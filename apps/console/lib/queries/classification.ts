@@ -25,6 +25,8 @@ import {
 	classificationAssignment,
 	classificationDimension,
 	classificationValue,
+	projectEnvironments,
+	projects,
 } from "@/lib/db/schema";
 import type { ResourceKind } from "@/lib/db/schema/enums";
 import type { EnforcingValue } from "@/lib/promotions/gates";
@@ -280,14 +282,18 @@ export async function countAssignmentsByKindForValue(
 }
 
 /**
- * The assigned values on a resource that carry a non-null `enforcement` policy — the classification
- * values that impose promotion gates on the resource (label drives policy). Feeds
+ * The values assigned to environment `envId` that carry a non-null `enforcement` policy — the
+ * classification values that impose promotion gates on it (label drives policy). Feeds
  * `applyClassificationEnforcement` in the gate engine. Non-enforcing values are filtered out in SQL.
+ *
+ * Only the environment's OWN organization's labels count: the assignment, its value and its
+ * dimension must all carry the org of the project the environment belongs to. The gate engine runs
+ * on the service role, so this join — not RLS — is what keeps another organization's assignment on
+ * the same uuid out of the gates. The org is read from the resource itself, never from a caller.
  */
-export async function getEnforcingValuesFor(
+export async function getEnforcingValuesForEnvironment(
 	tx: Db | Tx,
-	kind: ResourceKind,
-	resourceId: string,
+	envId: string,
 ): Promise<EnforcingValue[]> {
 	const rows = await tx
 		.select({
@@ -297,17 +303,34 @@ export async function getEnforcingValuesFor(
 		})
 		.from(classificationAssignment)
 		.innerJoin(
+			projectEnvironments,
+			eq(projectEnvironments.id, classificationAssignment.resource_id),
+		)
+		.innerJoin(
+			projects,
+			and(
+				eq(projects.id, projectEnvironments.project_id),
+				eq(projects.org_id, classificationAssignment.org_id),
+			),
+		)
+		.innerJoin(
 			classificationValue,
-			eq(classificationValue.id, classificationAssignment.value_id),
+			and(
+				eq(classificationValue.id, classificationAssignment.value_id),
+				eq(classificationValue.org_id, projects.org_id),
+			),
 		)
 		.innerJoin(
 			classificationDimension,
-			eq(classificationDimension.id, classificationAssignment.dimension_id),
+			and(
+				eq(classificationDimension.id, classificationAssignment.dimension_id),
+				eq(classificationDimension.org_id, projects.org_id),
+			),
 		)
 		.where(
 			and(
-				eq(classificationAssignment.resource_kind, kind),
-				eq(classificationAssignment.resource_id, resourceId),
+				eq(classificationAssignment.resource_kind, "project_environment"),
+				eq(classificationAssignment.resource_id, envId),
 				isNotNull(classificationValue.enforcement),
 			),
 		);

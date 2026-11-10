@@ -5,112 +5,159 @@
 // Admin AI-spend limits (Claude-Enterprise style): an org-wide and a per-member weekly
 // ceiling that only ever TIGHTEN the plan's included caps. Shown on the AI usage card to
 // admins (manage_billing) only. Entered in USD/week; stored as credits ($0.001/credit).
+//
+// F047 (#6127): an invalid value used to make Save do NOTHING — no message, no toast, and the
+// value silently not persisted (`-5` was coerced to "no limit"; `1e20` overflowed the column and
+// failed unhandled) — and a valid save gave no confirmation. The form is react-hook-form over the
+// shared zod schema now (`spend-limits.ts`): an invalid field says why inline before anything is
+// sent, the server re-validates with the SAME limits and its field errors land on the same inputs,
+// the button is disabled while the save is in flight, and a save says so.
 
-import { useState } from "react";
-import { setAiSpendCaps } from "@/app/server/actions/billing";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { type UseFormRegisterReturn, useForm } from "react-hook-form";
+import { saveAiSpendLimits } from "@/app/server/actions/billing";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
+import {
+	MAX_LABEL,
+	SERVER_TO_FORM_FIELD,
+	type SpendLimitsFormValues,
+	spendLimitsForm,
+	toCredits,
+	toDollars,
+} from "./spend-limits";
 
-const CREDITS_PER_DOLLAR = 1_000; // 1 credit = $0.001 (see lib/billing/ai-credits.ts)
-
-/** Credits → the dollars string shown in the field (empty = no limit). */
-function toDollars(credits: number | null): string {
-	return credits == null ? "" : String(credits / CREDITS_PER_DOLLAR);
-}
-
-/** A dollars field → credits to store (blank/invalid = null = no limit). */
-function toCredits(dollars: string): number | null {
-	const t = dollars.trim();
-	if (!t) return null;
-	const n = Number(t);
-	return Number.isFinite(n) && n >= 0 ? Math.round(n * CREDITS_PER_DOLLAR) : null;
+/** Whether a server field name is one of this form's (a narrowing, not a cast). */
+function isServerField(key: string): key is keyof typeof SERVER_TO_FORM_FIELD {
+	return key in SERVER_TO_FORM_FIELD;
 }
 
 /**
  * The two spend-limit fields + a Save. Seeds from the current caps; a blank field clears the
- * limit (back to the plan default). Save persists both via `setAiSpendCaps` and refetches.
+ * limit (back to the plan default). The parent re-keys this on the stored values, so a successful
+ * save — which invalidates `usage.ai` — re-seeds the form from what the server actually stored.
  */
 export function AiSpendLimits({
 	orgWeeklyCapCredits,
 	perUserWeeklyCapCredits,
-	onSaved,
 }: {
 	orgWeeklyCapCredits: number | null;
 	perUserWeeklyCapCredits: number | null;
-	onSaved: () => void;
 }) {
-	const [org, setOrg] = useState(toDollars(orgWeeklyCapCredits));
-	const [perUser, setPerUser] = useState(toDollars(perUserWeeklyCapCredits));
-	const [saving, setSaving] = useState(false);
+	const form = useForm<SpendLimitsFormValues>({
+		resolver: zodResolver(spendLimitsForm),
+		mode: "onChange",
+		defaultValues: {
+			orgWeeklyCap: toDollars(orgWeeklyCapCredits),
+			perUserWeeklyCap: toDollars(perUserWeeklyCapCredits),
+		},
+	});
+	const { errors, isDirty } = form.formState;
 
-	const dirty =
-		org !== toDollars(orgWeeklyCapCredits) ||
-		perUser !== toDollars(perUserWeeklyCapCredits);
+	const save = useActionMutation(saveAiSpendLimits, {
+		// The AI card shows the limits AND the budgets they tighten; the overview's usage card shows
+		// the same budgets (#6118) — `usage.ai` is the read both render from.
+		invalidates: [orpc.usage.ai.key()],
+		successMessage: "Spend limits saved.",
+		onValidationError: (fields) => {
+			for (const [key, messages] of Object.entries(fields)) {
+				const message = messages?.[0];
+				if (!message) continue;
+				if (isServerField(key)) form.setError(SERVER_TO_FORM_FIELD[key], { message });
+				else form.setError("root", { message });
+			}
+		},
+	});
 
-	const save = async () => {
-		setSaving(true);
-		try {
-			await setAiSpendCaps(toCredits(org), toCredits(perUser));
-			onSaved();
-		} finally {
-			setSaving(false);
-		}
-	};
+	const onSubmit = form.handleSubmit((values) =>
+		save.mutate({
+			orgWeeklyCapCredits: toCredits(values.orgWeeklyCap),
+			perUserWeeklyCapCredits: toCredits(values.perUserWeeklyCap),
+		}),
+	);
 
 	return (
-		<div className="border-t border-border px-6 py-4">
+		<form className="border-t border-border px-6 py-4" onSubmit={onSubmit} noValidate>
 			<div className="mb-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
 				<span className="font-mono text-ui-2xs uppercase tracking-[0.1em] text-text-tertiary">
 					Spend limits
 				</span>
 				<span className="text-ui-xs text-text-tertiary">
-					Weekly ceilings on top of your plan — AI pauses here. Leave blank for none.
+					Weekly ceilings on top of your plan — AI pauses here. Leave blank for none; $0
+					pauses the plan&apos;s included AI.
 				</span>
 			</div>
-			<div className="flex flex-wrap items-end gap-3">
-				<CapField label="Whole org / week" value={org} onChange={setOrg} />
-				<CapField label="Per member / week" value={perUser} onChange={setPerUser} />
+			<div className="flex flex-wrap items-start gap-3">
+				<CapField
+					id="ai-cap-org"
+					label="Whole org / week"
+					error={errors.orgWeeklyCap?.message}
+					{...form.register("orgWeeklyCap")}
+				/>
+				<CapField
+					id="ai-cap-member"
+					label="Per member / week"
+					error={errors.perUserWeeklyCap?.message}
+					{...form.register("perUserWeeklyCap")}
+				/>
 				<Button
+					type="submit"
 					size="sm"
 					variant="outline"
-					className="rounded-none"
-					disabled={!dirty || saving}
-					onClick={() => void save()}
+					className="mt-[18px] rounded-none"
+					disabled={!isDirty || save.isPending}
 				>
-					{saving ? "Saving…" : "Save limits"}
+					{save.isPending ? "Saving…" : "Save limits"}
 				</Button>
 			</div>
-		</div>
+			{errors.root?.message ? (
+				<p role="alert" className="mt-2 text-ui-xs text-destructive">
+					{errors.root.message}
+				</p>
+			) : null}
+		</form>
 	);
 }
 
-/** A single dollars/week input with a `$` adornment. */
+/** A single dollars/week input with a `$` adornment and its inline error. */
 function CapField({
+	id,
 	label,
-	value,
-	onChange,
+	error,
+	...input
 }: {
+	id: string;
 	label: string;
-	value: string;
-	onChange: (v: string) => void;
-}) {
+	error: string | undefined;
+} & UseFormRegisterReturn<keyof SpendLimitsFormValues>) {
+	const errorId = `${id}-error`;
 	return (
-		<label className="flex flex-col gap-1">
-			<span className="font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
+		<div className="flex flex-col gap-1">
+			<label htmlFor={id} className="font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
 				{label}
-			</span>
+			</label>
 			<span className="flex items-center gap-1 border border-border bg-background px-2">
 				<span className="text-ui-sm text-text-tertiary">$</span>
 				<Input
-					type="number"
-					min={0}
+					id={id}
+					type="text"
 					inputMode="decimal"
+					autoComplete="off"
 					placeholder="No limit"
-					value={value}
-					onChange={(e) => onChange(e.target.value)}
+					aria-invalid={error ? true : undefined}
+					aria-describedby={error ? errorId : undefined}
+					title={`Up to ${MAX_LABEL} a week`}
 					className="h-8 w-28 rounded-none border-0 bg-transparent px-0 text-ui-md shadow-none focus-visible:ring-0"
+					{...input}
 				/>
 			</span>
-		</label>
+			{error ? (
+				<span id={errorId} role="alert" className="max-w-[14rem] text-ui-xs text-destructive">
+					{error}
+				</span>
+			) : null}
+		</div>
 	);
 }

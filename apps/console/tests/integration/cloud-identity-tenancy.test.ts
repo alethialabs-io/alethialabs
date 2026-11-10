@@ -322,9 +322,9 @@ describeIfDb("cloud identity tenancy (#5479)", () => {
 			orgId: ORG_A,
 		});
 		vi.mocked(ensureCliOrgAccess).mockResolvedValue(null);
-		vi.mocked(authorize).mockResolvedValue({ userId: USER_A, orgId: ORG_A });
+		vi.mocked(authorize).mockResolvedValue({ credential: "session", userId: USER_A, orgId: ORG_A });
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: USER_A, orgId: ORG_A },
+			actor: { credential: "session", userId: USER_A, orgId: ORG_A },
 			credential: "session",
 			orgScope: [ORG_A],
 		});
@@ -509,7 +509,7 @@ describeIfDb("cloud identity tenancy (#5479)", () => {
 
 	it("does not let a service token bind its minter's personal identity", async () => {
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: USER_A, orgId: ORG_A },
+			actor: { credential: "service_token", userId: USER_A, orgId: ORG_A },
 			credential: "service_token",
 			serviceTokenId: "st-5481",
 			orgScope: [ORG_A],

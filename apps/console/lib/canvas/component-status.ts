@@ -165,7 +165,7 @@ export interface EnvironmentStatus {
 	iac: IacEnvironment | null;
 	/**
 	 * GitOps wiring + per-component ArgoCD health (#574) — the same read model the Deploy tab
-	 * shows, riding this poll so canvas badges and the tab can never disagree. Null when the
+	 * shows, riding this same read so canvas badges and the tab can never disagree. Null when the
 	 * environment could not be read.
 	 */
 	gitops: GitopsDeployStatus | null;

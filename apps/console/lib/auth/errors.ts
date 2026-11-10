@@ -39,3 +39,18 @@ export class NotOrgMemberError extends Error {
 		this.name = "NotOrgMemberError";
 	}
 }
+
+/**
+ * The process cannot tell which edition it is serving: `ALETHIA_EDITION` is unset and the enterprise
+ * package was not found (#6149). Refused rather than guessed, because guessing "community" serves
+ * every org address from the user's personal scope — the F049 shape. Set ALETHIA_EDITION.
+ */
+export class EditionMisconfiguredError extends Error {
+	/** Builds the error with an operator-facing message naming the fix. */
+	constructor() {
+		super(
+			"ALETHIA_EDITION is unset and @alethia/ee could not be loaded, so this request cannot be scoped to an organization. Set ALETHIA_EDITION=community or =enterprise.",
+		);
+		this.name = "EditionMisconfiguredError";
+	}
+}

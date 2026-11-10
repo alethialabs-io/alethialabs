@@ -3,13 +3,14 @@
 
 // GET /api/cli/projects/:id/promotions/:promotionId — one promotion with its approval slots.
 // Gated on project `view`; the promotion is loaded scoped to the resolved project + org (the
-// tenancy wall). Mirrors getPromotionDetail (web) but omits the per-gate evaluation + config diff
-// (console-only) — the CLI shows status, the approval tally, and the approval slots.
+// tenancy wall). Mirrors readPromotionDetail (web, lib/rpc/procedures/environments.ts) but omits the
+// per-gate evaluation + config diff (console-only) — the CLI shows status, the approval tally, and
+// the approval slots.
 
 import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { authorizeCli } from "@/lib/authz/guard";
-import { resolveCliProject } from "@/lib/cli/resolve-project";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -31,7 +32,7 @@ export async function GET(
 	const { id, promotionId } = await params;
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}

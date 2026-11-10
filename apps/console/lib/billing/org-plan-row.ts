@@ -30,15 +30,13 @@ import type Stripe from "stripe";
 import { alertOperator } from "@/lib/billing/operator-alert";
 import { isManualGrantExpired } from "@/lib/billing/plan";
 import type { PlanSlotBefore, PlanSlotWrite } from "@/lib/billing/queries";
+import { isLiveSubscriptionStatus } from "@/lib/billing/subscription-status";
 import {
 	isOrgPlanSubscription,
 	type SyncOptions,
 	type SyncOutcome,
 	syncSubscriptionToBilling,
 } from "@/lib/billing/sync";
-
-/** Stripe statuses under which a subscription still exists and may bill (ADR 0004 §2, "Live"). */
-const LIVE_STATUSES: ReadonlySet<string> = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
 
 /** Stripe statuses that are paid (ADR 0004 §2, "Paid"). */
 const PAID_STATUSES: ReadonlySet<string> = new Set(["active", "trialing"]);
@@ -72,11 +70,6 @@ export function isOrgPlanSubscriptionOf(sub: Stripe.Subscription, orgId: string)
 		!sub.metadata?.product_type &&
 		isOrgPlanSubscription(sub)
 	);
-}
-
-/** Whether a Stripe subscription status is live (ADR 0004 §2). */
-function isLiveStatus(status: string): boolean {
-	return LIVE_STATUSES.has(status);
 }
 
 /** Whether a Stripe subscription status is paid: `active` or `trialing` (ADR 0004 §2). */
@@ -272,7 +265,7 @@ export async function repointAfterEnd(
 	const orgId = ended.metadata?.organization_id;
 	if (!orgId || !isOrgPlanSubscriptionOf(ended, orgId)) return null;
 	const live = (await listAllSubscriptions(stripe, customerIdOf(ended))).filter(
-		(s) => s.id !== ended.id && isOrgPlanSubscriptionOf(s, orgId) && isLiveStatus(s.status),
+		(s) => s.id !== ended.id && isOrgPlanSubscriptionOf(s, orgId) && isLiveSubscriptionStatus(s.status),
 	);
 	const named = chooseSuccessor(live);
 	if (!named) return null;
@@ -324,7 +317,7 @@ export async function reconcileAfterSync(
 	if (!orgId || !before || before.subscriptionId === x.id || !isOrgPlanSubscriptionOf(x, orgId)) return null;
 
 	if (outcome === "ignored") {
-		if (!isLiveStatus(x.status)) return null;
+		if (!isLiveSubscriptionStatus(x.status)) return null;
 		if (before.subscriptionId === null) {
 			if (slotIsLive(before)) await reportTwoLive(orgId, partyOf(x), partyOfSlot(before));
 			return null;
@@ -336,7 +329,7 @@ export async function reconcileAfterSync(
 			const paidSuccessor = xTook === "applied" && isPaidStatus(x.status);
 			return yEnded === "applied" && !paidSuccessor ? y : null;
 		}
-		if (isLiveStatus(y.status)) await reportTwoLive(orgId, partyOf(x), partyOf(y));
+		if (isLiveSubscriptionStatus(y.status)) await reportTwoLive(orgId, partyOf(x), partyOf(y));
 		return null;
 	}
 

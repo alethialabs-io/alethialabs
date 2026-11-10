@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or, type SQL, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import type { EnvironmentStage } from "@/lib/db/schema/enums";
 import {
@@ -30,6 +30,13 @@ import type {
 // security posture (environment_security); org-wide we list the active verification
 // waivers (jobs.verify_override). All service-path with an explicit org_id filter, since
 // the service role bypasses RLS.
+//
+// EVIDENCE FOLLOWS PROJECT VISIBILITY. Every row belongs to a project, and the roll-up holds only
+// the projects in `projectIds` — the reader's PDP answer for `view` on `project`, which the caller
+// passes in (lib/rpc/procedures/evidence.ts). That set is intersected with the org's own projects
+// here (`projects.org_id = orgId` on every pass), so an id outside the org reads nothing even if
+// it were in the set. A waiver recorded on a job with no project and no environment is org-wide,
+// as an org-level job is (the job visibility rule, #6121).
 
 /** The latest verification verdict for an environment, from its most recent PLAN/DEPLOY job. */
 export interface EvidenceVerify {
@@ -131,9 +138,28 @@ export interface OrgEvidence {
 	summary: EvidenceSummary;
 }
 
-/** Assembles the org-wide evidence roll-up (verify verdicts + drift posture + waivers). */
-export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
+/** `col IN (ids)`, or a predicate that matches nothing for an empty set. */
+function inIds(col: Parameters<typeof inArray>[0], ids: readonly string[]): SQL {
+	return ids.length > 0 ? inArray(col, [...ids]) : sql`false`;
+}
+
+/**
+ * Assembles the evidence roll-up of `orgId` (verify verdicts + drift posture + waivers), limited
+ * to the projects in `projectIds` — the ones the reader may view (see the header).
+ */
+export async function queryOrgEvidence(
+	orgId: string,
+	projectIds: readonly string[],
+): Promise<OrgEvidence> {
 	const db = getServiceDb();
+	// The visible projects, AS PROJECTS OF THIS ORG: every pass below joins through this pair.
+	const visibleProject = and(eq(projects.org_id, orgId), inIds(projects.id, projectIds));
+	// The environments of those projects — the only environments a verify row may come from.
+	const visibleEnvironments = db
+		.select({ id: projectEnvironments.id })
+		.from(projectEnvironments)
+		.innerJoin(projects, eq(projectEnvironments.project_id, projects.id))
+		.where(visibleProject);
 
 	const [envs, verifyRows, driftRows, securityRows, waiverRows] =
 		await Promise.all([
@@ -157,7 +183,7 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 				cloudIdentities,
 				eq(projects.cloud_identity_id, cloudIdentities.id),
 			)
-			.where(eq(projects.org_id, orgId)),
+			.where(visibleProject),
 		// Latest verify-bearing PLAN/DEPLOY job per environment (DISTINCT ON keeps the
 		// most recent row per environment_id, newest first).
 		db
@@ -172,7 +198,7 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 				and(
 					eq(jobs.org_id, orgId),
 					inArray(jobs.job_type, ["PLAN", "DEPLOY"]),
-					isNotNull(jobs.environment_id),
+					inArray(jobs.environment_id, visibleEnvironments),
 					sql`${jobs.execution_metadata} -> 'verify_result' is not null`,
 				),
 			)
@@ -188,7 +214,7 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 			})
 			.from(environmentDrift)
 			.innerJoin(projects, eq(environmentDrift.project_id, projects.id))
-			.where(eq(projects.org_id, orgId)),
+			.where(visibleProject),
 		// Current security posture per environment (latest Trivy scan; L9).
 		db
 			.select({
@@ -203,7 +229,7 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 			})
 			.from(environmentSecurity)
 			.innerJoin(projects, eq(environmentSecurity.project_id, projects.id))
-			.where(eq(projects.org_id, orgId)),
+			.where(visibleProject),
 		// Recorded verification waivers, newest first.
 		db
 			.select({
@@ -219,7 +245,17 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 				projectEnvironments,
 				eq(jobs.environment_id, projectEnvironments.id),
 			)
-			.where(and(eq(jobs.org_id, orgId), isNotNull(jobs.verify_override)))
+			.where(
+				and(
+					eq(jobs.org_id, orgId),
+					isNotNull(jobs.verify_override),
+					// A visible project's waiver, or an org-level one: no project AND no environment.
+					or(
+						visibleProject,
+						and(isNull(jobs.project_id), isNull(jobs.environment_id)),
+					),
+				),
+			)
 			.orderBy(desc(jobs.created_at))
 			.limit(100),
 	]);

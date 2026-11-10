@@ -48,27 +48,34 @@ import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { ConnectorDetailSheet } from "@/components/connectors/connector-detail-sheet";
 import { unnamedControls } from "../support/accessible-names";
 
-// `canEditClassification` is mocked TRUE (not false) so `ClassificationControl` takes its
+// `classification.canEdit` answers TRUE (not false) so `ClassificationControl` takes its
 // `showPicker` branch — the same branch a real manager sees — and renders the per-row compact
-// "Classify" trigger this sheet puts in production. Mocking it false would delete that button from
+// "Classify" trigger this sheet puts in production. Answering false would delete that button from
 // every tree this file renders, which is exactly how the sixth control went unchecked before #4490's
-// third review thread.
+// third review thread. The now-rendered `ClassificationPicker` queries the org's dimension taxonomy
+// on mount; its popover content is never opened in this file, so an empty list is enough — this
+// test is about the trigger's name, not the picker. All of them are GET reads since #6129.
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return {
+		orpc: fakeOrpc({
+			"classification.canEdit": async () => true,
+			"classification.assignments": async () => [],
+			"classification.assignmentsForKind": async () => ({}),
+			"classification.dimensions": async () => [],
+		}).orpc,
+	};
+});
 vi.mock("@/app/server/actions/classification/assignments", () => ({
 	assignClassification: vi.fn(),
-	canEditClassification: vi.fn(async () => true),
-	getAssignments: vi.fn(async () => []),
-	getAssignmentsForKind: vi.fn(async () => ({})),
 	unassignClassification: vi.fn(),
 }));
-// The now-rendered `ClassificationPicker` queries the org's dimension taxonomy on mount. Its
-// popover content is never opened in this file, so an empty list is enough — this test is about
-// the trigger's name, not the picker.
-vi.mock("@/app/server/actions/classification/dimensions", () => ({
-	listDimensions: vi.fn(async () => []),
-}));
-// `ClassificationPicker` reads the org slug for its "no dimensions yet" link, unconditionally.
+// `ClassificationPicker` reads the org slug for its "no dimensions yet" link, unconditionally, and
+// its writes go through `useActionMutation`, which reads the router (an expired session is sent to
+// sign-in).
 vi.mock("next/navigation", () => ({
 	useParams: () => ({ org: "acme" }),
+	useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
 /** Renders under a fresh QueryClient (retries off so a mock rejection would fail fast, not hang). */

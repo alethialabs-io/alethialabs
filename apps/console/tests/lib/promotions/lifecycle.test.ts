@@ -99,7 +99,7 @@ vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/cost/previous-environment-cost", () => ({
 	getPreviousEnvironmentCost: vi.fn(async () => null),
 }));
-vi.mock("@/lib/queries/classification", () => ({ getEnforcingValuesFor: vi.fn(async () => []) }));
+vi.mock("@/lib/queries/classification", () => ({ getEnforcingValuesForEnvironment: vi.fn(async () => []) }));
 vi.mock("@/lib/promotions/approve", () => ({ claimApprovalSlot: vi.fn() }));
 vi.mock("@/lib/db/signed-job", () => ({ signedJob: <T>(row: T): T => row }));
 
@@ -113,7 +113,7 @@ import {
 	failPromotionForJob,
 	finalizePromotionOnDeploy,
 } from "@/lib/promotions/lifecycle";
-import { getEnforcingValuesFor } from "@/lib/queries/classification";
+import { getEnforcingValuesForEnvironment } from "@/lib/queries/classification";
 import { notifyScaler } from "@/lib/scaler";
 
 const PROMOTION = {
@@ -181,7 +181,7 @@ beforeEach(() => {
 	fake.reset();
 	vi.clearAllMocks();
 	vi.mocked(transitionEnv).mockResolvedValue(true);
-	vi.mocked(getEnforcingValuesFor).mockResolvedValue([]);
+	vi.mocked(getEnforcingValuesForEnvironment).mockResolvedValue([]);
 	vi.mocked(getPreviousEnvironmentCost).mockResolvedValue(null);
 });
 
@@ -340,19 +340,28 @@ describe("finalizePromotionOnDeploy", () => {
 });
 
 describe("failPromotionForJob", () => {
-	it("is a no-op when no in-flight promotion is backed by the job", async () => {
-		fake.selects.push([{ ...PROMOTION, plan_job_id: "other" }]);
+	it("is a no-op when the job does not exist", async () => {
+		fake.selects.push([]);
+		await failPromotionForJob("plan-1");
+		expect(fake.updated).toEqual([]);
+	});
+
+	it("is a no-op when the job has no project (it can back no promotion)", async () => {
+		fake.selects.push([{ project_id: null }]);
 		await failPromotionForJob("plan-1");
 		expect(fake.updated).toEqual([]);
 	});
 
 	it("marks the promotion FAILED for its deploy job", async () => {
-		fake.selects.push([{ ...PROMOTION, deploy_job_id: "deploy-1" }]);
+		fake.selects.push([{ project_id: "proj-1" }]);
 		await failPromotionForJob("deploy-1");
 		expect(fake.updated).toEqual([
 			expect.objectContaining({ status: "FAILED", error_message: "The promotion's job failed" }),
 		]);
 	});
+	// Which row the guarded UPDATE reaches (the job's own promotion, in its project, only while in
+	// flight) is a predicate this fake cannot evaluate: tests/integration/promotion-failure-lookup.test.ts
+	// proves it against Postgres.
 });
 
 describe("applyPromotionApproval", () => {

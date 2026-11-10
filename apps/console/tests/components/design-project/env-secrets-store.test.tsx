@@ -17,6 +17,7 @@ import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-reg
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { ConnectorProviderMeta } from "@/lib/connectors/registry.generated";
+import { queryWrapper } from "@/tests/helpers/query-wrapper";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "acme" }) }));
 
@@ -119,7 +120,7 @@ describe("environment secret store", () => {
 	it("writes the chosen store to EVERY secret in the environment", async () => {
 		seed(["api-key", "stripe-key", "sendgrid-key"]);
 		const user = userEvent.setup();
-		render(<EnvSettingsCard />);
+		render(<EnvSettingsCard />, { wrapper: queryWrapper() });
 
 		await user.click(screen.getByRole("combobox", { name: /secret/i }));
 		await user.click(await screen.findByRole("option", { name: /vault/i }));
@@ -134,7 +135,7 @@ describe("environment secret store", () => {
 			provider_config: { mount_path: "secret" },
 		});
 		const user = userEvent.setup();
-		render(<EnvSettingsCard />);
+		render(<EnvSettingsCard />, { wrapper: queryWrapper() });
 
 		await user.click(screen.getByRole("combobox", { name: /secret/i }));
 		await user.click(await screen.findByRole("option", { name: /cluster native/i }));
@@ -151,7 +152,7 @@ describe("environment secret store", () => {
 	it("a secret added afterwards inherits the environment's store", async () => {
 		seed(["api-key"], { provider: "vault", provider_config: { mount_path: "secret" } });
 		const user = userEvent.setup();
-		render(<CollectionPanel kind="secret" />);
+		render(<CollectionPanel kind="secret" />, { wrapper: queryWrapper() });
 
 		await user.click(screen.getByRole("button", { name: /add/i }));
 
@@ -169,7 +170,7 @@ describe("environment secret store", () => {
 	it("a secret added to a native environment stays native", async () => {
 		seed(["api-key"]);
 		const user = userEvent.setup();
-		render(<CollectionPanel kind="secret" />);
+		render(<CollectionPanel kind="secret" />, { wrapper: queryWrapper() });
 
 		await user.click(screen.getByRole("button", { name: /add/i }));
 		expect(providers().filter(Boolean)).toEqual([]);
@@ -177,7 +178,7 @@ describe("environment secret store", () => {
 
 	it("offers no store to configure when the environment has no secrets", () => {
 		seed([]);
-		render(<EnvSettingsCard />);
+		render(<EnvSettingsCard />, { wrapper: queryWrapper() });
 		expect(screen.getByText(/add a secret to choose where/i)).toBeInTheDocument();
 		expect(screen.queryByRole("combobox", { name: /secret/i })).not.toBeInTheDocument();
 	});
@@ -185,7 +186,7 @@ describe("environment secret store", () => {
 	it("won't let a store with no in-cluster read be chosen", async () => {
 		seed(["api-key"]);
 		const user = userEvent.setup();
-		render(<EnvSettingsCard />);
+		render(<EnvSettingsCard />, { wrapper: queryWrapper() });
 
 		await user.click(screen.getByRole("combobox", { name: /secret/i }));
 		const options = await screen.findAllByRole("option");
@@ -209,7 +210,7 @@ describe("environment container registry", () => {
 	it("writes the chosen registry to EVERY registry in the environment", async () => {
 		seed(["apps", "jobs"], {}, "registry");
 		const user = userEvent.setup();
-		render(<EnvSettingsCard />);
+		render(<EnvSettingsCard />, { wrapper: queryWrapper() });
 
 		await user.click(screen.getByRole("combobox", { name: /container registry/i }));
 		await user.click(await screen.findByRole("option", { name: /harbor/i }));
@@ -240,7 +241,7 @@ describe("environment container registry", () => {
 		});
 
 		const user = userEvent.setup();
-		render(<EnvSettingsCard />);
+		render(<EnvSettingsCard />, { wrapper: queryWrapper() });
 		await user.click(screen.getByRole("combobox", { name: /container registry/i }));
 		await user.click(await screen.findByRole("option", { name: /harbor/i }));
 
@@ -258,7 +259,7 @@ describe("environment container registry", () => {
 
 	it("offers nothing to configure when the environment has no registries", () => {
 		seed([], {}, "registry");
-		render(<EnvSettingsCard />);
+		render(<EnvSettingsCard />, { wrapper: queryWrapper() });
 		expect(screen.getByText(/add a container registry to choose/i)).toBeInTheDocument();
 	});
 });

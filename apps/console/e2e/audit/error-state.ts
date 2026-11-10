@@ -88,6 +88,28 @@ export async function rendersSharedErrorState(page: Page): Promise<boolean> {
 }
 
 /**
+ * The REGION-level error render (#6117): `components/errors/region-error.tsx` — `RegionError`, marked
+ * `data-slot="region-error"` and `role="alert"` — or any visible `role="alert"` inside `main`.
+ *
+ * `ErrorState` is the ROUTE boundary's render and nothing else since #6117, so a page whose failed or
+ * refused data region shows `RegionError` renders no `ErrorState` at all. A recogniser that knew only
+ * the shared ErrorState would read that page as showing no error state — which for T7 is a blank,
+ * and for family B is content that vanished without an error. The `data-slot` is the stable hook;
+ * `role="alert"` inside `main` is the fallback the component itself guarantees, and also catches a
+ * region that announces its failure without the shared component.
+ */
+export async function rendersRegionError(page: Page): Promise<boolean> {
+	return page.evaluate(() => {
+		const root = document.querySelector("main");
+		if (root === null) return false;
+		return Array.from(root.querySelectorAll<HTMLElement>('[data-slot="region-error"], [role="alert"]')).some((el) => {
+			const r = el.getBoundingClientRect();
+			return r.width > 0 && r.height > 0;
+		});
+	});
+}
+
+/**
  * The page's VISIBLE text — `innerText`, never `textContent`.
  *
  * A measured trap, not a style preference. The sandbox console serves tens of kilobytes of INLINE

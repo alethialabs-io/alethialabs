@@ -126,6 +126,7 @@ describe("resolveByoChartInstall", () => {
 		expect(spec).toMatchObject({
 			id: "payments",
 			source: "git",
+			byo: true,
 			chartRepo: "https://github.com/acme/payments-helm",
 			path: "charts/payments",
 			chart: "",
@@ -135,7 +136,10 @@ describe("resolveByoChartInstall", () => {
 		});
 	});
 
-	it("defaults ref to HEAD and namespace to default", () => {
+	// The namespace is sent AS STORED: a chart attached before #6446 still says "default" (or nothing),
+	// and the runner moves it to byo-<id> with a Deploy-tab warning. A new chart is stored with its own
+	// namespace by attachByoChart.
+	it("defaults ref to HEAD and sends a legacy chart's namespace as stored", () => {
 		const spec = resolveByoChartInstall({
 			addon_id: "svc",
 			mode: "managed",
@@ -178,6 +182,8 @@ describe("resolveByoChartInstall", () => {
 		expect(spec).toMatchObject({
 			id: "payments",
 			source: "helm",
+			// The BYO marker: the runner must not read a helm source as a catalogue chart (#6445).
+			byo: true,
 			// oci:// scheme kept so the Application repoURL is a prefix of the seeded cred url.
 			chartRepo: "oci://ghcr.io/acme/team",
 			chart: "mychart",
@@ -215,6 +221,15 @@ describe("resolveByoChartInstall", () => {
 		expect(
 			resolveByoChartInstall({ addon_id: "x", mode: "managed", chart_repo: "oci://ghcr.io" }),
 		).toBeNull();
+	});
+});
+
+describe("the BYO marker (#6445)", () => {
+	it("is on no catalogue add-on's spec — only resolveByoChartInstall stamps it", () => {
+		for (const a of ADDON_CATALOG) {
+			const spec = resolveAddOnInstall({ addon_id: a.id, mode: "managed" });
+			expect({ id: a.id, byo: spec?.byo }).toEqual({ id: a.id, byo: undefined });
+		}
 	});
 });
 

@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Mocked-boundary tests for the Activity action: stub currentActor + entitlements + a thenable
-// drizzle chain, and spy the drizzle operators (kept otherwise real) so we can assert the
-// cursor `limit+1` pagination math and that each filter adds the expected WHERE condition.
+// Mocked-boundary tests for the Activity reads (`activity.page` / `activity.permissions`, whose bodies
+// moved to lib/rpc/procedures/activity.ts in #6129) and the CSV export action: stub currentActor +
+// entitlements + a thenable drizzle chain, and spy the drizzle operators (kept otherwise real) so we
+// can assert the cursor `limit+1` pagination math and that each filter adds the expected WHERE
+// condition. The export is a `defineAction`: its refusals are results, not throws.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,11 +31,11 @@ vi.mock("drizzle-orm", async (importOriginal) => {
 });
 
 import { eq, gte, ilike, inArray, lt, lte, or } from "drizzle-orm";
+import { getActivityExportCsv } from "@/app/server/actions/activity";
 import {
-	getActivityExportCsv,
-	getActivityLog,
-	getActivityPermissions,
-} from "@/app/server/actions/activity";
+	readActivityPage as getActivityLog,
+	readActivityPermissions as getActivityPermissions,
+} from "@/lib/rpc/procedures/activity";
 import { getPdp } from "@/lib/authz";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorize, currentActor } from "@/lib/authz/guard";
@@ -118,10 +120,10 @@ beforeEach(() => {
 });
 
 // #3932: the console read the whole org log for ANY member while the CLI route refused them.
-describe("getActivityLog — authorization", () => {
+describe("activity.page — authorization", () => {
 	it("enforces activity:view_activity on the activity resource", async () => {
 		mockDb([dbRow()]);
-		await getActivityLog();
+		await getActivityLog({});
 		expect(vi.mocked(authorize)).toHaveBeenCalledWith("view_activity", { type: "activity" });
 	});
 
@@ -131,15 +133,15 @@ describe("getActivityLog — authorization", () => {
 		);
 		const db = vi.fn();
 		vi.mocked(getServiceDb).mockImplementation(db);
-		await expect(getActivityLog()).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(getActivityLog({})).rejects.toBeInstanceOf(ForbiddenError);
 		expect(db).not.toHaveBeenCalled();
 	});
 });
 
-describe("getActivityLog — pagination", () => {
+describe("activity.page — pagination", () => {
 	it("returns no cursor when the page isn't full and stringifies ids + ISO timestamps", async () => {
 		mockDb([dbRow({ id: 2 }), dbRow({ id: 1 })]);
-		const page = await getActivityLog();
+		const page = await getActivityLog({});
 		expect(page.nextCursor).toBeNull();
 		expect(page.rows).toHaveLength(2);
 		expect(page.rows[0]).toMatchObject({ id: "2", ts: "2026-06-20T10:00:00.000Z" });
@@ -162,14 +164,14 @@ describe("getActivityLog — pagination", () => {
 
 	it("always scopes by org and defaults the page size to 50 (+1)", async () => {
 		const calls = mockDb([dbRow()]);
-		await getActivityLog();
+		await getActivityLog({});
 		expect(vi.mocked(eq)).toHaveBeenCalled(); // org scope
 		expect(calls.limit).toBe(51);
 		expect(vi.mocked(lt)).not.toHaveBeenCalled(); // no cursor
 	});
 });
 
-describe("getActivityLog — filters", () => {
+describe("activity.page — filters", () => {
 	it("adds IN conditions for actor / resource-type / resource-id filters", async () => {
 		mockDb([dbRow()]);
 		await getActivityLog({
@@ -211,7 +213,10 @@ describe("getActivityExportCsv", () => {
 	it("rejects callers without the activityExport entitlement, before asking the PDP", async () => {
 		vi.mocked(getEntitlements).mockReturnValue({ activityExport: false } as never);
 		const pdp = mockPdp();
-		await expect(getActivityExportCsv()).rejects.toThrow(/Enterprise/);
+		await expect(getActivityExportCsv()).resolves.toMatchObject({
+			ok: false,
+			error: { kind: "entitlement", feature: "activityExport", message: expect.stringMatching(/Enterprise/) },
+		});
 		// An allowed export_activity is RECORDED, so enforcing first would log an export that
 		// was then refused.
 		expect(pdp.enforce).not.toHaveBeenCalled();
@@ -234,15 +239,16 @@ describe("getActivityExportCsv", () => {
 		mockPdp(["export_activity"]);
 		const db = vi.fn();
 		vi.mocked(getServiceDb).mockImplementation(db);
-		await expect(getActivityExportCsv()).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(getActivityExportCsv()).resolves.toMatchObject({ ok: false, error: { kind: "forbidden" } });
 		expect(db).not.toHaveBeenCalled();
 	});
 
 	it("emits a CSV with a header and one row per entry", async () => {
 		vi.mocked(getEntitlements).mockReturnValue({ activityExport: true } as never);
 		mockDb([dbRow({ id: 1, action: "deploy", decision: false, reason: "nope" })]);
-		const csv = await getActivityExportCsv();
-		const lines = csv.split("\n");
+		const result = await getActivityExportCsv();
+		if (!result.ok) throw new Error("the export was refused");
+		const lines = result.data.split("\n");
 		expect(lines[0]).toContain("time,actor,action");
 		expect(lines).toHaveLength(2);
 		expect(lines[1]).toContain('"deploy"');
@@ -250,12 +256,14 @@ describe("getActivityExportCsv", () => {
 	});
 });
 
-describe("getActivityPermissions", () => {
+describe("activity.permissions", () => {
 	it("answers both decisions through can(), which records nothing", async () => {
 		const pdp = mockPdp(["export_activity"]);
+		vi.mocked(getEntitlements).mockReturnValue({ activityExport: true } as never);
 		await expect(getActivityPermissions()).resolves.toEqual({
 			canView: true,
 			canExport: false,
+			exportEntitled: true,
 		});
 		expect(pdp.can).toHaveBeenCalledWith({ orgId: "org-1" }, "view_activity", {
 			type: "activity",
@@ -265,9 +273,11 @@ describe("getActivityPermissions", () => {
 
 	it("reports a caller with neither permission", async () => {
 		mockPdp(["view_activity", "export_activity"]);
+		vi.mocked(getEntitlements).mockReturnValue({ activityExport: false } as never);
 		await expect(getActivityPermissions()).resolves.toEqual({
 			canView: false,
 			canExport: false,
+			exportEntitled: false,
 		});
 	});
 });

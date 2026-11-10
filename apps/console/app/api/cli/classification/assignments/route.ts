@@ -5,12 +5,19 @@
 // resource's classification values from the CLI. Reads gate on org `view`, mutations on `edit`.
 // Org-scoped via the service DB with explicit org_id filters (RLS is bypassed here). A value is
 // addressed by dimension key + value slug (friendlier than uuids); single-valued dimensions swap.
+// A resource that lives in a project (the project, its environments, its clusters) also asks the
+// same action about that project (mayClassifyResource, lib/classification/resource-project.ts), as
+// the console's assignment actions do. A refusal is recorded, and answered exactly as an unknown
+// resource is answered by the same handler: GET and DELETE with no assignments (DELETE clearing
+// nothing), POST with its not-found.
 
 import { and, asc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
 import { recordActivity } from "@/lib/authz/activity";
+import { classifiableResourceInOrg } from "@/lib/classification/resource-org";
+import { mayClassifyResource } from "@/lib/classification/resource-project";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -87,6 +94,9 @@ export async function GET(req: Request) {
 	if ("error" in target) return target.error;
 
 	try {
+		if (!(await mayClassifyResource(actor, target.kind, target.id, "view"))) {
+			return cliJson(cliClassificationAssignmentsResponse, { assignments: [] });
+		}
 		const db = getServiceDb();
 		const assignments = await loadAssignments(
 			db,
@@ -120,6 +130,13 @@ export async function POST(req: Request) {
 	const { kind, id, dimension_key, value_slug } = parsed.data;
 
 	try {
+		// The resource must be this organization's (see lib/classification/resource-org.ts).
+		if (
+			!(await classifiableResourceInOrg(kind, id, actor)) ||
+			!(await mayClassifyResource(actor, kind, id, "edit"))
+		) {
+			return NextResponse.json({ error: `No ${kind} ${id}` }, { status: 404 });
+		}
 		const db = getServiceDb();
 		// Resolve the value → its dimension within the org.
 		const [value] = await db
@@ -154,6 +171,7 @@ export async function POST(req: Request) {
 					.delete(classificationAssignment)
 					.where(
 						and(
+							eq(classificationAssignment.org_id, actor.orgId),
 							eq(classificationAssignment.resource_kind, kind),
 							eq(classificationAssignment.resource_id, id),
 							eq(classificationAssignment.dimension_id, value.dimension_id),
@@ -204,6 +222,10 @@ export async function DELETE(req: Request) {
 	}
 
 	try {
+		// Refused: clear nothing and answer what an unknown resource gets (no assignments).
+		if (!(await mayClassifyResource(actor, target.kind, target.id, "edit"))) {
+			return cliJson(cliClassificationAssignmentsResponse, { assignments: [] });
+		}
 		const db = getServiceDb();
 		// Find the value ids (within the org) whose slug matches, then clear them off the resource.
 		const values = await db

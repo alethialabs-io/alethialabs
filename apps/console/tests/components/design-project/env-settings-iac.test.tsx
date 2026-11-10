@@ -26,6 +26,7 @@ import {
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { queryWrapper } from "@/tests/helpers/query-wrapper";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "acme" }) }));
 
@@ -73,6 +74,7 @@ function renderCard(iac: IacEnvironment | null, destroyEnvironment?: DestroyEnvi
 		<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, iac }}>
 			<EnvSettingsCard destroyEnvironment={destroyEnvironment} />
 		</EnvironmentStatusProvider>,
+		{ wrapper: queryWrapper() },
 	);
 }
 

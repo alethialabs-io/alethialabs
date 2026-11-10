@@ -97,9 +97,9 @@ function actingAs(userId: string, orgId: string, credential: CliCredential): voi
 	// credential gets.
 	vi.mocked(authorizeCli).mockResolvedValue(
 		credential === "service_token"
-			? { actor: { userId, orgId }, credential, serviceTokenId: "tok-1", orgScope: [orgId] }
+			? { actor: { credential, userId, orgId }, credential, serviceTokenId: "tok-1", orgScope: [orgId] }
 			: {
-					actor: { userId, orgId },
+					actor: { credential, userId, orgId },
 					credential,
 					orgScope: orgId === userId ? [orgId] : [orgId, userId],
 				},

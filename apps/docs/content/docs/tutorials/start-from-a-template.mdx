@@ -40,8 +40,8 @@ flowchart TB
 `} />
 
 The two templates run under two different trust levels. The apps repository can create any kind of
-resource on its cluster. A bring-your-own chart can create only namespaced resources in its own
-namespace, and no RBAC. For the full comparison, see [Starter Templates](/guides/design-project/starter-templates).
+resource on its cluster. A bring-your-own chart can create only a closed list of namespaced
+workload kinds in its own namespace, and no RBAC. For the full comparison, see [Starter Templates](/guides/design-project/starter-templates).
 
 ## Before you start
 

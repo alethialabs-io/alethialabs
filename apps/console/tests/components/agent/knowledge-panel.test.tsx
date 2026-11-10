@@ -89,3 +89,30 @@ describe("AgentKnowledgePanel — non-editor (canEdit false)", () => {
 		expect(upsertAgentContext).not.toHaveBeenCalled();
 	});
 });
+
+describe("AgentKnowledgePanel — switching scope (#6459)", () => {
+	// A scope switch reads as loading and never shows the previous scope's documents as the new
+	// one's, until the new scope's load lands. This pins the outcome only: `rerender` flushes effects
+	// inside `act`, so it cannot tell the derived `loading` (#6459) from the old effect that set it.
+	// Fails if the switch leaves "Runbook" on screen, or never leaves the loading state.
+	it("reads as loading the moment the scope changes, then shows the new scope's knowledge", async () => {
+		vi.mocked(canEditAgentContext).mockResolvedValue(true);
+		const { rerender } = render(<AgentKnowledgePanel projectId={null} onClose={() => {}} />);
+		expect(screen.getByText("Loading…")).toBeInTheDocument();
+		expect(await screen.findByText("Runbook")).toBeInTheDocument();
+
+		let answer: (v: { instructions: string; documents: (typeof DOC)[] }) => void = () => {};
+		vi.mocked(getAgentContext).mockReturnValue(
+			new Promise((resolve) => {
+				answer = resolve;
+			}) as never,
+		);
+		rerender(<AgentKnowledgePanel projectId="p1" onClose={() => {}} />);
+		expect(screen.getByText("Loading…")).toBeInTheDocument();
+		expect(screen.queryByText("Runbook")).not.toBeInTheDocument();
+
+		answer({ instructions: "", documents: [{ ...DOC, id: "d2", title: "Project notes" }] });
+		expect(await screen.findByText("Project notes")).toBeInTheDocument();
+		expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+	});
+});

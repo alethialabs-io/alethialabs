@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Pure derivations behind the Evidence surface — no JSX, no React, so the status/grouping/
-// sort math is unit-testable in isolation and reusable server-side (the evidence server
-// action filters + groups the roll-up here, off the request path). The UI's visual layer
+// sort math is unit-testable in isolation and reusable server-side (the `evidence.page` read
+// procedure filters + groups the roll-up here, off the client). The UI's visual layer
 // maps the returned `tone`/`iconKey` to grayscale Tailwind tokens + lucide icons.
 
 import { providerKey } from "@/components/evidence/evidence-query";

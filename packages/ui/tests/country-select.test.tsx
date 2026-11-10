@@ -8,11 +8,11 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { CountrySelect } from "../src/country-select";
+import { CountrySelect, returnFocusToTrigger } from "../src/country-select";
 import { pasteQuery } from "./interactions";
 
-// CountrySelect renders one cmdk CommandItem per COUNTRY_OPTIONS entry, unvirtualized
-// (country-select.tsx:88), so every popover-open mounts the whole list. #1453 stubbed the flag SVGs
+// CountrySelect renders one CommandItem per COUNTRY_OPTIONS entry, unvirtualized
+// (`CountryCommand` in country-select.tsx), so every popover-open mounts the whole list. #1453 stubbed the flag SVGs
 // and took this file from ~78s to ~32s, but the residual is the ITEM COUNT rather than the SVG
 // payload: with the stub active, opening the popover and typing NOTHING still cost ~5.8s for 254
 // items, and each of the four popover tests paid it again.
@@ -108,7 +108,7 @@ describe("CountrySelect", () => {
 		await pasteQuery(user, search, "Bulgaria");
 
 		expect(label("Bulgaria")).toBeInTheDocument();
-		// Non-matching options are filtered out by cmdk.
+		// Non-matching options are ranked out by the shared ranker (@repo/ui/command-search).
 		expect(queryLabel("Germany")).not.toBeInTheDocument();
 		expect(queryLabel("United States")).not.toBeInTheDocument();
 	});
@@ -117,8 +117,8 @@ describe("CountrySelect", () => {
 		const user = userEvent.setup({ delay: null });
 		render(<CountrySelect value="" onChange={vi.fn()} />);
 		await user.click(screen.getByRole("button"));
-		// cmdk labels its input through aria-labelledby → its own <label>; with no `label` prop that
-		// resolves to an empty name, which a screen reader announces as an unnamed combobox.
+		// The search is named by the `Command` root's `label` (#5803; an unnamed search is a combobox a
+		// screen reader cannot tell apart from any other).
 		expect(
 			await screen.findByRole("combobox", { name: "Search country" }),
 		).toHaveAttribute("placeholder", "Search country…");
@@ -174,5 +174,45 @@ describe("CountrySelect", () => {
 		await user.click(trigger);
 		expect(trigger).toHaveAttribute("aria-expanded", "false");
 		expect(onChange).not.toHaveBeenCalled();
+	});
+});
+
+// F033 (#6132): typing right after picking a country was lost — focus went back to the trigger
+// when the closing list finished its exit, even after the user had moved to the next field.
+describe("CountrySelect — focus after a pick (F033)", () => {
+	it("keeps what the user types into the next field right after picking a country", async () => {
+		const user = userEvent.setup({ delay: null });
+		render(
+			<>
+				<CountrySelect value="" onChange={vi.fn()} />
+				<input aria-label="Authority" />
+			</>,
+		);
+		await user.click(screen.getByRole("button"));
+		await user.click(label("Germany"));
+		await user.click(screen.getByRole("textbox", { name: "Authority" }));
+		await user.keyboard("Director");
+		expect(screen.getByRole("textbox", { name: "Authority" })).toHaveValue("Director");
+		expect(screen.getByRole("textbox", { name: "Authority" })).toHaveFocus();
+	});
+
+	it("returns focus to the trigger only while focus is still in the list, or nowhere", () => {
+		const popup = document.createElement("div");
+		const inside = document.createElement("button");
+		const outside = document.createElement("input");
+		popup.append(inside);
+		document.body.append(popup, outside);
+		try {
+			inside.focus();
+			expect(returnFocusToTrigger(popup)).toBe(true);
+			outside.focus();
+			expect(returnFocusToTrigger(popup)).toBe(false);
+			outside.blur();
+			expect(returnFocusToTrigger(popup)).toBe(true);
+			expect(returnFocusToTrigger(null)).toBe(true);
+		} finally {
+			popup.remove();
+			outside.remove();
+		}
 	});
 });

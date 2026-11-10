@@ -52,7 +52,7 @@ let agentBId = "";
 
 /** An injected actor for `orgId` in the community model (orgId === userId). */
 function actorFor(orgId: string): Actor {
-	return { userId: orgId, orgId };
+	return { credential: "session", userId: orgId, orgId };
 }
 
 describeIfDb("agent_identities cross-tenant isolation (IDOR audit #6)", () => {

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import * as React from "react";
-import { AlertDialog as AlertDialogPrimitive } from "@base-ui-components/react/alert-dialog";
+import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 
 import { cn } from "./utils";
 import { Button } from "./button";
@@ -152,6 +152,16 @@ function AlertDialogMedia({
  * base-ui `alert-dialog` has no `Action`/`Cancel` parts (unlike Radix) — both map onto
  * `AlertDialog.Close` rendered as a `Button`, so the exported names + button styling are kept.
  * `Action` and `Cancel` differ only in their default `variant`.
+ *
+ * A confirm that deletes, revokes or destroys passes `variant="destructive"` and NO colour
+ * className (#6108). Eight confirms used to paint themselves with
+ * `className="bg-destructive text-destructive-foreground"` over the `default` variant. That
+ * className reaches `cn(buttonVariants(...))`, where tailwind-merge reads `text-destructive-foreground`
+ * as a text colour and drops the variant's `text-primary-foreground`. No `--color-destructive-foreground`
+ * token exists, so the class emitted no rule and the label inherited the dialog's `--foreground`.
+ * That is the same grey as `--destructive` in both themes, so the label was invisible.
+ * `packages/ui/tests/button-variants.test.tsx` resolves the variant against both themes, and
+ * `apps/console/tests/components/destructive-confirm.test.ts` refuses a `*-foreground` class with no token.
  */
 function AlertDialogAction({
   className,

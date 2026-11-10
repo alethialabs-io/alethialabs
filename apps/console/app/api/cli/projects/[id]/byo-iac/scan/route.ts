@@ -25,7 +25,7 @@ export async function POST(
 	const { id } = await params;
 
 	try {
-		const scope = await resolveByoScope(actor.orgId, id, req);
+		const scope = await resolveByoScope(actor, id, req, "edit");
 		if ("error" in scope) return scope.error;
 
 		// The job id is returned so the caller can follow it with `alethia jobs logs -f` — a scan is

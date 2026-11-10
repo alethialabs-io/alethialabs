@@ -19,7 +19,7 @@
 
 import { and, desc, eq, sql } from "drizzle-orm";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
-import { isSharedClusterPlacement } from "@/lib/clusters/mint-eligibility";
+import { isSharedClusterPlacement, MINT_UNPROVISIONED_ENV_STATUSES } from "@/lib/clusters/mint-eligibility";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -32,18 +32,17 @@ import {
 import { KUBECONFIG_MINT_REQUEST_WINDOW_SECONDS } from "@/lib/db/schema/kubeconfig-mints";
 import { signedJob } from "@/lib/db/signed-job";
 import { newTraceparent } from "@/lib/observability/trace";
+import { identityScopeWhere } from "@/lib/runners/claim-identity";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import type { Actor } from "@/lib/authz/types";
 import { notifyScaler } from "@/lib/scaler";
 import type { CliKubeconfigMintRequest } from "@/lib/validations/cli-contract";
 import { type MintClient, type MintCredential, writeMintAudit } from "./audit";
 import { mintShapeRefusal } from "./clouds";
 import { credentialMayMintTier } from "./gates";
 
-/** Environment statuses with no cluster to mint against. */
-const UNPROVISIONED_ENV: ReadonlySet<string> = new Set([
-	"DRAFT",
-	"DESTROYING",
-	"DESTROYED",
-]);
+/** Environment statuses with no cluster to mint against (shared with the cluster card's notice). */
+const UNPROVISIONED_ENV = MINT_UNPROVISIONED_ENV_STATUSES;
 
 /** Who is asking, as the route resolved them. */
 export interface MintActor {
@@ -53,7 +52,8 @@ export interface MintActor {
 
 /** One mint request, already parsed against `cliKubeconfigMintRequest`. */
 export interface MintRequestInput {
-	actor: MintActor;
+	/** The full actor, so the identity rule reads its credential kind (`personalIdentityAuthor`). */
+	actor: Actor;
 	clusterId: string;
 	request: CliKubeconfigMintRequest;
 	client: MintClient;
@@ -74,6 +74,13 @@ interface QueuedMint {
 	expires_at: Date;
 }
 
+/**
+ * Why an `identity-unavailable` mint was refused, in the words both the CLI route and the console
+ * card show. It does not say whose the identity is.
+ */
+export const KUBECONFIG_MINT_IDENTITY_UNAVAILABLE_REASON =
+	"This cluster runs under a cloud account you cannot use here. A service token can use only the organization's shared cloud accounts; a member can use those and their own.";
+
 /** Why a mint was not queued. Each maps to one HTTP status in the route. */
 export type MintRequestRefusal =
 	| "admin-needs-a-person"
@@ -81,7 +88,8 @@ export type MintRequestRefusal =
 	| "not-provisioned"
 	| "unsupported-cloud"
 	| "static-only"
-	| "shared-cluster";
+	| "shared-cluster"
+	| "identity-unavailable";
 
 /** The outcome of {@link requestKubeconfigMint}. */
 export type MintRequestOutcome =
@@ -96,6 +104,9 @@ interface MintTarget {
 	environmentStatus: string | null;
 	/** The OWNING environment's placement (`project_environments.placement_mode`); null without one. */
 	placementMode: (typeof projectEnvironments.$inferSelect)["placement_mode"] | null;
+	/** The identity the cluster is bound to (its own, else its project's), whether or not usable. */
+	boundIdentityId: string | null;
+	/** `boundIdentityId` when the caller may use it (see {@link resolveMintTarget}), else null. */
 	cloudIdentityId: string | null;
 	provider: (typeof cloudIdentities.$inferSelect)["provider"] | null;
 }
@@ -105,11 +116,17 @@ interface MintTarget {
  * service role. The cloud identity is the cluster's own placement, falling back to its project's
  * (`coalesce(project_cluster.cloud_identity_id, projects.cloud_identity_id)`, #5250 §5), never "the
  * org's first identity". Null when no such cluster exists in that org.
+ *
+ * The identity is joined through `identityScopeWhere`: an `org` identity of this org, or the
+ * person's own `personal` one (`personalAuthorId`, undefined for a service token). The mint job
+ * carries that identity to the runner, so it follows the rule every other job's identity does.
  */
 async function resolveMintTarget(
 	clusterId: string,
 	orgId: string,
+	personalAuthorId: string | undefined,
 ): Promise<MintTarget | null> {
+	const bound = sql<string | null>`coalesce(${projectCluster.cloud_identity_id}, ${projects.cloud_identity_id})`;
 	const [row] = await getServiceDb()
 		.select({
 			clusterId: projectCluster.id,
@@ -117,6 +134,7 @@ async function resolveMintTarget(
 			environmentId: projectCluster.environment_id,
 			environmentStatus: projectEnvironments.status,
 			placementMode: projectEnvironments.placement_mode,
+			boundIdentityId: bound,
 			cloudIdentityId: cloudIdentities.id,
 			provider: cloudIdentities.provider,
 		})
@@ -129,13 +147,11 @@ async function resolveMintTarget(
 		.leftJoin(
 			cloudIdentities,
 			and(
-				eq(
-					cloudIdentities.id,
-					sql`coalesce(${projectCluster.cloud_identity_id}, ${projects.cloud_identity_id})`,
-				),
-				// The identity must be the org's too. It always is when the FKs were written by the
-				// app, and this makes "always" a property of the query rather than of every writer.
-				eq(cloudIdentities.org_id, orgId),
+				eq(cloudIdentities.id, bound),
+				// The identity must be one this caller may use: the org's, or a person's own. The
+				// design writes check the same rule, and this makes it a property of the query rather
+				// than of every writer.
+				identityScopeWhere(orgId, personalAuthorId),
 			),
 		)
 		.where(and(eq(projectCluster.id, clusterId), eq(projectCluster.org_id, orgId)))
@@ -187,8 +203,18 @@ export async function requestKubeconfigMint(
 		return { ok: false, refusal: "admin-needs-a-person" };
 	}
 
-	const target = await resolveMintTarget(clusterId, actor.orgId);
+	const target = await resolveMintTarget(
+		clusterId,
+		actor.orgId,
+		// The one identity rule: a person's own personal identity, the org's shared ones.
+		personalIdentityAuthor(actor),
+	);
 	if (!target) return { ok: false, refusal: "not-found" };
+	// Bound to an identity this caller may not use: refused before any job is queued, rather than
+	// queued for the claim route to refuse.
+	if (target.boundIdentityId && !target.cloudIdentityId) {
+		return { ok: false, refusal: "identity-unavailable" };
+	}
 
 	// A namespace/vcluster environment's cluster row names the SHARED Fabric cluster, and a mint of
 	// it would hand one tenant the whole cluster (#5327). The runner refuses this too (#5283) and

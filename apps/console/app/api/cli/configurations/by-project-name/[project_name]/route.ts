@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorizeCli } from "@/lib/authz/guard";
+import { cliMayActOnProject } from "@/lib/cli/project-access";
 import { getServiceDb } from "@/lib/db";
 import { getCliConfig } from "@/lib/queries/cli-config";
 import { NextResponse } from "next/server";
@@ -27,7 +28,9 @@ export async function GET(
 			envId: new URL(req.url).searchParams.get("env") ?? undefined,
 		});
 
-		if (!configuration) {
+		// The configuration names its project (`id`); a project the caller may not view answers exactly
+		// as one that does not exist.
+		if (!configuration || !(await cliMayActOnProject(actor, configuration.id, "view"))) {
 			return NextResponse.json({ error: "Configuration not found" }, { status: 404 });
 		}
 

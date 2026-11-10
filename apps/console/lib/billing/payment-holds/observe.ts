@@ -17,6 +17,8 @@
 // Stripe is injected as `HoldStripeReader`, the subset of the SDK client these reads use, so the
 // machine is testable without a network and the live client (`getStripe()`) satisfies it as it is.
 
+import { isLiveSubscriptionStatus } from "@/lib/billing/subscription-status";
+
 /** A PaymentIntent as the hold reads it. */
 export interface HeldPaymentIntent {
 	id: string;
@@ -129,9 +131,6 @@ const AWAITING: ReadonlySet<string> = new Set([
 	"requires_action",
 ]);
 
-/** The subscription statuses that are live (§2): the subscription still exists and may bill. */
-const LIVE: ReadonlySet<string> = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
-
 /** Whether `err` is Stripe's `resource_missing` (the object does not exist in this account). */
 export function isResourceMissing(err: unknown): boolean {
 	return typeof err === "object" && err !== null && "code" in err && err.code === "resource_missing";
@@ -160,7 +159,7 @@ function classifySub(status: string): SubObservation {
 	if (status === "canceled" || status === "incomplete_expired") {
 		return { kind: "ended", expired: status === "incomplete_expired" };
 	}
-	return LIVE.has(status) ? { kind: "live", status } : { kind: "other", status };
+	return isLiveSubscriptionStatus(status) ? { kind: "live", status } : { kind: "other", status };
 }
 
 /** Classifies one succeeded PaymentIntent's refunds as `refund` (§3.2). */

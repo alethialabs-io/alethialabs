@@ -27,7 +27,7 @@ type Captured = { table: unknown; set: Record<string, unknown> | undefined };
  * (resolving the seeded `jobRows` for the SELECT and for awaited writes), and
  * each `update(table).set(values)` is recorded so tests can assert the writes.
  */
-function mockDb(jobRows: unknown[], opts?: { casUpdated?: boolean }) {
+function mockDb(jobRows: unknown[], opts?: { casUpdated?: boolean; tornRows?: unknown[] }) {
 	const updates: Captured[] = [];
 	// The CAS RPC (set_env_status via db.execute) result — true = env legitimately moved.
 	const casUpdated = opts?.casUpdated ?? true;
@@ -49,6 +49,11 @@ function mockDb(jobRows: unknown[], opts?: { casUpdated?: boolean }) {
 			if (current) current.set = vals;
 			return db;
 		},
+		// A DESTROY's teardown write is gated on the env still tearing down: `returning` answers the
+		// rows that UPDATE matched (one by default; none = a straggler after a redeploy).
+		returning: () => ({
+			then: (resolve: (v: unknown) => void) => resolve(opts?.tornRows ?? [{ id: "env-1" }]),
+		}),
 		// The env-status CAS goes through db.execute<{updated}>(...) — return the seeded result.
 		execute: (query: unknown) => {
 			executeCalls.push(query);
@@ -100,7 +105,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 });
 
-describe("finalizeDeployment — guards (no writes)", () => {
+describe("finalizeDeployment — guards, and what a DESTROY writes", () => {
 	it("does nothing when the job is not found", async () => {
 		const { updates } = mockDb([]);
 		await expect(finalizeDeployment("job-x")).resolves.toBeUndefined();
@@ -113,10 +118,18 @@ describe("finalizeDeployment — guards (no writes)", () => {
 		expect(updates).toHaveLength(0);
 	});
 
-	it("does nothing for a non-BYO DESTROY (no iac_source in the snapshot)", async () => {
-		const { updates } = mockDb([{ ...fullJob(), job_type: "DESTROY" }]);
+	it("records a non-BYO DESTROY's teardown: the env's deploy stamp cleared, its cluster DESTROYED (#6122)", async () => {
+		const { updates, writeFor } = mockDb([{ ...fullJob(), job_type: "DESTROY" }]);
 		await finalizeDeployment("job-1");
-		expect(updates).toHaveLength(0);
+		expect(updates.map((u) => u.table)).toEqual([projectEnvironments, projectCluster]);
+		expect(writeFor(projectEnvironments)?.set).toMatchObject({ last_deployed_at: null });
+		expect(writeFor(projectCluster)?.set).toMatchObject({ status: "DESTROYED" });
+	});
+
+	it("a DESTROY success arriving after a redeploy (the env no longer tearing down) marks no cluster", async () => {
+		const { updates } = mockDb([{ ...fullJob(), job_type: "DESTROY" }], { tornRows: [] });
+		await finalizeDeployment("job-1");
+		expect(updates.map((u) => u.table)).toEqual([projectEnvironments]);
 	});
 
 	it("does nothing when the job is neither DEPLOY nor DESTROY", async () => {
@@ -302,8 +315,8 @@ describe("finalizeDeployment — BYO IaC deployed-commit tracking", () => {
 		};
 		const { updates, writeFor } = mockDb([job]);
 		await finalizeDeployment("job-1");
-		// A DESTROY carries no tofu outputs — the pin clear is the ONLY write.
-		expect(updates).toHaveLength(1);
+		// A DESTROY carries no tofu outputs — the pin clear, then the teardown record (#6122).
+		expect(updates.map((u) => u.table)).toEqual([projectIacSources, projectEnvironments, projectCluster]);
 		expect(writeFor(projectIacSources)?.set).toMatchObject({ deployed_commit_sha: null });
 	});
 

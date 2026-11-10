@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { z } from "zod";
-import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import {
 	ComponentWriteRefusedError,
 	componentIdentityAllowed,
@@ -15,7 +17,6 @@ import {
 	validateComponentFields,
 } from "@/lib/cli/project-components";
 import {
-	resolveCliProject,
 	resolveCliWriteEnvironment,
 } from "@/lib/cli/resolve-project";
 import { NextResponse } from "next/server";
@@ -88,7 +89,7 @@ export async function PATCH(
 	try {
 		// The org binding: a project is resolved only inside the caller's org, so a project id from
 		// another tenant is a 404 here exactly as it is for POST and DELETE.
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "edit");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
@@ -103,7 +104,7 @@ export async function PATCH(
 			!(await componentIdentityAllowed(
 				validated.values,
 				actor.orgId,
-				userIdIsTheCaller(auth.credential) ? actor.userId : undefined,
+				personalIdentityAuthor(actor),
 			))
 		) {
 			return NextResponse.json({ error: "Cloud identity not found" }, { status: 404 });
@@ -163,7 +164,7 @@ export async function DELETE(
 	}
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "edit");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}

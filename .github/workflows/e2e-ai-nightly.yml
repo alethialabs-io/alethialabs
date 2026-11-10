@@ -76,6 +76,11 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
+      # This job never builds ee/dist, so it has always served the community edition — by ACCIDENT
+      # of `auto` not finding the package. #6149 refuses an org address when the edition is unset and
+      # the package is absent (that is also what a failed enterprise load looks like), so the
+      # decision is made explicit here instead of left for every `/{org}` page to 500 on.
+      ALETHIA_EDITION: community
       ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
       ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
       ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret

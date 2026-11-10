@@ -3,33 +3,49 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Billing page — the authored claude.ai/design panel composed from the shared
-// settings primitives (shadcn + Tailwind tokens; no CSS module): page header, a
-// current-plan card with usage meters, payment methods + billing details (two-column),
+// settings primitives (shadcn + Tailwind tokens; no CSS module): a current-plan card (with
+// one AI-tier row that links to Usage), payment methods + billing details (two-column),
 // plan-history timeline, transaction history, and invoices. A Hobby→Pro upgrade opens the
 // shared in-place UpgradeOrgSheet (via useUpgradeSheet) rather than an inline plan dialog;
 // cancel/resume + saved cards + invoices are all in-app.
+//
+// #6133 (design decision A): Billing is the page for MONEY INSTRUMENTS. The AI plan, its meters,
+// credits and the admin spend limits all live on the Usage page, beside the runner hard cap, which
+// is the same kind of control. Billing states the AI tier as one fact on the plan card and links
+// there; it never renders the AI card itself, so the spend limits have exactly one home. The
+// "cloud-resource spend is billed separately" note is Usage's too: there it is the footnote of the
+// cloud-spend figure, and on this card it qualified nothing.
+//
+// #6127 (ADR 0005): every section reads a GET procedure the route prefetches on the server, so the
+// first paint is the page, not a two-box skeleton, and each section renders its own pending,
+// refused, failed and empty states. Cancel/resume go through the mutation contract. The billing-
+// admin sections (cards, plan history, charges, invoices) render only for a viewer who holds the
+// billing permission; anyone else gets one note saying so, instead of four sections that refuse.
 
-import { Info } from "lucide-react";
-import { useCallback, useEffect, useState, useTransition } from "react";
-import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowUpRight } from "lucide-react";
+import Link from "next/link";
+import { type ReactNode, useState } from "react";
 import { formatDate, formatMoney, scaleMoney } from "@repo/format";
-import {
-	type BillingSummary,
-	cancelSubscription,
-	getBillingSummary,
-	resumeSubscription,
-} from "@/app/server/actions/billing";
+import { cancelPlan, resumePlan } from "@/app/server/actions/billing";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { RegionError } from "@/components/errors/region-error";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
-import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
+import { ClockText } from "@/components/settings/usage/clock-text";
 import { SettingsSection } from "@/components/settings/settings-ui";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { globalHref } from "@/lib/routing";
+import { orpc } from "@/lib/rpc/client";
+import type { BillingSummary } from "@/lib/rpc/procedures/billing";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Skeleton } from "@repo/ui/skeleton";
-import { planMeta } from "@repo/plan-catalog";
-import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import { aiPlanMeta, planMeta } from "@repo/plan-catalog";
+import { useActiveOrgSlug, useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import { BillingSkeleton } from "./billing-skeleton";
+import { RegionRefusal, refusalOf, retryUnlessRefused } from "./read-state";
 import { RecentInvoices } from "./recent-invoices";
 import { PaymentMethodsCard } from "./payment-methods-card";
 import { PlanHistoryTimeline } from "./plan-history-timeline";
@@ -44,83 +60,30 @@ const STATE_LABEL: Record<BillingSummary["state"], string> = {
 	canceled: "Canceled",
 };
 
+/** The Billing page: the summary decides which page this is, then each section reads its own. */
 export function BillingPanel() {
-	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
-
-	const [summary, setSummary] = useState<BillingSummary | null>(null);
-	const [pending, startTransition] = useTransition();
+	const summary = useQuery(orpc.billing.summary.queryOptions({ retry: retryUnlessRefused }));
 	const [createOpen, setCreateOpen] = useState(false);
-	// Cancelling asks first (#4276). Resuming does not: it RESTORES the subscription, and a
-	// confirmation in front of an undo is friction with nothing behind it. The registry
-	// (apps/console/destructive-actions.yaml, `billing.subscription.cancel`) records the dialog
-	// this state opens.
-	//
-	// WHAT ACTUALLY EXERCISES IT is `e2e/flows/billing.spec.ts` ("Cancel plan opens a
-	// confirmation…"), against the `team` persona's real Stripe trial. NOT the audit leg: that
-	// entry's `fixture:` field is documentation, not a seeding directive, and no seeder in `e2e/`
-	// materialises a subscription for the audit org — `audit/context.ts:seedRouteFixtures` writes
-	// one project, one job and one support case and deliberately nothing else. So `hasSub` below
-	// is false there, the trigger is never rendered, and `audit/destructive.spec.ts` records the
-	// control as WITHHELD every gate. Read the other way round: delete the flows spec and this
-	// dialog is measured by nothing at all.
-	const [cancelOpen, setCancelOpen] = useState(false);
-	// Hobby → Pro upgrades open the shared in-place upgrade sheet (no inline plan dialog).
-	const { openUpgrade } = useUpgradeSheet();
 
-	const refresh = useCallback(() => {
-		getBillingSummary()
-			.then(setSummary)
-			.catch(() => toast.error("Couldn't load billing details."));
-		fetchWorkspace();
-	}, [fetchWorkspace]);
-	useEffect(() => {
-		refresh();
-	}, [refresh]);
-
-	// A subscription exists to manage (show a period + Cancel/Resume) for any live-ish state.
-	const hasSub =
-		summary?.state === "active" ||
-		summary?.state === "trialing" ||
-		summary?.state === "canceling" ||
-		summary?.state === "past_due";
-
-	/** Resume a subscription already scheduled to cancel. Not destructive — no confirmation. */
-	function resumePlan() {
-		startTransition(async () => {
-			try {
-				await resumeSubscription();
-				toast.success("Subscription resumed.");
-				refresh();
-			} catch (e) {
-				toast.error(e instanceof Error ? e.message : "Something went wrong.");
-			}
-		});
+	if (summary.data === undefined) {
+		if (summary.isError) {
+			const refusal = refusalOf(summary.error);
+			return refusal ? (
+				<RegionRefusal refusal={refusal} />
+			) : (
+				<RegionError
+					title="Couldn't load billing"
+					description="Something went wrong loading this organization's plan."
+					onRetry={() => void summary.refetch()}
+				/>
+			);
+		}
+		return <BillingSkeleton />;
 	}
 
-	/** Schedule the subscription to end at the period end. Only ever reached from the dialog. */
-	function confirmCancelPlan() {
-		startTransition(async () => {
-			try {
-				await cancelSubscription();
-				toast.success("Subscription will cancel at the period end.");
-				refresh();
-			} catch (e) {
-				toast.error(e instanceof Error ? e.message : "Something went wrong.");
-			}
-		});
-	}
-
-	if (!summary) {
-		return (
-			<div className="space-y-4">
-				<Skeleton className="h-24 w-full" />
-				<Skeleton className="h-48 w-full" />
-			</div>
-		);
-	}
-
-	// Self-managed / community: no Stripe → entitlements come from the license.
-	if (!summary.hosted) {
+	// Self-managed / community: no Stripe → entitlements come from the license. This is the edition
+	// gate, unchanged by #6127: the summary decides it.
+	if (!summary.data.hosted) {
 		return (
 			<Card className="p-6">
 				<SectionHeading
@@ -132,7 +95,7 @@ export function BillingPanel() {
 	}
 
 	// Free user with no org yet: an org is the paid, shared workspace — create one.
-	if (!summary.hasOrg) {
+	if (!summary.data.hasOrg) {
 		return (
 			<>
 				<Card className="p-6">
@@ -152,6 +115,55 @@ export function BillingPanel() {
 			</>
 		);
 	}
+
+	return <BillingView summary={summary.data} />;
+}
+
+/** The hosted org's billing page. */
+function BillingView({ summary }: { summary: BillingSummary }) {
+	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
+	// Cancelling asks first (#4276). Resuming does not: it RESTORES the subscription, and a
+	// confirmation in front of an undo is friction with nothing behind it. The registry
+	// (apps/console/destructive-actions.yaml, `billing.subscription.cancel`) records the dialog
+	// this state opens.
+	//
+	// WHAT ACTUALLY EXERCISES IT is `e2e/flows/billing.spec.ts` ("Cancel plan opens a
+	// confirmation…"), against the `team` persona's real Stripe trial. NOT the audit leg: that
+	// entry's `fixture:` field is documentation, not a seeding directive, and no seeder in `e2e/`
+	// materialises a subscription for the audit org — `audit/context.ts:seedRouteFixtures` writes
+	// one project, one job and one support case and deliberately nothing else. So `hasSub` below
+	// is false there, the trigger is never rendered, and `audit/destructive.spec.ts` records the
+	// control as WITHHELD every gate. Read the other way round: delete the flows spec and this
+	// dialog is measured by nothing at all.
+	const [cancelOpen, setCancelOpen] = useState(false);
+	// Hobby → Pro upgrades open the shared in-place upgrade sheet (no inline plan dialog).
+	const { openUpgrade } = useUpgradeSheet();
+
+	// A plan change shows on this card, on the plan history, and in the usage page's plan readout;
+	// the shell's plan badge reads the workspace store, which is refreshed alongside.
+	const planChanged = [
+		orpc.billing.summary.key(),
+		orpc.billing.planHistory.key(),
+		orpc.usage.org.key(),
+	];
+	const resume = useActionMutation(resumePlan, {
+		invalidates: planChanged,
+		successMessage: "Subscription resumed.",
+		onSuccess: () => void fetchWorkspace(),
+	});
+	const cancel = useActionMutation(cancelPlan, {
+		invalidates: planChanged,
+		successMessage: "Subscription will cancel at the period end.",
+		onSuccess: () => void fetchWorkspace(),
+	});
+	const pending = resume.isPending || cancel.isPending;
+
+	// A subscription exists to manage (show a period + Cancel/Resume) for any live-ish state.
+	const hasSub =
+		summary.state === "active" ||
+		summary.state === "trialing" ||
+		summary.state === "canceling" ||
+		summary.state === "past_due";
 
 	const meta = planMeta(summary.plan);
 	// The unit price is Stripe-authoritative (summary.unitAmount = the subscription's actual
@@ -174,9 +186,9 @@ export function BillingPanel() {
 		state === "active" || state === "trialing" || state === "canceling";
 	// currentPeriodEnd is only populated while the sub is live, so this label is only ever
 	// shown for active/trialing ("Renews") or canceling ("Cancels") — never a contradiction.
-	const periodLabel = summary.currentPeriodEnd
-		? `${state === "canceling" ? "Cancels" : "Renews"} ${formatDate(summary.currentPeriodEnd)}`
-		: null;
+	// A date in the VIEWER's zone, so it is rendered after hydration (ClockText).
+	const periodEnd = summary.currentPeriodEnd;
+	const periodVerb = state === "canceling" ? "Cancels" : "Renews";
 	// A future charge only exists while renewing — never when canceling / canceled / past_due.
 	const showNextCharge =
 		(state === "active" || state === "trialing") &&
@@ -216,10 +228,13 @@ export function BillingPanel() {
 							</div>
 							<div className="flex flex-wrap items-center gap-2 text-ui-sm text-text-tertiary">
 								<span>{meta.tagline}</span>
-								{periodLabel && (
+								{periodEnd && (
 									<>
 										<span className="size-[3px] rounded-full bg-text-disabled" />
-										<span>{periodLabel}</span>
+										<span>
+											{periodVerb}{" "}
+											<ClockText sizer="30 Sept 2026" text={() => formatDate(periodEnd)} />
+										</span>
 									</>
 								)}
 							</div>
@@ -247,18 +262,16 @@ export function BillingPanel() {
 								{showNextCharge && monthly !== null && summary.currentPeriodEnd && (
 									<div className="font-mono text-ui-2xs text-text-tertiary">
 										next charge {formatMoney(monthly)} ·{" "}
-										{formatDate(summary.currentPeriodEnd)}
+										<ClockText sizer="30 Sept 2026" text={() => formatDate(periodEnd ?? "")} />
 									</div>
 								)}
 							</div>
 						)}
 					</div>
 
-					<div className="flex flex-wrap items-center justify-between gap-4 border-t border-border bg-surface-sunken px-6 py-[14px]">
-						<div className="flex items-center gap-2 text-ui-sm text-text-tertiary">
-							<Info size={13} />
-							Your cloud-resource spend is billed separately by your provider.
-						</div>
+					<AiPlanRow />
+
+					<div className="flex flex-wrap items-center justify-end gap-4 border-t border-border bg-surface-sunken px-6 py-[14px]">
 						<div className="flex gap-2.5">
 							{hasSub ? (
 								<Button
@@ -273,7 +286,7 @@ export function BillingPanel() {
 										// "Cancel plan" and the click resumes — and that contradiction
 										// is #4276's to record, not to change behind a rename.
 										summary.cancelAtPeriodEnd
-											? resumePlan
+											? () => resume.mutate({})
 											: () => setCancelOpen(true)
 									}
 								>
@@ -289,21 +302,30 @@ export function BillingPanel() {
 				</div>
 			</SettingsSection>
 
-			{/* AI plan & usage — the standalone metered AI product (tier + daily/weekly %). */}
-			<AiUsageSection />
-
-			{/* payment + billing details → Stripe Customer Portal (once a customer exists) */}
-			{summary.canManage && <PaymentMethodsCard />}
-
-			{/* plan history */}
-			<PlanHistoryTimeline />
-
-			{/* transactions + invoices — once a customer exists */}
-			{summary.canManage && (
+			{summary.canManageBilling ? (
 				<>
-					<TransactionsTable />
-					<RecentInvoices />
+					{/* saved cards — once a customer exists */}
+					{summary.canManage && <PaymentMethodsCard />}
+
+					{/* plan history */}
+					<PlanHistoryTimeline />
+
+					{/* transactions + invoices — once a customer exists */}
+					{summary.canManage && (
+						<>
+							<TransactionsTable />
+							<RecentInvoices />
+						</>
+					)}
 				</>
+			) : (
+				// One note for the four sections this viewer may not read, rather than four refusals.
+				<SettingsSection title="Payments and invoices">
+					<RegionRefusal
+						refusal="forbidden"
+						description="Payment methods, plan history, charges and invoices are visible to members with the billing permission."
+					/>
+				</SettingsSection>
 			)}
 
 			{/* Cancelling asks first. The copy states the two facts a person needs to decide:
@@ -314,12 +336,55 @@ export function BillingPanel() {
 				title="Cancel this subscription?"
 				description={
 					summary.currentPeriodEnd
-						? `${meta.name} stays active until ${formatDate(summary.currentPeriodEnd)}, then this organization drops to the free plan. You can resume any time before then.`
-						: `${meta.name} stays active until the end of the current billing period, then this organization drops to the free plan. You can resume any time before then.`
+						? `${meta.name} stays active until ${formatDate(summary.currentPeriodEnd)}, then this organization moves to the Hobby plan. You can resume any time before then.`
+						: `${meta.name} stays active until the end of the current billing period, then this organization moves to the Hobby plan. You can resume any time before then.`
 				}
 				confirmLabel="Confirm cancellation"
-				onConfirm={confirmCancelPlan}
+				onConfirm={() => cancel.mutate({})}
 			/>
+		</div>
+	);
+}
+
+/**
+ * The plan card's AI row: the org's AI tier as one fact, and the link to the Usage page's AI
+ * section, which owns the meters, credits and spend limits (#6133). Reads `usage.ai` — the same
+ * cache entry the Usage page's AI card reads, prefetched by this route — and shows no price, so it
+ * cannot disagree with the AI card's live one. A failed or refused read says so in the row; the
+ * link stays, because the AI section renders that read's full error or refusal.
+ */
+function AiPlanRow() {
+	const orgSlug = useActiveOrgSlug();
+	const ai = useQuery(orpc.usage.ai.queryOptions({ retry: retryUnlessRefused }));
+
+	let tier: ReactNode;
+	if (ai.data !== undefined) {
+		tier = <span className="text-text-primary">{aiPlanMeta(ai.data.tier).name}</span>;
+	} else if (ai.isError) {
+		tier = (
+			<span className="text-text-secondary">
+				{refusalOf(ai.error) ? "Not available to you" : "Couldn't load the AI plan"}
+			</span>
+		);
+	} else {
+		// The height of one `text-ui-sm` line, so the row does not move when the tier arrives.
+		tier = <Skeleton aria-busy="true" className="h-4 w-16" />;
+	}
+
+	return (
+		<div
+			data-testid="billing-ai-plan-row"
+			className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border px-6 py-3 text-ui-sm"
+		>
+			<span className="text-text-tertiary">AI plan</span>
+			<div className="min-w-0 flex-1">{tier}</div>
+			<Link
+				href={`${globalHref(orgSlug, "usage")}#ai`}
+				className="inline-flex items-center gap-1 text-text-secondary transition-colors hover:text-text-primary"
+			>
+				Usage &amp; limits
+				<ArrowUpRight size={13} />
+			</Link>
 		</div>
 	);
 }

@@ -6,20 +6,31 @@
 // stepper): Details → Events → Routing → Conditions → Throttle, divided by Separators.
 // react-hook-form + zod validate on submit; events/channels/conditions use the shared
 // EventMatrix / ChannelRouting / PolicyConditions / ThrottleField. Creation only.
+//
+// #6125: the sheet tracks whether the form is DIRTY. Every editor writes through `setValue(…,
+// { shouldDirty: true })`, so a chosen event, a bound channel or a moved throttle counts as an edit
+// (react-hook-form only marks registered inputs dirty on its own); closing a dirty sheet asks before
+// discarding it. Create stays pressable on a pristine sheet: pressing it is how the sheet says what
+// is missing (inline, per field) rather than a disabled button that explains nothing. The write goes through
+// `useActionMutation`: pending state on Create, server validation on the field it names, one toast
+// for a refusal, and invalidation of every alert key.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Bell } from "lucide-react";
-import { useEffect, useId, useRef } from "react";
-import { useForm } from "react-hook-form";
-import { toast } from "sonner";
+import { useEffect, useId, useRef, useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
-import { type AlertsBootstrap, createPolicy } from "@/app/server/actions/alerts";
+import { createPolicy } from "@/app/server/actions/alerts";
+import type { AlertsHub } from "@/components/alerts/alerts-hub";
 import { ChannelRouting } from "@/components/alerts/channel-routing";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { EventMatrix } from "@/components/alerts/event-matrix";
 import { FieldHelp } from "@/components/alerts/field-help";
 import { PolicyConditions } from "@/components/alerts/policy-conditions";
 import { isSeverity, toMinSeverity } from "@/components/alerts/policy-shared";
 import { ThrottleField } from "@/components/alerts/throttle-field";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { alertsKeys } from "@/lib/query/use-alerts-query";
 import type { PolicyInput } from "@/lib/validations/alerts";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -67,23 +78,59 @@ const DEFAULTS: WizardValues = {
 	throttle_seconds: 300,
 };
 
+/** Marks a programmatic write as an edit, and re-validates the field it wrote. */
+const EDIT = { shouldDirty: true, shouldValidate: true } as const;
+
+/** The sheet's field a server validation path is about (`match.project_ids` → `project_ids`), or null. */
+function policyFieldOf(path: string): keyof WizardValues | null {
+	const [head, sub] = path.split(".");
+	switch (head) {
+		case "name":
+		case "description":
+		case "event_patterns":
+		case "channels":
+		case "throttle_seconds":
+			return head;
+		case "match":
+			if (sub === "min_severity") return "min_severity";
+			if (sub === "project_ids" || sub === "job_types" || sub === "resource_types" || sub === "actions") return sub;
+			return null;
+		default:
+			return null;
+	}
+}
+
 interface PolicySheetProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	bootstrap: AlertsBootstrap;
-	onSaved: () => void;
+	hub: AlertsHub;
 	onGoChannels: () => void;
 }
+
+/** The fields the sheet renders from. */
+const WATCHED = [
+	"enabled",
+	"event_patterns",
+	"channels",
+	"min_severity",
+	"project_ids",
+	"job_types",
+	"resource_types",
+	"actions",
+	"throttle_seconds",
+] as const;
 
 /** Guided, single-form create flow for an alert policy. */
 export function PolicySheet({
 	open,
 	onOpenChange,
-	bootstrap,
-	onSaved,
+	hub,
 	onGoChannels,
 }: PolicySheetProps) {
-	const { categories, channels, advancedAlerting, conditionOptions } = bootstrap;
+	const { categories, channels, advancedAlerting, conditionOptions } = hub;
+	const [confirmDiscard, setConfirmDiscard] = useState(false);
+	// A server validation message that names no field on this sheet — shown under the form, never lost.
+	const [formError, setFormError] = useState<string | null>(null);
 	const wasOpen = useRef(false);
 	// The switch's name is the visible row title, by reference — `role="switch"` takes its name
 	// from the author only, so the text beside it names nothing unless it is pointed at (#4352).
@@ -95,14 +142,51 @@ export function PolicySheet({
 		defaultValues: DEFAULTS,
 		mode: "onChange",
 	});
-	const v = form.watch();
+	const [
+		enabled,
+		eventPatterns,
+		boundChannels,
+		minSeverity,
+		projectIds,
+		jobTypes,
+		resourceTypes,
+		actions,
+		throttleSeconds,
+	] = useWatch({ control: form.control, name: WATCHED });
 
 	useEffect(() => {
 		if (open && !wasOpen.current) form.reset(DEFAULTS);
 		wasOpen.current = open;
 	}, [open, form]);
 
-	const onSubmit = form.handleSubmit(async (values) => {
+	const mutation = useActionMutation(createPolicy, {
+		invalidates: alertsKeys(),
+		successMessage: "Policy created",
+		onSuccess: () => onOpenChange(false),
+		onValidationError: (fields) => {
+			for (const [path, messages] of Object.entries(fields)) {
+				const message = messages?.[0];
+				if (!message) continue;
+				const field = policyFieldOf(path);
+				if (field) form.setError(field, { message });
+				else setFormError(message);
+			}
+		},
+	});
+	const saving = mutation.isPending;
+	const dirty = form.formState.isDirty;
+
+	// Closing with something entered asks first; nothing closes it while the create is in flight.
+	const requestOpenChange = (next: boolean) => {
+		if (next) return onOpenChange(true);
+		if (saving) return;
+		if (dirty) setConfirmDiscard(true);
+		else onOpenChange(false);
+	};
+
+	const onSubmit = form.handleSubmit((values) => {
+		if (saving) return;
+		setFormError(null);
 		const input: PolicyInput = {
 			name: values.name.trim(),
 			description: values.description.trim() || undefined,
@@ -129,20 +213,14 @@ export function PolicySheet({
 			recipient: undefined,
 			enabled: values.enabled,
 		};
-		try {
-			await createPolicy(input);
-			toast.success("Policy created");
-			onOpenChange(false);
-			onSaved();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to create policy");
-		}
+		mutation.mutate(input);
 	});
 
 	const errors = form.formState.errors;
 
 	return (
-		<Sheet open={open} onOpenChange={onOpenChange}>
+		<>
+		<Sheet open={open} onOpenChange={requestOpenChange}>
 			<SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
 				<SheetHeader className="gap-3 border-b border-border/60 p-5">
 					<div className="flex items-center gap-3">
@@ -195,8 +273,8 @@ export function PolicySheet({
 							<Switch
 								aria-labelledby={enableLabelId}
 								aria-describedby={enableDescId}
-								checked={v.enabled}
-								onCheckedChange={(c) => form.setValue("enabled", c)}
+								checked={enabled}
+								onCheckedChange={(c) => form.setValue("enabled", c, EDIT)}
 							/>
 						</div>
 					</section>
@@ -216,12 +294,12 @@ export function PolicySheet({
 								an Enterprise plan.
 							</FieldHelp>
 							<span className="ml-auto font-mono text-ui-2xs text-muted-foreground">
-								{v.event_patterns.length} selected
+								{eventPatterns.length} selected
 							</span>
 						</div>
 						<EventMatrix
 							categories={categories}
-							selected={v.event_patterns}
+							selected={eventPatterns}
 							onToggle={(key) => {
 								const cur = form.getValues("event_patterns");
 								form.setValue(
@@ -229,7 +307,7 @@ export function PolicySheet({
 									cur.includes(key)
 										? cur.filter((x) => x !== key)
 										: [...cur, key],
-									{ shouldValidate: true },
+									EDIT,
 								);
 							}}
 							advancedAlerting={advancedAlerting}
@@ -257,9 +335,9 @@ export function PolicySheet({
 						</div>
 						<ChannelRouting
 							channels={channels}
-							value={v.channels}
+							value={boundChannels}
 							onChange={(next) =>
-								form.setValue("channels", next, { shouldValidate: true })
+								form.setValue("channels", next, EDIT)
 							}
 							editable
 							onGoChannels={onGoChannels}
@@ -280,18 +358,18 @@ export function PolicySheet({
 							options={conditionOptions}
 							editable
 							value={{
-								min_severity: toMinSeverity(v.min_severity),
-								project_ids: v.project_ids,
-								job_types: v.job_types,
-								resource_types: v.resource_types,
-								actions: v.actions,
+								min_severity: toMinSeverity(minSeverity),
+								project_ids: projectIds,
+								job_types: jobTypes,
+								resource_types: resourceTypes,
+								actions,
 							}}
 							onChange={(c) => {
-								form.setValue("min_severity", c.min_severity);
-								form.setValue("project_ids", c.project_ids);
-								form.setValue("job_types", c.job_types);
-								form.setValue("resource_types", c.resource_types);
-								form.setValue("actions", c.actions);
+								form.setValue("min_severity", c.min_severity, EDIT);
+								form.setValue("project_ids", c.project_ids, EDIT);
+								form.setValue("job_types", c.job_types, EDIT);
+								form.setValue("resource_types", c.resource_types, EDIT);
+								form.setValue("actions", c.actions, EDIT);
 							}}
 						/>
 					</section>
@@ -309,30 +387,43 @@ export function PolicySheet({
 							</FieldHelp>
 						</div>
 						<ThrottleField
-							value={v.throttle_seconds}
-							onChange={(s) => form.setValue("throttle_seconds", s)}
+							value={throttleSeconds}
+							onChange={(s) => form.setValue("throttle_seconds", s, EDIT)}
 						/>
 					</section>
 				</div>
 
+				{formError && (
+					<p role="alert" className="border-t border-border/60 px-4 pt-3 text-destructive text-xs">
+						{formError}
+					</p>
+				)}
 				<SheetFooter className="flex-row items-center justify-between border-t border-border/60 p-4">
 					<Button
 						variant="ghost"
 						size="sm"
-						onClick={() => onOpenChange(false)}
-						disabled={form.formState.isSubmitting}
+						onClick={() => requestOpenChange(false)}
+						disabled={saving}
 					>
 						Cancel
 					</Button>
-					<Button
-						size="sm"
-						onClick={onSubmit}
-						disabled={form.formState.isSubmitting}
-					>
-						{form.formState.isSubmitting ? "Creating…" : "Create policy"}
+					<Button size="sm" onClick={onSubmit} disabled={saving}>
+						{saving ? "Creating…" : "Create policy"}
 					</Button>
 				</SheetFooter>
 			</SheetContent>
 		</Sheet>
+		<ConfirmDialog
+			open={confirmDiscard}
+			onOpenChange={setConfirmDiscard}
+			title="Discard this policy?"
+			description="What you entered has not been saved."
+			confirmLabel="Discard"
+			onConfirm={() => {
+				setConfirmDiscard(false);
+				onOpenChange(false);
+			}}
+		/>
+		</>
 	);
 }

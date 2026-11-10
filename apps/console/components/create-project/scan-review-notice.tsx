@@ -9,7 +9,7 @@ import { globalHref } from "@/lib/routing";
 import { EmptyState } from "@repo/ui/empty";
 import { Button } from "@repo/ui/button";
 
-/** The non-READY results of getScanProposal. */
+/** The non-READY results of `projects.scanProposal` (lib/rpc/procedures/projects.ts). */
 type NotReady =
 	| { status: "NOT_FOUND" }
 	| { status: "PENDING"; jobStatus: string }

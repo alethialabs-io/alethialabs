@@ -58,6 +58,7 @@ import { nudgeHold } from "@/lib/billing/payment-holds/store";
 import { isPaidStatus, reconcileAfterSync, repointAfterEnd } from "@/lib/billing/org-plan-row";
 import type { PlanSlotWrite } from "@/lib/billing/queries";
 import { getStripe } from "@/lib/billing/stripe";
+import { isLiveSubscriptionStatus } from "@/lib/billing/subscription-status";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import {
 	sendCreditPackReceiptEmail,
@@ -185,9 +186,6 @@ export const liveWebhookHolds: WebhookHoldPort = {
 /** Subscription statuses that are ended (ADR 0002 §2): a payment on one of them is refunded by its hold. */
 const ENDED_STATUSES: ReadonlySet<string> = new Set(["canceled", "incomplete_expired"]);
 
-/** Subscription statuses that are live (ADR 0002 §2): the subscription still exists and may bill. */
-const LIVE_STATUSES: ReadonlySet<string> = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
-
 /** The stamp of a close-out's cancel (`closeOutMintedSubscription`, app/server/actions/billing.ts). */
 const CLOSEOUT_STAMP = "alethia:closeout";
 
@@ -200,7 +198,7 @@ const CHECKOUT_CLOSED_STAMP_PREFIX = "alethia:checkout_closed:";
  */
 function isUnliveCreateATeamSubscription(sub: Stripe.Subscription): boolean {
 	const isCreateATeam = Boolean(sub.metadata?.created_by) && !sub.metadata?.organization_id;
-	return isCreateATeam && !LIVE_STATUSES.has(sub.status);
+	return isCreateATeam && !isLiveSubscriptionStatus(sub.status);
 }
 
 /** The id of the customer a subscription belongs to. */

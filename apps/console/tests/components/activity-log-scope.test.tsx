@@ -49,19 +49,26 @@ vi.mock("@/components/settings/enterprise-gate", () => ({
 	useEntitlement: () => false,
 }));
 vi.mock("@/components/org/upgrade-org-sheet", () => ({ UpgradeOrgSheet: () => null }));
-vi.mock("@/app/server/actions/members", () => ({ getMembers: vi.fn() }));
-vi.mock("@/app/server/actions/activity", () => ({
-	getActivityLog: vi.fn(),
-	getActivityExportCsv: vi.fn(),
+// The member list (`members.list`) and the feed's pages (`activity.page`) are GET reads since #6129;
+// `getActivityLog` stands for the page read and is called with the input of each page asked for.
+const { getActivityLog } = vi.hoisted(() => ({
+	getActivityLog: vi.fn(async (_input: unknown) => ({ rows: [], nextCursor: null, facets: null })),
 }));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return {
+		orpc: fakeOrpc({
+			"members.list": async () => [],
+			"activity.page": (input) => getActivityLog(input),
+		}).orpc,
+	};
+});
+vi.mock("@/app/server/actions/activity", () => ({ getActivityExportCsv: vi.fn() }));
 
 import { ActivityLog } from "@/components/settings/activity/activity-log";
-import { getMembers } from "@/app/server/actions/members";
-import { getActivityLog } from "@/app/server/actions/activity";
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.mocked(getMembers).mockResolvedValue([]);
 	vi.mocked(getActivityLog).mockResolvedValue({ rows: [], nextCursor: null, facets: null });
 });
 
@@ -72,8 +79,8 @@ describe("ActivityLog — project scope", () => {
 		// Forced scope: the first query carries the project id as SCOPE, not as the Project
 		// facet's filter — the server's facet counts must see the one and never the other.
 		await waitFor(() => expect(getActivityLog).toHaveBeenCalled());
-		expect(vi.mocked(getActivityLog).mock.calls[0][0]?.projectId).toBe("s1");
-		expect(vi.mocked(getActivityLog).mock.calls[0][0]?.resourceIds).toBeUndefined();
+		expect(getActivityLog.mock.calls[0][0]).toMatchObject({ projectId: "s1" });
+		expect(getActivityLog.mock.calls[0][0]).not.toHaveProperty("resourceIds");
 
 		// Redundant controls are gone; the caption names the project.
 		expect(screen.queryByText("Project")).toBeNull();
@@ -88,8 +95,8 @@ describe("ActivityLog — org scope", () => {
 		render(<ActivityLog />);
 
 		await waitFor(() => expect(getActivityLog).toHaveBeenCalled());
-		expect(vi.mocked(getActivityLog).mock.calls[0][0]?.resourceIds).toBeUndefined();
-		expect(vi.mocked(getActivityLog).mock.calls[0][0]?.projectId).toBeUndefined();
+		expect(getActivityLog.mock.calls[0][0]).not.toHaveProperty("resourceIds");
+		expect(getActivityLog.mock.calls[0][0]).not.toHaveProperty("projectId");
 
 		expect(screen.getByText("Project")).toBeInTheDocument();
 		expect(screen.queryByText(/activity in/i)).toBeNull();

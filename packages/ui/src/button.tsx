@@ -27,7 +27,7 @@
    `pnpm check:ui-client-boundary`. */
 "use client";
 
-import { Button as ButtonPrimitive } from "@base-ui-components/react/button"
+import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 import { isValidElement } from "react"
 import type * as React from "react"

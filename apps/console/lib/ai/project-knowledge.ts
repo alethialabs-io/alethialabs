@@ -138,8 +138,8 @@ export function formatContextBlock(
  * - OFF (default): per-user — `withOwnerScope(actor.userId)`, byte-identical to before. Each member
  *   only ever sees their own row (written stamping `org_id = user_id`).
  * - ON: org-shared — `withActorScope`. During the transition a member may see BOTH the shared org
- *   row (`org_id = actor.orgId`) and their own legacy personal row (`user_id = actor.userId`) via
- *   the `owner_all` RLS `user_id OR org_id` predicate, so we PREFER the org row (then most-recently-
+ *   row (`org_id = actor.orgId`) and their own legacy personal row (written `org_id = user_id`) via
+ *   the `owner_all` RLS arm on the caller's personal org, so we PREFER the org row (then most-recently-
  *   updated). That makes the read deterministic with no backfill: once an admin sets the org row
  *   everyone reads it; until then each member falls back to their own legacy row.
  */
@@ -179,11 +179,25 @@ export async function readAgentContext(
 }
 
 /**
+ * The per-user (flag OFF) test for a project the actor may resolve knowledge for: one they created,
+ * or one in their personal org. Applied on top of the actor-scoped read, which has already bounded
+ * the project to the actor's org or personal org.
+ */
+export function isOwnProject(
+	actor: ReadActor,
+	project: { user_id: string; org_id: string | null },
+): boolean {
+	return project.user_id === actor.userId || project.org_id === actor.userId; // authz-scope-ok
+}
+
+/**
  * Assemble the derived project-knowledge block from live state. Returns "" if the project isn't
- * visible in scope. Scope depends on {@link orgAgentContextEnabled}: OFF → `withOwnerScope`
- * (per-user, byte-identical to before); ON → `withActorScope`, so a teammate resolves an org
- * project's knowledge (projects are org-shared). `activeEnvironmentId` marks that environment
- * `(active)` in the list; omitted, the block is byte-identical to before.
+ * visible in scope. Always read under `withActorScope`, so the project must belong to the actor's
+ * org (or their personal org). {@link orgAgentContextEnabled} then decides WHOSE projects resolve:
+ * OFF → only a project the actor created (or one in their personal org), the per-user behaviour;
+ * ON → any project of the org, so a teammate resolves an org project's knowledge (projects are
+ * org-shared). `activeEnvironmentId` marks that environment `(active)` in the list; omitted, the
+ * block is byte-identical to before.
  */
 export async function buildProjectKnowledge(
 	actor: ReadActor,
@@ -197,6 +211,7 @@ export async function buildProjectKnowledge(
 			.where(eq(projects.id, projectId))
 			.limit(1);
 		if (!p) return null;
+		if (!orgAgentContextEnabled() && !isOwnProject(actor, p)) return null;
 
 		const envs = await tx
 			.select({
@@ -231,9 +246,7 @@ export async function buildProjectKnowledge(
 		};
 	};
 
-	const facts = orgAgentContextEnabled()
-		? await withActorScope(actor, read)
-		: await withOwnerScope(actor.userId, read);
+	const facts = await withActorScope(actor, read);
 
 	return facts ? formatProjectKnowledge(facts, activeEnvironmentId) : "";
 }

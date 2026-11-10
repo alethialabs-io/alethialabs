@@ -16,13 +16,16 @@ vi.mock("@/app/server/actions/cloud-resources", () => ({
 	getCloudIdentityInventory: vi.fn(),
 }));
 vi.mock("@/app/server/actions/clusters", () => ({ getClusters: vi.fn() }));
-vi.mock("@/app/server/actions/connectors", () => ({
-	getConnectorsWithStatus: vi.fn(),
+vi.mock("@/lib/rpc/procedures/connectors", () => ({
+	readConnectorsWithStatus: vi.fn(),
 }));
 vi.mock("@/app/server/actions/jobs", () => ({
-	getJob: vi.fn(),
 	getJobs: vi.fn(),
-	getPlanResult: vi.fn(),
+}));
+// The single-job reads are the jobs read procedures' readers (#6121), which apply job visibility.
+vi.mock("@/lib/rpc/procedures/jobs", () => ({
+	readJob: vi.fn(),
+	readPlanResult: vi.fn(),
 }));
 vi.mock("@/app/server/actions/runners", () => ({
 	getRunnersWithReleases: vi.fn(),
@@ -44,8 +47,9 @@ import { readTools } from "@/lib/ai/tools/read";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
 import { getClusters } from "@/app/server/actions/clusters";
-import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
-import { getJob, getJobs, getPlanResult } from "@/app/server/actions/jobs";
+import { readConnectorsWithStatus } from "@/lib/rpc/procedures/connectors";
+import { getJobs } from "@/app/server/actions/jobs";
+import { readJob as getJob, readPlanResult as getPlanResult } from "@/lib/rpc/procedures/jobs";
 import { getRunnersWithReleases } from "@/app/server/actions/runners";
 import { getProject, getProjects } from "@/app/server/actions/projects";
 import {
@@ -368,6 +372,7 @@ describe("list_clusters", () => {
 				status: "live",
 				cloud_identities: { provider: "aws" },
 				project_cluster: {
+					id: "pc1",
 					cluster_name: "k8s",
 					cluster_endpoint: "https://x",
 					cluster_version: "1.30",
@@ -383,6 +388,8 @@ describe("list_clusters", () => {
 			clusters: Array<Record<string, unknown>>;
 		};
 		const c = out.clusters[0];
+		// #6122: one entry per cluster — keyed on the cluster row, with its project beside it.
+		expect([c.id, c.project_id]).toEqual(["pc1", "c1"]);
 		expect(c.provider).toBe("aws");
 		expect(c.cluster).toEqual({
 			name: "k8s",
@@ -421,7 +428,7 @@ describe("list_clusters", () => {
 
 describe("list_connectors", () => {
 	it("maps connectors to the trimmed status shape", async () => {
-		vi.mocked(getConnectorsWithStatus).mockResolvedValue([
+		vi.mocked(readConnectorsWithStatus).mockResolvedValue([
 			{
 				slug: "datadog",
 				name: "Datadog",

@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // GET /api/cli/cloud-identities/:id/inventory — the discovered networking (networks + subnets) and
-// regions for a connected cloud identity. Gated on cloud_identity `view`; org-scoped by loading the
-// identity by (id, org_id) first (the tenancy wall — the inventory tables key only on
+// regions for a connected cloud identity. Gated on cloud_identity `view`; scoped by loading the
+// identity through `actorIdentityWhere` first (the tenancy wall — the inventory tables key only on
 // cloud_identity_id). Mirrors getCloudIdentityInventory (web). The sealed CIDRs are opened and the
 // ciphertext stripped, exactly as the web read does.
 
 import { and, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { authorizeCli } from "@/lib/authz/guard";
 import { cliJson } from "@/lib/cli/respond";
 import { openSensitive } from "@/lib/cloud-providers/inventory/upsert";
@@ -19,6 +20,7 @@ import {
 	cloudRegions,
 	cloudSubnets,
 } from "@/lib/db/schema";
+import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { cliCloudInventoryResponse } from "@/lib/validations/cli-contract";
 
 export async function GET(
@@ -32,12 +34,19 @@ export async function GET(
 
 	try {
 		const db = getServiceDb();
-		// Tenancy wall: the identity must belong to the caller's org before we read its inventory
-		// (the inventory tables key only on cloud_identity_id, not org).
+		// Tenancy wall: the identity must be one the caller may see before we read its inventory
+		// (the inventory tables key only on cloud_identity_id, not org) — an `org` identity of this
+		// org, or a person's own `personal` one, the rule the identity list applies.
 		const [identity] = await db
 			.select({ id: cloudIdentities.id })
 			.from(cloudIdentities)
-			.where(and(eq(cloudIdentities.id, id), eq(cloudIdentities.org_id, actor.orgId)))
+			.where(
+				actorIdentityWhere(
+					id,
+					actor.orgId,
+					personalIdentityAuthor(actor),
+				),
+			)
 			.limit(1);
 		if (!identity) {
 			return NextResponse.json(

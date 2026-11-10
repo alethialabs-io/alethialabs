@@ -141,6 +141,7 @@ export const HIDDEN_VERBS = new Map([
 	["bulkSuspend", "the bulk form of setMemberSuspended"],
 	["useDisableAddon", "a hook wrapping the disable mutation; the call site is the hook, not the action"],
 	["discardStagedChanges", "discards every staged canvas edit — destructive, and named for the buffer"],
+	["discardStagedDesignAction", "the board's Discard on the mutation contract (#6119): the action form of discardStagedChanges"],
 	["upsertAgentContext", "the knowledge-doc delete rewrites the whole context; the delete is an upsert of a shorter list"],
 	["togglePolicy", "disabling an alert policy silences a class of alerts across every channel routed to it — found by a human reading the surface, not by this table (#4492)"],
 ]);
@@ -431,7 +432,16 @@ export function scanSource(rel, source) {
 		if (!destructive) continue;
 		// Called, not merely imported. `\b` before the name keeps `deleteFoo` from matching
 		// `safeDeleteFoo`; the `(` after it is what makes it a call.
-		const called = new RegExp(`\\b${local}\\s*\\(`).test(code);
+		//
+		// OR handed, by name, to `useActionMutation` — the console's mutation contract (ADR 0005 D4,
+		// lib/actions/use-action-mutation.ts). `useActionMutation(deleteRole, …)` is how a control
+		// reaches the action once it moves onto that contract, and the hook is what calls it, so the
+		// file has no `deleteRole(` of its own. Without this arm, moving a control onto the contract
+		// read as DELETING it (#6129: `deleteRole`, `revokeGrant`). Any other indirect dispatch is still
+		// unmatched (see OMISSIONS above).
+		const called =
+			new RegExp(`\\b${local}\\s*\\(`).test(code) ||
+			new RegExp(`\\buseActionMutation\\s*\\(\\s*${local}\\s*[,)]`).test(code);
 		if (called) sites.push({ file: rel, mutation: exported, local, kind: "action" });
 	}
 
@@ -883,6 +893,21 @@ function selfTest() {
 	check(
 		"an imported-but-never-called destructive action is not a call site",
 		scanSource(strayFile, 'import { deleteFoo } from "@/app/server/actions/foo";\nexport const X = 1;').sites.length === 0,
+	);
+	// ── direction 1: an action handed to the mutation contract IS a site (#6129)
+	check(
+		"a destructive action handed by name to useActionMutation is a call site",
+		scanSource(
+			strayFile,
+			'import { deleteFoo } from "@/app/server/actions/foo";\nconst m = useActionMutation(deleteFoo, { invalidates: [] });',
+		).sites.length === 1,
+	);
+	check(
+		"...but a different action handed to useActionMutation does not make an unused import a site",
+		scanSource(
+			strayFile,
+			'import { deleteFoo, deleteFooBar } from "@/app/server/actions/foo";\nconst m = useActionMutation(deleteFooBar, { invalidates: [] });',
+		).sites.map((x) => x.mutation).join(",") === "deleteFooBar",
 	);
 	// ── direction 1: called-but-not-imported is NOT a site
 	check(

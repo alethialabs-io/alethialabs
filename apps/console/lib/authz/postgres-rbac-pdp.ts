@@ -95,6 +95,14 @@ export class PostgresRbacPDP implements Pdp {
 		// their own grants, but a grant to a TEAM they belong to is a different row that neither
 		// touches, and `team_member` rows can outlive the member row. This is the rule
 		// `lacksActiveMembership` states, and the ee OpenFGA PDP applies it before reading a tuple.
+		//
+		// An ALLOW row confers nothing unless everything it references is the grant's own org's: its
+		// role is built-in or this org's, a team principal is this org's team, a scoped resource is
+		// this org's resource — `grant_org_binding_violation` (lib/db/programmables.sql), the same
+		// predicate the `grants_org_binding` trigger refuses new rows on. Read here as well because a
+		// stored row can predate the trigger, and a resource can move org after its grant was written;
+		// neither may confer access, and nothing else re-reads them. A DENY row is NOT filtered: an
+		// exclusion that is dropped is fail-open, and an exclusion that is kept only takes access away.
 		return db.execute<GrantRow>(sql`
 			select g.resource_type, g.resource_id, g.effect
 			from grants g
@@ -114,6 +122,12 @@ export class PostgresRbacPDP implements Pdp {
 			    or (g.principal_type = 'team' and g.principal_id in (
 			      select team_id from team_member where user_id = ${actor.userId}
 			    ))
+			  )
+			  and (
+			    g.effect = 'deny'
+			    or public.grant_org_binding_violation(
+			      g.org_id, g.principal_type, g.principal_id, g.role_id, g.resource_type, g.resource_id
+			    ) is null
 			  )
 		`);
 	}

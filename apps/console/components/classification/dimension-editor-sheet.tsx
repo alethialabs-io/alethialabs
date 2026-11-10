@@ -5,6 +5,11 @@
 // Create / edit a classification dimension in a side sheet. Create mode offers an optional
 // "start from a template" step that pre-fills the fields and stages a set of values — nothing is
 // written until Save (then createDimensionWithValues). Edit mode updates the dimension only.
+//
+// #6129: the save goes through `useActionMutation` — pending disables Save and Cancel (the
+// double-submit guard), a server field refusal (a key another dimension uses) lands under its field,
+// and every classification read is invalidated. The sheet TRACKS DIRTY STATE: an edit with no change
+// cannot be saved, and closing it with unsaved changes asks first instead of dropping them.
 
 import { typedEntries } from "@/lib/typed-object";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -23,8 +28,7 @@ import { Textarea } from "@repo/ui/textarea";
 import { cn } from "@repo/ui/utils";
 import { Plus, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { useForm } from "react-hook-form";
-import { toast } from "sonner";
+import { useForm, useWatch } from "react-hook-form";
 import type { DimensionDTO } from "@/app/server/actions/classification/dimensions";
 import {
 	createDimension,
@@ -32,6 +36,10 @@ import {
 	type SeedValue,
 	updateDimension,
 } from "@/app/server/actions/classification/dimensions";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import type { ActionResult, FieldErrors } from "@/lib/actions/result";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { classificationReadKeys } from "@/lib/query/use-classification-query";
 import {
 	type DimensionInput,
 	dimensionInputSchema,
@@ -45,22 +53,40 @@ import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { InfoHint, Spinner } from "./classification-ui";
 import { RESOURCE_KIND_LABELS } from "./resource-kind-labels";
 
+/** The blank dimension a create starts from. */
+const BLANK_DIMENSION: DimensionInput = {
+	key: "",
+	label: "",
+	description: "",
+	multi: false,
+	applies_to: [],
+	position: 0,
+};
+
+/** The form values a template seeds (its values are staged separately). */
+function templateFormValues(t: ClassificationTemplate): DimensionInput {
+	return { key: t.key, label: t.label, description: t.description, multi: t.multi, applies_to: [], position: 0 };
+}
+
+/** The fields the sheet renders from. */
+const WATCHED = ["multi", "applies_to", "label"] as const;
+
 /** Create / edit a dimension. Controlled via `open` / `onOpenChange`. */
 export function DimensionEditorSheet({
 	dimension,
 	initialTemplateKey,
 	open,
 	onOpenChange,
-	onSaved,
 }: {
 	dimension?: DimensionDTO;
 	/** Preselect a template when opening in create mode (from an empty-state card). */
 	initialTemplateKey?: string;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	onSaved: () => void;
 }) {
 	const isEdit = Boolean(dimension);
+	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing.
+	const [confirmDiscard, setConfirmDiscard] = useState(false);
 	const [staged, setStaged] = useState<SeedValue[]>([]);
 	const [templateKey, setTemplateKey] = useState<string | null>(null);
 	const [addLabel, setAddLabel] = useState("");
@@ -72,31 +98,40 @@ export function DimensionEditorSheet({
 
 	const form = useForm<DimensionInput>({
 		resolver: zodResolver(dimensionInputSchema),
-		defaultValues: { key: "", label: "", description: "", multi: false, applies_to: [], position: 0 },
+		defaultValues: BLANK_DIMENSION,
 	});
 
 	// Apply a template's fields + stage its values (create mode only).
 	const applyTemplate = (t: ClassificationTemplate) => {
-		form.reset({
-			key: t.key,
-			label: t.label,
-			description: t.description,
-			multi: t.multi,
-			applies_to: [],
-			position: 0,
-		});
+		form.reset(templateFormValues(t));
 		setStaged(t.values);
 		setTemplateKey(t.key);
 	};
 
 	// Deselect the active template, back to a blank form.
 	const clearTemplate = () => {
-		form.reset({ key: "", label: "", description: "", multi: false, applies_to: [], position: 0 });
+		form.reset(BLANK_DIMENSION);
 		setStaged([]);
 		setTemplateKey(null);
 	};
 
-	// Reset when (re)opening.
+	// Reset when (re)opening, or when what the sheet was opened for changes while it is open. The
+	// sheet's own state is reset during render, against the props it was last reset for; the form
+	// is an external store, so its reset stays in an effect.
+	const openTemplate = !dimension && initialTemplateKey
+		? CLASSIFICATION_TEMPLATES.find((x) => x.key === initialTemplateKey)
+		: undefined;
+	// Keyed by the dimension's ID, not the object: a refetch that hands the open sheet a new object for
+	// the same row must not wipe what is being typed.
+	const dimensionId = dimension?.id;
+	const [resetFor, setResetFor] = useState<{ dimensionId?: string; templateKey?: string } | null>(null);
+	if (!open && resetFor !== null) setResetFor(null);
+	if (open && (resetFor === null || resetFor.dimensionId !== dimensionId || resetFor.templateKey !== initialTemplateKey)) {
+		setResetFor({ dimensionId, templateKey: initialTemplateKey });
+		setStaged(openTemplate ? openTemplate.values : []);
+		setTemplateKey(openTemplate ? openTemplate.key : null);
+		setAddLabel("");
+	}
 	useEffect(() => {
 		if (!open) return;
 		if (dimension) {
@@ -108,31 +143,23 @@ export function DimensionEditorSheet({
 				applies_to: dimension.appliesTo,
 				position: dimension.position,
 			});
-			setStaged([]);
-			setTemplateKey(null);
+		} else if (openTemplate) {
+			form.reset(templateFormValues(openTemplate));
 		} else {
-			const t = initialTemplateKey
-				? CLASSIFICATION_TEMPLATES.find((x) => x.key === initialTemplateKey)
-				: undefined;
-			if (t) {
-				applyTemplate(t);
-			} else {
-				form.reset({ key: "", label: "", description: "", multi: false, applies_to: [], position: 0 });
-				setStaged([]);
-				setTemplateKey(null);
-			}
+			form.reset(BLANK_DIMENSION);
 		}
-		setAddLabel("");
+		// Keyed like the state reset above: by the dimension's ID. `openTemplate` is derived from
+		// `initialTemplateKey`, and `form` is stable for the sheet's life.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [open, dimension, initialTemplateKey]);
+	}, [open, dimensionId, initialTemplateKey]);
 
-	const multi = form.watch("multi");
-	const appliesTo = form.watch("applies_to") ?? [];
+	const [multi, watchedAppliesTo, watchedLabel] = useWatch({ control: form.control, name: WATCHED });
+	const appliesTo = watchedAppliesTo ?? [];
 	const toggleKind = (kind: ResourceKind) => {
 		const set = new Set(appliesTo);
 		if (set.has(kind)) set.delete(kind);
 		else set.add(kind);
-		form.setValue("applies_to", [...set]);
+		form.setValue("applies_to", [...set], { shouldDirty: true });
 	};
 	const KIND_ENTRIES = typedEntries(RESOURCE_KIND_LABELS);
 
@@ -148,29 +175,53 @@ export function DimensionEditorSheet({
 		setAddLabel("");
 	};
 
-	const onSubmit = async (data: DimensionInput) => {
-		try {
-			if (dimension) {
-				await updateDimension(dimension.id, data);
-				toast.success("Dimension updated.");
-			} else if (staged.length > 0) {
-				await createDimensionWithValues(data, staged);
-				toast.success(`Created “${data.label}” with ${staged.length} values.`);
-			} else {
-				await createDimension(data);
-				toast.success("Dimension created.");
+	/** The edit, the template create (dimension + staged values) or the plain create. */
+	function saveDimension(data: DimensionInput): Promise<ActionResult<unknown>> {
+		if (dimension) return updateDimension({ ...data, id: dimension.id });
+		if (staged.length > 0) return createDimensionWithValues({ dimension: data, values: staged });
+		return createDimension(data);
+	}
+
+	const save = useActionMutation(saveDimension, {
+		invalidates: classificationReadKeys(),
+		successMessage: (): string => {
+			if (isEdit) return "Dimension updated.";
+			return staged.length > 0
+				? `Created “${form.getValues("label")}” with ${staged.length} values.`
+				: "Dimension created.";
+		},
+		onValidationError: (fields: FieldErrors) => {
+			for (const name of ["key", "label", "description"] as const) {
+				const message = fields[name]?.[0];
+				if (message) form.setError(name, { type: "server", message });
 			}
+		},
+		onSuccess: () => {
+			form.reset(form.getValues());
 			onOpenChange(false);
-			onSaved();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't save the dimension.");
-		}
+		},
+	});
+
+	const onSubmit = (data: DimensionInput) => {
+		if (save.isPending) return;
+		save.mutate(data);
 	};
 
-	const submitting = form.formState.isSubmitting;
+	const dirty = form.formState.isDirty;
+	/** Closing asks first when there is something to lose; a pristine sheet just closes. */
+	function requestOpenChange(next: boolean) {
+		if (!next && dirty && !save.isPending) {
+			setConfirmDiscard(true);
+			return;
+		}
+		onOpenChange(next);
+	}
+
+	const submitting = save.isPending;
 
 	return (
-		<Sheet open={open} onOpenChange={onOpenChange}>
+		<>
+		<Sheet open={open} onOpenChange={requestOpenChange}>
 			<SheetContent
 				side="right"
 				className="flex w-[min(480px,96vw)] flex-col gap-0 p-0 sm:max-w-none"
@@ -230,12 +281,15 @@ export function DimensionEditorSheet({
 								placeholder="Environment"
 								{...form.register("label")}
 								onChange={(e) => {
-									form.setValue("label", e.target.value);
+									form.setValue("label", e.target.value, { shouldDirty: true });
 									if (!isEdit && !form.formState.dirtyFields.key) {
 										form.setValue("key", slugifyOrEmpty(e.target.value));
 									}
 								}}
 							/>
+							{form.formState.errors.label?.message && (
+								<p className="mt-1 text-ui-xs text-destructive">{form.formState.errors.label.message}</p>
+							)}
 						</div>
 
 						<div>
@@ -256,6 +310,9 @@ export function DimensionEditorSheet({
 								disabled={isEdit}
 								{...form.register("key")}
 							/>
+							{form.formState.errors.key?.message && (
+								<p className="mt-1 text-ui-xs text-destructive">{form.formState.errors.key.message}</p>
+							)}
 						</div>
 
 						<div>
@@ -285,7 +342,7 @@ export function DimensionEditorSheet({
 							<Switch
 								aria-labelledby={multiLabelId}
 								checked={multi}
-								onCheckedChange={(v) => form.setValue("multi", v)}
+								onCheckedChange={(v) => form.setValue("multi", v, { shouldDirty: true })}
 							/>
 						</div>
 
@@ -391,12 +448,13 @@ export function DimensionEditorSheet({
 						<Button
 							type="button"
 							variant="outline"
-							onClick={() => onOpenChange(false)}
+							onClick={() => requestOpenChange(false)}
 							disabled={submitting}
 						>
 							Cancel
 						</Button>
-						<Button type="submit" disabled={submitting || !form.watch("label")}>
+						{/* An edit with nothing changed has nothing to save; a create always does. */}
+						<Button type="submit" disabled={submitting || !watchedLabel || (isEdit && !dirty)}>
 							{submitting && <Spinner />}
 							{isEdit ? "Save changes" : "Create dimension"}
 						</Button>
@@ -404,5 +462,21 @@ export function DimensionEditorSheet({
 				</form>
 			</SheetContent>
 		</Sheet>
+		<ConfirmDialog
+			open={confirmDiscard}
+			onOpenChange={setConfirmDiscard}
+			title="Discard your changes?"
+			description={
+				isEdit
+					? "The changes to this dimension are not saved. Closing the editor drops them."
+					: "This dimension is not created yet. Closing the editor drops what you entered."
+			}
+			confirmLabel="Discard changes"
+			onConfirm={() => {
+				form.reset();
+				onOpenChange(false);
+			}}
+		/>
+		</>
 	);
 }

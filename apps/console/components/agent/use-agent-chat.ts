@@ -8,7 +8,7 @@ import {
 	lastAssistantMessageIsCompleteWithToolCalls,
 	type UIMessage,
 } from "ai";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 import type { TurnRefusal, TurnRefusalCode } from "@/lib/agent/turn-claims";
 import { pendingClientToolCalls, type TurnRequest } from "@/lib/agent/turn-key";
@@ -137,6 +137,40 @@ const turnRevisionPartSchema = z.object({
 	data: z.object({ revision: z.number().int() }),
 });
 
+/**
+ * The request-time turn context of one chat: the base revision the next request carries, and the
+ * last request the transport sent (so a refusal can say what it refused). Mutable on purpose and
+ * outside React state: the transport reads and writes it while a request is built, never a render.
+ */
+class TurnContext {
+	#revision: number | null;
+	#lastRequest: RefusedRequest | null = null;
+
+	constructor(revision: number | null) {
+		this.#revision = revision;
+	}
+
+	/** The base revision the next request carries (null before any is known). */
+	revision(): number | null {
+		return this.#revision;
+	}
+
+	/** Seed or advance the base revision. */
+	setRevision(revision: number | null): void {
+		this.#revision = revision;
+	}
+
+	/** The turn fields of the last request sent, or null before the first. */
+	lastRequest(): RefusedRequest | null {
+		return this.#lastRequest;
+	}
+
+	/** Record the request being sent. */
+	recordRequest(request: RefusedRequest): void {
+		this.#lastRequest = request;
+	}
+}
+
 export interface UseAgentChatOptions {
 	/** Streaming route this surface talks to (e.g. /api/agent, /api/projects/[id]/assistant). */
 	api: string;
@@ -178,14 +212,13 @@ export function useAgentChat({
 	org,
 	initialRevision,
 }: UseAgentChatOptions) {
-	// The base revision, read at request time (a Chat keeps its first transport for its life).
-	const revisionRef = useRef<number | null>(initialRevision ?? null);
+	// The base revision and the request in flight, read at request time (a Chat keeps its first
+	// transport for its life). One object for the hook's life, never read during render.
+	const [turns] = useState(() => new TurnContext(initialRevision ?? null));
 	// A new lineage (or a reload of the same one) starts from the revision it was loaded at.
 	useEffect(() => {
-		revisionRef.current = initialRevision ?? null;
-	}, [id, initialRevision]);
-	// The turn fields of the request in flight, so a refusal can say what it refused.
-	const lastRequestRef = useRef<RefusedRequest | null>(null);
+		turns.setRevision(initialRevision ?? null);
+	}, [turns, id, initialRevision]);
 
 	const transport = useMemo(() => {
 		/**
@@ -196,7 +229,7 @@ export function useAgentChat({
 			const res = await fetch(input, init);
 			if (res.ok) return res;
 			const refusal = await readRefusal(res);
-			if (refusal) throw new TurnRefusedError(refusal, res.status, lastRequestRef.current);
+			if (refusal) throw new TurnRefusedError(refusal, res.status, turns.lastRequest());
 			throw new ChatRouteError(res.status, await res.text());
 		};
 		return new DefaultChatTransport({
@@ -205,17 +238,17 @@ export function useAgentChat({
 			prepareSendMessagesRequest: ({ messages, trigger, messageId }) => {
 				const extra = prepareBody?.(messages) ?? {};
 				if (!org) return { body: { messages, ...extra } };
-				const turn = turnOf(messages, trigger, messageId, revisionRef.current ?? 0);
-				lastRequestRef.current = { turn, last: messages.at(-1) };
+				const turn = turnOf(messages, trigger, messageId, turns.revision() ?? 0);
+				turns.recordRequest({ turn, last: messages.at(-1) });
 				return { body: { messages, orgId: org(), turn, ...extra } };
 			},
 		});
-	}, [api, prepareBody, org]);
+	}, [api, prepareBody, org, turns]);
 
 	/** Seed the base revision (a thread the caller just created, or just reloaded). */
 	const setBaseRevision = useCallback((revision: number | null) => {
-		revisionRef.current = revision;
-	}, []);
+		turns.setRevision(revision);
+	}, [turns]);
 
 	const chat = useChat({
 		transport,
@@ -229,7 +262,7 @@ export function useAgentChat({
 		// the answer; the next request carries it as its base revision.
 		onData: (part) => {
 			const parsed = turnRevisionPartSchema.safeParse(part);
-			if (parsed.success) revisionRef.current = parsed.data.data.revision;
+			if (parsed.success) turns.setRevision(parsed.data.data.revision);
 		},
 	});
 	return { ...chat, setBaseRevision };

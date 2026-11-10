@@ -57,14 +57,28 @@ export function AgentArtifactGallery({
 	// it is tracked here and handed down.
 	const [removing, setRemoving] = useState<string | null>(null);
 
-	const load = useCallback(() => {
-		setItems(null);
+	// Load the tab's list. The list is cleared where the tab CHANGES (`selectTab`), not here, so the
+	// effect only fetches; a late answer for a tab already left is dropped.
+	useEffect(() => {
+		let cancelled = false;
 		void (tab === "shared" ? listSharedArtifacts() : listArtifacts())
-			.then(setItems)
-			.catch(() => setItems([]));
+			.then((rows) => {
+				if (!cancelled) setItems(rows);
+			})
+			.catch(() => {
+				if (!cancelled) setItems([]);
+			});
+		return () => {
+			cancelled = true;
+		};
 	}, [tab]);
 
-	useEffect(() => load(), [load]);
+	/** Switch tabs: the list empties to its loading state until the new tab's list arrives. */
+	const selectTab = (next: GalleryTab) => {
+		if (next === tab) return;
+		setItems(null);
+		setTab(next);
+	};
 
 	/** Delete an artifact, then optimistically drop it from the list. */
 	const remove = useCallback(async (id: string) => {
@@ -135,7 +149,7 @@ export function AgentArtifactGallery({
 						<button
 							key={t}
 							type="button"
-							onClick={() => setTab(t)}
+							onClick={() => selectTab(t)}
 							className={cn(
 								"px-2.5 py-1 text-ui-sm transition-colors",
 								tab === t

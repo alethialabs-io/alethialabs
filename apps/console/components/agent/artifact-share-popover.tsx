@@ -32,7 +32,10 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
   const [open, setOpen] = useState(false);
   const [shared, setShared] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  // The artifact whose share targets `shared` holds, for THIS open of the popover; cleared where the
+  // popover opens (`onOpenChange` below), so each open reads as loading until its list lands.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const loading = open && loadedFor !== artifactId;
 
   // Whether the Share UI is available at all (one lookup per artifact view).
   useEffect(() => {
@@ -52,13 +55,18 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
   // Load the current share targets whenever the popover opens.
   useEffect(() => {
     if (!open) return;
-    setLoading(true);
+    let cancelled = false;
     void listArtifactShares(artifactId)
-      .then((rows) =>
-        setShared(new Set(rows.map((r) => keyOf(r.scopeType, r.scopeId)))),
-      )
-      .catch(() => setShared(new Set()))
-      .finally(() => setLoading(false));
+      .then((rows) => new Set(rows.map((r) => keyOf(r.scopeType, r.scopeId))))
+      .catch(() => new Set<string>())
+      .then((next) => {
+        if (cancelled) return;
+        setShared(next);
+        setLoadedFor(artifactId);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open, artifactId]);
 
   // The share target an UNSHARE has been requested for. Turning a target off revokes every
@@ -121,7 +129,13 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
 
   return (
     <>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover
+        open={open}
+        onOpenChange={(next) => {
+          if (next) setLoadedFor(null);
+          setOpen(next);
+        }}
+      >
         <PopoverTrigger
           render={
             <Button size="sm" variant="outline" className="gap-1.5 rounded-none">

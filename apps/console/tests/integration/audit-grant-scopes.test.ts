@@ -38,7 +38,7 @@ import {
 	teamMember,
 	user,
 } from "@/lib/db/schema";
-import { describeIfDb } from "./db";
+import { describeIfDb, insertStoredGrants } from "./db";
 
 const QUERY_FILE = join(
 	dirname(fileURLToPath(import.meta.url)),
@@ -129,7 +129,10 @@ describeIfDb("the #4583 audit query (docs/ops/grants-scope-contradictions.sql)",
 			is_builtin: false,
 		});
 
-		await db.insert(grants).values([
+		// STORED rows, inserted past the `grants_org_binding` trigger: this audit is about what is
+		// already in the table, and the connector control below names a catalog id no org owns,
+		// which no writer can store any more.
+		await insertStoredGrants([
 			// ── CONTROLS. None of these may ever appear in the audit's output. ────────────────
 			// Genuinely org-wide (resource_id NULL) — and what `also_org_wide` has to FIND.
 			row({ effect: "allow", permission_key: "project:view", resource_type: "org", resource_id: null }),

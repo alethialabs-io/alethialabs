@@ -13,6 +13,7 @@
 
 import type { ReactNode } from "react";
 import { formatMinutes } from "@repo/format";
+import { RegionError } from "@/components/errors/region-error";
 import { EmptyState } from "@repo/ui/empty";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
@@ -39,8 +40,14 @@ import { cn } from "@repo/ui/utils";
  */
 export function count(n: number): string {
 	if (!Number.isFinite(n)) return "—";
-	return Math.round(n).toLocaleString();
+	// A FIXED locale — `@repo/format`'s own (en-GB) — not the runtime's default. Both usage pages
+	// render on the server since #6127, and a default-locale count is `1,204` in the server's Node
+	// and `1.204` in a German browser: a text mismatch during hydration (React #418).
+	return Math.round(n).toLocaleString(COUNT_LOCALE);
 }
+
+/** `@repo/format`'s locale, so a count reads like every other figure on the page. */
+const COUNT_LOCALE = "en-GB";
 
 /**
  * The count analogue of `@repo/format`'s `formatQuota`: a used-against-allowance pair.
@@ -247,6 +254,7 @@ export function OverTimeCard<T extends { date: string } & Record<Metric, number>
 	totals,
 	rangeLabel,
 	error,
+	onRetry,
 }: {
 	metric: Metric;
 	onMetricChange: (m: Metric) => void;
@@ -265,8 +273,15 @@ export function OverTimeCard<T extends { date: string } & Record<Metric, number>
 	 * fail may omit it; both of this card's callers can.
 	 */
 	error?: boolean;
+	/** Re-runs the failed window's read; the error render's retry. */
+	onRetry?: () => void;
 }) {
 	const active = METRICS.find((m) => m.id === metric);
+	// A zero-filled window is EMPTY for the picked metric (F023). The reader zero-fills every day
+	// of the axis so the bars line up, which means `series.length` is the number of DAYS in the
+	// window and is never 0 for a real range — so the old `series.length > 0` test drew a flat row
+	// of 2px stubs (the bars' minimum height) for a window in which nothing happened.
+	const empty = series !== undefined && !series.some((p) => p[metric] > 0);
 	const format = active?.format ?? count;
 	const noun = active?.noun ?? "";
 	return (
@@ -308,7 +323,7 @@ export function OverTimeCard<T extends { date: string } & Record<Metric, number>
 			</div>
 			{/* FOUR branches, and each one is a different answer to "what is in this window".
 			    `error` is "we asked and it failed", `series === undefined` is "it has not answered
-			    yet", `[]` is "it is genuinely empty" — the props' own docs say so, and collapsing
+			    yet", all-zero is "it is genuinely empty" — the props' own docs say so, and collapsing
 			    any pair of them states something untrue. Collapsing empty into loading renders
 			    "Nothing was recorded" about a fetch still in flight; collapsing FAILED into loading
 			    is worse, because a skeleton has no terminal state — a 500 spun it forever with
@@ -316,21 +331,31 @@ export function OverTimeCard<T extends { date: string } & Record<Metric, number>
 			    None of this is hypothetical: the PROJECT panel keys its over-time query on the range
 			    bounds, so `data` returns to `undefined` on EVERY picker change. */}
 			{error ? (
-				<EmptyState
-					className="h-28 border-0 p-0 md:p-0"
-					title="Usage over time is unavailable"
-					description="We couldn't load this window. Pick the range again to retry."
-				/>
+				onRetry ? (
+					<RegionError
+						className="min-h-28 border-0 p-0 md:p-0"
+						title="Usage over time is unavailable"
+						description="We couldn't load this window."
+						onRetry={onRetry}
+					/>
+				) : (
+					<EmptyState
+						className="h-28 border-0 p-0 md:p-0"
+						title="Usage over time is unavailable"
+						description="We couldn't load this window. Pick the range again to retry."
+					/>
+				)
 			) : series === undefined ? (
 				<Skeleton className="h-28 w-full" />
-			) : series.length > 0 ? (
-				<Bars points={series} pick={(p) => p[metric]} />
-			) : (
+			) : empty ? (
 				<EmptyState
+					data-state="empty"
 					className="h-28 border-0 p-0 md:p-0"
 					title="No usage in this range"
-					description="Nothing was recorded in the window you picked."
+					description={`No ${noun} in the window you picked.`}
 				/>
+			) : (
+				<Bars points={series} pick={(p) => p[metric]} />
 			)}
 		</div>
 	);

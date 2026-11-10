@@ -67,6 +67,7 @@ func newKubectlStub(t *testing.T, defaultExit int, rules ...stubRule) *kubectlSt
 	fmt.Fprintf(&b, `prev=""
 for a in "$@"; do
   if [ "$prev" = "-f" ] && [ -f "$a" ]; then cat "$a" >> %s; fi
+  if [ "$prev" = "-f" ] && [ "$a" = "-" ]; then cat >> %[1]s; fi
   prev="$a"
 done
 `, shellSingleQuote(manifestPath))

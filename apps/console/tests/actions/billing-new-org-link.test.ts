@@ -727,7 +727,7 @@ describe("§5.6 — an ended X with no open hold", () => {
 		setup();
 
 		const clause = await refusedClause();
-		expect(clause).toMatch(/^This checkout was closed, and we could not confirm whether its payment went through.* We have raised an alert\. A team already created for it stays on the free plan\.$/);
+		expect(clause).toMatch(/^This checkout was closed, and we could not confirm whether its payment went through.* We have raised an alert\. A team already created for it stays on the Hobby plan\.$/);
 		expect(world.stripe.refunds.create).not.toHaveBeenCalled();
 		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
 		expect(emitAlertEvent).toHaveBeenCalledWith("org-platform", "system.platform.payment_needs_support", expect.objectContaining({ resource_id: "sub_x" }));
@@ -740,7 +740,7 @@ describe("§5.6 — an ended X with no open hold", () => {
 		setup();
 
 		expect(await refusedClause()).toBe(
-			"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the free plan.",
+			"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the Hobby plan.",
 		);
 		expect(emitAlertEvent).not.toHaveBeenCalled();
 	});
@@ -751,7 +751,7 @@ describe("§5.6 — an ended X with no open hold", () => {
 		seedHold({ state: "released", release_reason: "refunded", released_at: new Date() });
 
 		expect(await refusedClause()).toBe(
-			"This checkout was closed, so it was not linked to a team. An earlier payment was refunded in full; it can take 5–10 business days to reach you. A team already created for it stays on the free plan.",
+			"This checkout was closed, so it was not linked to a team. An earlier payment was refunded in full; it can take 5–10 business days to reach you. A team already created for it stays on the Hobby plan.",
 		);
 		expect(emitAlertEvent).not.toHaveBeenCalled();
 		expect(world.state.setups.get("sub_x")?.closed_reason).toBe("ended");
@@ -924,6 +924,157 @@ describe("§5.6 — beside the org's other live, paid plan (C80)", () => {
 	});
 });
 
+// ADR 0002 C120, the resume lookup's half (amendment 2026-11-04, slice S12). X is linked in Stripe to
+// org-1 and user-1, no hold names it, and the org's row names a live Y. `resolveNewOrgSetup` runs the REAL
+// closer here. While X reads `incomplete` it can still be paid, so the closer answers `open` with nothing
+// written. On dev at aed8b609b it went on to close the setup with org_has_plan: in this file that close
+// reaches the faked database, which has no transaction, so the closer threw and the lookup logged it, and
+// the verdict assertion fails there. `findUnfinishedNewOrgSetup` reaches the closer only for an ended X,
+// so it never closed an incomplete X's setup, on dev or here; its case below is a pin, not a C120 case.
+//
+// And a setup is never offered for payment beside another live plan (§5.6): the lookup reports such an
+// unpaid X as not payable here, with no payment link, and the sheet stops on that sentence. At 9fb2f9920
+// the lookup still handed back X's hosted invoice page.
+const NOT_PAYABLE_BESIDE_LIVE_PLAN =
+	"This team already has an active plan, so this checkout cannot be completed here. Do not pay it: an unpaid checkout closes on its own. Contact support at support@alethialabs.io if you meant to buy this plan for another team.";
+
+describe("C120 — the resume lookup leaves an incomplete X's setup open beside a live Y, and offers no payment", () => {
+	const HOSTED = "https://invoice.stripe.com/i/acct_1/test_inv";
+
+	/** Runs the real closer wherever the billing actions call it. */
+	async function useRealCloser(): Promise<void> {
+		const actual = await vi.importActual<typeof import("@/lib/billing/pending-org-setup")>("@/lib/billing/pending-org-setup");
+		vi.mocked(settleOpenSetup).mockImplementation(actual.settleOpenSetup);
+	}
+
+	/** Every verdict the closer returned so far; a closer that threw fails the test here. */
+	async function verdicts(): Promise<string[]> {
+		return Promise.all(vi.mocked(settleOpenSetup).mock.results.map((r) => (r.type === "return" ? r.value : Promise.reject(r.value))));
+	}
+
+	/** Whether a lookup logged that its closer could not check X. */
+	const closerFailed = () => vi.mocked(console.error).mock.calls.some((c) => String(c[0]).includes("setup closer could not check"));
+
+	/** X `incomplete` and awaiting the customer, linked in Stripe to org-1, with a hosted invoice page. */
+	function incompleteLinkedX(): FakeSub {
+		const x = subX("incomplete", ["requires_action"]);
+		x.metadata.organization_id = "org-1";
+		world.state.hosted.set(x.latest_invoice, HOSTED);
+		return x;
+	}
+
+	for (const yStatus of ["active", "trialing"]) {
+		it(`resolveNewOrgSetup beside a ${yStatus} Y: the closer answers open, closes nothing and alerts nothing; no payment link, and the not-payable sentence`, async () => {
+			await useRealCloser();
+			incompleteLinkedX();
+			setup();
+			world.state.row = { stripeSubscriptionId: "sub_y", status: yStatus, stripeCustomerId: "cus_y" };
+
+			await expect(resolved()).resolves.toMatchObject({
+				subscriptionId: "sub_x",
+				paid: false,
+				ended: null,
+				hold: null,
+				paymentUrl: null,
+				besideLivePlan: { clause: NOT_PAYABLE_BESIDE_LIVE_PLAN },
+			});
+			expect(settleOpenSetup).toHaveBeenCalledWith(expect.objectContaining({ subscription_id: "sub_x" }), expect.objectContaining({ orgId: "org-1" }));
+			await expect(verdicts()).resolves.toEqual(["open"]);
+			expect(closerFailed()).toBe(false);
+			expect(world.state.setups.get("sub_x")).toMatchObject({ closed_at: null, closed_reason: null, refused_reason: null, linked_at: null });
+			expect(world.state.row).toEqual({ stripeSubscriptionId: "sub_y", status: yStatus, stripeCustomerId: "cus_y" });
+			expect(emitAlertEvent).not.toHaveBeenCalled();
+			expect(holdOn()).toBeUndefined();
+		});
+	}
+
+	it("beside a past_due Y (the link's own definition of another live plan): reported as not payable, with the unpaid-plan sentence and no payment link", async () => {
+		incompleteLinkedX();
+		setup();
+		world.state.row = { stripeSubscriptionId: "sub_y", status: "past_due", stripeCustomerId: "cus_y" };
+
+		await expect(resolved()).resolves.toMatchObject({
+			paymentUrl: null,
+			besideLivePlan: {
+				clause:
+					"This team's plan has an unpaid invoice, so this checkout cannot be completed here. Do not pay it: an unpaid checkout closes on its own. Update the payment method in Billing, or contact support at support@alethialabs.io.",
+			},
+		});
+	});
+
+	// Round 3 blocker: the sentence is true only for a payment that failed or was never made
+	// (`action_needed`). A PaymentIntent still `processing` reads as plan state `confirming` (in flight):
+	// X stays `incomplete` with no 23h bound until it settles, so the lookup does not report it, and the
+	// link decides it — under a needs_operator hold, alerted (C80). At 047ca7e5d the lookup reported
+	// `besideLivePlan` here too.
+	it("an X whose first payment is processing (confirming) is NOT reported as not payable; the link then refuses it under a hold (C80)", async () => {
+		await useRealCloser();
+		subX("incomplete", ["processing"]).metadata.organization_id = "org-1";
+		setup();
+		world.state.row = { stripeSubscriptionId: "sub_y", status: "active", stripeCustomerId: "cus_y" };
+
+		await expect(resolved()).resolves.toMatchObject({ planState: "confirming", paymentUrl: null, besideLivePlan: null });
+		expect(await refusedClause()).toMatch(ORG_HAS_PLAN);
+		expect(holdOn()).toMatchObject({ state: "needs_operator", open_note: "link_refused", opened_by: "link" });
+		expect(world.state.setups.get("sub_x")).toMatchObject({ closed_at: null, linked_at: null, refused_reason: "org_has_plan" });
+		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+	});
+
+	it("control: with no live plan beside it, the same X keeps its payment link and is not reported", async () => {
+		incompleteLinkedX();
+		setup();
+		world.state.row = { stripeSubscriptionId: "sub_y", status: "canceled", stripeCustomerId: "cus_y" };
+
+		await expect(resolved()).resolves.toMatchObject({ planState: "action_needed", paymentUrl: HOSTED, besideLivePlan: null });
+	});
+
+	it("control: a PAID X beside the live plan is not reported as not payable — the link decides it (C80)", async () => {
+		subX("active", ["succeeded"]).metadata.organization_id = "org-1";
+		setup();
+		world.state.row = { stripeSubscriptionId: "sub_y", status: "active", stripeCustomerId: "cus_y" };
+
+		await expect(resolved()).resolves.toMatchObject({ paid: true, besideLivePlan: null });
+	});
+
+	it("control: an open hold on X is reported as the hold, not as the live plan", async () => {
+		incompleteLinkedX();
+		setup();
+		world.state.row = { stripeSubscriptionId: "sub_y", status: "active", stripeCustomerId: "cus_y" };
+		seedHold({ state: "closing", last_pay: "awaiting" });
+
+		await expect(resolved()).resolves.toMatchObject({ paymentUrl: null, hold: { state: "closing" }, besideLivePlan: null });
+	});
+
+	it("pin: findUnfinishedNewOrgSetup leaves an incomplete X's setup open (it reaches the closer only for an ended X)", async () => {
+		await useRealCloser();
+		incompleteLinkedX();
+		setup();
+		world.state.row = { stripeSubscriptionId: "sub_y", status: "active", stripeCustomerId: "cus_y" };
+
+		await findUnfinishedNewOrgSetup();
+		expect(closerFailed()).toBe(false);
+		expect(world.state.setups.get("sub_x")).toMatchObject({ closed_at: null, refused_reason: null });
+		expect(emitAlertEvent).not.toHaveBeenCalled();
+	});
+
+	it("X is then paid before it ends: the creator's resumed link meets the open setup and refuses under a needs_operator hold (C80)", async () => {
+		await useRealCloser();
+		const x = incompleteLinkedX();
+		setup();
+		world.state.row = { stripeSubscriptionId: "sub_y", status: "active", stripeCustomerId: "cus_y" };
+		await resolved();
+		await expect(verdicts()).resolves.toEqual(["open"]);
+
+		x.status = "active";
+		world.state.invoices.set(x.latest_invoice, "paid");
+		world.state.payments.set(x.latest_invoice, ["succeeded"]);
+		expect(await refusedClause()).toMatch(ORG_HAS_PLAN);
+		expect(holdOn()).toMatchObject({ state: "needs_operator", open_note: "link_refused", opened_by: "link" });
+		expect(world.state.setups.get("sub_x")).toMatchObject({ closed_at: null, linked_at: null, refused_reason: "org_has_plan" });
+		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe("§5.6 — what is linked as before", () => {
 	it("C60: an incomplete X whose payment is processing links and defers — confirming, no payment link, the row on community", async () => {
 		subX("incomplete", ["processing"]);
@@ -1092,11 +1243,11 @@ describe("§5.6 'When a hold ends' — an adoption re-links a setup that has an 
 // link would refuse it with and under the link's alert rule. The expected sentences are LITERALS (C106's
 // rule): read from the module under test, they could not see the two copies drift.
 const NOT_CHARGED_CLAUSE =
-	"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the free plan.";
+	"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the Hobby plan.";
 const UNCONFIRMED_CLAUSE =
 	"This checkout was closed, and we could not confirm whether its payment went through, so it was not linked to a team. Contact support at support@alethialabs.io with the time of the payment.";
 const ALERT_SENTENCE = " We have raised an alert.";
-const FREE_PLAN_SENTENCE = " A team already created for it stays on the free plan.";
+const FREE_PLAN_SENTENCE = " A team already created for it stays on the Hobby plan.";
 /** What `alertPaymentNeedsSupport` puts before the detail for `context: "setup_closed"`. */
 const SETUP_CLOSED_SUMMARY = "a create-a-team subscription whose unfinished setup was closed because the subscription ended: ";
 

@@ -15,12 +15,8 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
-import {
-	assignGrant,
-	getGrantOptions,
-	listAccessGrants,
-	revokeGrant,
-} from "@/app/server/actions/grants";
+import { assignGrant, listAccessGrants, revokeGrant } from "@/app/server/actions/grants";
+import { readGrantOptions } from "@/lib/rpc/procedures/members";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { seedAuthz } from "@/lib/authz/seed";
@@ -66,7 +62,7 @@ const ENTITLEMENTS: Entitlements = {
 
 /** Builds an injected actor bound to the test org with the Enterprise entitlement. */
 function actorFor(userId: string): Actor {
-	return { userId, orgId: ORG, entitlements: ENTITLEMENTS };
+	return { credential: "session", userId, orgId: ORG, entitlements: ENTITLEMENTS };
 }
 
 /** Seeds one org-wide role grant (principal → built-in role, resource_id NULL = org-wide). */
@@ -143,8 +139,7 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 	});
 
 	it("DENIES a viewer's self-escalation to org owner — throws ForbiddenError, writes NO row", async () => {
-		await expect(
-			runWithActor(actorFor(VIEWER), () =>
+		expect(await runWithActor(actorFor(VIEWER), () =>
 				assignGrant({
 					principalType: "user",
 					principalId: VIEWER, // grant MYSELF …
@@ -152,8 +147,7 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 					roleId: BUILTIN_ROLE_IDS.owner, // … the owner role, org-wide
 					resourceType: "org",
 				}),
-			),
-		).rejects.toBeInstanceOf(ForbiddenError);
+			)).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 
 		// The escalation must not have landed: no owner-role grant for the viewer.
 		expect(await countGrants(VIEWER, BUILTIN_ROLE_IDS.owner)).toBe(0);
@@ -185,9 +179,7 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 			)
 			.limit(1);
 
-		await expect(
-			runWithActor(actorFor(VIEWER), () => revokeGrant(ownerGrant.id)),
-		).rejects.toBeInstanceOf(ForbiddenError);
+		expect(await runWithActor(actorFor(VIEWER), () => revokeGrant({ id: ownerGrant.id }))).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 
 		expect(await countGrants(OWNER, BUILTIN_ROLE_IDS.owner)).toBe(1);
 	});
@@ -200,7 +192,7 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 			.where(and(eq(grants.org_id, ORG), eq(grants.principal_id, TARGET)))
 			.limit(1);
 
-		await runWithActor(actorFor(OWNER), () => revokeGrant(g.id));
+		await runWithActor(actorFor(OWNER), () => revokeGrant({ id: g.id }));
 		expect(await countGrants(TARGET)).toBe(0);
 	});
 
@@ -218,7 +210,7 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 
 	it("DENIES an outsider (no member:view) from reading the grant builder options", async () => {
 		await expect(
-			runWithActor(actorFor(OUTSIDER), () => getGrantOptions()),
+			runWithActor(actorFor(OUTSIDER), () => readGrantOptions()),
 		).rejects.toBeInstanceOf(ForbiddenError);
 	});
 
@@ -229,8 +221,7 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 	// set the grantor doesn't themselves hold.
 
 	it("DENIES an admin self-granting the OWNER role — throws, no owner grant lands", async () => {
-		await expect(
-			runWithActor(actorFor(ADMIN), () =>
+		expect(await runWithActor(actorFor(ADMIN), () =>
 				assignGrant({
 					principalType: "user",
 					principalId: ADMIN, // grant MYSELF …
@@ -238,14 +229,12 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 					roleId: BUILTIN_ROLE_IDS.owner, // … the owner role (adds billing the admin lacks)
 					resourceType: "org",
 				}),
-			),
-		).rejects.toBeInstanceOf(ForbiddenError);
+			)).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 		expect(await countGrants(ADMIN, BUILTIN_ROLE_IDS.owner)).toBe(0);
 	});
 
 	it("DENIES an admin granting a single permission above their ceiling (billing)", async () => {
-		await expect(
-			runWithActor(actorFor(ADMIN), () =>
+		expect(await runWithActor(actorFor(ADMIN), () =>
 				assignGrant({
 					principalType: "user",
 					principalId: TARGET,
@@ -253,8 +242,7 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 					permissionKey: "billing:manage_billing", // admin does not hold billing
 					resourceType: "org",
 				}),
-			),
-		).rejects.toBeInstanceOf(ForbiddenError);
+			)).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 		expect(await countGrants(TARGET)).toBe(0);
 	});
 

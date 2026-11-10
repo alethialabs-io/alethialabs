@@ -51,3 +51,19 @@ export const KUBECONFIG_MINT_SHARED_CLUSTER_REASON =
 export function isSharedClusterPlacement(mode: unknown): boolean {
 	return mode === "namespace" || mode === "vcluster";
 }
+
+/**
+ * Environment statuses the mint refuses as "not provisioned" (lib/kubeconfig-mint/request.ts): a
+ * DRAFT environment — which a plan leaves behind even over a live cluster — and one being or already
+ * torn down. Here, beside the other eligibility rules, so the cluster card can say so instead of
+ * offering a download the request will refuse.
+ */
+export const MINT_UNPROVISIONED_ENV_STATUSES: ReadonlySet<string> = new Set([
+	"DRAFT",
+	"DESTROYING",
+	"DESTROYED",
+]);
+
+/** The card's sentence for a cluster whose environment the mint refuses as not provisioned. */
+export const KUBECONFIG_MINT_UNPROVISIONED_REASON =
+	"Kubeconfig downloads are unavailable while this environment has an undeployed plan or is being torn down.";

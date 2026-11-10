@@ -8,17 +8,27 @@
 // ChannelRouting, PolicyConditions and ThrottleField. Mutation affordances are hidden when
 // the caller can't manage; security
 // (authz.*) events are locked without the advancedAlerting entitlement.
+//
+// Every write goes through `useActionMutation` (#6125): its pending state disables the trigger
+// (the double-submit guard), a refusal is one toast in the server's words, and success
+// invalidates every key that shows alert data — no `router.refresh()`. The panel renders its
+// rows, its empty copy, a skeleton or a region error from the view's READ STATE, never from an
+// empty row list alone: "No policies yet" is an answer, and a read in flight has not given one.
 
 import { Bell, Plus, SearchX, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
-	type AlertsBootstrap,
 	deletePolicy,
 	type PolicyDTO,
 	togglePolicy,
 	updatePolicy,
 } from "@/app/server/actions/alerts";
+import type { AlertsHub } from "@/components/alerts/alerts-hub";
+import { AlertsPanelSkeleton } from "@/components/alerts/alerts-skeleton";
+import { RegionError } from "@/components/errors/region-error";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { alertsKeys } from "@/lib/query/use-alerts-query";
 import {
 	type ChannelBinding,
 	ChannelRouting,
@@ -82,31 +92,75 @@ function draftFrom(p: PolicyDTO): Draft {
 	};
 }
 
+/** Two lists hold the same values in the same order. */
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+	return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
+/**
+ * Whether an edit draft differs from the policy it was opened on — what enables Save (#6125). The
+ * event set is compared as a set (toggling an event off and on again is not an edit); everything
+ * else as it is ordered in the editor.
+ */
+function draftIsDirty(draft: Draft, policy: PolicyDTO): boolean {
+	const base = draftFrom(policy);
+	return (
+		draft.name !== base.name ||
+		draft.description !== base.description ||
+		draft.events.size !== base.events.size ||
+		[...draft.events].some((e) => !base.events.has(e)) ||
+		!sameList(
+			draft.channels.map((c) => `${c.id}:${c.min_severity ?? ""}`),
+			base.channels.map((c) => `${c.id}:${c.min_severity ?? ""}`),
+		) ||
+		draft.minSeverity !== base.minSeverity ||
+		!sameList(draft.project_ids, base.project_ids) ||
+		!sameList(draft.job_types, base.job_types) ||
+		!sameList(draft.resource_types, base.resource_types) ||
+		!sameList(draft.actions, base.actions) ||
+		draft.throttle !== base.throttle
+	);
+}
+
 interface PoliciesPanelProps {
-	bootstrap: AlertsBootstrap;
-	/** The filter standard's resolved view — rows, facets, active-filter count. */
+	hub: AlertsHub;
+	/** The filter standard's resolved view — rows, facets, read state, active-filter count. */
 	view: PoliciesView;
-	onChanged: () => void;
 	onOpenChannel: (id?: string) => void;
 }
 
 /** Policies master-detail. */
-export function PoliciesPanel({
-	bootstrap,
-	view,
-	onChanged,
-	onOpenChannel,
-}: PoliciesPanelProps) {
-	const { policies, channels, advancedAlerting, canManage } = bootstrap;
+export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) {
+	const { policies, channels, canManage } = hub;
 	const selectedId = useAlertsSection((s) => s.selectedPolicyId);
 	const setSelectedId = useAlertsSection((s) => s.setSelectedPolicyId);
 
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState<Draft | null>(null);
-	const [saving, setSaving] = useState(false);
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const [deleteTarget, setDeleteTarget] = useState<PolicyDTO | null>(null);
 	const [disableTarget, setDisableTarget] = useState<PolicyDTO | null>(null);
+
+	const update = useActionMutation(updatePolicy, {
+		invalidates: alertsKeys(),
+		successMessage: "Policy saved",
+		onSuccess: () => {
+			setEditing(false);
+			setDraft(null);
+		},
+	});
+	const toggle = useActionMutation(togglePolicy, {
+		invalidates: alertsKeys(),
+		onSuccess: () => setDisableTarget(null),
+	});
+	const remove = useActionMutation(deletePolicy, {
+		invalidates: alertsKeys(),
+		successMessage: "Policy deleted",
+		onSuccess: () => {
+			setSelectedId(null);
+			setDeleteTarget(null);
+		},
+	});
 
 	const selected =
 		policies.find((p) => p.id === selectedId) ?? policies[0] ?? null;
@@ -136,8 +190,8 @@ export function PoliciesPanel({
 		setDraft(null);
 	};
 
-	const save = async () => {
-		if (!draft || !selected) return;
+	const save = () => {
+		if (!draft || !selected || update.isPending) return;
 		if (draft.events.size === 0) return toast.error("Pick at least one event.");
 		if (draft.channels.length === 0)
 			return toast.error("Bind at least one channel.");
@@ -167,28 +221,13 @@ export function PoliciesPanel({
 			recipient: undefined,
 			enabled: selected.enabled,
 		};
-		setSaving(true);
-		try {
-			await updatePolicy(selected.id, input);
-			toast.success("Policy saved");
-			setEditing(false);
-			setDraft(null);
-			onChanged();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to save policy");
-		} finally {
-			setSaving(false);
-		}
+		update.mutate({ ...input, id: selected.id });
 	};
 
 	// The mutation itself, split from the click handler so the confirm path can reach it.
-	const applyEnabled = async (p: PolicyDTO, next: boolean) => {
-		try {
-			await togglePolicy(p.id, next);
-			onChanged();
-		} catch {
-			toast.error("Failed to update");
-		}
+	const applyEnabled = (p: PolicyDTO, next: boolean) => {
+		if (toggle.isPending) return;
+		toggle.mutate({ id: p.id, enabled: next });
 	};
 	// Confirm only when DISABLING — enabling stays a bare click, exactly as it does for channels
 	// (`onToggle` in channels-panel.tsx). Both surfaces stop alert delivery, and the product had
@@ -197,17 +236,7 @@ export function PoliciesPanel({
 	// and nothing on the rail says so afterwards beyond the switch's own state.
 	const onToggleEnabled = (p: PolicyDTO, next: boolean) => {
 		if (!next) setDisableTarget(p);
-		else void applyEnabled(p, true);
-	};
-	const doDelete = async (p: PolicyDTO) => {
-		try {
-			await deletePolicy(p.id);
-			toast.success("Policy deleted");
-			setSelectedId(null);
-			onChanged();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to delete");
-		}
+		else applyEnabled(p, true);
 	};
 
 	const newPolicyBtn = canManage && (
@@ -218,7 +247,11 @@ export function PoliciesPanel({
 
 	return (
 		<div>
-			{policies.length === 0 ? (
+			{view.state === "loading" ? (
+				<AlertsPanelSkeleton kind="policies" />
+			) : view.state === "error" ? (
+				<RegionError title="Couldn't load policies" onRetry={view.retry} />
+			) : view.total === 0 ? (
 				<EmptyState
 					icon={<Bell />}
 					// `level={3}` under the section's own `h2` — see the twin in channels-panel.tsx:
@@ -252,7 +285,7 @@ export function PoliciesPanel({
 								<EmptyState
 									icon={<SearchX />}
 									title="No policies match"
-									description={`None of the ${policies.length} policies match these filters.`}
+									description={`None of the ${view.total} policies match these filters.`}
 									action={
 										<Button variant="outline" size="sm" onClick={resetFilters}>
 											Reset filters
@@ -334,10 +367,10 @@ export function PoliciesPanel({
 									policy={selected}
 									draft={draft}
 									editing={editing}
-									saving={saving}
-									canManage={canManage}
-									advancedAlerting={advancedAlerting}
-									bootstrap={bootstrap}
+									saving={update.isPending}
+									dirty={draft !== null && draftIsDirty(draft, selected)}
+									togglePending={toggle.isPending}
+									hub={hub}
 									patch={patch}
 									toggleEvent={toggleEvent}
 									onStartEdit={startEdit}
@@ -361,8 +394,7 @@ export function PoliciesPanel({
 				<PolicySheet
 					open={sheetOpen}
 					onOpenChange={setSheetOpen}
-					bootstrap={bootstrap}
-					onSaved={onChanged}
+					hub={hub}
 					onGoChannels={() => onOpenChannel()}
 				/>
 			)}
@@ -373,9 +405,10 @@ export function PoliciesPanel({
 				title="Disable this policy?"
 				description="This policy stops watching its events until you re-enable it, across every channel it routes to. You can re-enable any time."
 				confirmLabel="Disable"
+				pendingLabel="Disabling…"
+				pending={toggle.isPending}
 				onConfirm={() => {
-					if (disableTarget) void applyEnabled(disableTarget, false);
-					setDisableTarget(null);
+					if (disableTarget) applyEnabled(disableTarget, false);
 				}}
 			/>
 
@@ -385,9 +418,10 @@ export function PoliciesPanel({
 				title={`Delete policy "${deleteTarget?.name ?? ""}"?`}
 				description="This policy stops watching its events immediately. Delivery history is kept. This cannot be undone."
 				confirmLabel="Delete policy"
+				pendingLabel="Deleting…"
+				pending={remove.isPending}
 				onConfirm={() => {
-					if (deleteTarget) doDelete(deleteTarget);
-					setDeleteTarget(null);
+					if (deleteTarget && !remove.isPending) remove.mutate({ id: deleteTarget.id });
 				}}
 			/>
 		</div>
@@ -399,9 +433,11 @@ interface DetailProps {
 	draft: Draft | null;
 	editing: boolean;
 	saving: boolean;
-	canManage: boolean;
-	advancedAlerting: boolean;
-	bootstrap: AlertsBootstrap;
+	/** The draft differs from the saved policy — Save does nothing until it does. */
+	dirty: boolean;
+	/** The enable switch's write is in flight. */
+	togglePending: boolean;
+	hub: AlertsHub;
 	patch: (p: Partial<Draft>) => void;
 	toggleEvent: (key: string) => void;
 	onStartEdit: () => void;
@@ -418,9 +454,9 @@ function PolicyDetail({
 	draft,
 	editing,
 	saving,
-	canManage,
-	advancedAlerting,
-	bootstrap,
+	dirty,
+	togglePending,
+	hub,
 	patch,
 	toggleEvent,
 	onStartEdit,
@@ -430,7 +466,7 @@ function PolicyDetail({
 	onDelete,
 	onOpenChannel,
 }: DetailProps) {
-	const { categories, channels, conditionOptions } = bootstrap;
+	const { categories, channels, conditionOptions, canManage, advancedAlerting } = hub;
 	const ed = editing && draft !== null;
 
 	const events = ed ? [...draft.events] : policy.event_patterns;
@@ -530,7 +566,7 @@ function PolicyDetail({
 					<Switch
 						aria-label="Enabled"
 						checked={policy.enabled}
-						disabled={!canManage || ed}
+						disabled={!canManage || ed || togglePending}
 						onCheckedChange={(c) => onToggleEnabled(policy, c)}
 					/>
 					{canManage &&
@@ -544,7 +580,7 @@ function PolicyDetail({
 								>
 									Cancel
 								</Button>
-								<Button size="sm" onClick={onSave} disabled={saving}>
+								<Button size="sm" onClick={onSave} disabled={saving || !dirty}>
 									{saving ? "Saving…" : "Save"}
 								</Button>
 							</>

@@ -5,7 +5,7 @@
 // lingering empties would fragment the TanStack cache (the standard's normalize rule).
 
 import { describe, expect, it } from "vitest";
-import { normalizeActivityQuery } from "@/lib/query/use-activity-query";
+import { normalizeActivityQuery } from "@/lib/query/activity-query";
 
 describe("normalizeActivityQuery", () => {
 	it("sorts arrays and trims the search so equal filters produce equal keys", () => {

@@ -52,7 +52,7 @@ vi.mock("next-runtime-env", () => ({
   env: (key: string) => process.env[key],
 }));
 
-// jsdom lacks a few DOM APIs that Radix UI / cmdk touch on mount (ResizeObserver, layout
+// jsdom lacks a few DOM APIs that Base UI overlays and command lists touch on mount (ResizeObserver, layout
 // measurement, pointer capture). Stub them so dialog/command/select-based components render in
 // component tests. Purely additive — only fills gaps jsdom doesn't provide.
 if (!globalThis.ResizeObserver) {
@@ -90,6 +90,20 @@ if (typeof Element !== "undefined") {
   if (!Element.prototype.setPointerCapture) {
     Element.prototype.setPointerCapture = () => {};
   }
+}
+
+// jsdom's `focus()` never reads its FocusOptions argument (jsdom@29 has no FocusOptions at all).
+// Base UI's focus manager feature-detects `preventScroll` by passing an object whose
+// `preventScroll` is a getter and checking whether it was read (verified in @base-ui/react@1.9.0,
+// `floating-ui-react/components/FloatingFocusManager.js`). Unread, it concludes restoring focus
+// would scroll the page, as on Chrome for Android, and skips returning focus to the trigger after
+// an outside press. Desktop browsers do read it. Copying the options with a spread reads every own
+// property, the getter included, so jsdom answers the probe as those browsers do. (#6144)
+if (typeof HTMLElement !== "undefined") {
+  const nativeFocus = HTMLElement.prototype.focus;
+  HTMLElement.prototype.focus = function focusReadingOptions(options?: FocusOptions) {
+    nativeFocus.call(this, options && { ...options });
+  };
 }
 
 // jsdom doesn't implement `PointerEvent`. base-ui's overlays (Menu/Popover/Select/Tooltip/…) open on

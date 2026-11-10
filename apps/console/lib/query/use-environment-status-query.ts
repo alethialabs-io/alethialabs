@@ -3,52 +3,45 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
-import { getEnvironmentComponentStatus } from "@/app/server/actions/component-status";
-import {
-	EMPTY_ENVIRONMENT_STATUS,
-	type EnvironmentStatus,
-} from "@/lib/canvas/component-status";
-import { qk } from "./keys";
-
-/** Poll fast while the environment is mid-change, slowly when it's settled. */
-const POLL_IN_FLIGHT_MS = 4_000;
-const POLL_SETTLED_MS = 30_000;
+import type { EnvironmentStatus } from "@/lib/canvas/component-status";
+import { orpc } from "@/lib/rpc/client";
 
 /**
  * The environment's live server status for the canvas — component lifecycles, the in-flight job,
  * drift, cost, cluster liveness, and (for a BYO IaC env) the module's architecture, in ONE
- * round-trip.
+ * round-trip: the `canvas.environmentStatus` GET procedure (ADR 0005 D1, #6119).
  *
- * The poll rate follows the environment: while a job is running the canvas is watching a deploy
- * happen, so it refetches every few seconds; once things settle it drops back to a slow heartbeat
- * rather than hammering the database forever.
+ * THE FIRST PAINT CARRIES IT. The Architecture page prefetches this exact key on the server
+ * (`environmentStatusInput` below builds the input both sides use), so the board renders its node
+ * statuses with the page instead of fetching after hydration.
  *
- * **`environmentId` is optional, and `null` is a legitimate value** — it means "this project's
- * default environment", which the server resolves itself (`resolveActiveEnvironmentId`). The caller
- * passes `searchParams.get("environment_id")`, which is null on every visit to a project that hasn't
- * explicitly switched environments — i.e. the common case, and the one you land on from the sidebar.
+ * NO POLL. It used to refetch every 4 s while a job ran and every 30 s otherwise. A change to the
+ * environment, its components, its add-ons or its jobs is now a hint on the org's change stream,
+ * which invalidates this key (`lib/query/topics.ts`); while the stream is down the bus's one
+ * fallback poll covers it (`lib/realtime/client/fallback-poll.ts`).
  *
- * This used to be gated on `!!projectId && !!environmentId`, so **on the default environment the
- * query never ran at all**, and everything it feeds was dead there: component status (a FAILED
- * database read "Ready"), the drift chips, the cost chip, and the BYO-IaC architecture. It only came
- * alive if the URL happened to carry an explicit `?environment_id=`. The server had always handled
- * the absent id — only this guard stood in the way.
+ * **`environmentId` may be null** — it means "this project's default environment", which the server
+ * resolves itself. The page passes the environment it resolved, so the key the server prefetched is
+ * the key the client reads.
  */
 export function useEnvironmentStatusQuery(
 	projectId: string | undefined,
 	environmentId: string | null | undefined,
 ): UseQueryResult<EnvironmentStatus> {
 	return useQuery({
-		queryKey: qk.environmentStatus(projectId ?? "none", environmentId ?? null),
-		queryFn: () => {
-			// `enabled` guarantees a project below; this keeps the types honest without a cast.
-			if (!projectId) return Promise.resolve(EMPTY_ENVIRONMENT_STATUS);
-			return getEnvironmentComponentStatus(projectId, environmentId ?? null);
-		},
-		refetchInterval: (query) =>
-			query.state.data?.activeJob ? POLL_IN_FLIGHT_MS : POLL_SETTLED_MS,
+		...orpc.canvas.environmentStatus.queryOptions({
+			input: environmentStatusInput(projectId ?? "", environmentId),
+		}),
 		// The create flow has no project yet — nothing to fetch. An absent ENVIRONMENT is NOT a
 		// reason to skip: the server resolves it to the project's default.
 		enabled: !!projectId,
 	});
+}
+
+/** The `canvas.*` environment-scoped input for a project and (maybe) an environment. */
+export function environmentStatusInput(
+	projectId: string,
+	environmentId: string | null | undefined,
+): { projectId: string; environmentId: string | null } {
+	return { projectId, environmentId: environmentId ?? null };
 }

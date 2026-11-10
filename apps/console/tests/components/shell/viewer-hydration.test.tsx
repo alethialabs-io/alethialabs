@@ -57,6 +57,9 @@ vi.mock("@/lib/auth/client", () => ({
 		listAccounts: vi.fn(async () => ({ data: [] })),
 		organization: { acceptInvitation: vi.fn(), rejectInvitation: vi.fn() },
 	},
+	// The live session `useViewer()` follows when it has no seed. `live` is reassigned only between
+	// renderers, so within one it is the same object — as better-auth's atom snapshot is.
+	liveSession: { subscribe: () => () => {}, get: () => live, onPossibleChange: () => () => {} },
 }));
 vi.mock("@repo/privacy/consent-provider", () => ({
 	useConsent: () => ({ openPreferences: vi.fn() }),
@@ -142,7 +145,10 @@ const SURFACES: Array<[string, Surface]> = [
 				</ViewerProvider>
 			),
 			serverShows: "Ada Lovelace",
-			afterHydrationShows: "Ada King",
+			// The seed is the current answer until a client call changes the session (#6114): a
+			// seeded viewer does not subscribe to the live session, so it does not fetch it either.
+			// Following the live session after such a change is viewer-live-session.test.tsx.
+			afterHydrationShows: "Ada Lovelace",
 		},
 	],
 	[
@@ -199,7 +205,7 @@ describe("surfaces rendering the signed-in person hydrate without a mismatch (#5
 		});
 
 		expect(recoverable.map((e) => (e instanceof Error ? e.message : String(e)))).toEqual([]);
-		// Once hydrated, the surface follows the LIVE session, not the seed it hydrated with.
+		// Once hydrated: the seed, while it is current (seeded); the live session (unseeded).
 		expect(container.innerHTML).toContain(surface.afterHydrationShows);
 	});
 });

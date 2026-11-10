@@ -77,6 +77,16 @@ export const NA_REASONS = {
 	F8: ["not-a-list-page"],
 	F9: ["not-a-list-page"],
 	F10: ["not-a-list-page", "no-search-field"],
+	// Family B (#6116) — what the user experiences while a route loads. Every reason is STRUCTURAL:
+	// a redirect-only route renders nothing, and a route with no `loading.tsx` anywhere in its chain
+	// has no skeleton for B2 to compare (T1 already reports that absence). "The page made no read" is
+	// NOT an N/A — it is what B1 measures — and a page whose answered render is its own empty state
+	// is NOT MEASURED, through `notMeasured()`, because that is a claim about the instrument.
+	B1: ["redirect-only"],
+	B2: ["redirect-only", "no-loading-boundary"],
+	B3: ["redirect-only"],
+	B4: ["redirect-only"],
+	B5: ["redirect-only"],
 } as const;
 
 export type PredicateId = keyof typeof NA_REASONS;

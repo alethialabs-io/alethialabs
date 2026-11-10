@@ -15,7 +15,7 @@ import { Skeleton } from "@repo/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { Boxes, X } from "lucide-react";
 import type { ValueDTO } from "@/app/server/actions/classification/dimensions";
-import { getValueResourceBreakdown } from "@/app/server/actions/classification/assignments";
+import { orpc } from "@/lib/rpc/client";
 import { kindLabel } from "./resource-kind-labels";
 
 /** The value drill-down drawer. Open when `value` is set. */
@@ -28,11 +28,13 @@ export function ValueDrillDrawer({
 	dimensionLabel: string;
 	onClose: () => void;
 }) {
-	const { data, isPending, isError, refetch } = useQuery({
-		queryKey: ["classification", "value-breakdown", value?.id],
-		queryFn: () => getValueResourceBreakdown(value?.id ?? ""),
-		enabled: Boolean(value),
-	});
+	// The `classification.valueBreakdown` GET read (#6129), asked only while the drawer is open.
+	const { data, isPending, isError, refetch } = useQuery(
+		orpc.classification.valueBreakdown.queryOptions({
+			input: { valueId: value?.id ?? "" },
+			enabled: Boolean(value),
+		}),
+	);
 
 	const total = (data ?? []).reduce((n, r) => n + r.count, 0);
 

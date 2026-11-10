@@ -8,6 +8,8 @@
 #
 #   env:up      ensure this branch has an environment, and that it is running
 #               a NEW env comes up seeded with demo data   [--empty | --seed | --fresh]
+#               pinned ALETHIA_EDITION=enterprise, as prod is; [--community] pins a NEW or
+#               UNPINNED env to the community build instead (a present pin is never rewritten)
 #   env:push    rsync the working tree (the fast inner loop)   [--watch]
 #   env:down    release this branch's environment
 #   env:status  the box, every environment, capacity, cost
@@ -1017,7 +1019,11 @@ restore_live_envs() {
   [ -n "$slugs" ] || return 0
 
   echo "→ restarting environments the box was running: $(printf '%s' "$slugs" | tr '\n' ' ')"
-  printf '%s\n' "$slugs" | while read -r sl; do
+  # The slugs arrive on fd 3 and the loop body's stdin is /dev/null. Every ssh_box below would
+  # otherwise read the loop's stdin — ssh forwards it to the remote command — so the first
+  # `tmux has-session` swallowed the rest of the list and only the FIRST env was ever restored.
+  # Redirecting the whole body, not each call, is what keeps a future call in it from doing so.
+  while read -r sl <&3; do
     [ -n "$sl" ] || continue
     # Already up? tmux session present means the console survived; leave it alone.
     if ssh_box "tmux has-session -t 'alethia-$sl' 2>/dev/null"; then
@@ -1038,19 +1044,25 @@ restore_live_envs() {
     # demo owner's org already holds non-demo projects the seeder throws by design, the
     # boot exits 1, and the restore degrades into "✗ did not come back" for an env that
     # was fine. A restore restarts; it never writes data.
-    # Exit 3 is env-mode.sh's "it is UP, and it is serving COMMUNITY entitlements" (boot_rc
-    # there). It is not a failure to come back, and calling it one would name the wrong fault
-    # on an env this restore does not own; it is also not a success, and folding it into the
-    # `||` success path would leave the diagnostic that just printed above with nothing
-    # saying it was a verdict.
+    # Exit 3 is env-mode.sh's "it is UP, and it is in the wrong scope" (boot_rc there).
+    # It is not a failure to come back, and calling it one would name the wrong fault on an
+    # env this restore does not own; it is also not a success, and folding it into the `||`
+    # success path would leave the diagnostic that just printed above with nothing saying it
+    # was a verdict.
     local restore_rc=0
     ssh_box "test -d $REMOTE/envs/$sl && $REMOTE/bin/env-mode.sh '$sl' '$cport' '$sport' '$db' '' 'keep'" || restore_rc=$?
     case "$restore_rc" in
     0) ;;
-    3) echo "      ⚠ $sl is back but serving COMMUNITY entitlements (see above) — its owner must pnpm env:up" ;;
+    3)
+      # Exit 3 says only "up, and in the wrong scope" — not WHICH defect (#6166). Asked again
+      # rather than parsed out of the boot's prose, which went straight to the terminal anyway.
+      local scope_
+      scope_="$(measure_scope "$sl" "$cport" 2 10)"
+      echo "      ⚠ $sl is back, but it $(scope_headline "$scope_") (see above) — its owner must run: $(scope_remedy "$scope_")"
+      ;;
     *) echo "      ✗ $sl did not come back — pnpm env:up from its worktree" ;;
     esac
-  done
+  done 3< <(printf '%s\n' "$slugs") </dev/null
 }
 
 # Push the box-side scripts, the pinned shared compose file and the tunnel
@@ -1145,12 +1157,59 @@ push_tree() {
   #                             closes the window in between, during which a recompile would
   #                             otherwise catch the console with no dist at all. It also means
   #                             a laptop that happens to have built one can never SEND it.
+  #
+  # LOCAL JUNK THAT IS NOT SOURCE (#6110). The main checkout carried an untracked `.pnpm-store/`
+  # (1.7 GB) and `.codex-run-base/` (198 MB); neither is excluded above, so the first `env:up` of
+  # 2026-10-19 spent ~25 minutes shipping a package store and a tool's scratch copy to a box that
+  # installs its own. Two layers, because each covers what the other cannot:
+  #
+  #   1. A STATIC list of the known offenders. Unconditional, so it holds even where git cannot be
+  #      asked (no repo, no git on PATH), and it is what scripts/lib/env-suite-reap-test.sh pins.
+  #   2. A RULE: every TOP-LEVEL DOT-DIRECTORY that git reports as WHOLLY UNTRACKED (ignored or
+  #      not). The next tool to drop a cache at the root will name it `.something/`, and nothing
+  #      should have to remember to add it here.
+  #
+  # Why not "everything git ignores or does not track": this push ships the WORKING TREE on
+  # purpose — a new source file you have not `git add`ed yet must reach the box, or the env runs
+  # code you are not looking at. So untracked is not junk in general. And "everything ignored" is
+  # not safe either: rsync's gitignore reading (`:- .gitignore`) is not git's (no `!` negation,
+  # no global excludes), and an ignored path the box needs would vanish with no error. The rule is
+  # bounded where the cost of a wrong guess is smallest: a hidden directory at the ROOT, every file
+  # in it untracked. Source never lives there today — `.github`/`.claude`/`.githooks` are tracked,
+  # and a directory holding even one tracked file is not "wholly untracked", so it still ships
+  # (its own untracked files with it). The one thing this can withhold is a brand-new top-level
+  # hidden directory you have not added yet, and it says so below rather than skipping it silently.
+  #
+  # Excluding is also safe against `--delete`: without `--delete-excluded`, rsync never removes an
+  # excluded path on the receiver, so a box-side `.something/` survives either way.
+  local -a excludes=(
+    --exclude=node_modules --exclude=.next --exclude=.git --exclude=.turbo
+    --exclude=test-results --exclude=playwright-report --exclude='*.tfstate*'
+    --exclude=.terraform --exclude=/ee/dist
+    --exclude=/.env --exclude='.env.local' --exclude='.env.*.local'
+    --exclude='apps/*/.env.local'
+    --exclude=/.pnpm-store --exclude=/.codex-run-base
+  )
+  local entry withheld=""
+  # `--others --directory` (no --exclude-standard) lists untracked AND ignored paths, collapsing a
+  # wholly-untracked directory to one `name/` line instead of walking it. `|| true`: no repo or no
+  # git degrades to the static list, never to a failed push.
+  while IFS= read -r entry; do
+    case "$entry" in
+      .*/) entry="${entry%/}" ;;
+      *) continue ;;
+    esac
+    case "$entry" in
+      */* | . | .. | .git | .pnpm-store | .codex-run-base) continue ;;
+    esac
+    excludes+=("--exclude=/$entry")
+    withheld="$withheld $entry/"
+  done < <(git -C "$ROOT" ls-files --others --directory --no-empty-directory 2>/dev/null || true)
+  [ -z "$withheld" ] ||
+    echo "  push: not shipping untracked top-level dot-dirs:$withheld (git add a file in one to ship it)" >&2
+
   rsync -az --delete \
-    --exclude=node_modules --exclude=.next --exclude=.git --exclude=.turbo \
-    --exclude=test-results --exclude=playwright-report --exclude='*.tfstate*' \
-    --exclude=.terraform --exclude=/ee/dist \
-    --exclude=/.env --exclude='.env.local' --exclude='.env.*.local' \
-    --exclude='apps/*/.env.local' \
+    "${excludes[@]}" \
     -e "ssh -o StrictHostKeyChecking=accept-new" \
     "$ROOT/" "root@$ip:$REMOTE/envs/$slug_/" || rsync_rc=$?
 
@@ -1279,10 +1338,11 @@ cmd_push() {
 UP_FRESH=""
 UP_SEED=""
 up_flags() {
-  local fresh="" seed="" a
+  local fresh="" seed="" edition="enterprise" a
   for a in "$@"; do
     case "$a" in
     --fresh) fresh="fresh" ;;
+    --community) edition="community" ;;
     # Refused rather than last-one-wins: "--empty --seed" has no defensible reading, and
     # quietly picking one of them decides the audit's answer for it.
     --empty | --seed)
@@ -1293,20 +1353,22 @@ up_flags() {
     # An unrecognised flag is REFUSED rather than ignored. A silently dropped --empty
     # would hand back a seeded env that the caller believes is empty, and every
     # conclusion drawn from it would be wrong in a way nothing prints.
-    *) usage_error "unknown flag '$a' — env:up takes [--fresh] and one of [--empty|--seed]" ;;
+    *) usage_error "unknown flag '$a' — env:up takes [--fresh] [--community] and one of [--empty|--seed]" ;;
     esac
   done
   UP_FRESH="$fresh"
   UP_SEED="$seed"
+  UP_EDITION="$edition"
 }
 
 cmd_up() {
   need jq
   need rsync
-  local slug_ row cport sport db fresh="" seed=""
+  local slug_ row cport sport db fresh="" seed="" edition=""
   up_flags "$@"
   fresh="$UP_FRESH"
   seed="$UP_SEED"
+  edition="$UP_EDITION"
   slug_="$(slug)"
 
   provision_box
@@ -1322,7 +1384,7 @@ cmd_up() {
 
   echo "→ pushing working tree"
   push_tree
-  mint_env "$slug_" "$cport" "$sport" "$db"
+  mint_env "$slug_" "$cport" "$sport" "$db" "$fresh" "$edition"
 
   # The flag refusal above stops at the LAPTOP, and a POSITIONAL argument has no handshake.
   # scripts/box/ ships from $MAIN_CHECKOUT (see provision_box), which CLAUDE.md §7 pins to
@@ -1401,8 +1463,24 @@ cmd_up() {
 # break every cloud trust already pinned to this issuer, and Entra caches the JWKS for
 # ~24h so the breakage would outlive the fix. A reap-and-recreate DOES re-mint: reconnect
 # the connectors, or stash this file before `pnpm env:reap`.
+#
+# Written once is not the same as never touched again, and treating it so cost a sign-in (#6111):
+# an env minted before a key existed never received it. So an existing .env is RECONCILED —
+# missing keys appended, present ones left byte-for-byte alone — by dotenv_reconcile below, and
+# `env:status` names any env still lacking one.
+#
+# ALETHIA_EDITION is one of those keys, and it is PINNED rather than left to `auto` (#6158). Prod
+# (apps/console/Dockerfile) and the community image both set it, and `auto` is the one mode in
+# which a failure to resolve @alethia/ee used to degrade silently to community — after #6153 it is
+# refused as EditionMisconfiguredError instead. A sandbox that runs a mode prod never runs is not
+# rehearsing prod. `enterprise` by default; `env:up --community` pins the community build into
+# any env whose .env has no ALETHIA_EDITION line yet — a NEW env, or an existing UNPINNED one.
+# A present line is an ordinary present key, so reconcile never rewrites it: an env pinned
+# community stays community across every later env:up, and asking an env already carrying a
+# different value (`enterprise`, or a literal `auto`) for --community is refused rather than
+# silently ignored.
 mint_env() {
-  local slug_="$1" cport="$2" sport="$3" db="$4" fqdn url
+  local slug_="$1" cport="$2" sport="$3" db="$4" fresh="${5:-}" edition="${6:-enterprise}" fqdn url
   fqdn="$(env_fqdn "$slug_" "$cport")"
   url="https://$fqdn"
 
@@ -1434,8 +1512,65 @@ mint_env() {
   snapshot_key="$(openssl rand -base64 32)"
   bootstrap_token="$(openssl rand -hex 32)"
 
+  local out rc=0 secrets
+  secrets="$(dotenv_secret_keys | tr '\n' ' ')"
+  # The function travels as TEXT (`declare -f`), so the box needs nothing from scripts/box/ — which
+  # ships from the main checkout and drifts (see the SEED_REQUEST handshake in cmd_up). Stdout
+  # carries key NAMES only; the minted values go in on stdin and never come back out.
   # shellcheck disable=SC2029
-  ssh_box "test -f $REMOTE/envs/$slug_/.env || cat > $REMOTE/envs/$slug_/.env" <<ENV
+  out="$(dotenv_template "$slug_" "$cport" "$sport" "$db" "$url" "$secret1" "$secret2" "$secret3" \
+    "$secret4" "$oidc_key" "$receipt_key" "$snapshot_key" "$bootstrap_token" "$edition" |
+    ssh_box "$(declare -f dotenv_reconcile); dotenv_reconcile '$REMOTE/envs/$slug_/.env' '$fresh' $secrets")" ||
+    rc=$?
+  local added missing
+  added="$(printf '%s\n' "$out" | sed -n 's/^added://p')"
+  missing="$(printf '%s\n' "$out" | sed -n 's/^secret-missing://p')"
+  [ -z "$added" ] || echo "  .env: added keys this env predates:$added"
+  [ "$rc" != 3 ] || die "env '$slug_' was minted before these secrets existed:$missing
+  A secret is never minted into a LIVE env: its database may already hold state written without
+  it, and env:up cannot tell which. The non-secret keys it lacked have been added. To mint the
+  missing secrets too — this DROPS the env's database, then appends them — run:
+      pnpm env:up --fresh"
+  [ "$rc" = 0 ] || die "could not write or reconcile the .env for '$slug_' on the box (status $rc)."
+
+  # The pin the env ACTUALLY carries after reconcile — which, for an env that already had one, is
+  # not necessarily the one asked for. Read back through the same normaliser env:status uses.
+  local pinned
+  # shellcheck disable=SC2029
+  pinned="$(ssh_box "$(declare -f dotenv_edition); dotenv_edition '$REMOTE/envs/$slug_/.env'")" ||
+    die "could not read ALETHIA_EDITION back from the .env for '$slug_' on the box."
+  edition_pin_note "$slug_" "$edition" "$pinned"
+}
+
+# What env:up says about the edition pin it ended up with. <slug> <requested> <pinned>
+# A --community that could not be honoured is REFUSED: the caller would otherwise read an
+# enterprise console as the community build. A default env:up on an env deliberately pinned
+# community keeps the pin and says so; a pin that is neither is named, because env:status will
+# flag it on every run until someone fixes it.
+edition_pin_note() {
+  local slug_="$1" requested="$2" pinned="$3"
+  [ "$requested" = "$pinned" ] && return 0
+  if [ "$requested" = community ]; then
+    die "'$slug_' is already pinned ALETHIA_EDITION=$pinned, and env:up never rewrites a key the .env
+  already has. To run it as the community build, release it and mint it again:
+      pnpm env:down && pnpm env:up --community"
+  fi
+  case "$pinned" in
+  community) echo "  .env: '$slug_' stays pinned ALETHIA_EDITION=community (set when it was minted)." ;;
+  # A PRESENT `auto`/empty line is a key env:up will never rewrite, so re-running it is no remedy.
+  auto) echo "⚠ .env: '$slug_' sets ALETHIA_EDITION to auto/empty, which env:up never rewrites — set it in
+  that env's .env, or: pnpm env:down && pnpm env:up" >&2 ;;
+  *) echo "⚠ .env: '$slug_' has ALETHIA_EDITION=$pinned, not a pinned edition — prod pins enterprise." >&2 ;;
+  esac
+}
+
+# The env's .env, rendered from values mint_env generated. Formatting only — no openssl, no ssh —
+# so dotenv_secret_keys can render it with sentinels and the self-test can render it at all.
+dotenv_template() { # <slug> <cport> <sport> <db> <url> <s1> <s2> <s3> <s4> <oidc> <receipt> <snapshot> <bootstrap> [edition]
+  local slug_="$1" cport="$2" sport="$3" db="$4" url="$5" secret1="$6" secret2="$7" secret3="$8"
+  local secret4="$9" oidc_key="${10}" receipt_key="${11}" snapshot_key="${12}" bootstrap_token="${13}"
+  local edition="${14:-enterprise}"
+  cat <<ENV
 # Minted by scripts/env.sh for the '$slug_' environment. Not copied from any laptop.
 ALETHIA_DATABASE_URL=postgres://alethia:alethia-dev-secret@localhost:5433/$db
 ALETHIA_APP_DATABASE_URL=postgres://alethia_app:$secret4@localhost:5433/$db
@@ -1464,7 +1599,7 @@ ALETHIA_RUNNER_BOOTSTRAP_TOKEN=$bootstrap_token
 
 OPENFGA_API_URL=http://localhost:8082
 ALETHIA_DEPLOYMENT_MODE=hosted
-# This box is a sandbox, and saying so is what makes the line above survivable. `hosted` is
+# This box is a sandbox, and saying so is what makes the line above survivable. 'hosted' is
 # deliberate — it is how the sandbox rehearses Stripe-driven billing — but no mail credential
 # is ever copied here, and packages/email correctly refuses to degrade a HOSTED deployment to
 # the development log fallback. Without this flag those two truths cancelled out and sign-in
@@ -1473,9 +1608,113 @@ ALETHIA_DEPLOYMENT_MODE=hosted
 # non-production build, so a real deployment cannot open it.
 ALETHIA_SANDBOX=1
 ALETHIA_LICENSE_ACTIVE=false
+# Pinned, as prod pins it: unset means auto, a mode no real deployment runs (#6158).
+ALETHIA_EDITION=$edition
 ALETHIA_RUNNER_OPERATOR=self
 PORT=$cport
 ENV
+}
+
+# Which keys of the template carry a MINTED value — derived by rendering it with a sentinel in
+# every generated slot, not kept as a second list beside it. A hand-written list would go stale
+# the first time a secret is added to the template, and the cost of that staleness is exactly the
+# wrong one: a new secret classified as static gets appended to every LIVE env by the next env:up.
+dotenv_secret_keys() {
+  local m=@ALETHIA-MINTED@
+  dotenv_template s 3100 8400 db https://x "$m" "$m" "$m" "$m" "$m" "$m" "$m" "$m" |
+    sed -n "s/^\([A-Za-z_][A-Za-z0-9_]*\)=.*$m.*/\1/p"
+}
+
+# Every key the template writes — what env:status holds each env's .env against.
+dotenv_required_keys() {
+  dotenv_template s 3100 8400 db https://x a b c d e f g h |
+    sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'
+}
+
+# RUNS ON THE BOX, shipped as text by mint_env. POSIX sh on purpose: it must not care which shell
+# root's login shell is. stdin: the freshly rendered .env. Args: <file> <''|fresh> <secret key>...
+#
+# A missing file gets the whole render — the original write-once behaviour, unchanged. An EXISTING
+# file is never rewritten: a key it lacks is APPENDED, and nothing it has is touched, so a value
+# someone edited by hand, and every secret it was minted with, survive (#6111). The `dev` env
+# predated ALETHIA_SANDBOX=1 (#2958), so its sign-in codes went nowhere and nothing was red.
+#
+# A missing SECRET is the exception, and is refused (status 3) rather than minted — unless the
+# caller passed `fresh`, i.e. this env's database is about to be dropped, so no state on it can
+# have been written under a different value. Stdout is key names only (`added: …`,
+# `secret-missing: …`); a value is never printed.
+dotenv_reconcile() {
+  _f="$1"
+  _fresh="$2"
+  shift 2
+  if [ ! -f "$_f" ]; then
+    cat >"$_f"
+    return
+  fi
+  _new="$(cat)"
+  _add=""
+  _secret=""
+  for _k in $(printf '%s\n' "$_new" | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
+    grep -Eq "^(export[[:space:]]+)?$_k=" "$_f" && continue
+    _is_secret=""
+    for _s in "$@"; do
+      [ "$_s" = "$_k" ] && _is_secret=1
+    done
+    if [ -n "$_is_secret" ] && [ "$_fresh" != fresh ]; then
+      _secret="$_secret $_k"
+    else
+      _add="$_add $_k"
+    fi
+  done
+  if [ -n "$_add" ]; then
+    # A file that does not end in a newline would glue the first appended key onto its last line.
+    [ -z "$(tail -c1 "$_f")" ] || echo >>"$_f"
+    echo "# Added by scripts/env.sh env:up $(date -u +%Y-%m-%dT%H:%M:%SZ): keys introduced after this env was minted." >>"$_f"
+    for _k in $_add; do
+      printf '%s\n' "$_new" | grep -m1 "^$_k=" >>"$_f"
+    done
+    echo "added:$_add"
+  fi
+  if [ -n "$_secret" ]; then
+    echo "secret-missing:$_secret"
+    return 3
+  fi
+  return 0
+}
+
+# RUNS ON THE BOX, shipped as text. POSIX sh. Which edition a .env pins, as ONE word:
+# enterprise | community | auto | unset | other | no-file. A value outside the three the console
+# accepts is `other`, so an arbitrary string never crosses the wire.
+#
+# It reads the pin EXACTLY as scripts/box/env-mode.sh's scope_probe + scope_verdict do — the last
+# `^ALETHIA_EDITION=` line, CRs dropped, outer whitespace trimmed, ONE pair of matching quotes
+# removed — and the self-test holds the two readers to the same answer on every fixture. Two
+# readers that normalise differently would print a `scope` and an `edition` row that disagree
+# about the same line, and the MISMATCH this feeds would be a disagreement between two parsers
+# rather than between the .env and the console. Where scope_probe is narrower than the console
+# (an `export ` prefix), this is narrower with it, and the fix belongs in both at once.
+dotenv_edition() {
+  [ -f "$1" ] || {
+    echo no-file
+    return 0
+  }
+  grep -Eq '^ALETHIA_EDITION=' "$1" || {
+    echo unset
+    return 0
+  }
+  _e="$(grep -E '^ALETHIA_EDITION=' "$1" | tail -n 1 | cut -d= -f2- | tr -d '\r' |
+    sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  case "$_e" in
+  \"*\" | \'*\')
+    _e="${_e#?}"
+    _e="${_e%?}"
+    ;;
+  esac
+  case "$_e" in
+  "") echo auto ;;
+  enterprise | community | auto) echo "$_e" ;;
+  *) echo other ;;
+  esac
 }
 
 cmd_down() {
@@ -1538,6 +1777,75 @@ cmd_verify() {
   exit 1
 }
 
+# ── WHAT A DEFECT SCOPE MEANS (#6166) ────────────────────────────────────────────
+#
+# env-mode.sh's scope_verdict gives ONE verdict word, DEFECT, to three different faults, so that
+# every caller below refuses or flags both without learning a new word. They are not the same
+# fault, and naming the second in the first one's words sent the operator after the wrong cause:
+#   404 — the organization plugin is absent: the console is SERVING community entitlements.
+#   5xx — only under a pinned ALETHIA_EDITION=enterprise (#6161): @alethia/ee did not load, and
+#         lib/enterprise.ts refuses every call rather than fall back, sign-in included. It is
+#         serving nothing that touches auth — calling it "COMMUNITY" was simply false.
+#   5xx — under a pin the console REJECTS (#6171): ALETHIA_EDITION is not exactly community,
+#         enterprise or auto, so parseAlethiaEdition throws on every call. No edition is loaded or
+#         even attempted, and the cause is one line of the .env — not ee/dist, not the log.
+# The probe already prints "<verdict> <status> <why>", and these key on the STATUS — the same
+# thing scope_verdict and the boot's diagnostic key on — plus, for the two 5xx faults, the one
+# phrase of the why that scope_verdict writes for an invalid pin and nowhere else: "is not a valid
+# edition". The rest of the why is prose. They change WORDS only: which cases are refused is still
+# decided by the verdict.
+
+# The label env:status prints for a DEFECT. Shipped to the box as text (env_scopes), so it stays
+# plain sh.
+scope_defect_label() { # <probe line "<verdict> <status> <why>"> → COMMUNITY | EE-NOT-LOADED | INVALID-PIN
+  _l="${1#* }"
+  case "${_l%% *}:$_l" in
+  5[0-9][0-9]:*"is not a valid edition"*) echo INVALID-PIN ;;
+  5[0-9][0-9]:*) echo EE-NOT-LOADED ;;
+  *) echo COMMUNITY ;;
+  esac
+}
+
+# What the env IS, as a predicate: "'<slug>' <this>" and "…, but it <this>" both read. Takes the
+# whole probe line so a caller can hand it whatever the probe said: a line that is not a DEFECT
+# (a re-probe that no longer sees one) gets a headline that claims no cause.
+scope_headline() { # <probe line "<verdict> <status> <why>"> → predicate
+  local verdict="${1%% *}" rest status
+  rest="${1#* }"
+  status="${rest%% *}"
+  if [ "$verdict" != DEFECT ]; then
+    echo "came up in the wrong scope (a re-probe now reads: ${1:-no answer})"
+    return
+  fi
+  case "$(scope_defect_label "$1")" in
+  EE-NOT-LOADED) echo "cannot load the enterprise edition its .env pins — every auth call answers $status, sign-in included" ;;
+  INVALID-PIN) echo "has an ALETHIA_EDITION pin the console rejects, so it runs no edition at all — every auth call answers $status, sign-in included" ;;
+  *) echo "is serving COMMUNITY entitlements" ;;
+  esac
+}
+
+# The remedy for that headline. The invalid pin's is the .env line itself: env:up appends a MISSING
+# key and never rewrites a present one, so re-running it before the line is fixed changes nothing.
+# The ee-load 5xx one leads with the LOG: env-mode.sh builds @alethia/ee
+# before it boots and refuses to start without ee/dist, so at boot the likelier cause is a dist
+# that is present and threw on load, and only the console log says what it threw. Then env:up,
+# NOT env:push: loadEnterprise memoises a failed load for the life of the process, and env:push
+# rebuilds ee/dist without restarting it. env:up restarts the console.
+scope_remedy() { # <probe line> → the command(s) its owner runs
+  case "${1%% *}:$(scope_defect_label "$1")" in
+  DEFECT:INVALID-PIN) echo "fix the pin in that env's .env (community, enterprise or auto — exactly), then pnpm env:up" ;;
+  DEFECT:EE-NOT-LOADED) echo "pnpm env:logs (the load error is there), then pnpm env:up to rebuild ee/dist and restart the console" ;;
+  *) echo "pnpm env:up" ;;
+  esac
+}
+
+# The probe, asked once, the way env:test asks it. Exits 0 with whatever came back (empty when the
+# box did not answer) — the callers decide what an answer means. </dev/null because one caller,
+# restore_live_envs, sits inside a `while read` loop, and ssh would swallow the rest of its input.
+measure_scope() { # <slug> <console port> <attempts> <seconds per attempt>
+  ssh_box "$REMOTE/bin/env-mode.sh --scope '$2' '$REMOTE/envs/$1/.env' $3 $4" </dev/null 2>/dev/null || true
+}
+
 # ── WHICH EDITION IS EACH ENV SERVING? ───────────────────────────────────────────
 #
 # `env:status` printed a URL, ports, an owner and a timestamp — everything about whether the
@@ -1595,7 +1903,7 @@ env_scopes() { # → lines of "<slug> <verdict>"
   # file was read and the probe is not in it, `?-no-probe` when it could not be read at all,
   # and `?-probe-failed-rcN` when the probe IS there and still did not produce a verdict —
   # the one case that is a defect in this code rather than in the box.
-  script='
+  script="$(declare -f scope_defect_label)"'
 mode="'"$REMOTE"'/bin/env-mode.sh"
 sup=0
 grep -q scope_probe "$mode" >/dev/null 2>&1 || sup=$?
@@ -1612,7 +1920,7 @@ probe() {
   case "${1:-}" in
     enterprise) echo "$s enterprise" ;;
     community)  echo "$s community-pinned" ;;
-    DEFECT)     echo "$s COMMUNITY" ;;
+    DEFECT)     echo "$s $(scope_defect_label "$v")" ;;
     unknown)
       case "${2:-000}" in
         000|"")
@@ -1642,6 +1950,76 @@ probe '$s' '$p'"
   ssh_box "$script" 2>/dev/null || true
 }
 
+# → lines of "<slug> <gap> <edition>", one round trip for every env (#6111). <gap> is ok |
+# missing:K1,K2 | no-file. Held against dotenv_required_keys — the template itself — so a key
+# added to the template is checked here from the same commit, with no list to update. Key NAMES
+# only cross the wire; the check is grep -q, so no value is read back. The one exception is
+# <edition> (#6158), and it is not a value either: dotenv_edition reduces it to one of six words.
+env_dotenv_gaps() {
+  local slugs keys script s
+  slugs="$(ssh_box "$REMOTE/bin/env-registry.sh list" 2>/dev/null | jq -r 'keys[]' 2>/dev/null)" || return 0
+  [ -n "$slugs" ] || return 0
+  keys="$(dotenv_required_keys | tr '\n' ' ')"
+  script="$(declare -f dotenv_edition)"'
+gap() {
+  f="'"$REMOTE"'/envs/$1/.env"
+  [ -f "$f" ] || { echo "$1 no-file no-file"; return; }
+  m=""
+  for k in '"$keys"'; do
+    grep -Eq "^(export[[:space:]]+)?$k=" "$f" || m="$m${m:+,}$k"
+  done
+  if [ -n "$m" ]; then echo "$1 missing:$m $(dotenv_edition "$f")"; else echo "$1 ok $(dotenv_edition "$f")"; fi
+}'
+  while read -r s; do
+    [ -n "$s" ] || continue
+    script="$script
+gap '$s'"
+  done <<<"$slugs"
+  # shellcheck disable=SC2029
+  ssh_box "$script" 2>/dev/null || true
+}
+
+# The `edition` row of env:status (#6158): the edition the .env PINS, held against the scope the
+# running console was MEASURED serving (env_scopes). <pin from dotenv_edition> <scope verdict>.
+# Two answers that each look fine alone — "pinned community" and "serving enterprise" — are a
+# defect together: whatever the console runs, it is not what its .env asked for (the #3732 tmux
+# leak was exactly that shape). An unpinned env is flagged too: `auto` is a mode prod never runs.
+edition_row() {
+  local pin="$1" scope="$2" served
+  case "$pin" in
+  "") echo "?-not-checked"; return ;;
+  no-file) echo "?-no-.env"; return ;;
+  # Two remedies, because only one of these is a MISSING key: env:up appends an absent line and
+  # never rewrites a present one, so for a literal `auto` (or empty) re-running it changes nothing.
+  unset) echo "⚠ UNPINNED (unset) — prod pins enterprise; run pnpm env:up on that branch"; return ;;
+  auto) echo "⚠ UNPINNED (auto) — env:up never rewrites a present line: set it in that env's .env, or pnpm env:down && pnpm env:up"; return ;;
+  other) echo "⚠ ALETHIA_EDITION is not community, enterprise or auto — fix that env's .env"; return ;;
+  esac
+  case "$scope" in
+  enterprise) served=enterprise ;;
+  community-pinned | COMMUNITY) served=community ;;
+  # MEASURED, so not "not compared" — but it is not an edition being served either: the console
+  # is pinned to enterprise and cannot load it (#6166), which the scope row already names.
+  EE-NOT-LOADED) echo "⚠ pinned $pin, but the console cannot load the enterprise edition — see the scope row"; return ;;
+  *) echo "$pin (pinned) — not compared: the scope was not measured"; return ;;
+  esac
+  if [ "$pin" = "$served" ]; then
+    echo "$pin (pinned, matches scope)"
+  else
+    echo "⚠ MISMATCH pinned $pin, console serving $served — run pnpm env:up on that branch"
+  fi
+}
+
+# One "<slug>\t<edition row>" line per env, from the env_scopes and env_dotenv_gaps outputs.
+edition_rows() { # <scopes> <gaps>
+  local scopes="$1" gaps="$2" s pin scope
+  while read -r s _ pin; do
+    [ -n "$s" ] || continue
+    scope="$(printf '%s\n' "$scopes" | awk -v s="$s" '$1 == s { print $2; exit }')"
+    printf '%s\t%s\n' "$s" "$(edition_row "$pin" "$scope")"
+  done <<<"$gaps"
+}
+
 cmd_status() {
   need jq
   local ip domain
@@ -1660,16 +2038,20 @@ cmd_status() {
   # The scope is asked of every env in one round trip, before the listing renders, and joined
   # in by slug. An env missing from `scopes` prints `?` rather than nothing: a blank line
   # there would read as "fine", which is the exact failure this is here to stop.
-  local scopes
+  local scopes gaps editions
   scopes="$(env_scopes)"
+  gaps="$(env_dotenv_gaps)"
+  editions="$(edition_rows "$scopes" "$gaps")"
   # `owner` is now an INSTANCE, not a machine — so this can finally say which one is you.
   # It is the same string env:reap compares, printed verbatim: a status line that renders a
   # prettier form of the value the guard tests is a second source of truth waiting to drift.
   ssh_box "$REMOTE/bin/env-registry.sh list" |
-    jq -r --arg d "$domain" --arg scopes "$scopes" --arg me "$(env_owner)" '
+    jq -r --arg d "$domain" --arg scopes "$scopes" --arg gaps "$gaps" --arg eds "$editions" --arg me "$(env_owner)" '
       ($scopes | split("\n") | map(select(length > 0) | split(" ") | {key: .[0], value: .[1]}) | from_entries) as $sc |
+      ($gaps | split("\n") | map(select(length > 0) | split(" ") | {key: .[0], value: .[1]}) | from_entries) as $gp |
+      ($eds | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: .[1]}) | from_entries) as $ed |
       to_entries[] |
-      "  \(.key)\n    url    https://\(if .key == "dev" then $d else "env" + (((.value.consolePort - 3000) / 100) | tostring) + "-" + $d end)\n    ports  console :\(.value.consolePort)  storage :\(.value.storagePort)\n    scope  \($sc[.key] // "?-not-probed")\n    owner  \(.value.owner)\(if .value.owner == $me then "   ← you" else "" end)   last seen \(.value.lastSeen)"'
+      "  \(.key)\n    url     https://\(if .key == "dev" then $d else "env" + (((.value.consolePort - 3000) / 100) | tostring) + "-" + $d end)\n    ports   console :\(.value.consolePort)  storage :\(.value.storagePort)\n    scope   \($sc[.key] // "?-not-probed")\n    edition \($ed[.key] // "?-not-checked")\n    .env    \(($gp[.key] // "?-not-checked") | if startswith("missing:") then "⚠ MISSING " + (.[8:] | gsub(","; " ")) + " — run pnpm env:up on that branch" elif . == "no-file" then "⚠ NO .env — run pnpm env:up on that branch" else . end)\n    owner   \(.value.owner)\(if .value.owner == $me then "   ← you" else "" end)   last seen \(.value.lastSeen)"'
   cat <<'NOTE'
 
   Scope: which EDITION that env's console is serving, measured against the running process
@@ -1679,6 +2061,12 @@ cmd_status() {
   resolved the community entitlement baseline: a team/active subscription row on that env is
   still refused with 403 upgrade_required, so EVERY enterprise-scoped verification on it is
   vacuous. Fix it with `pnpm env:up`; `community-pinned` means that env's .env asked for it.
+  `EE-NOT-LOADED` is a different fault: the .env pins enterprise, @alethia/ee did not load,
+  and the console answers 5xx to every auth call, sign-in included — it is serving no edition
+  at all. Read `pnpm env:logs` for the load error, then `pnpm env:up` (which restarts it).
+  `INVALID-PIN` is the same outage with a simpler cause: the .env's ALETHIA_EDITION is not
+  exactly community, enterprise or auto, so the console rejects it on every call. Fix the pin
+  in that env's .env, then `pnpm env:up` (which never rewrites a line that is already there).
   A leading `?` is the absence of an answer, never a verdict, and each one names the cause it
   actually measured: `?-no-answer` (the console did not respond, but its tmux session is there
   — it is up and busy, or wedged), `?-not-running` (there is NO session behind this
@@ -1690,6 +2078,21 @@ cmd_status() {
   `?-probe-failed-rcN` (the probe is on the box and exited N without producing a verdict; N is
   the lead — 126/127 mean the file is not runnable and any `pnpm env:up` re-ships it, anything
   else is a defect in the probe rather than in the box).
+
+  .env: whether that env's box-side .env carries every key scripts/env.sh mints today. An env
+  minted before a key existed never got it, and nothing went red (#6111 — `dev` lacked
+  ALETHIA_SANDBOX=1, so its sign-in codes went nowhere). `pnpm env:up` on that branch appends
+  the missing non-secret keys; a missing SECRET makes it refuse and name `--fresh`.
+
+  Edition: the ALETHIA_EDITION that env's .env PINS, held against the scope above (#6158).
+  Prod pins `enterprise`; so does every env:up, and `env:up --community` pins the community
+  build into a new env or an existing unpinned one. `UNPINNED` means the .env leaves it to
+  `auto`, a mode no real deployment runs: `(unset)` has no line, and `pnpm env:up` on that
+  branch adds one; `(auto)` HAS a line, which env:up never rewrites — edit that env's .env, or
+  `pnpm env:down && pnpm env:up`. `MISMATCH` means the console is serving a
+  different edition than its .env asked for, so something other than the .env decided it (an
+  ALETHIA_EDITION leaked through the tmux server's environment did, in #3732); restart it with
+  `pnpm env:up`. When the scope carries a `?` the two are not compared, and the row says so.
 
   Reclaiming a `?-not-running` env: there is no non-destructive path today. `pnpm env:down`
   is the only way to free the slot and it DESTROYS that env's database and storage, so this
@@ -1849,7 +2252,7 @@ cmd_test() {
   # report reads as a product defect. `unknown` stays a warning for the same reason the boot
   # does not refuse on it — an unanswered probe is not a verdict either way.
   local scope_ verdict_
-  scope_="$(ssh_box "$REMOTE/bin/env-mode.sh --scope '$cport' '$REMOTE/envs/$slug_/.env' 3 30" 2>/dev/null || true)"
+  scope_="$(measure_scope "$slug_" "$cport" 3 30)"
   verdict_="${scope_%% *}"
   case "$verdict_" in
   enterprise) ;;
@@ -1858,10 +2261,27 @@ cmd_test() {
     echo "  enterprise-scoped spec in this run will be vacuous, not passing." >&2
     ;;
   DEFECT)
-    die "'$slug_' is serving COMMUNITY entitlements — ${scope_#* * }
+    # The headline and the remedy name the actual fault (#6166): a 404 is a console serving
+    # community entitlements, a 5xx under the enterprise pin is one that cannot sign anyone in.
+    # Both are refused — the verdict decides that, not the words.
+    case "$(scope_defect_label "$scope_")" in
+    INVALID-PIN)
+      die "'$slug_' $(scope_headline "$scope_") — ${scope_#* * }
+  Every spec that signs in would fail on authentication rather than on what it tests. Fix the
+  env first:  $(scope_remedy "$scope_")"
+      ;;
+    EE-NOT-LOADED)
+      die "'$slug_' $(scope_headline "$scope_") — ${scope_#* * }
+  Every spec that signs in would fail on authentication rather than on what it tests. Fix the
+  env first:  $(scope_remedy "$scope_")"
+      ;;
+    *)
+      die "'$slug_' $(scope_headline "$scope_") — ${scope_#* * }
   A team/active subscription row on it is still refused with 403 upgrade_required, so every
   enterprise-scoped spec would pass vacuously or fail for the wrong reason. Fix the env
-  first:  pnpm env:up"
+  first:  $(scope_remedy "$scope_")"
+      ;;
+    esac
     ;;
   *)
     echo "⚠ could not measure which edition '$slug_' is serving: ${scope_:-no answer from the box}" >&2
@@ -1963,7 +2383,7 @@ restart_env_console() { # <slug>
   # happened), but the reason it failed has to survive.
   #
   # THE EXIT CODE IS READ, not just tested against 0. env-mode.sh exits 3 for "the console is
-  # up, and it is serving COMMUNITY entitlements" (boot_rc there); making that case non-fatal
+  # up, and it is in the wrong scope" (boot_rc there); making that case non-fatal
   # is what stops a restart from claiming a running console "did not come back", and reading
   # the 3 here is what stops the same case from printing a clean `console restarted` line and
   # discarding the diagnostic the boot just wrote. Those two halves were added together and
@@ -1981,9 +2401,13 @@ restart_env_console() { # <slug>
   case "$rc" in
   0) ;;
   3)
-    echo "  ⚠ the console is back, but it came up serving COMMUNITY entitlements — every" >&2
-    echo "    enterprise-scoped check against '$slug_' is vacuous until its OWNER runs" >&2
-    echo "    pnpm env:up from that branch's worktree." >&2
+    # Exit 3 is "up, in the wrong scope" for BOTH DEFECTs; the status says which (#6166). Asked
+    # of the console again, the way env:test asks, rather than grepped out of the boot's prose.
+    local scope_
+    scope_="$(measure_scope "$slug_" "$cport" 2 10)"
+    echo "  ⚠ the console is back, but it $(scope_headline "$scope_")." >&2
+    echo "    No enterprise-scoped check against '$slug_' can be trusted until its OWNER runs" >&2
+    echo "    $(scope_remedy "$scope_") from that branch's worktree." >&2
     ;;
   *)
     echo "  ⚠ console did not come back — pnpm env:up to restore it" >&2

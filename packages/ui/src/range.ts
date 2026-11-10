@@ -8,9 +8,11 @@
 // in isolation. Every function takes an explicit `now` (defaulting to the wall clock) so
 // tests are deterministic.
 
+import { tz as inZone, tzOffset } from "@date-fns/tz";
 import {
 	endOfDay,
 	endOfMonth,
+	format,
 	isValid,
 	parse,
 	startOfDay,
@@ -22,7 +24,6 @@ import {
 	subWeeks,
 	subYears,
 } from "date-fns";
-import { formatInTimeZone } from "date-fns-tz";
 
 /** A concrete, resolved time window (half-open is fine for our queries: from ≤ t < to). */
 export interface DateRange {
@@ -198,11 +199,54 @@ export function timeZoneOptions(): string[] {
 	return [local, ...all.filter((z) => z !== local)];
 }
 
+/** Formats an instant as the wall-clock it reads in the IANA zone `zone` (date-fns tokens). */
+export function formatInZone(d: Date, zone: string, fmt: string): string {
+	return format(d, fmt, { in: inZone(zone) });
+}
+
+const MINUTE_MS = 60_000;
+const DAY_MS = 86_400_000;
+
+/**
+ * Turns a wall-clock "yyyy-MM-dd" + "HH:mm" read in the IANA zone `zone` into the instant
+ * it names. A wall-clock is not always exactly one instant, so the two DST cases are decided
+ * here, the way Temporal's `"compatible"` disambiguation decides them:
+ *
+ * - a time skipped by spring-forward (02:30 in New York on its change day) moves FORWARD by
+ *   the length of the gap (03:30 EDT), so the result is never before the time typed;
+ * - a time repeated by fall-back (01:30 in New York on its change day) is the EARLIER of
+ *   its two instants (01:30 EDT).
+ *
+ * Both are decided from `tzOffset` alone, never from the host's own zone. `TZDate`'s
+ * constructor resolves the repeated hour through the host zone: 03:30 in Sofia on
+ * 2026-10-25 came out as 00:30Z on a Sofia-zoned host and 01:30Z on a UTC one.
+ */
+export function zonedWallClockToInstant(dateStr: string, timeStr: string, zone: string): Date {
+	const [y = Number.NaN, mo = Number.NaN, d = Number.NaN] = dateStr.split("-").map(Number);
+	const [h = Number.NaN, mi = Number.NaN] = timeStr.split(":").map(Number);
+	// The wall-clock's digits read as if they were UTC; each offset the zone can have near
+	// it then yields one candidate instant.
+	const asUtc = Date.UTC(y, mo - 1, d, h, mi);
+	if (!Number.isFinite(asUtc)) return new Date(Number.NaN);
+	// The offsets a day either side are the two this wall-clock can be read under. That
+	// assumes the zone changes offset at most once in those two days.
+	const before = tzOffset(zone, new Date(asUtc - DAY_MS));
+	const after = tzOffset(zone, new Date(asUtc + DAY_MS));
+	const valid = [before, after]
+		.map((offset) => asUtc - offset * MINUTE_MS)
+		.filter((t) => tzOffset(zone, new Date(t)) === (asUtc - t) / MINUTE_MS);
+	// Both candidates valid = the repeated hour (or no change at all): take the earlier.
+	if (valid.length > 0) return new Date(Math.min(...valid));
+	// Neither valid = the skipped hour: read it at the pre-change offset, which lands it
+	// past the change by exactly the gap.
+	return new Date(asUtc - before * MINUTE_MS);
+}
+
 /** A short, lowercase-meridiem time ("11pm", "9:30am") in the given zone. */
 function timePart(d: Date, tz: string): string {
-	const minutes = formatInTimeZone(d, tz, "m");
+	const minutes = formatInZone(d, tz, "m");
 	const fmt = minutes === "0" ? "ha" : "h:mma";
-	return formatInTimeZone(d, tz, fmt).toLowerCase();
+	return formatInZone(d, tz, fmt).toLowerCase();
 }
 
 /**
@@ -216,12 +260,12 @@ export function formatRangeLabel(
 	tz: string = localTimeZone(),
 	now: Date = new Date(),
 ): string {
-	const year = (d: Date) => formatInTimeZone(d, tz, "yyyy");
-	const day = (d: Date) => formatInTimeZone(d, tz, "yyyy-MM-dd");
+	const year = (d: Date) => formatInZone(d, tz, "yyyy");
+	const day = (d: Date) => formatInZone(d, tz, "yyyy-MM-dd");
 	const yearless = year(range.from) === year(now) && year(range.to) === year(now);
 	const dateFmt = yearless ? "MMM d" : "MMM d, yyyy";
 	const side = (d: Date) =>
-		`${formatInTimeZone(d, tz, dateFmt)}, ${timePart(d, tz)}`;
+		`${formatInZone(d, tz, dateFmt)}, ${timePart(d, tz)}`;
 	if (day(range.from) === day(range.to)) return side(range.from);
 	return `${side(range.from)} – ${side(range.to)}`;
 }

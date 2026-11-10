@@ -5,6 +5,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import type { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
+import { cliMayActOnProject } from "@/lib/cli/project-access";
 import { cliJson } from "@/lib/cli/respond";
 import { readKubeconfigAccess } from "@/lib/clusters/kubeconfig-access";
 import { getServiceDb } from "@/lib/db";
@@ -85,7 +86,9 @@ export async function GET(
 			.where(and(eq(projectCluster.id, id), eq(projectCluster.org_id, actor.orgId)))
 			.limit(1);
 
-		if (!row) {
+		// A cluster belongs to a project; a project the caller may not view answers exactly as a
+		// cluster that does not exist.
+		if (!row || !(await cliMayActOnProject(actor, row.project_id, "view"))) {
 			return NextResponse.json({ error: "Cluster not found" }, { status: 404 });
 		}
 

@@ -31,7 +31,7 @@ const USER = randomUUID();
 
 /** Run `fn` as USER in their personal org. */
 function asUser<T>(fn: () => Promise<T>): Promise<T> {
-	return runWithActor({ userId: USER, orgId: USER }, fn);
+	return runWithActor({ credential: "session", userId: USER, orgId: USER }, fn);
 }
 
 const countRows = z.array(z.object({ n: z.coerce.number() }));

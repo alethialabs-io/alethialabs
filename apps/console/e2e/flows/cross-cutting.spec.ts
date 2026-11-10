@@ -58,21 +58,6 @@ function fatalErrors(guard: ConsoleGuard): string[] {
 }
 
 /**
- * Whether a request is the project shell's environment-status server action: a POST whose body is
- * the action's arguments, `[projectId, environmentId]`, with no environment chosen in the URL.
- */
-function isEnvironmentStatusAction(method: string, body: string | null, projectId: string): boolean {
-	if (method !== "POST" || !body) return false;
-	let args: unknown;
-	try {
-		args = JSON.parse(body);
-	} catch {
-		return false;
-	}
-	return Array.isArray(args) && args.length === 2 && args[0] === projectId && args[1] === null;
-}
-
-/**
  * One line per violation, carrying axe's own check payload.
  *
  * THE PAYLOAD IS THE POINT, not decoration. `color-contrast` puts `fgColor`, `bgColor`,
@@ -268,15 +253,24 @@ test.describe("Cross-cutting — project page resilience sweep", () => {
 	for (const route of PROJECT_ROUTES) {
 		test(`project ${route.label} loads without a 500 / redirect / pageerror`, async ({ owner }) => {
 			const proj = await ensureProject(owner);
-			// The project shell posts the environment-status action once it has hydrated, on every
-			// project route. The test holds the page until that action has answered, so a failure in
-			// it is part of this verdict (#5865).
-			const envStatus = owner.page.waitForResponse(
-				(res) => isEnvironmentStatusAction(res.request().method(), res.request().postData(), proj.projectId),
-				{ timeout: 60_000 },
-			);
 			await loadAndAssertShell(owner.page, `/${owner.orgSlug}/${proj.slug}${route.sub}`);
-			await envStatus;
+			// The board's environment-status read (#5865) is part of this verdict on the routes that
+			// show the board. Since #6119 it is no longer a server action the project shell posts on
+			// every project route: the Architecture page prefetches it (`canvas.environmentStatus`) and
+			// only the board reads it, retrying in the browser if the prefetch failed. The board
+			// publishes how that read stands (`data-slot="environment-status"`), so the test holds the
+			// page until it has SETTLED — success or error, never "the skeleton happened to go" — and a
+			// read that failed (on the server, then again in the browser) is red here.
+			if (route.sub === "" || route.sub === "/architecture") {
+				const status = owner.page.locator('[data-slot="environment-status"]');
+				await expect(status).toHaveAttribute("data-state", /^(success|error)$/, { timeout: 60_000 });
+				await expect(status, `the board's environment-status read failed on project ${route.label}`).toHaveAttribute(
+					"data-state",
+					"success",
+				);
+				// …and the design read did not fail either (that renders a region error, not the board).
+				await expect(owner.page.locator('[data-slot="region-error"]')).toHaveCount(0);
+			}
 			expect(fatalErrors(owner.guard), `fatal errors on project ${route.label}`).toEqual([]);
 		});
 	}

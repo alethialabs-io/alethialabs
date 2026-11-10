@@ -6,9 +6,13 @@ package argocd
 import (
 	"bytes"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"regexp"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/names"
 	"gopkg.in/yaml.v3"
@@ -21,8 +25,14 @@ import (
 //   - destinations are pinned to the in-cluster server + the specific namespaces the charts target;
 //   - clusterResourceWhitelist is EMPTY — no cluster-scoped resource (CRD, ClusterRole/Binding,
 //     Namespace, ValidatingWebhook, …) may be created by an untrusted chart;
-//   - namespaceResourceBlacklist denies in-namespace privilege-escalation vectors (RBAC Role/
-//     RoleBinding, ServiceAccount) so a chart can't grant itself extra permissions.
+//   - namespaceResourceWhitelist is a CLOSED list of workload kinds (byoWorkloadKinds), so a
+//     namespaced kind that is not on it — RBAC Role/RoleBinding, ServiceAccount, every
+//     external-secrets.io kind, and any kind an installed operator serves — fails the sync;
+//   - namespaceResourceBlacklist still names RBAC Role/RoleBinding, ServiceAccount and the
+//     external-secrets groups (byoSecretSyncDenied). The whitelist already refuses all of them; the
+//     blacklist is the second layer, so that a later widening of the whitelist (a wildcard group, say)
+//     cannot readmit them. ArgoCD admits a namespaced kind only when it is whitelisted AND not
+//     blacklisted.
 //
 // This is the AppProject half of the trust boundary; namespace PSA + an admission controller
 // (Kyverno/Gatekeeper) are the pod-level half added before untrusted charts are allowed.
@@ -64,11 +74,19 @@ type byoProjectSpec struct {
 	Description  string           `yaml:"description"`
 	SourceRepos  []string         `yaml:"sourceRepos"`
 	Destinations []byoDestination `yaml:"destinations"`
-	// MUST be a non-nil empty slice: yaml.v3 marshals a NIL slice as `null`, and an AppProject whose
-	// clusterResourceWhitelist is `null` is not the same statement as one whose whitelist is `[]`.
-	// This is the single field the whole hardening rests on, so its emptiness is asserted by a test
-	// rather than left to whoever next edits this struct.
-	ClusterResourceWhitelist   []byoGroupKind       `yaml:"clusterResourceWhitelist"`
+	// MUST render as `[]`: ArgoCD admits a cluster-scoped kind only when this list is non-empty and
+	// matches it. yaml.v3 marshals a nil slice as `[]` too, so the explicit empty slice below is for the
+	// reader; what would change the statement is an `omitempty` tag, which drops the key. This is the
+	// single field the whole hardening rests on, so its emptiness is asserted by a test rather than
+	// left to whoever next edits this struct.
+	ClusterResourceWhitelist []byoGroupKind `yaml:"clusterResourceWhitelist"`
+	// MUST be present AND non-empty. ArgoCD reads an ABSENT namespaceResourceWhitelist (nil after
+	// decoding) as "every namespaced kind is permitted" and an empty one as "none is"
+	// (AppProject.IsGroupKindNamePermitted). yaml.v3 marshals a nil slice as `[]`, so leaving the
+	// field unset renders a closed project. What would open it is an `omitempty` tag or deleting the
+	// field, since either drops the key. TestByoAppProjectAdmitsOnlyWorkloadKinds asserts the rendered
+	// YAML carries the list.
+	NamespaceResourceWhitelist []byoGroupKind       `yaml:"namespaceResourceWhitelist"`
 	NamespaceResourceBlacklist []byoGroupKind       `yaml:"namespaceResourceBlacklist"`
 	OrphanedResources          byoOrphanedResources `yaml:"orphanedResources"`
 }
@@ -140,6 +158,106 @@ func ByoProjectName(slug string) string {
 	return names.Bounded(byoProjectPrefix + s)
 }
 
+// ByoChartNamespace is the namespace a BYO chart deploys into when none of its own is chosen:
+// "byo-<chart id>" (#6446). The chart id is the add-on id the console derives (chartSlug), so this is
+// the same name the console's attach form offers as the default (byoChartNamespace in
+// apps/console/lib/validations/byo-charts.ts — the two are pinned to the same table of cases on each
+// side).
+//
+// DISTINCT PER CHART, past the 63-character cap too. A plain cut would give two stored ids that
+// share their first 59 characters the same namespace, so a name that does not fit is cut further
+// and ends in "-" + 8 hex of the FNV-1a 32 hash of the WHOLE id. A new chart's id (at most 57
+// characters) always fits, so the hash only ever appears for an id stored before that cap.
+//
+// A chart gets its own namespace rather than a shared one because the namespace is what isolates it:
+// the hardened AppProject allows the namespaced kinds in its destinations, so two charts in one
+// namespace can read each other's Secrets, and a chart in "default" sat beside the platform's own
+// workloads. No reserved name or prefix starts with "byo-". A NEW attachment may not choose a "byo-"
+// namespace other than its own (the console's attach schema). A chart that chose one before that rule
+// keeps it; only if it is another chart's derived name in the same environment does the runner refuse
+// one of the two (provisioner.byoNamespaceCollisions).
+func ByoChartNamespace(chartID string) string {
+	full := byoProjectPrefix + chartID
+	if len(full) <= names.SlugMaxLength {
+		return full
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(chartID)) // a hash.Hash never returns an error from Write
+	suffix := fmt.Sprintf("%08x", h.Sum32())
+	head := strings.TrimRight(full[:names.SlugMaxLength-len(suffix)-1], "-")
+	return head + "-" + suffix
+}
+
+// ByoLegacyDefaultNamespace is where a BYO chart attached before #6446 deployed when no namespace
+// was chosen. It is now reserved for the platform, and such a chart is moved to ByoChartNamespace on
+// its next deploy (provisioner.configureByoCharts).
+const ByoLegacyDefaultNamespace = "default"
+
+// byoSecretSyncDenied are the kinds a BYO chart may not declare because they sync secret material:
+// the whole external-secrets.io group (ExternalSecret, SecretStore, PushSecret, and the
+// cluster-scoped ClusterSecretStore and ClusterExternalSecret, which the empty
+// clusterResourceWhitelist denies as well) and the whole generators.external-secrets.io group, whose
+// kinds mint credentials for an ExternalSecret or PushSecret that references them, plus any other
+// subgroup of external-secrets.io a later ESO release adds.
+//
+// A chart reads only the secret material its declared bindings give it. Those bindings are
+// ExternalSecrets the RUNNER applies with its own kubeconfig (provisioner.applyByoChartBindings),
+// outside ArgoCD, so this list does not reach them. It has to be the AppProject that refuses a
+// chart's own: the platform's ClusterSecretStores admit the chart's namespace on purpose, because the
+// runner's binding ExternalSecrets live there, and an ESO store condition can only select a
+// NAMESPACE, never an object within one (see externalSecretsStoreTemplate).
+//
+// Kind "*" rather than a list of today's kinds: ArgoCD matches each entry with filepath.Match, so a
+// kind a later ESO release adds to any of these groups is denied without anyone editing this list.
+// "*.external-secrets.io" also matches the generators group; that group stays named because it is
+// the one ESO 0.9.20 ships.
+//
+// The deny stops new objects only. SweepByoSecretSyncObjects removes the ones an earlier sync left.
+var byoSecretSyncDenied = []byoGroupKind{
+	{Group: "external-secrets.io", Kind: "*"},
+	{Group: "generators.external-secrets.io", Kind: "*"},
+	{Group: "*.external-secrets.io", Kind: "*"},
+}
+
+// byoWorkloadKinds is the closed list of namespaced kinds a BYO chart may create. Each entry is an
+// exact group and kind: no wildcard, because ArgoCD matches each entry with filepath.Match and a "*"
+// here would admit every kind an installed operator serves in that group. The core group is "".
+//
+// A kind earns a place by being something an ordinary application chart ships to run itself, and by
+// granting nothing beyond the chart's own namespace. This list decides which KINDS a chart may
+// declare; what a container inside an admitted pod may do is the pod-level half described on
+// byoAppProject, not something this list can express.
+//
+// Absent ON PURPOSE, so refused: ServiceAccount, Role and RoleBinding (a chart may not mint an
+// identity or grant one permissions); every external-secrets.io kind (a chart reads only the secrets
+// its bindings give it — byoSecretSyncDenied); Endpoints and EndpointSlice (a Service's backends are
+// chosen by its selector, not written by hand); ResourceQuota and LimitRange (the namespace's limits
+// are the platform's to set); NetworkPolicy, as in the namespace-tenant and preview projects (a policy
+// governs every pod its selector matches in the namespace, and nothing guarantees that namespace holds
+// only this chart); and every kind served by a CustomResourceDefinition, because what such
+// an object can make its operator do is that operator's rule, not this project's. To admit another
+// kind, add it here with its reason and a case in TestByoAppProjectAdmitsOnlyWorkloadKinds.
+var byoWorkloadKinds = []byoGroupKind{
+	// Workload controllers — the chart's own processes.
+	{Group: "apps", Kind: "Deployment"},  // the usual stateless workload
+	{Group: "apps", Kind: "StatefulSet"}, // a workload with stable identity and its own volumes
+	{Group: "apps", Kind: "DaemonSet"},   // one pod per node, for node-local agents
+	{Group: "apps", Kind: "ReplicaSet"},  // what a Deployment manages; a chart may declare one directly
+	{Group: "batch", Kind: "Job"},        // run-to-completion work, including Helm hook jobs
+	{Group: "batch", Kind: "CronJob"},    // scheduled Jobs
+	{Group: "", Kind: "Pod"},             // a bare pod, as Helm test hooks declare
+	// Configuration and storage the workload reads.
+	{Group: "", Kind: "ConfigMap"},             // non-secret configuration
+	{Group: "", Kind: "Secret"},                // the chart's own secrets; bindings' secrets are the runner's
+	{Group: "", Kind: "PersistentVolumeClaim"}, // a claim on storage the cluster's StorageClasses provide
+	// Networking inside and into the namespace.
+	{Group: "", Kind: "Service"},                  // a stable address for the chart's pods
+	{Group: "networking.k8s.io", Kind: "Ingress"}, // HTTP routing through the cluster's ingress controller
+	// Availability.
+	{Group: "autoscaling", Kind: "HorizontalPodAutoscaler"}, // scales a workload in the namespace on load
+	{Group: "policy", Kind: "PodDisruptionBudget"},          // limits voluntary evictions of pods in the namespace
+}
+
 // RenderByoAppProject renders the hardened AppProject YAML locking BYO charts to their own repos
 // + namespaces. Empty inputs are tolerated (an empty sourceRepos/destinations project simply
 // admits nothing) so a mis-built snapshot fails closed rather than wide-open. commonLabels are the
@@ -174,15 +292,16 @@ func RenderByoAppProject(name string, sourceRepos, namespaces []string, commonLa
 			Finalizers: []string{"resources-finalizer.argocd.argoproj.io"},
 		},
 		Spec: byoProjectSpec{
-			Description:              "Bring-your-own Helm charts (hardened, default-deny)",
-			SourceRepos:              repos,
-			Destinations:             dests,
-			ClusterResourceWhitelist: []byoGroupKind{}, // non-nil — see the field comment
-			NamespaceResourceBlacklist: []byoGroupKind{
+			Description:                "Bring-your-own Helm charts (hardened, default-deny)",
+			SourceRepos:                repos,
+			Destinations:               dests,
+			ClusterResourceWhitelist:   []byoGroupKind{}, // non-nil — see the field comment
+			NamespaceResourceWhitelist: append([]byoGroupKind{}, byoWorkloadKinds...),
+			NamespaceResourceBlacklist: append([]byoGroupKind{
 				{Group: "rbac.authorization.k8s.io", Kind: "Role"},
 				{Group: "rbac.authorization.k8s.io", Kind: "RoleBinding"},
 				{Group: "", Kind: "ServiceAccount"},
-			},
+			}, byoSecretSyncDenied...),
 			OrphanedResources: byoOrphanedResources{Warn: true},
 		},
 	}
@@ -244,6 +363,9 @@ const dns1123LabelMaxLen = names.NamespaceMaxLength
 // list. Silently rewriting it in one place and not the other would produce a project whose
 // destination never matches the namespace the chart syncs into, and the failure would surface as an
 // ArgoCD permission error naming neither cause.
+//
+// It also REFUSES a reserved platform namespace (#6439) — see byoReservedNamespaceReason. The shape
+// checks run first so a hostile value is reported as malformed, never echoed back as "reserved".
 func validateByoNamespace(ns string) error {
 	if len(ns) > dns1123LabelMaxLen {
 		return fmt.Errorf("namespace %q is %d characters; Kubernetes allows at most %d", ns, len(ns), dns1123LabelMaxLen)
@@ -251,7 +373,106 @@ func validateByoNamespace(ns string) error {
 	if !dns1123Label.MatchString(ns) {
 		return fmt.Errorf("namespace %q is not a valid DNS-1123 label (lowercase alphanumerics and '-', starting and ending alphanumeric)", ns)
 	}
+	if reason := byoReservedNamespaceReason(ns); reason != "" {
+		return fmt.Errorf("namespace %q is reserved for the platform: %s. Choose a namespace of your own", ns, reason)
+	}
 	return nil
+}
+
+// ValidateByoNamespace is validateByoNamespace for the runner's deploy step, which refuses a BYO
+// chart per chart (provisioner.configureByoCharts) before either renderer sees its namespace.
+func ValidateByoNamespace(ns string) error { return validateByoNamespace(ns) }
+
+// byoReservedNamespacesJSON is the ONE list of namespaces a BYO chart may never target (#6439).
+//
+// WHY A BYO CHART MUST NOT SHARE A PLATFORM NAMESPACE. The hardened AppProject denies cluster-scoped
+// objects, and admits only a closed list of namespaced workload kinds (byoWorkloadKinds) in its
+// destinations. Those kinds include Secret, ConfigMap and Service, so a chart's isolation from the
+// platform still rests on the namespace itself. These are the namespaces on the
+// platform's side of that line.
+//
+// The console's BYO form refuses the same names up front from a mirrored copy
+// (apps/console/lib/validations/byo-reserved-namespaces.ts) whose parity test deep-equals this file;
+// how each group is checked against its source (and which parts are hand-kept) is stated in the JSON's
+// own $comment; the Go pins are the TestByoReserved_* tests in byo_test.go. "default" is reserved
+// (#6446): it holds the platform's first-class workloads, their binding Secrets and service accounts.
+// A chart with no namespace of its own lands in ByoChartNamespace instead. Preview namespaces are not
+// reserved either: their prefix is a per-project setting (project_preview_config.namespace_prefix),
+// not a fixed platform name.
+//
+//go:embed byo_reserved_namespaces.json
+var byoReservedNamespacesJSON []byte
+
+// byoReservedNamespaceList is the shape of byo_reserved_namespaces.json.
+type byoReservedNamespaceList struct {
+	Comment string `json:"$comment"`
+	Groups  []struct {
+		ID         string   `json:"id"`
+		Reason     string   `json:"reason"`
+		Namespaces []string `json:"namespaces"`
+	} `json:"groups"`
+	Prefixes []struct {
+		Prefix string `json:"prefix"`
+		Reason string `json:"reason"`
+	} `json:"prefixes"`
+}
+
+// byoReservedPrefix is one reserved namespace prefix and why it is reserved.
+type byoReservedPrefix struct{ prefix, reason string }
+
+// byoReserved holds the parsed list: exact names → reason, plus the prefixes.
+var byoReserved = mustParseByoReserved(byoReservedNamespacesJSON)
+
+// byoReservedIndex is byo_reserved_namespaces.json flattened for lookup.
+type byoReservedIndex struct {
+	exact    map[string]string
+	prefixes []byoReservedPrefix
+}
+
+// mustParseByoReserved parses the embedded list, PANICKING on a malformed one. The file is compiled
+// into the binary, so a parse failure is a build defect, and every test in this package reds on it —
+// an empty list would instead have silently reserved nothing. Unknown fields are refused too, so a
+// group added to the JSON in a shape this struct does not read cannot quietly reserve nothing.
+func mustParseByoReserved(raw []byte) byoReservedIndex {
+	var list byoReservedNamespaceList
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&list); err != nil {
+		panic(fmt.Sprintf("byo_reserved_namespaces.json: %v", err))
+	}
+	idx := byoReservedIndex{exact: map[string]string{}}
+	for _, g := range list.Groups {
+		if g.ID == "" || g.Reason == "" || len(g.Namespaces) == 0 {
+			panic(fmt.Sprintf("byo_reserved_namespaces.json: group %q needs an id, a reason and at least one namespace", g.ID))
+		}
+		for _, n := range g.Namespaces {
+			// A name in two groups keeps the FIRST group's reason; the order is the file's.
+			if _, seen := idx.exact[n]; !seen {
+				idx.exact[n] = g.Reason
+			}
+		}
+	}
+	for _, p := range list.Prefixes {
+		if p.Prefix == "" || p.Reason == "" {
+			panic("byo_reserved_namespaces.json: every prefix needs a prefix and a reason")
+		}
+		idx.prefixes = append(idx.prefixes, byoReservedPrefix{prefix: p.Prefix, reason: p.Reason})
+	}
+	return idx
+}
+
+// byoReservedNamespaceReason says why ns is reserved for the platform, or "" when a BYO chart may use
+// it. An exact name wins over a prefix, because its reason is the more specific one.
+func byoReservedNamespaceReason(ns string) string {
+	if reason, ok := byoReserved.exact[ns]; ok {
+		return reason
+	}
+	for _, p := range byoReserved.prefixes {
+		if strings.HasPrefix(ns, p.prefix) {
+			return p.reason
+		}
+	}
+	return ""
 }
 
 // RenderByoNamespaces renders the destination namespaces for a project's BYO charts, so the runner

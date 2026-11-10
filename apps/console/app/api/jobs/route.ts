@@ -15,11 +15,12 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import { runWithActor } from "@/lib/authz/actor-context";
+import { actorWithCredential, personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import { jobVisibleTo } from "@/lib/jobs/visibility";
 import {
 	assertMintingProfileStillMember,
 	authorizeCli,
 	ensureCliOrgAccess,
-	userIdIsTheCaller,
 } from "@/lib/authz/guard";
 import {
 	assertRunnerInOrg,
@@ -37,6 +38,7 @@ import { type CliCaller, credentialOf } from "@/lib/cli/providers";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { EnvStateConflictError } from "@/lib/db/env-status";
+import { redactJobRow } from "@/lib/jobs/redact-snapshot";
 import { FabricHasLiveTenantsError } from "@/lib/queries/destroy-tree";
 import { cloudIdentities, jobs, runners, projects } from "@/lib/db/schema";
 import { actorIdentityWhere } from "@/lib/runners/claim-identity";
@@ -245,7 +247,12 @@ export async function POST(req: Request) {
 			);
 		}
 		const scopedOrg = scopedOrgOf(caller, req);
-		const actor = await getActiveScope(userId, scopedOrg);
+		// Carries the credential kind, so the server actions below (reached through `runWithActor`)
+		// never treat a service token's minter as the person asking (`personalIdentityAuthor`).
+		const actor = actorWithCredential(
+			await getActiveScope(userId, scopedOrg),
+			caller.credential,
+		);
 		// WHICH QUESTION TO ASK DEPENDS ON WHAT THE CREDENTIAL IS (#4298).
 		//
 		// This route resolves its own scope rather than going through `authorizeCli`, so it
@@ -366,7 +373,7 @@ export async function POST(req: Request) {
 						actorIdentityWhere(
 							target.cloud_identity_id,
 							actor.orgId,
-							userIdIsTheCaller(caller.credential) ? actor.userId : undefined,
+							personalIdentityAuthor(actor),
 						),
 					)
 					.limit(1);
@@ -432,7 +439,7 @@ export async function POST(req: Request) {
 					{ status: 500 },
 				);
 			}
-			return cliJson(cliJobResponse, { job }, { status: 201 });
+			return cliJson(cliJobResponse, { job: redactJobRow(job) }, { status: 201 });
 		}
 
 		// PLAN / DEPLOY / DESTROY: run the console's own server actions under the CLI
@@ -557,7 +564,9 @@ export async function POST(req: Request) {
 
 		return cliJson(
 			cliJobResponse,
-			cascadeJobs ? { job, cascade_jobs: cascadeJobs } : { job },
+			cascadeJobs
+				? { job: redactJobRow(job), cascade_jobs: cascadeJobs }
+				: { job: redactJobRow(job) },
 			{ status: 201 },
 		);
 	} catch (err: unknown) {
@@ -819,6 +828,9 @@ export async function GET(req: Request) {
 
 	const scope: [SQL, ...(SQL | undefined)[]] = [
 		visible,
+		// Job visibility follows project visibility (lib/jobs/visibility.ts), exactly as the console's
+		// jobs list: a job of a project the caller may not view is not listed, nor counted.
+		await jobVisibleTo(actor),
 		status ? sql`${jobs.status}::text = ${status}` : undefined,
 	];
 
@@ -852,7 +864,7 @@ export async function GET(req: Request) {
 	});
 
 	const result = items.map((r) => ({
-		...r.job,
+		...redactJobRow(r.job),
 		project_name: r.project_name ?? null,
 		runner_name: r.runner_name ?? null,
 	}));

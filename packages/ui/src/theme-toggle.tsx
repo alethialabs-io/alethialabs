@@ -4,8 +4,7 @@
 
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
-
+import { useHydrated } from "./use-hydrated";
 import { cn } from "./utils";
 
 const THEMES = [
@@ -33,10 +32,10 @@ interface ThemeToggleProps {
  */
 export function ThemeToggle({ className, bare }: ThemeToggleProps) {
 	const { theme, setTheme } = useTheme();
-	const [mounted, setMounted] = useState(false);
-
-	// The server cannot know the stored theme; highlight only after hydration.
-	useEffect(() => setMounted(true), []);
+	// The server cannot know the stored theme; highlight only after hydration. `useHydrated` is
+	// false for the server render and the hydrating one, so both agree, and true after — no mount
+	// effect, and a client-only mount highlights on its first render.
+	const mounted = useHydrated();
 
 	return (
 		<div

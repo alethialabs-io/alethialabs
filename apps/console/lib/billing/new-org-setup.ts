@@ -95,6 +95,13 @@ export interface NewOrgSetupState {
 	 * (`endedSetupRead`, `endedSetupClause`). Null otherwise — an open hold is reported in `hold` instead.
 	 */
 	ended: { clause: string } | null;
+	/**
+	 * Set when this subscription is `incomplete` with its first payment failed or never made
+	 * (`action_needed`; not `processing`, `confirming` or `unconfirmed`), no open hold names it, and its team's billing row names ANOTHER
+	 * live plan (ADR 0002 §5.6, C120): the sentence saying it cannot be completed here.
+	 * `paymentUrl` is then null — a setup is never offered for payment beside another live plan.
+	 */
+	besideLivePlan?: { clause: string } | null;
 	/** The organization created for this subscription, if one exists and the caller owns it. */
 	org: { id: string; slug: string } | null;
 	/** The subscription's metadata names `org` — the link step's Stripe writes landed. */
@@ -131,7 +138,7 @@ const LINK_REFUSED_ALERT_RAISED = " We have raised an alert.";
 /** §5.5's `released(refunded)` clause, for an ended subscription a hold refunded in full. */
 const LINK_REFUSED_REFUNDED =
 	"This checkout was closed, so it was not linked to a team. An earlier payment was refunded in full; it can take 5–10 business days to reach you.";
-const LINK_REFUSED_FREE_PLAN = " A team already created for it stays on the free plan.";
+const LINK_REFUSED_FREE_PLAN = " A team already created for it stays on the Hobby plan.";
 
 /** What is known of an ended subscription's money: refunded by a hold, never charged, or not proven either. */
 export type EndedSetupRead = "refunded" | "not_charged" | "unconfirmed";

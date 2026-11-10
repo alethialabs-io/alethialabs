@@ -55,6 +55,15 @@ export const runners = pgTable(
 		// claims any provider (the full/self-host image); a lean per-cloud image
 		// declares just its one. Reported image-driven via the heartbeat.
 		supported_providers: cloudProvider().array(),
+		// The capabilities this runner last advertised in X-Runner-Capabilities (#6458), stamped by
+		// claim_next_job and runner_heartbeat. claim_next_job reads it to ask whether a LIVE runner in a
+		// job's pool can run a job the claiming runner cannot (lib/runners/snapshot-capabilities.ts).
+		capabilities: text().array().default([]).notNull(),
+		// When this runner last called the claim (#6458) — stamped by claim_next_job on every poll, empty
+		// or not. An idle runner polls at least every 30 s; a busy one holds an in-flight job. So a runner
+		// that only heartbeats — claim loop wedged — stops counting as a capable runner in its pool
+		// (live_runner_has_capabilities) once this ages out of the liveness window.
+		last_claim_at: timestamp({ withTimezone: true }),
 		// @deprecated superseded by operator/provisioning; retained nullable for the
 		// backfill window, dropped in a later migration.
 		mode: runnerMode(),
@@ -80,8 +89,10 @@ export const runners = pgTable(
 		index("idx_runners_user").on(t.user_id),
 		index("idx_runners_org").on(t.org_id),
 		index("idx_runners_token_hash").on(t.id, t.token_hash),
-		uniqueIndex("idx_runners_one_default_per_user")
-			.on(t.user_id)
+		// One default runner per user PER ORG: a default is chosen within the addressed org (or the
+		// personal workspace), and choosing one there leaves the user's default elsewhere alone.
+		uniqueIndex("idx_runners_one_default_per_user_org")
+			.on(t.user_id, t.org_id)
 			.where(sql`is_default = true`),
 		// Managed (platform-owned) runner names are globally unique.
 		uniqueIndex("idx_runners_unique_managed_name")

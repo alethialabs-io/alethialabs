@@ -235,7 +235,7 @@ ADR 0002 §1.3 S1–S15 hold unchanged here, with the same caveats. Two more are
 | **Payer key** | Who pays in that scope. `new_org`: the user id. `org_plan`: the org id. The pair `(scope, payer_key)` is the key. `payer_key` alone is never a key. |
 | **Lease key** | `leaseKeyFor(scope, payer_key)`: `user:<payer>` for `new_org`, `org-plan:<payer>` for `org_plan`. One function, used by the store's fence, the sweeper, the operator script and every flow. |
 | **Org-plan subscription of O** | A subscription whose **own** metadata has `organization_id = O` and no `product_type` (`billing.ts:1560`, `:1457`, `:1712`). A linked create-a-team subscription carries `organization_id = O` too (`sweeper.ts:388-392`), so it is one (ADR 0002 §2: "it becomes an ordinary org subscription once the link writes `organization_id`"). An AI subscription (`product_type = "ai_subscription"`, `billing.ts:1624`) is not. Neither is another org's subscription on a shared customer. The customer is never evidence. This is what (b) may **close**. The live check (c) deliberately counts more: F3's classifier, every live non-AI subscription on O's customer (D2 (c)). |
-| **Live** | ADR 0002 §2's set: `active`, `trialing`, `past_due`, `unpaid`, `paused` (`LIVE_SUBSCRIPTION_STATUSES`, `billing.ts:2196-2202`). |
+| **Live** | ADR 0002 §2's set: `active`, `trialing`, `past_due`, `unpaid`, `paused` (`LIVE_SUBSCRIPTION_STATUSES` and `isLiveSubscriptionStatus`, `apps/console/lib/billing/subscription-status.ts`). |
 | **Paid** | `active` or `trialing` (`isBillingActive`, `lib/billing/plan.ts:80-82`). The row guard's superseder test uses this set (`queries.ts:262`). |
 | **Off-Stripe grant** | An org row whose `stripeSubscriptionId` is null and whose status is `active`, `trialing` or `past_due`. It is **live** unless `isManualGrantExpired` (`plan.ts:94-103`) says its term has passed. |
 | **Row slot** | The org-plan columns of `organization_billing`: `stripeSubscriptionId`, `status`, `plan`, the event watermark. Only the guarded write writes them for Stripe (`queries.ts:296-344`). |
@@ -745,6 +745,8 @@ That is 48 cases. C17 and C38 re-run an existing test, and each adds only what t
 | Choosing which of two live plans to keep | A person's decision (D6, Q4). | The alert, and the operator in Stripe. |
 | An org on a **legacy shared customer** whose customer also carries another org's live plan, or a live unlinked create-a-team subscription | (c) uses F3's classifier with no `organization_id` filter on purpose, so it refuses every purchase, Checkout and trial by O for as long as that subscription lives. That is the safe side: it never mints beside a subscription it cannot place. | The refusal names support. The operator's fix is the one F3's over-cap alert already describes: once nothing of O's is live on the shared customer, point O's `organization_billing.stripe_customer_id` at a new Stripe customer with no subscription history. New customers are no longer shared (ADR 0002 §4.2 (2)), so no new case arises. |
 | The org-plan sheet showing `notice` | A UI change. | O7, `class:ui`, a draft until the maintainer accepts it (CLAUDE.md §4). Until then the clause still rides the response. |
+
+*Superseded 2026-11-06: the `class:ui` draft gate cited here and in O7 below was dropped; such a PR now opens non-draft.*
 
 ---
 

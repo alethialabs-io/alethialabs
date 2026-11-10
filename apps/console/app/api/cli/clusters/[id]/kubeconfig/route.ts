@@ -17,6 +17,7 @@ import {
 import { mintError, noStore, readBoundedJson } from "@/lib/kubeconfig-mint/http";
 
 import {
+	KUBECONFIG_MINT_IDENTITY_UNAVAILABLE_REASON,
 	type MintRequestRefusal,
 	requestKubeconfigMint,
 } from "@/lib/kubeconfig-mint/request";
@@ -51,6 +52,9 @@ function refusalResponse(refusal: MintRequestRefusal): Response {
 			// The runner's own sentence, byte for byte: the CLI prints one message for this whichever
 			// side refused it.
 			return mintError(422, KUBECONFIG_MINT_SHARED_CLUSTER_REASON);
+		case "identity-unavailable":
+			// 422 because the CLI prints a 422's message as the explanation (kubeMintRefusal).
+			return mintError(422, KUBECONFIG_MINT_IDENTITY_UNAVAILABLE_REASON);
 	}
 }
 

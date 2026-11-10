@@ -12,7 +12,6 @@
 // server-produced, capped at 100 by the query, and never sorted or paginated client-side.
 
 import Link from "next/link";
-import { formatRelative } from "@repo/format";
 import { CountPill } from "@repo/ui/count-pill";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { EmptyState } from "@repo/ui/empty";
@@ -28,6 +27,7 @@ import {
 } from "@repo/ui/table";
 import { cn } from "@repo/ui/utils";
 import type { EvidenceWaiver } from "@/lib/queries/evidence";
+import { RelativeClock } from "./evidence-clock";
 import { EVIDENCE_HELP } from "./evidence-help";
 import { EvIcon } from "./evidence-status";
 
@@ -86,20 +86,17 @@ export function EvidenceWaivers({
 				/>
 			) : (
 				<Table className="min-w-[720px]">
-					{/* Auto layout, not `table-fixed`: the two prose columns need to breathe the
-					    way the `minmax()` tracks they replace did, so these widths are hints. */}
-					<colgroup>
-						<col className="w-[24%]" />
-						<col className="w-[38%]" />
-						<col className="w-[170px]" />
-						<col className="w-[128px]" />
-					</colgroup>
+					{/* Auto layout: the two prose columns breathe, so these widths are hints. They sit
+					    on the HEADER cells, not in a `<colgroup>` — the shared row's hover marks lay
+					    out as a leading anonymous cell in Chrome, and an explicit column list hands
+					    that phantom cell the first width (evidence-table.tsx, #6126). Reason carries
+					    no width: it takes what is left, which would otherwise go to the phantom. */}
 					<TableHeader className="bg-surface-sunken">
 						<TableRow className="hover:bg-transparent">
-							<TableHead className={HEAD}>Waived</TableHead>
+							<TableHead className={cn(HEAD, "w-[24%]")}>Waived</TableHead>
 							<TableHead className={HEAD}>Reason</TableHead>
-							<TableHead className={HEAD}>Recorded</TableHead>
-							<TableHead className={HEAD}>Status</TableHead>
+							<TableHead className={cn(HEAD, "w-[170px]")}>Recorded</TableHead>
+							<TableHead className={cn(HEAD, "w-[128px]")}>Status</TableHead>
 						</TableRow>
 					</TableHeader>
 					<TableBody>
@@ -142,7 +139,7 @@ export function EvidenceWaivers({
 								<TableCell className={CELL}>
 									<div className="flex flex-col gap-0.5 font-mono text-ui-2xs text-text-tertiary">
 										<span className="text-text-secondary">{w.by}</span>
-										<span>{formatRelative(w.createdAt)}</span>
+										<RelativeClock at={w.createdAt} />
 										<Link
 											href={`/${org}/~/jobs/${w.jobId}`}
 											className="w-fit underline-offset-2 hover:text-text-primary hover:underline"
@@ -166,9 +163,7 @@ export function EvidenceWaivers({
 										  * things this cell can say, not the quietest. #4612.
 										  */}
 										<span className="font-mono text-ui-2xs text-text-tertiary">
-											{w.expiry
-												? `Expires ${formatRelative(w.expiry)}`
-												: "No expiry"}
+											{w.expiry ? <RelativeClock at={w.expiry} prefix="Expires " /> : "No expiry"}
 										</span>
 									</div>
 								</TableCell>

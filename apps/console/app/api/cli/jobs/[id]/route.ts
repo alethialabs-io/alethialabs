@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorizeCli } from "@/lib/authz/guard";
+import { jobVisibleTo } from "@/lib/jobs/visibility";
 import { getServiceDb } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
+import { redactJobRow } from "@/lib/jobs/redact-snapshot";
 import { jobWire } from "@/lib/validations/cli-contract";
 
 /** Fetches a single job by ID, enforcing view·job + org scope. */
@@ -19,6 +21,10 @@ export async function GET(
 	const auth = await authorizeCli(req, "view", { type: "job", id: jobId });
 	if ("error" in auth) return auth.error;
 	const { actor } = auth;
+
+	// Job visibility follows project visibility (lib/jobs/visibility.ts), as in the console: a job of a
+	// project the caller may not view is answered as one that does not exist.
+	const visible = await jobVisibleTo(auth.actor);
 
 	try {
 		const db = getServiceDb();
@@ -34,14 +40,14 @@ export async function GET(
 			// It is `auth.orgScope` and not a ternary on `auth.credential`: the values are the
 			// whole of #4154, and a per-route derivation is how the wide arm gets copied into a
 			// fourth file.
-			.where(and(eq(jobs.id, jobId), inArray(jobs.org_id, [...auth.orgScope])))
+			.where(and(eq(jobs.id, jobId), inArray(jobs.org_id, [...auth.orgScope]), visible))
 			.limit(1);
 
 		if (!job) {
 			return NextResponse.json({ error: "Job not found" }, { status: 404 });
 		}
 
-		return cliJson(jobWire, job);
+		return cliJson(jobWire, redactJobRow(job));
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";

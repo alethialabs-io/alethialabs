@@ -91,6 +91,23 @@ cleanup_main_checkout_from_common_dir() { # <git-common-dir> <fallback>
 	esac
 }
 
+# guard-destroy.sh files a snapshot under refs/safety/<worktree>/<UTC timestamp>[-suffix]. The
+# timestamp in the NAME is the age — not the commit date, which for a pinned stash entry or
+# branch tip is when that work was made, possibly long before it was pinned. The format is
+# fixed-width (YYYYmmddTHHMMSSZ), so a string comparison is a date comparison.
+#
+# 0 = expired (delete it) · 1 = keep (younger, or a name this script did not write)
+safety_ref_expired() { # <refname> <cutoff YYYYmmddTHHMMSSZ>
+	local ref="${1:-}" cutoff="${2:-}" rest ts
+	case "$ref" in refs/safety/*/*) ;; *) return 1 ;; esac
+	rest="${ref#refs/safety/}"
+	rest="${rest#*/}"
+	ts="${rest:0:16}"
+	case "$ts" in [0-9][0-9][0-9][0-9][01][0-9][0-3][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;; *) return 1 ;; esac
+	case "$cutoff" in [0-9][0-9][0-9][0-9][01][0-9][0-3][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;; *) return 1 ;; esac
+	[[ "$ts" < "$cutoff" ]]
+}
+
 # ── self-test ───────────────────────────────────────────────────────────────────────────
 # Counters are incremented in THIS shell, never a subshell: `fails=$((fails+1))` inside a
 # pipeline or `$( )` is lost on the way out, which is how a harness prints FAIL and then
@@ -140,6 +157,19 @@ if [ "$MODE" = "self-test" ]; then
 		"/fallback" "$(cleanup_main_checkout_from_common_dir /repo/.git/worktrees/wt-x /fallback)"
 	eq "empty common dir falls back" \
 		"/fallback" "$(cleanup_main_checkout_from_common_dir "" /fallback)"
+
+	safety_ref_expired refs/safety/wt-x/20261001T000000Z 20261006T000000Z && rc=0 || rc=$?
+	ok "a snapshot older than the cutoff expires" 0 "$rc"
+	safety_ref_expired refs/safety/wt-x/20261101T000000Z-stash-0 20261006T000000Z && rc=0 || rc=$?
+	ok "a younger pin is kept" 1 "$rc"
+	safety_ref_expired refs/safety/wt-x/20261001T000000Z-branch-feat_a 20261006T000000Z && rc=0 || rc=$?
+	ok "an old branch pin expires" 0 "$rc"
+	safety_ref_expired refs/safety/wt-x/not-a-timestamp 20261006T000000Z && rc=0 || rc=$?
+	ok "a name guard-destroy did not write is never deleted" 1 "$rc"
+	safety_ref_expired refs/heads/20201001T000000Z 20261006T000000Z && rc=0 || rc=$?
+	ok "nothing outside refs/safety/ is ever a candidate" 1 "$rc"
+	safety_ref_expired refs/safety/wt-x/20201001T000000Z "" && rc=0 || rc=$?
+	ok "no cutoff (date failed) deletes nothing" 1 "$rc"
 
 	if [ "$fails" -eq 0 ]; then
 		say "✓ all passed"
@@ -229,7 +259,23 @@ if cleanup_runs_branch_sweep "$MODE"; then
 	esac
 fi
 
-# ── 4. the census of what was deliberately left ─────────────────────────────────────────
+# ── 4. safety snapshots older than 30 days ──────────────────────────────────────────────
+# guard-destroy.sh's refs/safety/* keep a destroyed tree recoverable; after 30 days they are
+# history nobody will come back for. BSD date (macOS) first, GNU date second; if neither yields
+# a cutoff, safety_ref_expired keeps everything.
+_cutoff="$(date -u -v-30d +%Y%m%dT%H%M%SZ 2>/dev/null || date -u -d '30 days ago' +%Y%m%dT%H%M%SZ 2>/dev/null || true)"
+_pruned=0
+while IFS= read -r _ref; do
+	[ -n "$_ref" ] || continue
+	if safety_ref_expired "$_ref" "$_cutoff"; then
+		TO 5 git -C "$MAIN_CHECKOUT" update-ref -d "$_ref" >/dev/null 2>&1 && _pruned=$((_pruned + 1))
+	fi
+done <<EOF
+$(TO 10 git -C "$MAIN_CHECKOUT" for-each-ref --format='%(refname)' refs/safety/ 2>/dev/null || true)
+EOF
+[ "$_pruned" -gt 0 ] && say "  safety    pruned ${_pruned} refs/safety snapshot(s) older than 30 days"
+
+# ── 5. the census of what was deliberately left ─────────────────────────────────────────
 # The trees the sweep refuses are the whole reason this is not a silent cron. `--prune`
 # will NEVER reclaim them, so without a count they are invisible until someone runs
 # `wt:who` by hand and reads 40 lines. One number, and the command that explains it.

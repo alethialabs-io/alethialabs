@@ -1,10 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { HydrationBoundary, type Query, dehydrate } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { resolveProjectId } from "@/app/server/actions/resolve";
 import { ProjectShell } from "@/components/design-project/project-shell";
+import { getQueryClient } from "@/lib/query/client";
+import { serverOrpc } from "@/lib/rpc/server";
+
+/** Whether a cached query is this layout's environments prefetch, and settled (see `[org]/layout.tsx`). */
+function isEnvSwitcherRead(query: Query): boolean {
+	const [path] = query.queryKey;
+	return (
+		query.state.status === "success" &&
+		Array.isArray(path) &&
+		path[0] === "workspace" &&
+		path[1] === "environments"
+	);
+}
 
 /**
  * The project workspace layout. Owns the docked panel (service inspector + AI assistant) so the
@@ -42,11 +56,21 @@ export default async function ProjectLayout({
 	// No project, no shell — the page below answers the miss inside the boundary (see above).
 	if (projectId === null) return <>{children}</>;
 
-	const identities = await getVerifiedCloudIdentities();
+	// The topbar's environment switcher reads this project's environments; prefetching them here
+	// lets it paint the active env with the page instead of fetching after hydration (#6114).
+	const queryClient = getQueryClient();
+	const [identities] = await Promise.all([
+		getVerifiedCloudIdentities(),
+		queryClient.prefetchQuery(
+			serverOrpc().workspace.environments.queryOptions({ input: { project } }),
+		),
+	]);
 
 	return (
-		<ProjectShell projectId={projectId} identities={identities}>
-			{children}
-		</ProjectShell>
+		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isEnvSwitcherRead })}>
+			<ProjectShell projectId={projectId} identities={identities}>
+				{children}
+			</ProjectShell>
+		</HydrationBoundary>
 	);
 }

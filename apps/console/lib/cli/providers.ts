@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { actorWithCredential } from "@/lib/authz/actor-credential";
 import { isEnumMember } from "@/lib/coerce";
 import { type CliTokenPayload, verifyCliToken } from "@/lib/cli/auth";
 import { getActiveScope } from "@/lib/auth/scope";
@@ -268,7 +269,12 @@ export async function resolveCliProvider(
 			if (pinnedScope.orgId !== caller.pinnedOrg) {
 				return { userId: null, scope: null, provider: null, errorResponse: forbidden() };
 			}
-			return { userId, scope: pinnedScope, provider, errorResponse: null };
+			return {
+				userId,
+				scope: actorWithCredential(pinnedScope, "service_token"),
+				provider,
+				errorResponse: null,
+			};
 		}
 		case "session": {
 			// An interactive session picks its org with `X-Alethia-Org` — the CLI's `--org` flag. It is safe
@@ -289,7 +295,7 @@ export async function resolveCliProvider(
 			//
 			// Calling the membership query directly instead would skip the extra resolution honestly, but it puts a
 			// second copy of the membership predicate in the tree while #3863 is correcting the first.
-			const defaultScope = await getActiveScope(userId);
+			const defaultScope = actorWithCredential(await getActiveScope(userId), "session");
 			if (!headerOrg) {
 				return { userId, scope: defaultScope, provider, errorResponse: null };
 			}
@@ -312,7 +318,12 @@ export async function resolveCliProvider(
 			if (headerScope.orgId !== headerOrg) {
 				return { userId: null, scope: null, provider: null, errorResponse: forbidden() };
 			}
-			return { userId, scope: headerScope, provider, errorResponse: null };
+			return {
+				userId,
+				scope: actorWithCredential(headerScope, "session"),
+				provider,
+				errorResponse: null,
+			};
 		}
 	}
 }

@@ -12,12 +12,16 @@
 // `--shell-header-h`; changing it there must move every seam at once, which is only true while
 // each of these surfaces reads the variable rather than a copy of it.
 
-import { render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render as renderBare } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { SHELL_HEADER, SHELL_VIEWPORT } from "@/components/shell/shell-metrics";
 
-const { pathname } = vi.hoisted(() => ({
+const { pathname, LIVE } = vi.hoisted(() => ({
 	pathname: { current: "/acme/~/settings/general" },
+	// One object, as better-auth's atom answers: it is a `useSyncExternalStore` snapshot.
+	LIVE: { data: { user: { name: "User", email: "user@example.com" } }, isPending: false, error: null },
 }));
 
 vi.mock("next/navigation", () => ({
@@ -37,6 +41,7 @@ vi.mock("@/lib/auth/client", () => ({
 		signOut: vi.fn(),
 		listAccounts: vi.fn(async () => ({ data: [] })),
 	},
+	liveSession: { subscribe: () => () => {}, get: () => LIVE, onPossibleChange: () => () => {} },
 }));
 vi.mock("@repo/privacy/consent-provider", () => ({
 	useConsent: () => ({ openPreferences: vi.fn() }),
@@ -46,7 +51,7 @@ vi.mock("@/components/org/upgrade-sheet-provider", () => ({
 }));
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => true }));
 vi.mock("@/lib/query/use-projects-query", () => ({ useProjectsQuery: () => ({ data: [] }) }));
-vi.mock("@/lib/query/use-jobs-query", () => ({ useJobsQuery: () => ({ data: [] }) }));
+vi.mock("@/lib/query/use-jobs-query", () => ({ useRecentJobsQuery: () => ({ data: [] }) }));
 vi.mock("@/hooks/use-support-notifications", () => ({
 	useSupportNotifications: () => ({
 		notifications: [],
@@ -57,6 +62,8 @@ vi.mock("@/hooks/use-support-notifications", () => ({
 }));
 vi.mock("@/lib/stores/use-workspace-store", () => ({
 	useActiveOrgSlug: () => "acme",
+	useActiveWorkspaceOrg: () => ({ id: "org_1", name: "Acme", slug: "acme", plan: "hobby", logo: null }),
+	useWorkspaceContextQuery: () => ({ data: undefined }),
 	useWorkspaceStore: Object.assign(
 		() => ({
 			activeOrgId: "org_1",
@@ -72,6 +79,12 @@ const { AppSidebar } = await import("@/components/shell/app-sidebar");
 const { SidebarRail } = await import("@/components/shell/sidebar-rail");
 const { Topbar } = await import("@/components/shell/topbar");
 const { ElenchPanel } = await import("@/components/agent/elench/elench-panel");
+
+/** Renders `ui` under a QueryClient, as the app's Providers do; the shell's reads come from it. */
+function render(ui: ReactElement) {
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	return renderBare(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 /**
  * Every element in `root` whose class list carries the shared header-height class. `classList`

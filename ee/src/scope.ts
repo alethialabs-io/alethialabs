@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Alethia-Commercial
 
 import { type SQL, sql } from "drizzle-orm";
-import type { Actor } from "@/lib/authz/types";
+import type { ResolvedScope } from "@/lib/authz/types";
 
 /**
  * The one core capability the scope resolver needs: a tagged-SQL runner returning rows.
@@ -69,7 +69,7 @@ export async function resolveActiveScope(
 	db: ScopeQueryRunner,
 	userId: string,
 	activeOrgId?: string,
-): Promise<Actor> {
+): Promise<ResolvedScope> {
 	// The personal org, named explicitly. No membership row exists for it, by construction.
 	if (activeOrgId === userId) return { userId, orgId: userId };
 

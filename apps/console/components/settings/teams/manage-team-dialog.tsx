@@ -2,12 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// The roster of one team (#6129). Who is ON the team comes from the team's own row in the teams
+// list (`members.teams`, which the page already holds and which a `members` hint refreshes), and
+// who can be ADDED from the org's member list (`members.list`) — both GET reads, so the dialog no
+// longer fetches into local state on open. Adding and removing go to Better Auth's organization
+// endpoints through `useActionMutation`: each is pending while in flight, and every members read
+// is invalidated when it settles, which is what refreshes the row this dialog renders from.
+
 import { X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { toast } from "sonner";
-import { getMembers, type MemberRow } from "@/app/server/actions/members";
+import { useState } from "react";
+import type { TeamRow } from "@/app/server/actions/teams";
 import { Combobox } from "@/components/settings/access/combobox";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { viaAuth } from "@/components/settings/members/auth-action";
 import { Button } from "@repo/ui/button";
 import {
 	Dialog,
@@ -16,27 +23,29 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@repo/ui/dialog";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { authClient } from "@/lib/auth/client";
+import { useMembersQuery } from "@/lib/query/use-activity-query";
+import { orpc } from "@/lib/rpc/client";
+
+/** Every read a roster change shows in: the teams list, the members table's team chips. */
+const ROSTER_READS = [orpc.members.key()];
 
 /** Add/remove org members on a team (Enterprise). */
 export function ManageTeamDialog({
-	teamId,
-	teamName,
+	team,
 	open,
 	onOpenChange,
-	onChanged,
 }: {
-	teamId: string;
-	teamName: string;
+	/** The team, as the teams list currently holds it (its members included). */
+	team: TeamRow;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	onChanged?: () => void;
 }) {
-	const [members, setMembers] = useState<MemberRow[]>([]);
-	const [teamUserIds, setTeamUserIds] = useState<string[]>([]);
+	const { data: members = [] } = useMembersQuery();
 	const [selected, setSelected] = useState<string>("");
 	// The user whose removal from this team has been asked for but not yet confirmed. Removing a
-	// team member drops every team-scoped grant that reached them through it, so the row’s X opens
+	// team member drops every team-scoped grant that reached them through it, so the row's X opens
 	// a confirmation rather than the mutation (registry: `teams.member.remove`).
 	const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
 	// The name the confirmation is RENDERING, which outlives `pendingRemoval` by one close: the
@@ -44,49 +53,23 @@ export function ManageTeamDialog({
 	// transition, and a description derived from the cleared id would blank out mid-fade.
 	const [pendingName, setPendingName] = useState<string>("");
 
-	const load = useCallback(async () => {
-		const [orgMembers, res] = await Promise.all([
-			getMembers(),
-			authClient.organization.listTeamMembers({ query: { teamId } }),
-		]);
-		setMembers(orgMembers);
-		setTeamUserIds((res.data ?? []).map((m) => m.userId));
-	}, [teamId]);
-	useEffect(() => {
-		if (open) void load();
-	}, [open, load]);
+	const add = useActionMutation(
+		({ userId }: { userId: string }) =>
+			viaAuth(() => authClient.organization.addTeamMember({ teamId: team.id, userId })),
+		{ invalidates: ROSTER_READS, onSuccess: () => setSelected("") },
+	);
+	const remove = useActionMutation(
+		({ userId }: { userId: string }) =>
+			viaAuth(() => authClient.organization.removeTeamMember({ teamId: team.id, userId })),
+		{ invalidates: ROSTER_READS, successMessage: "Removed from the team" },
+	);
+	const removingUserId = remove.isPending ? remove.variables?.userId : undefined;
 
-	const add = async () => {
-		if (!selected) return;
-		const { error } = await authClient.organization.addTeamMember({
-			teamId,
-			userId: selected,
-		});
-		if (error) {
-			toast.error(error.message ?? "Couldn't add member");
-			return;
-		}
-		setSelected("");
-		await load();
-		onChanged?.();
-	};
-
-	const remove = async (userId: string) => {
-		const { error } = await authClient.organization.removeTeamMember({
-			teamId,
-			userId,
-		});
-		if (error) {
-			toast.error(error.message ?? "Couldn't remove member");
-			return;
-		}
-		await load();
-		onChanged?.();
-	};
-
+	const teamUserIds = team.members.map((m) => m.userId);
 	const nameFor = (userId: string) => {
 		const m = members.find((x) => x.userId === userId);
-		return m ? (m.name ?? m.email) : `${userId.slice(0, 8)}…`;
+		if (m) return m.name ?? m.email;
+		return team.members.find((x) => x.userId === userId)?.name ?? `${userId.slice(0, 8)}…`;
 	};
 
 	/** Ask before removing: records who, and the copy the confirmation will keep through its close. */
@@ -97,6 +80,7 @@ export function ManageTeamDialog({
 	const addable = members
 		.filter((m) => !teamUserIds.includes(m.userId))
 		.map((m) => ({ value: m.userId, label: m.name ?? m.email }));
+	const teamName = team.name;
 
 	return (
 		<>
@@ -111,8 +95,8 @@ export function ManageTeamDialog({
 		    about portal order; not being open at the same time does.
 		    It is also the better of the two shapes on its own merits — one modal at a time, with the
 		    question that needs answering the only thing on screen — and the team dialog comes back the
-		    moment the confirmation is answered either way (`remove` reloads the roster itself, so the
-		    list it returns to is the one the answer produced). */}
+		    moment the confirmation is answered either way (the removal invalidates the teams list the roster is read from,
+		    so the list it returns to is the one the answer produced). */}
 		<Dialog open={open && pendingRemoval === null} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
@@ -132,8 +116,12 @@ export function ManageTeamDialog({
 								placeholder="Add a member…"
 							/>
 						</div>
-						<Button size="sm" onClick={() => void add()} disabled={!selected}>
-							Add
+						<Button
+							size="sm"
+							onClick={() => add.mutate({ userId: selected })}
+							disabled={!selected || add.isPending}
+						>
+							{add.isPending ? "Adding…" : "Add"}
 						</Button>
 					</div>
 					<div className="space-y-1">
@@ -152,6 +140,8 @@ export function ManageTeamDialog({
 										variant="ghost"
 										size="icon"
 										className="h-7 w-7 text-destructive"
+										disabled={removingUserId === uid}
+										aria-busy={removingUserId === uid || undefined}
 										onClick={() => askToRemove(uid)}
 									>
 										<X className="h-4 w-4" />
@@ -181,7 +171,7 @@ export function ManageTeamDialog({
 			description={`${pendingName} leaves ${teamName}. Every grant that reached them through this team stops applying; their organization membership and role are untouched.`}
 			confirmLabel="Remove from team"
 			onConfirm={() => {
-				if (pendingRemoval) void remove(pendingRemoval);
+				if (pendingRemoval) remove.mutate({ userId: pendingRemoval });
 			}}
 		/>
 		</>

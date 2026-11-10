@@ -8,9 +8,9 @@
 // The RESOLVE step is not here any more (#4890). It used to be — `filter*()` narrowed the
 // bootstrap's universe in memory, because the three server-side siblings existed since #2899
 // and nothing called them — and every filtered view of a panel therefore shared one cache
-// entry. `alerts-filters.ts` now keys `qk.alert*(org, query)` on the normalized objects below
-// and `getAlert*Page(query)` resolves them in SQL, with the facet counts coming from each
-// builder's own UNFILTERED pass.
+// entry. `alerts-filters.ts` now hands the normalized objects below to the `alerts.<list>` GET
+// procedures as their input — which is also their query key — and the procedures resolve them in
+// SQL, with the facet counts coming from each builder's own UNFILTERED pass.
 //
 // So what is left is exactly the normalize step and the vocabulary around it: the filter
 // shapes, their defaults, the status/kind buckets a row falls in, and the human labels for
@@ -83,7 +83,7 @@ export const DEFAULT_CHANNEL_FILTERS: ChannelFilters = {
 };
 
 /**
- * The stable query object placed in the TanStack key (`qk.alertChannels`). Only
+ * The stable query object handed to `alerts.channels` as its input (and so its query key). Only
  * non-empty fields are present and arrays are sorted + deduped, so two equivalent
  * filter states always produce an identical key (no cache fragmentation).
  */
@@ -157,7 +157,7 @@ export const DEFAULT_POLICY_FILTERS: PolicyFilters = {
 	channels: [],
 };
 
-/** The stable query object placed in the TanStack key (`qk.alertPolicies`). */
+/** The stable query object handed to `alerts.policies` as its input (and so its query key). */
 export interface NormalizedPoliciesQuery {
 	search?: string;
 	status?: string[];

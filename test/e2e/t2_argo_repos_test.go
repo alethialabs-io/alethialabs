@@ -109,8 +109,9 @@ func TestT2ArgoReposDefaults(t *testing.T) {
 	if cfg.byoRevision != "HEAD" {
 		t.Errorf("default byo revision = %q, want %q", cfg.byoRevision, "HEAD")
 	}
-	if cfg.byoNamespace != "byo-e2e" {
-		t.Errorf("default byo namespace = %q, want %q", cfg.byoNamespace, "byo-e2e")
+	// The chart's own derived namespace (#6446): a chosen namespace may not start with "byo-".
+	if cfg.byoNamespace != "byo-byo-e2e" {
+		t.Errorf("default byo namespace = %q, want %q", cfg.byoNamespace, "byo-byo-e2e")
 	}
 	if !cfg.tokenPresent {
 		t.Errorf("token should be detected present")

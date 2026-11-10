@@ -26,6 +26,7 @@
 
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures/auth";
+import { untilFilterBarHydrated } from "./helpers/hydration";
 
 /** The feed's search box: the visible, accessible one, never a hidden streamed copy. */
 function searchBox(page: Page) {
@@ -78,6 +79,11 @@ test.describe("Activity page (a brand-new org)", () => {
 	}) => {
 		await page.goto(`/${orgSlug}/~/settings/activity`);
 		await expect(searchBox(page)).toBeVisible();
+		// VISIBLE IS NOT INTERACTIVE (e2e/helpers/hydration.ts): the click below opens a sheet, and a
+		// click on the server's markup before the bar hydrates is dropped. Since #6114 the shell paints
+		// from the layout's seed and does more before the page's boundary hydrates, so the window this
+		// test used to win by timing is one it lost on all four attempts in #6193's gate. Wait until the bar is live.
+		await untilFilterBarHydrated(page, /^events$/i);
 
 		// Open the event-type sheet and keep only denials — a fresh org has none.
 		await page.getByRole("button", { name: /^events$/i }).click();

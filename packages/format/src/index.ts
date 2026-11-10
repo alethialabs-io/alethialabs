@@ -164,8 +164,13 @@ export function formatDate(
 /**
  * A timestamp relative to now — `3 minutes ago`, `about 1 month ago`.
  *
- * Wraps `date-fns`, which nineteen console files import directly today. Reads the clock, so it
- * is the one function here that is not referentially transparent; tests inject the instant.
+ * Wraps `date-fns`. None of the nineteen console files that once called it directly still does,
+ * and as of #6141 neither the console nor the admin app declares `date-fns` as a dependency: what
+ * reaches them comes through this package and `@repo/ui`. A direct import in either app therefore
+ * fails to resolve (TS2307) until someone adds the dependency back, which is a manifest diff a
+ * reviewer sees; `check:shared-surface` does not match the import itself (its omissions say why).
+ * Reads the clock, so it is the one function here that is not referentially transparent; tests
+ * inject the instant.
  *
  * @param value an ISO string, epoch millis, or a Date.
  * @param now the instant to measure against; defaults to the real clock.

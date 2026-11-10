@@ -40,10 +40,11 @@ import {
 	createSubscriptionIntent,
 	getAiUsageSummary,
 	getOrgUsage,
-	getResourceCounts,
-	getUsageOverTime,
 	startProTrial,
 } from "@/app/server/actions/billing";
+// The usage page's org-only reads moved to the read router's usage domain (#6127).
+import { getResourceCounts, getUsageOverTime } from "@/lib/rpc/procedures/usage";
+import { ActionRefusal } from "@/lib/actions/result";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import {
 	aiCreditsSeries,
@@ -114,6 +115,48 @@ describe("getOrgUsage", () => {
 		expect(r.maxConcurrentJobs).toBe(8);
 	});
 
+	it("ends a period with no paid end one calendar month after it started — never 'now' (#6209)", async () => {
+		orgBilling.mockResolvedValue(null);
+		vi.mocked(queryJobMinutesByOrg).mockResolvedValue([]);
+		vi.mocked(queryRunningJobs).mockResolvedValue(0);
+		const r = await getOrgUsage();
+		const start = new Date(r.periodStart);
+		expect(start.getUTCDate()).toBe(1);
+		expect(r.periodEnd).toBe(
+			new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1)).toISOString(),
+		);
+		// Deterministic: a second read answers the same window.
+		expect((await getOrgUsage()).periodEnd).toBe(r.periodEnd);
+	});
+
+	it("an open-ended grant's monthly cycle ends on the anchor day, clamped to the month's length", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date("2026-02-10T12:00:00.000Z"));
+		orgBilling.mockResolvedValue(
+			billing({ currentPeriodStart: new Date("2025-10-31T00:00:00.000Z"), currentPeriodEnd: null }),
+		);
+		vi.mocked(queryJobMinutesByOrg).mockResolvedValue([]);
+		vi.mocked(queryRunningJobs).mockResolvedValue(0);
+		const r = await getOrgUsage();
+		vi.useRealTimers();
+		expect(r.periodStart).toBe("2026-01-31T00:00:00.000Z");
+		expect(r.periodEnd).toBe("2026-02-28T00:00:00.000Z");
+	});
+
+	it("a cycle anchored on the 31st that opened on a clamped Feb 28 ends on Mar 31 — the ANCHOR's day", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date("2026-03-10T12:00:00.000Z"));
+		orgBilling.mockResolvedValue(
+			billing({ currentPeriodStart: new Date("2025-10-31T00:00:00.000Z"), currentPeriodEnd: null }),
+		);
+		vi.mocked(queryJobMinutesByOrg).mockResolvedValue([]);
+		vi.mocked(queryRunningJobs).mockResolvedValue(0);
+		const r = await getOrgUsage();
+		vi.useRealTimers();
+		expect(r.periodStart).toBe("2026-02-28T00:00:00.000Z");
+		expect(r.periodEnd).toBe("2026-03-31T00:00:00.000Z");
+	});
+
 	it("reflects the hard-cap flag and defaults usage to zero", async () => {
 		orgBilling.mockResolvedValue(billing({ usageHardCap: true }));
 		vi.mocked(queryJobMinutesByOrg).mockResolvedValue([]);
@@ -126,10 +169,13 @@ describe("getOrgUsage", () => {
 });
 
 describe("getResourceCounts", () => {
-	it("returns zeros for the personal scope (no org)", async () => {
+	// ADR 0005 §7 Q2: a read with no meaning in the personal scope REFUSES (plan-gated) rather than
+	// answering zeros a page would render as "you used nothing".
+	it("refuses the personal scope (no org) as plan-gated, without counting", async () => {
 		actor.mockResolvedValue({ orgId: "user-1", userId: "user-1" } as never);
-		const r = await getResourceCounts();
-		expect(r).toEqual({ projects: 0, clusters: 0, spendUnderManagement: 0 });
+		const refused = getResourceCounts();
+		await expect(refused).rejects.toBeInstanceOf(ActionRefusal);
+		await expect(refused).rejects.toMatchObject({ kind: "entitlement", feature: "organization" });
 		expect(queryResourceCounts).not.toHaveBeenCalled();
 	});
 
@@ -151,8 +197,8 @@ describe("getUsageOverTime", () => {
 		]);
 
 		const r = await getUsageOverTime({
-			from: "2026-06-01T00:00:00.000Z",
-			to: "2026-06-03T00:00:00.000Z",
+			from: new Date("2026-06-01T00:00:00.000Z"),
+			to: new Date("2026-06-03T00:00:00.000Z"),
 		});
 		expect(r.series).toHaveLength(3); // 06-01, 06-02, 06-03 inclusive
 		expect(r.series.find((p) => p.date === "2026-06-02")?.runnerMinutes).toBe(120); // rounded
@@ -160,20 +206,21 @@ describe("getUsageOverTime", () => {
 		expect(r.totals).toEqual({ runnerMinutes: 120, jobs: 3, aiCredits: 50 });
 	});
 
-	it("returns an empty series for the personal scope", async () => {
+	it("refuses the personal scope as plan-gated, without querying", async () => {
 		actor.mockResolvedValue({ orgId: "user-1", userId: "user-1" } as never);
-		const r = await getUsageOverTime({
-			from: "2026-06-01T00:00:00.000Z",
-			to: "2026-06-03T00:00:00.000Z",
-		});
-		expect(r.series).toEqual([]);
-		expect(r.totals).toEqual({ runnerMinutes: 0, jobs: 0, aiCredits: 0 });
+		await expect(
+			getUsageOverTime({
+				from: new Date("2026-06-01T00:00:00.000Z"),
+				to: new Date("2026-06-03T00:00:00.000Z"),
+			}),
+		).rejects.toMatchObject({ kind: "entitlement" });
+		expect(queryJobMinutesSeries).not.toHaveBeenCalled();
 	});
 
 	it("returns empty for an inverted/invalid range", async () => {
 		const r = await getUsageOverTime({
-			from: "2026-06-03T00:00:00.000Z",
-			to: "2026-06-01T00:00:00.000Z",
+			from: new Date("2026-06-03T00:00:00.000Z"),
+			to: new Date("2026-06-01T00:00:00.000Z"),
 		});
 		expect(r.series).toEqual([]);
 	});

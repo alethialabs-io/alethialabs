@@ -157,9 +157,14 @@ describeIfDb("migration 0159 — merges differing duplicate member rows least-pr
 					  (${ORG_SUSPENDED}::uuid, 'user', ${USER}::uuid, ${BUILTIN_ROLE_IDS.viewer}::uuid, 'org'),
 					  (${ORG_NO_RAISE}::uuid, 'user', ${USER}::uuid, ${BUILTIN_ROLE_IDS.viewer}::uuid, 'org'),
 					  (${ORG_SOLE_SUSPENDED}::uuid, 'user', ${USER}::uuid, ${BUILTIN_ROLE_IDS.owner}::uuid, 'org')`);
+				// A row stored before migration 0159 ran, so before `grants_org_binding` existed: its scope
+				// id resolves to nothing, which the trigger refuses at write time. Triggers are off for
+				// this one statement only.
+				await tx.execute(sql`set local session_replication_role = replica`);
 				await tx.execute(sql`
 					insert into grants (org_id, principal_type, principal_id, role_id, resource_type, resource_id)
 					values (${ORG_SUSPENDED}::uuid, 'user', ${USER}::uuid, ${BUILTIN_ROLE_IDS.operator}::uuid, 'project', gen_random_uuid())`);
+				await tx.execute(sql`set local session_replication_role = origin`);
 				await tx.execute(sql`
 					insert into grants (org_id, principal_type, principal_id, effect, permission_key, resource_type)
 					select ${ORG_SUSPENDED}::uuid, 'user', ${USER}::uuid, 'deny', key, 'org' from permission limit 1`);

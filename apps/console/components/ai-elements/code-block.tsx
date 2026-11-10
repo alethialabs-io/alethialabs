@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@repo/ui/select";
+import { copyText } from "@repo/ui/copy-text";
 import { cn } from "@repo/ui/utils";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import type { ComponentProps, CSSProperties, HTMLAttributes } from "react";
@@ -394,25 +395,26 @@ export const CodeBlockContent = ({
     [code, language, rawTokens]
   );
 
-  // Async highlighting result (populated after shiki loads)
-  const [asyncTokens, setAsyncTokens] = useState<TokenizedCode | null>(null);
-  const asyncKeyRef = useRef({ code, language });
-
-  // Invalidate stale async tokens synchronously during render
-  if (
-    asyncKeyRef.current.code !== code ||
-    asyncKeyRef.current.language !== language
-  ) {
-    asyncKeyRef.current = { code, language };
-    setAsyncTokens(null);
-  }
+  // Async highlighting result (populated after shiki loads), stored WITH the code and language it
+  // answers: a result for an older input is simply not used, so nothing has to be invalidated.
+  const [asyncResult, setAsyncResult] = useState<{
+    code: string;
+    language: BundledLanguage;
+    tokens: TokenizedCode;
+  } | null>(null);
+  const asyncTokens =
+    asyncResult !== null &&
+    asyncResult.code === code &&
+    asyncResult.language === language
+      ? asyncResult.tokens
+      : null;
 
   useEffect(() => {
     let cancelled = false;
 
     highlightCode(code, language, (result) => {
       if (!cancelled) {
-        setAsyncTokens(result);
+        setAsyncResult({ code, language, tokens: result });
       }
     });
 
@@ -473,14 +475,13 @@ export const CodeBlockCopyButton = ({
   const { code } = useContext(CodeBlockContext);
 
   const copyToClipboard = useCallback(async () => {
-    if (typeof window === "undefined" || !navigator?.clipboard?.writeText) {
-      onError?.(new Error("Clipboard API not available"));
-      return;
-    }
-
     try {
       if (!isCopied) {
-        await navigator.clipboard.writeText(code);
+        // Falls back to a selection copy where the Clipboard API is absent (plain HTTP).
+        if (!(await copyText(code))) {
+          onError?.(new Error("The text could not be copied. Select it and copy it manually."));
+          return;
+        }
         setIsCopied(true);
         onCopy?.();
         timeoutRef.current = window.setTimeout(

@@ -3,8 +3,9 @@
 
 // Integration: the org_id derive-and-store invariant for jobs (the fix for org-scoped usage/
 // clusters reading empty in Teams orgs). A job ALWAYS belongs to the org that owns its project,
-// so the set_org_id_from_project trigger derives jobs.org_id from projects.org_id — structurally,
-// independent of what the insert call-site remembered to stamp. Regression cover for the bug where
+// so the set_org_id_from_project trigger derives jobs.org_id from projects.org_id when the insert
+// leaves it empty, and refuses an explicit org_id that disagrees — structurally, independent of
+// what the insert call-site remembered to stamp. Regression cover for the bug where
 // job inserts omitted org_id and the old trigger silently collapsed it to user_id, so org reads
 // filtering jobs.org_id missed every job in a real (org_id !== user_id) organization.
 
@@ -80,14 +81,13 @@ describeIfDb("jobs.org_id derive-and-store (Teams org)", () => {
 		expect(job.org_id).toBe(USER); // no project → personal org (community-equivalent)
 	});
 
-	it("an explicit org_id stamp is never overridden by the trigger", async () => {
+	it("an explicit org_id is kept when it is the project's org, and refused when it is not", async () => {
 		const db = getServiceDb();
-		const explicit = randomUUID();
-		const [job] = await db
+		const [kept] = await db
 			.insert(jobs)
 			.values({
 				user_id: USER,
-				org_id: explicit,
+				org_id: ORG,
 				project_id: projectId,
 				job_type: "PLAN",
 				status: "QUEUED",
@@ -95,32 +95,65 @@ describeIfDb("jobs.org_id derive-and-store (Teams org)", () => {
 				runner_id: runnerId,
 			})
 			.returning({ org_id: jobs.org_id });
-		expect(job.org_id).toBe(explicit);
+		expect(kept.org_id).toBe(ORG);
+
+		await expect(
+			db.insert(jobs).values({
+				user_id: USER,
+				org_id: randomUUID(),
+				project_id: projectId,
+				job_type: "PLAN",
+				status: "QUEUED",
+				config_snapshot: {},
+				runner_id: runnerId,
+			}),
+		).rejects.toMatchObject({ cause: { code: "23514" } });
+
+		// A project-less job keeps its explicit org: there is no parent to agree with.
+		const explicit = randomUUID();
+		const [projectless] = await db
+			.insert(jobs)
+			.values({
+				user_id: USER,
+				org_id: explicit,
+				job_type: "DEPLOY_RUNNER",
+				status: "QUEUED",
+				config_snapshot: {},
+				runner_id: runnerId,
+			})
+			.returning({ org_id: jobs.org_id });
+		expect(projectless.org_id).toBe(explicit);
 	});
 
-	it("the backfill realigns drifted rows so every project job matches its org (invariant)", async () => {
+	it("every project job carries its project's org (invariant): the NULL-org backfill fills it", async () => {
 		const db = getServiceDb();
-		// Simulate a historical drifted row: org_id stamped to the creator, not the project's org.
-		await db.insert(jobs).values({
-			user_id: USER,
-			org_id: USER, // wrong — the old trigger's collapse
-			project_id: projectId,
-			job_type: "PLAN",
-			status: "SUCCESS",
-			config_snapshot: {},
-			runner_id: runnerId,
+		// A historical row with no org (triggers off for the one write: the trigger would fill it).
+		const [legacy] = await db.transaction(async (tx) => {
+			await tx.execute(sql`set local session_replication_role = replica`);
+			return tx
+				.insert(jobs)
+				.values({
+					user_id: USER,
+					project_id: projectId,
+					job_type: "PLAN",
+					status: "SUCCESS",
+					config_snapshot: {},
+					runner_id: runnerId,
+				})
+				.returning({ id: jobs.id, org_id: jobs.org_id });
 		});
+		expect(legacy.org_id).toBeNull();
 
-		// The exact backfill statement from programmables.sql (idempotent, project-scoped here).
+		// The backfill statement from programmables.sql, project-scoped here.
 		await db.execute(sql`
 			UPDATE public.jobs j
 			   SET org_id = p.org_id
 			  FROM public.projects p
 			 WHERE j.project_id = p.id
 			   AND j.project_id = ${projectId}
-			   AND j.org_id IS DISTINCT FROM p.org_id`);
+			   AND j.org_id IS NULL
+			   AND p.org_id IS NOT NULL`);
 
-		// Invariant: after backfill, every job under this project carries the project's org.
 		const rows = await db
 			.select({ org_id: jobs.org_id })
 			.from(jobs)

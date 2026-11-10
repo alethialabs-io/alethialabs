@@ -82,6 +82,16 @@ export function paidMarketEnabled(
 	);
 }
 
+/**
+ * Whether ANY country × capacity cell is open — "is anything on sale anywhere", NOT "may this payer
+ * buy". It decides only whether the purchase sheet may skip straight to saying "not on sale yet"
+ * before asking the payer anything; once any cell opens, `paidMarketEnabled` (through the console's
+ * `assertPaidConversionAllowed`) stays the authority for each declared payer.
+ */
+export function anyPaidMarketOpen(): boolean {
+	return PAID_MARKETS.length > 0;
+}
+
 /** The evidence recorded for an enabled cell, or null when the cell is closed. */
 export function paidMarketEvidence(
 	country: string | null | undefined,

@@ -38,7 +38,7 @@ graph and fails if any file reaches a denied module.
 - ✅ `list_runners` — `getRunnersWithReleases()` · `view runner`.
 - ✅ `list_clusters` — `getClusters()` — provisioned stacks (endpoints/dbs/caches). No ArgoCD admin
   password is stored or surfaced — it is retrieved on-demand from `argocd-initial-admin-secret`.
-- ✅ `list_cloud_identities` — `getVerifiedCloudIdentities()`. ✅ `list_connectors` — `getConnectorsWithStatus()`.
+- ✅ `list_cloud_identities` — `getVerifiedCloudIdentities()`. ✅ `list_connectors` — `readConnectorsWithStatus()` (lib/rpc/procedures/connectors.ts).
 - ✅ `get_cached_resources(id)` — NEW `getCloudIdentityResources()` · `view cloud_identity` — existing VPCs/subnets.
 - ✅ `search_docs(query)` — `docs.ts` · lexical TF-IDF over the committed docs index (`gen:docs-index` from
   apps/docs). No PDP gate (public docs). Grounds connector / keyless-auth / how-to / architecture answers.

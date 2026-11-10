@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { motion } from "motion/react";
 import { Maximize2, Plus, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { SHELL_HEADER } from "@/components/shell/shell-metrics";
@@ -49,11 +48,10 @@ export function ElenchPanel({
 	const close = useElenchStore((s) => s.close);
 
 	return (
-		<motion.div
-			initial={{ width: 0 }}
-			animate={{ width: ELENCH_PANEL_W }}
-			transition={{ duration: 0.2, ease: "easeOut" }}
-			className="h-full max-w-full shrink-0 overflow-hidden"
+		// `elench-panel-in` (app/globals.css) grows this from zero width to the width set here.
+		<div
+			style={{ width: ELENCH_PANEL_W }}
+			className="elench-panel-in h-full max-w-full shrink-0 overflow-hidden"
 		>
 			<div
 				role="dialog"
@@ -101,6 +99,6 @@ export function ElenchPanel({
 					{children}
 				</div>
 			</div>
-		</motion.div>
+		</div>
 	);
 }

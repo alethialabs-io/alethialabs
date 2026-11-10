@@ -9,6 +9,9 @@
 
 import type { Action, Resource } from "./registry";
 
+/** What kind of credential an actor was built from. See {@link Actor.credential}. */
+export type ActorCredential = "session" | "service_token";
+
 /** The principal making a request, resolved once per request via getActiveScope(). */
 export interface Actor {
 	userId: string;
@@ -21,7 +24,28 @@ export interface Actor {
 	 * pair; getActiveScope is the single place that guarantees this is populated.
 	 */
 	entitlements?: Entitlements;
+	/**
+	 * The kind of credential this actor was built from. REQUIRED, so every place that builds an
+	 * actor has to say which it is: a scope resolved by `getActiveScope` carries no credential
+	 * (`ResolvedScope`) and becomes an `Actor` only through `actorWithCredential`
+	 * (lib/authz/actor-credential.ts).
+	 *
+	 * - `session` — a person: a console session, a CLI device login, an MCP OAuth grant.
+	 * - `service_token` — a CLI machine credential pinned to `orgId`. `userId` is the profile that
+	 *   MINTED it, not a caller, so a rule keyed on "the person asking" must not read `userId` as
+	 *   that person. Server actions see only the `Actor` (the CLI routes reach them through
+	 *   `runWithActor`), which is why the kind travels on it.
+	 *
+	 * Read it through the helpers in lib/authz/actor-credential.ts, not directly.
+	 */
+	credential: ActorCredential;
 }
+
+/**
+ * A resolved tenancy scope before it is bound to a credential: what `getActiveScope` returns.
+ * `actorWithCredential` turns it into an {@link Actor}.
+ */
+export type ResolvedScope = Omit<Actor, "credential">;
 
 /** What an action targets. `id` is omitted for create/list; `orgId` for cross-checks. */
 export interface ResourceRef {
@@ -48,12 +72,14 @@ export interface BulkCheck {
  * their own `.eq(user_id)` checks. `bulkCheck` batches; never loop `can()`.
  */
 export interface Pdp {
-	can(actor: Actor, action: Action, resource: ResourceRef): Promise<Decision>;
-	enforce(actor: Actor, action: Action, resource: ResourceRef): Promise<void>;
-	bulkCheck(actor: Actor, checks: BulkCheck[]): Promise<Decision[]>;
+	// A `ResolvedScope`, not an `Actor`: a permission is decided by who and where, never by which
+	// kind of credential carried the request, so a decision needs no credential bound.
+	can(actor: ResolvedScope, action: Action, resource: ResourceRef): Promise<Decision>;
+	enforce(actor: ResolvedScope, action: Action, resource: ResourceRef): Promise<void>;
+	bulkCheck(actor: ResolvedScope, checks: BulkCheck[]): Promise<Decision[]>;
 	/** The ids of resources of `resourceType` the actor may take `action` on. */
 	listAccessible(
-		actor: Actor,
+		actor: ResolvedScope,
 		action: Action,
 		resourceType: Resource,
 	): Promise<string[]>;

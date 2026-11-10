@@ -8,19 +8,20 @@
 //
 // Model: the committed range is two UTC instants; the chosen timezone is purely the
 // *display* basis. Every field (calendar day, date input, time input) is derived from the
-// instants via `formatInTimeZone`, and every edit recomposes the instant with
-// `fromZonedTime(wallClock, tz)`. So changing the timezone keeps the instants and just
-// re-renders the wall-clock. Generic/reusable: `value` / `onChange` only.
+// instants via `formatInZone`, and every edit recomposes the instant with
+// `zonedWallClockToInstant(date, time, tz)` (both in ./range, over `@date-fns/tz`). So
+// changing the timezone keeps the instants and just re-renders the wall-clock. Generic/reusable: `value` / `onChange` only.
 
 import { format } from "date-fns";
-import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { CalendarDays } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   type DateRange,
+  formatInZone,
   formatRangeLabel,
   localTimeZone,
   timeZoneOptions,
+  zonedWallClockToInstant,
 } from "./range";
 import { Button } from "./button";
 import { Calendar, type CalendarRange } from "./calendar";
@@ -33,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./select";
+import { useHydrated } from "./use-hydrated";
 
 interface DateRangeFilterProps {
   value: DateRange;
@@ -83,24 +85,27 @@ export function DateRangeFilter({
   // Gating on mount is the fix rather than `suppressHydrationWarning`, which suppresses the
   // REPORT and leaves the server's wrong wall-clock on screen. The committed range is unchanged
   // and the popover is closed during SSR, so nothing else here reaches the server's HTML.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  // `useHydrated` answers "past hydration?" without a mount effect: false for the server render
+  // and the hydrating one, true for every render after and for a client-only mount.
+  const mounted = useHydrated();
 
   const tzOptions = useMemo(() => timeZoneOptions(), []);
 
-  // Reset the draft to the committed value whenever the popover (re)opens.
-  useEffect(() => {
-    if (open) {
+  /** Open or close the popover; opening resets the draft to the committed value, so an edit
+   * abandoned by closing without Apply is not what the next opening shows. */
+  function onOpenChange(next: boolean) {
+    if (next) {
       setFrom(value.from);
       setTo(value.to);
     }
-  }, [open, value.from, value.to]);
+    setOpen(next);
+  }
 
   // Derived display fields (all in the chosen tz).
-  const fromDate = formatInTimeZone(from, tz, "yyyy-MM-dd");
-  const fromTime = formatInTimeZone(from, tz, "HH:mm");
-  const toDate = formatInTimeZone(to, tz, "yyyy-MM-dd");
-  const toTime = formatInTimeZone(to, tz, "HH:mm");
+  const fromDate = formatInZone(from, tz, "yyyy-MM-dd");
+  const fromTime = formatInZone(from, tz, "HH:mm");
+  const toDate = formatInZone(to, tz, "yyyy-MM-dd");
+  const toTime = formatInZone(to, tz, "HH:mm");
   // Floating local-midnight markers so the Calendar highlights the right civil day.
   const calRange: CalendarRange = {
     from: new Date(`${fromDate}T00:00:00`),
@@ -109,7 +114,7 @@ export function DateRangeFilter({
 
   /** Compose a wall-clock "YYYY-MM-DD HH:mm" in the chosen tz into a UTC instant. */
   const combine = (dateStr: string, timeStr: string) =>
-    fromZonedTime(`${dateStr} ${timeStr}:00`, tz);
+    zonedWallClockToInstant(dateStr, timeStr, tz);
 
   /** Calendar selection — keep each end's time-of-day, move only its civil day. */
   function onSelectRange(range: CalendarRange | undefined) {
@@ -128,7 +133,7 @@ export function DateRangeFilter({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger
         render={
           <Button variant="outline" size="sm" className="gap-1.5">

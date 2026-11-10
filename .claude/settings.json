@@ -31,6 +31,16 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-iac.sh\"",
             "statusMessage": "Checking IaC guard"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-spend.sh\"",
+            "statusMessage": "Checking spend ledger"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-destroy.sh\"",
+            "statusMessage": "Checking deletion guard"
           }
         ]
       },
@@ -105,6 +115,9 @@
       "Bash(git push --force origin staging:*)",
       "Bash(docker compose down -v:*)",
       "Bash(docker system prune:*)",
+      "Bash(gh repo delete:*)",
+      "Bash(gh repo archive:*)",
+      "Bash(gh release delete:*)",
       "Read(//Users/**/.aws/**)",
       "Read(//Users/**/.ssh/**)",
       "Read(//Users/**/.config/gcloud/**)",
@@ -116,7 +129,6 @@
       "Read(deploy/prod/secrets.local.env)"
     ],
     "allow": [
-      "Bash(aws secretsmanager get-secret-value --secret-id alethia/prod/env:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",

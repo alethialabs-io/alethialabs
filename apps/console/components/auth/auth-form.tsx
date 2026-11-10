@@ -24,6 +24,7 @@ import { ArrowRight, KeyRound, Loader2, Lock } from "lucide-react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { useHydrated } from "@repo/ui/use-hydrated";
 
 type AuthProvider = "github" | "gitlab" | "bitbucket" | "google";
 type Step = "providers" | "email" | "code" | "no-account";
@@ -87,6 +88,9 @@ function fmtCountdown(seconds: number): string {
 function digitsOnly(pasted: string): string {
 	return pasted.replace(/\D/g, "").slice(0, 6);
 }
+
+/** Shown when the sign-in code email could not be sent (or the request failed outright). */
+const SEND_FAILED_MESSAGE = "We couldn’t send the code — try again.";
 
 /** Allowlisted banner copy keyed by `?error=` / `?message=`. Arbitrary querystring
  *  text is never rendered (anti-phishing) — unknown codes show no banner. */
@@ -182,22 +186,28 @@ export function AuthForm({ mode }: AuthFormProps) {
 
 	// What the browser remembers from last time. Read AFTER mount, never during render:
 	// this form is server-prerendered and then hydrated, so a first client render that
-	// consulted localStorage would not match the server's HTML. Same shape as
-	// packages/ui/src/theme-toggle.tsx — the DOM is identical on the first client render
-	// and the remembered marks appear on the second.
+	// consulted localStorage would not match the server's HTML. The DOM is identical on the
+	// first client render and the remembered marks appear on the second.
 	const rememberedMethod = useAuthPrefsStore((s) => s.lastMethod);
 	const rememberedEmail = useAuthPrefsStore((s) => s.lastEmail);
 	const remember = useAuthPrefsStore((s) => s.remember);
 	const forget = useAuthPrefsStore((s) => s.forget);
-	const [mounted, setMounted] = useState(false);
+	const mounted = useHydrated();
 	/** Wraps the OTP field, so the window paste listener can tell "already handled" from "not". */
 	const otpRef = useRef<HTMLDivElement>(null);
-	useEffect(() => setMounted(true), []);
 	const lastMethod = mounted ? rememberedMethod : null;
 
+	// `?provider=github` (etc.) auto-starts that OAuth provider once — one-click deep links from
+	// marketing/docs. Validated against the allowlist, and read once: the form opens already
+	// "signing in with" it, and the effect below starts the hand-off.
+	const [hintedProvider] = useState<AuthProvider | null>(() => {
+		const hinted = searchParams.get("provider");
+		return hinted && arrayIncludes(oauthProviders, hinted) ? hinted : null;
+	});
+
 	const [step, setStep] = useState<Step>(prefillEmail ? "email" : "providers");
-	const [isLoading, setIsLoading] = useState(false);
-	const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
+	const [isLoading, setIsLoading] = useState(hintedProvider !== null);
+	const [loadingProvider, setLoadingProvider] = useState<string | null>(hintedProvider);
 	const [email, setEmail] = useState(prefillEmail);
 	// Pre-fill the remembered address once, after mount, and only when the field is
 	// still empty — a `?email=` param, or anything already typed, wins.
@@ -206,12 +216,18 @@ export function AuthForm({ mode }: AuthFormProps) {
 	// state into that would move a returning user off the provider tiles and onto the
 	// email form a beat after the page settled, which is a worse experience than the one
 	// this is meant to improve.
-	useEffect(() => {
-		if (!mounted || prefillEmail) return;
-		setEmail((current) => current || (rememberedEmail ?? ""));
-	}, [mounted, prefillEmail, rememberedEmail]);
+	//
+	// Seeded during the first render past hydration (React's "adjust state while rendering" form,
+	// guarded so it runs once), not in an effect, so the field never paints empty and then fills.
+	const [emailSeeded, setEmailSeeded] = useState(false);
+	if (mounted && !emailSeeded) {
+		setEmailSeeded(true);
+		if (!prefillEmail && rememberedEmail) setEmail((current) => current || rememberedEmail);
+	}
 	const [code, setCode] = useState("");
 	const [error, setError] = useState<string | null>(() => {
+		// An auto-started provider clears any banner, as a click on its tile does.
+		if (hintedProvider !== null) return null;
 		const code =
 			searchParams.get("error") ??
 			searchParams.get("message") ??
@@ -252,11 +268,12 @@ export function AuthForm({ mode }: AuthFormProps) {
 			? (next ?? "/onboarding")
 			: (next ?? "/dashboard");
 
-	const handleOAuthLogin = async (provider: AuthProvider) => {
-		setIsLoading(true);
-		setLoadingProvider(provider);
-		setError(null);
-
+	/**
+	 * The OAuth hand-off itself, for a form already marked as signing in with `provider` (by a
+	 * click, or by the `?provider=` hint's initial state). Every exit that does not reach the
+	 * provider rolls the form back.
+	 */
+	const startOAuth = async (provider: AuthProvider) => {
 		// Native providers go through signIn.social; self-hosted GitLab +
 		// Bitbucket are wired via the genericOAuth plugin (signIn.oauth2). Both
 		// redirect the browser, so control only returns here on error.
@@ -314,25 +331,40 @@ export function AuthForm({ mode }: AuthFormProps) {
 		setLoadingProvider(null);
 	};
 
-	// `?provider=github` (etc.) auto-starts that OAuth provider once — one-click
-	// deep links from marketing/docs. Validated against the allowlist.
+	/** A provider tile's click: marks the form as signing in with it, then hands off. */
+	const handleOAuthLogin = async (provider: AuthProvider) => {
+		setIsLoading(true);
+		setLoadingProvider(provider);
+		setError(null);
+		await startOAuth(provider);
+	};
+
+	// Start the `?provider=` hint's hand-off once. The form's initial state already says it is
+	// signing in with that provider, so nothing is set here before the request.
 	const providerHintFired = useRef(false);
 	useEffect(() => {
-		if (providerHintFired.current) return;
-		const hinted = searchParams.get("provider");
-		if (hinted && arrayIncludes(oauthProviders, hinted)) {
-			providerHintFired.current = true;
-			void handleOAuthLogin(hinted);
-		}
+		if (providerHintFired.current || hintedProvider === null) return;
+		providerHintFired.current = true;
+		void startOAuth(hintedProvider);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
+	/**
+	 * Asks the server to email a sign-in code. Throws when it was not sent, so neither
+	 * caller advances to (or resets) the code step on a send that never happened. A
+	 * provider failure answers SIGN_IN_CODE_SEND_FAILED (lib/auth/index.ts), and the
+	 * message is fixed here rather than read off the response.
+	 */
 	const sendCode = async () => {
 		const { error } = await authClient.emailOtp.sendVerificationOtp({
 			email,
 			type: "sign-in",
 		});
-		if (error) throw new Error(error.message ?? "Failed to send code");
+		if (!error) return;
+		if (error.code === "SIGN_IN_CODE_SEND_FAILED") {
+			throw new Error(SEND_FAILED_MESSAGE);
+		}
+		throw new Error(error.message ?? SEND_FAILED_MESSAGE);
 	};
 
 	const handleSendCode = async (e: React.FormEvent) => {

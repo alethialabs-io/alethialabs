@@ -275,7 +275,7 @@ func TestRenderAddOnApplicationResistsYAMLInjection(t *testing.T) {
 		{"chartRepo", types.AddOnInstall{ID: "a", Mode: "managed", ChartRepo: payload, Chart: "c", Version: "1", Namespace: "n"}},
 		{"id", types.AddOnInstall{ID: payload, Mode: "managed", ChartRepo: "https://e.com", Chart: "c", Version: "1", Namespace: "n"}},
 		{"project", types.AddOnInstall{ID: "a", Mode: "managed", Project: payload, ChartRepo: "https://e.com", Chart: "c", Version: "1", Namespace: "n"}},
-		{"path", types.AddOnInstall{ID: "a", Mode: "managed", Source: "git", Path: payload, ChartRepo: "https://e.com", Version: "1", Namespace: "n"}},
+		{"path", types.AddOnInstall{ID: "a", Mode: "managed", Source: "git", Project: "byo-p", Path: payload, ChartRepo: "https://e.com", Version: "1", Namespace: "n"}},
 	} {
 		t.Run(tc.field, func(t *testing.T) {
 			manifest, err := RenderAddOnApplication(tc.a)

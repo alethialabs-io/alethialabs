@@ -39,6 +39,10 @@ func clusterNameOutputKey(providerSlug string) string {
 // same probes the deploy path uses (argocd.ReadAddOnHealth + readGitopsSnapshot +
 // argocd.ReadSecurityPosture). On hetzner, talosMint mints the kubeconfig from the
 // `talosconfig` output instead of reading the stored certificate (see talos_remint.go).
+// It is NOT read-only: on a dedicated placement it also runs the stranded bootstrap-hook reconcile
+// (reapStrandedBootstrapHooks), which requests deletion of keyless bootstrap hooks whose ArgoCD
+// operation ended without running a delete policy, under the conditions in bootstrap_reaper.go.
+// Everything else here only reads.
 // Best-effort by design: no cluster name, an unknown
 // provider, or a kubeconfig failure returns (nil, nil, nil) — a day-2 job (drift) must
 // never fail because the cluster is briefly unreachable. Cloud creds are assumed already
@@ -76,6 +80,12 @@ func InspectCluster(
 	// GitOps snapshot (issue #574): day-2 refresh of the apps Application's revision +
 	// per-service health, same read the deploy's success path records.
 	gitops := readGitopsSnapshot(vc.Repositories.AppsDestinationRepo != "", vc.Repositories.AppsDestinationRepo, stdout, stderr)
+	// The day-2 half of the stranded bootstrap-hook reconcile (#6413): between deploys this is the
+	// run that removes a bootstrap-only hook whose operation ended without running a delete policy.
+	// Dedicated placements only, matching the deploy path that renders the bootstrap.
+	if bootstrapReapApplies(vc, providerSlug) {
+		reapStrandedBootstrapHooks(ctx, argocd.UserAppsApplicationName, appNamespace, stdout, stderr)
+	}
 	sec := argocd.ReadSecurityPosture(stdout, stderr)
 	return addonStatus, &sec, gitops
 }

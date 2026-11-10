@@ -23,7 +23,7 @@ export default defineConfig({
 			// `react-phone-number-input/flags` is ~250 full SVG flag components. #1452 cut the
 			// phone-input tests' cost by passing the library's `countries` prop, but CountrySelect
 			// takes no such prop — it renders COUNTRY_OPTIONS straight from countries.ts
-			// (country-select.tsx:88), so every popover-open still mounts the entire set in jsdom.
+			// (`CountryCommand` in country-select.tsx), so every popover-open still mounts the entire set in jsdom.
 			// That left country-select.test.tsx the slowest file in the package at ~50s, with its
 			// worst test ~1.5s under the old per-test budget. Swapping a shape-compatible stub in
 			// fixes it at the source, for both files. See tests/stubs/flags.tsx.
@@ -59,6 +59,8 @@ export default defineConfig({
 				"src/view-toggle.tsx",
 				"src/provider-icon.tsx",
 				"src/copy-button.tsx",
+				"src/copy-text.ts",
+				"src/command-search.ts",
 				"src/status-badge.tsx",
 				"src/filter-bar.tsx",
 				"src/filter-chip.tsx",
@@ -77,6 +79,19 @@ export default defineConfig({
 				// Authored behaviour: keeps a disabled control's reason reachable by pointer, keyboard
 				// and screen reader (#4996). tests/disabled-reason.test.tsx proves each channel.
 				"src/disabled-reason.tsx",
+				// Authored behaviour (#6117): the toolbar's count pill is content-sized and its
+				// skeleton shares the row's classes; a read-only value stays off the input surface.
+				// tests/page-toolbar.test.tsx and tests/read-only-value.test.tsx prove each.
+				"src/page-toolbar.tsx",
+				"src/read-only-value.tsx",
+				// Vendored, but with its own dedicated suite (tests/marker.test.tsx, moved here with
+				// the file from the console in #6144) — the #4104 precedent: a file with a dedicated suite
+				// is counted, not excluded.
+				"src/marker.tsx",
+				// Authored behaviour, promoted from the console in #6146: the server-vs-hydrated
+				// answer every clock- and zone-reading surface gates on. tests/use-hydrated.test.tsx
+				// proves the server render, the hydrating render and the render after.
+				"src/use-hydrated.ts",
 			],
 			// These shadcn/Radix wrappers are deliberately proved through the composed-component
 			// suites that mount them, rather than counted in the authored-logic unit badge. Naming

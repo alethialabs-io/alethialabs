@@ -16,7 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, GripVertical, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useRef, useState } from "react";
 import type { DimensionDTO, ValueDTO } from "@/app/server/actions/classification/dimensions";
-import { getDimensionResourceBreakdown } from "@/app/server/actions/classification/assignments";
+import { orpc } from "@/lib/rpc/client";
 import { InfoHint, Spinner } from "./classification-ui";
 import { kindLabel } from "./resource-kind-labels";
 
@@ -115,10 +115,12 @@ function ValueRow({
 
 /** The "coverage by resource kind" panel for the selected dimension (lazy). */
 function CoverageByKind({ dim }: { dim: DimensionDTO }) {
-	const { data, isPending, isError, refetch } = useQuery({
-		queryKey: ["classification", "dimension-breakdown", dim.id],
-		queryFn: () => getDimensionResourceBreakdown(dim.id),
-	});
+	// The `classification.dimensionBreakdown` GET read (#6129); a `classification` hint refreshes it.
+	const { data, isPending, isError, refetch } = useQuery(
+		orpc.classification.dimensionBreakdown.queryOptions({
+			input: { dimensionId: dim.id },
+		}),
+	);
 	const rows = data ?? [];
 	const max = rows.reduce((n, r) => Math.max(n, r.count), 0);
 

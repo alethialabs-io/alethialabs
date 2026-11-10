@@ -133,7 +133,7 @@ import { authorizeCliQuiet, authorizeQuiet } from "@/lib/authz/guard";
 import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
 import type { Actor } from "@/lib/authz/types";
 
-const ACTOR: Actor = { userId: USER, orgId: ORG };
+const ACTOR: Actor = { credential: "session", userId: USER, orgId: ORG };
 
 /** Whether the actor currently holds cluster:access_admin — flipped mid-mint to model a revocation. */
 let holdsAdmin = true;

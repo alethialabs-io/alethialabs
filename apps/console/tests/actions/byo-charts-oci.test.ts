@@ -13,6 +13,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
 vi.mock("@/lib/db", () => ({ withActorScope: vi.fn(), getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// The project-in-the-actor's-org check has its own suite (tests/lib/projects/refuse-other-org.test.ts).
+vi.mock("@/lib/projects/refuse-other-org", () => ({ refuseProjectOfAnotherOrg: vi.fn(async () => undefined) }));
 vi.mock("@/lib/billing/job-quota", () => ({ assertJobQuotaAllowed: vi.fn() }));
 vi.mock("@/lib/addons/byo-flag", () => ({ isByoHelmEnabled: () => true }));
 vi.mock("@/app/server/actions/resolve", () => ({
@@ -105,6 +107,60 @@ describe("attachByoChart — OCI", () => {
 		expect(inserted.find((i) => i.table === projectAddons)?.payload).toMatchObject({
 			version: "*",
 		});
+	});
+
+	it("defaults a new chart to its own namespace, byo-<chart id> (#6446)", async () => {
+		const { inserted } = setupDb();
+
+		await attachByoChart({
+			projectId: "proj-1",
+			id: "payments",
+			repoUrl: "oci://ghcr.io/acme/payments",
+		});
+
+		expect(inserted.find((i) => i.table === projectAddons)?.payload).toMatchObject({
+			namespace: "byo-payments",
+		});
+	});
+
+	it("refuses a new chart in default, which is reserved for the platform (#6446)", async () => {
+		const { inserted } = setupDb();
+		await expect(
+			attachByoChart({
+				projectId: "proj-1",
+				id: "payments",
+				repoUrl: "oci://ghcr.io/acme/payments",
+				namespace: "default",
+			}),
+		).rejects.toThrow();
+		expect(inserted.find((i) => i.table === projectAddons)).toBeUndefined();
+	});
+
+	it("lets a re-attach keep its stored byo- namespace, read from the database (#6446)", async () => {
+		// The stored row: attached before the byo- rule, in a byo- namespace that is not its own.
+		const { inserted } = setupDb([{ namespace: "byo-legacy" }]);
+		await attachByoChart({
+			projectId: "proj-1",
+			id: "payments",
+			repoUrl: "oci://ghcr.io/acme/payments",
+			namespace: "byo-legacy",
+		});
+		expect(inserted.find((i) => i.table === projectAddons)?.payload).toMatchObject({
+			namespace: "byo-legacy",
+		});
+	});
+
+	it("refuses a newly chosen byo- namespace that is not the chart's own (#6446)", async () => {
+		const { inserted } = setupDb([{ namespace: "byo-legacy" }]);
+		await expect(
+			attachByoChart({
+				projectId: "proj-1",
+				id: "payments",
+				repoUrl: "oci://ghcr.io/acme/payments",
+				namespace: "byo-other",
+			}),
+		).rejects.toThrow(/reserved for the namespace each chart gets by default/);
+		expect(inserted.find((i) => i.table === projectAddons)).toBeUndefined();
 	});
 
 	it("rejects an oci:// reference that names no chart path at all", async () => {

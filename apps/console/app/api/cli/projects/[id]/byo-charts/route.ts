@@ -11,6 +11,7 @@ import { z } from "zod";
 import { attachByoChart, detachByoChart } from "@/app/server/actions/byo-charts";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import {
 	type CursorScope,
 	MAX_PAGE_SIZE,
@@ -21,7 +22,6 @@ import {
 import { byoWriteError, resolveByoScope } from "@/lib/cli/byo-write";
 import {
 	resolveCliEnvironment,
-	resolveCliProject,
 	resolveDefaultEnvironmentId,
 } from "@/lib/cli/resolve-project";
 import { cliJson } from "@/lib/cli/respond";
@@ -58,7 +58,7 @@ export async function GET(
 			: parsed.opts;
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
@@ -180,7 +180,7 @@ export async function POST(
 	const b = parsed.data;
 
 	try {
-		const scope = await resolveByoScope(actor.orgId, id, req);
+		const scope = await resolveByoScope(actor, id, req, "edit");
 		if ("error" in scope) return scope.error;
 
 		const result = await runWithActor(actor, () =>
@@ -225,7 +225,7 @@ export async function DELETE(
 	}
 
 	try {
-		const scope = await resolveByoScope(actor.orgId, id, req);
+		const scope = await resolveByoScope(actor, id, req, "edit");
 		if ("error" in scope) return scope.error;
 
 		await runWithActor(actor, () =>

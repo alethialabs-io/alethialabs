@@ -4,13 +4,13 @@
 
 import { Check, Plus } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
-import {
-	getEnvironmentsForSlug,
-	type SwitcherEnv,
-} from "@/app/server/actions/resolve";
+import type { SwitcherEnv } from "@/app/server/actions/resolve";
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
+import { useProjectsQuery } from "@/lib/query/use-projects-query";
+import { orpc } from "@/lib/rpc/client";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import {
 	Command,
@@ -19,9 +19,17 @@ import {
 	CommandInput,
 	CommandItem,
 	CommandList,
-	CommandSeparator,
 } from "@repo/ui/command";
+import { useCommandSearch } from "@repo/ui/command-search";
+import { Button } from "@repo/ui/button";
 import { Popover, PopoverContent } from "@repo/ui/popover";
+import { Separator } from "@repo/ui/separator";
+
+/** An environment's search text: its name, for the shared ranker. */
+const envSearchText = (e: SwitcherEnv): string => e.name;
+
+/** A stable empty list, so effects keyed on `envs` do not re-run on every render before data. */
+const NO_ENVS: SwitcherEnv[] = [];
 
 /**
  * Header environment switcher — the Vercel combobox after org + project. Lists the current
@@ -36,7 +44,6 @@ export function EnvSwitcher() {
 	const searchParams = useSearchParams();
 	const [open, setOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
-	const [envs, setEnvs] = useState<SwitcherEnv[]>([]);
 
 	// Parse `/{org}/{project}` — never the legacy /dashboard or `~` global tree. The active
 	// environment lives in the `?environment_id=` query param, so switching envs keeps the current
@@ -69,22 +76,18 @@ export function EnvSwitcher() {
 		[],
 	);
 
-	/** Fetches the project's environments (never throws — resolves to [] on failure). */
-	const loadEnvs = useCallback(
-		() => getEnvironmentsForSlug(project).catch(() => Array<SwitcherEnv>()),
-		[project],
-	);
-
-	useEffect(() => {
-		if (!isDrilldown) return;
-		let live = true;
-		loadEnvs().then((rows) => {
-			if (live) setEnvs(rows);
-		});
-		return () => {
-			live = false;
-		};
-	}, [isDrilldown, loadEnvs]);
+	// The project's environments, over the read router (#6114). The `[project]` layout prefetches
+	// them for a project that resolves, so the switcher paints with the active env. It asks only for
+	// a slug the org's (layout-prefetched) project list contains: a 404 project route makes no
+	// request beyond its layout.
+	const { data: projects } = useProjectsQuery();
+	const knownProject = isDrilldown && !!projects?.some((p) => p.slug === project);
+	const envsQuery = useQuery({
+		...orpc.workspace.environments.queryOptions({ input: { project: project ?? "" } }),
+		enabled: knownProject,
+	});
+	const envs = envsQuery.data ?? NO_ENVS;
+	const refetchEnvs = envsQuery.refetch;
 
 	// Shift+Tab cycles environments for fast switching (skips while typing in a field so
 	// normal reverse-tab focus still works).
@@ -114,6 +117,9 @@ export function EnvSwitcher() {
 		return () => window.removeEventListener("keydown", onKey);
 	}, [isDrilldown, envs, envId, pathname, router, syncElench]);
 
+	// Ranked by the shared ranker; the query starts empty each time the popover opens.
+	const envSearch = useCommandSearch(envs, envSearchText, { open });
+
 	if (!isDrilldown || envs.length === 0) return null;
 
 	const active =
@@ -129,8 +135,7 @@ export function EnvSwitcher() {
 
 	/** After creating an env: refresh the list and switch to the new env in the current view. */
 	const handleCreated = async (name: string) => {
-		const rows = await loadEnvs();
-		setEnvs(rows);
+		const { data: rows = [] } = await refetchEnvs();
 		const created = rows.find((e) => e.name === name);
 		if (created) {
 			syncElench(created.id, rows);
@@ -154,40 +159,49 @@ export function EnvSwitcher() {
 					label={active?.name ?? ""}
 				/>
 				<PopoverContent className="w-64 p-0" align="start">
-					<Command label="Find environment">
+					<Command
+						label="Find environment"
+						search={envSearch.search}
+						onSearchChange={envSearch.onSearchChange}
+						filteredItems={envSearch.results}
+					>
 						<CommandInput placeholder="Find environment…" className="h-9" />
 						<CommandList>
 							<CommandEmpty>No environment found.</CommandEmpty>
-							<CommandGroup heading="Environments">
-								{envs.map((e) => (
-									<CommandItem
-										key={e.id}
-										value={e.name}
-										onSelect={() => handleSelect(e.id)}
-										className="gap-2"
-									>
-										<span className="flex-1 truncate">{e.name}</span>
-										{e.id === active?.id && (
-											<Check className="h-4 w-4 shrink-0" />
-										)}
-									</CommandItem>
-								))}
-							</CommandGroup>
-							<CommandSeparator />
-							<CommandGroup>
-								<CommandItem
-									value="__new-environment"
-									onSelect={() => {
-										setOpen(false);
-										setCreateOpen(true);
-									}}
-									className="gap-2 text-muted-foreground"
-								>
-									<Plus className="h-4 w-4 shrink-0" />
-									<span className="flex-1">New Environment</span>
-								</CommandItem>
-							</CommandGroup>
+							{envSearch.results.length > 0 && (
+								<CommandGroup heading="Environments">
+									{envSearch.results.map((e) => (
+										<CommandItem
+											key={e.id}
+											onSelect={() => handleSelect(e.id)}
+											className="gap-2"
+										>
+											<span className="flex-1 truncate">{e.name}</span>
+											{e.id === active?.id && (
+												<Check className="h-4 w-4 shrink-0" />
+											)}
+										</CommandItem>
+									))}
+								</CommandGroup>
+							)}
 						</CommandList>
+						<Separator />
+						{/* An action, not an environment, so a footer button OUTSIDE the listbox: offered on a
+						    miss too, reached by click or Tab from the search, never an arrow-key row and
+						    never counted as a match (so Enter on a miss runs nothing). */}
+						<div className="p-1">
+							<Button
+								variant="ghost"
+								onClick={() => {
+									setOpen(false);
+									setCreateOpen(true);
+								}}
+								className="w-full justify-start gap-2 px-2 text-muted-foreground"
+							>
+								<Plus className="h-4 w-4 shrink-0" />
+								<span className="flex-1 text-left">New Environment</span>
+							</Button>
+						</div>
 					</Command>
 				</PopoverContent>
 			</Popover>

@@ -212,7 +212,8 @@ async function settleOne(db: Db, id: string): Promise<boolean> {
 			.limit(1)
 			.for("update", { skipLocked: true });
 		if (!row) return false;
-		const owner: Actor = { userId: row.user_id, orgId: row.org_id };
+		// Settled on behalf of the person who wrote the draft.
+		const owner: Actor = { userId: row.user_id, orgId: row.org_id, credential: "session" };
 		const after = await settleIfSilent(tx, owner, row, null);
 		return after !== row;
 	});

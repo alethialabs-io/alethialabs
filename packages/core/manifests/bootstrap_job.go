@@ -6,8 +6,7 @@
 // role/user with working privileges — a Postgres ROLE, or on Azure MySQL an Entra AADUSER — which is
 // SQL the cloud API can't perform. So alongside the app manifests we emit a one-shot ArgoCD PreSync Job
 // that, connected as the database ADMIN, runs `alethia db-bootstrap` to create/scope the app's login,
-// then exits (hook-delete-policy: HookSucceeded). Because it is a PreSync hook it completes before the
-// app syncs, so the app's very first connection already has its grants.
+// then exits. Because it is a PreSync hook it completes before the app syncs, so the app's very first connection already has its grants.
 //
 // The Job is why the app never needs admin: it is the alternative to registering the app identity as a
 // superuser / Entra administrator. Its OWN admin credential is sourced per cloud, keyless where the
@@ -31,6 +30,7 @@ package manifests
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -59,6 +59,77 @@ const (
 	bootstrapSQLFile   = "/sql/init.sql"
 	bootstrapTokenDir  = "/db-admin-token"
 	bootstrapTokenFile = "/db-admin-token/token"
+)
+
+// BootstrapOnlyLabelKey marks the bootstrap hooks that must exist only while a bootstrap PreSync phase
+// runs: the admin ExternalSecret (AWS/GCP) and the admin-federated ServiceAccount (Azure). The hook
+// delete policies below remove them when the phase completes; an operation that never completes its
+// phase (terminated by hand, or whose record is lost) runs neither policy, so the runner's post-sync
+// reconcile (provisioner.reapStrandedBootstrapHooks) selects them by this label and removes the ones
+// that outlived their operation. The Job is deliberately NOT labelled: it holds no credential and is
+// bounded by its own activeDeadlineSeconds and ttlSecondsAfterFinished.
+//
+// EXPORTED because the provisioner's label selector must name the same key; BootstrapOnlyLabelValue
+// is its value. The tests pin the rendered label on every credential-bearing hook.
+const (
+	BootstrapOnlyLabelKey   = "alethia.io/bootstrap-only"
+	BootstrapOnlyLabelValue = "true"
+)
+
+// The rest of a bootstrap-only hook's rendered identity, EXPORTED for the same reconcile. It reaps an
+// object only when it is exactly a rendered bootstrap hook: the label above, these annotations, and
+// one of these names. Each constant is the one the renderer below writes, so the two cannot drift.
+const (
+	// BootstrapHookPhase is the argocd.argoproj.io/hook value every bootstrap hook carries.
+	BootstrapHookPhase = "PreSync"
+	// BootstrapAdminHookDeletePolicy is the delete policy of the credential-bearing hooks.
+	BootstrapAdminHookDeletePolicy = adminHookDeletePolicy
+	// BootstrapJobNamePrefix starts every bootstrap Job name (BootstrapJobName), and so every admin
+	// ExternalSecret name.
+	BootstrapJobNamePrefix = "bootstrap-"
+	// BootstrapAdminSecretSuffix ends every admin ExternalSecret name: <Job name><suffix>.
+	BootstrapAdminSecretSuffix = "-admin"
+	// BootstrapServiceAccountName is the Azure admin-federated ServiceAccount's name.
+	BootstrapServiceAccountName = keylessBootstrapKSAName
+)
+
+// ArgoCD hook delete policies for the bootstrap hooks. The two differ on purpose:
+//
+//   - adminHookDeletePolicy is carried by every hook that IS an admin credential or confers one — the
+//     AWS/GCP admin ExternalSecret (whose materialized Secret is garbage-collected with it through the
+//     Owner reference) and the Azure ServiceAccount federated to the dedicated admin identity. They are
+//     removed when the PreSync phase ends in EITHER outcome (HookSucceeded, HookFailed), so no admin
+//     credential remains in the app namespace whatever the Job's outcome. BeforeHookCreation removes a
+//     copy left by an operation that ended without running either policy before the next sync
+//     recreates it, so a retry always starts from a freshly materialized credential.
+//   - bootstrapJobHookDeletePolicy is the Job's. It holds no credential (only secretKeyRefs or a token
+//     file inside its own pod), so a FAILED Job is deliberately kept: its pod logs are where a cloud
+//     trust error is readable. BeforeHookCreation is what makes the retry possible — the Job's name is
+//     fixed and its pod template immutable, so without it a re-sync would find the failed Job still
+//     present instead of starting a new run.
+const (
+	adminHookDeletePolicy        = "BeforeHookCreation,HookSucceeded,HookFailed"
+	bootstrapJobHookDeletePolicy = "BeforeHookCreation,HookSucceeded"
+)
+
+// Time bounds on the bootstrap Job.
+//
+// bootstrapJobDeadlineSeconds is the Job's activeDeadlineSeconds. It bounds the PreSync phase: a pod
+// that never finishes (an image that cannot be pulled, a connection that hangs) would otherwise keep
+// the phase running forever, and the hook delete policies above only run when the phase completes.
+// With the deadline the Job always reaches Failed or Complete, so the phase always completes. A real
+// bootstrap is two or three short containers (image pulls, one SQL render, one SQL apply; the psql
+// step has a 30s connect timeout) run at most three times under backoffLimit 2; 15 minutes is several
+// times that budget, leaving room for slow first image pulls on a fresh node. The deadline covers
+// every attempt, not each one.
+//
+// bootstrapJobTTLSeconds is the Job's ttlSecondsAfterFinished. It bounds the lifetime of a FAILED Job,
+// which the delete policy deliberately keeps for its pod logs: an hour is long enough to read them
+// (the e2e reads them minutes after the deploy reports), and the Job and its pods do not persist
+// indefinitely when no further sync replaces them. A successful Job is deleted by HookSucceeded first.
+const (
+	bootstrapJobDeadlineSeconds = 900
+	bootstrapJobTTLSeconds      = 3600
 )
 
 // Database engine families the bootstrap Job branches on (matches types.ProjectDatabaseConfig.
@@ -99,8 +170,26 @@ type bootstrapJobSpec struct {
 	PodLabels      map[string]string // extra pod-template labels (Azure WI use=true — the webhook trigger)
 	InitContainers []bootstrapContainer
 	Main           bootstrapContainer
-	Volumes        []Volume
+	Volumes        []bootstrapVolume
 }
+
+// bootstrapVolume is one emptyDir scratch volume of the Job. Memory backs it with tmpfs, so what is
+// written there never reaches the node's disk and is gone when the pod's containers stop.
+type bootstrapVolume struct {
+	Name   string
+	Memory bool
+}
+
+// JobDeletePolicy is the Job's ArgoCD hook-delete-policy, exposed to the template so the rendered
+// annotation is this constant; the tests pin the literal value independently, so a change to the
+// constant fails them.
+func (bootstrapJobSpec) JobDeletePolicy() string { return bootstrapJobHookDeletePolicy }
+
+// ActiveDeadlineSeconds bounds the Job's whole run, every retry included. See bootstrapJobDeadlineSeconds.
+func (bootstrapJobSpec) ActiveDeadlineSeconds() int { return bootstrapJobDeadlineSeconds }
+
+// TTLSecondsAfterFinished bounds how long a finished Job is kept. See bootstrapJobTTLSeconds.
+func (bootstrapJobSpec) TTLSecondsAfterFinished() int { return bootstrapJobTTLSeconds }
 
 // BootstrapJobResult is the rendered artifacts for one keyless database's bootstrap.
 type BootstrapJobResult struct {
@@ -122,7 +211,7 @@ type BootstrapJobResult struct {
 // time a name needed normalizing, and the test would then poll forever for an object that was never
 // going to appear — and report it as a keyless failure.
 func BootstrapJobName(t types.ServiceBindingTarget) string {
-	return dns1123("bootstrap-" + string(t.Kind) + "-" + t.Name)
+	return dns1123(BootstrapJobNamePrefix + string(t.Kind) + "-" + t.Name)
 }
 
 // RenderBootstrapJob renders the least-priv bootstrap Job (+ its admin ExternalSecret on AWS/GCP) for
@@ -170,13 +259,16 @@ func RenderBootstrapJob(opts Options, t types.ServiceBindingTarget) (BootstrapJo
 
 // sqlVolume + its mount are shared by every cloud: the init container writes /sql/init.sql, the psql
 // container reads it.
-func sqlVolume() Volume     { return Volume{Name: "sql"} }
-func sqlMount() VolumeMount { return VolumeMount{Name: "sql", MountPath: bootstrapSQLDir} }
+func sqlVolume() bootstrapVolume { return bootstrapVolume{Name: "sql"} }
+func sqlMount() VolumeMount      { return VolumeMount{Name: "sql", MountPath: bootstrapSQLDir} }
 func sqlMountRO() VolumeMount {
 	return VolumeMount{Name: "sql", MountPath: bootstrapSQLDir, ReadOnly: true}
 }
-func tokenVolume() Volume     { return Volume{Name: "admin-token"} }
-func tokenMount() VolumeMount { return VolumeMount{Name: "admin-token", MountPath: bootstrapTokenDir} }
+
+// tokenVolume holds the minted admin Entra token between the init container and apply-sql. It is
+// memory-backed so the scratch data stays off the node's disk.
+func tokenVolume() bootstrapVolume { return bootstrapVolume{Name: "admin-token", Memory: true} }
+func tokenMount() VolumeMount      { return VolumeMount{Name: "admin-token", MountPath: bootstrapTokenDir} }
 func tokenMountRO() VolumeMount {
 	return VolumeMount{Name: "admin-token", MountPath: bootstrapTokenDir, ReadOnly: true}
 }
@@ -208,7 +300,7 @@ func awsBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 	if remoteKey == "" {
 		return bootstrapJobSpec{}, "", fmt.Errorf("no rds_master_credentials_secret_name output for the bootstrap Job admin credentials")
 	}
-	adminSecretName := name + "-admin"
+	adminSecretName := name + BootstrapAdminSecretSuffix
 	esYAML, err := renderAdminExternalSecret(adminSecretName, ns, string(types.CloudProviderAws), remoteKey)
 	if err != nil {
 		return bootstrapJobSpec{}, "", err
@@ -228,7 +320,7 @@ func awsBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 		Namespace:      ns,
 		InitContainers: []bootstrapContainer{sqlInit},
 		Main:           applySQL,
-		Volumes:        []Volume{sqlVolume()},
+		Volumes:        []bootstrapVolume{sqlVolume()},
 	}
 	return spec, esYAML, nil
 }
@@ -252,7 +344,7 @@ func gcpBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 	if remoteKey == "" {
 		return bootstrapJobSpec{}, "", fmt.Errorf("no cloud_sql_credentials_secret output for the bootstrap Job admin credentials")
 	}
-	adminSecretName := name + "-admin"
+	adminSecretName := name + BootstrapAdminSecretSuffix
 	esYAML, err := renderAdminExternalSecret(adminSecretName, ns, string(types.CloudProviderGcp), remoteKey)
 	if err != nil {
 		return bootstrapJobSpec{}, "", err
@@ -272,7 +364,7 @@ func gcpBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 		Namespace:      ns,
 		InitContainers: []bootstrapContainer{sqlInit},
 		Main:           applySQL,
-		Volumes:        []Volume{sqlVolume()},
+		Volumes:        []bootstrapVolume{sqlVolume()},
 	}
 	return spec, esYAML, nil
 }
@@ -357,14 +449,17 @@ func azureBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns str
 		Namespace:      ns,
 		ServiceAccount: keylessBootstrapKSAName,
 		EmitSA:         true,
-		SALabels:       map[string]string{"azure.workload.identity/use": "true"},
+		SALabels: map[string]string{
+			"azure.workload.identity/use": "true",
+			BootstrapOnlyLabelKey:         BootstrapOnlyLabelValue,
+		},
 		// The SA federates the DEDICATED admin identity, so it is ephemeral like the admin secret on the
-		// other clouds: a PreSync hook one wave before the Job, deleted after the phase — a pod can't
-		// impersonate the admin-capable KSA between deploys.
+		// other clouds: a PreSync hook one wave before the Job, deleted when the phase ends whether the
+		// Job succeeded or failed — a pod can't impersonate the admin-capable KSA between deploys.
 		SAAnnotations: map[string]string{
 			"azure.workload.identity/client-id":     adminClientID,
-			"argocd.argoproj.io/hook":               "PreSync",
-			"argocd.argoproj.io/hook-delete-policy": "HookSucceeded",
+			"argocd.argoproj.io/hook":               BootstrapHookPhase,
+			"argocd.argoproj.io/hook-delete-policy": adminHookDeletePolicy,
 			"argocd.argoproj.io/sync-wave":          "-1",
 		},
 		// The azure-workload-identity webhook injects the federated token when the POD carries this
@@ -375,7 +470,7 @@ func azureBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns str
 			sqlInit,
 		},
 		Main:    applySQL,
-		Volumes: []Volume{sqlVolume(), tokenVolume()},
+		Volumes: []bootstrapVolume{sqlVolume(), tokenVolume()},
 	}
 	return spec, nil
 }
@@ -482,13 +577,20 @@ func renderAdminExternalSecret(adminSecretName, namespace, provider, remoteKey s
 		Namespace: ns,
 		StoreName: store,
 		Data:      data,
+		// Selected by the runner's reconcile of hooks whose operation ended without running a
+		// delete policy (see BootstrapOnlyLabelKey). The shared template writes extra label values
+		// verbatim, and a bare `true` would decode as a YAML boolean, which Kubernetes rejects as a
+		// label value — so this one label is passed already quoted. Quoting here rather than in the
+		// template keeps every other ExternalSecret's rendering unchanged.
+		ExtraLabels: []esLabel{{Key: BootstrapOnlyLabelKey, Value: strconv.Quote(BootstrapOnlyLabelValue)}},
 		// Ephemeral, just-in-time admin credential: a PreSync hook one wave BEFORE the Job (so ESO has
-		// materialized the Secret — ArgoCD waits on the ExternalSecret's health), deleted after the
-		// PreSync phase. creationPolicy Owner sets an ownerRef, so deleting this ExternalSecret
-		// garbage-collects the admin Secret too — no standing superuser credential in the app namespace.
+		// materialized the Secret — ArgoCD waits on the ExternalSecret's health), deleted when the
+		// PreSync phase ends, succeeded or failed. creationPolicy Owner sets an ownerRef, so deleting
+		// this ExternalSecret garbage-collects the admin Secret too — no standing superuser credential in
+		// the app namespace.
 		Annotations: map[string]string{
-			"argocd.argoproj.io/hook":               "PreSync",
-			"argocd.argoproj.io/hook-delete-policy": "HookSucceeded",
+			"argocd.argoproj.io/hook":               BootstrapHookPhase,
+			"argocd.argoproj.io/hook-delete-policy": adminHookDeletePolicy,
 			"argocd.argoproj.io/sync-wave":          "-1",
 		},
 	}); err != nil {
@@ -528,10 +630,12 @@ metadata:
     app.kubernetes.io/managed-by: alethia
   annotations:
     argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    argocd.argoproj.io/hook-delete-policy: {{ .JobDeletePolicy }}
     argocd.argoproj.io/sync-wave: "0"
 spec:
   backoffLimit: 2
+  activeDeadlineSeconds: {{ .ActiveDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .TTLSecondsAfterFinished }}
   template:
     metadata:
       labels:
@@ -661,7 +765,12 @@ spec:
       volumes:
         {{- range .Volumes }}
         - name: {{ .Name }}
+          {{- if .Memory }}
+          emptyDir:
+            medium: Memory
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         {{- end }}
       {{- end }}
 `))

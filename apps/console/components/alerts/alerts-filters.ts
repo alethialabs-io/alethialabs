@@ -6,13 +6,16 @@
 // panels (lib/query/README.md → "Server-side filters"):
 //
 //   store (use-alerts-filters) → useFilterUrlSync → useDebouncedValue → normalize*Query()
-//     → qk.alert*(org, query) → getAlert*Page(query)
+//     → orpc.alerts.<list>(query) — a GET procedure (lib/rpc/procedures/alerts.ts, #6125)
 //
-// The resolve step USED to be in-memory (`filter*()` from alerts-query.ts), because the alerts
-// route is RSC-fed and `getAlertsBootstrap()` returned the whole universe in one payload. This
-// file recorded that deviation against itself; #4890 closed it. The three server-side siblings
-// have existed since #2899 and nothing called them, so every filtered view of a panel shared one
-// cache entry and the ledger's filter could only ever see the newest 50 rows.
+// The resolve step USED to be in-memory (`filter*()` from alerts-query.ts) over a bootstrap that
+// returned the whole universe in one payload; #4890 moved it to SQL, and #6125 moved the reads off
+// server actions onto GET procedures that the route prefetches.
+//
+// Each view also says what STATE its read is in (#6125). A panel decides between its rows, its
+// empty copy, a skeleton and a region error from `state` — never from `rows.length` alone, which is
+// 0 both while the first answer is in flight and after it failed, and rendered "No activity yet"
+// for both.
 //
 // Each hook is called ONCE, from alerts-page.tsx, which owns the resolved view and hands it to
 // the panels — so the URL-sync effects mount once even though the panels' filter bars read the
@@ -31,6 +34,7 @@ import type {
 	DeliveryDTO,
 	PolicyDTO,
 } from "@/app/server/actions/alerts";
+import type { UseQueryResult } from "@tanstack/react-query";
 import {
 	ACTIVITY_URL_PARAMS,
 	CHANNEL_STATUS_LABEL,
@@ -86,6 +90,34 @@ export interface FilteredView<Row, Facets> {
 	 * from a stand-in. `stale` stays the dim alone: dimming every first paint flashes a correct page.
 	 */
 	busy: boolean;
+	/**
+	 * What the read behind the rows has answered. `loading`: no answer yet. `error`: the read failed
+	 * with nothing to show. `ready`: rows (possibly none) the panel may render — including rows kept
+	 * behind a refresh that failed, which `refreshFailed` marks.
+	 */
+	state: "loading" | "error" | "ready";
+	/** A refetch failed behind rows that are still the last good answer. */
+	refreshFailed: boolean;
+	/** Every row in the org, whatever the filters — 0 means the empty copy, not the no-match copy. */
+	total: number;
+	/** Re-run the read (the region error's and the stale notice's retry). */
+	retry: () => void;
+}
+
+/** The parts of a page read every view derives its state from. */
+type PageRead<P> = Pick<UseQueryResult<P>, "data" | "isError" | "isPlaceholderData" | "isPending" | "refetch">;
+
+/** The read-state half of a {@link FilteredView}, from the page query behind it. */
+function readState<P extends { total: number }>(
+	page: PageRead<P>,
+): Pick<FilteredView<unknown, unknown>, "state" | "refreshFailed" | "total" | "retry"> {
+	const answered = page.data !== undefined;
+	return {
+		state: answered ? "ready" : page.isError ? "error" : "loading",
+		refreshFailed: answered && page.isError,
+		total: page.data?.total ?? 0,
+		retry: () => void page.refetch(),
+	};
 }
 
 export type ChannelsView = FilteredView<
@@ -120,9 +152,8 @@ function labelled(
 /** The empty facet set a panel renders against while its first read is in flight. */
 const NO_OPTIONS: FacetOption[] = [];
 
-/** Channels: URL-synced, debounced filters resolved by `getAlertChannelsPage(query)`.
- *  @param enabled false on the hub's upsell path, where no list renders. */
-export function useChannelsView(enabled = true): ChannelsView {
+/** Channels: URL-synced, debounced filters resolved by `alerts.channels(query)`. */
+export function useChannelsView(): ChannelsView {
 	const filters = useAlertChannelFilters((s) => s.filters);
 	const urlRead = useFilterUrlSync(
 		useAlertChannelFilters,
@@ -134,7 +165,7 @@ export function useChannelsView(enabled = true): ChannelsView {
 		() => normalizeChannelsQuery({ ...filters, search }),
 		[filters, search],
 	);
-	const page = useAlertChannelsPageQuery(query, enabled);
+	const page = useAlertChannelsPageQuery(query);
 	const facets = useMemo(
 		() => ({
 			types: labelled(page.data?.facets.types ?? NO_OPTIONS),
@@ -155,12 +186,12 @@ export function useChannelsView(enabled = true): ChannelsView {
 			page.isPending ||
 			page.isPlaceholderData ||
 			filters.search !== search,
+		...readState(page),
 	};
 }
 
-/** Policies: URL-synced, debounced filters resolved by `getAlertPoliciesPage(query)`.
- *  @param enabled see {@link useChannelsView}. */
-export function usePoliciesView(enabled = true): PoliciesView {
+/** Policies: URL-synced, debounced filters resolved by `alerts.policies(query)`. */
+export function usePoliciesView(): PoliciesView {
 	const filters = useAlertPolicyFilters((s) => s.filters);
 	const urlRead = useFilterUrlSync(
 		useAlertPolicyFilters,
@@ -172,7 +203,7 @@ export function usePoliciesView(enabled = true): PoliciesView {
 		() => normalizePoliciesQuery({ ...filters, search }),
 		[filters, search],
 	);
-	const page = useAlertPoliciesPageQuery(query, enabled);
+	const page = useAlertPoliciesPageQuery(query);
 	const facets = useMemo(
 		() => ({
 			status: labelled(
@@ -194,12 +225,12 @@ export function usePoliciesView(enabled = true): PoliciesView {
 			page.isPending ||
 			page.isPlaceholderData ||
 			filters.search !== search,
+		...readState(page),
 	};
 }
 
-/** Activity: URL-synced, debounced filters resolved by `getAlertDeliveriesPage(query)`.
- *  @param enabled see {@link useChannelsView}. */
-export function useActivityView(enabled = true): ActivityView {
+/** Activity: URL-synced, debounced filters resolved by `alerts.deliveries(query)`. */
+export function useActivityView(): ActivityView {
 	const filters = useAlertActivityFilters((s) => s.filters);
 	const urlRead = useFilterUrlSync(
 		useAlertActivityFilters,
@@ -211,7 +242,7 @@ export function useActivityView(enabled = true): ActivityView {
 		() => normalizeActivityQuery({ ...filters, search }),
 		[filters, search],
 	);
-	const page = useAlertDeliveriesPageQuery(query, enabled);
+	const page = useAlertDeliveriesPageQuery(query);
 	const facets = useMemo(
 		() => ({
 			status: labelled(
@@ -231,5 +262,6 @@ export function useActivityView(enabled = true): ActivityView {
 			page.isPending ||
 			page.isPlaceholderData ||
 			filters.search !== search,
+		...readState(page),
 	};
 }

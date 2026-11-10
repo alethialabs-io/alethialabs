@@ -5,8 +5,10 @@
 // fields validate (scalar-only var rows: empty/duplicate names block), and Review calls
 // attachIacSource with the collected repo/path/ref + folded scalar var_values. The heavy
 // RepositorySelector (git-provider auth + server fetch) is stubbed to a plain input so the wizard is
-// tested in isolation.
+// tested in isolation. The attach is on the mutation contract (#6119): the dialog hands
+// `attachIacSourceAction` to `useActionMutation`, which answers an `ActionResult`.
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,8 +16,13 @@ import { ByoIacDialog } from "@/components/design-project/byo/byo-iac-dialog";
 
 const { attachIacSource } = vi.hoisted(() => ({ attachIacSource: vi.fn() }));
 vi.mock("@/app/server/actions/byo-iac", () => ({
-	attachIacSource: (input: unknown) => attachIacSource(input),
+	attachIacSourceAction: (input: unknown) => attachIacSource(input),
 }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc({}).orpc };
+});
 
 // Stub the git-provider selector to a plain input — its auth/fetch internals aren't under test.
 vi.mock("@/components/repository-selector", () => ({
@@ -41,21 +48,24 @@ vi.mock("sonner", () => ({ toast }));
 
 beforeEach(() => {
 	attachIacSource.mockReset();
-	attachIacSource.mockResolvedValue({ ok: true, id: "src-1" });
+	attachIacSource.mockResolvedValue({ ok: true, data: { id: "src-1" } });
 	toast.success.mockReset();
 	toast.error.mockReset();
 });
 
 /** Renders the dialog open, in edit mode. */
 function renderDialog() {
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
-		<ByoIacDialog
-			open
-			onOpenChange={() => {}}
-			projectId="proj-1"
-			environmentId="env-1"
-			onAttached={vi.fn()}
-		/>,
+		<QueryClientProvider client={client}>
+			<ByoIacDialog
+				open
+				onOpenChange={() => {}}
+				projectId="proj-1"
+				environmentId="env-1"
+				onAttached={vi.fn()}
+			/>
+		</QueryClientProvider>,
 	);
 }
 
@@ -114,7 +124,26 @@ describe("ByoIacDialog", () => {
 				varValues: { region: "us-east-1" },
 			}),
 		);
-		expect(toast.success).toHaveBeenCalled();
+		await waitFor(() =>
+			expect(toast.success).toHaveBeenCalledWith("IaC source attached — scanning the module now."),
+		);
+	});
+
+	it("says a refusal inside the dialog, toasts nothing, and stays on Review", async () => {
+		const refusal =
+			"This Fabric already has an IaC source attached — detach it before attaching another.";
+		attachIacSource.mockResolvedValue({ ok: false, error: { kind: "conflict", message: refusal } });
+		const user = userEvent.setup();
+		renderDialog();
+		await toPathStep(user);
+		await user.click(screen.getByRole("button", { name: /next/i })); // → Variables
+		await user.click(screen.getByRole("button", { name: /next/i })); // → Review
+		await user.click(screen.getByRole("button", { name: /attach source/i }));
+
+		expect(await screen.findByText(refusal)).toBeInTheDocument();
+		expect(toast.error).not.toHaveBeenCalled();
+		expect(toast.success).not.toHaveBeenCalled();
+		expect(screen.getByRole("button", { name: /attach source/i })).toBeEnabled();
 	});
 
 	it("shows the module coords on the Review step", async () => {

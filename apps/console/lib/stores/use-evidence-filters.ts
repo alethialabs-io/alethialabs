@@ -3,7 +3,7 @@
 
 // The Evidence page's filter store — the console filter standard's per-page state
 // (see lib/query/README.md → "Server-side filters"). URL-synced by the page client
-// via useFilterUrlSync; fed into qk.evidence through normalizeEvidenceQuery.
+// via useFilterUrlSync; fed into the `evidence.page` read key through normalizeEvidenceQuery.
 
 import {
 	DEFAULT_EVIDENCE_FILTERS,

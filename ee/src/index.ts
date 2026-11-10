@@ -12,7 +12,7 @@ import { sso } from "@better-auth/sso";
 import { OpenFgaClient } from "@openfga/sdk";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { organization } from "better-auth/plugins/organization";
-import type { Actor, Entitlements } from "@/lib/authz/types";
+import type { Entitlements, ResolvedScope } from "@/lib/authz/types";
 import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
 import { FgaTupleSync } from "./fga-tuple-sync";
 import { resolveInstanceLicense } from "./license";
@@ -405,7 +405,7 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
     // caller is not a member of still falls back HERE and is refused by the header's reader.
     // STANDUP follow-up: honor session.activeOrganizationId for active-org switching
     // (needs the session/headers threaded into getActiveScope).
-    resolveScope: (userId: string, activeOrgId?: string): Promise<Actor> =>
+    resolveScope: (userId: string, activeOrgId?: string): Promise<ResolvedScope> =>
       resolveActiveScope(core.db, userId, activeOrgId),
 
     // Per-org entitlement resolution. A validly-licensed instance unlocks everything

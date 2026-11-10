@@ -237,9 +237,18 @@ test.describe("Account settings — validation (owner)", () => {
 			await dialog.getByRole("button", { name: /save changes/i }).click();
 
 			// The message is zod's own for `max`, and its wording has changed between zod majors, so
-			// the LIMIT is what is asserted — the number the schema states — rather than a sentence
-			// this test would own a copy of.
-			await expect(dialog.getByText(/120/)).toBeVisible();
+			// the LIMIT is what is asserted — the number the schema states, with its unit — rather
+			// than a sentence this test would own a copy of. Both majors write the number directly
+			// before the unit ("at most 120 character(s)", "<=120 characters").
+			//
+			// A bare `/120/` is NOT that assertion (#6252): the dialog also shows the persona's email,
+			// which embeds a millisecond timestamp (`e2e-ownerhobby-1793091208102-1@…`), so on some
+			// runs two elements matched and strict mode failed the test. The match is therefore
+			// scoped to the display-name field's own container (the input's parent, which holds the
+			// label, the input and the error line) and requires the number as a whole word followed
+			// by its unit — text no fixture value can contain.
+			const field = name.locator("xpath=..");
+			await expect(field.getByText(/\b120 characters?\b/i)).toBeVisible();
 		},
 	);
 });

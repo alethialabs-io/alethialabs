@@ -26,11 +26,14 @@ vi.mock("@/lib/analytics/server", () => ({ captureAiGeneration: vi.fn() }));
 vi.mock("@/lib/billing/ai-spend-alert", () => ({
 	checkAiSpendThreshold: vi.fn(() => Promise.resolve()),
 }));
+// #6127: the `usage` hint is one of the after-commit effects — never sent inside the transaction.
+vi.mock("@/lib/realtime/usage-hint", () => ({ emitUsageHint: vi.fn() }));
 
 import { captureAiGeneration } from "@/lib/analytics/server";
 import { recordAiUsage } from "@/lib/billing/ai-quota";
 import { checkAiSpendThreshold } from "@/lib/billing/ai-spend-alert";
 import { aiCostMicros } from "@/lib/billing/model-costs";
+import { emitUsageHint } from "@/lib/realtime/usage-hint";
 import type { Tx } from "@/lib/db";
 
 const MODEL = "anthropic/claude-haiku-4-5";
@@ -108,8 +111,10 @@ describe("recordAiUsage with a caller's tx", () => {
 		// Inside the caller's transaction: the row is written, nothing else has happened.
 		expect(captureAiGeneration).not.toHaveBeenCalled();
 		expect(checkAiSpendThreshold).not.toHaveBeenCalled();
+		expect(emitUsageHint).not.toHaveBeenCalled();
 
 		afterCommit();
+		expect(emitUsageHint).toHaveBeenCalledWith("org-1");
 		expect(captureAiGeneration).toHaveBeenCalledTimes(1);
 		expect(captureAiGeneration).toHaveBeenCalledWith(
 			expect.objectContaining({ orgId: "org-1", model: MODEL, costMicros: 42_000 }),
@@ -129,6 +134,7 @@ describe("recordAiUsage with a caller's tx", () => {
 		});
 		expect(captureAiGeneration).not.toHaveBeenCalled();
 		expect(checkAiSpendThreshold).not.toHaveBeenCalled();
+		expect(emitUsageHint).not.toHaveBeenCalled();
 	});
 });
 

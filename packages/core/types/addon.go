@@ -32,6 +32,11 @@ type AddOnInstall struct {
 	// applied BEFORE the Helm/git Applications render, so the CRDs they own exist by the time a
 	// CR that depends on them (a RabbitmqCluster, a CNPG Cluster) is synced.
 	Source string `json:"source,omitempty"`
+	// Byo marks a bring-your-own chart: one the customer supplied, from git OR from an OCI registry.
+	// The console stamps it on every BYO spec (resolveByoChartInstall). It is the marker the runner
+	// reads, rather than the chart URL, because an `oci://` URL says where a chart is stored and not
+	// who wrote it: a catalogue chart can be OCI too. See IsByo.
+	Byo bool `json:"byo,omitempty"`
 	// Path is the chart directory within a git-source repo (Source=="git"). Empty for Helm charts.
 	Path string `json:"path,omitempty"`
 	// CRDs are the CustomResourceDefinition names a manifest-source add-on establishes (e.g.
@@ -51,8 +56,9 @@ type AddOnInstall struct {
 	// the install decision drifting from the thing that caused it (#3228).
 	RequiresCertManager bool `json:"requiresCertManager,omitempty"`
 	// Project is the ArgoCD AppProject the Application is placed in. Empty = "infra" (the
-	// marketplace default). BYO charts are pinned to a hardened "byo-<slug>" project the runner
-	// sets at deploy time.
+	// marketplace default) for a catalogue add-on. A BYO chart (IsByo) is pinned to a hardened
+	// "byo-<slug>" project the runner sets at deploy time, and the renderer REFUSES a BYO chart whose
+	// project is not one (argocd.RenderAddOnApplication) rather than defaulting it.
 	Project string `json:"project,omitempty"`
 	// Namespace the chart installs into (CreateNamespace on sync).
 	Namespace string `json:"namespace"`
@@ -157,9 +163,19 @@ type AddOnSecretRef struct {
 	StaticData map[string]string `json:"staticData,omitempty"`
 }
 
-// IsGitSource reports whether this install pulls a chart from a git repo (a BYO chart) rather
-// than a Helm registry.
+// IsGitSource reports whether this install pulls a chart from a git repo rather than a Helm
+// registry. Every git-source chart is a BYO chart, but not every BYO chart is git-source — use IsByo
+// for "is this the customer's chart"; this answers only "does it clone a repo" (git credentials, the
+// Application's source.path).
 func (a AddOnInstall) IsGitSource() bool { return a.Source == "git" }
+
+// IsByo reports whether this install is a bring-your-own chart, from git or from an OCI registry. It
+// is the ONE predicate the runner's BYO handling keys on: the namespace validation and migration, the
+// hardened byo-<slug> AppProject, the binding lane and the BYO sync policy.
+//
+// True for the explicit marker (Byo), and for every git source: only BYO charts are git-sourced, and
+// a snapshot written before the marker existed carries git BYO charts without it.
+func (a AddOnInstall) IsByo() bool { return a.Byo || a.IsGitSource() }
 
 // IsManifestSource reports whether this install is a plain YAML manifest the runner
 // kubectl-applies (the operator rail) rather than anything ArgoCD renders as an Application.

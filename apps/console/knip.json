@@ -30,9 +30,6 @@
     "app/server/actions/privacy/cases.ts": [
       "files"
     ],
-    "app/server/actions/verify.ts": [
-      "files"
-    ],
     "components/agent/chat-top-bar.tsx": [
       "files"
     ],
@@ -58,12 +55,6 @@
       "files"
     ],
     "components/plan/resource-card.tsx": [
-      "files"
-    ],
-    "components/plan/use-plan.ts": [
-      "files"
-    ],
-    "components/settings/settings-card.tsx": [
       "files"
     ],
     "components/settings/upgrade/use-current-plan.ts": [

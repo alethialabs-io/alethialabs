@@ -8,7 +8,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { FormProvider, useForm } from "react-hook-form";
+import { FormProvider, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -23,6 +23,9 @@ const schema = z.object({
 });
 type Values = z.infer<typeof schema>;
 
+/** The fields the harness renders from. */
+const WATCHED = ["name", "email"] as const;
+
 /** A two-section form (no terminal section) so advancing off the last section fires onComplete. */
 function Harness({ onComplete }: { onComplete?: () => void }) {
 	const [open, setOpen] = useState("identity");
@@ -31,6 +34,7 @@ function Harness({ onComplete }: { onComplete?: () => void }) {
 		defaultValues: { name: "", email: "" },
 		mode: "onChange",
 	});
+	const [name, email] = useWatch({ control: form.control, name: WATCHED });
 	const sections: FormSectionDef<Values>[] = [
 		{
 			id: "identity",
@@ -40,7 +44,7 @@ function Harness({ onComplete }: { onComplete?: () => void }) {
 			body: () => (
 				<input
 					aria-label="name"
-					value={form.watch("name")}
+					value={name}
 					onChange={(e) =>
 						form.setValue("name", e.target.value, { shouldValidate: true })
 					}
@@ -55,7 +59,7 @@ function Harness({ onComplete }: { onComplete?: () => void }) {
 			body: () => (
 				<input
 					aria-label="email"
-					value={form.watch("email")}
+					value={email}
 					onChange={(e) =>
 						form.setValue("email", e.target.value, { shouldValidate: true })
 					}
@@ -137,13 +141,14 @@ function HarnessWithReview({ onComplete }: { onComplete?: () => void }) {
 		defaultValues: { name: "Alice", email: "alice@example.com" },
 		mode: "onChange",
 	});
+	const name = useWatch({ control: form.control, name: "name" });
 	const sections: FormSectionDef<Values>[] = [
 		{
 			id: "identity",
 			title: "Identity",
 			fields: ["name"],
 			summary: (v) => v.name,
-			body: () => <input aria-label="name" readOnly value={form.watch("name")} />,
+			body: () => <input aria-label="name" readOnly value={name} />,
 		},
 		{
 			id: "review",

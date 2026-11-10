@@ -9,7 +9,7 @@ import { type SQL, sql } from "drizzle-orm";
 import postgres from "postgres";
 import { describe } from "vitest";
 import { getServiceDb } from "@/lib/db";
-import { authzActivityLog, jobs, runners } from "@/lib/db/schema";
+import { authzActivityLog, grants, jobs, runners } from "@/lib/db/schema";
 
 /** Probe the dev DB once; true when reachable. */
 async function ping(): Promise<boolean> {
@@ -105,6 +105,22 @@ export async function purgeAuthzActivityLog(where: SQL): Promise<void> {
 	await getServiceDb().transaction(async (tx) => {
 		await tx.execute(sql`select set_config('app.authz_gc', 'on', true)`);
 		await tx.delete(authzActivityLog).where(where);
+	});
+}
+
+/**
+ * Inserts grant rows the way a row STORED BEFORE `grants_org_binding` existed would be: with the
+ * table's triggers off for this one transaction (`session_replication_role = replica`, which needs
+ * the superuser the suite migrates as). For fixtures that model legacy shapes on purpose — a scope
+ * id that resolves to nothing, another org's role — so the readers' handling of a stored row stays
+ * testable now that no writer can produce one. Never use it for a row a writer could still write.
+ */
+export async function insertStoredGrants(
+	rows: (typeof grants.$inferInsert)[],
+): Promise<void> {
+	await getServiceDb().transaction(async (tx) => {
+		await tx.execute(sql`set local session_replication_role = replica`);
+		await tx.insert(grants).values(rows);
 	});
 }
 

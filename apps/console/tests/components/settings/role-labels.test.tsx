@@ -63,7 +63,6 @@ vi.mock("@/app/server/actions/billing", () => ({
 vi.mock("@/app/server/actions/grants", () => ({
 	assignGrant: vi.fn(),
 	revokeGrant: vi.fn(),
-	getGrantOptions: vi.fn(async () => ({ roles: [], permissions: [], principals: [], resources: {} })),
 }));
 vi.mock("@/app/server/actions/roles", () => ({ createRole: vi.fn(), updateRole: vi.fn() }));
 vi.mock("@/lib/query/use-classification-query", () => ({
@@ -117,6 +116,10 @@ vi.mock("@/lib/query/use-members-query", () => ({
 		isPending: false,
 		isPlaceholderData: false,
 	}),
+	// The members gate is prefetched with the rows since #6129; `canManage` follows the test's switch.
+	useMembersGateQuery: () => ({
+		data: { canManage: entitled, canInvite: false, plan: "community", inviteBlockedReason: "x" },
+	}),
 }));
 
 /** One grant row in the shape `getAccessGrantsPage` returns. */
@@ -146,6 +149,7 @@ vi.mock("@/lib/query/use-access-grants-query", () => ({
 		isPending: false,
 		isPlaceholderData: false,
 	}),
+	useGrantOptionsQuery: () => ({ data: undefined }),
 }));
 
 /** Render `ui` inside the query client every settings surface expects. */
@@ -240,7 +244,6 @@ describe("Settings › Roles › the create sheet's \"Start from\" chips", () =>
 				role={null}
 				templates={templates}
 				canManage
-				onSaved={() => {}}
 			/>,
 		);
 		for (const name of BUILT_IN_ROLE_NAMES) {

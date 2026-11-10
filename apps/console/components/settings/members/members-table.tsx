@@ -2,16 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Settings · Members — stats + toolbar (tabs / search / role filter / invite) + a bulk
-// bar, over the shared DataTable (sortable + paginated). Real members + pending invitations,
-// filtered SERVER-SIDE by `getMembersPage` (rows + facets); inline role change, suspend/
-// reactivate (real PDP grant revoke), remove, invite, cancel. The page header + gate
-// live in members/page.tsx.
+// Settings · Members — toolbar (count / invite) + filter bar + a bulk bar, over the shared
+// DataTable. Real members + pending invitations, filtered SERVER-SIDE by the `members.page` GET
+// procedure (rows + facets), prefetched by the route with the `members.gate` read that decides the
+// toolbar (#6129). Inline role change, suspend/reactivate (real PDP grant revoke), remove, invite
+// and cancel all go through `useActionMutation`: each row shows its own pending state, and the
+// list is invalidated when the write settles.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CellContext, ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Plus, Shield, Users } from "lucide-react";
-import { useParams } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -19,24 +18,28 @@ import {
   useMemo,
   useState,
 } from "react";
-import { toast } from "sonner";
 import { setMemberSuspended } from "@/app/server/actions/members";
-import { getCollaborationAccess } from "@/app/server/actions/billing";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { ClassificationControl } from "@/components/classification/classification-control";
+import { RegionError } from "@/components/errors/region-error";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { DataTable } from "@/components/data-table";
-import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
-import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import { useMembersPageQuery } from "@/lib/query/use-members-query";
+import type { ActionResult } from "@/lib/actions/result";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import {
+  useMembersGateQuery,
+  useMembersPageQuery,
+} from "@/lib/query/use-members-query";
+import { orpc } from "@/lib/rpc/client";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useMembersFilters } from "@/lib/stores/use-settings-filters";
 import { formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,10 +59,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@repo/ui/select";
-import { Skeleton } from "@repo/ui/skeleton";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import { authClient } from "@/lib/auth/client";
-import { toOrgRole } from "@/lib/authz/org-access-control";
+import { type OrgRole, toOrgRole } from "@/lib/authz/org-access-control";
 import { BUILT_IN_ROLE_LABELS, roleDisplayName } from "@/lib/authz/registry";
 import { userInitials } from "@/lib/user-display";
 import {
@@ -70,6 +72,8 @@ import {
   type MemberRowView,
   normalizeMembersQuery,
 } from "./members-filters";
+import { viaAuth } from "./auth-action";
+import { PeopleListSkeleton } from "./people-skeleton";
 
 // A member's lifecycle state is not one of the product statuses `statusTier()` knows —
 // "suspended" would fall through to `idle` by accident rather than by decision — so the tier
@@ -263,10 +267,12 @@ function RoleSelect({
 /** The per-render state the table's cells read, delivered by context so no cell type changes. */
 interface MembersCells {
   canManage: boolean;
+  /** Row keys with a write in flight: their controls are disabled until it settles. */
+  busy: ReadonlySet<string>;
   selected: ReadonlySet<string>;
   toggle: (key: string) => void;
   askFor: (action: PendingMemberAction) => void;
-  changeRole: (memberId: string, value: string) => Promise<void>;
+  changeRole: (memberId: string, value: string) => void;
   classMap: Record<string, AssignedValue[]>;
 }
 
@@ -350,7 +356,7 @@ function MemberCell({ row }: CellContext<MemberRowView, unknown>) {
 
 /** The owner's fixed label, an editable role for a manageable member, plain text otherwise. */
 function RoleCell({ row }: CellContext<MemberRowView, unknown>) {
-  const { canManage, changeRole } = useMembersCells();
+  const { canManage, changeRole, busy } = useMembersCells();
   const r = row.original;
   if (r.kind === "member" && r.role === "owner") {
     return (
@@ -364,8 +370,8 @@ function RoleCell({ row }: CellContext<MemberRowView, unknown>) {
     return (
       <RoleSelect
         value={r.role}
-        disabled={r.status === "suspended"}
-        onChange={(v) => void changeRole(r.refId, v)}
+        disabled={r.status === "suspended" || busy.has(r.key)}
+        onChange={(v) => changeRole(r.refId, v)}
       />
     );
   }
@@ -417,19 +423,25 @@ function ActivityCell({ row }: CellContext<MemberRowView, unknown>) {
  * `ConfirmDialog` decides whether it happens. The owner's row has no menu.
  */
 function ActionsCell({ row }: CellContext<MemberRowView, unknown>) {
-  const { askFor } = useMembersCells();
+  const { askFor, busy } = useMembersCells();
   const r = row.original;
   if (r.kind === "member" && r.role === "owner") return null;
+  // A row whose write is in flight takes no second one: the menu is closed to it and the trigger
+  // says so, which is also the double-submit guard for a confirmation answered twice.
+  const pending = busy.has(r.key);
   return (
     <div className="text-right">
       <DropdownMenu>
         <DropdownMenuTrigger
+          disabled={pending}
           render={
             <Button
               variant="ghost"
               size="icon"
               className="size-7"
               aria-label={`Manage ${rowMenuSubject(r)}`}
+              aria-busy={pending || undefined}
+              disabled={pending}
             >
               <MoreHorizontal size={16} />
             </Button>
@@ -512,14 +524,45 @@ function membersColumns(canManage: boolean): ColumnDef<MemberRowView>[] {
   ];
 }
 
+/** Every read the members page shows; each write below invalidates all of them. */
+const MEMBERS_READS = [orpc.members.key()];
+
+/** One row of a bulk write: the row's key, and the write to run for it. */
+interface BulkStep {
+  key: string;
+  run: () => Promise<ActionResult<unknown>>;
+}
+
+/**
+ * Runs a bulk write row by row and answers once: success when every row succeeded, otherwise a
+ * `conflict` naming how many did not — the rows that did are already written, and the list is
+ * invalidated either way.
+ */
+async function runBulk(steps: BulkStep[]): Promise<ActionResult<{ done: number }>> {
+  let failed = 0;
+  for (const step of steps) {
+    const result = await step.run();
+    if (!result.ok) failed += 1;
+  }
+  if (failed > 0) {
+    return {
+      ok: false,
+      error: {
+        kind: "conflict",
+        message: `${failed} of ${steps.length} selected ${steps.length === 1 ? "row" : "rows"} could not be changed.`,
+      },
+    };
+  }
+  return { ok: true, data: { done: steps.length } };
+}
+
 /** Settings · Members: the filterable members + invitations table and its confirmations. */
 export function MembersTable() {
-  // Unlocks on a KNOWN `true` only: `null` while the workspace store has not answered (#5864). The
-  // management columns are then absent — not disabled, and no upsell — which is also what an
-  // unentitled org sees, so nothing gated is rendered for the unknown state.
-  const canManage = useEntitlement("organizations") === true;
-  const { org } = useParams<{ org: string }>();
-  const qc = useQueryClient();
+  // The gate is the SERVER's answer, prefetched with the rows (#6129, F017): whether this org may
+  // manage members (the select and actions columns) and invite, and why not. `canManage` unlocks
+  // on a known `true` only, so a gate that has not answered renders no management column at all.
+  const gate = useMembersGateQuery();
+  const canManage = gate.data?.canManage === true;
 
   // Filter state: the store is the source of truth, the URL mirrors it (shareable views),
   // and the free text is debounced. The role filter is a FACET, not the Radix Select it used
@@ -556,11 +599,11 @@ export function MembersTable() {
     setPending(action);
   }, []);
 
-  // Filtered SERVER-SIDE: `getMembersPage(q)` narrows members AND pending invitations in SQL
-  // and returns the status/role/team facets counted over the org's UNFILTERED universe, so an
-  // option never disappears as you select it. The normalized query IS the key, and
-  // `keepPreviousData` (in the hook) keeps the table's rows across a filter change —
-  // `isPlaceholderData` is what marks them stale while the next answer loads.
+  // Filtered SERVER-SIDE: `members.page` narrows members AND pending invitations in SQL and returns
+  // the status/role/team facets counted over the org's UNFILTERED universe, so an option never
+  // disappears as you select it. The normalized query IS the input, and `keepPreviousData` (in the
+  // hook) keeps the table's rows across a filter change — `isPlaceholderData` is what marks them
+  // stale while the next answer loads.
   const page = useMembersPageQuery(query);
   // The list is BUSY while what it shows may not answer the URL and the bar: before the link has
   // been read into the store, before the first answer, while the rows are the previous query's
@@ -570,70 +613,81 @@ export function MembersTable() {
   // placeholder half only: dimming the first paint of every visit would flash a correct page.
   const busy =
     !urlRead || page.isPending || page.isPlaceholderData || filters.search !== search;
-  // Inviting is the paid (Pro) value — viewing members is always open. The billing-backed
-  // `canInvite` gate (card-backed/paid) decides whether the Invite button opens the form
-  // or the Pro upsell; the server enforces it again in `beforeCreateInvitation`.
-  const collaboration = useQuery({
-    queryKey: ["members", org, "collaboration-access"] as const,
-    queryFn: () => getCollaborationAccess(),
-    staleTime: 60_000,
-  });
-  const canInvite = collaboration.data?.canInvite ?? false;
   // Memoized, not `data ?? []` inline: a fresh `[]` every render would re-key the batched
   // classification query below on each paint while the fetch is still in flight.
   const members = useMemo(() => page.data?.members ?? [], [page.data]);
   const invites = useMemo(() => page.data?.invitations ?? [], [page.data]);
   // WHO is viewing and WHEN the rows were read both come from the payload, never from this
   // renderer: the route dehydrates the payload, so the server render and the hydrating client
-  // read the same two values and produce the same markup. Reading the viewer from
-  // `authClient.useSession()` and the clock from `new Date()` here made the two renders disagree
-  // whenever the session fetch beat hydration (an extra "You" badge, React #418 "HTML") or the
-  // two clocks straddled a minute boundary (a different "… ago", #418 "text") — #5377.
+  // read the same two values and produce the same markup (#5377, React #418).
   const viewerUserId = page.data?.viewerUserId;
   const asOf = page.data?.asOf;
   /** Every member + pending invitation in the org — what tells onboarding from an empty filter. */
   const total = page.data?.total ?? 0;
 
-  const load = useCallback(() => {
-    void qc.invalidateQueries({ queryKey: ["members", org] });
-  }, [qc, org]);
+  // ── Writes (ADR 0005 D4) ──────────────────────────────────────────────────────────────────
+  // Every one invalidates every members read when it settles, and every one is pending while in
+  // flight — the row it acts on is disabled (`busy` below), which is the double-submit guard.
+  const roleChange = useActionMutation(
+    ({ memberId, role }: { memberId: string; role: OrgRole }) =>
+      viaAuth(() => authClient.organization.updateMemberRole({ memberId, role })),
+    { invalidates: MEMBERS_READS, successMessage: "Role updated" },
+  );
+  const removal = useActionMutation(
+    ({ memberId }: { memberId: string }) =>
+      viaAuth(() => authClient.organization.removeMember({ memberIdOrEmail: memberId })),
+    { invalidates: MEMBERS_READS, successMessage: "Member removed" },
+  );
+  const cancellation = useActionMutation(
+    ({ invitationId }: { invitationId: string }) =>
+      viaAuth(() => authClient.organization.cancelInvitation({ invitationId })),
+    { invalidates: MEMBERS_READS, successMessage: "Invitation revoked" },
+  );
+  const suspension = useActionMutation(setMemberSuspended, {
+    invalidates: MEMBERS_READS,
+    successMessage: (d) => (d.suspended ? "Member suspended" : "Member reactivated"),
+  });
+  const bulk = useActionMutation(
+    ({ steps }: { steps: BulkStep[]; keys: string[] }) => runBulk(steps),
+    {
+      invalidates: MEMBERS_READS,
+      successMessage: (d) => `${d.done} ${d.done === 1 ? "row" : "rows"} updated`,
+      onSuccess: () => setSelected(new Set()),
+    },
+  );
 
   const changeRole = useCallback(
-    async (memberId: string, value: string) => {
-      const next = toOrgRole(value);
-      if (!next) return;
-      await authClient.organization.updateMemberRole({ memberId, role: next });
-      load();
+    (memberId: string, value: string) => {
+      const role = toOrgRole(value);
+      if (!role || role === "owner") return;
+      roleChange.mutate({ memberId, role });
     },
-    [load],
+    [roleChange],
   );
-  const removeMember = useCallback(
-    async (memberId: string) => {
-      await authClient.organization.removeMember({ memberIdOrEmail: memberId });
-      load();
-    },
-    [load],
-  );
-  const cancelInvite = useCallback(
-    async (invitationId: string) => {
-      await authClient.organization.cancelInvitation({ invitationId });
-      load();
-    },
-    [load],
-  );
-  const suspend = useCallback(
-    async (memberId: string, next: boolean) => {
-      try {
-        await setMemberSuspended(memberId, next);
-        load();
-      } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : "Couldn't update the member.",
-        );
-      }
-    },
-    [load],
-  );
+
+  /** The row keys a write is in flight for — `m:<member id>` / `i:<invitation id>`. */
+  const busyKeys = useMemo(() => {
+    const keys = new Set<string>();
+    if (roleChange.isPending && roleChange.variables) keys.add(`m:${roleChange.variables.memberId}`);
+    if (removal.isPending && removal.variables) keys.add(`m:${removal.variables.memberId}`);
+    if (suspension.isPending && suspension.variables) keys.add(`m:${suspension.variables.memberId}`);
+    if (cancellation.isPending && cancellation.variables) {
+      keys.add(`i:${cancellation.variables.invitationId}`);
+    }
+    if (bulk.isPending && bulk.variables) for (const k of bulk.variables.keys) keys.add(k);
+    return keys;
+  }, [
+    roleChange.isPending,
+    roleChange.variables,
+    removal.isPending,
+    removal.variables,
+    suspension.isPending,
+    suspension.variables,
+    cancellation.isPending,
+    cancellation.variables,
+    bulk.isPending,
+    bulk.variables,
+  ]);
 
   const rows = useMemo<MemberRowView[]>(() => {
     const memberRows: MemberRowView[] = members.map((m) => ({
@@ -702,57 +756,81 @@ export function MembersTable() {
     });
   }, []);
 
-  async function bulkRemove() {
-    for (const r of filtered.filter((x) => selected.has(x.key))) {
-      try {
-        if (r.kind === "member") {
-          if (r.role === "owner") continue;
-          await authClient.organization.removeMember({
-            memberIdOrEmail: r.refId,
-          });
-        } else {
-          await authClient.organization.cancelInvitation({
-            invitationId: r.refId,
-          });
-        }
-      } catch {
-        /* best-effort */
+  /** Removes the selected rows: members leave the org, invitations are revoked; owners are skipped. */
+  function bulkRemove() {
+    const picked = filtered.filter((x) => selected.has(x.key));
+    const steps: BulkStep[] = [];
+    for (const r of picked) {
+      if (r.kind === "member") {
+        if (r.role === "owner") continue;
+        steps.push({
+          key: r.key,
+          run: () =>
+            viaAuth(() => authClient.organization.removeMember({ memberIdOrEmail: r.refId })),
+        });
+      } else {
+        steps.push({
+          key: r.key,
+          run: () => viaAuth(() => authClient.organization.cancelInvitation({ invitationId: r.refId })),
+        });
       }
     }
-    setSelected(new Set());
-    load();
+    bulk.mutate({ steps, keys: steps.map((step) => step.key) });
   }
 
-  async function bulkSuspend() {
-    for (const r of filtered.filter((x) => selected.has(x.key))) {
-      if (r.kind === "member" && r.role !== "owner" && r.status === "active") {
-        try {
-          await setMemberSuspended(r.refId, true);
-        } catch {
-          /* best-effort */
-        }
-      }
-    }
-    setSelected(new Set());
-    load();
+  /** Suspends every active, non-owner member in the selection. */
+  function bulkSuspend() {
+    const steps: BulkStep[] = filtered
+      .filter((r) => selected.has(r.key))
+      .filter((r) => r.kind === "member" && r.role !== "owner" && r.status === "active")
+      .map((r) => ({
+        key: r.key,
+        run: () => setMemberSuspended({ memberId: r.refId, suspended: true }),
+      }));
+    bulk.mutate({ steps, keys: steps.map((step) => step.key) });
   }
 
   // Memoized on `canManage` alone, and every `cell` is a module-level component (see STABLE
   // CELLS above): a re-render of this table must never hand DataTable a new cell TYPE.
   const columns = useMemo(() => membersColumns(canManage), [canManage]);
   const cells = useMemo<MembersCells>(
-    () => ({ canManage, selected, toggle, askFor, changeRole, classMap }),
-    [canManage, selected, toggle, askFor, changeRole, classMap],
+    () => ({ canManage, busy: busyKeys, selected, toggle, askFor, changeRole, classMap }),
+    [canManage, busyKeys, selected, toggle, askFor, changeRole, classMap],
   );
 
+  // Pending is the route skeleton's shape, not a second, different one (B2). The route prefetches
+  // the first answer, so this is reached only when the cache was evicted under the page.
   if (page.isPending) {
+    return <PeopleListSkeleton facets={2} columns={canManage ? 7 : 5} />;
+  }
+  // A failed first load is an ERROR, never "No members yet" (B4).
+  if (page.isError && page.data === undefined) {
     return (
-      <div className="space-y-4" aria-busy>
-        <Skeleton className="h-20 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
+      <RegionError
+        title="Couldn't load members"
+        description="The member list didn't load. Nothing about your organization changed."
+        onRetry={() => void page.refetch()}
+      />
     );
   }
+
+  const inviteButton = (
+    <Button size="sm">
+      <Plus size={13} />
+      Invite member
+    </Button>
+  );
+  // Invite is offered when the server says this org may invite; otherwise the SAME button is shown
+  // disabled with the reason, which names the plan the badge shows (F017, F057) — no upsell modal
+  // behind an enabled control. Before the gate answers there is no button at all.
+  const inviteAction = gate.data ? (
+    gate.data.canInvite ? (
+      <InviteMemberDialog trigger={inviteButton} />
+    ) : (
+      <DisabledReason reason={gate.data.inviteBlockedReason}>{inviteButton}</DisabledReason>
+    )
+  ) : undefined;
+  const bulkPending = bulk.isPending;
 
   return (
     <div aria-busy={busy}>
@@ -760,31 +838,8 @@ export function MembersTable() {
         className="mb-4"
         description="Organization members and pending invitations."
         count={filtered.length}
-        actions={
-          canInvite ? (
-            <InviteMemberDialog
-              onInvited={load}
-              trigger={
-                <Button size="sm">
-                  <Plus size={13} />
-                  Invite member
-                </Button>
-              }
-            />
-          ) : (
-            <UpgradeDialog
-              feature="invite"
-              trigger={
-                <Button size="sm">
-                  <Plus size={13} />
-                  Invite member
-                </Button>
-              }
-            />
-          )
-        }
+        actions={inviteAction}
       />
-
       {/* The stat-card strip that used to sit here is gone (banned by CLAUDE.md §6). Every
           figure it carried — seats, active, pending, suspended — is now the Status facet's
           option counts, computed over the same unfiltered rows, so nothing was lost. */}
@@ -861,6 +916,7 @@ export function MembersTable() {
             <Button
               variant="outline"
               size="sm"
+              disabled={bulkPending}
               onClick={() =>
                 askFor({ kind: "bulk-suspend", count: selected.size })
               }
@@ -870,6 +926,7 @@ export function MembersTable() {
             <Button
               variant="ghost"
               size="sm"
+              disabled={bulkPending}
               onClick={() =>
                 askFor({ kind: "bulk-remove", count: selected.size })
               }
@@ -931,22 +988,22 @@ export function MembersTable() {
           if (!pending) return;
           switch (pending.kind) {
             case "remove":
-              void removeMember(pending.memberId);
+              removal.mutate({ memberId: pending.memberId });
               break;
             case "cancel-invite":
-              void cancelInvite(pending.invitationId);
+              cancellation.mutate({ invitationId: pending.invitationId });
               break;
             case "suspend":
-              void suspend(pending.memberId, true);
+              suspension.mutate({ memberId: pending.memberId, suspended: true });
               break;
             case "reactivate":
-              void suspend(pending.memberId, false);
+              suspension.mutate({ memberId: pending.memberId, suspended: false });
               break;
             case "bulk-remove":
-              void bulkRemove();
+              bulkRemove();
               break;
             case "bulk-suspend":
-              void bulkSuspend();
+              bulkSuspend();
               break;
           }
         }}

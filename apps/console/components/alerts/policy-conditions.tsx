@@ -7,7 +7,7 @@
 // narrows — empty means "all". Shared by the policy create sheet and the inline editor.
 
 import { Boxes, ListChecks, Workflow } from "lucide-react";
-import type { ConditionOptions } from "@/app/server/actions/alerts";
+import type { ConditionOptions } from "@/lib/rpc/procedures/alerts";
 import { FieldHelp } from "@/components/alerts/field-help";
 import {
 	MIN_SEV_OPTIONS,

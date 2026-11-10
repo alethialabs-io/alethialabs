@@ -12,21 +12,32 @@
 //
 // Against the old dialog the refusal case fails: it awaited the result without reading it, toasted
 // "Promotion queued", closed itself and called `onPromoted`.
+//
+// #6120: the action is on the mutation contract — one object in, an `ActionResult` out, a refusal
+// as `{ kind: "conflict", message }` — and the preview is the `environments.promotionPreview` GET
+// procedure. The half the user sees is unchanged, and the refusal is still NOT toasted: the dialog
+// takes it over from the toast (`useActionMutation`'s `onRefusal`), so it is said once.
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
 
 const promoteEnvironment = vi.fn();
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
+const h = vi.hoisted(() => ({
+	handlers: {} as Record<string, FakeHandler>,
+	calls: [] as FakeCall[],
+}));
 
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc(h.handlers, h.calls).orpc };
+});
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 vi.mock("@/app/server/actions/promotions", () => ({
-	previewPromotion: vi.fn(async () => ({
-		changes: [{ component_type: "service", key: "api", op: "CREATE" }],
-		summary: ["1 add"],
-		include_removals: false,
-	})),
 	promoteEnvironment: (...a: unknown[]) => promoteEnvironment(...a),
 }));
 vi.mock("sonner", () => ({
@@ -52,14 +63,17 @@ async function renderAndPick() {
 	const onOpenChange = vi.fn();
 	const onPromoted = vi.fn();
 	const user = userEvent.setup();
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(
-		<PromoteDialog
-			open
-			onOpenChange={onOpenChange}
-			projectId="p1"
-			envs={ENVS}
-			onPromoted={onPromoted}
-		/>,
+		<QueryClientProvider client={client}>
+			<PromoteDialog
+				open
+				onOpenChange={onOpenChange}
+				projectId="p1"
+				envs={ENVS}
+				onPromoted={onPromoted}
+			/>
+		</QueryClientProvider>,
 	);
 	await user.click(await screen.findByRole("combobox", { name: "From" }));
 	await user.click(await screen.findByRole("option", { name: "development" }));
@@ -72,11 +86,21 @@ async function renderAndPick() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	h.calls.length = 0;
+	h.handlers["environments.promotionPreview"] = async () => ({
+		sourceId: "env-dev",
+		targetId: "env-prod",
+		diff: {
+			changes: [{ component_type: "service", key: "api", op: "CREATE" }],
+			summary: ["1 add"],
+			include_removals: false,
+		},
+	});
 });
 
 describe("PromoteDialog — a refused promotion", () => {
 	it("renders the server's sentence in the dialog, toasts nothing, and stays open", async () => {
-		promoteEnvironment.mockResolvedValue({ ok: false, error: REFUSAL });
+		promoteEnvironment.mockResolvedValue({ ok: false, error: { kind: "conflict", message: REFUSAL } });
 		const { user, onOpenChange, onPromoted } = await renderAndPick();
 
 		const button = screen.getByRole("button", { name: "Promote" });
@@ -85,7 +109,10 @@ describe("PromoteDialog — a refused promotion", () => {
 		const alert = await screen.findByRole("alert");
 		expect(alert).toHaveTextContent(REFUSAL);
 		expect(button).toHaveAttribute("aria-describedby", alert.id);
-		expect(promoteEnvironment).toHaveBeenCalledWith("p1", "env-dev", "env-prod", {
+		expect(promoteEnvironment).toHaveBeenCalledWith({
+			projectId: "p1",
+			sourceEnvId: "env-dev",
+			targetEnvId: "env-prod",
 			includeRemovals: false,
 		});
 		expect(toastError).not.toHaveBeenCalled();
@@ -95,7 +122,7 @@ describe("PromoteDialog — a refused promotion", () => {
 	});
 
 	it("clears the sentence once the pair changes, because it answered the old request", async () => {
-		promoteEnvironment.mockResolvedValue({ ok: false, error: REFUSAL });
+		promoteEnvironment.mockResolvedValue({ ok: false, error: { kind: "conflict", message: REFUSAL } });
 		const { user } = await renderAndPick();
 		await user.click(screen.getByRole("button", { name: "Promote" }));
 		await screen.findByRole("alert");
@@ -111,15 +138,46 @@ describe("PromoteDialog — a queued promotion", () => {
 	it("toasts, closes and tells the caller", async () => {
 		promoteEnvironment.mockResolvedValue({
 			ok: true,
-			promotionId: "promo-1",
-			planJobId: "job-1",
+			data: { promotionId: "promo-1", planJobId: "job-1" },
 		});
 		const { user, onOpenChange, onPromoted } = await renderAndPick();
 		await user.click(screen.getByRole("button", { name: "Promote" }));
 
-		expect(toastSuccess).toHaveBeenCalledWith("Promotion queued");
+		await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Promotion queued"));
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 		expect(onPromoted).toHaveBeenCalled();
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+	});
+});
+
+describe("PromoteDialog — the preview read", () => {
+	it("asks the preview procedure for the chosen pair, not a server action", async () => {
+		await renderAndPick();
+		expect(h.calls).toContainEqual({
+			path: "environments.promotionPreview",
+			input: { projectId: "p1", sourceId: "env-dev", targetId: "env-prod", includeRemovals: false },
+		});
+	});
+
+	it("renders a failed preview as an error with a retry — not as 'already aligned'", async () => {
+		h.handlers["environments.promotionPreview"] = async () => {
+			throw new Error("boom");
+		};
+		const onOpenChange = vi.fn();
+		const user = userEvent.setup();
+		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		render(
+			<QueryClientProvider client={client}>
+				<PromoteDialog open onOpenChange={onOpenChange} projectId="p1" envs={ENVS} onPromoted={vi.fn()} />
+			</QueryClientProvider>,
+		);
+		await user.click(await screen.findByRole("combobox", { name: "From" }));
+		await user.click(await screen.findByRole("option", { name: "development" }));
+		await user.click(await screen.findByRole("combobox", { name: "To" }));
+		await user.click(await screen.findByRole("option", { name: "production" }));
+
+		expect(await screen.findByText("Couldn't compute the changes")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+		expect(screen.queryByText(/already aligned/)).not.toBeInTheDocument();
 	});
 });

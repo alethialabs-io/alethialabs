@@ -17,9 +17,8 @@
 // speak both; this is the surface that could only ever produce the git one.
 
 import { useCallback, useMemo, useState } from "react";
-import { Controller, useForm, type FieldPath } from "react-hook-form";
+import { Controller, useForm, useWatch, type FieldPath } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { toast } from "sonner";
 import {
 	ArrowLeft,
 	ArrowRight,
@@ -29,6 +28,7 @@ import {
 	Package,
 	TriangleAlert,
 } from "lucide-react";
+import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import {
 	Dialog,
@@ -44,7 +44,9 @@ import { cn } from "@repo/ui/utils";
 import { RepositorySelector } from "@/components/repository-selector";
 import { RadioCardGroup } from "@/components/design-project/canvas/inspector/radio-card-group";
 import { useConnectedProviders } from "@/components/design-project/connectors-context";
-import { attachByoChart } from "@/app/server/actions/byo-charts";
+import { attachByoChartAction } from "@/app/server/actions/byo-charts";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
 import {
 	helmRegistryServesHost,
 	isSelectableHelmRegistry,
@@ -55,9 +57,11 @@ import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
 import {
 	byoChartFormSchema,
+	byoChartNamespace,
 	type ByoChartFormValues,
 	type ChartSource,
 } from "@/lib/validations/byo-charts";
+import { chartSlug } from "@/lib/validations/names";
 
 interface ByoChartDialogProps {
 	open: boolean;
@@ -93,7 +97,8 @@ export const STARTER_CHART_PATH = "chart";
 /** The OCI example. It is NOT the starter chart: that repository publishes no OCI artifact today, so
  * naming `oci://ghcr.io/alethialabs-io/…` would re-commit #4114's defect under our own org. podinfo
  * is the reference public OCI Helm chart, pullable anonymously, and — checked, not assumed — renders
- * only namespaced, non-RBAC resources, so it also satisfies the default-deny BYO AppProject a user
+ * a Deployment, a Service and test-hook Pods by default, all on the BYO AppProject's closed list of
+ * workload kinds (byoWorkloadKinds in packages/core/argocd/byo.go), so it satisfies the project a user
  * would be pasting it into. Swap it for ours the day the starter chart ships an OCI release. */
 export const EXAMPLE_OCI_CHART_REF = "oci://ghcr.io/stefanprodan/charts/podinfo";
 
@@ -132,6 +137,23 @@ const STEP_FIELDS: Record<string, FieldPath<ByoChartFormValues>[]> = {
 	"Chart path": ["chartPath"],
 };
 
+/** The form fields a server field refusal can name (the action's input keys that are also form fields). */
+const SERVER_FIELDS: ReadonlySet<string> = new Set<FieldPath<ByoChartFormValues>>([
+	"repoUrl",
+	"chartPath",
+	"ref",
+	"namespace",
+	"valuesYaml",
+]);
+
+/** Narrows a server field key to one of this form's fields. */
+function isServerField(key: string): key is FieldPath<ByoChartFormValues> {
+	return SERVER_FIELDS.has(key);
+}
+
+/** The fields the dialog renders from. */
+const WATCHED = ["source", "repoUrl", "chartPath", "name", "namespace", "ref"] as const;
+
 /** The "attach a Helm chart" dialog. Self-contained: it owns the wizard state and resets on close. */
 export function ByoChartDialog({
 	open,
@@ -160,21 +182,37 @@ export function ByoChartDialog({
 		trigger,
 		reset,
 		setValue,
-		watch,
 		formState: { errors, isSubmitting },
 	} = form;
 
 	// The wizard step lives in plain component state (not a schema field).
 	const [step, setStep] = useState(0);
+	// Why the attach was refused, said in the dialog beside Attach — the Review step shows none of the
+	// earlier steps' fields, so a field the server refused is ALSO summarised here.
+	const [refusal, setRefusal] = useState<string | null>(null);
+
+	// The attach, on the mutation contract: pending while in flight (the double-submit guard), each
+	// refusal routed into the dialog, and the board's chart nodes and their described workloads
+	// re-read when it settles.
+	const attach = useActionMutation(attachByoChartAction, {
+		invalidates: [orpc.canvas.byoCharts.key(), orpc.canvas.chartWorkloads.key()],
+		onValidationError: (fields) => {
+			const messages: string[] = [];
+			for (const [key, list] of Object.entries(fields)) {
+				const message = list?.[0];
+				if (!message) continue;
+				messages.push(message);
+				if (isServerField(key)) form.setError(key, { type: "server", message });
+			}
+			setRefusal(messages.join(" ") || "Check the chart's details.");
+		},
+		onRefusal: (error) => setRefusal(error.message),
+		successMessage: (data) => `Chart "${data.id}" attached — deploys on the next sync.`,
+	});
 
 	// Subscribing to `source` re-renders the dialog, so the step rail and the per-step bodies below
 	// (which differ per source) are rebuilt when it changes.
-	const source = watch("source");
-	const repoUrl = watch("repoUrl");
-	const chartPath = watch("chartPath");
-	const name = watch("name");
-	const namespace = watch("namespace");
-	const ref = watch("ref");
+	const [source, repoUrl, chartPath, name, namespace, ref] = useWatch({ control, name: WATCHED });
 
 	const isOci = source === "oci";
 	const steps = STEPS[source];
@@ -182,7 +220,10 @@ export function ByoChartDialog({
 
 	const effectiveUrl = (repoUrl ?? "").trim();
 	const effectiveName = (name ?? "").trim() || defaultNameFromRepo(effectiveUrl);
-	const effectiveNs = (namespace ?? "").trim() || "default";
+	// Its own namespace by default (#6446) — the same `byo-<id>` the attach action would choose, from
+	// the same id the action derives (`chartSlug` of the name).
+	const defaultNs = byoChartNamespace(chartSlug(effectiveName));
+	const effectiveNs = (namespace ?? "").trim() || defaultNs;
 	// A git ref defaults to HEAD; an OCI chart version defaults to `*` (ArgoCD for "latest").
 	const effectiveRef = (ref ?? "").trim() || (isOci ? "*" : "HEAD");
 
@@ -191,6 +232,7 @@ export function ByoChartDialog({
 			if (!next) {
 				reset();
 				setStep(0);
+				setRefusal(null);
 			}
 			onOpenChange(next);
 		},
@@ -217,37 +259,28 @@ export function ByoChartDialog({
 		[setValue],
 	);
 
-	const onSubmit = useCallback(
-		async (values: ByoChartFormValues) => {
-			try {
-				const res = await attachByoChart({
-					projectId,
-					environmentId,
-					id: effectiveName,
-					repoUrl: values.repoUrl,
-					// An OCI chart has no path — the chart name is the URL's last segment.
-					...(values.source === "oci" ? {} : { chartPath: values.chartPath }),
-					ref: effectiveRef,
-					namespace: effectiveNs,
-					valuesYaml: values.valuesYaml?.trim() ? values.valuesYaml : null,
-				});
-				toast.success(`Chart "${res.id}" attached — deploys on the next sync.`);
-				onAttached?.(res.id);
-				close(false);
-			} catch (err) {
-				toast.error(err instanceof Error ? err.message : "Could not attach the chart.");
-			}
-		},
-		[
-			projectId,
-			environmentId,
-			effectiveName,
-			effectiveRef,
-			effectiveNs,
-			onAttached,
-			close,
-		],
-	);
+	/** Attaches the chart with the effective name, ref and namespace, then closes the dialog. */
+	async function onSubmit(values: ByoChartFormValues) {
+		if (attach.isPending) return;
+		setRefusal(null);
+		try {
+			const res = await attach.mutateAsync({
+				projectId,
+				environmentId,
+				id: effectiveName,
+				repoUrl: values.repoUrl,
+				// An OCI chart has no path — the chart name is the URL's last segment.
+				...(values.source === "oci" ? {} : { chartPath: values.chartPath }),
+				ref: effectiveRef,
+				namespace: effectiveNs,
+				valuesYaml: values.valuesYaml?.trim() ? values.valuesYaml : null,
+			});
+			onAttached?.(res.id);
+			close(false);
+		} catch {
+			// Already said: in the dialog for a refusal or a field, in one toast for anything else.
+		}
+	}
 
 	return (
 		<Dialog open={open} onOpenChange={close}>
@@ -423,9 +456,13 @@ export function ByoChartDialog({
 									<Input
 										id="byo-chart-ns"
 										{...register("namespace")}
-										placeholder="default"
+										placeholder={defaultNs}
 										className="font-mono"
+										aria-invalid={errors.namespace ? true : undefined}
 									/>
+									{errors.namespace ? (
+										<p className="text-xs text-destructive">{errors.namespace.message}</p>
+									) : null}
 								</div>
 							</div>
 							<div className="flex flex-col gap-1.5">
@@ -449,13 +486,19 @@ export function ByoChartDialog({
 					)}
 				</div>
 
+				{refusal && (
+					<Alert variant="destructive">
+						<AlertDescription>{refusal}</AlertDescription>
+					</Alert>
+				)}
+
 				<div className="flex items-center justify-between">
 					<Button
 						type="button"
 						variant="ghost"
 						size="sm"
 						onClick={() => (step === 0 ? close(false) : setStep((s) => s - 1))}
-						disabled={isSubmitting}
+						disabled={isSubmitting || attach.isPending}
 					>
 						{step === 0 ? (
 							"Cancel"
@@ -474,9 +517,9 @@ export function ByoChartDialog({
 							type="button"
 							size="sm"
 							onClick={handleSubmit(onSubmit)}
-							disabled={isSubmitting}
+							disabled={isSubmitting || attach.isPending}
 						>
-							{isSubmitting ? (
+							{isSubmitting || attach.isPending ? (
 								<Loader2 className="h-3.5 w-3.5 animate-spin" />
 							) : (
 								<Check className="h-3.5 w-3.5" />

@@ -311,9 +311,11 @@
 //   the filter standard's server half — `apps/console/lib/queries/facets.ts` and the `query*Page`
 //                      builders. "A facet pass sees only the scope predicates" is a real check and
 //                      a real unit test; it is not a text match.
-//   `date-fns` direct — 11 console files still import `formatDistanceToNow` rather than
-//                      `formatRelative`. A bare import name is a weak signal (the package has
-//                      honest non-formatting uses), so this row is prose, not a matcher.
+//   `date-fns` direct — no console file imports it any more (#6141 moved the last one onto
+//                      `formatRelative`), and the console no longer declares it as a dependency,
+//                      so a new direct import fails type-checking (TS2307) until it is re-added.
+//                      A bare import name is a weak signal (the package has honest
+//                      non-formatting uses), so this row is prose, not a matcher.
 //   a bare `.toLocaleString(…)` — still not matched, and for the reason first recorded here: with
 //                      no options it is the correct way to put separators in a COUNT and appears
 //                      ~20 times, so no shape separates the money sites from the counts. The two

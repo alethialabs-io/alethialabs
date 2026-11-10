@@ -73,8 +73,9 @@ async function withDeadlockRetry<T>(fn: () => Promise<T>): Promise<T> {
  * bring-your-own shape and renders the Remove control; "deployed" needs a cloud identity AND a
  * deploy_config to render Destroy — use {@link seedDeployedRunner} rather than assembling it here.
  *
- * `is_default` defaults to false on purpose: `idx_runners_one_default_per_user` is a partial UNIQUE
- * index, so two seeded defaults for one persona collide and take both specs down.
+ * `is_default` defaults to false on purpose: `idx_runners_one_default_per_user_org` is a partial
+ * UNIQUE index (one default per user per org), so two seeded defaults for one persona in one org
+ * collide and take both specs down.
  */
 export async function seedRunner(
 	owner: Owner,
@@ -255,9 +256,9 @@ export interface SeededFleetPool {
  *   2. It is NEVER torn down by a spec. `deleteFleetPool` sets `deleting = true` (a reconciled
  *      teardown, not a delete) and the pool is a platform row no test owns — which is also why the
  *      registry's `runners.pool.delete` is only ever OPENED and CANCELLED here.
- *   3. It is only rendered on a SELF-MANAGED deployment: `getFleetPoolViews` returns nothing when
- *      `deploymentMode() === "hosted"`, and `runners-client.tsx` hides the whole Pools section
- *      behind `!isHosted`. The release gate never sets `ALETHIA_DEPLOYMENT_MODE=hosted`
+ *   3. It is only rendered on a SELF-MANAGED deployment: `readFleetPoolViews` returns nothing when
+ *      `deploymentMode() === "hosted"`, and `runners-client.tsx` renders the whole Pools section
+ *      only when `!hosted`. The release gate never sets `ALETHIA_DEPLOYMENT_MODE=hosted`
  *      (.github/workflows/release-gate.yml says why), so the section renders there.
  *
  * `hetzner` on purpose: it is the fleet substrate the controller actually supports, and it is not a

@@ -28,7 +28,7 @@ import {
 	connectorAssetUrl,
 } from "@/components/connectors/connector-assets";
 import {
-	type VerifyOutcome,
+	type ConnectSave,
 	useConnectionTest,
 } from "@/components/connectors/use-connection-test";
 import { Download, ExternalLink, Terminal } from "lucide-react";
@@ -37,7 +37,7 @@ import { useForm } from "react-hook-form";
 import * as z from "zod";
 
 /** A save action's instant server-side verify outcome (drives the connect flow). */
-type SaveResult = VerifyOutcome;
+type SaveResult = Awaited<ReturnType<ConnectSave>>;
 
 // --- Token clouds: DigitalOcean / Hetzner / Civo ---
 

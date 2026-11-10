@@ -1491,6 +1491,7 @@ func TestProv_ByoChartBindingsApplyKeylessExternalSecrets(t *testing.T) {
 	provStubTool(t, "kubectl", "#!/bin/sh\ncat \"$3\" >> "+applied+"\nexit 0\n")
 
 	vc := &types.ProjectConfig{
+		EnvironmentID: "env-1",
 		AddOns: []types.AddOnInstall{{
 			ID:        "acme-api",
 			Namespace: "apps",
@@ -1506,9 +1507,9 @@ func TestProv_ByoChartBindingsApplyKeylessExternalSecrets(t *testing.T) {
 	}
 	outputs := map[string]interface{}{"rds_master_credentials_secret_name": "acme/rds/master"}
 
-	names := applyByoChartBindings(vc, outputs, "aws", io.Discard, io.Discard)
-	if len(names) != 1 {
-		t.Fatalf("want one applied binding Secret name, got %#v", names)
+	st := applyByoChartBindings(vc, outputs, "aws", io.Discard, io.Discard)
+	if len(st.Declared) != 1 || st.Failures != 0 {
+		t.Fatalf("want one declared binding Secret and no failure, got %#v", st)
 	}
 	body, err := os.ReadFile(applied)
 	if err != nil {
@@ -1525,18 +1526,19 @@ func TestProv_ByoChartBindingsApplyKeylessExternalSecrets(t *testing.T) {
 	if !ok {
 		t.Fatalf("values[api] = %#v, want a nested map", vc.AddOns[0].Values["api"])
 	}
-	if got, _ := api["existingSecret"].(string); got != names[0] {
-		t.Errorf("values[api][existingSecret] = %q, want the applied Secret name %q", got, names[0])
+	if got, _ := api["existingSecret"].(string); got != st.Declared[0].Name {
+		t.Errorf("values[api][existingSecret] = %q, want the declared Secret name %q", got, st.Declared[0].Name)
 	}
 }
 
 // TestProv_ByoChartBindingsSurviveAFailedApply pins that a binding whose ExternalSecret cannot
-// be applied is reported and DROPPED from the swept set — reporting it as applied would make
-// the pruner sweep a Secret it never created.
+// be applied is reported, counted as a failure (which skips the prune for the deploy), and stays
+// in the DECLARED set — a failed apply is never read as a removed declaration.
 func TestProv_ByoChartBindingsSurviveAFailedApply(t *testing.T) {
 	provStubTool(t, "kubectl", "#!/bin/sh\nexit 1\n")
 
 	vc := &types.ProjectConfig{
+		EnvironmentID: "env-1",
 		AddOns: []types.AddOnInstall{{
 			ID:        "acme-api",
 			Namespace: "apps",
@@ -1551,12 +1553,15 @@ func TestProv_ByoChartBindingsSurviveAFailedApply(t *testing.T) {
 		}},
 	}
 	var errOut strings.Builder
-	names := applyByoChartBindings(vc, map[string]interface{}{
+	st := applyByoChartBindings(vc, map[string]interface{}{
 		"rds_master_credentials_secret_name": "acme/rds/master",
 	}, "aws", io.Discard, &errOut)
 
-	if len(names) != 0 {
-		t.Fatalf("a failed apply must not be reported as applied, got %#v", names)
+	if st.Failures != 1 {
+		t.Fatalf("a failed apply must be counted, got %#v", st)
+	}
+	if len(st.Declared) != 1 || st.Declared[0].Name != "api-database-primary" {
+		t.Fatalf("a failed apply must leave the binding declared, got %#v", st.Declared)
 	}
 	if !strings.Contains(errOut.String(), "ExternalSecret apply failed") {
 		t.Errorf("the failed apply must be warned about, got:\n%s", errOut.String())
@@ -2516,8 +2521,10 @@ func TestProv_ProbeSynthesizesTheClusterNameWhenTheOutputIsAbsent(t *testing.T) 
 // reachable; continuing past a namespace we merely failed to CREATE is still right, and unchanged.
 //
 // Fail-closed is preserved, which is what the old comment actually cared about: the scan loop has
-// already pinned each Application to `byo-<slug>`, and refusing here means that AppProject is never
-// created — so nothing syncs, rather than syncing into the wide-open default project.
+// already pinned each Application to `byo-<slug>`. Since #6439 the refusal is PER CHART: the refused
+// chart contributes no destination, the AppProject is re-applied without it (with no destinations at
+// all here, since this is the only chart), and deploy.go leaves the chart out of the render — so
+// nothing syncs into the refused namespace, and nothing syncs into the wide-open default project.
 func TestProv_PrepareByoChartsRefusesAnInvalidNamespace(t *testing.T) {
 	provStubTool(t, "kubectl", "#!/bin/sh\nexit 0\n")
 
@@ -2529,12 +2536,13 @@ func TestProv_PrepareByoChartsRefusesAnInvalidNamespace(t *testing.T) {
 	}
 	var errOut strings.Builder
 	if prepareByoCharts(vc, "tok", nil, map[string]string{"alethia.io/environment-id": "env-1"}, io.Discard, &errOut) {
-		t.Fatal("a namespace Kubernetes would reject must REFUSE the stage, not configure it")
+		t.Fatal("a namespace Kubernetes would reject must be REFUSED, not configured")
 	}
-	if !strings.Contains(errOut.String(), "refusing to configure BYO charts") {
+	if !strings.Contains(errOut.String(), "refusing BYO chart") {
 		t.Errorf("the refusal must say so, got:\n%s", errOut.String())
 	}
-	// Fail-closed: the Application is still pinned to a project that will not exist.
+	// Fail-closed: the Application is still pinned to the hardened project, which now grants it no
+	// destination.
 	if got := vc.AddOns[0].Project; got != "byo-acme-corp" {
 		t.Errorf("AddOns[0].Project = %q, want it pinned to the hardened project so nothing syncs", got)
 	}

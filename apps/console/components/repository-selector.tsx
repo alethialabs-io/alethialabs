@@ -14,8 +14,10 @@ import {
   CommandItem,
   CommandList,
 } from "@repo/ui/command";
+import { useCommandSearch } from "@repo/ui/command-search";
 import { Input } from "@repo/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
+import { Skeleton } from "@repo/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -36,7 +38,7 @@ import { Repository } from "@/app/server/actions/git/types";
 import { getLinkedProviders } from "@/app/server/actions/identities";
 import { useRepositoryContext } from "@/components/design-project/repository-context";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 interface RepositorySelectorProps {
   value: string | undefined;
@@ -53,6 +55,16 @@ interface RepositorySelectorProps {
    * Omitted: every provider is offered, as before.
    */
   providerAvailability?: GitProviderAvailability;
+  /**
+   * The caller's linked git providers, already read on the server (the `/~/new` route prefetches
+   * `projects.linkedGitProviders`). Given, the selector's FIRST render is already the right branch —
+   * the provider + repository row, or the "No Git accounts linked" panel — and it never fetches the
+   * list itself. Omitted, it reads the list on mount and shows its loading row until then.
+   *
+   * Read once, at mount, like `value`'s initial provider: a later change of this prop is not
+   * followed, so an array rebuilt on every parent render cannot re-trigger the load.
+   */
+  linkedProviders?: PublicGitProvider[];
 }
 
 /** The order the Link buttons are offered in. */
@@ -92,6 +104,19 @@ const GIT_PROVIDERS = [
   "gitlab",
 ] as const satisfies readonly PublicGitProvider[];
 
+/**
+ * The provider the selector opens on: the one a saved repo URL names when that provider is linked,
+ * else the first linked one; null when none is linked.
+ */
+function initialProviderFor(
+  providers: PublicGitProvider[],
+  savedUrl: string | undefined,
+): PublicGitProvider | null {
+  const detected = savedUrl ? providerFromRepoUrl(savedUrl) : null;
+  if (detected && providers.includes(detected)) return detected;
+  return providers[0] ?? null;
+}
+
 function providerFromRepoUrl(url: string): PublicGitProvider | null {
   try {
     const host = new URL(url).hostname.toLowerCase();
@@ -104,6 +129,67 @@ function providerFromRepoUrl(url: string): PublicGitProvider | null {
   return null;
 }
 
+/**
+ * The selector's settled layout in loading form, for a skeleton drawn before the page's data
+ * arrives (RUBRIC B2). The selector has two layouts with no shared geometry. One is the
+ * "No Git accounts linked" panel, about 178px tall with its three Link buttons and the manual-entry
+ * link. The other is the 40px provider and repository row. So the caller says which one it expects:
+ * `linked: false` draws the panel, and anything else draws the row. The classes are the ones the
+ * two branches below use. Change them together.
+ */
+export function RepositorySelectorSkeleton({
+  linked,
+  variant = "default",
+}: {
+  /** Whether the viewer has a git account linked. `undefined` (not known) draws the row. */
+  linked: boolean | undefined;
+  variant?: "default" | "settings";
+}) {
+  if (linked === false) {
+    return (
+      <div
+        data-slot="git-accounts-skeleton"
+        className={cn(
+          "space-y-3 border p-4",
+          variant === "settings"
+            ? "rounded-sm border-dashed border-border-strong bg-surface-sunken"
+            : "rounded-lg bg-muted/30",
+        )}
+      >
+        <div className="flex h-[1lh] items-center gap-2 text-sm">
+          <Skeleton className="size-4" />
+          <Skeleton className="h-3.5 w-36" />
+        </div>
+        <div className="flex h-[1lh] items-center text-sm">
+          <Skeleton className="h-3 w-full max-w-md" />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {LINK_ORDER.map((p) => (
+            <Skeleton key={p} className="h-8 w-28" />
+          ))}
+          <div className="mt-2 w-full">
+            <Skeleton className="h-8 w-52" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div data-slot="repository-row-skeleton" className="flex items-center gap-1.5">
+      <Skeleton
+        className={cn(
+          "min-w-0 flex-1",
+          variant === "settings" ? "h-10 rounded-sm" : "h-[38px]",
+        )}
+      />
+      <Skeleton className="size-9 shrink-0" />
+    </div>
+  );
+}
+
+/** A repository's search text: its `owner/name`, for the shared ranker. */
+const repoSearchText = (repo: { full_name: string }): string => repo.full_name;
+
 export function RepositorySelector({
   value,
   onChange,
@@ -113,23 +199,60 @@ export function RepositorySelector({
   variant = "default",
   onRepositorySelect,
   providerAvailability,
+  linkedProviders: seededProviders,
 }: RepositorySelectorProps) {
   const sharedCtx = useRepositoryContext();
-  const [repositories, setRepositories] = useState<Repository[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [fetchingRepos, setFetchingRepos] = useState(false);
+  // THE FIRST RENDER IS THE SETTLED LAYOUT WHEN ANYTHING ALREADY KNOWS THE ANSWER (F034). This used
+  // to start at `loading: false` with no providers, so the first frame — the server render
+  // included — was the "No Git accounts linked" panel with three Link buttons, swapped a moment
+  // later for the skeleton and then for the repository row. Now the state starts from the server
+  // seed or the shared context when there is one, and from the loading row when there is not: the
+  // row a user sees first is never one the data is about to take away.
+  const [seed] = useState(() => sharedCtx?.linkedProviders ?? seededProviders);
+  const [initialValue] = useState(value);
+  // This instance's own answers. With a shared context, the context's answers are READ (below),
+  // never copied into these: a copy needed an effect, and showed the previous answer for a commit.
+  const [ownRepositories, setRepositories] = useState<Repository[]>([]);
+  const [ownLoading, setLoading] = useState(seededProviders === undefined);
+  const [ownLinkedProviders, setLinkedProviders] = useState<PublicGitProvider[]>(
+    seed ?? [],
+  );
+  const [pickedProvider, setSelectedProvider] =
+    useState<PublicGitProvider | null>(() =>
+      seed ? initialProviderFor(seed, initialValue) : null,
+    );
+  const linkedProviders = sharedCtx ? sharedCtx.linkedProviders : ownLinkedProviders;
+  const loading = sharedCtx ? sharedCtx.loadingProviders : ownLoading;
+  // Until one is picked, a shared context's provider defaults the way a seed's does.
+  const selectedProvider =
+    pickedProvider ??
+    (sharedCtx ? initialProviderFor(sharedCtx.linkedProviders, initialValue) : null);
+  // What the mount knew, kept so `loadInitialData` can skip the provider read it no longer needs.
+  const [seededAtMount] = useState(() => !sharedCtx && seededProviders !== undefined);
+  const [selectedAtMount] = useState(selectedProvider);
+  // A provider known at mount has its repositories in flight from the first frame, so the row reads
+  // "Fetching repositories..." rather than "No repositories found" until the list lands.
+  // In shared-context mode the context's own flag says this until a local fetch starts.
+  const [ownFetchingRepos, setFetchingRepos] = useState(() => !sharedCtx && selectedProvider !== null);
+  // A shared context's cached list wins over this instance's own fetch, as it did when it was
+  // copied in; an uncached provider reads the context's flag (it is fetching it) or our own.
+  const ctxRepos =
+    sharedCtx && selectedProvider ? sharedCtx.reposByProvider[selectedProvider] : undefined;
+  const repositories = ctxRepos ?? ownRepositories;
+  const fetchingRepos = ctxRepos
+    ? false
+    : sharedCtx
+      ? sharedCtx.loadingRepos || ownFetchingRepos
+      : ownFetchingRepos;
   const [error, setError] = useState<string | null>(null);
   const [authRecoveryProvider, setAuthRecoveryProvider] =
     useState<PublicGitProvider | null>(null);
-  const [linkedProviders, setLinkedProviders] = useState<PublicGitProvider[]>(
-    [],
-  );
-  const [selectedProvider, setSelectedProvider] =
-    useState<PublicGitProvider | null>(null);
   const [showLinkOptions, setShowLinkOptions] = useState(false);
   const [isManual, setIsManual] = useState(false);
-  const [initialValue] = useState(value);
   const [open, setOpen] = useState(false);
+  // Ranked by the shared ranker over each repository's full name; the query starts empty each
+  // time the popover opens.
+  const repoSearch = useCommandSearch(repositories, repoSearchText, { open });
   const repositoryShellBorder = error
     ? variant === "settings"
       ? "border-border-strong ring-1 ring-border-strong"
@@ -138,110 +261,90 @@ export function RepositorySelector({
       ? "border-border-strong"
       : "border-input";
 
-  // When shared context exists, use its data instead of fetching independently
+  // When shared context exists, ask IT for an uncached provider's repositories (it fetches each
+  // provider once) instead of fetching independently.
   useEffect(() => {
-    if (!sharedCtx) return;
-    setLinkedProviders(sharedCtx.linkedProviders);
-    setLoading(sharedCtx.loadingProviders);
+    if (!sharedCtx || !selectedProvider || ctxRepos) return;
+    void sharedCtx.fetchRepos(selectedProvider);
+  }, [sharedCtx, selectedProvider, ctxRepos]);
 
-    if (sharedCtx.linkedProviders.length > 0 && !selectedProvider) {
-      let provider = sharedCtx.linkedProviders[0];
-      const detected = initialValue ? providerFromRepoUrl(initialValue) : null;
-      if (detected) provider = detected;
-      if (sharedCtx.linkedProviders.includes(provider)) {
-        setSelectedProvider(provider);
-      } else {
-        setSelectedProvider(sharedCtx.linkedProviders[0]);
-      }
-    }
-  }, [sharedCtx?.linkedProviders, sharedCtx?.loadingProviders]);
+  // Both declared before loadInitialData, which calls them, and `loadRepositories` before
+  // `fetchRepositories`: referencing a binding above its declaration is a TDZ hazard
+  // (react-hooks/immutability).
+  /**
+   * Fetches a provider's repositories into this instance, for a row already marked as fetching
+   * (by `fetchRepositories`, or by the mount's initial state). Every write is in a callback of the
+   * request, so the mount effect that starts it sets nothing synchronously.
+   */
+  const loadRepositories = (providerName: PublicGitProvider): Promise<void> => {
+    let recoveryProvider: PublicGitProvider | null = null;
+    return fetchRepositoriesByProvider(providerName)
+      .then((data) => {
+        if (data.error) {
+          if (
+            data.authErrorCode &&
+            data.authProvider &&
+            (data.authErrorCode === "token_expired" ||
+              data.authErrorCode === "unauthorized" ||
+              data.authErrorCode === "missing_token")
+          ) {
+            setAuthRecoveryProvider(data.authProvider);
+            recoveryProvider = data.authProvider;
+          }
+          throw new Error(data.error);
+        }
+        setRepositories(data.repositories || []);
+      })
+      .catch((err: unknown) => {
+        console.error(`Error fetching ${providerName} repositories:`, err);
+        setError(
+          recoveryProvider
+            ? `Authentication with ${recoveryProvider} failed or expired. Relink your account and try again.`
+            : err instanceof Error
+              ? err.message
+              : "Failed to fetch repositories",
+        );
+        setRepositories([]);
+      })
+      .finally(() => setFetchingRepos(false));
+  };
 
-  useEffect(() => {
-    if (!sharedCtx || !selectedProvider) return;
-    const repos = sharedCtx.reposByProvider[selectedProvider];
-    if (repos) {
-      setRepositories(repos);
-      setFetchingRepos(false);
-    } else {
-      setFetchingRepos(sharedCtx.loadingRepos);
-      sharedCtx.fetchRepos(selectedProvider);
-    }
-  }, [sharedCtx?.reposByProvider, selectedProvider, sharedCtx?.loadingRepos]);
-
-  // Declared before loadInitialData, which awaits it. The old ordering only
-  // worked because the call is async; referencing the binding above its
-  // declaration is a TDZ hazard (react-hooks/immutability).
+  /** Marks the row as fetching, then fetches the provider's repositories. */
   const fetchRepositories = async (providerName: PublicGitProvider) => {
     setFetchingRepos(true);
     setError(null);
     setAuthRecoveryProvider(null);
-    let recoveryProvider: PublicGitProvider | null = null;
-    try {
-      const data = await fetchRepositoriesByProvider(providerName);
-      if (data.error) {
-        if (
-          data.authErrorCode &&
-          data.authProvider &&
-          (data.authErrorCode === "token_expired" ||
-            data.authErrorCode === "unauthorized" ||
-            data.authErrorCode === "missing_token")
-        ) {
-          setAuthRecoveryProvider(data.authProvider);
-          recoveryProvider = data.authProvider;
-        }
-        throw new Error(data.error);
-      }
-
-      setRepositories(data.repositories || []);
-    } catch (err) {
-      console.error(`Error fetching ${providerName} repositories:`, err);
-      setError(
-        recoveryProvider
-          ? `Authentication with ${recoveryProvider} failed or expired. Relink your account and try again.`
-          : err instanceof Error
-            ? err.message
-            : "Failed to fetch repositories",
-      );
-      setRepositories([]);
-    } finally {
-      setFetchingRepos(false);
-    }
+    await loadRepositories(providerName);
   };
 
-  const loadInitialData = useCallback(async () => {
-    if (sharedCtx) return; // Skip — using shared context
-    setLoading(true);
-    setError(null);
-    try {
-      const providers = await getLinkedProviders();
-      setLinkedProviders(providers);
-
-      if (providers.length > 0) {
-        let initialProvider = providers[0];
-        const detected = initialValue
-          ? providerFromRepoUrl(initialValue)
-          : null;
-        if (detected) initialProvider = detected;
-
-        if (providers.includes(initialProvider)) {
+  /**
+   * The mount's read when there is no shared context. The initial state already says "loading" /
+   * "fetching", so nothing is set before the first request; every write is in its callbacks.
+   */
+  const loadInitialData = useEffectEvent((): Promise<void> => {
+    // Seeded by the server: the provider list is already on screen; only its repositories are left.
+    if (seededAtMount) {
+      return selectedAtMount ? loadRepositories(selectedAtMount) : Promise.resolve();
+    }
+    return getLinkedProviders()
+      .then(async (providers) => {
+        setLinkedProviders(providers);
+        const initialProvider = initialProviderFor(providers, initialValue);
+        if (initialProvider) {
           setSelectedProvider(initialProvider);
           await fetchRepositories(initialProvider);
-        } else {
-          setSelectedProvider(providers[0]);
-          await fetchRepositories(providers[0]);
         }
-      }
-    } catch (err) {
-      console.error("Error loading linked providers:", err);
-      setError("Failed to load linked accounts");
-    } finally {
-      setLoading(false);
-    }
-  }, [initialValue, sharedCtx]);
+      })
+      .catch((err: unknown) => {
+        console.error("Error loading linked providers:", err);
+        setError("Failed to load linked accounts");
+      })
+      .finally(() => setLoading(false));
+  });
 
   useEffect(() => {
-    if (!sharedCtx) loadInitialData();
-  }, [loadInitialData, sharedCtx]);
+    if (!sharedCtx) void loadInitialData();
+  }, [sharedCtx]);
 
   const handleProviderChange = async (provider: PublicGitProvider) => {
     setSelectedProvider(provider);
@@ -302,10 +405,13 @@ export function RepositorySelector({
   };
 
   if (loading) {
+    // The loading row in the settled row's shape: a label bar only when there IS a label, and the
+    // provider + repository row at its own height (h-9). With `label=""` (the import panel) the old
+    // label bar was a line the settled layout does not have.
     return (
-      <div className="space-y-2 animate-pulse">
-        <div className="h-4 w-24 bg-muted rounded" />
-        <div className="h-10 w-full bg-muted rounded" />
+      <div className={cn("animate-pulse", label && "space-y-1.5")}>
+        {label && <div className="h-4 w-24 bg-muted rounded" />}
+        <div className="h-9 w-full bg-muted rounded" />
       </div>
     );
   }
@@ -547,15 +653,19 @@ export function RepositorySelector({
                 }
               />
               <PopoverContent className="w-[400px] p-0" align="start">
-                <Command label="Search repositories">
+                <Command
+                  label="Search repositories"
+                  search={repoSearch.search}
+                  onSearchChange={repoSearch.onSearchChange}
+                  filteredItems={repoSearch.results}
+                >
                   <CommandInput placeholder="Search repositories..." />
                   <CommandList>
                     <CommandEmpty>No repository found.</CommandEmpty>
                     <CommandGroup>
-                      {repositories.map((repo) => (
+                      {repoSearch.results.map((repo) => (
                         <CommandItem
                           key={repo.id}
-                          value={repo.full_name}
                           onSelect={() => {
                             onChange(repo.url);
                             onRepositorySelect?.(repo);

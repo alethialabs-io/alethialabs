@@ -1,0 +1,96 @@
+{
+	"sanctioned": {
+		"lib/realtime/client/fallback-poll.ts :: setInterval": {
+			"count": 1,
+			"reason": "THE one sanctioned poll: every 30 s, only while the change stream is down (after 15 s) and only in a visible tab, it refetches every topic's keys (ADR 0005 §10 R7)"
+		}
+	},
+	"timers": {
+		"app/(private)/[org]/~/events/route.ts :: setInterval": {
+			"count": 1,
+			"reason": "SSE heartbeat comment every 20 s (under Cloudflare's 125 s read timeout); every third beat re-authorises the change stream (#6115)"
+		},
+		"app/(private)/cli/login/cli-request.tsx :: setInterval": {
+			"count": 1,
+			"reason": "countdown clock: re-renders the remaining time of the CLI sign-in request; reads no data"
+		},
+		"app/api/runners/wake/route.ts :: setInterval": {
+			"count": 1,
+			"reason": "SSE heartbeat on the runner wake stream; writes a comment frame, reads no data"
+		},
+		"app/api/stream/jobs/[id]/route.ts :: setInterval": {
+			"count": 1,
+			"reason": "SSE heartbeat on the per-job log stream; writes a comment frame, reads no data"
+		},
+		"components/jobs/columns.tsx :: setInterval": {
+			"count": 1,
+			"reason": "elapsed-time ticker: re-renders a running job's duration once a second; reads no data"
+		},
+		"lib/agent/turn-route.ts :: setInterval": {
+			"count": 1,
+			"reason": "SSE heartbeat on an agent turn stream; writes a comment frame, reads no data"
+		},
+		"lib/alerts/scheduler.ts :: setInterval": {
+			"count": 1,
+			"reason": "server sweeper: the alert delivery loop (a background job, not a page read)"
+		},
+		"lib/billing/payment-holds/sweeper.ts :: setInterval": {
+			"count": 1,
+			"reason": "server sweeper: payment-hold expiry (a background job, not a page read)"
+		},
+		"lib/cloud-providers/capabilities/sweep.ts :: setInterval": {
+			"count": 1,
+			"reason": "server sweeper: cloud capability refresh (a background job, not a page read)"
+		},
+		"lib/cloud-providers/sweep.ts :: setInterval": {
+			"count": 1,
+			"reason": "server sweeper: cloud connection health (a background job, not a page read)"
+		},
+		"lib/fleet/scaler.ts :: setInterval": {
+			"count": 1,
+			"reason": "server loop: the managed-fleet scaler (a background job, not a page read)"
+		},
+		"lib/jobs/recovery.ts :: setInterval": {
+			"count": 1,
+			"reason": "server sweeper: stale-job recovery (a background job, not a page read)"
+		},
+		"lib/observability/heartbeats.ts :: setInterval": {
+			"count": 1,
+			"reason": "server watchdog over the registered loops' heartbeats (a background job, not a page read)"
+		},
+		"lib/realtime/client/leader.ts :: setInterval": {
+			"count": 1,
+			"reason": "the leader lease's 2 s beat over BroadcastChannel in insecure contexts (ADR 0005 §10 R8); carries no data and fetches nothing"
+		},
+		"lib/realtime/self-test.ts :: setInterval": {
+			"count": 1,
+			"reason": "server self-test of the bus's LISTEN connection every 30 s (a NOTIFY round trip; #6115, ADR 0005 §10 R7)"
+		},
+		"lib/reclaim/sweep.ts :: setInterval": {
+			"count": 1,
+			"reason": "server sweeper: orphaned-resource reclaim (a background job, not a page read)"
+		},
+		"lib/reconcile/loop.ts :: setInterval": {
+			"count": 1,
+			"reason": "server loop: the reconcile loop (a background job, not a page read)"
+		},
+		"lib/stores/elench-drafts/heartbeat.ts :: setInterval": {
+			"count": 1,
+			"reason": "draft-claim heartbeat (ADR 0001): keeps this tab's claim on an open draft alive; a write, not a read"
+		}
+	},
+	"polls": {
+		"components/agent/elench/elench-conversation.tsx :: setInterval": {
+			"count": 1,
+			"lifts": "unassigned"
+		},
+		"components/org/pending-paid-setup.ts :: setInterval": {
+			"count": 1,
+			"lifts": "unassigned"
+		},
+		"lib/stores/elench-drafts/store.ts :: setInterval": {
+			"count": 1,
+			"lifts": "unassigned"
+		}
+	}
+}

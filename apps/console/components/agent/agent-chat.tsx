@@ -12,7 +12,6 @@ import {
 	ThumbsDown,
 	ThumbsUp,
 } from "lucide-react";
-import { motion } from "motion/react";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { Action, Actions } from "@/components/ai-elements/actions";
 import { ChatError } from "@/components/agent/chat-error";
@@ -43,12 +42,14 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
 import { ToolResultFrame } from "@/components/agent/tool-result-frame";
-import { Marker, MarkerContent } from "@/components/ai-elements/marker";
+import { Marker, MarkerContent } from "@repo/ui/marker";
 import {
 	AGENT_STEP_PART_TYPE,
 	agentStepDataSchema,
 } from "@/lib/ai/agent-steps";
 import { hasAcceptedApproval } from "@/lib/agent/turn-key";
+import { COPY_FAILED_MESSAGE } from "@repo/ui/copy-button";
+import { copyText } from "@repo/ui/copy-text";
 import { cn } from "@repo/ui/utils";
 
 export type AgentChatStatus = "submitted" | "streaming" | "ready" | "error";
@@ -159,6 +160,7 @@ export function AgentChat({
 	const pending = status === "submitted" || status === "streaming";
 	const lastMessageId = messages.at(-1)?.id;
 	const [copiedId, setCopiedId] = useState<string | null>(null);
+	const [copyFailedId, setCopyFailedId] = useState<string | null>(null);
 	const [feedback, setFeedback] =
 		useState<Record<string, "up" | "down">>(initialFeedback ?? {});
 	// Re-seed when the hydrated map arrives / the active thread changes (the consumer passes a
@@ -168,7 +170,13 @@ export function AgentChat({
 	}, [initialFeedback]);
 
 	const copyMessage = (message: UIMessage) => {
-		void navigator.clipboard.writeText(messageText(message)).then(() => {
+		void copyText(messageText(message)).then((copied) => {
+			if (!copied) {
+				setCopyFailedId(message.id);
+				setTimeout(() => setCopyFailedId((id) => (id === message.id ? null : id)), 4000);
+				return;
+			}
+			setCopyFailedId(null);
 			setCopiedId(message.id);
 			setTimeout(() => setCopiedId((id) => (id === message.id ? null : id)), 1500);
 		});
@@ -301,11 +309,7 @@ export function AgentChat({
 										messageId={m.id}
 										scrollAnchor={isUser}
 									>
-										<motion.div
-											initial={{ opacity: 0, y: 4 }}
-											animate={{ opacity: 1, y: 0 }}
-											transition={{ duration: 0.18, ease: "easeOut" }}
-										>
+										<div className="agent-message-in">
 											{/* `MessageContent` IS the user's bubble — the skin lives in the
 											    component (`group-[.is-user]:bg-secondary …`), which is why the
 											    separate `Bubble`/`BubbleContent` pair is gone. The two widths
@@ -366,7 +370,13 @@ export function AgentChat({
 																	</>
 																)}
 																<Action
-																	tooltip={copiedId === m.id ? "Copied" : "Copy"}
+																	tooltip={
+																		copiedId === m.id
+																			? "Copied"
+																			: copyFailedId === m.id
+																				? COPY_FAILED_MESSAGE
+																				: "Copy"
+																	}
 																	label="Copy message"
 																	onClick={() => copyMessage(m)}
 																>
@@ -408,20 +418,16 @@ export function AgentChat({
 														)}
 												</MessageContent>
 											</Message>
-										</motion.div>
+										</div>
 									</MessageScrollerItem>
 								);
 							})}
 
 							{status === "submitted" && (
-								<motion.div
-									initial={{ opacity: 0 }}
-									animate={{ opacity: 1 }}
-									className="flex items-center gap-2 text-xs text-muted-foreground"
-								>
+								<div className="agent-thinking-in flex items-center gap-2 text-xs text-muted-foreground">
 									<Loader2 className="h-3 w-3 animate-spin" />
 									Thinking…
-								</motion.div>
+								</div>
 							)}
 							{error &&
 								(errorMessage ? (

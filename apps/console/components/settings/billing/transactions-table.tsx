@@ -3,19 +3,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Transaction history (Billing page) — the org's recent Stripe charges (paid /
-// failed / refunded) on the shared DataTable (sortable + paginated). Read-only.
+// failed / refunded) on the shared DataTable (sortable + paginated). Read-only. The read is
+// `billing.transactions` over GET, prefetched by the route (#6127); a failed read renders as an
+// error with a retry, never as "No transactions yet".
 
+import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useEffect, useState } from "react";
-import { toast } from "sonner";
-import {
-	listTransactions,
-	type TransactionInfo,
-} from "@/app/server/actions/billing";
 import { DataTable } from "@/components/data-table";
+import { RegionError } from "@/components/errors/region-error";
+import { RegionRefusal, refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
 import { SettingsSection } from "@/components/settings/settings-ui";
+import { ClockText } from "@/components/settings/usage/clock-text";
+import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";
+import { orpc } from "@/lib/rpc/client";
+import type { TransactionInfo } from "@/lib/rpc/procedures/billing";
 import { formatDate, formatMoney } from "@repo/format";
-import { Skeleton } from "@repo/ui/skeleton";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 
 // A transaction outcome is not one of the product statuses `statusTier()` knows — "paid" and
@@ -40,9 +42,11 @@ const columns: ColumnDef<TransactionInfo>[] = [
 		accessorKey: "created",
 		header: "Date",
 		cell: ({ row }) => (
-			<span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-				{formatDate(row.original.created)}
-			</span>
+			<ClockText
+				className="font-mono text-xs text-muted-foreground"
+				sizer="30 Sept 2026"
+				text={() => formatDate(row.original.created)}
+			/>
 		),
 	},
 	{
@@ -80,26 +84,30 @@ const columns: ColumnDef<TransactionInfo>[] = [
 	},
 ];
 
+/** The Transaction history section: the table, or its pending / refused / failed render. */
 export function TransactionsTable() {
-	const [rows, setRows] = useState<TransactionInfo[] | null>(null);
-
-	useEffect(() => {
-		listTransactions()
-			.then(setRows)
-			.catch(() => toast.error("Couldn't load transactions."));
-	}, []);
+	const rows = useQuery(orpc.billing.transactions.queryOptions({ retry: retryUnlessRefused }));
+	const refusal = rows.isError ? refusalOf(rows.error) : null;
 
 	return (
 		<SettingsSection title="Transaction history">
-			{!rows ? (
-				<Skeleton className="h-40 w-full" />
-			) : (
+			{rows.data !== undefined ? (
 				<DataTable
 					columns={columns}
-					data={rows}
+					data={rows.data}
 					pageSize={10}
 					emptyMessage="No transactions yet."
 				/>
+			) : refusal ? (
+				<RegionRefusal refusal={refusal} />
+			) : rows.isError ? (
+				<RegionError
+					title="Couldn't load transactions"
+					description="Something went wrong reading this organization's charges."
+					onRetry={() => void rows.refetch()}
+				/>
+			) : (
+				<DataTableSkeleton columns={5} rows={4} />
 			)}
 		</SettingsSection>
 	);

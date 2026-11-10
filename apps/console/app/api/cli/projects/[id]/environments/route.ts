@@ -4,6 +4,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import {
 	type CursorScope,
 	MAX_PAGE_SIZE,
@@ -11,7 +12,6 @@ import {
 	paginate,
 	parsePageOpts,
 } from "@/lib/cli/paging";
-import { resolveCliProject } from "@/lib/cli/resolve-project";
 import { getServiceDb } from "@/lib/db";
 import { projectEnvironments, projectFabrics } from "@/lib/db/schema";
 import {
@@ -154,7 +154,7 @@ export async function GET(
 			: parsed.opts;
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
@@ -225,7 +225,7 @@ export async function POST(
 
 	try {
 		const db = getServiceDb();
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "edit");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}

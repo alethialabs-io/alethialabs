@@ -228,7 +228,7 @@ func (cp *ControlPlane) SeedPromotionGraph(ctx context.Context, opts b6SeedOpts)
 		return nil, fmt.Errorf("seed promotion: %w", err)
 	}
 	// Under Enforce, tag the TARGET env with a classification value whose enforcement forces the
-	// approval + verify gates (label drives policy). getEnforcingValuesFor reads exactly this.
+	// approval + verify gates (label drives policy). getEnforcingValuesForEnvironment reads exactly this.
 	if opts.Enforce {
 		dimID, valID := newUUID(), newUUID()
 		if _, err := cp.pool.Exec(ctx, `

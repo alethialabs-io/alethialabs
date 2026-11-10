@@ -142,4 +142,33 @@ describe("DeployPane", () => {
 		expect(screen.getByText(/re-deploy \(or wait for the next drift scan\)/)).toBeDefined();
 		expect(screen.queryByText(/GitOps deploy failed/)).toBeNull();
 	});
+	// #6141: the last-deploy row renders through `@repo/format`'s `formatRelative`, the same ladder
+	// every other console page uses, instead of a raw `date-fns` call.
+	describe("last deploy row", () => {
+		const fiveMinutesAgo = () => new Date(Date.now() - 5 * 60_000).toISOString();
+
+		it("reads relative to now", () => {
+			render(<DeployPane status={base({ lastDeployAt: fiveMinutesAgo() })} />);
+			expect(screen.getByText("5 minutes ago")).toBeDefined();
+		});
+
+		it("prefixes a failed deploy", () => {
+			render(
+				<DeployPane
+					status={base({ lastDeployAt: fiveMinutesAgo(), lastDeployFailed: true })}
+				/>,
+			);
+			expect(screen.getByText("failed · 5 minutes ago")).toBeDefined();
+		});
+
+		it("says never when nothing has deployed", () => {
+			render(<DeployPane status={base({ lastDeployAt: null })} />);
+			expect(screen.getByText("never")).toBeDefined();
+		});
+
+		it("renders a dash for an unparseable instant instead of throwing", () => {
+			render(<DeployPane status={base({ lastDeployAt: "not-a-date" })} />);
+			expect(screen.getByText("—")).toBeDefined();
+		});
+	});
 });

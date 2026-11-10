@@ -5,24 +5,30 @@
 // The custom-role editor Sheet: an AccordionForm (Identity → Permissions → Classification →
 // Review) with a persistent footer submit. Mirrors the alerts policy-sheet chrome. Sub-editors
 // are form-driven (PermissionMatrix via form.setValue) so collapsing a section never loses state.
+//
+// #6129: the save goes through `useActionMutation` (pending, one toast policy, field errors under
+// their fields, every members read invalidated). The sheet TRACKS DIRTY STATE: an edit with no
+// change cannot be saved, and closing it with unsaved changes asks first instead of dropping them.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ShieldPlus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
-import { toast } from "sonner";
 import {
 	createRole,
 	type RoleRow,
 	updateRole,
 } from "@/app/server/actions/roles";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import {
 	AccordionForm,
 	type FormSectionDef,
 } from "@/components/forms/accordion-form";
+import type { ActionResult, FieldErrors } from "@/lib/actions/result";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { roleDisplayName } from "@/lib/authz/registry";
-import { useInvalidateRoles } from "@/lib/query/use-roles-query";
+import { orpc } from "@/lib/rpc/client";
 import { type RoleInput, roleInputSchema } from "@/lib/validations/roles";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -45,10 +51,30 @@ interface RoleSheetProps {
 	/** Built-in roles offered as "start from a template" when creating. */
 	templates: RoleRow[];
 	canManage: boolean;
-	onSaved: () => void;
 }
 
 const BLANK: RoleInput = { name: "", description: "", permissionKeys: [] };
+
+/** What one save sends: the form's values, and the role it rewrites (absent when creating). */
+interface RoleSave {
+	id: string | null;
+	values: RoleInput;
+}
+
+/** Creates or rewrites the role, answering in the one `ActionResult` shape either way. */
+async function saveRole({ id, values }: RoleSave): Promise<ActionResult<{ id: string }>> {
+	const fields = {
+		name: values.name,
+		permissionKeys: values.permissionKeys,
+		description: values.description,
+	};
+	if (id) return updateRole({ id, ...fields });
+	const created = await createRole(fields);
+	return created.ok ? { ok: true, data: { id: created.data.id } } : created;
+}
+
+/** The fields a server validation result may name, narrowed to this form's own. */
+const ROLE_FIELDS = ["name", "description", "permissionKeys"] as const;
 
 /** Create or edit a custom role. */
 export function RoleSheet({
@@ -57,11 +83,10 @@ export function RoleSheet({
 	role,
 	templates,
 	canManage,
-	onSaved,
 }: RoleSheetProps) {
-	const invalidate = useInvalidateRoles();
 	const [openSection, setOpenSection] = useState("identity");
-	const [saving, setSaving] = useState(false);
+	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing.
+	const [confirmDiscard, setConfirmDiscard] = useState(false);
 	const isEdit = role != null;
 
 	const form = useForm<RoleInput>({
@@ -88,29 +113,34 @@ export function RoleSheet({
 		wasOpen.current = open;
 	}, [open, role, form]);
 
-	async function onSubmit(values: RoleInput) {
-		setSaving(true);
-		try {
-			if (isEdit) {
-				await updateRole(
-					role.id,
-					values.name,
-					values.permissionKeys,
-					values.description,
-				);
-				toast.success("Role updated");
-			} else {
-				await createRole(values.name, values.permissionKeys, values.description);
-				toast.success("Role created");
+	const save = useActionMutation(saveRole, {
+		invalidates: [orpc.members.key()],
+		successMessage: () => (isEdit ? "Role updated" : "Role created"),
+		onValidationError: (fields: FieldErrors) => {
+			for (const name of ROLE_FIELDS) {
+				const message = fields[name]?.[0];
+				if (message) form.setError(name, { type: "server", message });
 			}
-			invalidate();
-			onSaved();
+		},
+		onSuccess: () => {
+			form.reset(form.getValues());
 			onOpenChange(false);
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't save role");
-		} finally {
-			setSaving(false);
+		},
+	});
+
+	function onSubmit(values: RoleInput) {
+		if (save.isPending) return;
+		save.mutate({ id: role?.id ?? null, values });
+	}
+
+	const dirty = form.formState.isDirty;
+	/** Closing asks first when there is something to lose; a pristine sheet just closes. */
+	function requestOpenChange(next: boolean) {
+		if (!next && dirty && !save.isPending) {
+			setConfirmDiscard(true);
+			return;
 		}
+		onOpenChange(next);
 	}
 
 	const errors = form.formState.errors;
@@ -234,7 +264,8 @@ export function RoleSheet({
 	];
 
 	return (
-		<Sheet open={open} onOpenChange={onOpenChange}>
+		<>
+		<Sheet open={open} onOpenChange={requestOpenChange}>
 			<SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
 				<SheetHeader className="gap-3 border-b border-border/60 p-5">
 					<div className="flex items-center gap-3">
@@ -266,21 +297,38 @@ export function RoleSheet({
 							type="button"
 							variant="ghost"
 							size="sm"
-							onClick={() => onOpenChange(false)}
+							onClick={() => requestOpenChange(false)}
 						>
 							Cancel
 						</Button>
 						<Button
 							type="button"
 							size="sm"
-							disabled={!canManage || saving}
+							// An edit with nothing changed has nothing to save; a create always does.
+							disabled={!canManage || save.isPending || (isEdit && !dirty)}
 							onClick={() => void form.handleSubmit(onSubmit)()}
 						>
-							{saving ? "Saving…" : isEdit ? "Save changes" : "Create role"}
+							{save.isPending ? "Saving…" : isEdit ? "Save changes" : "Create role"}
 						</Button>
 					</SheetFooter>
 				</FormProvider>
 			</SheetContent>
 		</Sheet>
+		<ConfirmDialog
+			open={confirmDiscard}
+			onOpenChange={setConfirmDiscard}
+			title="Discard your changes?"
+			description={
+				isEdit
+					? "The changes to this role are not saved. Closing the editor drops them."
+					: "This role is not created yet. Closing the editor drops what you entered."
+			}
+			confirmLabel="Discard changes"
+			onConfirm={() => {
+				form.reset();
+				onOpenChange(false);
+			}}
+		/>
+		</>
 	);
 }

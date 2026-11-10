@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/names"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -26,9 +27,9 @@ import (
 // applicationTmpl renders an add-on as an ArgoCD Application. Two shapes share the template:
 //   - a marketplace chart (Source=="", the default) — a Helm-registry chart (repoURL+chart),
 //     placed in the "infra" project, automated + self-heal so the cluster converges.
-//   - a bring-your-own chart (Source=="git") — a chart directory inside the customer's git repo
-//     (repoURL+path+ref), pinned to its hardened "byo-<slug>" project (Project), with MANUAL sync
-//     (no automated block, no prune, no self-heal) so an untrusted chart never auto-applies.
+//   - a bring-your-own chart (IsByo) — a chart directory inside the customer's git repo
+//     (repoURL+path+ref), or a chart in the customer's OCI registry (repoURL+chart+version), pinned
+//     to its hardened "byo-<slug>" project (Project), auto-synced with prune and self-heal OFF.
 //
 // CreateNamespace makes the target namespace on first sync; the sync-wave orders installs.
 // ServerSideApply is set on both shapes so large-CRD charts (e.g. kube-prometheus-stack's
@@ -153,8 +154,8 @@ type addonIgnoreDifference struct {
 }
 
 type addonSyncPolicy struct {
-	// Automated is nil for git (BYO) sources — an untrusted chart is not self-healed or pruned
-	// automatically. The template expressed the same split with an if/else.
+	// Automated is always set: prune + self-heal for a catalogue add-on, both OFF for a BYO chart
+	// (IsByo), so an untrusted chart auto-syncs but is never pruned or reverted (#2910).
 	Automated *addonAutomated `yaml:"automated,omitempty"`
 	// ManagedNamespaceMetadata labels the namespace ArgoCD creates under CreateNamespace=true.
 	// Nil unless the add-on declares a Pod Security level (#2837).
@@ -269,7 +270,15 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 		source = "helm"
 	}
 	project := a.Project
-	if project == "" {
+	if a.IsByo() {
+		// A BYO chart renders ONLY under its hardened byo-<slug> AppProject, which the runner pins
+		// (provisioner.configureByoCharts). An empty project used to fall through to "infra" below —
+		// the catalogue's project, whose allowance is the whole cluster. Refused instead: a BYO chart
+		// that was not pinned must not deploy at all, and the error names it.
+		if !strings.HasPrefix(project, byoProjectPrefix) {
+			return "", fmt.Errorf("refusing to render BYO chart %s: its project %q is not a hardened %s<slug> project", a.ID, project, byoProjectPrefix)
+		}
+	} else if project == "" {
 		project = "infra"
 	}
 	app := addonApplication{
@@ -567,6 +576,13 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 	}
 	if source == "git" {
 		app.Spec.Source.Path = a.Path
+	} else {
+		app.Spec.Source.Chart = a.Chart
+	}
+	if a.IsByo() {
+		// Keyed on IsByo, not on the source: an OCI BYO chart is a helm source and gets the same
+		// policy as a git one (#6445).
+		//
 		// A BYO chart DEPLOYS, with prune and self-heal both off (#2910).
 		//
 		// This branch used to leave `automated` nil, reasoning that "an untrusted chart must not be
@@ -599,7 +615,6 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 		// the declared repos and namespaces). Auto-sync does not widen what the chart may create.
 		app.Spec.SyncPolicy.Automated = &addonAutomated{Prune: false, SelfHeal: false}
 	} else {
-		app.Spec.Source.Chart = a.Chart
 		// A marketplace chart is ours: prune and self-heal so the cluster converges to what the
 		// catalog declares.
 		app.Spec.SyncPolicy.Automated = &addonAutomated{Prune: true, SelfHeal: true}

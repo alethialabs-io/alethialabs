@@ -16,7 +16,19 @@ import { markJobSpan } from "@/lib/observability/trace";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 import { claimGrantFor } from "@/lib/runners/claim-grants";
 import { loadClaimIdentity } from "@/lib/runners/claim-identity";
+import {
+	issueLifecycleRunnerToken,
+	snapshotWithRunnerToken,
+} from "@/lib/runners/lifecycle-token";
 import { verifySnapshot } from "@/lib/runners/snapshot-sig";
+import { recordJobFailed } from "@/lib/jobs/job-failed";
+import { log } from "@/lib/observability/log";
+import {
+	RUNNER_CAPABILITIES_HEADER,
+	parseRunnerCapabilities,
+	refusalForRunner,
+	snapshotForRunner,
+} from "@/lib/runners/snapshot-capabilities";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
@@ -50,6 +62,11 @@ function referencedConnectorSlugs(snapshot: unknown): string[] {
 	return [...slugs];
 }
 
+/** The logger for one claimed job. */
+function claimLog(jobId: string) {
+	return log.child({ component: "job-claim", job_id: jobId });
+}
+
 /**
  * Claims the next job for the calling runner and returns it with the secrets its job type is
  * GRANTED (lib/runners/claim-grants.ts): the decrypted cloud identity and connector credentials are
@@ -69,12 +86,21 @@ export async function POST(req: Request) {
 			.where(eq(runners.id, runnerId))
 			.limit(1);
 
+		// The capabilities this runner advertised (lib/runners/snapshot-capabilities.ts). They go INTO
+		// the claim, which stamps them on runners.capabilities and leaves a job needing one this runner
+		// lacks QUEUED while a live runner in the job's pool has it (programmables.sql,
+		// live_runner_has_capabilities). Joined into one text value and split in SQL, because a JS array
+		// in a drizzle `sql` template expands into a list of parameters, not one array. A capability name
+		// never contains a comma.
+		const capabilities = parseRunnerCapabilities(req.headers.get(RUNNER_CAPABILITIES_HEADER));
+		const capabilityList = [...capabilities].join(",");
+
 		// claim_next_job atomically claims + returns the row, but raw execute over the
 		// prepare:false client yields Postgres-format timestamp strings the runner can't
 		// decode (it wants RFC3339). Use it only for the id, then re-read via a typed
 		// select so Drizzle maps timestamptz → Date → ISO in the JSON response.
 		const claimed = await db.execute<{ id: string }>(
-			sql`select id from claim_next_job(${runnerId}::uuid, ${tokenHash}, ${runner?.cloud_identity_id ?? null}::uuid)`,
+			sql`select id from claim_next_job(${runnerId}::uuid, ${tokenHash}, ${runner?.cloud_identity_id ?? null}::uuid, string_to_array(${capabilityList}::text, ','))`,
 		);
 
 		const claimedId = claimed[0]?.id;
@@ -96,15 +122,14 @@ export async function POST(req: Request) {
 		// the row was tampered after enqueue; fail the (already-claimed) job so it can't hang, and
 		// refuse to serve it. Signing is off when no key is configured, so this never blocks by default.
 		if (!verifySnapshot(job.config_snapshot, job.config_snapshot_sig)) {
+			const reason =
+				"config_snapshot signature verification failed — the snapshot was modified after enqueue";
 			await db
 				.update(jobs)
-				.set({
-					status: "FAILED",
-					error_message:
-						"config_snapshot signature verification failed — the snapshot was modified after enqueue",
-					completed_at: new Date(),
-				})
+				.set({ status: "FAILED", error_message: reason, completed_at: new Date() })
 				.where(eq(jobs.id, job.id));
+			// The rest of a failure (env, promotion, alert, scan row), as a runner-reported one gets.
+			await recordJobFailed(db, job.id, job, reason, claimLog(job.id));
 			console.error(
 				`[claim] config_snapshot signature mismatch for job ${job.id} — failed the job`,
 			);
@@ -112,6 +137,23 @@ export async function POST(req: Request) {
 				{ error: "config_snapshot signature verification failed" },
 				{ status: 409 },
 			);
+		}
+
+		// A runner is served only snapshot keys it reads (lib/runners/snapshot-capabilities.ts). One
+		// case cannot be served safely by stripping — a DEPLOY with an OCI BYO chart to a runner that
+		// does not read the marker. claim_next_job does not hand such a job to such a runner, except in
+		// three cases, and each lands here and fails with the fix in its reason: the job is ASSIGNED to
+		// this runner (no other runner may take it), no live runner in the job's pool advertises the
+		// capability (nobody else could run it), or the SQL reading of the snapshot
+		// (job_required_capabilities) ever disagrees with this one — the defence this check is kept for.
+		const capabilityRefusal = refusalForRunner(job.job_type, job.config_snapshot, capabilities);
+		if (capabilityRefusal) {
+			await db
+				.update(jobs)
+				.set({ status: "FAILED", error_message: capabilityRefusal, completed_at: new Date() })
+				.where(eq(jobs.id, job.id));
+			await recordJobFailed(db, job.id, job, capabilityRefusal, claimLog(job.id));
+			return NextResponse.json({ error: capabilityRefusal }, { status: 409 });
 		}
 
 		// Telemetry (no-op unless an OTLP endpoint is configured): record how long this job
@@ -126,6 +168,42 @@ export async function POST(req: Request) {
 			"alethia.job_type": job.job_type,
 			provider: job.provider ?? "unknown",
 		});
+
+		// A runner-lifecycle job's target token is minted now, for this claim, and rides only in this
+		// response (lib/runners/lifecycle-token.ts) — the stored snapshot never carries it.
+		const tokenIssue = await issueLifecycleRunnerToken(db, job, runnerId);
+		if (tokenIssue.kind === "refused") {
+			await db
+				.update(jobs)
+				.set({
+					status: "FAILED",
+					error_message: `Runner token handoff refused: ${tokenIssue.reason}`,
+					completed_at: new Date(),
+				})
+				.where(eq(jobs.id, job.id));
+			await recordJobFailed(
+				db,
+				job.id,
+				job,
+				`Runner token handoff refused: ${tokenIssue.reason}`,
+				claimLog(job.id),
+			);
+			return NextResponse.json(
+				{ error: `Runner token handoff refused: ${tokenIssue.reason}` },
+				{ status: 409 },
+			);
+		}
+		const issuedSnapshot =
+			tokenIssue.kind === "issued"
+				? snapshotWithRunnerToken(job.config_snapshot, tokenIssue.token)
+				: job.config_snapshot;
+		// A runner decodes the snapshot strictly, so it is served only the keys it says it reads
+		// (lib/runners/snapshot-capabilities.ts). One that predates the header gets the snapshot as it
+		// was before those keys existed. The stored row — and the signature checked above — are untouched.
+		const servedJob = {
+			...job,
+			config_snapshot: snapshotForRunner(issuedSnapshot, capabilities),
+		};
 
 		// Least privilege (#5308): what rides along with the row is decided per job type by an
 		// allow-list, not by what the snapshot happens to reference. A MINT_KUBECONFIG job carries
@@ -293,7 +371,11 @@ export async function POST(req: Request) {
 			}
 		}
 
-		return NextResponse.json({ job, cloud_identity, connector_credentials });
+		return NextResponse.json({
+			job: servedJob,
+			cloud_identity,
+			connector_credentials,
+		});
 	} catch (err) {
 		console.error("Claim error:", err);
 		return NextResponse.json(

@@ -3,7 +3,8 @@
 
 // Unit test for the CopyButton: clicking writes the given `text` to the
 // clipboard, swaps the Copy icon for the Check confirmation icon, then reverts
-// after the 2s timeout. Also exercises the missing-clipboard path.
+// after the 2s timeout. Also exercises the missing-clipboard path (a page served over plain HTTP,
+// where `navigator.clipboard` is undefined): the selection-copy fallback, and its failure.
 //
 // We drive the button with `fireEvent` (not userEvent) on purpose: userEvent
 // installs its OWN navigator.clipboard stub on setup, which would shadow the
@@ -69,7 +70,7 @@ describe("CopyButton", () => {
 		expect(writeText).not.toHaveBeenCalledWith("kafka://broker:9092");
 	});
 
-	it("shows the copied confirmation state then reverts after 2s", () => {
+	it("shows the copied confirmation state then reverts after 2s", async () => {
 		vi.useFakeTimers();
 		const writeText = vi.fn().mockResolvedValue(undefined);
 		stubClipboard({ writeText });
@@ -77,7 +78,9 @@ describe("CopyButton", () => {
 
 		expect(isCopiedState()).toBe(false);
 
-		fireEvent.click(screen.getByRole("button"));
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button"));
+		});
 
 		// Confirmation icon is now shown.
 		expect(isCopiedState()).toBe(true);
@@ -95,27 +98,35 @@ describe("CopyButton", () => {
 		expect(isCopiedState()).toBe(false);
 	});
 
-	it("does not enter the copied state when the clipboard API is missing", () => {
+	it("falls back to a selection copy when the clipboard API is missing, and confirms it", async () => {
 		stubClipboard(undefined);
+		const execCommand = vi.fn().mockReturnValue(true);
+		Object.defineProperty(document, "execCommand", { value: execCommand, configurable: true, writable: true });
 		render(<CopyButton text="hello" />);
 
-		// The component does not guard a missing clipboard, so the handler throws.
-		// Capture it however it surfaces (sync throw or window error event) so the
-		// suite stays green, then assert it never reached the confirmation state.
-		const errors: unknown[] = [];
-		const onError = (e: ErrorEvent) => {
-			errors.push(e.error);
-			e.preventDefault();
-		};
-		window.addEventListener("error", onError);
-		try {
+		await act(async () => {
 			fireEvent.click(screen.getByRole("button"));
-		} catch (e) {
-			errors.push(e);
-		}
-		window.removeEventListener("error", onError);
+		});
 
-		expect(errors.length).toBeGreaterThan(0);
+		expect(execCommand).toHaveBeenCalledWith("copy");
+		expect(isCopiedState()).toBe(true);
+	});
+
+	it("says it could not copy, instead of confirming, when no copy is possible", async () => {
+		stubClipboard(undefined);
+		Object.defineProperty(document, "execCommand", {
+			value: vi.fn().mockReturnValue(false),
+			configurable: true,
+			writable: true,
+		});
+		render(<CopyButton text="hello" />);
+
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button"));
+		});
+
 		expect(isCopiedState()).toBe(false);
+		expect(screen.getByRole("button", { name: /couldn't copy — select and copy manually/i })).toBeInTheDocument();
+		expect(screen.getByRole("status")).toHaveTextContent(/select and copy manually/);
 	});
 });

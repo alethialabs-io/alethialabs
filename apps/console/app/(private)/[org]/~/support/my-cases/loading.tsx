@@ -1,41 +1,33 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { PageToolbarSkeleton } from "@repo/ui/page-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
+import { CaseListSkeletonRows } from "@/components/support/cases/case-list-skeleton";
 
 /**
- * Instant skeleton shown while the "My cases" route prefetches on the server. Mirrors the
- * loaded layout — the status tab strip and a bordered list of case rows — so the swap to
- * real data doesn't shift the page.
+ * Instant skeleton shown while the "My cases" route prefetches on the server. Mirrors the loaded
+ * layout of `CaseList`: the page toolbar (count, one line of copy, the "Submit a case" button),
+ * the filter bar (search, the three bucket chips, the two facet buttons — `FilterBar`'s row with
+ * its `mb-4`), and the bordered list of case rows — so the swap to real data doesn't shift the page.
  */
 export default function MyCasesLoading() {
 	return (
 		<div className="space-y-4">
-			{/* Status tabs */}
-			<Skeleton className="h-9 w-64 rounded-md" />
+			<PageToolbarSkeleton count actions={1} />
 
-			{/* Case rows */}
-			<div className="overflow-hidden rounded-md border">
-				{Array.from({ length: 6 }).map((_, i) => (
-					<div
-						key={i}
-						className="flex items-start gap-4 border-b border-border/60 px-4 py-3.5 last:border-b-0"
-					>
-						<Skeleton className="mt-1.5 size-2 rounded-full" />
-						<div className="flex-1 space-y-2">
-							<div className="flex items-center gap-2">
-								<Skeleton className="h-3 w-20" />
-								<Skeleton className="h-3 w-48" />
-							</div>
-							<Skeleton className="h-3 w-32" />
-						</div>
-						<div className="flex items-center gap-2">
-							<Skeleton className="h-5 w-14 rounded-none" />
-							<Skeleton className="h-5 w-16 rounded-none" />
-						</div>
-					</div>
-				))}
+			<div className="mb-4 flex flex-wrap items-center gap-2.5" aria-hidden>
+				<Skeleton className="h-9 w-[240px] rounded-sm" />
+				<div className="flex items-center gap-1.5">
+					{["w-11", "w-16", "w-[4.5rem]"].map((w) => (
+						<Skeleton key={w} className={`h-7 ${w} rounded-full`} />
+					))}
+				</div>
+				<Skeleton className="h-8 w-24 rounded-md" />
+				<Skeleton className="h-8 w-20 rounded-md" />
 			</div>
+
+			<CaseListSkeletonRows />
 		</div>
 	);
 }

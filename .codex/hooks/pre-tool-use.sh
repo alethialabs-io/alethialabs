@@ -5,7 +5,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 codex_hook_init
 input="$(cat)"
 
-for guard in guard-worktree.sh guard-compose.sh guard-runtime.sh guard-merge.sh guard-iac.sh; do
+for guard in guard-worktree.sh guard-compose.sh guard-runtime.sh guard-merge.sh guard-iac.sh guard-spend.sh guard-destroy.sh; do
 	set +e
 	reason="$(printf '%s' "$input" | bash "$CODEX_HOOK_ROOT/.claude/hooks/$guard" 2>&1 >/dev/null)"
 	rc=$?

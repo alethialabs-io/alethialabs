@@ -16,8 +16,17 @@
 // payer capacity. The customer then read "Billing may not be configured on this deployment",
 // which blamed the operator for a rule the product enforces. The intent is not opened until the
 // payer has been declared and the gate has been asked, in that order.
+//
+// AND IT IS NOT ASKED AT ALL WHILE NOTHING IS ON SALE (#6132, F030). `PAID_MARKETS` is empty by
+// design, so the declaration ended in "not yet able to sell … in this country" for every customer —
+// after three fields. The sheet now asks the server once, as it opens, whether Pro is on sale
+// anywhere (`billing.salesOpen`, which honours the release gate's test-mode waiver), and opens on
+// "Pro isn't on sale yet" when it is not. A failed answer falls through to the declaration: the
+// gate behind it is still the authority, so the worst case is today's refusal, never a sale.
 
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowUpRight } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -48,6 +57,9 @@ import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { authClient } from "@/lib/auth/client";
 import { useViewer } from "@/components/providers/viewer-provider";
 import { track } from "@/lib/analytics/track";
+import { legalUrl } from "@/lib/legal";
+import { globalHref } from "@/lib/routing";
+import { orpc } from "@/lib/rpc/client";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { billingIntentErrorMessage } from "@/lib/billing/intent-error";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
@@ -62,6 +74,26 @@ import {
 } from "@repo/ui/sheet";
 
 type View = "declare" | "pay" | "invite";
+
+/**
+ * What the sheet shows before the payer is asked anything, from the one `billing.salesOpen` answer:
+ * `checking` while it is in flight, `closed` only when the server SAID nothing is on sale, and
+ * `declare` otherwise — including when the read failed, because the eligibility gate behind the
+ * declaration still refuses a closed market, so failing open here can cost a sentence, never a sale.
+ */
+function salesGateView(sales: {
+	isPending: boolean;
+	data?: { open: boolean } | undefined;
+}): "checking" | "closed" | "declare" {
+	if (sales.isPending) return "checking";
+	return sales.data?.open === false ? "closed" : "declare";
+}
+
+/** The closed view's copy (#6132, D1-A) — the free tier named by the catalog, never typed here. */
+export const SALES_CLOSED_COPY = {
+	heading: "Pro isn't on sale yet",
+	body: `We can't take payment for Pro in any country yet. ${planMeta("community").name} stays free, with no time limit.`,
+} as const;
 
 interface UpgradeOrgSheetProps {
 	open: boolean;
@@ -104,6 +136,19 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	const meta = planMeta("team");
 	const teamPrice = useLivePlanPrice("team", currency);
 
+	// Is Pro on sale anywhere? Asked the first time the sheet opens (never while it is closed) and
+	// then kept for the page's life: the answer moves with a deploy, not with anything a viewer
+	// does, so `staleTime: Infinity` keeps a reopen or a window focus from asking again.
+	const sales = useQuery(
+		orpc.billing.salesOpen.queryOptions({ enabled: open, staleTime: Infinity, retry: 1 }),
+	);
+	const gate = salesGateView(sales);
+
+	// A refusal describes the declaration that produced it. Once the payer changes a fact it is a
+	// sentence about an answer they no longer give (F031) — it names the previous country — so any
+	// edit drops it. Stable identity, so the form subscribes once.
+	const clearRefusal = useCallback(() => setRefusal(null), []);
+
 	// Announce the attempt when the sheet opens, but open NOTHING: the subscription intent is an
 	// effect of the declaration, not of the sheet being visible.
 	useEffect(() => {
@@ -114,11 +159,23 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	// Open a subscription intent once the payer has been declared (and re-open it when the
 	// currency toggle changes — Stripe locks a sub's currency at creation). If a live
 	// subscription already exists the action throws — surfaced inline rather than as a form.
+	// An intent belongs to one opening of the sheet. Whatever closes it — `handleOpenChange`, or a
+	// parent setting `open` itself — the secret and error made while it was open are dropped in the
+	// render that sees `open` change (React's "adjust state while rendering" form, keyed on the last
+	// `open` seen), so a reopening never shows the previous opening's payment form.
+	const [openSeen, setOpenSeen] = useState(open);
+	if (openSeen !== open) {
+		setOpenSeen(open);
+		setClientSecret(null);
+		setError(null);
+	}
+
+	// The previous intent's secret and error are dropped by whatever changed the request (the
+	// declaration, `switchCurrency`) or by the opening changing (above), so the render that asks
+	// again already shows neither.
 	useEffect(() => {
 		if (!open || !declaration) return;
 		let active = true;
-		setClientSecret(null);
-		setError(null);
 		createSubscriptionIntent("team", selected ? { currency: selected } : undefined)
 			.then((intent) => {
 				if (!active) return;
@@ -178,6 +235,8 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 				setRefusal(verdict.message);
 				return;
 			}
+			setClientSecret(null);
+			setError(null);
 			setDeclaration(next);
 			setView("pay");
 		} catch (e) {
@@ -189,6 +248,13 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 		} finally {
 			setDeclaring(false);
 		}
+	}
+
+	/** The currency toggle: drops the intent made in the old currency, then asks in the new one. */
+	function switchCurrency(next: SupportedCurrency) {
+		setClientSecret(null);
+		setError(null);
+		setSelected(next);
 	}
 
 	function handleOpenChange(next: boolean) {
@@ -266,7 +332,42 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 					Upgrade this organization to Pro and invite your teammates.
 				</SheetDescription>
 
-				{view === "declare" ? (
+				{view === "declare" && gate === "closed" ? (
+					<PurchaseLayout
+						meta={meta}
+						heading={SALES_CLOSED_COPY.heading}
+						subheading={SALES_CLOSED_COPY.body}
+						onClose={() => handleOpenChange(false)}
+					>
+						<div className="mt-auto flex flex-col gap-2">
+							<Button
+								nativeButton={false}
+								render={
+									<a href={legalUrl("/contact/sales")} target="_blank" rel="noreferrer" />
+								}
+							>
+								Contact sales
+								<ArrowUpRight size={15} />
+							</Button>
+							<Button variant="outline" onClick={() => handleOpenChange(false)}>
+								Close
+							</Button>
+						</div>
+					</PurchaseLayout>
+				) : view === "declare" && gate === "checking" ? (
+					<PurchaseLayout
+						meta={meta}
+						heading="Upgrade to Pro"
+						subheading="Tell us who this purchase is for, then add a payment method."
+						onClose={() => handleOpenChange(false)}
+					>
+						<div role="status" aria-busy="true" className="space-y-3">
+							<span className="sr-only">Checking whether Pro is on sale</span>
+							<Skeleton className="h-24 w-full" />
+							<Skeleton className="h-10 w-full" />
+						</div>
+					</PurchaseLayout>
+				) : view === "declare" ? (
 					<PurchaseLayout
 						meta={meta}
 						heading="Upgrade to Pro"
@@ -276,6 +377,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 						<PayerDeclarationForm
 							busy={declaring}
 							refusal={refusal}
+							onEdit={clearRefusal}
 							submitLabel="Continue to payment"
 							onDeclare={(d) => void handleDeclare(d)}
 						/>
@@ -292,7 +394,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 								<span className="text-ui-sm text-text-secondary">Billing currency</span>
 								<CurrencyToggle
 									value={currency}
-									onChange={setSelected}
+									onChange={switchCurrency}
 									disabled={!clientSecret}
 								/>
 							</div>
@@ -343,7 +445,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 						onFinish={finish}
 						onAddPayment={() => {
 							handleOpenChange(false);
-							router.push(`/${orgSlug}/settings/billing`);
+							router.push(globalHref(orgSlug, "settings/billing"));
 						}}
 					/>
 				)}

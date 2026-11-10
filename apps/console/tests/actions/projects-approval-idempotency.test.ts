@@ -165,7 +165,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" });
+	vi.mocked(authorize).mockResolvedValue({ credential: "session", userId: "user-1", orgId: "org-1" });
 });
 
 describe("planProject — approval key (#5797)", () => {

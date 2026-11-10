@@ -18,7 +18,6 @@ import {
   useState,
 } from "react";
 import { FormProvider, useFieldArray, useForm } from "react-hook-form";
-import { toast } from "sonner";
 import { z } from "zod";
 import { formatMoney } from "@repo/format";
 import { Button } from "@repo/ui/button";
@@ -40,13 +39,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@repo/ui/select";
-import {
-  getInviteContext,
-  type InviteContext,
-} from "@/app/server/actions/members";
+import { type ActionResult, describeActionError } from "@/lib/actions/result";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { authClient } from "@/lib/auth/client";
 import { track } from "@/lib/analytics/track";
 import { INVITE_ROLES } from "@/lib/members/roles";
+import { useInviteContextQuery } from "@/lib/query/use-members-query";
+import { orpc } from "@/lib/rpc/client";
+import { viaAuth } from "./auth-action";
 
 interface InviteFormData {
   invites: { email: string; role: string }[];
@@ -65,6 +65,35 @@ function toInviteRole(value: string): InviteRole {
     default:
       return "viewer";
   }
+}
+
+/** What one send of the invite form produced: the addresses invited, and the rows refused. */
+interface InviteOutcome {
+  sent: string[];
+  /** Each refused row's position in the submitted list, with the server's reason. */
+  failed: { index: number; message: string }[];
+}
+
+/**
+ * Invites each row through Better Auth's organization endpoint (the browser's own call, so the ee
+ * `beforeCreateInvitation` hook enforces the collaboration gate and the email/alert fire there).
+ * Rows are independent — one refused address does not stop the rest — so the outcome lists both.
+ */
+async function sendInvites(rows: InviteFormData["invites"]): Promise<ActionResult<InviteOutcome>> {
+  const outcome: InviteOutcome = { sent: [], failed: [] };
+  for (const [index, inv] of rows.entries()) {
+    const email = inv.email.trim().toLowerCase();
+    const result = await viaAuth(() =>
+      authClient.organization.inviteMember({ email, role: toInviteRole(inv.role) }),
+    );
+    if (result.ok) {
+      outcome.sent.push(email);
+      track("member_invited", { role: inv.role });
+    } else {
+      outcome.failed.push({ index, message: describeActionError(result.error) });
+    }
+  }
+  return { ok: true, data: outcome };
 }
 
 /** Builds the form schema, flagging emails already taken (member/pending) or duplicated. */
@@ -125,7 +154,9 @@ export function InviteMemberDialog({
   const open = openProp ?? internalOpen;
   const setOpen = onOpenChange ?? setInternalOpen;
 
-  const [ctx, setCtx] = useState<InviteContext | null>(null);
+  // The live invite context (seat figures, taken emails), read over GET each time the dialog is
+  // open (#6129) — and refreshed by the `members` hint while it is.
+  const { data: ctx } = useInviteContextQuery(open);
 
   const existing = useMemo(
     () => new Set(ctx?.existingEmails ?? []),
@@ -151,53 +182,40 @@ export function InviteMemberDialog({
     name: "invites",
   });
 
-  // Pull the live invite context (gate, seat figures, taken emails) each time it opens.
-  useEffect(() => {
-    if (!open) return;
-    let alive = true;
-    getInviteContext()
-      .then((c) => alive && setCtx(c))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [open]);
-
   // Reset to a single empty row whenever the dialog is freshly opened.
   useEffect(() => {
     if (open) form.reset({ invites: [{ email: "", role: "viewer" }] });
   }, [open, form]);
 
-  const onSubmit = async (data: InviteFormData) => {
-    // Invite each row through Better Auth (client). The ee `beforeCreateInvitation`
-    // hook enforces the collaboration gate server-side and the email/alert fire there.
-    const ok: string[] = [];
-    const failed: { email: string; error: string }[] = [];
-    for (const inv of data.invites) {
-      const email = inv.email.trim().toLowerCase();
-      const { error } = await authClient.organization.inviteMember({
-        email,
-        role: toInviteRole(inv.role),
-      });
-      if (error) failed.push({ email, error: error.message ?? "Failed" });
-      else {
-        ok.push(email);
-        track("member_invited", { role: inv.role });
+  const invite = useActionMutation(sendInvites, {
+    // The members table (a new pending row) and this dialog's own taken-email list.
+    invalidates: [orpc.members.key()],
+    successMessage: (d) =>
+      d.sent.length === 0
+        ? ""
+        : d.sent.length === 1
+          ? `Invitation sent to ${d.sent[0]}`
+          : `${d.sent.length} invitations sent`,
+    onSuccess: (d) => {
+      if (d.failed.length === 0) {
+        setOpen(false);
+        form.reset({ invites: [{ email: "", role: "viewer" }] });
+        onInvited?.();
+        return;
       }
-    }
-
-    if (ok.length > 0)
-      toast.success(
-        ok.length === 1
-          ? `Invitation sent to ${ok[0]}`
-          : `${ok.length} invitations sent`,
+      // Keep only the refused rows, each with its reason under its own address — a retry then
+      // sends exactly those, never re-invites the ones that went.
+      const failedAt = new Set(d.failed.map((f) => f.index));
+      remove(fields.flatMap((_, i) => (failedAt.has(i) ? [] : [i])));
+      d.failed.forEach((f, i) =>
+        form.setError(`invites.${i}.email`, { type: "server", message: f.message }),
       );
-    for (const f of failed) toast.error(`${f.email}: ${f.error}`);
-    if (failed.length === 0) {
-      setOpen(false);
-      form.reset({ invites: [{ email: "", role: "viewer" }] });
-      onInvited?.();
-    }
+    },
+  });
+
+  const onSubmit = (data: InviteFormData) => {
+    if (invite.isPending) return;
+    invite.mutate(data.invites);
   };
 
   // The amount comes through as a `Money` and is rendered by `formatMoney` (#4176 part b). It
@@ -320,9 +338,11 @@ export function InviteMemberDialog({
             </ul>
 
             <DialogFooter>
-              <Button type="submit" disabled={form.formState.isSubmitting}>
+              <Button type="submit" disabled={invite.isPending}>
                 <UserPlus className="h-4 w-4" />
-                Send {fields.length > 1 ? `${fields.length} invites` : "invite"}
+                {invite.isPending
+                  ? "Sending…"
+                  : `Send ${fields.length > 1 ? `${fields.length} invites` : "invite"}`}
               </Button>
             </DialogFooter>
           </form>

@@ -6,21 +6,29 @@
 // Card data never touches our code — adding a card confirms a Stripe SetupIntent inside the
 // embedded Payment Element (PCI SAQ-A). A card can be made default, promoted to / demoted
 // from ordered dunning backups (and reordered), and removed — all via inline row actions.
-// Data loads with useEffect/useState (this area does not use TanStack Query — matches
-// billing-panel.tsx).
+//
+// #6127: the cards are the `billing.paymentMethods` GET read, prefetched by the route, and every
+// row action goes through the mutation contract (`useActionMutation`): the row is busy while its
+// action is in flight (the double-submit guard), a refusal comes back as its own sentence, and a
+// success invalidates the cards. A failed read is an error with a retry — it used to be set to
+// `[]` and rendered as "No saved cards", which told a paying customer they had none.
 
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Plus } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import {
-	createSetupIntent,
-	detachPaymentMethod,
-	listPaymentMethods,
-	type PaymentMethodInfo,
-	setBackupCards,
-	setDefaultPaymentMethod,
+	makeDefaultCard,
+	removeCard as removeCardAction,
+	saveBackupCards,
+	startAddCard,
 } from "@/app/server/actions/billing";
 import { PaymentForm } from "@/components/billing/payment-form";
+import { RegionError } from "@/components/errors/region-error";
+import { RegionRefusal, refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
+import type { PaymentMethodInfo } from "@/lib/rpc/procedures/billing";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import {
 	SettingsPanel,
@@ -98,82 +106,76 @@ function RowAction({
 	);
 }
 
+/** The Payment methods section: the saved cards, their row actions, and the add-card dialog. */
 export function PaymentMethodsCard() {
-	const [cards, setCards] = useState<PaymentMethodInfo[] | null>(null);
+	const queryClient = useQueryClient();
+	const read = useQuery(orpc.billing.paymentMethods.queryOptions({ retry: retryUnlessRefused }));
+	const cards = read.data ?? null;
 	const [addOpen, setAddOpen] = useState(false);
 	const [clientSecret, setClientSecret] = useState<string | null>(null);
-	const [addingIntent, setAddingIntent] = useState(false);
-	const [pendingId, setPendingId] = useState<string | null>(null);
 	const [confirmRemove, setConfirmRemove] = useState<PaymentMethodInfo | null>(
 		null,
 	);
 
-	/** Reload the saved cards from Stripe. */
-	const refresh = useCallback(() => {
-		listPaymentMethods()
-			.then(setCards)
-			.catch(() => {
-				setCards([]);
-				toast.error("Couldn't load saved cards.");
-			});
-	}, []);
-	useEffect(() => {
-		refresh();
-	}, [refresh]);
-
-	/** Open the add-card dialog after creating a SetupIntent for the embedded form. */
-	async function openAddCard() {
-		if (addingIntent) return;
-		setAddingIntent(true);
-		try {
-			const { clientSecret: cs } = await createSetupIntent();
+	// Every card mutation changes what this list shows, and only this list.
+	const invalidates = [orpc.billing.paymentMethods.key()];
+	const addIntent = useActionMutation(startAddCard, {
+		invalidates: [],
+		onSuccess: ({ clientSecret: cs }) => {
 			setClientSecret(cs);
 			setAddOpen(true);
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't start adding a card.");
-		} finally {
-			setAddingIntent(false);
-		}
+		},
+	});
+	const setDefault = useActionMutation(makeDefaultCard, {
+		invalidates,
+		successMessage: "Default card updated.",
+	});
+	const setBackups = useActionMutation(saveBackupCards, {
+		invalidates,
+		successMessage: "Backup cards updated.",
+	});
+	const remove = useActionMutation(removeCardAction, {
+		invalidates,
+		successMessage: "Card removed.",
+	});
+	// While ANY card action is in flight, every row's actions are disabled: the backup order is one
+	// list, so two reorders racing from two rows would each persist an order built from a stale one.
+	const busy = setDefault.isPending || setBackups.isPending || remove.isPending;
+
+	/** Open the add-card dialog after creating a SetupIntent for the embedded form. */
+	function openAddCard() {
+		if (addIntent.isPending) return;
+		addIntent.mutate({});
 	}
 
-	/** Card saved in Stripe — close the dialog and refetch the list. */
+	/** Card saved in Stripe — close the dialog and re-read the list. */
 	function handleCardAdded() {
 		setAddOpen(false);
 		setClientSecret(null);
 		toast.success("Card saved.");
-		refresh();
-	}
-
-	/** Run a per-card mutation with a busy marker + refetch, surfacing errors as toasts. */
-	async function runCardAction(id: string, fn: () => Promise<unknown>) {
-		setPendingId(id);
-		try {
-			await fn();
-			refresh();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Something went wrong.");
-		} finally {
-			setPendingId(null);
-		}
+		void queryClient.invalidateQueries({ queryKey: orpc.billing.paymentMethods.key() });
 	}
 
 	/** Make a card the default (primary) payment method. */
 	function makeDefault(card: PaymentMethodInfo) {
-		void runCardAction(card.id, () => setDefaultPaymentMethod(card.id));
+		setDefault.mutate({ pmId: card.id });
+	}
+
+	/** Persists a new backup order. */
+	function persistBackups(pmIds: string[]) {
+		setBackups.mutate({ pmIds });
 	}
 
 	/** Append a card to the end of the ordered backup list. */
 	function makeBackup(card: PaymentMethodInfo) {
 		if (!cards) return;
-		const next = [...backupIds(cards).filter((id) => id !== card.id), card.id];
-		void runCardAction(card.id, () => setBackupCards(next));
+		persistBackups([...backupIds(cards).filter((id) => id !== card.id), card.id]);
 	}
 
 	/** Drop a card from the ordered backup list. */
 	function removeBackup(card: PaymentMethodInfo) {
 		if (!cards) return;
-		const next = backupIds(cards).filter((id) => id !== card.id);
-		void runCardAction(card.id, () => setBackupCards(next));
+		persistBackups(backupIds(cards).filter((id) => id !== card.id));
 	}
 
 	/** Swap a backup card with its neighbour (dir −1 = up, +1 = down) and persist. */
@@ -184,13 +186,13 @@ export function PaymentMethodsCard() {
 		const j = i + dir;
 		if (i < 0 || j < 0 || j >= ids.length) return;
 		[ids[i], ids[j]] = [ids[j], ids[i]];
-		void runCardAction(card.id, () => setBackupCards(ids));
+		persistBackups(ids);
 	}
 
 	/** Detach the confirmed card from the customer. */
 	function removeCard(card: PaymentMethodInfo) {
 		setConfirmRemove(null);
-		void runCardAction(card.id, () => detachPaymentMethod(card.id));
+		remove.mutate({ pmId: card.id });
 	}
 
 	const backupCount = cards ? backupIds(cards).length : 0;
@@ -200,14 +202,27 @@ export function PaymentMethodsCard() {
 			<SettingsSection
 				title="Payment methods"
 				action={
-					<Button size="sm" onClick={() => void openAddCard()} disabled={addingIntent}>
+					<Button size="sm" onClick={openAddCard} disabled={addIntent.isPending || cards === null}>
 						<Plus size={14} />
-						{addingIntent ? "Loading…" : "Add payment method"}
+						{addIntent.isPending ? "Loading…" : "Add payment method"}
 					</Button>
 				}
 			>
 				<SettingsPanel>
-					{cards === null ? (
+					{cards === null && read.isError ? (
+						refusalOf(read.error) ? (
+							<RegionRefusal
+								className="border-0"
+								refusal={refusalOf(read.error) ?? "forbidden"}
+							/>
+						) : (
+							<RegionError
+								title="Couldn't load saved cards"
+								description="Something went wrong reading this organization's payment methods."
+								onRetry={() => void read.refetch()}
+							/>
+						)
+					) : cards === null ? (
 						<div className="space-y-3 p-5">
 							<Skeleton className="h-10 w-full" />
 							<Skeleton className="h-10 w-full" />
@@ -220,7 +235,6 @@ export function PaymentMethodsCard() {
 						cards.map((card) => {
 							const rank = card.backupRank;
 							const isBackup = rank !== null;
-							const busy = pendingId === card.id;
 							return (
 								<div
 									key={card.id}

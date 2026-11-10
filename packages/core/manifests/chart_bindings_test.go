@@ -4,7 +4,10 @@
 package manifests
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -24,9 +27,16 @@ func TestRenderExternalSecret_WithMarkerLabel(t *testing.T) {
 	if err != nil || len(skipped) != 0 {
 		t.Fatalf("render err=%v skipped=%v", err, skipped)
 	}
-	// The marker (for PruneChartBindingSecrets) AND the always-present labels are both there.
-	if !strings.Contains(yaml, "alethia.io/byo-binding: true") {
-		t.Fatalf("marker label not rendered:\n%s", yaml)
+	// The marker (for PruneChartBindingSecrets) AND the always-present labels are both there, and
+	// the marker is a STRING once parsed: a YAML boolean label value fails the apply outright.
+	docs := parseYAMLDocs(t, yaml)
+	if len(docs) != 1 {
+		t.Fatalf("want one document, got %d:\n%s", len(docs), yaml)
+	}
+	meta, _ := docs[0]["metadata"].(map[string]any)
+	labels, _ := meta["labels"].(map[string]any)
+	if got, ok := labels["alethia.io/byo-binding"].(string); !ok || got != "true" {
+		t.Fatalf("marker label = %#v, want the string \"true\":\n%s", labels["alethia.io/byo-binding"], yaml)
 	}
 	if !strings.Contains(yaml, "app.kubernetes.io/managed-by: alethia") {
 		t.Fatalf("fixed labels dropped when adding an extra one:\n%s", yaml)
@@ -57,7 +67,7 @@ func TestResolveChartWorkloadBindings_Satisfiable(t *testing.T) {
 		"rds_master_credentials_secret_name": "arn:aws:secretsmanager:...:db-master",
 	}
 
-	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "web-ns", nil)
+	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "web-ns", nil, ChartBindingPolicy{})
 
 	wantPatches := map[string]any{
 		"externalDatabase.host": "db.internal:5432",
@@ -99,7 +109,7 @@ func TestResolveChartWorkloadBindings_UnsatisfiableCredential(t *testing.T) {
 
 	// (a) No ESO store for the cloud (hetzner) → unsatisfied, no patch, no ExternalSecret.
 	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths,
-		map[string]string{"rds_master_credentials_secret_name": "arn:secret"}, "hetzner", "ns", nil)
+		map[string]string{"rds_master_credentials_secret_name": "arn:secret"}, "hetzner", "ns", nil, ChartBindingPolicy{})
 	if len(res.Patches) != 0 || len(res.ExternalSecrets) != 0 {
 		t.Fatalf("hetzner should reference nothing: patches=%v es=%v", res.Patches, res.ExternalSecrets)
 	}
@@ -109,7 +119,7 @@ func TestResolveChartWorkloadBindings_UnsatisfiableCredential(t *testing.T) {
 
 	// (b) Store exists but the resource exported no master secret → unsatisfied, no dangling ref.
 	res = ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths,
-		map[string]string{}, "aws", "ns", nil)
+		map[string]string{}, "aws", "ns", nil, ChartBindingPolicy{})
 	if _, referenced := res.Patches["auth.existingSecret"]; referenced {
 		t.Fatal("must not reference an existingSecret that will not be materialized")
 	}
@@ -121,7 +131,7 @@ func TestResolveChartWorkloadBindings_UnsatisfiableCredential(t *testing.T) {
 func TestResolveChartWorkloadBindings_MissingPath(t *testing.T) {
 	binding := chartDBBinding([2]string{"DB_HOST", "endpoint"})
 	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding},
-		map[string]string{}, map[string]string{"rds_cluster_endpoint": "x"}, "aws", "ns", nil)
+		map[string]string{}, map[string]string{"rds_cluster_endpoint": "x"}, "aws", "ns", nil, ChartBindingPolicy{})
 	if len(res.Patches) != 0 {
 		t.Fatalf("no value-path → no patch, got %v", res.Patches)
 	}
@@ -176,10 +186,289 @@ func TestResolveChartWorkloadBindings_EngineAwarePort(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths,
-				map[string]string{}, "aws", "ns", tc.dbs)
+				map[string]string{}, "aws", "ns", tc.dbs, ChartBindingPolicy{})
 			if got := res.Patches["externalDatabase.port"]; got != tc.wantPort {
 				t.Errorf("port = %v, want %s", got, tc.wantPort)
 			}
 		})
 	}
+}
+
+// TestResolveChartWorkloadBindings_PolicyRefusals pins each ChartBindingPolicy refusal: the
+// credential facet is unsatisfied with its reason, gets no patch and no ExternalSecret, and the
+// non-secret facet beside it still resolves.
+func TestResolveChartWorkloadBindings_PolicyRefusals(t *testing.T) {
+	binding := chartDBBinding([2]string{"DB_HOST", "endpoint"}, [2]string{"DB_PASS", "password"})
+	valuePaths := map[string]string{
+		ChartBindingKnob("database", "orders", "endpoint"): "db.host",
+		ChartBindingKnob("database", "orders", "password"): "db.existingSecret",
+	}
+	outputs := map[string]string{
+		"rds_cluster_endpoint":               "db.internal",
+		"rds_master_credentials_secret_name": "arn:secret",
+	}
+	iam := true
+	keylessDB := []types.ProjectDatabaseConfig{{Name: "orders", IamAuth: &iam}}
+	passKnob := ChartBindingKnob("database", "orders", "password")
+
+	cases := []struct {
+		name       string
+		dbs        []types.ProjectDatabaseConfig
+		policy     ChartBindingPolicy
+		wantReason string // "" → the password facet resolves
+	}{
+		{name: "no policy", policy: ChartBindingPolicy{}},
+		{name: "keyless flag on, keyless target", dbs: keylessDB, policy: ChartBindingPolicy{KeylessDBAuth: true}, wantReason: "keyless database"},
+		{name: "keyless flag off, keyless target", dbs: keylessDB, policy: ChartBindingPolicy{}},
+		{name: "keyless flag on, password target", policy: ChartBindingPolicy{KeylessDBAuth: true}},
+		{name: "credential refusal", policy: ChartBindingPolicy{CredentialRefusal: "no owner"}, wantReason: "no owner"},
+		{name: "taken name", policy: ChartBindingPolicy{TakenSecretNames: map[string]bool{"web-database-orders": true}}, wantReason: "already rendered by a first-class service"},
+		{name: "other name taken", policy: ChartBindingPolicy{TakenSecretNames: map[string]bool{"other": true}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "ns", tc.dbs, tc.policy)
+			if res.Patches["db.host"] != "db.internal" {
+				t.Errorf("the non-secret facet stopped resolving: %v", res.Patches)
+			}
+			_, patched := res.Patches["db.existingSecret"]
+			if tc.wantReason == "" {
+				if !patched || len(res.ExternalSecrets) != 1 || len(res.Unsatisfied) != 0 {
+					t.Fatalf("password facet should resolve: patches=%v es=%v unsat=%v", res.Patches, res.ExternalSecrets, res.Unsatisfied)
+				}
+				return
+			}
+			if patched || len(res.ExternalSecrets) != 0 {
+				t.Fatalf("a refused facet produced a patch or ExternalSecret: patches=%v es=%v", res.Patches, res.ExternalSecrets)
+			}
+			if !reflect.DeepEqual(res.Unsatisfied, []string{passKnob}) || !strings.Contains(res.UnsatisfiedReasons[passKnob], tc.wantReason) {
+				t.Fatalf("unsat=%v reasons=%v, want %q with reason containing %q", res.Unsatisfied, res.UnsatisfiedReasons, passKnob, tc.wantReason)
+			}
+		})
+	}
+}
+
+// TestByoBindingDBUserIdentity pins the per-binding user namer (docs/adr/byo-binding-db-users.md §1):
+// deterministic; one user per binding Secret identity per environment (environment + namespace +
+// BindingSecretName), so a different environment, namespace, workload or target is a different user; "" is the renderer's "default"; the user fits
+// MySQL's 32-character limit; the secret key shares the user's hash and is Key Vault-safe (no "_").
+func TestByoBindingDBUserIdentity(t *testing.T) {
+	orders := types.ServiceBindingTarget{Kind: "database", Name: "orders"}
+	user := ByoBindingDBUser("env-1", "apps", "web", orders)
+	if user != ByoBindingDBUser("env-1", "apps", "web", orders) {
+		t.Fatal("the namer is not deterministic")
+	}
+	if !regexp.MustCompile(`^alethia_byo_[0-9a-f]{12}$`).MatchString(user) || len(user) > 32 {
+		t.Fatalf("user %q is not alethia_byo_<12 hex> within 32 characters", user)
+	}
+	key := ByoBindingDBSecretKey("env-1", "apps", "web", orders)
+	if key != "alethia-byo-db-"+strings.TrimPrefix(user, "alethia_byo_") {
+		t.Fatalf("secret key %q does not share the user %q's hash", key, user)
+	}
+	if strings.Contains(key, "_") {
+		t.Fatalf("secret key %q carries an underscore, which a Key Vault name cannot", key)
+	}
+	// A literal pin, so a change to the derivation is a visible decision, not a silent re-keying of
+	// every live user (each of which would then be revoked and re-created on the next deploy).
+	if user != "alethia_byo_"+sha256Hex12("env-1\x00apps\x00web-database-orders") {
+		t.Fatalf("user %q is not sha256(environment NUL namespace NUL BindingSecretName)", user)
+	}
+	distinct := map[string]string{
+		"other environment": ByoBindingDBUser("env-2", "apps", "web", orders),
+		"other namespace":   ByoBindingDBUser("env-1", "apps-2", "web", orders),
+		"other workload":    ByoBindingDBUser("env-1", "apps", "worker", orders),
+		"other target":      ByoBindingDBUser("env-1", "apps", "web", types.ServiceBindingTarget{Kind: "database", Name: "reports"}),
+	}
+	for name, other := range distinct {
+		if other == user {
+			t.Errorf("%s: same user %q", name, user)
+		}
+	}
+	if ByoBindingDBUser("env-1", "", "web", orders) != ByoBindingDBUser("env-1", "default", "web", orders) {
+		t.Error("an empty namespace is not the renderer's \"default\"")
+	}
+}
+
+// sha256Hex12 is the first 12 hex characters of s's SHA-256, computed independently of the namer.
+func sha256Hex12(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// dbUserFixture is one BYO workload "web" in "apps" bound to database orders, with the per-binding
+// user for it provisioned and its key in the store.
+func dbUserFixture() (types.ServiceBinding, map[string]string, map[string]string, *ByoDBUsers) {
+	binding := chartDBBinding([2]string{"DB_HOST", "endpoint"}, [2]string{"DB_USER", "username"}, [2]string{"DB_PASS", "password"})
+	valuePaths := map[string]string{
+		ChartBindingKnob("database", "orders", "endpoint"): "db.host",
+		ChartBindingKnob("database", "orders", "username"): "db.userSecret",
+		ChartBindingKnob("database", "orders", "password"): "db.existingSecret",
+	}
+	outputs := map[string]string{
+		"rds_cluster_endpoint":               "db.internal",
+		"rds_master_credentials_secret_name": "acme/rds/master",
+	}
+	user := ByoBindingDBUser("env-1", "apps", "web", binding.Target)
+	users := &ByoDBUsers{
+		Environment: "env-1",
+		SecretNames: map[string]string{ByoBindingDBSecretKey("env-1", "apps", "web", binding.Target): "use1-dev-acme-alethia-byo-db-x"},
+		Provisioned: map[string]bool{user: true},
+	}
+	return binding, valuePaths, outputs, users
+}
+
+// TestResolveChartWorkloadBindings_DBUsers: in per-binding mode a database credential facet resolves
+// to an ExternalSecret reading the binding's own key, under the same Secret name, and the
+// administrative output is never referenced — not in the params, not in the rendered YAML.
+func TestResolveChartWorkloadBindings_DBUsers(t *testing.T) {
+	binding, valuePaths, outputs, users := dbUserFixture()
+	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "apps", nil, ChartBindingPolicy{DBUsers: users})
+
+	if len(res.Unsatisfied) != 0 || len(res.ExternalSecrets) != 0 || len(res.DBUserSecrets) != 1 {
+		t.Fatalf("unsat=%v adminES=%v dbUserES=%v, want exactly one per-binding ExternalSecret", res.Unsatisfied, res.ExternalSecrets, res.DBUserSecrets)
+	}
+	name := BindingSecretName("web", binding.Target)
+	if res.Patches["db.existingSecret"] != name || res.Patches["db.userSecret"] != name || res.Patches["db.host"] != "db.internal" {
+		t.Fatalf("patches = %v", res.Patches)
+	}
+	p := res.DBUserSecrets[0]
+	if p.User != ByoBindingDBUser("env-1", "apps", "web", binding.Target) || p.RemoteKey != "use1-dev-acme-alethia-byo-db-x" ||
+		!reflect.DeepEqual(p.Facets, []string{"password", "username"}) || p.Namespace != "apps" {
+		t.Fatalf("params = %#v", p)
+	}
+	y, err := RenderByoDBUserExternalSecret(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(y, "acme/rds/master") {
+		t.Fatalf("the per-binding ExternalSecret names the administrative secret:\n%s", y)
+	}
+	docs := parseYAMLDocs(t, y)
+	spec, _ := docs[0]["spec"].(map[string]any)
+	target, _ := spec["target"].(map[string]any)
+	tmpl, _ := target["template"].(map[string]any)
+	data, _ := tmpl["data"].(map[string]any)
+	if target["name"] != name || data["username"] != p.User || data["password"] != "{{ .password }}" {
+		t.Fatalf("target = %#v\n%s", target, y)
+	}
+	remote, _ := spec["data"].([]any)
+	if len(remote) != 1 {
+		t.Fatalf("want one remote read, got %#v", remote)
+	}
+	ref, _ := remote[0].(map[string]any)["remoteRef"].(map[string]any)
+	if ref["key"] != "use1-dev-acme-alethia-byo-db-x" {
+		t.Fatalf("remoteRef = %#v, want the binding's own key", ref)
+	}
+	if _, hasProperty := ref["property"]; hasProperty {
+		t.Fatalf("a custom secret is a plain value; no property may be read: %#v", ref)
+	}
+}
+
+// TestResolveChartWorkloadBindings_DBUsersUnsatisfied: each reason a per-binding facet cannot resolve
+// is reported, and none of them falls back to the administrative credential.
+func TestResolveChartWorkloadBindings_DBUsersUnsatisfied(t *testing.T) {
+	passKnob := ChartBindingKnob("database", "orders", "password")
+	cases := []struct {
+		name       string
+		mutate     func(users *ByoDBUsers, dbs *[]types.ProjectDatabaseConfig, provider *string)
+		wantReason string // "" → unsatisfied with no stated reason (no store)
+	}{
+		{name: "no environment", mutate: func(u *ByoDBUsers, _ *[]types.ProjectDatabaseConfig, _ *string) { u.Environment = "" }, wantReason: "has no ID"},
+		{name: "user not provisioned", mutate: func(u *ByoDBUsers, _ *[]types.ProjectDatabaseConfig, _ *string) { u.Provisioned = nil }, wantReason: "was not provisioned"},
+		{name: "no secret key", mutate: func(u *ByoDBUsers, _ *[]types.ProjectDatabaseConfig, _ *string) { u.SecretNames = nil }, wantReason: "no secret for its own database user"},
+		{name: "mysql", mutate: func(_ *ByoDBUsers, dbs *[]types.ProjectDatabaseConfig, _ *string) {
+			*dbs = []types.ProjectDatabaseConfig{{Name: "orders", EngineFamily: "mysql"}}
+		}, wantReason: "needs a database facet"},
+		{name: "no store", mutate: func(_ *ByoDBUsers, _ *[]types.ProjectDatabaseConfig, p *string) { *p = "hetzner" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			binding, valuePaths, outputs, users := dbUserFixture()
+			var dbs []types.ProjectDatabaseConfig
+			provider := "aws"
+			tc.mutate(users, &dbs, &provider)
+			res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, provider, "apps", dbs, ChartBindingPolicy{DBUsers: users})
+			if len(res.ExternalSecrets) != 0 || len(res.DBUserSecrets) != 0 {
+				t.Fatalf("an unsatisfied facet produced an ExternalSecret: admin=%v dbUser=%v", res.ExternalSecrets, res.DBUserSecrets)
+			}
+			if _, patched := res.Patches["db.existingSecret"]; patched {
+				t.Fatalf("an unsatisfied facet was patched: %v", res.Patches)
+			}
+			if !contains(res.Unsatisfied, passKnob) {
+				t.Fatalf("unsat = %v, want %s", res.Unsatisfied, passKnob)
+			}
+			if got := res.UnsatisfiedReasons[passKnob]; !strings.Contains(got, tc.wantReason) || (tc.wantReason == "" && got != "") {
+				t.Fatalf("reason = %q, want one containing %q", got, tc.wantReason)
+			}
+		})
+	}
+
+	// connection_string has no per-binding form.
+	binding := chartDBBinding([2]string{"DB_URL", "connection_string"})
+	_, _, outputs, users := dbUserFixture()
+	knob := ChartBindingKnob("database", "orders", "connection_string")
+	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, map[string]string{knob: "db.url"}, outputs, "aws", "apps", nil, ChartBindingPolicy{DBUsers: users})
+	if len(res.DBUserSecrets) != 0 || !strings.Contains(res.UnsatisfiedReasons[knob], "not available for a per-binding database user") {
+		t.Fatalf("connection_string: es=%v reasons=%v", res.DBUserSecrets, res.UnsatisfiedReasons)
+	}
+}
+
+// TestResolveChartWorkloadBindings_DBUsersKeylessStillWins: the keyless refusal comes before the
+// per-binding mode, so a keyless target gets no password secret of either kind.
+func TestResolveChartWorkloadBindings_DBUsersKeylessStillWins(t *testing.T) {
+	binding, valuePaths, outputs, users := dbUserFixture()
+	iam := true
+	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "apps",
+		[]types.ProjectDatabaseConfig{{Name: "orders", IamAuth: &iam}}, ChartBindingPolicy{KeylessDBAuth: true, DBUsers: users})
+	if len(res.DBUserSecrets) != 0 || !strings.Contains(res.UnsatisfiedReasons[ChartBindingKnob("database", "orders", "password")], "keyless database") {
+		t.Fatalf("es=%v reasons=%v", res.DBUserSecrets, res.UnsatisfiedReasons)
+	}
+}
+
+// TestRenderByoDBUserExternalSecret_Refusals: the renderer fails closed on every input it cannot
+// render safely, and a username-only binding does not receive the password.
+func TestRenderByoDBUserExternalSecret_Refusals(t *testing.T) {
+	good := ByoDBUserSecretParams{
+		ServiceName: "web", Namespace: "apps", Target: types.ServiceBindingTarget{Kind: "database", Name: "orders"},
+		Provider: "aws", User: ByoBindingDBUser("env-1", "apps", "web", types.ServiceBindingTarget{Kind: "database", Name: "orders"}),
+		RemoteKey: "use1-dev-acme-alethia-byo-db-x", Facets: []string{"username"},
+		Labels: map[string]string{"alethia.io/byo-binding": "true"},
+	}
+	y, err := RenderByoDBUserExternalSecret(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(y, "password: ") {
+		t.Fatalf("a username-only binding's Secret carries the password:\n%s", y)
+	}
+	meta, _ := parseYAMLDocs(t, y)[0]["metadata"].(map[string]any)
+	labels, _ := meta["labels"].(map[string]any)
+	if labels["alethia.io/byo-binding"] != "true" {
+		t.Fatalf("label not a string \"true\": %#v", labels)
+	}
+	for name, mutate := range map[string]func(*ByoDBUserSecretParams){
+		"no store":         func(p *ByoDBUserSecretParams) { p.Provider = "hetzner" },
+		"admin user":       func(p *ByoDBUserSecretParams) { p.User = "postgres" },
+		"no remote key":    func(p *ByoDBUserSecretParams) { p.RemoteKey = " " },
+		"multi-line key":   func(p *ByoDBUserSecretParams) { p.RemoteKey = "a\nb" },
+		"no usable facets": func(p *ByoDBUserSecretParams) { p.Facets = []string{"connection_string"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := good
+			mutate(&p)
+			if y, err := RenderByoDBUserExternalSecret(p); err == nil {
+				t.Fatalf("rendered:\n%s", y)
+			}
+		})
+	}
+}
+
+// contains reports whether s holds v.
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

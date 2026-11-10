@@ -3,10 +3,10 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
-import { getClusters } from "@/app/server/actions/clusters";
 import { resolveProjectId } from "@/app/server/actions/resolve";
+import { isClustersRead } from "@/components/clusters/clusters-reads";
 import { getQueryClient } from "@/lib/query/client";
-import { qk } from "@/lib/query/keys";
+import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 import { ClustersClient } from "../../~/clusters/clusters-client";
 
@@ -16,17 +16,17 @@ export const metadata = pageMetadata({
 });
 
 /**
- * `/{org}/{project}/clusters` — the project's cluster(s). Reuses the org clusters grid scoped to
- * this project: prefetches the shared org cluster list (`qk.clusters(org)`) and hands
- * `ClustersClient` the resolved project id, which filters the grid to it. `loading.tsx` covers
- * the prefetch window.
+ * `/{org}/{project}/clusters` — the project's clusters, one per environment that runs one. Reuses the
+ * org clusters grid scoped to this project: prefetches the same `clusters.list` read the org page
+ * does (one cache entry serves both) and hands `ClustersClient` the resolved project id, which
+ * filters the grid to it. `loading.tsx` covers the prefetch window.
  */
 export default async function ProjectClustersRoute({
 	params,
 }: {
 	params: Promise<{ org: string; project: string }>;
 }) {
-	const { org, project } = await params;
+	const { project } = await params;
 	let projectId: string;
 	try {
 		projectId = await resolveProjectId(project);
@@ -35,13 +35,10 @@ export default async function ProjectClustersRoute({
 	}
 
 	const queryClient = getQueryClient();
-	await queryClient.prefetchQuery({
-		queryKey: qk.clusters(org),
-		queryFn: () => getClusters(),
-	});
+	await queryClient.prefetchQuery(serverOrpc().clusters.list.queryOptions({ retry: false }));
 
 	return (
-		<HydrationBoundary state={dehydrate(queryClient)}>
+		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isClustersRead })}>
 			<ClustersClient projectId={projectId} />
 		</HydrationBoundary>
 	);

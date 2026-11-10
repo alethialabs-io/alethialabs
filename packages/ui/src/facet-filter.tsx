@@ -19,6 +19,7 @@ import {
   CommandItem,
   CommandList,
 } from "./command";
+import { useCommandSearch } from "./command-search";
 import { CountFigure } from "./count-pill";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover";
 import { cn } from "./utils";
@@ -59,6 +60,78 @@ interface FacetFilterProps {
 function searchName(label: string, searchPlaceholder: string | undefined): string {
   if (searchPlaceholder === undefined) return `Search ${label}`;
   return searchPlaceholder.replace(/\s*(…|\.\.\.)$/, "");
+}
+
+/** An option's search text: its label, its hint and its value, all three matchable. */
+function facetSearchText(o: FacetOption): string {
+  return `${o.label} ${o.hint ?? ""} ${o.value}`;
+}
+
+/**
+ * The searchable option list inside the popover. Its own component so the query lives and dies
+ * with the open list; toggling an option keeps the popover, and the query, as they are.
+ */
+function FacetCommand({
+  name,
+  placeholder,
+  emptyText,
+  options,
+  selected,
+  onToggle,
+}: {
+  name: string;
+  placeholder: string;
+  emptyText: string;
+  options: FacetOption[];
+  selected: Set<string>;
+  onToggle: (value: string) => void;
+}) {
+  const search = useCommandSearch(options, facetSearchText);
+  return (
+    <Command
+      label={name}
+      search={search.search}
+      onSearchChange={search.onSearchChange}
+      filteredItems={search.results}
+    >
+      <CommandInput placeholder={placeholder} className="text-[12.5px]" />
+      <CommandList>
+        <CommandEmpty>{emptyText}</CommandEmpty>
+        <CommandGroup>
+          {search.results.map((o) => {
+            const isOn = selected.has(o.value);
+            return (
+              <CommandItem
+                key={o.value}
+                onSelect={() => onToggle(o.value)}
+                className="gap-2"
+              >
+                <span
+                  className={cn(
+                    "flex size-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors",
+                    isOn
+                      ? "border-text-primary bg-text-primary text-surface"
+                      : "border-border",
+                  )}
+                >
+                  {isOn && <Check size={11} />}
+                </span>
+                <span className="truncate text-text-primary">{o.label}</span>
+                {o.hint && (
+                  <CountFigure className="ml-auto truncate">{o.hint}</CountFigure>
+                )}
+                {o.count !== undefined && (
+                  <CountFigure className={cn("shrink-0", !o.hint && "ml-auto")}>
+                    {String(o.count)}
+                  </CountFigure>
+                )}
+              </CommandItem>
+            );
+          })}
+        </CommandGroup>
+      </CommandList>
+    </Command>
+  );
 }
 
 /** A searchable multi-select dropdown. Selecting toggles; the popover stays open. */
@@ -102,55 +175,14 @@ export function FacetFilter({
         }
       />
       <PopoverContent align={align} className="w-[240px] p-0">
-        {/* cmdk points the input's aria-labelledby at its own hidden <label>, whose text is this
-            prop. Left empty, that reference resolves to "" and blocks the placeholder fallback, so
-            the search is an unnamed combobox to a screen reader (#5803). */}
-        <Command label={searchName(label, searchPlaceholder)}>
-          <CommandInput
-            placeholder={searchPlaceholder ?? "Search…"}
-            className="text-[12.5px]"
-          />
-          <CommandList>
-            <CommandEmpty>{emptyText}</CommandEmpty>
-            <CommandGroup>
-              {options.map((o) => {
-                const isOn = selected.has(o.value);
-                return (
-                  <CommandItem
-                    key={o.value}
-                    value={`${o.label} ${o.hint ?? ""} ${o.value}`}
-                    onSelect={() => toggle(o.value)}
-                    className="gap-2"
-                  >
-                    <span
-                      className={cn(
-                        "flex size-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors",
-                        isOn
-                          ? "border-text-primary bg-text-primary text-surface"
-                          : "border-border",
-                      )}
-                    >
-                      {isOn && <Check size={11} />}
-                    </span>
-                    <span className="truncate text-text-primary">
-                      {o.label}
-                    </span>
-                    {o.hint && (
-                      <CountFigure className="ml-auto truncate">
-                        {o.hint}
-                      </CountFigure>
-                    )}
-                    {o.count !== undefined && (
-                      <CountFigure className={cn("shrink-0", !o.hint && "ml-auto")}>
-                        {String(o.count)}
-                      </CountFigure>
-                    )}
-                  </CommandItem>
-                );
-              })}
-            </CommandGroup>
-          </CommandList>
-        </Command>
+        <FacetCommand
+          name={searchName(label, searchPlaceholder)}
+          placeholder={searchPlaceholder ?? "Search…"}
+          emptyText={emptyText}
+          options={options}
+          selected={selected}
+          onToggle={toggle}
+        />
         {selected.size > 0 && (
           <div className="border-t border-border p-1">
             <Button

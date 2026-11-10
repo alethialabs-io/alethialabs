@@ -115,6 +115,10 @@ vi.mock("@/lib/query/use-members-query", () => ({
     isPending: false,
     isPlaceholderData: false,
   }),
+  // The route prefetches the gate with the rows (#6129); a manager who may not invite.
+  useMembersGateQuery: () => ({
+    data: { canManage: true, canInvite: false, plan: "community", inviteBlockedReason: "x" },
+  }),
 }));
 vi.mock("@/lib/query/use-classification-query", () => ({
   useAssignmentsForKind: () => ({ data: undefined }),

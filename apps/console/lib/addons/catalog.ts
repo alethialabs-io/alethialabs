@@ -8,6 +8,8 @@
 // observability stack; the broader backlog (security/secrets/networking/…) lands per the
 // plan's catalog table.
 
+import { randomBytes } from "node:crypto";
+
 import { MATRIX } from "@/lib/compat";
 import { asRecord } from "@/lib/records";
 import { parse as parseYaml } from "yaml";
@@ -522,6 +524,23 @@ const VELERO_PROVIDERS: Record<VeleroProvider, VeleroProviderPlugin> = {
 		image: "velero/velero-plugin-for-microsoft-azure:v1.10.1",
 	},
 };
+
+/** How many random bytes back Harbor's data-encryption key — see `harborSecretKey`. */
+export const HARBOR_SECRET_KEY_BYTES = 12;
+
+/**
+ * Harbor's data-encryption key: exactly 16 characters BY CONSTRUCTION, as the chart demands
+ * (#6222). base64url turns every 3 bytes into 4 characters and 12 is a multiple of 3, so 12 bytes
+ * always encode to exactly 16 characters with no padding to drop — whatever the bytes are. That
+ * is 96 bits, the most a 16-character key over this 64-symbol alphabet can carry. `bytes` is the
+ * injection point for tests; any other length is refused rather than encoded to the wrong size.
+ */
+export function harborSecretKey(bytes: Uint8Array = randomBytes(HARBOR_SECRET_KEY_BYTES)): string {
+	if (bytes.length !== HARBOR_SECRET_KEY_BYTES) {
+		throw new Error(`harborSecretKey needs exactly ${HARBOR_SECRET_KEY_BYTES} bytes, got ${bytes.length}`);
+	}
+	return Buffer.from(bytes).toString("base64url");
+}
 
 export const ADDON_CATALOG: AddOnDef[] = [
 	defineAddOn({
@@ -1806,7 +1825,8 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		generateSecrets: (present): Record<string, string> => {
 			const out: Record<string, string> = {};
 			if (!present.has("adminPassword")) out.adminPassword = randomCredential();
-			if (!present.has("secretKey")) out.secretKey = randomCredential(12);
+			// 16 characters by construction — see `harborSecretKey` (#6222).
+			if (!present.has("secretKey")) out.secretKey = harborSecretKey();
 			// #2823. Each of these replaces a value the chart would otherwise mint per render.
 			if (!present.has("secret")) out.secret = randomCredential();
 			if (!present.has("CSRF_KEY")) out.CSRF_KEY = randomCredential();
@@ -2393,12 +2413,16 @@ export function resolveByoChartInstall(
 			id: row.addon_id,
 			mode: row.mode,
 			source: "helm",
+			// The BYO marker: a helm source alone would read to the runner as a catalogue chart.
+			byo: true,
 			chartRepo: `oci://${segments.join("/")}`,
 			// Unused for a helm source (the chart is named separately), but the spec requires it.
 			path: "",
 			chart,
 			// The chart version (ArgoCD targetRevision); `*` = latest when unset.
 			version: row.version || "*",
+			// Sent as stored. A chart attached before #6446 may still say "default" (or nothing, which
+			// deployed into "default"); the runner moves it to `byo-<id>` and says so on the Deploy tab.
 			namespace: row.namespace ?? "default",
 			values,
 			syncWave: BYO_CHART_SYNC_WAVE,
@@ -2410,6 +2434,7 @@ export function resolveByoChartInstall(
 		id: row.addon_id,
 		mode: row.mode,
 		source: "git",
+		byo: true,
 		chartRepo: row.chart_repo,
 		// The chart directory within the repo (rendered as ArgoCD `source.path`).
 		path: row.chart_path ?? "",
@@ -2417,6 +2442,7 @@ export function resolveByoChartInstall(
 		chart: "",
 		// The git ref (branch/tag/sha); default to HEAD so an unset ref still resolves.
 		version: row.version ?? "HEAD",
+		// Sent as stored — see the OCI branch above.
 		namespace: row.namespace ?? "default",
 		values,
 		syncWave: BYO_CHART_SYNC_WAVE,

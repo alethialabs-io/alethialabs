@@ -5,19 +5,34 @@
 // config_snapshot decides whether the runner can reach an OCI-hosted chart at all, and whether the
 // claim route attaches the chart-repo credential. These lock that contract.
 
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
 vi.mock("@/lib/db", () => ({ withActorScope: vi.fn(), getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// The project-in-the-actor's-org check has its own suite (tests/lib/projects/refuse-other-org.test.ts).
+vi.mock("@/lib/projects/refuse-other-org", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/projects/refuse-other-org")>()),
+	refuseProjectOfAnotherOrg: vi.fn(async () => undefined),
+}));
 vi.mock("@/app/server/actions/resolve", () => ({ resolveActiveEnvironmentId: vi.fn() }));
 vi.mock("@/lib/billing/job-quota", () => ({ assertJobQuotaAllowed: vi.fn() }));
 
-import { scanByoChart } from "@/app/server/actions/byo-charts";
+import {
+	detachByoChartAction,
+	saveChartWorkloadOverlayAction,
+	scanByoChart,
+	scanByoChartAction,
+} from "@/app/server/actions/byo-charts";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import { jobs, projectAddons, projectHelmRegistries } from "@/lib/db/schema";
+import { ProjectOrgRefusalError, refuseProjectOfAnotherOrg } from "@/lib/projects/refuse-other-org";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
+import { UsageLimitError } from "@/lib/billing/usage-guard";
 
 type Rows = unknown[];
 
@@ -115,6 +130,22 @@ describe("scanByoChart — git charts", () => {
 		expect(snapshot.ref).toBe("main");
 		// A git chart needs no chart-repo credential, so the claim route must attach none.
 		expect(snapshot).not.toHaveProperty("helm_registries");
+	});
+
+	it("refuses a project of another org before queueing anything, in the refusal's own words", async () => {
+		const { valuesSpy } = setupDb(new Map([[projectAddons, [GIT_CHART]]]));
+		vi.mocked(refuseProjectOfAnotherOrg).mockRejectedValueOnce(
+			new ProjectOrgRefusalError("This project belongs to another organization — switch to it to run this."),
+		);
+		await expect(scanByoChart(input)).rejects.toThrow("This project belongs to another organization");
+		expect(valuesSpy.mock.calls.find((c) => c[0] === jobs)).toBeUndefined();
+	});
+
+	it("puts the scanned project in the job's column, so job visibility follows it (#6121)", async () => {
+		const { valuesSpy } = setupDb(new Map([[projectAddons, [GIT_CHART]]]));
+		await scanByoChart(input);
+		const call = valuesSpy.mock.calls.find((c) => c[0] === jobs);
+		expect(call?.[1]).toMatchObject({ job_type: "CHART_SCAN", project_id: "p1" });
 	});
 
 	it("still requires chart_path — a git repo cannot say which directory holds the chart", async () => {
@@ -217,5 +248,94 @@ describe("scanByoChart — OCI charts", () => {
 		setupDb(new Map([[projectAddons, [{ ...OCI_CHART, chart_repo: null }]]]));
 
 		await expect(scanByoChart(input)).rejects.toThrow(/Chart not found/);
+	});
+});
+
+// #6119: the board calls the `…Action` forms through `useActionMutation`. A refusal the person can
+// act on keeps its sentence and gets its kind; anything else stays `unexpected`.
+describe("the BYO chart actions — the mutation contract", () => {
+	const PROJECT = "11111111-1111-4111-8111-111111111111";
+	const ENV = "22222222-2222-4222-8222-222222222222";
+	const WORKLOAD = "33333333-3333-4333-8333-333333333333";
+	const target = { projectId: PROJECT, environmentId: ENV, id: "demo" };
+
+	it("answers the queued scan", async () => {
+		setupDb(new Map([[projectAddons, [GIT_CHART]]]));
+		await expect(scanByoChartAction(target)).resolves.toEqual({ ok: true, data: { jobId: "job-1" } });
+	});
+
+	it("answers a project of another org as a conflict, in the refusal's own words", async () => {
+		setupDb(new Map([[projectAddons, [GIT_CHART]]]));
+		const reason = "This project belongs to another organization — switch to it to run this.";
+		vi.mocked(refuseProjectOfAnotherOrg).mockRejectedValueOnce(new ProjectOrgRefusalError(reason));
+		await expect(scanByoChartAction(target)).resolves.toEqual({
+			ok: false,
+			error: { kind: "conflict", message: reason },
+		});
+	});
+
+	it("answers an upgradable job cap as an entitlement refusal, and a hard cap as a conflict", async () => {
+		// The BYO scans THROW the cap (assertJobQuotaAllowed), unlike `try*Project`, which returns it —
+		// so this is the board's real entitlement path.
+		setupDb(new Map([[projectAddons, [GIT_CHART]]]));
+		vi.mocked(assertJobQuotaAllowed).mockRejectedValueOnce(
+			new UsageLimitError("Free plan: 25 jobs a day.", true),
+		);
+		await expect(scanByoChartAction(target)).resolves.toEqual({
+			ok: false,
+			error: { kind: "entitlement", message: "Free plan: 25 jobs a day.", feature: "jobQuota" },
+		});
+		vi.mocked(assertJobQuotaAllowed).mockRejectedValueOnce(
+			new UsageLimitError("Usage cap reached.", false),
+		);
+		await expect(scanByoChartAction(target)).resolves.toEqual({
+			ok: false,
+			error: { kind: "conflict", message: "Usage cap reached." },
+		});
+	});
+
+	it("answers a chart that is not attached as not-found", async () => {
+		setupDb(new Map());
+		await expect(scanByoChartAction(target)).resolves.toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Chart not found (attach it before scanning)." },
+		});
+	});
+
+	it("answers the feature switched off as a conflict naming the switch", async () => {
+		setupDb(new Map());
+		process.env.ALETHIA_BYO_HELM_ENABLED = "false";
+		const result = await detachByoChartAction(target);
+		expect(result.ok).toBe(false);
+		expect(!result.ok && result.error.kind).toBe("conflict");
+		expect(withActorScope).not.toHaveBeenCalled();
+	});
+
+	it("binds the overlay write to the actor's org, and answers a workload it cannot see as not-found", async () => {
+		const seen: { where: { sql: string; params: unknown[] } | null } = { where: null };
+		const chain: Record<string, unknown> = {};
+		Object.assign(chain, {
+			set: () => chain,
+			where: (clause: SQL) => {
+				seen.where = new PgDialect().sqlToQuery(clause);
+				return chain;
+			},
+			returning: () => Promise.resolve([]),
+		});
+		vi.mocked(withActorScope).mockImplementation(
+			((_actor: unknown, cb: (tx: unknown) => unknown) => cb({ update: () => chain })) as never,
+		);
+
+		const result = await saveChartWorkloadOverlayAction({
+			projectId: PROJECT,
+			workloadId: WORKLOAD,
+			config: { replicas: 2 },
+		});
+
+		expect(result).toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Chart workload not found" },
+		});
+		expect(seen.where?.params).toEqual(expect.arrayContaining([WORKLOAD, PROJECT, "org-1"]));
 	});
 });

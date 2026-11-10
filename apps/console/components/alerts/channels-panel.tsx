@@ -7,17 +7,27 @@
 // channels edit in place (no edit button) with a dirty Save/Discard bar, a standalone
 // enable switch that confirms on disable, the unified ChannelVerify re-verify control, and
 // a confirmed Delete. "Used by" cross-links into the Policies section.
+//
+// Every write goes through `useActionMutation` (#6125) — pending state on its trigger, one toast
+// for a refusal, and invalidation of every key that shows alert data. The panel's body follows the
+// view's READ STATE: a skeleton while the first answer is in flight, a region error when it failed,
+// "No channels yet" only once the org's channels were read and there are none.
 
 import { Plus, SearchX, Send, Trash2 } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { toast } from "sonner";
 import {
-	type AlertsBootstrap,
 	type ChannelDTO,
 	deleteChannel,
+	type PolicyDTO,
 	setChannelEnabled,
 	updateChannel,
 } from "@/app/server/actions/alerts";
+import type { AlertsHub } from "@/components/alerts/alerts-hub";
+import { AlertsPanelSkeleton } from "@/components/alerts/alerts-skeleton";
+import { RegionError } from "@/components/errors/region-error";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { alertsKeys } from "@/lib/query/use-alerts-query";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
 import { ChannelsFilterBar } from "@/components/alerts/alerts-filter-bar";
 import type { ChannelsView } from "@/components/alerts/alerts-filters";
@@ -55,21 +65,15 @@ function sameRecipients(a: string[], b: string[]): boolean {
 }
 
 interface ChannelsPanelProps {
-	bootstrap: AlertsBootstrap;
-	/** The filter standard's resolved view — rows, facets, active-filter count. */
+	hub: AlertsHub;
+	/** The filter standard's resolved view — rows, facets, read state, active-filter count. */
 	view: ChannelsView;
-	onChanged: () => void;
 	onOpenPolicy: (id?: string) => void;
 }
 
 /** Channels master-detail. */
-export function ChannelsPanel({
-	bootstrap,
-	view,
-	onChanged,
-	onOpenPolicy,
-}: ChannelsPanelProps) {
-	const { channels, policies, canManage, encryptionConfigured } = bootstrap;
+export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
+	const { channels, policies, policiesKnown, canManage, encryptionConfigured } = hub;
 	const selectedId = useAlertsSection((s) => s.selectedChannelId);
 	const setSelectedId = useAlertsSection((s) => s.setSelectedChannelId);
 
@@ -86,16 +90,14 @@ export function ChannelsPanel({
 	const { rows, facets, stale } = view;
 	const resetFilters = useAlertChannelFilters((s) => s.reset);
 
-	const doDelete = async (c: ChannelDTO) => {
-		try {
-			await deleteChannel(c.id);
-			toast.success("Channel deleted");
+	const remove = useActionMutation(deleteChannel, {
+		invalidates: alertsKeys(),
+		successMessage: "Channel deleted",
+		onSuccess: () => {
 			setSelectedId(null);
-			onChanged();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to delete");
-		}
-	};
+			setDeleteTarget(null);
+		},
+	});
 
 	const addBtn = canManage && (
 		<Button size="sm" onClick={() => setSheetOpen(true)}>
@@ -108,7 +110,11 @@ export function ChannelsPanel({
 
 	return (
 		<div>
-			{channels.length === 0 ? (
+			{view.state === "loading" ? (
+				<AlertsPanelSkeleton kind="channels" />
+			) : view.state === "error" ? (
+				<RegionError title="Couldn't load channels" onRetry={view.retry} />
+			) : view.total === 0 ? (
 				<EmptyState
 					icon={<Send />}
 					// `level={3}` under the section's own `h2`. EmptyState renders its title as a
@@ -146,7 +152,7 @@ export function ChannelsPanel({
 								<EmptyState
 									icon={<SearchX />}
 									title="No channels match"
-									description={`None of the ${channels.length} channels match these filters.`}
+									description={`None of the ${view.total} channels match these filters.`}
 									action={
 										<Button variant="outline" size="sm" onClick={resetFilters}>
 											Reset filters
@@ -185,7 +191,6 @@ export function ChannelsPanel({
 									canManage={canManage}
 									encryptionConfigured={encryptionConfigured}
 									usingPolicies={policiesUsing(selected.id)}
-									onChanged={onChanged}
 									onRequestDelete={() => setDeleteTarget(selected)}
 									onOpenPolicy={onOpenPolicy}
 								/>
@@ -203,8 +208,7 @@ export function ChannelsPanel({
 				<ChannelSheet
 					open={sheetOpen}
 					onOpenChange={setSheetOpen}
-					bootstrap={bootstrap}
-					onSaved={onChanged}
+					encryptionConfigured={encryptionConfigured}
 				/>
 			)}
 
@@ -213,14 +217,19 @@ export function ChannelsPanel({
 				onOpenChange={(o) => !o && setDeleteTarget(null)}
 				title={`Delete channel "${deleteTarget?.name ?? ""}"?`}
 				description={
-					deleteTarget && policiesUsing(deleteTarget.id).length > 0
-						? `${policiesUsing(deleteTarget.id).length} policy/policies route here and will lose this destination. Delivery history is kept. This cannot be undone.`
-						: "Delivery history is kept. This cannot be undone."
+					// Without the policies read there is no answer to "what routes here" — say so rather
+					// than imply nothing does.
+					!policiesKnown
+						? "Couldn't check which policies route here; any that do will lose this destination. Delivery history is kept. This cannot be undone."
+						: deleteTarget && policiesUsing(deleteTarget.id).length > 0
+							? `${policiesUsing(deleteTarget.id).length} policy/policies route here and will lose this destination. Delivery history is kept. This cannot be undone.`
+							: "Delivery history is kept. This cannot be undone."
 				}
 				confirmLabel="Delete channel"
+				pendingLabel="Deleting…"
+				pending={remove.isPending}
 				onConfirm={() => {
-					if (deleteTarget) doDelete(deleteTarget);
-					setDeleteTarget(null);
+					if (deleteTarget && !remove.isPending) remove.mutate({ id: deleteTarget.id });
 				}}
 			/>
 		</div>
@@ -273,8 +282,7 @@ interface ChDetailProps {
 	channel: ChannelDTO;
 	canManage: boolean;
 	encryptionConfigured: boolean;
-	usingPolicies: AlertsBootstrap["policies"];
-	onChanged: () => void;
+	usingPolicies: PolicyDTO[];
 	onRequestDelete: () => void;
 	onOpenPolicy: (id?: string) => void;
 }
@@ -284,7 +292,6 @@ function ChannelDetail({
 	canManage,
 	encryptionConfigured,
 	usingPolicies,
-	onChanged,
 	onRequestDelete,
 	onOpenPolicy,
 }: ChDetailProps) {
@@ -300,17 +307,37 @@ function ChannelDetail({
 	const urlId = useId();
 	const secretId = useId();
 	const [routingKey, setRoutingKey] = useState("");
-	const [saving, setSaving] = useState(false);
 	const [disableConfirm, setDisableConfirm] = useState(false);
-	const [togglePending, setTogglePending] = useState(false);
 
-	useEffect(() => {
+	const update = useActionMutation(updateChannel, {
+		invalidates: alertsKeys(),
+		successMessage: "Channel saved",
+		onSuccess: () => {
+			setUrl("");
+			setSecret("");
+			setRoutingKey("");
+		},
+	});
+	const toggle = useActionMutation(setChannelEnabled, {
+		invalidates: alertsKeys(),
+		onSuccess: () => setDisableConfirm(false),
+	});
+	const saving = update.isPending;
+	const togglePending = toggle.isPending;
+
+	// Reset the draft when the SAVED values change — not whenever the row object does. The row is a
+	// query result now, and every live refetch (any alert hint: a delivery, another member's toggle)
+	// hands back a new object; resetting on identity would throw away an edit in progress each time.
+	const saved = JSON.stringify([channel.name, channel.recipients]);
+	const [savedSeen, setSavedSeen] = useState(saved);
+	if (saved !== savedSeen) {
+		setSavedSeen(saved);
 		setName(channel.name);
 		setRecipients(channel.recipients);
 		setUrl("");
 		setSecret("");
 		setRoutingKey("");
-	}, [channel]);
+	}
 
 	const dirty =
 		name.trim() !== channel.name ||
@@ -328,12 +355,12 @@ function ChannelDetail({
 		setRoutingKey("");
 	};
 
-	const save = async () => {
+	const save = () => {
+		if (saving) return;
 		if (channel.type === "email" && recipients.length === 0)
 			return toast.error("Add at least one recipient.");
-		setSaving(true);
-		try {
-			await updateChannel(channel.id, {
+		update.mutate({
+				id: channel.id,
 				type: channel.type,
 				name: name.trim() || meta.name,
 				enabled: channel.enabled,
@@ -348,29 +375,12 @@ function ChannelDetail({
 						: meta.credential === "routingKey"
 							? { routingKey: routingKey.trim() || undefined }
 							: undefined,
-			});
-			setUrl("");
-			setSecret("");
-			setRoutingKey("");
-			toast.success("Channel saved");
-			onChanged();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to save channel");
-		} finally {
-			setSaving(false);
-		}
+		});
 	};
 
-	const applyEnabled = async (next: boolean) => {
-		setTogglePending(true);
-		try {
-			await setChannelEnabled(channel.id, next);
-			onChanged();
-		} catch {
-			toast.error("Failed to update");
-		} finally {
-			setTogglePending(false);
-		}
+	const applyEnabled = (next: boolean) => {
+		if (togglePending) return;
+		toggle.mutate({ id: channel.id, enabled: next });
 	};
 	const onToggle = (next: boolean) => {
 		if (!next) setDisableConfirm(true); // confirm only when disabling
@@ -568,7 +578,6 @@ function ChannelDetail({
 					isVerified={channel.is_verified}
 					lastVerifiedAt={channel.last_verified_at}
 					canManage={canManage}
-					onVerified={onChanged}
 				/>
 			</div>
 
@@ -642,6 +651,8 @@ function ChannelDetail({
 				title="Disable this channel?"
 				description="Policies routing here stop delivering until you re-enable it. You can re-enable any time."
 				confirmLabel="Disable"
+				pendingLabel="Disabling…"
+				pending={togglePending}
 				onConfirm={() => applyEnabled(false)}
 			/>
 		</div>

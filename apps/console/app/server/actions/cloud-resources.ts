@@ -1,6 +1,11 @@
-"use server";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
+
+import "server-only";
+
+// NOT a server action (#6119). The browser reads this over GET through `canvas.cloudInventory`
+// (lib/rpc/procedures/canvas.ts); the assistant's read tool and the capability reader call it
+// in-process. Without `"use server"` it is no longer a POST endpoint any page can call.
 
 import { and, eq, isNull } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";

@@ -44,7 +44,7 @@ const ALL_USERS = Object.values(U);
 
 /** The caller as `authorizeCli` hands them over with no header: their personal scope. */
 function personal(userId: string) {
-	return { userId, orgId: userId };
+	return { userId, orgId: userId, credential: "session" as const };
 }
 
 describeIfDb("#5479 — cross-org CLI org access authorizes the permission in the path org", () => {

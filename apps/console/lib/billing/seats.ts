@@ -16,6 +16,7 @@ import { getOrgBilling } from "@/lib/billing/queries";
 import { getStripe } from "@/lib/billing/stripe";
 import { getServiceDb } from "@/lib/db";
 import { member } from "@/lib/db/schema";
+import { forgetSubscription } from "@/lib/billing/subscription-cache";
 
 // The free roles, by what they GRANT rather than by how they are spelled. `viewer` is not the
 // only string that means viewer: better-auth writes its own built-in `member` (the column
@@ -64,4 +65,5 @@ export async function syncOrgSeats(orgId: string): Promise<void> {
 		items: [{ id: flat.id, quantity: seats }],
 		proration_behavior: "create_prorations",
 	});
+	forgetSubscription(sub.id); // the plan card's cached read of it is now stale (lib/billing/subscription-cache.ts)
 }

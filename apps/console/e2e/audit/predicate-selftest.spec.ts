@@ -16,7 +16,8 @@
 // The hit test does not.
 
 import { expect, test, type Page } from "@playwright/test";
-import { errorStateSignature, rendersSharedErrorState } from "./error-state";
+import { layoutRpcReads, loadReadFloorProblems, manifestConsistencyProblems, readKey, readsOnLoad, shellClassifier, shellReadsFor, workersFromManifest, type BFloorRecord } from "./behaviour";
+import { errorStateSignature, rendersRegionError, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
 import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, STATUS_SELECTOR_WITHOUT_SONNER, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
 import { hitTest } from "./overlays";
@@ -788,4 +789,166 @@ test.describe("the live predicates fail when the page is wrong", () => {
 			record({ route: "/x", url: "/x", predicate: "R5", verdict: "N/A", reason: "redirect-only" }),
 		).toThrow(/never N\/A/);
 	});
+});
+
+// T7 and B4 read a failed or refused DATA REGION through `RegionError` (#6117), which renders no
+// `ErrorState`. Both directions, so a recogniser that stopped finding it is red here rather than a
+// column of T7 blanks and B4 "vanished" findings on pages that did the right thing.
+test("the region-level error render is recognised, and nothing else is", async ({ page }) => {
+	const fixture = (body: string) => `<!doctype html><html><body>${body}</body></html>`;
+	await page.setContent(fixture('<main><div data-slot="region-error" data-state="error">Couldn\'t load runners</div></main>'));
+	expect(await rendersRegionError(page), "RegionError by its data-slot, with no role").toBe(true);
+	await page.setContent(fixture('<main><div role="alert">Couldn\'t load runners</div></main>'));
+	expect(await rendersRegionError(page), "a role=alert inside main").toBe(true);
+	await page.setContent(fixture('<div role="alert">toast</div><main><table><tr><td>row</td></tr></table></main>'));
+	expect(await rendersRegionError(page), "an alert OUTSIDE main is not a region's error").toBe(false);
+	await page.setContent(fixture('<main><div data-slot="empty">No runners yet</div></main>'));
+	expect(await rendersRegionError(page), "an empty state is not an error").toBe(false);
+});
+
+// Family B's "read" (#6116): what B1 holds, B4 fails and B5 fails alone. The change stream and its
+// probe (#6115/#6178) are never reads — a stream open for the life of the page would make every
+// route "fetch on mount" — and a server action and a read-router call always are.
+test("family B's read classifier: actions and rpc in, the change stream and its probe out", () => {
+	const req = (url: string, method: string, headers: Record<string, string>) => ({ url: () => url, method: () => method, headers: () => headers });
+	expect(readKey(req("http://x.test/acme/~/jobs", "POST", { "next-action": "7f00" }))).toBe("action 7f00");
+	expect(readKey(req("http://x.test/acme/~/rpc/jobs/page?input=1", "GET", {}))).toBe("rpc jobs/page");
+	expect(readKey(req("http://x.test/acme/~/events", "GET", { accept: "text/event-stream" })), "the change stream").toBeNull();
+	expect(readKey(req("http://x.test/acme/~/events?probe=1", "GET", {})), "the stream's probe").toBeNull();
+	expect(readKey(req("http://x.test/acme/~/jobs", "GET", { rsc: "1" })), "a navigation's RSC payload").toBeNull();
+});
+
+// The build manifest is the shell classifier's input, so a manifest that does not describe the run
+// must refuse rather than classify: renamed worker keys (a Next upgrade, a manifest from another build)
+// name no observed route, and every shell read would silently become a page read.
+test("a build manifest that does not describe the observed run fails closed", () => {
+	const reads = new Map([["/a", ["action s1", "rpc x"]], ["/b", ["action s1"]]]);
+	const entries = new Map([["/a", "app/a/page"], ["/b", "app/b/page"]]);
+	const good = workersFromManifest({ node: { s1: { workers: { "app/a/page": {}, "app/b/page": {} } } } });
+	const renamed = workersFromManifest({ node: { s1: { workers: { "app/(renamed)/a/page": {}, "app/(renamed)/b/page": {} } } } });
+	expect(manifestConsistencyProblems(reads, entries, good)).toEqual([]);
+	expect(manifestConsistencyProblems(reads, entries, renamed).length, "renamed worker keys").toBe(2);
+	expect(manifestConsistencyProblems(reads, entries, workersFromManifest({ node: {} })).length, "an action the manifest omits").toBe(2);
+	expect(manifestConsistencyProblems(new Map([["/a", ["rpc x"]]]), entries, good).length, "a run that observed no action at all").toBe(1);
+});
+
+// A read the build references from every page is the SHELL's only when another route was seen making
+// it: `getJob` is in every AppShell bundle and only `~/jobs/[id]` calls it.
+test("the shell classifier needs a referenced-everywhere read to be OBSERVED elsewhere", () => {
+	const chains = new Map([["/a", "S"], ["/b", "S"]]);
+	const entries = new Map([["/a", "app/a/page"], ["/b", "app/b/page"]]);
+	const everywhere = { workers: { "app/a/page": {}, "app/b/page": {} } };
+	const workers = workersFromManifest({ node: { poll: everywhere, getJob: everywhere } });
+	const reads = new Map([["/a", ["action poll", "action getJob"]], ["/b", ["action poll"]]]);
+	expect(shellReadsFor("/a", chains, reads, entries, workers)).toEqual(["action poll"]);
+	// The KEY is classified, not the route's answered reads: a shell read /b made and /a's warm load did
+	// not is still the shell's when /a's cold load makes it.
+	const coldOnly = new Map([["/a", ["action getJob"]], ["/b", ["action poll"]]]);
+	expect(shellClassifier("/a", chains, coldOnly, entries, workers)("action poll")).toBe(true);
+	expect(shellClassifier("/a", chains, coldOnly, entries, workers)("action getJob")).toBe(false);
+});
+
+// A read-router read has no manifest entry; the shell's are the ones its LAYOUTS read. Derived from the
+// real `[org]/layout.tsx`, so a layout that stops seeding the shell over the router is a red line here.
+test("the [org] layout's read-router prefetches are the shell's reads", () => {
+	const reads = layoutRpcReads(["apps/console/app/(private)/[org]/layout.tsx"]);
+	expect(reads.has("rpc workspace/context"), [...reads].join(", ")).toBe(true);
+	const isShell = shellClassifier("/a", new Map([["/a", "S"]]), new Map([["/a", []]]), new Map(), () => null, reads);
+	expect(isShell("rpc workspace/context")).toBe(true);
+	expect(isShell("rpc jobs/detail")).toBe(false);
+});
+
+// The B3/B5 floor (#6318) replaced a count that every correct prefetch migration lowered by hand. What
+// it must still do is the count's one job: go RED when the scan measures nothing. Driven here over the
+// shape of a real run (run 40729885728's records, reduced to the fields the floor reads), then over
+// each way that run can stop being a measurement.
+test("the B3/B5 floor fails when the instrument measures nothing, and not when a route prefetches", () => {
+	const CONTROL = "/[org]/~/jobs";
+	const PROJECT_CONTROL = "/[org]/[project]/jobs";
+	const CONTROLS = [CONTROL, PROJECT_CONTROL];
+	/** B4's evidence: what its cold load failed of the page's own. */
+	const b4 = (route: string, cold: string[]): BFloorRecord => ({
+		route,
+		predicate: "B4",
+		verdict: cold.length > 0 ? "PASS" : "NOT MEASURED",
+		...(cold.length > 0 ? {} : { reason: "no-page-reads — …" }),
+		evidence: { phases: [{ phase: "cold load", pageReadsFailed: cold }, { phase: "stale refetch", pageReadsFailed: [...cold, "rpc x/stale"] }] },
+	});
+	const cell = (route: string, predicate: "B3" | "B5", verdict: string, reason?: string): BFloorRecord => ({ route, predicate, verdict, ...(reason ? { reason: `${reason} — …` } : {}) });
+	// Routes that read on load in both shells (the two controls, one its own empty state), one in the
+	// project shell that is not a control, one that prefetches everything, one redirect.
+	const healthy: BFloorRecord[] = [
+		b4(CONTROL, ["rpc members/list"]),
+		cell(CONTROL, "B3", "PASS"),
+		cell(CONTROL, "B5", "PASS"),
+		b4(PROJECT_CONTROL, ["rpc members/list"]),
+		cell(PROJECT_CONTROL, "B3", "PASS"),
+		cell(PROJECT_CONTROL, "B5", "PASS"),
+		b4("/[org]/[project]/environments", ["rpc classification/assignments"]),
+		cell("/[org]/[project]/environments", "B3", "PASS"),
+		cell("/[org]/[project]/environments", "B5", "PASS"),
+		b4("/[org]/~/settings/roles", ["rpc classification/assignments"]),
+		cell("/[org]/~/settings/roles", "B3", "PASS"),
+		cell("/[org]/~/settings/roles", "B5", "FAIL"),
+		b4("/[org]/~/runners", ["rpc classification/canEdit"]),
+		cell("/[org]/~/runners", "B3", "NOT MEASURED", "answered-empty"),
+		cell("/[org]/~/runners", "B5", "NOT MEASURED", "over-read-budget"),
+		b4("/[org]/~/connectors", []),
+		cell("/[org]/~/connectors", "B3", "NOT MEASURED", "no-page-reads"),
+		cell("/[org]/~/connectors", "B5", "NOT MEASURED", "not-intercepted"),
+		{ route: "/[org]/~/settings", predicate: "B3", verdict: "N/A", reason: "redirect-only" },
+	];
+	const floor = (records: readonly BFloorRecord[]) => [...loadReadFloorProblems(records, "B3", CONTROLS), ...loadReadFloorProblems(records, "B5", CONTROLS)];
+	expect(floor(healthy), "the healthy run").toEqual([]);
+	expect([...readsOnLoad(healthy).keys()].sort()).toEqual([CONTROL, PROJECT_CONTROL, "/[org]/[project]/environments", "/[org]/~/runners", "/[org]/~/settings/roles"].sort());
+	expect(loadReadFloorProblems(healthy, "B3", []).join("\n"), "a floor with no control").toMatch(/given no control route/);
+
+	// A route MIGRATING to the server prefetch stops reading on load: B4's cold load no longer sees it,
+	// and B3/B5's `no-page-reads` is the truth. The old floor had to be lowered for exactly this.
+	const migrated = healthy.map((r) =>
+		r.route !== "/[org]/~/settings/roles" ? r : r.predicate === "B4" ? b4(r.route, []) : cell(r.route, r.predicate === "B3" ? "B3" : "B5", "NOT MEASURED", "no-page-reads"),
+	);
+	expect(floor(migrated), "a route that started prefetching").toEqual([]);
+
+	// THE INSTRUMENT MEASURES NOTHING — the hold stops seeing reads, so every B3/B5 cell reads
+	// `no-page-reads` while B4's cold load still fails the page's reads: every witnessed route is named.
+	const blind = healthy.map((r) => (r.predicate === "B3" || r.predicate === "B5" ? (r.verdict === "N/A" ? r : { ...r, verdict: "NOT MEASURED", reason: "no-page-reads — …" }) : r));
+	const blindProblems = floor(blind).join("\n");
+	for (const route of [CONTROL, PROJECT_CONTROL, "/[org]/~/settings/roles", "/[org]/~/runners"]) expect(blindProblems, `the blind run names ${route}`).toContain(`on ${route} read \`no-page-reads\``);
+
+	// …and the witness goes blind WITH it: nothing reads on load anywhere, so "every witnessed route
+	// was scored" is vacuously true. The control is what keeps that red.
+	const allBlind = blind.map((r) => (r.predicate === "B4" ? b4(r.route, []) : r));
+	expect(floor(allBlind).join("\n"), "a run in which nothing read on load").toMatch(/control route \/\[org\]\/~\/jobs was not seen making a read/);
+	expect(floor(allBlind).join("\n")).toMatch(/did not score the control route/);
+
+	// A SHELL-CONFINED fault: the classifier (or the carrier, or the key — the witness shares all three)
+	// stops giving the `[project]` shell's page reads to the page. Every `[project]` route leaves the
+	// witness AND the verdicts at once, and every `[org]/~` route is untouched — so "every witnessed
+	// route was scored" stays true. Only the project shell's own control can see it.
+	const projectBlind = healthy.map((r) => {
+		if (!r.route.startsWith("/[org]/[project]/")) return r;
+		if (r.predicate === "B4") return b4(r.route, []);
+		return cell(r.route, r.predicate === "B3" ? "B3" : "B5", "NOT MEASURED", "no-page-reads");
+	});
+	const projectProblems = floor(projectBlind).join("\n");
+	expect(projectProblems, "a fault confined to the [project] shell").toMatch(/control route \/\[org\]\/\[project\]\/jobs was not seen making a read/);
+	expect(projectProblems, "and nothing is said about the org shell's control").not.toContain(`control route ${CONTROL}`);
+
+	// A WITHHELD B4 keeps its evidence; it must not witness, and the floor says so outright.
+	const b4Withheld = healthy.map((r) => (r.predicate === "B4" ? { ...r, verdict: "NOT MEASURED", reason: "positive control failed: B4 on the `static` fixture" } : r));
+	expect(readsOnLoad(b4Withheld).size, "a withheld B4 witnesses nothing").toBe(0);
+	expect(floor(b4Withheld).join("\n")).toMatch(/a withheld B4 cannot witness/);
+
+	// A thrown load, a missing phase and a withheld predicate are the instrument's, never the route's —
+	// on ANY route, witnessed or not.
+	const gaps = healthy.map((r) => (r.route === "/[org]/~/connectors" && r.predicate === "B3" ? { ...r, reason: "instrument-error — Timeout #ms exceeded" } : r));
+	expect(floor(gaps).join("\n")).toMatch(/B3 on \/\[org\]\/~\/connectors is NOT MEASURED for a reason that is the instrument's/);
+	const missing = healthy.filter((r) => !(r.route === "/[org]/~/settings/roles" && r.predicate === "B5"));
+	expect(floor(missing).join("\n")).toMatch(/B5 has no record for \/\[org\]\/~\/settings\/roles/);
+	const withheld = healthy.map((r) => (r.predicate === "B5" && r.verdict !== "N/A" ? { ...r, verdict: "NOT MEASURED", reason: "positive control failed: B5 on the `static` fixture" } : r));
+	expect(floor(withheld).filter((p) => p.includes("instrument's")).length, "every withheld B5 cell").toBe(6);
+
+	// A B4 that was not measured witnesses nothing — the evidence the floor reads is absent, not empty.
+	expect(readsOnLoad([{ route: CONTROL, predicate: "B4", verdict: "NOT MEASURED", reason: "instrument-error — …" }]).size).toBe(0);
 });

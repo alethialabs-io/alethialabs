@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { headers } from "next/headers";
-import { getWorkspaceContext } from "@/app/server/actions/workspace";
 import { auth } from "@/lib/auth";
+import { currentActor } from "@/lib/authz/guard";
 import type { BillingPlan } from "@/lib/db/schema/enums";
+import { readWorkspaceContext } from "@/lib/rpc/procedures/workspace";
 
 // Per-user, never cached — the header reads it on every marketing page load.
 export const dynamic = "force-dynamic";
@@ -33,7 +34,9 @@ export async function GET(): Promise<Response> {
 			return Response.json({ authenticated: false } satisfies NavContext);
 		}
 
-		const { activeOrgId, organizations } = await getWorkspaceContext();
+		// `/api/nav-context` names no org, so `currentActor()` answers from the session's org here —
+		// the marketing header has no address to read one from.
+		const { activeOrgId, organizations } = await readWorkspaceContext(await currentActor());
 		const active =
 			organizations.find((o) => o.id === activeOrgId) ?? organizations[0];
 		if (!active) {

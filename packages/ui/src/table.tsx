@@ -6,6 +6,47 @@ import * as React from "react"
 import { cn } from "./utils"
 
 /**
+ * The row's `[ · ]` clamp, drawn by the row's FIRST CELL rather than by the row (#6237).
+ *
+ * `.vx-clamp` draws its corner marks with an absolutely positioned `::before` on the element that
+ * carries it. On a `<tr>` that pseudo-element is a child of a table row, and Chrome lays it out as
+ * a leading anonymous table cell: in a table with a `<colgroup>` that phantom cell takes the first
+ * `<col>`'s width and every real column shifts one slot right; without one it is a narrow blank
+ * leading column. A row may only have cells as children, so the row must not generate one.
+ *
+ * So `TableRow` keeps `.vx-clamp vx-clamp--tight` — for the device's `--cl-*` knobs and its
+ * `position: relative` — and adds `.vx-clamp-none`, which tokens.css declares after the base rule
+ * as `content: none`, so the row generates no `::before` box at all. The marks are drawn instead by
+ * the first cell's `::before`. A cell is static, so that absolutely positioned pseudo-element
+ * resolves against the RELATIVE row and spans the whole row, at the same `--cl-gap` outside it as
+ * before. It is a child of a cell, not of the row, so it plays no part in table layout.
+ *
+ * The rules mirror `.vx-clamp::before` in `packages/brand/src/tokens.css` (masked border, resting
+ * reach, opacity on hover / focus-visible / `[data-clamped]`). They live on `<Table>` and select
+ * `[data-slot=table-row]`, so a page of rows carries them once, not once per row. A row that is
+ * not a `TableRow`, or a `TableRow` outside a `<Table>`, gets no marks — never a misplaced one.
+ */
+const ROW_CLAMP_MARK = [
+  "[&_[data-slot=table-row]>:first-child]:before:pointer-events-none",
+  "[&_[data-slot=table-row]>:first-child]:before:absolute",
+  "[&_[data-slot=table-row]>:first-child]:before:inset-[calc(-1*var(--cl-gap))]",
+  "[&_[data-slot=table-row]>:first-child]:before:border",
+  "[&_[data-slot=table-row]>:first-child]:before:border-[color:var(--cl-ink)]",
+  "[&_[data-slot=table-row]>:first-child]:before:opacity-0",
+  "[&_[data-slot=table-row]>:first-child]:before:[mask:linear-gradient(#000_0_0)_top_left/var(--cl-len)_var(--cl-len)_no-repeat,linear-gradient(#000_0_0)_top_right/var(--cl-len)_var(--cl-len)_no-repeat,linear-gradient(#000_0_0)_bottom_left/var(--cl-len)_var(--cl-len)_no-repeat,linear-gradient(#000_0_0)_bottom_right/var(--cl-len)_var(--cl-len)_no-repeat]",
+  "[&_[data-slot=table-row]>:first-child]:before:[transition:opacity_var(--dur-1)_var(--ease),scale_var(--dur-2)_var(--ease-out)]",
+  // The resting reach is motion, so it is only taken when motion is welcome: under
+  // `prefers-reduced-motion` the marks arrive already clamped, as `.vx-clamp` does.
+  "motion-safe:[&_[data-slot=table-row]>:first-child]:before:[scale:var(--cl-reach)]",
+  "[&_[data-slot=table-row]:hover>:first-child]:before:opacity-[var(--cl-op)]",
+  "[&_[data-slot=table-row]:hover>:first-child]:before:[scale:1]",
+  "[&_[data-slot=table-row]:focus-visible>:first-child]:before:opacity-[var(--cl-op)]",
+  "[&_[data-slot=table-row]:focus-visible>:first-child]:before:[scale:1]",
+  "[&_[data-slot=table-row][data-clamped]>:first-child]:before:opacity-[var(--cl-op)]",
+  "[&_[data-slot=table-row][data-clamped]>:first-child]:before:[scale:1]",
+].join(" ")
+
+/**
  * A table, in a wrapper that does NOT trap a sticky header.
  *
  * The wrapper used to be `overflow-x-auto`, and per spec `overflow-x: auto` computes `overflow-y`
@@ -45,7 +86,7 @@ function Table({
     >
       <table
         data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
+        className={cn("w-full caption-bottom text-sm", ROW_CLAMP_MARK, className)}
         {...props}
       />
     </div>
@@ -85,12 +126,16 @@ function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
   )
 }
 
+/**
+ * A table row. Its hover clamp is drawn by its first cell, never by a `::before` on the `<tr>` —
+ * see `ROW_CLAMP_MARK` for why a row-level pseudo-element shifts every column right.
+ */
 function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
   return (
     <tr
       data-slot="table-row"
       className={cn(
-        "vx-clamp vx-clamp--tight border-b border-border/40 transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
+        "vx-clamp vx-clamp--tight vx-clamp-none border-b border-border/40 transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
         className
       )}
       {...props}

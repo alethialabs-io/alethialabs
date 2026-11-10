@@ -36,6 +36,13 @@ export const HEALTH_CACHE_TTL_MS = 5_000;
 export interface DbHealth {
 	reachable: boolean;
 	latencyMs: number | null;
+	/**
+	 * `pg_notification_queue_usage()` — the fraction (0–1) of Postgres's shared NOTIFY queue in use,
+	 * read on the same round-trip as the connectivity probe. The console's change bus NOTIFYs on every
+	 * job, billing and usage change (ADR 0005 D3); a listener that falls behind fills this queue, and a
+	 * full queue makes every notifying commit FAIL. A number, null when it could not be read.
+	 */
+	notifyQueueUsage: number | null;
 	error?: string;
 }
 
@@ -63,6 +70,12 @@ export interface LoopHealthReport {
 	ageMs: number | null;
 	runs: number;
 	failures: number;
+	/**
+	 * The last successful tick's numeric counts (`superviseLoop` keeps only the numbers), or null.
+	 * For `realtime-bus` this is the change bus's {streams, keys, delivered, filtered, dropped} —
+	 * `streams` is the open-stream leak counter (#6115).
+	 */
+	lastResult: Record<string, number> | null;
 	/** Only present for the reconcile loop: its per-reconciler sub-task heartbeats. */
 	tasks?: ReconcileTaskHealth[];
 }
@@ -106,16 +119,34 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 	});
 }
 
-/** Probe DB connectivity with a bounded `select 1`. Never throws — a failure is a reported sub-check. */
+/** The NOTIFY-queue fraction from the probe's one row, or null when the row does not carry a number. */
+function queueUsageOf(rows: unknown): number | null {
+	if (!Array.isArray(rows) || rows.length === 0) return null;
+	const row: unknown = rows[0];
+	if (typeof row !== "object" || row === null || !("notify_queue_usage" in row)) return null;
+	const value = Number(row.notify_queue_usage);
+	return Number.isFinite(value) ? value : null;
+}
+
+/** Probe DB connectivity with a bounded query. Never throws — a failure is a reported sub-check. */
 async function probeDb(): Promise<DbHealth> {
 	const startedAt = Date.now();
 	try {
-		await withTimeout(getServiceDb().execute(sql`select 1`), DB_PROBE_TIMEOUT_MS, "db");
-		return { reachable: true, latencyMs: Date.now() - startedAt };
+		const rows = await withTimeout(
+			getServiceDb().execute(sql`select pg_notification_queue_usage() as notify_queue_usage`),
+			DB_PROBE_TIMEOUT_MS,
+			"db",
+		);
+		return {
+			reachable: true,
+			latencyMs: Date.now() - startedAt,
+			notifyQueueUsage: queueUsageOf(rows),
+		};
 	} catch (err) {
 		return {
 			reachable: false,
 			latencyMs: null,
+			notifyQueueUsage: null,
 			error: err instanceof Error ? err.message : String(err),
 		};
 	}
@@ -161,6 +192,7 @@ function loopReports(now: Date): LoopHealthReport[] {
 			ageMs: ageMsOf(hb, now),
 			runs: hb.runs,
 			failures: hb.failures,
+			lastResult: hb.lastResult,
 		};
 		if (hb.id === RECONCILE_LOOP_ID) {
 			report.tasks = getReconcileTaskHeartbeats().map((t) => ({
@@ -211,6 +243,7 @@ async function buildDeepHealth(now: Date): Promise<DeepHealth> {
 			db: {
 				reachable: false,
 				latencyMs: null,
+				notifyQueueUsage: null,
 				error: `health computation failed: ${err instanceof Error ? err.message : String(err)}`,
 			},
 			loops: [],

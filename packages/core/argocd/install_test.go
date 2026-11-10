@@ -7,9 +7,12 @@ import (
 	"bytes"
 	"encoding/base64"
 	"io"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestIsOperatorNotReady(t *testing.T) {
@@ -451,5 +454,217 @@ func TestTheCRDWaitRetriesWhileTheCRDIsStillRegistering(t *testing.T) {
 	// and fell through to the apply retry would satisfy the count above but not this.
 	if !strings.Contains(stdout.String(), "was confirmed Established") {
 		t.Errorf("the poll never reported the establish it was waiting for:\n%s", stdout.String())
+	}
+}
+
+// esoLabelRequirement, esoNamespaceSelector and esoStoreCondition are the slice of an ESO
+// ClusterSecretStore's spec.conditions the evaluator below reads.
+type esoLabelRequirement struct {
+	Key      string   `yaml:"key"`
+	Operator string   `yaml:"operator"`
+	Values   []string `yaml:"values"`
+}
+
+type esoNamespaceSelector struct {
+	MatchLabels      map[string]string     `yaml:"matchLabels"`
+	MatchExpressions []esoLabelRequirement `yaml:"matchExpressions"`
+}
+
+type esoStoreCondition struct {
+	NamespaceSelector *esoNamespaceSelector `yaml:"namespaceSelector"`
+	Namespaces        []string              `yaml:"namespaces"`
+	NamespaceRegexes  []string              `yaml:"namespaceRegexes"`
+}
+
+type esoStoreDoc struct {
+	Kind     string `yaml:"kind"`
+	Metadata struct {
+		Name string `yaml:"name"`
+	} `yaml:"metadata"`
+	Spec struct {
+		Conditions []esoStoreCondition `yaml:"conditions"`
+	} `yaml:"spec"`
+}
+
+// esoSelectorMatches is a Kubernetes label selector over one namespace's labels: every matchLabels
+// pair and every matchExpressions requirement must hold. An operator it does not know fails the test
+// rather than being guessed at.
+func esoSelectorMatches(t *testing.T, sel esoNamespaceSelector, nsLabels map[string]string) bool {
+	t.Helper()
+	for k, v := range sel.MatchLabels {
+		if nsLabels[k] != v {
+			return false
+		}
+	}
+	for _, r := range sel.MatchExpressions {
+		v, has := nsLabels[r.Key]
+		in := false
+		for _, want := range r.Values {
+			if has && v == want {
+				in = true
+			}
+		}
+		switch r.Operator {
+		case "In":
+			if !in {
+				return false
+			}
+		case "NotIn":
+			if in {
+				return false
+			}
+		case "Exists":
+			if !has {
+				return false
+			}
+		case "DoesNotExist":
+			if has {
+				return false
+			}
+		default:
+			t.Fatalf("label selector operator %q is not one this evaluator reads", r.Operator)
+		}
+	}
+	return true
+}
+
+// esoStoreAdmits answers ESO's own question for a ClusterSecretStore and a namespace
+// (pkg/controllers/secretstore/client_manager.go at v0.9.20, the pinned chart): no conditions admits
+// every namespace; otherwise the namespace is admitted when ANY condition matches it, by selector, by
+// name (which ESO turns into a kubernetes.io/metadata.name selector) or by regex. Conditions see
+// only the NAMESPACE the requesting object lives in, never the object, which is why a test of them
+// is a test over namespaces.
+func esoStoreAdmits(t *testing.T, store esoStoreDoc, ns string, nsLabels map[string]string) bool {
+	t.Helper()
+	if len(store.Spec.Conditions) == 0 {
+		return true
+	}
+	labels := map[string]string{"kubernetes.io/metadata.name": ns}
+	for k, v := range nsLabels {
+		labels[k] = v
+	}
+	for _, c := range store.Spec.Conditions {
+		if c.NamespaceSelector != nil && esoSelectorMatches(t, *c.NamespaceSelector, labels) {
+			return true
+		}
+		for _, n := range c.Namespaces {
+			if n == ns {
+				return true
+			}
+		}
+		for _, re := range c.NamespaceRegexes {
+			if regexp.MustCompile(re).MatchString(ns) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// everyRenderedSecretStore renders every ClusterSecretStore the platform applies: each cloud's native
+// store, each cross-account store, and the in-cluster Vault store on Hetzner.
+func everyRenderedSecretStore(t *testing.T) []esoStoreDoc {
+	t.Helper()
+	facts := []*InfraFacts{
+		{Provider: "aws", Region: "us-east-1", IRSAExternalSecretsArn: "arn:aws:iam::1:role/eso",
+			SecretsXacctRef: "arn:aws:iam::999:role/read", SecretsXacctRegion: "eu-west-1"},
+		{Provider: "gcp", GCPExternalSecretsSA: "eso@p.iam.gserviceaccount.com", GCPProjectID: "proj-1",
+			SecretsXacctProjectID: "secrets-project-b"},
+		{Provider: "azure", AzureExternalSecretsClient: "cid", AzureKeyVaultURI: "https://kv.vault.azure.net/",
+			SecretsXacctRef: "https://target.vault.azure.net/"},
+		{Provider: "alibaba", Region: "cn-hangzhou", AlibabaExternalSecretsRoleArn: "acs:ram::1:role/eso", AlibabaOIDCProviderArn: "acs:ram::1:oidc-provider/ack",
+			SecretsXacctRef: "acs:ram::999:role/read", SecretsXacctOIDCProviderRef: "acs:ram::999:oidc-provider/ack", SecretsXacctRegion: "cn-hangzhou"},
+	}
+	streams := []string{HetznerSecretStoreManifest()}
+	for _, f := range facts {
+		m, err := externalSecretsStoreManifest(f)
+		if err != nil {
+			t.Fatalf("render %s store: %v", f.Provider, err)
+		}
+		streams = append(streams, m)
+	}
+	var out []esoStoreDoc
+	for _, s := range streams {
+		dec := yaml.NewDecoder(strings.NewReader(s))
+		for {
+			var d esoStoreDoc
+			if err := dec.Decode(&d); err != nil {
+				if err == io.EOF {
+					break
+				}
+				t.Fatalf("parse store manifest: %v\n%s", err, s)
+			}
+			if d.Kind == "ClusterSecretStore" {
+				out = append(out, d)
+			}
+		}
+	}
+	// 4 native + 4 cross-account + Hetzner. A count that falls means a store went unexamined.
+	if len(out) != 9 {
+		t.Fatalf("expected 9 ClusterSecretStores, parsed %d", len(out))
+	}
+	return out
+}
+
+// TestSecretStoreConditionsAdmitTheRunnersBindingPath pins which namespaces the platform's
+// ClusterSecretStores serve, evaluated the way ESO evaluates them.
+//
+// A BYO chart's namespace, labelled exactly as the runner labels it (RenderByoNamespaces with the
+// runner's secret-store stamp, which provisioner.configureByoCharts passes), IS admitted: the
+// runner's per-binding ExternalSecrets live there (the Secret a chart's existingSecret names must be
+// in the chart's own namespace), so excluding it would withdraw every binding. Because a condition
+// selects namespaces and never objects, what keeps a chart from declaring its own ExternalSecret
+// there is the BYO AppProject's deny (TestByoAppProjectDeniesSecretSyncKinds), not these conditions.
+// A placed tenant namespace is excluded (#1306).
+//
+// The stamp (secretStoreConditions): a namespace marked as a BYO chart's WITHOUT it is refused; an
+// ordinary unlabelled namespace is still served; and a reserved platform namespace is still served
+// even when a runner from before #6439/#6446 marked it as a BYO chart's — "default" holds every
+// first-class service's binding ExternalSecrets.
+func TestSecretStoreConditionsAdmitTheRunnersBindingPath(t *testing.T) {
+	rendered, err := RenderByoNamespaces([]string{"byo-payments"}, map[string]string{ByoBindingOwnerLabel: "env-1", SecretStoreAccessLabel: SecretStoreAccessValue})
+	if err != nil {
+		t.Fatalf("render BYO namespace: %v", err)
+	}
+	var ns struct {
+		Metadata struct {
+			Name   string            `yaml:"name"`
+			Labels map[string]string `yaml:"labels"`
+		} `yaml:"metadata"`
+	}
+	if err := yaml.Unmarshal([]byte(rendered), &ns); err != nil {
+		t.Fatalf("parse BYO namespace: %v\n%s", err, rendered)
+	}
+	unstamped := map[string]string{}
+	for k, v := range ns.Metadata.Labels {
+		if k != SecretStoreAccessLabel {
+			unstamped[k] = v
+		}
+	}
+	for _, store := range everyRenderedSecretStore(t) {
+		if !esoStoreAdmits(t, store, ns.Metadata.Name, ns.Metadata.Labels) {
+			t.Errorf("%s does not admit the BYO namespace %s (labels %v): the runner's binding ExternalSecrets there would stop syncing",
+				store.Metadata.Name, ns.Metadata.Name, ns.Metadata.Labels)
+		}
+		if esoStoreAdmits(t, store, ns.Metadata.Name, unstamped) {
+			t.Errorf("%s admits a namespace marked as a BYO chart's without the runner's stamp (labels %v)", store.Metadata.Name, unstamped)
+		}
+		if !esoStoreAdmits(t, store, "payments", nil) {
+			t.Errorf("%s does not admit an ordinary unlabelled namespace", store.Metadata.Name)
+		}
+		for _, platform := range []string{"default", "monitoring"} {
+			if !esoStoreAdmits(t, store, platform, unstamped) {
+				t.Errorf("%s does not admit the platform namespace %q an older runner marked as a BYO chart's", store.Metadata.Name, platform)
+			}
+		}
+		if !esoStoreAdmits(t, store, "alethia-byo-db-users", map[string]string{"alethia.io/byo-db-users": "true", SecretStoreAccessLabel: SecretStoreAccessValue}) {
+			t.Errorf("%s does not admit the BYO users namespace", store.Metadata.Name)
+		}
+		if esoStoreAdmits(t, store, "tenant-a", map[string]string{"alethia.io/placement": "namespace"}) {
+			t.Errorf("%s admits a placed tenant namespace", store.Metadata.Name)
+		}
+		if esoStoreAdmits(t, store, "default", map[string]string{"alethia.io/placement": "namespace", SecretStoreAccessLabel: SecretStoreAccessValue}) {
+			t.Errorf("%s admits a placed tenant namespace through the stamp or the platform-name condition", store.Metadata.Name)
+		}
 	}
 }

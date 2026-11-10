@@ -5,8 +5,10 @@
 // against real Postgres. Exercises the widened projection — provider (via the cloud_identity
 // join), effective region (env → project fallback), the full verify report + signed receipt
 // pulled from execution_metadata, per-resource drift details, security report_count — plus the
-// summary counters and the active-waiver assembly. Seeds one org's worth of rows via the
-// service connection (bypasses RLS) with unique ids and cleans up by those ids.
+// summary counters and the active-waiver assembly — and the visibility bound (#6126): the roll-up
+// holds only the projects it is handed, and only as projects of the org it is asked about. Seeds one
+// org's worth of rows via the service connection (bypasses RLS) with unique ids and cleans up by
+// those ids.
 
 import { randomUUID } from "node:crypto";
 import { inArray } from "drizzle-orm";
@@ -192,7 +194,7 @@ describeIfDb("queryOrgEvidence (org evidence roll-up)", () => {
 	});
 
 	it("assembles both environment rows with provider + effective region", async () => {
-		const { rows } = await queryOrgEvidence(ORG_ID);
+		const { rows } = await queryOrgEvidence(ORG_ID, [PROJECT_ID]);
 		expect(rows).toHaveLength(2);
 		const env1 = rows.find((r) => r.environmentId === ENV1_ID);
 		const env2 = rows.find((r) => r.environmentId === ENV2_ID);
@@ -203,7 +205,7 @@ describeIfDb("queryOrgEvidence (org evidence roll-up)", () => {
 	});
 
 	it("carries the full verify report + signed receipt on the verified env", async () => {
-		const { rows } = await queryOrgEvidence(ORG_ID);
+		const { rows } = await queryOrgEvidence(ORG_ID, [PROJECT_ID]);
 		const env1 = rows.find((r) => r.environmentId === ENV1_ID);
 		expect(env1?.verify?.verdict).toBe("fail");
 		expect(env1?.verify?.hasReceipt).toBe(true);
@@ -217,7 +219,7 @@ describeIfDb("queryOrgEvidence (org evidence roll-up)", () => {
 	});
 
 	it("carries drift details and security report_count", async () => {
-		const { rows } = await queryOrgEvidence(ORG_ID);
+		const { rows } = await queryOrgEvidence(ORG_ID, [PROJECT_ID]);
 		const env1 = rows.find((r) => r.environmentId === ENV1_ID);
 		expect(env1?.drift?.inSync).toBe(false);
 		expect(env1?.drift?.drifted).toBe(2);
@@ -232,7 +234,7 @@ describeIfDb("queryOrgEvidence (org evidence roll-up)", () => {
 	});
 
 	it("leaves the untouched env's postures null (honest unknowns)", async () => {
-		const { rows } = await queryOrgEvidence(ORG_ID);
+		const { rows } = await queryOrgEvidence(ORG_ID, [PROJECT_ID]);
 		const env2 = rows.find((r) => r.environmentId === ENV2_ID);
 		expect(env2?.verify).toBeNull();
 		expect(env2?.drift).toBeNull();
@@ -240,7 +242,7 @@ describeIfDb("queryOrgEvidence (org evidence roll-up)", () => {
 	});
 
 	it("computes the summary counters over the org", async () => {
-		const { summary } = await queryOrgEvidence(ORG_ID);
+		const { summary } = await queryOrgEvidence(ORG_ID, [PROJECT_ID]);
 		expect(summary.environments).toBe(2);
 		expect(summary.failing).toBe(1);
 		expect(summary.unverified).toBe(1);
@@ -252,7 +254,7 @@ describeIfDb("queryOrgEvidence (org evidence roll-up)", () => {
 	});
 
 	it("lists the recorded waiver as active", async () => {
-		const { waivers } = await queryOrgEvidence(ORG_ID);
+		const { waivers } = await queryOrgEvidence(ORG_ID, [PROJECT_ID]);
 		const w = waivers.find((x) => x.jobId === WAIVER_JOB_ID);
 		expect(w).toBeDefined();
 		expect(w?.controls).toContain("KEYLESS-001");
@@ -260,5 +262,18 @@ describeIfDb("queryOrgEvidence (org evidence roll-up)", () => {
 		expect(w?.by).toBe("admin@alethia.test");
 		expect(w?.active).toBe(true);
 		expect(w?.environmentName).toBe("prod");
+	});
+
+	it("holds nothing of a project outside the visible set — rows, posture or waiver", async () => {
+		const ev = await queryOrgEvidence(ORG_ID, []);
+		expect(ev.rows).toEqual([]);
+		expect(ev.waivers.map((w) => w.jobId)).not.toContain(WAIVER_JOB_ID);
+		expect(ev.summary.environments).toBe(0);
+	});
+
+	it("reads nothing for a visible project id asked of ANOTHER org (the set is intersected with the org)", async () => {
+		const ev = await queryOrgEvidence(randomUUID(), [PROJECT_ID]);
+		expect(ev.rows).toEqual([]);
+		expect(ev.waivers).toEqual([]);
 	});
 });

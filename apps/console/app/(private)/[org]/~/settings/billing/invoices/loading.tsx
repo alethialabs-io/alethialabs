@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { TableSkeleton } from "@/components/skeletons/page-skeletons";
+import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";
 import { Skeleton } from "@repo/ui/skeleton";
 
 /**
@@ -30,7 +30,7 @@ export default function InvoicesLoading() {
 				<Skeleton className="h-8 w-40 rounded-md" />
 			</div>
 
-			<TableSkeleton rows={8} />
+			<DataTableSkeleton columns={5} rows={8} />
 		</div>
 	);
 }

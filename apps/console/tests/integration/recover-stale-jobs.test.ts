@@ -119,6 +119,8 @@ describeIfDb("recover_stale_jobs — poison cap + progress stall", () => {
 			.insert(projects)
 			.values({
 				user_id: USER,
+				// The jobs below are stamped ORG; a project-bearing job carries its project's org.
+				org_id: ORG,
 				project_name: "recover-test",
 				region: "us-east-1",
 				iac_version: "1.9.5",

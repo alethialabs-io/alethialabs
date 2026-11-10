@@ -27,9 +27,11 @@ import { expect, type Page } from "@playwright/test";
  * "Last 7 days" trigger sits between the `flex-1` search box and the date-range trigger, and the
  * date-range label growing from "Date range" to the formatted window at mount slid it 136 px left,
  * so a click aimed at the painted trigger landed on the bar. The date-range trigger now holds its
- * width from the first paint, and the shell evaluates far less before it can hydrate, so the
- * Activity spec's window test now clicks the moment the trigger is visible. The remaining callers
- * keep this wait; it is still the honest signal for "this bar is live".
+ * width from the first paint. #5849 also made the shell evaluate less before it could hydrate, and
+ * the Activity window test clicked the moment the trigger was visible — until #6114 had the shell
+ * render the layout's seeded data on first paint, which moved hydration later again: the denial
+ * test lost its click on every attempt and now waits here. Do not rely on "visible" for a click on
+ * a streamed page; this wait is the honest signal for "this bar is live".
  *
  * `anchor` is a control in the same bar that the server already renders; waiting for it first is
  * what keeps "no placeholder" from passing on a page that has not painted the bar at all.
