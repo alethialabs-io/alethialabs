@@ -290,6 +290,7 @@ const (
 	ServiceBindingFacetPassword         ServiceBindingFacet = "password"
 	ServiceBindingFacetConnectionString ServiceBindingFacet = "connection_string"
 	ServiceBindingFacetValue            ServiceBindingFacet = "value"
+	ServiceBindingFacetDatabase         ServiceBindingFacet = "database"
 )
 
 // AllServiceBindingFacets is every service_binding_facet value, in schema order.
@@ -300,6 +301,7 @@ var AllServiceBindingFacets = []ServiceBindingFacet{
 	ServiceBindingFacetPassword,
 	ServiceBindingFacetConnectionString,
 	ServiceBindingFacetValue,
+	ServiceBindingFacetDatabase,
 }
 
 // TopicSubscriptionProtocol mirrors the topic_subscription_protocol enum (lib/db/schema/enums.ts).

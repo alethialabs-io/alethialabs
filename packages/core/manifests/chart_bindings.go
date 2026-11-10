@@ -12,7 +12,8 @@ package manifests
 // (resolveBindings + writeBindingExternalSecrets in provisioner/manifests_gen.go).
 //
 // The contract (identical to a service binding, keyless):
-//   - non-secret facet (endpoint/port) → a literal value from the tofu outputs, set at the value-path.
+//   - non-secret facet (endpoint/port/database) → a literal value, set at the value-path: from the
+//     tofu outputs, or for `database` on a per-binding MySQL user, that user's own database.
 //   - credential facet (username/password/connection_string) → an `existingSecret` reference
 //     (BindingSecretName) set at the value-path, PLUS an ExternalSecret that materializes that k8s
 //     Secret keylessly (ESO ClusterSecretStore → secretKeyRef). A plaintext credential NEVER enters
@@ -23,7 +24,8 @@ package manifests
 //     at an `existingSecret` that will not exist).
 //   - with ChartBindingPolicy.DBUsers set, a DATABASE credential facet reads the binding's OWN user's
 //     key in the environment's secret store instead of the administrative one, and is unsatisfied
-//     when that user or key does not exist (docs/adr/byo-binding-db-users.md).
+//     when that user or key does not exist (docs/adr/byo-binding-db-users.md). On MySQL that user
+//     works in a database of its own, which the `database` facet names.
 
 import (
 	"bytes"
@@ -137,7 +139,6 @@ func ByoBindingDBSecretKey(environment, namespace, workload string, t types.Serv
 const (
 	dbUserNotProvisionedReason = "its own database user was not provisioned on this deploy; a BYO binding is never given the administrative credential"
 	dbUserNoSecretReason       = "no secret for its own database user in the environment's secret store; a BYO binding is never given the administrative credential"
-	dbUserMySQLReason          = "a per-binding MySQL user needs a database facet, which bindings do not carry yet; a BYO binding is never given the administrative credential"
 	dbUserFacetReason          = "facet is not available for a per-binding database user"
 	dbUserNoEnvironmentReason  = "the environment has no ID, so its own database user cannot be named; a BYO binding is never given the administrative credential"
 )
@@ -241,9 +242,6 @@ func ResolveChartWorkloadBindings(
 					case string(inj.From) != "username" && string(inj.From) != "password":
 						refuse(knob, dbUserFacetReason)
 						continue
-					case dbEngineForName(dbs, b.Target.Name) == engineMySQL:
-						refuse(knob, dbUserMySQLReason)
-						continue
 					case !policy.DBUsers.Provisioned[user]:
 						refuse(knob, dbUserNotProvisionedReason)
 						continue
@@ -293,6 +291,32 @@ func ResolveChartWorkloadBindings(
 				value = outputs[endpointOutputKey(provider, string(b.Target.Kind))]
 			case "port":
 				value = defaultPort(string(b.Target.Kind), dbEngineForName(dbs, b.Target.Name))
+			case "database":
+				if b.Target.Kind != types.ServiceBindingKindDatabase {
+					break // only a database has a name to give; unsatisfied below
+				}
+				// A per-binding MySQL user works in a database named after it (MySQL has no schema
+				// below a database), so the chart is told that name, once the user exists. Every other
+				// case — the administrative path, a keyless target, a per-binding Postgres user (which
+				// works in its own schema of the environment's database) — uses the environment's
+				// database. The keyless check is the credential branch's, so the two cannot disagree.
+				perBindingMySQL := policy.DBUsers != nil && (!policy.KeylessDBAuth || !KeylessDBTarget(b.Target, dbs)) &&
+					dbEngineForName(dbs, b.Target.Name) == engineMySQL
+				if !perBindingMySQL {
+					value = outputs[databaseNameOutputKey(provider)]
+					break
+				}
+				env := policy.DBUsers.Environment
+				user := ByoBindingDBUser(env, namespace, workloadName, b.Target)
+				switch {
+				case env == "":
+					refuse(knob, dbUserNoEnvironmentReason)
+					continue
+				case !policy.DBUsers.Provisioned[user]:
+					refuse(knob, dbUserNotProvisionedReason)
+					continue
+				}
+				value = user
 			}
 			if value == "" {
 				res.Unsatisfied = append(res.Unsatisfied, knob)
@@ -328,6 +352,21 @@ func ResolveChartWorkloadBindings(
 	}
 	sort.Strings(res.Unsatisfied)
 	return res
+}
+
+// databaseNameOutputKey maps a provider to the tofu output holding the environment's database name —
+// the outputs the bootstrap and BYO users Jobs connect with. "" → no such output, so a `database`
+// facet on the administrative path is unsatisfied rather than guessed.
+func databaseNameOutputKey(provider string) string {
+	switch provider {
+	case string(types.CloudProviderAws):
+		return "rds_database_name"
+	case string(types.CloudProviderGcp):
+		return "cloud_sql_database"
+	case string(types.CloudProviderAzure):
+		return "azure_db_name"
+	}
+	return ""
 }
 
 // ByoDBUserSecretParams is the resolved input for one per-binding-user ExternalSecret.

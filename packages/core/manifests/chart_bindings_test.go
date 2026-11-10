@@ -376,9 +376,10 @@ func TestResolveChartWorkloadBindings_DBUsersUnsatisfied(t *testing.T) {
 		{name: "no environment", mutate: func(u *ByoDBUsers, _ *[]types.ProjectDatabaseConfig, _ *string) { u.Environment = "" }, wantReason: "has no ID"},
 		{name: "user not provisioned", mutate: func(u *ByoDBUsers, _ *[]types.ProjectDatabaseConfig, _ *string) { u.Provisioned = nil }, wantReason: "was not provisioned"},
 		{name: "no secret key", mutate: func(u *ByoDBUsers, _ *[]types.ProjectDatabaseConfig, _ *string) { u.SecretNames = nil }, wantReason: "no secret for its own database user"},
-		{name: "mysql", mutate: func(_ *ByoDBUsers, dbs *[]types.ProjectDatabaseConfig, _ *string) {
+		{name: "mysql, user not provisioned", mutate: func(u *ByoDBUsers, dbs *[]types.ProjectDatabaseConfig, _ *string) {
 			*dbs = []types.ProjectDatabaseConfig{{Name: "orders", EngineFamily: "mysql"}}
-		}, wantReason: "needs a database facet"},
+			u.Provisioned = nil
+		}, wantReason: "was not provisioned"},
 		{name: "no store", mutate: func(_ *ByoDBUsers, _ *[]types.ProjectDatabaseConfig, p *string) { *p = "hetzner" }},
 	}
 	for _, tc := range cases {
@@ -410,6 +411,107 @@ func TestResolveChartWorkloadBindings_DBUsersUnsatisfied(t *testing.T) {
 	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, map[string]string{knob: "db.url"}, outputs, "aws", "apps", nil, ChartBindingPolicy{DBUsers: users})
 	if len(res.DBUserSecrets) != 0 || !strings.Contains(res.UnsatisfiedReasons[knob], "not available for a per-binding database user") {
 		t.Fatalf("connection_string: es=%v reasons=%v", res.DBUserSecrets, res.UnsatisfiedReasons)
+	}
+}
+
+// TestResolveChartWorkloadBindings_DBUsersMySQL: a MySQL target in per-binding mode (#6467) binds like
+// a Postgres one — the binding's own user and key, never the administrative output — and its
+// `database` facet names the user's own database, which is named after the user. Until the user is
+// provisioned, the `database` facet is refused with the credential facets' reason and patches nothing.
+func TestResolveChartWorkloadBindings_DBUsersMySQL(t *testing.T) {
+	mysql := []types.ProjectDatabaseConfig{{Name: "orders", EngineFamily: "mysql"}}
+	binding, valuePaths, outputs, users := dbUserFixture()
+	binding.Inject = append(binding.Inject, types.ServiceBindingInjection{Env: "DB_NAME", From: types.ServiceBindingFacetDatabase})
+	dbKnob := ChartBindingKnob("database", "orders", "database")
+	valuePaths[dbKnob] = "db.name"
+	outputs["rds_database_name"] = "app"
+	user := ByoBindingDBUser("env-1", "apps", "web", binding.Target)
+
+	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "apps", mysql, ChartBindingPolicy{DBUsers: users})
+	if len(res.Unsatisfied) != 0 || len(res.ExternalSecrets) != 0 || len(res.DBUserSecrets) != 1 {
+		t.Fatalf("unsat=%v reasons=%v adminES=%v dbUserES=%v", res.Unsatisfied, res.UnsatisfiedReasons, res.ExternalSecrets, res.DBUserSecrets)
+	}
+	if res.Patches["db.name"] != user {
+		t.Errorf("database facet = %v, want the user's own database %s", res.Patches["db.name"], user)
+	}
+	if p := res.DBUserSecrets[0]; p.User != user || p.RemoteKey != "use1-dev-acme-alethia-byo-db-x" {
+		t.Errorf("params = %#v", p)
+	}
+	if res.Patches["db.port"] != nil {
+		t.Errorf("unexpected port patch %v", res.Patches["db.port"])
+	}
+
+	for name, mutate := range map[string]func(*ByoDBUsers){
+		"not provisioned": func(u *ByoDBUsers) { u.Provisioned = nil },
+		"no environment":  func(u *ByoDBUsers) { u.Environment = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, _, u := dbUserFixture()
+			mutate(u)
+			res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "apps", mysql, ChartBindingPolicy{DBUsers: u})
+			if _, patched := res.Patches["db.name"]; patched {
+				t.Fatalf("an unprovisioned user's database was named: %v", res.Patches)
+			}
+			if !contains(res.Unsatisfied, dbKnob) || res.UnsatisfiedReasons[dbKnob] == "" {
+				t.Fatalf("database facet unsat=%v reasons=%v", res.Unsatisfied, res.UnsatisfiedReasons)
+			}
+			if res.UnsatisfiedReasons[dbKnob] != res.UnsatisfiedReasons[ChartBindingKnob("database", "orders", "password")] {
+				t.Errorf("the database facet's reason %q differs from the credential facets' %q", res.UnsatisfiedReasons[dbKnob], res.UnsatisfiedReasons[ChartBindingKnob("database", "orders", "password")])
+			}
+		})
+	}
+}
+
+// TestResolveChartWorkloadBindings_DatabaseFacet: outside a per-binding MySQL user, the `database`
+// facet is the environment's database, from the output the Jobs connect with; it is a literal, never
+// a Secret; a target that is not a database, or a cloud with no such output, leaves it unsatisfied.
+func TestResolveChartWorkloadBindings_DatabaseFacet(t *testing.T) {
+	iam := true
+	knob := ChartBindingKnob("database", "orders", "database")
+	db := chartDBBinding([2]string{"DB_NAME", "database"})
+	paths := map[string]string{knob: "db.name"}
+	_, _, _, users := dbUserFixture()
+	for _, tc := range []struct {
+		name     string
+		provider string
+		outputs  map[string]string
+		dbs      []types.ProjectDatabaseConfig
+		policy   ChartBindingPolicy
+		want     string // "" → unsatisfied
+	}{
+		{"aws administrative", "aws", map[string]string{"rds_database_name": "app"}, nil, ChartBindingPolicy{}, "app"},
+		{"gcp administrative", "gcp", map[string]string{"cloud_sql_database": "app-gcp"}, nil, ChartBindingPolicy{}, "app-gcp"},
+		{"azure administrative", "azure", map[string]string{"azure_db_name": "app-az"}, nil, ChartBindingPolicy{}, "app-az"},
+		{"mysql administrative", "aws", map[string]string{"rds_database_name": "app"}, []types.ProjectDatabaseConfig{{Name: "orders", EngineFamily: "mysql"}}, ChartBindingPolicy{}, "app"},
+		{"postgres per-binding", "aws", map[string]string{"rds_database_name": "app"}, nil, ChartBindingPolicy{DBUsers: users}, "app"},
+		{"mysql keyless", "aws", map[string]string{"rds_database_name": "app"}, []types.ProjectDatabaseConfig{{Name: "orders", EngineFamily: "mysql", IamAuth: &iam}}, ChartBindingPolicy{KeylessDBAuth: true, DBUsers: users}, "app"},
+		{"no output", "hetzner", map[string]string{"rds_database_name": "app"}, nil, ChartBindingPolicy{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{db}, paths, tc.outputs, tc.provider, "apps", tc.dbs, tc.policy)
+			if len(res.ExternalSecrets) != 0 || len(res.DBUserSecrets) != 0 {
+				t.Fatalf("a database name became a Secret: %v %v", res.ExternalSecrets, res.DBUserSecrets)
+			}
+			if tc.want == "" {
+				if _, patched := res.Patches["db.name"]; patched || !contains(res.Unsatisfied, knob) {
+					t.Fatalf("patches=%v unsat=%v, want unsatisfied", res.Patches, res.Unsatisfied)
+				}
+				return
+			}
+			if res.Patches["db.name"] != tc.want || len(res.Unsatisfied) != 0 {
+				t.Fatalf("patches=%v unsat=%v, want db.name=%s", res.Patches, res.Unsatisfied, tc.want)
+			}
+		})
+	}
+	cache := types.ServiceBinding{Target: types.ServiceBindingTarget{Kind: types.ServiceBindingKindCache, Name: "c"},
+		Inject: []types.ServiceBindingInjection{{Env: "X", From: types.ServiceBindingFacetDatabase}}}
+	cacheKnob := ChartBindingKnob("cache", "c", "database")
+	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{cache}, map[string]string{cacheKnob: "x"}, map[string]string{"rds_database_name": "app"}, "aws", "apps", nil, ChartBindingPolicy{})
+	if !contains(res.Unsatisfied, cacheKnob) || len(res.Patches) != 0 {
+		t.Fatalf("a cache binding was given a database name: %v %v", res.Patches, res.Unsatisfied)
+	}
+	if IsCredentialFacet("database") {
+		t.Error("the database facet is a credential")
 	}
 }
 

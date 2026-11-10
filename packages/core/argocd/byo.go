@@ -34,8 +34,10 @@ import (
 //     cannot readmit them. ArgoCD admits a namespaced kind only when it is whitelisted AND not
 //     blacklisted.
 //
-// This is the AppProject half of the trust boundary; namespace PSA + an admission controller
-// (Kyverno/Gatekeeper) are the pod-level half added before untrusted charts are allowed.
+// This is the AppProject half of the trust boundary. The pod- and object-level half is the BYO
+// namespace's Pod Security Admission labels and the BYO ValidatingAdmissionPolicy (byo_admission.go,
+// #6495): this project decides which kinds a chart may declare, and those decide what an admitted
+// kind may ask for.
 // The AppProject wire shape, MARSHALLED rather than templated (#2540).
 //
 // WHAT THE TEMPLATE DID. It interpolated `{{ . }}` into quoted YAML scalars for BOTH sourceRepos and
@@ -50,8 +52,8 @@ import (
 // absorbs every remaining line of the AppProject. The result is two VALID documents, the second a
 // ClusterRoleBinding to cluster-admin, applied by the runner with the cluster's admin kubeconfig.
 // That is precisely the cluster-scoped power the empty clusterResourceWhitelist below exists to
-// deny an untrusted chart. Not flag-gated: prepareByoCharts runs on every deploy carrying any
-// git-source add-on (provisioner/deploy.go, byo_charts.go).
+// deny an untrusted chart. Not flag-gated: configureByoCharts runs on every deploy carrying any BYO
+// chart (provisioner/deploy.go → runAddOnStage → configureByoCharts in byo_charts.go).
 //
 // TYPED STRUCTS, not map[string]any: field ORDER is preserved (yaml.v3 sorts map keys, which would
 // reshuffle the manifest on every render for no reason), and the shape is checked by the compiler
@@ -237,11 +239,22 @@ var byoSecretSyncDenied = []byoGroupKind{
 // only this chart); and every kind served by a CustomResourceDefinition, because what such
 // an object can make its operator do is that operator's rule, not this project's. To admit another
 // kind, add it here with its reason and a case in TestByoAppProjectAdmitsOnlyWorkloadKinds.
+//
+// DaemonSet STAYS, decided in #6495. The starter repos' contract scripts leave it out, and a chart
+// written from a starter does not need it. It stays because what made it dangerous is host access,
+// and that is Pod Security's to refuse, not this list's: under PSA baseline (byoPodSecurityLabels) a
+// DaemonSet's pod gets no privileged container, host namespace or hostPath volume, so it is an
+// ordinary pod scheduled once per node. Removing it would not be a quiet tightening either: ArgoCD
+// fails the WHOLE sync of an Application that declares a kind its project does not permit, so every
+// attached chart with a DaemonSet would stop syncing on its next deploy, and the DaemonSet already
+// running would be left unmanaged. What is left is capacity (a pod on every node), which a
+// Deployment with a large replica count costs as well, and which this list does not govern for
+// either kind.
 var byoWorkloadKinds = []byoGroupKind{
 	// Workload controllers — the chart's own processes.
 	{Group: "apps", Kind: "Deployment"},  // the usual stateless workload
 	{Group: "apps", Kind: "StatefulSet"}, // a workload with stable identity and its own volumes
-	{Group: "apps", Kind: "DaemonSet"},   // one pod per node, for node-local agents
+	{Group: "apps", Kind: "DaemonSet"},   // one pod per node, for node-local agents — kept, see below
 	{Group: "apps", Kind: "ReplicaSet"},  // what a Deployment manages; a chart may declare one directly
 	{Group: "batch", Kind: "Job"},        // run-to-completion work, including Helm hook jobs
 	{Group: "batch", Kind: "CronJob"},    // scheduled Jobs
@@ -339,11 +352,10 @@ func RenderByoAppProject(name string, sourceRepos, namespaces []string, commonLa
 // cluster's admin kubeconfig, to create the namespace itself before the chart syncs into it. The
 // trust boundary is unchanged: the chart still cannot create one.
 //
-// Pod-level hardening (Pod Security Admission labels + an admission controller) is deliberately NOT
-// applied here. byoAppProject's comment scopes that as the separate pod-level half of the
-// boundary, and inventing a PSA level here would silently change what customer charts are permitted
-// to run — a security posture worth deciding explicitly rather than acquiring as a side effect of a
-// bug fix.
+// The namespace also carries the pod-level half of the boundary: its admission mode and the Pod
+// Security Admission labels that follow from it (byo_admission.go, #6495). The levels were decided
+// there, explicitly, rather than acquired as a side effect of creating the namespace.
+//
 // dns1123Label is Kubernetes' own rule for a Namespace name: lowercase alphanumerics and '-',
 // starting and ending alphanumeric, at most 63 characters. Matched in FULL — an unanchored pattern
 // would accept a valid prefix followed by anything at all, which is the whole attack.
@@ -383,6 +395,46 @@ func validateByoNamespace(ns string) error {
 // chart per chart (provisioner.configureByoCharts) before either renderer sees its namespace.
 func ValidateByoNamespace(ns string) error { return validateByoNamespace(ns) }
 
+// ByoPreviewNamespaceConflict says why a BYO chart may not use namespace ns in a project whose
+// preview environments use previewPrefix, or "" when it may (#6494).
+//
+// THE SAME PREFIX SEMANTICS THE PREVIEW RENDERERS USE. RenderPreviewGuardrails pins both preview
+// AppProjects to `<prefix>-*` on the host (the namespace arm, where each PR lands in
+// `<prefix>-<pr number>`) and to `<prefix>` itself inside each preview vcluster (the vcluster arm).
+// So ns conflicts when it IS the prefix or starts with the prefix followed by "-". It is a namespace
+// boundary, not a substring test: with prefix "pr", "pr-7" and "pr" conflict while "pre-7" and
+// "prod" do not — neither preview project's destination pattern matches them. The bare prefix is a
+// vcluster-arm namespace, not a host one; it is refused on the host as well, so the rule does not
+// depend on the placement mode, which the preview settings can switch without a prefix change.
+//
+// Why it matters: a namespace the preview projects may sync into carries the preview guardrail
+// bundle (default-deny NetworkPolicy, quota, RBAC), and is open to the untrusted PR code the
+// preview-apps project runs. A BYO chart sharing it could change the objects that bundle relies
+// on, and would share its Secrets with preview workloads.
+//
+// previewPrefix is the project's stored prefix, empty when the project has no preview
+// configuration. Unlike validatePreviewNamespacePrefix, empty does NOT mean the renderers' default
+// "preview": a project with no preview configuration has no preview namespaces, and the console
+// emits the stored prefix (never blank when a configuration exists) on the config snapshot.
+//
+// The console refuses a NEW attachment, or a newly chosen namespace, with the mirrored rule
+// (byoPreviewNamespaceMessage in apps/console/lib/validations/byo-charts.ts), and refuses a prefix
+// change that an attached chart would match. The runner only REPORTS a chart stored before this
+// rule (provisioner.configureByoCharts): refusing it would withdraw its binding secrets from
+// running workloads.
+func ByoPreviewNamespaceConflict(ns, previewPrefix string) string {
+	p := strings.TrimSpace(previewPrefix)
+	if p == "" {
+		return ""
+	}
+	if ns != p && !strings.HasPrefix(ns, p+"-") {
+		return ""
+	}
+	return fmt.Sprintf("namespace %q is one of this project's preview namespaces: preview environments use %q and every namespace starting with %q, "+
+		"and carry their own guardrails there. Choose a namespace that is not %q and does not start with %q, or change the project's preview namespace prefix",
+		ns, p, p+"-", p, p+"-")
+}
+
 // byoReservedNamespacesJSON is the ONE list of namespaces a BYO chart may never target (#6439).
 //
 // WHY A BYO CHART MUST NOT SHARE A PLATFORM NAMESPACE. The hardened AppProject denies cluster-scoped
@@ -397,8 +449,9 @@ func ValidateByoNamespace(ns string) error { return validateByoNamespace(ns) }
 // own $comment; the Go pins are the TestByoReserved_* tests in byo_test.go. "default" is reserved
 // (#6446): it holds the platform's first-class workloads, their binding Secrets and service accounts.
 // A chart with no namespace of its own lands in ByoChartNamespace instead. Preview namespaces are not
-// reserved either: their prefix is a per-project setting (project_preview_config.namespace_prefix),
-// not a fixed platform name.
+// on this list: their prefix is a per-project setting (project_preview_config.namespace_prefix), not
+// a fixed platform name, so they are checked against that project's prefix instead
+// (ByoPreviewNamespaceConflict, #6494).
 //
 //go:embed byo_reserved_namespaces.json
 var byoReservedNamespacesJSON []byte
@@ -479,6 +532,11 @@ func byoReservedNamespaceReason(ns string) string {
 // can create them before the charts sync. Returns "" when there are none, which callers treat as
 // "nothing to apply" rather than an error.
 //
+// Each namespace carries its admission mode (ByoAdmissionModeLabel) from modes, and the Pod Security
+// Admission labels that mode implies (byoPodSecurityLabels). A namespace missing from modes is
+// rendered in "warn": the caller decides who refuses (DecideByoAdmissionModes), and an omission must
+// never be what turns refusal on for a chart that is already running.
+//
 // # Why this is marshalled rather than templated (#2540)
 //
 // It used to interpolate the namespace RAW into hand-rolled YAML. Every other label-emitting path in
@@ -498,15 +556,10 @@ func byoReservedNamespaceReason(ns string) string {
 // Validation then refuses that absurd name outright, because a namespace Kubernetes would reject is
 // a deploy that fails later and more confusingly. Either alone would close the hole; the pair also
 // fails in the right direction.
-func RenderByoNamespaces(namespaces []string, commonLabels map[string]string) (string, error) {
+func RenderByoNamespaces(namespaces []string, commonLabels map[string]string, modes map[string]ByoAdmissionMode) (string, error) {
 	ns := dedupeNonEmpty(namespaces)
 	if len(ns) == 0 {
 		return "", nil
-	}
-
-	labels := map[string]string{"alethia.io/managed-by": "byo-charts"}
-	for k, v := range commonLabels {
-		labels[k] = v
 	}
 
 	// Validate EVERY namespace before encoding any: a refusal must render nothing at all, not a
@@ -515,6 +568,26 @@ func RenderByoNamespaces(namespaces []string, commonLabels map[string]string) (s
 	for _, n := range ns {
 		if err := validateByoNamespace(n); err != nil {
 			return "", fmt.Errorf("render byo namespaces: %w", err)
+		}
+		mode := modes[n]
+		if !mode.valid() {
+			mode = ByoAdmissionWarn
+		}
+		// The caller's labels first; the managed-by marker, the mode and the PSA labels LAST, so no
+		// caller-supplied label can change which binding selects the namespace or what PSA enforces.
+		// (No caller passes managed-by today: the classification labels never carry it.)
+		labels := map[string]string{}
+		for k, v := range commonLabels {
+			// A caller's Pod Security label is dropped rather than overwritten: in "warn" no enforce
+			// label is written, so overwriting alone would let one through.
+			if !strings.HasPrefix(k, psaLabelPrefix) {
+				labels[k] = v
+			}
+		}
+		labels[byoNamespaceManagedByLabel] = byoNamespaceManagedByValue
+		labels[ByoAdmissionModeLabel] = string(mode)
+		for k, v := range byoPodSecurityLabels(mode) {
+			labels[k] = v
 		}
 		docs = append(docs, map[string]any{
 			"apiVersion": "v1",

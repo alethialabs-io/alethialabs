@@ -21,7 +21,8 @@ import { signedJob } from "@/lib/db/signed-job";
 import { refuseProjectOfAnotherOrg } from "@/lib/projects/refuse-other-org";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { authorize } from "@/lib/authz/guard";
-import { withActorScope } from "@/lib/db";
+import { type Tx, withActorScope } from "@/lib/db";
+import { lockProjectPreviewNamespaces } from "@/lib/projects/preview-namespace-lock";
 import {
 	type ChartWorkloadKind,
 	type ComponentStatus,
@@ -29,6 +30,7 @@ import {
 	projectAddons,
 	projectChartWorkloads,
 	projectHelmRegistries,
+	projectPreviewConfig,
 } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { parseValuesYaml } from "@/lib/addons/catalog";
@@ -45,6 +47,7 @@ import {
 	byoChartAttachSchema,
 	byoChartAttachSchemaFor,
 	byoChartNamespace,
+	byoPreviewNamespaceMessage,
 	type ByoChartAttachInput,
 } from "@/lib/validations/byo-charts";
 import { chartSlug } from "@/lib/validations/names";
@@ -143,6 +146,10 @@ export async function attachByoChart(
 	const values: AddOnValues = parsed.values ?? {};
 
 	await withActorScope(actor, async (tx) => {
+		// The preview-namespace check and the write share one transaction under the project's lock, so
+		// a concurrent preview-prefix save cannot slip a conflicting prefix in between (#6494).
+		await lockProjectPreviewNamespaces(tx, parsed.projectId);
+		await refusePreviewNamespace(tx, parsed.projectId, namespace, stored?.namespace ?? null);
 		await tx
 			.insert(projectAddons)
 			.values({
@@ -189,6 +196,34 @@ export async function attachByoChart(
 		/* ignore — the chart is attached; the user can re-run the scan from the node */
 	}
 	return { ok: true, id };
+}
+
+/**
+ * Refuses, as a `namespace` field error, a chart namespace that is one of the project's preview
+ * namespaces (#6494, {@link byoPreviewNamespaceMessage}). Checked on the namespace the chart will be
+ * STORED with — a blank field's `byo-<chart id>` included — against the project's stored preview
+ * prefix, which only the server can read. Runs in the write's transaction, under
+ * lockProjectPreviewNamespaces.
+ *
+ * A re-attach that keeps the chart's stored namespace unchanged is not refused, the same exception the
+ * `byo-` rule makes: a chart attached there before this rule keeps deploying (the runner reports it on
+ * the Deploy tab instead), and refusing every edit to it would leave its values unchangeable without
+ * moving it.
+ */
+async function refusePreviewNamespace(
+	tx: Tx,
+	projectId: string,
+	namespace: string,
+	storedNamespace: string | null,
+): Promise<void> {
+	if (storedNamespace !== null && namespace === storedNamespace) return;
+	const [preview] = await tx
+		.select({ namespace_prefix: projectPreviewConfig.namespace_prefix })
+		.from(projectPreviewConfig)
+		.where(eq(projectPreviewConfig.project_id, projectId))
+		.limit(1);
+	const message = byoPreviewNamespaceMessage(namespace, preview?.namespace_prefix);
+	if (message) throw new FieldRefusal({ namespace: [message] }, message);
 }
 
 /** Detaches a BYO chart (deletes its row); the runner prunes it on the next DEPLOY. */

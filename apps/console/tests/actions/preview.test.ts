@@ -31,6 +31,8 @@ function makeTx(opts: {
 }) {
 	const tx: Record<string, unknown> = {};
 	Object.assign(tx, {
+		// The save takes the project's preview-namespace advisory lock (#6494).
+		execute: async () => [],
 		select: () => tx,
 		from: () => tx,
 		where: () => tx,

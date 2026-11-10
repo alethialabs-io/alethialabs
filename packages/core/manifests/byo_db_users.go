@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// This file renders the BYO users Job (docs/adr/byo-binding-db-users.md §3, slice 4 of #6438): the
-// one-shot Job that connects to the environment's Postgres database as its administrator and runs
-// `alethia db-bootstrap --byo-users`, which creates, scopes, rotates and revokes the per-binding users.
+// This file renders the BYO users Job (docs/adr/byo-binding-db-users.md §3, slices 4 and 5 of #6438):
+// the one-shot Job that connects to the environment's Postgres or MySQL database as its administrator
+// and runs `alethia db-bootstrap --byo-users`, which creates, scopes, rotates and revokes the
+// per-binding users.
 //
 // It sits next to RenderBootstrapJob and borrows that Job's admin connection per cloud, its deadline,
 // its TTL and its security context. What differs, and why:
@@ -53,7 +54,8 @@ const (
 	// ByoDBUsersMainContainer is the container whose termination message carries the run's result.
 	ByoDBUsersMainContainer = "apply-sql"
 	// ByoDBUsersResultPath is the main container's terminationMessagePath. psql's \o writes the
-	// result there, and the runner reads it back as the container's termination message.
+	// result there (on MySQL, the shell redirects the client's output to it), and the runner reads it
+	// back as the container's termination message.
 	ByoDBUsersResultPath = "/dev/termination-log"
 	// byoDBUsersNamePrefix starts every object name of a run; ByoDBUsersJobNamePrefix exports it.
 	byoDBUsersNamePrefix = "byo-db-users-"
@@ -78,6 +80,9 @@ type ByoDBUsersUser struct {
 type ByoDBUsersJobParams struct {
 	// Provider is the cloud ("aws" | "gcp" | "azure"); the admin connection is per cloud.
 	Provider string
+	// Engine is the database's engine family: "postgres" (or "") or "mysql". It picks the client
+	// container and db-bootstrap's dialect.
+	Engine string
 	// RunnerImage runs db-bootstrap (and, on Azure, db-token).
 	RunnerImage string
 	// Environment is the environment's ID: the owner label value, and `--env-id`.
@@ -153,10 +158,10 @@ func byoDBUsersLabels(environment string) map[string]string {
 	}
 }
 
-// RenderByoDBUsersJob renders one BYO users run for a Postgres database. It fails closed on a provider
-// with no admin connection here, a missing admin output, a malformed environment, run id, user or
-// remote key, or a user declared twice — so a run that cannot connect, or would hand db-bootstrap a
-// name it refuses, is never applied.
+// RenderByoDBUsersJob renders one BYO users run for a Postgres or MySQL database. It fails closed on an
+// unknown engine, a provider with no admin connection here, a missing admin output, a malformed
+// environment, run id, user or remote key, or a user declared twice — so a run that cannot connect, or
+// would hand db-bootstrap a name it refuses, is never applied.
 func RenderByoDBUsersJob(p ByoDBUsersJobParams) (ByoDBUsersJob, error) {
 	if p.RunnerImage == "" {
 		return ByoDBUsersJob{}, fmt.Errorf("no runner image for the BYO users Job (db-bootstrap)")
@@ -166,6 +171,11 @@ func RenderByoDBUsersJob(p ByoDBUsersJobParams) (ByoDBUsersJob, error) {
 	}
 	if !byoDBUsersRunIDRe.MatchString(p.RunID) {
 		return ByoDBUsersJob{}, fmt.Errorf("BYO users Job: run id %q is not a short lowercase alphanumeric", p.RunID)
+	}
+	switch p.Engine {
+	case "", enginePostgres, engineMySQL:
+	default:
+		return ByoDBUsersJob{}, fmt.Errorf("BYO users Job: engine %q is not supported (want postgres|mysql)", p.Engine)
 	}
 	store := StoreNameFor(p.Provider)
 	if store == "" {
@@ -228,8 +238,16 @@ func RenderByoDBUsersJob(p ByoDBUsersJobParams) (ByoDBUsersJob, error) {
 		"--db", conn.dbName,
 		// One argument, so an empty declared set is still an explicit `--users=` (omitting it is refused).
 		"--users=" + strings.Join(userArgs, ","),
-		"--result-path", ByoDBUsersResultPath,
-		"--out", bootstrapSQLFile,
+	}
+	if p.Engine == engineMySQL {
+		// Two scripts: the sweep is applied with --force, so it is a file of its own, and only when
+		// revocation runs. The client's output, not a path, carries the result.
+		args = append(args, "--engine", engineMySQL, "--out", bootstrapSQLFile)
+		if !p.SkipRevoke {
+			args = append(args, "--sweep-out", byoDBUsersSweepFile)
+		}
+	} else {
+		args = append(args, "--result-path", ByoDBUsersResultPath, "--out", bootstrapSQLFile)
 	}
 	if p.SkipRevoke {
 		args = append(args, "--skip-revoke")
@@ -355,6 +373,11 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 			{"secretKey": "password", "remoteRef": map[string]any{"key": remote, "property": "password"}},
 		})
 		c.admin = ByoDBUsersObject{Resource: byoDBUsersESResource, Name: name, YAML: doc}
+		if p.Engine == engineMySQL {
+			c.main, c.volumes = byoDBUsersMySQLMain(host, c.dbName, p.SkipRevoke,
+				[]any{secretEnv("BYO_DB_ADMIN_USER", name, "username"), secretEnv("MYSQL_PWD", name, "password")}, false)
+			break
+		}
 		envs := append(pgEnv(host, c.dbName), secretEnv("PGUSER", name, "username"), secretEnv("PGPASSWORD", name, "password"))
 		c.main = map[string]any{
 			"name":         ByoDBUsersMainContainer,
@@ -404,6 +427,12 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 			"args":         []string{"db-token", "--provider", "azure", "--once", "--out", bootstrapTokenFile},
 			"volumeMounts": []any{map[string]any{"name": "admin-token", "mountPath": bootstrapTokenDir}},
 		}}
+		if p.Engine == engineMySQL {
+			// The ossrdbms-aad token is the same for both engines; MySQL's Entra login sends it as the
+			// password through the cleartext plugin, over TLS (bootstrap_job.go mysqlContainer).
+			c.main, c.volumes = byoDBUsersMySQLMain(host, c.dbName, p.SkipRevoke, []any{plainEnv("BYO_DB_ADMIN_USER", adminUser)}, true)
+			break
+		}
 		c.main = map[string]any{
 			"name":  ByoDBUsersMainContainer,
 			"image": postgresClientImage,
@@ -421,6 +450,79 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 		return c, fmt.Errorf("the BYO users Job is not supported for provider %q", p.Provider)
 	}
 	return c, nil
+}
+
+// byoDBUsersSweepFile is the MySQL sweep script, next to the provision script (bootstrapSQLFile).
+const byoDBUsersSweepFile = bootstrapSQLDir + "/sweep.sql"
+
+// byoDBUsersMySQLResultDir holds the sweep's output until it is known to be a whole result.
+const byoDBUsersMySQLResultDir = "/byo-result"
+
+// byoDBUsersMySQLScript is the MySQL main container's shell script. It applies the provision script
+// WITHOUT --force, so the first error stops the run, and sends the client's output — the result, the
+// only rows that script selects — to the termination message; set -e then fails the container on any
+// error before the result. Unless revocation is skipped, it applies the sweep WITH --force, so a
+// candidate that cannot be dropped does not stop the others (the client reports each error), into a
+// file of its own; that file replaces the termination message only when it starts with the result
+// header, and anything else fails the container. The admin password is MYSQL_PWD, which the client
+// reads natively, so it is never in argv.
+func byoDBUsersMySQLScript(skipRevoke, fromToken bool) string {
+	client := `mysql --user="$BYO_DB_ADMIN_USER" --ssl-mode=REQUIRED`
+	if fromToken {
+		client += " --enable-cleartext-plugin"
+	}
+	client += " -N -B"
+	lines := []string{"set -eu"}
+	if fromToken {
+		lines = append(lines, `MYSQL_PWD="$(cat `+bootstrapTokenFile+`)"`, "export MYSQL_PWD")
+	}
+	lines = append(lines, client+` "$BYO_DB_NAME" < `+bootstrapSQLFile+` > `+ByoDBUsersResultPath)
+	if !skipRevoke {
+		result := byoDBUsersMySQLResultDir + "/result"
+		lines = append(lines,
+			`if ! `+client+` --force "$BYO_DB_NAME" < `+byoDBUsersSweepFile+` > `+result+`; then`,
+			`  echo "alethia byo-users: the sweep reported errors above; a user it could not drop stays locked and is listed as revocation-pending" >&2`,
+			`fi`,
+			`first=""`,
+			`IFS= read -r first < `+result+` || true`,
+			`case "$first" in`,
+			`  "alethia-byo-users v1 count="*) ;;`,
+			`  *) echo "alethia byo-users: the sweep wrote no result" >&2; exit 1 ;;`,
+			`esac`,
+			`cat `+result+` > `+ByoDBUsersResultPath,
+		)
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// byoDBUsersMySQLMain is the MySQL main container and the run's volumes: the mysql client image, the
+// connection as env values, TLS always required, and the admin credential in adminEnv (and, with
+// fromToken, the Entra token's volume).
+func byoDBUsersMySQLMain(host, db string, skipRevoke bool, adminEnv []any, fromToken bool) (map[string]any, []any) {
+	env := append([]any{
+		plainEnv("MYSQL_HOST", host),
+		plainEnv("MYSQL_TCP_PORT", "3306"),
+		plainEnv("BYO_DB_NAME", db),
+	}, adminEnv...)
+	mounts := []any{
+		map[string]any{"name": "sql", "mountPath": bootstrapSQLDir, "readOnly": true},
+		map[string]any{"name": "byo-result", "mountPath": byoDBUsersMySQLResultDir},
+	}
+	volumes := []any{
+		map[string]any{"name": "sql", "emptyDir": map[string]any{}},
+		map[string]any{"name": "byo-result", "emptyDir": map[string]any{"medium": "Memory"}},
+	}
+	if fromToken {
+		mounts = append(mounts, map[string]any{"name": "admin-token", "mountPath": bootstrapTokenDir, "readOnly": true})
+		volumes = append(volumes, map[string]any{"name": "admin-token", "emptyDir": map[string]any{"medium": "Memory"}})
+	}
+	return map[string]any{
+		"name":         ByoDBUsersMainContainer,
+		"image":        mysqlClientImage,
+		"command":      []string{"/bin/sh", "-c", byoDBUsersMySQLScript(skipRevoke, fromToken)},
+		"env":          env,
+		"volumeMounts": mounts,
+	}, volumes
 }
 
 // byoDBUsersExternalSecret renders one credential ExternalSecret of a run. The Secret it materialises
