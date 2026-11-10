@@ -16,7 +16,12 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ADDON_CATALOG } from "@/lib/addons/catalog";
-import { byoChartAttachSchema, byoChartFormSchema } from "@/lib/validations/byo-charts";
+import { HETZNER_SERVICE_NAMESPACES } from "@/lib/cloud-providers/hetzner-services";
+import {
+	byoChartAttachSchema,
+	byoChartAttachSchemaFor,
+	byoChartFormSchema,
+} from "@/lib/validations/byo-charts";
 import {
 	BYO_RESERVED_NAMESPACES,
 	byoReservedNamespaceMessage,
@@ -37,9 +42,17 @@ function runnerList() {
 		.object({
 			$comment: z.string(),
 			groups: z.array(
-				z.object({ id: z.string(), reason: z.string(), namespaces: z.array(z.string()) }).strict(),
+				z
+					.object({
+						id: z.string(),
+						reason: z.string(),
+						namespaces: z.array(z.string()),
+						byoAttached: z.literal("warn").optional(),
+					})
+					.strict(),
 			),
 			prefixes: z.array(z.object({ prefix: z.string(), reason: z.string() }).strict()),
+			placementPrefixes: z.array(z.object({ prefix: z.string(), reason: z.string() }).strict()),
 		})
 		.strict()
 		.parse(raw);
@@ -79,7 +92,16 @@ function attachValue(namespace: string) {
 describe("BYO reserved namespaces — one list, two readers", () => {
 	it("the console mirror deep-equals the runner's byo_reserved_namespaces.json", () => {
 		const runner = runnerList();
-		expect(BYO_RESERVED_NAMESPACES).toEqual({ groups: runner.groups, prefixes: runner.prefixes });
+		expect(BYO_RESERVED_NAMESPACES).toEqual({
+			groups: runner.groups,
+			prefixes: runner.prefixes,
+			placementPrefixes: runner.placementPrefixes,
+		});
+	});
+
+	it("the data-services group is exactly the Hetzner data-service namespaces (#6551)", () => {
+		expect(HETZNER_SERVICE_NAMESPACES.length).toBeGreaterThan(0);
+		expect([...group("platformDataServices")].sort()).toEqual([...new Set(HETZNER_SERVICE_NAMESPACES)].sort());
 	});
 
 	it("the marketplace group is exactly the namespaces ADDON_CATALOG installs into", () => {
@@ -185,5 +207,24 @@ describe("the BYO chart schemas", () => {
 				chartPath: "charts/api",
 			}).success,
 		).toBe(true);
+	});
+});
+
+describe("the names #6551 newly reserved (byoAttached: warn)", () => {
+	const NEW = ["caches", "cnpg-system", "databases", "nosql", "scylla-operator", "topics", "fluent-bit"];
+
+	it("are refused for a BYO chart at attach and at update, even with the stored namespace unchanged", () => {
+		for (const ns of NEW) {
+			expect(byoChartAttachSchema.safeParse(attachValue(ns)).success).toBe(false);
+			expect(byoChartAttachSchemaFor(ns).safeParse(attachValue(ns)).success).toBe(false);
+			expect(byoChartFormSchema.safeParse(formValue(ns)).success).toBe(false);
+		}
+	});
+
+	it("are on exactly the two groups #6551 added", () => {
+		expect(BYO_RESERVED_NAMESPACES.groups.filter((g) => g.byoAttached === "warn").map((g) => g.id)).toEqual([
+			"platformDataServices",
+			"platformCloudIdentities",
+		]);
 	});
 });

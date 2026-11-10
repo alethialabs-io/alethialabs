@@ -56,6 +56,10 @@ func placementDestroySnapshot(mode string) map[string]any {
 	snap["placement_mode"] = mode
 	snap["namespace"] = "boutique-staging"
 	snap["cluster"] = map[string]any{"cluster_name": "alethia-nl-1"}
+	if mode == "namespace" {
+		// The console sends the host's namespaces for a namespace placement (#6551); none here.
+		snap["placement_host_namespaces"] = []any{}
+	}
 	return snap
 }
 

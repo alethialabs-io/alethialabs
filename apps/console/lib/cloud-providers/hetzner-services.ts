@@ -34,7 +34,10 @@ const HCLOUD_STORAGE_CLASS = "hcloud-volumes";
  *  values this repo rendered. Every volume we ask for is clamped here instead. */
 const HCLOUD_MIN_VOLUME_GB = 10;
 
-/** Shared namespaces per service category (auto-created by ArgoCD `CreateNamespace=true`). */
+/** Shared namespaces per service category (auto-created by ArgoCD `CreateNamespace=true`).
+ *  Exported as {@link HETZNER_SERVICE_NAMESPACES}: every value is a platform namespace that holds
+ *  service credentials, so the reserved-namespace list's `platformDataServices` group is pinned to it
+ *  by equality (tests/lib/validations/byo-reserved-namespaces.test.ts, #6551). */
 const NS = {
 	postgres: "databases",
 	cache: "caches",
@@ -46,6 +49,9 @@ const NS = {
 	operators: "cnpg-system",
 	scyllaOperators: "scylla-operator",
 } as const;
+
+/** The Hetzner data-service namespaces, for the reserved-namespace list's equality pin (#6551). */
+export const HETZNER_SERVICE_NAMESPACES: readonly string[] = Object.values(NS);
 
 /**
  * Pinned chart coordinates per in-cluster service. Versions resolve against the live Helm

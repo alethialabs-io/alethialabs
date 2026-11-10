@@ -97,6 +97,9 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	for _, o := range byo.PreviewOverlaps {
 		out.Warnings = append(out.Warnings, o.warning())
 	}
+	for _, o := range byo.NewlyReserved {
+		out.Warnings = append(out.Warnings, o.warning())
+	}
 	for _, a := range byo.Admission {
 		out.Warnings = append(out.Warnings, a.warning())
 	}

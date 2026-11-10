@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
 	RUNNER_CAPABILITY_ADDON_BYO_MARKER,
+	RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES,
 	RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX,
 	ociByoAddOnIds,
 	parseRunnerCapabilities,
@@ -84,6 +85,28 @@ describe("snapshotForRunner — preview_namespace_prefix (#6494)", () => {
 
 	it("matches the runner's capability name exactly", () => {
 		expect(RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX).toBe("preview-namespace-prefix");
+	});
+});
+
+describe("snapshotForRunner — placement_host_namespaces (#6551)", () => {
+	it("strips the key for a runner without the capability: the snapshot an old runner decodes", () => {
+		for (const header of [null, "", `${RUNNER_CAPABILITY_ADDON_BYO_MARKER},${RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX}`]) {
+			expect(snapshotForRunner(fixture("with-placement-host-namespaces.json"), parseRunnerCapabilities(header))).toEqual(
+				fixture("without-placement-host-namespaces.json"),
+			);
+		}
+	});
+
+	it("serves it to a runner with the capability unchanged — an EMPTY list included", () => {
+		const capable = parseRunnerCapabilities(RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES);
+		const snapshot = fixture("with-placement-host-namespaces.json");
+		expect(snapshotForRunner(snapshot, capable)).toBe(snapshot);
+		const empty = { ...fixture("without-placement-host-namespaces.json"), placement_host_namespaces: [] };
+		expect(snapshotForRunner(empty, capable)).toEqual(empty);
+	});
+
+	it("matches the runner's capability name exactly", () => {
+		expect(RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES).toBe("placement-host-namespaces");
 	});
 });
 

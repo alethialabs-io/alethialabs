@@ -24,5 +24,11 @@ const RunnerCapabilityAddonByoMarker = "addon-byo-marker"
 // (provisioner.byoPreviewOverlap): an older runner deploys exactly as it did, minus that warning.
 const RunnerCapabilityPreviewNamespacePrefix = "preview-namespace-prefix"
 
+// RunnerCapabilityPlacementHostNamespaces: the runner reads ProjectConfig.PlacementHostNamespaces (the
+// top-level `placement_host_namespaces`, #6551). Without it the console serves no such key. A runner
+// that reads it REFUSES a namespace deploy whose snapshot lacks it; an older runner never checked a
+// placement namespace against the host, so stripping leaves it deploying exactly as it did.
+const RunnerCapabilityPlacementHostNamespaces = "placement-host-namespaces"
+
 // RunnerSnapshotCapabilities is every capability this build advertises.
-var RunnerSnapshotCapabilities = []string{RunnerCapabilityAddonByoMarker, RunnerCapabilityPreviewNamespacePrefix}
+var RunnerSnapshotCapabilities = []string{RunnerCapabilityAddonByoMarker, RunnerCapabilityPreviewNamespacePrefix, RunnerCapabilityPlacementHostNamespaces}
