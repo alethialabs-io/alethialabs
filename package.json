@@ -97,6 +97,7 @@
     "env:runner": "bash scripts/env.sh runner",
     "env:reap": "bash scripts/env.sh reap",
     "env:timer": "bash scripts/env.sh timer",
+    "spend:status": "bash .claude/hooks/guard-spend.sh --status",
     "wt": "bash scripts/worktree.sh",
     "wt:ls": "git worktree list",
     "wt:prune": "bash scripts/worktree.sh --prune",

@@ -188,6 +188,53 @@ If you genuinely need a local runtime, `export ALETHIA_LOCAL_DEV=1` **before lau
 `claude`** — an inline `VAR=1 pnpm dev:up` prefix cannot work, because the guard is a
 PreToolUse hook spawned before the command runs.
 
+## Spend: what the box and the e2e runs cost you
+
+`.claude/hooks/guard-spend.sh` charges every priced action to `~/.alethia/spend-ledger.jsonl`
+before it runs, against **EUR 30 per rolling 7 days** shared by every instance on this machine:
+`pnpm env:box` is EUR 1, an `e2e-nightly.yml` floor dispatch EUR 0.50 plus EUR 15 per heavy input
+per provider, `e2e-ai-nightly.yml` EUR 0.10, and `gh run rerun` the price of the jobs it reruns.
+`pnpm spend:status` prints the window and what is left. A charge is taken even when the command
+then never runs, and a ledger that cannot be read or written refuses the charge.
+`env:up`/`push`/`logs`/`status`/`down`/`reap` are free. `env:box` is refused while the reap
+LaunchAgent is missing (`pnpm env:timer` installs it), and `pnpm env:timer off` is refused outright.
+
+## Recovering from a destructive command
+
+`.claude/hooks/guard-destroy.sh` snapshots a work tree before `git reset --hard`, `git clean`,
+`git checkout`/`git restore` of paths, `git switch --discard-changes`, `git rm -f`,
+`git worktree remove --force`, or an `rm` inside a work tree. It pins the entries
+`git stash drop`/`clear` would drop and the tips `git branch -D` would drop. Each lands under
+`refs/safety/<worktree-name>/<UTC timestamp>[-stash-N|-branch-name]` in the SHARED repository, so
+it survives the worktree being deleted. **Tracked changes are always captured**, whatever their path.
+Untracked files are captured within a budget of 5000 files / 50 MB per snapshot. New files in
+tracked directories go first, smallest first. Then each wholly-untracked directory gets an equal
+share of what is left, so one big directory cannot crowd out a small real file. Anything over
+budget is left out, and a one-line note names every group that was. **Ignored files** (`.env`,
+build output) and untracked dependency caches (`.pnpm-store`, `node_modules`, `.yarn/cache`, `.npm`,
+`.venv`, `.terraform`, `.gradle`) are never captured. Run these from any checkout:
+
+```
+git for-each-ref --sort=-refname refs/safety/          # what is there
+git show --stat <ref>                                  # what one snapshot holds
+git diff <ref>^ <ref>                                  # exactly what it saved, against HEAD then
+git restore --source=<ref> --worktree -- <path>…       # put files back into the current tree
+git checkout <ref> -- <path>…                          # the same, and stage them
+# a whole removed worktree: a tree on the snapshot's PARENT, then the snapshot's files onto it
+git worktree add ../wt-recovered <ref>^
+git -C ../wt-recovered restore --source=<ref> --worktree -- .
+git stash store -m recovered <ref>                     # a …-stash-N pin only
+git branch <name> <ref>                                # a …-branch-<name> pin only
+```
+
+**Restore a tree snapshot as FILES, never as a commit.** Do not check a snapshot out as a branch,
+and do not use it as a worktree base: its commit carries every untracked file it captured
+(`.bak` settings, local documents), and this repository is public. `.githooks/pre-push` and
+`guard-destroy.sh` both refuse to push a commit written by the snapshot identity. A `-stash-N` or
+`-branch-<name>` pin is the original commit, not a snapshot, so the last two lines are safe.
+
+`session-cleanup.sh` deletes snapshots older than 30 days.
+
 ## Reference
 
 - `infra/sandbox/README.md` — the box, sizing, cost, and why it is x86 rather than ARM
