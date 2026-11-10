@@ -987,6 +987,14 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chartRepo: "https://kubernetes.github.io/ingress-nginx",
 		chart: "ingress-nginx",
 		version: "4.15.1",
+		// #6537. Chart 4.11.2, the previous catalogue version, ships controller v1.11.2, which is
+		// below v1.11.5, the first release fixing the March 2025 advisories. Pinned and GitOps
+		// installs are not moved by a bump, so this marker is what tells them loudly.
+		securityRelease: {
+			summary:
+				"Controller v1.15.1 includes the fixes for CVE-2025-1974 (\"IngressNightmare\": remote code execution through the admission webhook) and CVE-2025-1097, CVE-2025-1098, CVE-2025-24513 and CVE-2025-24514. Controllers before v1.11.5, and v1.12.0, are affected.",
+			advisoryUrl: "https://kubernetes.io/blog/2025/03/24/ingress-nginx-cve-2025-1974/",
+		},
 		namespace: "ingress-nginx",
 		configSchema: z.object({
 			/** Controller replicas (raise for HA). */

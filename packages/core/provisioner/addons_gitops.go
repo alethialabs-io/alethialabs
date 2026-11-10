@@ -9,7 +9,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	"golang.org/x/mod/semver"
+	"gopkg.in/yaml.v3"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/git"
@@ -27,9 +31,15 @@ const addonsRepoDir = "addons"
 // gitops add-ons and nothing of ours to prune. commonLabels are the classification/sweep labels
 // stamped onto each seeded Application (BYOC B1.4) — the app-of-apps syncs these into the cluster
 // as ArgoCD Applications, so they must carry the same sweep handles as their managed-mode twins.
-func writeAddOnGitOps(ctx context.Context, vc *types.ProjectConfig, token string, commonLabels map[string]string, stdout, stderr io.Writer) error {
+//
+// It also READS each already-seeded manifest and returns a Deploy-tab warning for every add-on whose
+// file installs an older chart than the one this deploy would seed (#6537). It never rewrites the
+// file to fix that: seed-once is the guarantee that a customer's edits are theirs, and a version is
+// an edit like any other. The warnings are returned even when the commit or push fails, because the
+// clone that produced them succeeded.
+func writeAddOnGitOps(ctx context.Context, vc *types.ProjectConfig, token string, commonLabels map[string]string, stdout, stderr io.Writer) ([]string, error) {
 	if vc.Repositories.AppsDestinationRepo == "" || token == "" {
-		return nil
+		return nil, nil
 	}
 
 	// Desired gitops add-ons, keyed by catalog id.
@@ -42,33 +52,39 @@ func writeAddOnGitOps(ctx context.Context, vc *types.ProjectConfig, token string
 
 	dir, err := os.MkdirTemp("", "alethia-addons-*")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer os.RemoveAll(dir)
 
 	repo := git.NewGITWithToken(vc.Repositories.AppsDestinationRepo, dir, false, token)
 	if err := repo.Clone(ctx, "", false); err != nil {
-		return fmt.Errorf("clone apps repo: %w", err)
+		return nil, fmt.Errorf("clone apps repo: %w", err)
 	}
 
 	addonsPath := filepath.Join(dir, addonsRepoDir)
 	if err := os.MkdirAll(addonsPath, 0755); err != nil {
-		return err
+		return nil, err
 	}
 
-	// Seed-once: write a manifest only when the file is absent.
+	// Seed-once: write a manifest only when the file is absent. A file that IS present is read for
+	// its chart version, and only read.
+	var warnings []string
 	seeded := 0
-	for id, a := range desired {
+	for _, id := range sortedAddOnIDs(desired) {
+		a := desired[id]
 		file := filepath.Join(addonsPath, id+".yaml")
-		if _, statErr := os.Stat(file); statErr == nil {
+		if body, readErr := os.ReadFile(file); readErr == nil {
+			if w := gitopsAddOnDriftWarning(id, body, a); w != "" {
+				warnings = append(warnings, w)
+			}
 			continue // already present — respect customer edits
 		}
 		manifest, renderErr := renderSeedManifest(a, commonLabels)
 		if renderErr != nil {
-			return fmt.Errorf("render gitops add-on %s: %w", id, renderErr)
+			return warnings, fmt.Errorf("render gitops add-on %s: %w", id, renderErr)
 		}
 		if err := os.WriteFile(file, []byte(manifest), 0644); err != nil {
-			return err
+			return warnings, err
 		}
 		seeded++
 	}
@@ -78,16 +94,82 @@ func writeAddOnGitOps(ctx context.Context, vc *types.ProjectConfig, token string
 	pruned := pruneOrphanAddOnManifests(addonsPath, desired, stdout, stderr)
 
 	if seeded == 0 && pruned == 0 {
-		return nil // nothing changed — no commit
+		return warnings, nil // nothing changed — no commit
 	}
 	if err := repo.AddAndCommit("chore: sync marketplace add-ons (alethia)"); err != nil {
-		return fmt.Errorf("commit add-on manifests: %w", err)
+		return warnings, fmt.Errorf("commit add-on manifests: %w", err)
 	}
 	if err := repo.Push(ctx); err != nil {
-		return fmt.Errorf("push add-on manifests: %w", err)
+		return warnings, fmt.Errorf("push add-on manifests: %w", err)
 	}
 	fmt.Fprintf(stdout, "Synced GitOps add-ons: %d seeded, %d pruned.\n", seeded, pruned)
-	return nil
+	return warnings, nil
+}
+
+// sortedAddOnIDs returns the map's ids in order, so the Deploy-tab warnings read the same on every
+// deploy rather than in Go's randomised map order.
+func sortedAddOnIDs(m map[string]types.AddOnInstall) []string {
+	ids := make([]string, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// seededAddOnApplication is the part of an `addons/<id>.yaml` the drift check reads.
+type seededAddOnApplication struct {
+	Kind string `yaml:"kind"`
+	Spec struct {
+		Source struct {
+			Chart          string `yaml:"chart"`
+			TargetRevision string `yaml:"targetRevision"`
+		} `yaml:"source"`
+	} `yaml:"spec"`
+}
+
+// gitopsAddOnDriftWarning returns the Deploy-tab warning for an already-present GitOps add-on
+// manifest whose chart version is OLDER than the one this deploy would seed (`a.Version`: the
+// catalogue's version, or the user's pin), or "" when there is nothing to say (#6537).
+//
+// It says nothing unless it is sure, because a warning that cries wolf on every deploy is one the
+// customer learns to skip. So "" for a file that does not parse, is not an ArgoCD Application, has
+// no single `spec.source` (a multi-source Application is the customer's own design), installs a
+// DIFFERENT chart (they replaced ours), or carries a version that is not SemVer (a range such as
+// `4.*` is theirs to choose). And "" for a version at or above the desired one: a customer ahead
+// of the catalogue is not drift worth a warning.
+func gitopsAddOnDriftWarning(id string, body []byte, a types.AddOnInstall) string {
+	var app seededAddOnApplication
+	if err := yaml.Unmarshal(body, &app); err != nil {
+		return ""
+	}
+	src := app.Spec.Source
+	if app.Kind != "Application" || src.Chart == "" || src.Chart != a.Chart {
+		return ""
+	}
+	seeded, desired := canonicalSemver(src.TargetRevision), canonicalSemver(a.Version)
+	if seeded == "" || desired == "" || semver.Compare(seeded, desired) >= 0 {
+		return ""
+	}
+	return fmt.Sprintf("GitOps add-on %s: %s/%s.yaml in your apps repo installs chart %s %s, and Alethia would seed %s "+
+		"today. Alethia does not rewrite a file it has already seeded, so this add-on stays on %s until you set "+
+		"spec.source.targetRevision in that file to %s. The add-on's card in the console says whether %s is a security release.",
+		id, addonsRepoDir, id, src.Chart, src.TargetRevision, a.Version, src.TargetRevision, a.Version, a.Version)
+}
+
+// canonicalSemver returns v in the "vMAJOR.MINOR.PATCH" form golang.org/x/mod/semver compares, or
+// "" when it is not a full SemVer version. Chart versions are written without the `v`; a few chart
+// repositories tag with it, and both spell the same version.
+func canonicalSemver(v string) string {
+	v = strings.TrimSpace(v)
+	if !strings.HasPrefix(v, "v") {
+		v = "v" + v
+	}
+	// semver.IsValid accepts the shorthand "v1" and "v1.2"; a chart version is always all three parts.
+	if !semver.IsValid(v) || semver.Canonical(v) != strings.SplitN(v, "+", 2)[0] {
+		return ""
+	}
+	return v
 }
 
 // renderSeedManifest renders a gitops-mode add-on Application and stamps the classification/sweep

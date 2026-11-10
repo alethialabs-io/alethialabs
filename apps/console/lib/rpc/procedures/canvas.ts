@@ -747,6 +747,7 @@ export async function readProjectAddons(
 			license: def.license,
 			chart: def.chart,
 			version: def.version,
+			securityRelease: def.securityRelease ?? null,
 			namespace: def.namespace,
 			requires: def.requires ?? [],
 			fields: def.fields,
