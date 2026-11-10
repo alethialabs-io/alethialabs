@@ -190,6 +190,7 @@ func TestRenderedBootstrapJobPassesVerify(t *testing.T) {
 	}
 	gcpOutputs := map[string]string{
 		"cloud_sql_ip":                 "10.0.0.5",
+		"cloud_sql_server_ca_cert":     testGCPServerCA,
 		"cloud_sql_database":           "orders-prod",
 		"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
 		"cloud_sql_credentials_secret": "orders-prod-sql-credentials",

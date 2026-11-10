@@ -33,6 +33,18 @@ output "cloud_sql_ip" {
   value       = try(module.cloud_sql[0].instance_ip, null) != null ? module.cloud_sql[0].instance_ip : null
 }
 
+# The bootstrap Jobs' trust anchor for the Cloud SQL server (#6521), read into a ConfigMap the Job
+# mounts — no run-time download. See modules/cloud-sql/outputs.tf for why the mode is exported too.
+output "cloud_sql_server_ca_cert" {
+  description = "PEM of the Cloud SQL instance's server CA certificate — what the database bootstrap Jobs verify the server against (#6521)"
+  value       = try(module.cloud_sql[0].server_ca_cert, null) != null ? module.cloud_sql[0].server_ca_cert : null
+}
+
+output "cloud_sql_server_ca_mode" {
+  description = "The Cloud SQL instance's server CA mode; the database bootstrap Jobs connect only to GOOGLE_MANAGED_INTERNAL_CA (#6521)"
+  value       = try(module.cloud_sql[0].server_ca_mode, null) != null ? module.cloud_sql[0].server_ca_mode : null
+}
+
 output "cloud_sql_database" {
   description = "Name of the Cloud SQL database"
   value       = try(module.cloud_sql[0].database_name, null) != null ? module.cloud_sql[0].database_name : null
