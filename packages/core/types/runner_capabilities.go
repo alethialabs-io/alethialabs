@@ -18,5 +18,11 @@ const RunnerCapabilitiesHeader = "X-Runner-Capabilities"
 // it the console serves no `byo` key, and an OCI BYO chart is handled as it was before the marker.
 const RunnerCapabilityAddonByoMarker = "addon-byo-marker"
 
+// RunnerCapabilityPreviewNamespacePrefix: the runner reads ProjectConfig.PreviewNamespacePrefix (the
+// top-level `preview_namespace_prefix`, #6494). Without it the console serves no such key. Stripping
+// is safe because the key only feeds a Deploy-tab warning about a BYO chart in a preview namespace
+// (provisioner.byoPreviewOverlap): an older runner deploys exactly as it did, minus that warning.
+const RunnerCapabilityPreviewNamespacePrefix = "preview-namespace-prefix"
+
 // RunnerSnapshotCapabilities is every capability this build advertises.
-var RunnerSnapshotCapabilities = []string{RunnerCapabilityAddonByoMarker}
+var RunnerSnapshotCapabilities = []string{RunnerCapabilityAddonByoMarker, RunnerCapabilityPreviewNamespacePrefix}

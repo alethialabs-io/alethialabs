@@ -49,7 +49,7 @@ describe("setByPath", () => {
 });
 
 describe("isCredentialFacet", () => {
-	it("marks username/password/connection_string/value secret; endpoint/port not", () => {
+	it("marks username/password/connection_string/value secret; endpoint/port/database not", () => {
 		expect(isCredentialFacet("password")).toBe(true);
 		expect(isCredentialFacet("username")).toBe(true);
 		expect(isCredentialFacet("connection_string")).toBe(true);
@@ -57,6 +57,8 @@ describe("isCredentialFacet", () => {
 		expect(isCredentialFacet("value")).toBe(true);
 		expect(isCredentialFacet("endpoint")).toBe(false);
 		expect(isCredentialFacet("port")).toBe(false);
+		// database — the name of the database to use, templated like endpoint/port (#6467).
+		expect(isCredentialFacet("database")).toBe(false);
 	});
 });
 

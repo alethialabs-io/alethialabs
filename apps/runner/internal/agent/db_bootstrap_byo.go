@@ -22,8 +22,9 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 )
 
-// `alethia db-bootstrap --byo-users` renders the Postgres SQL for per-binding BYO database users
-// (docs/adr/byo-binding-db-users.md §3, §5; slice 3 of #6438). It is pure: it reads the declared users
+// `alethia db-bootstrap --byo-users` renders the SQL for per-binding BYO database users
+// (docs/adr/byo-binding-db-users.md §3, §5; slice 3 of #6438). This file is the Postgres dialect and the
+// command; db_bootstrap_byo_mysql.go is the MySQL dialect (--engine mysql, slice 5). It is pure: it reads the declared users
 // from its arguments and their passwords from its environment, and writes SQL. The BYO users Job
 // (slice 4) applies that SQL as the database administrator with `psql -X -v ON_ERROR_STOP=1 -f <file>`
 // — NOT --single-transaction: the script carries its own transactions, in three phases (ADR §3),
@@ -552,13 +553,14 @@ func isByoUsersInvocation(args []string) bool {
 func runDBBootstrapByoUsers(_ context.Context, args []string, getenv func(string) (string, bool)) error {
 	fs := flag.NewFlagSet("db-bootstrap --byo-users", flag.ContinueOnError)
 	fs.Bool("byo-users", false, "render the per-binding BYO users script")
-	engine := fs.String("engine", enginePostgres, "database engine (postgres only; MySQL is a later slice)")
+	engine := fs.String("engine", enginePostgres, "database engine (postgres|mysql)")
 	fs.String("provider", "", "cloud provider (accepted for symmetry; the script is the same on every cloud)")
 	envID := fs.String("env-id", "", "this environment's ID — the tag every per-binding user carries")
 	dbName := fs.String("db", "", "the environment's database")
 	usersFlag := fs.String("users", "", "comma-separated declared per-binding users (required; may be empty)")
 	resultPath := fs.String("result-path", "/dev/termination-log", "file the provisioned set is written to")
-	out := fs.String("out", "", "write the SQL to this file, 0600 (required: the SQL is never printed)")
+	out := fs.String("out", "", "write the SQL to this file, 0600 (required: the SQL is never printed); on mysql, the provision script")
+	sweepOut := fs.String("sweep-out", "", "mysql only: write the sweep script to this file, 0600 (required unless --skip-revoke)")
 	skipRevoke := fs.Bool("skip-revoke", false, "provision only, revoke nothing (the declared set is incomplete)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -568,8 +570,19 @@ func runDBBootstrapByoUsers(_ context.Context, args []string, getenv func(string
 	if *out == "" {
 		return errors.New("db-bootstrap --byo-users: --out is required (the script is never written to stdout)")
 	}
-	if *engine != enginePostgres && *engine != "" {
-		return fmt.Errorf("db-bootstrap --byo-users: engine %q is not supported (postgres only)", *engine)
+	switch *engine {
+	case enginePostgres, "", engineMySQL:
+	default:
+		return fmt.Errorf("db-bootstrap --byo-users: engine %q is not supported (want postgres|mysql)", *engine)
+	}
+	if *engine == engineMySQL {
+		// The sweep is a script of its own on MySQL (applied with --force), so it needs a file of its
+		// own; with --skip-revoke there is no sweep, and a path given anyway would be left stale.
+		if *skipRevoke != (*sweepOut == "") {
+			return errors.New("db-bootstrap --byo-users: --engine mysql needs --sweep-out exactly when revocation runs (not with --skip-revoke)")
+		}
+	} else if *sweepOut != "" {
+		return errors.New("db-bootstrap --byo-users: --sweep-out is for --engine mysql only")
 	}
 	usersGiven := false
 	fs.Visit(func(f *flag.Flag) {
@@ -595,13 +608,27 @@ func runDBBootstrapByoUsers(_ context.Context, args []string, getenv func(string
 		}
 		users = append(users, byoUser{Name: name, Password: pw})
 	}
-	sql, err := renderByoUsersSQL(byoUsersInput{
+	in := byoUsersInput{
 		SkipRevoke:    *skipRevoke,
 		EnvironmentID: *envID,
 		DBName:        *dbName,
 		Users:         users,
 		ResultPath:    *resultPath,
-	})
+	}
+	if *engine == engineMySQL {
+		scripts, err := renderByoUsersMySQL(in)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(*out, []byte(scripts.Provision), 0o600); err != nil {
+			return err
+		}
+		if scripts.Sweep == "" {
+			return nil
+		}
+		return os.WriteFile(*sweepOut, []byte(scripts.Sweep), 0o600)
+	}
+	sql, err := renderByoUsersSQL(in)
 	if err != nil {
 		return err
 	}

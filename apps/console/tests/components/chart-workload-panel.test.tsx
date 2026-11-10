@@ -30,6 +30,7 @@ vi.mock("sonner", () => ({ toast }));
 
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
+import type { ServiceBinding } from "@/components/design-project/canvas/inspector/bindings-field";
 import { ChartWorkloadPanel } from "@/components/design-project/canvas/inspector/chart-workload-panel";
 import { ByoChartCanvasProvider } from "@/components/design-project/byo/byo-chart-canvas-context";
 
@@ -47,7 +48,7 @@ function inBoard(): (props: { children: ReactNode }) => ReactNode {
 }
 
 /** A described-workload node seeded straight into the store (as the loader would build it). */
-function workloadNode(): CanvasNode {
+function workloadNode(bindings: ServiceBinding[] = []): CanvasNode {
 	return {
 		id: "cw-w1",
 		type: "chart_workload",
@@ -66,7 +67,7 @@ function workloadNode(): CanvasNode {
 					env_keys: ["LOG_LEVEL", "DB_URL"],
 					replicas: 3,
 				},
-				bindings: [],
+				bindings,
 				config: {},
 				valuePaths: {},
 			},
@@ -105,6 +106,14 @@ describe("ChartWorkloadPanel", () => {
 		// The reused W3 binding editor's add affordance.
 		expect(screen.getByText("Bind a resource")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /save overlay/i })).toBeInTheDocument();
+	});
+
+	it("offers the `database` facet, which only the chart lane resolves (#6467)", () => {
+		useCanvasStore.setState({
+			nodes: [workloadNode([{ target: { kind: "database", name: "orders" }, inject: [{ env: "DB_NAME", from: "database" }] }])],
+		});
+		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: queryWrapper() });
+		expect(screen.getByText("database name")).toBeInTheDocument();
 	});
 
 	it("returns nothing for an unknown node id", () => {

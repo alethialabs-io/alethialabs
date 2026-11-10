@@ -251,7 +251,7 @@ export const MATRIX: Matrix = {
 			"ingress-nginx": {
 				"k8s_min": "1.21",
 				"k8s_max": "",
-				"note": "Chart kubeVersion '>=1.21.0-0' (ingress-nginx@4.11.2); derived by derive-compat.mjs."
+				"note": "Chart kubeVersion '>=1.21.0-0' (ingress-nginx@4.15.1); derived by derive-compat.mjs."
 			},
 			"velero": {
 				"k8s_min": "1.16",

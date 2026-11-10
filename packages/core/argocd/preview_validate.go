@@ -152,6 +152,12 @@ func validatePreviewNamespacePrefix(what, prefix string) error {
 	if !dns1123Label.MatchString(p) {
 		return fmt.Errorf("%s: namespace prefix %q is not a valid DNS-1123 label (lowercase alphanumerics and '-', starting and ending alphanumeric)", what, p)
 	}
+	// "byo", or anything starting with "byo-", would make BYO charts' own namespaces (byo-<chart id>,
+	// ByoChartNamespace) preview namespaces (#6494): every chart attached with a blank namespace would
+	// then conflict with the previews. The console's previewConfigSchema refuses the same prefixes.
+	if p+"-" == byoProjectPrefix || strings.HasPrefix(p, byoProjectPrefix) {
+		return fmt.Errorf("%s: namespace prefix %q is reserved: every BYO chart's own namespace starts with %q", what, p, byoProjectPrefix)
+	}
 	return nil
 }
 

@@ -110,6 +110,10 @@ export const serviceBindingFacet = pgEnum("service_binding_facet", [
 	// value — the single opaque value of a `secret`-kind binding (a project secret resolved from a
 	// pluggable SaaS store — Vault/Doppler/generic — via ESO). Credential (secretKeyRef), not templated.
 	"value",
+	// database — the NAME of the database a `database`-kind binding should use. Non-secret, templated
+	// like endpoint/port. A per-binding MySQL user works in a database of its own, so the chart has to
+	// be told its name (docs/adr/byo-binding-db-users.md §3, #6467).
+	"database",
 ]);
 
 // Delivery protocol of a topic subscription (topic.subscriptions JSONB / topic_subscriptions table).

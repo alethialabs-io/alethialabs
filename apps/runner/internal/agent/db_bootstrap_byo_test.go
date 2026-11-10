@@ -332,7 +332,7 @@ func TestByoUsers_Refusals(t *testing.T) {
 }
 
 // TestByoUsers_CLIRefusals: the entry point refuses a missing declared set, a missing password, a bad
-// name before reading any password, and an engine other than Postgres.
+// name before reading any password, and MySQL without its sweep file (TestByoUsersMySQL_CLIEngineFlags).
 func TestByoUsers_CLIRefusals(t *testing.T) {
 	env := mapEnv(map[string]string{byoPasswordEnv(byoTestUser): byoTestPassword})
 	path := filepath.Join(t.TempDir(), "byo.sql")
@@ -342,7 +342,7 @@ func TestByoUsers_CLIRefusals(t *testing.T) {
 		"no --users":      base,
 		"no password env": append(append([]string{}, base...), "--users", "alethia_byo_ffffffffffff"),
 		"bad name":        append(append([]string{}, base...), "--users", "alethia_app"),
-		"mysql":           append(append([]string{}, base...), "--users", byoTestUser, "--engine", "mysql"),
+		"mysql, no sweep": append(append([]string{}, base...), "--users", byoTestUser, "--engine", "mysql"),
 		"unknown flag":    append(append([]string{}, base...), "--users", byoTestUser, "--password", "x"),
 	} {
 		if err := runDBBootstrapByoUsers(context.Background(), args, env); err == nil {

@@ -117,6 +117,30 @@ export function byoNamespacePrefixMessage(
 	return `Namespaces starting with “${BYO_CHART_NAMESPACE_PREFIX}” are reserved for the namespace each chart gets by default. Leave it blank to use this chart's, or choose one of your own.`;
 }
 
+/**
+ * Why a BYO chart may not use `namespace` in a project whose preview environments use
+ * `previewPrefix`, or `null` when it may (#6494). Kept equal to the Go rule in
+ * packages/core/argocd/byo.go (ByoPreviewNamespaceConflict) by one shared case table, described below.
+ * The Go test pins that rule to the namespaces the preview AppProjects admit:
+ * the prefix itself (the vcluster arm) and every namespace starting with the prefix and `-` (the
+ * namespace arm, `<prefix>-<pr number>`). A namespace boundary, not a substring test: with prefix
+ * `pr`, `pr-7` conflicts and `pre-7` does not. The two are held together by one table of cases:
+ * tests/lib/validations/byo-charts-preview-namespace.test.ts READS `byoPreviewCases` out of
+ * packages/core/argocd/byo_test.go and runs this function over it.
+ *
+ * `previewPrefix` is the project's STORED prefix, `null` when it has no preview configuration — and so
+ * no preview namespaces. It is not the preview form's `preview` default.
+ */
+export function byoPreviewNamespaceMessage(
+	namespace: string,
+	previewPrefix: string | null | undefined,
+): string | null {
+	const prefix = previewPrefix?.trim();
+	if (!prefix) return null;
+	if (namespace !== prefix && !namespace.startsWith(`${prefix}-`)) return null;
+	return `“${namespace}” is one of this project's preview namespaces: preview environments use “${prefix}” and every namespace starting with “${prefix}-”, with their own guardrails. Choose a namespace that does not start with “${prefix}-”, leave it blank for the chart's own, or change the project's preview namespace prefix.`;
+}
+
 export const CHART_SOURCES = ["git", "oci"] as const;
 export type ChartSource = (typeof CHART_SOURCES)[number];
 

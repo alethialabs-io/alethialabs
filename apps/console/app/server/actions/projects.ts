@@ -67,6 +67,7 @@ import {
 	projectNetwork,
 	projectNosqlTables,
 	projectObservability,
+	projectPreviewConfig,
 	projectQueues,
 	projectRepositories,
 	projectSourceRepos,
@@ -1780,6 +1781,15 @@ async function buildConfigSnapshot(
 			project.webhook_ca_consumers,
 		);
 
+		// #6494: the project's preview namespace prefix, so the runner can report a BYO chart stored
+		// in one of its preview namespaces (argocd.ByoPreviewNamespaceConflict). Read whether or not
+		// previews are enabled — the prefix is what the attach and preview-save checks hold to.
+		const [previewConfig] = await tx
+			.select({ namespace_prefix: projectPreviewConfig.namespace_prefix })
+			.from(projectPreviewConfig)
+			.where(eq(projectPreviewConfig.project_id, projectId))
+			.limit(1);
+
 		const configSnapshot = {
 			// An EXPLICIT PICK of the `projects` row, never `...project` (#1962). A DB-row spread
 			// puts every column of the table onto this HMAC-signed snapshot, so the next migration
@@ -2055,6 +2065,12 @@ async function buildConfigSnapshot(
 			// fidelity fixtures) are unchanged.
 			...(webhookCaConsumers.length > 0
 				? { webhook_ca_consumers: webhookCaConsumers }
+				: {}),
+			// #6494: emitted ONLY when the project has a preview configuration — mirroring the Go
+			// `omitempty`, and absent meaning "no preview namespaces" there — so a project without one
+			// freezes the same snapshot bytes (and the T2 fidelity fixtures) as before.
+			...(previewConfig?.namespace_prefix
+				? { preview_namespace_prefix: previewConfig.namespace_prefix }
 				: {}),
 			// Config-time compatibility report (#1218) — non-blocking; the UI surfaces
 			// its warnings (cluster inspector / add-on config sheet #1221, canvas chip #1222).
