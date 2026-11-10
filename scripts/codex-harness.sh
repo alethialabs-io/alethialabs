@@ -12,6 +12,7 @@ doctor() {
 	local required path
 	for required in .codex/config.toml .codex/hooks.json .codex/rules/default.rules .codex/README.md \
 		.agents/skills/README.md \
+		.claude/hooks/guard-spend.sh .claude/hooks/guard-destroy.sh .claude/hooks/lib/cmdline.sh \
 		.codex/hooks/common.sh .codex/hooks/pre-tool-use.sh .codex/hooks/guard-git-flow.sh \
 		.codex/hooks/pre-apply-patch.sh \
 		.codex/hooks/post-apply-patch.sh .codex/hooks/session-start.sh; do
@@ -58,7 +59,7 @@ expect_hook() {
 
 self_test() {
 	local guard
-	for guard in guard-worktree.sh guard-compose.sh guard-runtime.sh guard-merge.sh guard-iac.sh; do
+	for guard in guard-worktree.sh guard-compose.sh guard-runtime.sh guard-merge.sh guard-iac.sh guard-spend.sh guard-destroy.sh; do
 		bash "$ROOT/.claude/hooks/$guard" --self-test
 	done
 	bash "$ROOT/scripts/lib/wt-lease.sh" --self-test
@@ -68,6 +69,10 @@ self_test() {
 	expect_hook deny "pnpm db:reset"
 	expect_hook deny "tofu -chdir=infra/cp-aws apply"
 	expect_hook deny "git push origin main"
+	expect_hook deny "gh repo delete alethialabs-io/app --yes"
+	expect_hook deny "gh -R alethialabs-io/app release delete v1 --yes"
+	expect_hook deny "gh workflow run deploy-console.yml"
+	expect_hook deny "hcloud server create --name x"
 	echo "✓ Codex hook adapter self-tests passed"
 }
 

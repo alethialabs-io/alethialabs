@@ -2452,7 +2452,7 @@ jobs:
       - name: The playwright-install retry retries a fetch and refuses a real failure
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/ci/playwright-install.sh --self-test
-      - name: Guards self-test (runtime · compose · merge)
+      - name: Guards self-test (runtime · compose · merge · iac · worktree · spend · destroy)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           bash .claude/hooks/guard-runtime.sh --self-test
@@ -2465,10 +2465,23 @@ jobs:
           # work; two had been shipped for weeks. It builds a real main checkout and a real linked
           # worktree in a tmpdir, so it stays hermetic.
           bash .claude/hooks/guard-worktree.sh --self-test
+          # The spend ledger and the deletion guard (#harness 2026-11-06). Each self-test exercises every
+          # refusal and every allow; the deletion guard's snapshot path runs for real in a temp repo.
+          bash .claude/hooks/guard-spend.sh --self-test
+          bash .claude/hooks/guard-destroy.sh --self-test
+          # Mutation tests: every rule's call sites are disabled in turn, and so is every statement a
+          # `# @mut` marker names (one site of a rule, a cap, the shared gh-flag parser), and the
+          # self-test must FAIL for each. The list is derived from the files, so a rule or marker
+          # added without a failing case fails here. ~4–5 min together, most of it the snapshot
+          # fixtures (5000+ and 20000+ files, a 60 MB file) that the cap and fairness mutants reach.
+          bash .claude/hooks/guard-spend.sh --mutation-test
+          bash .claude/hooks/guard-destroy.sh --mutation-test
+          bash .claude/hooks/guard-merge.sh --mutation-test
+          bash .claude/hooks/session-cleanup.sh --self-test
       - name: Hook scripts parse
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          for f in .claude/hooks/*.sh scripts/env.sh scripts/dev-doctor.sh scripts/box/*.sh; do
+          for f in .claude/hooks/*.sh .claude/hooks/lib/*.sh scripts/env.sh scripts/dev-doctor.sh scripts/box/*.sh; do
             bash -n "$f"
           done
       # The box scripts' own decision matrices — the seed/empty/restart table and the edition

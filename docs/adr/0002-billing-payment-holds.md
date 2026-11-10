@@ -2515,6 +2515,7 @@ whatever this column says.
     an X whose setup is already closed: the link runs the closer, which answers `closed`, and does
     not refuse on it. If the board labels it
     `class:ui`, it opens as a draft and stays one (CLAUDE.md §4).
+    *(Superseded 2026-11-06: the `class:ui` draft gate was dropped; such a PR now opens non-draft.)*
     - scope: `apps/console/components/org/pending-paid-setup.ts apps/console/components/org/create-org-sheet.tsx apps/console/tests/components/org/**`
     - Blocked by: S9. Migration: no. Security review: no.
 10b. **S10b: The lookup reports an ended setup, and the sheet stops on it (§5.6 "The lookup reports

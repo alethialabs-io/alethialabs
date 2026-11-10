@@ -105,6 +105,13 @@ receives merges from `staging`.
 
 ### Promoting `staging → main` — the checklist
 
+**Agents run promotions when they are green** (maintainer ruling, 2026-11-06). The merge is
+`gh pr merge <n> --merge --match-head-commit <head sha>`, and `.claude/hooks/guard-merge.sh` admits it
+only for a `dev → staging` or `staging → main` PR whose `gh pr checks` shows nothing failed or
+pending and whose every `Release gate (<leg>)` from `.github/workflows/release-gate.yml` passed,
+for exactly that head. It refuses `--squash`, `--rebase`, `--auto`, `--admin`, `--delete-branch`
+and a command holding more than one merge. The checklist below is what "green" means.
+
 **Before the merge.**
 
 1. **Mark the promotion PR ready.** Nothing above `dev` is measured while it is a draft.

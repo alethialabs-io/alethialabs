@@ -2,6 +2,9 @@
 
 # Dependencies
 node_modules
+# pnpm's content-addressed store when it lands inside a checkout (1.7 GB in the main checkout once,
+# untracked and NOT ignored, which made every destructive-command snapshot hash it).
+.pnpm-store/
 .pnp
 .pnp.js
 
