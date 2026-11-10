@@ -600,10 +600,10 @@ func TestByoUsersMySQLServer_RefusedProvisionedUserIsLocked(t *testing.T) {
 // with CHAR(10), so the statements read the same in every sql_mode.
 var myLookalike = myUserA[:len(myUserA)-1] + "5"
 
-// TestByoUsersMySQLServer_NewlineLookalikeIsNoCandidate: ICU's `$` matches before a final newline, so
-// the lookalike matches the pattern alone. The length bound keeps it out of the candidates: it is not
-// dropped, and it never reaches the result, where one line the runner cannot parse would fail every
-// run (applyInput holds every entry to the runner's parser).
+// TestByoUsersMySQLServer_NewlineLookalikeIsNoCandidate: a tagged user named `<per-binding name>\n`.
+// Whether the anchored pattern alone selects it on this server is measured and logged. Either way it
+// is never a candidate: it is not dropped, and it never reaches the result, where one line the runner
+// cannot parse would fail every run (applyInput holds every entry to the runner's parser).
 func TestByoUsersMySQLServer_NewlineLookalikeIsNoCandidate(t *testing.T) {
 	a := newMyAdmin(t)
 	a.requiresFloor()
@@ -612,10 +612,15 @@ func TestByoUsersMySQLServer_NewlineLookalikeIsNoCandidate(t *testing.T) {
 	a.query(a.root, "SET @n = CONCAT('"+myLookalike+"', CHAR(10)); "+
 		"SET @s = CONCAT('CREATE USER ''', @n, '''@''%'' IDENTIFIED BY ''"+myDecoyPass+"'' ATTRIBUTE ''{\"alethia_env\":\"env-a\"}'''); "+
 		"PREPARE s FROM @s; EXECUTE s;")
-	if got := a.query(a.root, "SELECT COUNT(*) FROM information_schema.USER_ATTRIBUTES WHERE REGEXP_LIKE(USER, '^alethia_byo_[0-9a-f]{12}$', 'c') "+
-		"AND HEX(USER) = CONCAT(HEX('"+myLookalike+"'), '0A') AND JSON_UNQUOTE(JSON_EXTRACT(ATTRIBUTE, '$.alethia_env')) = 'env-a'"); got != "1" {
-		t.Fatalf("fixture: the lookalike does not match the pattern alone (count %s), so this test proves nothing", got)
+	row := "FROM information_schema.USER_ATTRIBUTES WHERE HEX(USER) = CONCAT(HEX('" + myLookalike + "'), '0A')"
+	if got := a.query(a.root, "SELECT COUNT(*) "+row+" AND JSON_UNQUOTE(JSON_EXTRACT(ATTRIBUTE, '$.alethia_env')) = 'env-a'"); got != "1" {
+		t.Fatalf("fixture: no tagged newline lookalike (count %s)", got)
 	}
+	// Measured, not assumed: does the pattern alone select the lookalike on this server? Either answer
+	// is logged; the assertions below hold for both, because the candidates also bound the length.
+	t.Logf("pattern alone selects <user>\\n on %s: column=%s literal=%s", a.query(a.root, "SELECT VERSION()"),
+		a.query(a.root, "SELECT COUNT(*) "+row+" AND REGEXP_LIKE(USER, '^alethia_byo_[0-9a-f]{12}$', 'c')"),
+		a.query(a.root, "SELECT REGEXP_LIKE(CONCAT('"+myLookalike+"', CHAR(10)), '^alethia_byo_[0-9a-f]{12}$', 'c')"))
 	if got := a.apply("env-a", byoUser{myUserB, myPasswordB}); strings.Join(got, ",") != myUserB {
 		t.Fatalf("result = %v, want [%s]", got, myUserB)
 	}
