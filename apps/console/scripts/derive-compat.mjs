@@ -223,7 +223,7 @@ async function deriveAddOns(addons) {
 
 /** Classify each add-on's derived window against what the matrix records. */
 export function diffAddOns(matrix, derived) {
-	const report = { drift: [], uncovered: [], overclaim: [], matched: [], skipped: [] };
+	const report = { drift: [], uncovered: [], overclaim: [], stale: [], matched: [], skipped: [] };
 	for (const d of derived) {
 		const cur = matrix.addon_k8s[d.id] || { k8s_min: "", k8s_max: "" };
 		const curEmpty = !cur.k8s_min && !cur.k8s_max;
@@ -235,7 +235,16 @@ export function diffAddOns(matrix, derived) {
 		} else if (curEmpty) {
 			report.uncovered.push({ ...d });
 		} else if (cur.k8s_min === d.window.k8s_min && cur.k8s_max === d.window.k8s_max) {
-			report.matched.push({ id: d.id, kind: "match" });
+			// The window still matches, but a note THIS tool wrote names the chart release it was read
+			// from. After a pin bump that keeps the same kubeVersion the window is right and the note is
+			// wrong — it cites a release nobody ships. Only our own provenance is refreshed; a note a
+			// person wrote (no trailing marker) is theirs and is left alone.
+			const note = typeof cur.note === "string" ? cur.note : "";
+			if (note.endsWith(PROVENANCE_MARKER) && note !== provenanceNote(d)) {
+				report.stale.push({ ...d, current: cur });
+			} else {
+				report.matched.push({ id: d.id, kind: "match" });
+			}
 		} else {
 			report.drift.push({ ...d, current: cur });
 		}
@@ -420,7 +429,12 @@ function crossCheckComponents(matrix) {
 function hasFindings(rep) {
 	const a = rep.addons;
 	return Boolean(
-		a.drift.length || a.uncovered.length || a.overclaim.length || rep.clouds.unsupported.length || rep.components.length,
+		a.drift.length ||
+			a.uncovered.length ||
+			a.overclaim.length ||
+			a.stale.length ||
+			rep.clouds.unsupported.length ||
+			rep.components.length,
 	);
 }
 
@@ -429,7 +443,7 @@ function printReport(rep) {
 	const a = rep.addons;
 	console.log("\nAdd-on Kubernetes windows (from Helm chart kubeVersion):");
 	console.log(
-		`  matched ${a.matched.length} · uncovered ${a.uncovered.length} · drift ${a.drift.length} · overclaim ${a.overclaim.length} · skipped ${a.skipped.length}`,
+		`  matched ${a.matched.length} · uncovered ${a.uncovered.length} · drift ${a.drift.length} · overclaim ${a.overclaim.length} · stale ${a.stale.length} · skipped ${a.skipped.length}`,
 	);
 	for (const u of a.uncovered)
 		console.log(`  ○ uncovered  ${u.id} → ${fmtW(u.window)}  (${u.chart}@${u.version} kubeVersion '${u.constraint}')`);
@@ -439,6 +453,8 @@ function printReport(rep) {
 		);
 	for (const o of a.overclaim)
 		console.log(`  ! overclaim  ${o.id}: matrix ${fmtW(o.current)} but chart declares no kubeVersion`);
+	for (const t of a.stale)
+		console.log(`  ○ stale note ${t.id}: window ${fmtW(t.window)} still matches; note cites an older release than ${t.chart}@${t.version}`);
 	for (const s of a.skipped) console.log(`  · skipped    ${s.id}: ${s.reason}`);
 
 	console.log("\nCloud Kubernetes versions (curated set validated against what the cloud offers):");
@@ -457,9 +473,12 @@ function printReport(rep) {
 	}
 }
 
+/** The suffix every note this tool writes ends with — how a derived note is told from a hand-written one. */
+const PROVENANCE_MARKER = "derived by derive-compat.mjs.";
+
 /** Provenance note recorded on a filled add-on window. */
 function provenanceNote(d) {
-	return `Chart kubeVersion '${d.constraint}' (${d.chart}@${d.version}); derived by derive-compat.mjs.`;
+	return `Chart kubeVersion '${d.constraint}' (${d.chart}@${d.version}); ${PROVENANCE_MARKER}`;
 }
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -474,7 +493,7 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function writeMatrix(rep) {
 	let text = readFileSync(MATRIX_PATH, "utf8");
 	let changed = 0;
-	for (const d of [...rep.addons.uncovered, ...rep.addons.drift]) {
+	for (const d of [...rep.addons.uncovered, ...rep.addons.drift, ...rep.addons.stale]) {
 		const entry =
 			`"${d.id}": { "k8s_min": ${JSON.stringify(d.window.k8s_min)}, ` +
 			`"k8s_max": ${JSON.stringify(d.window.k8s_max)}, "note": ${JSON.stringify(provenanceNote(d))} }`;
@@ -556,6 +575,11 @@ function renderIssue(rep) {
 	if (a.overclaim.length) {
 		lines.push("### Over-claim — matrix records a window the chart no longer declares", "");
 		for (const o of a.overclaim) lines.push(`- \`${o.id}\`: matrix ${fmtW(o.current)}`);
+		lines.push("");
+	}
+	if (a.stale.length) {
+		lines.push("### Stale provenance — window still matches, note cites a release no longer pinned", "");
+		for (const t of a.stale) lines.push(`- \`${t.id}\`: now ${t.chart}@${t.version} \`${t.constraint}\``);
 		lines.push("");
 	}
 	if (rep.clouds.unsupported.length) {
@@ -641,6 +665,9 @@ function selfTest() {
 			c: { k8s_min: "1.20", k8s_max: "" },
 			f: { k8s_min: "", k8s_max: "" },
 			g: { k8s_min: "1.20", k8s_max: "1.30" },
+			h: { k8s_min: "1.21", k8s_max: "", note: "Chart kubeVersion '>=1.21' (h@1); derived by derive-compat.mjs." },
+			i: { k8s_min: "1.21", k8s_max: "", note: "Chart kubeVersion '>=1.21' (i@1); derived by derive-compat.mjs." },
+			j: { k8s_min: "1.21", k8s_max: "", note: "Pinned by hand after #1234." },
 		},
 		k8s_cloud: {},
 		components: [],
@@ -651,10 +678,14 @@ function selfTest() {
 		{ id: "c", chart: "c", version: "1", status: "declared", window: { k8s_min: "1.21", k8s_max: "" }, constraint: ">=1.21" },
 		{ id: "f", chart: "f", version: "1", status: "no_kubeversion" },
 		{ id: "g", chart: "g", version: "1", status: "no_kubeversion" },
+		{ id: "h", chart: "h", version: "2", status: "declared", window: { k8s_min: "1.21", k8s_max: "" }, constraint: ">=1.21" },
+		{ id: "i", chart: "i", version: "1", status: "declared", window: { k8s_min: "1.21", k8s_max: "" }, constraint: ">=1.21" },
+		{ id: "j", chart: "j", version: "2", status: "declared", window: { k8s_min: "1.21", k8s_max: "" }, constraint: ">=1.21" },
 	];
 	const d = diffAddOns(matrix, derived);
 	eq(d.uncovered.map((x) => x.id), ["a"], "differ: empty + declared → uncovered");
-	eq(d.matched.filter((x) => x.kind === "match").map((x) => x.id), ["b"], "differ: equal window → matched");
+	eq(d.matched.filter((x) => x.kind === "match").map((x) => x.id), ["b", "i", "j"], "differ: equal window → matched");
+	eq(d.stale.map((x) => x.id), ["h"], "differ: equal window, derived note cites an older release → stale");
 	eq(d.drift.map((x) => x.id), ["c"], "differ: differing window → drift");
 	eq(d.matched.filter((x) => x.kind === "both-empty").map((x) => x.id), ["f"], "differ: empty + no kubeVersion → both-empty");
 	eq(d.overclaim.map((x) => x.id), ["g"], "differ: recorded window + no kubeVersion → over-claim");
@@ -689,7 +720,7 @@ async function main() {
 	printReport(rep);
 
 	if (MODE_WRITE) {
-		const pending = rep.addons.uncovered.length + rep.addons.drift.length;
+		const pending = rep.addons.uncovered.length + rep.addons.drift.length + rep.addons.stale.length;
 		if (pending === 0) {
 			console.log("\nNo windows to write — matrix already matches upstream.");
 		} else if (DRY_RUN) {
