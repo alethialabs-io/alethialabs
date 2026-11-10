@@ -4,6 +4,7 @@
 package argocd
 
 import (
+	"errors"
 	"os"
 	"sort"
 	"strings"
@@ -95,6 +96,13 @@ type InfraFacts struct {
 	NodeIAMRoleName        string
 	NodeSecurityGroup      string
 	KarpenterQueueName     string
+	// KarpenterRoleArn is the Karpenter controller's IRSA role (root output `karpenter_sa_role`,
+	// an IAM role ARN; null unless enable_karpenter is on AND the role exists). karpenter.yaml
+	// annotates the chart's `karpenter/karpenter` ServiceAccount with it — the trust policy in
+	// infra/templates/project/aws/irsa.tf names exactly that subject. Without it the controller
+	// has no AWS identity at all, so RenderApplications refuses an enabled Karpenter that lacks it
+	// (ErrKarpenterRoleMissing) rather than installing a controller that cannot launch a node.
+	KarpenterRoleArn string
 
 	// ── GCP (Workload Identity) ─────────────────────────────────
 	GCPProjectID     string
@@ -427,6 +435,25 @@ func (f *InfraFacts) CertManagerEnabled() bool {
 	return f.CertManagerIssuerEnabled() || f.CertManagerWebhookCARequired()
 }
 
+// ErrKarpenterRoleMissing is the named refusal for an enabled Karpenter with no IRSA role: the
+// `karpenter_sa_role` output was null or absent. Rendering the Application anyway would install a
+// controller with no AWS identity, which can neither launch nor terminate a node nor read its
+// interruption queue (#6559) — so the render fails instead, and the deploy reports it.
+var ErrKarpenterRoleMissing = errors.New("refusing to render Karpenter: enable_karpenter is on but the " +
+	"karpenter_sa_role output is empty, so the controller would have no IRSA role " +
+	"(eks.amazonaws.com/role-arn) and could not launch nodes — re-apply the project so the role output exists")
+
+// KarpenterServiceAccountRoleArn returns the role ARN karpenter.yaml annotates the controller's
+// ServiceAccount with, or ErrKarpenterRoleMissing when there is none. It is called from INSIDE the
+// template's own `if and (eq .Provider "aws") .EnableKarpenter` block, so the refusal and the
+// install gate are one condition and cannot drift: text/template aborts the render on the error.
+func (f *InfraFacts) KarpenterServiceAccountRoleArn() (string, error) {
+	if strings.TrimSpace(f.KarpenterRoleArn) == "" {
+		return "", ErrKarpenterRoleMissing
+	}
+	return f.KarpenterRoleArn, nil
+}
+
 // BuildFromOutputs assembles InfraFacts from the tofu outputs for the config's cloud.
 // Common facts come from the ProjectConfig; the cloud-specific cluster + workload-identity
 // outputs are extracted per provider. Every cloud gets an explicit case — an unknown
@@ -545,6 +572,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.NodeIAMRoleName = ExtractOutput(outputs, "node_iam_role_name")
 		f.NodeSecurityGroup = ExtractOutput(outputs, "node_security_group")
 		f.KarpenterQueueName = ExtractOutput(outputs, "karpenter_queue_name")
+		f.KarpenterRoleArn = ExtractOutput(outputs, "karpenter_sa_role")
 	default:
 		// Unknown/connect-only clouds (digitalocean, civo): common facts only — never
 		// fall through to another cloud's output keys.
