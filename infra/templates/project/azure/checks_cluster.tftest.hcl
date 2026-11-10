@@ -292,6 +292,19 @@ run "a_cluster_creates_every_workload_identity" {
     ])
     error_message = "The db_admin identity must be federated to exactly the bootstrap Job's and the BYO users Job's ServiceAccounts."
   }
+
+  # The issuer is what makes those subjects THIS environment's: a credential trusts only tokens its
+  # issuer signed, and the issuer is the environment's own AKS cluster. The not-shared argument for
+  # the fixed BYO users ServiceAccount name rests on it (app-db-identity.tf), so it is pinned, and
+  # the template's "" fallback (no cluster) cannot satisfy it.
+  assert {
+    condition = alltrue([
+      module.aks[0].oidc_issuer_url != "",
+      azurerm_federated_identity_credential.db_admin[0].issuer == module.aks[0].oidc_issuer_url,
+      azurerm_federated_identity_credential.db_admin_byo_users[0].issuer == module.aks[0].oidc_issuer_url,
+    ])
+    error_message = "The db_admin identity's federated credentials must trust only this environment's own AKS OIDC issuer."
+  }
 }
 
 ################################################################################

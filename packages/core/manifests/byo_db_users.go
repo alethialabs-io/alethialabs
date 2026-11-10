@@ -67,8 +67,13 @@ const (
 	// FIXED, not per environment, because the Azure template federates the dedicated admin identity
 	// to exactly system:serviceaccount:<ByoDBUsersNamespace>:<this> (app-db-identity.tf
 	// azure_byo_db_users_ksa_name), and an Azure federated credential matches its subject exactly,
-	// with no wildcard. One name per cluster is enough: the admin outputs exist only where the
-	// environment provisions its own AKS cluster, whose OIDC issuer the credential trusts.
+	// with no wildcard. One name per cluster is enough: the admin outputs and the credential exist
+	// only where the environment provisions its own AKS cluster (provision_aks), and the credential's
+	// issuer is that cluster's (module.aks[0].oidc_issuer_url). The credential trusts any pod running
+	// as this ServiceAccount in ByoDBUsersNamespace on that cluster. What keeps other workloads out of
+	// the namespace: BYO charts refuse it by exact name (argocd byo_reserved_namespaces.json), and
+	// the runner refuses to start a run while it holds a foreign object (provisioner
+	// foreignByoDBUsersObjects). A namespace-placed environment is not yet refused it (#6551).
 	// TestByoDBUsers_AzureServiceAccountMatchesTheTemplate pins the two spellings equal.
 	ByoDBUsersAzureServiceAccount = byoDBUsersNamePrefix + "admin"
 )

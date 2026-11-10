@@ -28,12 +28,21 @@
 #   db_admin         → keylessKSANamespace/keylessBootstrapKSAName         (the bootstrap Job pod)
 #   db_admin_byo_users → ByoDBUsersNamespace/ByoDBUsersAzureServiceAccount (the BYO users Job pod, #6504)
 #
-# The admin identity therefore carries TWO federated credentials (of Azure's 20 per identity). Each
-# subject is exact: an Azure federated credential matches its issuer and subject strings exactly and
-# takes no wildcard, so a token for the admin identity is issued only to a pod of THIS cluster running
-# as one of those two ServiceAccounts. Who may create such a pod is a Kubernetes RBAC question: the
-# BYO users namespace is reserved for the platform, and the runner refuses to start a run while it
-# holds any object that is not a run's (provisioner foreignByoDBUsersObjects).
+# The admin identity therefore carries TWO federated credentials (of Azure's 20 per identity). An
+# Azure federated credential matches its issuer and subject strings exactly and takes no wildcard, so
+# a token for the admin identity is issued only to a pod running as one of those two ServiceAccounts
+# on the cluster named by the issuer. What enforces each half, and what does not yet:
+#   - The issuer is this environment's OWN cluster: module.aks[0].oidc_issuer_url, and every
+#     credential here is counted on enable_app_db_identity, which requires var.provision_aks.
+#     checks_cluster.tftest.hcl pins the issuer.
+#   - BYO charts may not use the BYO users namespace: the chart path refuses it by exact name
+#     (argocd byo_reserved_namespaces.json, group platformByoDBUsers).
+#   - The runner refuses to start a BYO users run while that namespace holds any object that is not
+#     a run's (provisioner foreignByoDBUsersObjects). That refusal happens at run time, not at
+#     placement time.
+#   - OPEN GAP: a namespace-placed environment is not yet refused a platform namespace on the host
+#     cluster (#6551). Until it is, the reservation is not enforced on that path, for this subject or
+#     for the bootstrap subject above.
 
 locals {
   # Coupling point with packages/core/manifests (keylessKSAName / keylessBootstrapKSAName /
@@ -43,8 +52,8 @@ locals {
   azure_bootstrap_ksa_name = "alethia-db-bootstrap"
   # Coupling point with packages/core/manifests (ByoDBUsersNamespace / ByoDBUsersAzureServiceAccount),
   # pinned equal by TestByoDBUsers_AzureServiceAccountMatchesTheTemplate. The BYO users Job runs in a
-  # namespace of its own that is reserved for the platform (#6503), under one fixed ServiceAccount
-  # name, so the subject below needs no per-environment input.
+  # namespace of its own (#6503), under one fixed ServiceAccount name, so the subject below needs no
+  # per-environment input. Which paths keep other workloads out of that namespace is stated above.
   azure_byo_db_users_ksa_namespace = "alethia-byo-db-users"
   azure_byo_db_users_ksa_name      = "byo-db-users-admin"
   # PostgreSQL keyless: gates the Postgres-specific Entra-admin registration (a Flexible Server
