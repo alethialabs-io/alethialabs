@@ -34,8 +34,10 @@ import (
 //     cannot readmit them. ArgoCD admits a namespaced kind only when it is whitelisted AND not
 //     blacklisted.
 //
-// This is the AppProject half of the trust boundary; namespace PSA + an admission controller
-// (Kyverno/Gatekeeper) are the pod-level half added before untrusted charts are allowed.
+// This is the AppProject half of the trust boundary. The pod- and object-level half is the BYO
+// namespace's Pod Security Admission labels and the BYO ValidatingAdmissionPolicy (byo_admission.go,
+// #6495): this project decides which kinds a chart may declare, and those decide what an admitted
+// kind may ask for.
 // The AppProject wire shape, MARSHALLED rather than templated (#2540).
 //
 // WHAT THE TEMPLATE DID. It interpolated `{{ . }}` into quoted YAML scalars for BOTH sourceRepos and
@@ -237,11 +239,22 @@ var byoSecretSyncDenied = []byoGroupKind{
 // only this chart); and every kind served by a CustomResourceDefinition, because what such
 // an object can make its operator do is that operator's rule, not this project's. To admit another
 // kind, add it here with its reason and a case in TestByoAppProjectAdmitsOnlyWorkloadKinds.
+//
+// DaemonSet STAYS, decided in #6495. The starter repos' contract scripts leave it out, and a chart
+// written from a starter does not need it. It stays because what made it dangerous is host access,
+// and that is Pod Security's to refuse, not this list's: under PSA baseline (byoPodSecurityLabels) a
+// DaemonSet's pod gets no privileged container, host namespace or hostPath volume, so it is an
+// ordinary pod scheduled once per node. Removing it would not be a quiet tightening either: ArgoCD
+// fails the WHOLE sync of an Application that declares a kind its project does not permit, so every
+// attached chart with a DaemonSet would stop syncing on its next deploy, and the DaemonSet already
+// running would be left unmanaged. What is left is capacity (a pod on every node), which a
+// Deployment with a large replica count costs as well, and which this list does not govern for
+// either kind.
 var byoWorkloadKinds = []byoGroupKind{
 	// Workload controllers — the chart's own processes.
 	{Group: "apps", Kind: "Deployment"},  // the usual stateless workload
 	{Group: "apps", Kind: "StatefulSet"}, // a workload with stable identity and its own volumes
-	{Group: "apps", Kind: "DaemonSet"},   // one pod per node, for node-local agents
+	{Group: "apps", Kind: "DaemonSet"},   // one pod per node, for node-local agents — kept, see below
 	{Group: "apps", Kind: "ReplicaSet"},  // what a Deployment manages; a chart may declare one directly
 	{Group: "batch", Kind: "Job"},        // run-to-completion work, including Helm hook jobs
 	{Group: "batch", Kind: "CronJob"},    // scheduled Jobs
@@ -339,11 +352,10 @@ func RenderByoAppProject(name string, sourceRepos, namespaces []string, commonLa
 // cluster's admin kubeconfig, to create the namespace itself before the chart syncs into it. The
 // trust boundary is unchanged: the chart still cannot create one.
 //
-// Pod-level hardening (Pod Security Admission labels + an admission controller) is deliberately NOT
-// applied here. byoAppProject's comment scopes that as the separate pod-level half of the
-// boundary, and inventing a PSA level here would silently change what customer charts are permitted
-// to run — a security posture worth deciding explicitly rather than acquiring as a side effect of a
-// bug fix.
+// The namespace also carries the pod-level half of the boundary: its admission mode and the Pod
+// Security Admission labels that follow from it (byo_admission.go, #6495). The levels were decided
+// there, explicitly, rather than acquired as a side effect of creating the namespace.
+//
 // dns1123Label is Kubernetes' own rule for a Namespace name: lowercase alphanumerics and '-',
 // starting and ending alphanumeric, at most 63 characters. Matched in FULL — an unanchored pattern
 // would accept a valid prefix followed by anything at all, which is the whole attack.
@@ -520,6 +532,11 @@ func byoReservedNamespaceReason(ns string) string {
 // can create them before the charts sync. Returns "" when there are none, which callers treat as
 // "nothing to apply" rather than an error.
 //
+// Each namespace carries its admission mode (ByoAdmissionModeLabel) from modes, and the Pod Security
+// Admission labels that mode implies (byoPodSecurityLabels). A namespace missing from modes is
+// rendered in "warn": the caller decides who refuses (DecideByoAdmissionModes), and an omission must
+// never be what turns refusal on for a chart that is already running.
+//
 // # Why this is marshalled rather than templated (#2540)
 //
 // It used to interpolate the namespace RAW into hand-rolled YAML. Every other label-emitting path in
@@ -539,15 +556,10 @@ func byoReservedNamespaceReason(ns string) string {
 // Validation then refuses that absurd name outright, because a namespace Kubernetes would reject is
 // a deploy that fails later and more confusingly. Either alone would close the hole; the pair also
 // fails in the right direction.
-func RenderByoNamespaces(namespaces []string, commonLabels map[string]string) (string, error) {
+func RenderByoNamespaces(namespaces []string, commonLabels map[string]string, modes map[string]ByoAdmissionMode) (string, error) {
 	ns := dedupeNonEmpty(namespaces)
 	if len(ns) == 0 {
 		return "", nil
-	}
-
-	labels := map[string]string{"alethia.io/managed-by": "byo-charts"}
-	for k, v := range commonLabels {
-		labels[k] = v
 	}
 
 	// Validate EVERY namespace before encoding any: a refusal must render nothing at all, not a
@@ -556,6 +568,26 @@ func RenderByoNamespaces(namespaces []string, commonLabels map[string]string) (s
 	for _, n := range ns {
 		if err := validateByoNamespace(n); err != nil {
 			return "", fmt.Errorf("render byo namespaces: %w", err)
+		}
+		mode := modes[n]
+		if !mode.valid() {
+			mode = ByoAdmissionWarn
+		}
+		// The caller's labels first; the managed-by marker, the mode and the PSA labels LAST, so no
+		// caller-supplied label can change which binding selects the namespace or what PSA enforces.
+		// (No caller passes managed-by today: the classification labels never carry it.)
+		labels := map[string]string{}
+		for k, v := range commonLabels {
+			// A caller's Pod Security label is dropped rather than overwritten: in "warn" no enforce
+			// label is written, so overwriting alone would let one through.
+			if !strings.HasPrefix(k, psaLabelPrefix) {
+				labels[k] = v
+			}
+		}
+		labels[byoNamespaceManagedByLabel] = byoNamespaceManagedByValue
+		labels[ByoAdmissionModeLabel] = string(mode)
+		for k, v := range byoPodSecurityLabels(mode) {
+			labels[k] = v
 		}
 		docs = append(docs, map[string]any{
 			"apiVersion": "v1",

@@ -622,7 +622,7 @@ func everyRenderedSecretStore(t *testing.T) []esoStoreDoc {
 // even when a runner from before #6439/#6446 marked it as a BYO chart's — "default" holds every
 // first-class service's binding ExternalSecrets.
 func TestSecretStoreConditionsAdmitTheRunnersBindingPath(t *testing.T) {
-	rendered, err := RenderByoNamespaces([]string{"byo-payments"}, map[string]string{ByoBindingOwnerLabel: "env-1", SecretStoreAccessLabel: SecretStoreAccessValue})
+	rendered, err := RenderByoNamespaces([]string{"byo-payments"}, map[string]string{ByoBindingOwnerLabel: "env-1", SecretStoreAccessLabel: SecretStoreAccessValue}, nil)
 	if err != nil {
 		t.Fatalf("render BYO namespace: %v", err)
 	}
