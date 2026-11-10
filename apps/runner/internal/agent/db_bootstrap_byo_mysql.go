@@ -310,7 +310,7 @@ func mysqlByoCandidatesSQL(env string, users []byoUser) string {
 // underscores are escaped then. With partial_revokes ON the server reads them literally, and an
 // escape would be read as a backslash, so the name is given as is.
 func mysqlByoGrantDB(db string) string {
-	return "IF(@@partial_revokes, " + mustMySQLLiteral(db) + ", REPLACE(" + mustMySQLLiteral(db) + ", '_', CONCAT(CHAR(92 USING utf8mb4), '_')))"
+	return mustMySQLLiteral(db) // MUTATION: escape removed
 }
 
 // mysqlByoPrivilegeList is mysqlAppPrivileges as a quoted IN list of privilege names.
