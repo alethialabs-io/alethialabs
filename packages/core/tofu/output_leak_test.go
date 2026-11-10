@@ -118,3 +118,41 @@ func TestOutput_RestoresLogWriterAfterRead(t *testing.T) {
 		t.Fatalf("SECURITY REGRESSION: secret present in log writer:\n%s", logBuf.String())
 	}
 }
+
+// TestOutput_ReturnsASensitivePEMOutputVerbatim pins the read the database bootstrap Jobs rely on
+// (#6521): `cloud_sql_server_ca_cert` is a `sensitive = true` root output (the google provider marks
+// the CA sensitive, so OpenTofu requires it), and `sensitive` must not keep it from the caller.
+// TofuCLI.Output returns it, multi-line PEM byte for byte, as a string — the type the manifest lane's
+// output normalisation (provisioner generateAppManifests, stringOutputs) keeps.
+func TestOutput_ReturnsASensitivePEMOutputVerbatim(t *testing.T) {
+	requireTofuOrSkip(t)
+
+	const pem = "-----BEGIN CERTIFICATE-----\nTEST-CLOUD-SQL-SERVER-CA\n-----END CERTIFICATE-----\n"
+	dir := t.TempDir()
+	cfg := "output \"cloud_sql_server_ca_cert\" {\n  value     = \"" + strings.ReplaceAll(pem, "\n", `\n`) + "\"\n  sensitive = true\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(cfg), 0o600); err != nil {
+		t.Fatalf("write module: %v", err)
+	}
+	for _, args := range [][]string{
+		{"init", "-no-color", "-input=false"},
+		{"apply", "-no-color", "-input=false", "-auto-approve"},
+	} {
+		cmd := exec.Command("tofu", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("tofu %v: %v\n%s", args, err, out)
+		}
+	}
+	var logBuf bytes.Buffer
+	tf, err := NewTofuCLI(context.Background(), "", dir, &logBuf, &logBuf)
+	if err != nil {
+		t.Fatalf("NewTofuCLI: %v", err)
+	}
+	outputs, err := tf.Output(context.Background())
+	if err != nil {
+		t.Fatalf("Output: %v", err)
+	}
+	if got, ok := outputs["cloud_sql_server_ca_cert"].(string); !ok || got != pem {
+		t.Fatalf("cloud_sql_server_ca_cert = %#v, want the PEM verbatim as a string", outputs["cloud_sql_server_ca_cert"])
+	}
+}

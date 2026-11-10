@@ -52,10 +52,10 @@ func TestBootstrapJob_AWS(t *testing.T) {
 		t.Fatal(err)
 	}
 	docs := parseYAMLDocs(t, res.JobYAML)
-	if len(docs) != 1 {
-		t.Fatalf("AWS Job should be a single doc (no SA), got %d", len(docs))
+	if len(docs) != 2 || docs[0]["kind"] != "ConfigMap" {
+		t.Fatalf("AWS should emit the CA ConfigMap + the Job (no SA), got %d docs", len(docs))
 	}
-	job := docs[0]
+	job := docs[1]
 	if job["kind"] != "Job" {
 		t.Errorf("kind = %v, want Job", job["kind"])
 	}
@@ -93,6 +93,7 @@ func TestBootstrapJob_GCP(t *testing.T) {
 		RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
 		Outputs: map[string]string{
 			"cloud_sql_ip":                 "10.0.0.5",
+			"cloud_sql_server_ca_cert":     testGCPServerCA,
 			"cloud_sql_database":           "orders-prod",
 			"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
 			"cloud_sql_credentials_secret": "orders-prod-sql-credentials",
@@ -129,12 +130,12 @@ func TestBootstrapJob_Azure_DedicatedAdminKeyless(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Azure emits a ServiceAccount + the Job (two docs).
+	// Azure emits the CA ConfigMap, a ServiceAccount and the Job (three docs).
 	docs := parseYAMLDocs(t, res.JobYAML)
-	if len(docs) != 2 {
-		t.Fatalf("Azure should emit a ServiceAccount + Job (2 docs), got %d:\n%s", len(docs), res.JobYAML)
+	if len(docs) != 3 || docs[0]["kind"] != "ConfigMap" {
+		t.Fatalf("Azure should emit a CA ConfigMap + ServiceAccount + Job (3 docs), got %d:\n%s", len(docs), res.JobYAML)
 	}
-	sa := docs[0]
+	sa := docs[1]
 	if sa["kind"] != "ServiceAccount" {
 		t.Fatalf("first doc should be the ServiceAccount, got %v", sa["kind"])
 	}
@@ -143,7 +144,7 @@ func TestBootstrapJob_Azure_DedicatedAdminKeyless(t *testing.T) {
 		t.Errorf("SA must be annotated with the DEDICATED admin client id, got %v", saAnn)
 	}
 	// The pod carries the WI use label (the webhook trigger) — assert on the parsed pod template.
-	job := docs[1]
+	job := docs[2]
 	podLabels := job["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)["labels"].(map[string]any)
 	if podLabels["azure.workload.identity/use"] != "true" {
 		t.Errorf("pod template must carry azure.workload.identity/use=true, got %v", podLabels)
@@ -188,20 +189,20 @@ func TestBootstrapJob_Azure_MySQL_Keyless(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Still the Azure keyless shape: ServiceAccount + Job (two docs), WI-federated dedicated admin.
+	// Still the Azure keyless shape: CA ConfigMap + ServiceAccount + Job, WI-federated dedicated admin.
 	docs := parseYAMLDocs(t, res.JobYAML)
-	if len(docs) != 2 {
-		t.Fatalf("Azure MySQL should emit a ServiceAccount + Job (2 docs), got %d:\n%s", len(docs), res.JobYAML)
+	if len(docs) != 3 {
+		t.Fatalf("Azure MySQL should emit a CA ConfigMap + ServiceAccount + Job (3 docs), got %d:\n%s", len(docs), res.JobYAML)
 	}
-	if docs[0]["kind"] != "ServiceAccount" {
-		t.Fatalf("first doc should be the ServiceAccount, got %v", docs[0]["kind"])
+	if docs[1]["kind"] != "ServiceAccount" {
+		t.Fatalf("second doc should be the ServiceAccount, got %v", docs[1]["kind"])
 	}
 	// db-bootstrap binds the app on the CLIENT id via the MySQL dialect (--engine mysql --app-client-id).
 	for _, want := range []string{
 		"mint-admin-token", "db-token", // engine-agnostic admin-token init (unchanged)
 		"--engine", "mysql", "--app-client-id", "cccc1111-2222-3333-4444-555566667777",
 		mysqlClientImage, `name: "MYSQL_TCP_PORT"`, `value: "3306"`,
-		"--enable-cleartext-plugin", "--ssl-mode=REQUIRED",
+		"--enable-cleartext-plugin", "--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/alethia/db-ca/ca.pem",
 		"/bin/sh", "MYSQL_PWD=", "$(cat " + bootstrapTokenFile + ")", // token read into the mysql password
 
 	} {
@@ -288,7 +289,7 @@ func TestBootstrapJob_AWS_MySQL_Keyless(t *testing.T) {
 	for _, want := range []string{
 		"--engine", "mysql", // the MySQL dialect, not the default Postgres one
 		mysqlClientImage, `name: "MYSQL_TCP_PORT"`, `value: "3306"`,
-		"--ssl-mode=REQUIRED",
+		"--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/alethia/db-ca/ca.pem",
 		"secretKeyRef", // admin username + password come from the ExternalSecret
 	} {
 		if !strings.Contains(res.JobYAML, want) {
@@ -328,6 +329,7 @@ func TestBootstrapJob_GCP_MySQL_Keyless(t *testing.T) {
 		},
 		Outputs: map[string]string{
 			"cloud_sql_ip":                 "10.20.0.3",
+			"cloud_sql_server_ca_cert":     testGCPServerCA,
 			"cloud_sql_database":           "orders_prod",
 			"cloud_sql_iam_user":           "alethia-app", // MySQL form, not "alethia-app@proj.iam"
 			"cloud_sql_credentials_secret": "projects/p/secrets/orders-sql",
@@ -338,7 +340,7 @@ func TestBootstrapJob_GCP_MySQL_Keyless(t *testing.T) {
 	}
 	for _, want := range []string{
 		"--engine", "mysql", "--app-user", "alethia-app",
-		mysqlClientImage, `value: "3306"`, "--ssl-mode=REQUIRED",
+		mysqlClientImage, `value: "3306"`, "--ssl-mode=VERIFY_CA --ssl-ca=/etc/alethia/db-ca/ca.pem",
 		"secretKeyRef",
 	} {
 		if !strings.Contains(res.JobYAML, want) {
@@ -372,6 +374,7 @@ func TestBootstrapJob_Postgres_RendersUnchanged_OnAWSAndGCP(t *testing.T) {
 		}},
 		{"gcp", map[string]string{
 			"cloud_sql_ip":                 "10.20.0.3",
+			"cloud_sql_server_ca_cert":     testGCPServerCA,
 			"cloud_sql_database":           "orders_prod",
 			"cloud_sql_iam_user":           "alethia-app@proj.iam",
 			"cloud_sql_credentials_secret": "projects/p/secrets/orders-sql",
@@ -443,6 +446,7 @@ func assertPolicyExactly(t *testing.T, doc map[string]any, want ...string) {
 func TestBootstrapJob_HookDeletePolicies(t *testing.T) {
 	adminPolicy := []string{"BeforeHookCreation", "HookSucceeded", "HookFailed"}
 	jobPolicy := []string{"BeforeHookCreation", "HookSucceeded"}
+	caPolicy := []string{"BeforeHookCreation"}
 	for _, tc := range []struct {
 		provider string
 		outputs  map[string]string
@@ -454,6 +458,7 @@ func TestBootstrapJob_HookDeletePolicies(t *testing.T) {
 		}},
 		{"gcp", map[string]string{
 			"cloud_sql_ip":                 "10.0.0.5",
+			"cloud_sql_server_ca_cert":     testGCPServerCA,
 			"cloud_sql_database":           "orders-prod",
 			"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
 			"cloud_sql_credentials_secret": "orders-prod-sql-credentials",
@@ -480,6 +485,9 @@ func TestBootstrapJob_HookDeletePolicies(t *testing.T) {
 				switch doc["kind"] {
 				case "Job":
 					assertPolicyExactly(t, doc, jobPolicy...)
+				case "ConfigMap":
+					// Public CA certificates only: replaced on the next sync, not reaped with the credential.
+					assertPolicyExactly(t, doc, caPolicy...)
 				case "ServiceAccount":
 					credentialHooks++
 					assertPolicyExactly(t, doc, adminPolicy...)
@@ -542,6 +550,7 @@ func TestBootstrapJob_TimeBounds(t *testing.T) {
 		},
 		"gcp": {
 			"cloud_sql_ip":                 "10.0.0.5",
+			"cloud_sql_server_ca_cert":     testGCPServerCA,
 			"cloud_sql_database":           "orders-prod",
 			"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
 			"cloud_sql_credentials_secret": "orders-prod-sql-credentials",
@@ -584,6 +593,9 @@ func TestBootstrapJob_Azure_TokenScratchIsMemoryBacked(t *testing.T) {
 		vol, _ := v.(map[string]any)
 		name, _ := vol["name"].(string)
 		seen[name] = true
+		if name == dbCAVolume {
+			continue // the CA ConfigMap, pinned by TestBootstrapJob_VerifiesTheServerPerCloud
+		}
 		ed, ok := vol["emptyDir"].(map[string]any)
 		if !ok {
 			t.Errorf("volume %s is not an emptyDir: %v", name, vol)
@@ -620,6 +632,7 @@ func TestBootstrapJob_BootstrapOnlyLabel(t *testing.T) {
 		},
 		"gcp": {
 			"cloud_sql_ip":                 "10.0.0.5",
+			"cloud_sql_server_ca_cert":     testGCPServerCA,
 			"cloud_sql_database":           "orders-prod",
 			"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
 			"cloud_sql_credentials_secret": "orders-prod-sql-credentials",
@@ -647,9 +660,9 @@ func TestBootstrapJob_BootstrapOnlyLabel(t *testing.T) {
 				labels, _ := meta["labels"].(map[string]any)
 				got, present := labels[key]
 				switch doc["kind"] {
-				case "Job":
+				case "Job", "ConfigMap":
 					if present {
-						t.Errorf("the Job carries %s=%v; it holds no credential and must not be reaped", key, got)
+						t.Errorf("the %v carries %s=%v; it holds no credential and must not be reaped", doc["kind"], key, got)
 					}
 				case "ExternalSecret", "ServiceAccount":
 					if s, ok := got.(string); !ok || s != value {

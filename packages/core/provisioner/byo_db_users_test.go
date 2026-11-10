@@ -67,7 +67,7 @@ func newUsersCluster(t *testing.T) *usersCluster {
 // resourceOf maps a kind to the kubectl resource the run uses.
 func resourceOf(kind string) string {
 	return map[string]string{"ExternalSecret": "externalsecrets.external-secrets.io", "ServiceAccount": "serviceaccounts",
-		"Job": "jobs.batch", "Namespace": "namespaces", "Secret": "secrets"}[kind]
+		"Job": "jobs.batch", "Namespace": "namespaces", "Secret": "secrets", "ConfigMap": "configmaps"}[kind]
 }
 
 // seed puts a leftover object in the cluster, returned by the sweep's list of resource.
@@ -514,11 +514,16 @@ func TestByoDBUsers_SweepDeletesOnlyObjectsCarryingBothLabels(t *testing.T) {
 	c.seed("secrets", "no-run-label", "env-1", false)
 	c.seed("serviceaccounts", "no-owner", "", true)
 	c.seed("externalsecrets.external-secrets.io", "other-env", "env-2", true)
+	c.seed("configmaps", "leftover-ca", "env-1", true)
+	c.seed("configmaps", "ca-no-owner", "", true)
 	vc := usersConfig()
 	if out, log := runUsers(vc, usersOutputs(vc), nil); out.Failed {
 		t.Fatalf("outcome %+v\n%s", out, log)
 	}
-	for _, kept := range []string{"secrets/no-run-label", "serviceaccounts/no-owner", "externalsecrets.external-secrets.io/other-env"} {
+	if c.objects["configmaps/leftover-ca"] != nil {
+		t.Errorf("an interrupted run's CA ConfigMap carrying both labels was not swept")
+	}
+	for _, kept := range []string{"secrets/no-run-label", "serviceaccounts/no-owner", "externalsecrets.external-secrets.io/other-env", "configmaps/ca-no-owner"} {
 		if c.objects[kept] == nil {
 			t.Errorf("%s was deleted though it lacks one of the two labels", kept)
 		}
@@ -804,6 +809,7 @@ func TestByoDBUsers_RefusesANamespaceHoldingForeignObjects(t *testing.T) {
 		{"kind": "Job", "metadata": map[string]any{"name": manifests.ByoDBUsersJobNamePrefix + "abc-r1", "uid": jobUID, "labels": runLabels("env-2")}},
 		{"kind": "Pod", "metadata": map[string]any{"name": "run-pod", "labels": runLabels("env-2"), "ownerReferences": ownedBy(jobUID)}},
 		{"kind": "Secret", "metadata": map[string]any{"name": "s", "labels": runLabels("env-2")}},
+		{"kind": "ConfigMap", "metadata": map[string]any{"name": "ca", "labels": runLabels("env-2")}},
 	}
 	for name, foreign := range map[string]map[string]any{
 		"a Deployment":                   {"kind": "Deployment", "metadata": map[string]any{"name": "web", "labels": runLabels("env-1")}},
@@ -812,6 +818,7 @@ func TestByoDBUsers_RefusesANamespaceHoldingForeignObjects(t *testing.T) {
 			"ownerReferences": ownedBy("20000000-0000-0000-0000-000000000099")}},
 		"a ServiceAccount without both labels": {"kind": "ServiceAccount", "metadata": map[string]any{"name": "lookalike", "labels": map[string]any{manifests.ByoDBUsersLabel: "true"}}},
 		"a ConfigMap":                          {"kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}},
+		"a ConfigMap without both labels":      {"kind": "ConfigMap", "metadata": map[string]any{"name": "ca-lookalike", "labels": map[string]any{manifests.ByoDBUsersLabel: "true"}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
@@ -972,5 +979,68 @@ func TestByoDBUsers_APodOfAnUnlabelledJobIsForeign(t *testing.T) {
 	out, _ := runUsers(vc, usersOutputs(vc), nil)
 	if !out.Failed || len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], "Pod/child") {
 		t.Fatalf("outcome %+v, want the Pod named as foreign", out)
+	}
+}
+
+// TestByoDBUsers_CAConfigMapGoesWithTheCredentials: the CA set the Job verifies the database server
+// against is applied before the Job and removed after the run, uid-pinned, whatever its outcome.
+func TestByoDBUsers_CAConfigMapGoesWithTheCredentials(t *testing.T) {
+	for _, outcome := range []string{"Complete", "Failed"} {
+		t.Run(outcome, func(t *testing.T) {
+			t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+			c := newUsersCluster(t)
+			api, worker := usersFor()
+			c.jobOutcome = outcome
+			c.message = resultOf(api, worker)
+			vc := usersConfig()
+			runUsers(vc, usersOutputs(vc), nil)
+			name := manifests.ByoDBUsersBaseName("env-1") + "-db-ca"
+			cmAt, jobAt := -1, -1
+			for i, d := range c.applied {
+				meta, _ := d["metadata"].(map[string]any)
+				switch {
+				case d["kind"] == "ConfigMap" && meta["name"] == name:
+					cmAt = i
+				case d["kind"] == "Job":
+					jobAt = i
+				}
+			}
+			if cmAt < 0 || jobAt < 0 || cmAt > jobAt {
+				t.Fatalf("CA ConfigMap applied at %d, Job at %d", cmAt, jobAt)
+			}
+			if _, left := c.objects["configmaps/"+name]; left {
+				t.Error("the CA ConfigMap was left behind")
+			}
+			deleted := false
+			for _, d := range c.deletes() {
+				deleted = deleted || strings.Contains(d, "/configmaps/"+name)
+			}
+			if !deleted {
+				t.Errorf("the CA ConfigMap was never deleted:\n%s", strings.Join(c.calls, "\n"))
+			}
+		})
+	}
+}
+
+// TestByoDBUsers_TLSFailureIsAFailedRun: a Job whose client refused the server's certificate is a
+// failed run that provisions nobody. The Job is Failed in practice; even a termination message holding
+// the named TLS reason on a Job reported Complete is read as malformed, never as "zero users".
+func TestByoDBUsers_TLSFailureIsAFailedRun(t *testing.T) {
+	reason := "alethia: DB_TLS_VERIFY_FAILED: the database server's TLS certificate did not verify (the CA and the host name checked against the Amazon RDS global CA bundle). The Job stops here; it never retries without verification.\n"
+	if _, _, _, err := parseByoDBUsersResultLines(reason, true); err == nil {
+		t.Fatal("the TLS failure reason parses as a result")
+	}
+	for _, outcome := range []string{"Failed", "Complete"} {
+		t.Run(outcome, func(t *testing.T) {
+			t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+			c := newUsersCluster(t)
+			c.jobOutcome = outcome
+			c.message = &reason
+			vc := usersConfig()
+			out, log := runUsers(vc, usersOutputs(vc), nil)
+			if !out.Failed || out.Provisioned != nil {
+				t.Fatalf("outcome %+v\n%s", out, log)
+			}
+		})
 	}
 }

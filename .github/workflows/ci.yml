@@ -3037,6 +3037,150 @@ jobs:
             exit 1
           fi
 
+  # Database TLS verification on real servers (#6521). The bootstrap Job and the BYO users Job verify
+  # the managed database server's certificate before they send it an administrator credential
+  # (packages/core/manifests/db_tls.go). The unit tests pin the rendered flags and run the rendered
+  # scripts against a fake client; this job runs the same scripts with the real mysql and psql clients
+  # against a MySQL 8.4 and a Postgres 16 server whose certificate a throwaway CA signed for one host
+  # name. It proves the mechanics each cloud relies on: the identity mode (AWS, Azure) refuses an
+  # address the certificate does not name and an unrelated CA; the CA-only mode (GCP) accepts a
+  # certificate with no matching name but refuses an unrelated CA; every refusal fails the script with
+  # the named reason. It contacts no managed server, so which mode each cloud gets rests on the render
+  # tests and the providers' documentation, not on this job. Its second test step re-runs the tests
+  # with the scripts mutated back to the old unverified modes and FAILS if they still pass.
+  #
+  # Not required (no aggregator names it, nothing in .mergify.yml does): it starts two database
+  # containers, and an image pull must not wedge the queue. Same trigger as `byo-users-mysql`.
+  db-tls-verify:
+    name: DB TLS verification — real MySQL 8.4 and Postgres 16
+    needs: detect-changes
+    if: github.event.schedule != '0 3 * * *' && (github.event_name != 'pull_request' || needs.detect-changes.outputs.runner == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CERTS: ${{ github.workspace }}/.db-tls-certs
+      DB_NAME: db-tls.test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: packages/core/go.sum
+      - name: Pre-fetch Go modules (retrying a transient proxy error)
+        run: bash scripts/ci/go-mod-download-retry.sh packages/core
+      - name: Install the mysql and psql clients
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q mysql-client postgresql-client
+          mysql --version
+          psql --version
+      # A signing CA, an unrelated CA, and one server certificate naming ONLY $DB_NAME (no IP SAN), so
+      # dialling 127.0.0.1 is a host-name mismatch. The name resolves to 127.0.0.1 through /etc/hosts.
+      - name: Create the test CAs and the server certificate
+        run: |
+          set -euo pipefail
+          mkdir -p "$CERTS"
+          cd "$CERTS"
+          for ca in ca other-ca; do
+            openssl req -x509 -newkey rsa:2048 -nodes -keyout "$ca-key.pem" -out "$ca.pem" -days 2 \
+              -subj "/CN=alethia db-tls test $ca" -addext "basicConstraints=critical,CA:TRUE" \
+              -addext "keyUsage=critical,keyCertSign,cRLSign"
+          done
+          openssl req -newkey rsa:2048 -nodes -keyout server-key.pem -out server.csr -subj "/CN=$DB_NAME"
+          printf 'subjectAltName=DNS:%s\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' "$DB_NAME" > server.ext
+          openssl x509 -req -in server.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out server.pem -days 2 -extfile server.ext
+          openssl verify -CAfile ca.pem server.pem
+          chmod 0644 ./*.pem
+          echo "127.0.0.1 $DB_NAME" | sudo tee -a /etc/hosts
+      - name: Start MySQL 8.4 and Postgres 16 with that certificate
+        run: |
+          set -euo pipefail
+          docker run -d --name mysql -p 3306:3306 -e MYSQL_ROOT_PASSWORD=root-ci -v "$CERTS:/certs:ro" mysql:8.4 \
+            --ssl-ca=/certs/ca.pem --ssl-cert=/certs/server.pem --ssl-key=/certs/server-key.pem --require-secure-transport=ON
+          # Postgres refuses a key file it does not own, so the entrypoint copies the pair first.
+          docker run -d --name postgres -p 5432:5432 -e POSTGRES_PASSWORD=pg-ci -v "$CERTS:/certs:ro" \
+            --entrypoint sh postgres:16 -c 'install -o postgres -m 0600 /certs/server-key.pem /tmp/server-key.pem && install -o postgres -m 0644 /certs/server.pem /tmp/server.pem && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server-key.pem'
+          for _ in $(seq 1 60); do
+            if MYSQL_PWD=root-ci mysql --protocol=TCP -h 127.0.0.1 -uroot --ssl-mode=REQUIRED -N -B -e 'SELECT 1' >/dev/null 2>&1 &&
+               PGPASSWORD=pg-ci psql "host=127.0.0.1 user=postgres sslmode=require" -tAc 'SELECT 1' >/dev/null 2>&1; then
+              echo "both servers are up"; exit 0
+            fi
+            sleep 2
+          done
+          docker logs mysql | tail -30; docker logs postgres | tail -30
+          echo "::error::the database servers did not come up"; exit 1
+      # ALETHIA_TEST_DBTLS_REQUIRED turns the tests' skip into a failure, and the grep asserts each
+      # test PASSED by name, so a renamed test, a -run matching nothing, or a skip cannot read green.
+      - name: go test -tags integration (DB TLS verification, real servers)
+        working-directory: packages/core
+        env:
+          ALETHIA_TEST_DBTLS_CA: ${{ env.CERTS }}/ca.pem
+          ALETHIA_TEST_DBTLS_OTHER_CA: ${{ env.CERTS }}/other-ca.pem
+          ALETHIA_TEST_DBTLS_NAME: ${{ env.DB_NAME }}
+          ALETHIA_TEST_DBTLS_MYSQL_PWD: root-ci
+          ALETHIA_TEST_DBTLS_PG_PWD: pg-ci
+          ALETHIA_TEST_DBTLS_REQUIRED: "1"
+        run: |
+          set -o pipefail
+          go test -tags integration -count=1 -v -run DBTLSServer ./manifests/ | tee "$RUNNER_TEMP/dbtls.log"
+          for t in TestDBTLSServer_BootstrapMySQL TestDBTLSServer_BootstrapPostgres TestDBTLSServer_ByoUsersMySQL TestDBTLSServer_ByoUsersPostgres; do
+            grep -q -- "--- PASS: $t " "$RUNNER_TEMP/dbtls.log" || { echo "::error::$t did not PASS"; exit 1; }
+          done
+      - name: The same tests with the scripts mutated to the unverified modes must FAIL
+        working-directory: packages/core
+        env:
+          ALETHIA_TEST_DBTLS_CA: ${{ env.CERTS }}/ca.pem
+          ALETHIA_TEST_DBTLS_OTHER_CA: ${{ env.CERTS }}/other-ca.pem
+          ALETHIA_TEST_DBTLS_NAME: ${{ env.DB_NAME }}
+          ALETHIA_TEST_DBTLS_MYSQL_PWD: root-ci
+          ALETHIA_TEST_DBTLS_PG_PWD: pg-ci
+          ALETHIA_TEST_DBTLS_REQUIRED: "1"
+          ALETHIA_TEST_DBTLS_MUTATE: unverified
+        run: |
+          if go test -tags integration -count=1 -v -run DBTLSServer ./manifests/ > "$RUNNER_TEMP/mutant.log" 2>&1; then
+            cat "$RUNNER_TEMP/mutant.log"
+            echo "::error::the tests passed against unverified connections; they cannot tell verified from unverified"; exit 1
+          fi
+          for t in TestDBTLSServer_BootstrapMySQL TestDBTLSServer_BootstrapPostgres TestDBTLSServer_ByoUsersMySQL TestDBTLSServer_ByoUsersPostgres; do
+            grep -q -- "--- FAIL: $t " "$RUNNER_TEMP/mutant.log" || { cat "$RUNNER_TEMP/mutant.log"; echo "::error::$t did not fail on the unverified mutant"; exit 1; }
+          done
+          echo "every test failed on the unverified mutant, as it must"
+      - name: Server logs
+        if: failure()
+        run: |
+          docker logs mysql 2>&1 | tail -50 || true
+          docker logs postgres 2>&1 | tail -50 || true
+
+  # The pinned database CA bundles vs upstream (#6521). INFORMATIONAL. The bootstrap Jobs verify a
+  # managed database server against bundles checked into packages/core/manifests/dbca, pinned (source
+  # URL and sha256) in dbca/SOURCES.json; nothing fetches them at run time, so a provider that adds or
+  # rotates a root would otherwise go unnoticed until a Job failed to verify. This fetches every pinned
+  # source and goes red when one no longer matches its pin; the remedy is
+  # `scripts/db-ca-bundles.sh update`, a review of which roots changed, and a PR. It runs on the Monday
+  # cron (which, like every schedule, runs the default branch's tree), on dispatch, and on a PR that
+  # changes the bundles or the script. Not required, and nothing waits on it, so a rotation upstream is
+  # noticed without wedging the queue.
+  db-ca-bundles:
+    name: DB CA bundles vs upstream (informational)
+    if: github.event.schedule == '0 6 * * 1' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Compare every pinned source with what upstream serves
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ] &&
+            ! git diff --name-only "$BASE_SHA...$HEAD_SHA" | grep -qE '^(packages/core/manifests/dbca/|scripts/db-ca-bundles\.sh$)'; then
+            echo "this PR does not change the CA bundles; the weekly run checks them"; exit 0
+          fi
+          bash scripts/db-ca-bundles.sh check
+
   coverage-determinism:
     name: Coverage determinism probe (manual)
     # MANUAL ONLY. This exists to answer one question before the ratchet is armed: are the numbers
