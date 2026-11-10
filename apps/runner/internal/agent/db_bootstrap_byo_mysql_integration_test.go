@@ -599,8 +599,8 @@ func TestByoUsersMySQLServer_RefusedProvisionedUserIsLocked(t *testing.T) {
 // of the terminators before which ICU's `$` also matches. Each is built from an SQL expression, so the
 // statements read the same in every sql_mode. The base names are distinct per-binding-shaped names.
 var myLookalikes = []struct{ base, term, hex string }{
-	{"alethia_byo_eeeeeeeeeee5", "CHAR(10)", "0A"},
-	{"alethia_byo_eeeeeeeeeee6", "CHAR(13)", "0D"},
+	{"alethia_byo_eeeeeeeeeee5", "CHAR(10 USING utf8mb4)", "0A"},
+	{"alethia_byo_eeeeeeeeeee6", "CHAR(13 USING utf8mb4)", "0D"},
 	{"alethia_byo_eeeeeeeeeee7", "CONVERT(0xC285 USING utf8mb4)", "C285"},
 	{"alethia_byo_eeeeeeeeeee8", "CONVERT(0xE280A8 USING utf8mb4)", "E280A8"},
 }
