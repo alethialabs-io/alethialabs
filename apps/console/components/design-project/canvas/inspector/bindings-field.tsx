@@ -77,9 +77,20 @@ const FROM_FACETS: { value: BindingFrom; label: string; secret: boolean }[] = [
 	{ value: "value", label: "value", secret: true },
 	// database — the name of the database a `database` binding should use. Not a credential: it is
 	// templated into the values like endpoint/port. A per-binding MySQL user works in a database of its
-	// own, so a MySQL-backed chart needs this facet to find it.
+	// own, so a MySQL-backed chart needs this facet to find it. Only the BYO chart lane resolves it
+	// (manifests.ResolveChartWorkloadBindings); the service lane does not, so it is offered only
+	// where `allowDatabaseFacet` is set (bindingFacets).
 	{ value: "database", label: "database name", secret: false },
 ];
+
+/**
+ * The facets the editor offers: every facet, minus `database` unless the binding's lane resolves it.
+ * The service lane (generate.go resolveBindings) has no `database` case, so a service binding to it
+ * would always be omitted at deploy; only the chart-workload panel passes `allowDatabaseFacet`.
+ */
+export function bindingFacets(allowDatabaseFacet: boolean): typeof FROM_FACETS {
+	return allowDatabaseFacet ? FROM_FACETS : FROM_FACETS.filter((f) => f.value !== "database");
+}
 
 const isSecretFacet = (from: BindingFrom): boolean =>
 	FROM_FACETS.find((f) => f.value === from)?.secret ?? false;
@@ -143,6 +154,7 @@ export function BindingsField({
 	value,
 	onChange,
 	enableIacTargets = false,
+	allowDatabaseFacet = false,
 }: {
 	value: ServiceBinding[];
 	onChange: (next: ServiceBinding[]) => void;
@@ -152,7 +164,13 @@ export function BindingsField({
 	 * `output_keys`, so it leaves this off and behaves exactly as before (#823).
 	 */
 	enableIacTargets?: boolean;
+	/**
+	 * Offer the `database` facet. Only the chart-workload panel sets it: the BYO chart lane resolves
+	 * the facet, the service lane does not (#6467).
+	 */
+	allowDatabaseFacet?: boolean;
 }) {
+	const facets = bindingFacets(allowDatabaseFacet);
 	const nodes = useCanvasStore((s) => s.nodes);
 	const iacOutputs = useCanvasStore((s) => s.iacOutputs);
 	const bindings = value ?? [];
@@ -356,7 +374,7 @@ export function BindingsField({
 											patchBinding(bi, {
 												...binding,
 												inject: binding.inject.map((x, j) =>
-													j === ii ? { ...x, from: coerceEnum(v, FROM_FACETS.map((ff) => ff.value), FROM_FACETS[0].value) } : x,
+													j === ii ? { ...x, from: coerceEnum(v, facets.map((ff) => ff.value), facets[0].value) } : x,
 												),
 											})
 										}
@@ -365,7 +383,7 @@ export function BindingsField({
 											<SelectValue />
 										</SelectTrigger>
 										<SelectContent>
-											{FROM_FACETS.map((f) => (
+											{facets.map((f) => (
 												<SelectItem key={f.value} value={f.value}>
 													{f.label}
 												</SelectItem>

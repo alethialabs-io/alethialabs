@@ -2971,10 +2971,31 @@ jobs:
           if [ "${{ matrix.mysql }}" = 8.0.20 ]; then
             want="TestByoUsersMySQLServer_RefusesBelowFloor"
           else
-            want="TestByoUsersMySQLServer_Lifecycle TestByoUsersMySQLServer_RefusesForeignUser TestByoUsersMySQLServer_RevokeFailsSafe TestByoUsersMySQLServer_KillsSessions TestByoUsersMySQLServer_PartialRevokes TestByoUsersMySQLServer_SkipRevoke"
+            want="TestByoUsersMySQLServer_Lifecycle TestByoUsersMySQLServer_RefusesForeignUser TestByoUsersMySQLServer_RevokeFailsSafe TestByoUsersMySQLServer_KillsSessions TestByoUsersMySQLServer_PartialRevokes TestByoUsersMySQLServer_SkipRevoke TestByoUsersMySQLServer_FailedCursorStepDropsNoOtherAccount TestByoUsersMySQLServer_RefusedProvisionedUserIsLocked TestByoUsersMySQLServer_NewlineLookalikeIsNoCandidate TestByoUsersMySQLServer_UserCannotRetagItself"
           fi
           for t in $want; do
             grep -q -- "--- PASS: $t " "$RUNNER_TEMP/byo.log" || { echo "::error::$t did not PASS on mysql ${{ matrix.mysql }}"; exit 1; }
+          done
+      # The scripts claim to mean the same under any sql_mode: no literal carries a backslash, and no
+      # `"` delimits anything. This pass MEASURES that: it turns on NO_BACKSLASH_ESCAPES and
+      # ANSI_QUOTES for every new session and reruns every test, and TestByoUsersMySQLServer_SQLMode
+      # proves the modes were active in the administrator's session.
+      - name: go test -tags integration (BYO users, real MySQL, sql_mode NO_BACKSLASH_ESCAPES,ANSI_QUOTES)
+        if: matrix.mysql != '8.0.20'
+        working-directory: apps/runner
+        env:
+          ALETHIA_TEST_MYSQL_ADMIN_DSN: mysql://byo_admin:byo-admin-ci@127.0.0.1:3306/byo-test
+          ALETHIA_TEST_MYSQL_ROOT_DSN: mysql://root:root-ci@127.0.0.1:3306/byo-test
+          ALETHIA_TEST_MYSQL_REQUIRED: "1"
+          ALETHIA_TEST_MYSQL_SQL_MODE: NO_BACKSLASH_ESCAPES,ANSI_QUOTES
+          MYSQL_PWD: root-ci
+        run: |
+          set -o pipefail
+          mysql --protocol=TCP -h 127.0.0.1 -uroot --ssl-mode=REQUIRED -N -B \
+            -e "SET GLOBAL sql_mode = CONCAT(@@GLOBAL.sql_mode, ',NO_BACKSLASH_ESCAPES,ANSI_QUOTES'); SELECT @@GLOBAL.sql_mode"
+          go test -tags integration -count=1 -v -run ByoUsersMySQLServer ./internal/agent/... | tee "$RUNNER_TEMP/byo-modes.log"
+          for t in TestByoUsersMySQLServer_SQLMode TestByoUsersMySQLServer_Lifecycle TestByoUsersMySQLServer_RefusesForeignUser TestByoUsersMySQLServer_RevokeFailsSafe TestByoUsersMySQLServer_KillsSessions TestByoUsersMySQLServer_PartialRevokes TestByoUsersMySQLServer_SkipRevoke TestByoUsersMySQLServer_FailedCursorStepDropsNoOtherAccount TestByoUsersMySQLServer_RefusedProvisionedUserIsLocked TestByoUsersMySQLServer_NewlineLookalikeIsNoCandidate TestByoUsersMySQLServer_UserCannotRetagItself; do
+            grep -q -- "--- PASS: $t " "$RUNNER_TEMP/byo-modes.log" || { echo "::error::$t did not PASS on mysql ${{ matrix.mysql }} under NO_BACKSLASH_ESCAPES,ANSI_QUOTES"; exit 1; }
           done
 
   # The always-reporting aggregator of `byo-users-mysql`, built exactly as `byo-users-postgres-required`

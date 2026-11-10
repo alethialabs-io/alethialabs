@@ -200,6 +200,9 @@ export function ChartWorkloadPanel({ nodeId }: { nodeId: string }) {
 					<BindingsField
 						value={draft.bindings}
 						onChange={(next) => setDraft({ ...draft, bindings: next })}
+						// The BYO chart lane resolves the `database` facet (a per-binding MySQL user's own
+						// database); the service lane does not, so only this panel offers it (#6467).
+						allowDatabaseFacet
 					/>
 				</section>
 

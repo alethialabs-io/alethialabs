@@ -10,8 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 )
+
+// byoUserLen is the length of every per-binding user name: the prefix and 12 hex characters.
+var byoUserLen = len(manifests.ByoDBUserPrefix) + 12
 
 // The MySQL dialect of `alethia db-bootstrap --byo-users` (docs/adr/byo-binding-db-users.md §3, §5;
 // slice 5 of #6438). It keeps the Postgres dialect's rules, in what MySQL can express:
@@ -46,7 +52,10 @@ import (
 //     invocation's output to the termination message.
 //  2. the SWEEP script (--sweep-out), applied WITH --force, so one candidate that cannot be dropped
 //     does not stop the others: it ends each candidate's sessions, drops each candidate, and
-//     rewrites the result with a `revocation-pending:<user>` line for every candidate still present.
+//     rewrites the result with a `revocation-pending:<user>` line for every candidate still present
+//     and a `sessions-not-ended:<user>` line for every candidate whose sessions the administrator
+//     could not end. Every KILL and DROP is built by the statement that selected its target
+//     (mysqlByoSweepSQL), so no failed statement can leave a non-candidate to act on.
 //     It exists only when revocation runs (no --skip-revoke).
 //
 // The result has the Postgres dialect's form: a header `alethia-byo-users v1 count=<n>`, then n
@@ -289,13 +298,16 @@ func mysqlByoDeclaredList(users []byoUser) string {
 
 // mysqlByoCandidatesSQL selects the revocation candidates: a user on host '%' whose name matches the
 // anchored per-binding pattern, case-sensitively (so no first-class user, and no name differing only
-// in case), AND that carries this environment's tag (so no untagged user and no other environment's)
-// AND that is not declared. The lockout, the kills, the drops and the pending lines all share it, so
-// they cannot disagree about which users they act on. Names compare as binary: MySQL user names are
-// case-sensitive, and information_schema's collation is not.
+// in case), AND of exactly the per-binding length (ICU's `$` also matches before a final line
+// terminator, so the pattern alone admits `<user>\n`, which Go's byoUserPattern does not; a literal
+// may not carry the `\z` that would fix it in the pattern), AND that carries this environment's tag
+// (so no untagged user and no other environment's) AND that is not declared. The lockout, the kills,
+// the drops and the pending lines all share it, so they cannot disagree about which users they act
+// on. Names compare as binary: MySQL user names are case-sensitive, and information_schema's
+// collation is not.
 func mysqlByoCandidatesSQL(env string, users []byoUser) string {
 	q := `SELECT a.USER, a.HOST FROM information_schema.USER_ATTRIBUTES a
-    WHERE REGEXP_LIKE(a.USER, ` + mustMySQLLiteral(byoUserSQLPattern) + `, 'c') AND a.HOST = '%'
+    WHERE REGEXP_LIKE(a.USER, ` + mustMySQLLiteral(byoUserSQLPattern) + `, 'c') AND CHAR_LENGTH(a.USER) = ` + strconv.Itoa(byoUserLen) + ` AND a.HOST = '%'
       AND ` + mysqlByoTagged(env)
 	if list := mysqlByoDeclaredList(users); list != "" {
 		q += `
@@ -329,11 +341,13 @@ func mysqlByoPrivilegeList() string {
 //  2. refuse a user of that name that does not carry this environment's tag: the name is derived from
 //     the environment, so such a user was not made by this environment's runs;
 //  3. set its hash, TLS requirement and connection limit, every run (rotation; a reset by the user
-//     itself is undone);
+//     itself is undone), and LOCK it again, so a user an earlier run unlocked is held to every check
+//     below as well (new connections are refused between this statement and the unlock);
 //  4. its database, created when absent and kept forever, and the DDL+DML set on it alone;
 //  5. refuse a user that holds a global privilege, GRANT OPTION, a privilege on any other database, a
 //     privilege outside the set, or a role — each of which only an administrator could have given it;
-//  6. unlock it, last, so a user refused by any check above can never log in.
+//  6. unlock it, last, so a user refused by any check above, whether new or provisioned by an
+//     earlier run, is left locked and cannot log in.
 func mysqlByoProvisionSQL(env string, u byoUser, hash string) ([]string, error) {
 	user, account, lit := u.Name, mysqlAccount(u.Name), mustMySQLLiteral(u.Name)
 	attr, err := json.Marshal(map[string]string{mysqlByoEnvAttribute: env})
@@ -372,7 +386,9 @@ func mysqlByoProvisionSQL(env string, u byoUser, hash string) ([]string, error) 
 	}
 	out = append(out, tagged...)
 	out = append(out,
-		"ALTER USER "+account+" "+auth+";",
+		// LOCKED again, as on creation, so the UNLOCK below is the only way back in: a user an earlier
+		// run unlocked that now fails a check stays locked.
+		"ALTER USER "+account+" "+auth+" ACCOUNT LOCK;",
 		"CREATE DATABASE IF NOT EXISTS "+mysqlQuoteIdent(user)+";",
 	)
 	out = append(out, grant...)
@@ -407,7 +423,10 @@ func mysqlByoResultSQL(env string, users []byoUser, pending bool) string {
 	if pending {
 		entries += `
     UNION ALL
-    SELECT CONVERT(CONCAT(` + mustMySQLLiteral(byoPendingPrefix) + `, c.USER) USING utf8mb4) FROM (` + mysqlByoCandidatesSQL(env, users) + `) c`
+    SELECT CONVERT(CONCAT(` + mustMySQLLiteral(byoPendingPrefix) + `, c.USER) USING utf8mb4) FROM (` + mysqlByoCandidatesSQL(env, users) + `) c
+    UNION ALL
+    SELECT CONVERT(CONCAT(` + mustMySQLLiteral(mysqlByoSessionsPrefix) + `, j.u) USING utf8mb4)
+      FROM JSON_TABLE(IFNULL(@alethia_byo_unkilled, JSON_ARRAY()), '$[*]' COLUMNS (u VARCHAR(32) PATH '$')) j`
 	}
 	return `SELECT s.line FROM (
   SELECT 0 AS o, CONCAT(` + mustMySQLLiteral(byoResultHeaderPrefix) + `, COUNT(*)) AS line FROM (` + entries + `) r
@@ -419,29 +438,72 @@ func mysqlByoResultSQL(env string, users []byoUser, pending bool) string {
 // mysqlByoSweepSQL renders phase 3 for an invocation with --force: each candidate's sessions ended,
 // then each candidate dropped, one statement each, so a statement that fails (a KILL the administrator
 // has no CONNECTION_ADMIN for; a DROP USER refused because the user is a stored object's DEFINER) is
-// reported by the client and the next one still runs. Both walk a cursor kept in a session variable:
-// the next session id, or the next candidate name, above the last one handled.
+// reported by the client and the next one still runs.
+//
+// Under --force a failed statement leaves every variable it would have set unchanged, so no KILL or
+// DROP may ever be built from a value a failed statement could have left behind (the cursor's initial
+// ” would otherwise name the anonymous account ”@'%'). Each step therefore resets the statement to
+// `DO 0`, then selects the next candidate (or session) AND builds the statement acting on it in ONE
+// `SELECT … INTO`: the text names only a row that statement itself read from the candidates query, or
+// is `DO 0`. The cursor (the last name or id handled) is set by the same statement and only bounds
+// the next selection; it is never a target. A step that fails runs `DO 0`, and the next step selects
+// again above the cursor the last successful step left.
 func mysqlByoSweepSQL(env string, users []byoUser) []string {
 	cands := mysqlByoCandidatesSQL(env, users)
+	run := []string{
+		"PREPARE " + mysqlByoStmt + " FROM @" + mysqlByoStmt + ";",
+		"EXECUTE " + mysqlByoStmt + ";",
+		"DEALLOCATE PREPARE " + mysqlByoStmt + ";",
+	}
+	reset := "SET @" + mysqlByoStmt + " = 'DO 0';"
 	out := []string{
 		"-- phase 3a: end every candidate's sessions (a KILL that fails is reported and skipped; the session can no longer authenticate)",
 		"SET @alethia_byo_k = 0;",
 	}
 	for i := 0; i < mysqlByoMaxKills; i++ {
-		out = append(out, `SET @alethia_byo_k = (SELECT MIN(p.ID) FROM information_schema.PROCESSLIST p
-    WHERE p.ID > @alethia_byo_k AND CAST(p.USER AS BINARY) IN (SELECT CAST(c.USER AS BINARY) FROM (`+cands+`) c));`)
-		out = append(out, mysqlPrepared("IF(@alethia_byo_k IS NULL, 'DO 0', CONCAT('KILL ', @alethia_byo_k))")...)
+		out = append(out, reset, `SELECT MIN(p.ID), IFNULL(CONCAT('KILL ', MIN(p.ID)), 'DO 0') FROM information_schema.PROCESSLIST p
+    WHERE p.ID > @alethia_byo_k AND CAST(p.USER AS BINARY) IN (SELECT CAST(c.USER AS BINARY) FROM (`+cands+`) c)
+    INTO @alethia_byo_k, @`+mysqlByoStmt+`;`)
+		out = append(out, run...)
 	}
 	out = append(out,
 		"-- phase 3b: drop every candidate; its database is kept (a DROP USER that fails is reported and skipped; the user stays locked)",
 		"SET @alethia_byo_u = '';",
 	)
+	next := "CONVERT(MIN(CAST(c.USER AS BINARY)) USING utf8mb4)"
 	for i := 0; i < mysqlByoMaxDrops; i++ {
-		out = append(out, `SET @alethia_byo_u = (SELECT CONVERT(MIN(CAST(c.USER AS BINARY)) USING utf8mb4) FROM (`+cands+`) c
-    WHERE CAST(c.USER AS BINARY) > CAST(@alethia_byo_u AS BINARY));`)
-		out = append(out, mysqlPrepared("IF(@alethia_byo_u IS NULL, 'DO 0', CONCAT('DROP USER ', QUOTE(@alethia_byo_u), '@''%'''))")...)
+		out = append(out, reset, `SELECT `+next+`, IFNULL(CONCAT('DROP USER ', QUOTE(`+next+`), '@''%'''), 'DO 0') FROM (`+cands+`) c
+    WHERE CAST(c.USER AS BINARY) > CAST(@alethia_byo_u AS BINARY)
+    INTO @alethia_byo_u, @`+mysqlByoStmt+`;`)
+		out = append(out, run...)
 	}
 	return out
+}
+
+// mysqlByoCanKillSQL is TRUE when the administrator holds, directly or through an enabled role, both
+// PROCESS (without it information_schema.PROCESSLIST lists only its own sessions, so the kill steps
+// find nothing) and CONNECTION_ADMIN or SUPER (without it every KILL of another user's session fails).
+// A privilege it cannot see reads as missing, so the doubt is reported, never hidden.
+func mysqlByoCanKillSQL() string {
+	grantees := `SELECT CONCAT('''', SUBSTRING_INDEX(CURRENT_USER(), '@', 1), '''@''', SUBSTRING_INDEX(CURRENT_USER(), '@', -1), '''')
+        UNION SELECT CONCAT('''', r.ROLE_NAME, '''@''', r.ROLE_HOST, '''') FROM information_schema.ENABLED_ROLES r`
+	has := func(privs string) string {
+		return `EXISTS (SELECT 1 FROM information_schema.USER_PRIVILEGES g WHERE g.PRIVILEGE_TYPE IN (` + privs + `)
+      AND g.GRANTEE IN (` + grantees + `))`
+	}
+	return has("'PROCESS'") + "\n    AND " + has("'CONNECTION_ADMIN', 'SUPER'")
+}
+
+// mysqlByoSessionsPrefix starts a result line naming a revoked user whose open sessions this run
+// could not end. The runner surfaces each as a deploy warning (provisioner byoDBUsersSessionsPrefix).
+const mysqlByoSessionsPrefix = "sessions-not-ended:"
+
+// mysqlByoUnkilledSQL records, before the kills, the candidates whose sessions this run cannot end:
+// every candidate when the administrator lacks PROCESS or CONNECTION_ADMIN, none otherwise. The
+// sweep's result reads it back, after the drops, as `sessions-not-ended:<user>` lines.
+func mysqlByoUnkilledSQL(env string, users []byoUser) string {
+	return `SET @alethia_byo_unkilled = (SELECT IF(` + mysqlByoCanKillSQL() + `,
+    JSON_ARRAY(), IFNULL(JSON_ARRAYAGG(c.USER), JSON_ARRAY())) FROM (` + mysqlByoCandidatesSQL(env, users) + `) c);`
 }
 
 // byoMySQLScripts is the rendered MySQL dialect: the provision script and, unless revocation is
@@ -518,6 +580,9 @@ func renderByoUsersMySQL(in byoUsersInput) (byoMySQLScripts, error) {
 		"-- alethia db-bootstrap --byo-users (mysql), sweep script. Apply with mysql -N -B --force, after the provision script.",
 		"SET SESSION group_concat_max_len = 1048576;",
 	}
+	sweep = append(sweep,
+		"-- the candidates whose sessions this administrator cannot end (no PROCESS, or no CONNECTION_ADMIN), reported after the drops",
+		mysqlByoUnkilledSQL(in.EnvironmentID, users))
 	sweep = append(sweep, mysqlByoSweepSQL(in.EnvironmentID, users)...)
 	sweep = append(sweep, "-- result: the provisioned set and every candidate still present", mysqlByoResultSQL(in.EnvironmentID, users, true))
 	out.Sweep = strings.Join(sweep, "\n") + "\n"

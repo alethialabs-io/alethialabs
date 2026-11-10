@@ -293,7 +293,7 @@ and the per-binding role gains nothing from the administrator.
 CREATE USER IF NOT EXISTS 'alethia_byo_<h>'@'%' IDENTIFIED WITH caching_sha2_password AS '<hash>'
   REQUIRE SSL WITH MAX_USER_CONNECTIONS 20 ACCOUNT LOCK ATTRIBUTE '{"alethia_env":"<environment-id>"}';
 -- refuse unless the user carries this environment's tag
-ALTER USER 'alethia_byo_<h>'@'%' IDENTIFIED WITH caching_sha2_password AS '<hash>' REQUIRE SSL WITH MAX_USER_CONNECTIONS 20;
+ALTER USER 'alethia_byo_<h>'@'%' IDENTIFIED WITH caching_sha2_password AS '<hash>' REQUIRE SSL WITH MAX_USER_CONNECTIONS 20 ACCOUNT LOCK;
 CREATE DATABASE IF NOT EXISTS `alethia_byo_<h>`;
 GRANT <mysqlAppPrivileges> ON `alethia\_byo\_<h>`.* TO 'alethia_byo_<h>'@'%';   -- unescaped with partial_revokes ON
 -- refuse if the user holds a global privilege, GRANT OPTION, another database's privilege, or a role
@@ -327,12 +327,15 @@ without a patch, such as `8.0`, passes the runner and is held to the floor by th
 
 **The environment tag is a user attribute.** MySQL has no role comments. `ATTRIBUTE '{"alethia_env":
 "<id>"}'` is JSON on the account, and changing it needs the `CREATE USER` privilege, which a per-binding
-user does not hold. `COMMENT` writes to the same object under its own key, so an operator's comment does
-not remove the tag. A pre-existing user with a declared name and no such tag is refused, and its password,
+user does not hold. CI measures this on 8.0 and 8.4: a provisioned user's own `ALTER USER CURRENT_USER()
+ATTRIBUTE …` and `… COMMENT …` are refused and its tag is unchanged. `COMMENT` writes to the same object
+under its own key, so an operator's comment does not remove the tag. A pre-existing user with a declared name and no such tag is refused, and its password,
 grants and lock state are left as they were.
 
 **Quoting.** Every identifier is backtick-quoted. Account names and values are single-quoted literals, and
-a literal may not contain a backslash, so `sql_mode` cannot change its meaning. With `partial_revokes`
+a literal may not contain a backslash, so `sql_mode` cannot change its meaning, and no `"` delimits
+anything. CI measures this: on 8.0 and 8.4 every real-server test runs a second time with
+`NO_BACKSLASH_ESCAPES,ANSI_QUOTES` added to the global `sql_mode`. With `partial_revokes`
 OFF, the default, MySQL reads `_` and `%` in a `GRANT`'s database name as wildcards. The unescaped grant
 would also cover `alethiaXbyoX<h>`, and with `CREATE` the user could make such a database. The script
 therefore escapes the underscores. With `partial_revokes` ON the server reads them literally, so the
@@ -342,11 +345,20 @@ script does not escape them.
 declared user or for none". Each statement is atomic, and the provision script runs without `--force`,
 so the first error stops it before the result is written. A failed Job provisions nothing in the
 runner's count, even if some users before the error now exist. Every statement is idempotent, so the
-next run converges. A user stays locked until every check on it has passed. The sweep is a second
+next run converges. Every run locks each declared user again when it sets its password, new or not,
+and unlocks it only after every check on it has passed. A user refused by any check, including one an
+earlier run unlocked, is therefore left locked. The cost is a moment on every run, between that `ALTER
+USER` and the unlock, in which the user's new connections are refused; open ones are unaffected. The
+candidates match the anchored pattern and have exactly the per-binding length. ICU's `$` also matches
+before a final newline, so the length bound is what keeps a lookalike named `<user>\n` out. The sweep is a second
 script, applied with `--force`, so a candidate that cannot be dropped does not stop the others. It ends
 each candidate's sessions and drops each candidate, and the database is kept. MySQL has no loop outside a
 stored program, so each step is rendered: 64 session kills and 32 drops per run. A candidate past the
-bound stays locked, is reported as pending, and is dropped by a later run. The result has the Postgres
+bound stays locked, is reported as pending, and is dropped by a later run. Under `--force` a failed
+statement leaves its variables as they were, so no `KILL` or `DROP USER` is ever built from a variable.
+The same `SELECT … INTO` reads each target from the candidates query and builds the statement that acts
+on it, after the statement was reset to `DO 0`. A step that fails therefore runs `DO 0`, and no account
+outside the candidates can be named. CI tests this with the anonymous account `''@'%'` present. The result has the Postgres
 form, a header line and then one line per entry. It is the only statement in either script that returns
 rows. The Job sends the provision script's output to the termination message. The sweep's output
 replaces it only when it starts with the header; any other output fails the container.
@@ -358,9 +370,22 @@ routine, trigger or event. Since 8.0.22, `DROP USER` refuses such a user unless 
 user cannot create such an object itself, because the privilege set has no `CREATE VIEW`, `CREATE
 ROUTINE`, `TRIGGER` or `EVENT`. Only an administrator can create one with that user as `DEFINER`.
 
-**The limits.** Killing another user's session needs `CONNECTION_ADMIN`. Without it each `KILL` fails and
-is reported. A revoked user's open session then keeps running until it disconnects, but the user cannot
-open a new one, because it is locked and then dropped. The privilege check reads `information_schema`
+**The limits.** Ending another user's sessions needs two privileges. `PROCESS` lets the administrator
+see them (without it `information_schema.PROCESSLIST` lists only its own), and `CONNECTION_ADMIN` or
+`SUPER` lets it `KILL` them. Before the kills, the sweep checks whether the administrator holds both,
+directly or through an enabled role; a privilege it cannot see counts as missing. If it lacks either,
+the result names every revoked user as `sessions-not-ended:<user>`. The runner turns each of those into
+a deploy warning: the user's sessions were not terminated, and the user cannot log in again. A session
+opened before the revocation then keeps running until it disconnects. The user cannot open a new one,
+because it is locked and then dropped.
+
+Two further gaps can only be opened by an administrator. A rotation does not `DISCARD OLD PASSWORD`, so
+a secondary password an administrator set survives it. The privilege check also does not read
+`mysql.proxies_priv`, so a `PROXY` grant passes it. Neither can be set by the per-binding user.
+
+A grant written while `partial_revokes` was ON is unescaped. If the server later turns it OFF, the grant
+reads as a pattern, and the check accepts it. That pattern covers only this user's own name with each
+`_` matching any character. No other binding's database has such a name. The privilege check reads `information_schema`
 and `mysql.role_edges`, so an administrator that cannot read the grant tables fails the run. The check
 does not read table-level or column-level grants. Only an administrator can create those, because the
 user holds no `GRANT OPTION`. MySQL databases have no owner, so a database with the per-binding name that

@@ -10,10 +10,13 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 )
 
 // The real-MySQL half of the per-binding users tests. It applies the two rendered scripts exactly as
@@ -101,7 +104,16 @@ func (c myConn) run(sql string, force bool) (string, string, error) {
 type myAdmin struct {
 	t           *testing.T
 	admin, root myConn
+	// sessions are the last run's `sessions-not-ended:<user>` entries, held apart from what apply
+	// returns so the other tests read the result as before.
+	sessions []string
+	// mutateSweep, when set, rewrites the sweep script before it is applied (to make a step fail).
+	mutateSweep func(string) string
 }
+
+// myEntryRe is every entry a result may carry, as strictly as the runner's parser
+// (provisioner parseByoDBUsersResult) reads it: one unparseable line fails the whole run there.
+var myEntryRe = regexp.MustCompile(`^(` + byoPendingPrefix + `|` + mysqlByoSessionsPrefix + `)?` + manifests.ByoDBUserPrefix + `[0-9a-f]{12}$`)
 
 // newMyAdmin reads both DSNs or skips the test.
 func newMyAdmin(t *testing.T) *myAdmin {
@@ -188,8 +200,12 @@ func (a *myAdmin) applyInput(in byoUsersInput) ([]string, string, error) {
 		return nil, errOut, err
 	}
 	if scripts.Sweep != "" {
+		sweep := scripts.Sweep
+		if a.mutateSweep != nil {
+			sweep = a.mutateSweep(sweep)
+		}
 		var sweepErr string
-		result, sweepErr, _ = a.admin.run(scripts.Sweep, true)
+		result, sweepErr, _ = a.admin.run(sweep, true)
 		errOut += sweepErr
 	}
 	// The first line is the header, `alethia-byo-users v1 count=<n>`, and exactly n entries follow.
@@ -201,7 +217,19 @@ func (a *myAdmin) applyInput(in byoUsersInput) ([]string, string, error) {
 	if want := strings.TrimPrefix(lines[0], byoResultHeaderPrefix); want != strconv.Itoa(len(entries)) {
 		a.t.Fatalf("the header counts %s entries, the result has %d:\n%s", want, len(entries), result)
 	}
-	return entries, errOut, nil
+	a.sessions = nil
+	var out []string
+	for _, e := range entries {
+		if !myEntryRe.MatchString(e) {
+			a.t.Fatalf("the result carries %q, which the runner's parser rejects (the whole run would fail):\n%s", e, result)
+		}
+		if strings.HasPrefix(e, mysqlByoSessionsPrefix) {
+			a.sessions = append(a.sessions, strings.TrimPrefix(e, mysqlByoSessionsPrefix))
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, errOut, nil
 }
 
 // userCount is how many accounts named user exist on any host.
@@ -216,6 +244,7 @@ func (a *myAdmin) cleanup() {
 		_, _, _ = a.root.run("DROP DATABASE IF EXISTS `"+u+"`", false)
 	}
 	_, _, _ = a.root.run("DROP DATABASE IF EXISTS `"+myLookalikeDB+"`", false)
+	_, _, _ = a.root.run("SET @n = CONCAT('"+myLookalike+"', CHAR(10)); SET @s = CONCAT('DROP USER IF EXISTS ''', @n, '''@''%'''); PREPARE s FROM @s; EXECUTE s;", false)
 	for _, u := range []string{myUserA, myUserB, myUntagged, myUserC} {
 		_, _, _ = a.root.run("DROP USER IF EXISTS '"+u+"'@'%'", false)
 	}
@@ -276,6 +305,10 @@ func TestByoUsersMySQLServer_Lifecycle(t *testing.T) {
 	}
 	if got := a.userCount(myUserA); got != "0" {
 		t.Fatal("user A was not dropped")
+	}
+	// This administrator has no CONNECTION_ADMIN, so the run says it could not end A's sessions.
+	if strings.Join(a.sessions, ",") != myUserA {
+		t.Errorf("sessions-not-ended = %v, want [%s]", a.sessions, myUserA)
 	}
 	if got := a.query(a.root, "SELECT v FROM `"+myUserA+"`.kept"); got != "still here" {
 		t.Errorf("the revoked user's database lost its data: %q", got)
@@ -409,6 +442,9 @@ func TestByoUsersMySQLServer_KillsSessions(t *testing.T) {
 	if got := a.apply("env-a"); len(got) != 0 {
 		t.Fatalf("revoke run result = %v", got)
 	}
+	if len(a.sessions) != 0 {
+		t.Errorf("with PROCESS and CONNECTION_ADMIN the run still reports sessions not ended: %v", a.sessions)
+	}
 	select {
 	case <-done:
 	case <-time.After(30 * time.Second):
@@ -486,5 +522,147 @@ func TestByoUsersMySQLServer_RefusesBelowFloor(t *testing.T) {
 	}
 	if got := a.query(a.root, "SELECT account_locked FROM mysql.user WHERE CAST(User AS BINARY) = '"+myUserC+"'"); got != "N" {
 		t.Error("the refusal ran after the lockout: nothing may change below the floor")
+	}
+}
+
+// TestByoUsersMySQLServer_FailedCursorStepDropsNoOtherAccount (B1): under --force, a failed step
+// leaves the session variables as they were. The first drop step is made to fail while the anonymous
+// account ”@'%' exists; the drop cursor's initial value is ”, so a DROP built from the cursor would
+// name exactly that account. It must survive, and the later steps still drop both candidates.
+func TestByoUsersMySQLServer_FailedCursorStepDropsNoOtherAccount(t *testing.T) {
+	a := newMyAdmin(t)
+	a.requiresFloor()
+	a.cleanup()
+	t.Cleanup(a.cleanup)
+	a.query(a.root, "CREATE USER ''@'%' IDENTIFIED BY '"+myDecoyPass+"'")
+	t.Cleanup(func() { _, _, _ = a.root.run("DROP USER IF EXISTS ''@'%'", false) })
+	a.apply("env-a", byoUser{myUserA, myPasswordA1}, byoUser{myUserC, myPasswordA1})
+
+	failed := false
+	a.mutateSweep = func(sweep string) string {
+		i := strings.Index(sweep, "SELECT CONVERT(MIN(CAST(c.USER AS BINARY)) USING utf8mb4), IFNULL(CONCAT('DROP USER '")
+		if i < 0 {
+			t.Fatal("fixture: no drop step to break")
+		}
+		end := strings.Index(sweep[i:], ";\n")
+		failed = true
+		return sweep[:i] + "SELECT alethia_byo_no_such_column INTO @alethia_byo_u, @alethia_byo_s" + sweep[i+end:]
+	}
+	t.Cleanup(func() { a.mutateSweep = nil })
+	_, out, err := a.applyErr("env-a")
+	if err != nil || !failed {
+		t.Fatalf("the provision script failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "alethia_byo_no_such_column") {
+		t.Fatalf("the broken step did not fail:\n%s", out)
+	}
+	if got := a.query(a.root, "SELECT COUNT(*) FROM mysql.user WHERE User = '' AND Host = '%'"); got != "1" {
+		t.Fatal("a failed cursor step dropped the anonymous account")
+	}
+	if a.userCount(myUserA) != "0" || a.userCount(myUserC) != "0" {
+		t.Error("the steps after the failed one did not drop the candidates")
+	}
+}
+
+// TestByoUsersMySQLServer_RefusedProvisionedUserIsLocked: a user an earlier run unlocked, which now
+// fails the least-privilege check (an administrator granted it something more), is left LOCKED by the
+// failed run, and the next clean run unlocks it again.
+func TestByoUsersMySQLServer_RefusedProvisionedUserIsLocked(t *testing.T) {
+	a := newMyAdmin(t)
+	a.requiresFloor()
+	a.cleanup()
+	t.Cleanup(a.cleanup)
+	a.apply("env-a", byoUser{myUserA, myPasswordA1})
+	if err := a.login(myUserA, myPasswordA1, myUserA); err != nil {
+		t.Fatalf("fixture: A cannot log in: %v", err)
+	}
+	a.query(a.root, "GRANT SELECT ON `"+a.admin.db+"`.* TO '"+myUserA+"'@'%'")
+	_, out, err := a.applyErr("env-a", byoUser{myUserA, myPasswordA1})
+	if err == nil || !strings.Contains(out, myUserA+" holds a privilege beyond its own") {
+		t.Fatalf("the run did not refuse the over-privileged user: %v\n%s", err, out)
+	}
+	if got := a.query(a.root, "SELECT account_locked FROM mysql.user WHERE CAST(User AS BINARY) = '"+myUserA+"'"); got != "Y" {
+		t.Fatalf("a refused, previously provisioned user is left account_locked = %q", got)
+	}
+	if err := a.login(myUserA, myPasswordA1, myUserA); err == nil {
+		t.Fatal("a refused, previously provisioned user can still log in")
+	}
+	a.query(a.root, "REVOKE SELECT ON `"+a.admin.db+"`.* FROM '"+myUserA+"'@'%'")
+	if got := a.apply("env-a", byoUser{myUserA, myPasswordA1}); strings.Join(got, ",") != myUserA {
+		t.Fatalf("after the grant is removed, result = %v", got)
+	}
+	if err := a.login(myUserA, myPasswordA1, myUserA); err != nil {
+		t.Errorf("the clean run did not unlock the user: %v", err)
+	}
+}
+
+// myLookalike is a tagged user named like a per-binding user plus a trailing newline. It is built
+// with CHAR(10), so the statements read the same in every sql_mode.
+var myLookalike = myUserA[:len(myUserA)-1] + "5"
+
+// TestByoUsersMySQLServer_NewlineLookalikeIsNoCandidate: ICU's `$` matches before a final newline, so
+// the lookalike matches the pattern alone. The length bound keeps it out of the candidates: it is not
+// dropped, and it never reaches the result, where one line the runner cannot parse would fail every
+// run (applyInput holds every entry to the runner's parser).
+func TestByoUsersMySQLServer_NewlineLookalikeIsNoCandidate(t *testing.T) {
+	a := newMyAdmin(t)
+	a.requiresFloor()
+	a.cleanup()
+	t.Cleanup(a.cleanup)
+	a.query(a.root, "SET @n = CONCAT('"+myLookalike+"', CHAR(10)); "+
+		"SET @s = CONCAT('CREATE USER ''', @n, '''@''%'' IDENTIFIED BY ''"+myDecoyPass+"'' ATTRIBUTE ''{\"alethia_env\":\"env-a\"}'''); "+
+		"PREPARE s FROM @s; EXECUTE s;")
+	if got := a.query(a.root, "SELECT COUNT(*) FROM information_schema.USER_ATTRIBUTES WHERE REGEXP_LIKE(USER, '^alethia_byo_[0-9a-f]{12}$', 'c') "+
+		"AND HEX(USER) = CONCAT(HEX('"+myLookalike+"'), '0A') AND JSON_UNQUOTE(JSON_EXTRACT(ATTRIBUTE, '$.alethia_env')) = 'env-a'"); got != "1" {
+		t.Fatalf("fixture: the lookalike does not match the pattern alone (count %s), so this test proves nothing", got)
+	}
+	if got := a.apply("env-a", byoUser{myUserB, myPasswordB}); strings.Join(got, ",") != myUserB {
+		t.Fatalf("result = %v, want [%s]", got, myUserB)
+	}
+	if got := a.query(a.root, "SELECT COUNT(*) FROM mysql.user WHERE HEX(User) = CONCAT(HEX('"+myLookalike+"'), '0A')"); got != "1" {
+		t.Error("the newline lookalike was dropped as a candidate")
+	}
+}
+
+// TestByoUsersMySQLServer_UserCannotRetagItself: the whole revocation scope rests on the tag, so a
+// per-binding user must not be able to change its own ATTRIBUTE or COMMENT (both need CREATE USER).
+func TestByoUsersMySQLServer_UserCannotRetagItself(t *testing.T) {
+	a := newMyAdmin(t)
+	a.requiresFloor()
+	a.cleanup()
+	t.Cleanup(a.cleanup)
+	a.apply("env-a", byoUser{myUserA, myPasswordA1})
+	asA := a.admin.as(myUserA, myPasswordA1, myUserA)
+	for _, st := range []string{
+		`ALTER USER CURRENT_USER() ATTRIBUTE '{"alethia_env": "env-b"}'`,
+		`ALTER USER CURRENT_USER() COMMENT 'retagged'`,
+		`ALTER USER '` + myUserA + `'@'%' ATTRIBUTE '{"alethia_env": "env-b"}'`,
+	} {
+		if _, _, err := asA.run(st, false); err == nil {
+			t.Errorf("the user ran %s", st)
+		}
+	}
+	if got := a.query(a.root, "SELECT JSON_UNQUOTE(JSON_EXTRACT(ATTRIBUTE, '$.alethia_env')) FROM information_schema.USER_ATTRIBUTES WHERE USER = '"+myUserA+"'"); got != "env-a" {
+		t.Errorf("the user's tag is now %q", got)
+	}
+	if got := a.query(a.root, "SELECT JSON_CONTAINS_PATH(ATTRIBUTE, 'one', '$.comment') FROM information_schema.USER_ATTRIBUTES WHERE USER = '"+myUserA+"'"); got != "0" {
+		t.Error("the user wrote a comment on itself")
+	}
+}
+
+// TestByoUsersMySQLServer_SQLMode proves a pass ran under the sql_mode it claims: with
+// ALETHIA_TEST_MYSQL_SQL_MODE set (CI's second pass sets NO_BACKSLASH_ESCAPES,ANSI_QUOTES globally and
+// reruns every test), each listed mode must be active in the administrator's session.
+func TestByoUsersMySQLServer_SQLMode(t *testing.T) {
+	want := os.Getenv("ALETHIA_TEST_MYSQL_SQL_MODE")
+	if want == "" {
+		t.Skip("ALETHIA_TEST_MYSQL_SQL_MODE is unset")
+	}
+	a := newMyAdmin(t)
+	got := "," + a.query(a.admin, "SELECT @@SESSION.sql_mode") + ","
+	for _, m := range strings.Split(want, ",") {
+		if !strings.Contains(got, ","+m+",") {
+			t.Errorf("sql_mode %s lacks %s", got, m)
+		}
 	}
 }

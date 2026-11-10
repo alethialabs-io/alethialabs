@@ -260,7 +260,7 @@ func TestByoUsersMySQL_CLIEngineFlags(t *testing.T) {
 func TestByoUsersMySQL_CandidateScope(t *testing.T) {
 	got := mysqlByoCandidatesSQL("env-1", []byoUser{{Name: byoTestUser}})
 	for _, want := range []string{
-		"REGEXP_LIKE(a.USER, '^alethia_byo_[0-9a-f]{12}$', 'c') AND a.HOST = '%'",
+		"REGEXP_LIKE(a.USER, '^alethia_byo_[0-9a-f]{12}$', 'c') AND CHAR_LENGTH(a.USER) = 24 AND a.HOST = '%'",
 		"JSON_UNQUOTE(JSON_EXTRACT(a.ATTRIBUTE, '$.alethia_env')) = 'env-1'",
 		"CAST(a.USER AS BINARY) NOT IN ('" + byoTestUser + "')",
 	} {
@@ -329,9 +329,8 @@ func TestByoUsersMySQL_Phases(t *testing.T) {
 	if !strings.Contains(s, "CONCAT('revocation-pending:', c.USER)") {
 		t.Error("the sweep's result lists no pending revocation")
 	}
-	topSelect := regexp.MustCompile(`(?m)^SELECT `)
 	for name, script := range map[string]string{"provision": p, "sweep": s} {
-		if n := len(topSelect.FindAllString(script, -1)); n != 1 {
+		if n := len(rowSelects(script)); n != 1 {
 			t.Errorf("%s script has %d top-level SELECTs, want only its result", name, n)
 		}
 		if !strings.HasPrefix(script[strings.LastIndex(script, "\nSELECT ")+1:], "SELECT s.line FROM (") {
@@ -375,12 +374,114 @@ func TestByoUsersMySQL_LeastPrivilege(t *testing.T) {
 	if n := strings.Count(all, "'GRANT "); n != 1 {
 		t.Errorf("%d GRANT statements, want 1", n)
 	}
-	for _, bad := range []string{"*.*", "GRANT OPTION", "WITH ADMIN", "SUPER", "GRANT ALL", "DEFAULT ROLE", "SET ROLE", "ON `app-db`"} {
+	for _, bad := range []string{"*.*", "GRANT OPTION", "WITH ADMIN", "SUPER ON", "GRANT SUPER", "GRANT ALL", "DEFAULT ROLE", "SET ROLE", "ON `app-db`"} {
 		if strings.Contains(all, bad) {
 			t.Errorf("the scripts contain %q", bad)
 		}
 	}
 	if mysqlAppPrivileges != "SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES" {
 		t.Errorf("the privilege set changed: %s", mysqlAppPrivileges)
+	}
+}
+
+// statements splits a script into its statements (each ends with ";" at the end of a line).
+func statements(script string) []string {
+	var out []string
+	for _, st := range strings.Split(script, ";\n") {
+		if st = strings.TrimSpace(st); st != "" {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
+// rowSelects are the top-level SELECTs of a script that return rows: every SELECT but a `… INTO @var`.
+func rowSelects(script string) []string {
+	var out []string
+	for _, st := range statements(script) {
+		body := st
+		for strings.HasPrefix(body, "--") {
+			_, body, _ = strings.Cut(body, "\n")
+		}
+		if strings.HasPrefix(body, "SELECT ") && !regexp.MustCompile(`\n\s*INTO @[a-z_]+, @[a-z_]+$`).MatchString(body) {
+			out = append(out, body)
+		}
+	}
+	return out
+}
+
+// TestByoUsersMySQL_NoActionFromACarriedValue (B1): under --force a failed statement leaves its
+// variables as they were, so a KILL or DROP built from a variable could act on a value no candidate
+// query produced (the drop cursor's initial ” would name the anonymous account ”@'%'). Every KILL
+// and DROP USER text must be built by the SELECT that reads its target from the candidates query, in
+// the same statement, after the statement was reset to `DO 0`; no statement may build one from a
+// variable.
+func TestByoUsersMySQL_NoActionFromACarriedValue(t *testing.T) {
+	got, _ := renderByoUsersMySQL(oneUserInput())
+	sts := statements(got.Sweep)
+	built := 0
+	for i, st := range sts {
+		if !strings.Contains(st, "'DROP USER '") && !strings.Contains(st, "'KILL '") {
+			continue
+		}
+		built++
+		if !strings.HasPrefix(st, "SELECT ") || !strings.Contains(st, "FROM information_schema.USER_ATTRIBUTES a") ||
+			!regexp.MustCompile(`\n\s*INTO @alethia_byo_[ku], @alethia_byo_s$`).MatchString(st) {
+			t.Errorf("statement %d builds a KILL/DROP outside the SELECT that reads its target:\n%s", i, st)
+		}
+		if i == 0 || sts[i-1] != "SET @alethia_byo_s = 'DO 0'" {
+			t.Errorf("statement %d is not preceded by the reset to DO 0", i)
+		}
+		if i+1 >= len(sts) || sts[i+1] != "PREPARE alethia_byo_s FROM @alethia_byo_s" {
+			t.Errorf("statement %d is not prepared at once", i)
+		}
+	}
+	if built != mysqlByoMaxKills+mysqlByoMaxDrops {
+		t.Errorf("%d KILL/DROP builders, want %d", built, mysqlByoMaxKills+mysqlByoMaxDrops)
+	}
+	for _, bad := range []string{"QUOTE(@", "CONCAT('KILL ', @", "CONCAT('DROP USER ', @", "IF(@alethia_byo_u", "IF(@alethia_byo_k"} {
+		if strings.Contains(got.Sweep, bad) {
+			t.Errorf("the sweep builds an action from a variable: %q", bad)
+		}
+	}
+}
+
+// TestByoUsersMySQL_RotationRelocks: every run sets an existing user's password LOCKED, as creation
+// does, so the final UNLOCK, after every check, is the only way back in for a user an earlier run
+// provisioned too.
+func TestByoUsersMySQL_RotationRelocks(t *testing.T) {
+	got, _ := renderByoUsersMySQL(oneUserInput())
+	rot := "ALTER USER '" + byoTestUser + "'@'%' IDENTIFIED WITH caching_sha2_password AS '"
+	i := strings.Index(got.Provision, rot)
+	if i < 0 {
+		t.Fatal("no rotation")
+	}
+	line := got.Provision[i : i+strings.Index(got.Provision[i:], "\n")]
+	if !strings.HasSuffix(line, " ACCOUNT LOCK;") {
+		t.Fatalf("the rotation does not lock: %s", line)
+	}
+	if u, l := strings.Index(got.Provision, "ACCOUNT UNLOCK;"), strings.Index(got.Provision, "holds a privilege beyond its own"); u < l || u < i {
+		t.Error("the unlock does not follow the rotation and the checks")
+	}
+}
+
+// TestByoUsersMySQL_SessionsNotEndedReported: the sweep records, before any KILL, which candidates
+// this administrator cannot end the sessions of (it lacks PROCESS, or CONNECTION_ADMIN/SUPER, held
+// directly or by an enabled role), and the result lists each as `sessions-not-ended:<user>`.
+func TestByoUsersMySQL_SessionsNotEndedReported(t *testing.T) {
+	got, _ := renderByoUsersMySQL(oneUserInput())
+	s := got.Sweep
+	rec, kill := strings.Index(s, "SET @alethia_byo_unkilled = (SELECT IF("), strings.Index(s, "'KILL '")
+	if rec < 0 || rec > kill {
+		t.Fatal("the unkillable set is not recorded before the kills")
+	}
+	for _, want := range []string{"g.PRIVILEGE_TYPE IN ('PROCESS')", "g.PRIVILEGE_TYPE IN ('CONNECTION_ADMIN', 'SUPER')", "information_schema.ENABLED_ROLES r",
+		"CONCAT('" + mysqlByoSessionsPrefix + "', j.u)", "JSON_TABLE(IFNULL(@alethia_byo_unkilled, JSON_ARRAY())"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("sweep lacks %q", want)
+		}
+	}
+	if strings.Contains(got.Provision, mysqlByoSessionsPrefix) {
+		t.Error("the provision script reports sessions")
 	}
 }

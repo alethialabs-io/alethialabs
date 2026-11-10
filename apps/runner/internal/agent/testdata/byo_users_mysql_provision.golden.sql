@@ -10,7 +10,7 @@ DEALLOCATE PREPARE alethia_byo_s;
 -- phase 1: lock out every revocation candidate
 SET @alethia_byo_s = (SELECT IFNULL(CONCAT('ALTER USER ', GROUP_CONCAT(CONCAT(QUOTE(c.USER), '@', QUOTE(c.HOST)) ORDER BY c.USER SEPARATOR ', '), ' ACCOUNT LOCK'), 'DO 0')
     FROM (SELECT a.USER, a.HOST FROM information_schema.USER_ATTRIBUTES a
-    WHERE REGEXP_LIKE(a.USER, '^alethia_byo_[0-9a-f]{12}$', 'c') AND a.HOST = '%'
+    WHERE REGEXP_LIKE(a.USER, '^alethia_byo_[0-9a-f]{12}$', 'c') AND CHAR_LENGTH(a.USER) = 24 AND a.HOST = '%'
       AND JSON_UNQUOTE(JSON_EXTRACT(a.ATTRIBUTE, '$.alethia_env')) = 'env-1'
       AND CAST(a.USER AS BINARY) NOT IN ('alethia_byo_0123456789ab')) c);
 PREPARE alethia_byo_s FROM @alethia_byo_s;
@@ -24,7 +24,7 @@ SET @alethia_byo_s = IF((SELECT COUNT(*) FROM information_schema.USER_ATTRIBUTES
 PREPARE alethia_byo_s FROM @alethia_byo_s;
 EXECUTE alethia_byo_s;
 DEALLOCATE PREPARE alethia_byo_s;
-ALTER USER 'alethia_byo_0123456789ab'@'%' IDENTIFIED WITH caching_sha2_password AS '$A$005$BBBBBBBBBBBBBBBBBBBBpkqu8e9Gwp5813a8ikanw8hSCkN.yyCF3gNMmvKmvU3' REQUIRE SSL WITH MAX_USER_CONNECTIONS 20;
+ALTER USER 'alethia_byo_0123456789ab'@'%' IDENTIFIED WITH caching_sha2_password AS '$A$005$BBBBBBBBBBBBBBBBBBBBpkqu8e9Gwp5813a8ikanw8hSCkN.yyCF3gNMmvKmvU3' REQUIRE SSL WITH MAX_USER_CONNECTIONS 20 ACCOUNT LOCK;
 CREATE DATABASE IF NOT EXISTS `alethia_byo_0123456789ab`;
 SET @alethia_byo_s = CONCAT('GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES ON `', IF(@@partial_revokes, 'alethia_byo_0123456789ab', REPLACE('alethia_byo_0123456789ab', '_', CONCAT(CHAR(92 USING utf8mb4), '_'))), '`.* TO ''alethia_byo_0123456789ab''@''%''');
 PREPARE alethia_byo_s FROM @alethia_byo_s;

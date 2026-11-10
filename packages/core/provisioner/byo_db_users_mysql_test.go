@@ -133,3 +133,33 @@ func TestByoDBUsers_MySQLBindsTheUsersOwnDatabase(t *testing.T) {
 		t.Errorf("the administrative secret reached a binding:\n%s", body)
 	}
 }
+
+// TestByoDBUsers_SessionsNotEndedIsAWarning: a `sessions-not-ended:<user>` line (the administrator
+// could not end a revoked user's sessions) is a Deploy-tab warning naming that user — not a failure,
+// and not a provisioned user — and its spelling is the runner's.
+func TestByoDBUsers_SessionsNotEndedIsAWarning(t *testing.T) {
+	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+	c := newUsersCluster(t)
+	api, worker := usersFor()
+	gone := "alethia_byo_eeeeeeeeeeee"
+	c.message = resultOf(api, worker, byoDBUsersSessionsPrefix+gone)
+	vc := mysqlUsersConfig("8.0")
+	out, log := runUsers(vc, usersOutputs(vc), nil)
+	if out.Failed || len(out.Provisioned) != 2 || out.Provisioned[gone] {
+		t.Fatalf("outcome %+v\n%s", out, log)
+	}
+	if len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], gone) || !strings.Contains(out.Warnings[0], "sessions were not terminated") ||
+		!strings.Contains(out.Warnings[0], "cannot log in again") {
+		t.Fatalf("warnings %v", out.Warnings)
+	}
+	if _, _, err := parseByoDBUsersResult(*resultOf(byoDBUsersSessionsPrefix + "alethia_app"), true); err == nil {
+		t.Error("a session line naming a non-per-binding user was accepted")
+	}
+	src, err := os.ReadFile("../../../apps/runner/internal/agent/db_bootstrap_byo_mysql.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), `const mysqlByoSessionsPrefix = "`+byoDBUsersSessionsPrefix+`"`) {
+		t.Errorf("the runner's session line prefix is not %q", byoDBUsersSessionsPrefix)
+	}
+}
