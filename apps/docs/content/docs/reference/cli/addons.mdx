@@ -50,11 +50,28 @@ alethia addon list -p my-project -o json
 | `--env`, `-e` | No | Environment id, name or stage; an exact name wins over a stage. Omit to use the project's default environment. |
 
 Columns: **Add-on** (the catalog id), **Enabled** (✓ / —), **Mode** (`managed` | `gitops`),
-**Version**, **Status**, **Sync**, **Health**, **Last synced**.
+**Version**, **Update**, **Status**, **Sync**, **Health**, **Last synced**.
 
 **Version** is the chart version the add-on deploys with: your pin if you set one with
 `addon enable --version`, otherwise the catalog default. In `-o json`, `version_pinned` is `true`
 for a pin and `false` for the catalog default.
+
+**Update** is what the catalog offers this add-on. A catalog chart update reaches an unpinned
+`managed` add-on on the environment's next deploy, and nothing else, so the column is about the
+other two cases:
+
+- A pin older than the catalog's version shows `4.15.1 available`.
+- A `gitops` add-on shows `repo decides (catalog 4.15.1)`. The file in your apps repo, for
+  example `addons/ingress-nginx.yaml`, sets the version, and Alethia never rewrites it. Each deploy
+  reads the file and adds a warning on the **Deploy** tab when it installs an older chart.
+
+`SECURITY` in front of the value means the catalog's version is a security release. The table then
+prints one line per such add-on, with what the release fixes and the command to update the pin,
+for example `alethia addon enable ingress-nginx --version 4.15.1 --project my-project`. For a
+`gitops` add-on, the line names the file and the `spec.source.targetRevision` field to change.
+Nothing is updated until you act. In `-o json`, `update` holds `kind` (`pin-behind` | `gitops`),
+`catalog_version`, `security`, `security_summary` and `advisory_url`, and is `null` when the
+add-on follows the catalog.
 
 **Sync, not Health, is the column to read first.** Health is the workload's own report — a chart
 with no readiness probe reports `Healthy` the moment its pods schedule. Sync is whether ArgoCD has

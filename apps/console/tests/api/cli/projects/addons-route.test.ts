@@ -236,6 +236,47 @@ describe("GET /api/cli/projects/:id/addons — effective version", () => {
 	});
 });
 
+describe("GET /api/cli/projects/:id/addons — the catalogue's update offer (#6537)", () => {
+	it("offers a pinned ingress-nginx the security release, states it to a GitOps row, and says nothing to an unpinned one", async () => {
+		const row = {
+			id: "r",
+			enabled: true,
+			namespace: "ingress-nginx",
+			status: "READY",
+			health: null,
+			sync_status: null,
+			last_synced_at: null,
+			values: {},
+			values_yaml: null,
+			cursor_key: "k",
+		};
+		vi.mocked(paginate).mockResolvedValue({
+			items: [
+				{ ...row, addon_id: "ingress-nginx", mode: "managed", version: "4.11.2" },
+				{ ...row, addon_id: "ingress-nginx", mode: "gitops", version: null },
+				{ ...row, addon_id: "loki", mode: "managed", version: null },
+			],
+			page: { mode: "exact", limit: 100, total: 3, next_cursor: null },
+		} as never);
+
+		const res = await GET(new Request(URL_BASE), params);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		const def = getAddOn("ingress-nginx");
+		expect(body.addons[0].update).toEqual({
+			kind: "pin-behind",
+			catalog_version: def?.version,
+			security: true,
+			security_summary: def?.securityRelease?.summary,
+			advisory_url: def?.securityRelease?.advisoryUrl,
+		});
+		expect(body.addons[1].update).toMatchObject({ kind: "gitops", security: true });
+		expect(body.addons[2].update).toBeNull();
+		// The offer is information only: the pin reported is still the user's.
+		expect(body.addons[0]).toMatchObject({ version: "4.11.2", version_pinned: true });
+	});
+});
+
 describe("GET /api/cli/projects/:id/addons — stored settings for the plan (#5528)", () => {
 	it("returns the non-secret settings and values_yaml, and a secret setting by NAME only", async () => {
 		const def = ADDON_CATALOG.find((d) => d.fields.some((f) => f.type === "secret" || f.secret));

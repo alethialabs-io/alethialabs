@@ -7,6 +7,13 @@
 			"mode": "string",
 			"version": "string",
 			"version_pinned": false,
+			"update": {
+				"kind": "pin-behind",
+				"catalog_version": "string",
+				"security": false,
+				"security_summary": "string",
+				"advisory_url": "string"
+			},
 			"namespace": "string",
 			"status": "string",
 			"health": "string",

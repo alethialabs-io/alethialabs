@@ -45,6 +45,7 @@ import { Textarea } from "@repo/ui/textarea";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import { chartVersionError } from "@/lib/addons/chart-version";
 import { REQUIREMENT_HINTS } from "@/lib/addons/requirements";
+import { addOnUpdateNotice } from "@/lib/addons/update-notice";
 import type { AddOnField, AddOnMode } from "@/lib/addons/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers/generated/catalog";
 import {
@@ -53,6 +54,7 @@ import {
   useEnableAddon,
 } from "@/lib/query/use-addons-query";
 import type { FieldErrors } from "@/lib/actions/result";
+import { AddonUpdateNotice } from "./addon-update-notice";
 import { AddonIcon, AddonStatusBadge } from "./addon-visuals";
 
 /** Reserved RHF field names (kept distinct from add-on knob keys). */
@@ -258,6 +260,11 @@ export function AddonConfigForm({
   const addonVerdict = addonCompat(item.id, k8s.version, k8s.reason);
   const compat = addonVerdict.status === "pass" ? null : addonVerdict;
   const isInstalled = isInstalledItem(item);
+  // Read from the STORED install, not the form: the notice is about what is deployed (#6537).
+  const update = addOnUpdateNotice(
+    { version: item.version, securityRelease: item.securityRelease },
+    item.install ? { mode: item.install.mode, version: item.install.version } : null,
+  );
 
   const onSubmit = form.handleSubmit(async (values) => {
     // The double-submit guard: the Save button is disabled while pending, and a second submit (Enter
@@ -283,6 +290,12 @@ export function AddonConfigForm({
       // alert, or anything else in one toast. The card stays open with what was typed.
     }
   });
+
+  /** The one-click pin update: set the pin to the catalogue's version and save (#6537). */
+  const onUpdatePin = (version: string) => {
+    form.setValue("_version", version, { shouldDirty: true });
+    void onSubmit();
+  };
 
   /** Remove the add-on from this environment (reconciled away on the next Deploy). */
   const onRemove = async () => {
@@ -520,6 +533,16 @@ export function AddonConfigForm({
             </div>
           )}
         </div>
+
+        {update && (
+          <AddonUpdateNotice
+            notice={update}
+            addonId={item.id}
+            name={item.name}
+            pending={enable.isPending || disable.isPending}
+            onUpdatePin={onUpdatePin}
+          />
+        )}
 
         {refusal && (
           <Alert variant="destructive" role="alert">
