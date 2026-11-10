@@ -35,7 +35,6 @@ Variables can be passed via the main YAML configuration file of **idp-installer*
 | <a name="module_elasticache"></a> [elasticache](#module\_elasticache) | git::git@github.com:alethia/tf-module-redis.git | v1.0.0 |
 | <a name="module_global_dynamodb"></a> [global\_dynamodb](#module\_global\_dynamodb) | git@github.com:alethia/tf-module-dynamodb.git | n/a |
 | <a name="module_irsa_fluentbit_cloudwatch"></a> [irsa\_fluentbit\_cloudwatch](#module\_irsa\_fluentbit\_cloudwatch) | terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks | 5.34.0 |
-| <a name="module_irsa_alethia_agent"></a> [irsa\_alethia\_adp\_agent](#module\_irsa\_alethia\_adp\_agent) | terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks | 5.34.0 |
 | <a name="module_irsa_karpenter"></a> [irsa\_karpenter](#module\_irsa\_karpenter) | terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks | 5.34.0 |
 | <a name="module_karpenter"></a> [karpenter](#module\_karpenter) | terraform-aws-modules/eks/aws//modules/karpenter | 19.21.0 |
 | <a name="module_rds_iam_auth"></a> [rds\_iam\_auth](#module\_rds\_iam\_auth) | terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks | 5.34.0 |
@@ -48,7 +47,6 @@ Variables can be passed via the main YAML configuration file of **idp-installer*
 
 | Name | Type |
 |------|------|
-| [aws_iam_policy.irsa_alethia_agent](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_policy.irsa_karpenter](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_policy.rds_iam_auth](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_service_linked_role.spot](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_service_linked_role) | resource |

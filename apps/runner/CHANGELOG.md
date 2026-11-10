@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Upgrade notes
+
+* **aws template:** every IRSA role in the AWS project template now trusts only its exact ServiceAccounts, matched with `StringEquals` ([#6556](https://github.com/alethialabs-io/alethialabs/issues/6556)). Three roles that nothing in the platform used are removed, with their policies: `irsa-alethia-<cluster>`, `ai-bedrock-<cluster>` and `s3-bucket-<cluster>`. **Re-deploy your AWS environments after upgrading.** The deploy re-applies the stack and deletes these roles.
+  * If you annotated a ServiceAccount of your own with one of these role ARNs, that workload loses AWS access on the re-deploy. To fix it, create a role for that workload in your own IaC that trusts its exact `namespace:serviceaccount`, and annotate the ServiceAccount with the new role.
+  * A policy you attached to one of these roles by hand does not block the re-deploy. The roles are created with `force_detach_policies`, so the role delete detaches your policy first. Your policy itself is kept.
+  * The re-deploy also deletes the removed roles' own policies (`irsa_alethia_agent*`, `irsa_ai_bedrock_custom*`, `irsa_ai_bedrock_s3*`). If you attached one of them by hand to another role, user or group, the re-deploy fails with `DeleteConflict`, because AWS does not delete a managed policy that is still attached. To fix it, detach that policy from your entity (`aws iam detach-role-policy`, `detach-user-policy` or `detach-group-policy`), then re-deploy.
+
 ## [0.6.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.5.0...runner-v0.6.0) (2026-08-29)
 
 
