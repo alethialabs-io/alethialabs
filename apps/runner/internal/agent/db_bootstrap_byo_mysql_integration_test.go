@@ -244,7 +244,6 @@ func (a *myAdmin) cleanup() {
 		_, _, _ = a.root.run("DROP DATABASE IF EXISTS `"+u+"`", false)
 	}
 	_, _, _ = a.root.run("DROP DATABASE IF EXISTS `"+myLookalikeDB+"`", false)
-	_, _, _ = a.root.run("SET @n = CONCAT('"+myLookalike+"', CHAR(10)); SET @s = CONCAT('DROP USER IF EXISTS ''', @n, '''@''%'''); PREPARE s FROM @s; EXECUTE s;", false)
 	for _, u := range []string{myUserA, myUserB, myUntagged, myUserC} {
 		_, _, _ = a.root.run("DROP USER IF EXISTS '"+u+"'@'%'", false)
 	}
@@ -596,37 +595,66 @@ func TestByoUsersMySQLServer_RefusedProvisionedUserIsLocked(t *testing.T) {
 	}
 }
 
-// myLookalike is a tagged user named like a per-binding user plus a trailing newline. It is built
-// with CHAR(10), so the statements read the same in every sql_mode.
-var myLookalike = myUserA[:len(myUserA)-1] + "5"
+// myLookalikes are tagged users named like a per-binding user plus one trailing line terminator, each
+// of the terminators before which ICU's `$` also matches. Each is built from an SQL expression, so the
+// statements read the same in every sql_mode. The base names are distinct per-binding-shaped names.
+var myLookalikes = []struct{ base, term, hex string }{
+	{"alethia_byo_eeeeeeeeeee5", "CHAR(10)", "0A"},
+	{"alethia_byo_eeeeeeeeeee6", "CHAR(13)", "0D"},
+	{"alethia_byo_eeeeeeeeeee7", "CONVERT(0xC285 USING utf8mb4)", "C285"},
+	{"alethia_byo_eeeeeeeeeee8", "CONVERT(0xE280A8 USING utf8mb4)", "E280A8"},
+}
 
-// TestByoUsersMySQLServer_NewlineLookalikeIsNoCandidate: a tagged user named `<per-binding name>\n`.
-// Whether the anchored pattern alone selects it on this server is measured and logged. Either way it
-// is never a candidate: it is not dropped, and it never reaches the result, where one line the runner
-// cannot parse would fail every run (applyInput holds every entry to the runner's parser).
-func TestByoUsersMySQLServer_NewlineLookalikeIsNoCandidate(t *testing.T) {
+// lookalikeSQL runs stmt (an account statement taking the account as `<name>`) for one lookalike, its
+// name built from the expression.
+func lookalikeSQL(base, term, stmt string) string {
+	return "SET @n = CONCAT('" + base + "', " + term + "); SET @s = REPLACE('" + strings.ReplaceAll(stmt, "'", "''") +
+		"', '<name>', CONCAT('''', @n, '''@''%''')); PREPARE s FROM @s; EXECUTE s; DEALLOCATE PREPARE s;"
+}
+
+// cleanupLookalikes drops every lookalike, kept or stored without its terminator.
+func (a *myAdmin) cleanupLookalikes() {
+	for _, l := range myLookalikes {
+		_, _, _ = a.root.run(lookalikeSQL(l.base, l.term, "DROP USER IF EXISTS <name>"), false)
+		_, _, _ = a.root.run("DROP USER IF EXISTS '"+l.base+"'@'%'", false)
+	}
+}
+
+// TestByoUsersMySQLServer_LineTerminatorLookalikeIsNoCandidate: a tagged user named `<per-binding
+// name><line terminator>`. What the server does with each is MEASURED and logged: whether it stores
+// the terminator at all (an account name may be stored without it), and if so whether the anchored
+// pattern alone selects it. Every lookalike the server keeps must not be a candidate: it is not
+// dropped, and it never reaches the result, where one line the runner cannot parse would fail every
+// run (applyInput holds every entry to the runner's parser). The candidates' length bound is what
+// guarantees that wherever the pattern alone would select one.
+func TestByoUsersMySQLServer_LineTerminatorLookalikeIsNoCandidate(t *testing.T) {
 	a := newMyAdmin(t)
 	a.requiresFloor()
 	a.cleanup()
-	t.Cleanup(a.cleanup)
-	a.query(a.root, "SET @n = CONCAT('"+myLookalike+"', CHAR(10)); "+
-		"SET @s = CONCAT('CREATE USER ''', @n, '''@''%'' IDENTIFIED BY ''"+myDecoyPass+"'' ATTRIBUTE ''{\"alethia_env\":\"env-a\"}'''); "+
-		"PREPARE s FROM @s; EXECUTE s;")
-	row := "FROM information_schema.USER_ATTRIBUTES WHERE HEX(USER) = CONCAT(HEX('" + myLookalike + "'), '0A')"
-	if got := a.query(a.root, "SELECT COUNT(*) "+row+" AND JSON_UNQUOTE(JSON_EXTRACT(ATTRIBUTE, '$.alethia_env')) = 'env-a'"); got != "1" {
-		t.Fatalf("fixture: no tagged newline lookalike (count %s); accounts like it: %s", got,
-			a.query(a.root, "SELECT GROUP_CONCAT(CONCAT(HEX(USER), ' ', IFNULL(ATTRIBUTE, 'NULL')) SEPARATOR '; ') FROM information_schema.USER_ATTRIBUTES WHERE USER LIKE '"+myLookalike+"%'"))
+	a.cleanupLookalikes()
+	t.Cleanup(func() { a.cleanupLookalikes(); a.cleanup() })
+	kept := map[string]string{}
+	for _, l := range myLookalikes {
+		a.query(a.root, lookalikeSQL(l.base, l.term, `CREATE USER <name> IDENTIFIED BY '`+myDecoyPass+`' ATTRIBUTE '{"alethia_env":"env-a"}'`))
+		exists := "SELECT COUNT(*) FROM mysql.user WHERE HEX(User) = CONCAT(HEX('" + l.base + "'), '" + l.hex + "')"
+		stored := a.query(a.root, exists) == "1"
+		selects := a.query(a.root, "SELECT REGEXP_LIKE(CONCAT('"+l.base+"', "+l.term+"), '^alethia_byo_[0-9a-f]{12}$', 'c')")
+		t.Logf("lookalike %s+%s on %s: stored with its terminator=%v, pattern alone selects it=%s", l.base, l.hex, a.query(a.root, "SELECT VERSION()"), stored, selects)
+		if stored {
+			kept[l.base] = exists
+		} else {
+			// Stored as the bare per-binding name: a real, tagged candidate, not a lookalike. Remove it
+			// so it does not stand in for one.
+			a.query(a.root, "DROP USER IF EXISTS '"+l.base+"'@'%'")
+		}
 	}
-	// Measured, not assumed: does the pattern alone select the lookalike on this server? Either answer
-	// is logged; the assertions below hold for both, because the candidates also bound the length.
-	t.Logf("pattern alone selects <user>\\n on %s: column=%s literal=%s", a.query(a.root, "SELECT VERSION()"),
-		a.query(a.root, "SELECT COUNT(*) "+row+" AND REGEXP_LIKE(USER, '^alethia_byo_[0-9a-f]{12}$', 'c')"),
-		a.query(a.root, "SELECT REGEXP_LIKE(CONCAT('"+myLookalike+"', CHAR(10)), '^alethia_byo_[0-9a-f]{12}$', 'c')"))
 	if got := a.apply("env-a", byoUser{myUserB, myPasswordB}); strings.Join(got, ",") != myUserB {
 		t.Fatalf("result = %v, want [%s]", got, myUserB)
 	}
-	if got := a.query(a.root, "SELECT COUNT(*) FROM mysql.user WHERE HEX(User) = CONCAT(HEX('"+myLookalike+"'), '0A')"); got != "1" {
-		t.Error("the newline lookalike was dropped as a candidate")
+	for base, exists := range kept {
+		if a.query(a.root, exists) != "1" {
+			t.Errorf("the lookalike %s+terminator was dropped as a candidate", base)
+		}
 	}
 }
 
