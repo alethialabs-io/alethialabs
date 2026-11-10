@@ -32,6 +32,18 @@ const DNS1123_LABEL = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 /** 63 (Kubernetes' label limit) minus 8 reserved for `-` plus a seven-digit PR number. */
 const PREVIEW_PREFIX_MAX_LEN = 55;
 
+/**
+ * The prefix every BYO chart's own namespace starts with (`byo-<chart id>`). A preview prefix of
+ * `byo`, or one starting with `byo-`, would make those namespaces preview namespaces (#6494), so every
+ * chart attached with a blank namespace would conflict. Mirrors Go `validatePreviewNamespacePrefix`.
+ */
+const BYO_NAMESPACE_PREFIX = "byo-";
+
+/** Whether `prefix` would claim BYO charts' own namespaces (see {@link BYO_NAMESPACE_PREFIX}). */
+export function isByoReservedPreviewPrefix(prefix: string): boolean {
+	return `${prefix}-` === BYO_NAMESPACE_PREFIX || prefix.startsWith(BYO_NAMESPACE_PREFIX);
+}
+
 /** A GitHub/GitLab owner or repo segment: no whitespace, slashes, or path traversal. */
 const repoSegment = z
 	.string()
@@ -60,6 +72,10 @@ export const previewConfigSchema = createInsertSchema(projectPreviewConfig, {
 		.trim()
 		.max(PREVIEW_PREFIX_MAX_LEN, `must be at most ${PREVIEW_PREFIX_MAX_LEN} characters`)
 		.regex(DNS1123_LABEL, "must be a DNS-1123 label: lowercase alphanumerics and '-', starting and ending alphanumeric")
+		.refine(
+			(p) => !isByoReservedPreviewPrefix(p),
+			`“byo” and prefixes starting with “${BYO_NAMESPACE_PREFIX}” are reserved: every bring-your-own chart's own namespace starts with “${BYO_NAMESPACE_PREFIX}”. Choose another prefix.`,
+		)
 		.optional(),
 	fabric_id: z.string().uuid().nullish(),
 	git_credential_id: z.string().uuid().nullish(),

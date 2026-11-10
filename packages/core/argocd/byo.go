@@ -50,8 +50,8 @@ import (
 // absorbs every remaining line of the AppProject. The result is two VALID documents, the second a
 // ClusterRoleBinding to cluster-admin, applied by the runner with the cluster's admin kubeconfig.
 // That is precisely the cluster-scoped power the empty clusterResourceWhitelist below exists to
-// deny an untrusted chart. Not flag-gated: prepareByoCharts runs on every deploy carrying any
-// git-source add-on (provisioner/deploy.go, byo_charts.go).
+// deny an untrusted chart. Not flag-gated: configureByoCharts runs on every deploy carrying any BYO
+// chart (provisioner/deploy.go → runAddOnStage → configureByoCharts in byo_charts.go).
 //
 // TYPED STRUCTS, not map[string]any: field ORDER is preserved (yaml.v3 sorts map keys, which would
 // reshuffle the manifest on every render for no reason), and the shape is checked by the compiler
@@ -383,6 +383,46 @@ func validateByoNamespace(ns string) error {
 // chart per chart (provisioner.configureByoCharts) before either renderer sees its namespace.
 func ValidateByoNamespace(ns string) error { return validateByoNamespace(ns) }
 
+// ByoPreviewNamespaceConflict says why a BYO chart may not use namespace ns in a project whose
+// preview environments use previewPrefix, or "" when it may (#6494).
+//
+// THE SAME PREFIX SEMANTICS THE PREVIEW RENDERERS USE. RenderPreviewGuardrails pins both preview
+// AppProjects to `<prefix>-*` on the host (the namespace arm, where each PR lands in
+// `<prefix>-<pr number>`) and to `<prefix>` itself inside each preview vcluster (the vcluster arm).
+// So ns conflicts when it IS the prefix or starts with the prefix followed by "-". It is a namespace
+// boundary, not a substring test: with prefix "pr", "pr-7" and "pr" conflict while "pre-7" and
+// "prod" do not — neither preview project's destination pattern matches them. The bare prefix is a
+// vcluster-arm namespace, not a host one; it is refused on the host as well, so the rule does not
+// depend on the placement mode, which the preview settings can switch without a prefix change.
+//
+// Why it matters: a namespace the preview projects may sync into carries the preview guardrail
+// bundle (default-deny NetworkPolicy, quota, RBAC), and is open to the untrusted PR code the
+// preview-apps project runs. A BYO chart sharing it could change the objects that bundle relies
+// on, and would share its Secrets with preview workloads.
+//
+// previewPrefix is the project's stored prefix, empty when the project has no preview
+// configuration. Unlike validatePreviewNamespacePrefix, empty does NOT mean the renderers' default
+// "preview": a project with no preview configuration has no preview namespaces, and the console
+// emits the stored prefix (never blank when a configuration exists) on the config snapshot.
+//
+// The console refuses a NEW attachment, or a newly chosen namespace, with the mirrored rule
+// (byoPreviewNamespaceMessage in apps/console/lib/validations/byo-charts.ts), and refuses a prefix
+// change that an attached chart would match. The runner only REPORTS a chart stored before this
+// rule (provisioner.configureByoCharts): refusing it would withdraw its binding secrets from
+// running workloads.
+func ByoPreviewNamespaceConflict(ns, previewPrefix string) string {
+	p := strings.TrimSpace(previewPrefix)
+	if p == "" {
+		return ""
+	}
+	if ns != p && !strings.HasPrefix(ns, p+"-") {
+		return ""
+	}
+	return fmt.Sprintf("namespace %q is one of this project's preview namespaces: preview environments use %q and every namespace starting with %q, "+
+		"and carry their own guardrails there. Choose a namespace that is not %q and does not start with %q, or change the project's preview namespace prefix",
+		ns, p, p+"-", p, p+"-")
+}
+
 // byoReservedNamespacesJSON is the ONE list of namespaces a BYO chart may never target (#6439).
 //
 // WHY A BYO CHART MUST NOT SHARE A PLATFORM NAMESPACE. The hardened AppProject denies cluster-scoped
@@ -397,8 +437,9 @@ func ValidateByoNamespace(ns string) error { return validateByoNamespace(ns) }
 // own $comment; the Go pins are the TestByoReserved_* tests in byo_test.go. "default" is reserved
 // (#6446): it holds the platform's first-class workloads, their binding Secrets and service accounts.
 // A chart with no namespace of its own lands in ByoChartNamespace instead. Preview namespaces are not
-// reserved either: their prefix is a per-project setting (project_preview_config.namespace_prefix),
-// not a fixed platform name.
+// on this list: their prefix is a per-project setting (project_preview_config.namespace_prefix), not
+// a fixed platform name, so they are checked against that project's prefix instead
+// (ByoPreviewNamespaceConflict, #6494).
 //
 //go:embed byo_reserved_namespaces.json
 var byoReservedNamespacesJSON []byte

@@ -9,13 +9,15 @@
 // (packages/core/argocd/applicationset_preview.go): create-on-open, deploy head_sha,
 // destroy-on-close. Placement (namespace|vcluster) is the per-team tenancy of each preview.
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { defineAction } from "@/lib/actions/define-action";
-import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
+import { ActionRefusal, type ActionResult, FieldRefusal } from "@/lib/actions/result";
 import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
-import { projectPreviewConfig, projects } from "@/lib/db/schema";
+import { lockProjectPreviewNamespaces } from "@/lib/projects/preview-namespace-lock";
+import { projectAddons, projectPreviewConfig, projects } from "@/lib/db/schema";
+import { byoChartNamespace, byoPreviewNamespaceMessage } from "@/lib/validations/byo-charts";
 import {
 	type PreviewConfigParsed,
 	previewConfigSchema,
@@ -51,6 +53,25 @@ async function writePreviewConfig(projectId: string, parsed: PreviewConfigParsed
 			.limit(1);
 		if (!project) throw new ActionRefusal("not-found", "This project no longer exists.");
 
+		// The prefix this save leaves the project with: the one sent, else the stored one, else the
+		// column's default for a new row. Only a CHANGE is checked against the attached charts (#6494),
+		// under the project's lock so a concurrent attach cannot slip a chart in between.
+		await lockProjectPreviewNamespaces(tx, projectId);
+		const [existing] = await tx
+			.select({ namespace_prefix: projectPreviewConfig.namespace_prefix })
+			.from(projectPreviewConfig)
+			.where(eq(projectPreviewConfig.project_id, projectId))
+			.limit(1);
+		const prefix = parsed.namespace_prefix || existing?.namespace_prefix || DEFAULT_PREVIEW_PREFIX;
+		if (existing?.namespace_prefix !== prefix) {
+			const charts = await tx
+				.select({ addon_id: projectAddons.addon_id, namespace: projectAddons.namespace })
+				.from(projectAddons)
+				.where(and(eq(projectAddons.project_id, projectId), eq(projectAddons.source, "byo")));
+			const refusal = previewPrefixConflict(prefix, charts);
+			if (refusal) throw new FieldRefusal({ "config.namespace_prefix": [refusal] }, refusal);
+		}
+
 		const [row] = await tx
 			.insert(projectPreviewConfig)
 			.values({
@@ -66,6 +87,40 @@ async function writePreviewConfig(projectId: string, parsed: PreviewConfigParsed
 			.returning();
 		return { config: row };
 	});
+}
+
+/** The `namespace_prefix` column's default — what a new row stores when the save sends none. */
+const DEFAULT_PREVIEW_PREFIX = "preview";
+
+/**
+ * Why `prefix` may not become the project's preview namespace prefix, or `null` (#6494): it would make
+ * an attached BYO chart's namespace one of the project's preview namespaces
+ * ({@link byoPreviewNamespaceMessage}, the same rule the attach action applies the other way round).
+ *
+ * Refused rather than saved with a warning. The other choices are worse: saving it would put a running
+ * chart in a namespace the untrusted preview project may sync into, and the runner deliberately does
+ * not move or refuse a live chart (that would break its Services or withdraw its secrets), so nothing
+ * would ever undo it. Refusing here is the one point where a person is present to pick another prefix.
+ *
+ * A chart's namespace is read as the runner deploys it: blank, or the legacy `default` the runner moves
+ * out of, is the chart's own `byo-<chart id>`. Charts of every environment count, since the prefix is
+ * the project's.
+ */
+function previewPrefixConflict(
+	prefix: string,
+	charts: readonly { addon_id: string; namespace: string | null }[],
+): string | null {
+	const hits = charts.flatMap((c) => {
+		const namespace =
+			c.namespace && c.namespace !== "default" ? c.namespace : byoChartNamespace(c.addon_id);
+		return byoPreviewNamespaceMessage(namespace, prefix) ? [`“${c.addon_id}” (namespace “${namespace}”)`] : [];
+	});
+	if (hits.length === 0) return null;
+	const which =
+		hits.length === 1
+			? `BYO chart ${hits[0]} already deploys into one`
+			: `BYO charts ${hits.join(", ")} already deploy into them`;
+	return `The namespace prefix “${prefix}” would make “${prefix}” and every namespace starting with “${prefix}-” this project's preview namespaces, and its ${which}. Choose another prefix, or first attach the chart again with another namespace.`;
 }
 
 /**
