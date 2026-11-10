@@ -23,11 +23,12 @@
 #                                                        fluent-bit. Reached only through the output
 #                                                        `fluentbit_sa_role_arn`, for a customer-installed
 #                                                        chart whose SA is fluent-bit/fluent-bit.
-#   karpenter             karpenter:karpenter            NOT annotated by the platform. The Karpenter
-#                                                        Application (infra/templates/argocd/karpenter.yaml)
-#                                                        creates this SA without a role-arn annotation; the
-#                                                        role is reached only through the output
-#                                                        `karpenter_sa_role`, for whoever annotates that SA.
+#   karpenter             karpenter:karpenter            the platform renders this SA AND its annotation:
+#                                                        the Karpenter Application
+#                                                        (infra/templates/argocd/karpenter.yaml) annotates
+#                                                        it with the role ARN from output `karpenter_sa_role`
+#                                                        (packages/core/argocd/infra_facts.go), and refuses
+#                                                        to render Karpenter when that output is empty (#6559).
 #
 # Every role is matched with `StringEquals`, so a subject is a literal ServiceAccount, never a pattern.
 # checks_irsa_subjects.tftest.hcl pins this map exactly, refuses any `*` or `?` in it, and refuses an
