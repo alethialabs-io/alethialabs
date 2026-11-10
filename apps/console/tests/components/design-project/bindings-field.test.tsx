@@ -11,6 +11,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	BindingsField,
+	bindingFacets,
 	type ServiceBinding,
 } from "@/components/design-project/canvas/inspector/bindings-field";
 import type { IacGroup } from "@/lib/canvas/iac-inventory";
@@ -84,5 +85,30 @@ describe("BindingsField — BYO-IaC facet→output picker (#823)", () => {
 		// chart-workload lane does not resolve output_keys.
 		render(<BindingsField value={[byoBinding]} onChange={vi.fn()} />);
 		expect(screen.queryByText("Map to module outputs")).not.toBeInTheDocument();
+	});
+});
+
+// #6467 — the `database` facet is resolved by the BYO chart lane only (generate.go's service lane
+// has no case for it), so the editor offers it only where the chart-workload panel asks for it.
+describe("BindingsField — the database facet is chart-workload only (#6467)", () => {
+	const dbName: ServiceBinding = {
+		target: { kind: "database", name: "orders-db" },
+		inject: [{ env: "DATABASE_NAME", from: "database" }],
+	};
+
+	it("offers `database` only when allowDatabaseFacet is set", () => {
+		expect(bindingFacets(true).map((f) => f.value)).toContain("database");
+		expect(bindingFacets(false).map((f) => f.value)).not.toContain("database");
+		expect(bindingFacets(true).find((f) => f.value === "database")?.secret).toBe(false);
+	});
+
+	it("the chart-workload editor lists it", () => {
+		render(<BindingsField allowDatabaseFacet value={[dbName]} onChange={vi.fn()} />);
+		expect(screen.getByText("database name")).toBeInTheDocument();
+	});
+
+	it("the service editor does not", () => {
+		render(<BindingsField enableIacTargets value={[dbName]} onChange={vi.fn()} />);
+		expect(screen.queryByText("database name")).not.toBeInTheDocument();
 	});
 });
