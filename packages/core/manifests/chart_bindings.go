@@ -300,7 +300,7 @@ func ResolveChartWorkloadBindings(
 				// case — the administrative path, a keyless target, a per-binding Postgres user (which
 				// works in its own schema of the environment's database) — uses the environment's
 				// database. The keyless check is the credential branch's, so the two cannot disagree.
-				perBindingMySQL := policy.DBUsers != nil && !(policy.KeylessDBAuth && KeylessDBTarget(b.Target, dbs)) &&
+				perBindingMySQL := policy.DBUsers != nil && (!policy.KeylessDBAuth || !KeylessDBTarget(b.Target, dbs)) &&
 					dbEngineForName(dbs, b.Target.Name) == engineMySQL
 				if !perBindingMySQL {
 					value = outputs[databaseNameOutputKey(provider)]
