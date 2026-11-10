@@ -86,6 +86,38 @@ export const BYO_RESERVED_NAMESPACES: {
 			namespaces: ["default"],
 		},
 		{
+			id: "platformDataServices",
+			reason:
+				"the platform runs its in-cluster data services there (databases, caches, queues, operators), with their credentials",
+			namespaces: [
+				"caches",
+				"cnpg-system",
+				"databases",
+				"nosql",
+				"queues",
+				"registries",
+				"scylla-operator",
+				"secrets",
+				"topics",
+			],
+		},
+		{
+			id: "platformCloudIdentities",
+			reason: "a cloud identity the platform's templates create trusts a service account there",
+			namespaces: [
+				"agic",
+				"alethia-build",
+				"argocd",
+				"cert-manager",
+				"default",
+				"external-dns",
+				"external-secrets-operator",
+				"fluent-bit",
+				"karpenter",
+				"kube-system",
+			],
+		},
+		{
 			id: "marketplaceAddOns",
 			reason: "a platform-managed add-on from the marketplace installs there",
 			namespaces: [

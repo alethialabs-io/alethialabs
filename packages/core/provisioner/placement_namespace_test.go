@@ -5,10 +5,12 @@ package provisioner
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -21,6 +23,7 @@ func placedConfig(ns string, host *[]string) *types.ProjectConfig {
 		PlacementMode:           types.PlacementModeNamespace,
 		Namespace:               ns,
 		PlacementHostNamespaces: host,
+		EnvironmentID:           "env-1",
 	}
 	vc.Cluster.ClusterName = "acme-prod-cluster"
 	return vc
@@ -152,5 +155,146 @@ func TestRunNamespaceDestroy_RefusesAReservedNamespaceAndDeletesNothing(t *testi
 	ran, err := destroy("team-web")
 	if err != nil || ran != 1 {
 		t.Fatalf("control: an ordinary namespace's teardown must issue its Namespace delete, got %d commands (err %v)", ran, err)
+	}
+}
+
+// stubNamespaceRead answers the runner's `kubectl get namespace <ns>` with answer (or err), passes
+// every other read to the real seam, and counts the cluster WRITES (every executeCommand) the deploy
+// or teardown then issues.
+func stubNamespaceRead(t *testing.T, ns, answer string, readErr error) *int {
+	t.Helper()
+	origRead, origRun := executeCommandWithOutput, executeCommand
+	t.Cleanup(func() { executeCommandWithOutput, executeCommand = origRead, origRun })
+	executeCommandWithOutput = func(cmd, dir string, env []string) (string, error) {
+		if strings.HasPrefix(cmd, "kubectl get namespace "+ns+" ") {
+			return answer, readErr
+		}
+		return origRead(cmd, dir, env)
+	}
+	writes := 0
+	executeCommand = func(cmd, dir string, env []string, stdout, stderr io.Writer) error {
+		writes++
+		return origRun(cmd, dir, env, stdout, stderr)
+	}
+	return &writes
+}
+
+// namespaceJSON is `kubectl get namespace -o json` for a namespace carrying labels.
+func namespaceJSON(labels string) string {
+	return `{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"team-web","labels":{` + labels + `}}}`
+}
+
+// TestRunNamespaceDeploy_RefusesANamespaceItDoesNotOwn (#6551): a namespace on no list can still be
+// the host's (its own GitOps repo created it) or a sibling placement's. The runner reads it after
+// minting kube access and BEFORE its first write, and refuses unless it carries THIS environment's
+// owner label. Absent is the first deploy, which creates it labelled.
+func TestRunNamespaceDeploy_RefusesANamespaceItDoesNotOwn(t *testing.T) {
+	deploy := func(t *testing.T, answer string, readErr error) (int, error) {
+		t.Helper()
+		depIsolateHome(t)
+		depFakeBins(t, "kubectl", "helm")
+		depArgoTemplates(t)
+		depNoSlowProbes(t)
+		writes := stubNamespaceRead(t, "team-web", answer, readErr)
+		var out strings.Builder
+		_, err := RunDeployV2(t.Context(), DeployParams{
+			ProjectConfig:   depPlacementConfig(types.PlacementModeNamespace, "team-web"),
+			Provider:        "hetzner",
+			TalosKubeconfig: depTalosMinter("apiVersion: v1\nkind: Config\n"),
+			Stdout:          &out,
+			Stderr:          &out,
+		})
+		return *writes, err
+	}
+	for _, tc := range []struct{ name, answer string }{
+		{"another environment's namespace", namespaceJSON(`"alethia.io/placement":"namespace","alethia.io/environment-id":"env-2"`)},
+		{"the host's own namespace, no owner label", namespaceJSON(`"team":"payments"`)},
+		{"a namespace with no labels at all", `{"metadata":{"name":"team-web"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writes, err := deploy(t, tc.answer, nil)
+			if err == nil || !strings.Contains(err.Error(), `namespace "team-web" already exists on the cluster and does not belong to this environment`) {
+				t.Fatalf("want a refusal naming the namespace, got %v", err)
+			}
+			if writes != 0 {
+				t.Errorf("%d cluster writes before the refusal; want none", writes)
+			}
+		})
+	}
+	t.Run("a read that fails refuses (fail closed)", func(t *testing.T) {
+		writes, err := deploy(t, "", errors.New("forbidden"))
+		if err == nil || !strings.Contains(err.Error(), "could not read namespace") || writes != 0 {
+			t.Fatalf("want a fail-closed refusal with no writes, got %v (%d writes)", err, writes)
+		}
+	})
+	t.Run("an unparseable answer refuses (fail closed)", func(t *testing.T) {
+		if _, err := deploy(t, "not json", nil); err == nil || !strings.Contains(err.Error(), "could not parse namespace") {
+			t.Fatalf("want a fail-closed refusal, got %v", err)
+		}
+	})
+	t.Run("control: its own namespace deploys", func(t *testing.T) {
+		writes, err := deploy(t, namespaceJSON(`"alethia.io/environment-id":"env-1"`), nil)
+		if err != nil || writes == 0 {
+			t.Fatalf("its own labelled namespace must deploy, got %v (%d writes)", err, writes)
+		}
+	})
+	t.Run("control: a first deploy (no namespace yet) deploys", func(t *testing.T) {
+		writes, err := deploy(t, "", nil)
+		if err != nil || writes == 0 {
+			t.Fatalf("a first deploy must create the namespace, got %v (%d writes)", err, writes)
+		}
+	})
+}
+
+// TestRunNamespaceDeploy_FailsClosedWithoutAnEnvironmentID: with no environment id there is no owner
+// label to compare, so the runner cannot tell its namespace from someone else's, and refuses.
+func TestRunNamespaceDeploy_FailsClosedWithoutAnEnvironmentID(t *testing.T) {
+	vc := placedConfig("team-web", &[]string{})
+	vc.EnvironmentID = ""
+	if err := namespaceOwnershipRefusal(vc, "team-web", "deploy"); err == nil || !strings.Contains(err.Error(), "no environment_id") {
+		t.Fatalf("want a refusal naming the missing environment id, got %v", err)
+	}
+}
+
+// TestRunNamespaceDestroy_RefusesANamespaceItDoesNotOwn: the teardown deletes the Namespace, so it reads
+// it first and refuses — before any delete — unless it is this environment's.
+func TestRunNamespaceDestroy_RefusesANamespaceItDoesNotOwn(t *testing.T) {
+	stubKubectlOnPath(t)
+	teardown := func(answer string) (int, error) {
+		writes := stubNamespaceRead(t, "team-web", answer, nil)
+		err := runNamespaceDestroy(context.Background(), fakeNamespaceProvider{}, DestroyParams{
+			ProjectConfig: placedConfig("team-web", &[]string{}),
+			Provider:      "gcp",
+			KubeConn: func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+				return "https://api.example.invalid", "Y2E=", nil
+			},
+			NamespaceIdentity: func(context.Context, string, *types.ProjectConfig, string, string) error { return nil },
+			Stdout:            io.Discard,
+			Stderr:            io.Discard,
+		})
+		return *writes, err
+	}
+	writes, err := teardown(namespaceJSON(`"alethia.io/environment-id":"env-2"`))
+	if err == nil || !strings.Contains(err.Error(), "Refusing the teardown") || writes != 0 {
+		t.Fatalf("another environment's namespace: want a refusal with no deletes, got %v (%d deletes)", err, writes)
+	}
+	writes, err = teardown(namespaceJSON(`"alethia.io/environment-id":"env-1"`))
+	if err != nil || writes == 0 {
+		t.Fatalf("control: its own namespace must be torn down, got %v (%d deletes)", err, writes)
+	}
+}
+
+// TestNamespaceOwnerLabelIsTheEnvironmentHandle pins the label the check reads to the one the tenant
+// render stamps on the Namespace it creates — so a first deploy's namespace passes its second deploy.
+func TestNamespaceOwnerLabelIsTheEnvironmentHandle(t *testing.T) {
+	vc := placedConfig("team-web", &[]string{})
+	vc.EnvironmentID = "11111111-2222-4333-8444-555555555555"
+	m, err := argocd.RenderNamespaceTenant(namespaceTenantInput(vc, "team-web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns := strings.SplitN(m.Isolation, "\n---\n", 2)[0]
+	if !strings.Contains(ns, "kind: Namespace") || !strings.Contains(ns, namespaceOwnerLabel+`: "`+vc.EnvironmentID+`"`) {
+		t.Fatalf("the rendered Namespace must carry %s=%s, got:\n%s", namespaceOwnerLabel, vc.EnvironmentID, ns)
 	}
 }

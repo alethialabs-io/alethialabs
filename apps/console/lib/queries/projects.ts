@@ -26,6 +26,7 @@ import {
 	normalizeEnvironmentName,
 } from "@/lib/validations/names";
 import {
+	duplicatePlacementNamespace,
 	effectivePlacementNamespace,
 	placementNamespaceMessage,
 } from "@/lib/validations/placement-namespace";
@@ -75,6 +76,21 @@ export function environmentSpecProblem(spec: {
 		if (reserved) return reserved;
 	}
 	return null;
+}
+
+/**
+ * Why a create matrix cannot be fanned out, or `null`: the first spec {@link environmentSpecProblem}
+ * refuses, else two namespace placements resolving to one namespace (#6551) — the shared placements
+ * all land on one host Fabric, so they would share its namespace, AppProject and identity.
+ */
+export function environmentSpecsProblem(
+	specs: readonly { name: string; namespace?: string | null; placement_mode: PlacementMode }[],
+): string | null {
+	for (const s of specs) {
+		const problem = environmentSpecProblem(s);
+		if (problem) return problem;
+	}
+	return duplicatePlacementNamespace(specs)?.message ?? null;
 }
 
 /** One environment the front door seeds, with its placement onto a Fabric. The placement selector
@@ -418,10 +434,8 @@ export async function insertProjectWithDefaultFabric(
 		if (defaults.length !== 1) {
 			throw new Error("Exactly one environment must be the default.");
 		}
-		for (const s of specs) {
-			const problem = environmentSpecProblem(s);
-			if (problem) throw new Error(problem);
-		}
+		const specsProblem = environmentSpecsProblem(specs);
+		if (specsProblem) throw new Error(specsProblem);
 		// Still reserved even though the fan-out no longer mints a Fabric by this name: projects
 		// created before that fix carry one, so the name would be ambiguous in a state key and in
 		// `project env add --fabric shared`.

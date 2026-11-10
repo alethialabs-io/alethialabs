@@ -66,3 +66,27 @@ export function effectivePlacementNamespace(env: {
 }): string {
 	return env.namespace ?? slugifyOrEmpty(env.name);
 }
+
+/** The refusal for a namespace another namespace placement on the same Fabric already resolves to. */
+export function placementNamespaceTakenMessage(namespace: string, environment: string): string {
+	return `Namespace “${namespace}” is already used by the environment “${environment}” on this Fabric. Two namespace-placed environments cannot share a namespace; choose another.`;
+}
+
+/**
+ * The first namespace two of `envs` resolve to, as a refusal, or `null` when every namespace
+ * placement in the list resolves to its own namespace. For a create matrix, whose shared
+ * placements all land on the same host Fabric.
+ */
+export function duplicatePlacementNamespace(
+	envs: readonly { name: string; namespace?: string | null; placement_mode: string }[],
+): { index: number; message: string } | null {
+	const seen = new Map<string, string>();
+	for (const [index, env] of envs.entries()) {
+		if (env.placement_mode !== "namespace") continue;
+		const ns = effectivePlacementNamespace(env);
+		const holder = seen.get(ns);
+		if (holder !== undefined) return { index, message: placementNamespaceTakenMessage(ns, holder) };
+		seen.set(ns, env.name);
+	}
+	return null;
+}

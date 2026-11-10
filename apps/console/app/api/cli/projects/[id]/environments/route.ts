@@ -29,10 +29,14 @@ import {
 	cliEnvironmentResponse,
 	cliEnvironmentsResponse,
 } from "@/lib/validations/cli-contract";
-import { placementHostNamespaces } from "@/lib/queries/placement-host-namespaces";
+import {
+	placementHostNamespaces,
+	placementNamespacesOnFabric,
+} from "@/lib/queries/placement-host-namespaces";
 import {
 	effectivePlacementNamespace,
 	placementNamespaceMessage,
+	placementNamespaceTakenMessage,
 } from "@/lib/validations/placement-namespace";
 
 const ENVIRONMENTS_LIST = "project-environments";
@@ -262,12 +266,23 @@ export async function POST(
 		// chose. Checked against the namespace it would actually deploy into: its own, or its name's
 		// slug when it has none. The runner refuses the same at deploy; this refuses it up front.
 		if (mode === "namespace" && fabricId) {
+			const ns = effectivePlacementNamespace({ name, namespace: parsed.data.namespace });
 			const reserved = placementNamespaceMessage(
-				effectivePlacementNamespace({ name, namespace: parsed.data.namespace }),
+				ns,
 				await placementHostNamespaces(db, project.id, fabricId),
 			);
 			if (reserved) {
 				return NextResponse.json({ error: `namespace: ${reserved}` }, { status: 400 });
+			}
+			// No two namespace placements on one Fabric may resolve to the same namespace.
+			const holder = (await placementNamespacesOnFabric(db, project.id, fabricId)).find(
+				(p) => p.namespace === ns,
+			);
+			if (holder) {
+				return NextResponse.json(
+					{ error: `namespace: ${placementNamespaceTakenMessage(ns, holder.environment)}` },
+					{ status: 400 },
+				);
 			}
 		}
 

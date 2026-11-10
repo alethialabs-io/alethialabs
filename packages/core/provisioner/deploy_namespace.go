@@ -5,6 +5,7 @@ package provisioner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/netip"
@@ -476,6 +477,13 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 	}
 	result.ClusterReady = true
 
+	// #6551: the namespace must not already be someone else's — the host's own apps, a sibling
+	// placement, anything on no list. Read BEFORE the first cluster write (the repo credential below
+	// is one). A first deploy finds no namespace and creates it carrying this environment's label.
+	if err := namespaceOwnershipRefusal(vc, ns, "deploy"); err != nil {
+		return nil, err
+	}
+
 	// GitOps delivery onto the SHARED Fabric's ArgoCD. DO NOT install ArgoCD — it belongs to the Fabric
 	// (a namespace tenant must never re-install / upgrade the shared control plane).
 	setStage("argocd")
@@ -548,6 +556,43 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 	result.GitopsStatus = readGitopsSnapshot(gitopsRequested, vc.Repositories.AppsDestinationRepo, stdout, stderr)
 	fmt.Fprintf(stdout, "Namespace deployment completed: app + isolation guardrails applied into namespace %q on cluster %q.\n", ns, clusterName)
 	return &result, nil
+}
+
+// namespaceOwnerLabel is the label that names the environment a placement's Namespace belongs to. It
+// is the sweep handle cloud.ClassificationLabels stamps on every object the tenant render emits, the
+// Namespace included (TestNamespaceOwnerLabelIsTheEnvironmentHandle pins the two together).
+const namespaceOwnerLabel = "alethia.io/environment-id"
+
+// namespaceOwnershipRefusal refuses when Namespace ns already exists on the cluster without THIS
+// environment's owner label (#6551). A reserved list cannot see a namespace the host's own GitOps repo
+// created, or one a sibling placement holds; the cluster can. It FAILS CLOSED: a snapshot with no
+// environment id, a failed read, or an unreadable answer all refuse. An absent namespace passes — a
+// first deploy creates it with the label, and a teardown has nothing of anyone's to delete there.
+// It only reads; it never relabels, moves or deletes anything.
+func namespaceOwnershipRefusal(vc *types.ProjectConfig, ns, op string) error {
+	envID := strings.TrimSpace(vc.EnvironmentID)
+	if envID == "" {
+		return fmt.Errorf("namespace placement: the config snapshot carries no environment_id, so the runner cannot tell whether namespace %q on the cluster belongs to this environment. Refusing the %s; nothing was changed on the cluster", ns, op)
+	}
+	out, err := executeCommandWithOutput(fmt.Sprintf("kubectl get namespace %s --ignore-not-found -o json", ns), "", nil)
+	if err != nil {
+		return fmt.Errorf("namespace placement: could not read namespace %q to check who owns it, so refusing the %s; nothing was changed on the cluster: %w", ns, op, err)
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil
+	}
+	var obj struct {
+		Metadata struct {
+			Labels map[string]string `json:"labels"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal([]byte(out), &obj); err != nil {
+		return fmt.Errorf("namespace placement: could not parse namespace %q to check who owns it, so refusing the %s; nothing was changed on the cluster: %w", ns, op, err)
+	}
+	if obj.Metadata.Labels[namespaceOwnerLabel] == envID {
+		return nil
+	}
+	return fmt.Errorf("namespace placement: namespace %q already exists on the cluster and does not belong to this environment (its %s label is not %q) — it is the host's, another environment's, or the platform's. Refusing the %s; nothing was changed on the cluster. Choose a namespace of your own. If the namespace is in fact this environment's, from before the label existed, an operator who has confirmed that can add the label to it and run the %s again", ns, namespaceOwnerLabel, envID, op, op)
 }
 
 // placementNamespaceRefusal refuses a namespace placement whose namespace ns is reserved on the host

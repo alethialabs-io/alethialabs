@@ -479,6 +479,9 @@ func buildFabricDemoSnapshot(p fabricDemoParams, t fabricDemoOverlayTier, repo s
 		// The host environment's own namespaces, as the console computes them (#6551). The runner
 		// refuses a namespace deploy without the key; the base deploy attaches no BYO chart, so none.
 		"placement_host_namespaces": []string{},
+		// The runner refuses a namespace it cannot prove is this environment's; the owner label it
+		// stamps and checks is this id (#6551).
+		"environment_id": "e2e-" + p.env + "-demo-" + t.Tier,
 		// apps_path is what makes this a KUSTOMIZE-OVERLAY proof rather than a repo-root sync.
 		"repositories": map[string]any{
 			"apps_destination_repo": repo,

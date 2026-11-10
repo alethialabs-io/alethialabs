@@ -8,12 +8,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { environmentSpecProblem } from "@/lib/queries/projects";
+import { environmentSpecProblem, environmentSpecsProblem } from "@/lib/queries/projects";
 import {
 	BYO_RESERVED_NAMESPACES,
 	byoReservedNamespaceReason,
 } from "@/lib/validations/byo-reserved-namespaces";
 import {
+	duplicatePlacementNamespace,
 	PLACEMENT_HOST_NAMESPACE_REASON,
 	effectivePlacementNamespace,
 	placementNamespaceMessage,
@@ -110,5 +111,34 @@ describe("project create — the matrix schema and the fan-out", () => {
 		expect(environmentMatrixSchema.safeParse(matrix({ name: "dev", namespace: "team-web" })).success).toBe(true);
 		expect(environmentMatrixSchema.safeParse(matrix({ name: "preview", namespace: "preview" })).success).toBe(true);
 		expect(environmentSpecProblem({ name: "dev", namespace: "team-web", placement_mode: "namespace" })).toBeNull();
+	});
+});
+
+describe("two placements resolving to one namespace", () => {
+	it("is refused in a create matrix, on the second one's namespace field", () => {
+		const envs = [
+			{ name: "prod", stage: "production" as const, placement_mode: "dedicated" as const, is_default: true },
+			{ name: "dev", stage: "development" as const, placement_mode: "namespace" as const, namespace: "team-web" },
+			{ name: "team-web", stage: "development" as const, placement_mode: "namespace" as const },
+		];
+		const parsed = environmentMatrixSchema.safeParse(envs);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error?.issues[0]?.path).toEqual([2, "namespace"]);
+		expect(parsed.error?.issues[0]?.message).toMatch(/already used by the environment “dev”/);
+		expect(duplicatePlacementNamespace(envs)?.index).toBe(2);
+		// The fan-out, which createProject reaches without re-parsing, refuses it too.
+		expect(environmentSpecsProblem(envs)).toMatch(/already used by the environment “dev”/);
+		expect(environmentSpecsProblem(envs.slice(0, 2))).toBeNull();
+	});
+
+	it("ignores dedicated and vcluster entries, and distinct namespaces", () => {
+		expect(
+			duplicatePlacementNamespace([
+				{ name: "dev", placement_mode: "dedicated" },
+				{ name: "x", namespace: "dev", placement_mode: "vcluster" },
+				{ name: "dev", placement_mode: "namespace" },
+				{ name: "qa", placement_mode: "namespace" },
+			]),
+		).toBeNull();
 	});
 });

@@ -14,17 +14,20 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { projectAddons, projectEnvironments } from "@/lib/db/schema";
-import { placementHostNamespaces } from "@/lib/queries/placement-host-namespaces";
+import {
+	placementHostNamespaces,
+	placementNamespacesOnFabric,
+} from "@/lib/queries/placement-host-namespaces";
 
 /** A db whose select chains record their table and predicate; the addon read answers `rows`. */
-function recordingDb(rows: { namespace: string | null }[]) {
+function recordingDb(rows: { namespace: string | null; name?: string }[], envRows: unknown[] = []) {
 	const seen: { table: unknown; where: SQL | undefined }[] = [];
 	const db = {
 		select: () => ({
 			from: (table: unknown) => ({
 				where: (where: SQL) => {
 					seen.push({ table, where });
-					const result = table === projectAddons ? rows : [];
+					const result = table === projectAddons ? rows : envRows;
 					return Object.assign(Promise.resolve(result), { getSQL: () => where });
 				},
 			}),
@@ -68,5 +71,22 @@ describe("placementHostNamespaces", () => {
 		// predicate), so the chart rows are bound to exactly the host set asserted above.
 		expect(a.sql).toMatch(/"environment_id" in \(\("project_environments"\."project_id" = \$3 and "project_environments"\."fabric_id" = \$4/);
 		expect(a.params).toEqual(["p1", "byo", "p1", "f1", "dedicated"]);
+	});
+});
+
+describe("placementNamespacesOnFabric", () => {
+	it("returns each live namespace placement on THIS Fabric with the namespace it resolves to", async () => {
+		const { db, seen } = recordingDb([], [
+			{ name: "preview", namespace: "preview" },
+			{ name: "staging", namespace: null },
+		]);
+		// @ts-expect-error — a recording fake, not a drizzle Db.
+		expect(await placementNamespacesOnFabric(db, "p1", "f1")).toEqual([
+			{ environment: "preview", namespace: "preview" },
+			{ environment: "staging", namespace: "staging" },
+		]);
+		const q = rendered(seen.find((x) => x.table === projectEnvironments)?.where);
+		expect(q.sql).toMatch(/"project_id" = \$1 and .*"fabric_id" = \$2 and .*"placement_mode" = \$3 and .*"status" <> \$4/);
+		expect(q.params).toEqual(["p1", "f1", "namespace", "DESTROYED"]);
 	});
 });

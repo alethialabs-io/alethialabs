@@ -85,6 +85,12 @@ func runNamespaceDestroy(ctx context.Context, provider cloud.CloudProvider, para
 		return fmt.Errorf("namespace teardown: kubeconfig mint failed for cluster %q — cannot delete namespace %q: %w", clusterName, ns, err)
 	}
 
+	// #6551: the teardown deletes the Namespace object, so it must be this environment's — refused,
+	// before the first delete, when it exists without this environment's owner label.
+	if err := namespaceOwnershipRefusal(vc, ns, "teardown"); err != nil {
+		return err
+	}
+
 	// Render the SAME manifests the deploy applied, so the delete targets exactly the resources it
 	// created. The ArgoCD Application/AppProject names are DERIVED (namespaceTenantName), never stored,
 	// so re-rendering is the only way to name them without a second, driftable copy of that derivation.

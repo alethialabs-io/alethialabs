@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import type { Db, Tx } from "@/lib/db";
 import { projectAddons, projectEnvironments } from "@/lib/db/schema";
+import { effectivePlacementNamespace } from "@/lib/validations/placement-namespace";
 
 type Executor = Db | Tx;
 
@@ -51,4 +52,30 @@ export async function placementHostNamespaces(
 		if (ns) names.add(ns);
 	}
 	return [...names].sort();
+}
+
+/**
+ * The namespace placements already on `fabricId`, each with the namespace it resolves to (#6551). Two
+ * placements on one Fabric may not resolve to the same namespace: they would share its AppProject,
+ * its Application and its per-namespace cloud identity, and one's teardown would delete the other's
+ * namespace. A DESTROYED placement no longer holds its namespace. The default Preview environment is
+ * such a placement, so its `preview` namespace is covered here too.
+ */
+export async function placementNamespacesOnFabric(
+	db: Executor,
+	projectId: string,
+	fabricId: string,
+): Promise<{ environment: string; namespace: string }[]> {
+	const rows = await db
+		.select({ name: projectEnvironments.name, namespace: projectEnvironments.namespace })
+		.from(projectEnvironments)
+		.where(
+			and(
+				eq(projectEnvironments.project_id, projectId),
+				eq(projectEnvironments.fabric_id, fabricId),
+				eq(projectEnvironments.placement_mode, "namespace"),
+				ne(projectEnvironments.status, "DESTROYED"),
+			),
+		);
+	return rows.map((r) => ({ environment: r.name, namespace: effectivePlacementNamespace(r) }));
 }

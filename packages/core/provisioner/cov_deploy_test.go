@@ -138,6 +138,7 @@ func depPlacementConfig(mode types.PlacementMode, ns string) *types.ProjectConfi
 	vc.Namespace = ns
 	// The console sends the host's namespaces for a namespace placement (#6551); none here.
 	vc.PlacementHostNamespaces = &[]string{}
+	vc.EnvironmentID = "env-1"
 	return vc
 }
 

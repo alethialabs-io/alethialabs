@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
 	insert: vi.fn(),
 	host: vi.fn(async (): Promise<string[]> => []),
+	siblings: vi.fn(async (): Promise<{ environment: string; namespace: string }[]> => []),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -22,7 +23,10 @@ vi.mock("@/lib/authz/guard", () => ({
 vi.mock("@/lib/cli/project-access", () => ({
 	resolveCliProjectAuthorized: async () => ({ id: "p1" }),
 }));
-vi.mock("@/lib/queries/placement-host-namespaces", () => ({ placementHostNamespaces: h.host }));
+vi.mock("@/lib/queries/placement-host-namespaces", () => ({
+	placementHostNamespaces: h.host,
+	placementNamespacesOnFabric: h.siblings,
+}));
 vi.mock("@/lib/db", () => {
 	/** A select chain that resolves to the default environment's Fabric, whatever is asked. */
 	const chain: Record<string, unknown> = {};
@@ -59,6 +63,8 @@ beforeEach(() => {
 	h.insert.mockClear();
 	h.host.mockReset();
 	h.host.mockResolvedValue([]);
+	h.siblings.mockReset();
+	h.siblings.mockResolvedValue([]);
 });
 
 describe("POST environments — a reserved placement namespace", () => {
@@ -93,9 +99,28 @@ describe("POST environments — a reserved placement namespace", () => {
 		expect(status).toBe(500); // the fake insert throws; reaching it is the point
 	});
 
+	it("refuses a namespace another placement on this Fabric already resolves to — the Preview env's included", async () => {
+		h.siblings.mockResolvedValue([
+			{ environment: "preview", namespace: "preview" },
+			{ environment: "staging", namespace: "team-web" },
+		]);
+		for (const body of [
+			{ name: "team", placement_mode: "namespace", namespace: "preview" },
+			{ name: "team", placement_mode: "namespace", namespace: "team-web" },
+			{ name: "preview", placement_mode: "namespace" },
+		]) {
+			const { status, error } = await post(body);
+			expect(status).toBe(400);
+			expect(error).toMatch(/is already used by the environment/);
+		}
+		expect(h.siblings).toHaveBeenCalledWith(expect.anything(), "p1", "f1");
+		expect(h.insert).not.toHaveBeenCalled();
+	});
+
 	it("does not apply to a vcluster placement", async () => {
 		await post({ name: "team", placement_mode: "vcluster", namespace: "default" });
 		expect(h.insert).toHaveBeenCalledTimes(1);
 		expect(h.host).not.toHaveBeenCalled();
+		expect(h.siblings).not.toHaveBeenCalled();
 	});
 });

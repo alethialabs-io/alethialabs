@@ -16,6 +16,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ADDON_CATALOG } from "@/lib/addons/catalog";
+import { HETZNER_SERVICE_NAMESPACES } from "@/lib/cloud-providers/hetzner-services";
 import { byoChartAttachSchema, byoChartFormSchema } from "@/lib/validations/byo-charts";
 import {
 	BYO_RESERVED_NAMESPACES,
@@ -85,6 +86,11 @@ describe("BYO reserved namespaces — one list, two readers", () => {
 			prefixes: runner.prefixes,
 			placementPrefixes: runner.placementPrefixes,
 		});
+	});
+
+	it("the data-services group is exactly the Hetzner data-service namespaces (#6551)", () => {
+		expect(HETZNER_SERVICE_NAMESPACES.length).toBeGreaterThan(0);
+		expect([...group("platformDataServices")].sort()).toEqual([...new Set(HETZNER_SERVICE_NAMESPACES)].sort());
 	});
 
 	it("the marketplace group is exactly the namespaces ADDON_CATALOG installs into", () => {
