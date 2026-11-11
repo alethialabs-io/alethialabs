@@ -16,5 +16,17 @@
       "message": "Deployment exceeded its progress deadline"
     }
   },
-  "manifest_warnings": ["service \"worker\" skipped: no built image"]
+  "manifest_warnings": ["service \"worker\" skipped: no built image"],
+  "byo_admission": [
+    {
+      "namespace": "byo-payments",
+      "charts": ["payments"],
+      "mode": "warn",
+      "previous": "enforce",
+      "reason": "environment-setting-off",
+      "findings": ["Service \"web\": spec.type is LoadBalancer"],
+      "policy_unavailable": "the cluster does not serve ValidatingAdmissionPolicy",
+      "checks": [{ "kind": "PodSecurity", "state": "checked" }]
+    }
+  ]
 }

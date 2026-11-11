@@ -66,6 +66,10 @@ type GitopsStatus struct {
 	// and namespaces only). Empty ⇒ generation was clean and no BYO chart was refused (generation is
 	// skipped for a bring-your-own manifests repo).
 	ManifestWarnings []string `json:"manifest_warnings,omitempty"`
+	// ByoAdmission is each bring-your-own namespace's admission mode as this deploy left it, and what
+	// its rules refuse there (#6541). Empty when the environment has no BYO chart, or when the deploy
+	// did not reach the BYO stage.
+	ByoAdmission []ByoAdmissionNamespaceStatus `json:"byo_admission,omitempty"`
 }
 
 // ServiceHealth is one workload's ArgoCD resource status inside the apps Application:

@@ -1212,6 +1212,13 @@
       "when": 1794300823349,
       "tag": "0172_wooden_moon_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "7",
+      "when": 1794392635478,
+      "tag": "0173_cute_living_mummy",
+      "breakpoints": true
     }
   ]
 }

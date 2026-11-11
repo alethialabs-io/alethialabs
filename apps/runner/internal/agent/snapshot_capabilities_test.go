@@ -125,7 +125,7 @@ func TestRunnerHeaders_AdvertiseTheSnapshotCapabilities(t *testing.T) {
 	if _, err := NewRunnerAPIClient(server.URL, "r1", "tok").ClaimJob(); err != nil {
 		t.Fatalf("ClaimJob: %v", err)
 	}
-	if want := "addon-byo-marker,preview-namespace-prefix,placement-host-namespaces"; got != want {
+	if want := "addon-byo-marker,preview-namespace-prefix,placement-host-namespaces,byo-admission"; got != want {
 		t.Errorf("%s = %q, want %q (the console matches these exact names)", types.RunnerCapabilitiesHeader, got, want)
 	}
 }
@@ -260,5 +260,46 @@ func TestSnapshotContract_ThisRunnerTellsAbsentHostNamespacesFromNone(t *testing
 	}
 	if none.PlacementHostNamespaces == nil || len(*none.PlacementHostNamespaces) != 0 {
 		t.Errorf("an empty list must decode as an empty, NON-nil list, got %v", none.PlacementHostNamespaces)
+	}
+}
+
+// TestSnapshotContract_AnOldRunnerDecodesTheSnapshotWithoutByoAdmission (#6541): the snapshot the
+// console serves a runner without types.RunnerCapabilityByoAdmission decodes under that runner's
+// strict decode; the one carrying the key would fail every job of an environment with a BYO chart —
+// which is why it is gated.
+func TestSnapshotContract_AnOldRunnerDecodesTheSnapshotWithoutByoAdmission(t *testing.T) {
+	decode := func(name string) error {
+		data, err := json.Marshal(snapshotFixture(t, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.DisallowUnknownFields()
+		return dec.Decode(reflect.New(projectConfigWithout(t, "ByoAdmission")).Interface())
+	}
+	if err := decode("without-byo-admission.json"); err != nil {
+		t.Fatalf("an old runner must decode the snapshot served to it: %v", err)
+	}
+	if err := decode("with-byo-admission.json"); err == nil || !strings.Contains(err.Error(), `unknown field "byo_admission"`) {
+		t.Fatalf("an old runner must refuse the key (the reason it is gated), got %v", err)
+	}
+}
+
+// TestSnapshotContract_ThisRunnerTellsAbsentByoAdmissionFromNone: this build decodes both shapes,
+// and keeps "not sent" (nil — the provisioner decides as before #6541) apart from "sent".
+func TestSnapshotContract_ThisRunnerTellsAbsentByoAdmissionFromNone(t *testing.T) {
+	with, err := snapshotToProjectConfig(snapshotFixture(t, "with-byo-admission.json"))
+	if err != nil {
+		t.Fatalf("with the key: %v", err)
+	}
+	without, err := snapshotToProjectConfig(snapshotFixture(t, "without-byo-admission.json"))
+	if err != nil {
+		t.Fatalf("without the key: %v", err)
+	}
+	if with.ByoAdmission == nil || !with.ByoAdmission.Enforce || !reflect.DeepEqual(with.ByoAdmission.DeployedCharts, []string{"api"}) {
+		t.Errorf("ByoAdmission with the key = %+v, want enforce and [api]", with.ByoAdmission)
+	}
+	if without.ByoAdmission != nil {
+		t.Errorf("ByoAdmission without the key = %+v, want nil (not sent is not the same as nothing ran)", without.ByoAdmission)
 	}
 }

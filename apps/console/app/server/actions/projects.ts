@@ -85,6 +85,11 @@ import {
 } from "@/lib/addons/catalog";
 import type { ChartWorkloadOverlay } from "@/lib/addons/chart-overlay";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
+import { byoAdmissionSnapshot } from "@/lib/addons/byo-admission";
+import {
+	byoAdmissionEnforceInput,
+	writeByoAdmissionEnforce,
+} from "@/lib/environments/byo-admission-write";
 import { placementHostNamespaces } from "@/lib/queries/placement-host-namespaces";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 import {
@@ -1339,6 +1344,9 @@ async function buildConfigSnapshot(
 				workloadsByAddon.set(w.addon_id, list);
 			}
 		}
+		// What decides each BYO namespace's admission mode on the runner: the environment's setting
+		// and which of its BYO charts have run here (#6541).
+		const byoAdmission = byoAdmissionSnapshot(environment.byo_admission_enforce, addonRows);
 		const addons: AddOnInstallSpec[] = addonRows
 			.map((r) =>
 				// A bring-your-own chart (source='byo') resolves to a git- or OCI-source spec marked
@@ -2085,6 +2093,9 @@ async function buildConfigSnapshot(
 			// #6551: emitted for a `namespace` placement only (an EMPTY list is "computed, none"), so
 			// every other environment freezes the same snapshot bytes as before.
 			...(hostNamespaces ? { placement_host_namespaces: hostNamespaces } : {}),
+			// #6541: emitted only when the environment has a BYO chart, so every other environment
+			// freezes the same snapshot bytes as before. See lib/addons/byo-admission.ts.
+			...(byoAdmission ? { byo_admission: byoAdmission } : {}),
 			// Config-time compatibility report (#1218) — non-blocking; the UI surfaces
 			// its warnings (cluster inspector / add-on config sheet #1221, canvas chip #1222).
 			compat,
@@ -3635,6 +3646,24 @@ export async function setAutoHeal(
 				),
 			),
 	);
+}
+
+/**
+ * Turns the environment's BYO admission setting on or off (#6541): with it on, the next NEW deploy puts
+ * every bring-your-own namespace of the environment in admission `enforce`; turned off, the namespaces
+ * it moved return to `warn`. PDP-gated on project `edit`, like setAutoHeal. The setting changes a
+ * security control in both directions, so each change that changes something writes an audit row
+ * naming who, which environment, and old → new, in the same transaction as the write.
+ */
+export async function setByoAdmissionEnforce(
+	projectId: string,
+	environmentId: string,
+	enforce: boolean,
+) {
+	const input = byoAdmissionEnforceInput.parse({ projectId, environmentId, enforce });
+	await assertProjectInActorOrg(await currentActor(), input.projectId);
+	const actor = await authorize("edit", { type: "project", id: input.projectId });
+	return withActorScope(actor, (tx) => writeByoAdmissionEnforce(tx, actor.userId, input));
 }
 
 /** Per-component presence across a project's environments (the "where do my envs diverge" matrix). */

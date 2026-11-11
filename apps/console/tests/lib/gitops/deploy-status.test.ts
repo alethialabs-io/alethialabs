@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	assembleGitopsDeployStatus,
+	byoAdmissionReportComplete,
 	gitopsStatusReportSchema,
 	type GitopsAssemblyInputs,
 	type GitopsJobFacts,
@@ -247,5 +248,44 @@ describe("gitopsStatusReportSchema", () => {
 			manifest_warnings: ["api: repo-sourced service not built yet (resolved_image empty)"],
 		});
 		expect(parsed.success).toBe(true);
+	});
+});
+
+describe("byoAdmissionReportComplete (#6541)", () => {
+	const all = [
+		{ kind: "Service", state: "checked" as const },
+		{ kind: "Ingress", state: "checked" as const },
+		{ kind: "Secret", state: "checked" as const },
+		{ kind: "PodSecurity", state: "enforced" as const },
+	];
+	const ns = { namespace: "byo-a", charts: ["a"], mode: "enforce" as const, reason: "kept" };
+
+	it("is complete only when every deployed namespace checked every kind", () => {
+		expect(byoAdmissionReportComplete([{ ...ns, checks: all }])).toBe(true);
+		expect(byoAdmissionReportComplete([{ ...ns, checks: all.map((c, i) => (i === 2 ? { ...c, state: "failed" as const } : c)) }])).toBe(false);
+		expect(byoAdmissionReportComplete([{ ...ns, checks: all.slice(0, 3) }])).toBe(false);
+	});
+
+	it("reads no checks (an older runner) and no report as incomplete; a refused namespace needs none", () => {
+		expect(byoAdmissionReportComplete([ns])).toBe(false);
+		expect(byoAdmissionReportComplete([])).toBe(false);
+		expect(byoAdmissionReportComplete([{ ...ns, checks: all }, { namespace: "x", charts: ["x"], mode: "refused", reason: "not-this-environments-namespace" }])).toBe(true);
+	});
+});
+
+describe("assembleGitopsDeployStatus — BYO admission (#6541)", () => {
+	it("dates the report by the deploy that produced it, and has no date without one", () => {
+		expect(assembleGitopsDeployStatus(BASE).byoAdmissionReportAt).toBeNull();
+		const s = assembleGitopsDeployStatus({
+			...BASE,
+			deployJob: successDeploy({
+				gitops: {
+					mode: "gitops",
+					byo_admission: [{ namespace: "byo-a", charts: ["a"], mode: "warn", reason: "chart-history" }],
+				},
+			}),
+		});
+		expect(s.byoAdmission).toHaveLength(1);
+		expect(s.byoAdmissionReportAt).toBe("2026-07-16T10:00:00.000Z");
 	});
 });

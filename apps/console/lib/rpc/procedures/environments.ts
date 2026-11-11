@@ -48,6 +48,10 @@ import {
 	promotionApprovals,
 	user,
 } from "@/lib/db/schema";
+import {
+	type ByoAdmissionCardState,
+	readByoAdmissionCardStates,
+} from "@/lib/environments/byo-admission-state";
 import { diffDesigns } from "@/lib/promotions/diff";
 import { IN_FLIGHT, type PromotionRow, type ProtectionRow } from "@/lib/promotions/lifecycle";
 import { assertProjectInActorOrg, promotionInActorOrg } from "@/lib/promotions/org-binding";
@@ -62,6 +66,12 @@ export interface EnvRow {
 	stage: string;
 	is_default: boolean;
 	updated_at: string;
+	/** The BYO admission setting (#6541): every BYO namespace of this environment in `enforce`. */
+	byo_admission_enforce: boolean;
+	/** The environment has an enabled BYO chart, so the setting means something. */
+	byo_admission_has_charts: boolean;
+	/** The setting differs from what the latest deploy carried: the next new deploy applies it. */
+	byo_admission_pending: boolean;
 }
 
 /** A promotion row projected for the client. */
@@ -378,6 +388,13 @@ export async function readEnvironmentsOverview(slug: string): Promise<Environmen
 		readProtectionSummaries(actor, projectId),
 	]);
 
+	// Advisory (the card's "redeploy to apply" note, and whether to offer the setting at all), so it
+	// degrades: the setting stays offered, with no note, rather than failing the page.
+	const byoAdmission = await readByoAdmissionCardStates(
+		projectId,
+		new Map(environments.map((e) => [e.id, e.byo_admission_enforce])),
+	).catch(() => new Map<string, ByoAdmissionCardState>());
+
 	const active = promotions.find((p) => arrayIncludes(IN_FLIGHT, p.status));
 	const activePromotion = active ? await readPromotionDetail(active.id) : null;
 
@@ -389,6 +406,9 @@ export async function readEnvironmentsOverview(slug: string): Promise<Environmen
 			stage: e.stage,
 			is_default: e.is_default,
 			updated_at: e.updated_at.toISOString(),
+			byo_admission_enforce: e.byo_admission_enforce,
+			byo_admission_has_charts: byoAdmission.get(e.id)?.hasByoCharts ?? true,
+			byo_admission_pending: byoAdmission.get(e.id)?.pending ?? false,
 		})),
 		consistency,
 		reconcile,

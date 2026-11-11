@@ -242,11 +242,9 @@ Refusing in a namespace where a chart already runs would refuse that chart's nex
 after a restart or a node drain. So the namespace's `alethia.io/byo-admission` label decides
 whether the rules refuse or only report:
 
-- **`enforce`**: Pod Security enforces `baseline`, and the policy refuses. A namespace that Alethia
-  creates for a new chart starts here.
+- **`enforce`**: Pod Security enforces `baseline`, and the policy refuses.
 - **`warn`**: Pod Security does not enforce beyond the cluster's own default, and the policy only
-  warns and records. A namespace that already existed starts here, and so does the new namespace
-  of a chart that moved out of `default`.
+  warns and records.
 
 <Callout type="warn">
   **On most clouds, a `warn` namespace has no pod-level enforcement.** "The cluster's own default"
@@ -256,13 +254,79 @@ whether the rules refuse or only report:
   Security refusal until its namespace is in `enforce`.
 </Callout>
 
-A deploy never changes a namespace's label once it is set. While a namespace is in `warn`, each
-deploy checks what runs there against both levels, and the **Deploy** tab names the chart, the
-object and the field that `enforce` would refuse. Pod Security can only check the pods that run at
-that moment, so a pod of a `CronJob` between runs is not checked. Change the chart until the
-warning goes away. When you set the label to `enforce`, the policy refuses from then on and Pod
-Security enforces from the next deploy. Setting the label needs `kubectl` access to the cluster:
-the console has no control for it yet.
+### How a namespace gets its mode
+
+The mode comes from the history of the charts in the namespace **in this environment**, not from
+whether the namespace exists on the cluster. On each deploy, Alethia reads each chart's ArgoCD
+Application on the cluster. A chart has run here if its Application exists, or if Alethia last read
+it back in a running state. That last record is kept by Alethia, so it stays true when the cluster
+is re-provisioned and the Applications are gone.
+
+| The namespace | Its charts | Mode |
+|---|---|---|
+| Exists, is not a bring-your-own namespace of this environment, and no chart's Application deploys into it | Any | **Refused** |
+| Already has a mode | Any | Keeps it |
+| Any | At least one has run in this environment, or moved out of `default` | `warn` |
+| Does not exist | None has run | `enforce` |
+| Is already a bring-your-own namespace of this environment | None has run | `warn` |
+
+**A chart can't take over a namespace that is not this environment's.** If the namespace exists, is
+not one of this environment's bring-your-own namespaces, and no Application of this environment
+already deploys into it, the chart is not deployed, and the **Deploy** tab says why. A chart that
+has run in another namespace is refused too: what lets a chart into such a namespace is that it
+already runs there. Alethia does not start that namespace in `enforce`, because `enforce` applies to
+the whole namespace: it would refuse the next pod of every workload that already runs there,
+workloads this environment did not put there. Taking the namespace over would also give those
+workloads access to this environment's secrets. Attach the chart again with a namespace of your own.
+A blank namespace gives the chart its own, `byo-<chart id>`.
+
+If the cluster's namespaces or a chart's Application can't be read during a deploy, the deploy
+fails before it changes anything for bring-your-own charts. No chart is refused and no label is
+changed. Deploy again.
+
+### Moving namespaces from `warn` to `enforce`
+
+A deploy does not move a namespace from `warn` to `enforce` because of what it finds there. While a
+namespace is in `warn`, each deploy checks what runs there against both levels, and the **Deploy**
+tab names the chart, the object and the field that `enforce` would refuse. Change the chart until
+the warning goes away.
+
+Then turn on refusal for the environment:
+
+1. Open **Environments**, and on the environment's card, next to **BYO admission**, select
+   **Change**. The control appears only on an environment that has a bring-your-own chart.
+2. Read the report. It lists each bring-your-own namespace, its current mode, and what refusal would
+   refuse there, from the latest deploy, with that deploy's date. A kind of object that the deploy
+   could not check is marked **Could not be checked**. You can turn refusal on only when the latest
+   deploy produced a complete report. If it did not, deploy again first.
+3. Turn on **Refuse in every BYO namespace**, confirm that you have read the report, and save. The
+   card shows **Redeploy to apply**.
+4. Start a new deploy of the environment. Each namespace that was in `warn` is relabelled `enforce`,
+   and the **Deploy** tab shows each change, for example `warn → enforce`.
+
+The report covers only the pods that were running at that deploy. A `CronJob` between runs, a
+workload scaled to zero, and a chart attached after that deploy are not in it.
+
+From then on the policy refuses, and Pod Security enforces `baseline`. A pod or an object that
+already runs keeps running until it is replaced. The setting is off for every environment until you
+turn it on. Each change of the setting is recorded in the project's audit log.
+
+**A change of the setting takes effect on the next new deploy.** A deploy uses the configuration it
+was created with. A re-run, an approval-gated deploy whose plan was made before the change, and a
+promotion of an earlier plan all keep the old value. The card shows **Redeploy to apply** until a
+deploy that carries the new value has been made.
+
+To undo it, turn the setting off and start a new deploy. The namespaces that the setting moved go
+back to `warn`. Alethia marks those namespaces with the label
+`alethia.io/byo-admission-source=environment-setting`. A namespace that was in `enforce` before the
+setting, such as one created for a new chart, does not carry it and stays in `enforce`.
+
+You can also set one namespace's label to `enforce` with `kubectl`, and a deploy keeps that value.
+If the setting had moved that namespace, also remove the `alethia.io/byo-admission-source` label.
+Otherwise turning the setting off returns it to `warn`.
+
+The setting needs a runner that supports it. An older runner deploys as before and does not apply
+it, and the **Deploy** tab then shows the mode each namespace actually has.
 
 ## Removing a chart
 

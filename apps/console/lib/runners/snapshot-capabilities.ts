@@ -45,6 +45,18 @@ export const RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES = "placement-host-names
 /** The top-level snapshot key {@link RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES} gates. */
 const PLACEMENT_HOST_NAMESPACES_KEY = "placement_host_namespaces";
 
+/**
+ * The runner reads the top-level `byo_admission` (#6541). Mirrors Go
+ * `types.RunnerCapabilityByoAdmission`. Stripped, never refused: an older runner decides a BYO
+ * namespace's admission mode from whether the namespace exists, as it always did, and does not apply
+ * the environment's enforce setting. The setting's dialog says so, and the Deploy tab shows the mode
+ * each namespace actually got.
+ */
+export const RUNNER_CAPABILITY_BYO_ADMISSION = "byo-admission";
+
+/** The top-level snapshot key {@link RUNNER_CAPABILITY_BYO_ADMISSION} gates. */
+const BYO_ADMISSION_KEY = "byo_admission";
+
 /** The capabilities a runner advertised, from its header value (`null` when it sent none). */
 export function parseRunnerCapabilities(header: string | null): ReadonlySet<string> {
 	if (!header) return new Set();
@@ -113,27 +125,31 @@ export function refusalForRunner(
 	return `This project deploys a bring-your-own OCI chart${named ? ` (${named})` : ""}, which needs a runner newer than runner-v0.8.0 — one that reads the BYO chart marker (it sends the ${RUNNER_CAPABILITY_ADDON_BYO_MARKER} capability). Update the runner, then deploy again.`;
 }
 
+/** Each gated top-level snapshot key and the capability a runner names to be served it. */
+const TOP_LEVEL_GATES: ReadonlyArray<{ capability: string; key: string }> = [
+	{ capability: RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX, key: PREVIEW_NAMESPACE_PREFIX_KEY },
+	{ capability: RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES, key: PLACEMENT_HOST_NAMESPACES_KEY },
+	{ capability: RUNNER_CAPABILITY_BYO_ADMISSION, key: BYO_ADMISSION_KEY },
+];
+
 /**
  * The snapshot to serve a runner with `capabilities`: `snapshot` itself when it can read every key,
  * otherwise a copy without the keys it cannot — `addons[].byo` and the top-level
- * `preview_namespace_prefix` and `placement_host_namespaces`, each gated by its own capability. Never mutates the input.
+ * `preview_namespace_prefix`, `placement_host_namespaces` and `byo_admission`, each gated by its own
+ * capability. Never mutates the input.
  */
 export function snapshotForRunner(
 	snapshot: Record<string, unknown>,
 	capabilities: ReadonlySet<string>,
 ): Record<string, unknown> {
-	return withoutByoMarker(
-		withoutTopLevelKey(
-			withoutTopLevelKey(snapshot, capabilities, RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX, PREVIEW_NAMESPACE_PREFIX_KEY),
-			capabilities,
-			RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES,
-			PLACEMENT_HOST_NAMESPACES_KEY,
-		),
-		capabilities,
-	);
+	let served = snapshot;
+	for (const gate of TOP_LEVEL_GATES) {
+		served = withoutTopLevelKey(served, capabilities, gate.capability, gate.key);
+	}
+	return withoutByoMarker(served, capabilities);
 }
 
-/** `snapshot` without the top-level `key` unless the runner advertises `capability` (#6494, #6551). */
+/** `snapshot` without the top-level `key` unless the runner advertises `capability` (#6494, #6551, #6541). */
 function withoutTopLevelKey(
 	snapshot: Record<string, unknown>,
 	capabilities: ReadonlySet<string>,

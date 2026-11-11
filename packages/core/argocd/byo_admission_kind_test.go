@@ -132,7 +132,7 @@ func TestByoAdmissionKind(t *testing.T) {
 	}
 
 	nsYAML, err := RenderByoNamespaces([]string{enforceNS, warnNS}, nil,
-		map[string]ByoAdmissionMode{enforceNS: ByoAdmissionEnforce, warnNS: ByoAdmissionWarn})
+		map[string]ByoAdmissionDecision{enforceNS: {Mode: ByoAdmissionEnforce}, warnNS: {Mode: ByoAdmissionWarn}})
 	if err != nil {
 		t.Fatalf("render namespaces: %v", err)
 	}

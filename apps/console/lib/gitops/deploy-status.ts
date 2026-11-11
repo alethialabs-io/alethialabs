@@ -31,6 +31,7 @@ import {
 } from "@/lib/db/schema";
 import type {
 	AddOnStatusEntry,
+	ByoAdmissionNamespaceReport,
 	ExecutionMetadata,
 	GitopsFailedStep,
 	GitopsStatusReport,
@@ -47,6 +48,22 @@ const GITOPS_STEPS = [
 	"render",
 	"apply",
 ] as const satisfies readonly GitopsFailedStep[];
+
+/** Wire-shape validator for one `gitops_status.byo_admission` entry (Go
+ *  `argocd.ByoAdmissionNamespaceStatus`, #6541). `reason` stays an open string so a reason a newer
+ *  runner adds still renders. */
+const byoAdmissionNamespaceSchema = z.object({
+	namespace: z.string(),
+	charts: z.array(z.string()),
+	mode: z.enum(["enforce", "warn", "refused"]),
+	previous: z.enum(["enforce", "warn"]).optional(),
+	reason: z.string(),
+	findings: z.array(z.string()).optional(),
+	policy_unavailable: z.string().optional(),
+	checks: z
+		.array(z.object({ kind: z.string(), state: z.enum(["checked", "failed", "enforced"]) }))
+		.optional(),
+}) satisfies z.ZodType<ByoAdmissionNamespaceReport>;
 
 /** Wire-shape validator for `execution_metadata.gitops_status` (Go `argocd.GitopsStatus`).
  *  Every field beyond `mode` is optional so pre-#574 and partial payloads parse. */
@@ -69,6 +86,7 @@ export const gitopsStatusReportSchema = z.object({
 		)
 		.optional(),
 	manifest_warnings: z.array(z.string()).optional(),
+	byo_admission: z.array(byoAdmissionNamespaceSchema).optional(),
 });
 
 /** One component row on the Deploy tab: ArgoCD health + sync + optional message. */
@@ -116,6 +134,12 @@ export interface GitopsDeployStatus {
 	 *  unresolved binding endpoint (#710), an unsatisfiable credential facet — why a rendered
 	 *  service may boot misconfigured. Empty ⇒ generation was clean (or bring-your-own). */
 	warnings: string[];
+	/** Each bring-your-own namespace's admission mode as the LATEST deploy left it, and what its rules
+	 *  refuse there (#6541). Empty when the environment has no BYO chart, or the latest deploy came
+	 *  from a runner that predates it. */
+	byoAdmission: ByoAdmissionNamespaceReport[];
+	/** When the deploy that produced `byoAdmission` was created (ISO); null when there is none. */
+	byoAdmissionReportAt: string | null;
 }
 
 /** The empty read model — an environment that has never been deployed. */
@@ -134,6 +158,8 @@ export const EMPTY_GITOPS_DEPLOY_STATUS: GitopsDeployStatus = {
 	addons: [],
 	dataServices: [],
 	warnings: [],
+	byoAdmission: [],
+	byoAdmissionReportAt: null,
 };
 
 /** A gitops-carrying job reduced to what assembly needs. */
@@ -259,6 +285,9 @@ export function assembleGitopsDeployStatus(inputs: GitopsAssemblyInputs): Gitops
 		// Manifest-generation warnings are a DEPLOY-time artifact (drift never regenerates), so they
 		// come from the latest deploy's snapshot — valid until the next deploy re-renders.
 		warnings: deployJob?.gitops?.manifest_warnings ?? [],
+		// Like the warnings, a DEPLOY-time artifact: drift never re-decides a namespace's mode.
+		byoAdmission: deployJob?.gitops?.byo_admission ?? [],
+		byoAdmissionReportAt: deployJob?.gitops?.byo_admission ? deployJob.createdAt.toISOString() : null,
 	};
 }
 
@@ -399,5 +428,24 @@ export async function readGitopsDeployStatus(
 			sync: r.sync_status,
 			message: r.status_message,
 		})),
+	});
+}
+
+/** The checks a complete BYO namespace report carries: every object kind, and Pod Security. */
+const BYO_ADMISSION_CHECK_KINDS = ["Service", "Ingress", "Secret", "PodSecurity"] as const;
+
+/**
+ * Whether a BYO admission report is COMPLETE (#6541): it exists, and every namespace whose charts were
+ * deployed has every kind checked (Pod Security `enforced` counts). A namespace with no `checks` —
+ * from a runner that predates them — is NOT complete: an absent check is not a clean one. Refused
+ * namespaces were not deployed and are not checked.
+ */
+export function byoAdmissionReportComplete(report: readonly ByoAdmissionNamespaceReport[]): boolean {
+	if (report.length === 0) return false;
+	return report.every((ns) => {
+		if (ns.mode === "refused") return true;
+		return BYO_ADMISSION_CHECK_KINDS.every((kind) =>
+			(ns.checks ?? []).some((c) => c.kind === kind && c.state !== "failed"),
+		);
 	});
 }
