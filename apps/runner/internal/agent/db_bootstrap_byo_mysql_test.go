@@ -466,17 +466,22 @@ func TestByoUsersMySQL_RotationRelocks(t *testing.T) {
 	}
 }
 
-// TestByoUsersMySQL_SessionsNotEndedReported: the sweep records, before any KILL, which candidates
-// this administrator cannot end the sessions of (it lacks PROCESS, or CONNECTION_ADMIN/SUPER, held
-// directly or by an enabled role), and the result lists each as `sessions-not-ended:<user>`.
+// TestByoUsersMySQL_SessionsNotEndedReported (#6536 round 2): the sweep measures AFTER the last
+// KILL and BEFORE the first DROP USER which candidates still have a session open, so a session past
+// the kill bound or behind a failed kill step is named, and the drop (which closes no session) cannot
+// hide it; the result lists each as `sessions-not-ended:<user>`. No kill privilege is read: the
+// record is what is still open, not what the privileges predict.
 func TestByoUsersMySQL_SessionsNotEndedReported(t *testing.T) {
 	got, _ := renderByoUsersMySQL(oneUserInput())
 	s := got.Sweep
-	rec, kill := strings.Index(s, "SET @alethia_byo_unkilled = (SELECT IF("), strings.Index(s, "'KILL '")
-	if rec < 0 || rec > kill {
-		t.Fatal("the unkillable set is not recorded before the kills")
+	rec, lastKill, firstDrop := strings.Index(s, "SET @alethia_byo_unkilled = "), strings.LastIndex(s, "'KILL '"), strings.Index(s, "'DROP USER '")
+	if rec < 0 || rec < lastKill || rec > firstDrop {
+		t.Fatalf("the record (at %d) is not between the last kill (%d) and the first drop (%d)", rec, lastKill, firstDrop)
 	}
-	for _, want := range []string{"g.PRIVILEGE_TYPE IN ('PROCESS')", "g.PRIVILEGE_TYPE IN ('CONNECTION_ADMIN', 'SUPER')", "information_schema.ENABLED_ROLES r",
+	if strings.Contains(s, "CONNECTION_ADMIN") || strings.Contains(s, "'SUPER'") {
+		t.Error("the record predicts from the kill privilege instead of measuring what is still open")
+	}
+	for _, want := range []string{"g.PRIVILEGE_TYPE IN ('PROCESS')", "information_schema.ENABLED_ROLES r",
 		"CONCAT('" + mysqlByoSessionsPrefix + "', j.u)", "JSON_TABLE(IFNULL(@alethia_byo_unkilled, JSON_ARRAY())"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("sweep lacks %q", want)
@@ -502,16 +507,17 @@ func unkilledStatement(t *testing.T, sweep string) string {
 	return found[0]
 }
 
-// TestByoUsersMySQL_SessionsCountedWhereVisible (#6536): an administrator holding PROCESS but not
-// CONNECTION_ADMIN reports only the candidates that have a session open, counted in the same statement
-// that records them; only one without PROCESS, which cannot see another user's session, reports
-// every candidate. TestByoUsersMySQLServer_SessionsNotEndedOnlyWithSessions measures both on a server.
+// TestByoUsersMySQL_SessionsCountedWhereVisible (#6536): an administrator holding PROCESS reports only
+// the candidates that still have a session open (one already being killed does not count), measured
+// in the same statement that records them; only one without PROCESS, which cannot see another user's
+// session, reports every candidate. TestByoUsersMySQLServer_SessionsNotEndedOnlyWithSessions measures
+// both on a server.
 func TestByoUsersMySQL_SessionsCountedWhereVisible(t *testing.T) {
 	got, _ := renderByoUsersMySQL(oneUserInput())
 	st := unkilledStatement(t, got.Sweep)
 	for _, want := range []string{
-		"WHERE NOT " + mysqlByoCanSeeSessionsSQL() + "\n      OR EXISTS (SELECT 1 FROM information_schema.PROCESSLIST p WHERE CAST(p.USER AS BINARY) = CAST(c.USER AS BINARY))",
-		"SELECT IF(" + mysqlByoCanKillSQL() + ",\n    JSON_ARRAY(), ",
+		"WHERE NOT " + mysqlByoCanSeeSessionsSQL() + "\n      OR EXISTS (SELECT 1 FROM information_schema.PROCESSLIST p\n        WHERE CAST(p.USER AS BINARY) = CAST(c.USER AS BINARY) AND p.COMMAND <> 'Killed'))",
+		"SET @alethia_byo_unkilled = (SELECT IFNULL(JSON_ARRAYAGG(c.USER), JSON_ARRAY()) FROM (",
 	} {
 		if !strings.Contains(st, want) {
 			t.Errorf("the record lacks %q:\n%s", want, st)
@@ -546,11 +552,11 @@ func TestByoUsersMySQL_PrivilegeProbeIsBinary(t *testing.T) {
 	if strings.Contains(st, "g.GRANTEE IN") || strings.Contains(st, "g.GRANTEE =") {
 		t.Errorf("the probe compares GRANTEE under information_schema's collation:\n%s", st)
 	}
-	if n := strings.Count(st, "CAST(g.GRANTEE AS BINARY) IN (SELECT CAST(CONCAT("); n != 3 {
-		t.Errorf("%d binary GRANTEE comparisons, want 3 (PROCESS and the KILL privilege in the gate, PROCESS in the filter)", n)
+	if n := strings.Count(st, "CAST(g.GRANTEE AS BINARY) IN (SELECT CAST(CONCAT("); n != 1 {
+		t.Errorf("%d binary GRANTEE comparisons, want 1 (the PROCESS probe)", n)
 	}
-	if n := strings.Count(st, "UNION SELECT CAST(CONCAT('''', r.ROLE_NAME, '''@''', r.ROLE_HOST, '''') AS BINARY)"); n != 3 {
-		t.Errorf("%d binary role grantees, want 3", n)
+	if n := strings.Count(st, "UNION SELECT CAST(CONCAT('''', r.ROLE_NAME, '''@''', r.ROLE_HOST, '''') AS BINARY)"); n != 1 {
+		t.Errorf("%d binary role grantees, want 1", n)
 	}
 }
 

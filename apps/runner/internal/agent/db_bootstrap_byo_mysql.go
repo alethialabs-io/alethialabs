@@ -89,10 +89,12 @@ const (
 // mysqlByoMaxDrops bounds the candidates one sweep drops, and mysqlByoMaxKills the sessions it ends.
 // MySQL has no loop outside a stored program, so each step is rendered; a candidate past the bound
 // stays locked, is reported as revocation-pending, and is dropped by a later run.
-const (
-	mysqlByoMaxDrops = 32
-	mysqlByoMaxKills = 64
-)
+const mysqlByoMaxDrops = 32
+
+// mysqlByoMaxKills is a variable only so the real-server test of a session past the bound
+// (TestByoUsersMySQLServer_SessionPastKillCapIsReported) can lower it instead of opening 65
+// connections; nothing else assigns it.
+var mysqlByoMaxKills = 64
 
 // mysqlByoMaxReported bounds the `revocation-pending:` lines and, separately, the
 // `sessions-not-ended:` lines one result carries, as the drops are bounded: past it one
@@ -488,7 +490,7 @@ func mysqlByoSweepSQL(env string, users []byoUser) []string {
 	}
 	reset := "SET @" + mysqlByoStmt + " = 'DO 0';"
 	out := []string{
-		"-- phase 3a: end every candidate's sessions (a KILL that fails is reported and skipped; the session can no longer authenticate)",
+		"-- phase 3a: end every candidate's sessions (a KILL that fails is reported in the Job log and skipped; the session can no longer authenticate, and the record below names its user)",
 		"SET @alethia_byo_k = 0;",
 	}
 	for i := 0; i < mysqlByoMaxKills; i++ {
@@ -498,6 +500,8 @@ func mysqlByoSweepSQL(env string, users []byoUser) []string {
 		out = append(out, run...)
 	}
 	out = append(out,
+		"-- the record: the candidates with a session still open after the kills (all of them without PROCESS), reported after the drops",
+		mysqlByoUnkilledSQL(env, users),
 		"-- phase 3b: drop every candidate; its database is kept (a DROP USER that fails is reported and skipped; the user stays locked)",
 		"SET @alethia_byo_u = '';",
 	)
@@ -531,12 +535,6 @@ func mysqlByoCanSeeSessionsSQL() string {
 	return mysqlByoHasPrivilegeSQL("'PROCESS'")
 }
 
-// mysqlByoCanKillSQL is TRUE when the administrator holds PROCESS and also CONNECTION_ADMIN or SUPER,
-// without which every KILL of another user's session fails.
-func mysqlByoCanKillSQL() string {
-	return mysqlByoCanSeeSessionsSQL() + "\n    AND " + mysqlByoHasPrivilegeSQL("'CONNECTION_ADMIN', 'SUPER'")
-}
-
 // mysqlByoSessionsPrefix starts a result line naming a revoked user whose open sessions this run
 // could not end. The runner surfaces each as a deploy warning (provisioner byoDBUsersSessionsPrefix).
 const mysqlByoSessionsPrefix = "sessions-not-ended:"
@@ -549,19 +547,22 @@ const mysqlByoDoubtPrefix = "doubt:"
 // mysqlByoSessionsUnrecorded is the doubt reported when the record of unended sessions is absent.
 const mysqlByoSessionsUnrecorded = "sessions-unrecorded"
 
-// mysqlByoUnkilledSQL records, before the kills and in ONE statement, the candidates whose open
-// sessions this run cannot end: none when the administrator can kill (mysqlByoCanKillSQL); when it
-// holds PROCESS but cannot kill, exactly the candidates with a session in
-// information_schema.PROCESSLIST, counted here; and every candidate when it lacks PROCESS, because
-// then no other user's session is visible and none can be ruled out. Every candidate is locked by
-// then, so no session can open after the count. The sweep's result reads it back, after the drops,
-// as `sessions-not-ended:<user>` lines; this statement never sets it to NULL, so NULL there means the
-// record was lost (mysqlByoResultSQL).
+// mysqlByoUnkilledSQL MEASURES, after the kills and before the drops, in ONE statement, the
+// candidates with a session still open: with PROCESS, exactly those with a session in
+// information_schema.PROCESSLIST that is not already being killed; without it, every candidate,
+// because then no other user's session is visible and none can be ruled out. It is a measurement,
+// not a prediction from privileges, so one rule covers an administrator that cannot kill, a session
+// past mysqlByoMaxKills, and a kill step that failed under --force: DROP USER does not close a
+// session, and a dropped user is never a candidate again, so this is the only report it gets. A
+// session killed a moment ago and still listed reads as open, which over-reports, the safe
+// direction. Every candidate is locked, so no session can open after the measurement. The sweep's
+// result reads it back, after the drops, as `sessions-not-ended:<user>` lines; this statement never
+// sets it to NULL, so NULL there means the record was lost (mysqlByoResultSQL).
 func mysqlByoUnkilledSQL(env string, users []byoUser) string {
-	return `SET @alethia_byo_unkilled = (SELECT IF(` + mysqlByoCanKillSQL() + `,
-    JSON_ARRAY(), IFNULL(JSON_ARRAYAGG(c.USER), JSON_ARRAY())) FROM (` + mysqlByoCandidatesSQL(env, users) + `) c
+	return `SET @alethia_byo_unkilled = (SELECT IFNULL(JSON_ARRAYAGG(c.USER), JSON_ARRAY()) FROM (` + mysqlByoCandidatesSQL(env, users) + `) c
     WHERE NOT ` + mysqlByoCanSeeSessionsSQL() + `
-      OR EXISTS (SELECT 1 FROM information_schema.PROCESSLIST p WHERE CAST(p.USER AS BINARY) = CAST(c.USER AS BINARY)));`
+      OR EXISTS (SELECT 1 FROM information_schema.PROCESSLIST p
+        WHERE CAST(p.USER AS BINARY) = CAST(c.USER AS BINARY) AND p.COMMAND <> 'Killed'));`
 }
 
 // byoMySQLScripts is the rendered MySQL dialect: the provision script and, unless revocation is
@@ -638,9 +639,6 @@ func renderByoUsersMySQL(in byoUsersInput) (byoMySQLScripts, error) {
 		"-- alethia db-bootstrap --byo-users (mysql), sweep script. Apply with mysql -N -B --force, after the provision script.",
 		"SET SESSION group_concat_max_len = 1048576;",
 	}
-	sweep = append(sweep,
-		"-- the candidates whose open sessions this administrator cannot end (with PROCESS, those with a session, and without it, all), reported after the drops",
-		mysqlByoUnkilledSQL(in.EnvironmentID, users))
 	sweep = append(sweep, mysqlByoSweepSQL(in.EnvironmentID, users)...)
 	sweep = append(sweep, "-- result: the provisioned set and every candidate still present", mysqlByoResultSQL(in.EnvironmentID, users, true))
 	out.Sweep = strings.Join(sweep, "\n") + "\n"

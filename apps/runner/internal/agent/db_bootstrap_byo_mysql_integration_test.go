@@ -713,18 +713,20 @@ func TestByoUsersMySQLServer_SQLMode(t *testing.T) {
 }
 
 // openSession opens a session as user that stays open (SELECT SLEEP), waits until the server lists
-// it, and returns a stop that ends it from root and waits for the client.
+// it (one more session of user than before), and returns a stop that ends every session of user from
+// root and waits for the client.
 func (a *myAdmin) openSession(user, pass string) (stop func()) {
 	a.t.Helper()
+	listed := "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE CAST(USER AS BINARY) = '" + user + "'"
+	before := a.query(a.root, listed)
 	session := a.admin.as(user, pass, user).command(false, "-e", "SELECT SLEEP(300)")
 	if err := session.Start(); err != nil {
 		a.t.Fatal(err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- session.Wait() }()
-	listed := "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE CAST(USER AS BINARY) = '" + user + "'"
 	deadline := time.Now().Add(20 * time.Second)
-	for a.query(a.root, listed) == "0" {
+	for a.query(a.root, listed) == before {
 		if time.Now().After(deadline) {
 			_ = session.Process.Kill()
 			a.t.Fatalf("the session of %s never appeared", user)
@@ -868,34 +870,144 @@ func TestByoUsersMySQLServer_LostSessionRecordIsADoubt(t *testing.T) {
 }
 
 // TestByoUsersMySQLServer_PrivilegeProbeIsBinary (#6536): an account whose name differs from the
-// administrator's only in case, and which holds CONNECTION_ADMIN, lends the administrator nothing:
-// the run still reports the revoked user's session it could not end.
+// administrator's only in case lends the administrator nothing. Each subtest first PROVES that the
+// comparison without the cast would match the look-alike's row (so the test could fail), then that
+// the run still reports the revoked user's open session:
+//   - "lookalike holds PROCESS": the administrator has no PROCESS, so it cannot see the session. A
+//     case-insensitive probe would read "can see sessions", find none, and report nothing: a false
+//     "no sessions". The binary probe reads "cannot see", and names every candidate.
+//   - "lookalike holds CONNECTION_ADMIN": the administrator can see but not kill. The record is a
+//     measurement, so a borrowed kill privilege cannot suppress it either.
 func TestByoUsersMySQLServer_PrivilegeProbeIsBinary(t *testing.T) {
+	newMyAdmin(t).requiresFloor()
+	for _, tc := range []struct {
+		name, priv    string
+		dropOwnAccess bool // revoke PROCESS from the administrator
+	}{
+		{"lookalike holds PROCESS", "PROCESS", true},
+		{"lookalike holds CONNECTION_ADMIN", "CONNECTION_ADMIN", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newMyAdmin(t)
+			a.cleanup()
+			t.Cleanup(a.cleanup)
+			a.requireNoKill()
+			decoy := strings.ToUpper(a.admin.user)
+			if decoy == a.admin.user {
+				t.Fatalf("fixture: the administrator %q has no lower-case letter to vary", a.admin.user)
+			}
+			a.query(a.root, "CREATE USER '"+decoy+"'@'%' IDENTIFIED BY '"+myDecoyPass+"' ACCOUNT LOCK")
+			t.Cleanup(func() { _, _, _ = a.root.run("DROP USER IF EXISTS '"+decoy+"'@'%'", false) })
+			a.query(a.root, "GRANT "+tc.priv+" ON *.* TO '"+decoy+"'@'%'")
+			if tc.dropOwnAccess {
+				a.withoutProcess()
+			}
+			if a.holds(tc.priv) {
+				t.Fatalf("fixture: the administrator itself holds %s", tc.priv)
+			}
+			// Can this test fail? The administrator does not hold the privilege, so an uncast match
+			// of its own grantee string can only be the look-alike's row. It must match, read as the
+			// administrator, the same way the probe reads it; and the cast must not.
+			own := "'''" + a.admin.user + "''@''%'''"
+			uncast := a.query(a.admin, "SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES WHERE GRANTEE = "+own+" AND PRIVILEGE_TYPE = '"+tc.priv+"'")
+			cast := a.query(a.admin, "SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES WHERE CAST(GRANTEE AS BINARY) = CAST("+own+" AS BINARY) AND PRIVILEGE_TYPE = '"+tc.priv+"'")
+			if uncast != "1" || cast != "0" {
+				t.Fatalf("fixture: uncast match = %s, cast match = %s, want 1 and 0; the look-alike cannot tell a case-insensitive probe from a binary one here", uncast, cast)
+			}
+
+			a.apply("env-a", byoUser{myUserC, myPasswordA1})
+			a.openSession(myUserC, myPasswordA1)
+			if got := a.apply("env-a"); len(got) != 0 {
+				t.Fatalf("revoke run result = %v", got)
+			}
+			if strings.Join(a.sessions, ",") != myUserC {
+				t.Errorf("sessions-not-ended = %v, want [%s]: %s's %s was read as the administrator's", a.sessions, myUserC, decoy, tc.priv)
+			}
+		})
+	}
+}
+
+// withKill grants the administrator CONNECTION_ADMIN for the rest of the test.
+func (a *myAdmin) withKill() {
+	a.t.Helper()
+	a.query(a.root, "GRANT CONNECTION_ADMIN ON *.* TO '"+a.admin.user+"'@'%'")
+	a.t.Cleanup(func() { a.query(a.root, "REVOKE CONNECTION_ADMIN ON *.* FROM '"+a.admin.user+"'@'%'") })
+}
+
+// sessionsOf counts user's sessions as root sees them.
+func (a *myAdmin) sessionsOf(user string) string {
+	return a.query(a.root, "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE CAST(USER AS BINARY) = '"+user+"' AND COMMAND <> 'Killed'")
+}
+
+// TestByoUsersMySQLServer_SessionPastKillCapIsReported (#6536 round 2): an administrator that CAN kill
+// ends at most mysqlByoMaxKills sessions per run. A session past that bound survives the drop, since
+// DROP USER closes no session, so the run must name its user. The bound is lowered to 2 for this test
+// (mysqlByoMaxKills is a variable for exactly this; 65 real connections would exceed the per-binding
+// user's MAX_USER_CONNECTIONS of 20), and 3 sessions are opened.
+func TestByoUsersMySQLServer_SessionPastKillCapIsReported(t *testing.T) {
 	a := newMyAdmin(t)
 	a.requiresFloor()
 	a.cleanup()
 	t.Cleanup(a.cleanup)
-	a.requireNoKill()
-	decoy := strings.ToUpper(a.admin.user)
-	if decoy == a.admin.user {
-		t.Fatalf("fixture: the administrator %q has no lower-case letter to vary", a.admin.user)
-	}
-	a.query(a.root, "CREATE USER '"+decoy+"'@'%' IDENTIFIED BY '"+myDecoyPass+"' ACCOUNT LOCK")
-	t.Cleanup(func() { _, _, _ = a.root.run("DROP USER IF EXISTS '"+decoy+"'@'%'", false) })
-	a.query(a.root, "GRANT PROCESS, CONNECTION_ADMIN ON *.* TO '"+decoy+"'@'%'")
-	// The case-insensitive comparison this guards against can only misfire on a row the administrator
-	// can read; prove it can.
-	if got := a.query(a.admin, "SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES WHERE CAST(GRANTEE AS BINARY) = '''"+decoy+"''@''%''' AND PRIVILEGE_TYPE = 'CONNECTION_ADMIN'"); got != "1" {
-		t.Fatalf("fixture: the administrator cannot read the decoy's privilege row (%s)", got)
-	}
+	saved := mysqlByoMaxKills
+	mysqlByoMaxKills = 2
+	t.Cleanup(func() { mysqlByoMaxKills = saved })
+	a.withKill()
 
 	a.apply("env-a", byoUser{myUserC, myPasswordA1})
-	a.openSession(myUserC, myPasswordA1)
+	for i := 0; i < mysqlByoMaxKills+1; i++ {
+		a.openSession(myUserC, myPasswordA1)
+	}
 	if got := a.apply("env-a"); len(got) != 0 {
 		t.Fatalf("revoke run result = %v", got)
 	}
+	if got := a.sessionsOf(myUserC); got != "1" {
+		t.Fatalf("fixture: %s sessions survived the kills, want exactly 1 past the bound of %d", got, mysqlByoMaxKills)
+	}
+	if a.userCount(myUserC) != "0" {
+		t.Error("the user was not dropped")
+	}
 	if strings.Join(a.sessions, ",") != myUserC {
-		t.Errorf("sessions-not-ended = %v, want [%s]: %s's CONNECTION_ADMIN was read as the administrator's", a.sessions, myUserC, decoy)
+		t.Errorf("sessions-not-ended = %v, want [%s]: a session past the kill bound was left open silently", a.sessions, myUserC)
+	}
+}
+
+// TestByoUsersMySQLServer_FailedKillStepIsReported (#6536 round 2): under --force a kill step that
+// fails runs nothing and the sweep moves on, so its session survives the drop. With an administrator
+// that CAN kill, the first KILL is made to fail; the run must name the user, not only print the
+// error to the Job log.
+func TestByoUsersMySQLServer_FailedKillStepIsReported(t *testing.T) {
+	a := newMyAdmin(t)
+	a.requiresFloor()
+	a.cleanup()
+	t.Cleanup(a.cleanup)
+	a.withKill()
+
+	a.apply("env-a", byoUser{myUserC, myPasswordA1})
+	a.openSession(myUserC, myPasswordA1)
+	a.mutateSweep = func(sweep string) string {
+		const kill = "CONCAT('KILL ', MIN(p.ID))"
+		if !strings.Contains(sweep, kill) {
+			t.Fatal("fixture: no kill step to break")
+		}
+		return strings.Replace(sweep, kill, "CONCAT('KILL alethia_byo_no_such_column + ', MIN(p.ID))", 1)
+	}
+	t.Cleanup(func() { a.mutateSweep = nil })
+	got, out, err := a.applyErr("env-a")
+	if err != nil {
+		t.Fatalf("the provision script failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "alethia_byo_no_such_column") {
+		t.Fatalf("the broken kill step did not fail:\n%s", out)
+	}
+	if len(got) != 0 {
+		t.Fatalf("revoke run result = %v", got)
+	}
+	if a.sessionsOf(myUserC) != "1" {
+		t.Fatal("fixture: the session did not survive the failed kill step")
+	}
+	if strings.Join(a.sessions, ",") != myUserC {
+		t.Errorf("sessions-not-ended = %v, want [%s]: a failed kill step left a session open silently", a.sessions, myUserC)
 	}
 }
 

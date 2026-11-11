@@ -378,12 +378,18 @@ ROUTINE`, `TRIGGER` or `EVENT`. Only an administrator can create one with that u
 
 **The limits.** Ending another user's sessions needs two privileges. `PROCESS` lets the administrator
 see them (without it `information_schema.PROCESSLIST` lists only its own), and `CONNECTION_ADMIN` or
-`SUPER` lets it `KILL` them. Before the kills, the sweep checks whether the administrator holds both,
-directly or through an enabled role; a privilege it cannot see counts as missing. Account names are
-compared as binary, because information_schema's collation is case-insensitive and MySQL user names
-are not. If it holds `PROCESS` but cannot kill, the result names each revoked user that had a session
-open, counted in the same statement, as `sessions-not-ended:<user>`. If it lacks `PROCESS`, no other
-user's session is visible, so every revoked user is named. The runner turns each of those into a
+`SUPER` lets it `KILL` them. The sweep does not predict from those privileges. After the kills and
+before the drops, it measures which revoked users still have a session open, in one statement. `DROP
+USER` closes no session, and a dropped user is never a candidate again, so this is the only report such
+a session gets. If the administrator holds `PROCESS`, directly or through an enabled role, the result
+names as `sessions-not-ended:<user>` each revoked user with a session still listed that is not
+already being killed. One rule covers three cases: an administrator that cannot kill, a session past
+the 64-kill bound, and a kill step that failed under `--force` (whose error the client also prints
+to the Job log). A session killed a moment ago and still listed reads as open, which over-reports.
+If the administrator lacks `PROCESS`, no other user's session is visible, so every revoked user is
+named. The `PROCESS` check compares account names as binary, because information_schema's collation
+is case-insensitive and MySQL user names are not. Otherwise a look-alike account holding `PROCESS`
+would make the run read "can see sessions", find none and report nothing. The runner turns each of those into a
 deploy warning: any session the user had open was not terminated, and the user cannot log in again. A
 session opened before the revocation then keeps running until it disconnects. The user cannot open a
 new one, because it is locked and then dropped.
@@ -395,6 +401,15 @@ say whether a revoked user's session is still open. The `revocation-pending` and
 lists are each capped at 32 lines, as the drops are. Past the cap one `doubt:<list> +<n> more` line
 counts the rest, so a backlog cannot fill the termination message on its own. Every one of these
 lines is an entry, and the header counts it.
+
+**The result's size limits the declared users per environment.** The kubelet keeps only the last 4096
+bytes of a termination message. The two capped lists and their doubt lines take at most about 2.9 KB
+of that. A provisioned user's line is 25 bytes, so about 40 provisioned users fit next to a full
+backlog report, and about 160 with none. Past that, the result is truncated from the front and loses
+its header line. The runner then reads the result as malformed, and the run fails closed: no user
+counts as provisioned, and no binding is applied or withdrawn. The limit is not silent, but it is a
+limit. An environment that declares more users than fit needs a result channel larger than one
+termination message.
 
 Two further gaps can only be opened by an administrator. A rotation does not `DISCARD OLD PASSWORD`, so
 a secondary password an administrator set survives it. The privilege check also does not read

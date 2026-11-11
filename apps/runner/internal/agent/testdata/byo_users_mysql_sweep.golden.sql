@@ -1,21 +1,6 @@
 -- alethia db-bootstrap --byo-users (mysql), sweep script. Apply with mysql -N -B --force, after the provision script.
 SET SESSION group_concat_max_len = 1048576;
--- the candidates whose open sessions this administrator cannot end (with PROCESS, those with a session, and without it, all), reported after the drops
-SET @alethia_byo_unkilled = (SELECT IF(EXISTS (SELECT 1 FROM information_schema.USER_PRIVILEGES g WHERE g.PRIVILEGE_TYPE IN ('PROCESS')
-      AND CAST(g.GRANTEE AS BINARY) IN (SELECT CAST(CONCAT('''', SUBSTRING_INDEX(CURRENT_USER(), '@', 1), '''@''', SUBSTRING_INDEX(CURRENT_USER(), '@', -1), '''') AS BINARY)
-        UNION SELECT CAST(CONCAT('''', r.ROLE_NAME, '''@''', r.ROLE_HOST, '''') AS BINARY) FROM information_schema.ENABLED_ROLES r))
-    AND EXISTS (SELECT 1 FROM information_schema.USER_PRIVILEGES g WHERE g.PRIVILEGE_TYPE IN ('CONNECTION_ADMIN', 'SUPER')
-      AND CAST(g.GRANTEE AS BINARY) IN (SELECT CAST(CONCAT('''', SUBSTRING_INDEX(CURRENT_USER(), '@', 1), '''@''', SUBSTRING_INDEX(CURRENT_USER(), '@', -1), '''') AS BINARY)
-        UNION SELECT CAST(CONCAT('''', r.ROLE_NAME, '''@''', r.ROLE_HOST, '''') AS BINARY) FROM information_schema.ENABLED_ROLES r)),
-    JSON_ARRAY(), IFNULL(JSON_ARRAYAGG(c.USER), JSON_ARRAY())) FROM (SELECT a.USER, a.HOST FROM information_schema.USER_ATTRIBUTES a
-    WHERE REGEXP_LIKE(a.USER, '^alethia_byo_[0-9a-f]{12}$', 'c') AND CHAR_LENGTH(a.USER) = 24 AND a.HOST = '%'
-      AND JSON_UNQUOTE(JSON_EXTRACT(a.ATTRIBUTE, '$.alethia_env')) = 'env-1'
-      AND CAST(a.USER AS BINARY) NOT IN ('alethia_byo_0123456789ab')) c
-    WHERE NOT EXISTS (SELECT 1 FROM information_schema.USER_PRIVILEGES g WHERE g.PRIVILEGE_TYPE IN ('PROCESS')
-      AND CAST(g.GRANTEE AS BINARY) IN (SELECT CAST(CONCAT('''', SUBSTRING_INDEX(CURRENT_USER(), '@', 1), '''@''', SUBSTRING_INDEX(CURRENT_USER(), '@', -1), '''') AS BINARY)
-        UNION SELECT CAST(CONCAT('''', r.ROLE_NAME, '''@''', r.ROLE_HOST, '''') AS BINARY) FROM information_schema.ENABLED_ROLES r))
-      OR EXISTS (SELECT 1 FROM information_schema.PROCESSLIST p WHERE CAST(p.USER AS BINARY) = CAST(c.USER AS BINARY)));
--- phase 3a: end every candidate's sessions (a KILL that fails is reported and skipped; the session can no longer authenticate)
+-- phase 3a: end every candidate's sessions (a KILL that fails is reported in the Job log and skipped; the session can no longer authenticate, and the record below names its user)
 SET @alethia_byo_k = 0;
 SET @alethia_byo_s = 'DO 0';
 SELECT MIN(p.ID), IFNULL(CONCAT('KILL ', MIN(p.ID)), 'DO 0') FROM information_schema.PROCESSLIST p
@@ -657,6 +642,16 @@ SELECT MIN(p.ID), IFNULL(CONCAT('KILL ', MIN(p.ID)), 'DO 0') FROM information_sc
 PREPARE alethia_byo_s FROM @alethia_byo_s;
 EXECUTE alethia_byo_s;
 DEALLOCATE PREPARE alethia_byo_s;
+-- the record: the candidates with a session still open after the kills (all of them without PROCESS), reported after the drops
+SET @alethia_byo_unkilled = (SELECT IFNULL(JSON_ARRAYAGG(c.USER), JSON_ARRAY()) FROM (SELECT a.USER, a.HOST FROM information_schema.USER_ATTRIBUTES a
+    WHERE REGEXP_LIKE(a.USER, '^alethia_byo_[0-9a-f]{12}$', 'c') AND CHAR_LENGTH(a.USER) = 24 AND a.HOST = '%'
+      AND JSON_UNQUOTE(JSON_EXTRACT(a.ATTRIBUTE, '$.alethia_env')) = 'env-1'
+      AND CAST(a.USER AS BINARY) NOT IN ('alethia_byo_0123456789ab')) c
+    WHERE NOT EXISTS (SELECT 1 FROM information_schema.USER_PRIVILEGES g WHERE g.PRIVILEGE_TYPE IN ('PROCESS')
+      AND CAST(g.GRANTEE AS BINARY) IN (SELECT CAST(CONCAT('''', SUBSTRING_INDEX(CURRENT_USER(), '@', 1), '''@''', SUBSTRING_INDEX(CURRENT_USER(), '@', -1), '''') AS BINARY)
+        UNION SELECT CAST(CONCAT('''', r.ROLE_NAME, '''@''', r.ROLE_HOST, '''') AS BINARY) FROM information_schema.ENABLED_ROLES r))
+      OR EXISTS (SELECT 1 FROM information_schema.PROCESSLIST p
+        WHERE CAST(p.USER AS BINARY) = CAST(c.USER AS BINARY) AND p.COMMAND <> 'Killed'));
 -- phase 3b: drop every candidate; its database is kept (a DROP USER that fails is reported and skipped; the user stays locked)
 SET @alethia_byo_u = '';
 SET @alethia_byo_s = 'DO 0';
