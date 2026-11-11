@@ -2352,11 +2352,13 @@ type Addon struct {
 	Mode          string  `json:"mode"`
 	Version       *string `json:"version"`
 	VersionPinned bool    `json:"version_pinned"`
-	Namespace     *string `json:"namespace"`
-	Status        string  `json:"status"`
-	Health        *string `json:"health"`
-	Sync          *string `json:"sync"`
-	LastSyncedAt  *string `json:"last_synced_at"`
+	// Update is the catalogue's offer for this install (#6537); nil when it follows the catalogue.
+	Update       *AddonUpdate `json:"update"`
+	Namespace    *string      `json:"namespace"`
+	Status       string       `json:"status"`
+	Health       *string      `json:"health"`
+	Sync         *string      `json:"sync"`
+	LastSyncedAt *string      `json:"last_synced_at"`
 	// Settings are the stored NON-secret settings (#5528). A secret setting is absent from this map
 	// — the server removes it rather than masking it — and named in SecretKeys instead.
 	Settings map[string]any `json:"settings"`
@@ -2364,6 +2366,19 @@ type Addon struct {
 	ValuesYAML *string `json:"values_yaml"`
 	// SecretKeys are the names of the add-on's secret settings. Names only, never values.
 	SecretKeys []string `json:"secret_keys"`
+}
+
+// AddonUpdate is what the catalogue offers one installed add-on (#6537). Kind "pin-behind" is a
+// managed install pinned below the catalogue's version; "gitops" is a GitOps-mode install, whose apps
+// repo decides the version, so the catalogue's is stated. The server never acts on it: the pin and the
+// repo are the user's.
+type AddonUpdate struct {
+	Kind           string `json:"kind"`
+	CatalogVersion string `json:"catalog_version"`
+	// Security is true when the catalogue's version is a security release.
+	Security        bool    `json:"security"`
+	SecuritySummary *string `json:"security_summary"`
+	AdvisoryURL     *string `json:"advisory_url"`
 }
 
 // ProjectAddons is the installed catalog add-ons for one environment.

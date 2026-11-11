@@ -73,15 +73,19 @@ func TestByoDBUsersJob_MySQLPerCloud(t *testing.T) {
 				t.Fatalf("command %v", cmd)
 			}
 			script := cmd[2]
-			client := `mysql --user="$BYO_DB_ADMIN_USER" --ssl-mode=REQUIRED`
+			tlsMode := "VERIFY_IDENTITY"
+			if provider == "gcp" {
+				tlsMode = "VERIFY_CA"
+			}
+			client := `run_db_client mysql --user="$BYO_DB_ADMIN_USER" --ssl-mode=` + tlsMode + ` --ssl-ca=/etc/alethia/db-ca/ca.pem`
 			if provider == "azure" {
 				client += " --enable-cleartext-plugin"
 			}
 			client += " -N -B"
 			for _, want := range []string{
 				"set -eu\n",
-				client + ` "$BYO_DB_NAME" < /sql/init.sql > /dev/termination-log` + "\n",
-				`if ! ` + client + ` --force "$BYO_DB_NAME" < /sql/sweep.sql > /byo-result/result; then`,
+				"exec 3> /dev/termination-log\n" + client + ` "$BYO_DB_NAME" < /sql/init.sql` + "\n",
+				"exec 3> /byo-result/result\n" + `if ! ` + client + ` --force "$BYO_DB_NAME" < /sql/sweep.sql; then`,
 				`  "alethia-byo-users v1 count="*) ;;`,
 				`  *) echo "alethia byo-users: the sweep wrote no result" >&2; exit 1 ;;`,
 				"cat /byo-result/result > /dev/termination-log\n",
@@ -178,7 +182,7 @@ func TestByoDBUsersJob_MySQLContractWithTheRunner(t *testing.T) {
 	if !strings.Contains(pg, `engineMySQL    = "`+engineMySQL+`"`) {
 		t.Errorf("the runner's MySQL engine name is not %q", engineMySQL)
 	}
-	if !strings.Contains(byoDBUsersMySQLScript(false, false), `"alethia-byo-users v1 count="*)`) {
+	if !strings.Contains(byoDBUsersMySQLScript(false, false, ""), `"alethia-byo-users v1 count="*)`) {
 		t.Error("the shell checks for a header other than the runner's")
 	}
 }

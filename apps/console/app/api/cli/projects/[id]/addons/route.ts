@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { disableAddon, enableAddon } from "@/app/server/actions/addons";
 import { getAddOn } from "@/lib/addons/catalog";
+import { addOnUpdateNotice } from "@/lib/addons/update-notice";
 import { storedAddonSettings } from "@/lib/cli/addon-catalog";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
@@ -125,6 +126,8 @@ export async function GET(
 			environment: environmentName,
 			addons: items.map(({ id: _id, cursor_key: _cursor, ...r }) => ({
 				addon_id: r.addon_id,
+				// What the catalogue offers this install (#6537) — the same rule as the console card.
+				update: updateWire(r.addon_id, r.mode, r.version),
 				enabled: r.enabled,
 				mode: r.mode,
 				// The EFFECTIVE version — the pin, else the catalog's default — and which of the two it
@@ -149,6 +152,24 @@ export async function GET(
 		const message = err instanceof Error ? err.message : "Internal Server Error";
 		return NextResponse.json({ error: message }, { status: 500 });
 	}
+}
+
+/**
+ * The catalogue's update offer for one row, in wire shape, or null. An add-on that has left the
+ * catalogue has nothing to offer.
+ */
+function updateWire(addonId: string, mode: "managed" | "gitops", version: string | null) {
+	const def = getAddOn(addonId);
+	if (!def) return null;
+	const notice = addOnUpdateNotice(def, { mode, version });
+	if (!notice) return null;
+	return {
+		kind: notice.kind,
+		catalog_version: notice.catalogVersion,
+		security: notice.security !== null,
+		security_summary: notice.security?.summary ?? null,
+		advisory_url: notice.security?.advisoryUrl ?? null,
+	};
 }
 
 /** Body of POST .../addons — enable or reconfigure one catalog add-on.

@@ -188,6 +188,7 @@ func classifiedFacts(provider string) *InfraFacts {
 	vc.Classification = map[string][]string{"tier": {"prod"}}
 	return BuildFromOutputs(map[string]interface{}{
 		"eks_cluster_name":              "eks-demo",
+		"karpenter_sa_role":             testKarpenterRoleArn,
 		"eks_irsa_external_secrets_arn": "arn:aws:iam::acct-123:role/eso",
 	}, vc)
 }

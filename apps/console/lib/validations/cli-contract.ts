@@ -810,6 +810,21 @@ export const cliProbesResponse = z.object({
 	page: pageInfoSchema,
 });
 
+/**
+ * The catalogue's update offer for one installed add-on (#6537) — `lib/addons/update-notice.ts`.
+ * `pin-behind`: pinned below the catalogue. `gitops`: the apps repo decides the version, so the
+ * catalogue's is stated. Never acted on by the server: the pin and the repo are the user's.
+ */
+const addonUpdateWire = z.object({
+	kind: z.enum(["pin-behind", "gitops"]),
+	catalog_version: z.string(),
+	/** True when the catalogue's version is a security release. */
+	security: z.boolean(),
+	/** What the security release fixes; null when `security` is false. */
+	security_summary: z.string().nullable(),
+	advisory_url: z.string().nullable(),
+});
+
 /** One installed catalog add-on in an environment. */
 export const addonWire = z.object({
 	addon_id: z.string(),
@@ -819,6 +834,8 @@ export const addonWire = z.object({
 	version: z.string().nullable(),
 	/** Whether `version` is a user pin (true) or the catalog default (false). */
 	version_pinned: z.boolean(),
+	/** What the catalogue offers this install (#6537), or null when it follows the catalogue. */
+	update: addonUpdateWire.nullable(),
 	namespace: z.string().nullable(),
 	status: z.string(),
 	health: z.string().nullable(),

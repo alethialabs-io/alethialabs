@@ -85,6 +85,7 @@ import {
 } from "@/lib/addons/catalog";
 import type { ChartWorkloadOverlay } from "@/lib/addons/chart-overlay";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
+import { placementHostNamespaces } from "@/lib/queries/placement-host-namespaces";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 import {
 	normalizeWebhookCaConsumers,
@@ -1790,6 +1791,15 @@ async function buildConfigSnapshot(
 			.where(eq(projectPreviewConfig.project_id, projectId))
 			.limit(1);
 
+		// #6551: the namespaces the host environment (the `dedicated` env owning this Fabric) uses for
+		// its own BYO charts, so the runner can refuse a namespace placement into one. Computed for a
+		// `namespace` placement only; with no Fabric it stays absent, and the runner then refuses the
+		// deploy rather than assume the host uses none.
+		const hostNamespaces =
+			environment.placement_mode === "namespace" && fabric
+				? await placementHostNamespaces(tx, projectId, fabric.id)
+				: null;
+
 		const configSnapshot = {
 			// An EXPLICIT PICK of the `projects` row, never `...project` (#1962). A DB-row spread
 			// puts every column of the table onto this HMAC-signed snapshot, so the next migration
@@ -2072,6 +2082,9 @@ async function buildConfigSnapshot(
 			...(previewConfig?.namespace_prefix
 				? { preview_namespace_prefix: previewConfig.namespace_prefix }
 				: {}),
+			// #6551: emitted for a `namespace` placement only (an EMPTY list is "computed, none"), so
+			// every other environment freezes the same snapshot bytes as before.
+			...(hostNamespaces ? { placement_host_namespaces: hostNamespaces } : {}),
 			// Config-time compatibility report (#1218) — non-blocking; the UI surfaces
 			// its warnings (cluster inspector / add-on config sheet #1221, canvas chip #1222).
 			compat,

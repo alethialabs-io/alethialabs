@@ -63,6 +63,19 @@ const (
 	ByoDBUsersJobNamePrefix = byoDBUsersNamePrefix
 	// byoDBUsersEnvHashLen is how many hex characters of the environment hash a name carries.
 	byoDBUsersEnvHashLen = 10
+	// ByoDBUsersAzureServiceAccount is the ServiceAccount the Azure run's pod runs as. Its name is
+	// FIXED, not per environment, because the Azure template federates the dedicated admin identity
+	// to exactly system:serviceaccount:<ByoDBUsersNamespace>:<this> (app-db-identity.tf
+	// azure_byo_db_users_ksa_name), and an Azure federated credential matches its subject exactly,
+	// with no wildcard. One name per cluster is enough: the admin outputs and the credential exist
+	// only where the environment provisions its own AKS cluster (provision_aks), and the credential's
+	// issuer is that cluster's (module.aks[0].oidc_issuer_url). The credential trusts any pod running
+	// as this ServiceAccount in ByoDBUsersNamespace on that cluster. What keeps other workloads out of
+	// the namespace: BYO charts refuse it by exact name (argocd byo_reserved_namespaces.json), and
+	// the runner refuses to start a run while it holds a foreign object (provisioner
+	// foreignByoDBUsersObjects). A namespace-placed environment is not yet refused it (#6551).
+	// TestByoDBUsers_AzureServiceAccountMatchesTheTemplate pins the two spellings equal.
+	ByoDBUsersAzureServiceAccount = byoDBUsersNamePrefix + "admin"
 )
 
 // byoDBUsersRunIDRe bounds the run id folded into the Job's name: a Job name is also a pod label
@@ -119,6 +132,10 @@ type ByoDBUsersJob struct {
 	// Credentials are the run's credential-bearing objects, admin first, then one per user, sorted by
 	// user. The runner applies them before the Job and deletes every one of them after it.
 	Credentials []ByoDBUsersObject
+	// CAConfigMap is the ConfigMap holding the CA set the main container verifies the database server
+	// against (db_tls.go). It holds no secret; the runner applies it before the Job and deletes it
+	// after it, with the credentials.
+	CAConfigMap ByoDBUsersObject
 	// JobName is the Job's name.
 	JobName string
 	// JobYAML is the batch/v1 Job. It holds no credential: only secretKeyRefs and, on Azure, a token
@@ -137,7 +154,8 @@ func byoDBUsersUserSecretName(environment, user string) string {
 	return ByoDBUsersBaseName(environment) + "-u-" + strings.TrimPrefix(user, ByoDBUserPrefix)
 }
 
-// byoDBUsersAdminName is the admin ExternalSecret's (AWS/GCP) or ServiceAccount's (Azure) name.
+// byoDBUsersAdminName is the admin ExternalSecret's name (AWS/GCP). The Azure ServiceAccount is
+// ByoDBUsersAzureServiceAccount instead.
 func byoDBUsersAdminName(environment string) string {
 	return ByoDBUsersBaseName(environment) + "-admin"
 }
@@ -197,14 +215,23 @@ func RenderByoDBUsersJob(p ByoDBUsersJobParams) (ByoDBUsersJob, error) {
 		}
 	}
 
+	var out ByoDBUsersJob
 	env := p.Environment
 	labels := byoDBUsersLabels(env)
 	conn, err := byoDBUsersAdminConnection(p, store)
 	if err != nil {
 		return ByoDBUsersJob{}, err
 	}
+	caName := dbCAConfigMapName(ByoDBUsersBaseName(env))
+	out.CAConfigMap = ByoDBUsersObject{
+		Resource: "configmaps",
+		Name:     caName,
+		YAML:     renderDBCAConfigMap(caName, ByoDBUsersNamespace, labels, nil, conn.tls),
+	}
+	conn.volumes = append(conn.volumes, map[string]any{"name": dbCAVolume, "configMap": map[string]any{"name": caName}})
+	conn.main["volumeMounts"] = append(conn.main["volumeMounts"].([]any),
+		map[string]any{"name": dbCAVolume, "mountPath": dbCADir, "readOnly": true})
 
-	var out ByoDBUsersJob
 	nsLabels := map[string]string{ByoDBUsersLabel: ByoDBUsersLabelValue, "app.kubernetes.io/managed-by": "alethia"}
 	for k, v := range p.NamespaceLabels {
 		nsLabels[k] = v
@@ -319,6 +346,7 @@ const byoDBUsersESResource = "externalsecrets.external-secrets.io"
 // byoDBUsersConn is the per-cloud admin connection of a run.
 type byoDBUsersConn struct {
 	dbName         string
+	tls            dbTLS
 	admin          ByoDBUsersObject
 	serviceAccount string
 	podLabels      map[string]string
@@ -328,8 +356,8 @@ type byoDBUsersConn struct {
 }
 
 // byoDBUsersAdminConnection resolves the per-cloud admin connection from the outputs — the same
-// outputs, users and clients the bootstrap Job connects with (awsBootstrapSpec, gcpBootstrapSpec,
-// azureBootstrapSpec) — and renders the admin credential object.
+// outputs, users, clients and TLS verification the bootstrap Job connects with (awsBootstrapSpec,
+// gcpBootstrapSpec, azureBootstrapSpec, dbTLSFor) — and renders the admin credential object.
 func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersConn, error) {
 	env := p.Environment
 	labels := byoDBUsersLabels(env)
@@ -339,17 +367,29 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 		}
 		return "", fmt.Errorf("no %s output for the BYO users Job %s", key, what)
 	}
+	var c byoDBUsersConn
+	switch p.Provider {
+	case string(types.CloudProviderAws), string(types.CloudProviderGcp), string(types.CloudProviderAzure):
+		tls, err := dbTLSFor(p.Provider, p.Outputs)
+		if err != nil {
+			return c, fmt.Errorf("BYO users Job: %w", err)
+		}
+		c.tls = tls
+	default:
+		return c, fmt.Errorf("the BYO users Job is not supported for provider %q", p.Provider)
+	}
 	pgEnv := func(host, db string) []any {
 		return []any{
 			plainEnv("PGHOST", host),
 			plainEnv("PGPORT", "5432"),
 			plainEnv("PGDATABASE", db),
-			plainEnv("PGSSLMODE", "require"),
+			plainEnv("PGSSLMODE", c.tls.PGSSLMode()),
+			plainEnv("PGSSLROOTCERT", dbCAFile),
 			plainEnv("PGCONNECT_TIMEOUT", "30"),
+			plainEnv(dbTLSReasonEnv, c.tls.dbTLSFailureReason()),
 		}
 	}
 	sqlRO := map[string]any{"name": "sql", "mountPath": bootstrapSQLDir, "readOnly": true}
-	var c byoDBUsersConn
 	switch p.Provider {
 	case string(types.CloudProviderAws), string(types.CloudProviderGcp):
 		hostKey, dbKey, secretKey := "rds_cluster_endpoint", "rds_database_name", "rds_master_credentials_secret_name"
@@ -375,14 +415,14 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 		c.admin = ByoDBUsersObject{Resource: byoDBUsersESResource, Name: name, YAML: doc}
 		if p.Engine == engineMySQL {
 			c.main, c.volumes = byoDBUsersMySQLMain(host, c.dbName, p.SkipRevoke,
-				[]any{secretEnv("BYO_DB_ADMIN_USER", name, "username"), secretEnv("MYSQL_PWD", name, "password")}, false)
+				[]any{secretEnv("BYO_DB_ADMIN_USER", name, "username"), secretEnv("MYSQL_PWD", name, "password")}, false, c.tls)
 			break
 		}
 		envs := append(pgEnv(host, c.dbName), secretEnv("PGUSER", name, "username"), secretEnv("PGPASSWORD", name, "password"))
 		c.main = map[string]any{
 			"name":         ByoDBUsersMainContainer,
 			"image":        postgresClientImage,
-			"command":      []string{"psql", "-X", "-v", "ON_ERROR_STOP=1", "-f", bootstrapSQLFile},
+			"command":      []string{"/bin/sh", "-c", byoDBUsersPGScript(false)},
 			"env":          envs,
 			"volumeMounts": []any{sqlRO},
 		}
@@ -403,7 +443,7 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 		if err != nil {
 			return c, err
 		}
-		name := byoDBUsersAdminName(env)
+		name := ByoDBUsersAzureServiceAccount
 		saLabels := map[string]string{"azure.workload.identity/use": "true"}
 		for k, v := range labels {
 			saLabels[k] = v
@@ -430,15 +470,14 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 		if p.Engine == engineMySQL {
 			// The ossrdbms-aad token is the same for both engines; MySQL's Entra login sends it as the
 			// password through the cleartext plugin, over TLS (bootstrap_job.go mysqlContainer).
-			c.main, c.volumes = byoDBUsersMySQLMain(host, c.dbName, p.SkipRevoke, []any{plainEnv("BYO_DB_ADMIN_USER", adminUser)}, true)
+			c.main, c.volumes = byoDBUsersMySQLMain(host, c.dbName, p.SkipRevoke, []any{plainEnv("BYO_DB_ADMIN_USER", adminUser)}, true, c.tls)
 			break
 		}
 		c.main = map[string]any{
-			"name":  ByoDBUsersMainContainer,
-			"image": postgresClientImage,
-			"command": []string{"/bin/sh", "-c",
-				`PGPASSWORD="$(cat ` + bootstrapTokenFile + `)" psql -X -v ON_ERROR_STOP=1 -f ` + bootstrapSQLFile},
-			"env": append(pgEnv(host, c.dbName), plainEnv("PGUSER", adminUser)),
+			"name":    ByoDBUsersMainContainer,
+			"image":   postgresClientImage,
+			"command": []string{"/bin/sh", "-c", byoDBUsersPGScript(true)},
+			"env":     append(pgEnv(host, c.dbName), plainEnv("PGUSER", adminUser)),
 			"volumeMounts": []any{sqlRO,
 				map[string]any{"name": "admin-token", "mountPath": bootstrapTokenDir, "readOnly": true}},
 		}
@@ -446,10 +485,20 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 			map[string]any{"name": "sql", "emptyDir": map[string]any{}},
 			map[string]any{"name": "admin-token", "emptyDir": map[string]any{"medium": "Memory"}},
 		}
-	default:
-		return c, fmt.Errorf("the BYO users Job is not supported for provider %q", p.Provider)
 	}
 	return c, nil
+}
+
+// byoDBUsersPGScript is the Postgres main container's shell script: psql applies the provision
+// script, which itself writes the result to the termination message (`--result-path`), under
+// run_db_client, which names a TLS failure and keeps the client's exit code. With fromToken the
+// admin password is the minted Entra token, read from its file.
+func byoDBUsersPGScript(fromToken bool) string {
+	script := dbTLSShellPrelude + "exec 3>&1\n"
+	if fromToken {
+		script += `PGPASSWORD="$(cat ` + bootstrapTokenFile + `)"` + "\nexport PGPASSWORD\n"
+	}
+	return script + "run_db_client psql -X -v ON_ERROR_STOP=1 -f " + bootstrapSQLFile + "\n"
 }
 
 // byoDBUsersSweepFile is the MySQL sweep script, next to the provision script (bootstrapSQLFile).
@@ -465,24 +514,28 @@ const byoDBUsersMySQLResultDir = "/byo-result"
 // candidate that cannot be dropped does not stop the others (the client reports each error), into a
 // file of its own; that file replaces the termination message only when it starts with the result
 // header, and anything else fails the container. The admin password is MYSQL_PWD, which the client
-// reads natively, so it is never in argv.
-func byoDBUsersMySQLScript(skipRevoke, fromToken bool) string {
-	client := `mysql --user="$BYO_DB_ADMIN_USER" --ssl-mode=REQUIRED`
+// reads natively, so it is never in argv. Every client runs under run_db_client (dbTLSShellPrelude)
+// with mysqlFlags (the TLS verification), so a certificate that does not verify fails the container
+// with a named reason before any result is written: the run is Failed, never read as zero users.
+func byoDBUsersMySQLScript(skipRevoke, fromToken bool, mysqlFlags string) string {
+	client := `run_db_client mysql --user="$BYO_DB_ADMIN_USER" ` + mysqlFlags
 	if fromToken {
 		client += " --enable-cleartext-plugin"
 	}
 	client += " -N -B"
-	lines := []string{"set -eu"}
+	lines := []string{strings.TrimSuffix(dbTLSShellPrelude, "\n")}
 	if fromToken {
 		lines = append(lines, `MYSQL_PWD="$(cat `+bootstrapTokenFile+`)"`, "export MYSQL_PWD")
 	}
-	lines = append(lines, client+` "$BYO_DB_NAME" < `+bootstrapSQLFile+` > `+ByoDBUsersResultPath)
+	lines = append(lines, "exec 3> "+ByoDBUsersResultPath, client+` "$BYO_DB_NAME" < `+bootstrapSQLFile)
 	if !skipRevoke {
 		result := byoDBUsersMySQLResultDir + "/result"
 		lines = append(lines,
-			`if ! `+client+` --force "$BYO_DB_NAME" < `+byoDBUsersSweepFile+` > `+result+`; then`,
+			"exec 3> "+result,
+			`if ! `+client+` --force "$BYO_DB_NAME" < `+byoDBUsersSweepFile+`; then`,
 			`  echo "alethia byo-users: the sweep reported errors above; a user it could not drop stays locked and is listed as revocation-pending" >&2`,
 			`fi`,
+			"exec 3>&-",
 			`first=""`,
 			`IFS= read -r first < `+result+` || true`,
 			`case "$first" in`,
@@ -496,13 +549,14 @@ func byoDBUsersMySQLScript(skipRevoke, fromToken bool) string {
 }
 
 // byoDBUsersMySQLMain is the MySQL main container and the run's volumes: the mysql client image, the
-// connection as env values, TLS always required, and the admin credential in adminEnv (and, with
+// connection as env values, TLS always verified (tls), and the admin credential in adminEnv (and, with
 // fromToken, the Entra token's volume).
-func byoDBUsersMySQLMain(host, db string, skipRevoke bool, adminEnv []any, fromToken bool) (map[string]any, []any) {
+func byoDBUsersMySQLMain(host, db string, skipRevoke bool, adminEnv []any, fromToken bool, tls dbTLS) (map[string]any, []any) {
 	env := append([]any{
 		plainEnv("MYSQL_HOST", host),
 		plainEnv("MYSQL_TCP_PORT", "3306"),
 		plainEnv("BYO_DB_NAME", db),
+		plainEnv(dbTLSReasonEnv, tls.dbTLSFailureReason()),
 	}, adminEnv...)
 	mounts := []any{
 		map[string]any{"name": "sql", "mountPath": bootstrapSQLDir, "readOnly": true},
@@ -519,7 +573,7 @@ func byoDBUsersMySQLMain(host, db string, skipRevoke bool, adminEnv []any, fromT
 	return map[string]any{
 		"name":         ByoDBUsersMainContainer,
 		"image":        mysqlClientImage,
-		"command":      []string{"/bin/sh", "-c", byoDBUsersMySQLScript(skipRevoke, fromToken)},
+		"command":      []string{"/bin/sh", "-c", byoDBUsersMySQLScript(skipRevoke, fromToken, tls.MySQLFlags())},
 		"env":          env,
 		"volumeMounts": mounts,
 	}, volumes

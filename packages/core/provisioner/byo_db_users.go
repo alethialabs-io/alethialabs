@@ -11,9 +11,10 @@
 //  1. Decide whether a run can happen at all. No environment ID, a credential-based secrets provider
 //     (cloud.ByoDBUserSecretsUnavailableReason), no database, a database whose engine is named MySQL
 //     with no engine family set (the Job and the binding resolver could then disagree about its
-//     dialect), a Postgres older than 15, or a MySQL older than 8.0.21 runs nothing. Each of those
-//     but the first two gives every per-binding database credential facet a stated reason; none of
-//     them ever falls back to the administrative credential.
+//     dialect), an Azure database in password mode (no administrator identity to sign in as), a
+//     Postgres older than 15, or a MySQL older than 8.0.21 runs nothing. Each of those but the first
+//     two gives every per-binding database credential facet a stated reason; none of them ever
+//     falls back to the administrative credential.
 //  2. Take the declared users from the refusal-aware binding set (declaredByoDBUsers), and decide
 //     whether that set is complete. It is not when a declared user has no stored password, or when a
 //     binding of the environment fails to render. An incomplete set runs with `--skip-revoke`, so a
@@ -71,6 +72,15 @@ const byoDBUsersMinPostgresMajor = 15
 // on a MySQL older than 8.0.21 (apps/runner db_bootstrap_byo_mysql.go mysqlByoFloorReason): user
 // ATTRIBUTE, which carries the environment tag revocation selects by, arrived in 8.0.21.
 const byoDBUsersMySQLFloorReason = "per-binding database users need MySQL 8.0.21 or newer"
+
+// byoDBUsersAzurePasswordReason is the unsatisfied reason of every per-binding database credential
+// facet on an Azure database in password mode (iam_auth off). The Azure Job logs in as the dedicated
+// Entra administrator through Workload Identity (manifests ByoDBUsersAzureServiceAccount), and the
+// template creates that identity and its outputs only with Entra authentication on (app-db-identity.tf
+// enable_app_db_identity), so a password-mode server has no administrator the Job can use. Refusing
+// here states that, where rendering would fail on the missing azure_db_admin_* outputs and mark the run
+// Failed on every deploy (#6504).
+const byoDBUsersAzurePasswordReason = "per-binding database users on Azure need the database's Entra authentication (iam_auth); a password-mode server has no administrator identity the BYO users Job can sign in as"
 
 // byoDBUsersEngineUnknownReason is the unsatisfied reason when the database's engine names MySQL but
 // its engine family is unset: the binding resolver reads the family alone (manifests.dbEngineForName),
@@ -365,6 +375,11 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 	if !ok {
 		return out // no database: nothing this Job can provision
 	}
+	if in.Provider == string(types.CloudProviderAzure) && (db.IamAuth == nil || !*db.IamAuth) {
+		fmt.Fprintf(stdout, "BYO users Job: not run: %s (database %q)\n", byoDBUsersAzurePasswordReason, db.Name)
+		out.Refusal = byoDBUsersAzurePasswordReason
+		return out
+	}
 	// The engine is read as the binding resolver reads it (the engine family), so the Job's dialect
 	// and the resolver's — which decides what a `database` facet names — are one decision.
 	engine := "postgres"
@@ -472,11 +487,13 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 				fmt.Fprintf(stderr, "Warning: BYO users Job: credential re-mint before cleanup failed: %v\n", err)
 			}
 		}
-		cleanupByoDBUsers(cctx, owner, job.Credentials, stdout, stderr)
+		cleanupByoDBUsers(cctx, owner, byoDBUsersRunObjects(job), stdout, stderr)
 	}()
 
-	docs := make([]string, 0, len(job.Credentials))
-	for _, c := range job.Credentials {
+	// The CA ConfigMap goes with the credentials: the Job mounts it, and the cleanup removes it.
+	objs := byoDBUsersRunObjects(job)
+	docs := make([]string, 0, len(objs))
+	for _, c := range objs {
 		docs = append(docs, c.YAML)
 	}
 	if len(docs) > 0 {
@@ -523,6 +540,16 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 	}
 	fmt.Fprintf(stdout, "BYO users Job %s: %d of %d user(s) provisioned\n", job.JobName, len(out.Provisioned), len(users))
 	return out
+}
+
+// byoDBUsersRunObjects are the objects a run applies before its Job and deletes after it: its
+// credentials and, when rendered, the CA ConfigMap the Job verifies the database server against.
+func byoDBUsersRunObjects(job manifests.ByoDBUsersJob) []manifests.ByoDBUsersObject {
+	objs := append([]manifests.ByoDBUsersObject(nil), job.Credentials...)
+	if job.CAConfigMap.YAML != "" {
+		objs = append(objs, job.CAConfigMap)
+	}
+	return objs
 }
 
 // byoDBUsersSelector selects the run objects of one environment.
@@ -592,7 +619,8 @@ func (o byoDBUsersObject) jobFinished() (done, complete bool) {
 	return false, false
 }
 
-// byoDBUsersCredentialKinds are the kinds a run's credentials take, and the sweep's only kinds.
+// byoDBUsersCredentialKinds are the kinds a run's credentials take, plus its CA ConfigMap: the
+// sweep's only kinds.
 var byoDBUsersCredentialKinds = []struct {
 	resource string
 	path     func(apiVersion, name string) string
@@ -605,6 +633,11 @@ var byoDBUsersCredentialKinds = []struct {
 	}},
 	{"serviceaccounts", func(_, name string) string {
 		return "/api/v1/namespaces/" + manifests.ByoDBUsersNamespace + "/serviceaccounts/" + name
+	}},
+	// Not a credential: the CA set the Job verifies the database server against. Listed so the
+	// sweep removes one an interrupted run left, as it removes that run's credentials.
+	{"configmaps", func(_, name string) string {
+		return "/api/v1/namespaces/" + manifests.ByoDBUsersNamespace + "/configmaps/" + name
 	}},
 }
 
@@ -936,7 +969,7 @@ func (o byoDBUsersForeignObject) labelled() bool {
 
 // isRunObject reports whether one listed object is a BYO users run's — of any environment the
 // cluster hosts, since the namespace is shared — or one the API server creates in every namespace.
-// A run object is a Job, ExternalSecret, Secret or ServiceAccount carrying the run label and an
+// A run object is a Job, ExternalSecret, Secret, ServiceAccount or ConfigMap carrying the run label and an
 // owner label, or a Pod carrying both whose owner reference is the uid of a run Job listed in the
 // same namespace (runJobs) — a name or kind alone proves nothing. Nothing else belongs there.
 func (o byoDBUsersForeignObject) isRunObject(runJobs map[string]bool) bool {
@@ -946,7 +979,7 @@ func (o byoDBUsersForeignObject) isRunObject(runJobs map[string]bool) bool {
 		return true
 	}
 	switch o.Kind {
-	case "Job", "ExternalSecret", "Secret", "ServiceAccount":
+	case "Job", "ExternalSecret", "Secret", "ServiceAccount", "ConfigMap":
 		return o.labelled()
 	case "Pod":
 		for _, ref := range m.OwnerReferences {

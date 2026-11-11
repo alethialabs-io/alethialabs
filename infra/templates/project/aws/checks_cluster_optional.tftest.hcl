@@ -194,16 +194,14 @@ run "a_clusterless_project_plans" {
     error_message = "provision_eks = false must produce no EKS module instance."
   }
 
-  # The five IRSA roles from irsa.tf. Each federates to module.eks[0].oidc_provider_arn, so each was
+  # The IRSA roles from irsa.tf gated on provision_eks alone (five when #1772 measured this; the
+  # three with no consumer were removed in #6556). Each federates to module.eks[0].oidc_provider_arn, so each was
   # its own copy of the crash; a role trusting an OIDC provider that does not exist would also be
   # dead weight if it were somehow created.
   assert {
     condition = alltrue([
-      length(module.irsa_alethia_agent) == 0,
       length(module.irsa_fluentbit_cloudwatch) == 0,
       length(module.irsa_karpenter) == 0,
-      length(module.irsa_ai_bedrock) == 0,
-      length(module.s3_bucket_irsa_role) == 0,
     ])
     error_message = "No cluster means no OIDC provider to federate to — every IRSA role must drop out."
   }
@@ -213,10 +211,7 @@ run "a_clusterless_project_plans" {
   # aws_iam_policy.rds_iam_auth comment records being fixed once before.
   assert {
     condition = alltrue([
-      length(aws_iam_policy.irsa_alethia_agent) == 0,
       length(aws_iam_policy.irsa_karpenter) == 0,
-      length(aws_iam_policy.irsa_ai_bedrock_custom) == 0,
-      length(aws_iam_policy.irsa_ai_bedrock_s3) == 0,
     ])
     error_message = "An IAM policy whose only consumer dropped out is an orphan; the counts must match."
   }
@@ -369,11 +364,8 @@ run "a_cluster_still_creates_every_irsa_role" {
   assert {
     condition = alltrue([
       length(module.eks) == 1,
-      length(module.irsa_alethia_agent) == 1,
       length(module.irsa_fluentbit_cloudwatch) == 1,
       length(module.irsa_karpenter) == 1,
-      length(module.irsa_ai_bedrock) == 1,
-      length(module.s3_bucket_irsa_role) == 1,
       length(module.irsa_ecr_build) == 1,
       length(module.karpenter) == 1,
     ])
@@ -382,10 +374,7 @@ run "a_cluster_still_creates_every_irsa_role" {
 
   assert {
     condition = alltrue([
-      length(aws_iam_policy.irsa_alethia_agent) == 1,
       length(aws_iam_policy.irsa_karpenter) == 1,
-      length(aws_iam_policy.irsa_ai_bedrock_custom) == 1,
-      length(aws_iam_policy.irsa_ai_bedrock_s3) == 1,
       length(aws_iam_policy.irsa_ecr_build) == 1,
     ])
     error_message = "The policies must be created alongside the roles that consume them."
