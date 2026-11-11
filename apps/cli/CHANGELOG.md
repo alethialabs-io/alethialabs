@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.8.0...cli-v0.9.0) (2026-11-11)
+
+
+### Features
+
+* **addons:** tell pinned and GitOps installs when the catalog moves on ([#6537](https://github.com/alethialabs-io/alethialabs/issues/6537)) ([#6550](https://github.com/alethialabs-io/alethialabs/issues/6550)) ([4b492e7](https://github.com/alethialabs-io/alethialabs/commit/4b492e786e72c21952a5f40a7ba29ece8a3de064))
+* **byo-charts:** every BYO chart, git or OCI, deploys under its hardened project into a namespace of its own ([#6454](https://github.com/alethialabs-io/alethialabs/issues/6454)) ([b4aca3e](https://github.com/alethialabs-io/alethialabs/commit/b4aca3e6e16f43f968cfdf7f8505111ee81f43e2))
+
+
+### Bug Fixes
+
+* **authz:** grants reference only roles, teams and resources of their own organization ([#6226](https://github.com/alethialabs-io/alethialabs/issues/6226)) ([a287dbd](https://github.com/alethialabs-io/alethialabs/commit/a287dbdf21bf1bc58d43d49e2827aa33d1ee2187))
+* **console:** job-by-id writes bind to the addressed org; CLI drift follows project visibility; signing-key uniqueness applies to verified keys ([#6238](https://github.com/alethialabs-io/alethialabs/issues/6238)) ([410dd64](https://github.com/alethialabs-io/alethialabs/commit/410dd64e309a6f09f61d3d8a331df00f212ee9d3))
+
 ## [0.8.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.7.0...cli-v0.8.0) (2026-10-17)
 
 
