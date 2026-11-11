@@ -31,7 +31,14 @@ describe("recordAddonHealth — first_observed_running_at (#6541)", () => {
 		await recordAddonHealth("p", "e", { "addon-shop": { health: "Healthy", sync: "Synced" } });
 		const stamp = h.sets[0]?.first_observed_running_at;
 		if (!(stamp instanceof SQL)) throw new Error("first_observed_running_at was not stamped through SQL");
-		expect(new PgDialect().sqlToQuery(stamp).sql).toMatch(/^coalesce\("project_addons"\."first_observed_running_at", \$1\)$/);
+		const query = new PgDialect().sqlToQuery(stamp);
+		expect(query.sql).toMatch(/^coalesce\("project_addons"\."first_observed_running_at", \$1::timestamptz\)$/);
+		// A raw template parameter skips the column's Date mapping, and postgres-js refuses to
+		// serialize a Date there ("The string argument must be of type string… Received an instance
+		// of Date"). The bound value must already be the ISO string.
+		expect(query.params).toHaveLength(1);
+		expect(typeof query.params[0]).toBe("string");
+		expect(Number.isNaN(Date.parse(String(query.params[0])))).toBe(false);
 	});
 
 	it("leaves it out of the update for Unknown and Missing, so it is never cleared", async () => {

@@ -52,7 +52,9 @@ export async function recordAddonHealth(
 				updated_at: now,
 				...(isRunningHealth(s.health)
 					? {
-							first_observed_running_at: sql`coalesce(${projectAddons.first_observed_running_at}, ${now})`,
+							// The ISO string, not the Date: a raw template parameter skips the column's
+							// Date mapping, and postgres-js cannot serialize a Date bound there.
+							first_observed_running_at: sql`coalesce(${projectAddons.first_observed_running_at}, ${now.toISOString()}::timestamptz)`,
 						}
 					: {}),
 			})
