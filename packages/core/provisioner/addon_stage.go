@@ -106,6 +106,9 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	for _, o := range byo.NewlyReserved {
 		out.Warnings = append(out.Warnings, o.warning())
 	}
+	for _, m := range byo.HeldMoves {
+		out.Warnings = append(out.Warnings, m.warning())
+	}
 	for _, o := range byo.PlacementOverlaps {
 		out.Warnings = append(out.Warnings, o.warning())
 	}

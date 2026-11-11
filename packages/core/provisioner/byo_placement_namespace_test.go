@@ -19,40 +19,44 @@ import (
 
 // #6562, the runner's half: a host BYO chart may not be deployed into a namespace that another
 // environment holds — a namespace placement's (it carries alethia.io/placement=namespace) or one
-// carrying another environment's alethia.io/environment-id. A chart that is not yet running there is
-// refused before anything is written; one an earlier deploy already runs there is kept and reported,
-// because refusing it would withdraw its binding secrets. A failed read applies nothing.
+// carrying another environment's alethia.io/environment-id. A chart with no Application is refused
+// before anything is written; one whose Application already runs there is kept and reported; one
+// whose Application runs elsewhere is kept where it runs. A failed read applies nothing.
 
-// placedNS is the namespace the tests' "legacy" chart is stored in: one a placement may use.
+// placedNS is the namespace the tests' "legacy" chart is stored in.
 const placedNS = "team-web"
 
 // clusterReads answers the runner's namespace and Application reads for the tests below, and counts
-// the namespace reads. Every other read goes to the PATH stub newByoCluster installs.
+// them. Every other read goes to the PATH stub newByoCluster installs.
 type clusterReads struct {
 	namespaces map[string]string // ns → `kubectl get namespace -o json` answer ("" = absent)
-	nsErr      error
-	dest       string // the "legacy" chart's live Application destination ("" = no Application)
+	nsErr      error             // returned by the namespace reads (all, or only the first failFirst)
+	failFirst  int               // > 0: only the first failFirst reads of each namespace fail
+	dest       string            // the "legacy" chart's live Application destination ("" = none)
 	appErr     error
 	nsRead     map[string]int
+	appRead    int
 }
 
 func (r *clusterReads) install(t *testing.T) {
 	t.Helper()
 	r.nsRead = map[string]int{}
-	orig := executeCommandWithOutput
-	t.Cleanup(func() { executeCommandWithOutput = orig })
+	orig, origBackoff := executeCommandWithOutput, byoReadBackoff
+	byoReadBackoff = 0
+	t.Cleanup(func() { executeCommandWithOutput, byoReadBackoff = orig, origBackoff })
 	executeCommandWithOutput = func(cmd, dir string, env []string) (string, error) {
 		if rest, ok := strings.CutPrefix(cmd, "kubectl get namespace "); ok && strings.HasSuffix(cmd, " --ignore-not-found -o json") {
 			ns := strings.TrimSuffix(rest, " --ignore-not-found -o json")
 			if !strings.Contains(ns, " ") {
 				r.nsRead[ns]++
-				if r.nsErr != nil {
+				if r.nsErr != nil && (r.failFirst == 0 || r.nsRead[ns] <= r.failFirst) {
 					return "", r.nsErr
 				}
 				return r.namespaces[ns], nil
 			}
 		}
 		if strings.HasPrefix(cmd, "kubectl get applications.argoproj.io "+argocd.AddOnAppName("legacy")+" ") {
+			r.appRead++
 			return r.dest, r.appErr
 		}
 		return orig(cmd, dir, env)
@@ -66,10 +70,13 @@ func placedConfigFor() *types.ProjectConfig {
 	return vc
 }
 
-// labelled is a namespace answer carrying labels.
-func labelled(labels string) string {
-	return `{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"` + placedNS + `","labels":{` + labels + `}}}`
+// labelledAs is a namespace answer for ns carrying labels.
+func labelledAs(ns, labels string) string {
+	return `{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"` + ns + `","labels":{` + labels + `}}}`
 }
+
+// labelled is labelledAs for placedNS.
+func labelled(labels string) string { return labelledAs(placedNS, labels) }
 
 const placementLabels = `"alethia.io/placement":"namespace","alethia.io/environment-id":"env-2"`
 
@@ -84,6 +91,14 @@ func appliedNamespaces(t *testing.T, c *byoCluster) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// nothingApplied fails the test when the fake cluster received any write.
+func nothingApplied(t *testing.T, c *byoCluster) {
+	t.Helper()
+	if raw, err := os.ReadFile(c.applied); err == nil && strings.TrimSpace(string(raw)) != "" {
+		t.Errorf("nothing may be applied after a failed read, got:\n%s", raw)
+	}
 }
 
 func TestConfigureByoCharts_RefusesANewChartInANamespaceAnotherEnvironmentHolds(t *testing.T) {
@@ -102,8 +117,8 @@ func TestConfigureByoCharts_RefusesANewChartInANamespaceAnotherEnvironmentHolds(
 			if len(got.Refused) != 1 || got.Refused[0].ID != "legacy" || !strings.Contains(got.Refused[0].Reason, tc.want) || !strings.Contains(got.Refused[0].Reason, `"`+placedNS+`"`) {
 				t.Fatalf("want the legacy chart refused naming %q and the holder, got %+v", placedNS, got.Refused)
 			}
-			if len(got.PlacementOverlaps) != 0 {
-				t.Errorf("a refused chart is not also an overlap: %+v", got.PlacementOverlaps)
+			if len(got.PlacementOverlaps) != 0 || len(got.HeldMoves) != 0 {
+				t.Errorf("a refused chart is not also kept: overlaps=%+v moves=%+v", got.PlacementOverlaps, got.HeldMoves)
 			}
 			if dests := c.lastAppProjectDestinations(t, "byo-acme-corp"); !reflect.DeepEqual(dests, []string{"payments"}) {
 				t.Errorf("AppProject destinations = %v, want only payments", dests)
@@ -116,11 +131,17 @@ func TestConfigureByoCharts_RefusesANewChartInANamespaceAnotherEnvironmentHolds(
 }
 
 func TestConfigureByoCharts_AChartAlreadyRunningInAHeldNamespaceIsKeptAndReported(t *testing.T) {
-	for _, tc := range []struct{ name, answer, holder string }{
-		{"the placement's label", labelled(placementLabels), `the namespace-placed environment "env-2"`},
+	for _, tc := range []struct {
+		name, answer string
+		placement    bool
+		want         []string
+	}{
+		{"the placement's label", labelled(placementLabels), true, []string{`the namespace-placed environment "env-2"`, "that environment's deploys are refused"}},
 		// An earlier deploy of this environment stamped its own id over the placement's.
-		{"this environment's label over a placement's", labelled(`"alethia.io/placement":"namespace","alethia.io/environment-id":"env-1"`), "a namespace-placed environment"},
-		{"another environment's label", labelled(`"alethia.io/environment-id":"env-2"`), `the environment "env-2"`},
+		{"this environment's label over a placement's", labelled(`"alethia.io/placement":"namespace","alethia.io/environment-id":"env-1"`), true, []string{"a namespace-placed environment"}},
+		// Held only through the owner label: the warning says what the label says, and claims nothing
+		// about that environment's deploys.
+		{"another environment's label", labelled(`"alethia.io/environment-id":"env-2"`), false, []string{`owner label names the environment "env-2"`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newByoCluster(t, "")
@@ -141,19 +162,53 @@ func TestConfigureByoCharts_AChartAlreadyRunningInAHeldNamespaceIsKeptAndReporte
 				t.Errorf("applied Namespaces = %v; the held namespace's labels must be left as they are", ns)
 			}
 			w := got.PlacementOverlaps[0].warning()
-			for _, want := range []string{`"legacy"`, `"` + placedNS + `"`, tc.holder, "binding secrets unchanged", `"byo-legacy"`} {
+			for _, want := range append([]string{`"legacy"`, `"` + placedNS + `"`, "binding secrets unchanged", `"byo-legacy"`}, tc.want...) {
 				if !strings.Contains(w, want) {
 					t.Errorf("the Deploy-tab warning must contain %q, got: %s", want, w)
 				}
 			}
+			if !tc.placement && strings.Contains(w, "deploys are refused") {
+				t.Errorf("an owner-label hold must not claim that environment's deploys are refused: %s", w)
+			}
 		})
 	}
-	t.Run("an Application pointing at another namespace is not running there, and is refused", func(t *testing.T) {
+}
+
+// TestConfigureByoCharts_AMoveIntoAHeldNamespaceIsRefusedAndTheChartKeptWhereItRuns: the chart's
+// stored namespace was changed to a held one, but its Application still runs in its old namespace.
+// The chart is NOT refused (that would withdraw its secrets where it runs): it keeps deploying in
+// the old namespace, with its bindings, and the Deploy tab says the move was refused.
+func TestConfigureByoCharts_AMoveIntoAHeldNamespaceIsRefusedAndTheChartKeptWhereItRuns(t *testing.T) {
+	c := newByoCluster(t, "")
+	(&clusterReads{namespaces: map[string]string{placedNS: labelled(placementLabels)}, dest: "old-home"}).install(t)
+	vc := placedConfigFor()
+	got := configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard)
+	if got.Err != nil || len(got.Refused) != 0 {
+		t.Fatalf("the chart must not be refused: err=%v refused=%+v", got.Err, got.Refused)
+	}
+	if len(got.HeldMoves) != 1 || got.HeldMoves[0].Requested != placedNS || got.HeldMoves[0].Kept != "old-home" {
+		t.Fatalf("HeldMoves = %+v, want legacy kept in old-home", got.HeldMoves)
+	}
+	if vc.AddOns[1].Namespace != "old-home" {
+		t.Errorf("the chart must render into old-home, got %q", vc.AddOns[1].Namespace)
+	}
+	dests := c.lastAppProjectDestinations(t, "byo-acme-corp")
+	sort.Strings(dests)
+	if !reflect.DeepEqual(dests, []string{"old-home", "payments"}) {
+		t.Errorf("AppProject destinations = %v, want old-home kept and the held namespace absent", dests)
+	}
+	w := got.HeldMoves[0].warning()
+	for _, want := range []string{`"legacy"`, `not moved into namespace "` + placedNS + `"`, `"env-2"`, `keeps deploying in "old-home"`} {
+		if !strings.Contains(w, want) {
+			t.Errorf("the Deploy-tab warning must contain %q, got: %s", want, w)
+		}
+	}
+	t.Run("an old namespace the validator refuses is refused as before", func(t *testing.T) {
 		newByoCluster(t, "")
-		(&clusterReads{namespaces: map[string]string{placedNS: labelled(placementLabels)}, dest: "old-home"}).install(t)
+		(&clusterReads{namespaces: map[string]string{placedNS: labelled(placementLabels)}, dest: "kube-system"}).install(t)
 		got := configureByoCharts(placedConfigFor(), "tok", nil, nil, io.Discard, io.Discard)
-		if len(got.Refused) != 1 || len(got.PlacementOverlaps) != 0 {
-			t.Fatalf("want a refusal, got refused=%+v overlaps=%+v", got.Refused, got.PlacementOverlaps)
+		if len(got.Refused) != 1 || len(got.HeldMoves) != 0 {
+			t.Fatalf("want a refusal, got refused=%+v moves=%+v", got.Refused, got.HeldMoves)
 		}
 	})
 }
@@ -169,8 +224,8 @@ func TestConfigureByoCharts_ACoLocatedNamespaceWithoutTheMarkersPasses(t *testin
 			c := newByoCluster(t, "")
 			(&clusterReads{namespaces: map[string]string{placedNS: tc.answer}}).install(t)
 			got := configureByoCharts(placedConfigFor(), "tok", nil, nil, io.Discard, io.Discard)
-			if got.Err != nil || len(got.Refused) != 0 || len(got.PlacementOverlaps) != 0 {
-				t.Fatalf("want the chart configured untouched, got err=%v refused=%+v overlaps=%+v", got.Err, got.Refused, got.PlacementOverlaps)
+			if got.Err != nil || len(got.Refused) != 0 || len(got.PlacementOverlaps) != 0 || len(got.HeldMoves) != 0 {
+				t.Fatalf("want the chart configured untouched, got err=%v refused=%+v overlaps=%+v moves=%+v", got.Err, got.Refused, got.PlacementOverlaps, got.HeldMoves)
 			}
 			if ns := appliedNamespaces(t, c); !reflect.DeepEqual(ns, []string{"payments", placedNS}) {
 				t.Errorf("applied Namespaces = %v, want both", ns)
@@ -200,32 +255,91 @@ func TestConfigureByoCharts_AFailedReadAppliesNothing(t *testing.T) {
 			if len(got.Refused) != 0 {
 				t.Errorf("a failed read refuses no chart (that would withdraw its bindings): %+v", got.Refused)
 			}
-			if raw, err := os.ReadFile(c.applied); err == nil && strings.TrimSpace(string(raw)) != "" {
-				t.Errorf("nothing may be applied after a failed read, got:\n%s", raw)
-			}
+			nothingApplied(t, c)
 		})
 	}
 }
 
-// TestConfigureByoCharts_ANamespaceNoPlacementMayUseIsNotRead: a byo- namespace (every chart's own
-// default) and a reserved name are refused to every placement by #6551, so they are not read.
-func TestConfigureByoCharts_ANamespaceNoPlacementMayUseIsNotRead(t *testing.T) {
-	newByoCluster(t, "")
-	reads := &clusterReads{nsErr: errors.New("must not be read")}
-	reads.install(t)
-	vc := legacyByoConfig("databases")
-	vc.AddOns[0].Namespace = "byo-api"
-	got := configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard)
-	if got.Err != nil {
-		t.Fatalf("Err = %v", got.Err)
-	}
-	if len(reads.nsRead) != 0 {
-		t.Errorf("namespaces read: %v; want none", reads.nsRead)
-	}
+// TestConfigureByoCharts_TheReadsAreRetriedBeforeFailingClosed: a transient failure is retried
+// (byoReadAttempts), and only an exhausted retry fails closed.
+func TestConfigureByoCharts_TheReadsAreRetriedBeforeFailingClosed(t *testing.T) {
+	t.Run("two failures then an answer", func(t *testing.T) {
+		newByoCluster(t, "")
+		reads := &clusterReads{nsErr: errors.New("etcdserver: leader changed"), failFirst: 2}
+		reads.install(t)
+		got := configureByoCharts(placedConfigFor(), "tok", nil, nil, io.Discard, io.Discard)
+		if got.Err != nil {
+			t.Fatalf("a read that succeeds on its third attempt must pass, got %v", got.Err)
+		}
+		if reads.nsRead[placedNS] != 3 {
+			t.Errorf("%s read %d times, want 3", placedNS, reads.nsRead[placedNS])
+		}
+	})
+	t.Run("every attempt fails", func(t *testing.T) {
+		c := newByoCluster(t, "")
+		reads := &clusterReads{nsErr: errors.New("forbidden"), failFirst: byoReadAttempts}
+		reads.install(t)
+		got := configureByoCharts(placedConfigFor(), "tok", nil, nil, io.Discard, io.Discard)
+		if got.Err == nil {
+			t.Fatal("an exhausted retry must fail closed")
+		}
+		nothingApplied(t, c)
+	})
+	t.Run("the Application read too", func(t *testing.T) {
+		newByoCluster(t, "")
+		reads := &clusterReads{namespaces: map[string]string{placedNS: labelled(placementLabels)}, appErr: errors.New("timeout")}
+		reads.install(t)
+		configureByoCharts(placedConfigFor(), "tok", nil, nil, io.Discard, io.Discard)
+		if reads.appRead != byoReadAttempts {
+			t.Errorf("Application read %d times, want %d", reads.appRead, byoReadAttempts)
+		}
+	})
+}
+
+// TestConfigureByoCharts_ByoAndNewlyReservedNamespacesAreReadToo: the runner reaches a byo- name with
+// no console check (the legacy move chooses byo-<chart id> itself), and a placement created before
+// #6551 may hold one, so these are read and held like any other.
+func TestConfigureByoCharts_ByoAndNewlyReservedNamespacesAreReadToo(t *testing.T) {
+	t.Run("the legacy move's target is held", func(t *testing.T) {
+		c := newByoCluster(t, "")
+		reads := &clusterReads{namespaces: map[string]string{"byo-legacy": labelledAs("byo-legacy", placementLabels)}}
+		reads.install(t)
+		vc := placedConfigFor()
+		vc.AddOns[1].Namespace = "" // attached before #6446: moved to byo-legacy on this deploy
+		got := configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard)
+		if len(got.Refused) != 1 || got.Refused[0].ID != "legacy" || got.Refused[0].Namespace != "byo-legacy" {
+			t.Fatalf("want the moved chart refused in byo-legacy, got %+v", got.Refused)
+		}
+		if ns := appliedNamespaces(t, c); !reflect.DeepEqual(ns, []string{"payments"}) {
+			t.Errorf("applied Namespaces = %v; byo-legacy must not be written", ns)
+		}
+	})
+	t.Run("a newly reserved name is read", func(t *testing.T) {
+		newByoCluster(t, "")
+		reads := &clusterReads{}
+		reads.install(t)
+		vc := legacyByoConfig("databases")
+		vc.AddOns[0].Namespace = "byo-api"
+		if got := configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard); got.Err != nil {
+			t.Fatal(got.Err)
+		}
+		if reads.nsRead["databases"] != 1 || reads.nsRead["byo-api"] != 1 {
+			t.Errorf("namespaces read: %v; want databases and byo-api once each", reads.nsRead)
+		}
+	})
+	t.Run("a refused name is never read", func(t *testing.T) {
+		newByoCluster(t, "")
+		reads := &clusterReads{}
+		reads.install(t)
+		configureByoCharts(legacyByoConfig("kube-system"), "tok", nil, nil, io.Discard, io.Discard)
+		if reads.nsRead["kube-system"] != 0 {
+			t.Errorf("kube-system was read; a refused name is refused before the read")
+		}
+	})
 }
 
 // TestRunAddOnStage_PlacementHolds drives the stage: a failed read fails it before anything is
-// applied, and a kept chart gets one Deploy-tab warning, its Application and its binding secret.
+// applied; a kept chart gets one Deploy-tab warning, its Application and its binding secret.
 func TestRunAddOnStage_PlacementHolds(t *testing.T) {
 	stage := func(t *testing.T, reads *clusterReads) (*byoCluster, addOnStageResult, error) {
 		t.Helper()
@@ -245,14 +359,27 @@ func TestRunAddOnStage_PlacementHolds(t *testing.T) {
 		}, io.Discard, io.Discard)
 		return c, out, err
 	}
+	keptAndBound := func(t *testing.T, c *byoCluster, ns string) {
+		t.Helper()
+		applied, bound := false, false
+		for _, d := range c.docs(t) {
+			if d.Kind == "Application" && d.Metadata.Name == argocd.AddOnAppName("legacy") {
+				applied = true
+			}
+			if d.Kind == "ExternalSecret" && d.Metadata.Namespace == ns {
+				bound = true
+			}
+		}
+		if !applied || !bound {
+			t.Errorf("the chart must keep deploying and keep its bindings: Application applied=%v, ExternalSecret in %s=%v", applied, ns, bound)
+		}
+	}
 	t.Run("a failed read fails the stage and applies nothing", func(t *testing.T) {
 		c, _, err := stage(t, &clusterReads{nsErr: errors.New("forbidden")})
 		if err == nil || !strings.Contains(err.Error(), "could not read namespace") {
 			t.Fatalf("want the stage to fail closed, got %v", err)
 		}
-		if raw, rerr := os.ReadFile(c.applied); rerr == nil && strings.TrimSpace(string(raw)) != "" {
-			t.Errorf("nothing may be applied, got:\n%s", raw)
-		}
+		nothingApplied(t, c)
 	})
 	t.Run("a kept chart is warned about and still bound", func(t *testing.T) {
 		c, out, err := stage(t, &clusterReads{namespaces: map[string]string{placedNS: labelled(placementLabels)}, dest: placedNS})
@@ -262,17 +389,25 @@ func TestRunAddOnStage_PlacementHolds(t *testing.T) {
 		if len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], `"env-2"`) || !strings.Contains(out.Warnings[0], `"legacy"`) {
 			t.Errorf("want one Deploy-tab warning naming both sides, got %v", out.Warnings)
 		}
-		applied, bound := false, false
-		for _, d := range c.docs(t) {
-			if d.Kind == "Application" && d.Metadata.Name == argocd.AddOnAppName("legacy") {
-				applied = true
-			}
-			if d.Kind == "ExternalSecret" && d.Metadata.Namespace == placedNS {
-				bound = true
+		keptAndBound(t, c, placedNS)
+	})
+	t.Run("a refused move keeps the chart, and its bindings, where it runs", func(t *testing.T) {
+		c, out, err := stage(t, &clusterReads{namespaces: map[string]string{placedNS: labelled(placementLabels)}, dest: "old-home"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(out.Refused) != 0 || len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], "not moved into") {
+			t.Errorf("want no refusal and one move warning, got refused=%+v warnings=%v", out.Refused, out.Warnings)
+		}
+		keptAndBound(t, c, "old-home")
+		found := false
+		for _, ref := range out.Bindings.Declared {
+			if ref.Namespace == "old-home" {
+				found = true
 			}
 		}
-		if !applied || !bound {
-			t.Errorf("the chart must keep deploying and keep its bindings: Application applied=%v, ExternalSecret in %s=%v", applied, placedNS, bound)
+		if !found {
+			t.Errorf("the binding in old-home must stay in the prune's keep set, got %+v", out.Bindings.Declared)
 		}
 	})
 }
@@ -289,5 +424,22 @@ func TestNamespacePlacementLabelIsTheTenantRenders(t *testing.T) {
 	ns := strings.SplitN(m.Isolation, "\n---\n", 2)[0]
 	if !strings.Contains(ns, "kind: Namespace") || !strings.Contains(ns, namespacePlacementLabel+`: "`+namespacePlacementValue+`"`) {
 		t.Fatalf("the rendered Namespace must carry %s=%s, got:\n%s", namespacePlacementLabel, namespacePlacementValue, ns)
+	}
+}
+
+// TestByoAdmissionModes_AFailedReadStillWarnsEverywhere keeps #6495's fallback pinned now that the
+// configureByoCharts path fails closed first (TestConfigureByoCharts_AnUnreadableClusterAppliesNothing):
+// called on its own, an unreadable cluster still puts every namespace in "warn", never "enforce".
+func TestByoAdmissionModes_AFailedReadStillWarnsEverywhere(t *testing.T) {
+	provStubTool(t, "kubectl", "#!/bin/sh\necho 'connection refused' >&2\nexit 1\n")
+	var stderr strings.Builder
+	modes := byoAdmissionModes([]string{"byo-old", "byo-fresh"}, nil, &stderr)
+	for _, ns := range []string{"byo-old", "byo-fresh"} {
+		if modes[ns] != argocd.ByoAdmissionWarn {
+			t.Errorf("%s mode = %q, want warn when the cluster could not be read", ns, modes[ns])
+		}
+	}
+	if !strings.Contains(stderr.String(), "could not read the BYO namespaces") {
+		t.Errorf("the unread cluster was not logged:\n%s", stderr.String())
 	}
 }
