@@ -5,6 +5,7 @@
 import { Check, Plus } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
+import { RegionError } from "@/components/errors/region-error";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
@@ -20,6 +21,8 @@ import {
 import { useCommandSearch } from "@repo/ui/command-search";
 import { Popover, PopoverContent } from "@repo/ui/popover";
 import { Separator } from "@repo/ui/separator";
+import { Skeleton } from "@repo/ui/skeleton";
+import { readStatusOf } from "@/lib/query/read-status";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref, projectHref } from "@/lib/routing";
@@ -41,7 +44,11 @@ export function ProjectSwitcher() {
 	const orgSlug = useActiveOrgSlug();
 	const [open, setOpen] = useState(false);
 	// Prefetched by the `[org]` layout (#6114), so the active project is named on first paint.
-	const { data: projects = [], isSuccess: projectsLoaded } = useProjectsQuery();
+	const projectsQuery = useProjectsQuery();
+	const { data: projects = [], isSuccess: projectsLoaded } = projectsQuery;
+	// "No projects yet." is a fact about the org, so it is said only about a list that ANSWERED: a
+	// failed read gets a retry and a refused one its own note, never the empty state (#6114).
+	const listStatus = readStatusOf(projectsQuery);
 	// The query starts empty each time the popover opens.
 	const projectSearch = useCommandSearch(projects, projectSearchText, { open });
 
@@ -114,6 +121,20 @@ export function ProjectSwitcher() {
 								</CommandGroup>
 							</CommandList>
 						</>
+					) : listStatus === "error" ? (
+						<RegionError
+							title="Couldn't load projects"
+							onRetry={() => void projectsQuery.refetch()}
+						/>
+					) : listStatus === "forbidden" ? (
+						<p data-state="forbidden" className="px-3 py-3 text-ui-sm text-muted-foreground">
+							You can&apos;t list this organization&apos;s projects.
+						</p>
+					) : listStatus === "pending" ? (
+						<div role="status" aria-label="Loading projects" className="space-y-1.5 p-2">
+							<Skeleton className="h-7 w-full" />
+							<Skeleton className="h-7 w-full" />
+						</div>
 					) : (
 						<EmptyState title="No projects yet." className="px-3 py-6" />
 					)}

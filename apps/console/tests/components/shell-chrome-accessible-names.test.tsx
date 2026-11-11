@@ -73,6 +73,7 @@ vi.mock("@/hooks/use-support-notifications", () => ({
 		unreadCount: 0,
 		markAsRead: vi.fn(),
 		markAllRead: vi.fn(),
+		feed: { status: "ready", retry: vi.fn() },
 	}),
 }));
 vi.mock("@/lib/stores/use-workspace-store", () => ({
