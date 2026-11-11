@@ -22,6 +22,7 @@ func basePreviewInput() PreviewAppSetInput {
 		PlacementMode:   types.PlacementModeNamespace,
 		NamespacePrefix: "preview",
 		Labels:          map[string]string{"alethia.io/project": "demo"},
+		ByoCharts:       []PreviewByoChart{},
 	}
 }
 
