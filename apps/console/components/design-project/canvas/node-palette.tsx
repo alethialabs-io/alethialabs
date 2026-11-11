@@ -277,7 +277,9 @@ export function NodePalette({
 			serviceRows.push({
 				id: `addon-${a.id}`,
 				group: "Add-ons",
-				searchText: `add-on ${a.name} ${a.summary} ${a.category}`,
+				// A deprecated add-on stays findable (an environment may already have it), but its row
+				// names the replacement, so a new install is steered there before the card opens (#6543).
+				searchText: `add-on ${a.name} ${a.summary} ${a.category}${a.deprecated ? ` deprecated ${a.deprecated.replacementName}` : ""}`,
 				onSelect: () => {
 					onConfigureAddon(a);
 					handleOpenChange(false);
@@ -291,7 +293,9 @@ export function NodePalette({
 						<div className="min-w-0 flex-1">
 							<div className="text-sm font-medium">{a.name}</div>
 							<div className="truncate text-xs text-muted-foreground">
-								{a.summary}
+								{a.deprecated && !a.install
+									? `Deprecated. Use ${a.deprecated.replacementName} instead.`
+									: a.summary}
 							</div>
 						</div>
 						{/* Compat sits BEFORE the install slot and only when it wants attention — an add-on
@@ -306,6 +310,10 @@ export function NodePalette({
 								status={a.install.status}
 								health={a.install.health}
 							/>
+						) : a.deprecated ? (
+							<span className="font-mono text-ui-2xs uppercase text-muted-foreground">
+								Deprecated
+							</span>
 						) : (
 							<span className="font-mono text-ui-2xs uppercase text-muted-foreground">
 								Free

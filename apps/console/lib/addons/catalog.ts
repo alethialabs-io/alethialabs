@@ -26,6 +26,7 @@ import {
 	secretFieldKeys,
 	stripAddonSecrets,
 } from "./secrets";
+import type { AddOnDeprecationView } from "./deprecation";
 import type { AddOnDef, AddOnInstallSpec, AddOnMode } from "./types";
 
 /**
@@ -995,6 +996,18 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				"Controller v1.15.1 includes the fixes for CVE-2025-1974 (\"IngressNightmare\": remote code execution through the admission webhook) and CVE-2025-1097, CVE-2025-1098, CVE-2025-24513 and CVE-2025-24514. Controllers before v1.11.5, and v1.12.0, are affected.",
 			advisoryUrl: "https://kubernetes.io/blog/2025/03/24/ingress-nginx-cve-2025-1974/",
 		},
+		// #6543. Upstream retired the project: best-effort maintenance ended in March 2026 and 4.15.1
+		// is the last release, so no further security fix will come. The comparison behind the
+		// replacement, and the reason the date is 90 days after the decision (2026-11-11), are in
+		// docs/adr/0006-ingress-nginx-replacement.md.
+		deprecated: {
+			reason:
+				"The Kubernetes project retired ingress-nginx. 4.15.1 is its last release, and no further security fixes will follow.",
+			replacementId: "traefik",
+			removalDate: "2027-02-09",
+			migrationGuideUrl:
+				"https://alethialabs.io/docs/guides/design-project/migrate-from-ingress-nginx",
+		},
 		namespace: "ingress-nginx",
 		configSchema: z.object({
 			/** Controller replicas (raise for HA). */
@@ -1025,6 +1038,120 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				],
 			},
 			{ key: "metrics", label: "Enable metrics", type: "boolean", default: false },
+		],
+		syncWave: 1,
+		requires: ["ingress"],
+	}),
+	// The maintained replacement for ingress-nginx (#6543). Chosen over Envoy Gateway and NGINX Gateway
+	// Fabric in docs/adr/0006-ingress-nginx-replacement.md, for two reasons that are about THIS
+	// platform rather than about the proxies:
+	//
+	//   - It is the only one of the three published in a classic HTTPS Helm repository. The other two
+	//     are OCI-only, and every chart check here (render, determinism, published defaults, resource
+	//     fit, derive-compat) reads `chartRepo` as an https index.
+	//   - Its `kubernetesIngressNGINX` provider serves existing `ingressClassName: nginx` Ingresses and
+	//     reads most `nginx.ingress.kubernetes.io/*` annotations, so an environment can move off the
+	//     retired controller without rewriting a single Ingress first. That provider is OFF by default:
+	//     an annotation it does not support is ignored and the route is still served, so turning it on
+	//     beside a running ingress-nginx must follow the migration guide's annotation review.
+	//
+	// THE GATEWAY API PROVIDER IS OFF BY DEFAULT, AND THAT IS NOT A PREFERENCE. The chart stopped
+	// shipping the Gateway API CRDs, and no Alethia cluster has them (no template or platform add-on
+	// installs them). With the provider on and no CRDs, the chart's GatewayClass and Gateway have no
+	// kind to be applied as, the Application never syncs, and the ingress half breaks with it. So it
+	// is a switch the user turns on after installing the standard-channel CRDs, and the knob says so.
+	defineAddOn({
+		id: "traefik",
+		name: "Traefik",
+		category: "networking",
+		icon: "Network",
+		summary:
+			"The Traefik proxy — routes external HTTP(S) traffic through Ingress or Gateway API resources, and serves existing NGINX-class Ingresses unchanged.",
+		docsUrl: "https://doc.traefik.io/traefik/",
+		license: "MIT",
+		chartRepo: "https://traefik.github.io/charts",
+		chart: "traefik",
+		version: "42.3.2",
+		namespace: "traefik",
+		defaultValues: {
+			// The chart marks its IngressClass as the cluster default. An add-on must not silently take
+			// over every Ingress that names no class, least of all next to an ingress-nginx it is
+			// replacing — so the class exists and is chosen by name.
+			ingressClass: { enabled: true, isDefaultClass: false },
+			// The chart sets no requests at all, which schedules Traefik as BestEffort: first to be
+			// evicted on a full node, and the thing in front of every other service. A measured-small
+			// request and a memory ceiling, the same shape the rest of the catalogue uses.
+			resources: {
+				requests: { cpu: "100m", memory: "128Mi" },
+				limits: { memory: "512Mi" },
+			},
+			// Nothing in the add-on uses Traefik's API or its dashboard, so neither is configured.
+			// `null`, not `{ dashboard: false }`: the chart renders an `--api.*` argument for every key
+			// under `api`, and any such argument enables the API; only the dashboard UI follows
+			// `dashboard`. A null removes the chart's `api` defaults, so no `--api` argument renders.
+			// It survives the merge below (deepMerge assigns it) and the runner's YAML encoding.
+			api: null,
+			providers: {
+				kubernetesIngressNGINX: {
+					// Write the load balancer's address into each NGINX-class Ingress's status, as
+					// ingress-nginx did, so external-dns and anything else reading it keeps working.
+					publishService: { enabled: true },
+					// An Ingress backed by an ExternalName Service would make the proxy forward to any
+					// DNS name. The chart allows it by default; the other two Kubernetes providers do not.
+					disableSvcExternalName: true,
+				},
+			},
+		},
+		configSchema: z.object({
+			/** Proxy replicas (raise for HA). */
+			replicas: z.coerce.number().int().min(1).max(10).default(1),
+			/** How the proxy is exposed. LoadBalancer needs a cloud LB; NodePort/ClusterIP don't. */
+			serviceType: z.enum(["LoadBalancer", "NodePort", "ClusterIP"]).default("LoadBalancer"),
+			/** A dedicated metrics Service for Prometheus to scrape. */
+			metrics: z.boolean().default(false),
+			/** Serve `ingressClassName: nginx` Ingresses. OFF by default: turned on only after the
+			 * migration guide's annotation review (see the field's help). */
+			ingressNginx: z.boolean().default(false),
+			/** The Gateway API provider: a GatewayClass and Gateway. Needs the Gateway API CRDs. */
+			gatewayApi: z.boolean().default(false),
+		}),
+		toValues: (c) => ({
+			deployment: { replicas: c.replicas },
+			service: { spec: { type: c.serviceType } },
+			metrics: { prometheus: { service: { enabled: c.metrics } } },
+			providers: {
+				kubernetesIngressNGINX: { enabled: c.ingressNginx },
+				kubernetesGateway: { enabled: c.gatewayApi },
+			},
+		}),
+		fields: [
+			{ key: "replicas", label: "Proxy replicas", type: "number", default: 1, min: 1, max: 10 },
+			{
+				key: "serviceType",
+				label: "Service type",
+				type: "enum",
+				default: "LoadBalancer",
+				options: [
+					{ value: "LoadBalancer", label: "LoadBalancer" },
+					{ value: "NodePort", label: "NodePort" },
+					{ value: "ClusterIP", label: "ClusterIP" },
+				],
+			},
+			{ key: "metrics", label: "Metrics Service", type: "boolean", default: false },
+			{
+				key: "ingressNginx",
+				label: "Serve NGINX-class Ingresses",
+				type: "boolean",
+				default: false,
+				help: "Routes Ingress objects with ingressClassName nginx; needs an nginx IngressClass to exist. Review their annotations against the migration guide first: Traefik serves a route without the access controls it does not support.",
+			},
+			{
+				key: "gatewayApi",
+				label: "Gateway API",
+				type: "boolean",
+				default: false,
+				help: "Creates a traefik GatewayClass and Gateway for HTTPRoute resources. Install the Gateway API standard-channel CRDs (v1.6) on the cluster first: this chart does not ship them, and without them the add-on cannot sync.",
+			},
 		],
 		syncWave: 1,
 		requires: ["ingress"],
@@ -2196,6 +2323,20 @@ export type AddOnId = string;
 /** Looks up a catalog entry by id, or null when the id is unknown/retired. */
 export function getAddOn(id: string): AddOnDef | null {
 	return ADDON_CATALOG.find((a) => a.id === id) ?? null;
+}
+
+/**
+ * The deprecation of `def` as the console shows it — the marker plus the replacement's display
+ * name — or null when `def` is not deprecated (#6543). A replacement id the catalogue does not hold
+ * falls back to the id itself; the catalogue test refuses one, so that is a guard, not a path.
+ */
+export function addOnDeprecationView(def: AddOnDef): AddOnDeprecationView | null {
+	if (!def.deprecated) return null;
+	const replacement = getAddOn(def.deprecated.replacementId);
+	return {
+		...def.deprecated,
+		replacementName: replacement?.name ?? def.deprecated.replacementId,
+	};
 }
 
 /**

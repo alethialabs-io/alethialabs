@@ -54,7 +54,7 @@ The decisions come from `argocd.InfraServiceDecisions` (`packages/core/argocd/de
 |---------------|-----|-----|-------|---------|---------|
 | external-dns | installed (Route 53, IRSA) | installed when Workload Identity SA present | installed when managed-identity present | **N/A** — alibabacloud provider has no RRSA support upstream ([external-dns#5019](https://github.com/kubernetes-sigs/external-dns/issues/5019)); manage AliDNS outside the cluster | installed (Hetzner webhook) when a Cloud API token is connected |
 | external-secrets store | installed (Secrets Manager, IRSA) | installed (Secret Manager, WI) | installed (Key Vault, WI) | installed (KMS Secrets Manager, RRSA) | installed (in-cluster Vault) when the project declares a secret; otherwise skipped — connect an external [Vault](/concepts/connectors) instead |
-| ingress | installed (ALB controller) | skipped — cloud LB available; install the ingress-nginx add-on | skipped — install the ingress-nginx add-on | skipped — install the ingress-nginx add-on | skipped — install the ingress-nginx add-on |
+| ingress | installed (ALB controller) | skipped — cloud LB available; install the Traefik add-on | skipped — install the Traefik add-on | skipped — install the Traefik add-on | skipped — install the Traefik add-on |
 | storage class | installed (gp3, default) | built-in default (standard-rwo) | built-in default (managed-csi) | verify a default-annotated alicloud-disk class | installed (hcloud-volumes, default) |
 | ArgoCD URL | installed (ALB ingress, ACM cert) | skipped — no managed ingress yet; port-forward + admin password | skipped — port-forward + admin password | skipped — port-forward + admin password | skipped — port-forward + admin password |
 

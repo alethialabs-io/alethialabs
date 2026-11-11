@@ -10,6 +10,7 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { disableAddon, enableAddon } from "@/app/server/actions/addons";
+import { ActionRefusal } from "@/lib/actions/result";
 import { getAddOn } from "@/lib/addons/catalog";
 import { addOnUpdateNotice } from "@/lib/addons/update-notice";
 import { storedAddonSettings } from "@/lib/cli/addon-catalog";
@@ -309,12 +310,19 @@ export async function DELETE(
 /**
  * Maps an add-on write failure to a status the caller can act on.
  *
- * `enableAddon` throws for three distinct reasons and they deserve different codes: an unknown
- * add-on id or an invalid config is the caller's (400), an authorization refusal is 403, and anything
- * else is ours (500). Collapsing them into 500 would report a typo'd add-on id as a server fault.
+ * `enableAddon` throws for distinct reasons and they deserve different codes: an unknown add-on id
+ * or an invalid config is the caller's (400), an authorization refusal is 403, a conflict with the
+ * add-on's state (a deprecated add-on closed to new installs) is 409, and anything else is ours (500). Collapsing them into 500
+ * would report a typo'd add-on id as a server fault.
  */
 function addonWriteError(err: unknown): NextResponse {
 	const message = err instanceof Error ? err.message : "Internal Server Error";
+	// A conflict with the add-on's own state (#6543: a deprecated add-on past its removal date takes
+	// no new install) is neither a bad request nor our fault. 409, with the sentence verbatim, so the
+	// CLI prints the replacement it names.
+	if (err instanceof ActionRefusal && err.kind === "conflict") {
+		return NextResponse.json({ error: message }, { status: 409 });
+	}
 	if (/^Unknown add-on:|^Invalid add-on configuration:|^Invalid chart version:|values_yaml/i.test(message)) {
 		return NextResponse.json({ error: message }, { status: 400 });
 	}
