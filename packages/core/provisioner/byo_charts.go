@@ -528,6 +528,15 @@ func byoNamespaceCollisions(addons []types.AddOnInstall) map[string]string {
 	return out
 }
 
+// byoCollisionIn is byoNamespaceCollisions' answer for add-on i if it were in namespace ns instead of
+// its stored one: the same rule, run again for a chart the runner keeps in another namespace.
+func byoCollisionIn(addons []types.AddOnInstall, i int, ns string) (string, bool) {
+	moved := append([]types.AddOnInstall(nil), addons...)
+	moved[i].Namespace = ns
+	reason, collides := byoNamespaceCollisions(moved)[moved[i].ID]
+	return reason, collides
+}
+
 // byoRefusedIDs is the set of refused add-on ids, for the filters below.
 func byoRefusedIDs(refused []byoRefusal) map[string]bool {
 	out := make(map[string]bool, len(refused))
@@ -707,6 +716,14 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 		// workloads read there. Its old namespace must still pass the validator; one that no longer
 		// does (the platform's "default", after a legacy move) is refused as before.
 		if hold.held() && !hold.Live && hold.Dest != "" && argocd.ValidateByoNamespace(hold.Dest) == nil {
+			// The old namespace must also pass the collision rule the stored namespaces passed above:
+			// a chart refused for sharing another chart's own byo-<id> namespace keeps its Application
+			// there, and must not be re-admitted into it through this path.
+			if reason, collides := byoCollisionIn(vc.AddOns, i, hold.Dest); collides {
+				fmt.Fprintf(stderr, "Error: refusing BYO chart %q: %s\n", a.ID, reason)
+				refused = append(refused, byoRefusal{ID: a.ID, Namespace: hold.Dest, Reason: reason, Shared: true})
+				continue
+			}
 			fmt.Fprintf(stderr, "Warning: BYO chart %q: not moving it into namespace %q: %s; it keeps deploying in %q\n", a.ID, ns, hold.refusal(), hold.Dest)
 			heldMoves = append(heldMoves, byoHeldMove{ID: a.ID, Requested: ns, Kept: hold.Dest, Holder: hold.Holder, Placement: hold.Placement})
 			ns = hold.Dest

@@ -443,3 +443,25 @@ func TestByoAdmissionModes_AFailedReadStillWarnsEverywhere(t *testing.T) {
 		t.Errorf("the unread cluster was not logged:\n%s", stderr.String())
 	}
 }
+
+// TestConfigureByoCharts_AKeptChartIsNotReadmittedIntoAnotherChartsOwnNamespace: the chart's
+// Application runs in byo-api, chart "api"'s own default namespace, which a chart other than "api"
+// may never share (byoNamespaceCollisions). Its stored namespace is now a held one, so the runner
+// would keep it where its Application runs; the collision rule is re-run on that namespace and
+// refuses it instead of re-admitting it there.
+func TestConfigureByoCharts_AKeptChartIsNotReadmittedIntoAnotherChartsOwnNamespace(t *testing.T) {
+	c := newByoCluster(t, "")
+	(&clusterReads{namespaces: map[string]string{placedNS: labelled(placementLabels)}, dest: "byo-api"}).install(t)
+	vc := placedConfigFor()
+	vc.AddOns[0].Namespace = "byo-api"
+	got := configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard)
+	if len(got.HeldMoves) != 0 {
+		t.Fatalf("the chart must not be kept in another chart's own namespace: %+v", got.HeldMoves)
+	}
+	if len(got.Refused) != 1 || got.Refused[0].ID != "legacy" || !got.Refused[0].Shared || !strings.Contains(got.Refused[0].Reason, `"byo-api"`) {
+		t.Fatalf("want legacy refused for sharing byo-api, got %+v", got.Refused)
+	}
+	if dests := c.lastAppProjectDestinations(t, "byo-acme-corp"); !reflect.DeepEqual(dests, []string{"byo-api"}) {
+		t.Errorf("AppProject destinations = %v, want only api's byo-api", dests)
+	}
+}
