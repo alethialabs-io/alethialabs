@@ -20,6 +20,12 @@ spec:
         serviceAccount:
           create: true
           name: karpenter
+          {{- /* IRSA (#6559). The role's trust policy (project/aws/irsa.tf, module.irsa_karpenter)
+               names exactly karpenter:karpenter — this ServiceAccount in the destination
+               namespace below. The method REFUSES the render when the role output is empty, so
+               Karpenter is never installed without its AWS identity. */}}
+          annotations:
+            eks.amazonaws.com/role-arn: {{ .KarpenterServiceAccountRoleArn | printf "%q" }}
         replicas: 2
         settings:
           clusterName: {{ .ClusterName }}

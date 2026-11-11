@@ -19,6 +19,7 @@ import (
 func TestDedicatedDestinationsUnchanged(t *testing.T) {
 	facts := BuildFromOutputs(map[string]interface{}{
 		"eks_cluster_name":     "eks-demo",
+		"karpenter_sa_role":    testKarpenterRoleArn,
 		"eks_cluster_endpoint": "https://eks.example.com",
 	}, cfg("aws"))
 

@@ -66,7 +66,8 @@ spec:
 // the half a fixture can never check.
 func TestStorageClassesInManifestsReadsTheRealAWSRender(t *testing.T) {
 	files := renderAll(t, BuildFromOutputs(map[string]interface{}{
-		"eks_cluster_name": "eks-demo",
+		"eks_cluster_name":  "eks-demo",
+		"karpenter_sa_role": testKarpenterRoleArn,
 	}, cfg("aws")))
 	doc, ok := files["storage-class-gp3.yaml"]
 	if !ok {

@@ -161,7 +161,8 @@ func renderAll(t *testing.T, facts *InfraFacts) map[string]string {
 
 func TestRender_AWSUnchanged(t *testing.T) {
 	files := renderAll(t, BuildFromOutputs(map[string]interface{}{
-		"eks_cluster_name": "eks-demo",
+		"eks_cluster_name":  "eks-demo",
+		"karpenter_sa_role": testKarpenterRoleArn,
 	}, cfg("aws")))
 	dns := files["external-dns.yaml"]
 	if !strings.Contains(dns, "provider: aws") {
@@ -189,7 +190,7 @@ func TestRender_AWSUnchanged(t *testing.T) {
 func TestRender_AppsOverlaysApplicationSet(t *testing.T) {
 	vc := cfg("aws")
 	vc.Repositories.AppsDestinationRepo = "https://github.com/acme/demo"
-	files := renderAll(t, BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo"}, vc))
+	files := renderAll(t, BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo", "karpenter_sa_role": testKarpenterRoleArn}, vc))
 
 	as, ok := files["user-apps-overlays.yaml"]
 	if !ok {
@@ -216,7 +217,7 @@ func TestRender_AppsOverlaysApplicationSet(t *testing.T) {
 	// Flat / no apps repo → the ApplicationSet is gated out entirely (no empty Application deployed).
 	noRepo := cfg("aws")
 	noRepo.Repositories.AppsDestinationRepo = ""
-	flat := renderAll(t, BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo"}, noRepo))
+	flat := renderAll(t, BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo", "karpenter_sa_role": testKarpenterRoleArn}, noRepo))
 	if _, present := flat["user-apps-overlays.yaml"]; present {
 		t.Errorf("apps-overlays ApplicationSet must not render without an apps repo")
 	}
@@ -234,7 +235,7 @@ func TestRender_AppsPathOnDedicatedReplacesDiscovery(t *testing.T) {
 	vc := cfg("aws")
 	vc.Repositories.AppsDestinationRepo = "https://github.com/acme/demo"
 	vc.Repositories.AppsPath = "examples/online-boutique/overlays/prod"
-	files := renderAll(t, BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo"}, vc))
+	files := renderAll(t, BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo", "karpenter_sa_role": testKarpenterRoleArn}, vc))
 
 	apps, ok := files["user-apps.yaml"]
 	if !ok {
@@ -259,7 +260,7 @@ func TestRender_NoAppsPathIsUnchanged(t *testing.T) {
 	vc := cfg("aws")
 	vc.Repositories.AppsDestinationRepo = "https://github.com/acme/demo"
 	vc.Repositories.AppsPath = ""
-	files := renderAll(t, BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo"}, vc))
+	files := renderAll(t, BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo", "karpenter_sa_role": testKarpenterRoleArn}, vc))
 
 	apps, ok := files["user-apps.yaml"]
 	if !ok {
@@ -330,7 +331,7 @@ func TestRender_AzureFederatedIdentity(t *testing.T) {
 	// template, so a stray `extraVolumes` outside the azure branch would reach every cloud
 	// and mount a Secret the deploy path never seeds there.
 	for name, otherFacts := range map[string]*InfraFacts{
-		"aws": BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo"}, cfg("aws")),
+		"aws": BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo", "karpenter_sa_role": testKarpenterRoleArn}, cfg("aws")),
 		"gcp": BuildFromOutputs(map[string]interface{}{
 			"gke_cluster_name":             "gke-demo",
 			"external_dns_service_account": "extdns@proj.iam.gserviceaccount.com",
@@ -361,14 +362,16 @@ func TestRender_DNSDisabledSkipsExternalDNS(t *testing.T) {
 	vc := cfg("aws")
 	vc.DNS.Enabled = false
 	files := renderAll(t, BuildFromOutputs(map[string]interface{}{
-		"eks_cluster_name": "eks-demo",
+		"eks_cluster_name":  "eks-demo",
+		"karpenter_sa_role": testKarpenterRoleArn,
 	}, vc))
 	assertNoExternalDNS(t, files, "DNS disabled")
 
 	noDomain := cfg("aws")
 	noDomain.DNS.DomainName = ""
 	files = renderAll(t, BuildFromOutputs(map[string]interface{}{
-		"eks_cluster_name": "eks-demo",
+		"eks_cluster_name":  "eks-demo",
+		"karpenter_sa_role": testKarpenterRoleArn,
 	}, noDomain))
 	assertNoExternalDNS(t, files, "no domain")
 }
@@ -380,7 +383,8 @@ func TestRender_CloudflareConnector(t *testing.T) {
 	vc := cfg("aws")
 	vc.DNS.Provider = "cloudflare"
 	files := renderAll(t, BuildFromOutputs(map[string]interface{}{
-		"eks_cluster_name": "eks-demo",
+		"eks_cluster_name":  "eks-demo",
+		"karpenter_sa_role": testKarpenterRoleArn,
 	}, vc))
 	assertNoExternalDNS(t, files, "cloudflare connector without a credential")
 
@@ -389,7 +393,8 @@ func TestRender_CloudflareConnector(t *testing.T) {
 		Credentials: map[string]string{"api_token": "cf-tok"},
 	}}
 	files = renderAll(t, BuildFromOutputs(map[string]interface{}{
-		"eks_cluster_name": "eks-demo",
+		"eks_cluster_name":  "eks-demo",
+		"karpenter_sa_role": testKarpenterRoleArn,
 	}, vc))
 	dns, ok := files["external-dns.yaml"]
 	if !ok {
@@ -473,7 +478,7 @@ func TestRender_MetricsServerPerCloud(t *testing.T) {
 	// Minimal per-cloud outputs — just enough for BuildFromOutputs to set Provider and
 	// the cluster name every template reads.
 	outputs := map[string]map[string]interface{}{
-		"aws":     {"eks_cluster_name": "eks-demo"},
+		"aws":     {"eks_cluster_name": "eks-demo", "karpenter_sa_role": testKarpenterRoleArn},
 		"gcp":     {"gke_cluster_name": "gke-demo"},
 		"azure":   {"aks_cluster_name": "aks-demo"},
 		"alibaba": {"ack_cluster_name": "ack-demo"},
@@ -558,9 +563,10 @@ func TestRender_ESOStoresPerCloud(t *testing.T) {
 			provider: "aws",
 			withIdentity: map[string]interface{}{
 				"eks_cluster_name":              "eks-demo",
+				"karpenter_sa_role":             testKarpenterRoleArn,
 				"eks_irsa_external_secrets_arn": "arn:aws:iam::acct-123:role/eks-demo-secrets-operator",
 			},
-			noIdentity: map[string]interface{}{"eks_cluster_name": "eks-demo"},
+			noIdentity: map[string]interface{}{"eks_cluster_name": "eks-demo", "karpenter_sa_role": testKarpenterRoleArn},
 			store:      "secretstore-aws",
 			want: []string{
 				"eks.amazonaws.com/role-arn: arn:aws:iam::acct-123:role/eks-demo-secrets-operator",
@@ -747,6 +753,7 @@ func TestRender_AGICIsAzureOnly(t *testing.T) {
 	for _, p := range []string{"aws", "gcp", "alibaba", "hetzner"} {
 		files := renderAll(t, BuildFromOutputs(map[string]interface{}{
 			"eks_cluster_name":         "c",
+			"karpenter_sa_role":        testKarpenterRoleArn,
 			"gke_cluster_name":         "c",
 			"ack_cluster_name":         "c",
 			"talos_cluster_name":       "c",
@@ -785,6 +792,7 @@ func keysOf(files map[string]string) []string {
 func TestExternalDNS_AWSMatchesTheParentZone(t *testing.T) {
 	aws := renderAll(t, BuildFromOutputs(map[string]interface{}{
 		"eks_cluster_name":          "eks-demo",
+		"karpenter_sa_role":         testKarpenterRoleArn,
 		"eks_irsa_external_dns_arn": "arn:aws:iam::acct-123:role/x",
 	}, cfg("aws")))["external-dns.yaml"]
 	if aws == "" {
