@@ -37,6 +37,9 @@ const CONSOLE = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REPO = join(CONSOLE, "..", "..");
 const DOCKERFILES = ["Dockerfile", "Dockerfile.community"];
 const DEPLOY_WORKFLOW = join(REPO, ".github/workflows/deploy-console.yml");
+/** The script that step runs (#6582) — where the box's `.env` is actually written. */
+const DEPLOY_SCRIPT_PATH = "scripts/ci/deploy-console-assemble-env.sh";
+const DEPLOY_SCRIPT = join(REPO, DEPLOY_SCRIPT_PATH);
 const MARKETING_DOCKERFILE = join(REPO, "apps/marketing/Dockerfile");
 
 /** Where a runtime-read var gets its value when the image itself does not set it. */
@@ -113,13 +116,14 @@ function runtimeReads(): Map<string, string[]> {
 }
 
 const reads = runtimeReads();
-/** The step in deploy-console.yml that writes the box's `.env` — the only place a deploy-env claim counts. */
+/** The step in deploy-console.yml that writes the box's `.env` — by running DEPLOY_SCRIPT, the only place a deploy-env claim counts. */
 const ASSEMBLE_STEP = "      - name: Assemble .env from the vault and deploy";
 
 /**
  * The executable lines of the deploy workflow's `.env` assembly step: the step's own lines up to the
  * next step or job, with comment lines dropped, so neither a comment in that step nor any other step
- * can satisfy a deploy-env claim. Empty when the step is not found (the caller fails on that).
+ * can satisfy a deploy-env claim. Empty when the step is not found (the caller fails on that). Since
+ * #6582 those lines are one call to DEPLOY_SCRIPT, which is read by `executableLines` below.
  */
 function assembleEnvStep(workflow: string): string {
 	const lines = workflow.split("\n");
@@ -138,7 +142,16 @@ function assembleEnvStep(workflow: string): string {
 		.join("\n");
 }
 
+/** A shell file's lines with comment lines dropped, so a comment can never satisfy a deploy-env claim. */
+function executableLines(script: string): string {
+	return script
+		.split("\n")
+		.filter((l) => !/^\s*#/.test(l))
+		.join("\n");
+}
+
 const assembleStep = assembleEnvStep(readFileSync(DEPLOY_WORKFLOW, "utf8"));
+const assembleScript = executableLines(readFileSync(DEPLOY_SCRIPT, "utf8"));
 
 describe("runtime-read NEXT_PUBLIC_* vars (#5621)", () => {
 	it("finds the runtime reads (a scanner that finds nothing would pass everything)", () => {
@@ -148,13 +161,17 @@ describe("runtime-read NEXT_PUBLIC_* vars (#5621)", () => {
 
 	it("every ledger entry is still a runtime read, and deploy-env entries are really emitted", () => {
 		expect(assembleStep, `deploy-console.yml has no step named "${ASSEMBLE_STEP.trim()}"`).not.toBe("");
+		// The script only counts if that step runs it — otherwise an emit line there reaches nothing.
+		expect(assembleStep, `the "${ASSEMBLE_STEP.trim()}" step no longer runs ${DEPLOY_SCRIPT_PATH}`).toContain(
+			`run: bash ${DEPLOY_SCRIPT_PATH}`,
+		);
 		const unread = Object.keys(OTHER_RUNTIME_SOURCE).filter((key) => !reads.has(key));
 		const notEmitted = Object.entries(OTHER_RUNTIME_SOURCE)
 			.filter(([, src]) => src.kind === "deploy-env")
 			.map(([key]) => key)
-			.filter((key) => !new RegExp(`(echo "${key}=|emit ${key}\\b)`).test(assembleStep));
+			.filter((key) => !new RegExp(`(echo "${key}=|emit ${key}\\b)`).test(assembleScript));
 		expect(unread, "in the ledger but nothing reads it at runtime").toEqual([]);
-		expect(notEmitted, "claims deploy-env but deploy-console.yml never writes it").toEqual([]);
+		expect(notEmitted, `claims deploy-env but ${DEPLOY_SCRIPT_PATH} never writes it`).toEqual([]);
 	});
 
 	for (const file of DOCKERFILES) {
