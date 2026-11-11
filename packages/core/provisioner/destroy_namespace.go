@@ -5,14 +5,17 @@ package provisioner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	coreaws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
+	"github.com/alethialabs-io/alethialabs/packages/core/names"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
@@ -90,6 +93,13 @@ func runNamespaceDestroy(ctx context.Context, provider cloud.CloudProvider, para
 	if err := namespaceOwnershipRefusal(vc, ns, "teardown"); err != nil {
 		return err
 	}
+	// #6575: owning the Namespace is not the same as being alone in it. A host BYO chart kept in a
+	// namespace this placement holds (#6562) runs there too, and deleting the Namespace would delete its
+	// workloads and binding secrets with it. Refused, before the first delete, while any Application
+	// other than this placement's own targets the namespace.
+	if err := sharedNamespaceRefusal(vc, ns); err != nil {
+		return err
+	}
 
 	// Render the SAME manifests the deploy applied, so the delete targets exactly the resources it
 	// created. The ArgoCD Application/AppProject names are DERIVED (namespaceTenantName), never stored,
@@ -134,6 +144,82 @@ func runNamespaceDestroy(ctx context.Context, provider cloud.CloudProvider, para
 	}
 	fmt.Fprintf(stdout, "Namespace teardown completed: namespace %q, its guardrails, its ArgoCD Application/AppProject and its per-namespace cloud identity removed from cluster %q.\n", ns, clusterName)
 	return nil
+}
+
+// sharedNamespaceRefusal refuses the teardown of namespace ns while an ArgoCD Application other than
+// this placement's own targets it (#6575). The teardown deletes the Namespace object, which takes every
+// workload and Secret in it along; a namespace this environment owns can still hold a host BYO chart,
+// because #6562 keeps a chart that already ran there rather than withdraw its bindings. The refusal
+// names each such Application, the chart when it is a BYO chart's, and what the operator does first.
+//
+// It FAILS CLOSED: a read that fails on every attempt (retryByoRead), and an answer that is not an
+// Application list, both refuse, and nothing is deleted. It reads every Application in `argocd`, not
+// only BYO charts': any other Application there that targets ns is someone's workload, and deleting it
+// is the same harm. It matches on spec.destination.namespace only, so an Application in `argocd` that
+// targets the same namespace name on ANOTHER cluster refuses too; that is the safe direction, and
+// placement-host Applications are in-cluster. It only reads.
+func sharedNamespaceRefusal(vc *types.ProjectConfig, ns string) error {
+	own := argocd.NamespaceTenantAppName(vc.ProjectName, ns)
+	var others []string
+	err := retryByoRead(func() error {
+		var rerr error
+		others, rerr = applicationsTargetingNamespace(ns, own)
+		return rerr
+	})
+	if err != nil {
+		return fmt.Errorf("namespace placement: refusing the teardown, because the runner %w, so it cannot tell whether anything else runs in namespace %q; nothing was deleted. Run the teardown again once the ArgoCD Applications can be read", err, ns)
+	}
+	if len(others) == 0 {
+		return nil
+	}
+	described := make([]string, 0, len(others))
+	for _, name := range others {
+		if id, ok := strings.CutPrefix(name, names.AddOnAppNamePrefix); ok && id != "" {
+			described = append(described, fmt.Sprintf("BYO chart %q (Application %s)", id, name))
+			continue
+		}
+		described = append(described, fmt.Sprintf("Application %q", name))
+	}
+	return fmt.Errorf("namespace placement: namespace %q is also used by %s, which this environment does not own. The teardown deletes the namespace and everything in it, so it would delete those workloads and their binding secrets. Refusing the teardown; nothing was deleted. Re-attach each chart elsewhere first, with a namespace of its own (leave it blank for byo-<chart id>), and deploy its environment, so that its Application no longer targets %q; move any other Application out the same way; then run the teardown again", ns, strings.Join(described, ", "), ns)
+}
+
+// applicationsTargetingNamespace lists, sorted, the ArgoCD Applications in `argocd` whose
+// spec.destination.namespace is ns, leaving out the one named own. A failed read, an empty answer and
+// an answer without an `items` list are errors worded "could not read/parse the ArgoCD Applications":
+// `kubectl get -o json` of a list always prints one, so anything else is not evidence of "none".
+func applicationsTargetingNamespace(ns, own string) ([]string, error) {
+	out, err := executeCommandWithOutput("kubectl get applications.argoproj.io -n argocd -o json", "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("could not read the ArgoCD Applications in argocd: %w", err)
+	}
+	var list struct {
+		Items *[]struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Spec struct {
+				Destination struct {
+					Namespace string `json:"namespace"`
+				} `json:"destination"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		return nil, fmt.Errorf("could not parse the ArgoCD Applications in argocd: %w", err)
+	}
+	if list.Items == nil {
+		return nil, fmt.Errorf("could not parse the ArgoCD Applications in argocd: the answer carries no items list")
+	}
+	var found []string
+	for _, app := range *list.Items {
+		name := strings.TrimSpace(app.Metadata.Name)
+		if name == "" || name == own || strings.TrimSpace(app.Spec.Destination.Namespace) != ns {
+			continue
+		}
+		found = append(found, name)
+	}
+	sort.Strings(found)
+	return found, nil
 }
 
 // deprovisionNamespaceIdentity deletes the per-namespace tenant cloud identity provisioned by

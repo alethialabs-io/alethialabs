@@ -11,6 +11,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
+	order: new Array<string>(),
 	insert: vi.fn(),
 	host: vi.fn(async (): Promise<string[]> => []),
 	siblings: vi.fn(async (): Promise<{ environment: string; namespace: string }[]> => []),
@@ -32,12 +33,29 @@ vi.mock("@/lib/db", () => {
 	const chain: Record<string, unknown> = {};
 	for (const k of ["from", "where", "orderBy", "leftJoin"]) chain[k] = () => chain;
 	chain.limit = async () => [{ fabric_id: "f1", id: "f1", name: "prod" }];
+	const db = {
+		select: () => chain,
+		insert: (...args: unknown[]) => {
+			h.order.push("insert");
+			h.insert(...args);
+			throw new Error("insert reached in a test that expects a refusal");
+		},
+		execute: async () => {
+			h.order.push("lock");
+			return [];
+		},
+	};
 	return {
 		getServiceDb: () => ({
-			select: () => chain,
-			insert: (...args: unknown[]) => {
-				h.insert(...args);
-				throw new Error("insert reached in a test that expects a refusal");
+			...db,
+			// #6575: the check and the insert run in one transaction, which this records.
+			transaction: async (cb: (tx: typeof db) => Promise<unknown>) => {
+				h.order.push("begin");
+				try {
+					return await cb(db);
+				} finally {
+					h.order.push("end");
+				}
 			},
 		}),
 	};
@@ -60,11 +78,18 @@ async function post(body: Record<string, unknown>) {
 }
 
 beforeEach(() => {
+	h.order.length = 0;
 	h.insert.mockClear();
 	h.host.mockReset();
-	h.host.mockResolvedValue([]);
+	h.host.mockImplementation(async () => {
+		h.order.push("host");
+		return [];
+	});
 	h.siblings.mockReset();
-	h.siblings.mockResolvedValue([]);
+	h.siblings.mockImplementation(async () => {
+		h.order.push("siblings");
+		return [];
+	});
 });
 
 describe("POST environments — a reserved placement namespace", () => {
@@ -115,6 +140,11 @@ describe("POST environments — a reserved placement namespace", () => {
 		}
 		expect(h.siblings).toHaveBeenCalledWith(expect.anything(), "p1", "f1");
 		expect(h.insert).not.toHaveBeenCalled();
+	});
+
+	it("takes the project's namespace lock, then reads both sides and inserts, in ONE transaction (#6575)", async () => {
+		await post({ name: "team", placement_mode: "namespace", namespace: "team-web" });
+		expect(h.order).toEqual(["begin", "lock", "host", "siblings", "insert", "end"]);
 	});
 
 	it("does not apply to a vcluster placement", async () => {

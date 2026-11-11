@@ -29,15 +29,8 @@ import {
 	cliEnvironmentResponse,
 	cliEnvironmentsResponse,
 } from "@/lib/validations/cli-contract";
-import {
-	placementHostNamespaces,
-	placementNamespacesOnFabric,
-} from "@/lib/queries/placement-host-namespaces";
-import {
-	effectivePlacementNamespace,
-	placementNamespaceMessage,
-	placementNamespaceTakenMessage,
-} from "@/lib/validations/placement-namespace";
+import { claimPlacementNamespace } from "@/lib/projects/placement-namespace-claim";
+import { effectivePlacementNamespace } from "@/lib/validations/placement-namespace";
 
 const ENVIRONMENTS_LIST = "project-environments";
 
@@ -263,53 +256,52 @@ export async function POST(
 
 		// #6551: a namespace placement may not use a namespace the platform or the host environment
 		// uses on the shared cluster — the static list, plus the namespaces the host's own BYO charts
-		// chose. Checked against the namespace it would actually deploy into: its own, or its name's
-		// slug when it has none. The runner refuses the same at deploy; this refuses it up front.
-		if (mode === "namespace" && fabricId) {
-			const ns = effectivePlacementNamespace({ name, namespace: parsed.data.namespace });
-			const reserved = placementNamespaceMessage(
-				ns,
-				await placementHostNamespaces(db, project.id, fabricId),
-			);
-			if (reserved) {
-				return NextResponse.json({ error: `namespace: ${reserved}` }, { status: 400 });
-			}
-			// No two namespace placements on one Fabric may resolve to the same namespace.
-			const holder = (await placementNamespacesOnFabric(db, project.id, fabricId)).find(
-				(p) => p.namespace === ns,
-			);
-			if (holder) {
-				return NextResponse.json(
-					{ error: `namespace: ${placementNamespaceTakenMessage(ns, holder.environment)}` },
-					{ status: 400 },
-				);
-			}
+		// chose — nor one another placement on the Fabric resolves to. Checked against the namespace it
+		// would actually deploy into: its own, or its name's slug when it has none. The runner refuses
+		// the same at deploy; this refuses it up front.
+		//
+		// #6575: the check and the insert share one transaction under the project's namespace lock,
+		// which attachByoChart takes too. A chart attached into this namespace concurrently either
+		// committed first, and the check reads it, or waits for this insert and then refuses itself.
+		const outcome = await db.transaction(
+			async (tx): Promise<{ refusal: string } | { row: typeof projectEnvironments.$inferSelect | undefined }> => {
+				if (mode === "namespace" && fabricId) {
+					const ns = effectivePlacementNamespace({ name, namespace: parsed.data.namespace });
+					const refusal = await claimPlacementNamespace(tx, project.id, fabricId, ns);
+					if (refusal) return { refusal };
+				}
+				const [row] = await tx
+					.insert(projectEnvironments)
+					.values({
+						project_id: project.id,
+						user_id: actor.userId,
+						org_id: actor.orgId,
+						name,
+						stage: parsed.data.stage,
+						status: "DRAFT",
+						// TRUE WHEN THE PROJECT HAS NONE — see the same expression in
+						// app/server/actions/projects.ts. A flat `false` made a project that had reached
+						// zero environments unrepairable: the constraint trigger refuses the very insert
+						// that would fix it, and the CLI surfaced that as a raw 500.
+						is_default: sql<boolean>`NOT EXISTS (
+							SELECT 1 FROM public.project_environments e
+							 WHERE e.project_id = ${project.id}::uuid AND e.is_default
+						)`,
+						region: parsed.data.region ?? null,
+						fabric_id: fabricId,
+						placement_mode: mode,
+						namespace: parsed.data.namespace ?? null,
+						...(parsed.data.lifecycle ? { lifecycle: parsed.data.lifecycle } : {}),
+					})
+					.returning();
+				return { row };
+			},
+		);
+		if ("refusal" in outcome) {
+			return NextResponse.json({ error: `namespace: ${outcome.refusal}` }, { status: 400 });
 		}
-
-		const [row] = await db
-			.insert(projectEnvironments)
-			.values({
-				project_id: project.id,
-				user_id: actor.userId,
-				org_id: actor.orgId,
-				name,
-				stage: parsed.data.stage,
-				status: "DRAFT",
-				// TRUE WHEN THE PROJECT HAS NONE — see the same expression in
-				// app/server/actions/projects.ts. A flat `false` made a project that had reached
-				// zero environments unrepairable: the constraint trigger refuses the very insert
-				// that would fix it, and the CLI surfaced that as a raw 500.
-				is_default: sql<boolean>`NOT EXISTS (
-					SELECT 1 FROM public.project_environments e
-					 WHERE e.project_id = ${project.id}::uuid AND e.is_default
-				)`,
-				region: parsed.data.region ?? null,
-				fabric_id: fabricId,
-				placement_mode: mode,
-				namespace: parsed.data.namespace ?? null,
-				...(parsed.data.lifecycle ? { lifecycle: parsed.data.lifecycle } : {}),
-			})
-			.returning();
+		const { row } = outcome;
+		if (!row) throw new Error("Failed to create environment");
 
 		// Resolve the Fabric's NAME for the response. It is not necessarily the one the caller
 		// typed: a shared placement with no `--fabric` defaults to the project's default Fabric,

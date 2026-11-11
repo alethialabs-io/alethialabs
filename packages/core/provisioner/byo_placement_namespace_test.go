@@ -170,6 +170,16 @@ func TestConfigureByoCharts_AChartAlreadyRunningInAHeldNamespaceIsKeptAndReporte
 			if !tc.placement && strings.Contains(w, "deploys are refused") {
 				t.Errorf("an owner-label hold must not claim that environment's deploys are refused: %s", w)
 			}
+			// #6575: a placement's teardown is refused while the chart runs in its namespace, so the
+			// warning says to move the chart first. An owner-label holder need not be a placement, so
+			// the warning claims nothing about its teardown.
+			const teardown = "before that environment is torn down"
+			if tc.placement && !strings.Contains(w, teardown) {
+				t.Errorf("a placement hold's warning must say to move the chart %s: %s", teardown, w)
+			}
+			if !tc.placement && strings.Contains(w, "torn down") {
+				t.Errorf("an owner-label hold must not claim anything about that environment's teardown: %s", w)
+			}
 		})
 	}
 }
