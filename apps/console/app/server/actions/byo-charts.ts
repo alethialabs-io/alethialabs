@@ -148,8 +148,9 @@ export async function attachByoChart(
 	const values: AddOnValues = parsed.values ?? {};
 
 	await withActorScope(actor, async (tx) => {
-		// The preview-namespace check and the write share one transaction under the project's lock, so
-		// a concurrent preview-prefix save cannot slip a conflicting prefix in between (#6494).
+		// The preview- and placement-namespace checks and the write share one transaction under the
+		// project's lock, so a concurrent preview-prefix save (#6494) or namespace-placement create
+		// (#6575, lib/projects/placement-namespace-claim.ts) cannot slip a conflicting row in between.
 		await lockProjectPreviewNamespaces(tx, parsed.projectId);
 		await refusePreviewNamespace(tx, parsed.projectId, namespace, stored?.namespace ?? null);
 		await refusePlacementNamespace(tx, parsed.projectId, envId, namespace, stored?.namespace ?? null);
@@ -241,7 +242,9 @@ async function refusePreviewNamespace(
  * A re-attach that keeps the chart's stored namespace unchanged is not refused, the same exception the
  * preview rule makes: a chart attached there before this rule keeps deploying (the runner reports it
  * on the Deploy tab instead), and refusing every edit to it would leave its values unchangeable without
- * moving it. An environment with no Fabric shares no cluster, so nothing is held there.
+ * moving it. An environment with no Fabric shares no cluster, so nothing is held there. Runs in the
+ * write's transaction, under lockProjectPreviewNamespaces, which every namespace-placement create takes
+ * too (#6575).
  */
 async function refusePlacementNamespace(
 	tx: Tx,

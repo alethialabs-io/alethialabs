@@ -8,6 +8,7 @@ import {
 	type WebhookCaConsumer,
 } from "@/lib/addons/webhook-ca-consumers";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
+import { claimPlacementNamespace } from "@/lib/projects/placement-namespace-claim";
 import {
 	type EnvironmentLifecycle,
 	type EnvironmentStage,
@@ -293,6 +294,26 @@ function violates(err: unknown, constraint: string): boolean {
 	return false;
 }
 
+/**
+ * Claims each namespace placement's namespace under the project's namespace lock before the fan-out
+ * inserts the placements (#6575), throwing the first refusal. Every namespace-placement writer goes
+ * through {@link claimPlacementNamespace}, so this one also reads the host's charts and the Fabric's
+ * placements instead of assuming a new project has none. Today that assumption holds: the project row
+ * is uncommitted until this transaction commits, so no attach can reach it and every read here returns
+ * nothing. The lock and the reads are what keep the rule true for a caller that fans placements out
+ * into a project that already exists.
+ */
+async function refuseClaimedPlacementNamespaces(
+	tx: Tx,
+	projectId: string,
+	placements: readonly { fabricId: string; namespace: string }[],
+): Promise<void> {
+	for (const p of placements) {
+		const refusal = await claimPlacementNamespace(tx, projectId, p.fabricId, p.namespace);
+		if (refusal) throw new Error(refusal);
+	}
+}
+
 export async function insertProjectWithDefaultFabric(
 	tx: Tx,
 	input: CreateProjectCoreInput,
@@ -461,6 +482,15 @@ export async function insertProjectWithDefaultFabric(
 			if (!id) throw new Error(`No Fabric for environment "${s.name}".`);
 			return id;
 		};
+		await refuseClaimedPlacementNamespaces(
+			tx,
+			project.id,
+			specs.flatMap((s) =>
+				s.placement_mode === "namespace"
+					? [{ fabricId: fabricFor(s), namespace: effectivePlacementNamespace(s) }]
+					: [],
+			),
+		);
 
 		const envRows = await tx
 			.insert(projectEnvironments)
@@ -502,6 +532,9 @@ export async function insertProjectWithDefaultFabric(
 			.values({ ...fabricBase, name: input.environment_stage })
 			.returning({ id: projectFabrics.id });
 		if (!fabric) throw new Error("Failed to create default Fabric");
+		await refuseClaimedPlacementNamespaces(tx, project.id, [
+			{ fabricId: fabric.id, namespace: "preview" },
+		]);
 
 		const [dEnv, pEnv] = await tx
 			.insert(projectEnvironments)
