@@ -47,6 +47,11 @@ type PreviewAppSetInput struct {
 	// Common labels stamped on the ApplicationSet and propagated onto each generated Application
 	// (InjectCommonLabels does not descend into an ApplicationSet, so this template loops explicitly).
 	Labels map[string]string
+	// ByoCharts is every BYO chart attached to the project, in any environment (#6518). REQUIRED:
+	// nil refuses the render (ErrPreviewByoChartsUnknown), and an explicit empty list means the
+	// project has none. A chart in one of the preview namespaces refuses it with a
+	// *PreviewByoOverlapError naming each chart and namespace (CheckPreviewByoOverlap).
+	ByoCharts []PreviewByoChart
 }
 
 // previewAppSetTmpl renders the PR-preview ApplicationSet. It uses [[ ]] delimiters so ArgoCD's own
@@ -184,6 +189,10 @@ func (in PreviewAppSetInput) validate() error {
 	if err := validatePreviewNamespacePrefix(what, in.NamespacePrefix); err != nil {
 		return err
 	}
+	// After the prefix's own shape check, so the overlap is judged against a prefix that renders.
+	if err := CheckPreviewByoOverlap(in.NamespacePrefix, in.ByoCharts); err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
 	if err := validatePreviewURL(what, "destination server", in.DestServer, apiServerSchemes); err != nil {
 		return err
 	}
@@ -241,11 +250,7 @@ func (in PreviewAppSetInput) templateData() previewTemplateData {
 
 	in.AppsRepoURL = strings.TrimSpace(in.AppsRepoURL)
 
-	prefix := in.NamespacePrefix
-	if strings.TrimSpace(prefix) == "" {
-		prefix = "preview"
-	}
-	in.NamespacePrefix = prefix
+	in.NamespacePrefix = previewNamespacePrefixOrDefault(in.NamespacePrefix)
 
 	dest := in.DestServer
 	if strings.TrimSpace(dest) == "" {
