@@ -258,9 +258,10 @@ whether the rules refuse or only report:
 
 The mode comes from the history of the charts in the namespace **in this environment**, not from
 whether the namespace exists on the cluster. On each deploy, Alethia reads each chart's ArgoCD
-Application on the cluster. A chart has run here if its Application exists, or if Alethia last read
-it back in a running state. That last record is kept by Alethia, so it stays true when the cluster
-is re-provisioned and the Applications are gone.
+Application on the cluster. A chart has run here if its Application exists, or if Alethia has ever
+read it back in a running state. That record is kept by Alethia and is never cleared, so it stays
+true when the cluster is re-provisioned and the Applications are gone, even after a drift scan finds
+nothing to read.
 
 | The namespace | Its charts | Mode |
 |---|---|---|
@@ -298,7 +299,8 @@ Then turn on refusal for the environment:
 2. Read the report. It lists each bring-your-own namespace, its current mode, and what refusal would
    refuse there, from the latest deploy, with that deploy's date. A kind of object that the deploy
    could not check is marked **Could not be checked**. You can turn refusal on only when the latest
-   deploy produced a complete report. If it did not, deploy again first.
+   deploy produced a complete report. If it did not, deploy again first. Alethia checks this when it
+   saves the setting, not only in the form.
 3. Turn on **Refuse in every BYO namespace**, confirm that you have read the report, and save. The
    card shows **Redeploy to apply**.
 4. Start a new deploy of the environment. Each namespace that was in `warn` is relabelled `enforce`,

@@ -7,6 +7,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { FakeHandler } from "@/tests/helpers/fake-orpc";
 
 const h = vi.hoisted(() => ({
@@ -21,7 +22,13 @@ vi.mock("@/lib/rpc/client", async () => {
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/app/server/actions/projects", () => ({ setByoAdmissionEnforce: h.set }));
-vi.mock("@/app/server/actions/gitops-status", () => ({ getGitopsDeployStatus: h.status }));
+// The drawer reads `environments.byoAdmissionReport`; `h.status` stands in for the deploy status that
+// procedure reduces, so each test states the report as the Deploy tab would have it.
+h.handlers["environments.byoAdmissionReport"] = async (input) => {
+	const { projectId, environmentId } = z.object({ projectId: z.string(), environmentId: z.string() }).parse(input);
+	const st = await h.status(projectId, environmentId);
+	return { environmentId, report: st.byoAdmission, reportAt: st.byoAdmissionReportAt };
+};
 
 import { ByoAdmissionSheet, byoAdmissionFormSchema } from "@/components/environments/byo-admission-sheet";
 import { EMPTY_GITOPS_DEPLOY_STATUS } from "@/lib/gitops/deploy-status";

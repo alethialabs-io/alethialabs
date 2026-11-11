@@ -124,11 +124,12 @@ type ByoAdmissionConfig struct {
 	// Enforce is project_environments.byo_admission_enforce: put every BYO namespace of this
 	// environment in "enforce". Off by default, and off for every environment that existed before it.
 	Enforce bool `json:"enforce"`
-	// DeployedCharts are the ids of the environment's BYO charts the console last read back in a state
-	// whose Application exists and has resources (project_addons.health Healthy, Progressing, Degraded
-	// or Suspended). Sorted. It is the console's memory for a cluster that can no longer say — a
-	// re-provisioned one has no Applications — and it only ever chooses "warn" over "enforce": the
-	// runner's live Application read alone lets a chart into a namespace that is not this environment's
+	// DeployedCharts are the ids of the environment's BYO charts whose ArgoCD Application a console
+	// read-back has EVER seen in a running state (project_addons.first_observed_running_at: set once,
+	// on the first Healthy, Progressing, Degraded or Suspended read, and never cleared). Sorted. It is
+	// the console's memory for a cluster that can no longer say — a re-provisioned one has no
+	// Applications — and it only ever chooses "warn" over "enforce": the runner's live Application
+	// read alone lets a chart into a namespace that is not this environment's
 	// (argocd.ByoAdmissionInput.RunsHere).
 	DeployedCharts []string `json:"deployed_charts"`
 }

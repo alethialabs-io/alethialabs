@@ -86,6 +86,7 @@ import {
 import type { ChartWorkloadOverlay } from "@/lib/addons/chart-overlay";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import { byoAdmissionSnapshot } from "@/lib/addons/byo-admission";
+import { readGitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import {
 	byoAdmissionEnforceInput,
 	writeByoAdmissionEnforce,
@@ -3649,7 +3650,8 @@ export async function setAutoHeal(
 }
 
 /**
- * Turns the environment's BYO admission setting on or off (#6541): with it on, the next NEW deploy puts
+ * Turns the environment's BYO admission setting on or off (#6541). Turning it ON is refused unless the
+ * latest deploy produced a complete BYO admission report (byoAdmissionChangeRefusal). With it on, the next NEW deploy puts
  * every bring-your-own namespace of the environment in admission `enforce`; turned off, the namespaces
  * it moved return to `warn`. PDP-gated on project `edit`, like setAutoHeal. The setting changes a
  * security control in both directions, so each change that changes something writes an audit row
@@ -3663,7 +3665,12 @@ export async function setByoAdmissionEnforce(
 	const input = byoAdmissionEnforceInput.parse({ projectId, environmentId, enforce });
 	await assertProjectInActorOrg(await currentActor(), input.projectId);
 	const actor = await authorize("edit", { type: "project", id: input.projectId });
-	return withActorScope(actor, (tx) => writeByoAdmissionEnforce(tx, actor.userId, input));
+	// The latest deploy's report: turning refusal on is refused over an incomplete one, for every
+	// caller, not only the drawer. Read only when turning it on; the off switch never waits on it.
+	const report = input.enforce
+		? (await readGitopsDeployStatus(input.projectId, input.environmentId)).byoAdmission
+		: [];
+	return withActorScope(actor, (tx) => writeByoAdmissionEnforce(tx, actor.userId, input, report));
 }
 
 /** Per-component presence across a project's environments (the "where do my envs diverge" matrix). */

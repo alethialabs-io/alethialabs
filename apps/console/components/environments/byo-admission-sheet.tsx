@@ -12,7 +12,7 @@
 //
 // THE REPORT COMES FIRST. Turning refusal on is only safe for a person who has seen what it will
 // refuse, so the drawer shows the latest deploy's per-namespace report (the #6495 Deploy-tab
-// findings, read fresh through getGitopsDeployStatus) ABOVE the switch, with the deploy's date, and
+// findings, read fresh through the `environments.byoAdmissionReport` read procedure) ABOVE the switch, with the deploy's date, and
 // turning it on asks for an explicit acknowledgement of that report. Consent is BLOCKED until the
 // latest deploy produced a COMPLETE report (byoAdmissionReportComplete): a kind the runner could not
 // check is shown as "could not be checked", never as "nothing found", and a missing report is not
@@ -26,11 +26,10 @@ import { X } from "lucide-react";
 import { useEffect, useId } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
-import { getGitopsDeployStatus } from "@/app/server/actions/gitops-status";
 import { setByoAdmissionEnforce } from "@/app/server/actions/projects";
 import { RegionError } from "@/components/errors/region-error";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import { byoAdmissionReportComplete } from "@/lib/gitops/deploy-status";
+import { byoAdmissionReportComplete } from "@/lib/gitops/byo-admission-report";
 import { orpc } from "@/lib/rpc/client";
 import type { ByoAdmissionNamespaceReport } from "@/types/jsonb.types";
 import { formatRelative } from "@repo/format";
@@ -140,16 +139,17 @@ export function ByoAdmissionSheet({
 	const ackId = useId();
 	// Read fresh on every open: the report is the reason a person turns this on.
 	const report = useQuery({
-		queryKey: ["byo-admission-report", projectId, envId],
-		queryFn: () => getGitopsDeployStatus(projectId, envId),
+		...orpc.environments.byoAdmissionReport.queryOptions({
+			input: { projectId, environmentId: envId },
+		}),
 		enabled: open,
 		refetchOnMount: "always",
 	});
 
-	const namespaces = report.data?.byoAdmission ?? [];
+	const namespaces = report.data?.report ?? [];
 	const complete = byoAdmissionReportComplete(namespaces);
 	const findings = namespaces.reduce((n, ns) => n + (ns.findings?.length ?? 0), 0);
-	const reportAt = report.data?.byoAdmissionReportAt ?? null;
+	const reportAt = report.data?.reportAt ?? null;
 
 	const { control, handleSubmit, reset, formState } = useForm<ByoAdmissionForm>({
 		resolver: zodResolver(byoAdmissionFormSchema(enforce, complete)),
@@ -167,6 +167,7 @@ export function ByoAdmissionSheet({
 				return values.enforce;
 			}),
 		{
+			// The page's read (the card's mode and "Redeploy to apply"), and this drawer's own.
 			invalidates: [orpc.environments.key()],
 			successMessage: (on) =>
 				`BYO admission ${on ? "set to refuse" : "set to report"} for ${envName} — it applies on the next deploy`,

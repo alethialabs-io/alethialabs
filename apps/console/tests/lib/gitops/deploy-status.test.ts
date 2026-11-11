@@ -9,11 +9,11 @@
 import { describe, expect, it } from "vitest";
 import {
 	assembleGitopsDeployStatus,
-	byoAdmissionReportComplete,
 	gitopsStatusReportSchema,
 	type GitopsAssemblyInputs,
 	type GitopsJobFacts,
 } from "@/lib/gitops/deploy-status";
+import { byoAdmissionReportComplete } from "@/lib/gitops/byo-admission-report";
 
 /** A successful gitops-mode DEPLOY job carrying a full snapshot. */
 function successDeploy(overrides: Partial<GitopsJobFacts> = {}): GitopsJobFacts {

@@ -1,1 +1,0 @@
-ALTER TABLE "project_environments" ADD COLUMN "byo_admission_enforce" boolean DEFAULT false NOT NULL;

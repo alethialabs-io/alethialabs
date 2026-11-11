@@ -10,6 +10,8 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Tx } from "@/lib/db";
 import { auditLog, projectEnvironments } from "@/lib/db/schema";
+import { byoAdmissionChangeRefusal } from "@/lib/gitops/byo-admission-report";
+import type { ByoAdmissionNamespaceReport } from "@/types/jsonb.types";
 
 /** The input of setByoAdmissionEnforce: two ids and the setting. */
 export const byoAdmissionEnforceInput = z.object({
@@ -24,8 +26,18 @@ export type ByoAdmissionEnforceInput = z.infer<typeof byoAdmissionEnforceInput>;
 /** The slice of a transaction the write uses. */
 export type ByoAdmissionWriteTx = Pick<Tx, "select" | "update" | "insert">;
 
+/** Turning refusal on was refused: the latest deploy's report is not complete. */
+export class ByoAdmissionChangeRefused extends Error {
+	/** Names the refusal for the caller. */
+	constructor(message: string) {
+		super(message);
+		this.name = "ByoAdmissionChangeRefused";
+	}
+}
+
 /**
- * Reads the stored setting, writes the new one, and records `byo_admission_enforce: { from, to }`
+ * Reads the stored setting, refuses turning refusal on over an incomplete `report` (the latest
+ * deploy's, read by the caller) with ByoAdmissionChangeRefused, writes the new one, and records `byo_admission_enforce: { from, to }`
  * in the audit log when it changed — both in the caller's transaction, so a change is never written
  * without its audit row. The setting changes a security control in both directions, so both
  * directions are recorded. Throws when the environment is not in the project.
@@ -34,6 +46,7 @@ export async function writeByoAdmissionEnforce(
 	tx: ByoAdmissionWriteTx,
 	userId: string,
 	input: ByoAdmissionEnforceInput,
+	report: readonly ByoAdmissionNamespaceReport[],
 ): Promise<{ changed: boolean }> {
 	const inEnv = and(
 		eq(projectEnvironments.id, input.environmentId),
@@ -46,6 +59,8 @@ export async function writeByoAdmissionEnforce(
 		.limit(1);
 	if (!before) throw new Error("Environment not found for this project");
 	if (before.enforce === input.enforce) return { changed: false };
+	const refusal = byoAdmissionChangeRefusal(before.enforce, input.enforce, report);
+	if (refusal) throw new ByoAdmissionChangeRefused(refusal);
 	await tx
 		.update(projectEnvironments)
 		.set({ byo_admission_enforce: input.enforce, updated_at: new Date() })

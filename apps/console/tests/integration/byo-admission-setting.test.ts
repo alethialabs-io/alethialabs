@@ -7,6 +7,8 @@
 //     in BOTH directions, in the same transaction as the write; a save that changes nothing writes
 //     none;
 //   * an environment of another project is refused, and nothing is written;
+//   * turning refusal on is refused over an incomplete report, for every caller; the off switch never is;
+//   * a drift scan's Unknown never erases `first_observed_running_at` (the sticky history);
 //   * the Environments card reads "redeploy to apply" from what the latest deploy CARRIED: a deploy
 //     built before the change keeps the old value, so the note stays until a new one is made.
 
@@ -15,8 +17,21 @@ import { and, eq } from "drizzle-orm";
 import { beforeAll, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import { auditLog, jobs, projectAddons, projectEnvironments, projects } from "@/lib/db/schema";
+import { recordAddonHealth } from "@/lib/addons/inspection-persistence";
 import { readByoAdmissionCardStates } from "@/lib/environments/byo-admission-state";
-import { writeByoAdmissionEnforce } from "@/lib/environments/byo-admission-write";
+import { ByoAdmissionChangeRefused, writeByoAdmissionEnforce } from "@/lib/environments/byo-admission-write";
+import type { ByoAdmissionNamespaceReport } from "@/types/jsonb.types";
+
+/** A complete report: one warn namespace, every kind checked. */
+const COMPLETE: ByoAdmissionNamespaceReport[] = [
+	{
+		namespace: "byo-shop",
+		charts: ["shop"],
+		mode: "warn",
+		reason: "chart-history",
+		checks: ["Service", "Ingress", "Secret", "PodSecurity"].map((kind) => ({ kind, state: "checked" as const })),
+	},
+];
 import { defaultIfFirst, describeIfDb } from "./db";
 
 const USER = randomUUID();
@@ -80,9 +95,9 @@ describeIfDb("BYO admission setting — real Postgres", () => {
 
 	it("audits each change in both directions, and nothing for a save that changes nothing", async () => {
 		const input = (enforce: boolean) => ({ projectId, environmentId: envId, enforce });
-		expect(await db.transaction((tx) => writeByoAdmissionEnforce(tx, USER, input(true)))).toEqual({ changed: true });
-		expect(await db.transaction((tx) => writeByoAdmissionEnforce(tx, USER, input(true)))).toEqual({ changed: false });
-		expect(await db.transaction((tx) => writeByoAdmissionEnforce(tx, USER, input(false)))).toEqual({ changed: true });
+		expect(await db.transaction((tx) => writeByoAdmissionEnforce(tx, USER, input(true), COMPLETE))).toEqual({ changed: true });
+		expect(await db.transaction((tx) => writeByoAdmissionEnforce(tx, USER, input(true), COMPLETE))).toEqual({ changed: false });
+		expect(await db.transaction((tx) => writeByoAdmissionEnforce(tx, USER, input(false), []))).toEqual({ changed: true });
 
 		expect(await audits()).toEqual([
 			{ user_id: USER, action: "UPDATED", changes: { environment_id: envId, byo_admission_enforce: { from: false, to: true } } },
@@ -98,7 +113,7 @@ describeIfDb("BYO admission setting — real Postgres", () => {
 	it("refuses an environment of another project and writes nothing", async () => {
 		const before = (await audits()).length;
 		await expect(
-			db.transaction((tx) => writeByoAdmissionEnforce(tx, USER, { projectId: otherProjectId, environmentId: envId, enforce: true })),
+			db.transaction((tx) => writeByoAdmissionEnforce(tx, USER, { projectId: otherProjectId, environmentId: envId, enforce: true }, COMPLETE)),
 		).rejects.toThrow("Environment not found");
 		expect((await audits()).length).toBe(before);
 		const [row] = await db
@@ -106,6 +121,37 @@ describeIfDb("BYO admission setting — real Postgres", () => {
 			.from(projectEnvironments)
 			.where(and(eq(projectEnvironments.id, envId), eq(projectEnvironments.project_id, projectId)));
 		expect(row.enforce).toBe(false);
+	});
+
+	it("refuses turning refusal on over an incomplete report, writes nothing, and never blocks turning it off", async () => {
+		const before = (await audits()).length;
+		const incomplete: ByoAdmissionNamespaceReport[] = [{ ...COMPLETE[0], checks: COMPLETE[0].checks?.slice(1) }];
+		for (const report of [[], incomplete]) {
+			await expect(
+				db.transaction((tx) => writeByoAdmissionEnforce(tx, USER, { projectId, environmentId: envId, enforce: true }, report)),
+			).rejects.toBeInstanceOf(ByoAdmissionChangeRefused);
+		}
+		expect((await audits()).length).toBe(before);
+		await db.transaction((tx) => writeByoAdmissionEnforce(tx, USER, { projectId, environmentId: envId, enforce: true }, COMPLETE));
+		expect(await db.transaction((tx) => writeByoAdmissionEnforce(tx, USER, { projectId, environmentId: envId, enforce: false }, []))).toEqual({ changed: true });
+	});
+
+	it("a drift scan's Unknown does not erase the sticky history; the first running read stamps it once", async () => {
+		const stamp = async () =>
+			(
+				await db
+					.select({ at: projectAddons.first_observed_running_at })
+					.from(projectAddons)
+					.where(and(eq(projectAddons.environment_id, envId), eq(projectAddons.addon_id, "shop")))
+			)[0].at;
+		await recordAddonHealth(projectId, envId, { "addon-shop": { health: "Unknown", sync: "Unknown" } });
+		expect(await stamp()).toBeNull();
+		await recordAddonHealth(projectId, envId, { "addon-shop": { health: "Healthy", sync: "Synced" } });
+		const first = await stamp();
+		expect(first).not.toBeNull();
+		await recordAddonHealth(projectId, envId, { "addon-shop": { health: "Unknown", sync: "Unknown" } });
+		await recordAddonHealth(projectId, envId, { "addon-shop": { health: "Degraded", sync: "Synced" } });
+		expect(await stamp()).toEqual(first);
 	});
 
 	it("says 'redeploy to apply' until a deploy carries the setting, and only where a BYO chart is", async () => {

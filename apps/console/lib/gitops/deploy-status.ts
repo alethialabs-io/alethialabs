@@ -430,22 +430,3 @@ export async function readGitopsDeployStatus(
 		})),
 	});
 }
-
-/** The checks a complete BYO namespace report carries: every object kind, and Pod Security. */
-const BYO_ADMISSION_CHECK_KINDS = ["Service", "Ingress", "Secret", "PodSecurity"] as const;
-
-/**
- * Whether a BYO admission report is COMPLETE (#6541): it exists, and every namespace whose charts were
- * deployed has every kind checked (Pod Security `enforced` counts). A namespace with no `checks` —
- * from a runner that predates them — is NOT complete: an absent check is not a clean one. Refused
- * namespaces were not deployed and are not checked.
- */
-export function byoAdmissionReportComplete(report: readonly ByoAdmissionNamespaceReport[]): boolean {
-	if (report.length === 0) return false;
-	return report.every((ns) => {
-		if (ns.mode === "refused") return true;
-		return BYO_ADMISSION_CHECK_KINDS.every((kind) =>
-			(ns.checks ?? []).some((c) => c.kind === kind && c.state !== "failed"),
-		);
-	});
-}

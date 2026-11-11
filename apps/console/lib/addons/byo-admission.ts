@@ -11,19 +11,19 @@
 // environment's own — the case the cluster can no longer answer, a re-provisioned cluster with no
 // Applications. The runner never lets it lift a refusal.
 //
-// WHAT COUNTS AS "HAS RUN". A chart whose last ArgoCD read-back (`project_addons.health`, written by
-// recordAddonHealth after a deploy or a drift scan) is a state in which the Application exists AND has
-// resources: Healthy, Progressing, Degraded or Suspended. NOT `last_synced_at`: that is stamped for
-// every name the runner asked about, and the runner's health read seeds `Unknown/Unknown` for a name
-// before it reads anything, so it is set for an Application that does not exist, for a chart the
-// deploy refused, and for every name when the read failed. `Unknown` is exactly those cases, and
-// `Missing` is an Application whose resources do not exist, so neither counts. `last_synced_at` and
-// its other readers (the CLI add-ons list) are left as they are.
+// WHAT COUNTS AS "HAS RUN". A chart whose ArgoCD read-back (recordAddonHealth, after a deploy or a
+// drift scan) has EVER seen its Application in a state with resources — Healthy, Progressing,
+// Degraded or Suspended — which stamps `project_addons.first_observed_running_at` once and never
+// clears it. NOT the current `health`: a drift scan rewrites that to Unknown for an Application it
+// cannot find, which is exactly what a re-provisioned cluster looks like, and the history would be
+// gone when it is needed. And NOT `last_synced_at`: that is stamped for every name the runner asked
+// about, and the runner's health read seeds `Unknown/Unknown` for a name before it reads anything,
+// so it is set for an Application that does not exist, for a chart the deploy refused, and for every
+// name when the read failed. `Unknown` and `Missing` (an Application whose resources do not exist)
+// never stamp the column.
 //
-// NO BACKFILL. `health` is written by the same read-back that has always run, so every chart that has
-// been read back in a running state already carries it. A chart whose LAST read was Unknown (a kubectl
-// hiccup) is not listed until its next good read; for a namespace that still exists that changes
-// nothing, because the runner's own Application read decides there.
+// BACKFILL. The column's migration (0173) stamps every existing row whose current health is a running
+// state, so a chart that ran before the column existed keeps its history.
 //
 // Emitted ONLY when the environment has a BYO chart, so every other environment freezes the same
 // snapshot bytes as before. Gated on the runner capability `byo-admission`
@@ -36,7 +36,7 @@
 export interface ByoAdmissionSnapshot {
 	/** The environment's setting (project_environments.byo_admission_enforce). */
 	enforce: boolean;
-	/** The ids of the BYO charts last read back in a running state, sorted. */
+	/** The ids of the BYO charts ever read back in a running state, sorted. */
 	deployed_charts: string[];
 }
 
@@ -44,11 +44,16 @@ export interface ByoAdmissionSnapshot {
 export interface ByoAdmissionAddonRow {
 	source: string;
 	addon_id: string;
-	health: string | null;
+	first_observed_running_at: Date | null;
 }
 
 /** ArgoCD health states in which an Application exists and has resources: the chart has run. */
 const RAN_HEALTH: ReadonlySet<string> = new Set(["Healthy", "Progressing", "Degraded", "Suspended"]);
+
+/** Whether an ArgoCD health read-back is a running state (RAN_HEALTH) — what stamps the history. */
+export function isRunningHealth(health: string | null | undefined): boolean {
+	return health !== null && health !== undefined && RAN_HEALTH.has(health);
+}
 
 /**
  * The `byo_admission` value for an environment whose setting is `enforce` and whose enabled add-on
@@ -63,7 +68,7 @@ export function byoAdmissionSnapshot(
 	return {
 		enforce,
 		deployed_charts: byo
-			.filter((r) => r.health !== null && RAN_HEALTH.has(r.health))
+			.filter((r) => r.first_observed_running_at !== null)
 			.map((r) => r.addon_id)
 			.sort(),
 	};
