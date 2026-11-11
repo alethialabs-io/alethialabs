@@ -1051,7 +1051,9 @@ export const ADDON_CATALOG: AddOnDef[] = [
 	//     fit, derive-compat) reads `chartRepo` as an https index.
 	//   - Its `kubernetesIngressNGINX` provider serves existing `ingressClassName: nginx` Ingresses and
 	//     reads most `nginx.ingress.kubernetes.io/*` annotations, so an environment can move off the
-	//     retired controller without rewriting a single Ingress first.
+	//     retired controller without rewriting a single Ingress first. That provider is OFF by default:
+	//     an annotation it does not support is ignored and the route is still served, so turning it on
+	//     beside a running ingress-nginx must follow the migration guide's annotation review.
 	//
 	// THE GATEWAY API PROVIDER IS OFF BY DEFAULT, AND THAT IS NOT A PREFERENCE. The chart stopped
 	// shipping the Gateway API CRDs, and no Alethia cluster has them (no template or platform add-on
@@ -1083,10 +1085,18 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				requests: { cpu: "100m", memory: "128Mi" },
 				limits: { memory: "512Mi" },
 			},
+			// Nothing in the add-on uses the API/dashboard, and with the CRD provider on, a route to
+			// `api@internal` from any namespace would publish the whole routing table. Off.
+			api: { dashboard: false },
 			providers: {
-				// Write the load balancer's address into each NGINX-class Ingress's status, as
-				// ingress-nginx did, so external-dns and anything else reading it keeps working.
-				kubernetesIngressNGINX: { publishService: { enabled: true } },
+				kubernetesIngressNGINX: {
+					// Write the load balancer's address into each NGINX-class Ingress's status, as
+					// ingress-nginx did, so external-dns and anything else reading it keeps working.
+					publishService: { enabled: true },
+					// An Ingress backed by an ExternalName Service would make the proxy forward to any
+					// DNS name. The chart allows it by default; the other two Kubernetes providers do not.
+					disableSvcExternalName: true,
+				},
 			},
 		},
 		configSchema: z.object({
@@ -1096,8 +1106,9 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			serviceType: z.enum(["LoadBalancer", "NodePort", "ClusterIP"]).default("LoadBalancer"),
 			/** A dedicated metrics Service for Prometheus to scrape. */
 			metrics: z.boolean().default(false),
-			/** Serve `ingressClassName: nginx` Ingresses and read their nginx annotations. */
-			ingressNginx: z.boolean().default(true),
+			/** Serve `ingressClassName: nginx` Ingresses. OFF by default: turned on only after the
+			 * migration guide's annotation review (see the field's help). */
+			ingressNginx: z.boolean().default(false),
 			/** The Gateway API provider: a GatewayClass and Gateway. Needs the Gateway API CRDs. */
 			gatewayApi: z.boolean().default(false),
 		}),
@@ -1128,8 +1139,8 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				key: "ingressNginx",
 				label: "Serve NGINX-class Ingresses",
 				type: "boolean",
-				default: true,
-				help: "Routes Ingress objects with ingressClassName nginx and reads their nginx.ingress.kubernetes.io annotations, so they move over unchanged. Some annotations behave differently or are not supported; the migration guide lists them.",
+				default: false,
+				help: "Routes Ingress objects with ingressClassName nginx; needs an nginx IngressClass to exist. Review their annotations against the migration guide first: Traefik serves a route without the access controls it does not support.",
 			},
 			{
 				key: "gatewayApi",

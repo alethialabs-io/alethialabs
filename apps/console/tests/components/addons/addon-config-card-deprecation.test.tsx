@@ -132,6 +132,27 @@ describe("AddonConfigForm — a deprecated add-on", () => {
 		expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument();
 	});
 
+	it("after the date, the Remove confirm says plainly that removal cannot be undone", async () => {
+		at("2027-06-01T00:00:00Z");
+		const user = userEvent.setup();
+		renderForm({ ...ITEM, install: INSTALLED });
+		await user.click(screen.getByRole("button", { name: "Remove" }));
+		const dialog = await screen.findByRole("alertdialog");
+		expect(dialog).toHaveTextContent("This cannot be undone");
+		expect(dialog).toHaveTextContent("it cannot be re-enabled here");
+		expect(dialog).not.toHaveTextContent("re-enabling it starts from the defaults");
+	});
+
+	it("before the date, the Remove confirm keeps the ordinary re-enable sentence", async () => {
+		at("2026-12-01T12:00:00Z");
+		const user = userEvent.setup();
+		renderForm({ ...ITEM, install: INSTALLED });
+		await user.click(screen.getByRole("button", { name: "Remove" }));
+		const dialog = await screen.findByRole("alertdialog");
+		expect(dialog).toHaveTextContent("re-enabling it starts from the defaults");
+		expect(dialog).not.toHaveTextContent("cannot be undone");
+	});
+
 	it("shows nothing for an add-on that is not deprecated", () => {
 		renderForm({ ...ITEM, deprecated: null });
 		expect(screen.queryByTestId("addon-deprecation-notice")).toBeNull();

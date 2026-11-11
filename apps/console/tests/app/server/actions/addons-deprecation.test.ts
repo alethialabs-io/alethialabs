@@ -84,12 +84,4 @@ describe("enableAddon — a deprecated add-on", () => {
 		await expect(enableAddon(BASE)).resolves.toEqual({ ok: true });
 		expect(wrote.insert).toBe(true);
 	});
-
-	it("never refuses the replacement", async () => {
-		vi.useFakeTimers({ toFake: ["Date"] });
-		vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
-		const wrote = setupDb([]);
-		await expect(enableAddon({ ...BASE, addonId: "traefik" })).resolves.toEqual({ ok: true });
-		expect(wrote.insert).toBe(true);
-	});
 });

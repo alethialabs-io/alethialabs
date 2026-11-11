@@ -458,12 +458,16 @@
 					"memory": "512Mi"
 				}
 			},
+			"api": {
+				"dashboard": false
+			},
 			"providers": {
 				"kubernetesIngressNGINX": {
 					"publishService": {
 						"enabled": true
 					},
-					"enabled": true
+					"disableSvcExternalName": true,
+					"enabled": false
 				},
 				"kubernetesGateway": {
 					"enabled": false

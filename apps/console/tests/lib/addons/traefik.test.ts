@@ -24,12 +24,21 @@ describe("the Traefik add-on", () => {
 		expect(traefik?.deprecated).toBeUndefined();
 	});
 
-	it("serves NGINX-class Ingresses by default, and publishes the LB address into their status", () => {
-		const v = resolved();
-		expect(v).toMatchObject({
-			providers: {
-				kubernetesIngressNGINX: { enabled: true, publishService: { enabled: true } },
-			},
+	it("does NOT serve NGINX-class Ingresses by default — an unsupported annotation is dropped silently", () => {
+		// Turned on beside a running ingress-nginx, the provider would serve every nginx-class route on
+		// a second address without the controls it cannot read. The guide's review comes first.
+		expect(resolved()).toMatchObject({
+			providers: { kubernetesIngressNGINX: { enabled: false, publishService: { enabled: true } } },
+		});
+		expect(resolved({ ingressNginx: true })).toMatchObject({
+			providers: { kubernetesIngressNGINX: { enabled: true } },
+		});
+	});
+
+	it("refuses ExternalName backends and keeps the API/dashboard off", () => {
+		expect(resolved()).toMatchObject({
+			api: { dashboard: false },
+			providers: { kubernetesIngressNGINX: { disableSvcExternalName: true } },
 		});
 	});
 
@@ -51,12 +60,12 @@ describe("the Traefik add-on", () => {
 	});
 
 	it("maps the knobs onto the chart's own keys", () => {
-		const v = resolved({ replicas: 3, serviceType: "NodePort", metrics: true, ingressNginx: false });
+		const v = resolved({ replicas: 3, serviceType: "NodePort", metrics: true, ingressNginx: true });
 		expect(v).toMatchObject({
 			deployment: { replicas: 3 },
 			service: { spec: { type: "NodePort" } },
 			metrics: { prometheus: { service: { enabled: true } } },
-			providers: { kubernetesIngressNGINX: { enabled: false } },
+			providers: { kubernetesIngressNGINX: { enabled: true } },
 		});
 	});
 });

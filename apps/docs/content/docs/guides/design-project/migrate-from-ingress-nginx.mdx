@@ -22,11 +22,25 @@ ready.
 1. **Swap the controller.** Traefik serves your existing Ingress objects, so you change no Ingress.
 2. **Move to Gateway API.** Rewrite each Ingress as an `HTTPRoute`. This stage is optional.
 
-## Before you start
+## Stage 1: swap the controller
 
-- Read the [annotation table](#annotations-that-do-not-carry-over). If an Ingress uses an annotation
-  marked **not supported**, plan its replacement before you remove Ingress NGINX.
-- Find the annotations you use:
+Traefik's NGINX provider reads Ingress objects with `ingressClassName: nginx` and their
+`nginx.ingress.kubernetes.io/*` annotations. The add-on setting **Serve NGINX-class Ingresses**
+turns the provider on. It is off by default. Both controllers can run at the same time, each behind
+its own cloud load balancer. You move traffic by moving DNS.
+
+<Callout type="warn">
+Review your annotations **before** you turn on **Serve NGINX-class Ingresses**. Traefik ignores an
+annotation it does not support and still serves the route. As soon as the setting is on, each
+NGINX-class Ingress is reachable on Traefik's load balancer address, even before you move DNS.
+</Callout>
+
+<Steps>
+<Step>
+
+### Review your annotations
+
+List the annotations your Ingress objects use:
 
 ```bash
 kubectl get ingress --all-namespaces -o json \
@@ -34,24 +48,35 @@ kubectl get ingress --all-namespaces -o json \
   | grep '^nginx.ingress.kubernetes.io/' | sort | uniq -c
 ```
 
-## Stage 1: swap the controller
+Compare the list with the [annotation table](#annotations-that-do-not-carry-over). Some unsupported
+annotations are access controls:
 
-Traefik's NGINX provider reads Ingress objects with `ingressClassName: nginx` and their
-`nginx.ingress.kubernetes.io/*` annotations. Both controllers can run at the same time, each behind
-its own cloud load balancer. You move traffic by moving DNS.
+- `denylist-source-range`
+- `enable-modsecurity`, `enable-owasp-core-rules`, `modsecurity-snippet` and the other ModSecurity
+  and OWASP rule annotations
+- `auth-tls-match-cn`
 
-<Steps>
+Traefik serves the route without this control. Replace it with a Traefik middleware first, or keep
+that Ingress on Ingress NGINX. The setting applies to every NGINX-class Ingress at once, so to keep
+one Ingress on Ingress NGINX, leave the setting off until its control is replaced.
+
+</Step>
 <Step>
 
 ### Enable Traefik
 
-On the Architecture canvas, open the Add palette, choose **Traefik**, and leave **Serve NGINX-class
-Ingresses** on. Select **Enable add-on**, then deploy the environment.
+On the Architecture canvas, open the Add palette and choose **Traefik**. Turn on **Serve
+NGINX-class Ingresses** only when the review is done. Select **Enable add-on**, then deploy the
+environment.
+
+The setting needs an IngressClass named `nginx` with `spec.controller: k8s.io/ingress-nginx`. The
+Ingress NGINX add-on creates it. On an environment that never ran Ingress NGINX, create the class
+yourself, or leave the setting off and give your Ingress objects `ingressClassName: traefik`.
 
 To do the same from the CLI:
 
 ```bash
-alethia addon enable traefik --project my-project
+alethia addon enable traefik --project my-project --set ingressNginx=true
 ```
 
 </Step>
@@ -188,7 +213,7 @@ prefix.
 | `proxy-body-size` | Supported | No Gateway API field. Use the `Buffering` Middleware |
 | `proxy-read-timeout`, `proxy-send-timeout`, `proxy-connect-timeout` | Supported | The route `timeouts` field exists, but Traefik does not support it. Use a Traefik `ServersTransport` |
 | `whitelist-source-range`, `allowlist-source-range` | Supported | No Gateway API field. Use the `IPAllowList` Middleware |
-| `denylist-source-range` | **Not supported** | No Gateway API field. Use the `IPAllowList` Middleware with the inverse range |
+| `denylist-source-range` | **Not supported. An access control: Traefik serves the route without it** | No Gateway API field. Use the `IPAllowList` Middleware with the inverse range |
 | `auth-url`, `auth-signin` | Partly supported: URL and response headers only, little variable interpolation. Scope the route to a host, or `auth-signin` can allow an open redirect | No standard field. Use the `ForwardAuth` Middleware |
 | `auth-type: basic`, `auth-secret` | Supported | No Gateway API field. Use the `BasicAuth` Middleware |
 | `enable-cors`, `cors-*` | Partly supported | The `CORS` filter exists, but Traefik does not support it. Use the `Headers` Middleware |
@@ -205,9 +230,10 @@ prefix.
 | `upstream-vhost` | Supported | `URLRewrite` with `hostname` |
 | `custom-headers` | Supported | `RequestHeaderModifier` or `ResponseHeaderModifier` filter |
 | `mirror-*` | **Not supported** | `RequestMirror` filter, which Traefik does not support |
-| `enable-modsecurity`, `modsecurity-*` | **Not supported** | No equivalent |
+| `enable-modsecurity`, `enable-owasp-core-rules`, `modsecurity-*` | **Not supported. An access control: Traefik serves the route without it** | No equivalent |
 | `enable-opentelemetry`, `opentracing` | **Not supported** | Configure tracing on Traefik itself |
-| `auth-tls-match-cn`, `auth-tls-error-page` | **Not supported** | No equivalent |
+| `auth-tls-match-cn` | **Not supported. An access control: Traefik serves the route without it** | No equivalent |
+| `auth-tls-error-page` | **Not supported** | No equivalent |
 | `proxy-redirect-from`, `proxy-redirect-to` | **Not supported** | No equivalent |
 
 Other differences in Stage 1:

@@ -276,8 +276,9 @@ export function AddonConfigForm({
   // drops the Enable button rather than offering a press that can only fail. An installed one keeps
   // Save, because a reconfigure is never refused.
   const deprecation = item.deprecated ?? null;
-  const closedToNew =
-    deprecation !== null && !isInstalled && closedToNewInstalls(deprecation, new Date());
+  const closedForNewInstalls =
+    deprecation !== null && closedToNewInstalls(deprecation, new Date());
+  const closedToNew = closedForNewInstalls && !isInstalled;
 
   const onSubmit = form.handleSubmit(async (values) => {
     // The double-submit guard: the Save button is disabled while pending, and a second submit (Enter
@@ -554,7 +555,7 @@ export function AddonConfigForm({
             deprecation={deprecation}
             name={item.name}
             installed={isInstalled}
-            closed={closedToNewInstalls(deprecation, new Date())}
+            closed={closedForNewInstalls}
             onOpenReplacement={onOpenAddon}
           />
         )}
@@ -668,7 +669,13 @@ export function AddonConfigForm({
           open={confirmRemove}
           onOpenChange={setConfirmRemove}
           title="Remove this add-on?"
-          description={`${item.name} is uninstalled from this environment on your next Deploy, along with anything its chart owns in the cluster. Its configuration is not kept — re-enabling it starts from the defaults.`}
+          description={
+            // Past the removal date a removed add-on is a NEW install the next time, and new installs
+            // are refused (#6543) — so the usual "re-enabling starts from the defaults" would be false.
+            closedForNewInstalls && deprecation
+              ? `${item.name} is uninstalled from this environment on your next Deploy, along with anything its chart owns in the cluster. This cannot be undone: ${item.name} no longer accepts new installs, so it cannot be re-enabled here. Move your traffic to ${deprecation.replacementName} first.`
+              : `${item.name} is uninstalled from this environment on your next Deploy, along with anything its chart owns in the cluster. Its configuration is not kept — re-enabling it starts from the defaults.`
+          }
           confirmLabel="Remove add-on"
           onConfirm={() => {
             void onRemove();
