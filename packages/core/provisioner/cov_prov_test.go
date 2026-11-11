@@ -1468,7 +1468,9 @@ func TestProv_PrepareByoChartsRegistersOneCredentialPerRepo(t *testing.T) {
 // AppProject and the repo credential cannot be applied, the deploy continues and the operator
 // is told — the charts simply do not sync.
 func TestProv_PrepareByoChartsIsBestEffort(t *testing.T) {
-	provStubTool(t, "kubectl", "#!/bin/sh\necho 'connection refused' >&2\nexit 1\n")
+	// Every write fails; the reads answer (an absent namespace). A cluster that cannot even be READ
+	// fails closed instead (#6562, TestConfigureByoCharts_AFailedReadAppliesNothing).
+	provStubTool(t, "kubectl", "#!/bin/sh\n[ \"$1\" = get ] && exit 0\necho 'connection refused' >&2\nexit 1\n")
 
 	vc := provByoChartConfig()
 	var errOut strings.Builder

@@ -574,12 +574,39 @@ func namespaceOwnershipRefusal(vc *types.ProjectConfig, ns, op string) error {
 	if envID == "" {
 		return fmt.Errorf("namespace placement: the config snapshot carries no environment_id, so the runner cannot tell whether namespace %q on the cluster belongs to this environment. Refusing the %s; nothing was changed on the cluster", ns, op)
 	}
+	exists, labels, err := readNamespaceLabels(ns)
+	if err != nil {
+		return fmt.Errorf("namespace placement: refusing the %s, because the runner %w, so it cannot check who owns it; nothing was changed on the cluster", op, err)
+	}
+	if !exists {
+		return nil
+	}
+	if labels[namespaceOwnerLabel] == envID {
+		return nil
+	}
+	return fmt.Errorf("namespace placement: namespace %q already exists on the cluster and does not belong to this environment (its %s label is not %q) — it is the host's, another environment's, or the platform's. Refusing the %s; nothing was changed on the cluster. Choose a namespace of your own. If the namespace is in fact this environment's, from before the label existed, an operator who has confirmed that can add the label to it and run the %s again", ns, namespaceOwnerLabel, envID, op, op)
+}
+
+// namespacePlacementLabel is the label the tenant render stamps on a namespace placement's Namespace
+// (argocd.RenderNamespaceTenant), with the value namespacePlacementValue. The platform's secret stores
+// deny a namespace carrying it, and a host BYO chart is refused one (#6562).
+// TestNamespacePlacementLabelIsTheTenantRenders pins it to the render.
+const (
+	namespacePlacementLabel = "alethia.io/placement"
+	namespacePlacementValue = "namespace"
+)
+
+// readNamespaceLabels reads Namespace ns from the cluster: whether it exists, and its labels. ns must
+// already be a DNS-1123 label (it is interpolated into a shell command). A failed read and an
+// unparseable answer are both errors, worded "could not read/parse namespace %q", so each caller
+// can fail closed and say so. It only reads.
+func readNamespaceLabels(ns string) (bool, map[string]string, error) {
 	out, err := executeCommandWithOutput(fmt.Sprintf("kubectl get namespace %s --ignore-not-found -o json", ns), "", nil)
 	if err != nil {
-		return fmt.Errorf("namespace placement: could not read namespace %q to check who owns it, so refusing the %s; nothing was changed on the cluster: %w", ns, op, err)
+		return false, nil, fmt.Errorf("could not read namespace %q: %w", ns, err)
 	}
 	if strings.TrimSpace(out) == "" {
-		return nil
+		return false, nil, nil
 	}
 	var obj struct {
 		Metadata struct {
@@ -587,12 +614,9 @@ func namespaceOwnershipRefusal(vc *types.ProjectConfig, ns, op string) error {
 		} `json:"metadata"`
 	}
 	if err := json.Unmarshal([]byte(out), &obj); err != nil {
-		return fmt.Errorf("namespace placement: could not parse namespace %q to check who owns it, so refusing the %s; nothing was changed on the cluster: %w", ns, op, err)
+		return false, nil, fmt.Errorf("could not parse namespace %q: %w", ns, err)
 	}
-	if obj.Metadata.Labels[namespaceOwnerLabel] == envID {
-		return nil
-	}
-	return fmt.Errorf("namespace placement: namespace %q already exists on the cluster and does not belong to this environment (its %s label is not %q) — it is the host's, another environment's, or the platform's. Refusing the %s; nothing was changed on the cluster. Choose a namespace of your own. If the namespace is in fact this environment's, from before the label existed, an operator who has confirmed that can add the label to it and run the %s again", ns, namespaceOwnerLabel, envID, op, op)
+	return true, obj.Metadata.Labels, nil
 }
 
 // placementNamespaceRefusal refuses a namespace placement whose namespace ns is reserved on the host
