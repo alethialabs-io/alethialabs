@@ -10,6 +10,8 @@
 #   base=dev                      allow   Mergify normally lands it; merging your own dev PR is permitted
 #   base=staging, head=dev        allow   a PROMOTION — only as below, and only when green
 #   base=main,    head=staging    allow   a PROMOTION — the same conditions
+#   base=main,    head=release-please--branches--main--components--<c>
+#                                 allow   a RELEASE PR — the same conditions, plus the three below
 #   any other staging/main merge  block   a hotfix or a skipped hop is the maintainer's
 #   --admin                       block   bypasses the merge queue and the rules, whatever the base
 #   more than one `gh pr merge`   block   one command, one merge, one verdict
@@ -35,6 +37,20 @@
 #     be what lands, and for main the rule keeps one behaviour for both hops.
 #   · not `-d/--delete-branch`: the head of a promotion IS dev or staging. The rulesets stop the
 #     remote delete, but gh also deletes the LOCAL branch when run from a tree on it.
+#
+# A RELEASE PR (maintainer ruling 2026-11-11: "get it all to main, I authorize the merges") is the
+# release-please PR that bumps one component's version on `main`. It merges under every promotion
+# condition above, and only when, read from the API rather than from anything the command says:
+#   · the head branch matches ^release-please--branches--main--components--[a-z0-9-]+$ — whole, so
+#     a branch that only CONTAINS that name (a prefix, a `/suffix`) is not one;
+#   · the PR's author login is `app/alethia-labs-ci`, the GitHub App release-please.yml mints its
+#     token from. A login with a `/` cannot be a user account, and the author is not editable text;
+#   · every changed file is MODIFIED or ADDED and is on the allowlist DERIVED from
+#     release-please-config.json: `.release-please-manifest.json`, each package's changelog-path
+#     (CHANGELOG.md by default) and each package's `extra-files`. A release PR carrying anything
+#     else — code, a workflow, the config itself, a rename — is refused. The list is read from
+#     `gh pr view --json files,changedFiles`, and a list shorter than changedFiles (gh reads at most
+#     100) is refused rather than judged on the part it saw.
 #
 # Fail-closed matters here. The failure modes for resolving a PR are "offline", "not a PR
 # number" and "wrong repo", and in every one the safe answer is to refuse: an irreversible
@@ -66,9 +82,18 @@ deny() {
 	echo "  Promotions (dev → staging, staging → main) are agents' work WHEN GREEN:" >&2
 	echo "    gh pr merge <n> --merge --match-head-commit <head sha>" >&2
 	echo "  — every check passed and every release-gate leg passed, for exactly that head." >&2
+	echo "  A release-please PR into main merges the same way, when its author and files are release-please's." >&2
 	echo "  Anything else into staging/main is the maintainer's: ask the maintainer." >&2
 	exit 2
 }
+
+# The release PR rule's two constants. The head pattern is built in two halves so that each anchor
+# is a mutant of its own.
+# @mut-sub release-re-start s/\^//
+RELEASE_HEAD_RE='^release-please--branches--main--components--'
+# @mut-sub release-re-end s/\$'/'/
+RELEASE_HEAD_RE+='[a-z0-9-]+$'
+RELEASE_AUTHOR='app/alethia-labs-ci'
 
 # merge_args_from_words <raw segment> — set margs from the segment's quote-aware words: skip to
 # the `gh`, past gh's global flags, past `pr merge`. Leaves margs alone when that shape is not found.
@@ -200,47 +225,117 @@ main() {
 		;;
 	esac
 
-	# ── a staging/main base: only a promotion, only green ─────────────────────────────────────
+	# ── a staging/main base: only a promotion or a release PR, only green ─────────────────────
+	local kind
 	case "$base:$head" in
-	staging:dev | main:staging) ;;
+	staging:dev | main:staging) kind=promotion ;;
+	main:*)
+		kind=release
+		if ! [[ "$head" =~ $RELEASE_HEAD_RE ]]; then
+			# @mut release-branch
+			deny "PR #$pr merges \`${head:-?}\` into \`main\`. Only staging → main and a release-please PR (head release-please--branches--main--components--<c>) may."
+		fi
+		;;
 	*) deny "PR #$pr merges \`${head:-?}\` into \`$base\`. Only dev → staging and staging → main are promotions." ;;
 	esac
-	if [ "$squash" = 1 ] || [ "$rebase" = 1 ]; then
-		deny "promotion PR #$pr must land as a merge commit (--merge); a squash or rebase drops the ancestry the next promotion needs."
+	require_merge_flags
+	if [ "$kind" = release ]; then
+		# @mut release-rule
+		require_release_pr
 	fi
-	[ "$merge" = 1 ] || deny "promotion PR #$pr must say --merge explicitly (a merge commit, not a squash)."
+	# @mut merge-green
+	require_green
+	exit 0
+}
+
+# require_merge_flags — the promotion merge shape, for a promotion or a release PR (reads main's
+# locals): --merge, never --squash/--rebase/--auto/--delete-branch, and --match-head-commit = head.
+require_merge_flags() {
+	if [ "$squash" = 1 ] || [ "$rebase" = 1 ]; then
+		deny "$kind PR #$pr must land as a merge commit (--merge); a squash or rebase drops the ancestry the next promotion needs."
+	fi
+	[ "$merge" = 1 ] || deny "$kind PR #$pr must say --merge explicitly (a merge commit, not a squash)."
 	if [ "$auto" = 1 ]; then
-		deny "\`--auto\` on promotion PR #$pr would land it later, on whatever $base requires then — not on the state this guard checks. Merge it once it is green."
+		deny "\`--auto\` on $kind PR #$pr would land it later, on whatever $base requires then — not on the state this guard checks. Merge it once it is green."
 	fi
 	if [ "$delbranch" = 1 ]; then
 		# @mut merge-delete-branch
-		deny "\`--delete-branch\` on promotion PR #$pr would delete \`$head\` — the integration branch itself."
+		deny "\`--delete-branch\` on $kind PR #$pr would delete \`$head\` — for a promotion, the integration branch itself."
 	fi
-	[ -n "$sha" ] || deny "could not read the head commit of promotion PR #$pr, so the checks cannot be tied to what lands."
+	[ -n "$sha" ] || deny "could not read the head commit of $kind PR #$pr, so the checks cannot be tied to what lands."
 	local exact="gh pr merge $pr${repo:+ -R $repo} --merge --match-head-commit $sha"
 	if [ -z "$mhc" ]; then
 		# @mut merge-mhc-missing
-		deny "promotion PR #$pr must name the head its checks were verified for. Run:  $exact"
+		deny "$kind PR #$pr must name the head its checks were verified for. Run:  $exact"
 	fi
 	if [ "$mhc" != "$sha" ]; then
 		# @mut merge-mhc-mismatch
-		deny "promotion PR #$pr: --match-head-commit $mhc is not its head ($sha) — the head moved, and the new one is what the checks below describe. Re-check, then run:  $exact"
+		deny "$kind PR #$pr: --match-head-commit $mhc is not its head ($sha) — the head moved, and the new one is what the checks below describe. Re-check, then run:  $exact"
 	fi
+}
 
+# release_allowlist — print the files a release PR may change, derived from
+# release-please-config.json: the manifest, each package's changelog-path and its extra-files
+# (relative to the package, or to the repo root when written with a leading `/`).
+release_allowlist() {
+	local cfg="${CLAUDE_PROJECT_DIR:-.}/release-please-config.json"
+	echo ".release-please-manifest.json"
+	jq -r '(.["changelog-path"] // "CHANGELOG.md") as $dcl
+		| .packages // {} | to_entries[]
+		| (if .key == "." then "" else .key + "/" end) as $p
+		| ($p + (.value["changelog-path"] // $dcl)),
+		  ((.value["extra-files"] // [])[] | (if type == "string" then . else .path end)
+		   | select(type == "string") | if startswith("/") then ltrimstr("/") else $p + . end)' \
+		"$cfg" 2>/dev/null
+}
+
+# require_release_pr — a release PR's author is the release automation, and it changes only the
+# files release-please writes. Both are read from the API (reads main's locals).
+require_release_pr() {
+	local info allowed bad
+	info="$(gh pr view "$pr" "${rargs[@]}" --json author,files,changedFiles 2>/dev/null)"
+	printf '%s' "$info" | jq -e 'type == "object" and (.files | type == "array")' >/dev/null 2>&1 ||
+		deny "could not read the author and files of release PR #$pr (offline, or gh failed)."
+	if ! printf '%s' "$info" | jq -e --arg a "$RELEASE_AUTHOR" '.author.login == $a' >/dev/null 2>&1; then
+		# @mut release-author
+		deny "release PR #$pr was not opened by \`$RELEASE_AUTHOR\` (it was by \`$(printf '%s' "$info" | jq -r '.author.login // "?"')\`) — only release-please's own PR merges this way."
+	fi
+	if ! printf '%s' "$info" | jq -e '(.files | length) == .changedFiles' >/dev/null 2>&1; then
+		# @mut release-filecount
+		deny "release PR #$pr: the file list gh returned does not cover all $(printf '%s' "$info" | jq -r '.changedFiles') changed files, so it cannot be shown to carry only release files."
+	fi
+	allowed="$(release_allowlist)"
+	bad="$(printf '%s' "$info" | jq -r --arg ok "$allowed" '
+		($ok | split("\n") | map(select(length > 0))) as $ok
+		| [.files[] | .path as $p | select(any($ok[]; . == $p) | not) | $p] | join(", ")')"
+	if [ -n "$bad" ]; then
+		# @mut release-files
+		deny "release PR #$pr changes files release-please does not write: $bad."
+	fi
+	bad="$(printf '%s' "$info" | jq -r '[.files[] | select(.changeType != "MODIFIED" and .changeType != "ADDED") | "\(.path) (\(.changeType))"] | join(", ")')"
+	if [ -n "$bad" ]; then
+		# @mut release-changetype
+		deny "release PR #$pr renames or deletes a file: $bad."
+	fi
+}
+
+# require_green — every check passed and every release-gate leg passed for the PR's head (reads
+# main's locals). The one copy, for a promotion and a release PR alike.
+require_green() {
 	# gh exits 8 while checks are pending and 1 when one failed, printing the JSON either way, so
 	# the exit code is not the signal: the JSON is, and an unparseable answer fails closed.
 	local checks notgreen gate_yml legs missing
 	checks="$(gh pr checks "$pr" "${rargs[@]}" --json name,bucket,workflow 2>/dev/null)"
 	printf '%s' "$checks" | jq -e 'type == "array"' >/dev/null 2>&1 ||
-		deny "could not read the checks of promotion PR #$pr (offline, or gh failed)."
+		deny "could not read the checks of $kind PR #$pr (offline, or gh failed)."
 	# Subsumed by the leg check below (an empty list has no passing leg) — kept for the message.
 	printf '%s' "$checks" | jq -e 'length > 0' >/dev/null 2>&1 ||
-		deny "promotion PR #$pr reports no checks at all — nothing has proven it green."
+		deny "$kind PR #$pr reports no checks at all — nothing has proven it green."
 
 	notgreen="$(printf '%s' "$checks" | jq -r '[.[] | select(.bucket != "pass" and .bucket != "skipping") | "\(.name) (\(.bucket))"] | join(", ")')"
 	if [ -n "$notgreen" ]; then
 		# @mut merge-notgreen
-		deny "promotion PR #$pr is not green: $notgreen."
+		deny "$kind PR #$pr is not green: $notgreen."
 	fi
 
 	# Every release-gate leg the gate's own table names must have PASSED (skipping is not
@@ -256,9 +351,8 @@ main() {
 		| unique | join(", ")')"
 	if [ -n "$missing" ]; then
 		# @mut merge-legs
-		deny "promotion PR #$pr: these release-gate legs have not passed: $missing."
+		deny "$kind PR #$pr: these release-gate legs have not passed: $missing."
 	fi
-	exit 0
 }
 
 # ── Self-test ─────────────────────────────────────────────────────────────────────────────────
@@ -275,6 +369,12 @@ self_test() {
             { project: "qa",        args: "--project=qa" },
           ];
 YML
+	cat >"$stub/root/release-please-config.json" <<'JSON'
+{ "packages": {
+    "apps/cli": { "release-type": "simple", "component": "cli", "changelog-path": "CHANGELOG.md" },
+    "apps/runner": { "component": "runner",
+      "extra-files": [ "internal/version.txt", { "type": "generic", "path": "/deploy/runner-version.yaml" } ] } } }
+JSON
 	local G Q C S
 	G='{"name":"Release gate (hero)","bucket":"pass","workflow":"Release gate"}'
 	Q='{"name":"Release gate (qa)","bucket":"pass","workflow":"Release gate"}'
@@ -292,6 +392,45 @@ YML
 1619	[$C,$G,$Q,{"name":"Release gate (canvas)","bucket":"fail","workflow":"Release gate"}]
 1620	[$C,$G,$Q,{"name":"CI / x","bucket":"cancel","workflow":"CI"}]
 1700	[$C,$G,$Q]
+1800	[$C,$S,$G,$Q]
+1801	[$C,$G,$Q]
+1802	[$C,$G,$Q]
+1803	[$C,$G,$Q]
+1804	[$C,$G,$Q]
+1805	[$C,$G,$Q]
+1806	[$C,$G,$Q]
+1807	[$C,$G,$Q]
+1808	[{"name":"CI / Build","bucket":"fail","workflow":"CI"},$G,$Q]
+1809	[{"name":"CI / Build","bucket":"pending","workflow":"CI"},$G,$Q]
+1810	[$C,$G,$Q]
+1811	[$C,$G,$Q]
+1812	[$C,$G,$Q]
+1813	[$C,$G,$Q]
+1814	[$C,$G,$Q]
+1815	[$C,$G]
+EOF
+	# Release PRs: `gh pr view N --json author,files,changedFiles` prints that PR's row (1813: the
+	# lookup fails). A is the release automation, M/L a release PR's two ordinary files.
+	local A M L
+	A='"author":{"is_bot":true,"login":"app/alethia-labs-ci"}'
+	M='{"path":".release-please-manifest.json","changeType":"MODIFIED"}'
+	L='{"path":"apps/cli/CHANGELOG.md","changeType":"MODIFIED"}'
+	cat >"$stub/release.tsv" <<EOF
+1800	{$A,"changedFiles":2,"files":[$M,$L]}
+1801	{"author":{"is_bot":false,"login":"alethia-labs-ci"},"changedFiles":2,"files":[$M,$L]}
+1802	{$A,"changedFiles":2,"files":[$M,$L]}
+1803	{$A,"changedFiles":2,"files":[$M,$L]}
+1804	{$A,"changedFiles":2,"files":[$M,$L]}
+1805	{$A,"changedFiles":3,"files":[$M,$L,{"path":"apps/cli/main.go","changeType":"MODIFIED"}]}
+1806	{$A,"changedFiles":3,"files":[$M,$L]}
+1807	{$A,"changedFiles":2,"files":[$M,{"path":"apps/cli/CHANGELOG.md","changeType":"RENAMED"}]}
+1808	{$A,"changedFiles":2,"files":[$M,$L]}
+1809	{$A,"changedFiles":2,"files":[$M,$L]}
+1810	{$A,"changedFiles":2,"files":[$M,$L]}
+1811	{$A,"changedFiles":4,"files":[$M,{"path":"apps/runner/CHANGELOG.md","changeType":"MODIFIED"},{"path":"apps/runner/internal/version.txt","changeType":"MODIFIED"},{"path":"deploy/runner-version.yaml","changeType":"ADDED"}]}
+1812	{$A,"changedFiles":2,"files":[$M,{"path":"apps/cli/sub/CHANGELOG.md","changeType":"MODIFIED"}]}
+1814	{$A,"changedFiles":2,"files":[$M,{"path":"release-please-config.json","changeType":"MODIFIED"}]}
+1815	{$A,"changedFiles":2,"files":[$M,$L]}
 EOF
 	# `gh pr view N --json …` prints "<base> <head> <sha>"; `gh pr checks N --json …` prints that
 	# PR's checks (1616: the lookup fails). PR 1700 exists ONLY in o/other, so it is found only
@@ -302,8 +441,21 @@ n=""
 other=0
 for a in "\$@"; do case "\$a" in [0-9]*) n="\$a" ;; o/other) other=1 ;; esac; done
 if [ "\$n" = 1700 ] && [ "\$other" != 1 ]; then exit 1; fi
+if [ "\$2" = view ] && [[ "\$*" == *author* ]]; then
+	[ "\$n" = 1813 ] && exit 1
+	line="\$(grep "^\$n	" "$stub/release.tsv")" || exit 1
+	printf '%s\n' "\${line#*	}"
+	exit 0
+fi
 if [ "\$2" = view ]; then
+	R=release-please--branches--main--components--
 	case "\$n" in
+	1800 | 1801 | 1805 | 1806 | 1807 | 1808 | 1809 | 1812 | 1813 | 1814 | 1815) echo "main \${R}cli aaa\$n" ;;
+	1802) echo "main \${R}cli/evil aaa1802" ;;
+	1803) echo "main x\${R}cli aaa1803" ;;
+	1804) echo "main release-please--branches--staging--components--cli aaa1804" ;;
+	1810) echo "staging \${R}cli aaa1810" ;;
+	1811) echo "main \${R}runner aaa1811" ;;
 	1535) echo "dev feat/x 1535aaa" ;;
 	1600) echo "staging feat/x 1600aaa" ;;
 	1601) echo "main feat/x 1601aaa" ;;
@@ -389,6 +541,38 @@ STUB
 	t block 'gh pr merge 1620 --merge --match-head-commit aaa1620'   # a cancelled check
 	says 'not green' 'a cancelled check is named as not green'
 
+	# ── release-please PRs into main (maintainer ruling 2026-11-11) ──
+	t allow 'gh pr merge 1800 --merge --match-head-commit aaa1800'   # green, release-please's author and files
+	t allow 'gh pr merge 1811 --merge --match-head-commit aaa1811'   # changelog + extra-files, from the config
+	t block 'gh pr merge 1801 --merge --match-head-commit aaa1801'   # a look-alike author
+	says "was not opened by \`app/alethia-labs-ci\`" 'the wrong author is named'
+	t block 'gh pr merge 1802 --merge --match-head-commit aaa1802'   # the branch only STARTS right
+	says 'Only staging → main and a release-please PR' 'a look-alike branch is refused as a branch'
+	t block 'gh pr merge 1803 --merge --match-head-commit aaa1803'   # the branch only ENDS right
+	t block 'gh pr merge 1804 --merge --match-head-commit aaa1804'   # release branch for another base
+	t block 'gh pr merge 1805 --merge --match-head-commit aaa1805'   # also changes a code file
+	says 'apps/cli/main.go' 'the code file is named'
+	t block 'gh pr merge 1806 --merge --match-head-commit aaa1806'   # gh listed fewer files than changed
+	t block 'gh pr merge 1807 --merge --match-head-commit aaa1807'   # a rename onto an allowed path
+	t block 'gh pr merge 1808 --merge --match-head-commit aaa1808'   # a failed check
+	t block 'gh pr merge 1809 --merge --match-head-commit aaa1809'   # a pending check
+	says 'is not green' 'the pending check is named'
+	t block 'gh pr merge 1810 --merge --match-head-commit aaa1810'   # base staging
+	t block 'gh pr merge 1812 --merge --match-head-commit aaa1812'   # a CHANGELOG.md no package names
+	t block 'gh pr merge 1813 --merge --match-head-commit aaa1813'   # author/files lookup failed
+	t block 'gh pr merge 1814 --merge --match-head-commit aaa1814'   # edits release-please-config.json
+	t block 'gh pr merge 1815 --merge --match-head-commit aaa1815'   # a release-gate leg never reported
+	t block 'gh pr merge 1800 --merge'                               # no --match-head-commit
+	says 'gh pr merge 1800 --merge --match-head-commit aaa1800' 'the release refusal names the exact command'
+	t block 'gh pr merge 1800 --merge --match-head-commit bbb999'    # mismatched head
+	t block 'gh pr merge 1800 --squash --match-head-commit aaa1800'
+	t block 'gh pr merge 1800 --rebase --match-head-commit aaa1800'
+	t block 'gh pr merge 1800 --match-head-commit aaa1800'           # no --merge
+	t block 'gh pr merge 1800 --merge --auto --match-head-commit aaa1800'
+	t block 'gh pr merge 1800 --merge --admin --match-head-commit aaa1800'
+	t block 'gh pr merge 1800 --merge --delete-branch --match-head-commit aaa1800'
+	t block 'gh pr merge 1800 --merge --match-head-commit aaa1800 && gh pr merge 1811 --merge --match-head-commit aaa1811'
+
 	# ── gh's global flags before the subcommand, and the repository they name ──
 	t block 'gh -R o/r pr merge 1601 --merge'
 	t block 'gh --repo o/r pr merge 1612 --merge --match-head-commit aaa1612'
@@ -435,6 +619,17 @@ STUB
 		if [ "$n" -ge 1 ]; then pass=$((pass + 1)); else
 			fail=$((fail + 1))
 			echo "  ✗ no release-gate legs parse out of $real"
+		fi
+	fi
+
+	# The real release-please-config.json must yield the CLI's changelog, or every release PR would
+	# fail closed.
+	if [ -f "$(dirname "$real")/../../release-please-config.json" ]; then
+		if CLAUDE_PROJECT_DIR="$(cd "$(dirname "$real")/../.." && pwd)" release_allowlist | grep -qx 'apps/cli/CHANGELOG.md'; then
+			pass=$((pass + 1))
+		else
+			fail=$((fail + 1))
+			echo "  ✗ apps/cli/CHANGELOG.md does not derive from the real release-please-config.json"
 		fi
 	fi
 
