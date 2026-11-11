@@ -45,6 +45,7 @@ import { Textarea } from "@repo/ui/textarea";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import { chartVersionError } from "@/lib/addons/chart-version";
 import { REQUIREMENT_HINTS } from "@/lib/addons/requirements";
+import { closedToNewInstalls } from "@/lib/addons/deprecation";
 import { addOnUpdateNotice } from "@/lib/addons/update-notice";
 import type { AddOnField, AddOnMode } from "@/lib/addons/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers/generated/catalog";
@@ -54,6 +55,7 @@ import {
   useEnableAddon,
 } from "@/lib/query/use-addons-query";
 import type { FieldErrors } from "@/lib/actions/result";
+import { AddonDeprecationNotice } from "./addon-deprecation-notice";
 import { AddonUpdateNotice } from "./addon-update-notice";
 import { AddonIcon, AddonStatusBadge } from "./addon-visuals";
 
@@ -149,6 +151,7 @@ export function AddonConfigCard({
 }) {
   const addons = useAddonsQuery(projectId, environmentId);
   const closeCard = useCanvasStore((s) => s.closeCard);
+  const openCard = useCanvasStore((s) => s.openCard);
   const provider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
   const live = addons.data?.items.find((i) => i.id === itemId) ?? null;
 
@@ -191,6 +194,7 @@ export function AddonConfigCard({
       hasAppsRepo={addons.data?.hasAppsRepo ?? false}
       provider={provider}
       onDone={closeCard}
+      onOpenAddon={(id) => openCard({ kind: "addon", itemId: id })}
     />
   );
 }
@@ -207,6 +211,7 @@ export function AddonConfigForm({
   hasAppsRepo,
   provider,
   onDone,
+  onOpenAddon,
 }: {
   item: AddonMarketItem;
   projectId: string;
@@ -215,6 +220,8 @@ export function AddonConfigForm({
   /** The project's effective cloud provider — drives the requirement hints (null = unset). */
   provider: CloudProviderSlug | null;
   onDone: () => void;
+  /** Opens another add-on's card — the deprecation notice's "Open <replacement>" (#6543). */
+  onOpenAddon?: (addonId: string) => void;
 }) {
   // Remove is not undoable and its effect lands on the next Deploy — the chart is uninstalled and
   // whatever it owns in the cluster goes with it — so the click OPENS a confirm rather than firing
@@ -265,6 +272,12 @@ export function AddonConfigForm({
     { version: item.version, securityRelease: item.securityRelease },
     item.install ? { mode: item.install.mode, version: item.install.version } : null,
   );
+  // #6543. Past the removal date a NEW install is refused by `enableAddon`; the card says so and
+  // drops the Enable button rather than offering a press that can only fail. An installed one keeps
+  // Save, because a reconfigure is never refused.
+  const deprecation = item.deprecated ?? null;
+  const closedToNew =
+    deprecation !== null && !isInstalled && closedToNewInstalls(deprecation, new Date());
 
   const onSubmit = form.handleSubmit(async (values) => {
     // The double-submit guard: the Save button is disabled while pending, and a second submit (Enter
@@ -472,17 +485,19 @@ export function AddonConfigForm({
               Cancel
             </Button>
           )}
-          <Button
-            type="submit"
-            form="addon-config-form"
-            disabled={enable.isPending || disable.isPending}
-          >
-            {enable.isPending
-              ? "Saving…"
-              : isInstalled
-                ? "Save changes"
-                : "Enable add-on"}
-          </Button>
+          {!closedToNew && (
+            <Button
+              type="submit"
+              form="addon-config-form"
+              disabled={enable.isPending || disable.isPending}
+            >
+              {enable.isPending
+                ? "Saving…"
+                : isInstalled
+                  ? "Save changes"
+                  : "Enable add-on"}
+            </Button>
+          )}
         </>
       }
     >
@@ -533,6 +548,16 @@ export function AddonConfigForm({
             </div>
           )}
         </div>
+
+        {deprecation && (
+          <AddonDeprecationNotice
+            deprecation={deprecation}
+            name={item.name}
+            installed={isInstalled}
+            closed={closedToNewInstalls(deprecation, new Date())}
+            onOpenReplacement={onOpenAddon}
+          />
+        )}
 
         {update && (
           <AddonUpdateNotice

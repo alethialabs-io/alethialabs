@@ -48,7 +48,8 @@ describe("add-on catalog export fixture (e2e full-surface seed)", () => {
 			// Mirrors the B0.3 SSOT count guard: the harness must exercise ALL of them.
 			// 19 → 18: cert-manager moved to the PLATFORM rail, so it is no longer a marketplace
 			// chart this fixture seeds — it ships from the deploy itself.
-			expect(readFixture(cloud)).toHaveLength(18);
+			// 18 → 19: Traefik joined as ingress-nginx's replacement (#6543); ingress-nginx stays.
+			expect(readFixture(cloud)).toHaveLength(19);
 		},
 	);
 

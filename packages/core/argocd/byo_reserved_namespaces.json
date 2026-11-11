@@ -109,6 +109,7 @@
         "monitoring",
         "observability",
         "reloader",
+        "traefik",
         "trivy-system",
         "vault",
         "velero"

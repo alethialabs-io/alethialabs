@@ -23,7 +23,8 @@ import {
 	projectAddons,
 } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
-import { getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
+import { addOnDeprecationView, getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
+import { type AddOnDeprecationView, newInstallRefusal } from "@/lib/addons/deprecation";
 import { chartVersionError, chartVersionIntent } from "@/lib/addons/chart-version";
 import {
 	generateAddonSecrets,
@@ -66,6 +67,8 @@ export interface AddonMarketItem {
 	version: string;
 	/** Set when `version` is a security release (#6537) — drives the update offer's prominence. */
 	securityRelease?: AddOnSecurityRelease | null;
+	/** Set when the add-on is deprecated (#6543) — the card and the palette steer to the replacement. */
+	deprecated?: AddOnDeprecationView | null;
 	namespace: string;
 	requires: AddOnRequirement[];
 	fields: AddOnField[];
@@ -179,6 +182,16 @@ export async function enableAddon(input: {
 				),
 			)
 			.limit(1);
+		// A deprecated add-on past its removal date takes no NEW install (#6543). Asked here, against
+		// the row this transaction read, so an environment that already has it can still reconfigure
+		// or pin it: removing a running controller is the user's call, not the catalogue's.
+		const refusal = newInstallRefusal(
+			def,
+			addOnDeprecationView(def)?.replacementName ?? "",
+			existing !== undefined,
+			new Date(),
+		);
+		if (refusal) throw new ActionRefusal("conflict", refusal);
 		// Then mint any secret the add-on declares as auto-generated and that is STILL unset
 		// (#2822, #2823). Ordered after the merge, so a value the user supplied — or one carried
 		// forward from an earlier save — is already present and is never rotated by a reconfigure.

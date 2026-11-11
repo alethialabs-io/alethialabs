@@ -368,7 +368,7 @@ func perProviderDecision(service string, f *InfraFacts, table map[string]provide
 // CLB/NLB. A platform ingress controller from Alethia would be a SECOND controller fighting the
 // first for the same Ingress objects: exactly the #1722 ownership collision that already keeps
 // alibaba out of test/e2e/argocd_assert.go's metricsServerProviders, because ACK installs its own
-// metrics-server too. The shared skip reason below — install the ingress-nginx add-on — is the
+// metrics-server too. The shared skip reason below — install the Traefik add-on — is the
 // honest instruction on this cloud, and it is a marketplace add-on precisely so an operator who
 // turned the ACK component off can choose it.
 var ingressControllers = map[string]providerDecision{
@@ -398,14 +398,15 @@ var ingressControllers = map[string]providerDecision{
 		},
 		installedReason: "installed (Application Gateway Ingress Controller) — Ingress objects with ingressClassName azure-application-gateway become listeners and routing rules on the project's Application Gateway.",
 		skippedReason: func(_ *InfraFacts) string {
-			return "no Application Gateway is provisioned for this project — a v2 gateway is a standing hourly cost, so it is opt-in (azure_application_gateway_enabled, which follows the WAF switch when unset) and needs a template-provisioned VNet to carve its dedicated subnet. Install the ingress-nginx add-on to expose Ingress objects through a cloud load balancer instead."
+			return "no Application Gateway is provisioned for this project — a v2 gateway is a standing hourly cost, so it is opt-in (azure_application_gateway_enabled, which follows the WAF switch when unset) and needs a template-provisioned VNet to carve its dedicated subnet. Install the Traefik add-on to expose Ingress objects through a cloud load balancer instead."
 		},
 	},
 }
 
-// ingressNoControllerReason is what a cloud with no ingress controller records. Kept
-// byte-identical to the pre-table reason: this refactor changes the SHAPE, not any decision.
-const ingressNoControllerReason = "skipped — a cloud load balancer is available; install the ingress-nginx add-on to expose Ingress objects."
+// ingressNoControllerReason is what a cloud with no ingress controller records. It names Traefik,
+// not ingress-nginx, since #6543: the reason is an instruction, and the old one pointed at an add-on
+// upstream has retired and the catalogue has deprecated.
+const ingressNoControllerReason = "skipped — a cloud load balancer is available; install the Traefik add-on to expose Ingress objects."
 
 // ingressDecision records the ingress controller for this cloud, from ingressControllers.
 func ingressDecision(f *InfraFacts) InfraServiceDecision {
