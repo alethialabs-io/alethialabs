@@ -51,8 +51,8 @@ const KEY = orpc.environments.overview.queryKey({ input: { project: "payments" }
 const OVERVIEW: EnvironmentsOverview = {
 	projectId: "11111111-1111-4111-8111-111111111111",
 	envs: [
-		{ id: "env-dev", name: "development", stage: "development", is_default: true, updated_at: "2026-10-01T00:00:00.000Z" },
-		{ id: "env-prod", name: "production", stage: "production", is_default: false, updated_at: "2026-10-02T00:00:00.000Z" },
+		{ id: "env-dev", name: "development", stage: "development", is_default: true, updated_at: "2026-10-01T00:00:00.000Z", byo_admission_enforce: false, byo_admission_has_charts: true, byo_admission_pending: false },
+		{ id: "env-prod", name: "production", stage: "production", is_default: false, updated_at: "2026-10-02T00:00:00.000Z", byo_admission_enforce: true, byo_admission_has_charts: true, byo_admission_pending: true },
 	],
 	consistency: { envs: [], rows: [] },
 	reconcile: [],
@@ -100,6 +100,21 @@ describe("EnvironmentsView — the data (F010)", () => {
 		expect(screen.queryByRole("heading", { name: /^environments/i })).toBeNull();
 		expect(screen.getByRole("link", { name: "development" })).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: "production" })).toBeInTheDocument();
+	});
+
+	it("BYO admission (#6541): shown where a BYO chart is, with 'Redeploy to apply' after a change", () => {
+		renderView((qc) =>
+			qc.setQueryData(KEY, {
+				...OVERVIEW,
+				envs: [
+					{ ...OVERVIEW.envs[0], byo_admission_has_charts: false },
+					{ ...OVERVIEW.envs[1], byo_admission_has_charts: true, byo_admission_pending: true },
+				],
+			}),
+		);
+		expect(screen.queryByRole("button", { name: "Change BYO admission for development" })).toBeNull();
+		expect(screen.getByRole("button", { name: "Change BYO admission for production" })).toBeDefined();
+		expect(screen.getAllByText("Redeploy to apply")).toHaveLength(1);
 	});
 
 	it("renders an empty project as empty — the toolbar still offers to create one", () => {

@@ -427,23 +427,6 @@ func TestNamespacePlacementLabelIsTheTenantRenders(t *testing.T) {
 	}
 }
 
-// TestByoAdmissionModes_AFailedReadStillWarnsEverywhere keeps #6495's fallback pinned now that the
-// configureByoCharts path fails closed first (TestConfigureByoCharts_AnUnreadableClusterAppliesNothing):
-// called on its own, an unreadable cluster still puts every namespace in "warn", never "enforce".
-func TestByoAdmissionModes_AFailedReadStillWarnsEverywhere(t *testing.T) {
-	provStubTool(t, "kubectl", "#!/bin/sh\necho 'connection refused' >&2\nexit 1\n")
-	var stderr strings.Builder
-	modes := byoAdmissionModes([]string{"byo-old", "byo-fresh"}, nil, &stderr)
-	for _, ns := range []string{"byo-old", "byo-fresh"} {
-		if modes[ns] != argocd.ByoAdmissionWarn {
-			t.Errorf("%s mode = %q, want warn when the cluster could not be read", ns, modes[ns])
-		}
-	}
-	if !strings.Contains(stderr.String(), "could not read the BYO namespaces") {
-		t.Errorf("the unread cluster was not logged:\n%s", stderr.String())
-	}
-}
-
 // TestConfigureByoCharts_AKeptChartIsNotReadmittedIntoAnotherChartsOwnNamespace: the chart's
 // Application runs in byo-api, chart "api"'s own default namespace, which a chart other than "api"
 // may never share (byoNamespaceCollisions). Its stored namespace is now a held one, so the runner

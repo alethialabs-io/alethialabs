@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { isRunningHealth } from "@/lib/addons/byo-admission";
 import { getServiceDb } from "@/lib/db";
 import {
 	type ComponentStatus,
@@ -25,7 +26,10 @@ export function addonComponentStatus(health: string): ComponentStatus {
 }
 
 /**
- * Persists per-add-on ArgoCD health/sync for an environment. `addonStatus` is keyed by the
+ * Persists per-add-on ArgoCD health/sync for an environment. The first read in a running state also
+ * stamps `first_observed_running_at` (#6541) — once: COALESCE keeps the first stamp, and a later read
+ * that is not running (a drift scan's Unknown for an Application it cannot find) leaves the column
+ * out of the update entirely, so it never clears it. `addonStatus` is keyed by the
  * ArgoCD Application name ("addon-<id>"); the prefix is stripped to match
  * `project_addons.addon_id`. Only updates rows that exist (an add-on must be enabled first).
  */
@@ -46,6 +50,13 @@ export async function recordAddonHealth(
 				status: addonComponentStatus(s.health),
 				last_synced_at: now,
 				updated_at: now,
+				...(isRunningHealth(s.health)
+					? {
+							// The ISO string, not the Date: a raw template parameter skips the column's
+							// Date mapping, and postgres-js cannot serialize a Date bound there.
+							first_observed_running_at: sql`coalesce(${projectAddons.first_observed_running_at}, ${now.toISOString()}::timestamptz)`,
+						}
+					: {}),
 			})
 			.where(
 				and(

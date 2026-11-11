@@ -39,6 +39,8 @@ function base(overrides: Partial<GitopsDeployStatus> = {}): GitopsDeployStatus {
 			{ name: "db-primary", health: "Healthy", sync: "Synced", message: null },
 		],
 		warnings: [],
+		byoAdmission: [],
+		byoAdmissionReportAt: null,
 		...overrides,
 	};
 }
@@ -170,5 +172,29 @@ describe("DeployPane", () => {
 			render(<DeployPane status={base({ lastDeployAt: "not-a-date" })} />);
 			expect(screen.getByText("—")).toBeDefined();
 		});
+	});
+
+	it("BYO admission (#6541): each namespace's mode, the change the setting made, and why", () => {
+		render(
+			<DeployPane
+				status={base({
+					byoAdmission: [
+						{ namespace: "byo-api", charts: ["api"], mode: "enforce", previous: "warn", reason: "environment-setting", findings: ["Service \"web\": spec.type is LoadBalancer"] },
+						{ namespace: "byo-shop", charts: ["shop"], mode: "refused", reason: "not-this-environments-namespace" },
+						{ namespace: "byo-new", charts: ["new"], mode: "enforce", previous: "enforce", reason: "kept" },
+					],
+				})}
+			/>,
+		);
+		expect(screen.getByText("BYO admission")).toBeDefined();
+		expect(screen.getByText("warn → enforce · this environment's setting refuses · 1 finding")).toBeDefined();
+		expect(screen.getByText("not this environment's namespace")).toBeDefined();
+		// An unchanged mode is not reported as a change.
+		expect(screen.getByText("kept the mode it had")).toBeDefined();
+	});
+
+	it("BYO admission: no section when the environment has no BYO namespace", () => {
+		render(<DeployPane status={base()} />);
+		expect(screen.queryByText("BYO admission")).toBeNull();
 	});
 });

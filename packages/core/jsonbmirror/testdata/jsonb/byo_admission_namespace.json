@@ -1,0 +1,10 @@
+{
+  "namespace": "byo-payments",
+  "charts": ["payments"],
+  "mode": "enforce",
+  "previous": "warn",
+  "reason": "environment-setting",
+  "findings": ["Pod Security baseline: agent-1: hostPath volumes"],
+  "policy_unavailable": "it could not be applied",
+  "checks": [{ "kind": "Service", "state": "failed" }]
+}

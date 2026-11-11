@@ -936,6 +936,47 @@ export interface GitopsStatusReport {
 	/** Non-fatal manifest-generation warnings (skipped service, unresolved binding endpoint,
 	 *  unsatisfiable credential facet). No secret values — names only (Go `ManifestWarnings`). */
 	manifest_warnings?: string[];
+	/** Each bring-your-own namespace's admission mode as this deploy left it, and what its rules
+	 *  refuse there (#6541). Absent when the environment has no BYO chart, or from a runner that
+	 *  predates it. */
+	byo_admission?: ByoAdmissionNamespaceReport[];
+}
+
+/** A BYO namespace's admission mode: the two the runner renders, or `refused` when its charts were
+ *  not deployed. */
+export type ByoAdmissionModeReport = "enforce" | "warn" | "refused";
+
+/**
+ * One bring-your-own namespace as a deploy left it (#6541). Mirrors the Go
+ * `argocd.ByoAdmissionNamespaceStatus`. `reason` is the Go `ByoAdmissionReason` vocabulary, kept a
+ * string here so a reason a newer runner adds still renders. No secret values: names, modes, and
+ * the findings' object kinds, names and fields.
+ */
+export interface ByoAdmissionNamespaceReport {
+	namespace: string;
+	/** The ids of the charts in it, sorted. */
+	charts: string[];
+	mode: ByoAdmissionModeReport;
+	/** The mode it had before this deploy; absent when it had none. */
+	previous?: "enforce" | "warn";
+	reason: string;
+	/** What the rules refuse there, or would once it is in enforce: each live object's kind, name
+	 *  and field, then Pod Security baseline's pod summaries. */
+	findings?: string[];
+	/** Why the cluster runs no admission policy; absent when it runs one. */
+	policy_unavailable?: string;
+	/** Per kind, whether this deploy checked the namespace. Absent for a refused namespace, and from a
+	 *  runner before the checks were recorded — which the console must read as NOT checked. */
+	checks?: ByoAdmissionCheckReport[];
+}
+
+/** One kind of check a deploy ran on a BYO namespace (#6541). Mirrors the Go `argocd.ByoAdmissionCheck`. */
+export interface ByoAdmissionCheckReport {
+	/** "Service", "Ingress", "Secret" or "PodSecurity". */
+	kind: string;
+	/** `checked`; `failed` (nothing is known about this kind); `enforced` (Pod Security in an enforce
+	 *  namespace: the label already enforces). */
+	state: "checked" | "failed" | "enforced";
 }
 
 /** One workload's ArgoCD resource status inside the apps Application (Go `argocd.ServiceHealth`):
