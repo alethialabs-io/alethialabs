@@ -11,6 +11,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
+	order: new Array<string>(),
+	executed: new Array<unknown>(),
 	insert: vi.fn(),
 	host: vi.fn(async (): Promise<string[]> => []),
 	siblings: vi.fn(async (): Promise<{ environment: string; namespace: string }[]> => []),
@@ -32,17 +34,37 @@ vi.mock("@/lib/db", () => {
 	const chain: Record<string, unknown> = {};
 	for (const k of ["from", "where", "orderBy", "leftJoin"]) chain[k] = () => chain;
 	chain.limit = async () => [{ fabric_id: "f1", id: "f1", name: "prod" }];
+	const db = {
+		select: () => chain,
+		insert: (...args: unknown[]) => {
+			h.order.push("insert");
+			h.insert(...args);
+			throw new Error("insert reached in a test that expects a refusal");
+		},
+		execute: async (query: unknown) => {
+			h.executed.push(query);
+			h.order.push("lock");
+			return [];
+		},
+	};
 	return {
 		getServiceDb: () => ({
-			select: () => chain,
-			insert: (...args: unknown[]) => {
-				h.insert(...args);
-				throw new Error("insert reached in a test that expects a refusal");
+			...db,
+			// #6575: the check and the insert run in one transaction, which this records.
+			transaction: async (cb: (tx: typeof db) => Promise<unknown>) => {
+				h.order.push("begin");
+				try {
+					return await cb(db);
+				} finally {
+					h.order.push("end");
+				}
 			},
 		}),
 	};
 });
 
+import { is, SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { POST } from "@/app/api/cli/projects/[id]/environments/route";
 
 /** POSTs `body` and returns the status and the decoded body. */
@@ -60,11 +82,19 @@ async function post(body: Record<string, unknown>) {
 }
 
 beforeEach(() => {
+	h.order.length = 0;
+	h.executed.length = 0;
 	h.insert.mockClear();
 	h.host.mockReset();
-	h.host.mockResolvedValue([]);
+	h.host.mockImplementation(async () => {
+		h.order.push("host");
+		return [];
+	});
 	h.siblings.mockReset();
-	h.siblings.mockResolvedValue([]);
+	h.siblings.mockImplementation(async () => {
+		h.order.push("siblings");
+		return [];
+	});
 });
 
 describe("POST environments — a reserved placement namespace", () => {
@@ -115,6 +145,20 @@ describe("POST environments — a reserved placement namespace", () => {
 		}
 		expect(h.siblings).toHaveBeenCalledWith(expect.anything(), "p1", "f1");
 		expect(h.insert).not.toHaveBeenCalled();
+	});
+
+	it("takes the project's namespace lock, then reads both sides and inserts, in ONE transaction (#6575)", async () => {
+		await post({ name: "team", placement_mode: "namespace", namespace: "team-web" });
+		expect(h.order).toEqual(["begin", "lock", "host", "siblings", "insert", "end"]);
+		// The statement is the transaction-scoped advisory lock on THIS project's key — not any
+		// execute, and not the session-scoped pg_advisory_lock, which would outlive the transaction
+		// on a pooled connection.
+		expect(h.executed).toHaveLength(1);
+		const query = h.executed[0];
+		if (!is(query, SQL)) throw new Error(`the lock must be a drizzle sql query, got ${String(query)}`);
+		const rendered = new PgDialect().sqlToQuery(query);
+		expect(rendered.sql).toBe("select pg_advisory_xact_lock(hashtextextended($1, 0))");
+		expect(rendered.params).toEqual(["byo-preview-ns:p1"]);
 	});
 
 	it("does not apply to a vcluster placement", async () => {

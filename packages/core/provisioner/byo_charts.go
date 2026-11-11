@@ -1252,11 +1252,17 @@ func (o byoPlacementOverlap) warning() string {
 	if !o.Placement {
 		held = fmt.Sprintf("whose owner label names %s, not this one; the platform treats it as that environment's namespace", byoHolderPhrase(o.Holder, false))
 	}
+	// #6575: a placement's teardown deletes its namespace, so it refuses while this chart runs there.
+	// Said only for a placement hold: an owner-label-only holder need not be a placement at all.
+	teardown := ""
+	if o.Placement {
+		teardown = " Do this before that environment is torn down: its teardown deletes the namespace, so it is refused while this chart still runs there."
+	}
 	return fmt.Sprintf("BYO chart %q runs in namespace %q, %s. "+
 		"The chart was deployed there before that was refused, so this deploy kept it where it is, with its workloads and binding secrets unchanged, "+
 		"and left the namespace's labels as they are. "+
-		"Attach the chart again with a namespace of its own (leave it blank for %q), then remove what it left in %q.",
-		o.ID, o.Namespace, held, argocd.ByoChartNamespace(o.ID), o.Namespace)
+		"Attach the chart again with a namespace of its own (leave it blank for %q), then remove what it left in %q.%s",
+		o.ID, o.Namespace, held, argocd.ByoChartNamespace(o.ID), o.Namespace, teardown)
 }
 
 // byoHeldMove is one BYO chart whose stored namespace was changed to a namespace another environment
