@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
 	order: new Array<string>(),
+	executed: new Array<unknown>(),
 	insert: vi.fn(),
 	host: vi.fn(async (): Promise<string[]> => []),
 	siblings: vi.fn(async (): Promise<{ environment: string; namespace: string }[]> => []),
@@ -40,7 +41,8 @@ vi.mock("@/lib/db", () => {
 			h.insert(...args);
 			throw new Error("insert reached in a test that expects a refusal");
 		},
-		execute: async () => {
+		execute: async (query: unknown) => {
+			h.executed.push(query);
 			h.order.push("lock");
 			return [];
 		},
@@ -61,6 +63,8 @@ vi.mock("@/lib/db", () => {
 	};
 });
 
+import { is, SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { POST } from "@/app/api/cli/projects/[id]/environments/route";
 
 /** POSTs `body` and returns the status and the decoded body. */
@@ -79,6 +83,7 @@ async function post(body: Record<string, unknown>) {
 
 beforeEach(() => {
 	h.order.length = 0;
+	h.executed.length = 0;
 	h.insert.mockClear();
 	h.host.mockReset();
 	h.host.mockImplementation(async () => {
@@ -145,6 +150,15 @@ describe("POST environments — a reserved placement namespace", () => {
 	it("takes the project's namespace lock, then reads both sides and inserts, in ONE transaction (#6575)", async () => {
 		await post({ name: "team", placement_mode: "namespace", namespace: "team-web" });
 		expect(h.order).toEqual(["begin", "lock", "host", "siblings", "insert", "end"]);
+		// The statement is the transaction-scoped advisory lock on THIS project's key — not any
+		// execute, and not the session-scoped pg_advisory_lock, which would outlive the transaction
+		// on a pooled connection.
+		expect(h.executed).toHaveLength(1);
+		const query = h.executed[0];
+		if (!is(query, SQL)) throw new Error(`the lock must be a drizzle sql query, got ${String(query)}`);
+		const rendered = new PgDialect().sqlToQuery(query);
+		expect(rendered.sql).toBe("select pg_advisory_xact_lock(hashtextextended($1, 0))");
+		expect(rendered.params).toEqual(["byo-preview-ns:p1"]);
 	});
 
 	it("does not apply to a vcluster placement", async () => {

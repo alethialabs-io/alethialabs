@@ -629,11 +629,20 @@ func teardownTeamWeb(t *testing.T) (bool, error) {
 	return deprovisioned, err
 }
 
-// appList is `kubectl get applications -n argocd -o json` for (name, destination namespace) pairs.
-func appList(pairs ...string) string {
-	items := make([]string, 0, len(pairs)/2)
-	for i := 0; i+1 < len(pairs); i += 2 {
-		items = append(items, `{"metadata":{"name":"`+pairs[i]+`","namespace":"argocd"},"spec":{"destination":{"server":"https://kubernetes.default.svc","namespace":"`+pairs[i+1]+`"}}}`)
+// liveApp is one Application in a fake `kubectl get applications -n argocd -o json` answer.
+type liveApp struct {
+	name, dest, project, envID string
+}
+
+// appList is `kubectl get applications -n argocd -o json` for apps. An envID becomes the owner label.
+func appList(apps ...liveApp) string {
+	items := make([]string, 0, len(apps))
+	for _, a := range apps {
+		labels := ""
+		if a.envID != "" {
+			labels = `,"labels":{"` + namespaceOwnerLabel + `":"` + a.envID + `"}`
+		}
+		items = append(items, `{"metadata":{"name":"`+a.name+`","namespace":"argocd"`+labels+`},"spec":{"project":"`+a.project+`","destination":{"server":"https://kubernetes.default.svc","namespace":"`+a.dest+`"}}}`)
 	}
 	return `{"apiVersion":"v1","kind":"List","items":[` + strings.Join(items, ",") + `]}`
 }
@@ -650,18 +659,24 @@ func TestRunNamespaceDestroy_RefusesWhileAHostChartRunsInTheNamespace(t *testing
 	if got := argocd.NamespaceTenantAppName("acme", "team-web"); got != ownApp {
 		t.Fatalf("the placement's own Application is %q, want %q (the fixture names it)", got, ownApp)
 	}
-	r := &teardownReads{apps: appList(ownApp, "team-web", "addon-api", "team-web", "addon-elsewhere", "payments", "platform-thing", "team-web")}
+	r := &teardownReads{apps: appList(
+		liveApp{ownApp, "team-web", "tenant-acme-team-web", "env-1"},
+		liveApp{"addon-api", "team-web", "byo-acme", "env-0"},
+		liveApp{"addon-redis", "team-web", "infra", "env-0"},
+		liveApp{"addon-elsewhere", "payments", "byo-acme", "env-0"},
+		liveApp{"platform-thing", "team-web", "default", ""},
+	)}
 	r.install(t)
 	deprovisioned, err := teardownTeamWeb(t)
 	if err == nil {
 		t.Fatal("a teardown of a namespace a host BYO chart runs in must be refused")
 	}
-	for _, want := range []string{`namespace "team-web"`, `BYO chart "api" (Application addon-api)`, `Application "platform-thing"`, "Re-attach each chart elsewhere first", "nothing was deleted"} {
+	for _, want := range []string{`namespace "team-web"`, `BYO chart "api" (Application addon-api)`, `add-on "redis" (Application addon-redis)`, `Application "platform-thing"`, "Re-attach each chart elsewhere first", "nothing was deleted"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal must contain %q, got: %v", want, err)
 		}
 	}
-	for _, not := range []string{"elsewhere\" (", ownApp} {
+	for _, not := range []string{"elsewhere\" (", ownApp, `BYO chart "redis"`} {
 		if strings.Contains(err.Error(), not) {
 			t.Errorf("the refusal must not name %q (it does not target the namespace, or it is the placement's own), got: %v", not, err)
 		}
@@ -704,7 +719,10 @@ func TestRunNamespaceDestroy_FailsClosedWhenTheApplicationsCannotBeRead(t *testi
 // TestRunNamespaceDestroy_ProceedsWhenOnlyItsOwnApplicationTargetsTheNamespace is the control: the
 // placement's own Application, and Applications that target other namespaces, do not block it.
 func TestRunNamespaceDestroy_ProceedsWhenOnlyItsOwnApplicationTargetsTheNamespace(t *testing.T) {
-	r := &teardownReads{apps: appList(ownApp, "team-web", "addon-api", "payments")}
+	r := &teardownReads{apps: appList(
+		liveApp{ownApp, "team-web", "tenant-acme-team-web", "env-1"},
+		liveApp{"addon-api", "payments", "byo-acme", "env-0"},
+	)}
 	r.install(t)
 	deprovisioned, err := teardownTeamWeb(t)
 	if err != nil {
@@ -712,5 +730,46 @@ func TestRunNamespaceDestroy_ProceedsWhenOnlyItsOwnApplicationTargetsTheNamespac
 	}
 	if r.writes != 1 || !deprovisioned {
 		t.Errorf("%d deletes and identity deprovisioned=%v; want the isolation delete and the identity", r.writes, deprovisioned)
+	}
+}
+
+// TestRunNamespaceDestroy_RecognisesItsOwnApplicationAfterAProjectRename: the placement's own
+// Application is named from the project's display name, so after a rename the live one still carries
+// the OLD name. Its owner label is this environment's id, which a rename does not change, so the
+// teardown still knows it as its own and proceeds. An Application named like it but labelled for
+// another environment is not taken for its own.
+func TestRunNamespaceDestroy_RecognisesItsOwnApplicationAfterAProjectRename(t *testing.T) {
+	renamed := argocd.NamespaceTenantAppName("acme-old-name", "team-web")
+	if renamed == ownApp {
+		t.Fatalf("the fixture must rename the project: %q is still the current name", renamed)
+	}
+	r := &teardownReads{apps: appList(liveApp{renamed, "team-web", "tenant-acme-old-name-team-web", "env-1"})}
+	r.install(t)
+	deprovisioned, err := teardownTeamWeb(t)
+	if err != nil {
+		t.Fatalf("its own Application under the project's old name must not block the teardown: %v", err)
+	}
+	if r.writes != 1 || !deprovisioned {
+		t.Errorf("%d deletes and identity deprovisioned=%v; want the isolation delete and the identity", r.writes, deprovisioned)
+	}
+
+	r = &teardownReads{apps: appList(liveApp{renamed, "team-web", "tenant-acme-old-name-team-web", "env-2"})}
+	r.install(t)
+	if _, err := teardownTeamWeb(t); err == nil || !strings.Contains(err.Error(), renamed) {
+		t.Fatalf("an Application labelled for another environment must refuse, naming it; got %v", err)
+	}
+}
+
+// TestNamespaceTenantApplicationCarriesTheOwnerLabel pins the label the teardown recognises its own
+// Application by to the one the tenant render stamps on that Application.
+func TestNamespaceTenantApplicationCarriesTheOwnerLabel(t *testing.T) {
+	vc := placedConfig("team-web", &[]string{})
+	vc.Repositories.AppsDestinationRepo = "https://github.com/acme/apps"
+	m, err := argocd.RenderNamespaceTenant(namespaceTenantInput(vc, "team-web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m.App, "name: "+ownApp) || !strings.Contains(m.App, namespaceOwnerLabel+`: "`+vc.EnvironmentID+`"`) {
+		t.Fatalf("the tenant Application must be %s and carry %s=%s, got:\n%s", ownApp, namespaceOwnerLabel, vc.EnvironmentID, m.App)
 	}
 }

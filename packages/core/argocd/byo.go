@@ -144,6 +144,13 @@ var byoRepoUnsafe = regexp.MustCompile(`[\x00-\x1f\x7f]`)
 // LENGTH BUDGET, which is why the slug below is capped against it rather than after the join.
 const byoProjectPrefix = "byo-"
 
+// IsByoProjectName reports whether project names a BYO charts' AppProject: RenderAddOnApplication
+// renders a BYO chart only under one, and a catalogue add-on never under one. A reader of a live
+// Application uses it to tell a BYO chart's Application from a catalogue add-on's (#6575).
+func IsByoProjectName(project string) bool {
+	return strings.HasPrefix(project, byoProjectPrefix)
+}
+
 // ByoProjectName derives a stable ArgoCD AppProject name for a project's BYO charts:
 // "byo-<segment>". `slug` is typically the project's free-text name; the fallback keeps the name
 // non-empty and the cap keeps it inside 63 characters.

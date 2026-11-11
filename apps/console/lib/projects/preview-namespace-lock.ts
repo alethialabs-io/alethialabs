@@ -16,8 +16,10 @@
 //
 // Why a lock, and not a constraint: the two sides are rows of DIFFERENT tables (project_addons and
 // project_environments), matched through a derived value (a placement's namespace falls back to its
-// name's slug), so no unique index or exclusion constraint can state the rule; a trigger could, but it
-// would need this same lock to see the other table's uncommitted rows.
+// name's slug), so no unique index or exclusion constraint can state the rule. A trigger could check
+// it, but a trigger cannot see the other transaction's uncommitted row either, and no lock changes that:
+// it would still need a lock like this one, so that it WAITS for the other transaction to commit and
+// then reads the committed row.
 //
 // Transaction-scoped (`pg_advisory_xact_lock`): Postgres releases it at commit or rollback, so it
 // never outlives the transaction that took it, and nothing has to release it on an error path. That
