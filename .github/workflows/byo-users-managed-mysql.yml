@@ -35,17 +35,22 @@
 # runner's own public IPv4 as a /32, and nothing else. Every connection the test makes is TLS
 # (the test's client passes --ssl-mode=REQUIRED on every invocation).
 #
-# ── TEARDOWN — three layers, each able to stand alone ────────────────────────────────────────────
-#   1. `Tear down` deletes exactly what this run created, by the names derived from the run id, and
-#      WAITS for each deletion (an Aurora instance takes minutes, and the security group cannot be
-#      deleted while a database's interface still holds it).
-#   2. `Guaranteed teardown` runs scripts/e2e/aws-cleanup.sh, which discovers by the tag
-#      `alethia:project-id=e2e-<run_id>-<attempt>` every resource here carries, and sweeps RDS
-#      instances, RDS clusters, DB subnet groups and security groups among everything else.
-#   3. `Verify nothing survived` asks the cloud again, changing nothing (VERIFY_ONLY=1 plus direct
-#      describes by name), and fails the job if anything remains.
-#   All three are `if: always()`, and the step timeouts leave them room inside the job cap — which
-#   itself stays inside the 2-hour OIDC session, so the credentials outlive the cleanup.
+# ── TEARDOWN — three layers ───────────────────────────────────────────────────────────────────────
+#   1. `Tear down` is the ONLY layer that waits for a database to finish deleting. It deletes the two
+#      instances and the cluster by the names derived from the run id, then blocks on the AWS CLI
+#      waiters `aws rds wait db-instance-deleted` / `db-cluster-deleted` under one 21-minute deadline.
+#      Only when every waiter has confirmed the deletion does it delete the DB subnet group and the
+#      security group by name; while a database still exists, its network interface holds the group.
+#   2. `Guaranteed teardown` runs scripts/e2e/aws-cleanup.sh with its DEFAULTS, as the tag-scoped
+#      backstop for a run whose layer 1 never ran or died early. It finds every resource tagged
+#      `alethia:project-id=e2e-<run_id>-<attempt>` and issues the deletes. It does NOT wait for an RDS
+#      deletion to finish: its detach wait counts a database in `deleting` as already swept. So when
+#      layer 1 ran out of time, this layer cannot remove the security group either.
+#   3. `Verify nothing survived` asks the cloud again and changes nothing (VERIFY_ONLY=1 plus describes
+#      by name). It fails the job on any survivor, including a database still `deleting`. A survivor is
+#      then reclaimed by e2e-orphan-reaper.yml, whose sweep sees it as this run's orphan.
+#   All three are `if: always()`. Every step has a timeout, their sum is 10 minutes under the job cap,
+#   and the cap is under the 7200 s role session, so the teardown still holds valid credentials.
 #
 # ── CONCURRENCY ───────────────────────────────────────────────────────────────────────────────────
 # The nightly's stale-cluster preflight and the orphan reaper both sweep every `e2e-*` handle in this
@@ -72,10 +77,10 @@ jobs:
     concurrency:
       group: e2e-nightly-aws
       cancel-in-progress: false
-    # The sum of the step timeouts below is about 100 minutes; the job cap is above it so a step
-    # timing out still leaves the always() teardown its own budget, and below the 2-hour role
-    # session (role-duration-seconds) so the teardown still holds valid credentials.
-    timeout-minutes: 110
+    # Every step carries a timeout and they sum to 106 minutes, 10 under this cap, so a step timing out
+    # never costs the always() teardown its budget. The cap (116 min = 6960 s) is under the 7200 s
+    # role session (role-duration-seconds), which starts later still, at the configure step.
+    timeout-minutes: 116
     env:
       # The per-run handle aws-cleanup.sh scopes to (guard 2: <run_id>-<attempt>), and the region it
       # requires explicitly (guard 3). Job-level and never re-exported, so no step can shadow them.
@@ -87,6 +92,7 @@ jobs:
       RDS_CLASS: db.t4g.micro
     steps:
       - name: Require the e2e AWS role
+        timeout-minutes: 1
         env:
           ROLE_ARN: ${{ vars.E2E_AWS_ROLE_ARN }}
         run: |
@@ -96,16 +102,20 @@ jobs:
           fi
 
       - uses: actions/checkout@v7
+        timeout-minutes: 2
 
       - uses: actions/setup-go@v7
+        timeout-minutes: 4
         with:
           go-version-file: go.work
           cache-dependency-path: apps/runner/go.sum
 
       - name: Pre-fetch Go modules (retrying a transient proxy error)
+        timeout-minutes: 4
         run: bash scripts/ci/go-mod-download-retry.sh apps/runner
 
       - name: Install the mysql client
+        timeout-minutes: 4
         run: |
           if ! command -v mysql >/dev/null; then
             sudo apt-get update -q && sudo apt-get install -y -q mysql-client
@@ -114,6 +124,7 @@ jobs:
 
       - name: Configure AWS credentials (OIDC)
         id: aws
+        timeout-minutes: 2
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.E2E_AWS_ROLE_ARN }}
@@ -124,7 +135,7 @@ jobs:
       # the teardown can address them even when the step that created them died halfway.
       - name: Resolve engines, network and names
         id: plan
-        timeout-minutes: 5
+        timeout-minutes: 4
         run: |
           set -euo pipefail
           tag="e2e-${ALETHIA_E2E_ENV}"
@@ -206,6 +217,7 @@ jobs:
       # file under RUNNER_TEMP rather than in $GITHUB_ENV, so only the steps that read it see it.
       # Alphanumeric only: RDS refuses '/', '@', '"' and space, and the value goes into a mysql:// URI.
       - name: Generate the master password
+        timeout-minutes: 1
         run: |
           set -euo pipefail
           umask 077
@@ -216,7 +228,7 @@ jobs:
 
       - name: Create the security group and the databases
         id: create
-        timeout-minutes: 5
+        timeout-minutes: 4
         env:
           TAG: ${{ steps.plan.outputs.tag }}
           VPC: ${{ steps.plan.outputs.vpc }}
@@ -272,17 +284,17 @@ jobs:
             --tags "$tags" >/dev/null
           echo "requested ${AURORA_CLUSTER} (+ ${AURORA_INSTANCE}) and ${RDS_INSTANCE} behind ${sg}"
 
-      # Bounded twice: the loop gives up at 25 minutes, the step at 28, both well inside the job cap.
+      # Bounded twice: the loop gives up at 20 minutes, the step at 22.
       - name: Wait until both databases are available
         id: wait
-        timeout-minutes: 28
+        timeout-minutes: 22
         env:
           AURORA_CLUSTER: ${{ steps.plan.outputs.aurora_cluster }}
           AURORA_INSTANCE: ${{ steps.plan.outputs.aurora_instance }}
           RDS_INSTANCE: ${{ steps.plan.outputs.rds_instance }}
         run: |
           set -euo pipefail
-          deadline=$(( $(date +%s) + 25 * 60 ))
+          deadline=$(( $(date +%s) + 20 * 60 ))
           while :; do
             c="$(aws rds describe-db-clusters --db-cluster-identifier "$AURORA_CLUSTER" --query 'DBClusters[0].Status' --output text)"
             a="$(aws rds describe-db-instances --db-instance-identifier "$AURORA_INSTANCE" --query 'DBInstances[0].DBInstanceStatus' --output text)"
@@ -295,7 +307,7 @@ jobs:
               esac
             done
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "::error::the databases were not available after 25 minutes"; exit 1
+              echo "::error::the databases were not available after 20 minutes"; exit 1
             fi
             sleep 30
           done
@@ -310,7 +322,7 @@ jobs:
       # The master user is both the administrator and "root": a managed server has no other.
       - name: go test -tags integration (BYO users Lifecycle, each managed engine)
         id: test
-        timeout-minutes: 15
+        timeout-minutes: 12
         working-directory: apps/runner
         env:
           AURORA_HOST: ${{ steps.wait.outputs.aurora_host }}
@@ -351,10 +363,11 @@ jobs:
           done
           exit "$failed"
 
-      # ── Teardown, layer 1: exactly what this run created, by name, waiting for each deletion. ──
+      # ── Teardown, layer 1: delete what this run created by name, WAIT until AWS confirms each
+      #    database is gone, and only then delete the subnet group and the security group. ──
       - name: Tear down this run's databases and security group
         if: always()
-        timeout-minutes: 22
+        timeout-minutes: 24
         env:
           SG_NAME: ${{ steps.plan.outputs.sg_name }}
           VPC: ${{ steps.plan.outputs.vpc }}
@@ -368,72 +381,96 @@ jobs:
             echo "the plan step never named any resource, so nothing was created; layer 2 still sweeps by tag"
             exit 0
           fi
+          # One deadline for every wait below, 3 minutes inside the step timeout.
+          deadline=$(( $(date +%s) + 21 * 60 ))
+          remaining() { echo $(( deadline - $(date +%s) )); }
           gone() { printf '%s' "$1" | grep -Eq 'NotFound|not found|does not exist'; }
-          # delete <what> <cmd…> — "already gone" is success; anything else is reported, and the
-          # tag sweep and the verify step below decide the verdict.
+          # delete <what> <cmd…> — "already gone" is success; anything else is reported, and layers 2
+          # and 3 decide the verdict.
           delete() {
             local what="$1" err; shift
             if err="$("$@" 2>&1 >/dev/null)"; then echo "deleting ${what}"; return 0; fi
             if gone "$err"; then echo "${what}: already gone"; return 0; fi
             echo "::warning::could not delete ${what}: ${err}"
+            return 1
           }
-          delete "rds instance ${RDS_INSTANCE}" aws rds delete-db-instance --db-instance-identifier "$RDS_INSTANCE" --skip-final-snapshot --delete-automated-backups
-          delete "aurora instance ${AURORA_INSTANCE}" aws rds delete-db-instance --db-instance-identifier "$AURORA_INSTANCE" --skip-final-snapshot --delete-automated-backups
-          # A cluster refuses deletion while a member is not yet `deleting`; the member delete above
-          # moves it there, so the cluster delete is retried briefly rather than waited on in full.
-          for _ in 1 2 3 4 5 6; do
-            if err="$(aws rds delete-db-cluster --db-cluster-identifier "$AURORA_CLUSTER" --skip-final-snapshot 2>&1 >/dev/null)"; then
-              echo "deleting aurora cluster ${AURORA_CLUSTER}"; break
+          # wait_gone <what> <waiter…> — the AWS CLI waiter (which succeeds at once on a resource
+          # that does not exist), cut off at the deadline. Any failure clears `confirmed`.
+          confirmed=1
+          wait_gone() {
+            local what="$1" left rc; shift
+            left="$(remaining)"
+            if [ "$left" -le 0 ]; then
+              echo "::warning::no time left to wait for ${what}"; confirmed=0; return
             fi
-            if gone "$err"; then echo "aurora cluster ${AURORA_CLUSTER}: already gone"; break; fi
-            echo "aurora cluster not deletable yet: ${err}"; sleep 20
-          done
-          # Wait for every database to be GONE: until then its interface holds the security group.
-          deadline=$(( $(date +%s) + 18 * 60 ))
-          while :; do
-            left=""
-            # still <label> <cmd…> — adds the label while the resource is listed or cannot be read
-            still() {
-              local label="$1" err; shift
-              if err="$("$@" 2>&1 >/dev/null)"; then
-                left="${left} ${label}"
-              elif ! gone "$err"; then
-                left="${left} ${label}(unknown)"
+            echo "waiting up to ${left}s for ${what} to be deleted"
+            if timeout "$left" aws rds wait "$@"; then
+              echo "${what}: deleted"
+            else
+              rc=$?
+              echo "::warning::${what} was not confirmed deleted (waiter exit ${rc}; 124 is the deadline)"
+              confirmed=0
+            fi
+          }
+          # delete_cluster — a cluster refuses deletion until its member is `deleting`, so this is
+          # retried briefly; returns non-zero if it was never accepted.
+          delete_cluster() {
+            local err
+            for _ in 1 2 3 4 5 6; do
+              if err="$(aws rds delete-db-cluster --db-cluster-identifier "$AURORA_CLUSTER" --skip-final-snapshot 2>&1 >/dev/null)"; then
+                echo "deleting aurora cluster ${AURORA_CLUSTER}"; return 0
               fi
-            }
-            still "$RDS_INSTANCE" aws rds describe-db-instances --db-instance-identifier "$RDS_INSTANCE"
-            still "$AURORA_INSTANCE" aws rds describe-db-instances --db-instance-identifier "$AURORA_INSTANCE"
-            still "$AURORA_CLUSTER" aws rds describe-db-clusters --db-cluster-identifier "$AURORA_CLUSTER"
-            [ -z "$left" ] && { echo "every database is gone"; break; }
-            if [ "$(date +%s)" -ge "$deadline" ]; then echo "::warning::still deleting after 18 minutes:${left}"; break; fi
-            echo "waiting for:${left}"; sleep 30
-          done
-          delete "db subnet group ${SUBNET_GROUP}" aws rds delete-db-subnet-group --db-subnet-group-name "$SUBNET_GROUP"
+              if gone "$err"; then echo "aurora cluster ${AURORA_CLUSTER}: already gone"; return 0; fi
+              echo "aurora cluster not deletable yet: ${err}"; sleep 20
+            done
+            return 1
+          }
+
+          delete "rds instance ${RDS_INSTANCE}" aws rds delete-db-instance --db-instance-identifier "$RDS_INSTANCE" --skip-final-snapshot --delete-automated-backups || true
+          # No --delete-automated-backups here: an Aurora member keeps no automated backups of its own
+          # (they belong to the cluster), and the CLI reference documents that flag's default as
+          # "remove", so it would add nothing on this call.
+          delete "aurora instance ${AURORA_INSTANCE}" aws rds delete-db-instance --db-instance-identifier "$AURORA_INSTANCE" --skip-final-snapshot || true
+          cluster_accepted=0
+          delete_cluster && cluster_accepted=1
+
+          wait_gone "rds instance ${RDS_INSTANCE}" db-instance-deleted --db-instance-identifier "$RDS_INSTANCE"
+          wait_gone "aurora instance ${AURORA_INSTANCE}" db-instance-deleted --db-instance-identifier "$AURORA_INSTANCE"
+          if [ "$cluster_accepted" -eq 0 ]; then
+            # The member is gone (or the deadline passed), so the cluster can be asked again.
+            delete_cluster || echo "::warning::the cluster delete was never accepted"
+          fi
+          wait_gone "aurora cluster ${AURORA_CLUSTER}" db-cluster-deleted --db-cluster-identifier "$AURORA_CLUSTER"
+
+          if [ "$confirmed" -ne 1 ]; then
+            echo "::warning::not every database was confirmed deleted, so the subnet group and security group are left to layer 2, and layer 3 will fail the run on whatever survives"
+            exit 0
+          fi
+          delete "db subnet group ${SUBNET_GROUP}" aws rds delete-db-subnet-group --db-subnet-group-name "$SUBNET_GROUP" || true
           sg="$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=${VPC}" "Name=group-name,Values=${SG_NAME}" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true)"
           case "$sg" in
             sg-*)
+              # A deleted database's interface can take a moment longer to release the group.
               for _ in 1 2 3 4 5 6; do
                 if aws ec2 delete-security-group --group-id "$sg" 2>/dev/null; then echo "deleted security group ${sg}"; break; fi
-                echo "security group ${sg} still in use; retrying"; sleep 20
+                echo "security group ${sg} still in use; retrying"; sleep 15
               done ;;
             *) echo "security group ${SG_NAME}: none" ;;
           esac
 
-      # ── Teardown, layer 2: the tag-scoped sweep every e2e AWS run ends with. ──
-      # DELETE_RETRIES and DETACH_TIMEOUT are raised from the script's defaults because an RDS
-      # deletion takes minutes, and the security group cannot go until it has finished.
+      # ── Teardown, layer 2: the tag-scoped sweep every e2e AWS run ends with, at its defaults. It
+      #    issues deletes for anything still tagged with this run's handle, but it does not wait for an
+      #    RDS deletion to finish (a `deleting` database counts as swept), so it is a backstop for a
+      #    layer 1 that never ran, not a second chance at the security group. ──
       - name: Guaranteed teardown (tag-scoped sweep)
         if: always()
-        timeout-minutes: 20
-        env:
-          DELETE_RETRIES: "8"
-          DETACH_TIMEOUT: "600"
+        timeout-minutes: 15
         run: ./scripts/e2e/aws-cleanup.sh
 
       # ── Teardown, layer 3: ask the cloud again, change nothing, and fail on any survivor. ──
       - name: Verify nothing survived
         if: always()
-        timeout-minutes: 8
+        timeout-minutes: 6
         env:
           SG_NAME: ${{ steps.plan.outputs.sg_name }}
           SUBNET_GROUP: ${{ steps.plan.outputs.subnet_group }}
@@ -473,6 +510,7 @@ jobs:
 
       - name: Write the step summary
         if: always()
+        timeout-minutes: 1
         env:
           AURORA_VERSION: ${{ steps.plan.outputs.aurora_version }}
           RDS_VERSION: ${{ steps.plan.outputs.rds_version }}
