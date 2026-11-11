@@ -1,0 +1,497 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# BYO USERS ON A MANAGED MYSQL — the last "done when" of #6536.
+#
+# The per-binding BYO database users (apps/runner/internal/agent/db_bootstrap_byo_mysql*.go) create
+# each user with a PRECOMPUTED `caching_sha2_password` hash (`IDENTIFIED WITH caching_sha2_password AS
+# '$A$005$…'`), so the plaintext password never reaches the server's statement log. ci.yml's
+# `byo-users-mysql` job proves the SQL on stock MySQL with an administrator holding an RDS master
+# user's STATIC privileges. What it cannot prove is that a managed server accepts the statement at
+# all: managed engines run their own builds, and a managed master user is not a grant list someone
+# typed. This workflow runs the same `TestByoUsersMySQLServer_Lifecycle` against two real managed
+# servers, as their real master user:
+#
+#   * Aurora MySQL (the engine the product's AWS template provisions — infra/templates/project/aws/
+#     modules/rds/rds.tf), one cluster with one db.t4g.medium writer;
+#   * RDS for MySQL, one db.t4g.micro.
+#
+# Both are on the 8.4 line, resolved at run time from the engine catalogue (the newest 8.4.x the
+# region offers for that class), and the run refuses before creating anything if either is missing.
+#
+# ── COST AND SPEND GUARD ──────────────────────────────────────────────────────────────────────────
+# About an hour of a db.t4g.medium and a db.t4g.micro plus minimum storage: well under USD 0.10.
+# .claude/hooks/guard-spend.sh prices a dispatch at EUR 2.00 (C-BYOMYSQL), deliberately above that.
+#
+# ── IDENTITY ──────────────────────────────────────────────────────────────────────────────────────
+# workflow_dispatch ONLY, so no pull_request can reach the `id-token: write` below
+# (scripts/check-workflow-oidc-isolation.mjs). The job pins `environment: e2e-dev`, which is the
+# OIDC subject the e2e-nightly role trusts besides `main` (infra/aws-oidc/e2e-nightly.tf,
+# terraform.tfvars `e2e_github_environment`). The role is region-locked to us-east-1.
+#
+# ── NETWORK ───────────────────────────────────────────────────────────────────────────────────────
+# The databases must be publicly reachable for a GitHub-hosted runner to reach them. They are
+# reachable from exactly ONE address: a security group in the default VPC admits 3306 from this
+# runner's own public IPv4 as a /32, and nothing else. Every connection the test makes is TLS
+# (the test's client passes --ssl-mode=REQUIRED on every invocation).
+#
+# ── TEARDOWN — three layers, each able to stand alone ────────────────────────────────────────────
+#   1. `Tear down` deletes exactly what this run created, by the names derived from the run id, and
+#      WAITS for each deletion (an Aurora instance takes minutes, and the security group cannot be
+#      deleted while a database's interface still holds it).
+#   2. `Guaranteed teardown` runs scripts/e2e/aws-cleanup.sh, which discovers by the tag
+#      `alethia:project-id=e2e-<run_id>-<attempt>` every resource here carries, and sweeps RDS
+#      instances, RDS clusters, DB subnet groups and security groups among everything else.
+#   3. `Verify nothing survived` asks the cloud again, changing nothing (VERIFY_ONLY=1 plus direct
+#      describes by name), and fails the job if anything remains.
+#   All three are `if: always()`, and the step timeouts leave them room inside the job cap — which
+#   itself stays inside the 2-hour OIDC session, so the credentials outlive the cleanup.
+#
+# ── CONCURRENCY ───────────────────────────────────────────────────────────────────────────────────
+# The nightly's stale-cluster preflight and the orphan reaper both sweep every `e2e-*` handle in this
+# region that is not their own, on the stated premise that same-cloud runs are serialized by the
+# `e2e-nightly-aws` concurrency group. A run outside that group would have its databases deleted
+# underneath it. So this job joins the group, with cancel-in-progress: false.
+
+name: BYO users — managed MySQL (AWS)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  managed-mysql:
+    name: BYO users SQL — managed MySQL (Aurora + RDS)
+    runs-on: ubuntu-latest
+    environment: e2e-dev
+    permissions:
+      id-token: write
+      contents: read
+    concurrency:
+      group: e2e-nightly-aws
+      cancel-in-progress: false
+    # The sum of the step timeouts below is about 100 minutes; the job cap is above it so a step
+    # timing out still leaves the always() teardown its own budget, and below the 2-hour role
+    # session (role-duration-seconds) so the teardown still holds valid credentials.
+    timeout-minutes: 110
+    env:
+      # The per-run handle aws-cleanup.sh scopes to (guard 2: <run_id>-<attempt>), and the region it
+      # requires explicitly (guard 3). Job-level and never re-exported, so no step can shadow them.
+      ALETHIA_E2E_ENV: ${{ github.run_id }}-${{ github.run_attempt }}
+      ALETHIA_E2E_REGION: us-east-1
+      MASTER_USER: byo_master
+      TEST_DB: byo-test
+      AURORA_CLASS: db.t4g.medium
+      RDS_CLASS: db.t4g.micro
+    steps:
+      - name: Require the e2e AWS role
+        env:
+          ROLE_ARN: ${{ vars.E2E_AWS_ROLE_ARN }}
+        run: |
+          if [ -z "$ROLE_ARN" ]; then
+            echo "::error::vars.E2E_AWS_ROLE_ARN is unset, so there is no role to assume (infra/aws-oidc)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: apps/runner/go.sum
+
+      - name: Pre-fetch Go modules (retrying a transient proxy error)
+        run: bash scripts/ci/go-mod-download-retry.sh apps/runner
+
+      - name: Install the mysql client
+        run: |
+          if ! command -v mysql >/dev/null; then
+            sudo apt-get update -q && sudo apt-get install -y -q mysql-client
+          fi
+          mysql --version
+
+      - name: Configure AWS credentials (OIDC)
+        id: aws
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.ALETHIA_E2E_REGION }}
+          role-duration-seconds: 7200
+
+      # Names are derived from the run id, so they cannot collide with any other run's resources, and
+      # the teardown can address them even when the step that created them died halfway.
+      - name: Resolve engines, network and names
+        id: plan
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          tag="e2e-${ALETHIA_E2E_ENV}"
+          base="e2e-byo-${ALETHIA_E2E_ENV}"
+
+          # The newest 8.4.x each engine offers. An absent line is a refusal, not a fallback to 8.0:
+          # the point of the run is the 8.4 line the product pins.
+          # Each list is read into a variable first, so a failed API call fails the step under
+          # `set -e` instead of reading as "no such version".
+          aurora_offered="$(aws rds describe-db-engine-versions --engine aurora-mysql --query 'DBEngineVersions[].EngineVersion' --output text)"
+          rds_offered="$(aws rds describe-db-engine-versions --engine mysql --query 'DBEngineVersions[].EngineVersion' --output text)"
+          newest_84() { printf '%s\n' "$1" | tr '\t' '\n' | grep -E '^8\.4\.' | sort -V | tail -n1 || true; }
+          aurora_version="$(newest_84 "$aurora_offered")"
+          rds_version="$(newest_84 "$rds_offered")"
+          if [ -z "$aurora_version" ]; then
+            echo "::error::us-east-1 offers no aurora-mysql 8.4 engine version. Offered:"
+            printf '%s\n' "$aurora_offered" | tr '\t' '\n' | tail -n 15
+            exit 1
+          fi
+          if [ -z "$rds_version" ]; then
+            echo "::error::us-east-1 offers no mysql 8.4 engine version."
+            exit 1
+          fi
+
+          # The AZs each (engine, version, class) can be placed in. Refuse before creating anything
+          # when a class is not orderable, rather than half-creating and tearing down.
+          orderable() {
+            aws rds describe-orderable-db-instance-options --engine "$1" --engine-version "$2" --db-instance-class "$3" \
+              --query 'OrderableDBInstanceOptions[].AvailabilityZones[].Name' --output text
+          }
+          azs() { printf '%s\n' "$1" | tr '\t' '\n' | grep -v -e '^$' -e '^None$' | sort -u || true; }
+          aurora_orderable="$(orderable aurora-mysql "$aurora_version" "$AURORA_CLASS")"
+          rds_orderable="$(orderable mysql "$rds_version" "$RDS_CLASS")"
+          aurora_azs="$(azs "$aurora_orderable")"
+          rds_azs="$(azs "$rds_orderable")"
+          [ -n "$aurora_azs" ] || { echo "::error::$AURORA_CLASS is not orderable for aurora-mysql $aurora_version"; exit 1; }
+          [ -n "$rds_azs" ] || { echo "::error::$RDS_CLASS is not orderable for mysql $rds_version"; exit 1; }
+          both_azs="$(comm -12 <(printf '%s\n' "$aurora_azs") <(printf '%s\n' "$rds_azs"))"
+
+          vpc="$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)"
+          case "$vpc" in vpc-*) ;; *) echo "::error::no default VPC in ${ALETHIA_E2E_REGION}"; exit 1 ;; esac
+          subnets=""
+          while IFS=$'\t' read -r subnet az; do
+            [ -n "$subnet" ] || continue
+            if printf '%s\n' "$both_azs" | grep -qxF "$az"; then subnets="${subnets} ${subnet}"; fi
+          done < <(aws ec2 describe-subnets --filters "Name=vpc-id,Values=${vpc}" Name=default-for-az,Values=true \
+            --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text)
+          subnets="${subnets# }"
+          # A DB subnet group needs subnets in at least two AZs.
+          # shellcheck disable=SC2086 # split the space-separated id list on purpose
+          if [ "$(printf '%s\n' $subnets | grep -c .)" -lt 2 ]; then
+            echo "::error::fewer than two default subnets sit in AZs both classes can use (${both_azs//$'\n'/ })"
+            exit 1
+          fi
+
+          # This runner's own public IPv4, the ONLY source the security group admits.
+          ip="$(curl -4 -fsS --max-time 10 https://checkip.amazonaws.com | tr -d '[:space:]')"
+          if ! printf '%s' "$ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+            echo "::error::could not read this runner's public IPv4 (got '${ip}')"
+            exit 1
+          fi
+
+          {
+            echo "tag=${tag}"
+            echo "vpc=${vpc}"
+            echo "subnets=${subnets}"
+            echo "runner_ip=${ip}"
+            echo "aurora_version=${aurora_version}"
+            echo "rds_version=${rds_version}"
+            echo "sg_name=${base}-mysql"
+            echo "subnet_group=${base}-mysql"
+            echo "aurora_cluster=${base}-aurora"
+            echo "aurora_instance=${base}-aurora-1"
+            echo "rds_instance=${base}-rds"
+          } >> "$GITHUB_OUTPUT"
+          echo "aurora-mysql ${aurora_version} (${AURORA_CLASS}) · mysql ${rds_version} (${RDS_CLASS}) · vpc ${vpc} · subnets ${subnets}"
+
+      # The password is generated here, AFTER every third-party action has run, and kept in a 0600
+      # file under RUNNER_TEMP rather than in $GITHUB_ENV, so only the steps that read it see it.
+      # Alphanumeric only: RDS refuses '/', '@', '"' and space, and the value goes into a mysql:// URI.
+      - name: Generate the master password
+        run: |
+          set -euo pipefail
+          umask 077
+          pw="$(openssl rand -base64 64 | tr -dc 'A-Za-z0-9' | head -c 40)"
+          [ "${#pw}" -eq 40 ] || { echo "::error::password generation produced ${#pw} characters"; exit 1; }
+          echo "::add-mask::${pw}"
+          printf '%s' "$pw" > "$RUNNER_TEMP/master-password"
+
+      - name: Create the security group and the databases
+        id: create
+        timeout-minutes: 5
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          VPC: ${{ steps.plan.outputs.vpc }}
+          SUBNETS: ${{ steps.plan.outputs.subnets }}
+          RUNNER_IP: ${{ steps.plan.outputs.runner_ip }}
+          AURORA_VERSION: ${{ steps.plan.outputs.aurora_version }}
+          RDS_VERSION: ${{ steps.plan.outputs.rds_version }}
+          SG_NAME: ${{ steps.plan.outputs.sg_name }}
+          SUBNET_GROUP: ${{ steps.plan.outputs.subnet_group }}
+          AURORA_CLUSTER: ${{ steps.plan.outputs.aurora_cluster }}
+          AURORA_INSTANCE: ${{ steps.plan.outputs.aurora_instance }}
+          RDS_INSTANCE: ${{ steps.plan.outputs.rds_instance }}
+        run: |
+          set -euo pipefail
+          pw="$(cat "$RUNNER_TEMP/master-password")"
+          # ⚠️ The tag goes on what THIS RUN CREATES and on nothing else — never on the default VPC
+          # or its subnets. aws-cleanup.sh treats a tagged VPC as the run's own and sweeps every
+          # non-default security group, free interface, subnet and the VPC itself inside it.
+          tags="$(jq -cn --arg v "$TAG" '[{Key:"alethia:project-id",Value:$v},{Key:"alethia:e2e-workflow",Value:"byo-users-managed-mysql"}]')"
+          sg_tags="$(jq -cn --argjson t "$tags" '[{ResourceType:"security-group",Tags:$t}]')"
+
+          sg="$(aws ec2 create-security-group --group-name "$SG_NAME" --vpc-id "$VPC" \
+            --description "BYO users managed-MySQL e2e, run ${ALETHIA_E2E_ENV}: 3306 from one runner only" \
+            --tag-specifications "$sg_tags" --query GroupId --output text)"
+          echo "sg=${sg}" >> "$GITHUB_OUTPUT"
+          aws ec2 authorize-security-group-ingress --group-id "$sg" \
+            --ip-permissions "$(jq -cn --arg c "${RUNNER_IP}/32" '[{IpProtocol:"tcp",FromPort:3306,ToPort:3306,IpRanges:[{CidrIp:$c,Description:"this runner only"}]}]')" >/dev/null
+
+          # shellcheck disable=SC2086 # SUBNETS is a space-separated list of ids, split on purpose
+          aws rds create-db-subnet-group --db-subnet-group-name "$SUBNET_GROUP" \
+            --db-subnet-group-description "BYO users managed-MySQL e2e, run ${ALETHIA_E2E_ENV}" \
+            --subnet-ids $SUBNETS --tags "$tags" >/dev/null
+
+          # Aurora cannot retain fewer than one day of backups; 1 is its floor, and the cluster is
+          # deleted with --skip-final-snapshot and its automated backups.
+          aws rds create-db-cluster --db-cluster-identifier "$AURORA_CLUSTER" \
+            --engine aurora-mysql --engine-version "$AURORA_VERSION" \
+            --master-username "$MASTER_USER" --master-user-password "$pw" \
+            --db-subnet-group-name "$SUBNET_GROUP" --vpc-security-group-ids "$sg" \
+            --storage-encrypted --backup-retention-period 1 --no-deletion-protection \
+            --tags "$tags" >/dev/null
+          aws rds create-db-instance --db-instance-identifier "$AURORA_INSTANCE" \
+            --db-cluster-identifier "$AURORA_CLUSTER" --engine aurora-mysql \
+            --db-instance-class "$AURORA_CLASS" --publicly-accessible \
+            --tags "$tags" >/dev/null
+
+          aws rds create-db-instance --db-instance-identifier "$RDS_INSTANCE" \
+            --engine mysql --engine-version "$RDS_VERSION" --db-instance-class "$RDS_CLASS" \
+            --master-username "$MASTER_USER" --master-user-password "$pw" \
+            --allocated-storage 20 --storage-type gp3 --storage-encrypted \
+            --db-subnet-group-name "$SUBNET_GROUP" --vpc-security-group-ids "$sg" \
+            --publicly-accessible --no-multi-az --backup-retention-period 0 --no-deletion-protection \
+            --tags "$tags" >/dev/null
+          echo "requested ${AURORA_CLUSTER} (+ ${AURORA_INSTANCE}) and ${RDS_INSTANCE} behind ${sg}"
+
+      # Bounded twice: the loop gives up at 25 minutes, the step at 28, both well inside the job cap.
+      - name: Wait until both databases are available
+        id: wait
+        timeout-minutes: 28
+        env:
+          AURORA_CLUSTER: ${{ steps.plan.outputs.aurora_cluster }}
+          AURORA_INSTANCE: ${{ steps.plan.outputs.aurora_instance }}
+          RDS_INSTANCE: ${{ steps.plan.outputs.rds_instance }}
+        run: |
+          set -euo pipefail
+          deadline=$(( $(date +%s) + 25 * 60 ))
+          while :; do
+            c="$(aws rds describe-db-clusters --db-cluster-identifier "$AURORA_CLUSTER" --query 'DBClusters[0].Status' --output text)"
+            a="$(aws rds describe-db-instances --db-instance-identifier "$AURORA_INSTANCE" --query 'DBInstances[0].DBInstanceStatus' --output text)"
+            r="$(aws rds describe-db-instances --db-instance-identifier "$RDS_INSTANCE" --query 'DBInstances[0].DBInstanceStatus' --output text)"
+            echo "aurora cluster=${c} instance=${a} · rds instance=${r}"
+            if [ "$c" = available ] && [ "$a" = available ] && [ "$r" = available ]; then break; fi
+            for s in "$c" "$a" "$r"; do
+              case "$s" in failed | incompatible-* | inaccessible-encryption-credentials* | storage-full | restore-error)
+                echo "::error::a database reached the terminal status '${s}'"; exit 1 ;;
+              esac
+            done
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::the databases were not available after 25 minutes"; exit 1
+            fi
+            sleep 30
+          done
+          aurora_host="$(aws rds describe-db-clusters --db-cluster-identifier "$AURORA_CLUSTER" --query 'DBClusters[0].Endpoint' --output text)"
+          rds_host="$(aws rds describe-db-instances --db-instance-identifier "$RDS_INSTANCE" --query 'DBInstances[0].Endpoint.Address' --output text)"
+          echo "aurora_host=${aurora_host}" >> "$GITHUB_OUTPUT"
+          echo "rds_host=${rds_host}" >> "$GITHUB_OUTPUT"
+
+      # Both engines run even when the first fails, and each verdict is recorded, so one red engine
+      # cannot hide what the other did. ALETHIA_TEST_MYSQL_REQUIRED turns a skip into a failure, and
+      # the grep asserts the test PASSED by name, so a -run that matches nothing cannot read green.
+      # The master user is both the administrator and "root": a managed server has no other.
+      - name: go test -tags integration (BYO users Lifecycle, each managed engine)
+        id: test
+        timeout-minutes: 15
+        working-directory: apps/runner
+        env:
+          AURORA_HOST: ${{ steps.wait.outputs.aurora_host }}
+          RDS_HOST: ${{ steps.wait.outputs.rds_host }}
+          AURORA_VERSION: ${{ steps.plan.outputs.aurora_version }}
+          RDS_VERSION: ${{ steps.plan.outputs.rds_version }}
+          ALETHIA_TEST_MYSQL_REQUIRED: "1"
+        run: |
+          set -uo pipefail
+          pw="$(cat "$RUNNER_TEMP/master-password")"
+          : > "$RUNNER_TEMP/verdicts.tsv"
+          failed=0
+          for engine in aurora-mysql mysql; do
+            case "$engine" in
+              aurora-mysql) host="$AURORA_HOST"; api_version="$AURORA_VERSION" ;;
+              mysql) host="$RDS_HOST"; api_version="$RDS_VERSION" ;;
+            esac
+            echo "::group::${engine} ${api_version}"
+            # shellcheck disable=SC2016 # the backticks quote a MySQL identifier, not a command
+            if server_version="$(MYSQL_PWD="$pw" mysql --protocol=TCP -h "$host" -P 3306 -u "$MASTER_USER" --ssl-mode=REQUIRED -N -B \
+              -e 'CREATE DATABASE IF NOT EXISTS `'"$TEST_DB"'`; SELECT VERSION();')"; then
+              dsn="mysql://${MASTER_USER}:${pw}@${host}:3306/${TEST_DB}"
+              log="$RUNNER_TEMP/byo-${engine}.log"
+              ALETHIA_TEST_MYSQL_ADMIN_DSN="$dsn" ALETHIA_TEST_MYSQL_ROOT_DSN="$dsn" \
+                go test -tags integration -count=1 -v -run 'TestByoUsersMySQLServer_Lifecycle$' ./internal/agent/ 2>&1 | tee "$log"
+              if grep -q -- '--- PASS: TestByoUsersMySQLServer_Lifecycle ' "$log"; then
+                verdict=PASS
+              else
+                verdict=FAIL
+              fi
+            else
+              server_version="(no connection)"
+              verdict="FAIL (could not connect over TLS as the master user)"
+            fi
+            echo "::endgroup::"
+            printf '%s\t%s\t%s\t%s\n' "$engine" "$api_version" "$server_version" "$verdict" >> "$RUNNER_TEMP/verdicts.tsv"
+            case "$verdict" in PASS) ;; *) failed=1; echo "::error::${engine} ${api_version}: ${verdict}" ;; esac
+          done
+          exit "$failed"
+
+      # ── Teardown, layer 1: exactly what this run created, by name, waiting for each deletion. ──
+      - name: Tear down this run's databases and security group
+        if: always()
+        timeout-minutes: 22
+        env:
+          SG_NAME: ${{ steps.plan.outputs.sg_name }}
+          VPC: ${{ steps.plan.outputs.vpc }}
+          SUBNET_GROUP: ${{ steps.plan.outputs.subnet_group }}
+          AURORA_CLUSTER: ${{ steps.plan.outputs.aurora_cluster }}
+          AURORA_INSTANCE: ${{ steps.plan.outputs.aurora_instance }}
+          RDS_INSTANCE: ${{ steps.plan.outputs.rds_instance }}
+        run: |
+          set -uo pipefail
+          if [ -z "$AURORA_CLUSTER" ]; then
+            echo "the plan step never named any resource, so nothing was created; layer 2 still sweeps by tag"
+            exit 0
+          fi
+          gone() { printf '%s' "$1" | grep -Eq 'NotFound|not found|does not exist'; }
+          # delete <what> <cmd…> — "already gone" is success; anything else is reported, and the
+          # tag sweep and the verify step below decide the verdict.
+          delete() {
+            local what="$1" err; shift
+            if err="$("$@" 2>&1 >/dev/null)"; then echo "deleting ${what}"; return 0; fi
+            if gone "$err"; then echo "${what}: already gone"; return 0; fi
+            echo "::warning::could not delete ${what}: ${err}"
+          }
+          delete "rds instance ${RDS_INSTANCE}" aws rds delete-db-instance --db-instance-identifier "$RDS_INSTANCE" --skip-final-snapshot --delete-automated-backups
+          delete "aurora instance ${AURORA_INSTANCE}" aws rds delete-db-instance --db-instance-identifier "$AURORA_INSTANCE" --skip-final-snapshot --delete-automated-backups
+          # A cluster refuses deletion while a member is not yet `deleting`; the member delete above
+          # moves it there, so the cluster delete is retried briefly rather than waited on in full.
+          for _ in 1 2 3 4 5 6; do
+            if err="$(aws rds delete-db-cluster --db-cluster-identifier "$AURORA_CLUSTER" --skip-final-snapshot 2>&1 >/dev/null)"; then
+              echo "deleting aurora cluster ${AURORA_CLUSTER}"; break
+            fi
+            if gone "$err"; then echo "aurora cluster ${AURORA_CLUSTER}: already gone"; break; fi
+            echo "aurora cluster not deletable yet: ${err}"; sleep 20
+          done
+          # Wait for every database to be GONE: until then its interface holds the security group.
+          deadline=$(( $(date +%s) + 18 * 60 ))
+          while :; do
+            left=""
+            # still <label> <cmd…> — adds the label while the resource is listed or cannot be read
+            still() {
+              local label="$1" err; shift
+              if err="$("$@" 2>&1 >/dev/null)"; then
+                left="${left} ${label}"
+              elif ! gone "$err"; then
+                left="${left} ${label}(unknown)"
+              fi
+            }
+            still "$RDS_INSTANCE" aws rds describe-db-instances --db-instance-identifier "$RDS_INSTANCE"
+            still "$AURORA_INSTANCE" aws rds describe-db-instances --db-instance-identifier "$AURORA_INSTANCE"
+            still "$AURORA_CLUSTER" aws rds describe-db-clusters --db-cluster-identifier "$AURORA_CLUSTER"
+            [ -z "$left" ] && { echo "every database is gone"; break; }
+            if [ "$(date +%s)" -ge "$deadline" ]; then echo "::warning::still deleting after 18 minutes:${left}"; break; fi
+            echo "waiting for:${left}"; sleep 30
+          done
+          delete "db subnet group ${SUBNET_GROUP}" aws rds delete-db-subnet-group --db-subnet-group-name "$SUBNET_GROUP"
+          sg="$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=${VPC}" "Name=group-name,Values=${SG_NAME}" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true)"
+          case "$sg" in
+            sg-*)
+              for _ in 1 2 3 4 5 6; do
+                if aws ec2 delete-security-group --group-id "$sg" 2>/dev/null; then echo "deleted security group ${sg}"; break; fi
+                echo "security group ${sg} still in use; retrying"; sleep 20
+              done ;;
+            *) echo "security group ${SG_NAME}: none" ;;
+          esac
+
+      # ── Teardown, layer 2: the tag-scoped sweep every e2e AWS run ends with. ──
+      # DELETE_RETRIES and DETACH_TIMEOUT are raised from the script's defaults because an RDS
+      # deletion takes minutes, and the security group cannot go until it has finished.
+      - name: Guaranteed teardown (tag-scoped sweep)
+        if: always()
+        timeout-minutes: 20
+        env:
+          DELETE_RETRIES: "8"
+          DETACH_TIMEOUT: "600"
+        run: ./scripts/e2e/aws-cleanup.sh
+
+      # ── Teardown, layer 3: ask the cloud again, change nothing, and fail on any survivor. ──
+      - name: Verify nothing survived
+        if: always()
+        timeout-minutes: 8
+        env:
+          SG_NAME: ${{ steps.plan.outputs.sg_name }}
+          SUBNET_GROUP: ${{ steps.plan.outputs.subnet_group }}
+          AURORA_CLUSTER: ${{ steps.plan.outputs.aurora_cluster }}
+          AURORA_INSTANCE: ${{ steps.plan.outputs.aurora_instance }}
+          RDS_INSTANCE: ${{ steps.plan.outputs.rds_instance }}
+        run: |
+          set -uo pipefail
+          rc=0
+          VERIFY_ONLY=1 ./scripts/e2e/aws-cleanup.sh || rc=$?
+          # The tag sweep does not verify DB subnet groups (free) and reads a `deleting` database as
+          # swept. This run's own resources are asked about by name, and anything still listed —
+          # including a database still `deleting` — fails the job.
+          tag="e2e-${ALETHIA_E2E_ENV}"
+          left=""
+          probe() { # <label> <cmd…> — prints the label when the resource is still listed
+            local label="$1" out; shift
+            if out="$("$@" 2>&1)"; then
+              [ -n "$out" ] && [ "$out" != None ] && left="${left} ${label}"
+            elif ! printf '%s' "$out" | grep -Eq 'NotFound|not found'; then
+              left="${left} ${label}(could-not-check)"
+            fi
+          }
+          if [ -n "$AURORA_CLUSTER" ]; then
+            probe "$RDS_INSTANCE" aws rds describe-db-instances --db-instance-identifier "$RDS_INSTANCE" --query 'DBInstances[0].DBInstanceStatus' --output text
+            probe "$AURORA_INSTANCE" aws rds describe-db-instances --db-instance-identifier "$AURORA_INSTANCE" --query 'DBInstances[0].DBInstanceStatus' --output text
+            probe "$AURORA_CLUSTER" aws rds describe-db-clusters --db-cluster-identifier "$AURORA_CLUSTER" --query 'DBClusters[0].Status' --output text
+            probe "$SUBNET_GROUP" aws rds describe-db-subnet-groups --db-subnet-group-name "$SUBNET_GROUP" --query 'DBSubnetGroups[0].DBSubnetGroupName' --output text
+          fi
+          probe "security-group(${tag})" aws ec2 describe-security-groups --filters "Name=tag:alethia:project-id,Values=${tag}" --query 'SecurityGroups[].GroupId' --output text
+          if [ -n "$left" ]; then
+            echo "::error::resources of run ${ALETHIA_E2E_ENV} still exist:${left}"
+            rc=1
+          fi
+          [ "$rc" -eq 0 ] && echo "nothing tagged ${tag} survives"
+          exit "$rc"
+
+      - name: Write the step summary
+        if: always()
+        env:
+          AURORA_VERSION: ${{ steps.plan.outputs.aurora_version }}
+          RDS_VERSION: ${{ steps.plan.outputs.rds_version }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          {
+            echo "## BYO users — managed MySQL (run ${ALETHIA_E2E_ENV})"
+            echo
+            echo "\`TestByoUsersMySQLServer_Lifecycle\` as the managed master user, over TLS. It asserts the per-binding user is stored as \`caching_sha2_password\` with a \`\$A\$005\$\` hash."
+            echo
+            echo "| Engine | Engine version (API) | Server \`VERSION()\` | Verdict |"
+            echo "|---|---|---|---|"
+            if [ -s "$RUNNER_TEMP/verdicts.tsv" ]; then
+              while IFS=$'\t' read -r engine api server verdict; do
+                echo "| ${engine} | ${api} | ${server} | ${verdict} |"
+              done < "$RUNNER_TEMP/verdicts.tsv"
+            else
+              echo "| aurora-mysql | ${AURORA_VERSION:-unresolved} | — | NOT RUN (test step: ${TEST_OUTCOME:-skipped}) |"
+              echo "| mysql | ${RDS_VERSION:-unresolved} | — | NOT RUN (test step: ${TEST_OUTCOME:-skipped}) |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$RUNNER_TEMP/master-password"
