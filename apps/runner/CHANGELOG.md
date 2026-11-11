@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.9.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.8.0...runner-v0.9.0) (2026-11-11)
+
+
+### Features
+
+* **byo-charts:** a BYO chart may not target the project's preview namespaces ([#6494](https://github.com/alethialabs-io/alethialabs/issues/6494)) ([#6517](https://github.com/alethialabs-io/alethialabs/issues/6517)) ([473e4b8](https://github.com/alethialabs-io/alethialabs/commit/473e4b8998b182848105c199b161f8b17f23d85f))
+* **byo-charts:** every BYO chart, git or OCI, deploys under its hardened project into a namespace of its own ([#6454](https://github.com/alethialabs-io/alethialabs/issues/6454)) ([b4aca3e](https://github.com/alethialabs-io/alethialabs/commit/b4aca3e6e16f43f968cfdf7f8505111ee81f43e2))
+* **byo-charts:** per-binding MySQL users and a database facet ([#6467](https://github.com/alethialabs-io/alethialabs/issues/6467)) ([#6520](https://github.com/alethialabs-io/alethialabs/issues/6520)) ([3cdcce6](https://github.com/alethialabs-io/alethialabs/commit/3cdcce6d63e242245e3c1265cc75d0bf2047d2aa))
+* **byo-charts:** run the BYO users Job and bind charts only to provisioned users ([#6466](https://github.com/alethialabs-io/alethialabs/issues/6466)) ([#6503](https://github.com/alethialabs-io/alethialabs/issues/6503)) ([6f14f0c](https://github.com/alethialabs-io/alethialabs/commit/6f14f0c0a7346b9376fe1c0b7bb3b10ee417a163))
+* **db-bootstrap:** verify the managed database server's certificate (MySQL and Postgres) ([#6553](https://github.com/alethialabs-io/alethialabs/issues/6553)) ([c31af38](https://github.com/alethialabs-io/alethialabs/commit/c31af3875e02a1a8c3d107de91d06495dcd26ba7))
+* **runner:** db-bootstrap --byo-users renders per-binding Postgres users ([#6465](https://github.com/alethialabs-io/alethialabs/issues/6465)) ([#6475](https://github.com/alethialabs-io/alethialabs/issues/6475)) ([f24b1a0](https://github.com/alethialabs-io/alethialabs/commit/f24b1a088c4337ec24944df58a5c8c9a2d4fa164))
+
+
+### Bug Fixes
+
+* **azure:** call the real ARM action listClusterUserCredential (singular) ([#5407](https://github.com/alethialabs-io/alethialabs/issues/5407)) ([95a82e6](https://github.com/alethialabs-io/alethialabs/commit/95a82e64b40760e9e49b972c5105046067ee80db)), closes [#5287](https://github.com/alethialabs-io/alethialabs/issues/5287)
+* **placements:** refuse platform and host namespaces for a namespace placement ([#6551](https://github.com/alethialabs-io/alethialabs/issues/6551)) ([#6555](https://github.com/alethialabs-io/alethialabs/issues/6555)) ([75b8cd7](https://github.com/alethialabs-io/alethialabs/commit/75b8cd7120cef1451cf764dd24e0e1f0e55f7393))
+* **provisioner:** remove bootstrap-only hooks whose operation ended without a delete policy ([#6418](https://github.com/alethialabs-io/alethialabs/issues/6418)) ([8dd0d4c](https://github.com/alethialabs-io/alethialabs/commit/8dd0d4cc6a4eea017d0bc2af43b759e2252b6be1)), closes [#6413](https://github.com/alethialabs-io/alethialabs/issues/6413)
+* **runner,console:** a mint result refused for lost ownership answers 403, not 409 ([#5945](https://github.com/alethialabs-io/alethialabs/issues/5945)) ([#5955](https://github.com/alethialabs-io/alethialabs/issues/5955)) ([7a5e0d5](https://github.com/alethialabs-io/alethialabs/commit/7a5e0d59b30f8417a8cbad6684bd5346c6794ad9))
+
 ## [0.8.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.7.0...runner-v0.8.0) (2026-10-02)
 
 
