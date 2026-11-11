@@ -19,7 +19,7 @@ import (
 // out so that a chart already running is reported to and never refused by a deploy.
 
 // renderedNamespaceLabels renders namespaces with modes and returns each namespace's labels.
-func renderedNamespaceLabels(t *testing.T, namespaces []string, common map[string]string, modes map[string]ByoAdmissionMode) map[string]map[string]string {
+func renderedNamespaceLabels(t *testing.T, namespaces []string, common map[string]string, modes map[string]ByoAdmissionDecision) map[string]map[string]string {
 	t.Helper()
 	out, err := RenderByoNamespaces(namespaces, common, modes)
 	if err != nil {
@@ -50,7 +50,7 @@ func renderedNamespaceLabels(t *testing.T, namespaces []string, common map[strin
 // mode label is on both.
 func TestByoNamespaces_PodSecurityFollowsTheMode(t *testing.T) {
 	got := renderedNamespaceLabels(t, []string{"byo-new", "byo-old"}, nil,
-		map[string]ByoAdmissionMode{"byo-new": ByoAdmissionEnforce, "byo-old": ByoAdmissionWarn})
+		map[string]ByoAdmissionDecision{"byo-new": {Mode: ByoAdmissionEnforce}, "byo-old": {Mode: ByoAdmissionWarn}})
 
 	report := map[string]string{
 		"pod-security.kubernetes.io/warn":          "restricted",
@@ -93,7 +93,7 @@ func TestByoNamespaces_AnUndecidedModeIsWarn(t *testing.T) {
 		"alethia.io/project-id":              "p-1",
 	}
 	got := renderedNamespaceLabels(t, []string{"byo-missing", "byo-bogus"}, common,
-		map[string]ByoAdmissionMode{"byo-bogus": "deny"})
+		map[string]ByoAdmissionDecision{"byo-bogus": {Mode: "deny", BySetting: true}})
 	for _, ns := range []string{"byo-missing", "byo-bogus"} {
 		labels := got[ns]
 		if labels[ByoAdmissionModeLabel] != "warn" {
@@ -111,32 +111,186 @@ func TestByoNamespaces_AnUndecidedModeIsWarn(t *testing.T) {
 	}
 }
 
-// TestDecideByoAdmissionModes: new → enforce; existing → warn; a chart moved in → warn; an existing
-// mode is kept in both directions; a value that is not a mode is not kept.
-func TestDecideByoAdmissionModes(t *testing.T) {
+// modesOf decides with in and returns each namespace's mode, "refused" for a refused one.
+func modesOf(in ByoAdmissionInput) map[string]string {
+	out := map[string]string{}
+	for ns, d := range DecideByoAdmission(in) {
+		if d.Refused {
+			out[ns] = "refused"
+			continue
+		}
+		out[ns] = string(d.Mode)
+	}
+	return out
+}
+
+// ours is a namespace the runner created for this environment ("env-1") before.
+var ours = map[string]string{"alethia.io/managed-by": "byo-charts", ByoBindingOwnerLabel: "env-1"}
+
+// TestDecideByoAdmission_FromTheChartsHistory is #6541's case table. `history` is any signal that a
+// chart in the namespace has run in this environment; `runsHere` is the one that only the cluster
+// gives: a chart's live Application already deploys into this very namespace.
+func TestDecideByoAdmission_FromTheChartsHistory(t *testing.T) {
+	someoneElses := map[string]string{"team": "x"}
+	cases := []struct {
+		name              string
+		live              map[string]string // nil with exists=false: the namespace does not exist
+		exists            bool
+		history, runsHere bool
+		want              string
+		reason            ByoAdmissionReason
+	}{
+		// (a) A chart that ran before, in a namespace new to the cluster: its namespace was changed in
+		// the console, the cluster was re-provisioned or restored, or the namespace was deleted and
+		// recreated. Before #6541 this got enforce, and the chart's next deploy failed.
+		{"ran before, namespace new to the cluster", nil, false, true, false, "warn", ByoAdmissionReasonHistory},
+		{"runs here, namespace exists unlabelled", nil, true, true, true, "warn", ByoAdmissionReasonHistory},
+		{"runs here, namespace someone made by hand", someoneElses, true, true, true, "warn", ByoAdmissionReasonHistory},
+		// History from anywhere else never lifts the refusal of a foreign namespace: a console record,
+		// or an Application deploying into ANOTHER namespace (attach in your own, then change it).
+		{"ran elsewhere, namespace someone made by hand", someoneElses, true, true, false, "refused", ByoAdmissionReasonForeign},
+		{"ran elsewhere, namespace exists unlabelled", nil, true, true, false, "refused", ByoAdmissionReasonForeign},
+		// (a) A newly attached chart: a new namespace refuses; an existing one that is this
+		// environment's own BYO namespace reports (a detached chart's objects may remain there); any
+		// other existing namespace is refused to it. Before #6541 the last got warn.
+		{"new chart, new namespace", nil, false, false, false, "enforce", ByoAdmissionReasonNew},
+		{"new chart, this environment's BYO namespace", ours, true, false, false, "warn", ByoAdmissionReasonOwned},
+		{"new chart, namespace exists with no labels", nil, true, false, false, "refused", ByoAdmissionReasonForeign},
+		{"new chart, namespace someone made by hand", someoneElses, true, false, false, "refused", ByoAdmissionReasonForeign},
+		{"new chart, another environment's BYO namespace", map[string]string{"alethia.io/managed-by": "byo-charts", ByoBindingOwnerLabel: "env-2"}, true, false, false, "refused", ByoAdmissionReasonForeign},
+		{"new chart, owner label without managed-by", map[string]string{ByoBindingOwnerLabel: "env-1"}, true, false, false, "refused", ByoAdmissionReasonForeign},
+		{"new chart, managed-by without the owner label", map[string]string{"alethia.io/managed-by": "byo-charts"}, true, false, false, "refused", ByoAdmissionReasonForeign},
+		// A mode label does not make a namespace this environment's.
+		{"new chart, foreign namespace that carries a mode", map[string]string{ByoAdmissionModeLabel: "warn"}, true, false, false, "refused", ByoAdmissionReasonForeign},
+		// A mode already set on a namespace that is ours, or that the chart runs in, is kept.
+		{"ours, already enforce", withLabels(ours, ByoAdmissionModeLabel, "enforce"), true, false, false, "enforce", ByoAdmissionReasonKept},
+		{"ours, ran before, already enforce", withLabels(ours, ByoAdmissionModeLabel, "enforce"), true, true, false, "enforce", ByoAdmissionReasonKept},
+		{"runs here, already warn", map[string]string{ByoAdmissionModeLabel: "warn"}, true, true, true, "warn", ByoAdmissionReasonKept},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			live := map[string]map[string]string{}
+			if c.exists {
+				live["ns"] = c.live
+			}
+			d := DecideByoAdmission(ByoAdmissionInput{
+				Namespaces: []string{"ns"}, Live: live, Owner: "env-1",
+				History: map[string]bool{"ns": c.history}, RunsHere: map[string]bool{"ns": c.runsHere},
+			})["ns"]
+			got := string(d.Mode)
+			if d.Refused {
+				got = "refused"
+			}
+			if got != c.want || d.Reason != c.reason {
+				t.Errorf("got %s (%s), want %s (%s)", got, d.Reason, c.want, c.reason)
+			}
+		})
+	}
+}
+
+// withLabels is base plus one more label.
+func withLabels(base map[string]string, k, v string) map[string]string {
+	out := map[string]string{k: v}
+	for bk, bv := range base {
+		out[bk] = bv
+	}
+	return out
+}
+
+// TestDecideByoAdmission_NoOwnerMeansNotOurs: without this environment's owner value no namespace
+// can be shown to be its own, so a new chart is refused an existing one rather than admitted.
+func TestDecideByoAdmission_NoOwnerMeansNotOurs(t *testing.T) {
+	got := modesOf(ByoAdmissionInput{
+		Namespaces: []string{"ns"}, Live: map[string]map[string]string{"ns": {"alethia.io/managed-by": "byo-charts", ByoBindingOwnerLabel: ""}},
+	})
+	if got["ns"] != "refused" {
+		t.Errorf("mode = %q, want refused when the environment's owner is unknown", got["ns"])
+	}
+}
+
+// TestDecideByoAdmission_TheSettingMovesWarnToEnforceAndBack: with the environment's setting on,
+// every namespace that would be in warn is put in enforce and marked BySetting; one that is in
+// enforce on its own is not marked. Turned off, a namespace the setting moved returns to warn, and
+// one that was in enforce on its own stays there. The setting lifts no refusal.
+func TestDecideByoAdmission_TheSettingMovesWarnToEnforceAndBack(t *testing.T) {
 	live := map[string]map[string]string{
-		"existing-bare":    nil,
-		"existing-labels":  {"team": "x"},
-		"existing-enforce": {ByoAdmissionModeLabel: "enforce"},
-		"existing-warn":    {ByoAdmissionModeLabel: "warn"},
-		"existing-garbage": {ByoAdmissionModeLabel: "Deny"},
-		"moved-existing":   {ByoAdmissionModeLabel: "enforce"},
+		"warn":       withLabels(ours, ByoAdmissionModeLabel, "warn"),
+		"enforce":    withLabels(ours, ByoAdmissionModeLabel, "enforce"),
+		"by-setting": withLabels(withLabels(ours, ByoAdmissionModeLabel, "enforce"), ByoAdmissionSourceLabel, "environment-setting"),
+		"foreign":    {"team": "x"},
 	}
-	inherited := map[string]bool{"moved-new": true, "moved-existing": true}
-	ns := []string{"new", "existing-bare", "existing-labels", "existing-enforce", "existing-warn", "existing-garbage", "moved-new", "moved-existing"}
-	got := DecideByoAdmissionModes(ns, live, inherited)
-	want := map[string]ByoAdmissionMode{
-		"new":              ByoAdmissionEnforce,
-		"existing-bare":    ByoAdmissionWarn,
-		"existing-labels":  ByoAdmissionWarn,
-		"existing-enforce": ByoAdmissionEnforce,
-		"existing-warn":    ByoAdmissionWarn,
-		"existing-garbage": ByoAdmissionWarn,
-		"moved-new":        ByoAdmissionWarn,
-		"moved-existing":   ByoAdmissionEnforce,
+	in := ByoAdmissionInput{
+		Namespaces: []string{"warn", "enforce", "by-setting", "history-new-ns", "foreign", "fresh"},
+		Live:       live, Owner: "env-1",
+		History: map[string]bool{"warn": true, "enforce": true, "by-setting": true, "history-new-ns": true},
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("modes = %v\nwant    %v", got, want)
+
+	in.Enforce = true
+	on := DecideByoAdmission(in)
+	type want struct {
+		mode      string
+		bySetting bool
+		previous  ByoAdmissionMode
+	}
+	for ns, w := range map[string]want{
+		"warn":           {"enforce", true, ByoAdmissionWarn},
+		"enforce":        {"enforce", false, ByoAdmissionEnforce},
+		"by-setting":     {"enforce", true, ByoAdmissionEnforce},
+		"history-new-ns": {"enforce", true, ""},
+		"fresh":          {"enforce", false, ""},
+	} {
+		d := on[ns]
+		if string(d.Mode) != w.mode || d.BySetting != w.bySetting || d.Previous != w.previous || d.Refused {
+			t.Errorf("setting on, %s: %+v, want mode %s bySetting %v previous %q", ns, d, w.mode, w.bySetting, w.previous)
+		}
+	}
+	if !on["foreign"].Refused {
+		t.Errorf("setting on, foreign: %+v, want the refusal kept", on["foreign"])
+	}
+
+	in.Enforce = false
+	off := DecideByoAdmission(in)
+	for ns, mode := range map[string]ByoAdmissionMode{"warn": "warn", "enforce": "enforce", "by-setting": "warn", "history-new-ns": "warn", "fresh": "enforce"} {
+		if d := off[ns]; d.Mode != mode || d.BySetting {
+			t.Errorf("setting off, %s: %+v, want %s, unmarked", ns, d, mode)
+		}
+	}
+	if off["by-setting"].Reason != ByoAdmissionReasonSettingOff {
+		t.Errorf("the setting's own enforce, turned off, reads %s, want %s", off["by-setting"].Reason, ByoAdmissionReasonSettingOff)
+	}
+}
+
+// TestDecideByoAdmission_APinWithTheSourceLabelIsReverted: a person who labels a namespace the
+// setting moved "enforce" by hand, and leaves the source label on, has not pinned it — the setting
+// turned off returns it to warn. Removing the source label is what pins it (the docs say so).
+func TestDecideByoAdmission_APinWithTheSourceLabelIsReverted(t *testing.T) {
+	pinned := withLabels(ours, ByoAdmissionModeLabel, "enforce")
+	stillMarked := withLabels(pinned, ByoAdmissionSourceLabel, "environment-setting")
+	got := modesOf(ByoAdmissionInput{
+		Namespaces: []string{"pinned", "still-marked"}, Owner: "env-1",
+		Live: map[string]map[string]string{"pinned": pinned, "still-marked": stillMarked},
+	})
+	if !reflect.DeepEqual(got, map[string]string{"pinned": "enforce", "still-marked": "warn"}) {
+		t.Errorf("modes = %v, want the unmarked pin kept and the marked one reverted", got)
+	}
+}
+
+// TestByoNamespaces_TheSettingsEnforceIsMarked: a namespace in enforce by the setting carries the
+// source label; one in enforce on its own, or in warn, does not; and a caller cannot set it.
+func TestByoNamespaces_TheSettingsEnforceIsMarked(t *testing.T) {
+	got := renderedNamespaceLabels(t, []string{"by-setting", "own", "warn"}, map[string]string{ByoAdmissionSourceLabel: "environment-setting"},
+		map[string]ByoAdmissionDecision{
+			"by-setting": {Mode: ByoAdmissionEnforce, BySetting: true},
+			"own":        {Mode: ByoAdmissionEnforce},
+			"warn":       {Mode: ByoAdmissionWarn, BySetting: true},
+		})
+	if got["by-setting"][ByoAdmissionSourceLabel] != "environment-setting" {
+		t.Errorf("the setting's enforce is not marked: %v", got["by-setting"])
+	}
+	for _, ns := range []string{"own", "warn"} {
+		if _, ok := got[ns][ByoAdmissionSourceLabel]; ok {
+			t.Errorf("%s carries %s: %v", ns, ByoAdmissionSourceLabel, got[ns])
+		}
 	}
 }
 
@@ -226,8 +380,11 @@ func bindingsSelecting(docs []renderedPolicy, labels map[string]string) [][]stri
 // created now only by [Deny]; and a namespace this runner did not decide — "default" as a runner
 // before #6446 left it — by neither.
 func TestByoAdmission_ExistingNamespaceWarnsAndNewNamespaceDenies(t *testing.T) {
-	modes := DecideByoAdmissionModes([]string{"byo-old", "byo-new"}, map[string]map[string]string{"byo-old": nil}, nil)
-	labels := renderedNamespaceLabels(t, []string{"byo-old", "byo-new"}, nil, modes)
+	decisions := DecideByoAdmission(ByoAdmissionInput{
+		Namespaces: []string{"byo-old", "byo-new"}, Live: map[string]map[string]string{"byo-old": ours},
+		History: map[string]bool{"byo-old": true}, RunsHere: map[string]bool{"byo-old": true}, Owner: "env-1",
+	})
+	labels := renderedNamespaceLabels(t, []string{"byo-old", "byo-new"}, nil, decisions)
 	docs := renderPolicyDocs(t)
 
 	// One binding per kind, so each mode's namespace is reached by one binding per kind, all with

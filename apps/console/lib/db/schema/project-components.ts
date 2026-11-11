@@ -375,6 +375,13 @@ export const projectAddons = pgTable(
 		// ArgoCD sync state: Synced | OutOfSync | Unknown.
 		sync_status: text().$type<ArgocdSyncStatus>(),
 		last_synced_at: timestamp({ withTimezone: true }),
+		// When a read-back FIRST saw this add-on's Application in a running state (Healthy,
+		// Progressing, Degraded or Suspended) — set once by recordAddonHealth, never cleared (#6541).
+		// `health` is the CURRENT state and a drift scan rewrites it to Unknown for an Application it
+		// cannot find (after a re-provision, say); this is the sticky "the chart has run in this
+		// environment" the BYO admission decision reads (lib/addons/byo-admission.ts). Backfilled by
+		// its migration from rows whose health was a running state.
+		first_observed_running_at: timestamp({ withTimezone: true }),
 		// BYO chart-safety scan (source='byo'): the elench verify.Report over the chart's rendered
 		// manifests (helm template → EvaluateManifests), its lifecycle, and when it last ran.
 		scan_status: text().$type<ScanStatus>().default("unscanned").notNull(), // unscanned | scanning | done | failed

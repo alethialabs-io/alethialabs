@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -209,11 +210,15 @@ func (f fakeNamespaceProvider) ConfigureKubeconfig(context.Context, *types.Proje
 // stubKubectlOnPath puts an executable named `kubectl` on PATH for the duration of the test.
 // runNamespaceDestroy preflights with exec.LookPath, and CI's Go job installs helm and tofu but NOT
 // kubectl — so a test that relied on the runner image happening to ship it would pass here and
-// silently stop covering this path there. The stub is never executed; executeCommand is stubbed too.
+// silently stop covering this path there. Writes never reach it (executeCommand is stubbed); the
+// teardown's reads do, when a test leaves executeCommandWithOutput real.
 func stubKubectlOnPath(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	// It answers the teardown's Application read (#6575) with an empty list, the answer of a cluster
+	// where nothing else targets the namespace; every other call prints nothing.
+	stub := "#!/bin/sh\ncase \"$*\" in *\"get applications.argoproj.io\"*) echo '{\"apiVersion\":\"v1\",\"items\":[],\"kind\":\"List\"}';; esac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(stub), 0o755); err != nil {
 		t.Fatalf("write kubectl stub: %v", err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -566,5 +571,205 @@ func TestDeprovisionNamespaceIdentityCoversEveryActivatedCloud(t *testing.T) {
 	if err := deprovisionNamespaceIdentity(ctx, nil, "zzz-unknown", "r",
 		&types.ProjectConfig{}, "cluster-a", "team-ns", io.Discard, io.Discard); err == nil {
 		t.Fatal("an unrecognized provider must fail closed, not return success")
+	}
+}
+
+// teardownReads answers the teardown's two cluster reads — the Namespace (always this environment's
+// own, so the ownership check passes) and the Application list (apps, or appsErr) — and counts the
+// Application reads and the cluster WRITES (every executeCommand) that follow.
+type teardownReads struct {
+	apps     string
+	appsErr  error
+	appReads int
+	writes   int
+}
+
+// install replaces the kubectl seams for the duration of the test, with no retry backoff.
+func (r *teardownReads) install(t *testing.T) {
+	t.Helper()
+	stubKubectlOnPath(t)
+	origRead, origRun, origBackoff := executeCommandWithOutput, executeCommand, byoReadBackoff
+	byoReadBackoff = 0
+	t.Cleanup(func() { executeCommandWithOutput, executeCommand, byoReadBackoff = origRead, origRun, origBackoff })
+	executeCommandWithOutput = func(cmd, _ string, _ []string) (string, error) {
+		switch {
+		case strings.HasPrefix(cmd, "kubectl get namespace team-web "):
+			return `{"metadata":{"name":"team-web","labels":{"alethia.io/environment-id":"env-1"}}}`, nil
+		case strings.HasPrefix(cmd, "kubectl get applications.argoproj.io -n argocd "):
+			r.appReads++
+			return r.apps, r.appsErr
+		}
+		t.Errorf("unexpected read %q", cmd)
+		return "", nil
+	}
+	executeCommand = func(string, string, []string, io.Writer, io.Writer) error {
+		r.writes++
+		return nil
+	}
+}
+
+// teardownTeamWeb runs the teardown of placement team-web (project acme, env-1) and reports whether
+// the per-namespace cloud identity was deprovisioned.
+func teardownTeamWeb(t *testing.T) (bool, error) {
+	t.Helper()
+	deprovisioned := false
+	err := runNamespaceDestroy(context.Background(), fakeNamespaceProvider{}, DestroyParams{
+		ProjectConfig: placedConfig("team-web", &[]string{}),
+		Provider:      "gcp",
+		KubeConn: func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+			return "https://api.example.invalid", "Y2E=", nil
+		},
+		NamespaceIdentity: func(context.Context, string, *types.ProjectConfig, string, string) error {
+			deprovisioned = true
+			return nil
+		},
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	return deprovisioned, err
+}
+
+// liveApp is one Application in a fake `kubectl get applications -n argocd -o json` answer.
+type liveApp struct {
+	name, dest, project, envID string
+}
+
+// appList is `kubectl get applications -n argocd -o json` for apps. An envID becomes the owner label.
+func appList(apps ...liveApp) string {
+	items := make([]string, 0, len(apps))
+	for _, a := range apps {
+		labels := ""
+		if a.envID != "" {
+			labels = `,"labels":{"` + namespaceOwnerLabel + `":"` + a.envID + `"}`
+		}
+		items = append(items, `{"metadata":{"name":"`+a.name+`","namespace":"argocd"`+labels+`},"spec":{"project":"`+a.project+`","destination":{"server":"https://kubernetes.default.svc","namespace":"`+a.dest+`"}}}`)
+	}
+	return `{"apiVersion":"v1","kind":"List","items":[` + strings.Join(items, ",") + `]}`
+}
+
+// ownApp is the placement's own Application name for project acme, namespace team-web.
+const ownApp = "app-acme-team-web"
+
+// TestRunNamespaceDestroy_RefusesWhileAHostChartRunsInTheNamespace (#6575): the namespace is this
+// placement's (its owner label), but a host BYO chart kept there by #6562 runs in it too. Deleting the
+// Namespace would delete the chart's workloads and binding secrets, so the teardown refuses before its
+// first delete, names the chart and says to re-attach it elsewhere first. Nothing is deleted and the
+// cloud identity is left as it is.
+func TestRunNamespaceDestroy_RefusesWhileAHostChartRunsInTheNamespace(t *testing.T) {
+	if got := argocd.NamespaceTenantAppName("acme", "team-web"); got != ownApp {
+		t.Fatalf("the placement's own Application is %q, want %q (the fixture names it)", got, ownApp)
+	}
+	r := &teardownReads{apps: appList(
+		liveApp{ownApp, "team-web", "tenant-acme-team-web", "env-1"},
+		liveApp{"addon-api", "team-web", "byo-acme", "env-0"},
+		liveApp{"addon-redis", "team-web", "infra", "env-0"},
+		liveApp{"addon-elsewhere", "payments", "byo-acme", "env-0"},
+		liveApp{"platform-thing", "team-web", "default", ""},
+	)}
+	r.install(t)
+	deprovisioned, err := teardownTeamWeb(t)
+	if err == nil {
+		t.Fatal("a teardown of a namespace a host BYO chart runs in must be refused")
+	}
+	for _, want := range []string{`namespace "team-web"`, `BYO chart "api" (Application addon-api)`, `add-on "redis" (Application addon-redis)`, `Application "platform-thing"`, "Re-attach each chart elsewhere first", "nothing was deleted"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must contain %q, got: %v", want, err)
+		}
+	}
+	for _, not := range []string{"elsewhere\" (", ownApp, `BYO chart "redis"`} {
+		if strings.Contains(err.Error(), not) {
+			t.Errorf("the refusal must not name %q (it does not target the namespace, or it is the placement's own), got: %v", not, err)
+		}
+	}
+	if r.writes != 0 || deprovisioned {
+		t.Errorf("%d deletes issued and identity deprovisioned=%v before the refusal; want none", r.writes, deprovisioned)
+	}
+}
+
+// TestRunNamespaceDestroy_FailsClosedWhenTheApplicationsCannotBeRead (#6575): a failed or
+// unreadable Application list is no evidence that nothing else runs in the namespace. After the bounded
+// retry, the teardown refuses and deletes nothing.
+func TestRunNamespaceDestroy_FailsClosedWhenTheApplicationsCannotBeRead(t *testing.T) {
+	for _, tc := range []struct {
+		name, answer, want string
+		err                error
+	}{
+		{"a failed read", "", "could not read the ArgoCD Applications", errors.New("forbidden")},
+		{"an empty answer", "", "could not parse the ArgoCD Applications", nil},
+		{"an unparseable answer", "not json", "could not parse the ArgoCD Applications", nil},
+		{"an answer with no items list", `{"kind":"List"}`, "no items list", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &teardownReads{apps: tc.answer, appsErr: tc.err}
+			r.install(t)
+			deprovisioned, err := teardownTeamWeb(t)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "nothing was deleted") {
+				t.Fatalf("want a fail-closed refusal containing %q, got %v", tc.want, err)
+			}
+			if r.writes != 0 || deprovisioned {
+				t.Errorf("%d deletes issued and identity deprovisioned=%v; want none", r.writes, deprovisioned)
+			}
+			if r.appReads != byoReadAttempts {
+				t.Errorf("Application list read %d times, want %d (the bounded retry)", r.appReads, byoReadAttempts)
+			}
+		})
+	}
+}
+
+// TestRunNamespaceDestroy_ProceedsWhenOnlyItsOwnApplicationTargetsTheNamespace is the control: the
+// placement's own Application, and Applications that target other namespaces, do not block it.
+func TestRunNamespaceDestroy_ProceedsWhenOnlyItsOwnApplicationTargetsTheNamespace(t *testing.T) {
+	r := &teardownReads{apps: appList(
+		liveApp{ownApp, "team-web", "tenant-acme-team-web", "env-1"},
+		liveApp{"addon-api", "payments", "byo-acme", "env-0"},
+	)}
+	r.install(t)
+	deprovisioned, err := teardownTeamWeb(t)
+	if err != nil {
+		t.Fatalf("only its own Application targets the namespace, so the teardown must run: %v", err)
+	}
+	if r.writes != 1 || !deprovisioned {
+		t.Errorf("%d deletes and identity deprovisioned=%v; want the isolation delete and the identity", r.writes, deprovisioned)
+	}
+}
+
+// TestRunNamespaceDestroy_RecognisesItsOwnApplicationAfterAProjectRename: the placement's own
+// Application is named from the project's display name, so after a rename the live one still carries
+// the OLD name. Its owner label is this environment's id, which a rename does not change, so the
+// teardown still knows it as its own and proceeds. An Application named like it but labelled for
+// another environment is not taken for its own.
+func TestRunNamespaceDestroy_RecognisesItsOwnApplicationAfterAProjectRename(t *testing.T) {
+	renamed := argocd.NamespaceTenantAppName("acme-old-name", "team-web")
+	if renamed == ownApp {
+		t.Fatalf("the fixture must rename the project: %q is still the current name", renamed)
+	}
+	r := &teardownReads{apps: appList(liveApp{renamed, "team-web", "tenant-acme-old-name-team-web", "env-1"})}
+	r.install(t)
+	deprovisioned, err := teardownTeamWeb(t)
+	if err != nil {
+		t.Fatalf("its own Application under the project's old name must not block the teardown: %v", err)
+	}
+	if r.writes != 1 || !deprovisioned {
+		t.Errorf("%d deletes and identity deprovisioned=%v; want the isolation delete and the identity", r.writes, deprovisioned)
+	}
+
+	r = &teardownReads{apps: appList(liveApp{renamed, "team-web", "tenant-acme-old-name-team-web", "env-2"})}
+	r.install(t)
+	if _, err := teardownTeamWeb(t); err == nil || !strings.Contains(err.Error(), renamed) {
+		t.Fatalf("an Application labelled for another environment must refuse, naming it; got %v", err)
+	}
+}
+
+// TestNamespaceTenantApplicationCarriesTheOwnerLabel pins the label the teardown recognises its own
+// Application by to the one the tenant render stamps on that Application.
+func TestNamespaceTenantApplicationCarriesTheOwnerLabel(t *testing.T) {
+	vc := placedConfig("team-web", &[]string{})
+	vc.Repositories.AppsDestinationRepo = "https://github.com/acme/apps"
+	m, err := argocd.RenderNamespaceTenant(namespaceTenantInput(vc, "team-web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m.App, "name: "+ownApp) || !strings.Contains(m.App, namespaceOwnerLabel+`: "`+vc.EnvironmentID+`"`) {
+		t.Fatalf("the tenant Application must be %s and carry %s=%s, got:\n%s", ownApp, namespaceOwnerLabel, vc.EnvironmentID, m.App)
 	}
 }

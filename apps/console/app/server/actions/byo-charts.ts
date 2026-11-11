@@ -29,9 +29,11 @@ import {
 	jobs,
 	projectAddons,
 	projectChartWorkloads,
+	projectEnvironments,
 	projectHelmRegistries,
 	projectPreviewConfig,
 } from "@/lib/db/schema";
+import { placementNamespacesOnFabric } from "@/lib/queries/placement-host-namespaces";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { parseValuesYaml } from "@/lib/addons/catalog";
 import { inferValuePaths } from "@/lib/addons/chart-overlay";
@@ -146,10 +148,12 @@ export async function attachByoChart(
 	const values: AddOnValues = parsed.values ?? {};
 
 	await withActorScope(actor, async (tx) => {
-		// The preview-namespace check and the write share one transaction under the project's lock, so
-		// a concurrent preview-prefix save cannot slip a conflicting prefix in between (#6494).
+		// The preview- and placement-namespace checks and the write share one transaction under the
+		// project's lock, so a concurrent preview-prefix save (#6494) or namespace-placement create
+		// (#6575, lib/projects/placement-namespace-claim.ts) cannot slip a conflicting row in between.
 		await lockProjectPreviewNamespaces(tx, parsed.projectId);
 		await refusePreviewNamespace(tx, parsed.projectId, namespace, stored?.namespace ?? null);
+		await refusePlacementNamespace(tx, parsed.projectId, envId, namespace, stored?.namespace ?? null);
 		await tx
 			.insert(projectAddons)
 			.values({
@@ -224,6 +228,43 @@ async function refusePreviewNamespace(
 		.limit(1);
 	const message = byoPreviewNamespaceMessage(namespace, preview?.namespace_prefix);
 	if (message) throw new FieldRefusal({ namespace: [message] }, message);
+}
+
+/**
+ * Refuses, as a `namespace` field error, a chart namespace that a live namespace placement on the
+ * environment's Fabric resolves to (#6562), naming that environment. The reverse of #6551, which
+ * refuses a placement the namespace a host chart chose: a chart there would share the placement's
+ * namespace, and so its hardened AppProject and everything the placement's own workloads can reach.
+ * The placements and their effective namespaces are #6551's (placementNamespacesOnFabric), so the
+ * two directions cannot disagree about what a placement holds. The runner refuses it again at deploy,
+ * from the Namespace's labels on the cluster.
+ *
+ * A re-attach that keeps the chart's stored namespace unchanged is not refused, the same exception the
+ * preview rule makes: a chart attached there before this rule keeps deploying (the runner reports it
+ * on the Deploy tab instead), and refusing every edit to it would leave its values unchangeable without
+ * moving it. An environment with no Fabric shares no cluster, so nothing is held there. Runs in the
+ * write's transaction, under lockProjectPreviewNamespaces, which every namespace-placement create takes
+ * too (#6575).
+ */
+async function refusePlacementNamespace(
+	tx: Tx,
+	projectId: string,
+	environmentId: string,
+	namespace: string,
+	storedNamespace: string | null,
+): Promise<void> {
+	if (storedNamespace !== null && namespace === storedNamespace) return;
+	const [env] = await tx
+		.select({ fabric_id: projectEnvironments.fabric_id })
+		.from(projectEnvironments)
+		.where(and(eq(projectEnvironments.id, environmentId), eq(projectEnvironments.project_id, projectId)))
+		.limit(1);
+	if (!env?.fabric_id) return;
+	const placements = await placementNamespacesOnFabric(tx, projectId, env.fabric_id);
+	const holder = placements.find((p) => p.namespace === namespace);
+	if (!holder) return;
+	const message = `Namespace “${namespace}” is used by the namespace-placed environment “${holder.environment}” on this cluster. A bring-your-own chart needs a namespace of its own; choose another, or leave it blank.`;
+	throw new FieldRefusal({ namespace: [message] }, message);
 }
 
 /** Detaches a BYO chart (deletes its row); the runner prunes it on the next DEPLOY. */

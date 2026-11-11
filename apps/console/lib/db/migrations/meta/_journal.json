@@ -1212,6 +1212,13 @@
       "when": 1794300823349,
       "tag": "0172_wooden_moon_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "7",
+      "when": 1794404677220,
+      "tag": "0173_stormy_forgotten_one",
+      "breakpoints": true
     }
   ]
 }

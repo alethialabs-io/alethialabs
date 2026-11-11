@@ -35,8 +35,8 @@
 //     its entries, so a result the kubelet truncated is detected, never read as a shorter list. A
 //     user counts as provisioned only when the Job is Complete, the message names the user, and the
 //     user is in the set this run declared. Anything else provisions nothing, and is a binding
-//     failure, so the binding prune is skipped. A `revocation-pending:<user>` line is surfaced as a
-//     deploy warning and is NOT a failure. An absent message is a lost result and a failure: the
+//     failure, so the binding prune is skipped. A `revocation-pending:<user>`, `sessions-not-ended:<user>`
+//     or `doubt:…` line is surfaced as a deploy warning and is NOT a failure. An absent message is a lost result and a failure: the
 //     header is always written, so "nothing declared" arrives as `count=0`.
 package provisioner
 
@@ -95,6 +95,16 @@ const byoDBUsersPendingPrefix = "revocation-pending:"
 // could not end, because the administrator lacks PROCESS or CONNECTION_ADMIN (apps/runner
 // db_bootstrap_byo_mysql.go mysqlByoSessionsPrefix; MySQL only).
 const byoDBUsersSessionsPrefix = "sessions-not-ended:"
+
+// byoDBUsersDoubtPrefix starts a result line saying the Job cannot vouch for part of its own report
+// (apps/runner db_bootstrap_byo_mysql.go mysqlByoDoubtPrefix; MySQL only). byoDBUsersDoubtRe is
+// every such line the parser accepts.
+const byoDBUsersDoubtPrefix = "doubt:"
+
+// byoDBUsersDoubtRe matches a doubt line: `doubt:sessions-unrecorded` (the record of the sessions the
+// Job could not end was lost), or `doubt:<revocation-pending|sessions-not-ended> +<n> more` (that
+// list was capped and n more were left out).
+var byoDBUsersDoubtRe = regexp.MustCompile(`^` + byoDBUsersDoubtPrefix + `(?:(sessions-unrecorded)|(revocation-pending|sessions-not-ended) \+([1-9][0-9]{0,5}) more)$`)
 
 // byoDBUsersUserRe is the shape of a per-binding user (manifests.ByoBindingDBUser). A result line is
 // accepted only in this shape.
@@ -181,11 +191,34 @@ func byoDBUsersFailedWarning(reason string) string {
 }
 
 // byoDBUsersSessionsWarning is the Deploy-tab warning for one revoked user whose open sessions the
-// Job could not end. It is a warning, not a failure: the user is locked and dropped regardless.
+// Job could not end. It is a warning, not a failure: the user is locked and dropped regardless. The
+// Job names a user only when it saw a session of it, or when it could not see sessions at all (no
+// PROCESS), so the text claims no session exists: it says any it had was not terminated.
 func byoDBUsersSessionsWarning(user string) string {
-	return fmt.Sprintf("Database user %s belongs to a bring-your-own binding that was removed. Its open sessions were not terminated, "+
-		"because the database administrator lacks the PROCESS or CONNECTION_ADMIN privilege; a session opened before the revocation "+
-		"keeps running until it disconnects. The user cannot log in again.", user)
+	return fmt.Sprintf("Database user %s belongs to a bring-your-own binding that was removed. Any session it had open was not terminated, "+
+		"because the database administrator lacks the PROCESS or CONNECTION_ADMIN privilege; such a session keeps running until it "+
+		"disconnects. The user cannot log in again.", user)
+}
+
+// byoDBUsersDoubtWarning is the Deploy-tab warning for one doubt line (byoDBUsersDoubtRe), which the
+// parser has already accepted.
+func byoDBUsersDoubtWarning(line string) string {
+	m := byoDBUsersDoubtRe.FindStringSubmatch(line)
+	switch {
+	case m == nil:
+		return "The BYO users Job reported a doubt this deploy cannot read: " + line
+	case m[1] != "":
+		return "The BYO users Job lost its record of which removed bring-your-own bindings' database users still had sessions it could not " +
+			"terminate (a statement failed or its client reconnected), so this deploy cannot say whether any such session is still open. " +
+			"A revoked user cannot log in again; a session it opened before the revocation keeps running until it disconnects."
+	case m[2] == "revocation-pending":
+		return fmt.Sprintf("%s more database users of removed bring-your-own bindings could not be dropped on this deploy and are not listed "+
+			"one by one. They can no longer log in, but they still exist. The next deploy tries the drop again.", m[3])
+	default:
+		return fmt.Sprintf("%s more database users of removed bring-your-own bindings may have sessions open that were not terminated, and "+
+			"are not listed one by one: the database administrator lacks the PROCESS or CONNECTION_ADMIN privilege. Such a session keeps "+
+			"running until it disconnects. These users cannot log in again.", m[3])
+	}
 }
 
 // byoDBUsersPendingWarning is the Deploy-tab warning for one revocation the Job could not finish.
@@ -518,7 +551,7 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 	if err != nil {
 		return fail(fmt.Sprintf("could not read Job %s's result: %v", job.JobName, err))
 	}
-	listed, pending, unended, err := parseByoDBUsersResultLines(msg, present)
+	listed, pending, unended, doubts, err := parseByoDBUsersResultLines(msg, present)
 	if err != nil {
 		return fail(fmt.Sprintf("Job %s's result is malformed: %v", job.JobName, err))
 	}
@@ -537,6 +570,10 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 	for _, u := range unended {
 		fmt.Fprintf(stderr, "Warning: BYO users Job: the sessions of revoked user %s were not terminated (no PROCESS or CONNECTION_ADMIN)\n", u)
 		out.Warnings = append(out.Warnings, byoDBUsersSessionsWarning(u))
+	}
+	for _, d := range doubts {
+		fmt.Fprintf(stderr, "Warning: BYO users Job: %s\n", d)
+		out.Warnings = append(out.Warnings, byoDBUsersDoubtWarning(d))
 	}
 	fmt.Fprintf(stdout, "BYO users Job %s: %d of %d user(s) provisioned\n", job.JobName, len(out.Provisioned), len(users))
 	return out
@@ -894,7 +931,8 @@ var errByoDBUsersTruncated = errors.New("result truncated: too many users for on
 
 // parseByoDBUsersResult parses a termination message strictly. The first line is the header, and
 // exactly the counted number of entries follow, each a per-binding user (provisioned),
-// `revocation-pending:<user>` or `sessions-not-ended:<user>`, with one trailing newline allowed. A missing header (truncation), a
+// `revocation-pending:<user>`, `sessions-not-ended:<user>` or a doubt (byoDBUsersDoubtRe), with one
+// trailing newline allowed. A missing header (truncation), a
 // count that does not match, any other line, an empty line, a carriage return or a repeated entry
 // makes the whole message malformed, so nothing in it is trusted.
 //
@@ -902,30 +940,30 @@ var errByoDBUsersTruncated = errors.New("result truncated: too many users for on
 // header on every run, so "nothing declared" arrives as `count=0`, and an absent message means the
 // result was lost (errByoDBUsersResultLost), whatever was declared.
 func parseByoDBUsersResult(msg string, present bool) (users, pending []string, err error) {
-	users, pending, _, err = parseByoDBUsersResultLines(msg, present)
+	users, pending, _, _, err = parseByoDBUsersResultLines(msg, present)
 	return users, pending, err
 }
 
 // parseByoDBUsersResultLines is parseByoDBUsersResult that also returns the revoked users whose
-// sessions were not ended (unended).
-func parseByoDBUsersResultLines(msg string, present bool) (users, pending, unended []string, err error) {
+// sessions were not ended (unended) and the doubt lines, verbatim (doubts).
+func parseByoDBUsersResultLines(msg string, present bool) (users, pending, unended, doubts []string, err error) {
 	if !present || msg == "" {
-		return nil, nil, nil, errByoDBUsersResultLost
+		return nil, nil, nil, nil, errByoDBUsersResultLost
 	}
 	lines := strings.Split(strings.TrimSuffix(msg, "\n"), "\n")
 	m := byoDBUsersHeaderRe.FindStringSubmatch(lines[0])
 	if m == nil {
-		return nil, nil, nil, errByoDBUsersTruncated
+		return nil, nil, nil, nil, errByoDBUsersTruncated
 	}
 	count, _ := strconv.Atoi(m[1])
 	entries := lines[1:]
 	if len(entries) != count {
-		return nil, nil, nil, fmt.Errorf("the header counts %d entries, the result carries %d", count, len(entries))
+		return nil, nil, nil, nil, fmt.Errorf("the header counts %d entries, the result carries %d", count, len(entries))
 	}
 	seen := map[string]bool{}
 	for i, line := range entries {
 		if seen[line] {
-			return nil, nil, nil, fmt.Errorf("line %d repeats an entry", i+2)
+			return nil, nil, nil, nil, fmt.Errorf("line %d repeats an entry", i+2)
 		}
 		seen[line] = true
 		switch {
@@ -935,11 +973,13 @@ func parseByoDBUsersResultLines(msg string, present bool) (users, pending, unend
 			pending = append(pending, strings.TrimPrefix(line, byoDBUsersPendingPrefix))
 		case strings.HasPrefix(line, byoDBUsersSessionsPrefix) && byoDBUsersUserRe.MatchString(strings.TrimPrefix(line, byoDBUsersSessionsPrefix)):
 			unended = append(unended, strings.TrimPrefix(line, byoDBUsersSessionsPrefix))
+		case byoDBUsersDoubtRe.MatchString(line):
+			doubts = append(doubts, line)
 		default:
-			return nil, nil, nil, fmt.Errorf("line %d is neither a user, a pending revocation nor a session report", i+2)
+			return nil, nil, nil, nil, fmt.Errorf("line %d is neither a user, a pending revocation, a session report nor a doubt", i+2)
 		}
 	}
-	return users, pending, unended, nil
+	return users, pending, unended, doubts, nil
 }
 
 // byoDBUsersForeignKinds are the kinds the namespace check lists: every workload kind, plus the kinds

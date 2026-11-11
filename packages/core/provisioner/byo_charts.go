@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
@@ -527,6 +528,15 @@ func byoNamespaceCollisions(addons []types.AddOnInstall) map[string]string {
 	return out
 }
 
+// byoCollisionIn is byoNamespaceCollisions' answer for add-on i if it were in namespace ns instead of
+// its stored one: the same rule, run again for a chart the runner keeps in another namespace.
+func byoCollisionIn(addons []types.AddOnInstall, i int, ns string) (string, bool) {
+	moved := append([]types.AddOnInstall(nil), addons...)
+	moved[i].Namespace = ns
+	reason, collides := byoNamespaceCollisions(moved)[moved[i].ID]
+	return reason, collides
+}
+
 // byoRefusedIDs is the set of refused add-on ids, for the filters below.
 func byoRefusedIDs(refused []byoRefusal) map[string]bool {
 	out := make(map[string]bool, len(refused))
@@ -666,6 +676,11 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 		}
 	}
 	collisions := byoNamespaceCollisions(vc.AddOns)
+	owner := byoBindingOwner(vc)
+	holds := map[string]byoPlacementHold{}
+	heldNamespaces := map[string]bool{}
+	var placementOverlaps []byoPlacementOverlap
+	var heldMoves []byoHeldMove
 	for i := range vc.AddOns {
 		a := &vc.AddOns[i]
 		if !a.IsByo() {
@@ -686,6 +701,48 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			fmt.Fprintf(stderr, "Error: refusing BYO chart %q: %s\n", a.ID, reason)
 			refused = append(refused, byoRefusal{ID: a.ID, Namespace: ns, Reason: reason, Shared: true})
 			continue
+		}
+		// A namespace another environment holds (#6562): a namespace placement's, or one carrying
+		// another environment's owner label. Read here, before the first write below, and FAIL CLOSED:
+		// a failed read returns at once with Err and nothing applied. See byoPlacementHold.
+		hold, err := byoNamespaceHold(ns, owner, a.ID, holds)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: not configuring BYO charts: %v\n", err)
+			return byoConfigured{Err: err}
+		}
+		// A chart whose stored namespace moved INTO a held namespace while its Application still runs
+		// in another one: the move is refused, and the chart keeps deploying where its Application
+		// runs, with its bindings, rather than being refused, which would withdraw the secrets its
+		// workloads read there. Its old namespace must still pass the validator; one that no longer
+		// does (the platform's "default", after a legacy move) is refused as before.
+		if hold.held() && !hold.Live && hold.Dest != "" && argocd.ValidateByoNamespace(hold.Dest) == nil {
+			// The old namespace must also pass the collision rule the stored namespaces passed above:
+			// a chart refused for sharing another chart's own byo-<id> namespace keeps its Application
+			// there, and must not be re-admitted into it through this path.
+			if reason, collides := byoCollisionIn(vc.AddOns, i, hold.Dest); collides {
+				fmt.Fprintf(stderr, "Error: refusing BYO chart %q: %s\n", a.ID, reason)
+				refused = append(refused, byoRefusal{ID: a.ID, Namespace: hold.Dest, Reason: reason, Shared: true})
+				continue
+			}
+			fmt.Fprintf(stderr, "Warning: BYO chart %q: not moving it into namespace %q: %s; it keeps deploying in %q\n", a.ID, ns, hold.refusal(), hold.Dest)
+			heldMoves = append(heldMoves, byoHeldMove{ID: a.ID, Requested: ns, Kept: hold.Dest, Holder: hold.Holder, Placement: hold.Placement})
+			ns = hold.Dest
+			a.Namespace = ns
+			if hold, err = byoNamespaceHold(ns, owner, a.ID, holds); err != nil {
+				fmt.Fprintf(stderr, "Error: not configuring BYO charts: %v\n", err)
+				return byoConfigured{Err: err}
+			}
+		}
+		if hold.held() {
+			if !hold.Live {
+				reason := hold.refusal()
+				fmt.Fprintf(stderr, "Error: refusing BYO chart %q: %s\n", a.ID, reason)
+				refused = append(refused, byoRefusal{ID: a.ID, Namespace: ns, Reason: reason})
+				continue
+			}
+			fmt.Fprintf(stderr, "Warning: BYO chart %q: %s\n", a.ID, hold.refusal())
+			placementOverlaps = append(placementOverlaps, byoPlacementOverlap{ID: a.ID, Namespace: ns, Holder: hold.Holder, Placement: hold.Placement})
+			heldNamespaces[ns] = true
 		}
 		// A chart in one of the project's preview namespaces (#6494) is REPORTED, not refused: it was
 		// attached before the console refused such a namespace, and refusing it now would drop its
@@ -717,6 +774,32 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 		return byoConfigured{}
 	}
 
+	// Each accepted namespace's admission mode, decided from the history of its charts (#6541). It
+	// runs BEFORE anything is rendered from the accepted set, because it can refuse: a chart may not
+	// take over a namespace that exists and is not this environment's. A namespace another environment
+	// holds is left out (#6562). A failed read fails the deploy here, before the first write.
+	var admissionDecisions map[string]argocd.ByoAdmissionDecision
+	if len(namespaces) > 0 {
+		var admissionRefused []byoRefusal
+		var err error
+		admissionDecisions, admissionRefused, err = decideByoAdmission(vc, chartsByNS, moved, heldNamespaces)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: not configuring BYO charts: %v\n", err)
+			return byoConfigured{Err: err}
+		}
+		for _, r := range admissionRefused {
+			fmt.Fprintf(stderr, "Error: refusing BYO chart %q: %s\n", r.ID, r.Reason)
+		}
+		if len(admissionRefused) > 0 {
+			refused = append(refused, admissionRefused...)
+			repos, gitRepos, namespaces = acceptedByoSources(vc.AddOns, chartsByNS)
+			// What was said about a chart this refusal now keeps off the cluster is no longer true.
+			leftProject = keepAcceptedCharts(leftProject, func(c byoProjectChange) string { return c.ID }, chartsByNS)
+			previewOverlaps = keepAcceptedCharts(previewOverlaps, func(o byoPreviewOverlap) string { return o.ID }, chartsByNS)
+			newlyReserved = keepAcceptedCharts(newlyReserved, func(o byoNewlyReservedOverlap) string { return o.ID }, chartsByNS)
+		}
+	}
+
 	fmt.Fprintf(stdout, "Configuring %d bring-your-own chart(s) under hardened project %q (%d refused)\n", len(repos), projName, len(refused))
 
 	// The destination namespaces, created by the RUNNER because the chart cannot create them.
@@ -738,16 +821,17 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	// argocd.secretStoreConditions).
 	//
 	// Each namespace also carries its admission mode and the Pod Security labels that follow from it
-	// (#6495): "enforce" for a namespace created here for a new chart, "warn" for one that already
-	// exists or receives a moved chart, and an existing mode is kept (byoAdmissionModes).
+	// (#6495), as decided above (decideByoAdmission, #6541).
 	nsLabels := byoNamespaceLabels(commonLabels)
-	var modes map[string]argocd.ByoAdmissionMode
-	if len(namespaces) > 0 {
-		modes = byoAdmissionModes(namespaces, moved, stderr)
-	}
-	if ns, err := argocd.RenderByoNamespaces(namespaces, nsLabels, modes); err != nil {
+	modes := argocd.ByoAdmissionModes(admissionDecisions)
+	//
+	// A namespace another environment holds (#6562) is NOT rendered: the chart already in it keeps
+	// deploying there, but the host does not stamp its owner label or the secret-store stamp onto a
+	// namespace that is not its own. The namespace exists (it was read), so nothing needs creating.
+	// decideByoAdmission leaves it out too, so the environment's setting never relabels it.
+	if ns, err := argocd.RenderByoNamespaces(withoutHeldNamespaces(namespaces, heldNamespaces), nsLabels, admissionDecisions); err != nil {
 		fmt.Fprintf(stderr, "Error: refusing to configure BYO charts: %v\n", err)
-		return byoConfigured{Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, NewlyReserved: newlyReserved}
+		return byoConfigured{Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, NewlyReserved: newlyReserved, PlacementOverlaps: placementOverlaps, HeldMoves: heldMoves}
 	} else if ns != "" {
 		if err := argocd.ApplyManifest(ns, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: could not create BYO namespace(s) %s — a chart targeting one will fail its sync with `namespaces not found`: %v\n",
@@ -762,9 +846,13 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 		_, unavailable := applyByoAdmissionPolicy(stdout, stderr)
 		admission = reportByoAdmission(chartsByNS, modes, unavailable, stderr)
 		for _, r := range admission {
-			fmt.Fprintf(stderr, "Warning: %s\n", r.warning())
+			if r.warns() {
+				fmt.Fprintf(stderr, "Warning: %s\n", r.warning())
+			}
 		}
 	}
+	admissionChanges := byoAdmissionChanges(admissionDecisions)
+	admissionStatus := byoAdmissionStatuses(admissionDecisions, chartsByNS, refused, admission)
 
 	// Hardened AppProject locked to the ACCEPTED repos + namespaces — applied even when that is none,
 	// so a destination an earlier deploy granted is withdrawn (see the doc comment).
@@ -787,7 +875,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	// it, and NOT while a chart whose move was refused is still stored there: that chart still belongs
 	// to this environment and still has its objects in "default", so the labels stay true.
 	if len(moved) > 0 && projectUpdated && len(moveRefused) == 0 {
-		if owner := byoBindingOwner(vc); owner != "" {
+		if owner != "" {
 			if _, err := argocd.ReleaseLegacyByoNamespaceLabels(argocd.ByoLegacyDefaultNamespace, owner, nsLabels, stdout); err != nil {
 				fmt.Fprintf(stderr, "Warning: could not remove the BYO chart labels from namespace %q: %v\n", argocd.ByoLegacyDefaultNamespace, err)
 			}
@@ -821,7 +909,8 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo %s: %s\n", repo, argocd.RedactTokens(err.Error(), allTokens...))
 		}
 	}
-	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, NewlyReserved: newlyReserved, Admission: admission}
+	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, NewlyReserved: newlyReserved, Admission: admission, PlacementOverlaps: placementOverlaps, HeldMoves: heldMoves,
+		AdmissionChanges: admissionChanges, AdmissionStatus: admissionStatus}
 }
 
 // byoNamespaceLabels are the labels the runner stamps on a BYO chart's namespace beyond the
@@ -856,6 +945,23 @@ type byoConfigured struct {
 	// Admission are the accepted charts' namespaces holding what the BYO admission rules refuse,
 	// reported because nothing refuses them there yet (#6495).
 	Admission []byoAdmissionReport
+	// PlacementOverlaps are the accepted charts already deployed into a namespace another
+	// environment holds (#6562). They are still deployed, where they are.
+	PlacementOverlaps []byoPlacementOverlap
+	// HeldMoves are the charts whose stored namespace moved into a held namespace while their
+	// Application runs in another one (#6562). They keep deploying where the Application runs.
+	HeldMoves []byoHeldMove
+	// Err is set when the runner could not tell whether a chart's namespace is another environment's
+	// (#6562), or could not read the BYO namespaces or the charts' Applications to decide their
+	// admission mode (#6541). Nothing was applied: configureByoCharts returns before its first write,
+	// and the caller fails the deploy rather than refuse the chart, because a refusal withdraws its
+	// bindings.
+	Err error
+	// AdmissionChanges are the namespaces whose admission mode this deploy changed (#6541): the
+	// environment's setting taking effect, or being undone.
+	AdmissionChanges []byoAdmissionChange
+	// AdmissionStatus is every decided BYO namespace for the Deploy tab (#6541).
+	AdmissionStatus []argocd.ByoAdmissionNamespaceStatus
 }
 
 // byoPreviewOverlap is one BYO chart stored in a namespace the project's preview environments use
@@ -946,4 +1052,245 @@ func (c byoProjectChange) warning() string {
 		"and no ServiceAccount, Role or RoleBinding: a chart that declares a kind outside the list fails its sync, naming the resource. "+
 		"Anything it created earlier that the project does not permit is left in place and no longer managed; delete it yourself if you no longer need it.",
 		c.ID, c.To, c.From)
+}
+
+// byoPlacementHold is what the runner read about one BYO chart's namespace on the cluster (#6562): which
+// other environment, if any, holds it, and whether this chart is already deployed there.
+type byoPlacementHold struct {
+	// Placement is set when the namespace carries the namespace-placement label
+	// (namespacePlacementLabel=namespacePlacementValue): the tenant render stamps it on every
+	// namespace placement's Namespace.
+	Placement bool
+	// Holder is the namespace's owner label (namespaceOwnerLabel) when it names ANOTHER environment,
+	// "" when it has none or names this one (an earlier deploy of this environment stamped it).
+	Holder string
+	// Foreign is set when Holder names an environment other than this one.
+	Foreign bool
+	// Namespace is the namespace read.
+	Namespace string
+	// Live is set when this chart's Application already exists on the cluster with this namespace as
+	// its destination: an earlier deploy put the chart there.
+	Live bool
+	// Dest is the destination namespace of the chart's live Application, "" when it has none. Read
+	// only for a held namespace.
+	Dest string
+}
+
+// held reports whether another environment holds the namespace.
+func (h byoPlacementHold) held() bool { return h.Placement || h.Foreign }
+
+// refusal is the reason given for a chart in a held namespace, naming the namespace and its holder.
+func (h byoPlacementHold) refusal() string {
+	if h.Placement {
+		return fmt.Sprintf("namespace %q is held by %s: it carries %s=%s", h.Namespace, byoHolderPhrase(h.Holder, true), namespacePlacementLabel, namespacePlacementValue)
+	}
+	return fmt.Sprintf("namespace %q belongs to %s: its %s label names that environment, not this one", h.Namespace, byoHolderPhrase(h.Holder, false), namespaceOwnerLabel)
+}
+
+// byoHolderPhrase names the environment holding a namespace: by its id when its owner label names one
+// other than this environment, and as a namespace-placed environment when placement is set.
+func byoHolderPhrase(holder string, placement bool) string {
+	kind := "environment"
+	if placement {
+		kind = "namespace-placed environment"
+	}
+	if holder == "" {
+		if placement {
+			return "a " + kind
+		}
+		return "another " + kind
+	}
+	return fmt.Sprintf("the %s %q", kind, holder)
+}
+
+// byoNamespaceHold reads namespace ns (already validated as a DNS-1123 label) and, when another
+// environment holds it, whether chart id is already deployed there (#6562). Each namespace is read
+// once per deploy (cache). A failed or unparseable read of either object is an error: the caller
+// fails closed and applies nothing.
+//
+// # Where the line between refusing and keeping is drawn
+//
+// The NAMESPACE decides whether the chart is in the wrong place: a namespace placement's label, or
+// another environment's owner label. A namespace that exists with neither — created by the host's own
+// GitOps repo, by hand, or by an older runner — is merely co-located and passes, as it always did.
+//
+// The chart's own APPLICATION decides what to do about it. When its live destination is this
+// namespace, an earlier deploy already runs the chart there: refusing it now would drop its bindings
+// from the prune's keep set and withdraw the secrets its running workloads read, which is the outcome
+// to avoid. It is kept and reported instead (byoPlacementOverlap), as #6494 and #6551 do. When its
+// Application runs in ANOTHER namespace, the stored namespace was changed to the held one: the caller
+// refuses that move and keeps the chart where it runs (byoHeldMove), for the same reason. Only a chart
+// with no Application — nothing of it runs anywhere the runner can see — is refused, before anything
+// is written into the namespace; so is one whose old namespace the validator now refuses, as any
+// chart there is.
+//
+// The owner label alone cannot tell these apart: a namespace placement deployed before #6551 stamped
+// its own id over the host's, so a namespace carrying another environment's id can still hold a live
+// chart of this one.
+//
+// # Which namespaces are read
+//
+// Every namespace a chart is about to deploy into that passed the validator, once per deploy: the
+// byo- names and the newly reserved ones included. The runner reaches some of them with no console
+// check at all — the legacy move ("" or "default" to byo-<chart id>) chooses its target itself — and
+// a placement created before #6551 may hold any of them. A name the validator refuses is never read,
+// because the chart is refused before this.
+//
+// Each read is retried a few times (byoReadAttempts) before the deploy fails closed, so one
+// transient API error does not fail a deploy.
+func byoNamespaceHold(ns, owner, id string, cache map[string]byoPlacementHold) (byoPlacementHold, error) {
+	h, seen := cache[ns]
+	if !seen {
+		var exists bool
+		var labels map[string]string
+		err := retryByoRead(func() error {
+			var rerr error
+			exists, labels, rerr = readNamespaceLabels(ns)
+			return rerr
+		})
+		if err != nil {
+			return byoPlacementHold{}, fmt.Errorf("the runner %w, so it cannot tell whether another environment holds it. Nothing was applied for any bring-your-own chart, and no binding was withdrawn; deploy again once the namespace can be read", err)
+		}
+		h = byoPlacementHold{Namespace: ns}
+		if exists {
+			h.Placement = labels[namespacePlacementLabel] == namespacePlacementValue
+			if label := labels[namespaceOwnerLabel]; label != "" && label != owner {
+				h.Holder = label
+				h.Foreign = true
+			}
+		}
+		cache[ns] = h
+	}
+	if !h.held() {
+		return h, nil
+	}
+	var dest string
+	err := retryByoRead(func() error {
+		var rerr error
+		dest, rerr = liveByoDestination(id)
+		return rerr
+	})
+	if err != nil {
+		return byoPlacementHold{}, fmt.Errorf("namespace %q is held by another environment, and the runner could not read BYO chart %q's Application to tell whether the chart already runs there: %w. Nothing was applied for any bring-your-own chart, and no binding was withdrawn", ns, id, err)
+	}
+	h.Dest = dest
+	h.Live = dest == ns
+	return h, nil
+}
+
+// byoReadAttempts and byoReadBackoff bound the retry of the reads byoNamespaceHold makes: three
+// attempts, waiting byoReadBackoff, then twice that, between them. Variables so tests need not wait.
+var (
+	byoReadAttempts = 3
+	byoReadBackoff  = 500 * time.Millisecond
+)
+
+// retryByoRead runs read up to byoReadAttempts times, backing off between attempts, and returns the
+// last error when every attempt failed.
+func retryByoRead(read func() error) error {
+	var err error
+	wait := byoReadBackoff
+	for attempt := 1; attempt <= byoReadAttempts; attempt++ {
+		if err = read(); err == nil {
+			return nil
+		}
+		if attempt < byoReadAttempts {
+			time.Sleep(wait)
+			wait *= 2
+		}
+	}
+	return err
+}
+
+// liveByoDestination is the destination namespace of chart id's live Application, "" when it has
+// none. The name is checked before it reaches the shell.
+func liveByoDestination(id string) (string, error) {
+	name := argocd.AddOnAppName(id)
+	if !reapNameRE.MatchString(name) {
+		return "", fmt.Errorf("Application name %q is not a Kubernetes name", name)
+	}
+	out, err := executeCommandWithOutput(fmt.Sprintf("kubectl get applications.argoproj.io %s -n argocd --ignore-not-found -o jsonpath={.spec.destination.namespace}", name), "", nil)
+	if err != nil {
+		return "", fmt.Errorf("read Application %s: %w", name, err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// withoutHeldNamespaces is namespaces without the ones another environment holds, in order.
+func withoutHeldNamespaces(namespaces []string, held map[string]bool) []string {
+	if len(held) == 0 {
+		return namespaces
+	}
+	out := make([]string, 0, len(namespaces))
+	for _, ns := range namespaces {
+		if !held[ns] {
+			out = append(out, ns)
+		}
+	}
+	return out
+}
+
+// byoPlacementOverlap is one BYO chart already deployed into a namespace another environment holds
+// (#6562). The console refuses such a namespace at attach and at update, so a chart reaches this only
+// when it was attached before that check existed. It is reported, not refused or moved, for the
+// reason byoNamespaceHold gives; the namespace is left exactly as it is.
+type byoPlacementOverlap struct {
+	// ID is the add-on id.
+	ID string
+	// Namespace is the chart's namespace, which it keeps.
+	Namespace string
+	// Holder is the holding environment's id, from the namespace's owner label ("" when unlabelled).
+	Holder string
+	// Placement is set when the holder is a namespace-placed environment.
+	Placement bool
+}
+
+// warning is the Deploy-tab warning, naming both sides: the chart and the environment that holds its
+// namespace. It carries no secret — an id, a namespace and an environment id.
+func (o byoPlacementOverlap) warning() string {
+	held := fmt.Sprintf("which %s also uses. While both use it, that environment's deploys are refused", byoHolderPhrase(o.Holder, true))
+	if !o.Placement {
+		held = fmt.Sprintf("whose owner label names %s, not this one; the platform treats it as that environment's namespace", byoHolderPhrase(o.Holder, false))
+	}
+	// #6575: a placement's teardown deletes its namespace, so it refuses while this chart runs there.
+	// Said only for a placement hold: an owner-label-only holder need not be a placement at all.
+	teardown := ""
+	if o.Placement {
+		teardown = " Do this before that environment is torn down: its teardown deletes the namespace, so it is refused while this chart still runs there."
+	}
+	return fmt.Sprintf("BYO chart %q runs in namespace %q, %s. "+
+		"The chart was deployed there before that was refused, so this deploy kept it where it is, with its workloads and binding secrets unchanged, "+
+		"and left the namespace's labels as they are. "+
+		"Attach the chart again with a namespace of its own (leave it blank for %q), then remove what it left in %q.%s",
+		o.ID, o.Namespace, held, argocd.ByoChartNamespace(o.ID), o.Namespace, teardown)
+}
+
+// byoHeldMove is one BYO chart whose stored namespace was changed to a namespace another environment
+// holds, while its Application still runs in its old one (#6562). The move is refused and the chart
+// keeps deploying in its old namespace, with its bindings: refusing the chart would withdraw the
+// secrets its running workloads read there.
+type byoHeldMove struct {
+	// ID is the add-on id.
+	ID string
+	// Requested is the held namespace the chart is stored with.
+	Requested string
+	// Kept is the namespace its Application runs in, where this deploy kept it.
+	Kept string
+	// Holder is the holding environment's id ("" when the owner label does not name another one).
+	Holder string
+	// Placement is set when the holder is a namespace-placed environment.
+	Placement bool
+}
+
+// warning is the Deploy-tab warning: the move that was refused, why, and where the chart still runs.
+// It carries no secret — an id, two namespaces and an environment id.
+func (m byoHeldMove) warning() string {
+	why := fmt.Sprintf("%s uses it", byoHolderPhrase(m.Holder, true))
+	if !m.Placement {
+		why = fmt.Sprintf("its owner label names %s, not this one", byoHolderPhrase(m.Holder, false))
+	}
+	return fmt.Sprintf("BYO chart %q was not moved into namespace %q: %s. "+
+		"It keeps deploying in %q, where it runs now, with its workloads and binding secrets unchanged. "+
+		"Attach the chart again with a namespace of its own (leave it blank for %q).",
+		m.ID, m.Requested, why, m.Kept, argocd.ByoChartNamespace(m.ID))
 }

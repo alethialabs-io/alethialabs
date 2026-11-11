@@ -35,12 +35,14 @@ import (
 //
 // Both modes carry PSA warn=restricted and audit=restricted.
 //
-// The RUNNER chooses the mode, and it chooses it once (DecideByoAdmissionModes): a namespace it
-// creates for a new chart starts in "enforce"; a namespace that already exists, or that receives a
-// chart which ran elsewhere before (a #6446 move), starts in "warn"; and a namespace that already
-// carries a mode keeps it, whatever it is. The runner never moves a namespace from "warn" to
-// "enforce" on its own. That step is a separate, explicit relabel of that namespace, which the next
-// deploy then preserves. The runner reports what "warn" lets through on every deploy
+// The RUNNER chooses the mode (DecideByoAdmission), from the history of the charts in the namespace
+// (#6541): a namespace holding only charts that have never run in this environment starts in
+// "enforce"; one holding a chart that has run here, or one a #6446 move brings a chart into, starts in
+// "warn"; a namespace that already carries a mode keeps it. A namespace that exists and is not a BYO
+// namespace of this environment is refused to a new chart. The runner never moves a namespace from
+// "warn" to "enforce" because of what it finds: that step is the environment's setting
+// (types.ByoAdmissionConfig.Enforce), which a person turns on in the console, or an explicit relabel
+// of the namespace. The runner reports what "warn" lets through on every deploy
 // (ByoAdmissionViolations, PreviewByoPodSecurity), so a user knows before the step is taken.
 
 // ByoAdmissionModeLabel is the namespace label carrying a BYO namespace's admission mode. The
@@ -125,31 +127,231 @@ func byoPodSecurityLabels(m ByoAdmissionMode) map[string]string {
 	return out
 }
 
-// DecideByoAdmissionModes chooses each BYO namespace's admission mode. live maps every namespace
-// that exists on the cluster to its labels (nil labels for one that has none); a namespace absent
-// from live does not exist yet. inherited are the namespaces this deploy moves a chart into that ran
-// somewhere else before (#6446): such a namespace may be new, but its chart is not.
+// ByoAdmissionSourceLabel marks a namespace whose "enforce" comes from the environment's setting
+// (types.ByoAdmissionConfig.Enforce, #6541) rather than from the namespace's own history. It is what
+// makes the setting reversible: with the setting turned off, a namespace carrying it returns to
+// "warn", the mode it had before the setting moved it; a namespace in "enforce" without it — one
+// created for a new chart, or one a person relabelled — stays in "enforce". The bindings do not read
+// it; only DecideByoAdmission does.
+const ByoAdmissionSourceLabel = "alethia.io/byo-admission-source"
+
+// byoAdmissionSourceSetting is ByoAdmissionSourceLabel's one value.
+const byoAdmissionSourceSetting = "environment-setting"
+
+// ByoAdmissionReason is why DecideByoAdmission chose a namespace's mode, or refused its charts. The
+// Deploy tab shows it, so the values are a closed vocabulary rather than prose.
+type ByoAdmissionReason string
+
+const (
+	// ByoAdmissionReasonKept: the namespace already carried a mode, and keeps it.
+	ByoAdmissionReasonKept ByoAdmissionReason = "kept"
+	// ByoAdmissionReasonSetting: the environment's setting puts the namespace in "enforce".
+	ByoAdmissionReasonSetting ByoAdmissionReason = "environment-setting"
+	// ByoAdmissionReasonSettingOff: the setting had put the namespace in "enforce" and is now off,
+	// so it returns to "warn".
+	ByoAdmissionReasonSettingOff ByoAdmissionReason = "environment-setting-off"
+	// ByoAdmissionReasonHistory: a chart in the namespace has run in this environment — its ArgoCD
+	// Application exists, or the console last read it in a state with resources (types.ByoAdmissionConfig),
+	// or a #6446 move brings it in — so something of it may run there, or will, on its next sync.
+	ByoAdmissionReasonHistory ByoAdmissionReason = "chart-history"
+	// ByoAdmissionReasonOwned: no chart in it has run before, but the namespace is already one of this
+	// environment's BYO namespaces — what a detached chart left there may still run.
+	ByoAdmissionReasonOwned ByoAdmissionReason = "environment-namespace"
+	// ByoAdmissionReasonNew: a namespace created on this deploy for charts that have never run.
+	ByoAdmissionReasonNew ByoAdmissionReason = "new-namespace"
+	// ByoAdmissionReasonForeign: REFUSED — a namespace that exists, is not a BYO namespace of this
+	// environment, and in which no chart of this environment's Application already deploys.
+	ByoAdmissionReasonForeign ByoAdmissionReason = "not-this-environments-namespace"
+)
+
+// ByoAdmissionInput is everything DecideByoAdmission reads. It is only ever built from a cluster
+// that WAS read: the runner fails the deploy when the namespaces or the charts' Applications cannot
+// be read (decideByoAdmission), so there is no "unknown" input here to decide on.
+type ByoAdmissionInput struct {
+	// Namespaces are the accepted BYO namespaces this environment renders (never one another
+	// environment holds, #6562).
+	Namespaces []string
+	// Live maps every namespace that exists on the cluster to its labels (ReadByoNamespaceLabels).
+	Live map[string]map[string]string
+	// RunsHere marks a namespace into which the live ArgoCD Application of one of its charts already
+	// deploys. It is read from the cluster on this deploy and is the ONLY thing that lets a chart into
+	// an existing namespace that is not this environment's: what a chart has run elsewhere, or what
+	// the console remembers, never does.
+	RunsHere map[string]bool
+	// History marks a namespace holding a chart that has run in this environment by any signal —
+	// RunsHere, an Application with another destination, the console's record, or a #6446 move. It
+	// only chooses "warn" over "enforce"; it never lifts a refusal.
+	History map[string]bool
+	// Owner is this environment's owner-label value (ByoBindingOwnerLabel). Empty means no namespace
+	// can be shown to be this environment's.
+	Owner string
+	// Enforce is the environment's setting.
+	Enforce bool
+}
+
+// ByoAdmissionDecision is one namespace's outcome.
+type ByoAdmissionDecision struct {
+	// Mode is the mode to render. Meaningless when Refused.
+	Mode ByoAdmissionMode
+	// BySetting is set when Mode is "enforce" only because of the environment's setting; the
+	// namespace is then rendered with ByoAdmissionSourceLabel.
+	BySetting bool
+	// Previous is the namespace's live mode before this deploy, "" when it had none.
+	Previous ByoAdmissionMode
+	// Reason is why.
+	Reason ByoAdmissionReason
+	// Refused is set when the namespace's charts must not be deployed (ByoAdmissionReasonForeign).
+	Refused bool
+}
+
+// DecideByoAdmission decides each BYO namespace's admission mode from the history of the charts in it
+// (#6541), and refuses the charts of a namespace that a new chart may not take over.
 //
-//   - an existing namespace that carries a valid mode keeps it — the only way a namespace changes
-//     mode is an explicit relabel, which this preserves in both directions;
-//   - an existing namespace without one gets "warn": something may already run there;
-//   - a new namespace for an inherited chart gets "warn";
-//   - any other new namespace gets "enforce": nothing runs there yet, so refusing breaks nothing.
-func DecideByoAdmissionModes(namespaces []string, live map[string]map[string]string, inherited map[string]bool) map[string]ByoAdmissionMode {
-	out := make(map[string]ByoAdmissionMode, len(namespaces))
-	for _, ns := range namespaces {
-		labels, exists := live[ns]
+// # The rule
+//
+// The property is: a BYO namespace refuses (enforce) whenever nothing already runs in it that the
+// refusal could break. Whether the namespace EXISTS is a poor stand-in for that, wrong both ways
+// (#6541): a chart whose namespace is new to the cluster may have run before — its namespace was
+// changed in the console, the cluster was re-provisioned, or the namespace was deleted and recreated —
+// and a brand-new chart may target a namespace that exists and holds something else entirely. So, in
+// this order:
+//
+//  1. A namespace that exists, is not a BYO namespace of this environment (managed-by=byo-charts AND
+//     this environment's owner label), and into which no chart's live Application already deploys
+//     (RunsHere) is REFUSED (ByoAdmissionReasonForeign) — whatever labels it carries.
+//  2. A namespace that already carries a mode keeps it, unless that "enforce" came from the
+//     environment's setting (ByoAdmissionSourceLabel) and the setting is now off: it returns to "warn".
+//  3. A namespace holding a chart that has run in this environment (History) gets "warn".
+//  4. A namespace that does not exist gets "enforce"; one that is this environment's own BYO
+//     namespace gets "warn", since a detached chart's objects may remain.
+//  5. With the environment's setting on, every namespace that would otherwise be in "warn" is put in
+//     "enforce", marked BySetting. The setting does not lift a refusal.
+//
+// # Why only the live Application lifts the refusal
+//
+// The refusal exists so that a chart cannot take over a namespace that is someone else's. What
+// lifts it must therefore prove the chart ALREADY RUNS in that very namespace, which only the
+// cluster can say: its Application exists with that destination. A console record cannot (it is
+// written from a health read that may name an Application that does not exist), and neither can an
+// Application deploying somewhere else (attach in your own namespace, then change it to a foreign
+// one). Both still count as history for choosing "warn" over "enforce", where being wrong costs a
+// refused pod, not a takeover.
+//
+// # Why a foreign namespace is refused, and not started in "enforce"
+//
+// Both stop the chart running unrefused, but "enforce" is applied to the NAMESPACE, not the chart:
+// Pod Security baseline and the Deny binding would then refuse the next pod and the next update of
+// everything already in it — workloads this environment did not put there and cannot see. That is the
+// outage the "warn" mode exists to prevent, imposed on someone else. Taking the namespace over would
+// also stamp it with managed-by, the owner label and the secret-store stamp, which admits whatever
+// already runs there to the platform's ClusterSecretStores. Refusing breaks nothing: no Application of
+// the chart deploys there, and the warning tells the user to pick another namespace (a blank one gives
+// byo-<chart id>). It is also the rule a namespace placement follows for its own namespace (#6551),
+// and it is a superset of #6562's refusal of a namespace another environment or a placement holds,
+// which runs first and leaves those namespaces out of Namespaces.
+func DecideByoAdmission(in ByoAdmissionInput) map[string]ByoAdmissionDecision {
+	out := make(map[string]ByoAdmissionDecision, len(in.Namespaces))
+	for _, ns := range in.Namespaces {
+		labels, exists := in.Live[ns]
+		live := ByoAdmissionMode(labels[ByoAdmissionModeLabel])
+		d := ByoAdmissionDecision{}
+		if live.valid() {
+			d.Previous = live
+		}
+		owned := isEnvironmentByoNamespace(labels, in.Owner)
 		switch {
-		case exists && ByoAdmissionMode(labels[ByoAdmissionModeLabel]).valid():
-			out[ns] = ByoAdmissionMode(labels[ByoAdmissionModeLabel])
-		case exists, inherited[ns]:
-			out[ns] = ByoAdmissionWarn
-		default:
-			out[ns] = ByoAdmissionEnforce
+		case exists && !owned && !in.RunsHere[ns]:
+			out[ns] = ByoAdmissionDecision{Previous: d.Previous, Reason: ByoAdmissionReasonForeign, Refused: true}
+			continue
+		case live == ByoAdmissionEnforce && labels[ByoAdmissionSourceLabel] == byoAdmissionSourceSetting:
+			// The setting's own "enforce": underneath it the namespace was in "warn".
+			d.Mode, d.Reason = ByoAdmissionWarn, ByoAdmissionReasonSettingOff
+		case live.valid():
+			d.Mode, d.Reason = live, ByoAdmissionReasonKept
+		case in.History[ns] || in.RunsHere[ns]:
+			d.Mode, d.Reason = ByoAdmissionWarn, ByoAdmissionReasonHistory
+		case !exists:
+			d.Mode, d.Reason = ByoAdmissionEnforce, ByoAdmissionReasonNew
+		default: // exists and owned
+			d.Mode, d.Reason = ByoAdmissionWarn, ByoAdmissionReasonOwned
+		}
+		if in.Enforce && d.Mode == ByoAdmissionWarn {
+			d.Mode, d.BySetting, d.Reason = ByoAdmissionEnforce, true, ByoAdmissionReasonSetting
+		}
+		out[ns] = d
+	}
+	return out
+}
+
+// isEnvironmentByoNamespace reports whether a namespace's labels make it a BYO namespace of the
+// environment whose owner-label value is owner: the managed-by marker RenderByoNamespaces stamps AND
+// that environment's owner label. Either alone is not enough — the owner label is a classification
+// label the platform stamps on other namespaces too, and managed-by alone is any environment's.
+func isEnvironmentByoNamespace(labels map[string]string, owner string) bool {
+	return owner != "" && labels[byoNamespaceManagedByLabel] == byoNamespaceManagedByValue && labels[ByoBindingOwnerLabel] == owner
+}
+
+// ByoAdmissionModes is the mode of every namespace decisions does not refuse.
+func ByoAdmissionModes(decisions map[string]ByoAdmissionDecision) map[string]ByoAdmissionMode {
+	out := make(map[string]ByoAdmissionMode, len(decisions))
+	for ns, d := range decisions {
+		if !d.Refused {
+			out[ns] = d.Mode
 		}
 	}
 	return out
 }
+
+// ByoAdmissionNamespaceStatus is one BYO namespace as a deploy left it (#6541). It rides
+// GitopsStatus.ByoAdmission, so the console's Deploy tab can show each namespace's mode and what
+// changed, and the environment's admission setting can show what turning it on would refuse BEFORE
+// a person turns it on. It carries no secret: names, modes, and the report's findings (object kinds,
+// names and fields, and Pod Security's pod summaries). Mirrors the TS ByoAdmissionNamespaceReport
+// in apps/console/types/jsonb.types.ts.
+type ByoAdmissionNamespaceStatus struct {
+	// Namespace is the BYO namespace.
+	Namespace string `json:"namespace"`
+	// Charts are the ids of the charts in it, sorted.
+	Charts []string `json:"charts"`
+	// Mode is "enforce", "warn", or ByoAdmissionStatusRefused when its charts were not deployed.
+	Mode string `json:"mode"`
+	// Previous is the mode the namespace had before this deploy, "" when it had none.
+	Previous string `json:"previous,omitempty"`
+	// Reason is the ByoAdmissionReason the mode was chosen for.
+	Reason string `json:"reason"`
+	// Findings are what the rules refuse, or would refuse once the namespace is in "enforce": each
+	// live object's kind, name and field, then Pod Security baseline's pod summaries.
+	Findings []string `json:"findings,omitempty"`
+	// PolicyUnavailable is why the cluster runs no admission policy, or "".
+	PolicyUnavailable string `json:"policy_unavailable,omitempty"`
+	// Checks say, per kind, whether this deploy checked the namespace: one entry for each of
+	// ByoAdmissionObjectKinds and one for "PodSecurity". Empty for a refused namespace, which was not
+	// deployed. A report with any "failed" check is INCOMPLETE: its findings are not the whole answer.
+	Checks []ByoAdmissionCheck `json:"checks,omitempty"`
+}
+
+// ByoAdmissionCheck is one kind of check one deploy ran on a BYO namespace (#6541).
+type ByoAdmissionCheck struct {
+	// Kind is "Service", "Ingress", "Secret" or "PodSecurity".
+	Kind string `json:"kind"`
+	// State is ByoAdmissionCheckChecked, ByoAdmissionCheckFailed or ByoAdmissionCheckEnforced.
+	State string `json:"state"`
+}
+
+// The states of a ByoAdmissionCheck.
+const (
+	// ByoAdmissionCheckChecked: the kind was read and checked; its findings are complete.
+	ByoAdmissionCheckChecked = "checked"
+	// ByoAdmissionCheckFailed: the kind could not be read or checked; nothing is known about it.
+	ByoAdmissionCheckFailed = "failed"
+	// ByoAdmissionCheckEnforced: Pod Security in an "enforce" namespace — the label already enforces
+	// baseline, so there is no "what would enforcing refuse" to preview.
+	ByoAdmissionCheckEnforced = "enforced"
+)
+
+// ByoAdmissionStatusRefused is ByoAdmissionNamespaceStatus.Mode for a namespace whose charts the
+// decision refused.
+const ByoAdmissionStatusRefused = "refused"
 
 // ReadByoNamespaceLabels reads which of namespaces exist on the cluster, and their labels, in one
 // call. A namespace missing from the result does not exist. An error means nothing is known, and
@@ -653,28 +855,52 @@ func ByoAdmissionViolations(objs []ByoAdmissionObject) []ByoAdmissionViolation {
 // is live is what a "warn" namespace runs today, and what the next sync of a changed chart would
 // re-submit, so it is the set an "enforce" step would start refusing.
 func ReadByoAdmissionObjects(ns string) ([]ByoAdmissionObject, error) {
+	objs, errs := ReadByoAdmissionObjectsByKind(ns)
+	for _, k := range ByoAdmissionObjectKinds {
+		if err := errs[k]; err != nil {
+			return nil, err
+		}
+	}
+	return objs, nil
+}
+
+// ByoAdmissionObjectKinds are the kinds ReadByoAdmissionObjectsByKind reads, in its order.
+var ByoAdmissionObjectKinds = []string{"Service", "Ingress", "Secret"}
+
+// ReadByoAdmissionObjectsByKind is ReadByoAdmissionObjects one kind at a time (#6541): the objects of
+// every kind that WAS read, and the error of each kind that was not, keyed by kind. A report built
+// from it can then say exactly which kind went unchecked, rather than read a failed kind as clean.
+func ReadByoAdmissionObjectsByKind(ns string) ([]ByoAdmissionObject, map[string]error) {
+	errs := map[string]error{}
 	if !k8sNameRe.MatchString(ns) {
-		return nil, fmt.Errorf("refusing to read namespace %q: not a Kubernetes name", ns)
+		err := fmt.Errorf("refusing to read namespace %q: not a Kubernetes name", ns)
+		for _, k := range ByoAdmissionObjectKinds {
+			errs[k] = err
+		}
+		return nil, errs
 	}
 	var objs []ByoAdmissionObject
 	for _, res := range []struct{ kind, resource string }{{"Service", "services"}, {"Ingress", "ingresses.networking.k8s.io"}} {
 		raw, err := utils.ExecuteCommandWithOutput(fmt.Sprintf("kubectl get %s -n %s -o json", res.resource, ns), ".", nil)
 		if err != nil {
-			return nil, fmt.Errorf("read %s in %s: %w", res.resource, ns, err)
+			errs[res.kind] = fmt.Errorf("read %s in %s: %w", res.resource, ns, err)
+			continue
 		}
 		got, err := parseAdmissionObjects(res.kind, raw)
 		if err != nil {
-			return nil, fmt.Errorf("parse %s in %s: %w", res.resource, ns, err)
+			errs[res.kind] = fmt.Errorf("parse %s in %s: %w", res.resource, ns, err)
+			continue
 		}
 		objs = append(objs, got...)
 	}
 	raw, err := utils.ExecuteCommandWithOutput(
 		fmt.Sprintf("kubectl get secrets -n %s --field-selector type=%s -o name", ns, byoServiceAccountTokenSecretType), ".", nil)
 	if err != nil {
-		return nil, fmt.Errorf("read secrets in %s: %w", ns, err)
+		errs["Secret"] = fmt.Errorf("read secrets in %s: %w", ns, err)
+	} else {
+		objs = append(objs, parseSecretNames(raw, byoServiceAccountTokenSecretType)...)
 	}
-	objs = append(objs, parseSecretNames(raw, byoServiceAccountTokenSecretType)...)
-	return objs, nil
+	return objs, errs
 }
 
 // parseAdmissionObjects reads a `kubectl get <kind> -o json` List. Empty output is no objects.
