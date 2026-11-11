@@ -148,6 +148,21 @@ export interface AddOnSecurityRelease {
 }
 
 /**
+ * Why a catalogue add-on is on its way out, what replaces it, and when it stops taking new installs
+ * (#6543). An existing install is never removed by this marker: it keeps deploying, and is told.
+ */
+export interface AddOnDeprecation {
+	/** One or two sentences for the person who has it installed: why it is going. */
+	reason: string;
+	/** The catalogue id of the add-on to use instead. Must be in the catalogue and not deprecated. */
+	replacementId: string;
+	/** `YYYY-MM-DD` (UTC). From the start of this day a NEW install is refused; existing ones stay. */
+	removalDate: string;
+	/** A docs page that walks an existing install over to the replacement. */
+	migrationGuideUrl: string;
+}
+
+/**
  * A catalog entry: a curated OSS Helm chart plus the small set of user-tunable knobs the
  * marketplace surfaces. `configSchema` validates the knobs; `toValues` maps the parsed knobs
  * to a partial Helm-values object that is deep-merged onto `defaultValues`.
@@ -176,6 +191,13 @@ export interface AddOnDef<Schema extends z.ZodTypeAny = z.ZodTypeAny> {
 	 * changes is how loudly those installs are TOLD: `lib/addons/update-notice.ts` reads it.
 	 */
 	securityRelease?: AddOnSecurityRelease;
+	/**
+	 * Set when this add-on is deprecated (#6543). Before `removalDate` the console steers a new
+	 * install to the replacement; from it, `enableAddon` refuses a new install. An environment that
+	 * already has it keeps it, can reconfigure it, and is shown the reason and the migration guide.
+	 * Read by `lib/addons/deprecation.ts`; the catalogue-wide invariants are in its test.
+	 */
+	deprecated?: AddOnDeprecation;
 	/** Default install namespace. */
 	namespace: string;
 	/** Base Helm values always applied, before the user knobs are merged in. */
