@@ -544,6 +544,8 @@ describeIfDb("claim_next_job skips a job the runner lacks the capability for, wh
 			["fixture with the marker, DESTROY", "DESTROY", fixture("with-byo-marker.json")],
 			// #6494: the preview prefix is stripped, never required — no runner is ever refused for it.
 			["fixture with the preview prefix", "DEPLOY", fixture("with-preview-namespace-prefix.json")],
+			// #6541: byo_admission is stripped, never required, as above.
+			["fixture with byo_admission", "DEPLOY", fixture("with-byo-admission.json")],
 			["OCI BYO", "DEPLOY", OCI_BYO_SNAPSHOT],
 			["git-only BYO", "DEPLOY", GIT_BYO_SNAPSHOT],
 			["byo with no source", "DEPLOY", { addons: [{ id: "x", byo: true }] }],

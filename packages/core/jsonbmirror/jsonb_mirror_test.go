@@ -184,6 +184,10 @@ func mirrorPairs() []mirrorPair {
 			New: func() any { return new(argocd.GitopsStatus) }},
 		{TSFile: tsMirrorFile, TSName: "GitopsServiceHealth", GoName: "argocd.ServiceHealth", Fixture: "gitops_service_health.json",
 			New: func() any { return new(argocd.ServiceHealth) }},
+		{TSFile: tsMirrorFile, TSName: "ByoAdmissionNamespaceReport", GoName: "argocd.ByoAdmissionNamespaceStatus", Fixture: "byo_admission_namespace.json",
+			New: func() any { return new(argocd.ByoAdmissionNamespaceStatus) }},
+		{TSFile: tsMirrorFile, TSName: "ByoAdmissionCheckReport", GoName: "argocd.ByoAdmissionCheck", Fixture: "byo_admission_check.json",
+			New: func() any { return new(argocd.ByoAdmissionCheck) }},
 
 		// ── drift ──
 		{TSFile: tsMirrorFile, TSName: "DriftPosture", GoName: "drift.Posture", Fixture: "drift_posture.json",

@@ -67,6 +67,8 @@
 				"$TURBO_ROOT$/packages/core/types/testdata/snapshot-capabilities/without-preview-namespace-prefix.json",
 				"$TURBO_ROOT$/packages/core/types/testdata/snapshot-capabilities/with-placement-host-namespaces.json",
 				"$TURBO_ROOT$/packages/core/types/testdata/snapshot-capabilities/without-placement-host-namespaces.json",
+				"$TURBO_ROOT$/packages/core/types/testdata/snapshot-capabilities/with-byo-admission.json",
+				"$TURBO_ROOT$/packages/core/types/testdata/snapshot-capabilities/without-byo-admission.json",
 				"$TURBO_ROOT$/packages/core/types/vocab_gen.go",
 				"$TURBO_ROOT$/scripts/check-destructive-actions.mjs",
 				"$TURBO_ROOT$/scripts/check-filter-standard.mjs",
