@@ -8,7 +8,7 @@
 #
 # WHY THIS IS A FILE AND NOT A `run:` BLOCK (#6582). It was a 22 KB block scalar, over the
 # 21000-byte ceiling Actions puts on a template expression. It loaded only because it contained no
-# `${{ … }}`: one interpolation written into it — even inside a comment — would have made Actions
+# GitHub expression (dollar-double-brace): one interpolation written into it — even inside a comment — would have made Actions
 # compile the whole block as an expression and refuse the WHOLE FILE, which is a run with zero jobs,
 # no red check on any PR, and production silently not deploying. `check-workflow-shape.mjs` now
 # fails on any block over its budget, templated or not.
@@ -16,11 +16,11 @@
 # THE ENV CONTRACT. Everything this reads comes from the environment, never from interpolation:
 #
 #   ASM_SECRET_ID, ASM_REGION   job env (literals)
-#   IMAGE_TAG                   job env, `${{ github.sha }}`
-#   APPS_BUILT                  job env, `${{ needs.changes.outputs.apps_build }}`
+#   IMAGE_TAG                   job env, the `github.sha` expression
+#   APPS_BUILT                  job env, the `needs.changes.outputs.apps_build` expression
 #   AWS_* credentials           exported by aws-actions/configure-aws-credentials (OIDC)
 #
-# Do not add a `${{ }}` to this file — it is not a template, and the text would reach bash
+# Do not add a GitHub expression (dollar-double-brace) to this file — it is not a template, and the text would reach bash
 # verbatim. A new input is a new `env:` entry on the step or job.
 #
 # `deploy/prod/README.md` calls the `emit` list below "the real gate": a vault key reaches the box
@@ -30,9 +30,11 @@
 
 set -euo pipefail
 # The contract above, checked before anything touches the vault or the box. `?` without `:` refuses
-# only an UNSET variable: an EMPTY `APPS_BUILT` was accepted by the inline step and still is, so the
-# only behaviour this adds is failing earlier where `set -u` would have failed later — after the
-# first ssh had already pruned the box.
+# only an UNSET variable: an EMPTY `APPS_BUILT` was accepted by the inline step and still is. `set -u`
+# would catch an unset one anyway; what this adds is WHEN. The first three are read before the
+# first ssh, so for them nothing changes. `APPS_BUILT` is first read by the second ssh, AFTER the
+# first one has pruned the box's images and the scp has shipped the .env — checking it here
+# refuses before either.
 : "${ASM_SECRET_ID?ASM_SECRET_ID is not set — run this from the deploy job of deploy-console.yml}"
 : "${ASM_REGION?ASM_REGION is not set — run this from the deploy job of deploy-console.yml}"
 : "${IMAGE_TAG?IMAGE_TAG is not set — run this from the deploy job of deploy-console.yml}"

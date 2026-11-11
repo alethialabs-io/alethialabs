@@ -69,6 +69,7 @@
 				"$TURBO_ROOT$/packages/core/types/testdata/snapshot-capabilities/without-placement-host-namespaces.json",
 				"$TURBO_ROOT$/packages/core/types/vocab_gen.go",
 				"$TURBO_ROOT$/scripts/check-destructive-actions.mjs",
+				"$TURBO_ROOT$/scripts/ci/deploy-console-assemble-env.sh",
 				"$TURBO_ROOT$/scripts/check-filter-standard.mjs",
 				"$TURBO_ROOT$/scripts/check-route-states.mjs",
 				"$TURBO_ROOT$/scripts/check-shared-surface.mjs",
