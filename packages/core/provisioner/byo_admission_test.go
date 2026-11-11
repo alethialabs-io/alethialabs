@@ -190,20 +190,27 @@ func TestConfigureByoCharts_ExistingModeIsKept(t *testing.T) {
 	}
 }
 
-// TestConfigureByoCharts_AnUnreadableClusterWarnsEverywhere: when the namespaces cannot be read, no
+// TestConfigureByoCharts_AnUnreadableClusterAppliesNothing: when the namespaces cannot be read, no
 // namespace is put in "enforce" — not knowing whether a chart runs there is not permission to refuse.
-func TestConfigureByoCharts_AnUnreadableClusterWarnsEverywhere(t *testing.T) {
+// Since #6562 the runner also cannot tell whether another environment holds the namespace, so the BYO
+// stage fails closed before its first write: nothing is applied in any mode, and no chart is refused
+// (a refusal would withdraw its bindings). Before #6562 this test asserted "warn" Namespaces were
+// applied; that write is exactly what failing closed forbids. The admission read's own fallback to
+// "warn" (byoAdmissionModes) is unchanged for a cluster the per-namespace reads could still read.
+func TestConfigureByoCharts_AnUnreadableClusterAppliesNothing(t *testing.T) {
+	orig := byoReadBackoff
+	byoReadBackoff = 0
+	t.Cleanup(func() { byoReadBackoff = orig })
 	c := newAdmissionCluster(t, admissionClusterSpec{NamespacesFail: true, Discovery: served})
-	var stderr bytes.Buffer
-	configureByoCharts(twoChartConfig(), "tok", nil, nil, io.Discard, &stderr)
-	docs := c.docs(t)
-	for _, ns := range []string{"byo-old", "byo-fresh"} {
-		if got := docs["Namespace/"+ns].Metadata.Labels[argocd.ByoAdmissionModeLabel]; got != "warn" {
-			t.Errorf("%s mode = %q, want warn when the cluster could not be read", ns, got)
-		}
+	got := configureByoCharts(twoChartConfig(), "tok", nil, nil, io.Discard, io.Discard)
+	if got.Err == nil {
+		t.Fatal("an unreadable cluster must fail the BYO stage closed")
 	}
-	if !strings.Contains(stderr.String(), "could not read the BYO namespaces") {
-		t.Errorf("the unread cluster was not logged:\n%s", stderr.String())
+	if len(got.Refused) != 0 {
+		t.Errorf("an unreadable cluster refuses no chart, got %+v", got.Refused)
+	}
+	if strings.Contains(c.calls(), "apply -f") {
+		t.Errorf("nothing may be applied when the namespaces cannot be read:\n%s", c.calls())
 	}
 }
 
