@@ -1027,7 +1027,7 @@ func TestByoDBUsers_CAConfigMapGoesWithTheCredentials(t *testing.T) {
 // the named TLS reason on a Job reported Complete is read as malformed, never as "zero users".
 func TestByoDBUsers_TLSFailureIsAFailedRun(t *testing.T) {
 	reason := "alethia: DB_TLS_VERIFY_FAILED: the database server's TLS certificate did not verify (the CA and the host name checked against the Amazon RDS global CA bundle). The Job stops here; it never retries without verification.\n"
-	if _, _, _, err := parseByoDBUsersResultLines(reason, true); err == nil {
+	if _, _, _, _, err := parseByoDBUsersResultLines(reason, true); err == nil {
 		t.Fatal("the TLS failure reason parses as a result")
 	}
 	for _, outcome := range []string{"Failed", "Complete"} {
