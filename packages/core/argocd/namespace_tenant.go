@@ -257,10 +257,18 @@ func (in NamespaceTenantInput) templateData() namespaceTenantData {
 	return namespaceTenantData{
 		NamespaceTenantInput: in,
 		ProjectName:          namespaceTenantName("tenant", in.Project, in.Namespace),
-		AppName:              namespaceTenantName("app", in.Project, in.Namespace),
+		AppName:              NamespaceTenantAppName(in.Project, in.Namespace),
 		SortedLabels:         labels,
 		AppSourceReposOrDeny: repos,
 	}
+}
+
+// NamespaceTenantAppName is the name of a namespace placement's own ArgoCD Application in `argocd`,
+// the one RenderNamespaceTenant emits as App. It is derived, never stored, and the same whether or not
+// an apps repo is set, so a teardown can tell the placement's own Application from any other
+// Application that targets its namespace (#6575).
+func NamespaceTenantAppName(project, namespace string) string {
+	return namespaceTenantName("app", project, namespace)
 }
 
 // namespaceTenantName derives a stable, RFC1123-safe ArgoCD resource name of the form

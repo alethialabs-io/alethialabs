@@ -182,7 +182,9 @@ yourself is permitted when you have a reason. **A promotion merge** (`dev → st
 `gh pr merge <n> --merge --match-head-commit <head sha>` (the guard refuses without it and prints the
 exact command), never `--squash`, `--rebase`, `--auto` or `--delete-branch`, one merge per command,
 and only once `gh pr checks <n>` shows nothing failed or pending and every `Release gate (<leg>)`
-named in `.github/workflows/release-gate.yml` passed. Any other
+named in `.github/workflows/release-gate.yml` passed. A release-please PR into `main` (head
+`release-please--branches--main--components--<c>`, author `app/alethia-labs-ci`, changing only the
+files `release-please-config.json` says it writes) merges the same way under the same checks. Any other
 merge into `staging`/`main` is the maintainer's, and `--admin`, which bypasses the queue entirely,
 is never yours. Never merge a red PR.
 
@@ -346,7 +348,7 @@ command-text parser, `.claude/hooks/lib/cmdline.sh`:
 | `.claude/hooks/guard-worktree.sh` | PreToolUse · Bash + edits | Lease enforcement + no commits **or rebases** in the main checkout |
 | `.claude/hooks/guard-runtime.sh` | PreToolUse · Bash | Blocks local dev servers and destructive resets |
 | `.claude/hooks/guard-compose.sh` | PreToolUse · Bash | Blocks a raw `docker compose` bring-up |
-| `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base and head: `dev` may merge; a green `dev → staging` / `staging → main` promotion may merge with `--merge`; anything else into `staging`/`main`, and `--admin`, may not |
+| `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base and head: `dev` may merge; a green `dev → staging` / `staging → main` promotion, or a green release-please PR into `main` whose author and files are release-please's, may merge with `--merge`; anything else into `staging`/`main`, and `--admin`, may not |
 | `.claude/hooks/guard-iac.sh` | PreToolUse · Bash | Refuses `tofu`/`terraform` apply, destroy and `plan -destroy` — including the flag-first forms a permission rule cannot match |
 | `.claude/hooks/guard-spend.sh` | PreToolUse · Bash | Prices each spend action into `~/.alethia/spend-ledger.jsonl` and refuses one that crosses EUR 30 per rolling 7 days; refuses production dispatches and non-disposable cloud writes outright |
 | `.claude/hooks/guard-destroy.sh` | PreToolUse · Bash | Refuses irreversible deletion; snapshots local git destruction to `refs/safety/` first, then allows it |

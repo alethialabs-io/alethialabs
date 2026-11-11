@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // One environment card — identity + drift/deploy badges, classification chips, the "gates into this
-// env" protection summary, and a right rail (auto-heal + duplicate + delete). Presentational; the
+// env" protection summary, and a right rail (auto-heal + BYO admission + duplicate + delete). Presentational; the
 // mutations are handled by the orchestrator.
 
 import { formatMonthlyRate } from "@repo/format";
@@ -70,6 +70,7 @@ export function EnvironmentCard({
 	canEdit,
 	onEditRules,
 	onToggleHeal,
+	onEditAdmission,
 	onDuplicate,
 	onDelete,
 }: {
@@ -82,6 +83,8 @@ export function EnvironmentCard({
 	canEdit: boolean;
 	onEditRules: () => void;
 	onToggleHeal: (enabled: boolean) => void;
+	/** Opens the BYO admission drawer (#6541). */
+	onEditAdmission: () => void;
 	onDuplicate: () => void;
 	onDelete: () => void;
 }) {
@@ -240,6 +243,33 @@ export function EnvironmentCard({
 						</div>
 					)}
 				</div>
+				{env.byo_admission_has_charts && (
+					<div className="w-full">
+						<div className="mb-1.5 font-mono text-ui-2xs uppercase tracking-[0.12em] text-text-tertiary">
+							BYO admission
+						</div>
+						<div className="flex items-center gap-2">
+							<span className="font-mono text-ui-sm text-text-secondary">
+								{env.byo_admission_enforce ? "Refuse" : "Report"}
+							</span>
+							{canEdit && (
+								<button
+									type="button"
+									onClick={onEditAdmission}
+									aria-label={`Change BYO admission for ${env.name}`}
+									className="text-ui-sm text-text-secondary underline underline-offset-2 hover:text-text-primary"
+								>
+									Change
+								</button>
+							)}
+						</div>
+						{env.byo_admission_pending && (
+							<div className="mt-1.5 text-ui-2xs leading-tight text-text-tertiary">
+								Redeploy to apply
+							</div>
+						)}
+					</div>
+				)}
 				{canEdit && (
 					<div className="flex gap-1">
 						<Button

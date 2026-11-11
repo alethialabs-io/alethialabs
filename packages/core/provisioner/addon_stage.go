@@ -39,6 +39,9 @@ type addOnStageResult struct {
 	// Deployable is every add-on this deploy rendered and applied — vc.AddOns without the refused BYO
 	// charts. The health wait RunDeployV2 runs after the prunes reads exactly this list.
 	Deployable []types.AddOnInstall
+	// ByoAdmission is every BYO namespace's admission mode as this deploy left it (#6541), for
+	// GitopsStatus.ByoAdmission.
+	ByoAdmission []argocd.ByoAdmissionNamespaceStatus
 }
 
 // runAddOnStage is the add-on stage of a dedicated deploy, up to — NOT including — the health wait,
@@ -78,6 +81,12 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	// "byo-<slug>" (not the wide-open "infra" project). A chart whose namespace is refused (malformed,
 	// or reserved for the platform — #6439) is refused PER CHART.
 	byo := configureByoCharts(vc, in.GitAccessToken, in.GitRepoTokens, in.Facts.Labels, stdout, stderr)
+	if byo.Err != nil {
+		// #6562: the runner could not tell whether a chart's namespace is another environment's. Fail
+		// the deploy here, before anything below writes, rather than refuse the chart: a refusal
+		// withdraws its bindings, and a failed read is no evidence the chart is in the wrong place.
+		return out, fmt.Errorf("bring-your-own charts: %w", byo.Err)
+	}
 	out.Refused = byo.Refused
 	moved := byo.Moved
 	refusedIDs := byoRefusedIDs(out.Refused)
@@ -100,9 +109,21 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	for _, o := range byo.NewlyReserved {
 		out.Warnings = append(out.Warnings, o.warning())
 	}
-	for _, a := range byo.Admission {
-		out.Warnings = append(out.Warnings, a.warning())
+	for _, m := range byo.HeldMoves {
+		out.Warnings = append(out.Warnings, m.warning())
 	}
+	for _, o := range byo.PlacementOverlaps {
+		out.Warnings = append(out.Warnings, o.warning())
+	}
+	for _, a := range byo.Admission {
+		if a.warns() {
+			out.Warnings = append(out.Warnings, a.warning())
+		}
+	}
+	for _, c := range byo.AdmissionChanges {
+		out.Warnings = append(out.Warnings, c.warning())
+	}
+	out.ByoAdmission = byo.AdmissionStatus
 
 	// Seed each add-on's secret-knob Secret (W4.5 #640) BEFORE any Application syncs — managed or
 	// gitops mode. The values were fetched by the runner over the authenticated job channel and exist

@@ -148,7 +148,7 @@ func TestByoDBUsers_SessionsNotEndedIsAWarning(t *testing.T) {
 	if out.Failed || len(out.Provisioned) != 2 || out.Provisioned[gone] {
 		t.Fatalf("outcome %+v\n%s", out, log)
 	}
-	if len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], gone) || !strings.Contains(out.Warnings[0], "sessions were not terminated") ||
+	if len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], gone) || !strings.Contains(out.Warnings[0], "Any session it had open was not terminated") ||
 		!strings.Contains(out.Warnings[0], "cannot log in again") {
 		t.Fatalf("warnings %v", out.Warnings)
 	}
@@ -161,5 +161,81 @@ func TestByoDBUsers_SessionsNotEndedIsAWarning(t *testing.T) {
 	}
 	if !strings.Contains(string(src), `const mysqlByoSessionsPrefix = "`+byoDBUsersSessionsPrefix+`"`) {
 		t.Errorf("the runner's session line prefix is not %q", byoDBUsersSessionsPrefix)
+	}
+}
+
+// TestByoDBUsers_SessionsWarningClaimsNoSession (#6536): without PROCESS the Job names every revoked
+// user, whether or not it had a session, so the warning may not say that sessions exist.
+func TestByoDBUsers_SessionsWarningClaimsNoSession(t *testing.T) {
+	w := byoDBUsersSessionsWarning("alethia_byo_eeeeeeeeeeee")
+	for _, claim := range []string{"Its open sessions", "its sessions were", "has open sessions"} {
+		if strings.Contains(w, claim) {
+			t.Errorf("the warning claims a session exists (%q): %s", claim, w)
+		}
+	}
+	if !strings.Contains(w, "Any session it had open was not terminated") {
+		t.Errorf("the warning does not say what happened to a session it had: %s", w)
+	}
+}
+
+// TestByoDBUsers_DoubtLinesAreWarnings (#6536): each doubt line the runner writes — the lost session
+// record, and the "+n more" past either capped list — is accepted inside the counted entries and
+// surfaced as its own Deploy-tab warning, never a failure and never a provisioned user. A doubt of
+// any other shape makes the result malformed, as any unknown line does. The spellings are the
+// runner's.
+func TestByoDBUsers_DoubtLinesAreWarnings(t *testing.T) {
+	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+	c := newUsersCluster(t)
+	api, worker := usersFor()
+	doubts := []string{
+		byoDBUsersDoubtPrefix + "sessions-unrecorded",
+		byoDBUsersDoubtPrefix + "revocation-pending +6 more",
+		byoDBUsersDoubtPrefix + "sessions-not-ended +38 more",
+	}
+	c.message = resultOf(append([]string{api, worker}, doubts...)...)
+	vc := mysqlUsersConfig("8.0")
+	out, log := runUsers(vc, usersOutputs(vc), nil)
+	if out.Failed || len(out.Provisioned) != 2 {
+		t.Fatalf("outcome %+v\n%s", out, log)
+	}
+	if len(out.Warnings) != 3 {
+		t.Fatalf("warnings %v, want one per doubt", out.Warnings)
+	}
+	for i, want := range []string{"lost its record", "6 more database users", "38 more database users"} {
+		if !strings.Contains(out.Warnings[i], want) {
+			t.Errorf("warning %d = %q, want it to say %q", i, out.Warnings[i], want)
+		}
+	}
+	for _, bad := range []string{
+		byoDBUsersDoubtPrefix + "sessions-unrecorded +1 more",
+		byoDBUsersDoubtPrefix + "revocation-pending +0 more",
+		byoDBUsersDoubtPrefix + "revocation-pending +01 more",
+		byoDBUsersDoubtPrefix + "drops +3 more",
+		byoDBUsersDoubtPrefix + "sessions-not-ended",
+		byoDBUsersDoubtPrefix,
+	} {
+		if _, _, _, _, err := parseByoDBUsersResultLines(*resultOf(bad), true); err == nil {
+			t.Errorf("the doubt %q was accepted", bad)
+		}
+	}
+	// The header counts a doubt line like any entry: one left uncounted is a mismatch.
+	if _, _, _, _, err := parseByoDBUsersResultLines(byoDBUsersResultHeader+"0\n"+doubts[0]+"\n", true); err == nil {
+		t.Error("a doubt outside the header's count was accepted")
+	}
+	src, err := os.ReadFile("../../../apps/runner/internal/agent/db_bootstrap_byo_mysql.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`const mysqlByoDoubtPrefix = "` + byoDBUsersDoubtPrefix + `"`,
+		`const mysqlByoSessionsUnrecorded = "sessions-unrecorded"`,
+		`more("revocation-pending")`,
+		`more("sessions-not-ended")`,
+		`kind+" +") + ` + "`" + `, COUNT(*) - `,
+		`, ' more') USING utf8mb4)`,
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("the runner does not spell a doubt line as this parser reads it: %s", want)
+		}
 	}
 }

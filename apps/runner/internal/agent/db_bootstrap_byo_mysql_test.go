@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -326,7 +327,7 @@ func TestByoUsersMySQL_Phases(t *testing.T) {
 	if n := strings.Count(s, "CONCAT('DROP USER '"); n != mysqlByoMaxDrops {
 		t.Errorf("%d drop steps, want %d", n, mysqlByoMaxDrops)
 	}
-	if !strings.Contains(s, "CONCAT('revocation-pending:', c.USER)") {
+	if !strings.Contains(s, "CONCAT('revocation-pending:', p.USER)") {
 		t.Error("the sweep's result lists no pending revocation")
 	}
 	for name, script := range map[string]string{"provision": p, "sweep": s} {
@@ -465,17 +466,22 @@ func TestByoUsersMySQL_RotationRelocks(t *testing.T) {
 	}
 }
 
-// TestByoUsersMySQL_SessionsNotEndedReported: the sweep records, before any KILL, which candidates
-// this administrator cannot end the sessions of (it lacks PROCESS, or CONNECTION_ADMIN/SUPER, held
-// directly or by an enabled role), and the result lists each as `sessions-not-ended:<user>`.
+// TestByoUsersMySQL_SessionsNotEndedReported (#6536 round 2): the sweep measures AFTER the last
+// KILL and BEFORE the first DROP USER which candidates still have a session open, so a session past
+// the kill bound or behind a failed kill step is named, and the drop (which closes no session) cannot
+// hide it; the result lists each as `sessions-not-ended:<user>`. No kill privilege is read: the
+// record is what is still open, not what the privileges predict.
 func TestByoUsersMySQL_SessionsNotEndedReported(t *testing.T) {
 	got, _ := renderByoUsersMySQL(oneUserInput())
 	s := got.Sweep
-	rec, kill := strings.Index(s, "SET @alethia_byo_unkilled = (SELECT IF("), strings.Index(s, "'KILL '")
-	if rec < 0 || rec > kill {
-		t.Fatal("the unkillable set is not recorded before the kills")
+	rec, lastKill, firstDrop := strings.Index(s, "SET @alethia_byo_unkilled = "), strings.LastIndex(s, "'KILL '"), strings.Index(s, "'DROP USER '")
+	if rec < 0 || rec < lastKill || rec > firstDrop {
+		t.Fatalf("the record (at %d) is not between the last kill (%d) and the first drop (%d)", rec, lastKill, firstDrop)
 	}
-	for _, want := range []string{"g.PRIVILEGE_TYPE IN ('PROCESS')", "g.PRIVILEGE_TYPE IN ('CONNECTION_ADMIN', 'SUPER')", "information_schema.ENABLED_ROLES r",
+	if strings.Contains(s, "CONNECTION_ADMIN") || strings.Contains(s, "'SUPER'") {
+		t.Error("the record predicts from the kill privilege instead of measuring what is still open")
+	}
+	for _, want := range []string{"g.PRIVILEGE_TYPE IN ('PROCESS')", "information_schema.ENABLED_ROLES r",
 		"CONCAT('" + mysqlByoSessionsPrefix + "', j.u)", "JSON_TABLE(IFNULL(@alethia_byo_unkilled, JSON_ARRAY())"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("sweep lacks %q", want)
@@ -483,5 +489,101 @@ func TestByoUsersMySQL_SessionsNotEndedReported(t *testing.T) {
 	}
 	if strings.Contains(got.Provision, mysqlByoSessionsPrefix) {
 		t.Error("the provision script reports sessions")
+	}
+}
+
+// unkilledStatement is the sweep's one statement that records the unended sessions.
+func unkilledStatement(t *testing.T, sweep string) string {
+	t.Helper()
+	var found []string
+	for _, st := range statements(sweep) {
+		if strings.Contains(st, "SET @alethia_byo_unkilled") {
+			found = append(found, st)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("%d statements set @alethia_byo_unkilled, want exactly 1", len(found))
+	}
+	return found[0]
+}
+
+// TestByoUsersMySQL_SessionsCountedWhereVisible (#6536): an administrator holding PROCESS reports only
+// the candidates that still have a session open (one already being killed does not count), measured
+// in the same statement that records them; only one without PROCESS, which cannot see another user's
+// session, reports every candidate. TestByoUsersMySQLServer_SessionsNotEndedOnlyWithSessions measures
+// both on a server.
+func TestByoUsersMySQL_SessionsCountedWhereVisible(t *testing.T) {
+	got, _ := renderByoUsersMySQL(oneUserInput())
+	st := unkilledStatement(t, got.Sweep)
+	for _, want := range []string{
+		"WHERE NOT " + mysqlByoCanSeeSessionsSQL() + "\n      OR EXISTS (SELECT 1 FROM information_schema.PROCESSLIST p\n        WHERE CAST(p.USER AS BINARY) = CAST(c.USER AS BINARY) AND p.COMMAND <> 'Killed'))",
+		"SET @alethia_byo_unkilled = (SELECT IFNULL(JSON_ARRAYAGG(c.USER), JSON_ARRAY()) FROM (",
+	} {
+		if !strings.Contains(st, want) {
+			t.Errorf("the record lacks %q:\n%s", want, st)
+		}
+	}
+}
+
+// TestByoUsersMySQL_LostSessionRecordIsADoubt (#6536): the record of unended sessions is never NULL
+// when its statement succeeds, and the result turns a NULL one (the statement failed under --force, or
+// the client reconnected) into a `doubt:sessions-unrecorded` entry, inside the counted entries.
+func TestByoUsersMySQL_LostSessionRecordIsADoubt(t *testing.T) {
+	got, _ := renderByoUsersMySQL(oneUserInput())
+	if st := unkilledStatement(t, got.Sweep); !strings.Contains(st, "IFNULL(JSON_ARRAYAGG(c.USER), JSON_ARRAY())") {
+		t.Error("an empty record could be NULL, which would read as a lost one")
+	}
+	result := got.Sweep[strings.LastIndex(got.Sweep, "\nSELECT s.line FROM ("):]
+	branch := "SELECT CONVERT('" + mysqlByoDoubtPrefix + mysqlByoSessionsUnrecorded + "' USING utf8mb4) FROM DUAL WHERE @alethia_byo_unkilled IS NULL"
+	if n := strings.Count(result, branch); n != 2 {
+		t.Errorf("the doubt branch appears %d times in the result, want 2 (counted by the header and listed)", n)
+	}
+	if strings.Contains(got.Provision, mysqlByoDoubtPrefix) {
+		t.Error("the provision script, which records no sessions, reports a doubt about them")
+	}
+}
+
+// TestByoUsersMySQL_PrivilegeProbeIsBinary (#6536): every comparison of an account name in the
+// privilege probe is binary, so an account differing from the administrator only in case cannot lend
+// it a privilege. TestByoUsersMySQLServer_PrivilegeProbeIsBinary measures it on a server.
+func TestByoUsersMySQL_PrivilegeProbeIsBinary(t *testing.T) {
+	got, _ := renderByoUsersMySQL(oneUserInput())
+	st := unkilledStatement(t, got.Sweep)
+	if strings.Contains(st, "g.GRANTEE IN") || strings.Contains(st, "g.GRANTEE =") {
+		t.Errorf("the probe compares GRANTEE under information_schema's collation:\n%s", st)
+	}
+	if n := strings.Count(st, "CAST(g.GRANTEE AS BINARY) IN (SELECT CAST(CONCAT("); n != 1 {
+		t.Errorf("%d binary GRANTEE comparisons, want 1 (the PROCESS probe)", n)
+	}
+	if n := strings.Count(st, "UNION SELECT CAST(CONCAT('''', r.ROLE_NAME, '''@''', r.ROLE_HOST, '''') AS BINARY)"); n != 1 {
+		t.Errorf("%d binary role grantees, want 1", n)
+	}
+}
+
+// TestByoUsersMySQL_ReportLinesCapped (#6536): the pending and session lines are each capped at
+// mysqlByoMaxReported, with one `doubt:<kind> +<n> more` line past it, so a backlog alone cannot fill
+// the 4096 bytes of a termination message.
+func TestByoUsersMySQL_ReportLinesCapped(t *testing.T) {
+	got, _ := renderByoUsersMySQL(oneUserInput())
+	max := strconv.Itoa(mysqlByoMaxReported)
+	result := got.Sweep[strings.LastIndex(got.Sweep, "\nSELECT s.line FROM ("):]
+	for _, want := range []string{
+		"ORDER BY CAST(c.USER AS BINARY) LIMIT " + max + ") p",
+		"j WHERE j.n <= " + max,
+		"CONCAT('" + mysqlByoDoubtPrefix + "revocation-pending +', COUNT(*) - " + max + ", ' more')",
+		"CONCAT('" + mysqlByoDoubtPrefix + "sessions-not-ended +', COUNT(*) - " + max + ", ' more')",
+	} {
+		if n := strings.Count(result, want); n != 2 {
+			t.Errorf("the result carries %q %d times, want 2 (counted and listed)", want, n)
+		}
+	}
+	if n := strings.Count(result, "HAVING COUNT(*) > "+max); n != 4 {
+		t.Errorf("%d '+n more' lines guarded by the cap, want 4", n)
+	}
+	// The bound itself: both capped lists and their doubt lines, at their longest, fit with room left.
+	line := func(prefix string) int { return len(prefix) + byoUserLen + 1 }
+	more := len(mysqlByoDoubtPrefix+"sessions-not-ended +999999 more") + 1
+	if n := mysqlByoMaxReported*(line(byoPendingPrefix)+line(mysqlByoSessionsPrefix)) + 2*more; n > 4096*3/4 {
+		t.Errorf("the capped report takes %d bytes of a 4096-byte termination message", n)
 	}
 }

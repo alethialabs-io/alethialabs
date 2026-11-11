@@ -48,12 +48,17 @@ import {
 	promotionApprovals,
 	user,
 } from "@/lib/db/schema";
+import {
+	type ByoAdmissionCardState,
+	readByoAdmissionCardStates,
+} from "@/lib/environments/byo-admission-state";
+import { readGitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import { diffDesigns } from "@/lib/promotions/diff";
 import { IN_FLIGHT, type PromotionRow, type ProtectionRow } from "@/lib/promotions/lifecycle";
 import { assertProjectInActorOrg, promotionInActorOrg } from "@/lib/promotions/org-binding";
 import { query } from "@/lib/rpc/base";
 import { arrayIncludes } from "@/lib/type-guards";
-import type { GateResult, PromotionDiff } from "@/types/jsonb.types";
+import type { ByoAdmissionNamespaceReport, GateResult, PromotionDiff } from "@/types/jsonb.types";
 
 /** One environment row as the page shows it (`updated_at` is an ISO string). */
 export interface EnvRow {
@@ -62,6 +67,12 @@ export interface EnvRow {
 	stage: string;
 	is_default: boolean;
 	updated_at: string;
+	/** The BYO admission setting (#6541): every BYO namespace of this environment in `enforce`. */
+	byo_admission_enforce: boolean;
+	/** The environment has an enabled BYO chart, so the setting means something. */
+	byo_admission_has_charts: boolean;
+	/** The setting differs from what the latest deploy carried: the next new deploy applies it. */
+	byo_admission_pending: boolean;
 }
 
 /** A promotion row projected for the client. */
@@ -378,6 +389,13 @@ export async function readEnvironmentsOverview(slug: string): Promise<Environmen
 		readProtectionSummaries(actor, projectId),
 	]);
 
+	// Advisory (the card's "redeploy to apply" note, and whether to offer the setting at all), so it
+	// degrades: the setting stays offered, with no note, rather than failing the page.
+	const byoAdmission = await readByoAdmissionCardStates(
+		projectId,
+		new Map(environments.map((e) => [e.id, e.byo_admission_enforce])),
+	).catch(() => new Map<string, ByoAdmissionCardState>());
+
 	const active = promotions.find((p) => arrayIncludes(IN_FLIGHT, p.status));
 	const activePromotion = active ? await readPromotionDetail(active.id) : null;
 
@@ -389,6 +407,9 @@ export async function readEnvironmentsOverview(slug: string): Promise<Environmen
 			stage: e.stage,
 			is_default: e.is_default,
 			updated_at: e.updated_at.toISOString(),
+			byo_admission_enforce: e.byo_admission_enforce,
+			byo_admission_has_charts: byoAdmission.get(e.id)?.hasByoCharts ?? true,
+			byo_admission_pending: byoAdmission.get(e.id)?.pending ?? false,
 		})),
 		consistency,
 		reconcile,
@@ -405,6 +426,32 @@ export async function readEnvironmentsOverview(slug: string): Promise<Environmen
 	};
 }
 
+// ── BYO admission report ──────────────────────────────────────────────────────────────────────
+
+/** The latest deploy's BYO admission report for one environment (#6541): what the drawer shows. */
+export interface ByoAdmissionReportRead {
+	environmentId: string;
+	/** Each BYO namespace as the latest deploy left it; empty when there is no report. */
+	report: ByoAdmissionNamespaceReport[];
+	/** When that deploy was created (ISO); null when there is no report. */
+	reportAt: string | null;
+}
+
+/**
+ * The BYO admission report of `environmentId` in project `projectId`: bound to the actor's org,
+ * gated on project `view`, and the environment must be the project's. Read fresh each time the
+ * admission drawer opens, because it is what a person consents over.
+ */
+export async function readByoAdmissionReport(
+	projectId: string,
+	environmentId: string,
+): Promise<ByoAdmissionReportRead> {
+	const actor = await viewProjectInOrg(projectId);
+	await assertEnvsInProject(actor, projectId, [environmentId]);
+	const status = await readGitopsDeployStatus(projectId, environmentId);
+	return { environmentId, report: status.byoAdmission, reportAt: status.byoAdmissionReportAt };
+}
+
 // ── The procedures ────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -419,6 +466,10 @@ export const environmentsRouter = {
 	overview: query
 		.input(z.object({ project: z.string().min(1).max(200) }))
 		.handler(({ input }) => readEnvironmentsOverview(input.project)),
+	/** One environment's latest BYO admission report (the BYO admission drawer, #6541). */
+	byoAdmissionReport: query
+		.input(z.object({ projectId: z.uuid(), environmentId: z.uuid() }))
+		.handler(({ input }) => readByoAdmissionReport(input.projectId, input.environmentId)),
 	/** One environment's protection rules (the rules editor). */
 	protectionRules: query
 		.input(z.object({ projectId: z.uuid(), environmentId: z.uuid() }))

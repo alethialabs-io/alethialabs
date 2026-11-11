@@ -144,6 +144,13 @@ var byoRepoUnsafe = regexp.MustCompile(`[\x00-\x1f\x7f]`)
 // LENGTH BUDGET, which is why the slug below is capped against it rather than after the join.
 const byoProjectPrefix = "byo-"
 
+// IsByoProjectName reports whether project names a BYO charts' AppProject: RenderAddOnApplication
+// renders a BYO chart only under one, and a catalogue add-on never under one. A reader of a live
+// Application uses it to tell a BYO chart's Application from a catalogue add-on's (#6575).
+func IsByoProjectName(project string) bool {
+	return strings.HasPrefix(project, byoProjectPrefix)
+}
+
 // ByoProjectName derives a stable ArgoCD AppProject name for a project's BYO charts:
 // "byo-<segment>". `slug` is typically the project's free-text name; the fallback keeps the name
 // non-empty and the cap keeps it inside 63 characters.
@@ -576,10 +583,13 @@ func ByoNewlyReservedNamespaceReason(ns string) string { return byoReserved.warn
 // can create them before the charts sync. Returns "" when there are none, which callers treat as
 // "nothing to apply" rather than an error.
 //
-// Each namespace carries its admission mode (ByoAdmissionModeLabel) from modes, and the Pod Security
-// Admission labels that mode implies (byoPodSecurityLabels). A namespace missing from modes is
-// rendered in "warn": the caller decides who refuses (DecideByoAdmissionModes), and an omission must
-// never be what turns refusal on for a chart that is already running.
+// Each namespace carries its admission mode (ByoAdmissionModeLabel) from admission, and the Pod
+// Security Admission labels that mode implies (byoPodSecurityLabels). A namespace missing from
+// admission is rendered in "warn": the caller decides who refuses (DecideByoAdmission), and an
+// omission must never be what turns refusal on for a chart that is already running. A namespace whose
+// "enforce" comes from the environment's setting also carries ByoAdmissionSourceLabel, so that turning
+// the setting off returns it to "warn"; client-side apply removes the label from one that no longer
+// gets it.
 //
 // # Why this is marshalled rather than templated (#2540)
 //
@@ -600,7 +610,7 @@ func ByoNewlyReservedNamespaceReason(ns string) string { return byoReserved.warn
 // Validation then refuses that absurd name outright, because a namespace Kubernetes would reject is
 // a deploy that fails later and more confusingly. Either alone would close the hole; the pair also
 // fails in the right direction.
-func RenderByoNamespaces(namespaces []string, commonLabels map[string]string, modes map[string]ByoAdmissionMode) (string, error) {
+func RenderByoNamespaces(namespaces []string, commonLabels map[string]string, admission map[string]ByoAdmissionDecision) (string, error) {
 	ns := dedupeNonEmpty(namespaces)
 	if len(ns) == 0 {
 		return "", nil
@@ -613,7 +623,8 @@ func RenderByoNamespaces(namespaces []string, commonLabels map[string]string, mo
 		if err := validateByoNamespace(n); err != nil {
 			return "", fmt.Errorf("render byo namespaces: %w", err)
 		}
-		mode := modes[n]
+		decision := admission[n]
+		mode := decision.Mode
 		if !mode.valid() {
 			mode = ByoAdmissionWarn
 		}
@@ -622,14 +633,17 @@ func RenderByoNamespaces(namespaces []string, commonLabels map[string]string, mo
 		// (No caller passes managed-by today: the classification labels never carry it.)
 		labels := map[string]string{}
 		for k, v := range commonLabels {
-			// A caller's Pod Security label is dropped rather than overwritten: in "warn" no enforce
-			// label is written, so overwriting alone would let one through.
-			if !strings.HasPrefix(k, psaLabelPrefix) {
+			// A caller's Pod Security label, and its admission-source label, are dropped rather than
+			// overwritten: in "warn" neither is written, so overwriting alone would let one through.
+			if !strings.HasPrefix(k, psaLabelPrefix) && k != ByoAdmissionSourceLabel {
 				labels[k] = v
 			}
 		}
 		labels[byoNamespaceManagedByLabel] = byoNamespaceManagedByValue
 		labels[ByoAdmissionModeLabel] = string(mode)
+		if mode == ByoAdmissionEnforce && decision.BySetting {
+			labels[ByoAdmissionSourceLabel] = byoAdmissionSourceSetting
+		}
 		for k, v := range byoPodSecurityLabels(mode) {
 			labels[k] = v
 		}

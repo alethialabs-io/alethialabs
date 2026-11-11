@@ -30,5 +30,12 @@ const RunnerCapabilityPreviewNamespacePrefix = "preview-namespace-prefix"
 // placement namespace against the host, so stripping leaves it deploying exactly as it did.
 const RunnerCapabilityPlacementHostNamespaces = "placement-host-namespaces"
 
+// RunnerCapabilityByoAdmission: the runner reads ProjectConfig.ByoAdmission (the top-level
+// `byo_admission`, #6541). Without it the console serves no such key. Stripping is safe: an older
+// runner decides a BYO namespace's admission mode from whether the namespace exists, as it always
+// did, and does not apply the environment's enforce setting. The setting's dialog says so, and the
+// Deploy tab shows the mode each namespace actually got, so the difference is visible.
+const RunnerCapabilityByoAdmission = "byo-admission"
+
 // RunnerSnapshotCapabilities is every capability this build advertises.
-var RunnerSnapshotCapabilities = []string{RunnerCapabilityAddonByoMarker, RunnerCapabilityPreviewNamespacePrefix, RunnerCapabilityPlacementHostNamespaces}
+var RunnerSnapshotCapabilities = []string{RunnerCapabilityAddonByoMarker, RunnerCapabilityPreviewNamespacePrefix, RunnerCapabilityPlacementHostNamespaces, RunnerCapabilityByoAdmission}
