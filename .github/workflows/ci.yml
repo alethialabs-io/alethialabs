@@ -2971,7 +2971,7 @@ jobs:
           if [ "${{ matrix.mysql }}" = 8.0.20 ]; then
             want="TestByoUsersMySQLServer_RefusesBelowFloor"
           else
-            want="TestByoUsersMySQLServer_Lifecycle TestByoUsersMySQLServer_RefusesForeignUser TestByoUsersMySQLServer_RevokeFailsSafe TestByoUsersMySQLServer_KillsSessions TestByoUsersMySQLServer_PartialRevokes TestByoUsersMySQLServer_SkipRevoke TestByoUsersMySQLServer_FailedCursorStepDropsNoOtherAccount TestByoUsersMySQLServer_RefusedProvisionedUserIsLocked TestByoUsersMySQLServer_LineTerminatorLookalikeIsNoCandidate TestByoUsersMySQLServer_UserCannotRetagItself"
+            want="TestByoUsersMySQLServer_Lifecycle TestByoUsersMySQLServer_RefusesForeignUser TestByoUsersMySQLServer_RevokeFailsSafe TestByoUsersMySQLServer_KillsSessions TestByoUsersMySQLServer_PartialRevokes TestByoUsersMySQLServer_SkipRevoke TestByoUsersMySQLServer_FailedCursorStepDropsNoOtherAccount TestByoUsersMySQLServer_RefusedProvisionedUserIsLocked TestByoUsersMySQLServer_LineTerminatorLookalikeIsNoCandidate TestByoUsersMySQLServer_UserCannotRetagItself TestByoUsersMySQLServer_SessionsNotEndedOnlyWithSessions TestByoUsersMySQLServer_LostSessionRecordIsADoubt TestByoUsersMySQLServer_PrivilegeProbeIsBinary TestByoUsersMySQLServer_ReportLinesCapped"
           fi
           for t in $want; do
             grep -q -- "--- PASS: $t " "$RUNNER_TEMP/byo.log" || { echo "::error::$t did not PASS on mysql ${{ matrix.mysql }}"; exit 1; }
@@ -2994,7 +2994,7 @@ jobs:
           mysql --protocol=TCP -h 127.0.0.1 -uroot --ssl-mode=REQUIRED -N -B \
             -e "SET GLOBAL sql_mode = CONCAT(@@GLOBAL.sql_mode, ',NO_BACKSLASH_ESCAPES,ANSI_QUOTES'); SELECT @@GLOBAL.sql_mode"
           go test -tags integration -count=1 -v -run ByoUsersMySQLServer ./internal/agent/... | tee "$RUNNER_TEMP/byo-modes.log"
-          for t in TestByoUsersMySQLServer_SQLMode TestByoUsersMySQLServer_Lifecycle TestByoUsersMySQLServer_RefusesForeignUser TestByoUsersMySQLServer_RevokeFailsSafe TestByoUsersMySQLServer_KillsSessions TestByoUsersMySQLServer_PartialRevokes TestByoUsersMySQLServer_SkipRevoke TestByoUsersMySQLServer_FailedCursorStepDropsNoOtherAccount TestByoUsersMySQLServer_RefusedProvisionedUserIsLocked TestByoUsersMySQLServer_LineTerminatorLookalikeIsNoCandidate TestByoUsersMySQLServer_UserCannotRetagItself; do
+          for t in TestByoUsersMySQLServer_SQLMode TestByoUsersMySQLServer_Lifecycle TestByoUsersMySQLServer_RefusesForeignUser TestByoUsersMySQLServer_RevokeFailsSafe TestByoUsersMySQLServer_KillsSessions TestByoUsersMySQLServer_PartialRevokes TestByoUsersMySQLServer_SkipRevoke TestByoUsersMySQLServer_FailedCursorStepDropsNoOtherAccount TestByoUsersMySQLServer_RefusedProvisionedUserIsLocked TestByoUsersMySQLServer_LineTerminatorLookalikeIsNoCandidate TestByoUsersMySQLServer_UserCannotRetagItself TestByoUsersMySQLServer_SessionsNotEndedOnlyWithSessions TestByoUsersMySQLServer_LostSessionRecordIsADoubt TestByoUsersMySQLServer_PrivilegeProbeIsBinary TestByoUsersMySQLServer_ReportLinesCapped; do
             grep -q -- "--- PASS: $t " "$RUNNER_TEMP/byo-modes.log" || { echo "::error::$t did not PASS on mysql ${{ matrix.mysql }} under NO_BACKSLASH_ESCAPES,ANSI_QUOTES"; exit 1; }
           done
 

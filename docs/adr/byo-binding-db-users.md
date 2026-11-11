@@ -349,6 +349,12 @@ next run converges. Every run locks each declared user again when it sets its pa
 and unlocks it only after every check on it has passed. A user refused by any check, including one an
 earlier run unlocked, is therefore left locked. The cost is a moment on every run, between that `ALTER
 USER` and the unlock, in which the user's new connections are refused; open ones are unaffected. The
+lock also has a failure-mode cost. A run that stops between that `ALTER USER` and the unlock leaves a
+declared, healthy user refusing new connections until the next successful run unlocks it. A lost
+connection, the pod's deadline, or a transient error in the user's `GRANT` or in a check can each stop
+it there. The Job retries (`backoffLimit: 2`); if every attempt fails, the user stays locked until a
+later deploy's run succeeds, which unlocks it because every statement is idempotent. Open sessions are
+unaffected throughout. The
 candidates match the anchored pattern and have exactly the per-binding length. ICU's `$` also matches
 before a final newline, so the length bound is what keeps a lookalike named `<user>\n` out. The sweep is a second
 script, applied with `--force`, so a candidate that cannot be dropped does not stop the others. It ends
@@ -373,11 +379,22 @@ ROUTINE`, `TRIGGER` or `EVENT`. Only an administrator can create one with that u
 **The limits.** Ending another user's sessions needs two privileges. `PROCESS` lets the administrator
 see them (without it `information_schema.PROCESSLIST` lists only its own), and `CONNECTION_ADMIN` or
 `SUPER` lets it `KILL` them. Before the kills, the sweep checks whether the administrator holds both,
-directly or through an enabled role; a privilege it cannot see counts as missing. If it lacks either,
-the result names every revoked user as `sessions-not-ended:<user>`. The runner turns each of those into
-a deploy warning: the user's sessions were not terminated, and the user cannot log in again. A session
-opened before the revocation then keeps running until it disconnects. The user cannot open a new one,
-because it is locked and then dropped.
+directly or through an enabled role; a privilege it cannot see counts as missing. Account names are
+compared as binary, because information_schema's collation is case-insensitive and MySQL user names
+are not. If it holds `PROCESS` but cannot kill, the result names each revoked user that had a session
+open, counted in the same statement, as `sessions-not-ended:<user>`. If it lacks `PROCESS`, no other
+user's session is visible, so every revoked user is named. The runner turns each of those into a
+deploy warning: any session the user had open was not terminated, and the user cannot log in again. A
+session opened before the revocation then keeps running until it disconnects. The user cannot open a
+new one, because it is locked and then dropped.
+
+If that record is lost, the result says so. The statement that writes it can fail under `--force`, or
+the client can reconnect and lose the session's variables. A successful record always holds a
+value, even an empty list, so when it is lost the result carries `doubt:sessions-unrecorded`, and the runner warns that it cannot
+say whether a revoked user's session is still open. The `revocation-pending` and `sessions-not-ended`
+lists are each capped at 32 lines, as the drops are. Past the cap one `doubt:<list> +<n> more` line
+counts the rest, so a backlog cannot fill the termination message on its own. Every one of these
+lines is an entry, and the header counts it.
 
 Two further gaps can only be opened by an administrator. A rotation does not `DISCARD OLD PASSWORD`, so
 a secondary password an administrator set survives it. The privilege check also does not read

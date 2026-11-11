@@ -7,10 +7,12 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -104,16 +106,17 @@ func (c myConn) run(sql string, force bool) (string, string, error) {
 type myAdmin struct {
 	t           *testing.T
 	admin, root myConn
-	// sessions are the last run's `sessions-not-ended:<user>` entries, held apart from what apply
-	// returns so the other tests read the result as before.
-	sessions []string
+	// sessions are the last run's `sessions-not-ended:<user>` entries, and doubts its `doubt:…`
+	// entries, held apart from what apply returns so the other tests read the result as before.
+	sessions, doubts []string
 	// mutateSweep, when set, rewrites the sweep script before it is applied (to make a step fail).
 	mutateSweep func(string) string
 }
 
 // myEntryRe is every entry a result may carry, as strictly as the runner's parser
 // (provisioner parseByoDBUsersResult) reads it: one unparseable line fails the whole run there.
-var myEntryRe = regexp.MustCompile(`^(` + byoPendingPrefix + `|` + mysqlByoSessionsPrefix + `)?` + manifests.ByoDBUserPrefix + `[0-9a-f]{12}$`)
+var myEntryRe = regexp.MustCompile(`^((` + byoPendingPrefix + `|` + mysqlByoSessionsPrefix + `)?` + manifests.ByoDBUserPrefix + `[0-9a-f]{12}` +
+	`|` + mysqlByoDoubtPrefix + `(` + mysqlByoSessionsUnrecorded + `|(revocation-pending|sessions-not-ended) \+[1-9][0-9]{0,5} more))$`)
 
 // newMyAdmin reads both DSNs or skips the test.
 func newMyAdmin(t *testing.T) *myAdmin {
@@ -217,7 +220,7 @@ func (a *myAdmin) applyInput(in byoUsersInput) ([]string, string, error) {
 	if want := strings.TrimPrefix(lines[0], byoResultHeaderPrefix); want != strconv.Itoa(len(entries)) {
 		a.t.Fatalf("the header counts %s entries, the result has %d:\n%s", want, len(entries), result)
 	}
-	a.sessions = nil
+	a.sessions, a.doubts = nil, nil
 	var out []string
 	for _, e := range entries {
 		if !myEntryRe.MatchString(e) {
@@ -225,6 +228,10 @@ func (a *myAdmin) applyInput(in byoUsersInput) ([]string, string, error) {
 		}
 		if strings.HasPrefix(e, mysqlByoSessionsPrefix) {
 			a.sessions = append(a.sessions, strings.TrimPrefix(e, mysqlByoSessionsPrefix))
+			continue
+		}
+		if strings.HasPrefix(e, mysqlByoDoubtPrefix) {
+			a.doubts = append(a.doubts, e)
 			continue
 		}
 		out = append(out, e)
@@ -305,9 +312,10 @@ func TestByoUsersMySQLServer_Lifecycle(t *testing.T) {
 	if got := a.userCount(myUserA); got != "0" {
 		t.Fatal("user A was not dropped")
 	}
-	// This administrator has no CONNECTION_ADMIN, so the run says it could not end A's sessions.
-	if strings.Join(a.sessions, ",") != myUserA {
-		t.Errorf("sessions-not-ended = %v, want [%s]", a.sessions, myUserA)
+	// This administrator has PROCESS but no CONNECTION_ADMIN, and A had no session open, so the run
+	// reports no session it could not end (#6536).
+	if len(a.sessions)+len(a.doubts) != 0 {
+		t.Errorf("sessions-not-ended = %v, doubts = %v, want none: A had no open session", a.sessions, a.doubts)
 	}
 	if got := a.query(a.root, "SELECT v FROM `"+myUserA+"`.kept"); got != "still here" {
 		t.Errorf("the revoked user's database lost its data: %q", got)
@@ -701,5 +709,243 @@ func TestByoUsersMySQLServer_SQLMode(t *testing.T) {
 		if !strings.Contains(got, ","+m+",") {
 			t.Errorf("sql_mode %s lacks %s", got, m)
 		}
+	}
+}
+
+// openSession opens a session as user that stays open (SELECT SLEEP), waits until the server lists
+// it, and returns a stop that ends it from root and waits for the client.
+func (a *myAdmin) openSession(user, pass string) (stop func()) {
+	a.t.Helper()
+	session := a.admin.as(user, pass, user).command(false, "-e", "SELECT SLEEP(300)")
+	if err := session.Start(); err != nil {
+		a.t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- session.Wait() }()
+	listed := "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE CAST(USER AS BINARY) = '" + user + "'"
+	deadline := time.Now().Add(20 * time.Second)
+	for a.query(a.root, listed) == "0" {
+		if time.Now().After(deadline) {
+			_ = session.Process.Kill()
+			a.t.Fatalf("the session of %s never appeared", user)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	stopped := false
+	stop = func() {
+		if stopped {
+			return
+		}
+		stopped = true
+		for _, id := range strings.Fields(a.query(a.root, "SELECT ID FROM information_schema.PROCESSLIST WHERE CAST(USER AS BINARY) = '"+user+"'")) {
+			_, _, _ = a.root.run("KILL "+id, false)
+		}
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			_ = session.Process.Kill()
+		}
+	}
+	a.t.Cleanup(stop)
+	return stop
+}
+
+// holds reports whether the administrator holds the global privilege priv, read as root.
+func (a *myAdmin) holds(priv string) bool {
+	return a.query(a.root, "SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES WHERE CAST(GRANTEE AS BINARY) = '''"+a.admin.user+"''@''%''' AND PRIVILEGE_TYPE = '"+priv+"'") == "1"
+}
+
+// withoutProcess revokes PROCESS from the administrator for the rest of the test, and gives it back
+// at cleanup. It fails the test when the administrator does not hold PROCESS to begin with, since
+// then the case with PROCESS was never measured.
+func (a *myAdmin) withoutProcess() {
+	a.t.Helper()
+	if !a.holds("PROCESS") {
+		a.t.Fatal("fixture: the administrator does not hold PROCESS")
+	}
+	a.query(a.root, "REVOKE PROCESS ON *.* FROM '"+a.admin.user+"'@'%'")
+	a.t.Cleanup(func() { a.query(a.root, "GRANT PROCESS ON *.* TO '"+a.admin.user+"'@'%'") })
+}
+
+// requireNoKill fails the test unless the administrator holds PROCESS and neither CONNECTION_ADMIN nor
+// SUPER: the RDS-like administrator these tests describe.
+func (a *myAdmin) requireNoKill() {
+	a.t.Helper()
+	if !a.holds("PROCESS") || a.holds("CONNECTION_ADMIN") || a.holds("SUPER") {
+		a.t.Fatal("fixture: the administrator must hold PROCESS and neither CONNECTION_ADMIN nor SUPER")
+	}
+}
+
+// TestByoUsersMySQLServer_SessionsNotEndedOnlyWithSessions (#6536): an administrator that can see
+// sessions (PROCESS) but not end them (no CONNECTION_ADMIN) reports `sessions-not-ended:` for exactly
+// the revoked users that had a session open, not for every candidate. Without PROCESS no other user's
+// session is visible, so every candidate is reported, which the warning's wording ("any session it
+// had open") stays true for.
+func TestByoUsersMySQLServer_SessionsNotEndedOnlyWithSessions(t *testing.T) {
+	a := newMyAdmin(t)
+	a.requiresFloor()
+	a.cleanup()
+	t.Cleanup(a.cleanup)
+	a.requireNoKill()
+
+	a.apply("env-a", byoUser{myUserA, myPasswordA1}, byoUser{myUserC, myPasswordA1})
+	stop := a.openSession(myUserC, myPasswordA1)
+	if got := a.apply("env-a"); len(got) != 0 {
+		t.Fatalf("revoke run result = %v", got)
+	}
+	if strings.Join(a.sessions, ",") != myUserC || len(a.doubts) != 0 {
+		t.Errorf("with PROCESS: sessions-not-ended = %v, doubts = %v, want exactly [%s], the one with a session", a.sessions, a.doubts, myUserC)
+	}
+	if a.userCount(myUserA) != "0" || a.userCount(myUserC) != "0" {
+		t.Error("the candidates were not dropped")
+	}
+	stop()
+
+	// Without PROCESS: every candidate, whether or not it had a session.
+	a.apply("env-a", byoUser{myUserA, myPasswordA1}, byoUser{myUserC, myPasswordA1})
+	a.withoutProcess()
+	if got := a.apply("env-a"); len(got) != 0 {
+		t.Fatalf("revoke run result = %v", got)
+	}
+	sort.Strings(a.sessions)
+	if strings.Join(a.sessions, ",") != myUserA+","+myUserC {
+		t.Errorf("without PROCESS: sessions-not-ended = %v, want every candidate [%s %s]", a.sessions, myUserA, myUserC)
+	}
+}
+
+// TestByoUsersMySQLServer_LostSessionRecordIsADoubt (#6536): when the statement recording the
+// unended sessions fails under --force, or the client reconnects and loses the session's variables
+// before the result, the result carries `doubt:sessions-unrecorded`, counted by its header, and the
+// revocation still completes. Neither may read as "no session was left open".
+func TestByoUsersMySQLServer_LostSessionRecordIsADoubt(t *testing.T) {
+	// The floor is checked here, not in the subtests, so a server below it skips this test by name
+	// and CI's PASS check sees it, instead of passing over skipped subtests.
+	newMyAdmin(t).requiresFloor()
+	for _, tc := range []struct {
+		name   string
+		mutate func(t *testing.T, sweep string) string
+		stderr string
+	}{
+		{"the record fails", func(t *testing.T, sweep string) string {
+			i := strings.Index(sweep, "SET @alethia_byo_unkilled = ")
+			if i < 0 {
+				t.Fatal("fixture: no record statement")
+			}
+			end := i + strings.Index(sweep[i:], ";\n")
+			return sweep[:i] + "SET @alethia_byo_unkilled = alethia_byo_no_such_column" + sweep[end:]
+		}, "alethia_byo_no_such_column"},
+		{"the client reconnects", func(t *testing.T, sweep string) string {
+			i := strings.LastIndex(sweep, "\nSELECT s.line FROM (")
+			if i < 0 {
+				t.Fatal("fixture: no result")
+			}
+			// `\r` is the client's reconnect command; a reconnect starts a new session.
+			return sweep[:i] + "\n\\r" + sweep[i:]
+		}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newMyAdmin(t)
+			a.cleanup()
+			t.Cleanup(a.cleanup)
+			a.apply("env-a", byoUser{myUserA, myPasswordA1})
+			a.mutateSweep = func(s string) string { return tc.mutate(t, s) }
+			got, out, err := a.applyErr("env-a")
+			a.mutateSweep = nil
+			if err != nil {
+				t.Fatalf("the provision script failed: %v\n%s", err, out)
+			}
+			if !strings.Contains(out, tc.stderr) {
+				t.Fatalf("the broken record did not fail:\n%s", out)
+			}
+			if len(got) != 0 || strings.Join(a.doubts, ",") != mysqlByoDoubtPrefix+mysqlByoSessionsUnrecorded {
+				t.Errorf("result = %v, doubts = %v, want only %s%s", got, a.doubts, mysqlByoDoubtPrefix, mysqlByoSessionsUnrecorded)
+			}
+			if a.userCount(myUserA) != "0" {
+				t.Error("a lost record stopped the revocation")
+			}
+		})
+	}
+}
+
+// TestByoUsersMySQLServer_PrivilegeProbeIsBinary (#6536): an account whose name differs from the
+// administrator's only in case, and which holds CONNECTION_ADMIN, lends the administrator nothing:
+// the run still reports the revoked user's session it could not end.
+func TestByoUsersMySQLServer_PrivilegeProbeIsBinary(t *testing.T) {
+	a := newMyAdmin(t)
+	a.requiresFloor()
+	a.cleanup()
+	t.Cleanup(a.cleanup)
+	a.requireNoKill()
+	decoy := strings.ToUpper(a.admin.user)
+	if decoy == a.admin.user {
+		t.Fatalf("fixture: the administrator %q has no lower-case letter to vary", a.admin.user)
+	}
+	a.query(a.root, "CREATE USER '"+decoy+"'@'%' IDENTIFIED BY '"+myDecoyPass+"' ACCOUNT LOCK")
+	t.Cleanup(func() { _, _, _ = a.root.run("DROP USER IF EXISTS '"+decoy+"'@'%'", false) })
+	a.query(a.root, "GRANT PROCESS, CONNECTION_ADMIN ON *.* TO '"+decoy+"'@'%'")
+	// The case-insensitive comparison this guards against can only misfire on a row the administrator
+	// can read; prove it can.
+	if got := a.query(a.admin, "SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES WHERE CAST(GRANTEE AS BINARY) = '''"+decoy+"''@''%''' AND PRIVILEGE_TYPE = 'CONNECTION_ADMIN'"); got != "1" {
+		t.Fatalf("fixture: the administrator cannot read the decoy's privilege row (%s)", got)
+	}
+
+	a.apply("env-a", byoUser{myUserC, myPasswordA1})
+	a.openSession(myUserC, myPasswordA1)
+	if got := a.apply("env-a"); len(got) != 0 {
+		t.Fatalf("revoke run result = %v", got)
+	}
+	if strings.Join(a.sessions, ",") != myUserC {
+		t.Errorf("sessions-not-ended = %v, want [%s]: %s's CONNECTION_ADMIN was read as the administrator's", a.sessions, myUserC, decoy)
+	}
+}
+
+// myCapUser is the i-th of the backlog users TestByoUsersMySQLServer_ReportLinesCapped creates.
+func myCapUser(i int) string {
+	return fmt.Sprintf("%sdddddddddd%02x", manifests.ByoDBUserPrefix, i)
+}
+
+// TestByoUsersMySQLServer_ReportLinesCapped (#6536): a backlog of revoked users larger than the caps
+// adds at most mysqlByoMaxReported `revocation-pending:` and mysqlByoMaxReported
+// `sessions-not-ended:` lines, each followed by a `doubt:<kind> +<n> more` line naming the rest, all
+// counted by the header. Without PROCESS every candidate is a session report, so both lists overflow.
+func TestByoUsersMySQLServer_ReportLinesCapped(t *testing.T) {
+	a := newMyAdmin(t)
+	a.requiresFloor()
+	a.cleanup()
+	const backlog = 2*mysqlByoMaxDrops + 6
+	var create, drop strings.Builder
+	for i := 0; i < backlog; i++ {
+		fmt.Fprintf(&create, "CREATE USER '%s'@'%%' IDENTIFIED BY '%s' ACCOUNT LOCK ATTRIBUTE '{\"alethia_env\":\"env-cap\"}';\n", myCapUser(i), myDecoyPass)
+		fmt.Fprintf(&drop, "DROP USER IF EXISTS '%s'@'%%';\n", myCapUser(i))
+	}
+	_, _, _ = a.root.run(drop.String(), true)
+	t.Cleanup(func() { _, _, _ = a.root.run(drop.String(), true); a.cleanup() })
+	a.query(a.root, create.String())
+	a.withoutProcess()
+
+	got := a.apply("env-cap")
+	var pending int
+	for _, e := range got {
+		if strings.HasPrefix(e, byoPendingPrefix) {
+			pending++
+		}
+	}
+	left := backlog - mysqlByoMaxDrops
+	if pending != mysqlByoMaxReported || len(got) != pending {
+		t.Errorf("%d revocation-pending lines of %d entries, want %d", pending, len(got), mysqlByoMaxReported)
+	}
+	if len(a.sessions) != mysqlByoMaxReported {
+		t.Errorf("%d sessions-not-ended lines, want %d", len(a.sessions), mysqlByoMaxReported)
+	}
+	sort.Strings(a.doubts)
+	want := []string{
+		fmt.Sprintf("%srevocation-pending +%d more", mysqlByoDoubtPrefix, left-mysqlByoMaxReported),
+		fmt.Sprintf("%ssessions-not-ended +%d more", mysqlByoDoubtPrefix, backlog-mysqlByoMaxReported),
+	}
+	if strings.Join(a.doubts, "|") != strings.Join(want, "|") {
+		t.Errorf("doubts = %v, want %v", a.doubts, want)
+	}
+	if n := a.query(a.root, "SELECT COUNT(*) FROM information_schema.USER_ATTRIBUTES WHERE JSON_UNQUOTE(JSON_EXTRACT(ATTRIBUTE, '$.alethia_env')) = 'env-cap'"); n != strconv.Itoa(left) {
+		t.Errorf("%s backlog users left, want %d (the drops are capped at %d per run)", n, left, mysqlByoMaxDrops)
 	}
 }
