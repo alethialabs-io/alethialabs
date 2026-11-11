@@ -3068,10 +3068,19 @@ jobs:
           cache-dependency-path: packages/core/go.sum
       - name: Pre-fetch Go modules (retrying a transient proxy error)
         run: bash scripts/ci/go-mod-download-retry.sh packages/core
+      # The ubuntu-24.04 runner image already ships both clients (mysql-client 8.0 and the PostgreSQL 16
+      # client). Going to apt anyway made this job fail on every Ubuntu mirror outage (2026-11-11:
+      # "Temporary failure resolving 'azure.archive.ubuntu.com'") while the clients were already there.
+      # So apt runs only for a client that is actually missing, and then with retries.
       - name: Install the mysql and psql clients
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q mysql-client postgresql-client
+          missing=()
+          command -v mysql >/dev/null 2>&1 || missing+=(mysql-client)
+          command -v psql >/dev/null 2>&1 || missing+=(postgresql-client)
+          if [ ${#missing[@]} -gt 0 ]; then
+            sudo apt-get -o Acquire::Retries=5 update -q
+            sudo apt-get -o Acquire::Retries=5 install -y -q "${missing[@]}"
+          fi
           mysql --version
           psql --version
       # A signing CA, an unrelated CA, and one server certificate naming ONLY $DB_NAME (no IP SAN), so
