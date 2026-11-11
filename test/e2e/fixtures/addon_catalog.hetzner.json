@@ -455,9 +455,7 @@
 					"memory": "512Mi"
 				}
 			},
-			"api": {
-				"dashboard": false
-			},
+			"api": null,
 			"providers": {
 				"kubernetesIngressNGINX": {
 					"publishService": {

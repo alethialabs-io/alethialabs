@@ -35,11 +35,19 @@ describe("the Traefik add-on", () => {
 		});
 	});
 
-	it("refuses ExternalName backends and keeps the API/dashboard off", () => {
+	it("refuses ExternalName backends", () => {
 		expect(resolved()).toMatchObject({
-			api: { dashboard: false },
 			providers: { kubernetesIngressNGINX: { disableSvcExternalName: true } },
 		});
+	});
+
+	it("configures no Traefik API at all: `api` resolves to null, which removes the chart's defaults", () => {
+		// `{ dashboard: false }` would still render `--api.*` arguments, and any of them enables the API.
+		const v = resolved();
+		expect(v).toHaveProperty("api");
+		expect(v.api).toBeNull();
+		// The null must reach the fixture the chart checks render, not only the in-memory spec.
+		expect(JSON.stringify(v)).toContain('"api":null');
 	});
 
 	it("keeps Gateway API OFF by default — the clusters carry no Gateway API CRDs", () => {

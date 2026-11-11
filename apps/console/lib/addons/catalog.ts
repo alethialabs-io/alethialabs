@@ -1085,9 +1085,12 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				requests: { cpu: "100m", memory: "128Mi" },
 				limits: { memory: "512Mi" },
 			},
-			// Nothing in the add-on uses the API/dashboard, and with the CRD provider on, a route to
-			// `api@internal` from any namespace would publish the whole routing table. Off.
-			api: { dashboard: false },
+			// Nothing in the add-on uses Traefik's API or its dashboard, so neither is configured.
+			// `null`, not `{ dashboard: false }`: the chart renders an `--api.*` argument for every key
+			// under `api`, and any such argument enables the API; only the dashboard UI follows
+			// `dashboard`. A null removes the chart's `api` defaults, so no `--api` argument renders.
+			// It survives the merge below (deepMerge assigns it) and the runner's YAML encoding.
+			api: null,
 			providers: {
 				kubernetesIngressNGINX: {
 					// Write the load balancer's address into each NGINX-class Ingress's status, as
