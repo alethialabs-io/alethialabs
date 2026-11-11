@@ -39,6 +39,9 @@ type addOnStageResult struct {
 	// Deployable is every add-on this deploy rendered and applied — vc.AddOns without the refused BYO
 	// charts. The health wait RunDeployV2 runs after the prunes reads exactly this list.
 	Deployable []types.AddOnInstall
+	// ByoAdmission is every BYO namespace's admission mode as this deploy left it (#6541), for
+	// GitopsStatus.ByoAdmission.
+	ByoAdmission []argocd.ByoAdmissionNamespaceStatus
 }
 
 // runAddOnStage is the add-on stage of a dedicated deploy, up to — NOT including — the health wait,
@@ -113,8 +116,14 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 		out.Warnings = append(out.Warnings, o.warning())
 	}
 	for _, a := range byo.Admission {
-		out.Warnings = append(out.Warnings, a.warning())
+		if a.warns() {
+			out.Warnings = append(out.Warnings, a.warning())
+		}
 	}
+	for _, c := range byo.AdmissionChanges {
+		out.Warnings = append(out.Warnings, c.warning())
+	}
+	out.ByoAdmission = byo.AdmissionStatus
 
 	// Seed each add-on's secret-knob Secret (W4.5 #640) BEFORE any Application syncs — managed or
 	// gitops mode. The values were fetched by the runner over the authenticated job channel and exist

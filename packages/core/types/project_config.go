@@ -91,6 +91,14 @@ type ProjectConfig struct {
 	// that "computed, and empty" and "not computed" stay two different values.
 	PlacementHostNamespaces *[]string `json:"placement_host_namespaces,omitempty"`
 
+	// ByoAdmission is what the console knows about this environment's bring-your-own charts that
+	// decides their namespaces' admission mode (#6541, argocd.DecideByoAdmission). The console emits
+	// it only when the environment has at least one BYO chart, gated on
+	// RunnerCapabilityByoAdmission. NIL — the key absent — means the console did not send it (an
+	// older console, or a snapshot stored before the key): the setting is then off and the console's
+	// record empty, and the runner decides from the cluster alone (its live Application reads).
+	ByoAdmission *ByoAdmissionConfig `json:"byo_admission,omitempty"`
+
 	// IacSource, when set, marks this project as BRING-YOUR-OWN IaC: the runner
 	// provisions the customer's own OpenTofu root module (cloned at a pinned commit
 	// from git) instead of a bundled Alethia template. It is the fail-closed
@@ -107,6 +115,23 @@ type ProjectConfig struct {
 	// Populated at runtime from the claim response (decrypted), not from snapshot.
 	// Keyed lookups happen via ConnectorCredentialFor.
 	ConnectorCredentials []ConnectorCredential `json:"-"`
+}
+
+// ByoAdmissionConfig is the snapshot's `byo_admission` (#6541): the environment's setting, and each
+// BYO chart's history in this environment. Neither field is omitempty — once the key is sent, false
+// and an empty list are statements, not omissions.
+type ByoAdmissionConfig struct {
+	// Enforce is project_environments.byo_admission_enforce: put every BYO namespace of this
+	// environment in "enforce". Off by default, and off for every environment that existed before it.
+	Enforce bool `json:"enforce"`
+	// DeployedCharts are the ids of the environment's BYO charts whose ArgoCD Application a console
+	// read-back has EVER seen in a running state (project_addons.first_observed_running_at: set once,
+	// on the first Healthy, Progressing, Degraded or Suspended read, and never cleared). Sorted. It is
+	// the console's memory for a cluster that can no longer say — a re-provisioned one has no
+	// Applications — and it only ever chooses "warn" over "enforce": the runner's live Application
+	// read alone lets a chart into a namespace that is not this environment's
+	// (argocd.ByoAdmissionInput.RunsHere).
+	DeployedCharts []string `json:"deployed_charts"`
 }
 
 // ProjectIacSourceConfig pins the customer's own OpenTofu root module for a

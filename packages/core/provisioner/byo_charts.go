@@ -774,6 +774,32 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 		return byoConfigured{}
 	}
 
+	// Each accepted namespace's admission mode, decided from the history of its charts (#6541). It
+	// runs BEFORE anything is rendered from the accepted set, because it can refuse: a chart may not
+	// take over a namespace that exists and is not this environment's. A namespace another environment
+	// holds is left out (#6562). A failed read fails the deploy here, before the first write.
+	var admissionDecisions map[string]argocd.ByoAdmissionDecision
+	if len(namespaces) > 0 {
+		var admissionRefused []byoRefusal
+		var err error
+		admissionDecisions, admissionRefused, err = decideByoAdmission(vc, chartsByNS, moved, heldNamespaces)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: not configuring BYO charts: %v\n", err)
+			return byoConfigured{Err: err}
+		}
+		for _, r := range admissionRefused {
+			fmt.Fprintf(stderr, "Error: refusing BYO chart %q: %s\n", r.ID, r.Reason)
+		}
+		if len(admissionRefused) > 0 {
+			refused = append(refused, admissionRefused...)
+			repos, gitRepos, namespaces = acceptedByoSources(vc.AddOns, chartsByNS)
+			// What was said about a chart this refusal now keeps off the cluster is no longer true.
+			leftProject = keepAcceptedCharts(leftProject, func(c byoProjectChange) string { return c.ID }, chartsByNS)
+			previewOverlaps = keepAcceptedCharts(previewOverlaps, func(o byoPreviewOverlap) string { return o.ID }, chartsByNS)
+			newlyReserved = keepAcceptedCharts(newlyReserved, func(o byoNewlyReservedOverlap) string { return o.ID }, chartsByNS)
+		}
+	}
+
 	fmt.Fprintf(stdout, "Configuring %d bring-your-own chart(s) under hardened project %q (%d refused)\n", len(repos), projName, len(refused))
 
 	// The destination namespaces, created by the RUNNER because the chart cannot create them.
@@ -795,18 +821,15 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	// argocd.secretStoreConditions).
 	//
 	// Each namespace also carries its admission mode and the Pod Security labels that follow from it
-	// (#6495): "enforce" for a namespace created here for a new chart, "warn" for one that already
-	// exists or receives a moved chart, and an existing mode is kept (byoAdmissionModes).
+	// (#6495), as decided above (decideByoAdmission, #6541).
 	nsLabels := byoNamespaceLabels(commonLabels)
-	var modes map[string]argocd.ByoAdmissionMode
-	if len(namespaces) > 0 {
-		modes = byoAdmissionModes(namespaces, moved, stderr)
-	}
+	modes := argocd.ByoAdmissionModes(admissionDecisions)
 	//
 	// A namespace another environment holds (#6562) is NOT rendered: the chart already in it keeps
 	// deploying there, but the host does not stamp its owner label or the secret-store stamp onto a
 	// namespace that is not its own. The namespace exists (it was read), so nothing needs creating.
-	if ns, err := argocd.RenderByoNamespaces(withoutHeldNamespaces(namespaces, heldNamespaces), nsLabels, modes); err != nil {
+	// decideByoAdmission leaves it out too, so the environment's setting never relabels it.
+	if ns, err := argocd.RenderByoNamespaces(withoutHeldNamespaces(namespaces, heldNamespaces), nsLabels, admissionDecisions); err != nil {
 		fmt.Fprintf(stderr, "Error: refusing to configure BYO charts: %v\n", err)
 		return byoConfigured{Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, NewlyReserved: newlyReserved, PlacementOverlaps: placementOverlaps, HeldMoves: heldMoves}
 	} else if ns != "" {
@@ -823,9 +846,13 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 		_, unavailable := applyByoAdmissionPolicy(stdout, stderr)
 		admission = reportByoAdmission(chartsByNS, modes, unavailable, stderr)
 		for _, r := range admission {
-			fmt.Fprintf(stderr, "Warning: %s\n", r.warning())
+			if r.warns() {
+				fmt.Fprintf(stderr, "Warning: %s\n", r.warning())
+			}
 		}
 	}
+	admissionChanges := byoAdmissionChanges(admissionDecisions)
+	admissionStatus := byoAdmissionStatuses(admissionDecisions, chartsByNS, refused, admission)
 
 	// Hardened AppProject locked to the ACCEPTED repos + namespaces — applied even when that is none,
 	// so a destination an earlier deploy granted is withdrawn (see the doc comment).
@@ -882,7 +909,8 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo %s: %s\n", repo, argocd.RedactTokens(err.Error(), allTokens...))
 		}
 	}
-	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, NewlyReserved: newlyReserved, Admission: admission, PlacementOverlaps: placementOverlaps, HeldMoves: heldMoves}
+	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, NewlyReserved: newlyReserved, Admission: admission, PlacementOverlaps: placementOverlaps, HeldMoves: heldMoves,
+		AdmissionChanges: admissionChanges, AdmissionStatus: admissionStatus}
 }
 
 // byoNamespaceLabels are the labels the runner stamps on a BYO chart's namespace beyond the
@@ -924,9 +952,16 @@ type byoConfigured struct {
 	// Application runs in another one (#6562). They keep deploying where the Application runs.
 	HeldMoves []byoHeldMove
 	// Err is set when the runner could not tell whether a chart's namespace is another environment's
-	// (#6562). Nothing was applied: configureByoCharts returns before its first write, and the
-	// caller fails the deploy rather than refuse the chart, because a refusal withdraws its bindings.
+	// (#6562), or could not read the BYO namespaces or the charts' Applications to decide their
+	// admission mode (#6541). Nothing was applied: configureByoCharts returns before its first write,
+	// and the caller fails the deploy rather than refuse the chart, because a refusal withdraws its
+	// bindings.
 	Err error
+	// AdmissionChanges are the namespaces whose admission mode this deploy changed (#6541): the
+	// environment's setting taking effect, or being undone.
+	AdmissionChanges []byoAdmissionChange
+	// AdmissionStatus is every decided BYO namespace for the Deploy tab (#6541).
+	AdmissionStatus []argocd.ByoAdmissionNamespaceStatus
 }
 
 // byoPreviewOverlap is one BYO chart stored in a namespace the project's preview environments use

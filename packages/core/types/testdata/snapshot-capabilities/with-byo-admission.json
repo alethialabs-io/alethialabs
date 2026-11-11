@@ -1,0 +1,25 @@
+{
+  "project_name": "acme",
+  "environment_id": "env-1",
+  "addons": [
+    {
+      "id": "api",
+      "mode": "managed",
+      "source": "git",
+      "byo": true,
+      "chartRepo": "https://github.com/acme/charts",
+      "chart": "",
+      "path": "charts/api",
+      "version": "HEAD",
+      "namespace": "byo-api",
+      "values": {},
+      "syncWave": 10
+    }
+  ],
+  "byo_admission": {
+    "enforce": true,
+    "deployed_charts": [
+      "api"
+    ]
+  }
+}

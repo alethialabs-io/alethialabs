@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
 	RUNNER_CAPABILITY_ADDON_BYO_MARKER,
+	RUNNER_CAPABILITY_BYO_ADMISSION,
 	RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES,
 	RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX,
 	ociByoAddOnIds,
@@ -107,6 +108,32 @@ describe("snapshotForRunner — placement_host_namespaces (#6551)", () => {
 
 	it("matches the runner's capability name exactly", () => {
 		expect(RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES).toBe("placement-host-namespaces");
+	});
+});
+
+describe("snapshotForRunner — byo_admission (#6541)", () => {
+	// The marker capability is named in every header here, so `addons[].byo` stays and only the
+	// key under test can differ.
+	const others = `${RUNNER_CAPABILITY_ADDON_BYO_MARKER},${RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX},${RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES}`;
+
+	it("strips the key for a runner without the capability: the snapshot an old runner decodes", () => {
+		expect(snapshotForRunner(fixture("with-byo-admission.json"), parseRunnerCapabilities(others))).toEqual(
+			fixture("without-byo-admission.json"),
+		);
+	});
+
+	it("serves it to a runner with the capability unchanged", () => {
+		const snapshot = fixture("with-byo-admission.json");
+		expect(snapshotForRunner(snapshot, parseRunnerCapabilities(`${others},${RUNNER_CAPABILITY_BYO_ADMISSION}`))).toBe(snapshot);
+	});
+
+	it("is gated on its own capability, not on the marker's", () => {
+		const served = snapshotForRunner(fixture("with-byo-admission.json"), parseRunnerCapabilities(RUNNER_CAPABILITY_BYO_ADMISSION));
+		expect(served.byo_admission).toEqual({ enforce: true, deployed_charts: ["api"] });
+	});
+
+	it("matches the runner's capability name exactly", () => {
+		expect(RUNNER_CAPABILITY_BYO_ADMISSION).toBe("byo-admission");
 	});
 });
 

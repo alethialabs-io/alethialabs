@@ -30,6 +30,7 @@ import type { SwitcherEnv } from "@/app/server/actions/resolve";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { RegionError } from "@/components/errors/region-error";
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
+import { ByoAdmissionSheet } from "@/components/environments/byo-admission-sheet";
 import { ProtectionRulesDialog } from "@/components/environments/protection-rules-dialog";
 import { PromoteDialog } from "@/components/environments/promote-dialog";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
@@ -133,6 +134,7 @@ function EnvironmentsBody({
 	const [duplicateFrom, setDuplicateFrom] = useState<EnvRow | null>(null);
 	const [promoteOpen, setPromoteOpen] = useState(false);
 	const [protectFor, setProtectFor] = useState<EnvRow | null>(null);
+	const [admissionFor, setAdmissionFor] = useState<EnvRow | null>(null);
 	const [pendingDelete, setPendingDelete] = useState<EnvRow | null>(null);
 	const [detailOpen, setDetailOpen] = useState(false);
 	const [confirmReject, setConfirmReject] = useState(false);
@@ -271,6 +273,7 @@ function EnvironmentsBody({
 								onToggleHeal={(enabled) => {
 									if (!heal.isPending) heal.mutate({ env, enabled });
 								}}
+								onEditAdmission={() => setAdmissionFor(env)}
 								onDuplicate={() => {
 									setDuplicateFrom(env);
 									setCreateOpen(true);
@@ -341,6 +344,16 @@ function EnvironmentsBody({
 					projectId={projectId}
 					envId={protectFor.id}
 					envName={protectFor.name}
+				/>
+			)}
+			{admissionFor && (
+				<ByoAdmissionSheet
+					open={!!admissionFor}
+					onOpenChange={(o) => !o && setAdmissionFor(null)}
+					projectId={projectId}
+					envId={admissionFor.id}
+					envName={admissionFor.name}
+					enforce={admissionFor.byo_admission_enforce}
 				/>
 			)}
 			<PromotionDetailOverlay

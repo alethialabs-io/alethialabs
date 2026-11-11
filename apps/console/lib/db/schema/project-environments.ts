@@ -87,6 +87,13 @@ export const projectEnvironments = pgTable(
 		last_auto_heal_at: timestamp({ withTimezone: true }),
 		// Consecutive auto-heal deploy failures; drives backoff + the circuit breaker.
 		auto_heal_failures: integer().default(0).notNull(),
+		// --- Bring-your-own chart admission (#6541) ---------------------------------------------
+		// Opt-in: put every BYO namespace of this environment in admission `enforce` (Pod Security
+		// baseline + the BYO admission policy's Deny binding). Off, a namespace keeps the mode the
+		// runner chose from its charts' history, so `warn` where a chart already ran. Off for every
+		// environment that existed before it. Rides the snapshot as `byo_admission.enforce`; the
+		// runner relabels the namespaces, and turning it off returns the ones it moved to `warn`.
+		byo_admission_enforce: boolean().default(false).notNull(),
 		// --- Ephemeral reaper bookkeeping (bounded retry + backoff + give-up) --------------------
 		// Consecutive DESTROY re-enqueue attempts by the ephemeral reaper for this expired env; drives
 		// the exponential backoff and the give-up cap. Reset to 0 on a fresh successful DEPLOY.

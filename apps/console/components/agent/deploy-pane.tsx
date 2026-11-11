@@ -16,6 +16,7 @@ import type {
 	GitopsComponentRow,
 	GitopsDeployStatus,
 } from "@/lib/gitops/deploy-status";
+import type { ByoAdmissionNamespaceReport } from "@/types/jsonb.types";
 
 /** Maps an ArgoCD health string onto the grayscale status tiers. */
 function healthTier(health: string): StatusTier {
@@ -157,6 +158,46 @@ function Group({
 	);
 }
 
+/** Why the runner chose a BYO namespace's mode (Go `ByoAdmissionReason`), as a person reads it. */
+const ADMISSION_REASON: Record<string, string> = {
+	kept: "kept the mode it had",
+	"environment-setting": "this environment's setting refuses",
+	"environment-setting-off": "the setting is off again",
+	"chart-history": "a chart here has run before",
+	"environment-namespace": "already this environment's namespace",
+	"new-namespace": "new namespace, nothing ran here",
+	"existing-namespace": "the namespace already existed",
+	"namespaces-unread": "the namespaces could not be read",
+	"not-this-environments-namespace": "not this environment's namespace",
+};
+
+/** A BYO namespace's mode as a grayscale tier: refusing is active, reporting idle, refused failed. */
+function admissionTier(mode: ByoAdmissionNamespaceReport["mode"]): StatusTier {
+	if (mode === "enforce") return "active";
+	if (mode === "refused") return "failed";
+	return "idle";
+}
+
+/** One BYO namespace (#6541): its mode, the change this deploy made, and why. */
+function AdmissionRow({ ns }: { ns: ByoAdmissionNamespaceReport }) {
+	const changed = ns.previous && ns.previous !== ns.mode && ns.mode !== "refused";
+	const reason = ADMISSION_REASON[ns.reason] ?? ns.reason;
+	const findings = ns.findings?.length ?? 0;
+	return (
+		<div className="flex items-start justify-between gap-3 border-b border-border py-2 last:border-0">
+			<div className="flex min-w-0 flex-col gap-0.5">
+				<span className="truncate font-mono text-xs text-foreground">{ns.namespace}</span>
+				<span className="text-ui-xs leading-snug text-muted-foreground">
+					{changed ? `${ns.previous} → ${ns.mode} · ` : ""}
+					{reason}
+					{findings > 0 ? ` · ${findings} finding${findings === 1 ? "" : "s"}` : ""}
+				</span>
+			</div>
+			<StatusBadge status={ns.mode} tier={admissionTier(ns.mode)} />
+		</div>
+	);
+}
+
 /** The Deploy tab's content — null status means the read hasn't landed yet. */
 export function DeployPane({ status }: { status: GitopsDeployStatus | null }) {
 	if (!status) {
@@ -280,6 +321,17 @@ export function DeployPane({ status }: { status: GitopsDeployStatus | null }) {
 					rows={[]}
 					emptyText="No apps repo — services are not GitOps-managed in this environment."
 				/>
+			)}
+
+			{status.byoAdmission.length > 0 && (
+				<Section
+					title="BYO admission"
+					hint="Each bring-your-own namespace's admission mode as the last deploy left it: enforce refuses, warn only reports. The environment's BYO admission setting moves every one to enforce."
+				>
+					{status.byoAdmission.map((ns) => (
+						<AdmissionRow key={ns.namespace} ns={ns} />
+					))}
+				</Section>
 			)}
 
 			<Group title="Add-ons" rows={status.addons} />
