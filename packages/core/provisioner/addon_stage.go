@@ -97,6 +97,9 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	for _, o := range byo.PreviewOverlaps {
 		out.Warnings = append(out.Warnings, o.warning())
 	}
+	for _, o := range byo.NewlyReserved {
+		out.Warnings = append(out.Warnings, o.warning())
+	}
 	for _, a := range byo.Admission {
 		out.Warnings = append(out.Warnings, a.warning())
 	}
@@ -170,7 +173,11 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 		}
 	}
 	// GitOps-mode add-ons → seed/prune into the customer's apps repo.
-	if gitErr := writeAddOnGitOps(ctx, vc, in.GitAccessToken, in.Facts.Labels, stdout, stderr); gitErr != nil {
+	// Its warnings name each seeded manifest that installs an older chart than this deploy would seed
+	// (#6537); the file is left as the customer has it.
+	gitWarnings, gitErr := writeAddOnGitOps(ctx, vc, in.GitAccessToken, in.Facts.Labels, stdout, stderr)
+	out.Warnings = append(out.Warnings, gitWarnings...)
+	if gitErr != nil {
 		fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %v\n", gitErr)
 	}
 	// One-shot in-cluster bootstraps for the add-ons that ask for one — today, initialising and

@@ -25,7 +25,8 @@ var byoUsersTestUsers = []ByoDBUsersUser{
 // byoUsersTestOutputs are each cloud's admin-connection outputs.
 var byoUsersTestOutputs = map[string]map[string]string{
 	"aws": {"rds_cluster_endpoint": "db.internal", "rds_database_name": "app", "rds_master_credentials_secret_name": "acme/rds/master"},
-	"gcp": {"cloud_sql_ip": "10.0.0.5", "cloud_sql_database": "app", "cloud_sql_credentials_secret": "acme-sql-admin"},
+	"gcp": {"cloud_sql_ip": "10.0.0.5", "cloud_sql_database": "app", "cloud_sql_credentials_secret": "acme-sql-admin",
+		"cloud_sql_server_ca_cert": testGCPServerCA},
 	"azure": {"azure_db_fqdn": "db.postgres.database.azure.com", "azure_db_name": "app",
 		"azure_db_admin_user": "acme-dbadmin", "azure_db_admin_client_id": "11111111-2222-3333-4444-555555555555"},
 }
@@ -214,7 +215,7 @@ func TestByoDBUsersJob_RendersPerCloud(t *testing.T) {
 				}
 			}
 			if provider == "azure" {
-				if dig(pod, "serviceAccountName") != byoDBUsersAdminName("env-1") {
+				if dig(pod, "serviceAccountName") != ByoDBUsersAzureServiceAccount {
 					t.Errorf("Azure pod runs as %v", dig(pod, "serviceAccountName"))
 				}
 				sa := byoUsersDoc(t, job.Credentials[0].YAML)
@@ -320,7 +321,12 @@ func TestByoDBUsersJob_SecurityContextMatchesTheBootstrapJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootPod := dig(byoUsersDoc(t, boot.JobYAML), "spec", "template", "spec")
+	var bootPod any
+	for _, doc := range parseYAMLDocs(t, boot.JobYAML) {
+		if doc["kind"] == "Job" {
+			bootPod = dig(doc, "spec", "template", "spec")
+		}
+	}
 	pod := dig(byoUsersDoc(t, renderByoUsersFor(t, "aws", false).JobYAML), "spec", "template", "spec")
 	if !reflect.DeepEqual(dig(pod, "securityContext"), dig(bootPod, "securityContext")) {
 		t.Errorf("pod securityContext %v, the bootstrap Job's %v", dig(pod, "securityContext"), dig(bootPod, "securityContext"))

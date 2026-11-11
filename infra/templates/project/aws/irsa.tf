@@ -5,6 +5,44 @@
 # system:serviceaccount:<ns>:*), because the namespace-deploy path runs no tofu. GCP Workload-Identity /
 # Azure federated per-namespace parity is the documented #1013 follow-up.
 
+# The exact `namespace:serviceaccount` subjects each role below trusts — ONE list per role, and every
+# module in this file reads its subjects from here rather than inline (#6556). Each entry says how a
+# pod reaches the role, i.e. what puts the role's ARN in an `eks.amazonaws.com/role-arn` annotation:
+#
+#   rds_iam_auth          default:alethia-app            the platform renders this SA AND its annotation:
+#                                                        packages/core/manifests/keyless.go (keylessKSA*),
+#                                                        keyless_aws.go (role ARN from `rds_iam_auth_irsa_arn`)
+#   ecr_build             alethia-build:kaniko-builder   the platform's BUILD Job runs AS this SA
+#                                                        (packages/core/imagebuild/kaniko.go serviceAccountName;
+#                                                        coordinates from output `ecr_build_service_account`,
+#                                                        defaults in apps/runner/internal/agent/build.go), but
+#                                                        nothing in the platform creates or annotates the SA:
+#                                                        the ARN is published as output `ecr_build_role_arn`
+#                                                        for the operator to annotate it (aws/README.md).
+#   fluentbit_cloudwatch  fluent-bit:fluent-bit          NOT rendered by the platform, which installs no
+#                                                        fluent-bit. Reached only through the output
+#                                                        `fluentbit_sa_role_arn`, for a customer-installed
+#                                                        chart whose SA is fluent-bit/fluent-bit.
+#   karpenter             karpenter:karpenter            the platform renders this SA AND its annotation:
+#                                                        the Karpenter Application
+#                                                        (infra/templates/argocd/karpenter.yaml) annotates
+#                                                        it with the role ARN from output `karpenter_sa_role`
+#                                                        (packages/core/argocd/infra_facts.go), and refuses
+#                                                        to render Karpenter when that output is empty (#6559).
+#
+# Every role is matched with `StringEquals`, so a subject is a literal ServiceAccount, never a pattern.
+# checks_irsa_subjects.tftest.hcl pins this map exactly, refuses any `*` or `?` in it, and refuses an
+# IRSA module in this file that takes its subjects from anywhere else or matches with `StringLike`.
+# Adding a role means adding its entry here AND saying above how a pod reaches it.
+locals {
+  irsa_service_accounts = {
+    rds_iam_auth         = ["default:alethia-app"]
+    fluentbit_cloudwatch = ["fluent-bit:fluent-bit"]
+    karpenter            = ["${local.karpenter_namespace}:karpenter"]
+    ecr_build            = ["${local.ecr_build_namespace}:${local.ecr_build_service_account}"]
+  }
+}
+
 ##########################
 #IRSA for RDS IAM Auth   #
 ##########################
@@ -68,7 +106,7 @@ module "rds_iam_auth" {
   oidc_providers = {
     main = {
       provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
-      namespace_service_accounts = ["default:alethia-app"]
+      namespace_service_accounts = local.irsa_service_accounts.rds_iam_auth
     }
   }
 }
@@ -119,54 +157,6 @@ EOT
 }
 
 
-##########################
-#IRSA for Alethia agent   #
-##########################
-module "irsa_alethia_agent" {
-
-  source = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  # No cluster, no OIDC provider to federate to — see the note on module.rds_iam_auth (#1772).
-  count   = var.provision_eks ? 1 : 0
-  version = "5.34.0"
-
-  assume_role_condition_test = "StringLike"
-  create_role                = true
-  role_name                  = "irsa-alethia-${local.eks_name}"
-  role_policy_arns = {
-    alethia_agent_policy = one(aws_iam_policy.irsa_alethia_agent[*].arn)
-  }
-  oidc_providers = {
-    main = {
-      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
-      namespace_service_accounts = ["*:*"]
-    }
-  }
-}
-
-resource "aws_iam_policy" "irsa_alethia_agent" {
-  # Same count as the role that consumes it (above) — a policy outliving its only consumer is an
-  # orphan nothing detaches. Same pairing as aws_iam_policy.rds_iam_auth (#1772).
-  count = var.provision_eks ? 1 : 0
-
-  name_prefix = "irsa_alethia_agent"
-  description = "Policy for ServiceAccounts allowing calls to AWS metering API for cluster ${local.eks_name}"
-  policy      = <<EOT
-{
-    "Statement": [
-        {
-            "Action": [
-                "aws-marketplace:RegisterUsage",
-                "aws-marketplace:MeterUsage"
-            ],
-            "Effect": "Allow",
-            "Resource": "*"
-        }
-    ],
-    "Version": "2012-10-17"
-}
-EOT
-}
-
 #############################################
 #IRSA for fluent-bit access to cloudwatch   #
 #############################################
@@ -177,7 +167,7 @@ module "irsa_fluentbit_cloudwatch" {
   count   = var.provision_eks ? 1 : 0
   version = "5.34.0"
 
-  assume_role_condition_test = "StringLike"
+  assume_role_condition_test = "StringEquals"
   create_role                = true
   role_name                  = "irsa-fluentbit-cloudwatch-${local.eks_name}"
   role_policy_arns = {
@@ -186,7 +176,7 @@ module "irsa_fluentbit_cloudwatch" {
   oidc_providers = {
     main = {
       provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
-      namespace_service_accounts = ["fluent-bit:fluent-bit"]
+      namespace_service_accounts = local.irsa_service_accounts.fluentbit_cloudwatch
     }
   }
 }
@@ -321,89 +311,11 @@ module "irsa_karpenter" {
   oidc_providers = {
     main = {
       provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
-      namespace_service_accounts = ["${local.karpenter_namespace}:karpenter"]
+      namespace_service_accounts = local.irsa_service_accounts.karpenter
     }
   }
 }
 
-##########################
-#IRSA for AI Bedrock   #
-##########################
-module "irsa_ai_bedrock" {
-
-  source = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  # No cluster, no OIDC provider to federate to — see the note on module.rds_iam_auth (#1772).
-  count   = var.provision_eks ? 1 : 0
-  version = "5.34.0"
-
-  assume_role_condition_test = "StringLike"
-  create_role                = true
-  role_name                  = "ai-bedrock-${local.eks_name}"
-  role_policy_arns = {
-    aws_managed_policy            = "arn:aws:iam::aws:policy/AmazonBedrockFullAccess",
-    irsa_ai_bedrock_custom_policy = one(aws_iam_policy.irsa_ai_bedrock_custom[*].arn)
-    irsa_ai_bedrock_s3_policy     = one(aws_iam_policy.irsa_ai_bedrock_s3[*].arn)
-
-  }
-  oidc_providers = {
-    main = {
-      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
-      namespace_service_accounts = ["*:*"]
-    }
-  }
-}
-resource "aws_iam_policy" "irsa_ai_bedrock_custom" {
-  # Same count as the role that consumes it (above) — an orphan otherwise (#1772).
-  count = var.provision_eks ? 1 : 0
-
-  name_prefix = "irsa_ai_bedrock_custom"
-  description = "Policy for ServiceAccounts allowing invoking bedrock model"
-  policy      = <<EOT
-  {
-    "Statement": [
-        {
-             "Action": [
-                "bedrock:InvokeModel",
-                "bedrock:InvokeModelWithResponseStream"
-            ],
-            "Effect": "Allow",
-            "Resource": "arn:aws:bedrock:${var.region}:${var.aws_account_id}:*/*"
-        }
-    ],
-    "Version": "2012-10-17"
-  }
- EOT
-}
-resource "aws_iam_policy" "irsa_ai_bedrock_s3" {
-  # Same count as the role that consumes it (above) — an orphan otherwise (#1772).
-  count = var.provision_eks ? 1 : 0
-
-  name_prefix = "irsa_ai_bedrock_s3"
-  description = "Policy for ServiceAccounts allowing S3 bucket access"
-  policy      = <<EOT
-  {
-    "Statement": [
-		{
-			"Effect": "Allow",
-			"Action": [
-				"s3:ListBucket"
-			],
-			"Resource": "arn:aws:s3:::*"
-		},
-		{
-			"Effect": "Allow",
-			"Action": [
-				"s3:GetObject",
-				"s3:PutObject"
-			],
-			"Resource": "arn:aws:s3:::*/*"
-		}
-	],
-    "Version": "2012-10-17"
-  }
- EOT  
-
-}
 #############################################
 #IRSA for in-cluster image builds (W2)      #
 #############################################
@@ -474,31 +386,7 @@ module "irsa_ecr_build" {
   oidc_providers = {
     main = {
       provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
-      namespace_service_accounts = ["${local.ecr_build_namespace}:${local.ecr_build_service_account}"]
-    }
-  }
-}
-
-##########################
-#IRSA for S3 bucket   #
-##########################
-module "s3_bucket_irsa_role" {
-
-  source = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  # No cluster, no OIDC provider to federate to — see the note on module.rds_iam_auth (#1772).
-  count   = var.provision_eks ? 1 : 0
-  version = "5.34.0"
-
-  assume_role_condition_test = "StringLike"
-  create_role                = true
-  role_name                  = "s3-bucket-${local.eks_name}"
-  role_policy_arns = {
-    aws_managed_policy = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
-  }
-  oidc_providers = {
-    main = {
-      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
-      namespace_service_accounts = ["*:*"]
+      namespace_service_accounts = local.irsa_service_accounts.ecr_build
     }
   }
 }

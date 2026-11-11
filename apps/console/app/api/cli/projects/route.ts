@@ -94,15 +94,23 @@ export async function POST(req: Request) {
 
 	const parsed = createProjectBody.safeParse(await req.json().catch(() => null));
 	if (!parsed.success) {
-		// The two node-shape refusals carry a sentence the caller can act on ("pass one"); every other
-		// failure keeps the generic message, as before.
-		const refusal = parsed.error.issues.find(
+		// The node-shape refusals and the environment-matrix refusals (a reserved or shared placement
+		// namespace, #6551; a name the console would shadow) carry a sentence the caller can act on;
+		// every other failure keeps the generic message, as before.
+		const shapeRefusal = parsed.error.issues.find(
 			(i) =>
 				i.code === "custom" &&
 				(i.path[0] === "node_size" || i.path[0] === "instance_type"),
 		);
+		const envRefusal = parsed.error.issues.find(
+			(i) => i.code === "custom" && i.path[0] === "environments",
+		);
 		return NextResponse.json(
-			{ error: refusal?.message ?? "Invalid request body" },
+			{
+				error:
+					shapeRefusal?.message ??
+					(envRefusal ? `${envRefusal.path.join(".")}: ${envRefusal.message}` : "Invalid request body"),
+			},
 			{ status: 400 },
 		);
 	}

@@ -33,6 +33,18 @@ export const RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX = "preview-namespace-pre
 /** The top-level snapshot key {@link RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX} gates. */
 const PREVIEW_NAMESPACE_PREFIX_KEY = "preview_namespace_prefix";
 
+/**
+ * The runner reads the top-level `placement_host_namespaces` (#6551). Mirrors Go
+ * `types.RunnerCapabilityPlacementHostNamespaces`. Stripped, never refused: a runner that reads it
+ * refuses a namespace deploy WITHOUT it, while an older runner never checked a placement namespace
+ * against the host, so it deploys exactly as it did. The attach-time check in the console
+ * (lib/validations/placement-namespace.ts) applies whichever runner claims the job.
+ */
+export const RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES = "placement-host-namespaces";
+
+/** The top-level snapshot key {@link RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES} gates. */
+const PLACEMENT_HOST_NAMESPACES_KEY = "placement_host_namespaces";
+
 /** The capabilities a runner advertised, from its header value (`null` when it sent none). */
 export function parseRunnerCapabilities(header: string | null): ReadonlySet<string> {
 	if (!header) return new Set();
@@ -104,23 +116,33 @@ export function refusalForRunner(
 /**
  * The snapshot to serve a runner with `capabilities`: `snapshot` itself when it can read every key,
  * otherwise a copy without the keys it cannot — `addons[].byo` and the top-level
- * `preview_namespace_prefix`, each gated by its own capability. Never mutates the input.
+ * `preview_namespace_prefix` and `placement_host_namespaces`, each gated by its own capability. Never mutates the input.
  */
 export function snapshotForRunner(
 	snapshot: Record<string, unknown>,
 	capabilities: ReadonlySet<string>,
 ): Record<string, unknown> {
-	return withoutByoMarker(withoutPreviewNamespacePrefix(snapshot, capabilities), capabilities);
+	return withoutByoMarker(
+		withoutTopLevelKey(
+			withoutTopLevelKey(snapshot, capabilities, RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX, PREVIEW_NAMESPACE_PREFIX_KEY),
+			capabilities,
+			RUNNER_CAPABILITY_PLACEMENT_HOST_NAMESPACES,
+			PLACEMENT_HOST_NAMESPACES_KEY,
+		),
+		capabilities,
+	);
 }
 
-/** `snapshot` without the top-level `preview_namespace_prefix` unless the runner reads it (#6494). */
-function withoutPreviewNamespacePrefix(
+/** `snapshot` without the top-level `key` unless the runner advertises `capability` (#6494, #6551). */
+function withoutTopLevelKey(
 	snapshot: Record<string, unknown>,
 	capabilities: ReadonlySet<string>,
+	capability: string,
+	key: string,
 ): Record<string, unknown> {
-	if (capabilities.has(RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX)) return snapshot;
-	if (!(PREVIEW_NAMESPACE_PREFIX_KEY in snapshot)) return snapshot;
-	return Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== PREVIEW_NAMESPACE_PREFIX_KEY));
+	if (capabilities.has(capability)) return snapshot;
+	if (!(key in snapshot)) return snapshot;
+	return Object.fromEntries(Object.entries(snapshot).filter(([k]) => k !== key));
 }
 
 /** `snapshot` without `addons[].byo` unless the runner reads it (#6445). */

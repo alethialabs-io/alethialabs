@@ -547,6 +547,11 @@ func TestValidateByoNamespace_RefusesEveryReservedNamespace(t *testing.T) {
 	for _, g := range list.Groups {
 		for _, ns := range g.Namespaces {
 			total++
+			if ByoNewlyReservedNamespaceReason(ns) != "" {
+				// #6551: reserved only by a byoAttached "warn" group — an attached chart there is
+				// REPORTED and kept (TestByoNewlyReserved_*), not refused.
+				continue
+			}
 			err := validateByoNamespace(ns)
 			if err == nil {
 				t.Errorf("group %s: namespace %q accepted; it is reserved for the platform", g.ID, ns)

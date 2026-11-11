@@ -65,10 +65,12 @@ func TestRunDestroyPlanNamespaceOwnsNoTofu(t *testing.T) {
 func TestRunDestroyRoutesNamespaceAwayFromTofu(t *testing.T) {
 	err := RunDestroy(context.Background(), DestroyParams{
 		ProjectConfig: &types.ProjectConfig{
-			ProjectName:      "p",
-			EnvironmentStage: types.EnvironmentStage("dev"),
-			PlacementMode:    types.PlacementModeNamespace,
-			Namespace:        "team-ns",
+			ProjectName:             "p",
+			EnvironmentStage:        types.EnvironmentStage("dev"),
+			PlacementMode:           types.PlacementModeNamespace,
+			Namespace:               "team-ns",
+			PlacementHostNamespaces: &[]string{},
+			EnvironmentID:           "env-1",
 		},
 		Provider:     "aws",
 		TemplatesDir: t.TempDir(),
@@ -102,10 +104,12 @@ func TestRunDestroyNamespaceValidatesTheSnapshotLikeDeployDoes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &types.ProjectConfig{
-				ProjectName:      "p",
-				EnvironmentStage: types.EnvironmentStage("dev"),
-				PlacementMode:    types.PlacementModeNamespace,
-				Namespace:        tc.ns,
+				ProjectName:             "p",
+				EnvironmentStage:        types.EnvironmentStage("dev"),
+				PlacementMode:           types.PlacementModeNamespace,
+				Namespace:               tc.ns,
+				PlacementHostNamespaces: &[]string{},
+				EnvironmentID:           "env-1",
 			}
 			cfg.Cluster.ClusterName = tc.cluster
 			err := RunDestroy(context.Background(), DestroyParams{
@@ -140,10 +144,12 @@ func TestRunNamespaceDestroyNeverReportsSuccessItCannotDeliver(t *testing.T) {
 	cancel()
 
 	cfg := &types.ProjectConfig{
-		ProjectName:      "p",
-		EnvironmentStage: types.EnvironmentStage("dev"),
-		PlacementMode:    types.PlacementModeNamespace,
-		Namespace:        "team-ns",
+		ProjectName:             "p",
+		EnvironmentStage:        types.EnvironmentStage("dev"),
+		PlacementMode:           types.PlacementModeNamespace,
+		Namespace:               "team-ns",
+		PlacementHostNamespaces: &[]string{},
+		EnvironmentID:           "env-1",
 	}
 	cfg.Cluster.ClusterName = "cluster-a"
 
@@ -170,7 +176,7 @@ func TestRunNamespaceDestroyFailsOpenOnAnUnactivatedCloud(t *testing.T) {
 	if namespaceRemintWired("zzz-unknown") {
 		t.Fatal("test premise broken: zzz-unknown must not be an activated cloud")
 	}
-	cfg := &types.ProjectConfig{ProjectName: "p", PlacementMode: types.PlacementModeNamespace, Namespace: "team-ns"}
+	cfg := &types.ProjectConfig{ProjectName: "p", PlacementMode: types.PlacementModeNamespace, Namespace: "team-ns", PlacementHostNamespaces: &[]string{}, EnvironmentID: "env-1"}
 	cfg.Cluster.ClusterName = "cluster-a"
 
 	if err := runNamespaceDestroy(context.Background(), provider, DestroyParams{
@@ -240,10 +246,12 @@ func TestRunNamespaceDestroyDeletesTheAppBeforeTheNamespace(t *testing.T) {
 
 	deprovisioned := 0
 	cfg := &types.ProjectConfig{
-		ProjectName:      "acme",
-		EnvironmentStage: types.EnvironmentStage("dev"),
-		PlacementMode:    types.PlacementModeNamespace,
-		Namespace:        "team-web",
+		ProjectName:             "acme",
+		EnvironmentStage:        types.EnvironmentStage("dev"),
+		PlacementMode:           types.PlacementModeNamespace,
+		Namespace:               "team-web",
+		PlacementHostNamespaces: &[]string{},
+		EnvironmentID:           "env-1",
 	}
 	cfg.Cluster.ClusterName = "acme-prod-cluster"
 	cfg.Repositories.AppsDestinationRepo = "https://github.com/acme/apps"
@@ -298,7 +306,7 @@ func TestRunNamespaceDestroyKeepsGoingAndStillReportsTheFailure(t *testing.T) {
 	}
 
 	deprovisioned := 0
-	cfg := &types.ProjectConfig{ProjectName: "acme", PlacementMode: types.PlacementModeNamespace, Namespace: "team-web"}
+	cfg := &types.ProjectConfig{ProjectName: "acme", PlacementMode: types.PlacementModeNamespace, Namespace: "team-web", PlacementHostNamespaces: &[]string{}, EnvironmentID: "env-1"}
 	cfg.Cluster.ClusterName = "acme-prod-cluster"
 	cfg.Repositories.AppsDestinationRepo = "https://github.com/acme/apps"
 
@@ -344,7 +352,7 @@ func TestRunNamespaceDestroyAttemptsEveryStepWhenEveryStepFails(t *testing.T) {
 	}
 
 	identityAttempts := 0
-	cfg := &types.ProjectConfig{ProjectName: "acme", PlacementMode: types.PlacementModeNamespace, Namespace: "team-web"}
+	cfg := &types.ProjectConfig{ProjectName: "acme", PlacementMode: types.PlacementModeNamespace, Namespace: "team-web", PlacementHostNamespaces: &[]string{}, EnvironmentID: "env-1"}
 	cfg.Cluster.ClusterName = "acme-prod-cluster"
 	cfg.Repositories.AppsDestinationRepo = "https://github.com/acme/apps"
 
@@ -379,7 +387,7 @@ func TestRunNamespaceDestroyAttemptsEveryStepWhenEveryStepFails(t *testing.T) {
 // later steps returned.
 func TestRunNamespaceDestroyRefusesWithoutKubectl(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // an empty directory: nothing is on PATH, including kubectl
-	cfg := &types.ProjectConfig{ProjectName: "acme", PlacementMode: types.PlacementModeNamespace, Namespace: "team-web"}
+	cfg := &types.ProjectConfig{ProjectName: "acme", PlacementMode: types.PlacementModeNamespace, Namespace: "team-web", PlacementHostNamespaces: &[]string{}, EnvironmentID: "env-1"}
 	cfg.Cluster.ClusterName = "acme-prod-cluster"
 
 	err := runNamespaceDestroy(context.Background(), fakeNamespaceProvider{}, DestroyParams{
@@ -405,7 +413,7 @@ func TestRunNamespaceDestroyFailsClosedWhenItCannotMintKubeAccess(t *testing.T) 
 		return nil
 	}
 
-	cfg := &types.ProjectConfig{ProjectName: "acme", PlacementMode: types.PlacementModeNamespace, Namespace: "team-web"}
+	cfg := &types.ProjectConfig{ProjectName: "acme", PlacementMode: types.PlacementModeNamespace, Namespace: "team-web", PlacementHostNamespaces: &[]string{}, EnvironmentID: "env-1"}
 	cfg.Cluster.ClusterName = "acme-prod-cluster"
 
 	err := runNamespaceDestroy(context.Background(), fakeNamespaceProvider{configureErr: errors.New("no credentials")}, DestroyParams{

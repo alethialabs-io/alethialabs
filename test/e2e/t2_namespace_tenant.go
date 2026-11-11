@@ -85,6 +85,12 @@ func buildNamespaceSnapshot(p namespaceTenantParams, ns string) map[string]any {
 		"namespace":         ns,
 		// The serving cluster is the shared Fabric's — the runner mints keyless access to it by name.
 		"cluster": map[string]any{"cluster_name": p.fabricClust},
+		// The host environment's own namespaces, as the console computes them (#6551). The runner
+		// refuses a namespace deploy without the key; the base deploy attaches no BYO chart, so none.
+		"placement_host_namespaces": []string{},
+		// The runner refuses a namespace it cannot prove is this environment's; the owner label it
+		// stamps and checks is this id (#6551).
+		"environment_id": "e2e-" + p.env + "-ns",
 	}
 	if p.appsRepo != "" {
 		snap["repositories"] = map[string]any{"apps_destination_repo": p.appsRepo}

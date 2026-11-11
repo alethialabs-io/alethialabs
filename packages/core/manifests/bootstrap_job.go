@@ -171,13 +171,18 @@ type bootstrapJobSpec struct {
 	InitContainers []bootstrapContainer
 	Main           bootstrapContainer
 	Volumes        []bootstrapVolume
+	// CAConfigMapYAML is the PreSync hook ConfigMap holding the CA set the apply container verifies
+	// the database server against (db_tls.go). It is rendered ahead of the Job's document.
+	CAConfigMapYAML string
 }
 
-// bootstrapVolume is one emptyDir scratch volume of the Job. Memory backs it with tmpfs, so what is
-// written there never reaches the node's disk and is gone when the pod's containers stop.
+// bootstrapVolume is one volume of the Job: an emptyDir scratch volume, or, when ConfigMap is set, that
+// ConfigMap (the database CA set). Memory backs an emptyDir with tmpfs, so what is written there never
+// reaches the node's disk and is gone when the pod's containers stop.
 type bootstrapVolume struct {
-	Name   string
-	Memory bool
+	Name      string
+	Memory    bool
+	ConfigMap string
 }
 
 // JobDeletePolicy is the Job's ArgoCD hook-delete-policy, exposed to the template so the rendered
@@ -234,22 +239,32 @@ func RenderBootstrapJob(opts Options, t types.ServiceBindingTarget) (BootstrapJo
 	}
 	name := BootstrapJobName(t)
 
-	var spec bootstrapJobSpec
-	var adminSecret string
-	var err error
 	switch opts.Provider {
-	case string(types.CloudProviderAws):
-		spec, adminSecret, err = awsBootstrapSpec(opts, t, name, ns)
-	case string(types.CloudProviderGcp):
-		spec, adminSecret, err = gcpBootstrapSpec(opts, t, name, ns)
-	case string(types.CloudProviderAzure):
-		spec, err = azureBootstrapSpec(opts, t, name, ns)
+	case string(types.CloudProviderAws), string(types.CloudProviderGcp), string(types.CloudProviderAzure):
 	default:
 		return BootstrapJobResult{}, fmt.Errorf("keyless bootstrap is not supported for provider %q", opts.Provider)
+	}
+	// How the apply container verifies the server it sends the admin credential to (db_tls.go). A
+	// cloud whose verification cannot be resolved gets no Job at all, never an unverified one.
+	tls, err := dbTLSFor(opts.Provider, opts.Outputs)
+	if err != nil {
+		return BootstrapJobResult{}, fmt.Errorf("keyless bootstrap Job: %w", err)
+	}
+
+	var spec bootstrapJobSpec
+	var adminSecret string
+	switch opts.Provider {
+	case string(types.CloudProviderAws):
+		spec, adminSecret, err = awsBootstrapSpec(opts, t, name, ns, tls)
+	case string(types.CloudProviderGcp):
+		spec, adminSecret, err = gcpBootstrapSpec(opts, t, name, ns, tls)
+	default: // azure, the only provider left after the switch above
+		spec, err = azureBootstrapSpec(opts, t, name, ns, tls)
 	}
 	if err != nil {
 		return BootstrapJobResult{}, err
 	}
+	attachDBCA(&spec, tls)
 	job, err := renderBootstrapJobYAML(spec)
 	if err != nil {
 		return BootstrapJobResult{}, err
@@ -287,7 +302,7 @@ func renderSQLInit(opts Options, extraArgs []string, dbName string) bootstrapCon
 }
 
 // awsBootstrapSpec: connect as the RDS master (ExternalSecret-materialized) over the in-VPC endpoint.
-func awsBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns string) (bootstrapJobSpec, string, error) {
+func awsBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns string, tls dbTLS) (bootstrapJobSpec, string, error) {
 	host := opts.Outputs[endpointOutputKey(string(types.CloudProviderAws), "database")]
 	if host == "" {
 		return bootstrapJobSpec{}, "", fmt.Errorf("no rds_cluster_endpoint output for the keyless bootstrap Job")
@@ -310,10 +325,10 @@ func awsBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 	// Deliberately not an Entra-style minted admin token: an IAM-token admin would itself have to be a
 	// pre-existing plugin user, and the master user is precisely who creates those (#1507).
 	sqlInit := renderSQLInit(opts, nil, dbName) // AWS grants the fixed alethia_app role — no extra args
-	applySQL := psqlContainer(host, dbName, "", adminSecretName, false)
+	applySQL := psqlContainer(host, dbName, "", adminSecretName, false, tls)
 	if dbEngineForTarget(opts, t) == engineMySQL {
 		sqlInit = renderSQLInit(opts, []string{"--engine", engineMySQL}, dbName)
-		applySQL = mysqlContainer(host, dbName, "", adminSecretName, false)
+		applySQL = mysqlContainer(host, dbName, "", adminSecretName, false, tls)
 	}
 	spec := bootstrapJobSpec{
 		Name:           name,
@@ -327,7 +342,7 @@ func awsBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 
 // gcpBootstrapSpec: connect as the BUILT_IN default user (cloudsqlsuperuser, ExternalSecret-materialized)
 // over the instance private IP; grant the app's tofu-created CLOUD_IAM_SERVICE_ACCOUNT user.
-func gcpBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns string) (bootstrapJobSpec, string, error) {
+func gcpBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns string, tls dbTLS) (bootstrapJobSpec, string, error) {
 	host := opts.Outputs[endpointOutputKey(string(types.CloudProviderGcp), "database")]
 	if host == "" {
 		return bootstrapJobSpec{}, "", fmt.Errorf("no cloud_sql_ip output for the keyless bootstrap Job")
@@ -354,10 +369,10 @@ func gcpBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 	// lowercase SA local part, because Cloud SQL MySQL truncates the @ and domain (#1505). The admin
 	// credential is the same built-in user from the ExternalSecret either way.
 	sqlInit := renderSQLInit(opts, []string{"--app-user", appUser}, dbName)
-	applySQL := psqlContainer(host, dbName, "", adminSecretName, false)
+	applySQL := psqlContainer(host, dbName, "", adminSecretName, false, tls)
 	if dbEngineForTarget(opts, t) == engineMySQL {
 		sqlInit = renderSQLInit(opts, []string{"--engine", engineMySQL, "--app-user", appUser}, dbName)
-		applySQL = mysqlContainer(host, dbName, "", adminSecretName, false)
+		applySQL = mysqlContainer(host, dbName, "", adminSecretName, false, tls)
 	}
 	spec := bootstrapJobSpec{
 		Name:           name,
@@ -399,7 +414,7 @@ func dbEngineForName(dbs []types.ProjectDatabaseConfig, name string) string {
 //   - Postgres: bind the app role to the app UAMI's OBJECT id (--app-oid → azure_db_app_oid); psql.
 //   - MySQL:    CREATE AADUSER on the app UAMI's CLIENT id (--engine mysql --app-client-id →
 //     azure_db_client_id); the mysql client with the cleartext-password plugin.
-func azureBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns string) (bootstrapJobSpec, error) {
+func azureBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns string, tls dbTLS) (bootstrapJobSpec, error) {
 	host := opts.Outputs[endpointOutputKey(string(types.CloudProviderAzure), "database")]
 	if host == "" {
 		return bootstrapJobSpec{}, fmt.Errorf("no azure_db_fqdn output for the keyless bootstrap Job")
@@ -426,14 +441,14 @@ func azureBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns str
 			return bootstrapJobSpec{}, fmt.Errorf("no azure_db_client_id output — cannot bind the app's Entra login for keyless MySQL")
 		}
 		sqlInit = renderSQLInit(opts, []string{"--engine", engineMySQL, "--app-client-id", appClientID}, dbName)
-		applySQL = mysqlContainer(host, dbName, adminUser, "", true)
+		applySQL = mysqlContainer(host, dbName, adminUser, "", true, tls)
 	default: // postgres
 		appOID := opts.Outputs["azure_db_app_oid"]
 		if appOID == "" {
 			return bootstrapJobSpec{}, fmt.Errorf("no azure_db_app_oid output — cannot bind the app's Entra login")
 		}
 		sqlInit = renderSQLInit(opts, []string{"--app-oid", appOID}, dbName)
-		applySQL = psqlContainer(host, dbName, adminUser, "", true)
+		applySQL = psqlContainer(host, dbName, adminUser, "", true, tls)
 	}
 
 	// Init 1: mint the admin Entra token (once) via the Job's federated Workload Identity. The
@@ -477,25 +492,28 @@ func azureBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns str
 
 // psqlContainer builds the apply-sql container. AWS/GCP read PGUSER + PGPASSWORD from the admin
 // ExternalSecret (adminSecretName); Azure passes a plain PGUSER and reads the token file into
-// PGPASSWORD via a tiny shell wrapper (fromToken=true). SSL is always required.
-func psqlContainer(host, dbName, plainUser, adminSecretName string, fromToken bool) bootstrapContainer {
+// PGPASSWORD (fromToken=true). TLS is always verified as tls says (PGSSLMODE verify-full or verify-ca,
+// PGSSLROOTCERT the mounted CA set), and psql runs under run_db_client, which names a TLS failure.
+func psqlContainer(host, dbName, plainUser, adminSecretName string, fromToken bool, tls dbTLS) bootstrapContainer {
 	env := []bootstrapEnv{
 		{Name: "PGHOST", Value: host},
 		{Name: "PGPORT", Value: "5432"},
 		{Name: "PGDATABASE", Value: dbName},
-		{Name: "PGSSLMODE", Value: "require"},
+		{Name: "PGSSLMODE", Value: tls.PGSSLMode()},
+		{Name: "PGSSLROOTCERT", Value: dbCAFile},
 		{Name: "PGCONNECT_TIMEOUT", Value: "30"},
+		{Name: dbTLSReasonEnv, Value: tls.dbTLSFailureReason()},
 	}
 	c := bootstrapContainer{
 		Name:   "apply-sql",
 		Image:  postgresClientImage,
 		Mounts: []VolumeMount{sqlMountRO()},
 	}
+	script := dbTLSShellPrelude + "exec 3>&1\n"
 	if fromToken {
 		// Azure: username is a plain value; the password is the minted Entra token on the shared file.
 		env = append(env, bootstrapEnv{Name: "PGUSER", Value: plainUser})
-		c.Command = []string{"/bin/sh", "-c",
-			`PGPASSWORD="$(cat ` + bootstrapTokenFile + `)" psql -v ON_ERROR_STOP=1 -f ` + bootstrapSQLFile}
+		script += `PGPASSWORD="$(cat ` + bootstrapTokenFile + `)"` + "\nexport PGPASSWORD\n"
 		c.Mounts = append(c.Mounts, tokenMountRO())
 	} else {
 		// AWS/GCP: both username and password come from the admin ExternalSecret.
@@ -503,15 +521,16 @@ func psqlContainer(host, dbName, plainUser, adminSecretName string, fromToken bo
 			bootstrapEnv{Name: "PGUSER", SecretName: adminSecretName, SecretKey: "username"},
 			bootstrapEnv{Name: "PGPASSWORD", SecretName: adminSecretName, SecretKey: "password"},
 		)
-		c.Command = []string{"psql", "-v", "ON_ERROR_STOP=1", "-f", bootstrapSQLFile}
 	}
+	c.Command = []string{"/bin/sh", "-c", script + "run_db_client psql -v ON_ERROR_STOP=1 -f " + bootstrapSQLFile + "\n"}
 	c.Env = env
 	return c
 }
 
 // mysqlContainer builds the apply-sql container, mirroring psqlContainer's two-mode shape. host/port/db
-// are passed as env VALUES (YAML-quoted, so no manifest-string injection) and TLS is always required.
-// The admin credential differs by cloud:
+// are passed as env VALUES (YAML-quoted, so no manifest-string injection) and TLS is always verified
+// as tls says (--ssl-mode VERIFY_IDENTITY or VERIFY_CA, --ssl-ca the mounted CA set). The admin
+// credential differs by cloud:
 //
 //   - Azure (fromToken=true): no admin password exists, so the dedicated Entra identity's MINTED TOKEN is
 //     read from the shared file into MYSQL_PWD. Azure MySQL's Entra login sends that token as the
@@ -522,23 +541,26 @@ func psqlContainer(host, dbName, plainUser, adminSecretName string, fromToken bo
 //     tell the client to hand a native password to the server in the clear on any server that asked.
 //
 // The username always arrives via env rather than the args, so a shell wrapper is needed in both modes
-// (the mysql client reads MYSQL_PWD/MYSQL_HOST/MYSQL_TCP_PORT natively, but not the user).
-func mysqlContainer(host, dbName, plainUser, adminSecretName string, fromToken bool) bootstrapContainer {
+// (the mysql client reads MYSQL_PWD/MYSQL_HOST/MYSQL_TCP_PORT natively, but not the user). The client
+// runs under run_db_client, which names a TLS failure.
+func mysqlContainer(host, dbName, plainUser, adminSecretName string, fromToken bool, tls dbTLS) bootstrapContainer {
 	env := []bootstrapEnv{
 		{Name: "MYSQL_HOST", Value: host},       // read natively by the mysql client
 		{Name: "MYSQL_TCP_PORT", Value: "3306"}, // read natively by the mysql client
 		{Name: "BOOTSTRAP_DB_NAME", Value: dbName},
+		{Name: dbTLSReasonEnv, Value: tls.dbTLSFailureReason()},
 	}
 	c := bootstrapContainer{
 		Name:   "apply-sql",
 		Image:  mysqlClientImage,
 		Mounts: []VolumeMount{sqlMountRO()},
 	}
+	script := dbTLSShellPrelude + "exec 3>&1\n"
+	client := `run_db_client mysql --user="$BOOTSTRAP_DB_USER" ` + tls.MySQLFlags()
 	if fromToken {
 		env = append(env, bootstrapEnv{Name: "BOOTSTRAP_DB_USER", Value: plainUser})
-		c.Command = []string{"/bin/sh", "-c",
-			`MYSQL_PWD="$(cat ` + bootstrapTokenFile + `)" mysql --user="$BOOTSTRAP_DB_USER" ` +
-				`--ssl-mode=REQUIRED --enable-cleartext-plugin "$BOOTSTRAP_DB_NAME" < ` + bootstrapSQLFile}
+		script += `MYSQL_PWD="$(cat ` + bootstrapTokenFile + `)"` + "\nexport MYSQL_PWD\n"
+		client += " --enable-cleartext-plugin"
 		c.Mounts = append(c.Mounts, tokenMountRO())
 	} else {
 		// MYSQL_PWD is read natively by the client, so the password never appears in argv (where it
@@ -547,12 +569,40 @@ func mysqlContainer(host, dbName, plainUser, adminSecretName string, fromToken b
 			bootstrapEnv{Name: "BOOTSTRAP_DB_USER", SecretName: adminSecretName, SecretKey: "username"},
 			bootstrapEnv{Name: "MYSQL_PWD", SecretName: adminSecretName, SecretKey: "password"},
 		)
-		c.Command = []string{"/bin/sh", "-c",
-			`mysql --user="$BOOTSTRAP_DB_USER" --ssl-mode=REQUIRED "$BOOTSTRAP_DB_NAME" < ` + bootstrapSQLFile}
 	}
+	c.Command = []string{"/bin/sh", "-c", script + client + ` "$BOOTSTRAP_DB_NAME" < ` + bootstrapSQLFile + "\n"}
 	c.Env = env
 	return c
 }
+
+// attachDBCA gives a resolved spec its CA set: the ConfigMap (a PreSync hook one wave before the Job,
+// so it exists when the pod mounts it), the volume, and the read-only mount on the apply container.
+// The ConfigMap holds only public CA certificates, so unlike the admin credential it is not removed
+// when the phase ends: BeforeHookCreation replaces it on the next sync, and a failed Job kept for its
+// logs can still be read alongside the CA set it verified against.
+//
+// Left behind on purpose when its binding is removed. ArgoCD does not prune hook resources, so once
+// no service binds the database nothing re-renders the hook and the ConfigMap stays in the app
+// namespace. That is harmless, so it gets no reaper: it holds public CA certificates only (the same
+// files the vendors publish), it carries no credential and grants nothing, and nothing reads it but
+// a bootstrap Job that mounts it by name, which a re-added binding re-renders and replaces. The
+// stranded-hook reaper (BootstrapOnlyLabelKey) is for credential-bearing hooks; this one does not
+// carry that label, so it is never mistaken for one.
+func attachDBCA(spec *bootstrapJobSpec, tls dbTLS) {
+	cm := dbCAConfigMapName(spec.Name)
+	spec.CAConfigMapYAML = renderDBCAConfigMap(cm, spec.Namespace,
+		map[string]string{"app.kubernetes.io/name": spec.Name, "app.kubernetes.io/managed-by": "alethia"},
+		map[string]string{
+			"argocd.argoproj.io/hook":               BootstrapHookPhase,
+			"argocd.argoproj.io/hook-delete-policy": dbCAHookDeletePolicy,
+			"argocd.argoproj.io/sync-wave":          "-1",
+		}, tls)
+	spec.Volumes = append(spec.Volumes, bootstrapVolume{Name: dbCAVolume, ConfigMap: cm})
+	spec.Main.Mounts = append(spec.Main.Mounts, VolumeMount{Name: dbCAVolume, MountPath: dbCADir, ReadOnly: true})
+}
+
+// dbCAHookDeletePolicy is the CA ConfigMap's hook delete policy. See attachDBCA.
+const dbCAHookDeletePolicy = "BeforeHookCreation"
 
 // renderAdminExternalSecret materializes the Job's admin credentials (username + password) from the
 // cloud's provisioned admin secret into a k8s Secret (adminSecretName) via the provider's
@@ -765,7 +815,10 @@ spec:
       volumes:
         {{- range .Volumes }}
         - name: {{ .Name }}
-          {{- if .Memory }}
+          {{- if .ConfigMap }}
+          configMap:
+            name: {{ .ConfigMap }}
+          {{- else if .Memory }}
           emptyDir:
             medium: Memory
           {{- else }}
@@ -781,5 +834,9 @@ func renderBootstrapJobYAML(spec bootstrapJobSpec) (string, error) {
 	if err := bootstrapJobTmpl.Execute(&buf, spec); err != nil {
 		return "", fmt.Errorf("render bootstrap job %s: %w", spec.Name, err)
 	}
-	return strings.TrimSpace(buf.String()) + "\n", nil
+	job := strings.TrimSpace(buf.String()) + "\n"
+	if spec.CAConfigMapYAML == "" {
+		return job, nil
+	}
+	return spec.CAConfigMapYAML + "---\n" + job, nil
 }

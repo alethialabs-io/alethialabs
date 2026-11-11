@@ -25,6 +25,9 @@ func appsPathTestConfig(mode types.PlacementMode) *types.ProjectConfig {
 	}
 	vc.Cluster.ClusterName = "acme-prod-cluster"
 	vc.Repositories.AppsDestinationRepo = "https://github.com/acme/manifests"
+	// The console sends the host's namespaces for a namespace placement (#6551); none here.
+	vc.PlacementHostNamespaces = &[]string{}
+	vc.EnvironmentID = "env-1"
 	return vc
 }
 

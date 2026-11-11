@@ -139,6 +139,14 @@ export const addOnFieldSchema = z.union([
 	}),
 ]);
 
+/** Why a catalogue chart version is a security release — shown beside the update offer. */
+export interface AddOnSecurityRelease {
+	/** One sentence for the person deciding whether to move: what the release fixes. */
+	summary: string;
+	/** The upstream advisory or release notes the sentence is drawn from. */
+	advisoryUrl: string;
+}
+
 /**
  * A catalog entry: a curated OSS Helm chart plus the small set of user-tunable knobs the
  * marketplace surfaces. `configSchema` validates the knobs; `toValues` maps the parsed knobs
@@ -160,6 +168,14 @@ export interface AddOnDef<Schema extends z.ZodTypeAny = z.ZodTypeAny> {
 	chart: string;
 	/** Pinned chart version (the install default; a row may override it). */
 	version: string;
+	/**
+	 * Set when `version` is a SECURITY release: every older version of this chart carries a fix
+	 * it does not (#6537). It changes nothing about what is installed. A bump reaches only the
+	 * managed, unpinned installs on their next deploy; a pinned install keeps its pin and a GitOps
+	 * install keeps what its repo says, because both are the user's decision. What this marker
+	 * changes is how loudly those installs are TOLD: `lib/addons/update-notice.ts` reads it.
+	 */
+	securityRelease?: AddOnSecurityRelease;
 	/** Default install namespace. */
 	namespace: string;
 	/** Base Helm values always applied, before the user knobs are merged in. */

@@ -34,6 +34,7 @@ import type {
 	AddOnField,
 	AddOnIcon,
 	AddOnRequirement,
+	AddOnSecurityRelease,
 } from "@/lib/addons/types";
 import type { AddOnValues } from "@/types/jsonb.types";
 
@@ -63,6 +64,8 @@ export interface AddonMarketItem {
 	license: string;
 	chart: string;
 	version: string;
+	/** Set when `version` is a security release (#6537) — drives the update offer's prominence. */
+	securityRelease?: AddOnSecurityRelease | null;
 	namespace: string;
 	requires: AddOnRequirement[];
 	fields: AddOnField[];

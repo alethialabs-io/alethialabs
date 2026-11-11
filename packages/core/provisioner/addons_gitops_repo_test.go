@@ -83,7 +83,7 @@ func TestWriteAddOnGitOps_SeedPruneAndSeedOnce(t *testing.T) {
 			vc.AddOns = tc.addons
 
 			var out, errb bytes.Buffer
-			if err := writeAddOnGitOps(t.Context(), vc, "tok", labels, &out, &errb); err != nil {
+			if _, err := writeAddOnGitOps(t.Context(), vc, "tok", labels, &out, &errb); err != nil {
 				t.Fatalf("writeAddOnGitOps: %v", err)
 			}
 
@@ -114,7 +114,7 @@ func TestWriteAddOnGitOps_SeededManifestCarriesLabels(t *testing.T) {
 	vc.AddOns = []types.AddOnInstall{gitopsAddOn("tempo")}
 
 	var out, errb bytes.Buffer
-	if err := writeAddOnGitOps(t.Context(), vc, "tok",
+	if _, err := writeAddOnGitOps(t.Context(), vc, "tok",
 		map[string]string{"alethia.io/environment-id": "env-9"}, &out, &errb); err != nil {
 		t.Fatalf("writeAddOnGitOps: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestWriteAddOnGitOps_CloneFailureIsReported(t *testing.T) {
 	vc.AddOns = []types.AddOnInstall{gitopsAddOn("loki")}
 
 	var out, errb bytes.Buffer
-	err := writeAddOnGitOps(t.Context(), vc, "tok", nil, &out, &errb)
+	_, err := writeAddOnGitOps(t.Context(), vc, "tok", nil, &out, &errb)
 	if err == nil {
 		t.Fatal("expected a clone error for an unreachable apps repo")
 	}

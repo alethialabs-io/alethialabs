@@ -65,6 +65,12 @@ func runNamespaceDestroy(ctx context.Context, provider cloud.CloudProvider, para
 	if ns == "" || !isDNS1123Label(ns) {
 		return fmt.Errorf("namespace teardown: destination namespace %q is not a valid DNS-1123 label", ns)
 	}
+	// #6551: the teardown deletes the Namespace object itself. A reserved namespace is shared with the
+	// platform or the host environment, so deleting it would take their workloads with it. Refused
+	// before kube access is minted, so nothing is deleted.
+	if err := placementNamespaceRefusal(vc, ns, "teardown"); err != nil {
+		return err
+	}
 
 	fmt.Fprintf(stdout, "Namespace teardown: removing namespace %q from shared cluster %q (provider: %s) — no tofu; this env owns no infrastructure state.\n", ns, clusterName, provider.Name())
 
@@ -77,6 +83,12 @@ func runNamespaceDestroy(ctx context.Context, provider cloud.CloudProvider, para
 	// could not perform is the precise defect this function exists to remove.
 	if err := mintNamespaceKubeAccess(ctx, provider, params.KubeConn, params.TalosKubeconfig, vc, params.Provider, clusterName, stdout); err != nil {
 		return fmt.Errorf("namespace teardown: kubeconfig mint failed for cluster %q — cannot delete namespace %q: %w", clusterName, ns, err)
+	}
+
+	// #6551: the teardown deletes the Namespace object, so it must be this environment's — refused,
+	// before the first delete, when it exists without this environment's owner label.
+	if err := namespaceOwnershipRefusal(vc, ns, "teardown"); err != nil {
+		return err
 	}
 
 	// Render the SAME manifests the deploy applied, so the delete targets exactly the resources it
