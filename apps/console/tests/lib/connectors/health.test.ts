@@ -15,6 +15,7 @@ vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
 import { markFailed, markHealthy } from "@/lib/connectors/health";
 import { getServiceDb } from "@/lib/db";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { log } from "@/lib/observability/log";
 
 /**
  * Builds a thenable drizzle-ish chain: every builder returns the chain, and awaiting
@@ -121,7 +122,7 @@ describe("markFailed", () => {
 	});
 
 	it("swallows DB errors and never emits (best-effort)", async () => {
-		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const spy = vi.spyOn(log, "error").mockImplementation(() => {});
 		vi.mocked(getServiceDb).mockImplementation(() => {
 			throw new Error("db down");
 		});
@@ -131,7 +132,10 @@ describe("markFailed", () => {
 		).resolves.toBeUndefined();
 
 		expect(emitAlertEventSafe).not.toHaveBeenCalled();
-		expect(spy).toHaveBeenCalled();
+		expect(spy).toHaveBeenCalledWith("[connector-health] markFailed failed for provider", {
+			provider: "azure",
+			err: expect.any(Error),
+		});
 		spy.mockRestore();
 	});
 });
@@ -151,7 +155,7 @@ describe("markHealthy", () => {
 	});
 
 	it("swallows DB errors (best-effort)", async () => {
-		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const spy = vi.spyOn(log, "error").mockImplementation(() => {});
 		vi.mocked(getServiceDb).mockImplementation(() => {
 			throw new Error("db down");
 		});
@@ -159,7 +163,10 @@ describe("markHealthy", () => {
 		await expect(
 			markHealthy(scope, "cloud_credential" as never, "aws"),
 		).resolves.toBeUndefined();
-		expect(spy).toHaveBeenCalled();
+		expect(spy).toHaveBeenCalledWith("[connector-health] markHealthy failed for provider", {
+			provider: "aws",
+			err: expect.any(Error),
+		});
 		spy.mockRestore();
 	});
 });

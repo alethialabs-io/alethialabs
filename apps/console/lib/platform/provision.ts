@@ -17,6 +17,7 @@ import { getServiceDb } from "@/lib/db";
 import { invitation, member, organization, user } from "@/lib/db/schema";
 import { RESERVED_SLUGS } from "@/lib/routing";
 import { orgSlugShapeRefusal } from "@repo/org-slug";
+import { log } from "@/lib/observability/log";
 
 /** Days an operator-issued owner invitation stays valid. */
 const INVITE_TTL_DAYS = 14;
@@ -138,7 +139,7 @@ export async function provisionOrg(
 			expiresInDays: INVITE_TTL_DAYS,
 		});
 	} catch (err) {
-		console.error(`[platform] owner invite email failed for ${orgId}:`, err);
+		log.error(`[platform] owner invite email failed for ${orgId}`, { org_id: orgId, err });
 	}
 
 	return { orgId, invitationId: invite.id };
@@ -184,7 +185,7 @@ export async function setOrgPlan(input: SetOrgPlanInput): Promise<void> {
 					isTrial: input.status === "trialing",
 				});
 			} catch (err) {
-				console.error(`[platform] plan-welcome email failed for ${input.orgId}:`, err);
+				log.error(`[platform] plan-welcome email failed for ${input.orgId}`, { org_id: input.orgId, err });
 			}
 		}
 	}

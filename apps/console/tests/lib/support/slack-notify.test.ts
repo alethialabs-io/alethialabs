@@ -12,6 +12,7 @@ import {
 	slackCaseCreated,
 	slackCaseReplied,
 } from "@/lib/support/slack-notify";
+import { log } from "@/lib/observability/log";
 
 const ORIGINAL_WEBHOOK = process.env.SUPPORT_SLACK_WEBHOOK_URL;
 
@@ -63,9 +64,11 @@ describe("notifySupportSlack", () => {
 
 	it("never throws when fetch rejects", async () => {
 		process.env.SUPPORT_SLACK_WEBHOOK_URL = "https://hooks.slack.test/abc";
-		vi.spyOn(global, "fetch").mockRejectedValue(new Error("network down"));
-		vi.spyOn(console, "warn").mockImplementation(() => {});
+		const down = new Error("network down");
+		vi.spyOn(global, "fetch").mockRejectedValue(down);
+		const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
 		await expect(notifySupportSlack(payload)).resolves.toBeUndefined();
+		expect(warn).toHaveBeenCalledWith("[support] Slack notify failed", { err: down });
 	});
 });
 

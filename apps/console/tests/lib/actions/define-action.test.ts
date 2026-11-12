@@ -13,6 +13,7 @@ import { defineAction } from "@/lib/actions/define-action";
 import { ActionRefusal, FieldRefusal } from "@/lib/actions/result";
 import { UnauthorizedError } from "@/lib/auth/errors";
 import { ForbiddenError } from "@/lib/authz/types";
+import { log } from "@/lib/observability/log";
 
 const rename = (run: () => Promise<string>) =>
 	defineAction({ input: z.object({ name: z.string().min(1, "Name is required").max(64) }), run });
@@ -67,13 +68,20 @@ describe("defineAction", () => {
 	});
 
 	it("never leaks an unexpected error's text; it returns a reference instead", async () => {
-		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const spy = vi.spyOn(log, "error").mockImplementation(() => {});
+		const failure = new Error("duplicate key value violates unique constraint projects_pkey");
 		const result = await rename(async () => {
-			throw new Error("duplicate key value violates unique constraint projects_pkey");
+			throw failure;
 		})({ name: "Acme" });
 		expect(result.ok).toBe(false);
 		expect(JSON.stringify(result)).not.toContain("projects_pkey");
 		expect(result).toMatchObject({ error: { kind: "unexpected", ref: expect.stringMatching(/^[0-9a-f]{8}$/) } });
+		// The operator's copy goes through the logger, keyed by the same ref the user was shown.
+		expect(spy).toHaveBeenCalledWith(expect.stringMatching(/^\[action\] unexpected error ref=/), {
+			ref: expect.any(String),
+			err: failure,
+		});
+		expect(result).toMatchObject({ error: { ref: spy.mock.calls[0]?.[1]?.ref } });
 		spy.mockRestore();
 	});
 

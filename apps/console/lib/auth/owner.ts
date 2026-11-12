@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { getInjectedActor } from "@/lib/authz/actor-context";
 import { UnauthorizedError } from "./errors";
 import { toViewer, type Viewer } from "./viewer";
+import { log } from "@/lib/observability/log";
 
 /**
  * Reads the current Better Auth session, tolerating a failed lookup. A stale/expired token that the
@@ -16,7 +17,7 @@ async function safeGetSession() {
 	try {
 		return await auth.api.getSession({ headers: await headers() });
 	} catch (error) {
-		console.error("[auth] session lookup failed:", error);
+		log.error("[auth] session lookup failed", { err: error });
 		return null;
 	}
 }
