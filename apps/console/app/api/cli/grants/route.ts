@@ -29,6 +29,7 @@ import {
 	cliGrantResponse,
 	cliGrantsResponse,
 } from "@/lib/validations/cli-contract";
+import { log } from "@/lib/observability/log";
 
 const VALID_KEYS: ReadonlySet<string> = new Set(PERMISSIONS.map((p) => p.key));
 
@@ -263,7 +264,7 @@ export async function POST(req: Request) {
 				roleId: input.role_id ?? null,
 				permissionKey: input.permission_key ?? null,
 			})
-			.catch((err) => console.error("[authz] grant tuple sync failed:", err));
+			.catch((err: unknown) => log.error("[authz] grant tuple sync failed", { err }));
 
 		emitAlertEventSafe(actor.orgId, "authz.grant.assign", {
 			title: `Grant assigned: ${input.effect} ${input.permission_key ?? "role"} on ${resourceType}`,

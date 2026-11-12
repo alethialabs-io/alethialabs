@@ -13,6 +13,7 @@ import { grants } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliOkResponse } from "@/lib/validations/cli-contract";
+import { log } from "@/lib/observability/log";
 
 /** Revokes an access grant (mirrors the revokeGrant action) and removes its PDP
  * tuples. Gated on `manage_members` of `member` + customRoles. */
@@ -59,7 +60,7 @@ export async function DELETE(
 		if (scope !== null) {
 			void getTupleSync()
 				.removeScopedGrant({ ...scope, roleId: g.role_id, permissionKey: g.permission_key })
-				.catch((err) => console.error("[authz] grant tuple removal failed:", err));
+				.catch((err: unknown) => log.error("[authz] grant tuple removal failed", { err }));
 		}
 
 		emitAlertEventSafe(actor.orgId, "authz.grant.revoke", {

@@ -14,6 +14,7 @@ import { getServiceDb } from "@/lib/db";
 import { supportCaseAttachments, supportCases } from "@/lib/db/schema";
 import { storage } from "@/lib/storage";
 import { eq } from "drizzle-orm";
+import { log } from "@/lib/observability/log";
 
 /** Max accepted attachment size (10 MiB). */
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -111,7 +112,7 @@ export async function POST(
 	} catch (uploadErr: unknown) {
 		const message =
 			uploadErr instanceof Error ? uploadErr.message : "Upload failed";
-		console.error("Support attachment upload error:", uploadErr);
+		log.error("Support attachment upload error", { err: uploadErr });
 		return NextResponse.json(
 			{ error: "Upload failed: " + message },
 			{ status: 500 },

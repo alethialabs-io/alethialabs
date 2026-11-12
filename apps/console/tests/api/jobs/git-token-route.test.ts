@@ -29,6 +29,12 @@ vi.mock("@/lib/auth", () => ({
 	auth: { api: { getAccessToken: (input: unknown) => getAccessToken(input) } },
 }));
 
+const logError = vi.fn();
+vi.mock("@/lib/observability/log", () => {
+	const l = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: logError, child: () => l };
+	return { log: l };
+});
+
 vi.mock("@/lib/config/auth", () => ({
 	getGitlabBaseUrl: () => "https://code.acme.example",
 }));
@@ -399,6 +405,22 @@ describe("POST /api/jobs/[id]/git-token", () => {
 		expect(logged).toContain("(unparsed repo URL)");
 		expect(logged).not.toContain("tok-5d1e");
 		warn.mockRestore();
+	});
+
+	it("reports a getAccessToken failure through the logger, with the error under `err`", async () => {
+		const failure = new Error("refresh failed");
+		getAccessToken.mockRejectedValue(failure);
+		seed("https://github.com/acme/apps");
+		const res = await post();
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ token: null });
+		expect(logError).toHaveBeenCalledWith("git-token: getAccessToken failed for the job owner", {
+			job_id: "job-1",
+			user_id: "user-1",
+			provider: "github",
+			repo_host: "github.com",
+			err: failure,
+		});
 	});
 
 	it("answers a job with no repo with no token, and never guesses a provider", async () => {

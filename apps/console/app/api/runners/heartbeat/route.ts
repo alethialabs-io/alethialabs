@@ -11,6 +11,7 @@ import {
 import { sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { log } from "@/lib/observability/log";
 
 // Runners report the cloud providers their image can execute (per-cloud routing).
 // Validated against the cloud_provider enum so only real providers reach the column.
@@ -71,7 +72,7 @@ export async function POST(req: Request) {
 			cancelled_job_ids: cancelled.map((r) => r.id),
 		});
 	} catch (err) {
-		console.error("Heartbeat error:", err);
+		log.error("Heartbeat error", { err });
 		return NextResponse.json(
 			{ error: "Failed to update heartbeat" },
 			{ status: 500 },

@@ -5,6 +5,7 @@ import { getServiceDb } from "@/lib/db";
 import { verifyPlatformSecret } from "@/lib/platform/auth";
 import { sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { log } from "@/lib/observability/log";
 
 /**
  * Queue-depth probe for the ECS scaler. Requeues stale jobs, then reports how
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
 	await db
 		.execute(sql`SELECT public.sweep_offline_runners()`)
 		.catch((err) => {
-			console.error("[platform/queue] sweep_offline_runners failed:", err);
+			log.error("[platform/queue] sweep_offline_runners failed", { err });
 		});
 
 	const queuedRows = await db.execute<{ queued: number }>(
