@@ -118,6 +118,11 @@ describe("what the bridge treats as an email address", () => {
 		["two: a@x.io, b@y.io.", "two: [email], [email]."],
 		["o'brien@example.ie", "[email]"],
 		["UPPER@EXAMPLE.COM", "[email]"],
+		["user@bücher.de", "[email]"],
+		["jörg@example.de", "[email]"],
+		["user@example.xn--p1ai", "[email]"],
+		["to=user%40example.com&x=1", "to=[email]&x=1"],
+		["git@github.com:org/repo", "[email]:org/repo"],
 	])("redacts %j", (input, expected) => {
 		expect(bridgedBody(input)).toBe(expected);
 	});
@@ -129,6 +134,7 @@ describe("what the bridge treats as an email address", () => {
 		["a lone @ sign"],
 		["trailing@"],
 		["host@1.2.3.4"],
+		["width=100%40px"],
 	])("leaves %j", (input) => {
 		expect(bridgedBody(input)).toBe(input);
 	});
@@ -145,6 +151,8 @@ describe("the email matcher's cost", () => {
 		const t0 = performance.now();
 		log.error(hostile, { err: new Error(hostile) });
 		log.error(`${"a@".repeat(512 * 1024)}`);
+		// Many literal `@` and one encoded marker at the very end: each kind is searched for once.
+		log.error(`${"a@".repeat(256 * 1024)}x%40`);
 		const elapsed = performance.now() - t0;
 		expect(records[0]?.body).toBe(hostile);
 		expect(elapsed).toBeLessThan(1000);

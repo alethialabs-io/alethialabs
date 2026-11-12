@@ -200,6 +200,29 @@ function serializeErr(value: unknown): SerializedErrValue {
 /** What an email-address-shaped substring is replaced with on the OTel bridge. */
 const EMAIL_REDACTED = "[email]";
 
+/**
+ * An address's last domain label: two or more letters (ASCII or not), or a punycode label
+ * (`xn--…`). Digits alone never qualify, which keeps a version in a package path unmatched.
+ */
+const LAST_LABEL = /^(?:[A-Za-z\u0080-\uFFFF]{2,}|xn--[A-Za-z0-9-]+)$/;
+
+/**
+ * Finds each `@` of an address in `text`, literal or URL-encoded (`user%40example.com`), in order.
+ * Each kind's next position is cached and searched again only once the scan has passed it, so the
+ * two `indexOf` searches together read `text` once.
+ */
+function atFinder(text: string): (from: number) => { at: number; width: number } | undefined {
+	let literal = -2;
+	let encoded = -2;
+	return (from) => {
+		if (literal !== -1 && literal < from) literal = text.indexOf("@", from);
+		if (encoded !== -1 && encoded < from) encoded = text.indexOf("%40", from);
+		if (literal === -1 && encoded === -1) return undefined;
+		if (encoded === -1 || (literal !== -1 && literal < encoded)) return { at: literal, width: 1 };
+		return { at: encoded, width: 3 };
+	};
+}
+
 /** True when the UTF-16 unit at `i` may appear in an address's local part, as matched here. */
 function isLocalChar(text: string, i: number): boolean {
 	const c = text.charCodeAt(i);
@@ -212,7 +235,8 @@ function isLocalChar(text: string, i: number): boolean {
 		c === 37 || // %
 		c === 43 || // +
 		c === 45 || // -
-		c === 39 // '
+		c === 39 || // '
+		c >= 0x80 // a non-ASCII letter (an internationalised address, `jörg@…`)
 	);
 }
 
@@ -220,7 +244,12 @@ function isLocalChar(text: string, i: number): boolean {
 function isDomainChar(text: string, i: number): boolean {
 	const c = text.charCodeAt(i);
 	return (
-		(c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 46 || c === 45
+		(c >= 48 && c <= 57) ||
+		(c >= 65 && c <= 90) ||
+		(c >= 97 && c <= 122) ||
+		c === 46 ||
+		c === 45 ||
+		c >= 0x80 // an internationalised domain (`bücher.de`)
 	);
 }
 
@@ -236,38 +265,46 @@ function domainLength(text: string, start: number): number {
 	while (end > start && (text.charCodeAt(end - 1) === 46 || text.charCodeAt(end - 1) === 45)) end--;
 	const labels = text.slice(start, end).split(".");
 	if (labels.length < 2 || labels.some((l) => l === "")) return 0;
-	return /^[A-Za-z]{2,}$/.test(labels[labels.length - 1] ?? "") ? end - start : 0;
+	return LAST_LABEL.test(labels[labels.length - 1] ?? "") ? end - start : 0;
 }
 
 /**
- * Returns `text` with every email-address-shaped substring (`local@domain.tld`) replaced by
+ * Returns `text` with each email-address-shaped substring (`local@domain.tld`), as bounded below, replaced by
  * EMAIL_REDACTED. A hand-written scan rather than a regex, so its cost is linear in `text`: each `@`
  * is expanded left over local-part characters (never past the end of the previous match) and right
  * over domain characters, and as `@` is neither, no character is read by more than one `@`'s
  * expansion in each direction. A regex such as `[\w.]+@[\w.]+\.\w+` restarts its local-part scan at
  * every position, which is quadratic on a long run of local-part characters with no `@` after it —
  * the shape of a large base64 or hex blob quoted in an error message. It errs toward redacting:
- * anything shaped like an address is replaced, whether or not it is one.
+ * anything shaped like an address is replaced, whether or not it is one (`git@github.com:org/repo`
+ * loses its host on the bridge; stdout keeps it).
+ *
+ * Boundary, stated: an `@` written literally or as `%40`; a local part and domain of ASCII
+ * letters, digits and `._%+-'`, or any non-ASCII character; a last label as LAST_LABEL says. Not
+ * matched: a quoted local part (`"a b"@x.com`), an HTML-entity `@`, an address on a bare host
+ * (`user@localhost`) or an IP literal. Of `a@b@c.com` the leading `a` stays.
  */
 function redactEmails(text: string): string {
-	let at = text.indexOf("@");
-	if (at === -1) return text;
+	const nextAt = atFinder(text);
+	let hit = nextAt(0);
+	if (hit === undefined) return text;
 	let out = "";
 	let copied = 0;
 	// The left edge a local part may reach back to: the end of the previous match, or the previous `@`.
 	let floor = 0;
-	while (at !== -1) {
+	while (hit !== undefined) {
+		const { at, width } = hit;
 		let start = at;
 		while (start > floor && isLocalChar(text, start - 1)) start--;
-		const domain = start < at ? domainLength(text, at + 1) : 0;
-		let next = at + 1;
+		const domain = start < at ? domainLength(text, at + width) : 0;
+		let next = at + width;
 		if (domain > 0) {
 			out += text.slice(copied, start) + EMAIL_REDACTED;
-			copied = at + 1 + domain;
+			copied = at + width + domain;
 			next = copied;
 		}
 		floor = next;
-		at = text.indexOf("@", next);
+		hit = nextAt(next);
 	}
 	return out + text.slice(copied);
 }
