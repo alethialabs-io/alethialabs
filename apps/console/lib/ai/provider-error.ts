@@ -51,9 +51,11 @@ export const PROVIDER_ERROR_MESSAGES: Readonly<Record<ProviderErrorCode, string>
  */
 export const ANTHROPIC_CREDIT_EXHAUSTED = /credit balance is too low/i;
 
-/** Provider error `type`s (Anthropic `error.type`, OpenAI `error.type` / `error.code`) per code. */
+/** Provider error `type`s / `code`s (Anthropic `error.type`, OpenAI `error.type` / `error.code`) that mean billing. */
 const BILLING_TYPES: readonly string[] = ["billing_error", "insufficient_quota"];
+/** Provider error `type`s that mean the API key was rejected or lacks permission. */
 const AUTH_TYPES: readonly string[] = ["authentication_error", "permission_error"];
+/** Provider error `type`s that mean the provider is busy or rate-limiting us: Retry is right. */
 const OVERLOADED_TYPES: readonly string[] = ["overloaded_error", "rate_limit_error"];
 
 /** The provider's typed error fields, read off the response body the SDK parsed. */
@@ -91,19 +93,42 @@ function unwrap(err: unknown): unknown {
 }
 
 /**
+ * The `type` of an error the provider sent INSIDE a stream that had already answered HTTP 200.
+ * `@ai-sdk/anthropic` forwards Anthropic's SSE `error` event as the event's plain
+ * `{ type, message }` object, not an `APICallError`, so there is no status to read — only the type.
+ * Undefined for anything else, including every `Error` (a bug of ours is never a provider type).
+ */
+function streamedErrorType(cause: unknown): string | undefined {
+	if (cause instanceof Error) return undefined;
+	return str(asRecord(cause).type);
+}
+
+/** Whether a provider `type` or `code` is one of `list`'s. */
+function typedIn(list: readonly string[], type: string | undefined, code: string | undefined): boolean {
+	return (type !== undefined && list.includes(type)) || (code !== undefined && list.includes(code));
+}
+
+/**
  * Classify a failure a chat stream raised into the code the client is told. Decided by the AI
  * SDK's typed `APICallError` fields — HTTP status and the provider's error `type` — never by its
  * prose, with the single exception of {@link ANTHROPIC_CREDIT_EXHAUSTED}. A `RetryError` (the SDK
- * gave up after retrying a 429/529) is classified by its last attempt. Anything that is not a
- * provider API call — a dropped socket, a bug of ours — is `network`.
+ * gave up after retrying a 429/529) is classified by its last attempt; an error the provider sent
+ * mid-stream is classified by its type alone. Anything that is not a provider failure — a dropped
+ * socket, a bug of ours — is `network`.
  */
 export function classifyProviderError(err: unknown): ProviderErrorCode {
 	const cause = unwrap(err);
-	if (!APICallError.isInstance(cause)) return "network";
+	if (!APICallError.isInstance(cause)) {
+		const streamed = streamedErrorType(cause);
+		if (typedIn(BILLING_TYPES, streamed, undefined)) return "provider-billing";
+		if (typedIn(AUTH_TYPES, streamed, undefined)) return "provider-auth";
+		if (typedIn(OVERLOADED_TYPES, streamed, undefined)) return "provider-overloaded";
+		return "network";
+	}
 	const status = cause.statusCode;
 	const { type, code, message } = providerFields(cause);
-	const typed = (list: readonly string[]) =>
-		(type !== undefined && list.includes(type)) || (code !== undefined && list.includes(code));
+	/** Whether this response's type or code is one of `list`'s. */
+	const typed = (list: readonly string[]) => typedIn(list, type, code);
 
 	if (status === 402 || typed(BILLING_TYPES)) return "provider-billing";
 	if (
@@ -129,4 +154,35 @@ export function providerErrorMessage(err: unknown): string {
  */
 export function providerErrorCodeOf(text: string): ProviderErrorCode | undefined {
 	return PROVIDER_ERROR_CODES.find((c) => PROVIDER_ERROR_MESSAGES[c] === text);
+}
+
+/**
+ * What a chat route LOGS about a failure, instead of the raw error. pino's `err` serializer copies
+ * every enumerable property, and an `APICallError` carries the whole request it sent
+ * (`requestBodyValues`: the system prompt and the user's conversation) plus the provider's response
+ * headers and body — none of which belongs in a log line. This keeps what an operator needs to
+ * diagnose the failure and nothing the user typed: the class, the HTTP status, the provider's typed
+ * fields and request id, and — for a failure that is not a provider call, i.e. a bug of ours — the
+ * error's name, message and stack.
+ */
+export function providerErrorSummary(err: unknown): Record<string, unknown> {
+	const code = classifyProviderError(err);
+	const attempts = RetryError.isInstance(err) ? err.errors.length : undefined;
+	const cause = unwrap(err);
+	if (APICallError.isInstance(cause)) {
+		const fields = providerFields(cause);
+		return {
+			code,
+			attempts,
+			status: cause.statusCode,
+			provider_type: fields.type,
+			provider_code: fields.code,
+			provider_message: fields.message ?? cause.message,
+			request_id: cause.responseHeaders?.["request-id"],
+		};
+	}
+	if (cause instanceof Error) {
+		return { code, attempts, name: cause.name, message: cause.message, stack: cause.stack };
+	}
+	return { code, attempts, provider_type: streamedErrorType(cause) };
 }

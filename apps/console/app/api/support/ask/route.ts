@@ -9,7 +9,7 @@ import {
 } from "ai";
 import { z } from "zod";
 import { readTurnRequest, serveTurnBody } from "@/lib/agent/turn-route";
-import { classifyProviderError, providerErrorMessage } from "@/lib/ai/provider-error";
+import { providerErrorMessage, providerErrorSummary } from "@/lib/ai/provider-error";
 import { cachedSystemMessage } from "@/lib/ai/provider-options";
 import { supportSystemPrompt } from "@/lib/ai/support/prompt";
 import { buildSupportTools } from "@/lib/ai/tools/support";
@@ -168,7 +168,7 @@ async function answerThreadless(req: Request, raw: object): Promise<Response> {
 			},
 			// A failed turn RELEASES its reserved hold (reconciled to 0) so it never leaks headroom.
 			onError: ({ error }) => {
-				log.warn("support ask model error", { code: classifyProviderError(error), err: error });
+				log.warn("support ask model error", { error: providerErrorSummary(error) });
 				holdRequest(req);
 				void recordAiUsage({
 					orgId: actor.orgId,

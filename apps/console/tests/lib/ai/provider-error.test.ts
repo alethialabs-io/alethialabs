@@ -4,9 +4,10 @@
 
 // `classifyProviderError` decides, from the AI SDK's typed `APICallError` fields, which class of
 // provider failure a chat stream hit, and `providerErrorMessage` is the only text the client gets.
-// Every error here is built from the SDK's REAL error classes with an Anthropic-shaped response
-// body (`{"type":"error","error":{"type":…,"message":…}}`), the way `@ai-sdk/anthropic` builds them,
-// so a change to how the SDK exposes those fields fails here rather than in production.
+// Every error here is built by hand from the SDK's REAL error classes with an Anthropic-shaped
+// response body (`{"type":"error","error":{"type":…,"message":…}}`), matching how
+// `@ai-sdk/anthropic` 3.0.x builds them. They are NOT produced by the adapter, so a change in the
+// adapter's error shape would not fail here.
 
 import { APICallError } from "@ai-sdk/provider";
 import { RetryError, streamText } from "ai";
@@ -19,6 +20,7 @@ import {
 	classifyProviderError,
 	providerErrorCodeOf,
 	providerErrorMessage,
+	providerErrorSummary,
 } from "@/lib/ai/provider-error";
 
 /** The credit-exhausted message Anthropic returned in `e2e-ai-nightly` run 43016072306. */
@@ -118,6 +120,59 @@ describe("classifyProviderError", () => {
 		expect(classifyProviderError("boom")).toBe("network");
 		expect(classifyProviderError(undefined)).toBe("network");
 		expect(classifyProviderError(anthropicError(500, "api_error", "Internal server error"))).toBe("network");
+	});
+
+	it("classifies an error the provider sent mid-stream by its type alone", () => {
+		// `@ai-sdk/anthropic` forwards an SSE `error` event as its plain `{ type, message }` object.
+		expect(classifyProviderError({ type: "overloaded_error", message: "Overloaded" })).toBe(
+			"provider-overloaded",
+		);
+		expect(classifyProviderError({ type: "billing_error", message: "x" })).toBe("provider-billing");
+		expect(classifyProviderError({ type: "authentication_error", message: "x" })).toBe("provider-auth");
+		expect(classifyProviderError({ type: "api_error", message: "x" })).toBe("network");
+		// An Error of ours that happens to carry a `type` is never read as a provider's.
+		expect(classifyProviderError(Object.assign(new Error("x"), { type: "overloaded_error" }))).toBe("network");
+	});
+});
+
+describe("providerErrorSummary", () => {
+	it("logs the provider's typed fields and never the request it sent or the response headers", () => {
+		const err = new APICallError({
+			message: CREDIT_PROSE,
+			url: "https://api.anthropic.com/v1/messages",
+			requestBodyValues: { system: "SYSTEM-PROMPT", messages: [{ role: "user", content: "USER-TYPED" }] },
+			statusCode: 400,
+			responseHeaders: { "request-id": "req_123", "anthropic-organization-id": "ORG-ID" },
+			responseBody: JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: CREDIT_PROSE } }),
+			isRetryable: false,
+		});
+		const summary = providerErrorSummary(err);
+		expect(summary).toMatchObject({
+			code: "provider-billing",
+			status: 400,
+			provider_type: "invalid_request_error",
+			request_id: "req_123",
+		});
+		const line = JSON.stringify(summary);
+		for (const secret of ["SYSTEM-PROMPT", "USER-TYPED", "ORG-ID"]) expect(line).not.toContain(secret);
+	});
+
+	it("summarises a RetryError by its last attempt and counts the attempts", () => {
+		const last = anthropicError(529, "overloaded_error", "Overloaded", { isRetryable: true });
+		const retry = new RetryError({ message: "Failed", reason: "maxRetriesExceeded", errors: [last, last] });
+		const summary = providerErrorSummary(retry);
+		expect(summary).toMatchObject({ code: "provider-overloaded", attempts: 2, status: 529 });
+		expect(JSON.stringify(summary)).not.toContain("claude-test");
+	});
+
+	it("keeps name, message and stack for a failure that is not a provider call", () => {
+		const bug = new TypeError("cannot read x");
+		expect(providerErrorSummary(bug)).toMatchObject({
+			code: "network",
+			name: "TypeError",
+			message: "cannot read x",
+			stack: bug.stack,
+		});
 	});
 });
 

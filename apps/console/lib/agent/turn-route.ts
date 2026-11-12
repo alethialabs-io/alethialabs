@@ -51,7 +51,7 @@ import { isClientToolName, parseClientToolOutput } from "@/lib/ai/client-tools";
 import { type Mention, mentionSchema, mentionsSchema } from "@/lib/ai/mentions";
 import { MAX_DRAFT_MENTION_FIELD, MAX_DRAFT_MENTION_SPANS, normalizeDraftText } from "@/lib/elench/draft-content";
 import { refuseUserMessage } from "@/lib/ai/message-limits";
-import { classifyProviderError, providerErrorMessage } from "@/lib/ai/provider-error";
+import { providerErrorMessage, providerErrorSummary } from "@/lib/ai/provider-error";
 import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
 import { cachedSystemMessage, thinkingOptions } from "@/lib/ai/provider-options";
 import { getOwner } from "@/lib/auth/owner";
@@ -659,8 +659,7 @@ async function streamAcceptedTurn<R>(
 					onError: ({ error }) => {
 						log.warn("chat turn model error", {
 							thread_id: turn.threadId,
-							code: classifyProviderError(error),
-							err: error,
+							error: providerErrorSummary(error),
 						});
 					},
 				});
@@ -733,8 +732,7 @@ async function streamAcceptedTurn<R>(
 			onError: (error) => {
 				log.warn("chat turn stream failed", {
 					thread_id: turn.threadId,
-					code: classifyProviderError(error),
-					err: error,
+					error: providerErrorSummary(error),
 				});
 				void finalizeOnce({ answer: soFar.message, steps: [...steps], partial: true, error: "stream-error" });
 				return providerErrorMessage(error);
