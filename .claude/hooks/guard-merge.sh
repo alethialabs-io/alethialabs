@@ -348,7 +348,8 @@ require_green() {
 	# The ONE exemption: a run whose gate job's `if:` was false never expands its matrix, so it
 	# reports a single SKIPPED check named with the literal expression (release-gate.yml says so at
 	# the job). It names no leg, and every named leg above must still have passed on its own — so a
-	# skipped placeholder proves nothing either way. Failing or pending, it still blocks.
+	# skipped placeholder proves nothing either way. A FAILING or PENDING placeholder is refused by
+	# the not-green check above, not here; this clause only keeps the exemption to `skipping`.
 	# @mut merge-placeholder
 	placeholder='Release gate (${{ matrix.project }})'
 	missing="$(printf '%s' "$checks" | jq -r --arg legs "$legs" --arg placeholder "$placeholder" '
@@ -403,6 +404,7 @@ JSON
 1621	[$C,$G,$Q,{"name":"Release gate (\${{ matrix.project }})","bucket":"skipping","workflow":"Release gate"}]
 1622	[$C,$G,$Q,{"name":"Release gate (\${{ matrix.project }})","bucket":"fail","workflow":"Release gate"}]
 1623	[$C,$G,{"name":"Release gate (\${{ matrix.project }})","bucket":"skipping","workflow":"Release gate"}]
+1624	[$C,$G,$Q,{"name":"Release gate (canvas)","bucket":"skipping","workflow":"Release gate"}]
 1700	[$C,$G,$Q]
 1800	[$C,$S,$G,$Q]
 1801	[$C,$G,$Q]
@@ -471,7 +473,7 @@ if [ "\$2" = view ]; then
 	1535) echo "dev feat/x 1535aaa" ;;
 	1600) echo "staging feat/x 1600aaa" ;;
 	1601) echo "main feat/x 1601aaa" ;;
-	1610 | 1612 | 1613 | 1614 | 1615 | 1616 | 1618 | 1619 | 1620 | 1621 | 1622 | 1623) echo "staging dev aaa\$n" ;;
+	1610 | 1612 | 1613 | 1614 | 1615 | 1616 | 1618 | 1619 | 1620 | 1621 | 1622 | 1623 | 1624) echo "staging dev aaa\$n" ;;
 	1611) echo "main staging aaa1611" ;;
 	1617) echo "main dev aaa1617" ;;
 	1700) echo "staging dev aaa1700" ;;
@@ -555,6 +557,7 @@ STUB
 	t allow 'gh pr merge 1621 --merge --match-head-commit aaa1621'   # a SKIPPED unexpanded-matrix placeholder beside green legs
 	t block 'gh pr merge 1622 --merge --match-head-commit aaa1622'   # the placeholder FAILING still blocks
 	t block 'gh pr merge 1623 --merge --match-head-commit aaa1623'   # a skipped placeholder never stands in for a missing leg
+	t block 'gh pr merge 1624 --merge --match-head-commit aaa1624'   # the exemption is that ONE name: any other skipped gate leg still blocks
 
 	# ── release-please PRs into main (maintainer ruling 2026-11-11) ──
 	t allow 'gh pr merge 1800 --merge --match-head-commit aaa1800'   # green, release-please's author and files
