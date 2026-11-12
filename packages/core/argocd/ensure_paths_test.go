@@ -204,7 +204,7 @@ func TestConfigureRepoCredentials(t *testing.T) {
 	stub := newKubectlStub(t, 0)
 	var stdout, stderr bytes.Buffer
 	const token = "ghp-token-must-not-be-logged"
-	if err := ConfigureRepoCredentials("https://github.com/acme/app.git", token, &stdout, &stderr); err != nil {
+	if err := ConfigureRepoCredentials("https://github.com/acme/app.git", token, "x-access-token", &stdout, &stderr); err != nil {
 		t.Fatalf("ConfigureRepoCredentials() error = %v, want nil", err)
 	}
 	if !stub.calledWith("apply -f") {
@@ -224,7 +224,7 @@ func TestConfigureRepoCredentials(t *testing.T) {
 func TestConfigureRepoCredentialsNamedReportsAFailedApply(t *testing.T) {
 	newKubectlStub(t, 1)
 	var stdout, stderr bytes.Buffer
-	err := ConfigureRepoCredentialsNamed("https://github.com/acme/app.git", "tok", "repo-byo-abc", &stdout, &stderr)
+	err := ConfigureRepoCredentialsNamed("https://github.com/acme/app.git", "tok", "x-access-token", "repo-byo-abc", &stdout, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "failed to apply repo credentials") {
 		t.Fatalf("ConfigureRepoCredentialsNamed() error = %v, want an apply failure", err)
 	}

@@ -57,6 +57,10 @@ type stageDeployPayload struct {
 	SpendPolicy     provisioner.SpendPolicy `json:"spend_policy,omitempty"`
 	StateConsoleURL string                  `json:"state_console_url"`
 	JobID           string                  `json:"job_id"`
+	// GitProviders is ProjectConfig.GitProviders (repo URL → the provider the console named for its
+	// token), which JSON drops. It is not a secret, so it rides the payload, and runDeployStage puts
+	// it back so each clone and ArgoCD credential is sent with its provider's username (#6599).
+	GitProviders map[string]string `json:"git_providers,omitempty"`
 }
 
 // stageDestroyPayload reconstructs provisioner.DestroyParams.
@@ -96,6 +100,8 @@ type stageIacScanPayload struct {
 // deploy/plan/destroy the untrusted customer tofu runs through the sandbox seam; the
 // git/state tokens cross via the child's allowlisted env (stageSecrets), not the payload.
 type stageDriftPayload struct {
+	// GitProviders is ProjectConfig.GitProviders, carried explicitly as in stageDeployPayload.
+	GitProviders    map[string]string    `json:"git_providers,omitempty"`
 	ProjectConfig   *types.ProjectConfig `json:"project_config"`
 	CloudAccountID  string               `json:"cloud_account_id"`
 	Provider        string               `json:"provider"`
@@ -209,6 +215,7 @@ func buildDeployPayload(vc *types.ProjectConfig, provider string, dryRun bool, p
 	cfg := *vc // shallow copy — don't mutate the caller's config
 	cfg.GitAccessToken = ""
 	return stageDeployPayload{
+		GitProviders:          vc.GitProviders,
 		ProjectConfig:         &cfg,
 		CloudAccountID:        vc.CloudAccountID,
 		ConnectorCredentials:  vc.ConnectorCredentials,
@@ -287,6 +294,7 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 	vc.CloudAccountID = p.CloudAccountID
 	vc.ConnectorCredentials = p.ConnectorCredentials
 	vc.GitAccessToken = sec.GitToken
+	vc.GitProviders = p.GitProviders
 
 	result, err := provisioner.RunDeployV2(ctx, provisioner.DeployParams{
 		ProjectConfig:         vc,
@@ -374,6 +382,7 @@ func buildDriftPayload(vc *types.ProjectConfig, provider, templatesDir, categori
 	cfg := *vc // shallow copy — don't mutate the caller's config
 	cfg.GitAccessToken = ""
 	return stageDriftPayload{
+		GitProviders:    vc.GitProviders,
 		ProjectConfig:   &cfg,
 		CloudAccountID:  vc.CloudAccountID,
 		Provider:        provider,
@@ -475,6 +484,7 @@ func runDriftStage(ctx context.Context, p stageDriftPayload, sec stageSecrets, w
 	vc := p.ProjectConfig
 	vc.CloudAccountID = p.CloudAccountID
 	vc.GitAccessToken = sec.GitToken
+	vc.GitProviders = p.GitProviders
 
 	posture, _, err := provisioner.RunDriftDetection(ctx, provisioner.DriftParams{
 		ProjectConfig:  vc,

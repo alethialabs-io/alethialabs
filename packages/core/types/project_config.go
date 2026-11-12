@@ -109,6 +109,12 @@ type ProjectConfig struct {
 
 	GitAccessToken string `json:"git_access_token"`
 
+	// GitProviders maps each repo URL the runner fetched a git token for to the provider the console
+	// said minted it ("github", "gitlab", "bitbucket"). Populated at runtime, never from the
+	// snapshot. It picks the username sent with that repo's token (git.TokenUsername); a repo with no
+	// entry gets the username sent before providers were named.
+	GitProviders map[string]string `json:"-"`
+
 	// Populated at runtime from CloudIdentity, not from snapshot
 	CloudAccountID string `json:"-"`
 

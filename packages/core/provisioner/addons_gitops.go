@@ -57,7 +57,7 @@ func writeAddOnGitOps(ctx context.Context, vc *types.ProjectConfig, token string
 	}
 	defer os.RemoveAll(dir)
 
-	repo := git.NewGITWithToken(vc.Repositories.AppsDestinationRepo, dir, false, token)
+	repo := git.NewGITWithToken(vc.Repositories.AppsDestinationRepo, dir, false, token, gitProviderFor(vc, vc.Repositories.AppsDestinationRepo))
 	if err := repo.Clone(ctx, "", false); err != nil {
 		return nil, fmt.Errorf("clone apps repo: %w", err)
 	}

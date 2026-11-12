@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -265,13 +266,13 @@ func TestFetchRepoToken_WarnsWithTheHostOnly(t *testing.T) {
 	w := NewWithAPI(Config{Operator: "self"}, api)
 
 	var errOut strings.Builder
-	if got := w.fetchRepoToken("j", "https://user:pw@github.com/acme/apps.git", &errOut); got != "" {
+	if got := w.fetchRepoToken("j", "https://user:pw@github.com/acme/apps.git", &errOut); got != (GitToken{}) {
 		t.Errorf("token = %q after a refusal, want none", got)
 	}
-	if got := w.fetchRepoToken("j", "git@tok-5d1e@evil.example:acme/apps.git", &errOut); got != "" {
+	if got := w.fetchRepoToken("j", "git@tok-5d1e@evil.example:acme/apps.git", &errOut); got != (GitToken{}) {
 		t.Errorf("token = %q after a refusal, want none", got)
 	}
-	if got := w.fetchRepoToken("j", "", &errOut); got != "" {
+	if got := w.fetchRepoToken("j", "", &errOut); got != (GitToken{}) {
 		t.Errorf("token = %q for an empty repo, want none", got)
 	}
 	if len(asked) != 2 {
@@ -285,5 +286,97 @@ func TestFetchRepoToken_WarnsWithTheHostOnly(t *testing.T) {
 		if strings.Contains(warn, leak) {
 			t.Errorf("warnings = %q, printed %q from the repo URL", warn, leak)
 		}
+	}
+}
+
+// stagePayloadProviders decodes the GitProviders a stage payload carried across the sandbox.
+func stagePayloadProviders(t *testing.T, payload []byte) map[string]string {
+	t.Helper()
+	var p struct {
+		GitProviders map[string]string `json:"git_providers"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		t.Fatalf("decode stage payload: %v", err)
+	}
+	return p.GitProviders
+}
+
+// TestDeploy_CarriesEachRepoTokensProviderIntoTheStage pins #6599: the provider the console named
+// for each repo's token reaches the stage, keyed by that repo, so the apps repo, the IaC module and
+// each chart are each sent with their own provider's username.
+func TestDeploy_CarriesEachRepoTokensProviderIntoTheStage(t *testing.T) {
+	rec := &tokenRecorder{}
+	api := newCovRunAPI()
+	api.gitTokenFn = rec.fn
+	api.gitProviders = map[string]string{
+		tokAppsRepo:  "github",
+		tokIacRepo:   "bitbucket",
+		tokChartRepo: "gitlab",
+	}
+	sb := &covRunSandbox{}
+	w := NewWithAPI(Config{Operator: "self", RunnerID: "r-tokens"}, api)
+	w.sandbox = sb
+
+	snap := covRunSnapshot()
+	snap["repositories"] = map[string]any{"apps_destination_repo": tokAppsRepo}
+	snap["iac_source"] = map[string]any{"repo_url": tokIacRepo, "commit_sha": "abc123"}
+	snap["addons"] = []any{map[string]any{"id": "c1", "source": "git", "chartRepo": tokChartRepo}}
+	stdout := NewJobLogger(api, "tok-prov", "STDOUT")
+	stderr := NewJobLogger(api, "tok-prov", "STDERR")
+	err := w.executeDeploy(t.Context(), &Job{ID: "tok-prov", JobType: string(types.JobTypeDeploy), ConfigSnapshot: snap}, "aws", nil, nil, stdout, stderr)
+	stdout.Close()
+	stderr.Close()
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	if got := stagePayloadProviders(t, sb.lastSpec().Stage.Payload); !reflect.DeepEqual(got, api.gitProviders) {
+		t.Errorf("stage GitProviders = %v, want %v", got, api.gitProviders)
+	}
+}
+
+// TestPlan_CarriesTheIacModulesProviderIntoTheStage: a plan clones the module with its provider's
+// username too.
+func TestPlan_CarriesTheIacModulesProviderIntoTheStage(t *testing.T) {
+	rec := &tokenRecorder{}
+	api := newCovRunAPI()
+	api.gitTokenFn = rec.fn
+	api.gitProviders = map[string]string{tokIacRepo: "bitbucket"}
+	sb := &covRunSandbox{}
+	w := NewWithAPI(Config{Operator: "self"}, api)
+	w.sandbox = sb
+
+	snap := covRunSnapshot()
+	snap["iac_source"] = map[string]any{"repo_url": tokIacRepo, "commit_sha": "abc123"}
+	stdout := NewJobLogger(api, "tok-plan-prov", "STDOUT")
+	stderr := NewJobLogger(api, "tok-plan-prov", "STDERR")
+	err := w.executePlan(t.Context(), &Job{ID: "tok-plan-prov", ConfigSnapshot: snap}, "", nil, nil, stdout, stderr)
+	stdout.Close()
+	stderr.Close()
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	want := map[string]string{tokIacRepo: "bitbucket"}
+	if got := stagePayloadProviders(t, sb.lastSpec().Stage.Payload); !reflect.DeepEqual(got, want) {
+		t.Errorf("stage GitProviders = %v, want %v", got, want)
+	}
+}
+
+// TestBuildDeployPayload_GitProvidersSurviveTheRoundTrip: the providers cross the sandbox in the
+// payload's own field, because JSON drops ProjectConfig.GitProviders.
+func TestBuildDeployPayload_GitProvidersSurviveTheRoundTrip(t *testing.T) {
+	vc := &types.ProjectConfig{GitProviders: map[string]string{tokIacRepo: "bitbucket"}}
+	b, err := json.Marshal(buildDeployPayload(vc, "aws", false, "", "", "", "", nil, nil, "", "j"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back stageDeployPayload
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(back.GitProviders, vc.GitProviders) {
+		t.Errorf("GitProviders after the round trip = %v, want %v", back.GitProviders, vc.GitProviders)
+	}
+	if back.ProjectConfig.GitProviders != nil {
+		t.Errorf("ProjectConfig.GitProviders crossed in the config itself: %v", back.ProjectConfig.GitProviders)
 	}
 }

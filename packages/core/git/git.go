@@ -35,6 +35,9 @@ type GIT struct {
 	Repo      *gogit.Repository
 	DryRun    bool
 	Token     string
+	// Provider is the git provider that minted Token, as the console named it (see TokenUsername).
+	// It decides the HTTP Basic username sent with the token. Empty means "not named".
+	Provider string
 }
 
 // NewGIT creates a GIT wrapper for a TOKEN-LESS clone, PRESERVING the caller's transport.
@@ -90,13 +93,16 @@ func normalizeRepoURL(rawURL string) string {
 	return "https://" + u
 }
 
-// NewGITWithToken creates a GIT wrapper that uses HTTPS + token auth.
-func NewGITWithToken(repoURL string, localPath string, dryRun bool, token string) *GIT {
+// NewGITWithToken creates a GIT wrapper that uses HTTPS + token auth. provider is the git provider
+// the console said minted token ("github", "gitlab", "bitbucket", or "" when it named none); it
+// picks the username sent with the token (see TokenUsername).
+func NewGITWithToken(repoURL string, localPath string, dryRun bool, token, provider string) *GIT {
 	return &GIT{
 		RepoURL:   transformURLToHTTPS(repoURL),
 		LocalPath: localPath,
 		DryRun:    dryRun,
 		Token:     token,
+		Provider:  provider,
 	}
 }
 
@@ -156,7 +162,7 @@ func transformURLToHTTPS(rawURL string) string {
 func (g *GIT) getAuth() (transport.AuthMethod, error) {
 	if g.Token != "" {
 		return &githttp.BasicAuth{
-			Username: "x-access-token",
+			Username: TokenUsername(g.Provider),
 			Password: g.Token,
 		}, nil
 	}

@@ -117,14 +117,15 @@ func (w *Runner) fetchGitChart(ctx context.Context, job *Job, repoURL, ref, work
 	// Parent clone (trusted: has the git token + egress). The chart lands under the
 	// RW-mounted workdir so the untrusted render sees it without any token/egress. The token is
 	// requested for the chart repo by name — the job's project has an apps repo too.
-	token := w.fetchRepoToken(job.ID, repoURL, stderr)
+	fetched := w.fetchRepoToken(job.ID, repoURL, stderr)
+	token := fetched.Token
 	if token == "" {
 		fmt.Fprintln(stderr, "No git token; attempting public clone.")
 	}
 	cloneDir := filepath.Join(workDir, "clone")
 	var repo *git.GIT
 	if token != "" {
-		repo = git.NewGITWithToken(repoURL, cloneDir, false, token)
+		repo = git.NewGITWithToken(repoURL, cloneDir, false, token, fetched.Provider)
 	} else {
 		repo = git.NewGIT(repoURL, cloneDir, false)
 	}
