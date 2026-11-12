@@ -191,40 +191,157 @@ function stripQueryParams(s: string, rewrites: readonly QueryRewrite[] = []): st
 }
 
 /**
- * Deep-walks a value IN PLACE: redacts secret-named keys, strips failed-query parameter values (see
- * `stripQueryParams`) and scrubs secret values out of every string. Cycle-safe via a WeakSet.
- * Mutating in place preserves the caller's concrete type (a Sentry Event / Breadcrumb) rather than
- * degrading it to a plain record.
+ * What the walk has already produced for each object it reached: the object itself when scrubbing
+ * left it as it was, or the copy that replaces it. An object is entered here BEFORE its children are
+ * walked, as its (still empty) copy, so a cycle back to it resolves to the copy and a shared object
+ * is scrubbed once. A consequence: every object on a cycle is copied, even a clean one, because the
+ * back-reference already points at a copy. That costs memory, not correctness.
  */
-function scrubInPlace(
-	value: unknown,
-	seen: WeakSet<object>,
+type ScrubMemo = Map<object, unknown>;
+
+/**
+ * Returns `value` with secret-named keys redacted, failed-query parameter values stripped (see
+ * `stripQueryParams`) and secret values scrubbed out of every string. COPY-ON-WRITE (#6662): an
+ * object or array is returned as it is when nothing in it changes, and as a fresh copy when anything
+ * does; the object reached is never written to. That matters because a breadcrumb from the console
+ * integration holds the logged arguments themselves, so writing through it once changed a logged
+ * error's own `params` for the code that still held it. Cycle-safe via `memo`.
+ */
+function scrubValue(value: unknown, memo: ScrubMemo, rewrites: readonly QueryRewrite[]): unknown {
+	if (typeof value === "string") return scrubString(stripQueryParams(value, rewrites));
+	if (typeof value !== "object" || value === null) return value;
+	if (memo.has(value)) return memo.get(value);
+	if (Array.isArray(value)) return scrubArray(value, memo, rewrites);
+	if (isRecord(value)) return scrubRecord(value, memo, rewrites);
+	return value;
+}
+
+/** `scrubValue` for an array: the array itself when no element changes, else a new array. */
+function scrubArray(
+	value: readonly unknown[],
+	memo: ScrubMemo,
 	rewrites: readonly QueryRewrite[],
-): void {
-	if (Array.isArray(value)) {
-		for (let i = 0; i < value.length; i++) {
-			const el: unknown = value[i];
-			if (typeof el === "string") value[i] = scrubString(stripQueryParams(el, rewrites));
-			else scrubInPlace(el, seen, rewrites);
-		}
-		return;
+): unknown {
+	const copy: unknown[] = [];
+	memo.set(value, copy);
+	let changed = false;
+	for (let i = 0; i < value.length; i++) {
+		const el: unknown = value[i];
+		const out = scrubValue(el, memo, rewrites);
+		copy.push(out);
+		if (!Object.is(out, el)) changed = true;
 	}
-	if (isRecord(value)) {
-		if (seen.has(value)) return;
-		seen.add(value);
-		// A failed query copied into the event as an object (a serialized thrown value, extra error
-		// data, a logged error) carries its values in its own `params` array, not only in its message.
-		if (failedQueryText(value) !== undefined) value.params = REDACTED;
-		for (const key of Object.keys(value)) {
-			if (isSecretKey(key)) {
-				value[key] = REDACTED;
-				continue;
+	if (changed) return copy;
+	memo.set(value, value);
+	return value;
+}
+
+/** What `changedEntries` read from an object: every own enumerable value, and the ones that change. */
+interface RecordScan {
+	/** The value each own enumerable key returned, read ONCE (a getter is never read twice). */
+	read: Map<string, unknown>;
+	/** The scrubbed value of each key that scrubbing changes; empty means no copy is needed. */
+	changes: Map<string, unknown>;
+}
+
+/**
+ * Reads each of `value`'s own enumerable keys once, and scrubs it; `changes` holds the keys whose
+ * scrubbed value differs (empty means `value` needs no copy). A key whose read throws (a getter that
+ * fails) is redacted rather than letting the scrub throw: a throwing `beforeSend` makes Sentry send
+ * its own internal error report, which skips this scrub. A secret-named key is redacted whole, and a failed query copied into
+ * the event as an object (a serialized thrown value, extra error data, a logged error) has its own
+ * `params` array redacted too, because it carries the values there and not only in its message.
+ */
+function changedEntries(
+	value: Record<string, unknown>,
+	memo: ScrubMemo,
+	rewrites: readonly QueryRewrite[],
+): RecordScan {
+	const read = new Map<string, unknown>();
+	const changes = new Map<string, unknown>();
+	if (failedQueryText(value) !== undefined) changes.set("params", REDACTED);
+	for (const key of Object.keys(value)) {
+		let original: unknown;
+		try {
+			original = value[key];
+		} catch {
+			changes.set(key, REDACTED);
+			continue;
+		}
+		read.set(key, original);
+		const out = isSecretKey(key) ? REDACTED : scrubValue(original, memo, rewrites);
+		if (!Object.is(out, original)) changes.set(key, out);
+	}
+	return { read, changes };
+}
+
+/**
+ * `scrubValue` for a non-array object: the object itself when nothing in it changes, else a copy
+ * with the same prototype and the same own properties, the changed ones replaced. The prototype is
+ * kept so a copied `Error` is still one to Sentry's serializer, which then reads its `message` and
+ * `stack` as it would have read the original's. An own accessor (V8 defines an error's `stack` as
+ * one, and its getter reads an internal slot the copy does not have) is copied as the value it
+ * returns on the original.
+ */
+function scrubRecord(
+	value: Record<string, unknown>,
+	memo: ScrubMemo,
+	rewrites: readonly QueryRewrite[],
+): unknown {
+	const copy: object = Object.create(Object.getPrototypeOf(value));
+	memo.set(value, copy);
+	const { read, changes } = changedEntries(value, memo, rewrites);
+	if (changes.size === 0) {
+		memo.set(value, value);
+		return value;
+	}
+	const descriptors = Object.getOwnPropertyDescriptors(value);
+	for (const key of Object.keys(descriptors)) {
+		const d = descriptors[key];
+		if (d !== undefined && (d.get !== undefined || d.set !== undefined)) {
+			// An enumerable accessor was read once above, and that read is what was scrubbed; a
+			// non-enumerable one (an error's `stack`) is read here, and left out if its getter throws.
+			let current: unknown;
+			if (read.has(key)) current = read.get(key);
+			else {
+				try {
+					current = Reflect.get(value, key);
+				} catch {
+					delete descriptors[key];
+					continue;
+				}
 			}
-			const v: unknown = value[key];
-			if (typeof v === "string") value[key] = scrubString(stripQueryParams(v, rewrites));
-			else scrubInPlace(v, seen, rewrites);
+			descriptors[key] = {
+				value: current,
+				writable: true,
+				enumerable: d.enumerable ?? false,
+				configurable: true,
+			};
 		}
 	}
+	for (const [key, out] of changes) {
+		descriptors[key] = { value: out, writable: true, enumerable: true, configurable: true };
+	}
+	Object.defineProperties(copy, descriptors);
+	return copy;
+}
+
+/**
+ * Scrubs the top-level event or breadcrumb Sentry hands a hook, keeping its concrete type: each key
+ * whose value scrubbing changes is pointed at the scrubbed copy (`scrubValue`), so nothing below the
+ * top level is written to. The top-level object itself is Sentry's own, not the caller's: Sentry
+ * builds a fresh breadcrumb (`{ timestamp, ...breadcrumb }`) before `beforeBreadcrumb` and a fresh
+ * event (`{ ...event, event_id, ... }`) before `beforeSend`, so writing its keys reaches no
+ * application object.
+ */
+function scrubTopLevel<T>(root: T, rewrites: readonly QueryRewrite[]): T {
+	// Widened to `unknown` so the narrowing yields a plain record whose keys can be written.
+	const record: unknown = root;
+	if (!isRecord(record)) return root;
+	const memo: ScrubMemo = new Map();
+	memo.set(record, record);
+	for (const [key, out] of changedEntries(record, memo, rewrites).changes) record[key] = out;
+	return root;
 }
 
 /**
@@ -234,15 +351,14 @@ function scrubInPlace(
  * when it or an error on its `cause` chain is a failed database query, its exact message is
  * rewritten to `Failed query: <sql>` wherever it appears, and the driver error under it has its
  * message and detail rewritten without the values Postgres quotes in them (see `queryRewrites`).
- * Returns the same (mutated) event so the concrete type is preserved.
+ * Returns the same event object, with every changed part below it replaced by a scrubbed copy, so
+ * the concrete type is preserved and no object the event refers to is changed (`scrubTopLevel`).
  */
 export function scrubEvent<T>(event: T, hint?: { originalException?: unknown }): T {
-	scrubInPlace(event, new WeakSet(), queryRewrites(hint?.originalException));
-	return event;
+	return scrubTopLevel(event, queryRewrites(hint?.originalException));
 }
 
-/** Sentry `beforeBreadcrumb` scrubber — same deep scrub over a breadcrumb. */
+/** Sentry `beforeBreadcrumb` scrubber — same deep, copy-on-write scrub over a breadcrumb. */
 export function scrubBreadcrumb<T>(breadcrumb: T): T {
-	scrubInPlace(breadcrumb, new WeakSet(), []);
-	return breadcrumb;
+	return scrubTopLevel(breadcrumb, []);
 }
