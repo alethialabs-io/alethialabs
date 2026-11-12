@@ -5,6 +5,7 @@
 import { Check, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { RegionError } from "@/components/errors/region-error";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { OrgAvatar } from "@/components/org/org-avatar";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
@@ -21,12 +22,14 @@ import {
 import { useCommandSearch } from "@repo/ui/command-search";
 import { Popover, PopoverContent } from "@repo/ui/popover";
 import { Separator } from "@repo/ui/separator";
+import { Skeleton } from "@repo/ui/skeleton";
 import { planMeta } from "@repo/plan-catalog";
 import {
 	useActiveOrgSlug,
 	useActiveWorkspaceOrg,
 	useWorkspaceContextQuery,
 } from "@/lib/stores/use-workspace-store";
+import { readStatusOf } from "@/lib/query/read-status";
 import { orgHref } from "@/lib/routing";
 
 /**
@@ -79,8 +82,12 @@ export function OrgSwitcher() {
 	const orgSlug = useActiveOrgSlug();
 	const [open, setOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
-	const { data } = useWorkspaceContextQuery();
+	const contextQuery = useWorkspaceContextQuery();
+	const { data } = contextQuery;
 	const organizations = data?.organizations ?? [];
+	// Until the context answers there is no list to search: a failed read gets a retry and a refused
+	// one its own note, never "No organization found." about a list that was never read (#6114).
+	const listStatus = readStatusOf(contextQuery);
 	const active = useActiveWorkspaceOrg();
 	// While the context is not there (only when the layout's prefetch failed and the client's retry
 	// is in flight) the trigger names the org by its ADDRESS and shows no plan — never a guessed
@@ -120,7 +127,8 @@ export function OrgSwitcher() {
 		// BEFORE navigating, so every server action, in-flight refetch and prefetch still running on
 		// the CURRENT page executed under an org its URL did not name — the exact
 		// session-disagrees-with-URL window both #4133 and #4134 exist to close. #4134 removed it and
-		// it is not reinstated here; `switchOrg` is no longer destructured in this component.
+		// it is not reinstated here. The store's `switchOrg`, which wrote the session from the
+		// client, had no caller left and was deleted (#6114).
 		router.push(target);
 	};
 
@@ -161,49 +169,67 @@ export function OrgSwitcher() {
 						onSearchChange={orgSearch.onSearchChange}
 						filteredItems={orgSearch.results}
 					>
-						<CommandInput placeholder="Find organization…" className="h-9" />
-						<CommandList>
-							<CommandEmpty>No organization found.</CommandEmpty>
-							<CommandGroup heading="Organizations">
-								{orgSearch.results.map((o) => {
-									const meta = planMeta(o.plan);
-									return (
-										<CommandItem
-											key={o.id}
-											// An org with no slug has no URL to navigate to — see handleSelect.
-											// Disabled rather than hidden: a workspace the user belongs to that
-											// silently vanished from the switcher is harder to report than one
-											// that is visibly not selectable.
-											disabled={!o.slug}
-											onSelect={() => handleSelect(o.id)}
-											className="gap-2"
-										>
-											<OrgAvatar
-												name={o.name}
-												logo={o.logo}
-												size={20}
-												className="rounded-full"
-											/>
-											<span className="flex-1 truncate">{o.name}</span>
-											{o.status === "trialing" && (
-								<Badge className="bg-ink px-1.5 text-ui-3xs font-medium uppercase tracking-wide text-ink-foreground">
-													Trial
-												</Badge>
-											)}
-											<Badge
-												variant="outline"
-									className="text-ui-2xs font-normal text-muted-foreground"
-											>
-												{meta.name}
-											</Badge>
-											{o.id === active?.id && (
-												<Check className="h-4 w-4 shrink-0" />
-											)}
-										</CommandItem>
-									);
-								})}
-							</CommandGroup>
-						</CommandList>
+						{listStatus === "error" ? (
+							<RegionError
+								title="Couldn't load your organizations"
+								onRetry={() => void contextQuery.refetch()}
+							/>
+						) : listStatus === "forbidden" ? (
+							<p data-state="forbidden" className="px-3 py-3 text-ui-sm text-muted-foreground">
+								Your organizations can&apos;t be listed from this address.
+							</p>
+						) : listStatus === "pending" ? (
+							<div role="status" aria-label="Loading organizations" className="space-y-1.5 p-2">
+								<Skeleton className="h-7 w-full" />
+								<Skeleton className="h-7 w-full" />
+							</div>
+						) : (
+							<>
+								<CommandInput placeholder="Find organization…" className="h-9" />
+								<CommandList>
+									<CommandEmpty>No organization found.</CommandEmpty>
+									<CommandGroup heading="Organizations">
+										{orgSearch.results.map((o) => {
+											const meta = planMeta(o.plan);
+											return (
+												<CommandItem
+													key={o.id}
+													// An org with no slug has no URL to navigate to — see handleSelect.
+													// Disabled rather than hidden: a workspace the user belongs to that
+													// silently vanished from the switcher is harder to report than one
+													// that is visibly not selectable.
+													disabled={!o.slug}
+													onSelect={() => handleSelect(o.id)}
+													className="gap-2"
+												>
+													<OrgAvatar
+														name={o.name}
+														logo={o.logo}
+														size={20}
+														className="rounded-full"
+													/>
+													<span className="flex-1 truncate">{o.name}</span>
+													{o.status === "trialing" && (
+										<Badge className="bg-ink px-1.5 text-ui-3xs font-medium uppercase tracking-wide text-ink-foreground">
+															Trial
+														</Badge>
+													)}
+													<Badge
+														variant="outline"
+											className="text-ui-2xs font-normal text-muted-foreground"
+													>
+														{meta.name}
+													</Badge>
+													{o.id === active?.id && (
+														<Check className="h-4 w-4 shrink-0" />
+													)}
+												</CommandItem>
+											);
+										})}
+									</CommandGroup>
+								</CommandList>
+							</>
+						)}
 						<Separator />
 						{/* Pinned footer — outside CommandList so search never hides it. */}
 						<div className="p-1">
