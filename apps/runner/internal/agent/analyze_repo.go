@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/git"
+	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/scanner"
 )
 
@@ -23,11 +24,11 @@ func (w *Runner) executeAnalyzeRepo(ctx context.Context, job *Job, stdout, stder
 	}
 	ref, _ := job.ConfigSnapshot["ref"].(string)
 
-	fmt.Fprintf(stdout, "Analyzing repository %s\n", repoURL)
+	fmt.Fprintf(stdout, "Analyzing the repository on host %s\n", provisioner.RepoHostForLog(repoURL))
 
-	token, err := w.api.FetchGitToken(job.ID, "")
-	if err != nil {
-		fmt.Fprintf(stderr, "No git token (%v); attempting public clone.\n", err)
+	token := w.fetchRepoToken(job.ID, repoURL, stderr)
+	if token == "" {
+		fmt.Fprintln(stderr, "No git token; attempting public clone.")
 	}
 
 	dir, err := os.MkdirTemp("", "alethia-scan-")
