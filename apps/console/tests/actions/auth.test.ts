@@ -17,6 +17,7 @@ import { requestEmailCode } from "@/app/server/actions/auth";
 import { getAuthConfig } from "@/lib/config/auth";
 import { getServiceDb } from "@/lib/db";
 import { sendNoAccountEmail } from "@/lib/email/auth-email";
+import { log } from "@/lib/observability/log";
 
 /**
  * A drizzle-ish select chain that records the `where` predicate and resolves the
@@ -107,12 +108,15 @@ describe("requestEmailCode", () => {
 	it("swallows a failing no-account email and still returns no-account", async () => {
 		mockDb([]);
 		vi.mocked(sendNoAccountEmail).mockRejectedValue(new Error("SES down") as never);
-		const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const errSpy = vi.spyOn(log, "error").mockImplementation(() => undefined);
 
 		const result = await requestEmailCode({ email: "boom@test.dev", mode: "login" });
 
 		expect(result).toEqual({ outcome: "no-account" });
-		expect(errSpy).toHaveBeenCalled();
+		// The caught error goes to the logger under `err`, so its serializer decides what is written.
+		expect(errSpy).toHaveBeenCalledWith("[auth] no-account email failed", {
+			err: expect.objectContaining({ message: "SES down" }),
+		});
 		errSpy.mockRestore();
 	});
 });

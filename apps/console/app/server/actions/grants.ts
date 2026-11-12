@@ -27,6 +27,7 @@ import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { grants, role, user } from "@/lib/db/schema";
+import { log } from "@/lib/observability/log";
 
 const VALID_KEYS: ReadonlySet<string> = new Set(PERMISSIONS.map((p) => p.key));
 
@@ -198,7 +199,7 @@ async function writeGrant(input: AssignGrantInput): Promise<void> {
 			roleId: input.roleId ?? null,
 			permissionKey: input.permissionKey ?? null,
 		})
-		.catch((err) => console.error("[authz] grant tuple sync failed:", err));
+		.catch((err: unknown) => log.error("[authz] grant tuple sync failed", { err }));
 
 	// Security event: an access grant was assigned (gated to advancedAlerting in emit).
 	emitAlertEventSafe(actor.orgId, "authz.grant.assign", {
@@ -256,7 +257,7 @@ async function deleteGrant(id: string): Promise<void> {
 	if (scope !== null) {
 		void getTupleSync()
 			.removeScopedGrant({ ...scope, roleId: g.role_id, permissionKey: g.permission_key })
-			.catch((err) => console.error("[authz] grant tuple removal failed:", err));
+			.catch((err: unknown) => log.error("[authz] grant tuple removal failed", { err }));
 	}
 
 	// Security event: an access grant was revoked (gated to advancedAlerting in emit).

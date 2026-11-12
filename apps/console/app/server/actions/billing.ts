@@ -189,6 +189,7 @@ import {
 	getOrgUsage as readOrgUsage,
 	type UsageReport,
 } from "@/lib/rpc/procedures/usage";
+import { log } from "@/lib/observability/log";
 
 // ── Reads moved to the read router (#6127, ADR 0005 D1) ─────────────────────────────────────────
 // The billing and usage READS live in `lib/rpc/procedures/billing.ts` and `procedures/usage.ts`,
@@ -584,7 +585,7 @@ async function alertOperator(input: {
 		});
 		return queued > 0;
 	} catch (err) {
-		console.error(`[alerts] emit failed (${OPERATOR_ALERT_EVENT}):`, err);
+		log.error(`[alerts] emit failed (${OPERATOR_ALERT_EVENT})`, { err, event: OPERATOR_ALERT_EVENT });
 		return false;
 	}
 }
@@ -694,7 +695,7 @@ async function openSetupRefusal(actor: { userId: string; orgId: string }): Promi
 				if (namesOtherLivePlan(billing, row.subscription_id)) besideLivePlanCopy = orgRowBlocksNewPlan(billing) ?? LIVE_PLAN_REFUSAL;
 			}
 		} catch (e) {
-			console.error(`[billing] open-setup guard could not check ${row.subscription_id}:`, e);
+			log.error(`[billing] open-setup guard could not check ${row.subscription_id}`, { err: e, subscription_id: row.subscription_id });
 			return OPEN_SETUP_UNCHECKED;
 		}
 		if (verdict !== "open") continue;
@@ -1348,7 +1349,7 @@ async function artifactGateHolds(lease: PurchaseLease): Promise<boolean> {
 	try {
 		return await renewPurchaseLease(lease);
 	} catch (e) {
-		console.error(`[billing] the artifact gate could not renew ${lease.key}:`, e);
+		log.error(`[billing] the artifact gate could not renew ${lease.key}`, { err: e, lease_key: lease.key });
 		return false;
 	}
 }
@@ -1366,7 +1367,7 @@ async function closeOutCheckoutSession(sessionId: string, orgId: string): Promis
 		await getPurchaseStripe().checkout.sessions.expire(sessionId);
 		expired = true;
 	} catch (e) {
-		console.error(`[billing] close-out could not expire Checkout session ${sessionId}; it lapses at its expires_at:`, e);
+		log.error(`[billing] close-out could not expire Checkout session ${sessionId}; it lapses at its expires_at`, { err: e, session_id: sessionId });
 	}
 	logBillingEvent("billing.purchase_lease.checkout_closeout", {
 		session_id: sessionId,
@@ -2020,7 +2021,7 @@ async function closeOutMintedSubscription(sub: Stripe.Subscription, mintedOn: Mi
 			forgetSubscription(sub.id); // the plan card's cached read of it is now stale (lib/billing/subscription-cache.ts)
 			cancelled = true;
 		} catch (e) {
-			console.error(`[billing] close-out could not cancel ${sub.id}; it stays incomplete:`, e);
+			log.error(`[billing] close-out could not cancel ${sub.id}; it stays incomplete`, { err: e, subscription_id: sub.id });
 		}
 	}
 	logBillingEvent("billing.purchase_lease.closeout", {
@@ -2109,7 +2110,7 @@ async function stampCarriedClauses(holdIds: readonly string[]): Promise<void> {
 	try {
 		await stampHoldNotice(holdIds);
 	} catch (e) {
-		console.error(`[billing] could not stamp notice_last_sent_at on ${holdIds.join(", ")}:`, e);
+		log.error(`[billing] could not stamp notice_last_sent_at on ${holdIds.join(", ")}`, { err: e, hold_ids: holdIds });
 	}
 }
 
@@ -2158,7 +2159,7 @@ async function relinkIfAdopted(
 		return relinked?.kind === "refused" ? relinked.hold : null;
 	} catch (e) {
 		if (e instanceof PurchaseLeaseLostError) throw e;
-		console.error(`[billing] could not re-link the setup of adopted hold ${after.id}:`, e);
+		log.error(`[billing] could not re-link the setup of adopted hold ${after.id}`, { err: e, hold_id: after.id });
 		return null;
 	}
 }
@@ -2190,7 +2191,7 @@ async function closeUnderHold(
 			openedByUserId: userId,
 		});
 	} catch (e) {
-		console.error(`[billing] could not open a payment hold on ${sub.id}; nothing was closed:`, e);
+		log.error(`[billing] could not open a payment hold on ${sub.id}; nothing was closed`, { err: e, subscription_id: sub.id });
 		return { kind: "refused", message: HOLD_NOT_RECORDED };
 	}
 	if (opened.kind === "lease_lost") throw new PurchaseLeaseLostError(lease.key);
@@ -2294,7 +2295,7 @@ async function liveCreateATeamSubscription(
 		try {
 			listed = await listCustomerSubscriptions(getPurchaseStripe(), customer, "all");
 		} catch (e) {
-			console.error(`[billing] the create-a-team live check could not list ${customer}:`, e);
+			log.error(`[billing] the create-a-team live check could not list ${customer}`, { err: e, customer_id: customer });
 			return { kind: "refused", message: LIVE_CHECK_FAILED };
 		}
 		if (listed.kind === "over_cap") return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
@@ -2481,7 +2482,7 @@ async function startNewOrgSubscription(
 		try {
 			listed = await listCustomerSubscriptions(getStripe(), sweepCustomer, "incomplete");
 		} catch (e) {
-			console.error(`[billing] the create-a-team sweep could not list ${sweepCustomer}:`, e);
+			log.error(`[billing] the create-a-team sweep could not list ${sweepCustomer}`, { err: e, customer_id: sweepCustomer });
 			return { kind: "refused", message: LIVE_CHECK_FAILED };
 		}
 		if (listed.kind === "over_cap") {
@@ -3246,7 +3247,7 @@ async function settleOpenSetupQuietly(
 	try {
 		await settleOpenSetup(row, { sub, orgId });
 	} catch (e) {
-		console.error(`[billing] setup closer could not check ${row.subscription_id}:`, e);
+		log.error(`[billing] setup closer could not check ${row.subscription_id}`, { err: e, subscription_id: row.subscription_id });
 	}
 }
 

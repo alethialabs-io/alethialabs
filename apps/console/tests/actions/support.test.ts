@@ -60,6 +60,7 @@ import {
 	sendCaseResolvedEmail,
 } from "@/lib/email/support-email";
 import { slackCaseCreated, slackCaseReplied } from "@/lib/support/slack-notify";
+import { log } from "@/lib/observability/log";
 
 /**
  * A drizzle-ish chain whose every builder returns itself; each `await` (then) shifts the next
@@ -245,7 +246,7 @@ describe("submitCase", () => {
 	});
 
 	it("does NOT fail when a notification throws (safeNotify swallows it)", async () => {
-		vi.spyOn(console, "warn").mockImplementation(() => {});
+		const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
 		mockDb([[{ id: "case-1", case_number: 42 }], []]);
 		vi.mocked(sendCaseCreatedAck).mockRejectedValueOnce(new Error("SES down"));
 		vi.mocked(slackCaseCreated).mockRejectedValueOnce(new Error("Slack 500"));
@@ -255,6 +256,11 @@ describe("submitCase", () => {
 			ok: true,
 			data: { id: "case-1", caseNumber: 42 },
 		});
+		// Each swallowed failure is reported through the logger, the caught error under `err`.
+		expect(warn).toHaveBeenCalledWith(
+			expect.stringMatching(/^\[support\] .+ failed$/),
+			expect.objectContaining({ err: expect.objectContaining({ message: "Slack 500" }) }),
+		);
 	});
 
 	it("refuses an invalid payload as a field-level validation result, before authorizing or writing", async () => {
