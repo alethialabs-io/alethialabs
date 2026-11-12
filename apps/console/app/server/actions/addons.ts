@@ -37,7 +37,12 @@ import type {
 	AddOnRequirement,
 	AddOnSecurityRelease,
 } from "@/lib/addons/types";
-import type { AddOnValues } from "@/types/jsonb.types";
+import type { AddOnValues, GitopsBumpRecord } from "@/types/jsonb.types";
+import {
+	actorScopedBumpStore,
+	type GitopsBumpResult,
+	requestGitopsBumpFor,
+} from "@/lib/addons/gitops-bump/service";
 
 /** The install state of an add-on on an environment (null when not enabled). */
 export interface AddonInstallState {
@@ -52,6 +57,8 @@ export interface AddonInstallState {
 	health: string | null;
 	sync: string | null;
 	lastSyncedAt: string | null;
+	/** GitOps mode: the pull request Alethia opened to bump the seeded chart version, or null (#6549). */
+	gitopsBump: GitopsBumpRecord | null;
 }
 
 /** One marketplace row: the catalog display metadata + this environment's install state. */
@@ -80,6 +87,11 @@ export interface ProjectAddonsView {
 	items: AddonMarketItem[];
 	/** Whether the environment has a GitOps apps repo configured — gates GitOps mode. */
 	hasAppsRepo: boolean;
+	/**
+	 * The apps repo as `owner/repo` when it is a GitHub repository, which is where a GitOps bump pull
+	 * request is opened (#6549); null when it is not one, absent from a view built before this field.
+	 */
+	appsRepoName?: string | null;
 }
 
 /** The sentence for an Advanced values override that is not a YAML mapping. */
@@ -311,5 +323,48 @@ export async function disableAddonAction(raw: z.input<typeof addonTargetInput>) 
 			await refusingCanvasWrite(() => disableAddon(input));
 			return { addonId: input.addonId };
 		},
+	})(raw);
+}
+
+// ── The GitOps add-on bump pull request (#6549) ─────────────────────────────────────────────────
+
+/**
+ * Opens, or finds, the pull request that moves a GitOps-mode add-on's seeded
+ * `spec.source.targetRevision` to the version a deploy would seed, using the CALLER's own GitHub
+ * token. Gated on `edit`, like every other add-on write, and only for a person: a credential that is
+ * not one is refused (`not-a-person`), whichever surface it came through. The console card and the CLI route call
+ * this one function. A deploy never does: the pull request exists only because someone asked.
+ */
+export async function requestGitopsBump(input: {
+	projectId: string;
+	environmentId?: string | null;
+	addonId: string;
+	again?: boolean;
+}): Promise<GitopsBumpResult> {
+	const actor = await authorize("edit", {
+		type: "project",
+		id: input.projectId,
+	});
+	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
+	return requestGitopsBumpFor(actorScopedBumpStore((fn) => withActorScope(actor, fn)), {
+		// The whole actor, not its `userId`: for a service token that id is the minter, not a caller,
+		// and the service refuses an actor that is not a person before it reads any token.
+		actor,
+		projectId: input.projectId,
+		environmentId: envId,
+		addonId: input.addonId,
+		again: input.again ?? false,
+	});
+}
+
+const gitopsBumpInput = addonTargetInput.extend({
+	again: z.boolean().optional(),
+});
+
+/** Opens or finds the bump pull request for a GitOps add-on; answers what happened. */
+export async function requestGitopsBumpAction(raw: z.input<typeof gitopsBumpInput>) {
+	return defineAction({
+		input: gitopsBumpInput,
+		run: async ({ input }) => refusingCanvasWrite(() => requestGitopsBump(input)),
 	})(raw);
 }

@@ -1,0 +1,21 @@
+# Seeded by Alethia; edited by the platform team.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: addon-ingress-nginx
+  namespace: argocd
+  labels:
+    alethia.io/managed-by: addon-marketplace
+spec:
+  project: default # the default project
+  source:
+    repoURL: https://kubernetes.github.io/ingress-nginx
+    chart: ingress-nginx
+    targetRevision: 4.15.1  # pinned until the Q3 window
+    helm:
+      values: |
+        controller:
+          replicaCount: 2
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ingress-nginx

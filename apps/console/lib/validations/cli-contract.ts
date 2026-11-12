@@ -1052,6 +1052,23 @@ export const cliAgentResponse = z.object({ agent: agentWire });
 /** DELETE member/team/channel/alert/role/grant result. */
 export const cliOkResponse = z.object({ ok: z.literal(true) });
 
+/**
+ * POST /api/cli/projects/:id/addons/bump (#6549): the GitOps add-on bump pull request, or why none
+ * was opened. Mirrors Go `api.GitopsBumpResult`. `file`, `field` and `version` are always present:
+ * they are the manual instruction a refusal falls back to.
+ */
+export const cliGitopsBumpResponse = z.object({
+	status: z.enum(["open", "merged", "declined", "refused"]),
+	created: z.boolean(),
+	version: z.string(),
+	file: z.string(),
+	field: z.literal("spec.source.targetRevision"),
+	number: z.number().int().positive().nullable(),
+	url: z.string().url().nullable(),
+	reason: z.string().nullable(),
+	message: z.string().nullable(),
+});
+
 // --- Short-lived kubeconfig mint (#5250 decisions 1–8; seams #5280) ---
 //
 // The channel, end to end:

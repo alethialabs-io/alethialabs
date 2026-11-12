@@ -46,6 +46,7 @@ import type { AddonMarketItem } from "@/app/server/actions/addons";
 import { chartVersionError } from "@/lib/addons/chart-version";
 import { REQUIREMENT_HINTS } from "@/lib/addons/requirements";
 import { closedToNewInstalls } from "@/lib/addons/deprecation";
+import type { GitopsBumpResult } from "@/lib/addons/gitops-bump/service";
 import { addOnUpdateNotice } from "@/lib/addons/update-notice";
 import type { AddOnField, AddOnMode } from "@/lib/addons/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers/generated/catalog";
@@ -53,6 +54,7 @@ import {
   useAddonsQuery,
   useDisableAddon,
   useEnableAddon,
+  useRequestGitopsBump,
 } from "@/lib/query/use-addons-query";
 import type { FieldErrors } from "@/lib/actions/result";
 import { AddonDeprecationNotice } from "./addon-deprecation-notice";
@@ -192,6 +194,7 @@ export function AddonConfigCard({
       projectId={projectId}
       environmentId={environmentId}
       hasAppsRepo={addons.data?.hasAppsRepo ?? false}
+      appsRepoName={addons.data?.appsRepoName ?? null}
       provider={provider}
       onDone={closeCard}
       onOpenAddon={(id) => openCard({ kind: "addon", itemId: id })}
@@ -209,6 +212,7 @@ export function AddonConfigForm({
   projectId,
   environmentId,
   hasAppsRepo,
+  appsRepoName = null,
   provider,
   onDone,
   onOpenAddon,
@@ -217,6 +221,8 @@ export function AddonConfigForm({
   projectId: string;
   environmentId: string | null;
   hasAppsRepo: boolean;
+  /** The apps repo as `owner/repo` on GitHub, where a GitOps bump pull request is opened (#6549). */
+  appsRepoName?: string | null;
   /** The project's effective cloud provider — drives the requirement hints (null = unset). */
   provider: CloudProviderSlug | null;
   onDone: () => void;
@@ -255,6 +261,12 @@ export function AddonConfigForm({
   const disable = useDisableAddon({
     onRefusal: (error) => setRefusal(error.message),
     successMessage: `${item.name} removed`,
+  });
+  // The GitOps bump pull request (#6549): the last press's outcome, said in the notice.
+  const [bumpResult, setBumpResult] = useState<GitopsBumpResult | null>(null);
+  const bump = useRequestGitopsBump({
+    onRefusal: (error) => setRefusal(error.message),
+    onSuccess: (result) => setBumpResult(result),
   });
   const mode = useWatch({ control: form.control, name: "_mode" });
   // The env's Kubernetes version as it will DEPLOY — above the early return, since hooks must run in
@@ -567,6 +579,21 @@ export function AddonConfigForm({
             name={item.name}
             pending={enable.isPending || disable.isPending}
             onUpdatePin={onUpdatePin}
+            bump={
+              hasAppsRepo && item.install?.mode === "gitops"
+                ? {
+                    record: item.install.gitopsBump,
+                    repo: appsRepoName,
+                    result: bumpResult,
+                    pending: bump.isPending,
+                    onRequest: (again) => {
+                      if (bump.isPending) return;
+                      setRefusal(null);
+                      bump.mutate({ projectId, environmentId, addonId: item.id, again });
+                    },
+                  }
+                : undefined
+            }
           />
         )}
 

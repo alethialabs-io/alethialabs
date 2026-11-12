@@ -311,8 +311,10 @@ of the password under 5000 rounds, which is the server's default and its minimum
 letters and digits, so the string needs no escaping in a literal. `IDENTIFIED WITH caching_sha2_password
 AS '<hash>'` stores it unchanged. The renderer never emits `IDENTIFIED BY`, so a cloud that refused the
 precomputed form would fail the run; it would not fall back to plaintext. CI verifies the form on
-MySQL 8.0 and 8.4 by logging in with the password. It was not verified on RDS or Aurora, Cloud SQL or
-Azure Database for MySQL. **Limitation:** as with the Postgres verifier, the hash is in the SQL text. A
+MySQL 8.0 and 8.4 by logging in with the password. On 2026-11-12, `byo-users-managed-mysql.yml` (run
+43166673552) ran the full per-binding user lifecycle, logging in with the password included, on Aurora
+MySQL 8.4 (`8.4.mysql_aurora.8.4.10`) and RDS for MySQL 8.4.11, and it passed on both (#6536). It has not
+been verified on MySQL 8.0 on RDS or Aurora, Cloud SQL or Azure Database for MySQL. **Limitation:** as with the Postgres verifier, the hash is in the SQL text. A
 server that logs statements (the general log, or an audit plugin) records it, and the client's error
 output can carry it into the Job's log. The hash does not authenticate. It does allow an offline guess,
 which is not practical against 32 random alphanumeric characters, but it is credential material.

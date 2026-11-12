@@ -92,6 +92,7 @@ import {
 	projects,
 } from "@/lib/db/schema";
 import type { ComponentStatus } from "@/lib/db/schema/enums";
+import { githubRepoName } from "@/lib/addons/gitops-bump/github";
 import { readGitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import { structuralHash } from "@/lib/promotions/diff";
 import {
@@ -695,6 +696,7 @@ export async function readProjectAddons(
 			health: projectAddons.health,
 			sync_status: projectAddons.sync_status,
 			last_synced_at: projectAddons.last_synced_at,
+			gitops_bump: projectAddons.gitops_bump,
 		})
 		.from(projectAddons)
 		.innerJoin(projects, eq(projectAddons.project_id, projects.id))
@@ -735,6 +737,8 @@ export async function readProjectAddons(
 					health: row.health,
 					sync: row.sync_status,
 					lastSyncedAt: row.last_synced_at?.toISOString() ?? null,
+					// The bump pull request, for the card's link (#6549). A number, URL and state; no secret.
+					gitopsBump: row.gitops_bump ?? null,
 				}
 			: null;
 		return {
@@ -756,7 +760,7 @@ export async function readProjectAddons(
 		};
 	});
 
-	return { environmentId: envId, items, hasAppsRepo };
+	return { environmentId: envId, items, hasAppsRepo, appsRepoName: githubRepoName(repo?.repo) };
 }
 
 // ── BYO Helm charts ───────────────────────────────────────────────────────────────────────────
