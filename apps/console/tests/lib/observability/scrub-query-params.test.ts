@@ -146,18 +146,38 @@ describe("scrubEvent on a failed query", () => {
 		expect(out.exception.values[0]?.value).toBe(`Failed query: ${SQL}`);
 	});
 
-	it("strips the parameter text from the event's breadcrumbs, keeping a following stack", () => {
+	it("cuts a breadcrumb's parameter text to the end, so a value cannot forge where it stops", () => {
+		const forged = `Failed query: ${SQL}\nparams: x\n    at forged (a.ts:1:1)\n${PARAMS.join(",")}`;
 		const out = scrubEvent({
 			breadcrumbs: [
 				{ message: `DrizzleQueryError: ${RAW_MESSAGE}\n    at handler (route.ts:1:1)` },
+				{ message: forged },
 				{ message: "unrelated params: kept" },
 			],
 		});
-		expectNoParams(out.breadcrumbs[0]);
-		expect(out.breadcrumbs[0]?.message).toBe(
-			`DrizzleQueryError: Failed query: ${SQL}\n    at handler (route.ts:1:1)`,
-		);
-		expect(out.breadcrumbs[1]?.message).toBe("unrelated params: kept");
+		expectNoParams(out.breadcrumbs.slice(0, 2));
+		expect(out.breadcrumbs[0]?.message).toBe(`DrizzleQueryError: Failed query: ${SQL}`);
+		expect(out.breadcrumbs[1]?.message).toBe(`Failed query: ${SQL}`);
+		expect(out.breadcrumbs[2]?.message).toBe("unrelated params: kept");
+	});
+
+	it("cuts a JSON-escaped message, whose separator is a literal backslash-n", () => {
+		const escaped = JSON.stringify({ error: RAW_MESSAGE });
+		const out = scrubBreadcrumb({ message: escaped });
+		for (const p of PARAMS) expect(out.message).not.toContain(p);
+	});
+
+	it("redacts the own params array of a failed query copied into the event as an object", () => {
+		const out = scrubEvent({ extra: { __serialized__: { query: SQL, params: [...PARAMS], message: RAW_MESSAGE } } });
+		expectNoParams(out);
+		expect(out.extra.__serialized__.query).toBe(SQL);
+	});
+
+	it("stays linear on a long string full of query prefixes and no separator", () => {
+		const big = "Failed query: x".repeat(70_000);
+		const started = performance.now();
+		expect(scrubBreadcrumb({ message: big }).message).toBe(big);
+		expect(performance.now() - started).toBeLessThan(250);
 	});
 
 	it("leaves an error that is not a failed query untouched", () => {

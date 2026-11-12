@@ -153,27 +153,39 @@ function queryRewrites(thrown: unknown): QueryRewrite[] {
 	return out;
 }
 
+/** The separators that end a failed query's SQL: raw, and as it reads once JSON-escaped. */
+const PARAMS_MARKERS = ["\nparams: ", "\\nparams: "] as const;
+
 /**
- * A failed query's message by its shape: `Failed query: ` and the SQL, then `\nparams: ` and the
- * values, which run to the next stack-frame line (`\n    at …`, when the text is a whole stack or a
- * logged error) or to the end of the string. The values are not escaped, so a value that itself
- * contains a stack-frame-shaped line ends the match early; the exact rewrite from the original
- * exception (`queryRewrites`) has no such limit, and runs first.
+ * Cuts a failed query's parameter values out of `s` by the message's shape: everything from the
+ * first `\nparams: ` (raw or JSON-escaped) that follows a `Failed query: ` is dropped, to the END of
+ * the string. The values are not escaped, so no later marker can be trusted to end them (a value can
+ * forge a stack-frame line); the trailing text this also drops is the price of that. Two `indexOf`
+ * scans, so its cost is linear in the length of `s`.
  */
-const FAILED_QUERY_PARAMS = /(Failed query: [\s\S]*?)\nparams: [\s\S]*?(?=\n\s+at |$)/g;
+function cutParamsByShape(s: string): string {
+	const head = s.indexOf("Failed query: ");
+	if (head === -1) return s;
+	let cut = -1;
+	for (const marker of PARAMS_MARKERS) {
+		const at = s.indexOf(marker, head);
+		if (at !== -1 && (cut === -1 || at < cut)) cut = at;
+	}
+	return cut === -1 ? s : s.slice(0, cut);
+}
 
 /**
  * Removes the bound parameter values from every failed-query message in `s`: first each exact
- * message in `rewrites` (taken from the original exception), then any remaining text of the
- * `Failed query: <sql>\nparams: <values>` shape — which also covers a message Sentry truncated to
- * its `maxValueLength`, and a breadcrumb that quotes one.
+ * message in `rewrites` (taken from the original exception), which keeps any text after it, then
+ * any remaining text of the `Failed query: <sql>\nparams: <values>` shape (`cutParamsByShape`) —
+ * which also covers a breadcrumb that quotes a message from another error.
  */
 function stripQueryParams(s: string, rewrites: readonly QueryRewrite[] = []): string {
 	let out = s;
 	for (const { message, replacement } of rewrites) {
 		out = out.split(message).join(replacement);
 	}
-	return out.replace(FAILED_QUERY_PARAMS, "$1");
+	return cutParamsByShape(out);
 }
 
 /**
@@ -198,6 +210,9 @@ function scrubInPlace(
 	if (isRecord(value)) {
 		if (seen.has(value)) return;
 		seen.add(value);
+		// A failed query copied into the event as an object (a serialized thrown value, extra error
+		// data, a logged error) carries its values in its own `params` array, not only in its message.
+		if (failedQueryText(value) !== undefined) value.params = REDACTED;
 		for (const key of Object.keys(value)) {
 			if (isSecretKey(key)) {
 				value[key] = REDACTED;
