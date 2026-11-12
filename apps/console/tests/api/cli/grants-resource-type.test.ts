@@ -26,6 +26,11 @@ vi.mock("@/lib/authz/tuple-sync", () => ({ getTupleSync: vi.fn() }));
 vi.mock("@/lib/authz/activity", () => ({ recordActivity: vi.fn() }));
 vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+const logError = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/observability/log", () => {
+	const l = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: logError, child: () => l };
+	return { log: l };
+});
 // The org-binding check asks Postgres (lib/authz/grant-binding.ts); here every grant is bound
 // unless a case says otherwise. The refusals themselves run against real Postgres in
 // tests/integration/grant-org-binding.test.ts.
@@ -274,5 +279,17 @@ describe("POST /api/cli/grants — a reference outside the caller's org", () => 
 			roleId: null,
 			resource: { resourceType: "project", resourceId: "22222222-2222-4222-8222-222222222222" },
 		});
+	});
+});
+
+describe("POST /api/cli/grants — a failed tuple sync", () => {
+	it("is reported through the logger with the error under `err`, and the grant still stands", async () => {
+		const failure = new Error("openfga unreachable");
+		syncScopedGrant.mockRejectedValue(failure);
+		const res = await POST(req(grantBody({ resource_type: "project", resource_id: RESOURCE })));
+		expect(res.status).toBe(201);
+		await vi.waitFor(() =>
+			expect(logError).toHaveBeenCalledWith("[authz] grant tuple sync failed", { err: failure }),
+		);
 	});
 });

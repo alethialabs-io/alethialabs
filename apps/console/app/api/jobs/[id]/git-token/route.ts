@@ -15,6 +15,7 @@ import {
 	UNPARSED_REPO_HOST,
 } from "@/lib/git/provider-host";
 import { verifyRunnerToken } from "@/lib/runners/auth";
+import { log } from "@/lib/observability/log";
 
 /**
  * The refusal body for a repo whose host is not one of the configured git providers. `host` is the
@@ -395,14 +396,17 @@ export async function POST(
 		} catch (err: unknown) {
 			// getAccessToken threw (provider not configured, no account row, refresh failed, …).
 			// Surface the reason — the swallowed catch here is what made this un-diagnosable.
-			console.error(
-				`git-token: getAccessToken failed for job owner ${job.user_id} provider ${gitProvider} (repo host ${resolved.host}):`,
-				err instanceof Error ? err.message : err,
-			);
+			log.error("git-token: getAccessToken failed for the job owner", {
+				job_id: jobId,
+				user_id: job.user_id,
+				provider: gitProvider,
+				repo_host: resolved.host,
+				err,
+			});
 			return NextResponse.json({ token: null });
 		}
 	} catch (err: unknown) {
-		console.error("Git token fetch error:", err);
+		log.error("Git token fetch error", { job_id: jobId, err });
 		return NextResponse.json(
 			{ error: "Internal Server Error" },
 			{ status: 500 },

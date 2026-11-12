@@ -230,10 +230,10 @@ export async function POST(req: Request) {
 					try {
 						apiToken = decryptSecret(c.token).api_token ?? "";
 					} catch (e) {
-						console.error(
-							`Failed to decrypt cloud token for identity ${job.cloud_identity_id}:`,
-							e,
-						);
+						claimLog(job.id).error("Failed to decrypt cloud token for identity", {
+							cloud_identity_id: job.cloud_identity_id,
+							err: e,
+						});
 					}
 				}
 				// Hetzner Object Storage S3 keys (distinct from the Cloud API token) — decrypted
@@ -245,20 +245,20 @@ export async function POST(req: Request) {
 					try {
 						s3AccessKey = decryptSecret(c.s3_access_key).access_key ?? "";
 					} catch (e) {
-						console.error(
-							`Failed to decrypt S3 access key for identity ${job.cloud_identity_id}:`,
-							e,
-						);
+						claimLog(job.id).error("Failed to decrypt S3 access key for identity", {
+							cloud_identity_id: job.cloud_identity_id,
+							err: e,
+						});
 					}
 				}
 				if (grant.objectStorageKeys && c.s3_secret_key) {
 					try {
 						s3SecretKey = decryptSecret(c.s3_secret_key).secret_key ?? "";
 					} catch (e) {
-						console.error(
-							`Failed to decrypt S3 secret key for identity ${job.cloud_identity_id}:`,
-							e,
-						);
+						claimLog(job.id).error("Failed to decrypt S3 secret key for identity", {
+							cloud_identity_id: job.cloud_identity_id,
+							err: e,
+						});
 					}
 				}
 				cloud_identity = {
@@ -347,10 +347,10 @@ export async function POST(req: Request) {
 						Object.assign(fields, decryptSecret(row.credentials.secret));
 					}
 				} catch (decErr) {
-					console.error(
-						`Failed to decrypt credential for ${row.slug}:`,
-						decErr,
-					);
+					claimLog(job.id).error("Failed to decrypt connector credential", {
+						slug: row.slug,
+						err: decErr,
+					});
 					// Durable connector health: a credential the runner can't use is a
 					// real, point-of-use failure → emit system.connector.token_failed once.
 					if (job.user_id) {
@@ -377,7 +377,7 @@ export async function POST(req: Request) {
 			connector_credentials,
 		});
 	} catch (err) {
-		console.error("Claim error:", err);
+		log.error("Claim error", { component: "job-claim", err });
 		return NextResponse.json(
 			{ error: "Internal Server Error" },
 			{ status: 500 },

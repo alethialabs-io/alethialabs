@@ -19,6 +19,7 @@ import {
 	secretFieldKeys,
 } from "@/lib/addons/secrets";
 import { verifyRunnerToken } from "@/lib/runners/auth";
+import { log } from "@/lib/observability/log";
 
 /**
  * Returns the decrypted secret-knob values for every enabled add-on of the job's
@@ -110,7 +111,7 @@ export async function POST(
 		return NextResponse.json({ secrets });
 	} catch (err: unknown) {
 		// Deliberately generic: never echo decryption errors (they can reference key material).
-		console.error("Addon secrets fetch error for job", jobId, "-", errorName(err));
+		log.error("Addon secrets fetch error for job", { job_id: jobId, err_name: errorName(err) });
 		return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
 	}
 }
