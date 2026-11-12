@@ -7,16 +7,23 @@ import { auth } from "@/lib/auth";
 import { resolveAccountId } from "@/lib/auth/accounts";
 import { getServiceDb } from "@/lib/db";
 import { jobs, projectAddons, projectRepositories } from "@/lib/db/schema";
-import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
+import { type GitProviderRefusal, resolveGitProvider } from "@/lib/git/provider-host";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 
-/** Detects the git provider from a repo URL (defaults to github). */
-function providerFromRepo(repoUrl: string): PublicGitProvider {
-	return repoUrl.includes("gitlab")
-		? "gitlab"
-		: repoUrl.includes("bitbucket")
-			? "bitbucket"
-			: "github";
+/** The refusal body for a repo whose host is not one of the configured git providers. */
+function unknownProviderResponse(
+	reason: GitProviderRefusal,
+	host: string | null,
+): NextResponse {
+	const what = host ? `host ${host}` : "this repository URL";
+	return NextResponse.json(
+		{
+			error: `Cannot tell which git provider serves ${what}; no git token was issued. Supported hosts are github.com, bitbucket.org and the configured GitLab host.`,
+			code: "git_provider_unresolved",
+			reason,
+		},
+		{ status: 422 },
+	);
 }
 
 /** Returns the git provider token for the user who owns a job. */
@@ -110,7 +117,22 @@ export async function POST(
 			requestedRepo && authorizedRepos.has(requestedRepo)
 				? requestedRepo
 				: iacRepoUrl || repos?.apps_destination_repo || scanRepoUrl || "";
-		const gitProvider: PublicGitProvider = providerFromRepo(repoUrl);
+		// No repo at all means nothing to clone, so there is nothing to authenticate: answer with no
+		// token rather than guessing a provider. Every runner caller already treats a null token as
+		// "clone anonymously".
+		if (!repoUrl) return NextResponse.json({ token: null });
+
+		// The provider decides WHOSE token leaves the console, so it is resolved from the repo's exact
+		// host against the configured ones (#6600). An unknown host is refused, never defaulted — a
+		// default would send one provider's token toward another provider's host.
+		const resolved = resolveGitProvider(repoUrl);
+		if (!resolved.ok) {
+			console.warn(
+				`git-token: refused for job ${jobId} — repo provider unresolved (${resolved.reason}${resolved.host ? `, host ${resolved.host}` : ""})`,
+			);
+			return unknownProviderResponse(resolved.reason, resolved.host);
+		}
+		const gitProvider = resolved.provider;
 
 		// Better Auth returns a fresh (auto-refreshed) token from the owner's linked `account`,
 		// keyed by the job owner's userId — this is a server-to-server call with no user session.
