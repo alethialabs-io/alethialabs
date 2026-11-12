@@ -15,10 +15,15 @@ vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 const verify = vi.fn();
 vi.mock("@/lib/alerts/channels", () => ({ getChannelSender: () => ({ verify }) }));
+vi.mock("@/lib/observability/log", () => {
+	const l = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: () => l };
+	return { log: l };
+});
 
 import { POST } from "@/app/api/cli/channels/[id]/verify/route";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
+import { log } from "@/lib/observability/log";
 import { SsrfError } from "@/lib/net/ssrf-guard";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -94,14 +99,18 @@ describe("POST /api/cli/channels/:id/verify", () => {
 	});
 
 	it("a destination the outbound guard refuses gets one fixed sentence — never the guard's own words", async () => {
-		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-		verify.mockRejectedValue(new SsrfError("Refusing to connect to non-public address 10.1.2.3 for host internal.example"));
+		const refusal = new SsrfError("Refusing to connect to non-public address 10.1.2.3 for host internal.example");
+		verify.mockRejectedValue(refusal);
 		const res = await call();
 		expect(res.status).toBe(400);
 		const body = await res.text();
 		expect(JSON.parse(body)).toEqual({ error: "This destination isn't publicly reachable over HTTPS." });
 		expect(body).not.toContain("10.1.2.3");
 		expect(body).not.toContain("internal.example");
-		warn.mockRestore();
+		// The guard's message is logged through the structured logger, as the error under `err`.
+		expect(vi.mocked(log.warn)).toHaveBeenCalledWith(
+			"[cli] channel destination refused by the outbound guard",
+			{ err: refusal },
+		);
 	});
 });

@@ -33,6 +33,7 @@ import {
 } from "@/lib/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto/secrets";
 import { verifyRunnerToken } from "@/lib/runners/auth";
+import { log } from "@/lib/observability/log";
 
 // Talos admin talosconfigs are small YAML docs (~a few KB); bound the write-back to reject an absurd body.
 const MAX_TALOSCONFIG_BYTES = 128 * 1024;
@@ -183,7 +184,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 		return NextResponse.json({ ok: true });
 	} catch (err: unknown) {
 		// Generic: never echo encryption errors (they can reference key material).
-		console.error("Talosconfig write-back error for job", jobId, "-", errorName(err));
+		log.error("Talosconfig write-back error for job", { job_id: jobId, err_name: errorName(err) });
 		return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
 	}
 }
@@ -212,7 +213,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 		const talosconfig = decryptSecret(envelope).talosconfig ?? null;
 		return NextResponse.json({ talosconfig });
 	} catch (err: unknown) {
-		console.error("Talosconfig claim error for job", jobId, "-", errorName(err));
+		log.error("Talosconfig claim error for job", { job_id: jobId, err_name: errorName(err) });
 		return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
 	}
 }

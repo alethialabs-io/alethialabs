@@ -33,6 +33,10 @@ vi.mock("@/lib/auth", () => ({
 	},
 }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+vi.mock("@/lib/observability/log", () => {
+	const l = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: () => l };
+	return { log: l };
+});
 
 import { POST as DENY } from "@/app/api/auth/cli/deny/route";
 import { POST as EXCHANGE } from "@/app/api/auth/cli/exchange/route";
@@ -45,6 +49,7 @@ import {
 	PENDING_DEVICE_CODE_TTL_MS,
 } from "@/lib/auth/cli-device-code";
 import { getServiceDb } from "@/lib/db";
+import { log } from "@/lib/observability/log";
 import { headers } from "next/headers";
 
 const DEVICE_CODE = "2f1c8c1e-7a4b-4d2e-9a3f-0b5c6d7e8f90";
@@ -273,6 +278,29 @@ describe("POST /api/auth/cli/start", () => {
 	// The failure class this repo keeps hitting: a "nothing found" branch indistinguishable
 	// from "nothing wrong". A read-back that finds no row means the registration this route
 	// is about to report as done did not happen — not that everything is fine.
+	it("reports a failed sweep and a failed registration through the logger, with the error under `err`", async () => {
+		const sweepFailure = new Error("sweep failed");
+		const insertFailure = new Error("insert failed");
+		Object.assign(fake.db, {
+			delete: () => {
+				throw sweepFailure;
+			},
+			insert: () => {
+				throw insertFailure;
+			},
+		});
+		const res = await START(
+			post("/api/auth/cli/start", { device_code: DEVICE_CODE, user_code: USER_CODE }),
+		);
+		expect(res.status).toBe(500);
+		expect(vi.mocked(log.error)).toHaveBeenCalledWith("Error sweeping stale CLI login requests", {
+			err: sweepFailure,
+		});
+		expect(vi.mocked(log.error)).toHaveBeenCalledWith("Error registering CLI login request", {
+			err: insertFailure,
+		});
+	});
+
 	it("does not report success when the read-back finds nothing", async () => {
 		fake.queue.push([], [], []);
 		const res = await START(
