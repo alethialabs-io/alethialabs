@@ -117,31 +117,29 @@ interface QueryRewrite {
 /**
  * The exact rewrites for a thrown value and its `cause` chain. For each failed query on the chain:
  * its exact `message` (which carries the parameter values) and `Failed query: <sql>`. For each
- * database driver's error AFTER a failed query on the chain (its cause, as drizzle-orm wraps it):
+ * database driver's error on the chain (usually a failed query's cause, as drizzle-orm wraps it):
  * its `message` and `detail` with the values Postgres quotes in them removed (`redactDriverText`).
  * Cycle-safe. Sentry sends each error in the chain as its own exception value, which is why the whole
  * chain is read, and why the driver's message is rewritten wherever it appears rather than only on
  * the thrown value.
  *
- * A driver-shaped error that is NOT under a failed query is left as it is: the scrub then cannot
- * tell it from an error of another kind that happens to carry a five-character code, and quoted text
- * in an arbitrary message is not a query value. Every console query runs through drizzle-orm, so a
- * driver error reaches here as a `DrizzleQueryError`'s cause.
+ * A driver error is rewritten wherever it is on the chain, not only under a failed query: a COMMIT
+ * that fails a deferred constraint is raised by the driver directly, with no `DrizzleQueryError`
+ * around it, and the log serializer redacts it there too. A `Failing row contains (...)` DETAIL is
+ * covered by `redactDriverText`.
  */
 function queryRewrites(thrown: unknown): QueryRewrite[] {
 	const out: QueryRewrite[] = [];
 	const seen = new Set<object>();
-	let underQuery = false;
 	let current: unknown = thrown;
 	while (typeof current === "object" && current !== null && !seen.has(current)) {
 		seen.add(current);
 		const query = failedQueryText(current);
 		if (query !== undefined) {
-			underQuery = true;
 			if ("message" in current && typeof current.message === "string") {
 				pushRewrite(out, current.message, `Failed query: ${query}`);
 			}
-		} else if (underQuery && isDriverError(current)) {
+		} else if (isDriverError(current)) {
 			pushRewrite(out, current.message, redactDriverText(current.message));
 			if ("detail" in current && typeof current.detail === "string") {
 				pushRewrite(out, current.detail, redactDriverText(current.detail));

@@ -5,6 +5,7 @@ import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import pino from "pino";
 import {
 	failedQueryText,
+	DRIVER_IDENTIFIER_FIELDS,
 	isDriverError,
 	redactDriverText,
 } from "@/lib/observability/query-error";
@@ -30,6 +31,10 @@ interface SerializedErr {
 	code?: string | number | boolean;
 	status?: string | number | boolean;
 	statusCode?: string | number | boolean;
+	schema_name?: string;
+	table_name?: string;
+	column_name?: string;
+	constraint_name?: string;
 	cause?: SerializedErrValue;
 	errors?: SerializedErrValue[];
 	aggregateErrors?: SerializedErrValue[];
@@ -102,7 +107,10 @@ function replaceInStack(
 function rewrittenMessage(value: object, message: string): string | undefined {
 	const query = failedQueryText(value);
 	if (query !== undefined) return `Failed query: ${query}`;
-	if (isDriverError(value)) return redactDriverText(message);
+	if (isDriverError(value)) {
+		const redacted = redactDriverText(message);
+		return redacted === message ? undefined : redacted;
+	}
 	return undefined;
 }
 
@@ -146,6 +154,14 @@ function serializeErrAt(
 		if (stack !== undefined) out.stack = stack;
 	}
 	copyStatusFields(value, out);
+	// A driver error's quoted identifiers go with the redacted span (see `redactDriverText`), so its
+	// schema identifier fields, which name what failed and carry no value, are written instead.
+	if (isDriverError(value)) {
+		for (const field of DRIVER_IDENTIFIER_FIELDS) {
+			const v: unknown = Reflect.get(value, field);
+			if (typeof v === "string" && v !== "") out[field] = v;
+		}
+	}
 
 	ancestors.add(value);
 	try {
@@ -165,7 +181,7 @@ function serializeErrAt(
 
 /**
  * The logger's `err` serializer. Emits only `type`, `message` and `stack`, plus `code`, `status`
- * and `statusCode` when they are primitives, recursing into `cause` and `errors` under the same
+ * and `statusCode` when they are primitives (and, for a driver error, its schema identifier fields), recursing into `cause` and `errors` under the same
  * rule (at most MAX_ERR_DEPTH levels, the deepest replaced by `"[MaxDepth]"`, and MAX_ERR_CHILDREN
  * entries; a cycle becomes `"[Circular]"`). Unlike `pino.stdSerializers.err`, no other enumerable
  * property of the error is copied, and a cause is nested under `cause` rather than folded into the

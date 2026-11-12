@@ -16,8 +16,15 @@
 
 const REDACTED = "[REDACTED]";
 
-/** A SQLSTATE: five characters, digits and upper-case letters (`22P02`, `23505`). */
-const SQLSTATE = /^[0-9A-Z]{5}$/;
+/**
+ * A SQLSTATE: five characters, digits and upper-case letters (`22P02`, `23505`, `P0001`). Every
+ * SQLSTATE Postgres defines contains a digit, which is what tells one from a Node system error code
+ * of the same length (`EPIPE`, `EPERM`, `EBUSY`).
+ */
+const SQLSTATE = /^(?=[A-Z]*[0-9])[0-9A-Z]{5}$/;
+
+/** The schema identifiers a driver error carries: names, not values, so they may be written. */
+export const DRIVER_IDENTIFIER_FIELDS = ["schema_name", "table_name", "column_name", "constraint_name"] as const;
 
 /**
  * The SQL text of a failed database query, when `value` is drizzle-orm's `DrizzleQueryError`, else
@@ -111,5 +118,17 @@ function redactQuoted(s: string): string {
  * `isDriverError`) — quoted text in an arbitrary message is not a query value.
  */
 export function redactDriverText(s: string): string {
-	return redactQuoted(redactKeyList(s));
+	return redactQuoted(redactKeyList(redactFailingRow(s)));
+}
+
+/**
+ * Replaces the row in a `Failing row contains (<values>).` DETAIL (a not-null or check-constraint
+ * violation) with `Failing row contains ([REDACTED]).`, cutting to the end: the row's values are
+ * not escaped either.
+ */
+function redactFailingRow(s: string): string {
+	const marker = "Failing row contains (";
+	const at = s.indexOf(marker);
+	if (at === -1) return s;
+	return `${s.slice(0, at + marker.length)}${REDACTED}).`;
 }

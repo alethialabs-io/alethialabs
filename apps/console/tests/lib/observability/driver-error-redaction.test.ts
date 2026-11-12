@@ -214,8 +214,8 @@ describe("the Sentry scrub, for a driver error under a failed query", () => {
 		expect(out.exception.values[2]?.value).toBe("could not save the user");
 	});
 
-	it("leaves the quoted text of a driver-shaped error that is not under a failed query", () => {
-		const e = Object.assign(new Error('job "nightly" failed'), { code: "JOB01" });
+	it("leaves the quoted text of an error whose code is not a SQLSTATE", () => {
+		const e = Object.assign(new Error('job "nightly" failed'), { code: "EPIPE" });
 		const out = scrubEvent({ exception: { values: [exceptionOf(e)] } }, { originalException: e });
 		expect(out.exception.values[0]?.value).toBe('job "nightly" failed');
 	});
@@ -258,5 +258,45 @@ describe("a failed query sent through the real Sentry SDK", () => {
 			expect(envelope).toContain("PostgresError");
 		}
 		expect(sent.join("\n")).toContain(JSON.stringify('invalid input syntax for type uuid: "[REDACTED]"'));
+	});
+});
+
+describe("review follow-ups (#6661)", () => {
+	it("does not take a Node system error code for a SQLSTATE", () => {
+		const isDriver = (code: string) => isDriverError(Object.assign(new Error('write "x" failed'), { code }));
+		expect(["EPIPE", "EPERM", "EBUSY", "ESRCH"].map(isDriver)).toEqual([false, false, false, false]);
+		expect(["22P02", "23505", "P0001", "XX000"].map(isDriver)).toEqual([true, true, true, true]);
+	});
+
+	it("keeps the stack of a driver-shaped error whose message has nothing to redact", () => {
+		const { log, lines } = collectLogger();
+		const e = Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" });
+		e.message = "canceling statement due to statement timeout";
+		log.error("timed out", { err: e });
+		const line = JSON.parse(lines[0] ?? "{}");
+		expect(line.err.stack).toContain("canceling statement due to statement timeout");
+	});
+
+	it("writes the schema identifiers a redacted driver message no longer names", () => {
+		const { log, lines } = collectLogger();
+		log.error("insert failed", { err: failedQueries().unique });
+		const text = lines.join("\n");
+		expectNoValue(text);
+		const cause = JSON.parse(lines[0] ?? "{}").err.cause;
+		expect(cause).toMatchObject({ code: "23505", table_name: "users", constraint_name: "users_email_key", schema_name: "public" });
+	});
+
+	it("redacts a Failing row DETAIL", () => {
+		expect(redactDriverText(`Failing row contains (1, ${DUP_EMAIL}, null).`)).toBe("Failing row contains ([REDACTED]).");
+	});
+
+	it("rewrites a driver error the driver raised directly, with no failed query around it", () => {
+		const commit = pgError(UNIQUE_FIELDS);
+		const out = scrubEvent(
+			{ exception: { values: [{ type: "PostgresError", value: commit.message }] }, extra: { detail: commit.detail } },
+			{ originalException: commit },
+		);
+		expect(JSON.stringify(out)).not.toContain(DUP_EMAIL);
+		expect(out.exception.values[0]?.value).toBe('duplicate key value violates unique constraint "[REDACTED]"');
 	});
 });
