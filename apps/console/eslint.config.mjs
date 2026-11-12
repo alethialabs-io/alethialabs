@@ -5,6 +5,45 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import vitest from "@vitest/eslint-plugin";
 
+const USE_SESSION_MESSAGE =
+	"Read the signed-in person with useViewer() from @/components/providers/viewer-provider — better-auth's useSession is not hydration-safe (#5382).";
+
+/** The useSession hydration guard (#5382); see the block that applies it below. */
+const USE_SESSION_SELECTORS = [
+	{ selector: "MemberExpression[property.name='useSession']", message: USE_SESSION_MESSAGE },
+	{
+		selector: "MemberExpression[computed=true][property.value='useSession']",
+		message: USE_SESSION_MESSAGE,
+	},
+	{ selector: "ObjectPattern > Property[key.name='useSession']", message: USE_SESSION_MESSAGE },
+];
+
+/** The names a caught error goes by in this codebase (#6650). The rule's boundary is stated below. */
+const CAUGHT_ERROR_NAME = "/^(err|error|e|cause|reason|ex|exception|[a-z][A-Za-z0-9]*(Err|Error))$/";
+/** A server module: one with no `"use client"` directive. */
+const SERVER_MODULE = "Program:not(:has(ExpressionStatement[directive='use client']))";
+/** A `console.error(…)` or `console.warn(…)` call. */
+const CONSOLE_ERROR_CALL =
+	"CallExpression[callee.object.name='console'][callee.property.name=/^(error|warn)$/]";
+/** An identifier named like a caught error, or a member chain rooted at one (`err.cause.message`). */
+const ERROR_VALUE = [
+	`Identifier[name=${CAUGHT_ERROR_NAME}]`,
+	`MemberExpression:has(Identifier.object[name=${CAUGHT_ERROR_NAME}])`,
+];
+const CAUGHT_ERROR_MESSAGE =
+	"Report a caught error through the structured logger: log.error(msg, { err }).";
+/** The caught-error guard (#6650); see the block that applies it below. */
+const CAUGHT_ERROR_SELECTORS = [
+	...ERROR_VALUE.map((v) => `${CONSOLE_ERROR_CALL} > ${v}.arguments`),
+	...ERROR_VALUE.map((v) => `${CONSOLE_ERROR_CALL} > TemplateLiteral.arguments > ${v}.expressions`),
+	...ERROR_VALUE.map((v) => `${CONSOLE_ERROR_CALL} > CallExpression.arguments > ${v}.arguments`),
+	// Wrapped forms: `err instanceof Error ? err.message : err`, `input.error ?? ""`, `err?.message`,
+	// `"x: " + err`, and `{ err }`. Anywhere inside the wrapper, so a nested operand still matches.
+	...["ConditionalExpression", "LogicalExpression", "ChainExpression", "BinaryExpression", "ObjectExpression"].flatMap(
+		(w) => ERROR_VALUE.map((v) => `${CONSOLE_ERROR_CALL} > ${w}.arguments ${v}`),
+	),
+].map((selector) => ({ selector: `${SERVER_MODULE} ${selector}`, message: CAUGHT_ERROR_MESSAGE }));
+
 const eslintConfig = defineConfig([
 	// Generated / build output — never linted.
 	globalIgnores([
@@ -124,24 +163,53 @@ const eslintConfig = defineConfig([
 		files: ["**/*.{ts,tsx}"],
 		ignores: ["tests/**", "e2e/**", "components/providers/viewer-provider.tsx"],
 		rules: {
-			"no-restricted-syntax": [
-				"error",
-				{
-					selector: "MemberExpression[property.name='useSession']",
-					message:
-						"Read the signed-in person with useViewer() from @/components/providers/viewer-provider — better-auth's useSession is not hydration-safe (#5382).",
-				},
-				{
-					selector: "MemberExpression[computed=true][property.value='useSession']",
-					message:
-						"Read the signed-in person with useViewer() from @/components/providers/viewer-provider — better-auth's useSession is not hydration-safe (#5382).",
-				},
-				{
-					selector: "ObjectPattern > Property[key.name='useSession']",
-					message:
-						"Read the signed-in person with useViewer() from @/components/providers/viewer-provider — better-auth's useSession is not hydration-safe (#5382).",
-				},
-			],
+			"no-restricted-syntax": ["error", ...USE_SESSION_SELECTORS],
+		},
+	},
+	{
+		// Caught-error guard (#6650, #6634): console server code reports a caught error through the
+		// structured logger, `log.error(msg, { err })` / `log.warn(msg, { err })` from
+		// lib/observability/log.ts, so its `err` serializer decides what is written. `console.error`
+		// and `console.warn` hand the object to util.inspect, which prints the error's own enumerable
+		// fields — more than the serializer allows (a DrizzleQueryError's bound parameter values).
+		//
+		// WHERE: app/** and lib/**, .ts and .tsx (server components and layouts call console too);
+		// not tests, e2e or scripts. A `"use client"` module is excluded STRUCTURALLY, not by a list: every selector
+		// is prefixed with `Program:not(:has(ExpressionStatement[directive='use client']))`, so the
+		// directive itself takes the file out and a new client module needs no config edit. A
+		// module with no directive that still ships to the browser is listed below by path, with why.
+		//
+		// WHAT is matched: a `console.error`/`console.warn` call one of whose arguments is
+		//   - an identifier named in CAUGHT_ERROR_NAME (`err`, `error`, `e`, `cause`, `reason`, `ex`,
+		//     `exception`) — `console.error("x", err)`;
+		//   - a member chain rooted at one — `err.message`, `err.cause.stack`;
+		//   - a template literal interpolating either — `` `x: ${err}` ``, `` `${err.message}` ``;
+		//   - a call taking either directly — `String(err)`, `JSON.stringify(err)`.
+		// BOUNDARY, stated: the rule matches a NAME, not a binding. "The identifier bound by the
+		// enclosing catch clause" cannot be written as a selector (esquery cannot compare one node's
+		// attribute with another's), so `catch (boom) { console.error(boom) }` passes, and a non-error
+		// value that happens to be called `reason` fires. An error first copied into another variable,
+		// or passed nested deeper than the forms above, is not seen either. The name list is the
+		// convention this codebase already uses for caught errors; a new name belongs in it.
+		// Any name ending in `Err` or `Error` (`uploadErr`, `cancelError`) also matches. Server
+		// components (`.tsx` with no "use client") are covered; a "use client" directive anywhere in
+		// the file excludes it, which is broader than the first statement but not a case that occurs.
+		files: ["app/**/*.{ts,tsx}", "lib/**/*.{ts,tsx}"],
+		ignores: [
+			"**/*.test.{ts,tsx}",
+			"**/__tests__/**",
+			"**/e2e/**",
+			"**/scripts/**",
+			// Browser-reachable with no "use client" of its own: imported only by client components
+			// (components/org/upgrade-org-sheet.tsx, components/billing/{credit-pack-dialog,
+			// upgrade-ai-sheet}.tsx). The server logger (pino + OTel) cannot run there, and the
+			// browser's devtools console is the only reader of this line, so console.error is right.
+			"lib/billing/intent-error.ts",
+		],
+		rules: {
+			// no-restricted-syntax's options REPLACE, they do not merge, so the useSession selectors
+			// above are repeated here or they would stop applying to these files.
+			"no-restricted-syntax": ["error", ...USE_SESSION_SELECTORS, ...CAUGHT_ERROR_SELECTORS],
 		},
 	},
 	{
