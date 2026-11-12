@@ -12,8 +12,10 @@
 //                      when the catalogue's version is a security release.
 //   gitops             keeps whatever `addons/<id>.yaml` in the user's apps repo says: the runner
 //                      seeds that file once and never rewrites it (provisioner/addons_gitops.go).
-//                      The console cannot read the repo, so it states what the catalogue ships and
-//                      leaves the comparison to the runner, which reports drift on the Deploy tab.
+//                      Rendering this notice does not read the repo, so it states what the
+//                      catalogue ships and leaves the comparison to the runner, which reports drift
+//                      on the Deploy tab. The repo is read only when the user asks for the bump
+//                      pull request (lib/addons/gitops-bump/, #6549), with their own token.
 //
 // One function so the console card and `GET /api/cli/projects/:id/addons` cannot disagree. It
 // imports nothing server-only, so the client card calls it directly.
@@ -100,7 +102,7 @@ export function addOnUpdateNotice(
 	if (!install) return null;
 	const security = catalog.securityRelease ?? null;
 	if (install.mode === "gitops") {
-		// The repo decides and the console cannot read it, so the catalogue version is ALWAYS stated.
+		// The repo decides and this notice does not read it, so the catalogue version is ALWAYS stated.
 		// Not even a stored pin equal to the catalogue proves the repo current: the file was seeded
 		// once, with whatever version applied then, and the user may have edited it since.
 		return {

@@ -1,0 +1,11 @@
+{
+  "status": "open",
+  "created": true,
+  "version": "4.15.1",
+  "file": "addons/ingress-nginx.yaml",
+  "field": "spec.source.targetRevision",
+  "number": 42,
+  "url": "https://github.com/acme/apps/pull/42",
+  "reason": null,
+  "message": null
+}

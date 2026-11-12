@@ -7,7 +7,9 @@ import {
 	disableAddonAction,
 	enableAddonAction,
 	type ProjectAddonsView,
+	requestGitopsBumpAction,
 } from "@/app/server/actions/addons";
+import type { GitopsBumpResult } from "@/lib/addons/gitops-bump/service";
 import {
 	type ActionMutationOptions,
 	useActionMutation,
@@ -72,4 +74,14 @@ export function useDisableAddon(
 	> = {},
 ) {
 	return useActionMutation(disableAddonAction, { ...options, invalidates: addonKeys() });
+}
+
+/**
+ * Opens, or finds, the pull request that bumps a GitOps add-on's seeded chart version (#6549). The
+ * outcome, including a refusal with its manual instruction, comes back as data for the card to say.
+ */
+export function useRequestGitopsBump(
+	options: AddonWriteOptions<GitopsBumpResult, Parameters<typeof requestGitopsBumpAction>[0]> = {},
+) {
+	return useActionMutation(requestGitopsBumpAction, { ...options, invalidates: addonKeys() });
 }

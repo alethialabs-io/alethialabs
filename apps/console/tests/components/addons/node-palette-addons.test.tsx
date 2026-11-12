@@ -51,6 +51,7 @@ const ITEMS: AddonMarketItem[] = [
 			health: null,
 			sync: null,
 			lastSyncedAt: null,
+			gitopsBump: null,
 		},
 	},
 ];

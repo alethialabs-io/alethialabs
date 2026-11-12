@@ -1,0 +1,187 @@
+{
+  "_comment": "The 'only when sure' rules for a GitOps add-on's seeded manifest (#6549), read by BOTH the runner's drift check (packages/core/provisioner/addons_gitops_bump_fixture_test.go) and the console's edit (apps/console/tests/lib/addons/gitops-bump/edit.test.ts). drift: does the runner report this file as behind. edit: what the console's edit does, 'ok' or its refusal. An edit is never 'ok' where drift is false. Every case installs chart ingress-nginx and the target version is 4.15.1.",
+  "chart": "ingress-nginx",
+  "target": "4.15.1",
+  "cases": [
+    {
+      "name": "plain",
+      "file": "plain.yaml",
+      "why": "The seeded file, older chart: the one case the whole feature exists for.",
+      "drift": true,
+      "edit": "ok",
+      "expected": "plain.expected.yaml"
+    },
+    {
+      "name": "double-quoted",
+      "file": "double-quoted.yaml",
+      "why": "A double-quoted version keeps its double quotes.",
+      "drift": true,
+      "edit": "ok",
+      "expected": "double-quoted.expected.yaml"
+    },
+    {
+      "name": "single-quoted",
+      "file": "single-quoted.yaml",
+      "why": "A single-quoted version keeps its single quotes.",
+      "drift": true,
+      "edit": "ok",
+      "expected": "single-quoted.expected.yaml"
+    },
+    {
+      "name": "crlf-and-comments",
+      "file": "crlf-comments.yaml",
+      "why": "CRLF line endings, a header comment, an end-of-line comment on the version itself: all byte-identical.",
+      "drift": true,
+      "edit": "ok",
+      "expected": "crlf-comments.expected.yaml"
+    },
+    {
+      "name": "v-prefixed",
+      "file": "v-prefixed.yaml",
+      "why": "A v-prefixed older version is drift; the edit writes the catalog's spelling.",
+      "drift": true,
+      "edit": "ok",
+      "expected": "v-prefixed.expected.yaml"
+    },
+    {
+      "name": "equal",
+      "file": "equal.yaml",
+      "why": "Already on the target.",
+      "drift": false,
+      "edit": "not-older"
+    },
+    {
+      "name": "newer",
+      "file": "newer.yaml",
+      "why": "The customer moved ahead of the catalog.",
+      "drift": false,
+      "edit": "not-older"
+    },
+    {
+      "name": "range",
+      "file": "range.yaml",
+      "why": "A range is the customer's choice.",
+      "drift": false,
+      "edit": "revision-not-semver"
+    },
+    {
+      "name": "shorthand",
+      "file": "shorthand.yaml",
+      "why": "A two-part version is not a full SemVer version.",
+      "drift": false,
+      "edit": "revision-not-semver"
+    },
+    {
+      "name": "leading-zero",
+      "file": "leading-zero.yaml",
+      "why": "SemVer forbids leading zeros; golang.org/x/mod/semver rejects it.",
+      "drift": false,
+      "edit": "revision-not-semver"
+    },
+    {
+      "name": "different-chart",
+      "file": "different-chart.yaml",
+      "why": "The customer replaced our chart.",
+      "drift": false,
+      "edit": "different-chart"
+    },
+    {
+      "name": "not-an-application",
+      "file": "not-application.yaml",
+      "why": "Not an ArgoCD Application.",
+      "drift": false,
+      "edit": "not-an-application"
+    },
+    {
+      "name": "not-yaml",
+      "file": "not-yaml.yaml",
+      "why": "Does not parse.",
+      "drift": false,
+      "edit": "not-yaml"
+    },
+    {
+      "name": "empty",
+      "file": "empty.yaml",
+      "why": "An empty file.",
+      "drift": false,
+      "edit": "not-one-document"
+    },
+    {
+      "name": "duplicate-key",
+      "file": "duplicate-key.yaml",
+      "why": "Two targetRevision keys: neither reader picks one.",
+      "drift": false,
+      "edit": "not-yaml"
+    },
+    {
+      "name": "invalid-utf8",
+      "file": "invalid-utf8.yaml",
+      "why": "Not UTF-8.",
+      "drift": false,
+      "edit": "not-utf8"
+    },
+    {
+      "name": "multi-document",
+      "file": "multi-document.yaml",
+      "why": "The runner reads the first document and warns; the edit refuses a file it did not seed whole.",
+      "drift": true,
+      "edit": "not-one-document"
+    },
+    {
+      "name": "multi-source",
+      "file": "multi-source.yaml",
+      "why": "The runner reads spec.source; the edit refuses an Application that also has spec.sources.",
+      "drift": true,
+      "edit": "multi-source"
+    },
+    {
+      "name": "tagged",
+      "file": "tagged.yaml",
+      "why": "An explicit tag: the customer shaped the scalar.",
+      "drift": true,
+      "edit": "revision-not-plain"
+    },
+    {
+      "name": "block-scalar",
+      "file": "block-scalar.yaml",
+      "why": "A block scalar: the value is a version, the text is not.",
+      "drift": true,
+      "edit": "revision-not-plain"
+    },
+    {
+      "name": "anchor-alias",
+      "file": "anchor-alias.yaml",
+      "why": "An alias: editing it would change the anchor's other users.",
+      "drift": true,
+      "edit": "revision-not-plain"
+    },
+    {
+      "name": "anchored-revision",
+      "file": "anchored-revision.yaml",
+      "why": "The version itself carries an anchor that an alias elsewhere reads: the edit would change that copy too, and a re-parse cannot tell.",
+      "drift": true,
+      "edit": "revision-not-plain"
+    },
+    {
+      "name": "anchored-source",
+      "file": "anchored-source.yaml",
+      "why": "The source block carries an anchor that an alias elsewhere reads: changing its version changes the alias's copy too.",
+      "drift": true,
+      "edit": "revision-not-plain"
+    },
+    {
+      "name": "escaped-double-quoted",
+      "file": "escaped-double-quoted.yaml",
+      "why": "An escape inside the quotes: the source text is not the value.",
+      "drift": true,
+      "edit": "revision-not-plain"
+    },
+    {
+      "name": "byte-order-mark",
+      "file": "bom.yaml",
+      "why": "A UTF-8 byte-order mark.",
+      "drift": true,
+      "edit": "byte-order-mark"
+    }
+  ]
+}
