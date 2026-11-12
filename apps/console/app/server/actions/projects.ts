@@ -2525,6 +2525,9 @@ export async function planProject(
 			"plan",
 		);
 	assertIacSourceQueueable(iacSource, "plan");
+	// A promotion deploys this plan's own snapshot (promotions/lifecycle.ts), so a plan whose deploy
+	// would push a GitOps add-on to a read-only apps repo is refused here, before anyone approves it.
+	assertGitopsDeliveryQueueable(configSnapshot);
 
 	const result = await withScope(
 		{ ownerId: owner, orgId: actor.orgId },

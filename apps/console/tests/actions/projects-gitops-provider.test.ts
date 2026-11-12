@@ -22,7 +22,7 @@ vi.mock("@/lib/config/auth", async (importOriginal) => ({
 	getGitlabBaseUrl: () => "https://code.acme.example",
 }));
 
-import { buildProject, provisionProject } from "@/app/server/actions/projects";
+import { buildProject, planProject, provisionProject } from "@/app/server/actions/projects";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
@@ -230,4 +230,26 @@ describe("buildProject — the BUILD chains a deploy, so it is gated the same wa
 			expect(valuesSpy.mock.calls.some((c) => c[0] === jobs)).toBe(false);
 		},
 	);
+});
+
+describe("planProject — a promotion deploys the plan's snapshot, so it is gated the same way", () => {
+	it.each(["https://code.acme.example/acme/apps", "https://bitbucket.org/acme/apps"])(
+		"refuses a PLAN whose snapshot would push a GitOps add-on to %s",
+		async (repo) => {
+			const { valuesSpy } = setupDb(withRepoAndAddons(repo, [addonRow("loki", "gitops")]), new Map([[jobs, [{ id: "job-p" }]]]));
+
+			await expect(planProject("p1")).rejects.toThrow(/Switch the GitOps add-on loki to Managed delivery/);
+			expect(valuesSpy.mock.calls.some((c) => c[0] === jobs)).toBe(false);
+		},
+	);
+
+	it("queues the plan when the apps repo is on GitHub", async () => {
+		const { valuesSpy } = setupDb(
+			withRepoAndAddons("https://github.com/acme/apps", [addonRow("loki", "gitops")]),
+			new Map([[jobs, [{ id: "job-pg" }]]]),
+		);
+
+		await expect(planProject("p1")).resolves.toEqual({ jobId: "job-pg" });
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "PLAN" });
+	});
 });

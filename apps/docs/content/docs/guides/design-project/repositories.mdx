@@ -150,10 +150,13 @@ token from the job owner's connected Git provider, and only the GitHub connectio
 | GitLab | No | The connection asks for `read_repository`, which cannot push. | `oauth2` |
 | Bitbucket | No | The connection asks for `repository`, which is read-only. | `x-token-auth` |
 
-The console refuses GitOps mode for an apps repository on GitLab or Bitbucket twice: when you choose
-the mode for an add-on, and again before it queues a deploy. Both refusals tell you to use Managed
-delivery. The second one names each GitOps add-on, because an apps repository can move off GitHub
-after its add-ons were set to GitOps. A deploy never starts a push it cannot finish.
+The console also refuses GitOps mode when the apps repository is on a host that matches no
+connected provider, because it has no token to send there.
+
+The console refuses GitOps mode for such an apps repository twice: when you choose the mode for an
+add-on, and again before it queues a plan, a build or a deploy. Both refusals tell you to use
+Managed delivery. The second one names each GitOps add-on, because an apps repository can move off
+GitHub after its add-ons were set to GitOps.
 
 Reading the repository works on all three providers. Alethia sends each provider the username it
 requires with the token, for every clone and for the ArgoCD repository Secret. Bitbucket refuses
