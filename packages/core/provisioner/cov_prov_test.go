@@ -1442,7 +1442,9 @@ func TestProv_PrepareByoChartsRegistersOneCredentialPerRepo(t *testing.T) {
 
 	vc := provByoChartConfig()
 	var errOut strings.Builder
-	if !prepareByoCharts(vc, "shared-token", map[string]string{}, map[string]string{"env": "prod"}, io.Discard, &errOut) {
+	// The chart repo's OWN token: there is no fallback to the shared one (#6600).
+	repoTokens := map[string]string{"https://github.com/acme/charts.git": "repo-token"}
+	if !prepareByoCharts(vc, "shared-token", repoTokens, map[string]string{"env": "prod"}, io.Discard, &errOut) {
 		t.Fatal("prepareByoCharts did not report the BYO charts")
 	}
 	if vc.AddOns[0].Project == "" || vc.AddOns[0].Project != vc.AddOns[1].Project {
@@ -1474,7 +1476,8 @@ func TestProv_PrepareByoChartsIsBestEffort(t *testing.T) {
 
 	vc := provByoChartConfig()
 	var errOut strings.Builder
-	if !prepareByoCharts(vc, "shared-token", nil, nil, io.Discard, &errOut) {
+	repoTokens := map[string]string{"https://github.com/acme/charts.git": "repo-token"}
+	if !prepareByoCharts(vc, "shared-token", repoTokens, nil, io.Discard, &errOut) {
 		t.Fatal("prepareByoCharts did not report the BYO charts")
 	}
 	if !strings.Contains(errOut.String(), "could not apply BYO AppProject") {
