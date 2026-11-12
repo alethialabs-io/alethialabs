@@ -70,6 +70,37 @@ type GitopsStatus struct {
 	// its rules refuse there (#6541). Empty when the environment has no BYO chart, or when the deploy
 	// did not reach the BYO stage.
 	ByoAdmission []ByoAdmissionNamespaceStatus `json:"byo_admission,omitempty"`
+	// AddonDrift is every GitOps-mode add-on whose seeded `addons/<id>.yaml` installs an older chart
+	// than this deploy would seed (#6537, #6549). It is the structured form of the drift warning, so
+	// the console can attach an action to the add-on it names instead of showing a sentence. Empty
+	// when no GitOps add-on has drifted, or when the deploy did not reach the GitOps write.
+	AddonDrift []AddonDriftStatus `json:"addon_drift,omitempty"`
+}
+
+// AddonDriftStatus is one GitOps-mode add-on whose seeded manifest is behind the version this deploy
+// would seed. Mirrors the TS `AddonDriftReport` in apps/console/types/jsonb.types.ts. It holds only
+// catalog names, a repo-relative path and version strings — never a value from the file.
+type AddonDriftStatus struct {
+	// AddonID is the catalog id (`ingress-nginx`).
+	AddonID string `json:"addon_id"`
+	// File is the manifest's path inside the apps repo (`addons/ingress-nginx.yaml`).
+	File string `json:"file"`
+	// Chart is the Helm chart the file installs, which is the catalog's chart.
+	Chart string `json:"chart"`
+	// SeededVersion is the file's `spec.source.targetRevision`, exactly as written.
+	SeededVersion string `json:"seeded_version"`
+	// DesiredVersion is the version this deploy would seed: the catalog's, or the user's pin.
+	DesiredVersion string `json:"desired_version"`
+	// Warning is the exact string this deploy ALSO put in ManifestWarnings for this add-on.
+	//
+	// The sentence stays in ManifestWarnings for this release, so a console that predates
+	// `addon_drift` still shows the drift. A console that reads `addon_drift` drops the
+	// ManifestWarnings entry equal to this field and renders the structured row instead. Pairing by
+	// this exact string, rather than by matching the sentence's wording, means rewording the sentence
+	// cannot break the pairing. Remove the ManifestWarnings copy, and then this field, once every
+	// console that runners report to reads `addon_drift`, which is the first release after the one
+	// that ships it reaches main.
+	Warning string `json:"warning"`
 }
 
 // ServiceHealth is one workload's ArgoCD resource status inside the apps Application:

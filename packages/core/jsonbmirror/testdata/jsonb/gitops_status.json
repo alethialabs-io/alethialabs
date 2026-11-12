@@ -28,5 +28,15 @@
       "policy_unavailable": "the cluster does not serve ValidatingAdmissionPolicy",
       "checks": [{ "kind": "PodSecurity", "state": "checked" }]
     }
+  ],
+  "addon_drift": [
+    {
+      "addon_id": "ingress-nginx",
+      "file": "addons/ingress-nginx.yaml",
+      "chart": "ingress-nginx",
+      "seeded_version": "4.11.2",
+      "desired_version": "4.15.1",
+      "warning": "GitOps add-on ingress-nginx: addons/ingress-nginx.yaml in your apps repo installs chart ingress-nginx 4.11.2"
+    }
   ]
 }

@@ -1219,6 +1219,13 @@
       "when": 1794404677220,
       "tag": "0173_stormy_forgotten_one",
       "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1794441837434,
+      "tag": "0174_third_leper_queen",
+      "breakpoints": true
     }
   ]
 }
