@@ -584,7 +584,7 @@ func keylessAppsRepoReset(ctx context.Context, repoURL, provider, token string) 
 		return fmt.Errorf("keyless apps-repo preflight: %w", err)
 	}
 	defer os.RemoveAll(check)
-	if err := git.NewGITWithToken(repoURL, check, false, token).Clone(ctx, "", false); err != nil {
+	if err := git.NewGITWithToken(repoURL, check, false, token, git.ProviderGitHub).Clone(ctx, "", false); err != nil {
 		return fmt.Errorf("keyless apps-repo preflight: clone %s: %w", repoURL, err)
 	}
 	return keylessAppsRepoRefusal(check, repoURL)

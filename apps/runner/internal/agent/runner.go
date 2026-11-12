@@ -748,7 +748,8 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	// console picks the provider from that repo, validated against the job): the apps repo's goes
 	// to GitAccessToken, the BYO IaC module's and each BYO git chart's to GitRepoTokens. Resolved
 	// here in the parent — the values cross the sandbox boundary as secrets.
-	gitToken, gitTokens := w.deployGitTokens(job.ID, vc, stderr)
+	gitToken, gitTokens, gitProviders := w.deployGitTokens(job.ID, vc, stderr)
+	vc.GitProviders = gitProviders
 
 	// Add-on secret-knob values (W4.5 #640): the config snapshot carries only a SecretRef
 	// per add-on (name/namespace/keys — never values); the plaintext is fetched HERE, over
@@ -1149,7 +1150,8 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 
 	// A plan clones only the BYO IaC module (GitOps wiring is apply-only), so the only token it
 	// needs is that module repo's own, requested by name.
-	planGitTokens := w.iacRepoTokens(job.ID, vc, stderr)
+	planGitTokens, planGitProviders := w.iacRepoTokens(job.ID, vc, stderr)
+	vc.GitProviders = planGitProviders
 
 	stateBackend, err := w.stateBackend(job.ID)
 	if err != nil {

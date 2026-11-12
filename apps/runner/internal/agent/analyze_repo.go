@@ -26,7 +26,8 @@ func (w *Runner) executeAnalyzeRepo(ctx context.Context, job *Job, stdout, stder
 
 	fmt.Fprintf(stdout, "Analyzing the repository on host %s\n", provisioner.RepoHostForLog(repoURL))
 
-	token := w.fetchRepoToken(job.ID, repoURL, stderr)
+	fetched := w.fetchRepoToken(job.ID, repoURL, stderr)
+	token := fetched.Token
 	if token == "" {
 		fmt.Fprintln(stderr, "No git token; attempting public clone.")
 	}
@@ -39,7 +40,7 @@ func (w *Runner) executeAnalyzeRepo(ctx context.Context, job *Job, stdout, stder
 
 	var repo *git.GIT
 	if token != "" {
-		repo = git.NewGITWithToken(repoURL, dir, false, token)
+		repo = git.NewGITWithToken(repoURL, dir, false, token, fetched.Provider)
 	} else {
 		repo = git.NewGIT(repoURL, dir, false)
 	}

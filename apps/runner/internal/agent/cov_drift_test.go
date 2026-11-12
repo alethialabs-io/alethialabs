@@ -67,13 +67,13 @@ func (a *covDriftAPI) FetchStateToken(jobID string) (string, error) {
 }
 
 // FetchGitToken answers the git-token mint and records that it was called.
-func (a *covDriftAPI) FetchGitToken(jobID, repoURL string) (string, error) {
+func (a *covDriftAPI) FetchGitToken(jobID, repoURL string) (GitToken, error) {
 	a.gitTokenCalls++
 	a.gitTokenRepos = append(a.gitTokenRepos, repoURL)
 	if a.gitTokenErr != nil {
-		return "", a.gitTokenErr
+		return GitToken{}, a.gitTokenErr
 	}
-	return a.gitToken, nil
+	return GitToken{Token: a.gitToken}, nil
 }
 
 // covDriftSandbox stands in for the isolation backend. Like the container backend it
@@ -1145,7 +1145,7 @@ func TestDrift_APIOptionalFieldsDegradeToEmpty(t *testing.T) {
 	c := NewRunnerAPIClient(srv.URL, "r1", "tok")
 
 	tok, err := c.FetchGitToken("j1", "")
-	if err != nil || tok != "" {
+	if err != nil || tok != (GitToken{}) {
 		t.Fatalf("git token = %q, err = %v", tok, err)
 	}
 	tc, err := c.FetchFabricTalosconfig("j1")

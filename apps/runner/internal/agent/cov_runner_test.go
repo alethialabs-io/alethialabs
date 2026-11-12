@@ -77,9 +77,11 @@ type covRunAPI struct {
 
 	mu sync.Mutex
 
-	updateErr     error
-	getJobFn      func(jobID string) (*Job, error)
-	gitTokenFn    func(jobID, repoURL string) (string, error)
+	updateErr  error
+	getJobFn   func(jobID string) (*Job, error)
+	gitTokenFn func(jobID, repoURL string) (string, error)
+	// gitProviders is the provider FetchGitToken names for a repo's token, by repo URL (#6599).
+	gitProviders  map[string]string
 	addonSecretFn func(jobID string) (map[string]map[string]string, error)
 	stateTokenErr error
 	downloadOK    bool // true ⇒ DownloadPlanArtifact creates the file and succeeds
@@ -120,12 +122,14 @@ func (a *covRunAPI) GetJob(jobID string) (*Job, error) {
 	return a.mockAPI.GetJob(jobID)
 }
 
-// FetchGitToken delegates to the test hook when one is set.
-func (a *covRunAPI) FetchGitToken(jobID, repoURL string) (string, error) {
+// FetchGitToken delegates to the test hook when one is set, naming the provider gitProviders holds
+// for the repo.
+func (a *covRunAPI) FetchGitToken(jobID, repoURL string) (GitToken, error) {
 	if a.gitTokenFn != nil {
-		return a.gitTokenFn(jobID, repoURL)
+		tok, err := a.gitTokenFn(jobID, repoURL)
+		return GitToken{Token: tok, Provider: a.gitProviders[repoURL]}, err
 	}
-	return "", nil
+	return GitToken{}, nil
 }
 
 // FetchAddonSecrets delegates to the test hook when one is set.

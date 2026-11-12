@@ -253,7 +253,7 @@ func TestConfigureRepoCredentialsNamedNeverLogsTheToken(t *testing.T) {
 	const token = "ghp_do_not_log_me"
 	stub := newKubectlStub(t, 0)
 	var stdout, stderr bytes.Buffer
-	if err := ConfigureRepoCredentialsNamed("https://github.com/acme/apps", token, "repo-byo-abc123", &stdout, &stderr); err != nil {
+	if err := ConfigureRepoCredentialsNamed("https://github.com/acme/apps", token, "x-access-token", "repo-byo-abc123", &stdout, &stderr); err != nil {
 		t.Fatalf("ConfigureRepoCredentialsNamed() error = %v", err)
 	}
 	if !stub.calledWith("apply -f") {

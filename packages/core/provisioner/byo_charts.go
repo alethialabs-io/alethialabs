@@ -908,7 +908,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			fmt.Fprintf(stderr, "Warning: no git access token for BYO repo on host %s — no credential registered; a private chart there will fail to sync (reconnect the git provider)\n", RepoHostForLog(repo))
 			continue
 		}
-		if err := argocd.ConfigureRepoCredentialsNamed(repo, repoToken, argocd.ByoRepoSecretName(repo), stdout, stderr); err != nil {
+		if err := argocd.ConfigureRepoCredentialsNamed(repo, repoToken, gitUsernameFor(vc, repo), argocd.ByoRepoSecretName(repo), stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo on host %s: %s\n", RepoHostForLog(repo), argocd.RedactTokens(err.Error(), allTokens...))
 		}
 	}

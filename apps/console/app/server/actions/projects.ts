@@ -87,6 +87,7 @@ import type { ChartWorkloadOverlay } from "@/lib/addons/chart-overlay";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import { byoAdmissionSnapshot } from "@/lib/addons/byo-admission";
 import { readGitopsDeployStatus } from "@/lib/gitops/deploy-status";
+import { type GitopsDeploySnapshot, gitopsDeployRefusal } from "@/lib/git/gitops-support";
 import {
 	byoAdmissionEnforceInput,
 	writeByoAdmissionEnforce,
@@ -2171,6 +2172,18 @@ function assertIacSourceQueueable(
 }
 
 /**
+ * Queue gate for GitOps add-on delivery (#6599): a deploy that would push a GitOps-mode add-on's
+ * manifest into an apps repo the job owner's token cannot push to (any provider but GitHub, for
+ * now) is refused before it is queued, naming the add-ons to switch to Managed delivery. The same
+ * choice is refused when the mode is picked (enableAddon); this catches an apps repo that moved off
+ * GitHub after its add-ons were set to GitOps.
+ */
+function assertGitopsDeliveryQueueable(snapshot: GitopsDeploySnapshot): void {
+	const refusal = gitopsDeployRefusal(snapshot);
+	if (refusal) throw new JobRefusalError(refusal);
+}
+
+/**
  * Resolves a provisioning job's deploy destination in the decoupled env-model (#837): the target
  * environment (the explicitly-passed one, verified to belong to the project, else the project's
  * default), the Fabric (infra unit) it is placed onto, and the effective Kubernetes namespace.
@@ -2590,6 +2603,8 @@ export async function buildProject(
 		throw new Error(
 			"Nothing to build — this environment has no repo-sourced services.",
 		);
+	// A successful BUILD chains the DEPLOY on this same snapshot (builds.ts), so it is gated here.
+	assertGitopsDeliveryQueueable(configSnapshot);
 	if (environment.status !== "ACTIVE")
 		throw new Error(
 			"Builds run in the environment's own cluster — provision the infrastructure first.",
@@ -2693,6 +2708,7 @@ export async function provisionProject(
 			"deploy",
 		);
 	assertIacSourceQueueable(iacSource, "deploy");
+	assertGitopsDeliveryQueueable(configSnapshot);
 
 	// W2 build-then-deploy: redeploying an ACTIVE environment that has repo-sourced
 	// services queues the BUILD first — the status route persists the digests and chains

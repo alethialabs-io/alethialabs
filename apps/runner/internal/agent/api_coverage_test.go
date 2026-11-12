@@ -106,12 +106,31 @@ func TestFetchGitToken_SuccessNullAndError(t *testing.T) {
 			if r.URL.Query().Get("repo") != "https://github.com/o/r" {
 				t.Errorf("repo query = %q", r.URL.Query().Get("repo"))
 			}
-			json.NewEncoder(w).Encode(map[string]any{"token": "gho_abc"})
+			json.NewEncoder(w).Encode(map[string]any{"token": "gho_abc", "provider": "github"})
 		}))
 		defer server.Close()
 		tok, err := NewRunnerAPIClient(server.URL, "w1", "tok1").FetchGitToken("job-1", "https://github.com/o/r")
-		if err != nil || tok != "gho_abc" {
-			t.Fatalf("token=%q err=%v", tok, err)
+		if err != nil || tok != (GitToken{Token: "gho_abc", Provider: "github"}) {
+			t.Fatalf("token=%+v err=%v", tok, err)
+		}
+	})
+
+	// The provider the console resolved rides back with the token (#6599): the runner sends the
+	// username that provider requires and never re-reads the host itself.
+	t.Run("provider is read from the response", func(t *testing.T) {
+		for _, provider := range []string{"github", "gitlab", "bitbucket", ""} {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				body := map[string]any{"token": "tok"}
+				if provider != "" {
+					body["provider"] = provider
+				}
+				json.NewEncoder(w).Encode(body)
+			}))
+			tok, err := NewRunnerAPIClient(server.URL, "w1", "tok1").FetchGitToken("job-1", "https://example.test/o/r")
+			server.Close()
+			if err != nil || tok != (GitToken{Token: "tok", Provider: provider}) {
+				t.Errorf("provider %q: token=%+v err=%v", provider, tok, err)
+			}
 		}
 	})
 
@@ -121,8 +140,8 @@ func TestFetchGitToken_SuccessNullAndError(t *testing.T) {
 		}))
 		defer server.Close()
 		tok, err := NewRunnerAPIClient(server.URL, "w1", "tok1").FetchGitToken("job-1", "")
-		if err != nil || tok != "" {
-			t.Fatalf("token=%q err=%v (want empty, nil)", tok, err)
+		if err != nil || tok != (GitToken{}) {
+			t.Fatalf("token=%+v err=%v (want empty, nil)", tok, err)
 		}
 	})
 
@@ -144,8 +163,8 @@ func TestFetchGitToken_SuccessNullAndError(t *testing.T) {
 		}))
 		defer server.Close()
 		tok, err := NewRunnerAPIClient(server.URL, "w1", "tok1").FetchGitToken("job-1", "https://git.example.net/o/r")
-		if err == nil || tok != "" {
-			t.Fatalf("token=%q err=%v (want empty, error)", tok, err)
+		if err == nil || tok != (GitToken{}) {
+			t.Fatalf("token=%+v err=%v (want empty, error)", tok, err)
 		}
 		want := "fetch git token returned status 422: Cannot tell which git provider serves host git.example.net"
 		if err.Error() != want {

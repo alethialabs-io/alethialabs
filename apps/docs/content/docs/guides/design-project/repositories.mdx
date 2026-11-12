@@ -139,6 +139,26 @@ overwritten, so your edits survive. Alethia removes only the files it authored â
 `alethia.io/managed-by: addon-marketplace` label â€” when the add-on is no longer in GitOps mode.
 Files without that label are left alone.
 
+### Which Git providers support GitOps mode
+
+GitOps mode is available only for apps repositories on GitHub for now. Alethia pushes with the
+token from the job owner's connected Git provider, and only the GitHub connection can push:
+
+| Provider | GitOps mode | Why | Username sent with the token |
+|---|---|---|---|
+| GitHub | Yes | The connection can push to the repository. | `x-access-token` |
+| GitLab | No | The connection asks for `read_repository`, which cannot push. | `oauth2` |
+| Bitbucket | No | The connection asks for `repository`, which is read-only. | `x-token-auth` |
+
+The console refuses GitOps mode for an apps repository on GitLab or Bitbucket twice: when you choose
+the mode for an add-on, and again before it queues a deploy. Both refusals tell you to use Managed
+delivery. The second one names each GitOps add-on, because an apps repository can move off GitHub
+after its add-ons were set to GitOps. A deploy never starts a push it cannot finish.
+
+Reading the repository works on all three providers. Alethia sends each provider the username it
+requires with the token, for every clone and for the ArgoCD repository Secret. Bitbucket refuses
+any other username, even to read.
+
 ## What a placed environment gets
 
 A namespace or vcluster placement is wired before the deploy reaches the code that renders the

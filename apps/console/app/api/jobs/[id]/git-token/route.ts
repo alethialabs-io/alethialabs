@@ -201,7 +201,11 @@ function flatRepo(snapshot: Record<string, unknown>): string {
 	return typeof snapshot.repo_url === "string" ? snapshot.repo_url : "";
 }
 
-/** Returns the git provider token for the user who owns a job, minted for one repo of that job. */
+/**
+ * Returns the git provider token for the user who owns a job, minted for one repo of that job, as
+ * `{ token, provider }`: `provider` is the git provider the repo's host resolved to, which the
+ * runner's git client needs to pick the username it sends with the token.
+ */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
@@ -384,7 +388,10 @@ export async function POST(
 					`git-token: no ${gitProvider} access token for job owner ${job.user_id} (repo host ${resolved.host}) — the owner has no valid ${gitProvider} link or its token could not be refreshed`,
 				);
 			}
-			return NextResponse.json({ token: res.accessToken ?? null });
+			// The provider rides back with the token: it decides the username the runner's git client
+			// sends with it (Bitbucket refuses GitHub's `x-access-token`, #6599), and only the console
+			// can resolve it — a self-hosted GitLab host is configured here, not on the runner.
+			return NextResponse.json({ token: res.accessToken ?? null, provider: gitProvider });
 		} catch (err: unknown) {
 			// getAccessToken threw (provider not configured, no account row, refresh failed, …).
 			// Surface the reason — the swallowed catch here is what made this un-diagnosable.

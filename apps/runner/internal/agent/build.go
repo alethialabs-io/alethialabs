@@ -281,11 +281,12 @@ func (w *Runner) resolveHeadSHA(ctx context.Context, jobID, repoURL string, stde
 	}
 	defer os.RemoveAll(dir)
 
-	token := w.fetchRepoToken(jobID, repoURL, stderr)
+	fetched := w.fetchRepoToken(jobID, repoURL, stderr)
+	token := fetched.Token
 	if token == "" {
 		fmt.Fprintln(stderr, "No git token; attempting public clone.")
 	}
-	repo := git.NewGITWithToken(repoURL, dir, false, token)
+	repo := git.NewGITWithToken(repoURL, dir, false, token, fetched.Provider)
 	if err := repo.Clone(ctx, "", false); err != nil {
 		return "", fmt.Errorf("clone for commit pinning: %w", err)
 	}

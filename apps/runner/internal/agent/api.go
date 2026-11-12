@@ -409,24 +409,35 @@ func (c *RunnerAPIClient) DownloadPlanArtifact(jobID, destPath string) error {
 	return nil
 }
 
+// GitToken is a git token the console minted for one repo, with the provider it says minted it.
+// Token is "" when the console issued none. Provider is "github", "gitlab" or "bitbucket", or ""
+// from a console that predates the field; it picks the username sent with the token
+// (git.TokenUsername), because Bitbucket refuses a token under GitHub's `x-access-token` (#6599).
+type GitToken struct {
+	Token    string
+	Provider string
+}
+
 // FetchGitToken mints the job owner's git provider token for repoURL: the console resolves the
 // provider from THAT repo's host (validated against the job's repos), and the token is for that
 // repo alone. Every caller names its repo (through Runner.fetchRepoToken); an empty repoURL is the
-// request older runners send, which the console answers only for a job with a single repo.
-func (c *RunnerAPIClient) FetchGitToken(jobID, repoURL string) (string, error) {
+// request older runners send, which the console answers only for a job with a single repo. The
+// provider the console resolved comes back with the token, so the runner never re-derives it from
+// the host — a self-hosted GitLab host is configured on the console, not here.
+func (c *RunnerAPIClient) FetchGitToken(jobID, repoURL string) (GitToken, error) {
 	endpoint := fmt.Sprintf("%s/jobs/%s/git-token", c.baseURL, jobID)
 	if repoURL != "" {
 		endpoint += "?repo=" + url.QueryEscape(repoURL)
 	}
 	req, err := http.NewRequest("POST", endpoint, nil)
 	if err != nil {
-		return "", err
+		return GitToken{}, err
 	}
 	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("fetch git token request failed: %w", err)
+		return GitToken{}, fmt.Errorf("fetch git token request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -434,22 +445,23 @@ func (c *RunnerAPIClient) FetchGitToken(jobID, repoURL string) (string, error) {
 		// The console explains a refusal in an {"error": "..."} body (e.g. a repo on a host that is
 		// not a configured git provider, #6600) — carry it into the job log instead of a bare code.
 		if msg := consoleErrorMessage(resp.Body); msg != "" {
-			return "", fmt.Errorf("fetch git token returned status %d: %s", resp.StatusCode, msg)
+			return GitToken{}, fmt.Errorf("fetch git token returned status %d: %s", resp.StatusCode, msg)
 		}
-		return "", fmt.Errorf("fetch git token returned status %d", resp.StatusCode)
+		return GitToken{}, fmt.Errorf("fetch git token returned status %d", resp.StatusCode)
 	}
 
 	var result struct {
-		Token *string `json:"token"`
+		Token    *string `json:"token"`
+		Provider string  `json:"provider"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode git token response: %w", err)
+		return GitToken{}, fmt.Errorf("failed to decode git token response: %w", err)
 	}
 
 	if result.Token == nil {
-		return "", nil
+		return GitToken{}, nil
 	}
-	return *result.Token, nil
+	return GitToken{Token: *result.Token, Provider: result.Provider}, nil
 }
 
 // consoleErrorMessage reads the "error" field of a console JSON error body, bounded to 4 KiB.
