@@ -19,7 +19,7 @@ const USE_SESSION_SELECTORS = [
 ];
 
 /** The names a caught error goes by in this codebase (#6650). The rule's boundary is stated below. */
-const CAUGHT_ERROR_NAME = "/^(err|error|e|cause|reason|ex|exception)$/";
+const CAUGHT_ERROR_NAME = "/^(err|error|e|cause|reason|ex|exception|[a-z][A-Za-z0-9]*(Err|Error))$/";
 /** A server module: one with no `"use client"` directive. */
 const SERVER_MODULE = "Program:not(:has(ExpressionStatement[directive='use client']))";
 /** A `console.error(…)` or `console.warn(…)` call. */
@@ -37,6 +37,11 @@ const CAUGHT_ERROR_SELECTORS = [
 	...ERROR_VALUE.map((v) => `${CONSOLE_ERROR_CALL} > ${v}.arguments`),
 	...ERROR_VALUE.map((v) => `${CONSOLE_ERROR_CALL} > TemplateLiteral.arguments > ${v}.expressions`),
 	...ERROR_VALUE.map((v) => `${CONSOLE_ERROR_CALL} > CallExpression.arguments > ${v}.arguments`),
+	// Wrapped forms: `err instanceof Error ? err.message : err`, `input.error ?? ""`, `err?.message`,
+	// `"x: " + err`, and `{ err }`. Anywhere inside the wrapper, so a nested operand still matches.
+	...["ConditionalExpression", "LogicalExpression", "ChainExpression", "BinaryExpression", "ObjectExpression"].flatMap(
+		(w) => ERROR_VALUE.map((v) => `${CONSOLE_ERROR_CALL} > ${w}.arguments ${v}`),
+	),
 ].map((selector) => ({ selector: `${SERVER_MODULE} ${selector}`, message: CAUGHT_ERROR_MESSAGE }));
 
 const eslintConfig = defineConfig([
@@ -168,10 +173,10 @@ const eslintConfig = defineConfig([
 		// and `console.warn` hand the object to util.inspect, which prints the error's own enumerable
 		// fields — more than the serializer allows (a DrizzleQueryError's bound parameter values).
 		//
-		// WHERE: app/**/*.ts and lib/**/*.ts. Not .tsx (components and pages), not tests, e2e or
-		// scripts. A `"use client"` .ts module is excluded STRUCTURALLY, not by a list: every selector
+		// WHERE: app/** and lib/**, .ts and .tsx (server components and layouts call console too);
+		// not tests, e2e or scripts. A `"use client"` module is excluded STRUCTURALLY, not by a list: every selector
 		// is prefixed with `Program:not(:has(ExpressionStatement[directive='use client']))`, so the
-		// directive itself takes the file out and a new client module needs no config edit. A .ts
+		// directive itself takes the file out and a new client module needs no config edit. A
 		// module with no directive that still ships to the browser is listed below by path, with why.
 		//
 		// WHAT is matched: a `console.error`/`console.warn` call one of whose arguments is
@@ -186,9 +191,12 @@ const eslintConfig = defineConfig([
 		// value that happens to be called `reason` fires. An error first copied into another variable,
 		// or passed nested deeper than the forms above, is not seen either. The name list is the
 		// convention this codebase already uses for caught errors; a new name belongs in it.
-		files: ["app/**/*.ts", "lib/**/*.ts"],
+		// Any name ending in `Err` or `Error` (`uploadErr`, `cancelError`) also matches. Server
+		// components (`.tsx` with no "use client") are covered; a "use client" directive anywhere in
+		// the file excludes it, which is broader than the first statement but not a case that occurs.
+		files: ["app/**/*.{ts,tsx}", "lib/**/*.{ts,tsx}"],
 		ignores: [
-			"**/*.test.ts",
+			"**/*.test.{ts,tsx}",
 			"**/__tests__/**",
 			"**/e2e/**",
 			"**/scripts/**",

@@ -60,7 +60,7 @@ describe("caught-error lint rule (#6650)", () => {
 	});
 
 	it.each([
-		["a .tsx component", "lib/lint-fixture/widget.tsx"],
+		["a co-located .tsx test", "lib/lint-fixture/widget.test.tsx"],
 		["a test", "tests/lint-fixture/thing.test.ts"],
 		["a co-located test", "lib/lint-fixture/thing.test.ts"],
 		["the browser-reachable billing intent helper", "lib/billing/intent-error.ts"],
@@ -73,5 +73,29 @@ describe("caught-error lint rule (#6650)", () => {
 			filePath: path.join(CONSOLE_DIR, "lib/lint-fixture/server-module.ts"),
 		});
 		expect(result.messages.some((m) => m.message.includes("useViewer()"))).toBe(true);
+	});
+});
+
+describe("caught-error lint rule: wrapped forms and server .tsx (#6663 review)", () => {
+	it.each([
+		["a conditional that passes the raw error", 'try {} catch (err) { console.error("x", err instanceof Error ? err.message : err); }'],
+		["an optional member", 'try {} catch (err) { console.warn("x", err?.message); }'],
+		["a string concatenation", 'try {} catch (err) { console.error("x: " + err); }'],
+		["an object wrapping the error", 'try {} catch (err) { console.error({ err }); }'],
+		["a nullish fallback", 'declare const input: { error?: unknown }; console.error("x", input.error ?? "");'],
+		["a catch name ending in Err", 'try {} catch (uploadErr) { console.error("x", uploadErr); }'],
+		["a catch name ending in Error", 'try {} catch (cancelError) { console.warn("x", cancelError); }'],
+	])("fires on %s", async (_name, code) => {
+		expect(await hits(code)).toBeGreaterThan(0);
+	});
+
+	it("fires in a server component (.tsx with no \"use client\")", async () => {
+		expect(await hits('try {} catch (error) { console.error("x", error); }', "app/lint-fixture/layout.tsx")).toBe(1);
+	});
+
+	it("does not fire in a client component", async () => {
+		expect(
+			await hits('"use client";\ntry {} catch (error) { console.error("x", error); }', "app/lint-fixture/error.tsx"),
+		).toBe(0);
 	});
 });
