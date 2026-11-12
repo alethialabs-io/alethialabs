@@ -8,10 +8,14 @@ import { useParams } from "next/navigation";
 import { useMemo } from "react";
 import { formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
+import { Skeleton } from "@repo/ui/skeleton";
+import { RegionError } from "@/components/errors/region-error";
 import {
   useJobNotifications,
   type JobNotification,
+  type NotificationFeed,
 } from "@/hooks/use-job-notifications";
 import {
   useSupportNotifications,
@@ -27,6 +31,43 @@ type FeedItem =
   | { kind: "job"; ts: number; job: JobNotification }
   | { kind: "support"; ts: number; support: SupportNotification };
 
+/** One of the bell's two sources, named for the sentences that report on it. */
+interface FeedSource {
+  feed: NotificationFeed;
+  /** What failed, as the error render says it ("job activity"). */
+  noun: string;
+  /** Why a refused source is missing, as the forbidden render says it. */
+  refused: string;
+}
+
+/**
+ * What the popover body renders besides its rows — the four states the bell must keep apart
+ * (#6114): `pending` while a source has not answered and there is nothing to show, `error` for the
+ * sources whose read failed (with a retry), `forbidden` for the sources the read router refused
+ * (no retry — a refusal answers the same again), and `empty` only when every source ANSWERED and
+ * none of the answers holds a row. An error or a refusal is never reported as "all caught up".
+ */
+function bellBodyState(
+  sources: readonly FeedSource[],
+  rowCount: number,
+): {
+  pending: boolean;
+  failed: FeedSource[];
+  refused: FeedSource[];
+  empty: boolean;
+} {
+  const failed = sources.filter((s) => s.feed.status === "error");
+  const refused = sources.filter((s) => s.feed.status === "forbidden");
+  const anyPending = sources.some((s) => s.feed.status === "pending");
+  const anyReady = sources.some((s) => s.feed.status === "ready");
+  return {
+    pending: rowCount === 0 && anyPending,
+    failed,
+    refused,
+    empty: rowCount === 0 && anyReady && !anyPending && failed.length === 0,
+  };
+}
+
 /**
  * Notifications bell + popover for the sidebar profile bar. Composes the two live feeds — jobs
  * (`useJobNotifications`) and support cases (`useSupportNotifications`) — into one recency-sorted
@@ -40,6 +81,18 @@ export function NotificationsPopover() {
   const support = useSupportNotifications();
 
   const unreadCount = jobs.unreadCount + support.unreadCount;
+  const sources: FeedSource[] = [
+    {
+      feed: jobs.feed,
+      noun: "job activity",
+      refused: "Job activity isn't shown: your role can't view jobs in this organization.",
+    },
+    {
+      feed: support.feed,
+      noun: "support replies",
+      refused: "Support replies aren't shown: you can't view support cases here.",
+    },
+  ];
 
   const feed = useMemo<FeedItem[]>(() => {
     const items: FeedItem[] = [
@@ -56,6 +109,17 @@ export function NotificationsPopover() {
     ];
     return items.sort((a, b) => b.ts - a.ts);
   }, [jobs.notifications, support.notifications]);
+
+  const body = bellBodyState(sources, feed.length);
+  // The header's summary may only say "All caught up" about sources that answered.
+  const summary =
+    unreadCount > 0
+      ? `${unreadCount} unread`
+      : body.pending
+        ? "Loading…"
+        : body.failed.length > 0
+          ? "Some notifications didn't load"
+          : "All caught up";
 
   /** Marks every job AND support notification read (the header action). */
   function markAllRead(): void {
@@ -87,7 +151,7 @@ export function NotificationsPopover() {
               Notifications
             </p>
             <p className="text-ui-xs text-muted-foreground">
-              {unreadCount > 0 ? `${unreadCount} unread` : "All caught up"}
+              {summary}
             </p>
           </div>
           {unreadCount > 0 && (
@@ -117,10 +181,46 @@ export function NotificationsPopover() {
               />
             ),
           )}
-          {feed.length === 0 && (
-            <div className="p-8 text-center text-ui-sm text-muted-foreground">
-              You&apos;re all caught up!
+          {body.pending && (
+            <div role="status" aria-label="Loading notifications" data-state="pending">
+              {[0, 1, 2].map((i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-3 border-b border-border/20 px-4 py-2.5"
+                >
+                  <Skeleton className="h-5.5 w-5.5 shrink-0" />
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <Skeleton className="h-3 w-2/3" />
+                    <Skeleton className="h-2.5 w-1/2" />
+                  </div>
+                </div>
+              ))}
             </div>
+          )}
+          {body.failed.length > 0 && (
+            <RegionError
+              title="Couldn't load notifications"
+              description={`Your ${body.failed.map((s) => s.noun).join(" and ")} didn't load.`}
+              onRetry={() => {
+                for (const s of body.failed) s.feed.retry();
+              }}
+            />
+          )}
+          {body.refused.map((s) => (
+            <p
+              key={s.noun}
+              data-state="forbidden"
+              className="border-b border-border/20 px-4 py-2.5 text-ui-xs text-muted-foreground"
+            >
+              {s.refused}
+            </p>
+          ))}
+          {body.empty && (
+            <EmptyState
+              title="You're all caught up"
+              description="Job outcomes and support replies show up here."
+              className="p-6 md:p-6"
+            />
           )}
         </div>
       </PopoverContent>
