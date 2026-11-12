@@ -17,6 +17,7 @@ import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import { resolveCliWriteEnvironment } from "@/lib/cli/resolve-project";
 import { cliEnvironmentError, cliJson } from "@/lib/cli/respond";
 import { cliGitopsBumpResponse } from "@/lib/validations/cli-contract";
+import { log } from "@/lib/observability/log";
 
 /**
  * Maps a failure to a status. An authorization refusal is 403. Anything else is ours (500), and its
@@ -28,7 +29,7 @@ function bumpError(err: unknown): NextResponse {
 	if (/forbidden|not authorized|permission/i.test(message)) {
 		return NextResponse.json({ error: "You do not have permission to change this project's add-ons." }, { status: 403 });
 	}
-	console.error("addons/bump: request failed", err instanceof Error ? err.name : typeof err);
+	log.error("addons/bump: request failed", { err_name: err instanceof Error ? err.name : typeof err });
 	return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
 }
 

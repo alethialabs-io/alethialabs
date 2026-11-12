@@ -34,6 +34,12 @@ vi.mock("@/lib/crypto/secrets", () => ({
 	decryptSecret: (v: unknown) => decryptSecret(v),
 }));
 
+const logError = vi.fn();
+vi.mock("@/lib/observability/log", () => {
+	const l = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: logError, child: () => l };
+	return { log: l };
+});
+
 const RUNNER = "11111111-1111-1111-1111-111111111111";
 
 type JobRow = {
@@ -167,6 +173,22 @@ describe("GET /api/jobs/[id]/talosconfig", () => {
 		expect(res.status).toBe(status);
 		expect(JSON.stringify(await res.json())).not.toContain("fabric-a");
 		expect(decryptSecret).not.toHaveBeenCalled();
+	});
+});
+
+describe("a decryption failure", () => {
+	it("is logged through the logger by the error's name only, never its message", async () => {
+		mockDb(job("DESTROY"), env("vcluster"), { talos_admin_config: "sealed" });
+		decryptSecret.mockImplementationOnce(() => {
+			throw new TypeError("unwrap failed for key kms-key-CANARY-77");
+		});
+		const res = await get();
+		expect(res.status).toBe(500);
+		expect(logError).toHaveBeenCalledWith("Talosconfig claim error for job", {
+			job_id: "job-1",
+			err_name: "TypeError",
+		});
+		expect(JSON.stringify(logError.mock.calls)).not.toContain("CANARY-77");
 	});
 });
 

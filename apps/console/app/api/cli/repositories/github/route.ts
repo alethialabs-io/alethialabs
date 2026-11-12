@@ -5,6 +5,7 @@ import { verifyCliToken } from "@/lib/cli/auth";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliRepositoriesResponse } from "@/lib/validations/cli-contract";
+import { log } from "@/lib/observability/log";
 
 export async function GET(req: Request) {
 	const { error: authError } = await verifyCliToken(req);
@@ -65,7 +66,7 @@ export async function GET(req: Request) {
 
 		return cliJson(cliRepositoriesResponse, { repositories });
 	} catch (error) {
-		console.error("[CLI] Error fetching GitHub repositories:", error);
+		log.error("[CLI] Error fetching GitHub repositories", { err: error });
 		return NextResponse.json(
 			{ error: "Failed to fetch repositories" },
 			{ status: 500 }

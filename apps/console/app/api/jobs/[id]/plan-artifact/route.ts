@@ -11,6 +11,7 @@ import {
 	planArtifactSizeError,
 } from "@/lib/storage/plan-artifact";
 import { NextResponse } from "next/server";
+import { log } from "@/lib/observability/log";
 
 export async function POST(
 	req: Request,
@@ -51,7 +52,7 @@ export async function POST(
 				uploadErr instanceof Error
 					? uploadErr.message
 					: "Upload failed";
-			console.error("Plan artifact upload error:", uploadErr);
+			log.error("Plan artifact upload error", { err: uploadErr });
 			return NextResponse.json(
 				{ error: "Upload failed: " + message },
 				{ status: 500 },
