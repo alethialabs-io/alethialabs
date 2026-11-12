@@ -744,38 +744,11 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		}
 	}
 
-	gitToken := vc.GitAccessToken
-	if gitToken == "" {
-		if fetched, err := w.api.FetchGitToken(job.ID, ""); err != nil {
-			fmt.Fprintf(stderr, "Warning: failed to fetch git token: %v\n", err)
-		} else {
-			gitToken = fetched
-		}
-	}
-
-	// Per-repo tokens for bring-your-own (git-source) charts: each may live on a different
-	// provider than the apps-destination repo, so resolve a token per distinct chart repo (the
-	// console picks the provider from that repo, validated against the job). Resolved here in the
-	// parent — the values cross the sandbox boundary as secrets and the child registers the
-	// per-repo ArgoCD repository credentials before the BYO Applications sync.
-	gitTokens := map[string]string{}
-	for i := range vc.AddOns {
-		if !vc.AddOns[i].IsGitSource() {
-			continue
-		}
-		repo := vc.AddOns[i].ChartRepo
-		if repo == "" {
-			continue
-		}
-		if _, done := gitTokens[repo]; done {
-			continue
-		}
-		if fetched, err := w.api.FetchGitToken(job.ID, repo); err != nil {
-			fmt.Fprintf(stderr, "Warning: failed to fetch git token for %s: %v\n", repo, err)
-		} else if fetched != "" {
-			gitTokens[repo] = fetched
-		}
-	}
+	// One token per repo the deploy clones or pushes, each requested for that repo by name (the
+	// console picks the provider from that repo, validated against the job): the apps repo's goes
+	// to GitAccessToken, the BYO IaC module's and each BYO git chart's to GitRepoTokens. Resolved
+	// here in the parent — the values cross the sandbox boundary as secrets.
+	gitToken, gitTokens := w.deployGitTokens(job.ID, vc, stderr)
 
 	// Add-on secret-knob values (W4.5 #640): the config snapshot carries only a SecretRef
 	// per add-on (name/namespace/keys — never values); the plaintext is fetched HERE, over
@@ -1174,14 +1147,9 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 
 	infracostKey := os.Getenv("INFRACOST_API_KEY")
 
-	planGitToken := vc.GitAccessToken
-	if planGitToken == "" {
-		if fetched, err := w.api.FetchGitToken(job.ID, ""); err != nil {
-			fmt.Fprintf(stderr, "Warning: failed to fetch git token: %v\n", err)
-		} else {
-			planGitToken = fetched
-		}
-	}
+	// A plan clones only the BYO IaC module (GitOps wiring is apply-only), so the only token it
+	// needs is that module repo's own, requested by name.
+	planGitTokens := w.iacRepoTokens(job.ID, vc, stderr)
 
 	stateBackend, err := w.stateBackend(job.ID)
 	if err != nil {
@@ -1201,7 +1169,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 	if err != nil {
 		return err
 	}
-	sec := stageSecrets{GitToken: planGitToken, StateToken: stateBackend.Token}
+	sec := stageSecrets{GitTokens: planGitTokens, StateToken: stateBackend.Token}
 
 	// A progress marker: a transient failure costs only the progress line, but a refusal means the
 	// job was requeued out from under this runner and the plan must not run unowned (#5162).

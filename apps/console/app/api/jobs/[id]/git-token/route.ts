@@ -11,10 +11,15 @@ import {
 	type GitProviderRefusal,
 	repoHostForLog,
 	resolveGitProvider,
+	UNPARSED_REPO_HOST,
 } from "@/lib/git/provider-host";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 
-/** The refusal body for a repo whose host is not one of the configured git providers. */
+/**
+ * The refusal body for a repo whose host is not one of the configured git providers. `host` is the
+ * hostname the resolver read (always hostname-shaped), or null when none could be read, in which case
+ * the body names no host at all.
+ */
 function unknownProviderResponse(
 	reason: GitProviderRefusal,
 	host: string | null,
@@ -57,7 +62,43 @@ function buildServiceRepos(snapshot: Record<string, unknown>): string[] {
 	return repos;
 }
 
-/** Returns the git provider token for the user who owns a job. */
+/** Marks a job that references more than one repo when the runner named none. */
+const AMBIGUOUS = Symbol("ambiguous");
+
+/**
+ * The repo a request WITHOUT `?repo=` is answered for: the one distinct repo among the job's BYO IaC
+ * source, its flat scan target and the project's apps repo, "" when it has none, or {@link AMBIGUOUS}
+ * when it has several — an unnamed token would then be used for more than the repo it was minted for.
+ */
+function singleUnnamedRepo(
+	snapshot: Record<string, unknown>,
+	appsRepo: string | null | undefined,
+): string | typeof AMBIGUOUS {
+	const distinct = new Set(
+		[iacSourceRepo(snapshot), flatRepo(snapshot), appsRepo ?? ""].filter((r) => r.length > 0),
+	);
+	if (distinct.size > 1) return AMBIGUOUS;
+	const [only] = distinct;
+	return only ?? "";
+}
+
+/** The BYO IaC module repo a PLAN/DEPLOY/DESTROY/DRIFT snapshot carries under `iac_source`, or "". */
+function iacSourceRepo(snapshot: Record<string, unknown>): string {
+	const source = snapshot.iac_source;
+	return typeof source === "object" &&
+		source !== null &&
+		"repo_url" in source &&
+		typeof source.repo_url === "string"
+		? source.repo_url
+		: "";
+}
+
+/** The flat `repo_url` an ANALYZE_REPO / CHART_SCAN / IAC_SCAN snapshot names as its target, or "". */
+function flatRepo(snapshot: Record<string, unknown>): string {
+	return typeof snapshot.repo_url === "string" ? snapshot.repo_url : "";
+}
+
+/** Returns the git provider token for the user who owns a job, minted for one repo of that job. */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
@@ -105,25 +146,16 @@ export async function POST(
 					.limit(1)
 			: [];
 
-		// ANALYZE_REPO / CHART_SCAN / IAC_SCAN jobs have no project row — the target repo is the
-		// flat config_snapshot.repo_url.
-		const scanRepoUrl =
-			typeof job.config_snapshot?.repo_url === "string"
-				? job.config_snapshot.repo_url
-				: "";
-		// BYO IaC PLAN/DEPLOY/DESTROY jobs: the customer's module repo rides the snapshot under
-		// iac_source — it's the repo the runner clones (replace mode), so it wins over the
-		// project's GitOps destination repo for provider detection.
-		const snapIacSource = job.config_snapshot?.iac_source;
-		const iacRepoUrl =
-			typeof snapIacSource === "object" &&
-			snapIacSource !== null &&
-			"repo_url" in snapIacSource &&
-			typeof snapIacSource.repo_url === "string"
-				? snapIacSource.repo_url
-				: "";
-		// Per-repo resolution: a runner asking for the token to clone a SPECIFIC repo — e.g. a BYO
-		// Helm chart on a different provider than the apps-destination repo — passes ?repo=<url>.
+		// ANALYZE_REPO / CHART_SCAN / IAC_SCAN jobs carry their target repo as the flat
+		// config_snapshot.repo_url. ANALYZE_REPO has no project; CHART_SCAN and IAC_SCAN DO carry a
+		// project_id, so the project's apps repo is loaded for them too and is not their target.
+		const scanRepoUrl = flatRepo(job.config_snapshot);
+		// BYO IaC PLAN/DEPLOY/DESTROY/DRIFT jobs: the customer's module repo rides the snapshot under
+		// iac_source — it's the repo the runner clones (replace mode).
+		const iacRepoUrl = iacSourceRepo(job.config_snapshot);
+		// Per-repo resolution: the runner names the exact repo it will clone or push with the token
+		// it asks for — ?repo=<url> — for every clone (the IaC module, the apps repo, each BYO chart,
+		// a scan target, a build's service source), so each token is minted for that one repo.
 		// We only honor it when the repo is one this job legitimately references (a compromised
 		// runner must not be able to phish a token for an arbitrary repo), and a repo outside that set
 		// is REFUSED — never answered with the default repo's token, which the runner would then use
@@ -161,8 +193,24 @@ export async function POST(
 			);
 		}
 
-		const repoUrl =
-			requestedRepo || iacRepoUrl || repos?.apps_destination_repo || scanRepoUrl || "";
+		// No ?repo= is the request runners up to 0.10.0 still send for a deploy, plan, drift, scan or
+		// analyze job, and they use the token for every repo of that job that they clone or push. So
+		// the token is minted only when the job references exactly ONE such repo — it is then used
+		// for that repo alone. A job that references more than one gets no token and is told to name
+		// the repo; a runner that names it never reaches this path.
+		const repoUrl = requestedRepo || singleUnnamedRepo(job.config_snapshot, repos?.apps_destination_repo);
+		if (repoUrl === AMBIGUOUS) {
+			console.warn(
+				`git-token: refused for job ${jobId} — no repo named, and the job references more than one repo`,
+			);
+			return NextResponse.json(
+				{
+					error: "This job references more than one repository, so the token must be requested for one of them by name (upgrade the runner); no git token was issued.",
+					code: "git_repo_required",
+				},
+				{ status: 400 },
+			);
+		}
 		// No repo at all means nothing to clone, so there is nothing to authenticate: answer with no
 		// token rather than guessing a provider. Every runner caller already treats a null token as
 		// "clone anonymously".
@@ -174,7 +222,7 @@ export async function POST(
 		const resolved = resolveGitProvider(repoUrl);
 		if (!resolved.ok) {
 			console.warn(
-				`git-token: refused for job ${jobId} — repo provider unresolved (${resolved.reason}${resolved.host ? `, host ${resolved.host}` : ""})`,
+				`git-token: refused for job ${jobId} — repo provider unresolved (${resolved.reason}, host ${resolved.host ?? UNPARSED_REPO_HOST})`,
 			);
 			return unknownProviderResponse(resolved.reason, resolved.host);
 		}

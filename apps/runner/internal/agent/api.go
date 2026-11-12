@@ -409,9 +409,10 @@ func (c *RunnerAPIClient) DownloadPlanArtifact(jobID, destPath string) error {
 	return nil
 }
 
-// FetchGitToken mints the job owner's git provider token. When repoURL is non-empty the console
-// resolves the provider from THAT repo (validated against the job's repos) rather than the default
-// apps-destination precedence — so a BYO chart on a different provider gets the right token.
+// FetchGitToken mints the job owner's git provider token for repoURL: the console resolves the
+// provider from THAT repo's host (validated against the job's repos), and the token is for that
+// repo alone. Every caller names its repo (through Runner.fetchRepoToken); an empty repoURL is the
+// request older runners send, which the console answers only for a job with a single repo.
 func (c *RunnerAPIClient) FetchGitToken(jobID, repoURL string) (string, error) {
 	endpoint := fmt.Sprintf("%s/jobs/%s/git-token", c.baseURL, jobID)
 	if repoURL != "" {

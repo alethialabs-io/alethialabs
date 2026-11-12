@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/git"
+	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
 )
 
@@ -45,7 +46,7 @@ func (w *Runner) executeIacScan(ctx context.Context, job *Job, stdout, stderr *J
 	ref := getSnapshotString(job.ConfigSnapshot, "ref")
 	modulePath := getSnapshotString(job.ConfigSnapshot, "path")
 
-	fmt.Fprintf(stdout, "Scanning BYO IaC module %q (%s @ %s)\n", modulePath, repoURL, ref)
+	fmt.Fprintf(stdout, "Scanning BYO IaC module %q (repo on host %s @ %s)\n", modulePath, provisioner.RepoHostForLog(repoURL), ref)
 
 	workDir, err := newJobWorkDir(job.ID)
 	if err != nil {
@@ -54,10 +55,11 @@ func (w *Runner) executeIacScan(ctx context.Context, job *Job, stdout, stderr *J
 	defer os.RemoveAll(workDir)
 
 	// Parent clone (trusted: holds the git token + egress). The module lands under the
-	// RW-mounted workdir so the untrusted scan reads it without any token/egress secret.
-	token, err := w.api.FetchGitToken(job.ID, "")
-	if err != nil {
-		fmt.Fprintf(stderr, "No git token (%v); attempting public clone.\n", err)
+	// RW-mounted workdir so the untrusted scan reads it without any token/egress secret. The token
+	// is requested for the module repo by name — the job's project has an apps repo too.
+	token := w.fetchRepoToken(job.ID, repoURL, stderr)
+	if token == "" {
+		fmt.Fprintln(stderr, "No git token; attempting public clone.")
 	}
 	cloneDir := filepath.Join(workDir, "clone")
 	var repo *git.GIT

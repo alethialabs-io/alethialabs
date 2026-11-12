@@ -47,6 +47,8 @@ type covDriftAPI struct {
 	gitToken      string
 	gitTokenErr   error
 	gitTokenCalls int
+	// gitTokenRepos is the repo each git-token request named, in order.
+	gitTokenRepos []string
 }
 
 // covDriftNewAPI builds the decorated mock with sane defaults (both mints succeed).
@@ -65,6 +67,7 @@ func (a *covDriftAPI) FetchStateToken(jobID string) (string, error) {
 // FetchGitToken answers the git-token mint and records that it was called.
 func (a *covDriftAPI) FetchGitToken(jobID, repoURL string) (string, error) {
 	a.gitTokenCalls++
+	a.gitTokenRepos = append(a.gitTokenRepos, repoURL)
 	if a.gitTokenErr != nil {
 		return "", a.gitTokenErr
 	}
