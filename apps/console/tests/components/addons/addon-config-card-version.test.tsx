@@ -21,6 +21,7 @@ const { enableMut, disableMut } = vi.hoisted(() => ({
 vi.mock("@/lib/query/use-addons-query", () => ({
 	useEnableAddon: () => enableMut,
 	useDisableAddon: () => disableMut,
+	useRequestGitopsBump: () => ({ mutate: () => {}, isPending: false }),
 	useAddonsQuery: vi.fn(),
 }));
 
@@ -52,6 +53,7 @@ const PINNED: AddonInstallState = {
 	health: null,
 	sync: null,
 	lastSyncedAt: null,
+	gitopsBump: null,
 };
 
 /** Renders the form for `item`. */

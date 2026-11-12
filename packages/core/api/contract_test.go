@@ -6,8 +6,10 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -631,6 +633,27 @@ func TestContract_ByoAttach(t *testing.T) {
 
 // TestContract_ByoScan pins the scan response — the job id is what makes an asynchronous scan
 // followable instead of something a script has to poll blind.
+// TestContract_GitopsBump (#6549): both arms of the bump answer decode strictly, a pull request with
+// its number and URL, a refusal with its reason and message, and both with the manual instruction.
+func TestContract_GitopsBump(t *testing.T) {
+	var open GitopsBumpResult
+	strictDecode(t, "gitops_bump.json", &open)
+	assertNoExtraStructKeys(t, "gitops_bump.json", open)
+	if open.Status != "open" || open.Number == nil || *open.Number != 42 || open.URL == nil || open.Reason != nil {
+		t.Errorf("the open arm did not decode: %+v", open)
+	}
+	var refused GitopsBumpResult
+	strictDecode(t, "gitops_bump_refused.json", &refused)
+	if refused.Status != "refused" || refused.Reason == nil || refused.Message == nil || refused.Number != nil {
+		t.Errorf("the refused arm did not decode: %+v", refused)
+	}
+	for _, r := range []GitopsBumpResult{open, refused} {
+		if r.File == "" || r.Field != "spec.source.targetRevision" || r.Version == "" {
+			t.Errorf("the manual instruction is missing: %+v", r)
+		}
+	}
+}
+
 func TestContract_ByoScan(t *testing.T) {
 	var resp ByoScanResult
 	strictDecode(t, "byo_scan.json", &resp)
@@ -707,5 +730,43 @@ func TestContract_KubeconfigMint(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRequestGitopsBumpClient (#6549): the client POSTs the add-on and `again` to the bump endpoint
+// in the environment asked for, decodes the answer, and surfaces a server error.
+func TestRequestGitopsBumpClient(t *testing.T) {
+	var got map[string]interface{}
+	var path, query, method string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		method, path, query = r.Method, r.URL.Path, r.URL.RawQuery
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "open", "created": true, "version": "4.15.1", "file": "addons/ingress-nginx.yaml",
+			"field": "spec.source.targetRevision", "number": 42, "url": "https://github.com/acme/apps/pull/42",
+			"reason": nil, "message": nil,
+		})
+	}))
+	res, err := client.RequestGitopsBump("shop", "prod", "ingress-nginx", true)
+	if err != nil {
+		t.Fatalf("RequestGitopsBump: %v", err)
+	}
+	if method != http.MethodPost || !strings.HasSuffix(path, "/cli/projects/shop/addons/bump") || query != "env=prod" {
+		t.Errorf("request = %s %s?%s", method, path, query)
+	}
+	if got["addon_id"] != "ingress-nginx" || got["again"] != true {
+		t.Errorf("body = %+v", got)
+	}
+	if res.Status != "open" || res.Number == nil || *res.Number != 42 {
+		t.Errorf("result = %+v", res)
+	}
+
+	failing := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Internal Server Error"})
+	}))
+	if _, err := failing.RequestGitopsBump("shop", "", "ingress-nginx", false); err == nil {
+		t.Error("a server error was swallowed")
 	}
 }

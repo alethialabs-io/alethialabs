@@ -60,6 +60,7 @@
 				"$TURBO_ROOT$/packages/core/compat/testdata/engine_parity.json",
 				"$TURBO_ROOT$/packages/core/format/format.go",
 				"$TURBO_ROOT$/packages/core/kubeaccess/testdata/seal_vectors.json",
+				"$TURBO_ROOT$/packages/core/provisioner/testdata/addon_bump/*",
 				"$TURBO_ROOT$/packages/core/types/brand_gen.go",
 				"$TURBO_ROOT$/packages/core/types/testdata/snapshot-capabilities/with-byo-marker.json",
 				"$TURBO_ROOT$/packages/core/types/testdata/snapshot-capabilities/without-byo-marker.json",

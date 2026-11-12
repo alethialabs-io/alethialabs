@@ -107,7 +107,8 @@ alethia
 ├── addon                             # alias: addons — marketplace add-ons (-p/--project · -e/--env)
 │   ├── list
 │   ├── enable [addon_id] [--mode managed|gitops] [--set k=v] [--values-file f]
-│   └── disable [addon_id]            # asks when omitted; --yes to skip the confirmation
+│   ├── disable [addon_id]            # asks when omitted; --yes to skip the confirmation
+│   └── bump [addon_id] [--again]     # GitOps: a pull request that moves the seeded chart version
 ├── chart                             # alias: charts — BYO Helm charts (-p/--project · -e/--env)
 │   ├── list
 │   ├── attach [id] [--repo <u>] [--chart-path <p>] [--ref <r>] [--namespace <n>] [--set k=v] [--values-file <f>]

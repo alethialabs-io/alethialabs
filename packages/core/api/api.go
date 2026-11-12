@@ -2571,6 +2571,35 @@ func (c *Client) DisableAddon(project, env, addonID string) error {
 	return nil
 }
 
+// GitopsBumpResult is the answer of POST /cli/projects/:id/addons/bump (#6549): the pull request
+// that moves a GitOps add-on's seeded `spec.source.targetRevision`, or why none was opened. It
+// mirrors `cliGitopsBumpResponse` in apps/console/lib/validations/cli-contract.ts. Number and URL are
+// set when Status names a pull request; Reason and Message when Status is "refused". File, Field and
+// Version are always set: they are the manual instruction.
+type GitopsBumpResult struct {
+	// Status is "open", "merged", "declined" (closed without merging) or "refused".
+	Status  string  `json:"status"`
+	Created bool    `json:"created"`
+	Version string  `json:"version"`
+	File    string  `json:"file"`
+	Field   string  `json:"field"`
+	Number  *int    `json:"number"`
+	URL     *string `json:"url"`
+	Reason  *string `json:"reason"`
+	Message *string `json:"message"`
+}
+
+// RequestGitopsBump asks the console to open, or find, the bump pull request for one GitOps add-on.
+// again re-opens one the user closed without merging; nothing else does.
+func (c *Client) RequestGitopsBump(project, env, addonID string, again bool) (*GitopsBumpResult, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/addons/bump", c.baseURL, url.PathEscape(project)), env)
+	var resp GitopsBumpResult
+	if err := c.doPost(endpoint, map[string]interface{}{"addon_id": addonID, "again": again}, &resp); err != nil {
+		return nil, fmt.Errorf("failed to request the pull request: %w", err)
+	}
+	return &resp, nil
+}
+
 // --- BYO charts ---
 
 // AttachChartParams is the payload for AttachChart. Field validity — the repo-URL shape, the

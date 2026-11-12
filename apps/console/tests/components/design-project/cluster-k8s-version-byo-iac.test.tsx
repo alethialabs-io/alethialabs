@@ -30,6 +30,7 @@ const { enableMut, disableMut } = vi.hoisted(() => ({
 vi.mock("@/lib/query/use-addons-query", () => ({
 	useEnableAddon: () => enableMut,
 	useDisableAddon: () => disableMut,
+	useRequestGitopsBump: () => ({ mutate: () => {}, isPending: false }),
 	useAddonsQuery: vi.fn(),
 }));
 
