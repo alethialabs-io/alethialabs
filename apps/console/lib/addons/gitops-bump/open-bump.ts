@@ -135,18 +135,30 @@ export async function openGitopsBump(gh: GithubClient, req: BumpRequest): Promis
 		const head = await gh.branchHead(base);
 		if (!head) return { kind: "github-error", operation: "read the default branch", status: 404 };
 		const created = await gh.createBranch(branch, head);
-		const committed = created && (await gh.writeFile(path, branch, edit.bytes, file.sha, text.commit));
-		if (!committed) {
-			// The branch existed, or a concurrent click committed onto it first.
+		// The status GitHub refused this call's first commit with, or null when there was no refusal.
+		let firstRefusal: number | null = null;
+		if (created) {
+			const wrote = await gh.writeFile(path, branch, edit.bytes, file.sha, text.commit);
+			if (!wrote.ok) firstRefusal = wrote.status;
+		}
+		if (!created || firstRefusal !== null) {
+			// The branch existed, or GitHub refused the commit. A refusal is a race only when the branch
+			// has MOVED since: re-read it before deciding which.
 			const reuse = await reusableBranch(gh, { base, branch, path, seeded: file.bytes, edited: edit.bytes });
 			if (reuse === "diverged") return { kind: "branch-diverged", branch };
 			if (reuse.commitFrom !== null) {
+				// The branch still holds the default branch's file, unchanged. After a refusal that means
+				// nothing raced this call: GitHub refused the commit itself (a repository rule, push
+				// protection, validation), and the same commit again would be refused again.
+				if (firstRefusal !== null) return { kind: "github-error", operation: "commit the file", status: firstRefusal };
 				// The branch exists but the commit never landed (an earlier attempt failed between the
-				// two calls): it still holds the default branch's file, so commit the edit onto it.
-				if (!(await gh.writeFile(path, branch, edit.bytes, reuse.commitFrom, text.commit))) {
-					// Lost a race to commit: whatever landed must itself be exactly this edit.
+				// two calls): commit the edit onto it.
+				const wrote = await gh.writeFile(path, branch, edit.bytes, reuse.commitFrom, text.commit);
+				if (!wrote.ok) {
+					// Refused: a race if the branch moved, else GitHub refusing the commit itself.
 					const again = await reusableBranch(gh, { base, branch, path, seeded: file.bytes, edited: edit.bytes });
-					if (again === "diverged" || again.commitFrom !== null) return { kind: "branch-diverged", branch };
+					if (again === "diverged") return { kind: "branch-diverged", branch };
+					if (again.commitFrom !== null) return { kind: "github-error", operation: "commit the file", status: wrote.status };
 				}
 			}
 		}

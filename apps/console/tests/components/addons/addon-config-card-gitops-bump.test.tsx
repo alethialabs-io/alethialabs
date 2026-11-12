@@ -132,6 +132,27 @@ describe("AddonConfigForm — the GitOps bump pull request (#6549)", () => {
 		expect(screen.getByRole("button", { name: "Open a pull request to 4.15.1" })).toBeDefined();
 	});
 
+	it("a pinned GitOps install: the prose names the same version as the button, and does not claim the security fix", () => {
+		renderForm({ ...ITEM, install: { ...GITOPS, version: "4.13.0" } });
+		const notice = screen.getByTestId("addon-update-notice");
+		expect(notice).toHaveTextContent("spec.source.targetRevision there to 4.13.0, the version this environment is pinned to");
+		expect(notice).not.toHaveTextContent("there to 4.15.1");
+		expect(screen.getByTestId("gitops-pin-not-security")).toHaveTextContent(
+			"The security release is 4.15.1. This environment is pinned to 4.13.0",
+		);
+	});
+
+	it("an unpinned GitOps install: the prose and the button both name the catalog's version, with no pin caveat", () => {
+		renderForm({ ...ITEM, install: GITOPS });
+		expect(screen.getByTestId("addon-update-notice")).toHaveTextContent("spec.source.targetRevision there to 4.15.1.");
+		expect(screen.queryByTestId("gitops-pin-not-security")).toBeNull();
+	});
+
+	it("a pinned install says nothing about a fix when the catalog version is not a security release", () => {
+		renderForm({ ...ITEM, securityRelease: null, install: { ...GITOPS, version: "4.13.0" } });
+		expect(screen.queryByTestId("gitops-pin-not-security")).toBeNull();
+	});
+
 	it("a pinned GitOps install: the button names the PIN, which is what the bump moves the file to", () => {
 		renderForm({ ...ITEM, install: { ...GITOPS, version: "4.13.0" } });
 		expect(screen.getByRole("button", { name: "Open a pull request to 4.13.0" })).toBeDefined();

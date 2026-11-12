@@ -25,7 +25,7 @@ const blob = (bytes: Uint8Array) => createHash("sha1").update(bytes).digest("hex
  * One repo in memory: branches map to files, pull requests are kept with their head, and `commits`
  * holds, per branch, the files each of its own commits (the ones `main` does not have) changed.
  */
-function fakeGithub(opts: { file?: Uint8Array | null } = {}) {
+function fakeGithub(opts: { file?: Uint8Array | null; refuseEveryCommit?: number } = {}) {
 	const branches = new Map<string, Map<string, Uint8Array>>([["main", new Map()]]);
 	const commits = new Map<string, string[][]>();
 	/** Runs once, just before the next commit: stands in for a concurrent click committing first. */
@@ -64,12 +64,14 @@ function fakeGithub(opts: { file?: Uint8Array | null } = {}) {
 			const hook = beforeNextWrite;
 			beforeNextWrite = null;
 			hook?.();
+			// A repository rule or push protection: GitHub refuses every commit, whatever its sha.
+			if (opts.refuseEveryCommit !== undefined) return { ok: false, status: opts.refuseEveryCommit };
 			// GitHub refuses a commit whose blob sha is no longer the file's: the file moved.
 			const current = branches.get(branch)?.get(path);
-			if (!current || sha !== blob(current)) return false;
+			if (!current || sha !== blob(current)) return { ok: false, status: 409 };
 			branches.get(branch)?.set(path, bytes);
 			commits.set(branch, [...(commits.get(branch) ?? []), [path]]);
-			return true;
+			return { ok: true };
 		},
 		async compare(_base, head) {
 			calls.push("compare");
@@ -223,6 +225,44 @@ describe("openGitopsBump (#6549)", () => {
 		});
 		const out = await openGitopsBump(gh.client, REQ);
 		expect(out.kind).toBe("opened");
+		expect(gh.pulls).toHaveLength(1);
+	});
+
+	it("a commit GitHub keeps refusing on an unmoved branch is GitHub's error, with its status, not a diverged branch", async () => {
+		for (const status of [409, 422]) {
+			// A fresh branch: the first commit is refused and the re-read shows the branch did not move.
+			const fresh = fakeGithub({ refuseEveryCommit: status });
+			expect(await openGitopsBump(fresh.client, REQ)).toEqual({ kind: "github-error", operation: "commit the file", status });
+			expect(fresh.calls.filter((c) => c === "writeFile")).toHaveLength(1); // the same commit is not retried
+			expect(fresh.pulls).toHaveLength(0);
+			// A branch left by a failed attempt: the commit onto it is refused, and it still did not move.
+			const left = fakeGithub({ refuseEveryCommit: status });
+			left.branches.set(bumpBranchName("ingress-nginx", "4.15.1"), new Map([[PATH, SEEDED]]));
+			expect(await openGitopsBump(left.client, REQ)).toEqual({ kind: "github-error", operation: "commit the file", status });
+			expect(left.pulls).toHaveLength(0);
+		}
+	});
+
+	it("a refused commit on a branch that MOVED to someone else's change is a diverged branch", async () => {
+		const gh = fakeGithub();
+		const branch = bumpBranchName("ingress-nginx", "4.15.1");
+		gh.beforeNextWrite(() => {
+			gh.branches.get(branch)?.set(PATH, new TextEncoder().encode("kind: Application\n# theirs\n"));
+			gh.commits.set(branch, [[PATH]]);
+		});
+		expect(await openGitopsBump(gh.client, REQ)).toEqual({ kind: "branch-diverged", branch });
+		expect(gh.pulls).toHaveLength(0);
+	});
+
+	it("a refused commit onto a left-over branch that then received this edit is a race, and the pull request opens", async () => {
+		const gh = fakeGithub();
+		const branch = bumpBranchName("ingress-nginx", "4.15.1");
+		gh.branches.set(branch, new Map([[PATH, SEEDED]]));
+		gh.beforeNextWrite(() => {
+			gh.branches.get(branch)?.set(PATH, BUMPED);
+			gh.commits.set(branch, [[PATH]]);
+		});
+		expect((await openGitopsBump(gh.client, REQ)).kind).toBe("opened");
 		expect(gh.pulls).toHaveLength(1);
 	});
 

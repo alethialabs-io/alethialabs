@@ -131,7 +131,7 @@ function toResult(outcome: BumpOutcome, version: string, file: string): GitopsBu
 		case "branch-diverged":
 			return refused(
 				"branch-diverged",
-				`The branch ${outcome.branch} already exists in the apps repo with other changes, so Alethia will not reuse it.`,
+				`The branch ${outcome.branch} already exists in the apps repo and does not hold exactly this change, so Alethia will not reuse it. Delete the branch to try again.`,
 			);
 		case "invalid-input":
 			return refused("not-catalog", "This add-on's id or version cannot name a branch.");

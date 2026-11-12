@@ -113,6 +113,9 @@ export function AddonUpdateNotice({
   // The version a GitOps bump moves the file to: the stored pin, else the catalog's. The same
   // `row.version ?? def.version` the bump itself resolves (lib/addons/gitops-bump/service.ts).
   const bumpVersion = notice.installedVersion ?? catalogVersion;
+  // A pin to another version is not the catalog's security release, so the notice must not let the
+  // file change it names read as the one that carries that release's fix.
+  const pinNotSecurity = security !== null && bumpVersion !== catalogVersion;
   const title = security
     ? `Security update: ${name} ${catalogVersion}`
     : `The catalog now ships ${name} ${catalogVersion}`;
@@ -136,9 +139,18 @@ export function AddonUpdateNotice({
           <p>
             This add-on is managed in your apps repo. <code>addons/{addonId}.yaml</code> decides the
             chart version, and Alethia never rewrites that file. To move, set{" "}
-            <code>spec.source.targetRevision</code> there to <code>{catalogVersion}</code>. Each
+            <code>spec.source.targetRevision</code> there to <code>{bumpVersion}</code>
+            {bumpVersion !== catalogVersion && ", the version this environment is pinned to"}. Each
             deploy reads the file and names an older version on the Deploy tab. On GitHub, Alethia
             can open a pull request that changes only that field, for you to review.
+          </p>
+        )}
+        {notice.kind === "gitops" && pinNotSecurity && (
+          <p data-testid="gitops-pin-not-security">
+            The security release is <code>{catalogVersion}</code>. This environment is pinned to{" "}
+            <code>{bumpVersion}</code>, so a change to <code>{bumpVersion}</code> is not that
+            release, and Alethia cannot say it includes the fix. Clear the Chart version field below
+            to move to <code>{catalogVersion}</code>.
           </p>
         )}
         {notice.kind === "gitops" && bump && <GitopsBumpOffer bump={bump} version={bumpVersion} />}

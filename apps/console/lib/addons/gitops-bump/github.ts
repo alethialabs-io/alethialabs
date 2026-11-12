@@ -128,8 +128,16 @@ function toBase64(bytes: Uint8Array): string {
 export function githubClient(ref: GithubRepoRef, token: string, fetchImpl: FetchLike) {
 	const base = `${API}/repos/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.repo)}`;
 
-	/** Sends one request and parses its JSON; a status in `allow` returns null instead of throwing. */
-	async function call(operation: string, path: string, init: RequestInit = {}, allow: number[] = []): Promise<unknown> {
+	/**
+	 * Sends one request and parses its JSON. A status in `allow` is returned as `{ refused: status }`
+	 * instead of throwing, so a caller that must tell those statuses apart still can.
+	 */
+	async function request(
+		operation: string,
+		path: string,
+		init: RequestInit = {},
+		allow: number[] = [],
+	): Promise<{ refused: number } | { body: unknown }> {
 		let res: Response;
 		try {
 			res = await fetchImpl(`${base}${path}`, {
@@ -149,13 +157,19 @@ export function githubClient(ref: GithubRepoRef, token: string, fetchImpl: Fetch
 			// A network failure, a timeout or a refused redirect. Its text is not forwarded.
 			throw new GithubCallError(operation, 0);
 		}
-		if (allow.includes(res.status)) return null;
+		if (allow.includes(res.status)) return { refused: res.status };
 		if (!res.ok) throw new GithubCallError(operation, res.status);
 		try {
-			return await res.json();
+			return { body: await res.json() };
 		} catch {
 			throw new GithubCallError(operation, res.status);
 		}
+	}
+
+	/** `request`, with a status in `allow` returned as null: for callers that need only "refused". */
+	async function call(operation: string, path: string, init: RequestInit = {}, allow: number[] = []): Promise<unknown> {
+		const res = await request(operation, path, init, allow);
+		return "body" in res ? res.body : null;
 	}
 
 	return {
@@ -199,18 +213,31 @@ export function githubClient(ref: GithubRepoRef, token: string, fetchImpl: Fetch
 			return made !== null;
 		},
 		/**
-		 * Commits `bytes` as `path` on `branch`, replacing the blob `sha`. False when GitHub refuses it
-		 * as a conflict (409, or 422 for a stale `sha`): the file moved under this call, which is what a
-		 * concurrent click that committed first looks like. The caller re-reads the branch.
+		 * Commits `bytes` as `path` on `branch`, replacing the blob `sha`. A 409 or 422 is returned as
+		 * `{ ok: false, status }` rather than thrown, because one cause of either is a concurrent click
+		 * that committed first, and the caller tells that apart by re-reading the branch.
+		 *
+		 * What the statuses mean, per GitHub's REST reference for "Create or update file contents"
+		 * (https://docs.github.com/en/rest/repos/contents#create-or-update-file-contents): 409 is
+		 * "Conflict", and 422 is "Validation failed, or the endpoint has been spammed." The reference
+		 * says no more than that: it does not name which of the two a stale `sha` produces, and a
+		 * repository rule or push protection can refuse a commit too. So neither status on its own
+		 * proves a race; only the re-read branch does.
 		 */
-		async writeFile(path: string, branch: string, bytes: Uint8Array, sha: string, message: string): Promise<boolean> {
-			const made = await call(
+		async writeFile(
+			path: string,
+			branch: string,
+			bytes: Uint8Array,
+			sha: string,
+			message: string,
+		): Promise<{ ok: true } | { ok: false; status: number }> {
+			const res = await request(
 				"commit the file",
 				`/contents/${encPath(path)}`,
 				{ method: "PUT", body: JSON.stringify({ message, content: toBase64(bytes), sha, branch }) },
 				[409, 422],
 			);
-			return made !== null;
+			return "refused" in res ? { ok: false, status: res.refused } : { ok: true };
 		},
 		/**
 		 * What `head` holds that `base` does not: how many commits it is ahead, and every file those
