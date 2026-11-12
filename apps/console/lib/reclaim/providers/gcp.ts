@@ -46,6 +46,7 @@ import { and, eq } from "drizzle-orm";
 import { externalAccountClientFromWif } from "@/lib/cloud-providers/session/gcp";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
+import { log } from "@/lib/observability/log";
 import type { CloudResourceRef, LabelSelector, ReclaimAdapter } from "../types";
 
 const COMPUTE_API = "https://compute.googleapis.com/compute/v1";
@@ -487,8 +488,9 @@ async function listOrSkipUnreadable(
 		return await run();
 	} catch (err) {
 		if (err instanceof GcpHttpError && (err.status === 403 || err.status === 404)) {
-			console.warn(
-				`gcp reclaim: cannot list ${kind} (HTTP ${err.status}) — skipping. These resources will never be reclaimed until the connector grants read access to them.`,
+			log.warn(
+				`gcp reclaim: cannot list ${kind} — skipping. These resources will never be reclaimed until the connector grants read access to them.`,
+				{ err },
 			);
 			return [];
 		}

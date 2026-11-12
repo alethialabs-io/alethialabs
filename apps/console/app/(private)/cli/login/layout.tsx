@@ -4,6 +4,7 @@
 import { headers } from "next/headers";
 import { AuthCard, AuthShell } from "@/components/auth/auth-shell";
 import { auth } from "@/lib/auth";
+import { log } from "@/lib/observability/log";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 import { CliAccountProvider } from "./cli-session";
 
@@ -34,7 +35,7 @@ async function signedInEmail(): Promise<string | null> {
 		const session = await auth.api.getSession({ headers: await headers() });
 		return session?.user?.email ?? null;
 	} catch (error) {
-		console.error("[cli-login] session lookup failed:", error);
+		log.error("[cli-login] session lookup failed", { err: error });
 		return null;
 	}
 }
