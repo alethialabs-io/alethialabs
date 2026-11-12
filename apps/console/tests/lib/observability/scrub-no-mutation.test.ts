@@ -153,3 +153,40 @@ describe("scrubEvent copies what it changes", () => {
 		expect(error.params).toEqual(PARAMS);
 	});
 });
+
+describe("accessors on a copied object (#6667 review)", () => {
+	it("reads an enumerable getter once and sends the value it scrubbed", () => {
+		let reads = 0;
+		const logged = {
+			api_token: "tok-should-not-leak",
+			get note() {
+				reads += 1;
+				return reads === 1 ? "clean" : "pw-should-not-leak";
+			},
+		};
+		const out = scrubBreadcrumb({ data: { arguments: [logged] } });
+		expect(reads).toBe(1);
+		const text = JSON.stringify(out);
+		expect(text).not.toContain("pw-should-not-leak");
+		expect(text).not.toContain("tok-should-not-leak");
+	});
+
+	it("does not throw when a getter throws, and leaves the original untouched", () => {
+		const logged = { password: "pw-x" };
+		Object.defineProperty(logged, "boom", {
+			enumerable: false,
+			get() {
+				throw new Error("getter failed");
+			},
+		});
+		Object.defineProperty(logged, "loud", {
+			enumerable: true,
+			get() {
+				throw new Error("getter failed");
+			},
+		});
+		const out = scrubBreadcrumb({ data: { arguments: [logged] } });
+		expect(JSON.stringify(out)).not.toContain("pw-x");
+		expect(logged.password).toBe("pw-x");
+	});
+});

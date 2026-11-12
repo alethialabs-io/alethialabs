@@ -194,7 +194,8 @@ function stripQueryParams(s: string, rewrites: readonly QueryRewrite[] = []): st
  * What the walk has already produced for each object it reached: the object itself when scrubbing
  * left it as it was, or the copy that replaces it. An object is entered here BEFORE its children are
  * walked, as its (still empty) copy, so a cycle back to it resolves to the copy and a shared object
- * is scrubbed once.
+ * is scrubbed once. A consequence: every object on a cycle is copied, even a clean one, because the
+ * back-reference already points at a copy. That costs memory, not correctness.
  */
 type ScrubMemo = Map<object, unknown>;
 
@@ -235,9 +236,19 @@ function scrubArray(
 	return value;
 }
 
+/** What `changedEntries` read from an object: every own enumerable value, and the ones that change. */
+interface RecordScan {
+	/** The value each own enumerable key returned, read ONCE (a getter is never read twice). */
+	read: Map<string, unknown>;
+	/** The scrubbed value of each key that scrubbing changes; empty means no copy is needed. */
+	changes: Map<string, unknown>;
+}
+
 /**
- * The scrubbed value of each of `value`'s own enumerable keys that scrubbing CHANGES; an empty map
- * means `value` needs no copy. A secret-named key is redacted whole, and a failed query copied into
+ * Reads each of `value`'s own enumerable keys once, and scrubs it; `changes` holds the keys whose
+ * scrubbed value differs (empty means `value` needs no copy). A key whose read throws (a getter that
+ * fails) is redacted rather than letting the scrub throw: a throwing `beforeSend` makes Sentry send
+ * its own internal error report, which skips this scrub. A secret-named key is redacted whole, and a failed query copied into
  * the event as an object (a serialized thrown value, extra error data, a logged error) has its own
  * `params` array redacted too, because it carries the values there and not only in its message.
  */
@@ -245,15 +256,23 @@ function changedEntries(
 	value: Record<string, unknown>,
 	memo: ScrubMemo,
 	rewrites: readonly QueryRewrite[],
-): Map<string, unknown> {
+): RecordScan {
+	const read = new Map<string, unknown>();
 	const changes = new Map<string, unknown>();
 	if (failedQueryText(value) !== undefined) changes.set("params", REDACTED);
 	for (const key of Object.keys(value)) {
-		const original: unknown = value[key];
+		let original: unknown;
+		try {
+			original = value[key];
+		} catch {
+			changes.set(key, REDACTED);
+			continue;
+		}
+		read.set(key, original);
 		const out = isSecretKey(key) ? REDACTED : scrubValue(original, memo, rewrites);
 		if (!Object.is(out, original)) changes.set(key, out);
 	}
-	return changes;
+	return { read, changes };
 }
 
 /**
@@ -271,7 +290,7 @@ function scrubRecord(
 ): unknown {
 	const copy: object = Object.create(Object.getPrototypeOf(value));
 	memo.set(value, copy);
-	const changes = changedEntries(value, memo, rewrites);
+	const { read, changes } = changedEntries(value, memo, rewrites);
 	if (changes.size === 0) {
 		memo.set(value, value);
 		return value;
@@ -280,8 +299,20 @@ function scrubRecord(
 	for (const key of Object.keys(descriptors)) {
 		const d = descriptors[key];
 		if (d !== undefined && (d.get !== undefined || d.set !== undefined)) {
+			// An enumerable accessor was read once above, and that read is what was scrubbed; a
+			// non-enumerable one (an error's `stack`) is read here, and left out if its getter throws.
+			let current: unknown;
+			if (read.has(key)) current = read.get(key);
+			else {
+				try {
+					current = Reflect.get(value, key);
+				} catch {
+					delete descriptors[key];
+					continue;
+				}
+			}
 			descriptors[key] = {
-				value: Reflect.get(value, key),
+				value: current,
 				writable: true,
 				enumerable: d.enumerable ?? false,
 				configurable: true,
@@ -309,7 +340,7 @@ function scrubTopLevel<T>(root: T, rewrites: readonly QueryRewrite[]): T {
 	if (!isRecord(record)) return root;
 	const memo: ScrubMemo = new Map();
 	memo.set(record, record);
-	for (const [key, out] of changedEntries(record, memo, rewrites)) record[key] = out;
+	for (const [key, out] of changedEntries(record, memo, rewrites).changes) record[key] = out;
 	return root;
 }
 
