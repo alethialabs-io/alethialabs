@@ -403,6 +403,54 @@ jobs:
       # the walk below. What is NOT omitted any more — it was, and the audit of #4466 caught it —
       # are `scripts/lib/console-routes.mjs` and `scripts/ci/playwright-install.sh`: neither is
       # reachable from apps/console's dependency graph and both are read by legs, so they are SEAMS.
+      #
+      # THE LEG TABLE. One row per Playwright project the gate drives; `capabilities` is the
+      # promise the leg makes (apps/console/e2e/helpers/capabilities.ts) and `floor` is the
+      # fewest tests `--list` may report before the leg is called testMatch drift, not a suite.
+      # `args` is the LITERAL `--project=<name>` flag, spelled out per row on purpose:
+      # playwright.config.ts's dead-zone guard (#2875) reads every workflow for exactly that
+      # string to prove a project runs somewhere, and a `--project=<the matrix expression>` is a
+      # template it cannot see through. The emitter stays literal so the guard stays honest.
+      #
+      # AND THAT EXPRESSION IS NEVER WRITTEN OUT INSIDE THE SCRIPT, WHICH IS LOAD-BEARING.
+      # Actions compiles a `run:` scalar as a template only if it CONTAINS a `$`+`{{ … }}`, and
+      # this step's script is large. Writing the real expression into one of its comments — as it
+      # was until #4466's review — put the whole block under the template compiler and inside the
+      # 21,000-BYTE ceiling that refused this whole file once (see the notes above, and
+      # scripts/ci/check-workflow-shape.mjs, whose error text prescribes exactly this fix).
+      # Prose about an expression IS an expression. Do not restore it for readability.
+      #
+      # These paragraphs used to be `//` comments inside the script. They moved out here, where a
+      # YAML comment costs the expression budget nothing, when check-workflow-shape.mjs began to
+      # budget EVERY block scalar, templated or not (#6582); the script was 18,845 bytes.
+      #
+      # `capabilities` IS A COMMA-SEPARATED SET, and the `env:` block below reads it with
+      # `contains(...)`, never `==`. Until #4456 every row held at most one name and the block
+      # compared the whole set against one name with `==`, so the first row to promise two things
+      # would have matched NOTHING and blanked all SIX Stripe variables — a leg that then
+      # fails its own `--assert-env` pre-check, or (had that check not existed) runs every
+      # billing assertion against an unconfigured console. See the env block for the six sites.
+      #
+      # ── WHAT MAY NARROW, AND WHAT MAY NOT ─────────────────────────────────────────────────
+      #
+      # A labelled dev PR used to run all seven legs: ~76 runner-minutes a push (measured, run
+      # 34351806933), most of it seven copies of the same `next build`, for a lane whose whole
+      # diff is one spec file. CI capacity is this wave's binding constraint, so a dev PR may
+      # narrow. Three things never do, and the order below is the order they are asked in:
+      #
+      #   1. A PR into main or staging runs EVERY leg. That is the gate; a promotion must not
+      #      choose what measures it. `release-gate:all` is the same answer asked for by hand.
+      #   2. A diff touching a SEAM runs every leg — a file any leg reads, where a change can
+      #      move any of them, so inferring from its path is the under-reporting this repo
+      #      keeps paying for.
+      #   3. A path matching NO rule runs every leg. "nothing matched" and "nothing needs
+      #      running" are the same input, and making them the same output is the vacuous-green
+      #      shape the gate exists to refuse. So does a file list this job could not read, and
+      #      so does a diff of zero files.
+      #
+      # The consequence, stated plainly because it is the honest bound: inference narrows ONLY
+      # for a diff made ENTIRELY of leg-specific files under apps/console/e2e/. A console
+      # source change selects everything, because it can break anything.
       - id: pick
         name: Pick the legs for this event
         env:
@@ -414,28 +462,6 @@ jobs:
           CHANGED_FILES: /tmp/release-gate-changed-files.txt
         run: |
           node - <<'EOF'
-          // THE LEG TABLE. One row per Playwright project the gate drives; `capabilities` is the
-          // promise the leg makes (apps/console/e2e/helpers/capabilities.ts) and `floor` is the
-          // fewest tests `--list` may report before the leg is called testMatch drift, not a suite.
-          // `args` is the LITERAL `--project=<name>` flag, spelled out per row on purpose:
-          // playwright.config.ts's dead-zone guard (#2875) reads every workflow for exactly that
-          // string to prove a project runs somewhere, and a `--project=<the matrix expression>` is a
-          // template it cannot see through. The emitter stays literal so the guard stays honest.
-          //
-          // AND THAT EXPRESSION IS SPELLED IN PROSE HERE, NOT WRITTEN OUT, WHICH IS LOAD-BEARING.
-          // Actions compiles a `run:` scalar as a template only if it CONTAINS a `$`+`{{ … }}`, and
-          // this step is 14 KB. Writing the real expression into this sentence — as it was until
-          // #4466's review — put all 14 KB under the template compiler and inside the 21,000-BYTE
-          // ceiling that refused this whole file once (see the note above the step, and
-          // scripts/ci/check-workflow-shape.mjs, whose error text prescribes exactly this fix).
-          // Prose about an expression IS an expression. Do not restore it for readability.
-          //
-          // `capabilities` IS A COMMA-SEPARATED SET, and the `env:` block below reads it with
-          // `contains(...)`, never `==`. Until #4456 every row held at most one name and the block
-          // compared the whole set against one name with `==`, so the first row to promise two things
-          // would have matched NOTHING and blanked all SIX Stripe variables — a leg that then
-          // fails its own `--assert-env` pre-check, or (had that check not existed) runs every
-          // billing assertion against an unconfigured console. See the env block for the six sites.
           const legs = [
             { project: "hero",      args: "--project=hero",      workers: 1, retries: 1, capabilities: "",                   manifest: false, floor: 1 },
             { project: "elench-ai", args: "--project=elench-ai", workers: 1, retries: 1, capabilities: "ai-mock",            manifest: false, floor: 1 },
@@ -485,27 +511,6 @@ jobs:
             { project: "audit-interaction", args: "--project=audit-interaction", workers: 1, retries: 0, capabilities: "stripe,encryption", manifest: true, floor: 70 },
           ];
           const ALL = legs.map((l) => l.project);
-
-          // ── WHAT MAY NARROW, AND WHAT MAY NOT ─────────────────────────────────────────────────
-          //
-          // A labelled dev PR used to run all seven legs: ~76 runner-minutes a push (measured, run
-          // 34351806933), most of it seven copies of the same `next build`, for a lane whose whole
-          // diff is one spec file. CI capacity is this wave's binding constraint, so a dev PR may
-          // narrow. Three things never do, and the order below is the order they are asked in:
-          //
-          //   1. A PR into main or staging runs EVERY leg. That is the gate; a promotion must not
-          //      choose what measures it. `release-gate:all` is the same answer asked for by hand.
-          //   2. A diff touching a SEAM runs every leg — a file any leg reads, where a change can
-          //      move any of them, so inferring from its path is the under-reporting this repo
-          //      keeps paying for.
-          //   3. A path matching NO rule runs every leg. "nothing matched" and "nothing needs
-          //      running" are the same input, and making them the same output is the vacuous-green
-          //      shape the gate exists to refuse. So does a file list this job could not read, and
-          //      so does a diff of zero files.
-          //
-          // The consequence, stated plainly because it is the honest bound: inference narrows ONLY
-          // for a diff made ENTIRELY of leg-specific files under apps/console/e2e/. A console
-          // source change selects everything, because it can break anything.
 
           // A file any leg reads. The first six are the list #4440 names; `global-setup.ts` and
           // `reporters/` are added with the same argument — Playwright has no per-project

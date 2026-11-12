@@ -4,7 +4,8 @@
 """Assert the declared required-vault-key list matches the deploy's own assertions.
 
 `deploy/prod/required-vault-keys.txt` is the single source of truth for what the production
-deploy refuses to run without. `.github/workflows/deploy-console.yml` separately gates on those
+deploy refuses to run without. `scripts/ci/deploy-console-assemble-env.sh` — the script
+`.github/workflows/deploy-console.yml`'s deploy step runs (#6582) — separately gates on those
 keys inline. Two places, so they can drift — and a list that has drifted is worse than no list,
 because it looks authoritative.
 
@@ -30,7 +31,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 LIST = ROOT / "deploy/prod/required-vault-keys.txt"
-WORKFLOW = ROOT / ".github/workflows/deploy-console.yml"
+# The deploy's gates moved out of the workflow's `run:` block into this script (#6582). Reading the
+# workflow instead would parse ZERO assertions — refused below, never a vacuous pass.
+WORKFLOW = ROOT / "scripts/ci/deploy-console-assemble-env.sh"
 
 
 def declared() -> set[str]:
@@ -44,7 +47,7 @@ def declared() -> set[str]:
 
 
 def asserted() -> set[str]:
-    """Vault keys the deploy workflow hard-gates on.
+    """Vault keys the deploy script hard-gates on.
 
     A gate is `X="$(val KEY)"` plus, somewhere in the same file, `[ -n "$X" ] || ... exit 1`.
     """
@@ -64,7 +67,7 @@ def main() -> int:
         print(f"::error::{LIST.relative_to(ROOT)} declares no keys — refusing to pass vacuously")
         return 1
     if not a:
-        print("::error::parsed ZERO assertions from the deploy workflow — the parser is broken, not the workflow")
+        print(f"::error::parsed ZERO assertions from {WORKFLOW.relative_to(ROOT)} — the parser is broken, or the gates moved again")
         return 1
 
     if "--print" in sys.argv:
