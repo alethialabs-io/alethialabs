@@ -33,6 +33,7 @@ import {
 import { alertOperator } from "@/lib/billing/operator-alert";
 import type { PlanSlotWrite } from "@/lib/billing/queries";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
+import { log } from "@/lib/observability/log";
 
 /** True when a fixture carries what the module reads off a subscription. */
 function isSubscriptionFixture(x: unknown): x is Stripe.Subscription {
@@ -92,7 +93,7 @@ describe("reportTwoLive and reportReplacedLivePlan (D6)", () => {
 	beforeEach(() => {
 		vi.mocked(alertOperator).mockReset().mockResolvedValue(true);
 		vi.spyOn(console, "info").mockImplementation(() => {});
-		vi.spyOn(console, "error").mockImplementation(() => {});
+		vi.spyOn(log, "error").mockImplementation(() => {});
 	});
 	afterEach(() => vi.restoreAllMocks());
 
@@ -111,11 +112,13 @@ describe("reportTwoLive and reportReplacedLivePlan (D6)", () => {
 		expect(alert?.summary).not.toMatch(/purchase flow cancelled/);
 	});
 
-	it("never throws, even when the alert does", async () => {
-		vi.mocked(alertOperator).mockRejectedValue(new Error("boom"));
+	it("never throws, even when the alert does, and logs the caught error under `err`", async () => {
+		const boom = new Error("boom");
+		vi.mocked(alertOperator).mockRejectedValue(boom);
 		await expect(
 			reportTwoLive("org_1", { subscriptionId: "a", status: "active", created: null }, { subscriptionId: null, status: "active", created: null }),
 		).resolves.toBeUndefined();
+		expect(log.error).toHaveBeenCalledWith("[billing] two-live report failed for org org_1", { org_id: "org_1", err: boom });
 	});
 
 	it("D6b reports a replaced past_due subscription and a live grant, never a lapsed grant, an ended slot or no row", async () => {
