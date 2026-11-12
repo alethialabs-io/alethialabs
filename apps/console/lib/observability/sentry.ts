@@ -71,7 +71,8 @@ export async function initSentryServer(): Promise<boolean> {
 			// the module loader — keeps the background loops + the existing OTel init untouched.
 			skipOpenTelemetrySetup: true,
 			registerEsmLoaderHooks: false,
-			beforeSend: (event) => scrubEvent(enrichTrace(event)),
+			// The hint carries the thrown value, from which a failed query's exact message is known.
+			beforeSend: (event, hint) => scrubEvent(enrichTrace(event), hint),
 			beforeBreadcrumb: (breadcrumb) => scrubBreadcrumb(breadcrumb),
 		});
 		initialized = true;

@@ -14,6 +14,12 @@
 //
 // Both are keyed off ONE denylist (`SECRET_KEY_SUBSTRINGS`) so there is a single source of truth for
 // "what is secret" — nothing hand-rolled per call site. Kept in sync with the runner denylist.
+//
+// Separately, a failed database query is sent without its bound parameter values (#6633), by the
+// rule the log serializer applies (lib/observability/log.ts, #6630): drizzle-orm's
+// `DrizzleQueryError` message is `Failed query: <sql>\nparams: <values>`, and Sentry sends an error's
+// `message` as the exception value, so every string in the event has that message rewritten to
+// `Failed query: <sql>`. See `stripQueryParams`.
 
 /**
  * Substring denylist (case-insensitive) identifying secret-bearing KEY names. The first block mirrors
@@ -96,46 +102,144 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Deep-walks a value IN PLACE: redacts secret-named keys and scrubs secret values out of every
- * string. Cycle-safe via a WeakSet. Mutating in place preserves the caller's concrete type (a Sentry
- * Event / Breadcrumb) rather than degrading it to a plain record.
+ * The SQL text of a failed database query, when `value` is drizzle-orm's `DrizzleQueryError`, else
+ * `undefined`. Recognised by shape — an own `query` string and an own `params` array, which
+ * drizzle-orm's constructor sets on every instance — not by `instanceof`, which fails open when a
+ * second copy of drizzle-orm is loaded.
+ *
+ * This is the same test as `failedQueryText` in lib/observability/log.ts, written again here because
+ * that one is module-private and #6633's scope does not include log.ts. Keep the two in step.
  */
-function scrubInPlace(value: unknown, seen: WeakSet<object>): void {
+function failedQueryText(value: object): string | undefined {
+	if (
+		Object.hasOwn(value, "query") &&
+		"query" in value &&
+		typeof value.query === "string" &&
+		Object.hasOwn(value, "params") &&
+		"params" in value &&
+		Array.isArray(value.params)
+	) {
+		return value.query;
+	}
+	return undefined;
+}
+
+/** One failed query's message as the error carries it, and the text it is rewritten to. */
+interface QueryRewrite {
+	message: string;
+	replacement: string;
+}
+
+/**
+ * The failed queries found on a thrown value and its `cause` chain: for each, its exact `message`
+ * (which carries the parameter values) and `Failed query: <sql>`. Cycle-safe. Sentry sends each
+ * error in the chain as its own exception value, which is why the whole chain is read.
+ */
+function queryRewrites(thrown: unknown): QueryRewrite[] {
+	const out: QueryRewrite[] = [];
+	const seen = new Set<object>();
+	let current: unknown = thrown;
+	while (typeof current === "object" && current !== null && !seen.has(current)) {
+		seen.add(current);
+		const query = failedQueryText(current);
+		if (query !== undefined && "message" in current && typeof current.message === "string") {
+			const replacement = `Failed query: ${query}`;
+			if (current.message !== replacement) {
+				out.push({ message: current.message, replacement });
+			}
+		}
+		current = "cause" in current ? current.cause : undefined;
+	}
+	return out;
+}
+
+/** The separators that end a failed query's SQL: raw, and as it reads once JSON-escaped. */
+const PARAMS_MARKERS = ["\nparams: ", "\\nparams: "] as const;
+
+/**
+ * Cuts a failed query's parameter values out of `s` by the message's shape: everything from the
+ * first `\nparams: ` (raw or JSON-escaped) that follows a `Failed query: ` is dropped, to the END of
+ * the string. The values are not escaped, so no later marker can be trusted to end them (a value can
+ * forge a stack-frame line); the trailing text this also drops is the price of that. Two `indexOf`
+ * scans, so its cost is linear in the length of `s`.
+ */
+function cutParamsByShape(s: string): string {
+	const head = s.indexOf("Failed query: ");
+	if (head === -1) return s;
+	let cut = -1;
+	for (const marker of PARAMS_MARKERS) {
+		const at = s.indexOf(marker, head);
+		if (at !== -1 && (cut === -1 || at < cut)) cut = at;
+	}
+	return cut === -1 ? s : s.slice(0, cut);
+}
+
+/**
+ * Removes the bound parameter values from every failed-query message in `s`: first each exact
+ * message in `rewrites` (taken from the original exception), which keeps any text after it, then
+ * any remaining text of the `Failed query: <sql>\nparams: <values>` shape (`cutParamsByShape`) —
+ * which also covers a breadcrumb that quotes a message from another error.
+ */
+function stripQueryParams(s: string, rewrites: readonly QueryRewrite[] = []): string {
+	let out = s;
+	for (const { message, replacement } of rewrites) {
+		out = out.split(message).join(replacement);
+	}
+	return cutParamsByShape(out);
+}
+
+/**
+ * Deep-walks a value IN PLACE: redacts secret-named keys, strips failed-query parameter values (see
+ * `stripQueryParams`) and scrubs secret values out of every string. Cycle-safe via a WeakSet.
+ * Mutating in place preserves the caller's concrete type (a Sentry Event / Breadcrumb) rather than
+ * degrading it to a plain record.
+ */
+function scrubInPlace(
+	value: unknown,
+	seen: WeakSet<object>,
+	rewrites: readonly QueryRewrite[],
+): void {
 	if (Array.isArray(value)) {
 		for (let i = 0; i < value.length; i++) {
 			const el: unknown = value[i];
-			if (typeof el === "string") value[i] = scrubString(el);
-			else scrubInPlace(el, seen);
+			if (typeof el === "string") value[i] = scrubString(stripQueryParams(el, rewrites));
+			else scrubInPlace(el, seen, rewrites);
 		}
 		return;
 	}
 	if (isRecord(value)) {
 		if (seen.has(value)) return;
 		seen.add(value);
+		// A failed query copied into the event as an object (a serialized thrown value, extra error
+		// data, a logged error) carries its values in its own `params` array, not only in its message.
+		if (failedQueryText(value) !== undefined) value.params = REDACTED;
 		for (const key of Object.keys(value)) {
 			if (isSecretKey(key)) {
 				value[key] = REDACTED;
 				continue;
 			}
 			const v: unknown = value[key];
-			if (typeof v === "string") value[key] = scrubString(v);
-			else scrubInPlace(v, seen);
+			if (typeof v === "string") value[key] = scrubString(stripQueryParams(v, rewrites));
+			else scrubInPlace(v, seen, rewrites);
 		}
 	}
 }
 
 /**
- * Sentry `beforeSend` scrubber: strips secrets from the entire event (message, exception values,
- * tags, extra, request data/headers/cookies, and stack-frame vars) before it leaves the process.
- * Returns the same (mutated) event so the concrete type is preserved.
+ * Sentry `beforeSend` scrubber: strips secrets and failed-query parameter values from the entire
+ * event (message, exception values, breadcrumbs, tags, extra, request data/headers/cookies, and
+ * stack-frame vars) before it leaves the process. `hint.originalException` is the thrown value;
+ * when it or an error on its `cause` chain is a failed database query, its exact message is
+ * rewritten to `Failed query: <sql>` wherever it appears. Returns the same (mutated) event so the
+ * concrete type is preserved.
  */
-export function scrubEvent<T>(event: T): T {
-	scrubInPlace(event, new WeakSet());
+export function scrubEvent<T>(event: T, hint?: { originalException?: unknown }): T {
+	scrubInPlace(event, new WeakSet(), queryRewrites(hint?.originalException));
 	return event;
 }
 
 /** Sentry `beforeBreadcrumb` scrubber — same deep scrub over a breadcrumb. */
 export function scrubBreadcrumb<T>(breadcrumb: T): T {
-	scrubInPlace(breadcrumb, new WeakSet());
+	scrubInPlace(breadcrumb, new WeakSet(), []);
 	return breadcrumb;
 }
