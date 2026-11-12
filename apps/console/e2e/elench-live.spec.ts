@@ -10,7 +10,7 @@
 // dashboard request materializes widgets on the grid. Anything tighter is a flake
 // factory. The exact-behavior contract lives in the scripted suite (elench-ai.spec.ts).
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 test.skip(
 	!process.env.ANTHROPIC_API_KEY,
@@ -37,11 +37,36 @@ async function ask(page: Page, text: string): Promise<void> {
 	await composer.press("Enter");
 }
 
-/** The turn must not have ended in the error state (missing key / budget / network). */
+/**
+ * The chat's error card: `ChatError` renders an `alert` inside the transcript (the Elench dialog's
+ * "Messages" region), whatever its kind — missing key, budget, provider, network. Matched by role,
+ * not copy, so a reworded card cannot slip past. Scoped to the transcript so the composer's own
+ * too-long alert and the draft decision bars, which sit outside it, are not read as a failed turn.
+ */
+function chatErrorAlert(page: Page): Locator {
+	return page
+		.getByRole("dialog", { name: "Elench" })
+		.getByRole("region", { name: "Messages" })
+		.getByRole("alert");
+}
+
+/**
+ * Wait until `success` is visible OR the chat shows its error card, whichever comes first. On the
+ * error card the test fails at once with the card's text, rather than waiting out the whole budget
+ * for a success locator that can no longer appear (#6616).
+ */
+async function waitForTurn(page: Page, success: Locator, timeout: number): Promise<void> {
+	const alert = chatErrorAlert(page);
+	await expect(success.or(alert).first()).toBeVisible({ timeout });
+	if (await alert.first().isVisible()) {
+		const text = (await alert.first().innerText()).replace(/\s+/g, " ").trim();
+		throw new Error(`The chat showed an error instead of the answer: ${text}`);
+	}
+}
+
+/** The turn must not have ended in the error state: the chat's error card is absent. */
 async function expectNoChatError(page: Page): Promise<void> {
-	await expect(page.getByText(/ai is not configured/i)).toHaveCount(0);
-	await expect(page.getByText(/ai limit reached/i)).toHaveCount(0);
-	await expect(page.getByText(/the assistant hit an error/i)).toHaveCount(0);
+	await expect(chatErrorAlert(page)).toHaveCount(0);
 }
 
 test.describe("Elench with a REAL model (nightly)", () => {
@@ -53,9 +78,7 @@ test.describe("Elench with a REAL model (nightly)", () => {
 		await ask(page, "In one sentence, what does Alethia do?");
 		// An assistant turn produced text (the copy affordance only appears on a
 		// completed assistant message).
-		await expect(
-			page.getByRole("button", { name: /copy/i }).first(),
-		).toBeVisible({ timeout: 120_000 });
+		await waitForTurn(page, page.getByRole("button", { name: /copy/i }).first(), 120_000);
 		await expectNoChatError(page);
 	});
 
@@ -63,14 +86,12 @@ test.describe("Elench with a REAL model (nightly)", () => {
 		await ask(page, "Are my connectors healthy? Use the tools to check.");
 		// SOME tool ran and rendered inside the unified frame — we don't pin which one
 		// or how many (a real model may also list identities, etc.).
-		await expect(
-			page.locator('[data-slot="tool-result-frame"]').first(),
-		).toBeVisible({ timeout: 120_000 });
-		await expect(
-			page.locator('[data-slot="tool-result-frame"]')
-				.filter({ hasText: "Completed" })
-				.first(),
-		).toBeVisible({ timeout: 120_000 });
+		await waitForTurn(page, page.locator('[data-slot="tool-result-frame"]').first(), 120_000);
+		await waitForTurn(
+			page,
+			page.locator('[data-slot="tool-result-frame"]').filter({ hasText: "Completed" }).first(),
+			120_000,
+		);
 		await expectNoChatError(page);
 	});
 
@@ -81,9 +102,7 @@ test.describe("Elench with a REAL model (nightly)", () => {
 		);
 		// However the model gets there (build_dashboard, or pin_widget calls), the grid
 		// ends up holding at least one widget.
-		await expect(page.getByTestId("widget-card").first()).toBeVisible({
-			timeout: 150_000,
-		});
+		await waitForTurn(page, page.getByTestId("widget-card").first(), 150_000);
 		await expectNoChatError(page);
 	});
 });
