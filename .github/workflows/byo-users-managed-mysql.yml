@@ -486,13 +486,18 @@ jobs:
           # including a database still `deleting` — fails the job.
           tag="e2e-${ALETHIA_E2E_ENV}"
           left=""
-          probe() { # <label> <cmd…> — prints the label when the resource is still listed
+          # probe ALWAYS returns 0 and reports only through $left. Actions runs this under `bash -e`
+          # (`set -uo` does not turn -e off), so a probe whose last command was a false `[ … ] &&` —
+          # i.e. every resource correctly GONE — used to kill the step silently with exit 1, on run
+          # 43166673552, where AWS confirmed nothing survived.
+          probe() { # <label> <cmd…> — appends the label to $left when the resource is still listed
             local label="$1" out; shift
             if out="$("$@" 2>&1)"; then
-              [ -n "$out" ] && [ "$out" != None ] && left="${left} ${label}"
+              if [ -n "$out" ] && [ "$out" != None ]; then left="${left} ${label}"; fi
             elif ! printf '%s' "$out" | grep -Eq 'NotFound|not found'; then
               left="${left} ${label}(could-not-check)"
             fi
+            return 0
           }
           if [ -n "$AURORA_CLUSTER" ]; then
             probe "$RDS_INSTANCE" aws rds describe-db-instances --db-instance-identifier "$RDS_INSTANCE" --query 'DBInstances[0].DBInstanceStatus' --output text
@@ -505,7 +510,7 @@ jobs:
             echo "::error::resources of run ${ALETHIA_E2E_ENV} still exist:${left}"
             rc=1
           fi
-          [ "$rc" -eq 0 ] && echo "nothing tagged ${tag} survives"
+          if [ "$rc" -eq 0 ]; then echo "nothing tagged ${tag} survives"; fi
           exit "$rc"
 
       - name: Write the step summary
