@@ -12,6 +12,7 @@
 
 import "server-only";
 import { emitAlertEvent } from "@/lib/alerts/emit";
+import { log } from "@/lib/observability/log";
 
 /** The event the platform operator's alert rules route (`alertPaymentNeedsSupport` raises the same one). */
 export const OPERATOR_ALERT_EVENT = "system.platform.payment_needs_support";
@@ -49,7 +50,7 @@ export async function alertOperator(input: OperatorAlert): Promise<boolean> {
 		});
 		return queued > 0;
 	} catch (err) {
-		console.error(`[alerts] emit failed (${OPERATOR_ALERT_EVENT}):`, err);
+		log.error(`[alerts] emit failed (${OPERATOR_ALERT_EVENT})`, { err });
 		return false;
 	}
 }

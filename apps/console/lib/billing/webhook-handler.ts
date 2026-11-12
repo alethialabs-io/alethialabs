@@ -70,6 +70,7 @@ import {
 import { and, eq, isNull, ne, or, type SQL } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { paymentHolds } from "@/lib/db/schema";
+import { log } from "@/lib/observability/log";
 
 /** Options controlling side effects of a dispatch. */
 export interface HandleEventOptions {
@@ -267,7 +268,7 @@ export async function handleStripeEvent(
 		try {
 			nudged += await fn();
 		} catch (err) {
-			console.error(`[stripe] payment-hold nudge failed for ${event.type}:`, err);
+			log.error(`[stripe] payment-hold nudge failed for ${event.type}`, { err });
 		}
 	};
 	// Runs an email send, swallowing (logging) failures; a no-op when suppressed (replay path).
@@ -276,7 +277,7 @@ export async function handleStripeEvent(
 		try {
 			await fn();
 		} catch (err) {
-			console.error(`[stripe] ${label} email failed:`, err);
+			log.error(`[stripe] ${label} email failed`, { err });
 		}
 	};
 	// Mirrors a paid invoice locally, swallowing (logging) failures — the entitlement sync has
@@ -288,7 +289,7 @@ export async function handleStripeEvent(
 		try {
 			await mirrorPaidInvoice(invoice, orgId);
 		} catch (err) {
-			console.error(`[stripe] invoice mirror failed for ${invoice.id}:`, err);
+			log.error(`[stripe] invoice mirror failed for ${invoice.id}`, { err });
 		}
 	};
 

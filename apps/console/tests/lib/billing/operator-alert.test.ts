@@ -14,6 +14,8 @@ vi.mock("@/lib/alerts/emit", () => ({ emitAlertEvent: vi.fn(async () => 1) }));
 
 import { emitAlertEvent } from "@/lib/alerts/emit";
 import { alertOperator, OPERATOR_ALERT_EVENT, type OperatorAlert } from "@/lib/billing/operator-alert";
+import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
+import { log } from "@/lib/observability/log";
 
 const SOURCE = readFileSync(path.resolve(__dirname, "../../../lib/billing/operator-alert.ts"), "utf8");
 
@@ -27,7 +29,7 @@ const ALERT: OperatorAlert = {
 describe("lib/billing/operator-alert.ts (C48)", () => {
 	beforeEach(() => {
 		vi.mocked(emitAlertEvent).mockReset().mockResolvedValue(1);
-		vi.spyOn(console, "error").mockImplementation(() => {});
+		vi.spyOn(log, "error").mockImplementation(() => {});
 	});
 	afterEach(() => {
 		delete process.env.ALETHIA_PLATFORM_ALERT_ORG_ID;
@@ -63,9 +65,23 @@ describe("lib/billing/operator-alert.ts (C48)", () => {
 		await expect(alertOperator(ALERT)).resolves.toBe(false);
 	});
 
-	it("never throws: a failed emit resolves false", async () => {
+	it("never throws: a failed emit resolves false, and the caught error reaches the logger under `err`", async () => {
 		process.env.ALETHIA_PLATFORM_ALERT_ORG_ID = "org_platform";
-		vi.mocked(emitAlertEvent).mockRejectedValue(new Error("db down"));
+		const boom = new Error("db down");
+		vi.mocked(emitAlertEvent).mockRejectedValue(boom);
 		await expect(alertOperator(ALERT)).resolves.toBe(false);
+		expect(log.error).toHaveBeenCalledWith(`[alerts] emit failed (${OPERATOR_ALERT_EVENT})`, { err: boom });
+	});
+
+	it("alertPaymentNeedsSupport logs the caller's error and a failed emit through the logger under `err`", async () => {
+		process.env.ALETHIA_PLATFORM_ALERT_ORG_ID = "org_platform";
+		const cause = new Error("card declined");
+		const boom = new Error("db down");
+		vi.mocked(emitAlertEvent).mockRejectedValue(boom);
+		await expect(
+			alertPaymentNeedsSupport({ subscriptionId: "sub_x", customerId: "cus_x", paymentIntentId: null, detail: "d", error: cause }),
+		).resolves.toBe(false);
+		expect(log.error).toHaveBeenCalledWith(expect.stringContaining("[billing] payment needs support"), { err: cause });
+		expect(log.error).toHaveBeenCalledWith(expect.stringContaining("[alerts] emit failed"), { err: boom });
 	});
 });

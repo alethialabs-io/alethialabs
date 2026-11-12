@@ -37,6 +37,7 @@ import {
 	type SyncOutcome,
 	syncSubscriptionToBilling,
 } from "@/lib/billing/sync";
+import { log } from "@/lib/observability/log";
 
 /** Stripe statuses that are paid (ADR 0004 §2, "Paid"). */
 const PAID_STATUSES: ReadonlySet<string> = new Set(["active", "trialing"]);
@@ -149,7 +150,7 @@ export async function reportTwoLive(
 			summary,
 		});
 	} catch (err) {
-		console.error(`[billing] two-live report failed for org ${orgId}:`, err);
+		log.error(`[billing] two-live report failed for org ${orgId}`, { org_id: orgId, err });
 	}
 }
 
@@ -230,7 +231,7 @@ async function rereadSuccessor(
 	try {
 		return await stripe.subscriptions.retrieve(named.id);
 	} catch (err) {
-		console.error(`[billing] R1 could not re-read successor ${named.id} for org ${orgId}:`, err);
+		log.error(`[billing] R1 could not re-read successor ${named.id} for org ${orgId}`, { org_id: orgId, err });
 		await alertOperator({
 			title: "A re-pointed org plan could not be re-read",
 			subject: { type: "stripe_subscription", id: named.id },
@@ -339,7 +340,7 @@ export async function reconcileAfterSync(
 	try {
 		y = await stripe.subscriptions.retrieve(replacedId);
 	} catch (err) {
-		console.error(`[billing] D6b′ could not read replaced subscription ${replacedId}:`, err);
+		log.error(`[billing] D6b′ could not read replaced subscription ${replacedId}`, { err });
 		await reportTwoLive(
 			orgId,
 			partyOf(x),

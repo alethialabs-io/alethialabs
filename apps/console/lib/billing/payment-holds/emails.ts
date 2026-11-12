@@ -53,6 +53,7 @@ import {
 } from "@/lib/db/schema";
 import { sendOrgPlanHoldNoticeEmail, sendPaymentHoldNoticeEmail } from "@/lib/email/billing-email";
 import { claimHoldNotice, unclaimHoldNotice } from "./store";
+import { log } from "@/lib/observability/log";
 
 /** How long after its release a hold's email may still be sent (§5.4). */
 const RELEASED_NOTICE_WINDOW_DAYS = 14;
@@ -152,18 +153,18 @@ export async function sendDueHoldNotices(input: {
 			if (notice === "released:adopted" && (await markedOrgExists(hold.subscription_id))) continue;
 			if (!(await claimHoldNotice(hold.id, notice))) continue;
 		} catch (err) {
-			console.error(`[billing] could not claim the ${notice} email of payment hold ${hold.id}:`, err);
+			log.error(`[billing] could not claim the ${notice} email of payment hold ${hold.id}`, { err });
 			continue;
 		}
 		try {
 			await input.deliver(hold, notice);
 			sent += 1;
 		} catch (err) {
-			console.error(`[billing] the ${notice} email of payment hold ${hold.id} failed; the next tick retries:`, err);
+			log.error(`[billing] the ${notice} email of payment hold ${hold.id} failed; the next tick retries`, { err });
 			try {
 				await unclaimHoldNotice(hold.id, notice);
 			} catch (unclaimErr) {
-				console.error(`[billing] could not give back the ${notice} claim of payment hold ${hold.id}:`, unclaimErr);
+				log.error(`[billing] could not give back the ${notice} claim of payment hold ${hold.id}`, { err: unclaimErr });
 			}
 		}
 	}
