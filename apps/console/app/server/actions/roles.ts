@@ -21,6 +21,7 @@ import type { Actor } from "@/lib/authz/types";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { role, rolePermission } from "@/lib/db/schema";
+import { log } from "@/lib/observability/log";
 
 export interface CustomRole {
 	id: string;
@@ -193,7 +194,7 @@ async function rewriteRole(
 	// Re-expand every grant on this role so its tuples reflect the new permissions.
 	void getTupleSync()
 		.resyncRole(id)
-		.catch((err) => console.error("[authz] role resync failed:", err));
+		.catch((err: unknown) => log.error("[authz] role resync failed", { err, role_id: id }));
 
 	emitAlertEventSafe(actor.orgId, "authz.role.edit", {
 		title: `Role permissions changed: ${name}`,

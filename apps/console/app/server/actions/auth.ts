@@ -19,6 +19,7 @@ import { getAuthConfig } from "@/lib/config/auth";
 import { getServiceDb } from "@/lib/db";
 import { user } from "@/lib/db/schema";
 import { sendNoAccountEmail } from "@/lib/email/auth-email";
+import { log } from "@/lib/observability/log";
 
 export type AuthMode = "login" | "signup";
 
@@ -58,7 +59,7 @@ export async function requestEmailCode({
 		await sendNoAccountEmail(
 			normalized,
 			`${getAuthConfig().baseURL}/signup`,
-		).catch((e) => console.error("[auth] no-account email failed:", e));
+		).catch((e: unknown) => log.error("[auth] no-account email failed", { err: e }));
 		return { outcome: "no-account" };
 	}
 

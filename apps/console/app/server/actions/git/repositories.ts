@@ -13,6 +13,7 @@ import {
 	GitLabRepo,
 	Repository,
 } from "./types";
+import { log } from "@/lib/observability/log";
 
 export async function fetchAllRepositories(): Promise<{
 	repositories: Repository[];
@@ -110,14 +111,14 @@ export async function fetchAllRepositories(): Promise<{
 						}
 					}
 				} catch (err) {
-					console.error(`Error fetching ${provider} repos:`, err);
+					log.error(`Error fetching ${provider} repos`, { err, provider });
 				}
 			}),
 		);
 
 		return { repositories: allRepos };
 	} catch (error) {
-		console.error("Error fetching all repositories:", error);
+		log.error("Error fetching all repositories", { err: error });
 		return { repositories: [], error: "Failed to fetch repositories" };
 	}
 }
@@ -255,7 +256,7 @@ export async function createRepository(
 
 		return { repository };
 	} catch (error) {
-		console.error("Error creating repository for provider:", provider, error);
+		log.error("Error creating repository for provider", { err: error, provider });
 		return { error: "Failed to create repository" };
 	}
 }
@@ -381,7 +382,7 @@ export async function fetchRepositoriesByProvider(
 
 		return { repositories: allRepos };
 	} catch (error) {
-		console.error("Error fetching repositories for provider:", provider, error);
+		log.error("Error fetching repositories for provider", { err: error, provider });
 		return {
 			repositories: [],
 			error:
