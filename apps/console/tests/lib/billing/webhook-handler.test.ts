@@ -66,7 +66,9 @@ import {
 	sendPaymentFailedEmail,
 	sendReceiptEmail,
 	sendSubscriptionCanceledEmail,
+	sendTrialEndingEmail,
 } from "@/lib/email/billing-email";
+import { log } from "@/lib/observability/log";
 
 /** Stripe's `created` for every event below: 2026-10-01T12:00:00Z, in seconds. */
 const CREATED = 1_790_856_000;
@@ -127,6 +129,16 @@ describe("handleStripeEvent → syncSubscriptionToBilling (#5514)", () => {
 			);
 		},
 	);
+
+	it("a failed email send is swallowed and logged through the logger under `err`", async () => {
+		const boom = new Error("smtp down");
+		vi.mocked(sendTrialEndingEmail).mockRejectedValueOnce(boom);
+		const logged = vi.spyOn(log, "error").mockImplementation(() => {});
+		const { event } = subscriptionEvent("customer.subscription.trial_will_end");
+		await handleStripeEvent(event);
+		expect(logged).toHaveBeenCalledWith("[stripe] trial will end email failed", { err: boom });
+		logged.mockRestore();
+	});
 
 	it("a deletion the row REFUSED (another subscription's) sends no cancellation email", async () => {
 		vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");

@@ -17,6 +17,7 @@ vi.mock("@repo/plan-catalog", () => ({
 }));
 
 import { ensureIncludedCredit } from "@/lib/billing/credit-grants";
+import { log } from "@/lib/observability/log";
 import { isStripeConfigured, planForPriceId } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
 import { planIncludedCreditCents, planMeta } from "@repo/plan-catalog";
@@ -187,12 +188,16 @@ describe("ensureIncludedCredit — idempotency + resilience", () => {
 		expect(create).toHaveBeenCalledTimes(1);
 	});
 
-	it("swallows a Stripe error (best-effort, never throws)", async () => {
+	it("swallows a Stripe error (best-effort, never throws), and logs it under `err`", async () => {
+		const boom = new Error("stripe down");
 		const list = vi.fn(async () => ({ data: [] }));
 		const create = vi.fn(async () => {
-			throw new Error("stripe down");
+			throw boom;
 		});
 		vi.mocked(getStripe).mockReturnValue({ billing: { creditGrants: { list, create } } } as never);
+		const logged = vi.spyOn(log, "error").mockImplementation(() => {});
 		await expect(ensureIncludedCredit(sub())).resolves.toBeUndefined();
+		expect(logged).toHaveBeenCalledWith("[billing] included-credit grant failed", { err: boom });
+		logged.mockRestore();
 	});
 });
