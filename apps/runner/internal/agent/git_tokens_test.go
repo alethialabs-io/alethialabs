@@ -115,6 +115,35 @@ func TestDeploy_RequestsATokenPerRepoAndUsesEachForItsOwnRepo(t *testing.T) {
 	}
 }
 
+// TestDeploy_IgnoresASnapshotGitToken: a token on the snapshot's git_access_token is not used for
+// the apps repo in place of the one requested for it by name.
+func TestDeploy_IgnoresASnapshotGitToken(t *testing.T) {
+	rec := &tokenRecorder{}
+	api := newCovRunAPI()
+	api.gitTokenFn = rec.fn
+	sb := &covRunSandbox{}
+	w := NewWithAPI(Config{Operator: "self", RunnerID: "r-tokens"}, api)
+	w.sandbox = sb
+
+	snap := covRunSnapshot()
+	snap["repositories"] = map[string]any{"apps_destination_repo": tokAppsRepo}
+	snap["git_access_token"] = "frozen-snapshot-token"
+	stdout := NewJobLogger(api, "tok-snap", "STDOUT")
+	stderr := NewJobLogger(api, "tok-snap", "STDERR")
+	err := w.executeDeploy(t.Context(), &Job{ID: "tok-snap", JobType: string(types.JobTypeDeploy), ConfigSnapshot: snap}, "aws", nil, nil, stdout, stderr)
+	stdout.Close()
+	stderr.Close()
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	if asked := rec.asked(); !reflect.DeepEqual(asked, []string{tokAppsRepo}) {
+		t.Errorf("requested repos = %q, want one request naming the apps repo", asked)
+	}
+	if got := childSecrets(t, sb.lastSpec()).GitToken; got != "token-for:"+tokAppsRepo {
+		t.Errorf("GitToken = %q, want the token requested for the apps repo", got)
+	}
+}
+
 // TestPlan_RequestsOnlyTheIacModulesToken: a BYO IaC plan asks for the module repo's token by name
 // and carries it in GitTokens only; the apps repo, which a plan never touches, is not asked for.
 func TestPlan_RequestsOnlyTheIacModulesToken(t *testing.T) {

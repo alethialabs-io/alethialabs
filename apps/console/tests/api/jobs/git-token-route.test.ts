@@ -8,7 +8,7 @@
 // provider's token can be sent toward a host that is not that provider's.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { jobs, projectAddons, projectRepositories } from "@/lib/db/schema";
+import { jobs, projectAddons, projectRepositories, runners } from "@/lib/db/schema";
 
 const RUNNER = "11111111-1111-1111-1111-111111111111";
 const TOKEN = "CANARY-git-token-5d1e";
@@ -52,7 +52,10 @@ const fakeDb = {
 };
 vi.mock("@/lib/db", () => ({ getServiceDb: () => fakeDb }));
 
-/** Seeds a job owned by RUNNER whose project's apps-destination repo is `appsRepo`. */
+/**
+ * Seeds a job owned by RUNNER whose project's apps-destination repo is `appsRepo`. RUNNER reports
+ * `runnerVersion` (null: no runners row, so no recorded version).
+ */
 function seed(
 	appsRepo: string | null,
 	chartRepos: string[] = [],
@@ -60,11 +63,13 @@ function seed(
 		job_type: "DEPLOY",
 		config_snapshot: {},
 	},
+	runnerVersion: string | null = "0.10.0",
 ) {
 	rowsByTable = new Map<unknown, unknown[]>([
 		[jobs, [{ user_id: "user-1", project_id: "proj-1", runner_id: RUNNER, ...job }]],
 		[projectRepositories, appsRepo === null ? [] : [{ apps_destination_repo: appsRepo }]],
 		[projectAddons, chartRepos.map((chart_repo) => ({ chart_repo }))],
+		[runners, runnerVersion === null ? [] : [{ version: runnerVersion }]],
 	]);
 }
 
@@ -205,38 +210,162 @@ describe("POST /api/jobs/[id]/git-token", () => {
 	});
 
 	describe("a request that names no repo (runners up to 0.10.0)", () => {
-		it.each([
-			[
-				"a BYO IaC deploy whose module and apps repo differ",
-				{ job_type: "DEPLOY", config_snapshot: { iac_source: { repo_url: "https://bitbucket.org/acme/infra" } } },
-			],
-			["a CHART_SCAN of a repo that is not the apps repo", { job_type: "CHART_SCAN", config_snapshot: { repo_url: "https://github.com/acme/chart" } }],
-			["an IAC_SCAN of a repo that is not the apps repo", { job_type: "IAC_SCAN", config_snapshot: { repo_url: "https://github.com/acme/infra" } }],
-		])("is refused for %s, with no token minted", async (_what, job) => {
-			seed("https://github.com/acme/apps", [], job);
+		const APPS = "https://github.com/acme/apps";
+		const IAC = "https://bitbucket.org/acme/infra";
+		const TARGET = "https://github.com/acme/chart";
+		const CHART = "https://code.acme.example/acme/byo-chart";
+
+		/** What one unnamed request did: its status, its code, and whether any account was read or token minted. */
+		async function unnamedOutcome() {
 			const res = await post();
-			expect(res.status).toBe(400);
 			const body = await res.text();
-			expect(body).not.toContain(TOKEN);
-			expect(JSON.parse(body)).toMatchObject({ code: "git_repo_required" });
-			expect(resolveAccountId).not.toHaveBeenCalled();
-			expect(getAccessToken).not.toHaveBeenCalled();
+			const parsed: { code?: string } = JSON.parse(body);
+			return {
+				status: res.status,
+				code: parsed.code ?? null,
+				tokenInBody: body.includes(TOKEN),
+				accountLookups: resolveAccountId.mock.calls,
+				mints: getAccessToken.mock.calls.length,
+			};
+		}
+
+		/** A 400 git_repo_required that minted nothing and looked up no account. */
+		const REFUSED = { status: 400, code: "git_repo_required", tokenInBody: false, accountLookups: [], mints: 0 };
+
+		/** A 200 carrying the token, minted once from `provider`'s link. */
+		function minted(provider: string) {
+			return { status: 200, code: null, tokenInBody: true, accountLookups: [["user-1", provider]], mints: 1 };
+		}
+
+		it("tells the operator the consequence and the fix, and names no repo", async () => {
+			seed(APPS, [], { job_type: "DEPLOY", config_snapshot: { iac_source: { repo_url: IAC } } });
+			const res = await post();
+			const { error } = await res.json();
+			expect(error).toContain("will fail to clone");
+			expect(error).toContain("Upgrade the runner");
+			expect(error).not.toContain("github.com/acme");
+			expect(error).not.toContain("bitbucket");
 		});
 
-		it("is answered for a job whose only repo is the scan target (ANALYZE_REPO has no project)", async () => {
-			seed(null, [], { job_type: "ANALYZE_REPO", config_snapshot: { repo_url: "https://bitbucket.org/acme/svc" } });
-			const res = await post();
-			expect(res.status).toBe(200);
-			expect(await res.json()).toEqual({ token: TOKEN });
-			expect(resolveAccountId).toHaveBeenCalledWith("user-1", "bitbucket");
+		describe.each(["CHART_SCAN", "IAC_SCAN", "ANALYZE_REPO"])("%s", (jobType) => {
+			it("is answered for the scan target even when the project has a different apps repo", async () => {
+				seed(APPS, [], {
+					job_type: jobType,
+					config_snapshot: { repo_url: IAC, repositories: { apps_destination_repo: APPS } },
+				});
+				expect(await unnamedOutcome()).toEqual(minted("bitbucket"));
+			});
+
+			it("answers no token when the snapshot names no scan target", async () => {
+				seed(APPS, [], { job_type: jobType, config_snapshot: {} });
+				const res = await post();
+				expect(res.status).toBe(200);
+				expect(await res.json()).toEqual({ token: null });
+				expect(resolveAccountId).not.toHaveBeenCalled();
+			});
 		});
 
-		it("is answered when the BYO IaC module IS the apps repo, so the token serves one repo", async () => {
-			const repo = "https://github.com/acme/mono";
-			seed(repo, [], { job_type: "DEPLOY", config_snapshot: { iac_source: { repo_url: repo } } });
-			const res = await post();
-			expect(res.status).toBe(200);
-			expect(resolveAccountId).toHaveBeenCalledWith("user-1", "github");
+		describe.each(["PLAN", "DRIFT"])("%s", (jobType) => {
+			it("is answered for the IaC module even when the apps repo differs", async () => {
+				seed(APPS, [CHART], {
+					job_type: jobType,
+					config_snapshot: {
+						iac_source: { repo_url: IAC },
+						repositories: { apps_destination_repo: APPS },
+						addons: [{ id: "c", source: "git", chartRepo: CHART }],
+					},
+				}, "0.9.0");
+				expect(await unnamedOutcome()).toEqual(minted("bitbucket"));
+			});
+
+			it("with no IaC module, is refused when the job references more than one repo", async () => {
+				seed(APPS, [], {
+					job_type: jobType,
+					config_snapshot: { repositories: { apps_destination_repo: "https://github.com/acme/old-apps" } },
+				});
+				expect(await unnamedOutcome()).toEqual(REFUSED);
+			});
+
+			it("with no IaC module, is answered for the job's one repo", async () => {
+				seed(APPS, [], { job_type: jobType, config_snapshot: { repositories: { apps_destination_repo: APPS } } });
+				expect(await unnamedOutcome()).toEqual(minted("github"));
+			});
+		});
+
+		describe("DEPLOY", () => {
+			it("is refused when the module and the apps repo differ", async () => {
+				seed(APPS, [], { job_type: "DEPLOY", config_snapshot: { iac_source: { repo_url: IAC } } });
+				expect(await unnamedOutcome()).toEqual(REFUSED);
+			});
+
+			it("is refused when the snapshot's apps repo differs from the project's current one", async () => {
+				seed(APPS, [], {
+					job_type: "DEPLOY",
+					config_snapshot: { repositories: { apps_destination_repo: "https://github.com/acme/old-apps" } },
+				});
+				expect(await unnamedOutcome()).toEqual(REFUSED);
+			});
+
+			it("is answered when the module IS the apps repo, so the token serves one repo", async () => {
+				const repo = "https://github.com/acme/mono";
+				seed(repo, [], {
+					job_type: "DEPLOY",
+					config_snapshot: { iac_source: { repo_url: repo }, repositories: { apps_destination_repo: repo } },
+				});
+				expect(await unnamedOutcome()).toEqual(minted("github"));
+			});
+
+			/** A DEPLOY whose only module/apps repo is APPS, with one BYO git chart on CHART. */
+			const chartDeploy = {
+				job_type: "DEPLOY",
+				config_snapshot: {
+					repositories: { apps_destination_repo: APPS },
+					addons: [
+						{ id: "byo", source: "git", chartRepo: CHART },
+						{ id: "grafana", source: "helm", chartRepo: "https://grafana.github.io/helm-charts" },
+					],
+				},
+			};
+
+			it.each(["0.10.0", "v0.10.0", "0.11.2"])(
+				"from runner %s, still answers for the apps repo when a BYO chart lives elsewhere",
+				async (version) => {
+					seed(APPS, [CHART], chartDeploy, version);
+					expect(await unnamedOutcome()).toEqual(minted("github"));
+				},
+			);
+
+			it.each([
+				["0.9.0", "0.9.0"],
+				["a pre-release of 0.10.0", "0.10.0-rc.1"],
+				["a version that is not SemVer", "dev"],
+				["an empty version", ""],
+				["no recorded version", null],
+			])("from a runner reporting %s, is refused when a BYO git chart lives elsewhere", async (_what, version) => {
+				seed(APPS, [CHART], chartDeploy, version);
+				expect(await unnamedOutcome()).toEqual(REFUSED);
+			});
+
+			it("from an old runner, ignores a chart that is not git-sourced", async () => {
+				seed(APPS, [], {
+					job_type: "DEPLOY",
+					config_snapshot: {
+						repositories: { apps_destination_repo: APPS },
+						addons: [{ id: "grafana", source: "helm", chartRepo: "https://grafana.github.io/helm-charts" }],
+					},
+				}, "0.9.0");
+				expect(await unnamedOutcome()).toEqual(minted("github"));
+			});
+		});
+
+		it("is refused for a job type with no per-type rule when it references more than one repo", async () => {
+			seed(APPS, [], { job_type: "DESTROY", config_snapshot: { iac_source: { repo_url: IAC } } });
+			expect(await unnamedOutcome()).toEqual(REFUSED);
+		});
+
+		it("is refused for another job type whose snapshot names both a scan target and a module", async () => {
+			seed(null, [], { job_type: "STATE_IMPORT", config_snapshot: { repo_url: TARGET, iac_source: { repo_url: IAC } } });
+			expect(await unnamedOutcome()).toEqual(REFUSED);
 		});
 	});
 

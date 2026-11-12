@@ -33,8 +33,9 @@ func (w *Runner) fetchRepoToken(jobID, repoURL string, stderr io.Writer) string 
 }
 
 // deployGitTokens resolves the git tokens a DEPLOY needs, one request per distinct repo:
-//   - appsToken is the token for the apps-destination repo (DeployParams.GitAccessToken) — a
-//     token the snapshot already carries wins, as before;
+//   - appsToken is the token for the apps-destination repo (DeployParams.GitAccessToken). The
+//     snapshot's own git_access_token is not read: the console always writes it empty, and a
+//     token there would not be scoped to any one repo;
 //   - repoTokens maps the BYO IaC module repo and each BYO git chart repo to its own token
 //     (DeployParams.GitRepoTokens). A repo with no token has no entry.
 func (w *Runner) deployGitTokens(jobID string, vc *types.ProjectConfig, stderr io.Writer) (appsToken string, repoTokens map[string]string) {
@@ -48,10 +49,7 @@ func (w *Runner) deployGitTokens(jobID string, vc *types.ProjectConfig, stderr i
 		return t
 	}
 
-	appsToken = vc.GitAccessToken
-	if appsToken == "" {
-		appsToken = tokenFor(vc.Repositories.AppsDestinationRepo)
-	}
+	appsToken = tokenFor(vc.Repositories.AppsDestinationRepo)
 
 	repoTokens = map[string]string{}
 	add := func(repo string) {

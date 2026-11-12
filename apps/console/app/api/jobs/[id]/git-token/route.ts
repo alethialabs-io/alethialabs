@@ -6,7 +6,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { resolveAccountId } from "@/lib/auth/accounts";
 import { getServiceDb } from "@/lib/db";
-import { jobs, projectAddons, projectRepositories } from "@/lib/db/schema";
+import { compareChartVersions } from "@/lib/addons/update-notice";
+import { jobs, projectAddons, projectRepositories, runners } from "@/lib/db/schema";
 import {
 	type GitProviderRefusal,
 	repoHostForLog,
@@ -65,21 +66,110 @@ function buildServiceRepos(snapshot: Record<string, unknown>): string[] {
 /** Marks a job that references more than one repo when the runner named none. */
 const AMBIGUOUS = Symbol("ambiguous");
 
+/** The job types whose runner clones only the snapshot's flat `repo_url` with an unnamed token. */
+const FLAT_TARGET_JOB_TYPES = new Set(["CHART_SCAN", "IAC_SCAN", "ANALYZE_REPO"]);
+
 /**
- * The repo a request WITHOUT `?repo=` is answered for: the one distinct repo among the job's BYO IaC
- * source, its flat scan target and the project's apps repo, "" when it has none, or {@link AMBIGUOUS}
- * when it has several — an unnamed token would then be used for more than the repo it was minted for.
+ * The first runner release that never applies the unnamed token to a BYO git chart repo. Older
+ * runners use it for a chart repo whose own token they could not get.
  */
-function singleUnnamedRepo(
+const NAMED_CHART_TOKENS_SINCE = "0.10.0";
+
+/**
+ * Whether a runner reporting `version` may still use an unnamed token for a BYO git chart repo:
+ * true below {@link NAMED_CHART_TOKENS_SINCE}, and true when the version is missing or is not a
+ * SemVer version, since nothing then shows the runner is new enough.
+ */
+function mayReuseUnnamedTokenForCharts(version: string | null | undefined): boolean {
+	if (!version) return true;
+	const order = compareChartVersions(version, NAMED_CHART_TOKENS_SINCE);
+	return order === null || order < 0;
+}
+
+/** The version the runner last reported on its heartbeat (`runners.version`), or null if none. */
+async function recordedRunnerVersion(runnerId: string): Promise<string | null> {
+	const [row] = await getServiceDb()
+		.select({ version: runners.version })
+		.from(runners)
+		.where(eq(runners.id, runnerId))
+		.limit(1);
+	return row?.version ?? null;
+}
+
+/**
+ * The repos a runner that names no repo (0.10.0 and older) uses the unnamed token for, by job type:
+ *   - CHART_SCAN / IAC_SCAN / ANALYZE_REPO: the flat scan target only;
+ *   - PLAN / DRIFT: the BYO IaC module only (a plan returns before any GitOps step, and drift clones
+ *     nothing else); one with no module falls back to every repo the job references;
+ *   - DEPLOY: the IaC module and the apps repo, as the snapshot froze it and as the project holds it
+ *     now (they differ when the apps repo changed after the job was queued), plus each BYO git chart
+ *     repo when the runner may reuse the token for charts;
+ *   - any other type: every repo the job references.
+ */
+function unnamedTokenRepos(
+	jobType: string,
 	snapshot: Record<string, unknown>,
-	appsRepo: string | null | undefined,
-): string | typeof AMBIGUOUS {
-	const distinct = new Set(
-		[iacSourceRepo(snapshot), flatRepo(snapshot), appsRepo ?? ""].filter((r) => r.length > 0),
-	);
+	liveAppsRepo: string,
+	includeChartRepos: boolean,
+): string[] {
+	const allReferenced = [iacSourceRepo(snapshot), flatRepo(snapshot), snapshotAppsRepo(snapshot), liveAppsRepo];
+	if (FLAT_TARGET_JOB_TYPES.has(jobType)) return [flatRepo(snapshot)];
+	if (jobType === "PLAN" || jobType === "DRIFT") {
+		const iac = iacSourceRepo(snapshot);
+		return iac ? [iac] : allReferenced;
+	}
+	if (jobType === "DEPLOY") {
+		return [
+			iacSourceRepo(snapshot),
+			snapshotAppsRepo(snapshot),
+			liveAppsRepo,
+			...(includeChartRepos ? snapshotGitChartRepos(snapshot) : []),
+		];
+	}
+	return allReferenced;
+}
+
+/**
+ * The repo a request WITHOUT `?repo=` is answered for: the one distinct repo among `repos` (see
+ * {@link unnamedTokenRepos}), "" when there is none, or {@link AMBIGUOUS} when there are several,
+ * since an unnamed token would then be used for more than the repo it was minted for.
+ */
+function singleUnnamedRepo(repos: string[]): string | typeof AMBIGUOUS {
+	const distinct = new Set(repos.filter((r) => r.length > 0));
 	if (distinct.size > 1) return AMBIGUOUS;
 	const [only] = distinct;
 	return only ?? "";
+}
+
+/** The apps repo the snapshot froze at enqueue, under `repositories.apps_destination_repo`, or "". */
+function snapshotAppsRepo(snapshot: Record<string, unknown>): string {
+	const repositories = snapshot.repositories;
+	return typeof repositories === "object" &&
+		repositories !== null &&
+		"apps_destination_repo" in repositories &&
+		typeof repositories.apps_destination_repo === "string"
+		? repositories.apps_destination_repo
+		: "";
+}
+
+/** The chart repos of the snapshot's git-source add-ons (`addons[].chartRepo` where `source` is "git"). */
+function snapshotGitChartRepos(snapshot: Record<string, unknown>): string[] {
+	const addons = snapshot.addons;
+	if (!Array.isArray(addons)) return [];
+	const repos: string[] = [];
+	for (const addon of addons) {
+		if (
+			typeof addon === "object" &&
+			addon !== null &&
+			"source" in addon &&
+			addon.source === "git" &&
+			"chartRepo" in addon &&
+			typeof addon.chartRepo === "string"
+		) {
+			repos.push(addon.chartRepo);
+		}
+	}
+	return repos;
 }
 
 /** The BYO IaC module repo a PLAN/DEPLOY/DESTROY/DRIFT snapshot carries under `iac_source`, or "". */
@@ -194,18 +284,32 @@ export async function POST(
 		}
 
 		// No ?repo= is the request runners up to 0.10.0 still send for a deploy, plan, drift, scan or
-		// analyze job, and they use the token for every repo of that job that they clone or push. So
-		// the token is minted only when the job references exactly ONE such repo — it is then used
-		// for that repo alone. A job that references more than one gets no token and is told to name
-		// the repo; a runner that names it never reaches this path.
-		const repoUrl = requestedRepo || singleUnnamedRepo(job.config_snapshot, repos?.apps_destination_repo);
+		// analyze job, and they use the token for every repo of that job type they clone or push (see
+		// unnamedTokenRepos). So the token is minted only when that set holds exactly ONE repo, and is
+		// then used for that repo alone. Otherwise no token is issued; a runner that names the repo
+		// never reaches this path. Whether a DEPLOY's chart repos count depends on the runner's
+		// recorded version, read only on this path.
+		const includeChartRepos =
+			!requestedRepo &&
+			job.job_type === "DEPLOY" &&
+			mayReuseUnnamedTokenForCharts(await recordedRunnerVersion(runnerId));
+		const repoUrl =
+			requestedRepo ||
+			singleUnnamedRepo(
+				unnamedTokenRepos(
+					job.job_type,
+					job.config_snapshot,
+					repos?.apps_destination_repo ?? "",
+					includeChartRepos,
+				),
+			);
 		if (repoUrl === AMBIGUOUS) {
 			console.warn(
-				`git-token: refused for job ${jobId} — no repo named, and the job references more than one repo`,
+				`git-token: refused for job ${jobId} — no repo named, and the job uses more than one repo`,
 			);
 			return NextResponse.json(
 				{
-					error: "This job references more than one repository, so the token must be requested for one of them by name (upgrade the runner); no git token was issued.",
+					error: "This runner (0.10.0 or older) asks for one git token per job, and this job uses more than one repository, so no token was issued and a private repository will fail to clone. Upgrade the runner to a newer release.",
 					code: "git_repo_required",
 				},
 				{ status: 400 },
