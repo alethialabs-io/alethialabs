@@ -98,15 +98,15 @@ func runAddonBump(c gitopsBumper, out io.Writer, project, env, addonID string, a
 		fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Pull request %s was merged.", link())))
 		fmt.Fprintln(out, ui.MutedStyle.Render(fmt.Sprintf("The next deploy reads %s from %s.", r.Version, r.File)))
 	case "declined":
-		fmt.Fprintln(out, fmt.Sprintf("You closed pull request %s without merging it, so nothing was opened.", link()))
+		fmt.Fprintf(out, "You closed pull request %s without merging it, so nothing was opened.\n", link())
 		fmt.Fprintln(out, ui.MutedStyle.Render("Run the command again with --again to open it once more."))
 	default:
 		msg := ""
 		if r.Message != nil {
 			msg = *r.Message
 		}
-		fmt.Fprintln(out, fmt.Sprintf("No pull request was opened. %s", msg))
-		fmt.Fprintln(out, fmt.Sprintf("To move it yourself, set %s in %s to %s.", r.Field, r.File, r.Version))
+		fmt.Fprintf(out, "No pull request was opened. %s\n", msg)
+		fmt.Fprintf(out, "To move it yourself, set %s in %s to %s.\n", r.Field, r.File, r.Version)
 	}
 	return nil
 }
