@@ -60,14 +60,9 @@ func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider s
 	// InspectCluster is skipped: a customer's arbitrary module has no Alethia-managed
 	// ArgoCD/add-on surface to inspect, and its (sensitive) tofu outputs stay in the sandbox.
 	if vc.IacSource != nil {
-		gitToken := vc.GitAccessToken
-		if gitToken == "" {
-			if fetched, ferr := w.api.FetchGitToken(job.ID, ""); ferr != nil {
-				fmt.Fprintf(stderr, "Warning: failed to fetch git token: %v\n", ferr)
-			} else {
-				gitToken = fetched
-			}
-		}
+		// Drift clones only the BYO module, so its token is requested for that repo by name. The
+		// snapshot's git_access_token is not read (see deployGitTokens).
+		gitToken := w.fetchRepoToken(job.ID, vc.IacSource.RepoURL, stderr)
 		workDir, werr := newJobWorkDir(job.ID)
 		if werr != nil {
 			return fmt.Errorf("create workdir: %w", werr)
