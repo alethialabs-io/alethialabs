@@ -33,6 +33,7 @@ vi.mock("@/lib/billing/stripe", () => ({ getStripe: () => fakeStripe }));
 
 import { createCheckoutSession, createSubscriptionIntent } from "@/app/server/actions/billing";
 import { runWithActor } from "@/lib/authz/actor-context";
+import { log } from "@/lib/observability/log";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import type { Actor, Entitlements } from "@/lib/authz/types";
 import { seedAuthz } from "@/lib/authz/seed";
@@ -764,7 +765,7 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 	const ALL = [SUB_EXPIRES, SUB_MOVED, SUB_PAID, SUB_LIVE, SUB_HELD];
 	let savedStripeKey: string | undefined;
 	let info: MockInstance<typeof console.info>;
-	let error: MockInstance<typeof console.error>;
+	let error: MockInstance<typeof log.error>;
 
 	/** X as Stripe reads it: linked in Stripe to O and U, never marked linked on the setup. */
 	const x = (id: string, status: string, latestInvoice: string | null = null) => ({
@@ -803,7 +804,7 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 				return typeof parsed === "object" && parsed !== null ? String(Reflect.get(parsed, "event")) : "";
 			});
 
-	/** How many `alertPaymentNeedsSupport` calls named `subscriptionId` (it always logs before it emits). */
+	/** How many `alertPaymentNeedsSupport` calls named `subscriptionId` (it always logs, through `log.error`, before it emits). */
 	const alertsFor = (subscriptionId: string): number =>
 		error.mock.calls.filter((call) => String(call[0]).includes(`payment needs support — Subscription ${subscriptionId} `)).length;
 
@@ -833,7 +834,7 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 
 	beforeEach(() => {
 		info = vi.spyOn(console, "info");
-		error = vi.spyOn(console, "error");
+		error = vi.spyOn(log, "error");
 	});
 
 	afterEach(() => {
