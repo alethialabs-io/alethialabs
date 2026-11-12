@@ -73,16 +73,21 @@ function seed(
 	]);
 }
 
+/** The `User-Agent` the next request sends (every runner release sends `runner/<version>`); null sends none. */
+let userAgent: string | null = "runner/0.10.0";
+
 /** Invokes the route, optionally asking for a specific repo's token. */
 async function post(repo?: string) {
 	const { POST } = await import("@/app/api/jobs/[id]/git-token/route");
 	const query = repo ? `?repo=${encodeURIComponent(repo)}` : "";
-	return POST(new Request(`https://console.local/api/jobs/job-1/git-token${query}`, { method: "POST" }), {
+	const headers: Record<string, string> = userAgent === null ? {} : { "user-agent": userAgent };
+	return POST(new Request(`https://console.local/api/jobs/job-1/git-token${query}`, { method: "POST", headers }), {
 		params: Promise.resolve({ id: "job-1" }),
 	});
 }
 
 beforeEach(() => {
+	userAgent = "runner/0.10.0";
 	vi.clearAllMocks();
 	verifyRunnerToken.mockResolvedValue({ runnerId: RUNNER, tokenHash: "h" });
 	resolveAccountId.mockResolvedValue("account-1");
@@ -265,7 +270,7 @@ describe("POST /api/jobs/[id]/git-token", () => {
 			});
 		});
 
-		describe.each(["PLAN", "DRIFT"])("%s", (jobType) => {
+		describe.each(["PLAN", "DETECT_DRIFT"])("%s", (jobType) => {
 			it("is answered for the IaC module even when the apps repo differs", async () => {
 				seed(APPS, [CHART], {
 					job_type: jobType,
@@ -330,6 +335,7 @@ describe("POST /api/jobs/[id]/git-token", () => {
 			it.each(["0.10.0", "v0.10.0", "0.11.2"])(
 				"from runner %s, still answers for the apps repo when a BYO chart lives elsewhere",
 				async (version) => {
+					userAgent = `runner/${version}`;
 					seed(APPS, [CHART], chartDeploy, version);
 					expect(await unnamedOutcome()).toEqual(minted("github"));
 				},
@@ -343,6 +349,16 @@ describe("POST /api/jobs/[id]/git-token", () => {
 				["no recorded version", null],
 			])("from a runner reporting %s, is refused when a BYO git chart lives elsewhere", async (_what, version) => {
 				seed(APPS, [CHART], chartDeploy, version);
+				expect(await unnamedOutcome()).toEqual(REFUSED);
+			});
+
+			it.each([
+				["reports 0.9.0 while the row already says 0.10.0 (a rolling update)", "runner/0.9.0"],
+				["sends no User-Agent", null],
+				["sends a User-Agent of another shape", "Go-http-client/1.1"],
+			])("from a request that %s, is refused when a BYO git chart lives elsewhere", async (_what, ua) => {
+				userAgent = ua;
+				seed(APPS, [CHART], chartDeploy, "0.10.0");
 				expect(await unnamedOutcome()).toEqual(REFUSED);
 			});
 
@@ -364,7 +380,7 @@ describe("POST /api/jobs/[id]/git-token", () => {
 		});
 
 		it("is refused for another job type whose snapshot names both a scan target and a module", async () => {
-			seed(null, [], { job_type: "STATE_IMPORT", config_snapshot: { repo_url: TARGET, iac_source: { repo_url: IAC } } });
+			seed(null, [], { job_type: "STATE_SURGERY", config_snapshot: { repo_url: TARGET, iac_source: { repo_url: IAC } } });
 			expect(await unnamedOutcome()).toEqual(REFUSED);
 		});
 	});

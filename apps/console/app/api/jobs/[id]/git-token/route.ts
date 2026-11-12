@@ -7,7 +7,7 @@ import { auth } from "@/lib/auth";
 import { resolveAccountId } from "@/lib/auth/accounts";
 import { getServiceDb } from "@/lib/db";
 import { compareChartVersions } from "@/lib/addons/update-notice";
-import { jobs, projectAddons, projectRepositories, runners } from "@/lib/db/schema";
+import { type ProvisionJobType, jobs, projectAddons, projectRepositories, runners } from "@/lib/db/schema";
 import {
 	type GitProviderRefusal,
 	repoHostForLog,
@@ -67,7 +67,11 @@ function buildServiceRepos(snapshot: Record<string, unknown>): string[] {
 const AMBIGUOUS = Symbol("ambiguous");
 
 /** The job types whose runner clones only the snapshot's flat `repo_url` with an unnamed token. */
-const FLAT_TARGET_JOB_TYPES = new Set(["CHART_SCAN", "IAC_SCAN", "ANALYZE_REPO"]);
+const FLAT_TARGET_JOB_TYPES: ReadonlySet<ProvisionJobType> = new Set<ProvisionJobType>([
+	"CHART_SCAN",
+	"IAC_SCAN",
+	"ANALYZE_REPO",
+]);
 
 /**
  * The first runner release that never applies the unnamed token to a BYO git chart repo. Older
@@ -86,6 +90,15 @@ function mayReuseUnnamedTokenForCharts(version: string | null | undefined): bool
 	return order === null || order < 0;
 }
 
+/**
+ * The version a runner request reports in its `User-Agent: runner/<version>` header (every runner
+ * release that calls this route sends it), or null when the header is absent or has another shape.
+ */
+function requestRunnerVersion(req: Request): string | null {
+	const match = /^runner\/(\S+)/.exec(req.headers.get("user-agent") ?? "");
+	return match?.[1] ?? null;
+}
+
 /** The version the runner last reported on its heartbeat (`runners.version`), or null if none. */
 async function recordedRunnerVersion(runnerId: string): Promise<string | null> {
 	const [row] = await getServiceDb()
@@ -99,7 +112,7 @@ async function recordedRunnerVersion(runnerId: string): Promise<string | null> {
 /**
  * The repos a runner that names no repo (0.10.0 and older) uses the unnamed token for, by job type:
  *   - CHART_SCAN / IAC_SCAN / ANALYZE_REPO: the flat scan target only;
- *   - PLAN / DRIFT: the BYO IaC module only (a plan returns before any GitOps step, and drift clones
+ *   - PLAN / DETECT_DRIFT: the BYO IaC module only (a plan returns before any GitOps step, and drift clones
  *     nothing else); one with no module falls back to every repo the job references;
  *   - DEPLOY: the IaC module and the apps repo, as the snapshot froze it and as the project holds it
  *     now (they differ when the apps repo changed after the job was queued), plus each BYO git chart
@@ -107,14 +120,14 @@ async function recordedRunnerVersion(runnerId: string): Promise<string | null> {
  *   - any other type: every repo the job references.
  */
 function unnamedTokenRepos(
-	jobType: string,
+	jobType: ProvisionJobType,
 	snapshot: Record<string, unknown>,
 	liveAppsRepo: string,
 	includeChartRepos: boolean,
 ): string[] {
 	const allReferenced = [iacSourceRepo(snapshot), flatRepo(snapshot), snapshotAppsRepo(snapshot), liveAppsRepo];
 	if (FLAT_TARGET_JOB_TYPES.has(jobType)) return [flatRepo(snapshot)];
-	if (jobType === "PLAN" || jobType === "DRIFT") {
+	if (jobType === "PLAN" || jobType === "DETECT_DRIFT") {
 		const iac = iacSourceRepo(snapshot);
 		return iac ? [iac] : allReferenced;
 	}
@@ -288,11 +301,14 @@ export async function POST(
 		// unnamedTokenRepos). So the token is minted only when that set holds exactly ONE repo, and is
 		// then used for that repo alone. Otherwise no token is issued; a runner that names the repo
 		// never reaches this path. Whether a DEPLOY's chart repos count depends on the runner's
-		// recorded version, read only on this path.
+		// version, read only on this path. Both the version this request reports and the one the
+		// runner row last recorded must be new enough: the row is per runner, not per process, so
+		// during a rolling update an older process can share a row a newer one already updated.
 		const includeChartRepos =
 			!requestedRepo &&
 			job.job_type === "DEPLOY" &&
-			mayReuseUnnamedTokenForCharts(await recordedRunnerVersion(runnerId));
+			(mayReuseUnnamedTokenForCharts(requestRunnerVersion(req)) ||
+				mayReuseUnnamedTokenForCharts(await recordedRunnerVersion(runnerId)));
 		const repoUrl =
 			requestedRepo ||
 			singleUnnamedRepo(
