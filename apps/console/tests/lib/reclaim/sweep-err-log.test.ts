@@ -110,6 +110,8 @@ describe("sweepOrphans — a failed sweep is logged through the err serializer",
 		expect(await sweepOrphans()).toBe(0);
 		const line = lineWithMsg("orphan reclaim: sweep failed");
 		expect(JSON.stringify(line)).not.toContain(PLANTED);
+		for (const p of PARAMS) expect(JSON.stringify(line)).not.toContain(p);
+		expect(JSON.stringify(line)).not.toContain("params:");
 		expect(line).toMatchObject({
 			job_id: "job-1",
 			err: { type: "DrizzleQueryError", cause: { code: "ECONNREFUSED" } },

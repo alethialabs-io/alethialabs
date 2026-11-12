@@ -76,6 +76,8 @@ describe("onRequestError — the logged line", () => {
 		);
 		const line = lineWithMsg("uncaught request error");
 		expect(JSON.stringify(line)).not.toContain(PLANTED);
+		for (const p of PARAMS) expect(JSON.stringify(line)).not.toContain(p);
+		expect(JSON.stringify(line)).not.toContain("params:");
 		expect(line).toMatchObject({
 			component: "onRequestError",
 			method: "POST",

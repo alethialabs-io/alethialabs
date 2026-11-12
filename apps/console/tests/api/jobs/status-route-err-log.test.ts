@@ -112,6 +112,8 @@ function lineWithMsg(msg: string): unknown {
  */
 function expectSerializedQueryError(line: unknown): void {
 	expect(JSON.stringify(line)).not.toContain(PLANTED);
+	for (const p of PARAMS) expect(JSON.stringify(line)).not.toContain(p);
+	expect(JSON.stringify(line)).not.toContain("params:");
 	expect(line).toMatchObject({
 		err: { type: "DrizzleQueryError", cause: { code: "23505" } },
 	});
