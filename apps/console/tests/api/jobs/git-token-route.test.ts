@@ -53,12 +53,16 @@ const fakeDb = {
 vi.mock("@/lib/db", () => ({ getServiceDb: () => fakeDb }));
 
 /** Seeds a job owned by RUNNER whose project's apps-destination repo is `appsRepo`. */
-function seed(appsRepo: string | null, chartRepos: string[] = []) {
+function seed(
+	appsRepo: string | null,
+	chartRepos: string[] = [],
+	job: { job_type: string; config_snapshot: Record<string, unknown> } = {
+		job_type: "DEPLOY",
+		config_snapshot: {},
+	},
+) {
 	rowsByTable = new Map<unknown, unknown[]>([
-		[
-			jobs,
-			[{ user_id: "user-1", project_id: "proj-1", runner_id: RUNNER, config_snapshot: {} }],
-		],
+		[jobs, [{ user_id: "user-1", project_id: "proj-1", runner_id: RUNNER, ...job }]],
 		[projectRepositories, appsRepo === null ? [] : [{ apps_destination_repo: appsRepo }]],
 		[projectAddons, chartRepos.map((chart_repo) => ({ chart_repo }))],
 	]);
@@ -114,6 +118,56 @@ describe("POST /api/jobs/[id]/git-token", () => {
 		const res = await post("https://charts.example.net/acme/chart");
 		expect(res.status).toBe(422);
 		expect(await res.text()).not.toContain(TOKEN);
+		expect(getAccessToken).not.toHaveBeenCalled();
+	});
+
+	it("refuses a requested repo the job does not reference, instead of answering with the default repo's token", async () => {
+		seed("https://github.com/acme/apps");
+		const res = await post("https://github.com/someone-else/repo");
+		expect(res.status).toBe(403);
+		const body = await res.text();
+		expect(body).not.toContain(TOKEN);
+		expect(JSON.parse(body)).toMatchObject({ code: "git_repo_not_authorized" });
+		expect(resolveAccountId).not.toHaveBeenCalled();
+		expect(getAccessToken).not.toHaveBeenCalled();
+	});
+
+	/** A BUILD job whose snapshot carries one repo-sourced and one image-sourced service. */
+	function buildJob(serviceRepo: string) {
+		return {
+			job_type: "BUILD",
+			config_snapshot: {
+				services: [
+					{ name: "api", source: { kind: "repo", repo_url: serviceRepo, path: "." } },
+					{ name: "db", source: { kind: "image", image: "postgres:16" } },
+				],
+			},
+		};
+	}
+
+	it("mints the token for a BUILD job's service source repo on github.com", async () => {
+		seed("https://bitbucket.org/acme/apps", [], buildJob("https://github.com/acme/api"));
+		const res = await post("https://github.com/acme/api");
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ token: TOKEN });
+		expect(resolveAccountId).toHaveBeenCalledWith("user-1", "github");
+	});
+
+	it("refuses a BUILD job's service source repo on an unknown host", async () => {
+		seed("https://github.com/acme/apps", [], buildJob("https://git.example.net/acme/api"));
+		const res = await post("https://git.example.net/acme/api");
+		expect(res.status).toBe(422);
+		expect(await res.text()).not.toContain(TOKEN);
+		expect(getAccessToken).not.toHaveBeenCalled();
+	});
+
+	it("does not authorize service repos for a job that is not a BUILD", async () => {
+		seed("https://github.com/acme/apps", [], {
+			...buildJob("https://github.com/acme/api"),
+			job_type: "DEPLOY",
+		});
+		const res = await post("https://github.com/acme/api");
+		expect(res.status).toBe(403);
 		expect(getAccessToken).not.toHaveBeenCalled();
 	});
 

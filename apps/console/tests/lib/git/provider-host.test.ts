@@ -7,7 +7,7 @@
 // and anything that does not match is refused rather than defaulted to GitHub.
 
 import { describe, expect, it } from "vitest";
-import { resolveGitProvider } from "@/lib/git/provider-host";
+import { repoHostForLog, resolveGitProvider } from "@/lib/git/provider-host";
 
 const PUBLIC = { gitlabBaseUrl: "https://gitlab.com" };
 const SELF_HOSTED = { gitlabBaseUrl: "https://code.acme.example:8443" };
@@ -104,6 +104,13 @@ describe("resolveGitProvider", () => {
 		["https://github.com\\evil/acme/shop", "malformed"],
 		["https://\uff47ithub.com/acme/shop", "malformed"],
 		["https://github.com/acme/my shop", "malformed"],
+		["https:/github.com/acme/shop", "malformed"],
+		["https:github.com/acme/shop", "malformed"],
+		["https:///github.com/acme/shop", "malformed"],
+		["HTTPS:/github.com/acme/shop", "malformed"],
+		// Not an scp remote: its path starts with `//`, which git reads as a URL. Without the scp
+		// pattern's lookahead this would resolve to github.com.
+		["git@github.com://evil.io/acme/shop", "malformed"],
 	] as const)("refuses %j as %s", (url, reason) => {
 		expect(resolveGitProvider(url, PUBLIC)).toEqual({ ok: false, reason, host: null });
 	});
@@ -112,5 +119,13 @@ describe("resolveGitProvider", () => {
 		expect(resolveGitProvider("https://gitlab.com/group/project", { gitlabBaseUrl: "::" })).toMatchObject(
 			{ ok: false, reason: "unknown_host" },
 		);
+	});
+});
+
+describe("repoHostForLog", () => {
+	it("prints the host and never the userinfo or path", () => {
+		expect(repoHostForLog("https://user:secret@github.com/acme/shop")).toBe("github.com");
+		expect(repoHostForLog("git@Code.Acme.Example:a/b.git")).toBe("code.acme.example");
+		expect(repoHostForLog("https:/github.com/x")).toBe("(unparsed repo URL)");
 	});
 });

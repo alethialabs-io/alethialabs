@@ -44,6 +44,13 @@ const SCP_REMOTE = /^[^@\s/]+@([^:\s/]+):(?!\/\/)\S+$/;
  */
 const PLAIN_REMOTE = /^[!-[\]-~]+$/;
 
+/**
+ * An accepted URL remote must spell `scheme://host` literally. The URL parser here repairs
+ * `https:/host`, `https:host` and `https:///host` into `https://host`, but the runner's git client
+ * does not, so a remote it would have to repair could name one host here and another at clone time.
+ */
+const LITERAL_AUTHORITY = /^(?:https|ssh):\/\/[^/]/i;
+
 /** URL schemes a git remote may use here. Plain `http:` is refused: a token must not cross it. */
 const ALLOWED_SCHEMES = new Set(["https:", "ssh:"]);
 
@@ -73,6 +80,7 @@ function remoteHost(
 	if (!ALLOWED_SCHEMES.has(url.protocol)) {
 		return { ok: false, reason: "unsupported_scheme" };
 	}
+	if (!LITERAL_AUTHORITY.test(repoUrl)) return { ok: false, reason: "malformed" };
 	const host = url.hostname.toLowerCase();
 	if (!host) return { ok: false, reason: "malformed" };
 	return { ok: true, host };
@@ -91,7 +99,8 @@ function remoteHost(
  * `api.github.com` are all refused. The comparison ignores case and the port. Accepted forms are
  * `https://` and `ssh://` URLs and scp-style `git@host:owner/repo` remotes; anything else, and any
  * host that matches nothing, is refused rather than defaulted. A remote containing a backslash,
- * whitespace or a non-ASCII character is refused as malformed.
+ * whitespace or a non-ASCII character, or a URL that does not spell `scheme://host` literally, is
+ * refused as malformed.
  */
 export function resolveGitProvider(
 	repoUrl: string,
@@ -113,4 +122,13 @@ export function resolveGitProvider(
 	}
 
 	return { ok: false, reason: "unknown_host", host };
+}
+
+/**
+ * The host a repo URL names, for a log line: never the full URL, which can carry credentials in its
+ * userinfo. Returns a placeholder when the URL has no host this module can read.
+ */
+export function repoHostForLog(repoUrl: string): string {
+	const remote = remoteHost(repoUrl.trim());
+	return remote.ok ? remote.host : "(unparsed repo URL)";
 }

@@ -7,7 +7,11 @@ import { auth } from "@/lib/auth";
 import { resolveAccountId } from "@/lib/auth/accounts";
 import { getServiceDb } from "@/lib/db";
 import { jobs, projectAddons, projectRepositories } from "@/lib/db/schema";
-import { type GitProviderRefusal, resolveGitProvider } from "@/lib/git/provider-host";
+import {
+	type GitProviderRefusal,
+	repoHostForLog,
+	resolveGitProvider,
+} from "@/lib/git/provider-host";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 
 /** The refusal body for a repo whose host is not one of the configured git providers. */
@@ -24,6 +28,33 @@ function unknownProviderResponse(
 		},
 		{ status: 422 },
 	);
+}
+
+/**
+ * The source repo URLs of a BUILD job's repo-sourced services, read from its config snapshot
+ * (`services[].source.repo_url` where `source.kind` is "repo"). The runner clones each one to pin the
+ * commit it builds, so each is a repo this job legitimately asks a token for.
+ */
+function buildServiceRepos(snapshot: Record<string, unknown>): string[] {
+	const services = snapshot.services;
+	if (!Array.isArray(services)) return [];
+	const repos: string[] = [];
+	for (const service of services) {
+		if (typeof service !== "object" || service === null || !("source" in service)) continue;
+		const source = service.source;
+		if (
+			typeof source === "object" &&
+			source !== null &&
+			"kind" in source &&
+			source.kind === "repo" &&
+			"repo_url" in source &&
+			typeof source.repo_url === "string" &&
+			source.repo_url.length > 0
+		) {
+			repos.push(source.repo_url);
+		}
+	}
+	return repos;
 }
 
 /** Returns the git provider token for the user who owns a job. */
@@ -43,6 +74,7 @@ export async function POST(
 		const [job] = await db
 			.select({
 				user_id: jobs.user_id,
+				job_type: jobs.job_type,
 				project_id: jobs.project_id,
 				runner_id: jobs.runner_id,
 				config_snapshot: jobs.config_snapshot,
@@ -93,8 +125,10 @@ export async function POST(
 		// Per-repo resolution: a runner asking for the token to clone a SPECIFIC repo — e.g. a BYO
 		// Helm chart on a different provider than the apps-destination repo — passes ?repo=<url>.
 		// We only honor it when the repo is one this job legitimately references (a compromised
-		// runner must not be able to phish a token for an arbitrary repo); otherwise we fall back
-		// to the default precedence below. BYO chart repos live on project_addons.chart_repo.
+		// runner must not be able to phish a token for an arbitrary repo), and a repo outside that set
+		// is REFUSED — never answered with the default repo's token, which the runner would then use
+		// for the repo it asked about (#6600). BYO chart repos live on project_addons.chart_repo; a
+		// BUILD job's service source repos ride its snapshot.
 		const requestedRepo =
 			new URL(req.url).searchParams.get("repo")?.trim() || "";
 		const byoChartRepos =
@@ -110,13 +144,25 @@ export async function POST(
 				iacRepoUrl,
 				scanRepoUrl,
 				...byoChartRepos.map((r) => r.chart_repo),
+				...(job.job_type === "BUILD" ? buildServiceRepos(job.config_snapshot) : []),
 			].filter((r): r is string => typeof r === "string" && r.length > 0),
 		);
 
+		if (requestedRepo && !authorizedRepos.has(requestedRepo)) {
+			console.warn(
+				`git-token: refused for job ${jobId} — requested repo (host ${repoHostForLog(requestedRepo)}) is not one this job references`,
+			);
+			return NextResponse.json(
+				{
+					error: "The requested repository is not one this job references; no git token was issued.",
+					code: "git_repo_not_authorized",
+				},
+				{ status: 403 },
+			);
+		}
+
 		const repoUrl =
-			requestedRepo && authorizedRepos.has(requestedRepo)
-				? requestedRepo
-				: iacRepoUrl || repos?.apps_destination_repo || scanRepoUrl || "";
+			requestedRepo || iacRepoUrl || repos?.apps_destination_repo || scanRepoUrl || "";
 		// No repo at all means nothing to clone, so there is nothing to authenticate: answer with no
 		// token rather than guessing a provider. Every runner caller already treats a null token as
 		// "clone anonymously".
@@ -153,7 +199,7 @@ export async function POST(
 			const accountId = await resolveAccountId(job.user_id, gitProvider);
 			if (accountId === null) {
 				console.warn(
-					`git-token: job owner ${job.user_id} has no ${gitProvider} account link (repo ${repoUrl}) — a PRIVATE apps repo cannot be cloned`,
+					`git-token: job owner ${job.user_id} has no ${gitProvider} account link (repo host ${resolved.host}) — a PRIVATE apps repo cannot be cloned`,
 				);
 				return NextResponse.json({ token: null });
 			}
@@ -167,7 +213,7 @@ export async function POST(
 			// needs this — ArgoCD clones it anonymously.)
 			if (!res.accessToken) {
 				console.warn(
-					`git-token: no ${gitProvider} access token for job owner ${job.user_id} (repo ${repoUrl}) — the owner has no valid ${gitProvider} link or its token could not be refreshed`,
+					`git-token: no ${gitProvider} access token for job owner ${job.user_id} (repo host ${resolved.host}) — the owner has no valid ${gitProvider} link or its token could not be refreshed`,
 				);
 			}
 			return NextResponse.json({ token: res.accessToken ?? null });
@@ -175,7 +221,7 @@ export async function POST(
 			// getAccessToken threw (provider not configured, no account row, refresh failed, …).
 			// Surface the reason — the swallowed catch here is what made this un-diagnosable.
 			console.error(
-				`git-token: getAccessToken failed for job owner ${job.user_id} provider ${gitProvider} (repo ${repoUrl}):`,
+				`git-token: getAccessToken failed for job owner ${job.user_id} provider ${gitProvider} (repo host ${resolved.host}):`,
 				err instanceof Error ? err.message : err,
 			);
 			return NextResponse.json({ token: null });
