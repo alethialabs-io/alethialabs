@@ -44,6 +44,7 @@ import {
 import { profiles } from "@/lib/db/schema";
 import { sendSignInCodeEmail } from "@/lib/email/auth-email";
 import { sendWelcomeEmail } from "@/lib/email/notify-email";
+import { log } from "@/lib/observability/log";
 
 const cfg = getAuthConfig();
 
@@ -183,7 +184,7 @@ const plugins: BetterAuthOptions["plugins"] = [
 			} catch (e) {
 				// The one report of this failure. Deliberately not rethrown: Better Auth would
 				// log it a second time and still answer 200 (see failedSignInCodeSends).
-				console.error(`[auth] ${type} code email failed:`, e);
+				log.error(`[auth] ${type} code email failed`, { type, err: e });
 				// Only "sign-in" is surfaced. It is the only type the form sends, and the only
 				// one Better Auth sends for an unknown address too (disableSignUp is off) — so a
 				// failure looks the same whether or not the address has an account. The other
@@ -342,7 +343,7 @@ export const auth = betterAuth({
 					// throw straight out of the hook and abort the rest of it — including the
 					// org provisioning below, which is what actually gets the user into the app.
 					await ensureMemberGrant(u.id, u.id, "owner").catch((e) =>
-						console.error("[onboarding] personal-scope grant failed:", e),
+						log.error("[onboarding] personal-scope grant failed", { err: e }),
 					);
 					// Auto-create a real, named org (slug = username) and make it primary.
 					//
@@ -359,10 +360,10 @@ export const auth = betterAuth({
 						email: u.email,
 						name: u.name ?? null,
 						username: readUsername(u),
-					}).catch((e) => console.error("[onboarding] org provision failed:", e));
+					}).catch((e) => log.error("[onboarding] org provision failed", { err: e }));
 					// Best-effort welcome (general stream); never block signup on email.
 					void sendWelcomeEmail(u.email).catch((e) =>
-						console.error("[email] welcome send failed:", e),
+						log.error("[email] welcome send failed", { err: e }),
 					);
 				},
 			},

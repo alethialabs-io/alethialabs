@@ -14,6 +14,7 @@
 // Do not add `"use server"` here.
 
 import type { AwsPricingResponse } from "@/types/aws-pricing.types";
+import { log } from "@/lib/observability/log";
 
 export type RegionPrices = {
 	eksControlPlane: number;
@@ -160,7 +161,7 @@ export async function getRegionPrices(region: string): Promise<RegionPrices> {
 		priceCache.set(region, { data: result, fetchedAt: Date.now() });
 		return result;
 	} catch (err) {
-		console.error("Failed to fetch pricing:", err);
+		log.error("Failed to fetch pricing", { region, err });
 		return getFallbackPrices(region);
 	}
 }

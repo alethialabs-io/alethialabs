@@ -12,6 +12,7 @@ import {
 import { z } from "zod";
 import { canonicalReceiptJson } from "@/lib/evidence/receipt-canonical";
 import type { RekorAnchor, SignedReceipt } from "@/types/jsonb.types";
+import { log } from "@/lib/observability/log";
 
 // Console-side Rekor transparency-log anchoring (#885). The runner produces + ed25519-signs an
 // evidence receipt; AFTER it lands (authenticated) the console anchors it here — submission and
@@ -174,7 +175,7 @@ export async function anchorReceipt(receipt: SignedReceipt): Promise<RekorAnchor
 		}
 		return anchor;
 	} catch (err) {
-		console.error("[rekor] anchoring failed (fail-open, receipt stays unanchored):", err);
+		log.error("[rekor] anchoring failed (fail-open, receipt stays unanchored)", { err });
 		return null;
 	}
 }

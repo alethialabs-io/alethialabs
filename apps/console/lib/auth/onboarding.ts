@@ -12,6 +12,7 @@ import { getServiceDb } from "@/lib/db";
 import { member, organization, user } from "@/lib/db/schema";
 import { pickFreeSlug, RESERVED_SLUGS } from "@/lib/routing";
 import { slugify } from "@/lib/utils/slugify";
+import { log } from "@/lib/observability/log";
 
 interface NewUser {
 	id: string;
@@ -141,7 +142,7 @@ export async function ensurePrimaryOrg(
 			username: row.username,
 		});
 	} catch (e) {
-		console.error("[onboarding] org repair failed:", e);
+		log.error("[onboarding] org repair failed", { err: e });
 		return null;
 	}
 	return getPrimaryOrg(userId);

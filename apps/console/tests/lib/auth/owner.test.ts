@@ -25,6 +25,7 @@ import {
 	getViewer,
 	requireOwner,
 } from "@/lib/auth/owner";
+import { log } from "@/lib/observability/log";
 
 const createdAt = new Date("2026-01-02T03:04:05Z");
 
@@ -65,10 +66,13 @@ describe("getViewer", () => {
 		mocks.getSession.mockResolvedValue(null);
 		expect(await getViewer()).toBeNull();
 
-		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-		mocks.getSession.mockRejectedValue(new Error("session table unavailable"));
+		const logged = vi.spyOn(log, "error").mockImplementation(() => {});
+		const failure = new Error("session table unavailable");
+		mocks.getSession.mockRejectedValue(failure);
 		expect(await getViewer()).toBeNull();
 		expect(logged).toHaveBeenCalledTimes(1);
+		expect(logged).toHaveBeenCalledWith("[auth] session lookup failed", { err: failure });
+		logged.mockRestore();
 	});
 });
 

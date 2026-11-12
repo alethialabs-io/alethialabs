@@ -232,7 +232,7 @@ export async function reconcilePool(
 				poolSize: onlineNow,
 				metadata,
 			})
-			.catch((err) => console.error("[fleet] recordAction failed:", err));
+			.catch((err) => flog.error("[fleet] recordAction failed", { err }));
 	};
 
 	// Nothing to mutate this tick → no need to contend the scale lock (a pure no-op read pass, which

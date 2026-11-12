@@ -15,10 +15,11 @@ import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { getServiceDb } from "@/lib/db";
 import { member, user } from "@/lib/db/schema";
+import { log } from "@/lib/observability/log";
 
 /** Mirror a grant change to OpenFGA, best-effort (Postgres is the source of truth). */
 function mirror(run: Promise<void>): void {
-	void run.catch((err) => console.error("[authz] tuple sync failed:", err));
+	void run.catch((err) => log.error("[authz] tuple sync failed", { err }));
 }
 
 /**

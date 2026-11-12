@@ -12,6 +12,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
 import { connectorHealth } from "@/lib/db/schema";
 import type { ConnectorHealthKind } from "@/lib/db/schema/enums";
+import { log } from "@/lib/observability/log";
 
 export interface HealthScope {
 	userId: string;
@@ -88,7 +89,7 @@ export async function markFailed(
 			});
 		}
 	} catch (err) {
-		console.error("[connector-health] markFailed failed for provider:", provider, err);
+		log.error("[connector-health] markFailed failed for provider", { provider, err });
 	}
 }
 
@@ -117,6 +118,6 @@ export async function markHealthy(
 				),
 			);
 	} catch (err) {
-		console.error("[connector-health] markHealthy failed for provider:", provider, err);
+		log.error("[connector-health] markHealthy failed for provider", { provider, err });
 	}
 }
