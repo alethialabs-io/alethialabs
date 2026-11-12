@@ -9,6 +9,7 @@ import {
 } from "ai";
 import { z } from "zod";
 import { readTurnRequest, serveTurnBody } from "@/lib/agent/turn-route";
+import { providerErrorMessage, providerErrorSummary } from "@/lib/ai/provider-error";
 import { cachedSystemMessage } from "@/lib/ai/provider-options";
 import { supportSystemPrompt } from "@/lib/ai/support/prompt";
 import { buildSupportTools } from "@/lib/ai/tools/support";
@@ -22,6 +23,7 @@ import {
 import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
 import { getAiModel } from "@/lib/config/ai";
 import { holdRequest } from "@/lib/http/hold-request";
+import { log } from "@/lib/observability/log";
 
 /** The support chat's own body fields: its messages and the user's model pick. */
 const supportBodySchema = z.looseObject({
@@ -166,6 +168,7 @@ async function answerThreadless(req: Request, raw: object): Promise<Response> {
 			},
 			// A failed turn RELEASES its reserved hold (reconciled to 0) so it never leaks headroom.
 			onError: ({ error }) => {
+				log.warn("support ask model error", { error: providerErrorSummary(error) });
 				holdRequest(req);
 				void recordAiUsage({
 					orgId: actor.orgId,
@@ -186,7 +189,11 @@ async function answerThreadless(req: Request, raw: object): Promise<Response> {
 			},
 		});
 
-		return result.toUIMessageStreamResponse({ originalMessages: messages });
+		return result.toUIMessageStreamResponse({
+			originalMessages: messages,
+			// The client is told the failure's class (a shared constant), never the provider's words.
+			onError: providerErrorMessage,
+		});
 	} catch (e) {
 		// A throw between the gate and stream registration strands the hold — release it before rethrow.
 		await releaseAiHold(charge, holdCtx);

@@ -51,6 +51,7 @@ import { isClientToolName, parseClientToolOutput } from "@/lib/ai/client-tools";
 import { type Mention, mentionSchema, mentionsSchema } from "@/lib/ai/mentions";
 import { MAX_DRAFT_MENTION_FIELD, MAX_DRAFT_MENTION_SPANS, normalizeDraftText } from "@/lib/elench/draft-content";
 import { refuseUserMessage } from "@/lib/ai/message-limits";
+import { providerErrorMessage, providerErrorSummary } from "@/lib/ai/provider-error";
 import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
 import { cachedSystemMessage, thinkingOptions } from "@/lib/ai/provider-options";
 import { getOwner } from "@/lib/auth/owner";
@@ -656,7 +657,10 @@ async function streamAcceptedTurn<R>(
 						});
 					},
 					onError: ({ error }) => {
-						log.warn("chat turn model error", { thread_id: turn.threadId, err: error });
+						log.warn("chat turn model error", {
+							thread_id: turn.threadId,
+							error: providerErrorSummary(error),
+						});
 					},
 				});
 				const answerStream = result
@@ -664,6 +668,8 @@ async function streamAcceptedTurn<R>(
 						sendFinish: false,
 						originalMessages: turn.modelInput,
 						generateMessageId: () => answerId,
+						// The client is told the failure's class (a shared constant), never the provider's words.
+						onError: providerErrorMessage,
 					})
 					.pipeThrough(answerStreamTransform(turn, markers, flags));
 				// One copy to the client, one to the answer that is stored. `merge` reads its copy
@@ -724,9 +730,12 @@ async function streamAcceptedTurn<R>(
 			// A throw inside `execute` after the stream registered (the heartbeat may be running) ends
 			// the attempt as C7 — or C6 partial, when model output had already streamed.
 			onError: (error) => {
-				log.warn("chat turn stream failed", { thread_id: turn.threadId, err: error });
+				log.warn("chat turn stream failed", {
+					thread_id: turn.threadId,
+					error: providerErrorSummary(error),
+				});
 				void finalizeOnce({ answer: soFar.message, steps: [...steps], partial: true, error: "stream-error" });
-				return "An error occurred.";
+				return providerErrorMessage(error);
 			},
 		});
 		return createUIMessageStreamResponse({ stream });

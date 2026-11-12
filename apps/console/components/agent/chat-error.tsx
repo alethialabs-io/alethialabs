@@ -6,9 +6,12 @@ import { isEnumMember } from "@/lib/coerce";
 import { asRecord } from "@/lib/records";
 import {
 	AlertTriangle,
+	CreditCard,
+	Hourglass,
 	KeyRound,
 	MessageSquareWarning,
 	RefreshCcw,
+	ShieldAlert,
 	TextCursorInput,
 	WifiOff,
 } from "lucide-react";
@@ -18,6 +21,7 @@ import { getAiUsageSummary } from "@/app/server/actions/billing";
 import { CreditPackDialog } from "@/components/billing/credit-pack-dialog";
 import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
 import { MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
+import { providerErrorCodeOf } from "@/lib/ai/provider-error";
 import { formatCountdown } from "@/lib/billing/ai-usage-format";
 import { track } from "@/lib/analytics/track";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
@@ -30,7 +34,21 @@ type ChatErrorKind =
 	| "unanswered"
 	| "thread-start"
 	| "notice"
+	| "provider-billing"
+	| "provider-auth"
+	| "provider-overloaded"
 	| "network";
+
+/**
+ * Kinds whose Retry cannot help, so none is offered: re-sending an over-limit message is refused
+ * again, and a provider account with no credit or a rejected key fails every attempt until an
+ * administrator of this deployment fixes it.
+ */
+const NO_RETRY: ReadonlySet<ChatErrorKind> = new Set<ChatErrorKind>([
+	"too-long",
+	"provider-billing",
+	"provider-auth",
+]);
 
 /**
  * A transcript that ENDS on a user turn with no reply after it — found on load, not raised by
@@ -127,7 +145,10 @@ function parseBudget(error: Error): ParsedBudget | null {
  * budget response is a JSON blob with a `reason` (parsed by `parseBudget`), and a dropped
  * fetch throws a generic `TypeError`. An over-limit message is the routes' 413 body, and a
  * reloaded transcript ending on an unanswered turn is an `UnansweredTurnError`, and a first send
- * whose thread could not be created is a `ThreadStartError`. Everything else falls to network.
+ * whose thread could not be created is a `ThreadStartError`. A provider failure is the stream
+ * error text a chat route returned from `lib/ai/provider-error.ts` — matched exactly, and before the
+ * budget pattern, because the out-of-credit constant says "credit". Everything else falls to
+ * network.
  */
 function classify(error: Error): ChatErrorKind {
 	if (error instanceof UnansweredTurnError) return "unanswered";
@@ -137,6 +158,8 @@ function classify(error: Error): ChatErrorKind {
 	const msg = error.message ?? "";
 	// The chat routes' 413 body, matched exactly — it is a shared constant, not prose.
 	if (msg === MESSAGE_TOO_LONG) return "too-long";
+	const provider = providerErrorCodeOf(msg);
+	if (provider && provider !== "network") return provider;
 	if (/not configured|ANTHROPIC_API_KEY/i.test(msg)) return "missing-key";
 	if (/budget|quota|credit|reason|upgradable|"error"/i.test(msg)) return "budget";
 	return "network";
@@ -189,6 +212,24 @@ const COPY: Record<
 		title: "",
 		description: "",
 	},
+	"provider-billing": {
+		icon: CreditCard,
+		title: "The AI provider account is out of credit",
+		description:
+			"The model provider account behind this deployment has no credit left. An administrator of this deployment needs to top it up. Retrying does not help until then.",
+	},
+	"provider-auth": {
+		icon: ShieldAlert,
+		title: "The AI provider rejected the API key",
+		description:
+			"The model provider refused this deployment's API key. An administrator of this deployment needs to check the key. Retrying does not help until then.",
+	},
+	"provider-overloaded": {
+		icon: Hourglass,
+		title: "The AI provider is busy",
+		description:
+			"The model provider is busy or is limiting requests. Wait a moment, then retry.",
+	},
 	network: {
 		icon: WifiOff,
 		title: "The assistant hit an error",
@@ -199,9 +240,11 @@ const COPY: Record<
 
 /**
  * The transcript's error affordance. Kind-aware (missing-key / budget / too-long / unanswered /
- * thread-start / network) so a missing gateway key reads as setup rather than failure, and
+ * thread-start / provider-billing / provider-auth / provider-overloaded / network) so a missing gateway key reads as setup rather than failure, and
  * offers the caller's Retry (`regenerate` for a turn, a thread re-attempt for thread-start) on
- * every kind but too-long — re-sending the same over-limit message can only be refused again.
+ * every kind but too-long and the two operator-side provider kinds (billing, auth) — re-sending
+ * cannot succeed until the message, or the deployment's provider account, changes. A busy
+ * provider keeps Retry.
  * For the AI-budget (402) case it parses the real reason + reset time from the response body and
  * shows the tier-aware CTA: top-up packs are PAID-plan-only, so a hit limit offers "Buy credits"
  * only once a best-effort summary fetch confirms a paid tier — free (or unknown) tiers get
@@ -276,7 +319,7 @@ export function ChatError({
 							{buyCredits ? "Buy credits" : "Upgrade AI plan"}
 						</Button>
 					)}
-					{onRetry && kind !== "too-long" && (
+					{onRetry && !NO_RETRY.has(kind) && (
 						<Button
 							type="button"
 							variant="outline"
