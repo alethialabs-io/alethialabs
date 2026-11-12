@@ -116,8 +116,14 @@ func TestMapCloneError_NoUserinfo(t *testing.T) {
 		if !errors.Is(err, cause) {
 			t.Fatalf("default branch lost the cause from the chain: %v", err)
 		}
-		if !strings.Contains(err.Error(), "connection refused") {
-			t.Fatalf("default branch lost the failure reason: %v", err)
+		// A remote that does not parse cannot have been dialled, and nothing in a message about it can
+		// be shown free of its userinfo, so its cause text is replaced by a fixed reason.
+		want := "connection refused"
+		if RedactURL(raw) == UnparsedRepoURL {
+			want = remoteURLUnparsed
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("default branch lost the failure reason %q: %v", want, err)
 		}
 		assertNoUserinfo(t, "mapCloneError default", err.Error())
 	}
@@ -184,5 +190,40 @@ func TestClone_NoUserinfoInOutputOrError(t *testing.T) {
 		}
 		assertNoUserinfo(t, "CloneAndCheckoutCommit output", out)
 		assertNoUserinfo(t, "CloneAndCheckoutCommit error", err.Error())
+	}
+}
+
+// TestClone_UnparseableRemoteHidesUserinfo covers a remote that does not parse because its userinfo
+// holds a character a transport's error message escapes (a quote, a control character). The escaped
+// form is not a substring of the raw URL, so the cause text must be replaced, not searched.
+func TestClone_UnparseableRemoteHidesUserinfo(t *testing.T) {
+	for _, raw := range []string{
+		"https://alice:s3cr3t-tok\"x@127.0.0.1:1/o/r.git",
+		"https://alice:s3cr3t-tok\x01x@127.0.0.1:1/o/r.git",
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		g := &GIT{RepoURL: raw, LocalPath: t.TempDir()}
+		var err error
+		out := captureStdout(t, func() { err = g.Clone(ctx, "", true) })
+		cancel()
+		if err == nil {
+			t.Fatalf("expected the clone of an unparseable remote to fail")
+		}
+		assertNoUserinfo(t, "Clone output", out)
+		assertNoUserinfo(t, "Clone error", err.Error())
+		if !strings.Contains(err.Error(), remoteURLUnparsed) {
+			t.Fatalf("clone error does not say the remote did not parse: %v", err)
+		}
+	}
+}
+
+// TestScrubCause_DropsQueryWithUserinfo asserts the cause text loses the query and fragment along
+// with the userinfo, as RedactURL does, when the transport printed the URL with its password masked.
+func TestScrubCause_DropsQueryWithUserinfo(t *testing.T) {
+	raw := "https://alice:s3cr3t-tok@github.com/o/r?access_token=q-secret#frag"
+	got := scrubCause(raw, errors.New(`Get "https://alice:***@github.com/o/r?access_token=q-secret#frag/info/refs": refused`)).Error()
+	assertNoUserinfo(t, "scrubCause", got)
+	if strings.Contains(got, "q-secret") || strings.Contains(got, "#frag") {
+		t.Fatalf("scrubCause kept the query or fragment: %s", got)
 	}
 }

@@ -14,6 +14,10 @@ import (
 // userinfo and its host, so no part of it is printed.
 const UnparsedRepoURL = "(unparsed repo URL)"
 
+// remoteURLUnparsed replaces the whole text of a transport error about a remote URL that does not
+// parse: nothing in such a message can be shown to be free of the URL's userinfo.
+const remoteURLUnparsed = "the remote URL could not be parsed"
+
 // RedactURL returns the form of a git remote URL that is safe to print in an error or a log line:
 // scheme, host (with port) and path. Userinfo, query and fragment are dropped. An scp-style
 // `user@host:path` prints as `host:path`; a bare `host/owner/repo` prints as given minus any
@@ -116,7 +120,13 @@ func scrubUserinfo(rawURL, msg string) string {
 		parse = "//" + s // a bare `[userinfo@]host/path`, read as RedactURL reads it
 	}
 	u, err := url.Parse(parse)
-	if err != nil || u.User == nil {
+	if err != nil {
+		// The remote does not parse, so its userinfo cannot be told apart, and a transport's error may
+		// quote the input in an escaped form a verbatim replace would miss. Say what happened instead;
+		// the original error stays in the chain for errors.Is / errors.As.
+		return remoteURLUnparsed
+	}
+	if u.User == nil {
 		return msg
 	}
 	user := u.User.Username()
@@ -131,6 +141,14 @@ func scrubUserinfo(rawURL, msg string) string {
 	}
 	if hasPass && pass != "" {
 		msg = strings.ReplaceAll(msg, pass, "***")
+	}
+	// RedactURL drops the query and fragment, so the cause text does too (a transport may print the
+	// URL with the userinfo masked, which the verbatim replace above cannot match).
+	if u.RawQuery != "" {
+		msg = strings.ReplaceAll(msg, "?"+u.RawQuery, "")
+	}
+	if u.Fragment != "" {
+		msg = strings.ReplaceAll(msg, "#"+u.EscapedFragment(), "")
 	}
 	return msg
 }
