@@ -6,6 +6,8 @@
 // is unset (the default OSS self-host), and never throws — a notify failure must never
 // fail the customer's submit/reply.
 
+import { log } from "@/lib/observability/log";
+
 /** A rendered Slack notification for a support-case event. */
 export interface SlackNotifyPayload {
 	/** The message text (also the notification fallback). */
@@ -80,7 +82,7 @@ export async function notifySupportSlack(
 			}),
 		});
 	} catch (err) {
-		console.warn("[support] Slack notify failed:", err);
+		log.warn("[support] Slack notify failed", { err });
 	}
 }
 

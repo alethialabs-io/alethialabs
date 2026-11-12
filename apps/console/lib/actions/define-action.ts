@@ -14,6 +14,7 @@ import {
 	type ActionResult,
 	type FieldErrors,
 } from "@/lib/actions/result";
+import { log } from "@/lib/observability/log";
 
 /** What an action's body receives: the parsed, typed input. */
 export interface ActionContext<I> {
@@ -92,6 +93,6 @@ function mapThrown(error: unknown): ActionError {
 		return { kind: "unauthenticated" };
 	}
 	const ref = crypto.randomUUID().slice(0, 8);
-	console.error(`[action] unexpected error ref=${ref}`, error);
+	log.error(`[action] unexpected error ref=${ref}`, { ref, err: error });
 	return { kind: "unexpected", ref };
 }

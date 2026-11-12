@@ -11,6 +11,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({ getServiceDb: () => ({ execute: vi.fn() }) }));
 
 import { createUsageHinter, USAGE_HINT_WINDOW_MS } from "@/lib/realtime/usage-hint";
+import { log } from "@/lib/observability/log";
 
 const ORG_A = "11111111-1111-4111-8111-111111111111";
 const ORG_B = "22222222-2222-4222-8222-222222222222";
@@ -97,12 +98,16 @@ describe("emitUsageHint's throttle", () => {
 	});
 
 	it("a failed NOTIFY is swallowed — the AI call that triggered it never sees it", async () => {
-		const error = vi.spyOn(console, "error").mockImplementation(() => {});
-		emit.mockRejectedValue(new Error("db down"));
+		const error = vi.spyOn(log, "error").mockImplementation(() => {});
+		const down = new Error("db down");
+		emit.mockRejectedValue(down);
 		expect(() => hinter()(ORG_A)).not.toThrow();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(error).toHaveBeenCalled();
+		expect(error).toHaveBeenCalledWith(
+			"[realtime] usage hint failed; the page refreshes on focus instead",
+			{ org_id: ORG_A, err: down },
+		);
 		error.mockRestore();
 	});
 });

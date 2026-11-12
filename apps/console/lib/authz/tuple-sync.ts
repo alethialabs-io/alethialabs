@@ -10,6 +10,7 @@
 
 import type { GrantScope } from "@/lib/authz/fga-tuples";
 import { getEnterprise } from "@/lib/enterprise";
+import { log } from "@/lib/observability/log";
 
 export interface HierarchyEdge {
 	childType: string;
@@ -78,5 +79,5 @@ export function mirrorHierarchyEdge(
 ): void {
 	void getTupleSync()
 		.syncHierarchyEdge({ childType, childId, parentType, parentId })
-		.catch((err) => console.error("[authz] edge tuple sync failed:", err));
+		.catch((err) => log.error("[authz] edge tuple sync failed", { err }));
 }
