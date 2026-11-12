@@ -24,7 +24,9 @@
 #     .github/workflows/release-gate.yml, a `Release gate (<leg>)` check exists with bucket
 #     `pass`. Skipping is NOT fine here: deploy-console.yml's receipt refuses a production deploy
 #     unless all seven legs are `success`, and a leg that never reported cannot have passed. Any
-#     extra `Release gate (…)` check the PR carries must pass as well.
+#     extra `Release gate (…)` check the PR carries must pass as well — except the literal
+#     `Release gate (${{ matrix.project }})` when SKIPPED: a run whose gate job did not apply never
+#     expands its matrix, so that check names no leg (#6590 was refused on exactly this).
 #   · `--match-head-commit <sha>` names the head those checks were read for. `dev` moves on every
 #     queue merge, so without it a newer, unchecked head could land between this hook and the
 #     merge; with it, GitHub refuses the merge if the head moved. A merge without it is refused
@@ -343,11 +345,18 @@ require_green() {
 	gate_yml="${CLAUDE_PROJECT_DIR:-.}/.github/workflows/release-gate.yml"
 	legs="$(grep -oE '\{[[:space:]]*project:[[:space:]]*"[^"]+"' "$gate_yml" 2>/dev/null | sed -E 's/.*"([^"]+)"/\1/')"
 	[ -n "$legs" ] || deny "could not read the release-gate legs from $gate_yml, so PR #$pr cannot be shown green."
-	missing="$(printf '%s' "$checks" | jq -r --arg legs "$legs" '
+	# The ONE exemption: a run whose gate job's `if:` was false never expands its matrix, so it
+	# reports a single SKIPPED check named with the literal expression (release-gate.yml says so at
+	# the job). It names no leg, and every named leg above must still have passed on its own — so a
+	# skipped placeholder proves nothing either way. Failing or pending, it still blocks.
+	# @mut merge-placeholder
+	placeholder='Release gate (${{ matrix.project }})'
+	missing="$(printf '%s' "$checks" | jq -r --arg legs "$legs" --arg placeholder "$placeholder" '
 		. as $c
 		| ($legs | split("\n") | map(select(length > 0)) | map("Release gate (\(.))")) as $want
 		| ([$want[] | . as $n | select(([$c[] | select(.name == $n and .bucket == "pass")] | length) == 0)]
-		   + [$c[] | select((.name | startswith("Release gate (")) and .bucket != "pass") | .name])
+		   + [$c[] | select((.name | startswith("Release gate (")) and .bucket != "pass")
+		     | select((.name == $placeholder and .bucket == "skipping") | not) | .name])
 		| unique | join(", ")')"
 	if [ -n "$missing" ]; then
 		# @mut merge-legs
@@ -391,6 +400,9 @@ JSON
 1618	[]
 1619	[$C,$G,$Q,{"name":"Release gate (canvas)","bucket":"fail","workflow":"Release gate"}]
 1620	[$C,$G,$Q,{"name":"CI / x","bucket":"cancel","workflow":"CI"}]
+1621	[$C,$G,$Q,{"name":"Release gate (\${{ matrix.project }})","bucket":"skipping","workflow":"Release gate"}]
+1622	[$C,$G,$Q,{"name":"Release gate (\${{ matrix.project }})","bucket":"fail","workflow":"Release gate"}]
+1623	[$C,$G,{"name":"Release gate (\${{ matrix.project }})","bucket":"skipping","workflow":"Release gate"}]
 1700	[$C,$G,$Q]
 1800	[$C,$S,$G,$Q]
 1801	[$C,$G,$Q]
@@ -459,7 +471,7 @@ if [ "\$2" = view ]; then
 	1535) echo "dev feat/x 1535aaa" ;;
 	1600) echo "staging feat/x 1600aaa" ;;
 	1601) echo "main feat/x 1601aaa" ;;
-	1610 | 1612 | 1613 | 1614 | 1615 | 1616 | 1618 | 1619 | 1620) echo "staging dev aaa\$n" ;;
+	1610 | 1612 | 1613 | 1614 | 1615 | 1616 | 1618 | 1619 | 1620 | 1621 | 1622 | 1623) echo "staging dev aaa\$n" ;;
 	1611) echo "main staging aaa1611" ;;
 	1617) echo "main dev aaa1617" ;;
 	1700) echo "staging dev aaa1700" ;;
@@ -540,6 +552,9 @@ STUB
 	t block 'gh pr merge 1619 --merge --match-head-commit aaa1619'   # an extra gate leg the head names, failing
 	t block 'gh pr merge 1620 --merge --match-head-commit aaa1620'   # a cancelled check
 	says 'not green' 'a cancelled check is named as not green'
+	t allow 'gh pr merge 1621 --merge --match-head-commit aaa1621'   # a SKIPPED unexpanded-matrix placeholder beside green legs
+	t block 'gh pr merge 1622 --merge --match-head-commit aaa1622'   # the placeholder FAILING still blocks
+	t block 'gh pr merge 1623 --merge --match-head-commit aaa1623'   # a skipped placeholder never stands in for a missing leg
 
 	# ── release-please PRs into main (maintainer ruling 2026-11-11) ──
 	t allow 'gh pr merge 1800 --merge --match-head-commit aaa1800'   # green, release-please's author and files
