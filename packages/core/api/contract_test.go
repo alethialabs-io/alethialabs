@@ -6,8 +6,10 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -728,5 +730,43 @@ func TestContract_KubeconfigMint(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRequestGitopsBumpClient (#6549): the client POSTs the add-on and `again` to the bump endpoint
+// in the environment asked for, decodes the answer, and surfaces a server error.
+func TestRequestGitopsBumpClient(t *testing.T) {
+	var got map[string]interface{}
+	var path, query, method string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		method, path, query = r.Method, r.URL.Path, r.URL.RawQuery
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "open", "created": true, "version": "4.15.1", "file": "addons/ingress-nginx.yaml",
+			"field": "spec.source.targetRevision", "number": 42, "url": "https://github.com/acme/apps/pull/42",
+			"reason": nil, "message": nil,
+		})
+	}))
+	res, err := client.RequestGitopsBump("shop", "prod", "ingress-nginx", true)
+	if err != nil {
+		t.Fatalf("RequestGitopsBump: %v", err)
+	}
+	if method != http.MethodPost || !strings.HasSuffix(path, "/cli/projects/shop/addons/bump") || query != "env=prod" {
+		t.Errorf("request = %s %s?%s", method, path, query)
+	}
+	if got["addon_id"] != "ingress-nginx" || got["again"] != true {
+		t.Errorf("body = %+v", got)
+	}
+	if res.Status != "open" || res.Number == nil || *res.Number != 42 {
+		t.Errorf("result = %+v", res)
+	}
+
+	failing := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Internal Server Error"})
+	}))
+	if _, err := failing.RequestGitopsBump("shop", "", "ingress-nginx", false); err == nil {
+		t.Error("a server error was swallowed")
 	}
 }
