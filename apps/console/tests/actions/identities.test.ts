@@ -37,6 +37,7 @@ import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { resolveAccountId } from "@/lib/auth/accounts";
 import { markFailed, markHealthy } from "@/lib/connectors/health";
+import { log } from "@/lib/observability/log";
 
 const listUserAccounts = vi.mocked(auth.api.listUserAccounts);
 const getAccessToken = vi.mocked(auth.api.getAccessToken);
@@ -45,7 +46,7 @@ const mockResolveAccountId = vi.mocked(resolveAccountId);
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.spyOn(console, "error").mockImplementation(() => {});
+	vi.spyOn(log, "error").mockImplementation(() => {});
 	// Default to "the provider IS linked" so each existing case keeps exercising the branch it
 	// was written for; the no-link branch is asserted explicitly below.
 	mockResolveAccountId.mockResolvedValue("acct-row-1");
@@ -79,6 +80,9 @@ describe("getLinkedProviders", () => {
 	it("fails closed (empty) when the auth API throws", async () => {
 		listUserAccounts.mockRejectedValue(new Error("auth down"));
 		expect(await getLinkedProviders()).toEqual([]);
+		expect(log.error).toHaveBeenCalledWith("Unexpected error fetching linked providers", {
+			err: expect.objectContaining({ message: "auth down" }),
+		});
 	});
 });
 
