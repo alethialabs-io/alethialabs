@@ -42,6 +42,10 @@ type addOnStageResult struct {
 	// ByoAdmission is every BYO namespace's admission mode as this deploy left it (#6541), for
 	// GitopsStatus.ByoAdmission.
 	ByoAdmission []argocd.ByoAdmissionNamespaceStatus
+	// AddonDrift is every GitOps-mode add-on whose seeded manifest is behind this deploy (#6549), for
+	// GitopsStatus.AddonDrift. Each entry's Warning is also in Warnings; see
+	// argocd.AddonDriftStatus.Warning for why both are sent.
+	AddonDrift []argocd.AddonDriftStatus
 }
 
 // runAddOnStage is the add-on stage of a dedicated deploy, up to — NOT including — the health wait,
@@ -194,10 +198,14 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 		}
 	}
 	// GitOps-mode add-ons → seed/prune into the customer's apps repo.
-	// Its warnings name each seeded manifest that installs an older chart than this deploy would seed
-	// (#6537); the file is left as the customer has it.
-	gitWarnings, gitErr := writeAddOnGitOps(ctx, vc, in.GitAccessToken, in.Facts.Labels, stdout, stderr)
-	out.Warnings = append(out.Warnings, gitWarnings...)
+	// Its drift entries name each seeded manifest that installs an older chart than this deploy would
+	// seed (#6537); the file is left as the customer has it. Each goes out twice: as the sentence in
+	// Warnings and as a structured entry in AddonDrift (#6549).
+	drift, gitErr := writeAddOnGitOps(ctx, vc, in.GitAccessToken, in.Facts.Labels, stdout, stderr)
+	for _, d := range drift {
+		out.Warnings = append(out.Warnings, d.Warning)
+	}
+	out.AddonDrift = drift
 	if gitErr != nil {
 		fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %v\n", gitErr)
 	}
