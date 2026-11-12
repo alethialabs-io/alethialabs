@@ -135,6 +135,23 @@ func TestFetchGitToken_SuccessNullAndError(t *testing.T) {
 			t.Fatal("expected error on 403")
 		}
 	})
+
+	t.Run("non-OK carries the console's error message", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]any{"error": "Cannot tell which git provider serves host git.example.net"})
+		}))
+		defer server.Close()
+		tok, err := NewRunnerAPIClient(server.URL, "w1", "tok1").FetchGitToken("job-1", "https://git.example.net/o/r")
+		if err == nil || tok != "" {
+			t.Fatalf("token=%q err=%v (want empty, error)", tok, err)
+		}
+		want := "fetch git token returned status 422: Cannot tell which git provider serves host git.example.net"
+		if err.Error() != want {
+			t.Fatalf("err = %q, want %q", err.Error(), want)
+		}
+	})
 }
 
 func TestFetchAddonSecrets_SuccessAndError(t *testing.T) {
