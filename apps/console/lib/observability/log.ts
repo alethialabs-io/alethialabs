@@ -197,12 +197,97 @@ function serializeErr(value: unknown): SerializedErrValue {
 	return serializeErrAt(value, 0, new Set());
 }
 
+/** What an email-address-shaped substring is replaced with on the OTel bridge. */
+const EMAIL_REDACTED = "[email]";
+
+/** True when the UTF-16 unit at `i` may appear in an address's local part, as matched here. */
+function isLocalChar(text: string, i: number): boolean {
+	const c = text.charCodeAt(i);
+	return (
+		(c >= 48 && c <= 57) || // 0-9
+		(c >= 65 && c <= 90) || // A-Z
+		(c >= 97 && c <= 122) || // a-z
+		c === 46 || // .
+		c === 95 || // _
+		c === 37 || // %
+		c === 43 || // +
+		c === 45 || // -
+		c === 39 // '
+	);
+}
+
+/** True when the UTF-16 unit at `i` may appear in an address's domain, as matched here. */
+function isDomainChar(text: string, i: number): boolean {
+	const c = text.charCodeAt(i);
+	return (
+		(c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 46 || c === 45
+	);
+}
+
+/**
+ * Returns the length of the address domain that starts `text` at `start`, or 0 when what follows the
+ * `@` is not one: two or more dot-separated labels, none empty, the last made of two or more ASCII
+ * letters. A trailing `.` or `-` (the end of a sentence) is not part of the domain. The letters-only
+ * last label is what keeps a package path in a stack frame (`pino@9.1.0`) unmatched.
+ */
+function domainLength(text: string, start: number): number {
+	let end = start;
+	while (end < text.length && isDomainChar(text, end)) end++;
+	while (end > start && (text.charCodeAt(end - 1) === 46 || text.charCodeAt(end - 1) === 45)) end--;
+	const labels = text.slice(start, end).split(".");
+	if (labels.length < 2 || labels.some((l) => l === "")) return 0;
+	return /^[A-Za-z]{2,}$/.test(labels[labels.length - 1] ?? "") ? end - start : 0;
+}
+
+/**
+ * Returns `text` with every email-address-shaped substring (`local@domain.tld`) replaced by
+ * EMAIL_REDACTED. A hand-written scan rather than a regex, so its cost is linear in `text`: each `@`
+ * is expanded left over local-part characters (never past the end of the previous match) and right
+ * over domain characters, and as `@` is neither, no character is read by more than one `@`'s
+ * expansion in each direction. A regex such as `[\w.]+@[\w.]+\.\w+` restarts its local-part scan at
+ * every position, which is quadratic on a long run of local-part characters with no `@` after it —
+ * the shape of a large base64 or hex blob quoted in an error message. It errs toward redacting:
+ * anything shaped like an address is replaced, whether or not it is one.
+ */
+function redactEmails(text: string): string {
+	let at = text.indexOf("@");
+	if (at === -1) return text;
+	let out = "";
+	let copied = 0;
+	// The left edge a local part may reach back to: the end of the previous match, or the previous `@`.
+	let floor = 0;
+	while (at !== -1) {
+		let start = at;
+		while (start > floor && isLocalChar(text, start - 1)) start--;
+		const domain = start < at ? domainLength(text, at + 1) : 0;
+		let next = at + 1;
+		if (domain > 0) {
+			out += text.slice(copied, start) + EMAIL_REDACTED;
+			copied = at + 1 + domain;
+			next = copied;
+		}
+		floor = next;
+		at = text.indexOf("@", next);
+	}
+	return out + text.slice(copied);
+}
+
 /**
  * Mirror one structured line into the OTel logs pipeline (shipped to PostHog / a collector by
  * lib/observability/otel.ts). `logs.getLogger()` is the API no-op until a LoggerProvider is
  * registered (only when an OTLP logs endpoint is configured), so this is free + silent otherwise, and
  * never throws into the caller. The correlation fields (trace_id/org_id/job_id) ride as attributes so a
  * log joins its trace. Errors are flattened to string attributes (OTel attrs are primitives).
+ *
+ * Every string that leaves here — the body (`msg`), `error.message`, `error.stack`, a string
+ * `error.code` and every other string or JSON-encoded attribute — has its email-address-shaped
+ * substrings replaced (see `redactEmails`), because this is where a line leaves the deployment for a
+ * log store outside it (PostHog's log product, or a collector): an email provider's error can quote
+ * the recipient, and a caller's `msg` or field can carry one. The pino line on stdout is NOT redacted:
+ * stdout is the operator's own runtime log (the container or platform log of their own deployment —
+ * the sandbox prints sign-in codes there), and the recipient of a failed send is what an operator
+ * debugging that send needs to see. Only the top-level error is bridged, so a `cause` chain never
+ * reaches this pipeline at all.
  */
 function bridgeToOtel(level: string, msg: string, fields?: LogFields): void {
 	try {
@@ -213,23 +298,29 @@ function bridgeToOtel(level: string, msg: string, fields?: LogFields): void {
 				// The same allow-list as the pino line: never JSON-dump an arbitrary error object.
 				const e = serializeErr(v);
 				if (typeof e === "string") {
-					attributes["error.message"] = e;
+					attributes["error.message"] = redactEmails(e);
 				} else {
 					attributes["error.type"] = e.type;
-					if (e.message !== undefined) attributes["error.message"] = e.message;
-					if (e.stack) attributes["error.stack"] = e.stack;
-					if (e.code !== undefined) attributes["error.code"] = e.code;
+					if (e.message !== undefined) attributes["error.message"] = redactEmails(e.message);
+					if (e.stack) attributes["error.stack"] = redactEmails(e.stack);
+					if (e.code !== undefined) {
+						attributes["error.code"] =
+							typeof e.code === "string" ? redactEmails(e.code) : e.code;
+					}
 				}
-			} else if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+			} else if (typeof v === "string") {
+				attributes[k] = redactEmails(v);
+			} else if (typeof v === "number" || typeof v === "boolean") {
 				attributes[k] = v;
 			} else {
-				attributes[k] = JSON.stringify(v);
+				const json: unknown = JSON.stringify(v);
+				if (typeof json === "string") attributes[k] = redactEmails(json);
 			}
 		}
 		logs.getLogger("alethia-console").emit({
 			severityNumber: OTEL_SEVERITY[level] ?? SeverityNumber.INFO,
 			severityText: level,
-			body: msg,
+			body: redactEmails(msg),
 			attributes,
 		});
 	} catch {
