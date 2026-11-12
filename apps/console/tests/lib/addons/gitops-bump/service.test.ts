@@ -24,18 +24,21 @@ const FIXTURES = resolve(__dirname, "../../../../../../packages/core/provisioner
 const SEEDED = readFileSync(join(FIXTURES, "plain.yaml"));
 
 const INPUT: GitopsBumpInput = {
-	userId: "user-1",
+	actor: { userId: "user-1", orgId: "org-1", credential: "session" },
 	projectId: "11111111-1111-4111-8111-111111111111",
 	environmentId: "22222222-2222-4222-8222-222222222222",
 	addonId: "ingress-nginx",
 	again: false,
 };
 
+type Row = { mode: string; source: string; version: string | null; gitopsBump: GitopsBumpRecord | null };
+
 /** An in-memory store: one GitOps ingress-nginx row pinned to 4.15.1, and the given apps repo. */
-function store(appsRepo: string | null, row: { mode: string; source: string; version: string | null } | null = {
+function store(appsRepo: string | null, row: Row | null = {
 	mode: "gitops",
 	source: "catalog",
 	version: "4.15.1",
+	gitopsBump: null,
 }) {
 	const saved: GitopsBumpRecord[] = [];
 	const s: GitopsBumpStore = {
@@ -197,8 +200,8 @@ describe("requestGitopsBumpFor: what is asked for", () => {
 		const { fn } = fakeFetch();
 		const cases: [ReturnType<typeof store>, string][] = [
 			[store("https://github.com/acme/apps", null), "not-installed"],
-			[store("https://github.com/acme/apps", { mode: "managed", source: "catalog", version: null }), "not-gitops"],
-			[store("https://github.com/acme/apps", { mode: "gitops", source: "byo", version: null }), "not-catalog"],
+			[store("https://github.com/acme/apps", { mode: "managed", source: "catalog", version: null, gitopsBump: null }), "not-gitops"],
+			[store("https://github.com/acme/apps", { mode: "gitops", source: "byo", version: null, gitopsBump: null }), "not-catalog"],
 			[store(null), "no-apps-repo"],
 		];
 		for (const [{ s }, reason] of cases) {
@@ -213,6 +216,96 @@ describe("requestGitopsBumpFor: what is asked for", () => {
 		const r = await requestGitopsBumpFor(store("https://github.com/acme/apps").s, INPUT, fn, async () => null);
 		expect(r).toMatchObject({ status: "refused", reason: "no-git-link" });
 		expect(fn).not.toHaveBeenCalled();
+	});
+});
+
+describe("requestGitopsBumpFor: only a person's own account opens the pull request", () => {
+	it("a service token pinned to a shared org is refused, and no token is read or sent", async () => {
+		const reader = vi.fn(async () => TOKEN);
+		const { fn } = fakeFetch();
+		const { s, saved } = store("https://github.com/acme/apps");
+		const r = await requestGitopsBumpFor(
+			s,
+			{ ...INPUT, actor: { userId: "minter-1", orgId: "org-shared", credential: "service_token" } },
+			fn,
+			reader,
+		);
+		expect(r).toMatchObject({ status: "refused", reason: "not-a-person", file: "addons/ingress-nginx.yaml", version: "4.15.1" });
+		expect(reader).not.toHaveBeenCalled();
+		expect(fn).not.toHaveBeenCalled();
+		expect(saved).toEqual([]);
+	});
+
+	it("a service token pinned to its minter's own personal workspace acts for that one person", async () => {
+		const reader = vi.fn(async () => TOKEN);
+		const { fn } = fakeFetch();
+		const r = await requestGitopsBumpFor(
+			store("https://github.com/acme/apps").s,
+			{ ...INPUT, actor: { userId: "user-9", orgId: "user-9", credential: "service_token" } },
+			fn,
+			reader,
+		);
+		expect(r).toMatchObject({ status: "open", created: true });
+		expect(reader).toHaveBeenCalledWith("user-9", "github");
+	});
+});
+
+describe("requestGitopsBumpFor: the record and the pull request's text", () => {
+	const reader = vi.fn(async () => TOKEN);
+	const OPENED: GitopsBumpRecord = {
+		version: "4.15.1",
+		provider: "github",
+		number: 7,
+		url: "https://github.com/acme/apps/pull/7",
+		branch: "alethia/addon-bump-ingress-nginx-4.15.1",
+		state: "open",
+		opened_by: "user-original",
+		updated_at: "2026-11-01T00:00:00.000Z",
+	};
+
+	/** A GitHub that already has pull request #7 open on the bump branch. */
+	function withOpenPull() {
+		const pull = { number: 7, state: "open", html_url: OPENED.url, merged_at: null };
+		return vi.fn(async (url: string) =>
+			new URL(url).pathname.endsWith("/pulls") ? Response.json([pull]) : Response.json({}, { status: 404 }),
+		);
+	}
+
+	it("finding a pull request someone else opened keeps the recorded opener", async () => {
+		const { s, saved } = store("https://github.com/acme/apps", {
+			mode: "gitops",
+			source: "catalog",
+			version: "4.15.1",
+			gitopsBump: OPENED,
+		});
+		const r = await requestGitopsBumpFor(s, INPUT, withOpenPull(), reader);
+		expect(r).toMatchObject({ status: "open", created: false, number: 7 });
+		expect(saved.map((x) => x.opened_by)).toEqual(["user-original"]);
+	});
+
+	it("a found pull request with no record of it is recorded under the asker", async () => {
+		const { s, saved } = store("https://github.com/acme/apps");
+		await requestGitopsBumpFor(s, INPUT, withOpenPull(), reader);
+		expect(saved.map((x) => x.opened_by)).toEqual(["user-1"]);
+	});
+
+	/** The body of the pull request the flow opened. */
+	function openedBody(seen: { url: string; init: RequestInit }[]): string {
+		const post = seen.find((c) => c.init.method === "POST" && new URL(c.url).pathname.endsWith("/pulls"));
+		const parsed: unknown = JSON.parse(String(post?.init.body ?? "{}"));
+		return typeof parsed === "object" && parsed !== null && "body" in parsed ? String(parsed.body) : "";
+	}
+
+	it("names the catalog's security release only when the target IS the catalog's version", async () => {
+		const atCatalog = fakeFetch();
+		await requestGitopsBumpFor(store("https://github.com/acme/apps").s, INPUT, atCatalog.fn, reader);
+		expect(openedBody(atCatalog.seen)).toContain("**Security release.**");
+
+		const atPin = fakeFetch();
+		const pinned = store("https://github.com/acme/apps", { mode: "gitops", source: "catalog", version: "4.13.0", gitopsBump: null });
+		const r = await requestGitopsBumpFor(pinned.s, INPUT, atPin.fn, reader);
+		expect(r).toMatchObject({ status: "open", version: "4.13.0" });
+		expect(openedBody(atPin.seen)).not.toContain("Security release");
 	});
 });
 

@@ -119,6 +119,27 @@ describe("DeployPane", () => {
 		expect(screen.getByText("is open in your apps repo.")).toBeDefined();
 	});
 
+	it("a drift row with no pull request says where one can be opened (#6549)", () => {
+		render(
+			<DeployPane
+				status={base({
+					addonDrift: [
+						{
+							addonId: "ingress-nginx",
+							file: "addons/ingress-nginx.yaml",
+							chart: "ingress-nginx",
+							seededVersion: "4.11.2",
+							desiredVersion: "4.15.1",
+							pull: null,
+						},
+					],
+				})}
+			/>,
+		);
+		expect(screen.getByText("On GitHub, the add-on's card can open a pull request that makes this change.")).toBeDefined();
+		expect(screen.queryByRole("link", { name: /Pull request/ })).toBeNull();
+	});
+
 	it("no GitOps add-on section when nothing drifted", () => {
 		render(<DeployPane status={base()} />);
 		expect(screen.queryByText(/GitOps add-on updates/)).toBeNull();

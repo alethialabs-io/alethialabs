@@ -4,7 +4,8 @@
 // POST /api/cli/projects/:id/addons/bump — `alethia addon bump`: open, or find, the pull request that
 // moves a GitOps add-on's seeded chart version (#6549). Gated on project `edit`, and it runs the same
 // function the console card does (`requestGitopsBump`), as the CLI's user, with that user's own
-// GitHub token. Defaults to the project's default environment; pass ?env= for another.
+// GitHub token. A credential that is not a person's is refused there (`not-a-person`), so this route
+// adds no rule of its own. Defaults to the project's default environment; pass ?env= for another.
 
 import { NextResponse } from "next/server";
 import { z } from "zod";

@@ -194,6 +194,7 @@ export function AddonConfigCard({
       projectId={projectId}
       environmentId={environmentId}
       hasAppsRepo={addons.data?.hasAppsRepo ?? false}
+      appsRepoName={addons.data?.appsRepoName ?? null}
       provider={provider}
       onDone={closeCard}
       onOpenAddon={(id) => openCard({ kind: "addon", itemId: id })}
@@ -211,6 +212,7 @@ export function AddonConfigForm({
   projectId,
   environmentId,
   hasAppsRepo,
+  appsRepoName = null,
   provider,
   onDone,
   onOpenAddon,
@@ -219,6 +221,8 @@ export function AddonConfigForm({
   projectId: string;
   environmentId: string | null;
   hasAppsRepo: boolean;
+  /** The apps repo as `owner/repo` on GitHub, where a GitOps bump pull request is opened (#6549). */
+  appsRepoName?: string | null;
   /** The project's effective cloud provider — drives the requirement hints (null = unset). */
   provider: CloudProviderSlug | null;
   onDone: () => void;
@@ -579,6 +583,7 @@ export function AddonConfigForm({
               hasAppsRepo && item.install?.mode === "gitops"
                 ? {
                     record: item.install.gitopsBump,
+                    repo: appsRepoName,
                     result: bumpResult,
                     pending: bump.isPending,
                     onRequest: (again) => {

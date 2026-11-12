@@ -156,6 +156,20 @@
       "edit": "revision-not-plain"
     },
     {
+      "name": "anchored-revision",
+      "file": "anchored-revision.yaml",
+      "why": "The version itself carries an anchor that an alias elsewhere reads: the edit would change that copy too, and a re-parse cannot tell.",
+      "drift": true,
+      "edit": "revision-not-plain"
+    },
+    {
+      "name": "anchored-source",
+      "file": "anchored-source.yaml",
+      "why": "The source block carries an anchor that an alias elsewhere reads: changing its version changes the alias's copy too.",
+      "drift": true,
+      "edit": "revision-not-plain"
+    },
+    {
       "name": "escaped-double-quoted",
       "file": "escaped-double-quoted.yaml",
       "why": "An escape inside the quotes: the source text is not the value.",

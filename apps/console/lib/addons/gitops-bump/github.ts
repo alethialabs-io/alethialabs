@@ -11,6 +11,8 @@
 // opening pull requests needs Pull requests: read and write (fine-grained token names). The
 // console's GitHub OAuth app asks for `repo`, which covers all of them.
 
+import { resolveGitProvider } from "@/lib/git/provider-host";
+
 const API = "https://api.github.com";
 
 /** How long one GitHub call may take before it is abandoned. */
@@ -51,6 +53,19 @@ export function githubRepoFromUrl(repoUrl: string): GithubRepoRef | null {
 	const repo = (parts[1] ?? "").replace(/\.git$/, "");
 	if (!GITHUB_OWNER.test(owner) || !GITHUB_REPO.test(repo) || repo === "." || repo === "..") return null;
 	return { owner, repo };
+}
+
+/**
+ * The apps repo as `owner/repo` when it is a GitHub repository, else null: what the card shows as
+ * where the pull request will be opened. The same two decisions the bump makes, in the same order
+ * (`resolveGitProvider`, then `githubRepoFromUrl`), so the card cannot name a repo the bump would not use.
+ */
+export function githubRepoName(repoUrl: string | null | undefined): string | null {
+	if (!repoUrl) return null;
+	const provider = resolveGitProvider(repoUrl);
+	if (!provider.ok || provider.provider !== "github") return null;
+	const ref = githubRepoFromUrl(repoUrl);
+	return ref ? `${ref.owner}/${ref.repo}` : null;
 }
 
 /** A failed GitHub call: the operation and the HTTP status, never the body or the token. */
@@ -183,12 +198,31 @@ export function githubClient(ref: GithubRepoRef, token: string, fetchImpl: Fetch
 			);
 			return made !== null;
 		},
-		/** Commits `bytes` as `path` on `branch`, replacing the blob `sha`. */
-		async writeFile(path: string, branch: string, bytes: Uint8Array, sha: string, message: string): Promise<void> {
-			await call("commit the file", `/contents/${encPath(path)}`, {
-				method: "PUT",
-				body: JSON.stringify({ message, content: toBase64(bytes), sha, branch }),
-			});
+		/**
+		 * Commits `bytes` as `path` on `branch`, replacing the blob `sha`. False when GitHub refuses it
+		 * as a conflict (409, or 422 for a stale `sha`): the file moved under this call, which is what a
+		 * concurrent click that committed first looks like. The caller re-reads the branch.
+		 */
+		async writeFile(path: string, branch: string, bytes: Uint8Array, sha: string, message: string): Promise<boolean> {
+			const made = await call(
+				"commit the file",
+				`/contents/${encPath(path)}`,
+				{ method: "PUT", body: JSON.stringify({ message, content: toBase64(bytes), sha, branch }) },
+				[409, 422],
+			);
+			return made !== null;
+		},
+		/**
+		 * What `head` holds that `base` does not: how many commits it is ahead, and every file those
+		 * commits change, or null for the files when GitHub did not list them (a very large diff).
+		 */
+		async compare(base: string, head: string): Promise<{ aheadBy: number; files: string[] | null }> {
+			const o = obj(await call("compare the branch", `/compare/${encPath(`${base}...${head}`)}`));
+			const ahead = o?.ahead_by;
+			if (typeof ahead !== "number") throw new GithubCallError("compare the branch", 0);
+			const list = o?.files;
+			const files = Array.isArray(list) ? list.map((f) => str(obj(f), "filename")) : null;
+			return { aheadBy: ahead, files: files && files.every((f) => f !== "") ? files : null };
 		},
 		/** Opens a pull request; null when GitHub says one already exists for that head. */
 		async openPull(input: { title: string; body: string; head: string; base: string }): Promise<GithubPull | null> {

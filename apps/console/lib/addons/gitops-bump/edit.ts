@@ -15,11 +15,12 @@
 // (`gitopsAddOnDrift`, packages/core/provisioner/addons_gitops.go). The two read one fixture table,
 // packages/core/provisioner/testdata/addon_bump/cases.json, so they cannot drift apart unnoticed.
 // The edit is STRICTER than the drift check in two places, both refusals: a file that also carries
-// `spec.sources`, and a `targetRevision` written with a tag, an alias or a block scalar. Those are
-// files the customer has shaped, so they get the manual instruction instead of a pull request.
+// `spec.sources`, and a `targetRevision` written with a tag, an alias, an anchor (on the value or on
+// any map above it) or a block scalar. Those are files the customer has shaped, so they get the
+// manual instruction instead of a pull request.
 
 import { isDeepStrictEqual } from "node:util";
-import { isMap, isScalar, parseAllDocuments, type Document } from "yaml";
+import { isMap, isScalar, parseAllDocuments, type Document, type Node } from "yaml";
 import { compareChartVersions } from "@/lib/addons/update-notice";
 
 /** Why the edit was not made. Each is a file Alethia cannot be sure it may change. */
@@ -54,6 +55,16 @@ export function isStrictSemver(v: string): boolean {
 	return STRICT_SEMVER.test(v);
 }
 
+/**
+ * Reports whether any node on the path to the version carries an anchor. An anchored node may be
+ * read again by an alias elsewhere in the file, and that copy would change with the splice. The
+ * re-parse check below cannot see it: it compares against the original document with the value
+ * set, and that clone resolves the alias to the same edited node, so both agree.
+ */
+function anchoredOnPath(nodes: (Node | null | undefined)[]): boolean {
+	return nodes.some((n) => n !== null && n !== undefined && typeof n.anchor === "string" && n.anchor !== "");
+}
+
 /** The `spec.source.targetRevision` scalar and the document around it, or the refusal. */
 function locateRevision(
 	text: string,
@@ -81,6 +92,7 @@ function locateRevision(
 	if (node.type !== "PLAIN" && node.type !== "QUOTE_SINGLE" && node.type !== "QUOTE_DOUBLE") {
 		return { ok: false, refusal: "revision-not-plain" };
 	}
+	if (anchoredOnPath([root, spec, source, node])) return { ok: false, refusal: "revision-not-plain" };
 	const [start, end] = node.range;
 	const quote = node.type === "QUOTE_DOUBLE" ? '"' : node.type === "QUOTE_SINGLE" ? "'" : "";
 	// The source text of the scalar must BE its value, quoted at most: no escapes, no folding, no

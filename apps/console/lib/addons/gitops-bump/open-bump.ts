@@ -86,6 +86,29 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
 	return a.length === b.length && a.every((x, i) => x === b[i]);
 }
 
+/**
+ * Whether an existing bump branch may be used, by what it holds that the default branch does not
+ * (GitHub's compare, so a commit to ANY file counts, not only to the add-on's):
+ *
+ * - no commits of its own, and the add-on's file as the default branch has it: reuse it, and commit
+ *   the edit onto it (`commitFrom` is the file's blob sha there);
+ * - exactly one commit, changing exactly the add-on's file, to exactly the edited bytes: reuse it
+ *   as it is (`commitFrom` null). That is this flow's own commit from an earlier attempt;
+ * - anything else: someone else's work, so `diverged`.
+ */
+async function reusableBranch(
+	gh: GithubClient,
+	at: { base: string; branch: string; path: string; seeded: Uint8Array; edited: Uint8Array },
+): Promise<{ commitFrom: string | null } | "diverged"> {
+	const ahead = await gh.compare(at.base, at.branch);
+	const onBranch = await gh.readFile(at.path, at.branch);
+	if (!onBranch) return "diverged";
+	if (ahead.aheadBy === 0) return sameBytes(onBranch.bytes, at.seeded) ? { commitFrom: onBranch.sha } : "diverged";
+	const onlyThisFile = ahead.files !== null && ahead.files.length === 1 && ahead.files[0] === at.path;
+	if (ahead.aheadBy === 1 && onlyThisFile && sameBytes(onBranch.bytes, at.edited)) return { commitFrom: null };
+	return "diverged";
+}
+
 /** Opens the bump pull request, or reports the one that exists. See the file comment. */
 export async function openGitopsBump(gh: GithubClient, req: BumpRequest): Promise<BumpOutcome> {
 	if (!ADDON_ID.test(req.addonId) || !isStrictSemver(req.version) || req.chart === "") {
@@ -108,20 +131,23 @@ export async function openGitopsBump(gh: GithubClient, req: BumpRequest): Promis
 
 		// The branch: create it at the default branch's head and commit the edit, or, when it already
 		// exists (a previous attempt, a declined pull request, a concurrent click), use it only if it
-		// already holds exactly this edit. A branch someone has pushed to is theirs.
+		// holds nothing but this edit. A branch someone has pushed to is theirs.
 		const head = await gh.branchHead(base);
 		if (!head) return { kind: "github-error", operation: "read the default branch", status: 404 };
 		const created = await gh.createBranch(branch, head);
-		if (created) {
-			await gh.writeFile(path, branch, edit.bytes, file.sha, text.commit);
-		} else {
-			const onBranch = await gh.readFile(path, branch);
-			if (onBranch && sameBytes(onBranch.bytes, file.bytes)) {
+		const committed = created && (await gh.writeFile(path, branch, edit.bytes, file.sha, text.commit));
+		if (!committed) {
+			// The branch existed, or a concurrent click committed onto it first.
+			const reuse = await reusableBranch(gh, { base, branch, path, seeded: file.bytes, edited: edit.bytes });
+			if (reuse === "diverged") return { kind: "branch-diverged", branch };
+			if (reuse.commitFrom !== null) {
 				// The branch exists but the commit never landed (an earlier attempt failed between the
 				// two calls): it still holds the default branch's file, so commit the edit onto it.
-				await gh.writeFile(path, branch, edit.bytes, onBranch.sha, text.commit);
-			} else if (!onBranch || !sameBytes(onBranch.bytes, edit.bytes)) {
-				return { kind: "branch-diverged", branch };
+				if (!(await gh.writeFile(path, branch, edit.bytes, reuse.commitFrom, text.commit))) {
+					// Lost a race to commit: whatever landed must itself be exactly this edit.
+					const again = await reusableBranch(gh, { base, branch, path, seeded: file.bytes, edited: edit.bytes });
+					if (again === "diverged" || again.commitFrom !== null) return { kind: "branch-diverged", branch };
+				}
 			}
 		}
 

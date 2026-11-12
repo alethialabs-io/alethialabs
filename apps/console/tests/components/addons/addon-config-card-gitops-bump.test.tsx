@@ -63,13 +63,14 @@ const PINNED: AddonInstallState = {
 };
 
 /** Renders the form for `item`. */
-function renderForm(item: AddonMarketItem) {
+function renderForm(item: AddonMarketItem, appsRepoName: string | null = "acme/apps") {
 	render(
 		<AddonConfigForm
 			item={item}
 			projectId="p1"
 			environmentId="e1"
 			hasAppsRepo
+			appsRepoName={appsRepoName}
 			provider={null}
 			onDone={vi.fn()}
 		/>,
@@ -121,6 +122,35 @@ describe("AddonConfigForm — the GitOps bump pull request (#6549)", () => {
 		expect(screen.queryByRole("button", { name: /open a pull request/i })).toBeNull();
 		await user.click(screen.getByRole("button", { name: "Open it again" }));
 		expect(bumpMut.mutate.mock.calls[0]?.[0]).toMatchObject({ again: true });
+	});
+
+	it("a stored pull request for ANOTHER version is no pull request: the card offers a new one", () => {
+		// #42 moved the file to 4.11.2; the catalog has since moved to 4.15.1.
+		renderForm({ ...ITEM, install: { ...GITOPS, gitopsBump: { ...RECORD, version: "4.11.2", state: "declined" } } });
+		expect(screen.queryByRole("link", { name: "#42" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Open it again" })).toBeNull();
+		expect(screen.getByRole("button", { name: "Open a pull request to 4.15.1" })).toBeDefined();
+	});
+
+	it("a pinned GitOps install: the button names the PIN, which is what the bump moves the file to", () => {
+		renderForm({ ...ITEM, install: { ...GITOPS, version: "4.13.0" } });
+		expect(screen.getByRole("button", { name: "Open a pull request to 4.13.0" })).toBeDefined();
+		expect(screen.queryByRole("button", { name: "Open a pull request to 4.15.1" })).toBeNull();
+	});
+
+	it("a pinned GitOps install: a stored pull request for the pin is shown", () => {
+		renderForm({ ...ITEM, install: { ...GITOPS, version: "4.13.0", gitopsBump: { ...RECORD, version: "4.13.0" } } });
+		expect(screen.getByRole("link", { name: "#42" })).toBeDefined();
+	});
+
+	it("names the repo the pull request is opened in, before the press", () => {
+		renderForm({ ...ITEM, install: GITOPS });
+		expect(screen.getByTestId("gitops-bump")).toHaveTextContent("It is opened in acme/apps, with your own GitHub account.");
+	});
+
+	it("names no repo when the apps repo is not a GitHub one", () => {
+		renderForm({ ...ITEM, install: GITOPS }, null);
+		expect(screen.getByTestId("gitops-bump")).not.toHaveTextContent("It is opened in");
 	});
 
 	it("offers nothing to a managed install", () => {

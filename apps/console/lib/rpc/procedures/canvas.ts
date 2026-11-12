@@ -92,6 +92,7 @@ import {
 	projects,
 } from "@/lib/db/schema";
 import type { ComponentStatus } from "@/lib/db/schema/enums";
+import { githubRepoName } from "@/lib/addons/gitops-bump/github";
 import { readGitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import { structuralHash } from "@/lib/promotions/diff";
 import {
@@ -759,7 +760,7 @@ export async function readProjectAddons(
 		};
 	});
 
-	return { environmentId: envId, items, hasAppsRepo };
+	return { environmentId: envId, items, hasAppsRepo, appsRepoName: githubRepoName(repo?.repo) };
 }
 
 // ── BYO Helm charts ───────────────────────────────────────────────────────────────────────────

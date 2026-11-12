@@ -23,6 +23,8 @@ import type { GitopsBumpRecord } from "@/types/jsonb.types";
 export interface GitopsBumpView {
 	/** The pull request stored on the add-on's row, or null. */
 	record: GitopsBumpRecord | null;
+	/** The apps repo as `owner/repo` when it is on GitHub, which is where the pull request goes; or null. */
+	repo: string | null;
 	/** The outcome of the last press in this card, which wins over the stored record. */
 	result: GitopsBumpResult | null;
 	/** True while a request is in flight. */
@@ -31,17 +33,28 @@ export interface GitopsBumpView {
 	onRequest: (again: boolean) => void;
 }
 
-/** The pull request to show: the last press's outcome, else the stored record. */
-function shownPull(bump: GitopsBumpView): { state: "open" | "merged" | "declined"; number: number; url: string; version: string } | null {
+/**
+ * The pull request to show: the last press's outcome, else the stored record. Either one counts only
+ * when it is for `version`, the version a press would bump to. A pull request for another version
+ * belongs to a catalog or pin that has moved on, so it is treated as none, the same rule the Deploy
+ * tab's `pullFor` applies (lib/gitops/deploy-status.ts).
+ */
+function shownPull(
+	bump: GitopsBumpView,
+	version: string,
+): { state: "open" | "merged" | "declined"; number: number; url: string; version: string } | null {
 	const r = bump.result;
-	if (r && r.status !== "refused") return { state: r.status, number: r.number, url: r.url, version: r.version };
+	if (r && r.status !== "refused" && r.version === version) return { state: r.status, number: r.number, url: r.url, version: r.version };
 	const rec = bump.record;
-	return rec ? { state: rec.state, number: rec.number, url: rec.url, version: rec.version } : null;
+	return rec && rec.version === version ? { state: rec.state, number: rec.number, url: rec.url, version: rec.version } : null;
 }
 
-/** The GitOps half of the notice: the pull request, or the button that opens one. */
+/**
+ * The GitOps half of the notice: the pull request, or the button that opens one. `version` is the
+ * version the bump moves the file to: the install's pin, else the catalog's (what a deploy seeds).
+ */
 function GitopsBumpOffer({ bump, version }: { bump: GitopsBumpView; version: string }) {
-	const pull = shownPull(bump);
+	const pull = shownPull(bump, version);
 	const refused = bump.result?.status === "refused" ? bump.result : null;
 	return (
 		<div className="space-y-2" data-testid="gitops-bump">
@@ -63,6 +76,11 @@ function GitopsBumpOffer({ bump, version }: { bump: GitopsBumpView; version: str
 				<Button type="button" size="sm" variant="outline" disabled={bump.pending} onClick={() => bump.onRequest(false)}>
 					Open a pull request to {version}
 				</Button>
+			)}
+			{(!pull || pull.state === "declined") && bump.repo && (
+				<p className="text-muted-foreground">
+					It is opened in <code>{bump.repo}</code>, with your own GitHub account.
+				</p>
 			)}
 			{pull?.state === "declined" && (
 				<Button type="button" size="sm" variant="outline" disabled={bump.pending} onClick={() => bump.onRequest(true)}>
@@ -92,6 +110,9 @@ export function AddonUpdateNotice({
   bump?: GitopsBumpView;
 }) {
   const { security, catalogVersion } = notice;
+  // The version a GitOps bump moves the file to: the stored pin, else the catalog's. The same
+  // `row.version ?? def.version` the bump itself resolves (lib/addons/gitops-bump/service.ts).
+  const bumpVersion = notice.installedVersion ?? catalogVersion;
   const title = security
     ? `Security update: ${name} ${catalogVersion}`
     : `The catalog now ships ${name} ${catalogVersion}`;
@@ -120,7 +141,7 @@ export function AddonUpdateNotice({
             can open a pull request that changes only that field, for you to review.
           </p>
         )}
-        {notice.kind === "gitops" && bump && <GitopsBumpOffer bump={bump} version={catalogVersion} />}
+        {notice.kind === "gitops" && bump && <GitopsBumpOffer bump={bump} version={bumpVersion} />}
         {security && (
           <p>
             {security.summary}{" "}

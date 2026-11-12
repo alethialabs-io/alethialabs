@@ -4,6 +4,7 @@
 // The bump pull request flow (#6549) against an in-memory GitHub: dedupe, the declined rule, the
 // branch-reuse rule, the race, and what the pull request says.
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -17,9 +18,18 @@ const PATH = "addons/ingress-nginx.yaml";
 
 const REQ: BumpRequest = { addonId: "ingress-nginx", chart: "ingress-nginx", version: "4.15.1", again: false, security: null };
 
-/** One repo in memory: branches map to files, pull requests are kept with their head. */
+/** A blob sha, content-addressed as GitHub's is: the same bytes on two branches are the same blob. */
+const blob = (bytes: Uint8Array) => createHash("sha1").update(bytes).digest("hex");
+
+/**
+ * One repo in memory: branches map to files, pull requests are kept with their head, and `commits`
+ * holds, per branch, the files each of its own commits (the ones `main` does not have) changed.
+ */
 function fakeGithub(opts: { file?: Uint8Array | null } = {}) {
 	const branches = new Map<string, Map<string, Uint8Array>>([["main", new Map()]]);
+	const commits = new Map<string, string[][]>();
+	/** Runs once, just before the next commit: stands in for a concurrent click committing first. */
+	let beforeNextWrite: (() => void) | null = null;
 	const main = branches.get("main");
 	if (main && opts.file !== null) main.set(PATH, opts.file ?? SEEDED);
 	const pulls: (GithubPull & { head: string; title: string; body: string })[] = [];
@@ -37,7 +47,7 @@ function fakeGithub(opts: { file?: Uint8Array | null } = {}) {
 		async readFile(path, branch) {
 			calls.push(`readFile:${branch}`);
 			const f = branches.get(branch)?.get(path);
-			return f ? { bytes: f, sha: `blob-${branch}` } : null;
+			return f ? { bytes: f, sha: blob(f) } : null;
 		},
 		async pullsFrom(branch) {
 			calls.push("pullsFrom");
@@ -49,9 +59,22 @@ function fakeGithub(opts: { file?: Uint8Array | null } = {}) {
 			branches.set(branch, new Map(branches.get("main")));
 			return true;
 		},
-		async writeFile(path, branch, bytes) {
+		async writeFile(path, branch, bytes, sha) {
 			calls.push("writeFile");
+			const hook = beforeNextWrite;
+			beforeNextWrite = null;
+			hook?.();
+			// GitHub refuses a commit whose blob sha is no longer the file's: the file moved.
+			const current = branches.get(branch)?.get(path);
+			if (!current || sha !== blob(current)) return false;
 			branches.get(branch)?.set(path, bytes);
+			commits.set(branch, [...(commits.get(branch) ?? []), [path]]);
+			return true;
+		},
+		async compare(_base, head) {
+			calls.push("compare");
+			const own = commits.get(head) ?? [];
+			return { aheadBy: own.length, files: [...new Set(own.flat())] };
 		},
 		async openPull(input) {
 			calls.push("openPull");
@@ -71,8 +94,12 @@ function fakeGithub(opts: { file?: Uint8Array | null } = {}) {
 	return {
 		client,
 		branches,
+		commits,
 		pulls,
 		calls,
+		beforeNextWrite: (fn: () => void) => {
+			beforeNextWrite = fn;
+		},
 		raceNextOpen: () => {
 			duplicateOnce = true;
 		},
@@ -161,6 +188,42 @@ describe("openGitopsBump (#6549)", () => {
 		gh.branches.set(branch, new Map([[PATH, new TextEncoder().encode("kind: Application\n# theirs\n")]]));
 		expect((await openGitopsBump(gh.client, REQ)).kind).toBe("branch-diverged");
 		expect(gh.pulls).toHaveLength(0);
+	});
+
+	it("a branch carrying the edit AND a change to another file is refused, in one commit or two", async () => {
+		const branch = bumpBranchName("ingress-nginx", "4.15.1");
+		const shapes: string[][][] = [[[PATH, "README.md"]], [[PATH], ["README.md"]], [["README.md"]]];
+		for (const shape of shapes) {
+			const gh = fakeGithub();
+			// The add-on's file on the branch is EXACTLY the edit; only the compare can tell.
+			gh.branches.set(branch, new Map([[PATH, BUMPED], ["README.md", new TextEncoder().encode("theirs\n")]]));
+			gh.commits.set(branch, shape);
+			expect(await openGitopsBump(gh.client, REQ)).toEqual({ kind: "branch-diverged", branch });
+			expect(writes(gh.calls)).toEqual(["createBranch"]);
+			expect(gh.pulls).toHaveLength(0);
+		}
+	});
+
+	it("a branch holding only this flow's own one-file commit is reused as it is", async () => {
+		const gh = fakeGithub();
+		const branch = bumpBranchName("ingress-nginx", "4.15.1");
+		gh.branches.set(branch, new Map([[PATH, BUMPED]]));
+		gh.commits.set(branch, [[PATH]]);
+		expect((await openGitopsBump(gh.client, REQ)).kind).toBe("opened");
+		expect(gh.calls).not.toContain("writeFile");
+	});
+
+	it("a concurrent click that committed first: the conflict is a reuse, not a failed commit", async () => {
+		const gh = fakeGithub();
+		const branch = bumpBranchName("ingress-nginx", "4.15.1");
+		// The other click's commit lands between this call's branch creation and its commit.
+		gh.beforeNextWrite(() => {
+			gh.branches.get(branch)?.set(PATH, BUMPED);
+			gh.commits.set(branch, [[PATH]]);
+		});
+		const out = await openGitopsBump(gh.client, REQ);
+		expect(out.kind).toBe("opened");
+		expect(gh.pulls).toHaveLength(1);
 	});
 
 	it("a race with another click returns the pull request the other click opened", async () => {

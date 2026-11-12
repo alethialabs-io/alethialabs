@@ -87,6 +87,11 @@ export interface ProjectAddonsView {
 	items: AddonMarketItem[];
 	/** Whether the environment has a GitOps apps repo configured — gates GitOps mode. */
 	hasAppsRepo: boolean;
+	/**
+	 * The apps repo as `owner/repo` when it is a GitHub repository, which is where a GitOps bump pull
+	 * request is opened (#6549); null when it is not one, absent from a view built before this field.
+	 */
+	appsRepoName?: string | null;
 }
 
 /** The sentence for an Advanced values override that is not a YAML mapping. */
@@ -326,7 +331,8 @@ export async function disableAddonAction(raw: z.input<typeof addonTargetInput>) 
 /**
  * Opens, or finds, the pull request that moves a GitOps-mode add-on's seeded
  * `spec.source.targetRevision` to the version a deploy would seed, using the CALLER's own GitHub
- * token. Gated on `edit`, like every other add-on write. The console card and the CLI route call
+ * token. Gated on `edit`, like every other add-on write, and only for a person: a credential that is
+ * not one is refused (`not-a-person`), whichever surface it came through. The console card and the CLI route call
  * this one function. A deploy never does: the pull request exists only because someone asked.
  */
 export async function requestGitopsBump(input: {
@@ -341,7 +347,9 @@ export async function requestGitopsBump(input: {
 	});
 	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
 	return requestGitopsBumpFor(actorScopedBumpStore((fn) => withActorScope(actor, fn)), {
-		userId: actor.userId,
+		// The whole actor, not its `userId`: for a service token that id is the minter, not a caller,
+		// and the service refuses an actor that is not a person before it reads any token.
+		actor,
 		projectId: input.projectId,
 		environmentId: envId,
 		addonId: input.addonId,

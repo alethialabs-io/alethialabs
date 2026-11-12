@@ -235,7 +235,9 @@ version, or your pin. It changes only that field. Every other byte of the file s
 does not migrate values that the newer chart renamed or removed, so check the chart's release notes
 before you merge.
 
-- The pull request is opened with **your** linked GitHub account.
+- The pull request is opened with **your** linked GitHub account. Sign in as yourself with
+  `alethia login`. A service token for a shared organization belongs to no one person, so the
+  command refuses it and shows the change to make yourself.
 - If a pull request for that version is open, the command shows it and opens no other.
 - If you closed one without merging it, the command tells you and opens nothing. To open it again,
   use `--again`.

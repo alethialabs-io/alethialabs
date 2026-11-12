@@ -11,13 +11,18 @@
 // for the GitHub calls, and dropped: it is not returned, logged, or stored. Only the pull request's
 // number, URL, branch and state are stored.
 //
-// The caller has already authorised the user for `edit` on the project; this function trusts that
-// and scopes every read and write to the project, environment and org it was handed.
+// The caller has already authorised the actor for `edit` on the project; this function trusts that
+// and scopes every read and write to the project, environment and org it was handed. It does NOT
+// trust that the actor is a person: a pull request is opened with a person's own GitHub account, so
+// an actor with no personal identity (`personalIdentityAuthor`, lib/authz/actor-credential.ts) is
+// refused before any token is read.
 
 import "server-only";
 import { and, eq } from "drizzle-orm";
 import { getAddOn } from "@/lib/addons/catalog";
 import { providerTokenForUser } from "@/lib/auth/provider-token";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import type { Actor } from "@/lib/authz/types";
 import type { Tx } from "@/lib/db";
 import { projectAddons, projectRepositories } from "@/lib/db/schema";
 import type { GitopsBumpRecord } from "@/types/jsonb.types";
@@ -28,6 +33,7 @@ import { type BumpOutcome, openGitopsBump } from "./open-bump";
 
 /** Why no pull request was opened. Each comes with the manual instruction. */
 export type GitopsBumpRefusalReason =
+	| "not-a-person"
 	| "not-installed"
 	| "not-gitops"
 	| "not-catalog"
@@ -68,7 +74,8 @@ export type GitopsBumpResult =
 
 /** What is being asked for. */
 export interface GitopsBumpInput {
-	userId: string;
+	/** Who asked. Only a person's own GitHub account opens the pull request; see the file comment. */
+	actor: Actor;
 	projectId: string;
 	environmentId: string;
 	addonId: string;
@@ -142,9 +149,21 @@ function toResult(outcome: BumpOutcome, version: string, file: string): GitopsBu
 	}
 }
 
-/** The record stored on the row for a result that names a pull request, or null for a refusal. */
-function toRecord(r: GitopsBumpResult, branch: string, userId: string, now: Date): GitopsBumpRecord | null {
+/**
+ * The record stored on the row for a result that names a pull request, or null for a refusal.
+ * `opened_by` is the person whose click OPENED it: a pull request this call only found (open, merged
+ * or declined) keeps the opener already recorded for it, and `userId` is used only when this call
+ * opened it or there is no record of that pull request to keep.
+ */
+function toRecord(
+	r: GitopsBumpResult,
+	branch: string,
+	userId: string,
+	prior: GitopsBumpRecord | null,
+	now: Date,
+): GitopsBumpRecord | null {
 	if (r.status === "refused") return null;
+	const samePull = prior !== null && prior.number === r.number && prior.url === r.url;
 	return {
 		version: r.version,
 		provider: "github",
@@ -152,16 +171,19 @@ function toRecord(r: GitopsBumpResult, branch: string, userId: string, now: Date
 		url: r.url,
 		branch,
 		state: r.status,
-		opened_by: userId,
+		opened_by: !r.created && samePull ? prior.opened_by : userId,
 		updated_at: now.toISOString(),
 	};
 }
 
 /** What the flow reads and writes in the database, behind one seam so it can be tested without one. */
 export interface GitopsBumpStore {
-	/** The add-on row (null when not installed) and the environment's apps repo (null when none). */
+	/**
+	 * The add-on row (null when not installed), with the bump pull request already recorded on it, and
+	 * the environment's apps repo (null when none).
+	 */
 	readTarget(input: GitopsBumpInput): Promise<{
-		row: { mode: string; source: string; version: string | null } | null;
+		row: { mode: string; source: string; version: string | null; gitopsBump: GitopsBumpRecord | null } | null;
 		appsRepo: string | null;
 	}>;
 	/** Records the pull request on the add-on's row. */
@@ -186,7 +208,12 @@ export function actorScopedBumpStore(scoped: <T>(fn: (tx: Tx) => Promise<T>) => 
 		readTarget: (input) =>
 			scoped(async (tx) => {
 				const [row] = await tx
-					.select({ mode: projectAddons.mode, source: projectAddons.source, version: projectAddons.version })
+					.select({
+						mode: projectAddons.mode,
+						source: projectAddons.source,
+						version: projectAddons.version,
+						gitopsBump: projectAddons.gitops_bump,
+					})
 					.from(projectAddons)
 					.where(addonRow(input))
 					.limit(1);
@@ -236,6 +263,16 @@ export async function requestGitopsBumpFor(
 		field: "spec.source.targetRevision",
 		version,
 	});
+	// A pull request is opened with a person's own GitHub account. An actor with no personal identity
+	// (a service token pinned to a shared org, whose `userId` is only the profile that minted it) has
+	// no account of its own to open one with, so it is refused here, before any token is read.
+	const person = personalIdentityAuthor(input.actor);
+	if (person === undefined) {
+		return refused(
+			"not-a-person",
+			"A pull request is opened with a person's own GitHub account, and this credential is not a person's. Sign in as yourself (alethia login), or change the file yourself.",
+		);
+	}
 	if (!row) return refused("not-installed", "This add-on is not enabled in this environment.");
 	if (row.source !== "catalog" || !def) return refused("not-catalog", "Only a catalog add-on's seeded file can be bumped.");
 	if (row.mode !== "gitops") return refused("not-gitops", "This add-on is managed by Alethia, so the next deploy installs its version.");
@@ -255,7 +292,7 @@ export async function requestGitopsBumpFor(
 	const repo = githubRepoFromUrl(appsRepo);
 	if (!repo) return refused("unknown-host", "The apps repo URL does not name a GitHub repository.");
 
-	const token = await readToken(input.userId, "github");
+	const token = await readToken(person, "github");
 	if (!token) return refused("no-git-link", "Link your GitHub account to let Alethia open the pull request for you.");
 
 	const outcome = await openGitopsBump(githubClient(repo, token, fetchImpl), {
@@ -263,10 +300,15 @@ export async function requestGitopsBumpFor(
 		chart: def.chart,
 		version,
 		again: input.again,
-		security: def.securityRelease ? { summary: def.securityRelease.summary, advisoryUrl: def.securityRelease.advisoryUrl } : null,
+		// The catalog's security note describes the CATALOG's version. A pin to another version is not
+		// that release, so its pull request does not claim the fix.
+		security:
+			def.securityRelease && version === def.version
+				? { summary: def.securityRelease.summary, advisoryUrl: def.securityRelease.advisoryUrl }
+				: null,
 	});
 	const result = toResult(outcome, version, file);
-	const record = "branch" in outcome ? toRecord(result, outcome.branch, input.userId, now()) : null;
+	const record = "branch" in outcome ? toRecord(result, outcome.branch, person, row.gitopsBump, now()) : null;
 	if (record) await store.saveBump(input, record);
 	return result;
 }
