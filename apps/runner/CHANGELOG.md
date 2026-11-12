@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.9.0...runner-v0.10.0) (2026-11-12)
+
+
+### Features
+
+* **byo-charts:** decide a namespace's admission mode from the chart's history, and give warn → enforce a product path ([#6541](https://github.com/alethialabs-io/alethialabs/issues/6541)) ([#6571](https://github.com/alethialabs-io/alethialabs/issues/6571)) ([232c29d](https://github.com/alethialabs-io/alethialabs/commit/232c29d53bad8f51234167a51756f2c10524a5ad))
+
+
+### Bug Fixes
+
+* **git:** resolve the git provider from the repo's exact host, and refuse an unknown one ([#6600](https://github.com/alethialabs-io/alethialabs/issues/6600)) ([#6606](https://github.com/alethialabs-io/alethialabs/issues/6606)) ([7e59c7b](https://github.com/alethialabs-io/alethialabs/commit/7e59c7b6df07df2a93257881c78337bf0f7233de))
+
 ## [0.9.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.8.0...runner-v0.9.0) (2026-11-11)
 
 
