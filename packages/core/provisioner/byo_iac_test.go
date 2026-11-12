@@ -308,3 +308,35 @@ func TestCoerceByoVarValues(t *testing.T) {
 		}
 	}
 }
+
+// TestPrepareByoIacWorkdir_LogsRedactedRepoURL feeds a repo URL carrying userinfo and asserts that
+// neither the job-log line nor the returned error prints it. The clone targets a refused local
+// port, so it fails fast without the network.
+func TestPrepareByoIacWorkdir_LogsRedactedRepoURL(t *testing.T) {
+	vc := &types.ProjectConfig{
+		IacSource: &types.ProjectIacSourceConfig{
+			RepoURL:   "https://alice:s3cr3t-tok@127.0.0.1:1/o/r.git",
+			Ref:       "main",
+			CommitSHA: strings.Repeat("a", 40),
+			Path:      "module",
+		},
+	}
+	var out, errBuf bytes.Buffer
+	_, _, _, err := prepareByoIacWorkdir(context.Background(), vc, "", t.TempDir(), &out, &errBuf)
+	if err == nil {
+		t.Fatal("expected the clone from a refused port to fail")
+	}
+	if !strings.Contains(out.String(), "cloning https://127.0.0.1:1/o/r.git") {
+		t.Fatalf("job log missing the redacted repo URL: %q", out.String())
+	}
+	for _, text := range []string{out.String(), errBuf.String(), err.Error()} {
+		if strings.Contains(text, "alice") || strings.Contains(text, "s3cr3t-tok") {
+			t.Fatalf("userinfo printed: %s", text)
+		}
+	}
+	// A rejected transport is named the same way.
+	verr := validateByoRepoURL("http://alice:s3cr3t-tok@internal.example/o/r.git")
+	if verr == nil || strings.Contains(verr.Error(), "alice") || strings.Contains(verr.Error(), "s3cr3t-tok") {
+		t.Fatalf("validateByoRepoURL error must reject without userinfo, got: %v", verr)
+	}
+}
