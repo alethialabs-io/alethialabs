@@ -10,6 +10,7 @@
 import path from "node:path";
 import { ESLint } from "eslint";
 import { beforeAll, describe, expect, it } from "vitest";
+import consoleEslintConfig from "../../eslint.config.mjs";
 
 const CONSOLE_DIR = path.resolve(import.meta.dirname, "../..");
 const MESSAGE = "Report a caught error through the structured logger: log.error(msg, { err }).";
@@ -17,7 +18,9 @@ const MESSAGE = "Report a caught error through the structured logger: log.error(
 let eslint: ESLint;
 
 beforeAll(() => {
-	eslint = new ESLint({ cwd: CONSOLE_DIR, overrideConfigFile: "eslint.config.mjs" });
+	// The config module itself, not a copy: `overrideConfigFile: true` skips file lookup so this is
+	// exactly what the import resolved.
+	eslint = new ESLint({ cwd: CONSOLE_DIR, overrideConfigFile: true, overrideConfig: consoleEslintConfig });
 });
 
 /** How many times the caught-error rule fires on `code` linted as if it lived at `file`. */
