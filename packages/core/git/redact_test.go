@@ -227,3 +227,26 @@ func TestScrubCause_DropsQueryWithUserinfo(t *testing.T) {
 		t.Fatalf("scrubCause kept the query or fragment: %s", got)
 	}
 }
+
+// TestRedactURL_EdgeShapes pins the scp and bare-host shapes that must fall back or trim.
+func TestRedactURL_EdgeShapes(t *testing.T) {
+	for raw, want := range map[string]string{
+		"git@github.com:o/r.git?ref=main#x": "github.com:o/r.git",
+		"git@github.com:o/a@b.git":          UnparsedRepoURL,
+		"%zz/o/r":                           UnparsedRepoURL,
+	} {
+		if got := RedactURL(raw); got != want {
+			t.Fatalf("RedactURL(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+// TestScrubCause_NilAndEmptyUsername covers a nil error and a URL whose userinfo has a password but
+// an empty username.
+func TestScrubCause_NilAndEmptyUsername(t *testing.T) {
+	if scrubCause("https://a:b@h/p", nil) != nil {
+		t.Fatalf("scrubCause(nil) must be nil")
+	}
+	got := scrubCause("https://:s3cr3t-tok@github.com/o/r", errors.New("refused for :s3cr3t-tok@github.com")).Error()
+	assertNoUserinfo(t, "scrubCause empty username", got)
+}
