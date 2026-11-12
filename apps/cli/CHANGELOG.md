@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.9.0...cli-v0.10.0) (2026-11-12)
+
+
+### Features
+
+* **addons:** open a pull request that bumps a GitOps add-on's seeded chart version ([#6549](https://github.com/alethialabs-io/alethialabs/issues/6549)) ([#6618](https://github.com/alethialabs-io/alethialabs/issues/6618)) ([661d55b](https://github.com/alethialabs-io/alethialabs/commit/661d55b827b1e97c497a2d59d034e23f1737a54d))
+
 ## [0.9.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.8.0...cli-v0.9.0) (2026-11-11)
 
 
