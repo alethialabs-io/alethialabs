@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { SsrfError, UNREACHABLE_DESTINATION } from "@/lib/net/ssrf-guard";
 import { cliChannelResponse } from "@/lib/validations/cli-contract";
+import { log } from "@/lib/observability/log";
 
 /** Maps a channel row to its client-safe CLI wire shape (never the secret envelope). */
 function toChannelWire(row: typeof alertChannels.$inferSelect) {
@@ -53,7 +54,7 @@ export async function POST(
 		// The outbound guard's own message describes how the destination resolved: logged, never
 		// returned. The CLI gets the same fixed sentence the console does.
 		if (err instanceof SsrfError) {
-			console.warn("[cli] channel destination refused by the outbound guard:", err.message);
+			log.warn("[cli] channel destination refused by the outbound guard", { err });
 			return NextResponse.json({ error: UNREACHABLE_DESTINATION }, { status: 400 });
 		}
 		const message = err instanceof Error ? err.message : "Verification failed.";

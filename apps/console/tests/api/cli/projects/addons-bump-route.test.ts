@@ -9,6 +9,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/app/server/actions/addons", () => ({ requestGitopsBump: vi.fn() }));
+vi.mock("@/lib/observability/log", () => {
+	const l = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: () => l };
+	return { log: l };
+});
 vi.mock("@/lib/authz/actor-context", () => ({
 	runWithActor: (_actor: unknown, fn: () => unknown) => fn(),
 }));
@@ -24,6 +28,7 @@ vi.mock("@/lib/cli/resolve-project", () => ({
 
 import { POST } from "@/app/api/cli/projects/[id]/addons/bump/route";
 import { requestGitopsBump } from "@/app/server/actions/addons";
+import { log } from "@/lib/observability/log";
 import { cliGitopsBumpResponse } from "@/lib/validations/cli-contract";
 
 const params = { params: Promise.resolve({ id: "shop" }) };
@@ -96,14 +101,17 @@ describe("POST /api/cli/projects/:id/addons/bump", () => {
 	});
 
 	it("does not forward an internal error's text", async () => {
-		vi.spyOn(console, "error").mockImplementation(() => {});
+		vi.mocked(log.error).mockClear();
 		vi.mocked(requestGitopsBump).mockImplementation(async () => {
 			throw new Error("connect ECONNREFUSED token=gho_SHOULD_NOT_LEAK");
 		});
 		const res = await post({ addon_id: "ingress-nginx" });
 		expect(res.status).toBe(500);
 		expect(JSON.stringify(await res.json())).not.toContain("gho_SHOULD_NOT_LEAK");
-		expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("gho_SHOULD_NOT_LEAK");
+		// The logger gets the error's NAME only: its message can carry a token, and the `err`
+		// serializer would write the message.
+		expect(vi.mocked(log.error)).toHaveBeenCalledWith("addons/bump: request failed", { err_name: "Error" });
+		expect(JSON.stringify(vi.mocked(log.error).mock.calls)).not.toContain("gho_SHOULD_NOT_LEAK");
 	});
 
 	it("maps an authorization refusal to 403", async () => {

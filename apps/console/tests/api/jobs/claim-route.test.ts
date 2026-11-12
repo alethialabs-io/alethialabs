@@ -40,6 +40,11 @@ vi.mock("@/lib/runners/snapshot-sig", () => ({ verifySnapshot: () => true }));
 vi.mock("@/lib/connectors/health", () => ({ markFailed: vi.fn() }));
 vi.mock("@/lib/observability/metrics", () => ({ recordClaimLatency: vi.fn() }));
 vi.mock("@/lib/observability/trace", () => ({ markJobSpan: vi.fn() }));
+const logError = vi.fn();
+vi.mock("@/lib/observability/log", () => {
+	const l = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: logError, child: () => l };
+	return { log: l };
+});
 
 const DNS_CANARY = "CANARY-dns-cloudflare-7f3a";
 const REGISTRY_CANARY = "CANARY-registry-dockerhub-91c2";
@@ -230,6 +235,31 @@ describe("POST /api/jobs/claim — per-job-type grants (#5308)", () => {
 		});
 		expect(body.cloud_identity?.api_token).toBe("hcloud-api-token");
 		expect(body.cloud_identity?.s3_secret_key).toBe(S3_CANARY);
+	});
+
+	it("reports a credential that fails to decrypt through the logger, with the error under `err`", async () => {
+		const tokenFailure = new Error("bad envelope (token)");
+		const credentialFailure = new Error("bad envelope (credential)");
+		decryptSecret.mockImplementation((ciphertext: string) => {
+			if (ciphertext === "enc:hcloud") throw tokenFailure;
+			if (ciphertext === "enc:dockerhub") throw credentialFailure;
+			return PLAINTEXT[ciphertext] ?? {};
+		});
+		try {
+			const { body } = await claim("DEPLOY");
+			expect(body.cloud_identity?.api_token).toBe("");
+			expect(body.connector_credentials.map((c) => c.slug)).not.toContain("dockerhub");
+			expect(logError).toHaveBeenCalledWith(
+				"Failed to decrypt cloud token for identity",
+				expect.objectContaining({ err: tokenFailure }),
+			);
+			expect(logError).toHaveBeenCalledWith("Failed to decrypt connector credential", {
+				slug: "dockerhub",
+				err: credentialFailure,
+			});
+		} finally {
+			decryptSecret.mockImplementation((ciphertext: string) => PLAINTEXT[ciphertext] ?? {});
+		}
 	});
 
 	it("hands a job type this build does not know the row and nothing else", async () => {
