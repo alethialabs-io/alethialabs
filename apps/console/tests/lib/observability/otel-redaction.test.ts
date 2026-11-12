@@ -155,8 +155,11 @@ describe("the email matcher's cost", () => {
 		log.error(`${"a@".repeat(256 * 1024)}x%40`);
 		const elapsed = performance.now() - t0;
 		expect(records[0]?.body).toBe(hostile);
-		expect(elapsed).toBeLessThan(1000);
-	});
+		// Linear finishes in tens of milliseconds; a quadratic matcher on these inputs runs for
+		// minutes. The bound sits far from both, so a loaded CI runner (1.3 s was measured under the
+		// full parallel suite) does not fail it and a quadratic regression still does.
+		expect(elapsed).toBeLessThan(10_000);
+	}, 30_000);
 
 	it("redacts an address at the end of 1 MB of text", () => {
 		const blob = `${"x".repeat(1024 * 1024)} reply to ops@example.com`;
