@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { errorDigest, errorMessage, errorStack, isExpectedRequestError } from "@/lib/errors";
+import { errorDigest, isExpectedRequestError } from "@/lib/errors";
 
 /** Next.js server-startup hook. Runs once per app instance on the Node runtime. */
 export async function register() {
@@ -109,8 +109,9 @@ export async function register() {
 /**
  * Captures the FULL server stack for any uncaught request error (Server Components, Route
  * Handlers, Server Actions). The dev overlay and terminal otherwise collapse app frames as
- * "ignore-listed", which hides the real throw site; this logs the unredacted stack + digest
- * so a digest seen in the browser maps to an exact `file:line` here.
+ * "ignore-listed", which hides the real throw site; this logs the error under `err`, through the
+ * logger's `err` serializer (its type, message, stack and status fields, and its cause), plus the
+ * digest, so a digest seen in the browser maps to an exact `file:line` here.
  */
 export async function onRequestError(
 	error: unknown,
@@ -135,7 +136,7 @@ export async function onRequestError(
 		path: request.path ?? context.routePath ?? "?",
 		route_type: context.routeType ?? "?",
 		digest: errorDigest(error) ?? "-",
-		stack: errorStack(error) ?? errorMessage(error),
+		err: error,
 	});
 	// Preserve the former product-analytics hook as a fail-closed no-op. Background contexts cannot
 	// prove optional analytics consent, so server errors remain in structured logs and the separately
