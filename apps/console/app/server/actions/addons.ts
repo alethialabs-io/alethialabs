@@ -37,7 +37,12 @@ import type {
 	AddOnRequirement,
 	AddOnSecurityRelease,
 } from "@/lib/addons/types";
-import type { AddOnValues } from "@/types/jsonb.types";
+import type { AddOnValues, GitopsBumpRecord } from "@/types/jsonb.types";
+import {
+	actorScopedBumpStore,
+	type GitopsBumpResult,
+	requestGitopsBumpFor,
+} from "@/lib/addons/gitops-bump/service";
 
 /** The install state of an add-on on an environment (null when not enabled). */
 export interface AddonInstallState {
@@ -52,6 +57,8 @@ export interface AddonInstallState {
 	health: string | null;
 	sync: string | null;
 	lastSyncedAt: string | null;
+	/** GitOps mode: the pull request Alethia opened to bump the seeded chart version, or null (#6549). */
+	gitopsBump: GitopsBumpRecord | null;
 }
 
 /** One marketplace row: the catalog display metadata + this environment's install state. */
@@ -311,5 +318,45 @@ export async function disableAddonAction(raw: z.input<typeof addonTargetInput>) 
 			await refusingCanvasWrite(() => disableAddon(input));
 			return { addonId: input.addonId };
 		},
+	})(raw);
+}
+
+// ── The GitOps add-on bump pull request (#6549) ─────────────────────────────────────────────────
+
+/**
+ * Opens, or finds, the pull request that moves a GitOps-mode add-on's seeded
+ * `spec.source.targetRevision` to the version a deploy would seed, using the CALLER's own GitHub
+ * token. Gated on `edit`, like every other add-on write. The console card and the CLI route call
+ * this one function. A deploy never does: the pull request exists only because someone asked.
+ */
+export async function requestGitopsBump(input: {
+	projectId: string;
+	environmentId?: string | null;
+	addonId: string;
+	again?: boolean;
+}): Promise<GitopsBumpResult> {
+	const actor = await authorize("edit", {
+		type: "project",
+		id: input.projectId,
+	});
+	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
+	return requestGitopsBumpFor(actorScopedBumpStore((fn) => withActorScope(actor, fn)), {
+		userId: actor.userId,
+		projectId: input.projectId,
+		environmentId: envId,
+		addonId: input.addonId,
+		again: input.again ?? false,
+	});
+}
+
+const gitopsBumpInput = addonTargetInput.extend({
+	again: z.boolean().optional(),
+});
+
+/** Opens or finds the bump pull request for a GitOps add-on; answers what happened. */
+export async function requestGitopsBumpAction(raw: z.input<typeof gitopsBumpInput>) {
+	return defineAction({
+		input: gitopsBumpInput,
+		run: async ({ input }) => refusingCanvasWrite(() => requestGitopsBump(input)),
 	})(raw);
 }

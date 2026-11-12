@@ -82,6 +82,7 @@ describe("DeployPane", () => {
 							chart: "ingress-nginx",
 							seededVersion: "4.11.2",
 							desiredVersion: "4.15.1",
+							pull: null,
 						},
 					],
 				})}
@@ -94,6 +95,28 @@ describe("DeployPane", () => {
 		// It is a warning for the rollup, though it is not in the plain Warnings section.
 		expect(screen.getByText("4 components · 1 degraded · 1 warning")).toBeDefined();
 		expect(screen.queryByText(/^Warnings ·/)).toBeNull();
+	});
+
+	it("a drift row links to its pull request (#6549)", () => {
+		render(
+			<DeployPane
+				status={base({
+					addonDrift: [
+						{
+							addonId: "ingress-nginx",
+							file: "addons/ingress-nginx.yaml",
+							chart: "ingress-nginx",
+							seededVersion: "4.11.2",
+							desiredVersion: "4.15.1",
+							pull: { number: 42, url: "https://github.com/acme/apps/pull/42", state: "open" },
+						},
+					],
+				})}
+			/>,
+		);
+		const link = screen.getByRole("link", { name: /Pull request #42/ });
+		expect(link.getAttribute("href")).toBe("https://github.com/acme/apps/pull/42");
+		expect(screen.getByText("is open in your apps repo.")).toBeDefined();
 	});
 
 	it("no GitOps add-on section when nothing drifted", () => {

@@ -1,0 +1,11 @@
+{
+  "status": "refused",
+  "created": false,
+  "version": "4.15.1",
+  "file": "addons/ingress-nginx.yaml",
+  "field": "spec.source.targetRevision",
+  "number": null,
+  "url": null,
+  "reason": "provider-not-supported",
+  "message": "Alethia opens these pull requests on GitHub only. On GitLab, change the file yourself."
+}

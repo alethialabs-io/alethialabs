@@ -99,6 +99,23 @@ function AddonDriftItem({ drift }: { drift: AddonDriftRow }) {
 					<span className="font-mono">spec.source.targetRevision</span> in that file to{" "}
 					<span className="font-mono">{drift.desiredVersion}</span> to move it.
 				</div>
+				{drift.pull ? (
+					<div className="text-foreground">
+						<a href={drift.pull.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline underline-offset-2">
+							Pull request #{drift.pull.number}
+							<ExternalLink className="size-3" aria-hidden />
+						</a>{" "}
+						<span className="text-muted-foreground">
+							{drift.pull.state === "open" && "is open in your apps repo."}
+							{drift.pull.state === "merged" && "was merged. The next deploy reads the new version."}
+							{drift.pull.state === "declined" && "was closed without merging."}
+						</span>
+					</div>
+				) : (
+					<div className="text-muted-foreground">
+						On GitHub, the add-on's card can open a pull request that makes this change.
+					</div>
+				)}
 			</div>
 		</div>
 	);

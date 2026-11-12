@@ -208,6 +208,45 @@ alethia addon disable -p my-project
   having done nothing.
 </Callout>
 
+## `alethia addon bump`
+
+Open a pull request that moves a GitOps add-on to the chart version that a deploy would seed.
+
+```bash
+alethia addon bump ingress-nginx -p my-project -e production
+alethia addon bump -p my-project
+alethia addon bump ingress-nginx -p my-project --again
+```
+
+| Argument / Flag | Required | Description |
+|------|----------|-------------|
+| `[addon-id]` | No | Catalog id (positional). Omit it on a terminal to pick from the installed add-ons. |
+| `--project`, `-p` | No | Project name or id. Omit it on a terminal and you are asked. |
+| `--env`, `-e` | No | Environment id, name or stage; an exact name wins over a stage. |
+| `--again` | No | Open the pull request again after you closed the last one without merging it. |
+
+Alethia seeds a GitOps add-on's `addons/<addon-id>.yaml` once and does not rewrite it. A newer
+catalog version therefore does not reach the add-on until the file changes. The Deploy tab names
+each add-on whose file is behind.
+
+This command opens a pull request in the environment's apps repo. The pull request sets
+`spec.source.targetRevision` in that file to the version a deploy would seed: the catalog's
+version, or your pin. It changes only that field. Every other byte of the file stays the same. It
+does not migrate values that the newer chart renamed or removed, so check the chart's release notes
+before you merge.
+
+- The pull request is opened with **your** linked GitHub account.
+- If a pull request for that version is open, the command shows it and opens no other.
+- If you closed one without merging it, the command tells you and opens nothing. To open it again,
+  use `--again`.
+- A deploy never opens a pull request.
+
+<Callout type="info">
+  Only GitHub repositories are supported. On GitLab or Bitbucket, and whenever the command cannot
+  open a pull request, it shows the file, the field and the version to change yourself. The
+  command exits 0 in that case, because the refusal is an answer, not a failure.
+</Callout>
+
 ## See also
 
 - [Chart Commands](/reference/cli/charts) — your own BYO Helm charts.

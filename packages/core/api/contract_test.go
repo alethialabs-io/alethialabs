@@ -631,6 +631,27 @@ func TestContract_ByoAttach(t *testing.T) {
 
 // TestContract_ByoScan pins the scan response — the job id is what makes an asynchronous scan
 // followable instead of something a script has to poll blind.
+// TestContract_GitopsBump (#6549): both arms of the bump answer decode strictly, a pull request with
+// its number and URL, a refusal with its reason and message, and both with the manual instruction.
+func TestContract_GitopsBump(t *testing.T) {
+	var open GitopsBumpResult
+	strictDecode(t, "gitops_bump.json", &open)
+	assertNoExtraStructKeys(t, "gitops_bump.json", open)
+	if open.Status != "open" || open.Number == nil || *open.Number != 42 || open.URL == nil || open.Reason != nil {
+		t.Errorf("the open arm did not decode: %+v", open)
+	}
+	var refused GitopsBumpResult
+	strictDecode(t, "gitops_bump_refused.json", &refused)
+	if refused.Status != "refused" || refused.Reason == nil || refused.Message == nil || refused.Number != nil {
+		t.Errorf("the refused arm did not decode: %+v", refused)
+	}
+	for _, r := range []GitopsBumpResult{open, refused} {
+		if r.File == "" || r.Field != "spec.source.targetRevision" || r.Version == "" {
+			t.Errorf("the manual instruction is missing: %+v", r)
+		}
+	}
+}
+
 func TestContract_ByoScan(t *testing.T) {
 	var resp ByoScanResult
 	strictDecode(t, "byo_scan.json", &resp)

@@ -695,6 +695,7 @@ export async function readProjectAddons(
 			health: projectAddons.health,
 			sync_status: projectAddons.sync_status,
 			last_synced_at: projectAddons.last_synced_at,
+			gitops_bump: projectAddons.gitops_bump,
 		})
 		.from(projectAddons)
 		.innerJoin(projects, eq(projectAddons.project_id, projects.id))
@@ -735,6 +736,8 @@ export async function readProjectAddons(
 					health: row.health,
 					sync: row.sync_status,
 					lastSyncedAt: row.last_synced_at?.toISOString() ?? null,
+					// The bump pull request, for the card's link (#6549). A number, URL and state; no secret.
+					gitopsBump: row.gitops_bump ?? null,
 				}
 			: null;
 		return {
