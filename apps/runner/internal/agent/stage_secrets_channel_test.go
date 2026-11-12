@@ -61,8 +61,10 @@ func TestRun_ExecuteDeploy_HandsItsSecretsToTheSandbox(t *testing.T) {
 
 	stdout := NewJobLogger(api, "covrun-secrets", "STDOUT")
 	stderr := NewJobLogger(api, "covrun-secrets", "STDERR")
+	snap := covRunDeploySnapshot("namespace")
+	snap["repositories"] = map[string]any{"apps_destination_repo": "https://github.com/acme/apps.git"}
 	err := w.executeDeploy(t.Context(),
-		&Job{ID: "covrun-secrets", JobType: string(types.JobTypeDeploy), ConfigSnapshot: covRunDeploySnapshot("namespace")},
+		&Job{ID: "covrun-secrets", JobType: string(types.JobTypeDeploy), ConfigSnapshot: snap},
 		"hetzner", nil, nil, stdout, stderr)
 	stdout.Close()
 	stderr.Close()
@@ -78,7 +80,7 @@ func TestRun_ExecuteDeploy_HandsItsSecretsToTheSandbox(t *testing.T) {
 		t.Errorf("state token = %q, want the job's minted token", got.StateToken)
 	}
 	if got.GitToken != "covrun-git-token" {
-		t.Errorf("git token = %q, want the job's BYO git token", got.GitToken)
+		t.Errorf("git token = %q, want the apps repo's git token", got.GitToken)
 	}
 	if got.AddonSecrets["a6"]["apiKey"] != "covrun-addon" {
 		t.Errorf("add-on secrets = %v, want a6.apiKey", got.AddonSecrets)

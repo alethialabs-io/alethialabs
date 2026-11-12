@@ -110,10 +110,12 @@ type stageDriftPayload struct {
 // sandbox.Spec.Secrets (specSecrets); the container child fills them from its env
 // (stageSecretsFromEnv), which the backend built from that Spec field for this job only.
 type stageSecrets struct {
+	// GitToken is the token requested for the apps-destination repo on a deploy, or for the BYO
+	// IaC module repo on a drift — the one repo that stage uses it for.
 	GitToken   string
 	StateToken string
-	// GitTokens maps a BYO chart repo URL → its git token, when the repo lives on a different
-	// provider than the apps-destination repo (see runner.go's per-repo resolution). Crosses the
+	// GitTokens maps each other repo a deploy or plan clones (the BYO IaC module, each BYO git
+	// chart) → the token requested for exactly that repo (see git_tokens.go). Crosses the
 	// container boundary as a JSON-encoded ALETHIA_STAGE_GIT_TOKENS env var.
 	GitTokens map[string]string
 	// AddonSecrets maps add-on id → secret field key → plaintext (W4.5 #640), fetched by the

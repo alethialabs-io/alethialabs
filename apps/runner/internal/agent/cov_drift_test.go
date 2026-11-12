@@ -28,6 +28,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -47,6 +49,8 @@ type covDriftAPI struct {
 	gitToken      string
 	gitTokenErr   error
 	gitTokenCalls int
+	// gitTokenRepos is the repo each git-token request named, in order.
+	gitTokenRepos []string
 }
 
 // covDriftNewAPI builds the decorated mock with sane defaults (both mints succeed).
@@ -65,6 +69,7 @@ func (a *covDriftAPI) FetchStateToken(jobID string) (string, error) {
 // FetchGitToken answers the git-token mint and records that it was called.
 func (a *covDriftAPI) FetchGitToken(jobID, repoURL string) (string, error) {
 	a.gitTokenCalls++
+	a.gitTokenRepos = append(a.gitTokenRepos, repoURL)
 	if a.gitTokenErr != nil {
 		return "", a.gitTokenErr
 	}
@@ -340,33 +345,31 @@ func TestDrift_ByoRunsThroughTheSandboxAndRecordsPosture(t *testing.T) {
 	}
 }
 
-// TestDrift_ByoFetchesGitTokenOnlyWhenTheSnapshotHasNone pins the token precedence: a
-// token frozen on the snapshot is used as-is, and only its absence triggers a mint.
-func TestDrift_ByoFetchesGitTokenOnlyWhenTheSnapshotHasNone(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		snapToken string
-		wantCalls int
-	}{
-		{"snapshot token wins", "frozen-token", 0},
-		{"empty snapshot token mints", "", 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+// TestDrift_ByoAlwaysRequestsTheModuleTokenByName pins that a BYO drift asks for the module repo's
+// token by name and hands the sandbox that token, whether or not the snapshot carries a
+// git_access_token of its own: a snapshot token is never used in its place.
+func TestDrift_ByoAlwaysRequestsTheModuleTokenByName(t *testing.T) {
+	for _, snapToken := range []string{"", "frozen-token"} {
+		t.Run("snapshot token "+strconv.Quote(snapToken), func(t *testing.T) {
 			api := covDriftNewAPI()
 			sb := &covDriftSandbox{resultJSON: covDriftPostureResult}
 			w := covDriftRunner(t, api, "self", sb)
 			out, errl := covDriftLoggers(t, api)
 
+			const module = "https://git.test/mod.git"
 			vc := types.ProjectConfig{
-				GitAccessToken: tc.snapToken,
-				IacSource:      &types.ProjectIacSourceConfig{RepoURL: "https://git.test/mod.git", CommitSHA: "abc"},
+				GitAccessToken: snapToken,
+				IacSource:      &types.ProjectIacSourceConfig{RepoURL: module, CommitSHA: "abc"},
 			}
 			job := covDriftJob(covDriftSnapshot(t, vc))
 			if err := w.executeDriftDetection(context.Background(), job, "aws", nil, out, errl); err != nil {
 				t.Fatalf("byo drift: %v", err)
 			}
-			if api.gitTokenCalls != tc.wantCalls {
-				t.Fatalf("git-token mints = %d, want %d", api.gitTokenCalls, tc.wantCalls)
+			if want := []string{module}; !reflect.DeepEqual(api.gitTokenRepos, want) {
+				t.Fatalf("git-token requests = %q, want one naming the module: %q", api.gitTokenRepos, want)
+			}
+			if got := childSecrets(t, sb.spec).GitToken; got != api.gitToken {
+				t.Fatalf("sandbox GitToken = %q, want the token minted for the module (%q)", got, api.gitToken)
 			}
 		})
 	}

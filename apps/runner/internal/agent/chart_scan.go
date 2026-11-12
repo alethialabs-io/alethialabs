@@ -16,6 +16,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/git"
 	"github.com/alethialabs-io/alethialabs/packages/core/helmoci"
 	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
+	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
@@ -111,13 +112,14 @@ func (w *Runner) fetchGitChart(ctx context.Context, job *Job, repoURL, ref, work
 	if chartPath == "" {
 		return "", fmt.Errorf("config_snapshot missing chart_path")
 	}
-	fmt.Fprintf(stdout, "Scanning Helm chart %s (%s @ %s)\n", chartPath, repoURL, ref)
+	fmt.Fprintf(stdout, "Scanning Helm chart %s (repo on host %s @ %s)\n", chartPath, provisioner.RepoHostForLog(repoURL), ref)
 
 	// Parent clone (trusted: has the git token + egress). The chart lands under the
-	// RW-mounted workdir so the untrusted render sees it without any token/egress.
-	token, err := w.api.FetchGitToken(job.ID, "")
-	if err != nil {
-		fmt.Fprintf(stderr, "No git token (%v); attempting public clone.\n", err)
+	// RW-mounted workdir so the untrusted render sees it without any token/egress. The token is
+	// requested for the chart repo by name — the job's project has an apps repo too.
+	token := w.fetchRepoToken(job.ID, repoURL, stderr)
+	if token == "" {
+		fmt.Fprintln(stderr, "No git token; attempting public clone.")
 	}
 	cloneDir := filepath.Join(workDir, "clone")
 	var repo *git.GIT
