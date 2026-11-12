@@ -4,6 +4,7 @@
 
 import { useCallback, useMemo } from "react";
 import { useRecentJobsQuery } from "@/lib/query/use-jobs-query";
+import { readStatusOf, type ReadStatus, type StatusQuery } from "@/lib/query/read-status";
 import { useNotificationsStore } from "@/lib/stores/use-notifications-store";
 import { NOTIFY_JOB_TYPES } from "@/lib/jobs/toast-copy";
 import type {
@@ -30,6 +31,28 @@ const TERMINAL: ReadonlySet<PublicProvisionJobStatus> = new Set([
 	"CANCELLED",
 ]);
 
+/** One bell source's read status plus the retry for its `error` render. */
+export interface NotificationFeed {
+	status: ReadStatus;
+	/** Re-run the source's read. Only meaningful for `error`. */
+	retry: () => void;
+}
+
+/**
+ * A bell source's {@link NotificationFeed}, from its query. Before #6114 the bell read `data ?? []`,
+ * so a failed or refused read rendered as "You're all caught up!".
+ */
+export function notificationFeed(
+	query: StatusQuery & { refetch?: () => Promise<unknown> },
+): NotificationFeed {
+	return {
+		status: readStatusOf(query),
+		retry: () => {
+			void query.refetch?.();
+		},
+	};
+}
+
 /**
  * Derives the notifications-bell feed live from the shared jobs query plus the persisted
  * read-state store. Pure (no toasts — those live in `use-job-toasts.ts`) and stateless, so
@@ -37,7 +60,8 @@ const TERMINAL: ReadonlySet<PublicProvisionJobStatus> = new Set([
  * list that emptied on every remount). Unread = terminal jobs the user hasn't acknowledged.
  */
 export function useJobNotifications() {
-	const { data: jobs } = useRecentJobsQuery();
+	const jobsQuery = useRecentJobsQuery();
+	const jobs = jobsQuery.data;
 	const readJobIds = useNotificationsStore((s) => s.readJobIds);
 	const markRead = useNotificationsStore((s) => s.markRead);
 	const markAllReadStore = useNotificationsStore((s) => s.markAllRead);
@@ -78,5 +102,11 @@ export function useJobNotifications() {
 		[markAllReadStore, notifications],
 	);
 
-	return { notifications, unreadCount, markAsRead, markAllRead };
+	return {
+		notifications,
+		unreadCount,
+		markAsRead,
+		markAllRead,
+		feed: notificationFeed(jobsQuery),
+	};
 }

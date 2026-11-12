@@ -140,6 +140,7 @@ export const BYO_RESERVED_NAMESPACES: {
 				"monitoring",
 				"observability",
 				"reloader",
+				"traefik",
 				"trivy-system",
 				"vault",
 				"velero",

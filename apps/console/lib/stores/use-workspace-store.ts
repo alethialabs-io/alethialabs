@@ -5,7 +5,6 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useParams } from "next/navigation";
 import { useEffect } from "react";
 import { create } from "zustand";
-import { setActiveOrganization } from "@/app/server/actions/workspace";
 import type { Entitlements } from "@/lib/authz/types";
 import { getQueryClient } from "@/lib/query/client";
 import { orpc, rpcClient, tenantSegment } from "@/lib/rpc/client";
@@ -48,8 +47,6 @@ interface WorkspaceStore {
 	applyWorkspace: (ctx: WorkspaceContext) => void;
 	/** Say the load failed (the hydrated query errored), keeping whatever an earlier load set. */
 	markFailed: () => void;
-	/** Persist the active org server-side, then update local state. */
-	switchOrg: (orgId: string) => Promise<void>;
 }
 
 /** The store's settled state for a workspace context. */
@@ -99,10 +96,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
 	},
 	applyWorkspace: (ctx) => set(loaded(ctx)),
 	markFailed: () => set({ loadStatus: "failed", isLoading: false }),
-	switchOrg: async (orgId) => {
-		await setActiveOrganization(orgId);
-		set({ activeOrgId: orgId });
-	},
 }));
 
 /**

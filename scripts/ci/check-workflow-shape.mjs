@@ -248,6 +248,18 @@ export const EXPRESSION_LIMIT = 21000;
 export const EXPRESSION_BUDGET = 18000;
 
 /**
+ * Whether one measured block scalar breaks the budget. Templated or not: an untemplated block over
+ * it is one `${{` from Actions refusing the whole file (#6582). The ONE predicate — `check()` and the
+ * self-test both call it, so the test cannot pass on a copy of the rule that `check()` does not use.
+ *
+ * @param {{bytes: number}} b a row from `scanExpressionBudget`
+ * @returns {boolean}
+ */
+export function overBudget(b) {
+	return b.bytes > EXPRESSION_BUDGET;
+}
+
+/**
  * Block scalars big enough to hit GitHub's expression-length ceiling, in the unit that ceiling uses.
  *
  * WHY THIS IS WORTH A CHECK, and it is the only one here with a same-repo incident three commits old.
@@ -276,11 +288,10 @@ export const EXPRESSION_BUDGET = 18000;
  *      them on a green run — that is the whole job of this check.
  *   3. IT BINDS ONLY ON A TEMPLATED SCALAR — one containing at least one `${{ … }}`. That is what
  *      makes GitHub compile the whole scalar as an expression. `deploy-console.yml`'s
- *      `Assemble .env from the vault and deploy` is 22,422 bytes, over the ceiling, contains no
- *      expression, and loads. The EVIDENCE for "untemplated and over the ceiling still runs" is
+ *      `Assemble .env from the vault and deploy` was 22,422 bytes, over the ceiling, contained no
+ *      expression, and loaded. The EVIDENCE for "untemplated and over the ceiling still runs" is
  *      that same step at 21,500 bytes, which deployed production on 09e09542c, 59ecb03d8 and
- *      4848b736a; it grew to 22,422 after 2026-08-31 and has not run since, so today's figure is
- *      the claim and those three runs are the proof. The rejected release-gate scalar
+ *      4848b736a. The rejected release-gate scalar
  *      contained exactly ONE — `${{ matrix.project }}`, written inside a JavaScript COMMENT
  *      explaining a different job's flag. Prose about an expression is an expression, and it put
  *      21 KB of shell script under a template compiler.
@@ -288,9 +299,18 @@ export const EXPRESSION_BUDGET = 18000;
  * Held against every step-level `run:`/`with.script` scalar in this repo — the summary line counts
  * them, ~180 of them block scalars, and ZERO are `with.script`, so that arm is written for the shape
  * and exercised only by the self-test —
- * and against the one observed rejection: exactly one exceeds the ceiling and it is the untemplated
- * one. That is one positive and one negative, not a documented rule — so this fails on the TEMPLATED
- * ones only, and the summary prints the largest of BOTH kinds.
+ * and against the one observed rejection.
+ *
+ * AND YET THIS FAILS ON A BLOCK OF EITHER KIND (#6582), because rule 3 is what makes an untemplated
+ * block over the budget a defect rather than a pass. It used to fail on TEMPLATED blocks only, and
+ * that left the production deploy's 22 KB script exactly one `${{` from being refused — a distance
+ * nobody would see, since the edit that closes it is one token long and can be a COMMENT. "Loads
+ * today" is a property of the current text, not of the block: the budget has to hold for the next
+ * edit too, and only a block under it whatever gets written into it does that. The cure for an
+ * untemplated block over budget is the same as for a templated one — move it into a checked-in
+ * script, inputs through `env:` (`scripts/ci/deploy-console-assemble-env.sh` is the worked
+ * example), move prose into YAML `#` comments, or split the step. The `templated` flag is still
+ * recorded, because the message and the summary say which of the two failures it is.
  *
  * SCOPE, stated: BLOCK scalars under `run:`/`script:` only. An `if:`, an `env:` value and a `with:`
  * input are template expressions under the same ceiling; the largest of those in this repo today is
@@ -858,7 +878,18 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 		}
 		for (const b of scanExpressionBudget(text)) {
 			if (b.bytes > biggestScalar.bytes) biggestScalar = { ...b, file: f };
-			if (!b.templated || b.bytes <= EXPRESSION_BUDGET) continue;
+			if (!overBudget(b)) continue;
+			if (!b.templated) {
+				out.push(
+					`${dir}/${f}:${b.line}: this \`${b.key}:\` block is ${b.bytes} BYTES (${b.chars} characters) — budget ${EXPRESSION_BUDGET}, ceiling ${EXPRESSION_LIMIT}. ` +
+						"It contains no `${{ … }}` today, so Actions accepts it. That is ONE TOKEN from not being true: a single interpolation written into it — " +
+						"inside a comment counts (run 34460914813) — makes Actions compile the whole scalar as one template expression, and over the ceiling the WHOLE FILE " +
+						"is refused: a run with zero jobs, named after the file's PATH, and no context reported on any PR (#6582). " +
+						"Move the script into a checked-in file under scripts/ci/ and pass its inputs through `env:` (scripts/ci/deploy-console-assemble-env.sh is the worked example), " +
+						"move prose OUT of the block into YAML `#` comments, which cost nothing, or split the step — each `run:` has its own budget.",
+				);
+				continue;
+			}
 			out.push(
 				`${dir}/${f}:${b.line}: this \`${b.key}:\` block is ${b.bytes} BYTES (${b.chars} characters) and contains a \`\${{ … }}\`, ` +
 					`which makes Actions compile the whole scalar as one template expression — ceiling ${EXPRESSION_LIMIT}, budget here ${EXPRESSION_BUDGET}. ` +
@@ -866,8 +897,8 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 					"because `on:` was never read, no context reported on the PR, and the reason legible only inside that run's own UI " +
 					"(`Exceeded max expression length 21000`, run 34460914813). " +
 					"Move prose OUT of the block into YAML `#` comments, which cost nothing, or split the step — each `run:` has its own budget. " +
-					"If the block needs no interpolation at all, deleting the last `${{ … }}` takes it out of the limit entirely: an untemplated scalar is never measured, " +
-					"which is how deploy-console.yml has deployed production carrying an untemplated block of 21,500 bytes.",
+					"Deleting the last `${{ … }}` takes it out of the limit Actions enforces, but NOT out of this budget: an untemplated block over it fails here too (#6582), " +
+					"because it is still one interpolation from being refused.",
 			);
 		}
 		const guards = scanServiceGuards(text);
@@ -1223,12 +1254,22 @@ jobs:
 		const body = `          ${filler}${expr ? "  # ${{ matrix.project }}" : ""}\n`;
 		return `jobs:\n  a:\n    steps:\n      ${item ? "- " : "- name: n\n        "}run: ${indicator}\n${body}`;
 	};
-	const budgeted = (text) => scanExpressionBudget(text).filter((b) => b.templated && b.bytes > EXPRESSION_BUDGET);
-	ok("a 22 KB block with NO expression is not measured against the limit",
-		budgeted(block(22000)).length === 0 && scanExpressionBudget(block(22000))[0].bytes > EXPRESSION_LIMIT,
-		JSON.stringify(scanExpressionBudget(block(22000))));
-	ok("...and the same block with ONE `${{ … }}` in a comment is over budget",
-		budgeted(block(22000, { expr: true })).length === 1);
+	const budgeted = (text) => scanExpressionBudget(text).filter(overBudget);
+	// THROUGH check(), not through the predicate alone: the defect #6582 fixed was in check()'s own
+	// `continue`, which skipped every untemplated row, and a test of a helper copy of the rule could
+	// not have seen it. Run against the pre-#6582 check() this case is the one that goes red.
+	const budgetProblems = (text) => check("d", () => ["w.yml"], () => text).filter((p) => /BYTES \(/.test(p));
+	const untemplatedHit = budgetProblems(block(22000));
+	ok("a 22 KB block with NO expression FAILS the budget (#6582) — one `${{` from Actions refusing the file",
+		untemplatedHit.length === 1 && /contains no `\$\{\{ … \}\}` today/.test(untemplatedHit[0]) && scanExpressionBudget(block(22000))[0].templated === false,
+		JSON.stringify(untemplatedHit));
+	ok("...and so does one just over the BUDGET, not only over the ceiling",
+		budgetProblems(block(EXPRESSION_BUDGET + 100)).length === 1);
+	ok("...while one just under it does not", budgetProblems(block(EXPRESSION_BUDGET - 100)).length === 0);
+	const templatedHit = budgetProblems(block(22000, { expr: true }));
+	ok("...and the same block with ONE `${{ … }}` in a comment fails as the TEMPLATED kind",
+		budgeted(block(22000, { expr: true })).length === 1 && templatedHit.length === 1 && /contains a `\$\{\{ … \}\}`/.test(templatedHit[0]),
+		JSON.stringify(templatedHit));
 	ok("a small templated block is fine", budgeted(block(500, { expr: true })).length === 0);
 	// THE UNIT. A block of em dashes is 3 bytes per character: under budget counted wrongly, over
 	// counted rightly. This is the case that decides whether the check would have caught #4466's
@@ -1502,6 +1543,6 @@ if (process.argv.includes("--self-test")) {
 			`largest TEMPLATED block scalar ${biggest.bytes} bytes of ${EXPRESSION_BUDGET} budgeted (${EXPRESSION_LIMIT} is where Actions refuses the file) ` +
 			`— ${biggest.file}:${biggest.line}, of ${scalars} block scalar(s) measured; ` +
 			`largest of ANY kind ${overall.bytes} bytes — ${overall.file}:${overall.line}` +
-			`${overall.templated ? "" : ", untemplated"}${overall.bytes > EXPRESSION_LIMIT ? ` — OVER the ${EXPRESSION_LIMIT} ceiling, and one \`\${{\` away from taking that workflow off the air` : ""}`,
+			`${overall.templated ? "" : ", untemplated"}, of ${EXPRESSION_BUDGET} budgeted for EITHER kind`,
 	);
 }

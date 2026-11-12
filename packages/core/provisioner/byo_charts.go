@@ -6,6 +6,7 @@ package provisioner
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -887,10 +888,12 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	// kubectl/git failure can echo a tokened URL (#948).
 	allTokens := gitTokenValues(token, repoTokens)
 
-	// Per-repo credentials. Each repo prefers its own token (repoTokens[repo], set when the chart
-	// lives on a different provider than the apps-destination repo) and falls back to the shared
-	// token. Without any token a private BYO Application can't clone — warn (public charts still
-	// work) but don't fail the deploy.
+	// Per-repo credentials. Each repo gets ONLY its own token (repoTokens[repo]): the runner fetches
+	// one per chart repo, and the console resolves it from that repo's exact host (#6600). There is
+	// deliberately no fallback to the shared apps-repo token — when the per-repo fetch failed or was
+	// refused, that token belongs to another repo's provider, and registering it here would send it
+	// to the chart repo's host. Without a token the chart is treated as public: no credential is
+	// registered, a private one fails to sync, and the deploy does not fail.
 	seen := map[string]bool{}
 	for _, repo := range gitRepos {
 		if repo == "" || seen[repo] {
@@ -899,10 +902,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 		seen[repo] = true
 		repoToken := repoTokens[repo]
 		if repoToken == "" {
-			repoToken = token
-		}
-		if repoToken == "" {
-			fmt.Fprintf(stderr, "Warning: no git access token for BYO repo %s — a private chart there will fail to sync (reconnect the git provider)\n", repo)
+			fmt.Fprintf(stderr, "Warning: no git access token for BYO repo on host %s — no credential registered; a private chart there will fail to sync (reconnect the git provider)\n", byoRepoHost(repo))
 			continue
 		}
 		if err := argocd.ConfigureRepoCredentialsNamed(repo, repoToken, argocd.ByoRepoSecretName(repo), stdout, stderr); err != nil {
@@ -911,6 +911,25 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	}
 	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, NewlyReserved: newlyReserved, Admission: admission, PlacementOverlaps: placementOverlaps, HeldMoves: heldMoves,
 		AdmissionChanges: admissionChanges, AdmissionStatus: admissionStatus}
+}
+
+// byoRepoHost is the host a BYO chart repo names, for a log line — never the full URL, whose
+// userinfo can carry a credential. It reads https/ssh URLs and scp-style user@host:path remotes,
+// and returns a placeholder for anything else.
+func byoRepoHost(repo string) string {
+	if !strings.Contains(repo, "://") {
+		if at := strings.Index(repo, "@"); at >= 0 {
+			if colon := strings.Index(repo[at+1:], ":"); colon > 0 {
+				return strings.ToLower(repo[at+1 : at+1+colon])
+			}
+		}
+		return "(unparsed repo URL)"
+	}
+	u, err := url.Parse(repo)
+	if err != nil || u.Hostname() == "" {
+		return "(unparsed repo URL)"
+	}
+	return strings.ToLower(u.Hostname())
 }
 
 // byoNamespaceLabels are the labels the runner stamps on a BYO chart's namespace beyond the

@@ -72,7 +72,8 @@ assumed role authenticates it). See `.env.production.example` for the vault-key 
 (`[auto] / [chain] / [ext] / [const]`) and `secrets.local.env.example` for the externals.
 
 > **The emit list is the real gate.** A vault key only reaches the app if the "Assemble .env"
-> step in `.github/workflows/deploy-console.yml` explicitly `emit`s/`echo`s it into the box `.env`
+> step in `.github/workflows/deploy-console.yml` — which runs
+> `scripts/ci/deploy-console-assemble-env.sh` — explicitly `emit`s/`echo`s it into the box `.env`
 > (the console reads it via `env_file: .env`). When you add a feature-gating env var, add it in
 > **all three** places — the emit list, `.env.production.example` (catalog), and
 > `secrets.local.env.example` (if operator-supplied) — or the feature silently stays off in prod

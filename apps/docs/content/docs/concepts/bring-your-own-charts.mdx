@@ -80,6 +80,32 @@ attached with `default` itself, moves to its own namespace on the environment's 
 Nothing else in `default` is changed. To keep the new namespace in the chart's settings, attach the
 chart again with that namespace or one of your own.
 
+### A chart in a preview namespace
+
+A project's preview environments use the **namespace prefix** from the project's **Preview
+environments** settings. The preview namespaces are the prefix itself and every namespace that
+starts with the prefix followed by `-`. With the prefix `preview`, `preview` and `preview-api` are
+preview namespaces, and `previews` and `my-preview-1` are not.
+
+Untrusted pull request code runs in a preview namespace, so a chart cannot run in one:
+
+- When you attach a chart, a namespace in the preview namespaces is refused.
+- A change to the prefix that puts an attached chart in the preview namespaces is refused, and the
+  error names each chart and its namespace.
+- A chart that was attached in a preview namespace before these rules keeps its namespace. Each
+  deploy shows a warning on the **Deploy** tab that names the chart, its namespace and the prefix.
+- Preview environments cannot be turned on for a project while one of its charts is in a preview
+  namespace. The refusal names each chart and its namespace.
+
+To resolve the overlap, do one of these:
+
+- **Attach the chart again with another namespace.** Choose a namespace that is not the prefix and
+  does not start with the prefix followed by `-`, or leave the namespace blank to use
+  `byo-<chart id>`.
+- **Change the preview namespace prefix** to one that no attached chart's namespace matches. The
+  prefix cannot be `byo` or start with `byo-`, because every chart's own namespace starts with
+  `byo-`.
+
 ## A push to the tracked ref deploys
 
 Your chart is attached at a git **ref**, and a ref is usually a branch — the default is `HEAD`.

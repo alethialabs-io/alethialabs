@@ -46,7 +46,7 @@ import type {
 } from "@/components/design-project/canvas/inspector/config-schema";
 import { ActionRefusal } from "@/lib/actions/result";
 import { NO_DEFAULT_ENVIRONMENT } from "@/lib/canvas/write-refusals";
-import { ADDON_CATALOG } from "@/lib/addons/catalog";
+import { ADDON_CATALOG, addOnDeprecationView } from "@/lib/addons/catalog";
 import { redactAddonSecrets } from "@/lib/addons/secrets";
 import { authorize } from "@/lib/authz/guard";
 import {
@@ -748,6 +748,7 @@ export async function readProjectAddons(
 			chart: def.chart,
 			version: def.version,
 			securityRelease: def.securityRelease ?? null,
+			deprecated: addOnDeprecationView(def),
 			namespace: def.namespace,
 			requires: def.requires ?? [],
 			fields: def.fields,

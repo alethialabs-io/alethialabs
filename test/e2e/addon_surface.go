@@ -20,7 +20,7 @@ import (
 // enough to give the ArgoCD health assertion teeth but is nowhere near the maintainer's
 // FULLY-TESTED bar: "every single add-on we have available" must install and converge.
 //
-// AllCatalogAddOns loads all 18, from the GENERATED per-cloud fixture
+// AllCatalogAddOns loads all 19, from the GENERATED per-cloud fixture
 // `fixtures/addon_catalog.<cloud>.json` — which
 // is produced from apps/console/lib/addons/catalog.ts (the SSOT) via the real `resolveAddOnInstall`
 // (`pnpm -C apps/console run export:addon-catalog`), and kept honest by catalog-export.test.ts, which reds CI
@@ -200,13 +200,16 @@ func CatalogAddOn(id string) (types.AddOnInstall, error) {
 		"add-on %q is not in the catalog fixture (regenerate: pnpm -C apps/console run export:addon-catalog)", id)
 }
 
-// expectedCatalogSize mirrors the console's B0.3 SSOT count guard (ADDON_CATALOG.length === 18).
+// expectedCatalogSize mirrors the console's B0.3 SSOT count guard (ADDON_CATALOG.length === 19).
 // A fixture with fewer entries means the export is stale or partial — fail rather than under-test.
 //
 // 19 → 18 when cert-manager moved to the PLATFORM rail (infra/templates/argocd/cert-manager.yaml).
 // It is no longer a marketplace chart this run installs; it ships from the deploy itself, and its
 // ArgoCD Application is asserted through the infra-service decision instead (infraServiceArgoApps).
-const expectedCatalogSize = 18
+//
+// 18 → 19 when Traefik joined as ingress-nginx's replacement (#6543). ingress-nginx is deprecated but
+// still catalogued, so a full-surface run installs both — two controllers, two load balancers.
+const expectedCatalogSize = 19
 
 // SeedAddOnsForSurface returns the add-ons a provisioning tier should seed: the full catalog when
 // ALETHIA_E2E_ALL_ADDONS=1, else the lean single seed (fast default).

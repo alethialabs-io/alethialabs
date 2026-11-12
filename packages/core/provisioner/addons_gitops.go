@@ -32,12 +32,13 @@ const addonsRepoDir = "addons"
 // stamped onto each seeded Application (BYOC B1.4) — the app-of-apps syncs these into the cluster
 // as ArgoCD Applications, so they must carry the same sweep handles as their managed-mode twins.
 //
-// It also READS each already-seeded manifest and returns a Deploy-tab warning for every add-on whose
-// file installs an older chart than the one this deploy would seed (#6537). It never rewrites the
-// file to fix that: seed-once is the guarantee that a customer's edits are theirs, and a version is
-// an edit like any other. The warnings are returned even when the commit or push fails, because the
-// clone that produced them succeeded.
-func writeAddOnGitOps(ctx context.Context, vc *types.ProjectConfig, token string, commonLabels map[string]string, stdout, stderr io.Writer) ([]string, error) {
+// It also READS each already-seeded manifest and returns one drift entry for every add-on whose file
+// installs an older chart than the one this deploy would seed (#6537). Each entry carries the
+// Deploy-tab sentence as well as its structured fields (#6549). It never rewrites the file to fix
+// that: seed-once is the guarantee that a customer's edits are theirs, and a version is an edit like
+// any other. The entries are returned even when the commit or push fails, because the clone that
+// produced them succeeded.
+func writeAddOnGitOps(ctx context.Context, vc *types.ProjectConfig, token string, commonLabels map[string]string, stdout, stderr io.Writer) ([]argocd.AddonDriftStatus, error) {
 	if vc.Repositories.AppsDestinationRepo == "" || token == "" {
 		return nil, nil
 	}
@@ -68,14 +69,14 @@ func writeAddOnGitOps(ctx context.Context, vc *types.ProjectConfig, token string
 
 	// Seed-once: write a manifest only when the file is absent. A file that IS present is read for
 	// its chart version, and only read.
-	var warnings []string
+	var warnings []argocd.AddonDriftStatus
 	seeded := 0
 	for _, id := range sortedAddOnIDs(desired) {
 		a := desired[id]
 		file := filepath.Join(addonsPath, id+".yaml")
 		if body, readErr := os.ReadFile(file); readErr == nil {
-			if w := gitopsAddOnDriftWarning(id, body, a); w != "" {
-				warnings = append(warnings, w)
+			if d, drifted := gitopsAddOnDrift(id, body, a); drifted {
+				warnings = append(warnings, d)
 			}
 			continue // already present — respect customer edits
 		}
@@ -128,33 +129,47 @@ type seededAddOnApplication struct {
 	} `yaml:"spec"`
 }
 
-// gitopsAddOnDriftWarning returns the Deploy-tab warning for an already-present GitOps add-on
-// manifest whose chart version is OLDER than the one this deploy would seed (`a.Version`: the
-// catalogue's version, or the user's pin), or "" when there is nothing to say (#6537).
+// gitopsAddOnDrift reports an already-present GitOps add-on manifest whose chart version is OLDER
+// than the one this deploy would seed (`a.Version`: the catalogue's version, or the user's pin), with
+// its Deploy-tab sentence; ok is false when there is nothing to say (#6537, #6549).
 //
 // It says nothing unless it is sure, because a warning that cries wolf on every deploy is one the
-// customer learns to skip. So "" for a file that does not parse, is not an ArgoCD Application, has
-// no single `spec.source` (a multi-source Application is the customer's own design), installs a
+// customer learns to skip. So nothing for a file that does not parse, is not an ArgoCD Application,
+// has no single `spec.source` (a multi-source Application is the customer's own design), installs a
 // DIFFERENT chart (they replaced ours), or carries a version that is not SemVer (a range such as
-// `4.*` is theirs to choose). And "" for a version at or above the desired one: a customer ahead
-// of the catalogue is not drift worth a warning.
-func gitopsAddOnDriftWarning(id string, body []byte, a types.AddOnInstall) string {
+// `4.*` is theirs to choose). And nothing for a version at or above the desired one: a customer
+// ahead of the catalogue is not drift worth a warning.
+func gitopsAddOnDrift(id string, body []byte, a types.AddOnInstall) (d argocd.AddonDriftStatus, ok bool) {
 	var app seededAddOnApplication
 	if err := yaml.Unmarshal(body, &app); err != nil {
-		return ""
+		return d, false
 	}
 	src := app.Spec.Source
 	if app.Kind != "Application" || src.Chart == "" || src.Chart != a.Chart {
-		return ""
+		return d, false
 	}
 	seeded, desired := canonicalSemver(src.TargetRevision), canonicalSemver(a.Version)
 	if seeded == "" || desired == "" || semver.Compare(seeded, desired) >= 0 {
-		return ""
+		return d, false
 	}
+	d = argocd.AddonDriftStatus{
+		AddonID:        id,
+		File:           addonsRepoDir + "/" + id + ".yaml",
+		Chart:          src.Chart,
+		SeededVersion:  src.TargetRevision,
+		DesiredVersion: a.Version,
+	}
+	d.Warning = gitopsAddOnDriftWarning(d)
+	return d, true
+}
+
+// gitopsAddOnDriftWarning is the Deploy-tab sentence for one drifted GitOps add-on. It is what a
+// console that predates `addon_drift` shows; see argocd.AddonDriftStatus.Warning.
+func gitopsAddOnDriftWarning(d argocd.AddonDriftStatus) string {
 	return fmt.Sprintf("GitOps add-on %s: %s/%s.yaml in your apps repo installs chart %s %s, and Alethia would seed %s "+
 		"today. Alethia does not rewrite a file it has already seeded, so this add-on stays on %s until you set "+
 		"spec.source.targetRevision in that file to %s. The add-on's card in the console says whether %s is a security release.",
-		id, addonsRepoDir, id, src.Chart, src.TargetRevision, a.Version, src.TargetRevision, a.Version, a.Version)
+		d.AddonID, addonsRepoDir, d.AddonID, d.Chart, d.SeededVersion, d.DesiredVersion, d.SeededVersion, d.DesiredVersion, d.DesiredVersion)
 }
 
 // canonicalSemver returns v in the "vMAJOR.MINOR.PATCH" form golang.org/x/mod/semver compares, or

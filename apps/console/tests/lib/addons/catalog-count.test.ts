@@ -20,7 +20,10 @@ import { ADDON_CATALOG } from "@/lib/addons/catalog";
 // 19 → 18: cert-manager moved to the PLATFORM rail (infra/templates/argocd/cert-manager.yaml),
 // where it can see the cloud, the DNS zone and the identity a DNS01 ClusterIssuer needs. It is
 // REMOVED here rather than duplicated, so exactly one thing owns the cert-manager CRDs (#1722).
-const EXPECTED_ADDON_COUNT = 18;
+// 18 → 19: Traefik joins as the maintained replacement for ingress-nginx (#6543). ingress-nginx
+// stays — deprecated, closed to new installs from its removal date, but still deployed for the
+// environments that have it — so the set grows rather than swaps.
+const EXPECTED_ADDON_COUNT = 19;
 
 describe("ADDON_CATALOG count guard", () => {
 	it("has exactly the pinned number of add-ons", () => {

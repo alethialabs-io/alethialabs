@@ -84,19 +84,19 @@ function ingressHint(provider: CloudProviderSlug | null): RequirementHint {
 		case "alibaba":
 			return {
 				label,
-				hint: "Cloud LoadBalancer available — install the ingress-nginx add-on for Ingress resources.",
+				hint: "Cloud LoadBalancer available — install the Traefik add-on for Ingress resources.",
 				satisfied: "addon",
 			};
 		case "hetzner":
 			return {
 				label,
-				hint: "hcloud load balancers via the in-cluster CCM — install the ingress-nginx add-on.",
+				hint: "hcloud load balancers via the in-cluster CCM — install the Traefik add-on.",
 				satisfied: "addon",
 			};
 		default:
 			return {
 				label,
-				hint: "Needs an ingress controller — install the ingress-nginx add-on for Ingress resources.",
+				hint: "Needs an ingress controller — install the Traefik add-on for Ingress resources.",
 				satisfied: "addon",
 			};
 	}
