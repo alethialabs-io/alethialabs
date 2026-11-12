@@ -1,0 +1,8 @@
+{
+  "addon_id": "cert-manager",
+  "file": "addons/cert-manager.yaml",
+  "chart": "cert-manager",
+  "seeded_version": "v1.14.0",
+  "desired_version": "1.16.2",
+  "warning": "GitOps add-on cert-manager: addons/cert-manager.yaml in your apps repo installs chart cert-manager v1.14.0"
+}
