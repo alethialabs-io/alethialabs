@@ -5,11 +5,16 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 // fakeBumper records the one call `bump` makes and answers with a canned result.
@@ -77,4 +82,97 @@ func TestRunAddonBump(t *testing.T) {
 	if err := runAddonBump(&fakeBumper{err: errors.New("boom")}, &bytes.Buffer{}, "acme", "", "x", false); err == nil {
 		t.Error("an API error was swallowed")
 	}
+}
+
+// bumpEnv is a signed-in CLI pointed at a fake console that answers POST .../addons/bump with
+// `reply` at `status`, recording the request it was sent.
+func bumpEnv(t *testing.T, status int, reply any) (func(args ...string) error, *addonRec) {
+	t.Helper()
+	rec := &addonRec{}
+	credsPath := isolatedHome(t)
+	tok := makeToken(t, time.Now().Add(time.Hour))
+	if err := saveCredentials(credsPath, types.ExchangeResponse{AccessToken: tok, RefreshToken: "r"}); err != nil {
+		t.Fatalf("saveCredentials: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/addons/bump") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		rec.method, rec.query = r.Method, r.URL.RawQuery
+		_ = json.NewDecoder(r.Body).Decode(&rec.body)
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(reply)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("ALETHIA_WEB_ORIGIN", srv.URL)
+	t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
+	prev := addonBumpAgain
+	t.Cleanup(func() { addonBumpAgain = prev })
+	addonBumpAgain = false
+	resetAddonPersistentFlags(t)
+	return func(args ...string) error {
+		execRootArgs(args)
+		return rootCmd.Execute()
+	}, rec
+}
+
+// TestAddonBumpCmd drives `alethia addon bump` end to end against a fake console: the request names
+// the add-on and --again, a refusal is an answer (exit 0), and a server error is fatal.
+func TestAddonBumpCmd(t *testing.T) {
+	t.Run("POSTs the add-on and --again to the bump endpoint", func(t *testing.T) {
+		run, rec := bumpEnv(t, http.StatusOK, bumpResult("open"))
+		exited, code, err := connInvoke(t, run, "addon", "bump", "ingress-nginx", "--project", "shop", "--env", "prod", "--again")
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		if exited {
+			t.Fatalf("unexpected fatal exit (code %d)", code)
+		}
+		if rec.method != "POST" || rec.body["addon_id"] != "ingress-nginx" || rec.body["again"] != true {
+			t.Errorf("request = %s %+v", rec.method, rec.body)
+		}
+		if !strings.Contains(rec.query, "env=prod") {
+			t.Errorf("the environment was not sent: %q", rec.query)
+		}
+	})
+
+	t.Run("a refusal is an answer, not a failure", func(t *testing.T) {
+		run, _ := bumpEnv(t, http.StatusOK, bumpResult("refused"))
+		exited, code, err := connInvoke(t, run, "addon", "bump", "ingress-nginx", "--project", "shop")
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		if exited {
+			t.Fatalf("a refusal exited %d", code)
+		}
+	})
+
+	t.Run("a server error is fatal", func(t *testing.T) {
+		run, _ := bumpEnv(t, http.StatusInternalServerError, map[string]string{"error": "Internal Server Error"})
+		exited, code, err := connInvoke(t, run, "addon", "bump", "ingress-nginx", "--project", "shop")
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		if !exited || code == 0 {
+			t.Fatalf("expected a fatal exit, got exited=%v code=%d", exited, code)
+		}
+	})
+
+	t.Run("signed out is fatal before any request", func(t *testing.T) {
+		isolatedHome(t)
+		t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
+		resetAddonPersistentFlags(t)
+		run := func(a ...string) error {
+			execRootArgs(a)
+			return rootCmd.Execute()
+		}
+		exited, code, err := connInvoke(t, run, "addon", "bump", "ingress-nginx", "--project", "shop")
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		if !exited || code == 0 {
+			t.Fatalf("expected a fatal exit, got exited=%v code=%d", exited, code)
+		}
+	})
 }

@@ -113,7 +113,7 @@ function AddonDriftItem({ drift }: { drift: AddonDriftRow }) {
 					</div>
 				) : (
 					<div className="text-muted-foreground">
-						On GitHub, the add-on's card can open a pull request that makes this change.
+
 					</div>
 				)}
 			</div>
