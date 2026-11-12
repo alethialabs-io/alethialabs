@@ -3,6 +3,11 @@
 
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import pino from "pino";
+import {
+	failedQueryText,
+	isDriverError,
+	redactDriverText,
+} from "@/lib/observability/query-error";
 
 // Map pino level → OTel severity. Used by the log bridge below.
 const OTEL_SEVERITY: Record<string, SeverityNumber> = {
@@ -66,32 +71,6 @@ function copyStatusFields(value: object, out: SerializedErr): void {
 }
 
 /**
- * The SQL text of a failed database query, when `value` is drizzle-orm's `DrizzleQueryError`, else
- * `undefined`. That error's `message` is `Failed query: <sql>\nparams: <values>`, so it carries the
- * query's bound parameter values (an email, a token) and must not be written as it is.
- *
- * Recognised by shape, an own `query` string and an own `params` array, which drizzle-orm's
- * constructor sets on every instance. Not by `instanceof`: that fails open when a second copy of
- * drizzle-orm is loaded (a peer-dependency or patch variant in the pnpm store, a separately
- * bundled server entry), and `DrizzleQueryError` declares no `entityKind`, so drizzle's own `is()`
- * cannot match across copies either. A missed match writes the parameter values; a shape match on
- * some other error only replaces its message with `Failed query: <its query>`.
- */
-function failedQueryText(value: object): string | undefined {
-	if (
-		Object.hasOwn(value, "query") &&
-		"query" in value &&
-		typeof value.query === "string" &&
-		Object.hasOwn(value, "params") &&
-		"params" in value &&
-		Array.isArray(value.params)
-	) {
-		return value.query;
-	}
-	return undefined;
-}
-
-/**
  * Returns `stack` with its header line rewritten from `name: original` to `name: replacement`, or
  * `undefined` (the stack is dropped) unless the stack's header is EXACTLY `name: original` followed
  * by its frames or by nothing. V8 writes the header from the message as it stood when the stack was
@@ -109,6 +88,22 @@ function replaceInStack(
 	const rest = stack.slice(header.length);
 	if (rest !== "" && !/^\n\s+at /.test(rest)) return undefined;
 	return `${name}: ${replacement}${rest}`;
+}
+
+/**
+ * The message to write for an error whose own message is `message`, when that message must not be
+ * written as it is, else `undefined`: `Failed query: <sql>` for a failed database query (see
+ * `failedQueryText`), and the message with its quoted values and `Key (...)=(...)` list removed for
+ * a database driver's error (see `isDriverError`, `redactDriverText`). A driver error is redacted
+ * wherever it is logged — directly or at any depth of a `cause` / `errors` chain — not only inside a
+ * failed query's chain: its shape (an own SQLSTATE `code`) is specific to the driver, and the cost
+ * of a false match is a quoted word redacted, where a missed one writes the value.
+ */
+function rewrittenMessage(value: object, message: string): string | undefined {
+	const query = failedQueryText(value);
+	if (query !== undefined) return `Failed query: ${query}`;
+	if (isDriverError(value)) return redactDriverText(message);
+	return undefined;
 }
 
 /** The recursive step of `serializeErr`; `ancestors` holds the objects on the current path. */
@@ -129,23 +124,24 @@ function serializeErrAt(
 		copyStatusFields(value, other);
 		return other;
 	}
-	// A failed database query's message is rebuilt from its SQL text, so the bound parameter values
-	// in the original message are written neither here nor in the stack, which repeats the message.
-	const query = failedQueryText(value);
-	const message = query === undefined ? value.message : `Failed query: ${query}`;
+	// A failed database query's message is rebuilt from its SQL text, and a driver error's message
+	// has the values Postgres quotes in it removed, so neither the bound parameter values nor the
+	// offending input is written here or in the stack, which repeats the message.
+	const rewritten = rewrittenMessage(value, value.message);
+	const message = rewritten ?? value.message;
 	const out: SerializedErr = {
 		type: value.constructor?.name || "Error",
 		message,
 	};
 	if ("stack" in value && typeof value.stack === "string") {
 		const stack =
-			query === undefined
+			rewritten === undefined
 				? value.stack
 				: replaceInStack(
 						value.stack,
 						"name" in value && typeof value.name === "string" ? value.name : "Error",
 						value.message,
-						message,
+						rewritten,
 					);
 		if (stack !== undefined) out.stack = stack;
 	}
@@ -177,7 +173,9 @@ function serializeErrAt(
  * `{ type }` (its constructor's name) plus any primitive `code` / `status` / `statusCode`. A
  * drizzle-orm `DrizzleQueryError` (see `failedQueryText`) is written with the message
  * `Failed query: <sql>`: its parameter values are left out of `message` and `stack`, and its `cause`
- * (the driver's error, with the Postgres `code`) is kept as for any error.
+ * (the driver's error) is kept as for any error — with its Postgres `code`, and its message with the
+ * values Postgres quotes in it removed (see `rewrittenMessage`). A driver error's `detail` is never
+ * written, as no field outside the list above is.
  */
 function serializeErr(value: unknown): SerializedErrValue {
 	return serializeErrAt(value, 0, new Set());
@@ -240,7 +238,9 @@ export interface LogFields {
 	 * `errors` (`aggregateErrors` for an `AggregateError`) under the same rule. Any other property
 	 * of the error is not written. A non-error value is written as `String(value)` if it is a
 	 * primitive, else as `{ type }`. A failed database query (drizzle-orm's `DrizzleQueryError`) is
-	 * written without its bound parameter values: its message becomes `Failed query: <sql>`.
+	 * written without its bound parameter values: its message becomes `Failed query: <sql>`. A
+	 * database driver's error (an own SQLSTATE `code`) keeps its code, and its message is written
+	 * with the quoted values and `Key (...)=(...)` value list removed.
 	 */
 	err?: unknown;
 	[key: string]: unknown;

@@ -19,7 +19,14 @@
 // rule the log serializer applies (lib/observability/log.ts, #6630): drizzle-orm's
 // `DrizzleQueryError` message is `Failed query: <sql>\nparams: <values>`, and Sentry sends an error's
 // `message` as the exception value, so every string in the event has that message rewritten to
-// `Failed query: <sql>`. See `stripQueryParams`.
+// `Failed query: <sql>`. See `stripQueryParams`. The driver error under it has the values Postgres
+// quotes in its message and detail removed the same way (#6645, lib/observability/query-error.ts).
+
+import {
+	failedQueryText,
+	isDriverError,
+	redactDriverText,
+} from "@/lib/observability/query-error";
 
 /**
  * Substring denylist (case-insensitive) identifying secret-bearing KEY names. The first block mirrors
@@ -101,56 +108,53 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * The SQL text of a failed database query, when `value` is drizzle-orm's `DrizzleQueryError`, else
- * `undefined`. Recognised by shape — an own `query` string and an own `params` array, which
- * drizzle-orm's constructor sets on every instance — not by `instanceof`, which fails open when a
- * second copy of drizzle-orm is loaded.
- *
- * This is the same test as `failedQueryText` in lib/observability/log.ts, written again here because
- * that one is module-private and #6633's scope does not include log.ts. Keep the two in step.
- */
-function failedQueryText(value: object): string | undefined {
-	if (
-		Object.hasOwn(value, "query") &&
-		"query" in value &&
-		typeof value.query === "string" &&
-		Object.hasOwn(value, "params") &&
-		"params" in value &&
-		Array.isArray(value.params)
-	) {
-		return value.query;
-	}
-	return undefined;
-}
-
-/** One failed query's message as the error carries it, and the text it is rewritten to. */
+/** One error's text as the error carries it, and the text it is rewritten to. */
 interface QueryRewrite {
 	message: string;
 	replacement: string;
 }
 
 /**
- * The failed queries found on a thrown value and its `cause` chain: for each, its exact `message`
- * (which carries the parameter values) and `Failed query: <sql>`. Cycle-safe. Sentry sends each
- * error in the chain as its own exception value, which is why the whole chain is read.
+ * The exact rewrites for a thrown value and its `cause` chain. For each failed query on the chain:
+ * its exact `message` (which carries the parameter values) and `Failed query: <sql>`. For each
+ * database driver's error AFTER a failed query on the chain (its cause, as drizzle-orm wraps it):
+ * its `message` and `detail` with the values Postgres quotes in them removed (`redactDriverText`).
+ * Cycle-safe. Sentry sends each error in the chain as its own exception value, which is why the whole
+ * chain is read, and why the driver's message is rewritten wherever it appears rather than only on
+ * the thrown value.
+ *
+ * A driver-shaped error that is NOT under a failed query is left as it is: the scrub then cannot
+ * tell it from an error of another kind that happens to carry a five-character code, and quoted text
+ * in an arbitrary message is not a query value. Every console query runs through drizzle-orm, so a
+ * driver error reaches here as a `DrizzleQueryError`'s cause.
  */
 function queryRewrites(thrown: unknown): QueryRewrite[] {
 	const out: QueryRewrite[] = [];
 	const seen = new Set<object>();
+	let underQuery = false;
 	let current: unknown = thrown;
 	while (typeof current === "object" && current !== null && !seen.has(current)) {
 		seen.add(current);
 		const query = failedQueryText(current);
-		if (query !== undefined && "message" in current && typeof current.message === "string") {
-			const replacement = `Failed query: ${query}`;
-			if (current.message !== replacement) {
-				out.push({ message: current.message, replacement });
+		if (query !== undefined) {
+			underQuery = true;
+			if ("message" in current && typeof current.message === "string") {
+				pushRewrite(out, current.message, `Failed query: ${query}`);
+			}
+		} else if (underQuery && isDriverError(current)) {
+			pushRewrite(out, current.message, redactDriverText(current.message));
+			if ("detail" in current && typeof current.detail === "string") {
+				pushRewrite(out, current.detail, redactDriverText(current.detail));
 			}
 		}
 		current = "cause" in current ? current.cause : undefined;
 	}
 	return out;
+}
+
+/** Adds `message` → `replacement` to `out` unless the two are the same text. */
+function pushRewrite(out: QueryRewrite[], message: string, replacement: string): void {
+	if (message !== "" && message !== replacement) out.push({ message, replacement });
 }
 
 /** The separators that end a failed query's SQL: raw, and as it reads once JSON-escaped. */
@@ -230,8 +234,9 @@ function scrubInPlace(
  * event (message, exception values, breadcrumbs, tags, extra, request data/headers/cookies, and
  * stack-frame vars) before it leaves the process. `hint.originalException` is the thrown value;
  * when it or an error on its `cause` chain is a failed database query, its exact message is
- * rewritten to `Failed query: <sql>` wherever it appears. Returns the same (mutated) event so the
- * concrete type is preserved.
+ * rewritten to `Failed query: <sql>` wherever it appears, and the driver error under it has its
+ * message and detail rewritten without the values Postgres quotes in them (see `queryRewrites`).
+ * Returns the same (mutated) event so the concrete type is preserved.
  */
 export function scrubEvent<T>(event: T, hint?: { originalException?: unknown }): T {
 	scrubInPlace(event, new WeakSet(), queryRewrites(hint?.originalException));
