@@ -110,6 +110,7 @@ import {
 	writeHoldState,
 } from "./store";
 import { forgetSubscription } from "@/lib/billing/subscription-cache";
+import { log } from "@/lib/observability/log";
 
 /** How often the in-process sweeper ticks (§5.4). */
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
@@ -310,7 +311,7 @@ export async function visitHold(hold: PaymentHoldRow, deps: SweepDeps): Promise<
 		try {
 			await releasePurchaseLease(lease);
 		} catch (err) {
-			console.error("[billing] payment-hold sweeper could not release a lease; it lapses on its own:", err);
+			log.error("[billing] payment-hold sweeper could not release a lease; it lapses on its own", { err });
 		}
 	}
 }
@@ -574,7 +575,7 @@ async function alertUnheldRefusal(input: {
 	try {
 		held = await openHoldOn(input.sub.id);
 	} catch (err) {
-		console.error(`[billing] could not read the open hold on ${input.sub.id} before alerting its unheld refusal:`, err);
+		log.error(`[billing] could not read the open hold on ${input.sub.id} before alerting its unheld refusal`, { err });
 	}
 	if (held) return;
 	await alertPaymentNeedsSupport({
@@ -730,7 +731,7 @@ async function relinkAfterVisit(lease: PurchaseLease, hold: PaymentHoldRow, deps
 	try {
 		return await relinkAdoptedHold(lease, hold, deps);
 	} catch (err) {
-		console.error(`[billing] payment-hold sweeper could not re-link the setup of adopted hold ${hold.id}:`, err);
+		log.error(`[billing] payment-hold sweeper could not re-link the setup of adopted hold ${hold.id}`, { err });
 		return null;
 	}
 }
@@ -784,14 +785,14 @@ async function recordRelink(
 	try {
 		held = await renewPurchaseLease(lease);
 	} catch (err) {
-		console.error(`[billing] could not renew the lease to record the relink of adopted hold ${hold.id}; the relink pass decides it again:`, err);
+		log.error(`[billing] could not renew the lease to record the relink of adopted hold ${hold.id}; the relink pass decides it again`, { err });
 		return null;
 	}
 	if (!held) throw new PurchaseLeaseLostError(lease.key);
 	try {
 		return await writeAdoptedRelinkState(lease, { id: hold.id, version: hold.version }, patch);
 	} catch (err) {
-		console.error(`[billing] could not record the relink of adopted hold ${hold.id}; the relink pass decides it again:`, err);
+		log.error(`[billing] could not record the relink of adopted hold ${hold.id}; the relink pass decides it again`, { err });
 		return null;
 	}
 }
@@ -869,7 +870,7 @@ async function recordFailedRelink(
 	const message = err instanceof Error ? err.message : String(err);
 	const attempts = hold.attempts + 1;
 	const next = relinkRetryAfter(attempts);
-	console.error(`[billing] re-linking the setup of adopted hold ${hold.id} failed (attempt ${attempts}; the limit is ${RELINK_MAX_ATTEMPTS}):`, err);
+	log.error(`[billing] re-linking the setup of adopted hold ${hold.id} failed (attempt ${attempts}; the limit is ${RELINK_MAX_ATTEMPTS})`, { err });
 	if (next.kind === "retry") {
 		await recordRelink(lease, hold, { attempts, lastError: message, nextCheckAt: new Date(deps.now().getTime() + next.delayMs) });
 		return;
@@ -961,7 +962,7 @@ async function giveBack(lease: PurchaseLease): Promise<void> {
 	try {
 		await releasePurchaseLease(lease);
 	} catch (err) {
-		console.error("[billing] payment-hold sweeper could not release a lease; it lapses on its own:", err);
+		log.error("[billing] payment-hold sweeper could not release a lease; it lapses on its own", { err });
 	}
 }
 
@@ -982,7 +983,7 @@ async function retryAdoptedRelinks(options: SweepOptions, deps: SweepDeps): Prom
 		try {
 			await retryOneRelink(hold, deps);
 		} catch (err) {
-			console.error(`[billing] payment-hold sweeper's relink pass failed on hold ${hold.id}:`, err);
+			log.error(`[billing] payment-hold sweeper's relink pass failed on hold ${hold.id}`, { err });
 		}
 	}
 }
@@ -1049,7 +1050,7 @@ export async function runPaymentHoldSweep(options: SweepOptions = {}): Promise<S
 		} catch (err) {
 			// One hold's failure (a database error mid-write) must not starve the rest of the batch; the
 			// hold stays open and due, so the next tick retries it.
-			console.error(`[billing] payment-hold sweeper failed on hold ${hold.id}:`, err);
+			log.error(`[billing] payment-hold sweeper failed on hold ${hold.id}`, { err });
 		}
 	}
 
@@ -1057,7 +1058,7 @@ export async function runPaymentHoldSweep(options: SweepOptions = {}): Promise<S
 		await retryAdoptedRelinks(options, deps);
 	} catch (err) {
 		// The pass's own selection failed; the checks stay due, so the next tick retries them.
-		console.error("[billing] payment-hold sweeper's relink pass could not select its holds:", err);
+		log.error("[billing] payment-hold sweeper's relink pass could not select its holds", { err });
 	}
 
 	result.notices = await sendDueHoldNotices({ deliver: deps.deliver, scope: options.scope, payerKey: options.payerKey });
