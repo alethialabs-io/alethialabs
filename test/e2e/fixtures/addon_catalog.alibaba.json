@@ -429,6 +429,58 @@
 		"syncWave": 3
 	},
 	{
+		"id": "traefik",
+		"mode": "managed",
+		"chartRepo": "https://traefik.github.io/charts",
+		"chart": "traefik",
+		"version": "42.3.2",
+		"namespace": "traefik",
+		"values": {
+			"ingressClass": {
+				"enabled": true,
+				"isDefaultClass": false
+			},
+			"resources": {
+				"requests": {
+					"cpu": "100m",
+					"memory": "128Mi"
+				},
+				"limits": {
+					"memory": "512Mi"
+				}
+			},
+			"api": null,
+			"providers": {
+				"kubernetesIngressNGINX": {
+					"publishService": {
+						"enabled": true
+					},
+					"disableSvcExternalName": true,
+					"enabled": false
+				},
+				"kubernetesGateway": {
+					"enabled": false
+				}
+			},
+			"deployment": {
+				"replicas": 1
+			},
+			"service": {
+				"spec": {
+					"type": "LoadBalancer"
+				}
+			},
+			"metrics": {
+				"prometheus": {
+					"service": {
+						"enabled": false
+					}
+				}
+			}
+		},
+		"syncWave": 1
+	},
+	{
 		"id": "trivy-operator",
 		"mode": "managed",
 		"chartRepo": "https://aquasecurity.github.io/helm-charts/",

@@ -430,6 +430,11 @@ func (c *RunnerAPIClient) FetchGitToken(jobID, repoURL string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		// The console explains a refusal in an {"error": "..."} body (e.g. a repo on a host that is
+		// not a configured git provider, #6600) — carry it into the job log instead of a bare code.
+		if msg := consoleErrorMessage(resp.Body); msg != "" {
+			return "", fmt.Errorf("fetch git token returned status %d: %s", resp.StatusCode, msg)
+		}
 		return "", fmt.Errorf("fetch git token returned status %d", resp.StatusCode)
 	}
 
@@ -444,6 +449,18 @@ func (c *RunnerAPIClient) FetchGitToken(jobID, repoURL string) (string, error) {
 		return "", nil
 	}
 	return *result.Token, nil
+}
+
+// consoleErrorMessage reads the "error" field of a console JSON error body, bounded to 4 KiB.
+// It returns "" when the body is absent, is not JSON, or carries no error string.
+func consoleErrorMessage(body io.Reader) string {
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(io.LimitReader(body, 4096)).Decode(&payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Error)
 }
 
 // FetchAddonSecrets fetches the decrypted secret-knob values for the job's enabled add-ons

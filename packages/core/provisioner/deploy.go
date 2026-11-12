@@ -1355,6 +1355,8 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		var deployable []types.AddOnInstall
 		// Each BYO namespace's admission mode as the add-on stage left it (#6541).
 		var byoAdmission []argocd.ByoAdmissionNamespaceStatus
+		// Each GitOps add-on whose seeded manifest is behind this deploy (#6549).
+		var addonDrift []argocd.AddonDriftStatus
 		if len(vc.AddOns) > 0 {
 			// Operator wave FIRST (the manifest rail): Kubernetes operators ship as a plain
 			// `kubectl apply` release manifest, which an ArgoCD Application cannot source. The
@@ -1387,6 +1389,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			manifestWarnings = append(manifestWarnings, stage.Warnings...)
 			deployable = stage.Deployable
 			byoAdmission = stage.ByoAdmission
+			addonDrift = stage.AddonDrift
 		}
 		// Prune managed add-ons the user disabled (removed from the desired set). Runs even
 		// when vc.AddOns is empty, so disabling the last add-on still cleans it up.
@@ -1491,16 +1494,28 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// Attach the manifest-generation warnings (skipped services, unresolved bindings,
 		// unsatisfiable credential facets) so the console's Deploy tab can surface WHY a service
 		// may be misconfigured, instead of the operator digging through raw deploy logs (#717).
-		if result.GitopsStatus != nil {
-			result.GitopsStatus.ManifestWarnings = manifestWarnings
-			// Each BYO namespace's admission mode, for the Deploy tab and the environment's
-			// admission setting (#6541).
-			result.GitopsStatus.ByoAdmission = byoAdmission
-		}
+		attachDeployReport(result.GitopsStatus, manifestWarnings, byoAdmission, addonDrift)
 	}
 
 	fmt.Fprintln(stdout, "Deployment completed successfully.")
 	return &result, nil
+}
+
+// attachDeployReport attaches what the deploy collected to its GitOps snapshot, for the console's
+// Deploy tab. A nil status (the snapshot was not read) is left nil: there is nothing to attach to.
+//
+//   - warnings: the manifest-generation and add-on stage warnings (#717, #6439).
+//   - byo: each BYO namespace's admission mode, for the Deploy tab and the environment's admission
+//     setting (#6541).
+//   - drift: each GitOps add-on whose seeded manifest is behind this deploy, in the form the console
+//     attaches an action to (#6549). Its sentences are already in warnings.
+func attachDeployReport(status *argocd.GitopsStatus, warnings []string, byo []argocd.ByoAdmissionNamespaceStatus, drift []argocd.AddonDriftStatus) {
+	if status == nil {
+		return
+	}
+	status.ManifestWarnings = warnings
+	status.ByoAdmission = byo
+	status.AddonDrift = drift
 }
 
 // runnerIdentity is a best-effort identifier for the executor, recorded in the

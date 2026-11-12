@@ -2,8 +2,9 @@
 #
 # ONE key per line. `#` comments and blank lines are ignored. This file is the single source of
 # truth: `.github/workflows/deploy-console.yml`'s `preflight` job checks every key here against the
-# live vault BEFORE any image is built, and also asserts that the deploy job's own inline
-# `[ -n "$X" ] || … exit 1` assertions correspond exactly to this list — so the two cannot drift.
+# live vault BEFORE any image is built, and also asserts that the deploy script's own inline
+# `[ -n "$X" ] || … exit 1` assertions (`scripts/ci/deploy-console-assemble-env.sh`) correspond
+# exactly to this list — so the two cannot drift.
 #
 # WHY THIS FILE EXISTS
 #

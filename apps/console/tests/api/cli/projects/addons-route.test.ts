@@ -48,7 +48,9 @@ vi.mock("@/lib/cli/paging", async (importOriginal) => {
 import { loadStoredAddon } from "@/app/api/cli/projects/[id]/addons/reconfigure";
 import { GET, POST } from "@/app/api/cli/projects/[id]/addons/route";
 import { enableAddon } from "@/app/server/actions/addons";
+import { ActionRefusal } from "@/lib/actions/result";
 import { ADDON_CATALOG, getAddOn } from "@/lib/addons/catalog";
+import { newInstallRefusal } from "@/lib/addons/deprecation";
 import { CHART_VERSION_REFUSAL, chartVersionIntent } from "@/lib/addons/chart-version";
 import { authorizeCli } from "@/lib/authz/guard";
 import { paginate } from "@/lib/cli/paging";
@@ -114,6 +116,28 @@ describe("POST /api/cli/projects/:id/addons — version", () => {
 		const res = await post({ addon_id: "kube-prometheus-stack", version: 58 });
 		expect(res.status).toBe(400);
 		expect(enableAddon).not.toHaveBeenCalled();
+	});
+});
+
+// #6543: a deprecated add-on past its removal date refuses a new install. The CLI must get that as a
+// conflict with the add-on's state — 409, sentence verbatim — not as a server fault.
+describe("POST /api/cli/projects/:id/addons — a deprecated add-on closed to new installs", () => {
+	it("answers 409 with the refusal sentence, which names the replacement", async () => {
+		const nginx = getAddOn("ingress-nginx");
+		if (!nginx) throw new Error("ingress-nginx is not in the catalogue");
+		const sentence = newInstallRefusal(nginx, "Traefik", false, new Date("2030-01-01T00:00:00Z"));
+		if (!sentence) throw new Error("ingress-nginx is not closed to new installs in 2030");
+		vi.mocked(enableAddon).mockRejectedValue(new ActionRefusal("conflict", sentence));
+		const res = await post({ addon_id: "ingress-nginx" });
+		expect(res.status).toBe(409);
+		expect(await res.json()).toEqual({ error: sentence });
+		expect(sentence).toContain("Enable Traefik (traefik) instead");
+	});
+
+	it("keeps an unknown add-on a 400 — only a CONFLICT refusal is 409", async () => {
+		vi.mocked(enableAddon).mockRejectedValue(new ActionRefusal("not-found", "Unknown add-on: nope"));
+		const res = await post({ addon_id: "nope" });
+		expect(res.status).toBe(400);
 	});
 });
 

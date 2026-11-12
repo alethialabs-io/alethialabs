@@ -53,6 +53,10 @@ HEARTBEAT=""
 SELFTEST=""
 ONLY_ISSUE=""
 TAKEOVER=""
+# STALLED is resolved only on the --issue path, but Guard 1 in the pick loop reads it on EVERY path.
+# Under `set -u` an unset STALLED aborted the autonomous loop the moment any candidate had a closing
+# PR ("STALLED: unbound variable", exit 0, nothing claimed). Empty means "not a validated takeover".
+STALLED=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --class) CLASS="${2:?}"; shift 2 ;;

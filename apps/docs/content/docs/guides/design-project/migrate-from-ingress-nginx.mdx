@@ -1,0 +1,250 @@
+---
+title: Migrate from ingress-nginx
+description: Move an environment from the deprecated ingress-nginx add-on to the Traefik add-on, and from Ingress objects to Gateway API routes.
+---
+
+# Migrate from ingress-nginx
+
+The Kubernetes project retired ingress-nginx. Its last release is 4.15.1, and it gets no more
+security fixes. The **Ingress NGINX** add-on is deprecated, and the **Traefik** add-on replaces it.
+
+| Date | What changes |
+|------|--------------|
+| Now | The Add palette marks Ingress NGINX as deprecated and points to Traefik. |
+| 2027-02-09 | Ingress NGINX no longer accepts new installs, from the console or the CLI. |
+
+An environment that already has Ingress NGINX keeps it after that date. It still deploys, and you
+can still change its settings or pin its chart version. Alethia never removes it for you.
+
+This guide moves an environment in two stages. Do the first stage now. Do the second when you are
+ready.
+
+1. **Swap the controller.** Traefik serves your existing Ingress objects, so you change no Ingress.
+2. **Move to Gateway API.** Rewrite each Ingress as an `HTTPRoute`. This stage is optional.
+
+## Stage 1: swap the controller
+
+Traefik's NGINX provider reads Ingress objects with `ingressClassName: nginx` and their
+`nginx.ingress.kubernetes.io/*` annotations. The add-on setting **Serve NGINX-class Ingresses**
+turns the provider on. It is off by default. Both controllers can run at the same time, each behind
+its own cloud load balancer. You move traffic by moving DNS.
+
+<Callout type="warn">
+Review your annotations **before** you turn on **Serve NGINX-class Ingresses**. Traefik ignores an
+annotation it does not support and still serves the route. As soon as the setting is on, each
+NGINX-class Ingress is reachable on Traefik's load balancer address, even before you move DNS.
+</Callout>
+
+<Steps>
+<Step>
+
+### Review your annotations
+
+List the annotations your Ingress objects use:
+
+```bash
+kubectl get ingress --all-namespaces -o json \
+  | jq -r '.items[].metadata.annotations // {} | keys[]' \
+  | grep '^nginx.ingress.kubernetes.io/' | sort | uniq -c
+```
+
+Compare the list with the [annotation table](#annotations-that-do-not-carry-over). Some unsupported
+annotations are access controls:
+
+- `denylist-source-range`
+- `enable-modsecurity`, `enable-owasp-core-rules`, `modsecurity-snippet` and the other ModSecurity
+  and OWASP rule annotations
+- `auth-tls-match-cn`
+
+Traefik serves the route without this control. Replace it with a Traefik middleware first, or keep
+that Ingress on Ingress NGINX. The setting applies to every NGINX-class Ingress at once, so to keep
+one Ingress on Ingress NGINX, leave the setting off until its control is replaced.
+
+</Step>
+<Step>
+
+### Enable Traefik
+
+On the Architecture canvas, open the Add palette and choose **Traefik**. Turn on **Serve
+NGINX-class Ingresses** only when the review is done. Select **Enable add-on**, then deploy the
+environment.
+
+The setting needs an IngressClass named `nginx` with `spec.controller: k8s.io/ingress-nginx`. The
+Ingress NGINX add-on creates it. On an environment that never ran Ingress NGINX, create the class
+yourself, or leave the setting off and give your Ingress objects `ingressClassName: traefik`.
+
+To do the same from the CLI:
+
+```bash
+alethia addon enable traefik --project my-project --set ingressNginx=true
+```
+
+</Step>
+<Step>
+
+### Check that Traefik serves your routes
+
+Get the address of Traefik's load balancer:
+
+```bash
+kubectl -n traefik get service -l app.kubernetes.io/name=traefik
+```
+
+Send a request for one of your hosts to that address, without changing DNS:
+
+```bash
+curl --resolve app.example.com:443:<traefik-address> https://app.example.com/
+```
+
+Repeat for each host, and check each behaviour that an annotation controls: redirects, rewrites,
+authentication and allowlists.
+
+</Step>
+<Step>
+
+### Move DNS
+
+Point each host at Traefik's address. If external-dns manages your records, it follows the Ingress
+status. Traefik writes its own address there, so both controllers compete for the record until you
+remove Ingress NGINX. In that case, do the next step in a quiet period.
+
+</Step>
+<Step>
+
+### Keep the nginx IngressClass
+
+Traefik selects Ingresses through an IngressClass object whose `spec.controller` is
+`k8s.io/ingress-nginx`. The Ingress NGINX add-on owns the `nginx` IngressClass, so removing the
+add-on deletes it, and Traefik then stops serving your Ingresses. Tell ArgoCD to keep the object
+when it deletes the add-on:
+
+```bash
+kubectl annotate ingressclass nginx argocd.argoproj.io/sync-options=Delete=false --overwrite
+```
+
+</Step>
+<Step>
+
+### Remove Ingress NGINX
+
+Open **Ingress NGINX** on the canvas and select **Remove**, then deploy. The controller and its load
+balancer go. Your Ingress objects and the `nginx` IngressClass stay, and Traefik keeps serving them.
+Check that the class is still there:
+
+```bash
+kubectl get ingressclass nginx
+```
+
+</Step>
+</Steps>
+
+## Stage 2: move to Gateway API
+
+Gateway API is the upstream replacement for the Ingress API. Its routes are separate objects for
+the parts that Ingress put into annotations.
+
+<Steps>
+<Step>
+
+### Install the Gateway API CRDs
+
+The Traefik chart does not include the Gateway API custom resource definitions (CRDs), and Alethia
+clusters do not have them. Install the standard channel:
+
+```bash
+kubectl apply --server-side \
+  -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.3/standard-install.yaml
+```
+
+Install the CRDs before the next step. Without them the add-on cannot sync.
+
+</Step>
+<Step>
+
+### Turn on Gateway API in Traefik
+
+Open **Traefik** on the canvas, turn on **Gateway API**, save, and deploy. Traefik creates a
+`traefik` GatewayClass and a `traefik-gateway` Gateway in the `traefik` namespace. The Gateway has one HTTP
+listener on port 8000. For HTTPS, add a listener with `certificateRefs` under `gateway.listeners`
+in the add-on's raw Helm values.
+
+</Step>
+<Step>
+
+### Convert each Ingress
+
+The [ingress2gateway](https://github.com/kubernetes-sigs/ingress2gateway) tool writes a first draft
+from your Ingress objects:
+
+```bash
+ingress2gateway print --providers ingress-nginx --all-namespaces > routes.yaml
+```
+
+Review the draft before you apply it. The tool does not convert authentication, cookie affinity,
+rate limits or snippets. Point each route's `parentRefs` at `traefik-gateway` in the `traefik`
+namespace.
+
+</Step>
+<Step>
+
+### Remove the Ingress
+
+When the route serves the host, delete the Ingress. When no NGINX-class Ingress is left, turn off
+**Serve NGINX-class Ingresses**.
+
+</Step>
+</Steps>
+
+## Annotations that do not carry over
+
+The table covers the common `nginx.ingress.kubernetes.io/` annotations. Each name below drops that
+prefix.
+
+- **Stage 1** says what Traefik's NGINX provider does with the annotation on an Ingress.
+- **Stage 2** says what replaces it in Gateway API. A Traefik Middleware is a Traefik resource that
+  an `HTTPRoute` references with an `ExtensionRef` filter. It does not carry over to another Gateway
+  API implementation.
+
+| Annotation | Stage 1: Traefik on the Ingress | Stage 2: Gateway API |
+|------------|----------------------------------|----------------------|
+| `rewrite-target` | Supported | `URLRewrite` filter. Capture groups such as `$1` need the `ReplacePathRegex` Middleware |
+| `ssl-redirect`, `force-ssl-redirect` | Supported. A global redirect has no per-route opt-out | `RequestRedirect` filter with `scheme: https` on the HTTP listener's route |
+| `backend-protocol` | Supported, except `FCGI` and `AUTO_HTTP` | `BackendTLSPolicy` for HTTPS, a `GRPCRoute` for gRPC |
+| `proxy-body-size` | Supported | No Gateway API field. Use the `Buffering` Middleware |
+| `proxy-read-timeout`, `proxy-send-timeout`, `proxy-connect-timeout` | Supported | The route `timeouts` field exists, but Traefik does not support it. Use a Traefik `ServersTransport` |
+| `whitelist-source-range`, `allowlist-source-range` | Supported | No Gateway API field. Use the `IPAllowList` Middleware |
+| `denylist-source-range` | **Not supported. An access control: Traefik serves the route without it** | No Gateway API field. Use the `IPAllowList` Middleware with the inverse range |
+| `auth-url`, `auth-signin` | Partly supported: URL and response headers only, little variable interpolation. Scope the route to a host, or `auth-signin` can allow an open redirect | No standard field. Use the `ForwardAuth` Middleware |
+| `auth-type: basic`, `auth-secret` | Supported | No Gateway API field. Use the `BasicAuth` Middleware |
+| `enable-cors`, `cors-*` | Partly supported | The `CORS` filter exists, but Traefik does not support it. Use the `Headers` Middleware |
+| `canary`, `canary-weight` | Supported | Weighted `backendRefs` |
+| `canary-by-header` | Supported | A separate rule with a header match |
+| `affinity: cookie`, `session-cookie-*` | Supported in persistent mode only, not `balanced` | Experimental `sessionPersistence`. Use a sticky cookie on the Traefik service |
+| `configuration-snippet`, `server-snippet` | Only a few directives, such as `add_header`, `proxy_set_header`, `rewrite` and `return`, and only when snippets are allowed | No equivalent. Use a Middleware for each behaviour |
+| `use-regex` | Supported | `RegularExpression` path match, which depends on the implementation |
+| `limit-rps`, `limit-rpm`, `limit-connections` | Supported. An over-limit request gets `429`, not `503` | No Gateway API field. Use the `RateLimit` or `InFlightReq` Middleware |
+| `limit-rate`, `limit-whitelist`, `global-rate-limit*` | **Not supported** | No Gateway API field |
+| `permanent-redirect`, `temporal-redirect` | Supported | `RequestRedirect` filter with a `statusCode` |
+| `app-root` | Supported | An `Exact /` rule with a `RequestRedirect` filter |
+| `ssl-passthrough` | Supported | A `TLSRoute` on a listener with `tls.mode: Passthrough` |
+| `upstream-vhost` | Supported | `URLRewrite` with `hostname` |
+| `custom-headers` | Supported | `RequestHeaderModifier` or `ResponseHeaderModifier` filter |
+| `mirror-*` | **Not supported** | `RequestMirror` filter, which Traefik does not support |
+| `enable-modsecurity`, `enable-owasp-core-rules`, `modsecurity-*` | **Not supported. An access control: Traefik serves the route without it** | No equivalent |
+| `enable-opentelemetry`, `opentracing` | **Not supported** | Configure tracing on Traefik itself |
+| `auth-tls-match-cn` | **Not supported. An access control: Traefik serves the route without it** | No equivalent |
+| `auth-tls-error-page` | **Not supported** | No equivalent |
+| `proxy-redirect-from`, `proxy-redirect-to` | **Not supported** | No equivalent |
+
+Other differences in Stage 1:
+
+- Traefik balances load round-robin only. The `load-balance: ewma` setting and IP-hash balancing
+  have no effect.
+- The NGINX provider has no leader election. With more than one replica, each replica writes the
+  Ingress status.
+- Request buffering is off by default in Traefik, and on by default in NGINX.
+- Traefik keeps trailing slashes as they arrive.
+
+Sources: the [Traefik NGINX provider reference](https://doc.traefik.io/traefik/reference/routing-configuration/kubernetes/ingress-nginx/),
+the [ingress-nginx annotation reference](https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/)
+and the [Gateway API HTTPRoute reference](https://gateway-api.sigs.k8s.io/reference/api-types/httproute/).

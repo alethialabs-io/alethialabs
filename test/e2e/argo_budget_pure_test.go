@@ -74,24 +74,38 @@ func TestArgoBudgetFullSurfaceExceedsWhatKilledTheHetznerRun(t *testing.T) {
 // were Healthy by 35m.
 const argoMeasuredFullSurfaceBudget = 35 * time.Minute
 
+// argoMeasuredSurfaceSize is how many catalogue charts run 33107415369 converged. The catalogue has
+// grown since (19 when Traefik joined as ingress-nginx's replacement, #6543), so the measurement
+// pins the RATE at the size it was taken at, and the live catalogue is held to at least that budget.
+const argoMeasuredSurfaceSize = 18
+
 // The full surface must derive the budget that was MEASURED to converge, not merely "more than the
 // lean tier". This is the test that would have been red for the whole life of the 19m30s guess:
 // every `addons` and `full` run was failing on the clock, before it could reach a real defect, and
 // nothing offline said so.
 //
-// It is deliberately an EQUALITY. Tuning base or per-add-on without re-deciding what the surface is
-// known to need is how the previous guess survived four paid runs.
+// It is deliberately an EQUALITY at the measured size. Tuning base or per-add-on without re-deciding
+// what the surface is known to need is how the previous guess survived four paid runs. A catalogue
+// that has grown past the measured size gets the derived per-chart allowance on top — never less
+// than what was measured, and never clamped.
 func TestArgoBudgetFullSurfaceIsTheMeasuredConvergence(t *testing.T) {
-	if got := argoBudgetFor(expectedCatalogSize); got != argoMeasuredFullSurfaceBudget {
+	if got := argoBudgetFor(argoMeasuredSurfaceSize); got != argoMeasuredFullSurfaceBudget {
 		t.Errorf("argoBudgetFor(%d) = %s, want the measured %s (hetzner/addons run 33107415369)\n"+
 			"  base %s + %d x %s = %s\n"+
-			"If the catalog size changed, re-derive; if the rate changed, say which run measured it.",
-			expectedCatalogSize, got, argoMeasuredFullSurfaceBudget,
-			argoBudgetBase, expectedCatalogSize, argoBudgetPerAddOn,
-			argoBudgetBase+time.Duration(expectedCatalogSize)*argoBudgetPerAddOn)
+			"If the rate changed, say which run measured it.",
+			argoMeasuredSurfaceSize, got, argoMeasuredFullSurfaceBudget,
+			argoBudgetBase, argoMeasuredSurfaceSize, argoBudgetPerAddOn,
+			argoBudgetBase+time.Duration(argoMeasuredSurfaceSize)*argoBudgetPerAddOn)
+	}
+	if expectedCatalogSize < argoMeasuredSurfaceSize {
+		t.Errorf("the catalogue (%d) is smaller than the measured surface (%d): re-measure, the 35m no longer describes it",
+			expectedCatalogSize, argoMeasuredSurfaceSize)
+	}
+	if got := argoBudgetFor(expectedCatalogSize); got < argoMeasuredFullSurfaceBudget {
+		t.Errorf("argoBudgetFor(%d) = %s, below the measured %s", expectedCatalogSize, got, argoMeasuredFullSurfaceBudget)
 	}
 	// …and the ceiling must not be the thing producing that answer. A clamped value would make the
-	// equality above true while the derivation itself was still wrong.
+	// derivation look right while it was being cut short.
 	if unclamped := argoBudgetBase + time.Duration(expectedCatalogSize)*argoBudgetPerAddOn; unclamped > argoBudgetCeiling {
 		t.Errorf("the real catalog derives %s, which the %s ceiling CLAMPS — the surface has outgrown the clamp",
 			unclamped, argoBudgetCeiling)

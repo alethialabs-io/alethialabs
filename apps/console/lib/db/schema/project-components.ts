@@ -35,6 +35,7 @@ import type {
 	DatabaseProviderConfig,
 	DetectedService,
 	DnsProviderConfig,
+	GitopsBumpRecord,
 	IacScanReport,
 	IacVarValues,
 	NodeSize,
@@ -387,6 +388,10 @@ export const projectAddons = pgTable(
 		scan_status: text().$type<ScanStatus>().default("unscanned").notNull(), // unscanned | scanning | done | failed
 		scan_report: jsonb().$type<VerifyReport>(),
 		scanned_at: timestamp({ withTimezone: true }),
+		// GitOps mode only: the pull request Alethia opened in the apps repo to move this add-on's
+		// seeded `spec.source.targetRevision` to a newer chart (#6549), so the Deploy tab and the card
+		// can link to it and a second click finds it instead of opening another. NULL = none offered.
+		gitops_bump: jsonb().$type<GitopsBumpRecord>(),
 		created_at: ts(),
 		updated_at: ts(),
 	},

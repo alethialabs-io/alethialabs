@@ -940,6 +940,30 @@ export interface GitopsStatusReport {
 	 *  refuse there (#6541). Absent when the environment has no BYO chart, or from a runner that
 	 *  predates it. */
 	byo_admission?: ByoAdmissionNamespaceReport[];
+	/** Each GitOps-mode add-on whose seeded `addons/<id>.yaml` installs an older chart than the deploy
+	 *  would seed (#6549, Go `AddonDrift`). Absent when nothing drifted, or from a runner that
+	 *  predates it — that runner still puts the sentence in `manifest_warnings`. */
+	addon_drift?: AddonDriftReport[];
+}
+
+/**
+ * One GitOps-mode add-on whose seeded manifest is behind the version the deploy would seed. Mirrors
+ * Go `argocd.AddonDriftStatus`. Catalog names, a repo-relative path and version strings only.
+ */
+export interface AddonDriftReport {
+	/** The catalog id (`ingress-nginx`). */
+	addon_id: string;
+	/** The manifest's path inside the apps repo (`addons/ingress-nginx.yaml`). */
+	file: string;
+	/** The Helm chart the file installs. */
+	chart: string;
+	/** The file's `spec.source.targetRevision`, exactly as written. */
+	seeded_version: string;
+	/** The version the deploy would seed: the catalog's, or the user's pin. */
+	desired_version: string;
+	/** The exact sentence the same deploy put in `manifest_warnings` for this add-on. A console that
+	 *  reads `addon_drift` drops that entry and renders this row instead (see the Go field). */
+	warning: string;
 }
 
 /** A BYO namespace's admission mode: the two the runner renders, or `refused` when its charts were
@@ -1773,4 +1797,30 @@ export interface ElenchLastSent {
 	kind: ElenchDraftSendKind;
 	/** ISO-8601, the server's clock. */
 	at: string;
+}
+
+/**
+ * `project_addons.gitops_bump`: the pull request Alethia opened in the customer's apps repo to move a
+ * GitOps-mode add-on's `spec.source.targetRevision` to a newer chart version (#6549). One per add-on
+ * row; it describes the latest version offered. Holds no secret: a pull-request number and URL, a
+ * branch name and version strings.
+ */
+export interface GitopsBumpRecord {
+	/** The chart version the pull request moves the file to. */
+	version: string;
+	/** The git provider that hosts the apps repo. */
+	provider: "github" | "gitlab" | "bitbucket";
+	/** The provider's pull-request number. */
+	number: number;
+	/** The pull request's web URL, which the Deploy tab and the add-on card link to. */
+	url: string;
+	/** The head branch, deterministic per add-on and version. */
+	branch: string;
+	/** Where the pull request stands. `declined` is one the user closed without merging; it is never
+	 *  reopened without an explicit ask. */
+	state: "open" | "merged" | "declined";
+	/** The user whose click opened it. */
+	opened_by: string;
+	/** When this record was last written (ISO). */
+	updated_at: string;
 }

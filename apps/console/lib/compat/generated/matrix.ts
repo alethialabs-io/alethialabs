@@ -253,6 +253,11 @@ export const MATRIX: Matrix = {
 				"k8s_max": "",
 				"note": "Chart kubeVersion '>=1.21.0-0' (ingress-nginx@4.15.1); derived by derive-compat.mjs."
 			},
+			"traefik": {
+				"k8s_min": "1.30",
+				"k8s_max": "",
+				"note": "Chart kubeVersion '>=1.30.0-0' (traefik@42.3.2); derived by derive-compat.mjs."
+			},
 			"velero": {
 				"k8s_min": "1.16",
 				"k8s_max": "",

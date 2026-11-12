@@ -45,12 +45,16 @@
 #                      a 3–6 h run is EUR 10–20; 15 is the midpoint. cli_demo_grid reaches FOUR
 #                      providers (hetzner, aws, gcp, azure), everything else one.
 #   C-AI          10   `gh workflow run e2e-ai-nightly.yml` — real-model tokens, cents per run.
+#   C-BYOMYSQL   200   `gh workflow run byo-users-managed-mysql.yml` — one Aurora MySQL db.t4g.medium
+#                      and one RDS MySQL db.t4g.micro for about an hour, created and deleted by the
+#                      run (#6536). Under USD 0.10 in fact; priced high on purpose.
 #   C-LOCALE2E  1500   scripts/e2e/{provisioning,keyless-db,registry,secrets}-e2e.sh run locally:
 #                      the same real-cloud applies as one heavy nightly leg.
 #   C-HCLOUD     100   `hcloud --context alethia-e2e|alethia-sandbox <resource> create` — the
 #                      same order of cost as one sandbox bring-up.
 #   C-RERUN            `gh run rerun <id>` — the run's workflow is looked up over the REST API and
-#                      priced from the same table: free → 0, prod → refused, e2e-ai → 10. An
+#                      priced from the same table: free → 0, prod → refused, e2e-ai → 10,
+#                      byo-users-managed-mysql → 200. An
 #                      e2e-nightly rerun is charged per "Provision" job it runs again (all of them;
 #                      only the failed ones with --failed; the one named with --job): 50 for a
 #                      SCHEDULED run (the floor is the only scheduled dimension) and 1550 for a
@@ -114,6 +118,7 @@ REAP_PLIST="$HOME/Library/LaunchAgents/io.alethialabs.sandbox-reap.plist"
 #   prod     ships or changes production — refused (R-PROD)
 #   nightly  priced from its inputs (C-NIGHTLY)
 #   ai       C-AI
+#   byomysql C-BYOMYSQL
 wf_class() {
 	case "$1" in
 	ci.yml | release-gate.yml | codeql.yml | validate-console.yml | validate-runner.yml | workflow-health.yml | \
@@ -129,6 +134,7 @@ wf_class() {
 		;;
 	e2e-nightly.yml) echo nightly ;;
 	e2e-ai-nightly.yml) echo ai ;;
+	byo-users-managed-mysql.yml) echo byomysql ;;
 	*) echo unknown ;;
 	esac
 }
@@ -490,6 +496,10 @@ rule_workflow() {
 		charge C-AI 10 "gh workflow run $file"
 		return 0
 	fi
+	if [ "$class" = byomysql ]; then
+		charge C-BYOMYSQL 200 "gh workflow run $file"
+		return 0
+	fi
 	# nightly
 	local heavy=0 providers=1 names="" maxcfg=0
 	for a in "${inputs[@]}"; do
@@ -620,6 +630,10 @@ rule_rerun() {
 	unknown) refuse R-WORKFLOW "\`gh run rerun $id\` re-runs $wf, which is not in guard-spend.sh's workflow table." ;;
 	ai)
 		charge C-RERUN 10 "gh run rerun $id ($wf)"
+		return 0
+		;;
+	byomysql)
+		charge C-RERUN 200 "gh run rerun $id ($wf)"
 		return 0
 		;;
 	esac
@@ -945,6 +959,7 @@ case "$*" in
 *o/other/actions/runs/110*) echo ".github/workflows/e2e-ai-nightly.yml schedule" ;;
 *actions/runs/110*) echo '{"message":"Not Found","status":"404"}'; echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
 *actions/runs/111*) exit 0 ;;
+*actions/runs/112*) echo ".github/workflows/byo-users-managed-mysql.yml workflow_dispatch" ;;
 *actions/runs/106*) echo '{"message":"Not Found","documentation_url":"x","status":"404"}'; echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
 "run view 104 "*)
 	printf '1\tsuccess\tResolve dimension\n5551\tfailure\tProvision + verify + teardown (real cloud) (hetzner)\n'
@@ -1012,6 +1027,12 @@ STUB
 	t block 'gh workflow run e2e-nightly.yml -f fabric_demo=true -f secrets_xacct=true'
 	c 1550 'gh workflow run "E2E Nightly (T2 · real cloud)" -f xacct_registry=true'
 	c 10 'gh workflow run e2e-ai-nightly.yml'
+	c 200 'gh workflow run byo-users-managed-mysql.yml'
+	c 200 'gh workflow run byo-users-managed-mysql.yml --ref feat/x'
+	c 200 'gh workflow run "BYO users — managed MySQL (AWS)"'
+	c 200 'gh run rerun 112'
+	t block 'gh workflow run not-in-the-table.yml'
+	grep -q 'not in guard-spend.sh' "$tmp/stderr" && pass=$((pass + 1)) || bad "an unclassified dispatch is refused by naming the table: $(cat "$tmp/stderr")"
 	c 1500 'bash scripts/e2e/keyless-db-e2e.sh'
 	c 1500 './scripts/e2e/provisioning-e2e.sh --provider hetzner'
 	c 100 'hcloud --context alethia-e2e server create --name x --type cx22'

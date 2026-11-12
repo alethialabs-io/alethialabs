@@ -80,6 +80,11 @@ type PreviewGuardrailsInput struct {
 	// Common labels stamped on the ApplicationSet + AppProjects and propagated onto each generated
 	// Application (as in #842, the template loops these explicitly).
 	Labels map[string]string
+	// ByoCharts is every BYO chart attached to the project, in any environment (#6518). REQUIRED:
+	// nil refuses the render (ErrPreviewByoChartsUnknown), and an explicit empty list means the
+	// project has none. A chart in one of the preview namespaces refuses it with a
+	// *PreviewByoOverlapError naming each chart and namespace (CheckPreviewByoOverlap).
+	ByoCharts []PreviewByoChart
 }
 
 // previewGuardrailsTmpl renders the two AppProjects + the companion guardrails ApplicationSet. It
@@ -286,6 +291,10 @@ func (in PreviewGuardrailsInput) validate() error {
 	if err := validatePreviewNamespacePrefix(what, in.NamespacePrefix); err != nil {
 		return err
 	}
+	// After the prefix's own shape check, so the overlap is judged against a prefix that renders.
+	if err := CheckPreviewByoOverlap(in.NamespacePrefix, in.ByoCharts); err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
 	if err := validatePreviewURL(what, "destination server", in.DestServer, apiServerSchemes); err != nil {
 		return err
 	}
@@ -350,11 +359,7 @@ func (in PreviewGuardrailsInput) templateData() previewGuardrailsData {
 	in.GuardrailsRepoURL = strings.TrimSpace(in.GuardrailsRepoURL)
 	in.GuardrailsPath = strings.TrimSpace(in.GuardrailsPath)
 
-	prefix := in.NamespacePrefix
-	if strings.TrimSpace(prefix) == "" {
-		prefix = "preview"
-	}
-	in.NamespacePrefix = prefix
+	in.NamespacePrefix = previewNamespacePrefixOrDefault(in.NamespacePrefix)
 
 	dest := in.DestServer
 	if strings.TrimSpace(dest) == "" {

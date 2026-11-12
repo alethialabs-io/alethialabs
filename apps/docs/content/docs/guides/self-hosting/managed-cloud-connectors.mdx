@@ -101,5 +101,5 @@ needed — Azure/Alibaba/AWS/GCP all re-fetch the JWKS and validate against whic
 
 - Vault key catalog: `deploy/prod/.env.production.example`; operator inputs:
   `deploy/prod/secrets.local.env.example`.
-- The emit list in `.github/workflows/deploy-console.yml` is the gate — a key only reaches the app if
-  it's emitted there.
+- The emit list in `scripts/ci/deploy-console-assemble-env.sh` (run by
+  `.github/workflows/deploy-console.yml`) is the gate — a key only reaches the app if it's emitted there.
