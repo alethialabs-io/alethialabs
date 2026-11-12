@@ -128,6 +128,29 @@ describe("a logged DrizzleQueryError", () => {
 		expect(errOf(lines[0])).not.toHaveProperty("stack");
 	});
 
+	it.each([
+		["shortened to its first line", (m: string) => m.split("\n")[0] ?? ""],
+		["emptied", () => ""],
+	])("drops the stack when the message was %s after the stack was read", (_what, change) => {
+		const e = queryError();
+		expect(e.stack).toContain("secret-param");
+		e.message = change(e.message);
+		const { log, lines } = collectLogger();
+		log.error("query failed", { err: e });
+		expectNoParams(JSON.stringify(lines[0]));
+		expect(errOf(lines[0])).not.toHaveProperty("stack");
+	});
+
+	it("does not match a query/params pair that is inherited rather than the error's own", () => {
+		/** An error class whose `query` and `params` live on its prototype, not on the instance. */
+		class Inherited extends Error {}
+		Object.assign(Inherited.prototype, { query: "select 1", params: ["inherited-param"] });
+		const e = new Inherited("lookup failed");
+		const { log, lines } = collectLogger();
+		log.error("lookup", { err: e });
+		expect(errOf(lines[0])).toMatchObject({ message: "lookup failed" });
+	});
+
 	it("leaves a plain Error whose message contains 'params:' unchanged", () => {
 		const plain = new Error(`Failed query: ${SQL}\nparams: ${PARAMS.join(",")}`);
 		const { log, lines } = collectLogger();

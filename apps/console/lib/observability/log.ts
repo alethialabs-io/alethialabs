@@ -92,15 +92,23 @@ function failedQueryText(value: object): string | undefined {
 }
 
 /**
- * Returns `stack` with its first copy of `original` (the error's own message, which V8 writes into
- * the stack's first line) replaced by `replacement`. When the stack does not contain `original`,
- * which it would not if the message was changed after the error was built, the stack is dropped
- * (`undefined`), because nothing then shows the stack is free of what the message held.
+ * Returns `stack` with its header line rewritten from `name: original` to `name: replacement`, or
+ * `undefined` (the stack is dropped) unless the stack's header is EXACTLY `name: original` followed
+ * by its frames or by nothing. V8 writes the header from the message as it stood when the stack was
+ * first read, so a message changed after that no longer matches the header — and a shortened one
+ * could still appear inside it — so only an exact header proves the rest of the stack is frames.
  */
-function replaceInStack(stack: string, original: string, replacement: string): string | undefined {
-	const at = stack.indexOf(original);
-	if (at === -1) return undefined;
-	return stack.slice(0, at) + replacement + stack.slice(at + original.length);
+function replaceInStack(
+	stack: string,
+	name: string,
+	original: string,
+	replacement: string,
+): string | undefined {
+	const header = original === "" ? name : `${name}: ${original}`;
+	if (!stack.startsWith(header)) return undefined;
+	const rest = stack.slice(header.length);
+	if (rest !== "" && !/^\n\s+at /.test(rest)) return undefined;
+	return `${name}: ${replacement}${rest}`;
 }
 
 /** The recursive step of `serializeErr`; `ancestors` holds the objects on the current path. */
@@ -131,7 +139,14 @@ function serializeErrAt(
 	};
 	if ("stack" in value && typeof value.stack === "string") {
 		const stack =
-			query === undefined ? value.stack : replaceInStack(value.stack, value.message, message);
+			query === undefined
+				? value.stack
+				: replaceInStack(
+						value.stack,
+						"name" in value && typeof value.name === "string" ? value.name : "Error",
+						value.message,
+						message,
+					);
 		if (stack !== undefined) out.stack = stack;
 	}
 	copyStatusFields(value, out);
