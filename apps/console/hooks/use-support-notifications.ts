@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useCallback, useMemo } from "react";
+import { notificationFeed } from "@/hooks/use-job-notifications";
 import { useSupportCasesQuery } from "@/lib/query/use-support-cases-query";
 import { useNotificationsStore } from "@/lib/stores/use-notifications-store";
 import type {
@@ -33,7 +34,8 @@ const MAX_NOTIFICATIONS = 20;
  * without waiting for the server watermark round-trip. Capped to the most-recent cases.
  */
 export function useSupportNotifications() {
-	const { data: cases } = useSupportCasesQuery();
+	const casesQuery = useSupportCasesQuery();
+	const cases = casesQuery.data;
 	const readSupportCaseIds = useNotificationsStore((s) => s.readSupportCaseIds);
 	const markSupportRead = useNotificationsStore((s) => s.markSupportRead);
 	const markAllSupportRead = useNotificationsStore((s) => s.markAllSupportRead);
@@ -79,5 +81,11 @@ export function useSupportNotifications() {
 		[markAllSupportRead, notifications],
 	);
 
-	return { notifications, unreadCount, markAsRead, markAllRead };
+	return {
+		notifications,
+		unreadCount,
+		markAsRead,
+		markAllRead,
+		feed: notificationFeed(casesQuery),
+	};
 }
