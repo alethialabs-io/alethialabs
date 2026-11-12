@@ -195,6 +195,7 @@ export function AddonConfigCard({
       environmentId={environmentId}
       hasAppsRepo={addons.data?.hasAppsRepo ?? false}
       appsRepoName={addons.data?.appsRepoName ?? null}
+      gitopsRefusal={addons.data?.gitopsRefusal ?? null}
       provider={provider}
       onDone={closeCard}
       onOpenAddon={(id) => openCard({ kind: "addon", itemId: id })}
@@ -213,6 +214,7 @@ export function AddonConfigForm({
   environmentId,
   hasAppsRepo,
   appsRepoName = null,
+  gitopsRefusal = null,
   provider,
   onDone,
   onOpenAddon,
@@ -223,6 +225,11 @@ export function AddonConfigForm({
   hasAppsRepo: boolean;
   /** The apps repo as `owner/repo` on GitHub, where a GitOps bump pull request is opened (#6549). */
   appsRepoName?: string | null;
+  /**
+   * Why GitOps delivery cannot be chosen here — the apps repo is not on GitHub (#6599) — or null.
+   * The server refuses the same choice with the same sentence; this says it before the click.
+   */
+  gitopsRefusal?: string | null;
   /** The project's effective cloud provider — drives the requirement hints (null = unset). */
   provider: CloudProviderSlug | null;
   onDone: () => void;
@@ -620,17 +627,19 @@ export function AddonConfigForm({
                   <SelectItem value="managed">
                     Managed — Alethia applies it
                   </SelectItem>
-                  <SelectItem value="gitops" disabled={!hasAppsRepo}>
+                  <SelectItem value="gitops" disabled={!hasAppsRepo || gitopsRefusal !== null}>
                     GitOps — written to your apps repo
                   </SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                {mode === "gitops"
-                  ? "The manifest is seeded into your apps repo (you own + edit it thereafter); ArgoCD syncs it."
-                  : !hasAppsRepo
-                    ? "GitOps mode needs an apps repo on this environment (set one in the project)."
-                    : "Alethia renders + applies the ArgoCD Application directly."}
+                {gitopsRefusal !== null
+                  ? gitopsRefusal
+                  : mode === "gitops"
+                    ? "The manifest is seeded into your apps repo (you own + edit it thereafter); ArgoCD syncs it."
+                    : !hasAppsRepo
+                      ? "GitOps mode needs an apps repo on this environment (set one in the project)."
+                      : "Alethia renders + applies the ArgoCD Application directly."}
               </p>
             </div>
 

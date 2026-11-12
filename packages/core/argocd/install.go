@@ -826,16 +826,19 @@ func ApplyManifest(manifest string, stdout, stderr io.Writer) error {
 
 // ConfigureRepoCredentials registers the customer's apps-destination repo with ArgoCD under the
 // shared "repo-apps" Secret. BYO chart repos use ConfigureRepoCredentialsNamed with a per-repo
-// Secret name so they never collide with — or read — the apps repo's credential.
-func ConfigureRepoCredentials(repoURL, token string, stdout, stderr io.Writer) error {
-	return ConfigureRepoCredentialsNamed(repoURL, token, "repo-apps", stdout, stderr)
+// Secret name so they never collide with — or read — the apps repo's credential. username is the
+// HTTP Basic username the token's provider requires (git.TokenUsername).
+func ConfigureRepoCredentials(repoURL, token, username string, stdout, stderr io.Writer) error {
+	return ConfigureRepoCredentialsNamed(repoURL, token, username, "repo-apps", stdout, stderr)
 }
 
 // ConfigureRepoCredentialsNamed applies an ArgoCD repository Secret (name `secretName`) granting
 // token access to `repoURL`. Parametrizing the name lets each repo (apps destination + every BYO
 // chart repo) own an isolated credential — a shared name would let one tenant's Application read
-// another repo's token.
-func ConfigureRepoCredentialsNamed(repoURL, token, secretName string, stdout, stderr io.Writer) error {
+// another repo's token. username is sent with the token: Bitbucket Cloud refuses an access token
+// under any username but `x-token-auth`, so it must be the one the token's provider requires
+// (git.TokenUsername).
+func ConfigureRepoCredentialsNamed(repoURL, token, username, secretName string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "Configuring ArgoCD repository credentials for %s (secret %s)\n", repoURL, secretName)
 
 	b64 := base64.StdEncoding.EncodeToString
@@ -851,7 +854,7 @@ data:
   url: %s
   username: %s
   password: %s
-`, secretName, b64([]byte("git")), b64([]byte(repoURL)), b64([]byte("x-access-token")), b64([]byte(token)))
+`, secretName, b64([]byte("git")), b64([]byte(repoURL)), b64([]byte(username)), b64([]byte(token)))
 
 	tmpFile, err := os.CreateTemp("", "argocd-repo-*.yaml")
 	if err != nil {

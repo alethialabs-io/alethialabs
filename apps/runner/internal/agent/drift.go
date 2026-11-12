@@ -62,7 +62,11 @@ func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider s
 	if vc.IacSource != nil {
 		// Drift clones only the BYO module, so its token is requested for that repo by name. The
 		// snapshot's git_access_token is not read (see deployGitTokens).
-		gitToken := w.fetchRepoToken(job.ID, vc.IacSource.RepoURL, stderr)
+		fetched := w.fetchRepoToken(job.ID, vc.IacSource.RepoURL, stderr)
+		gitToken := fetched.Token
+		if fetched.Provider != "" {
+			vc.GitProviders = map[string]string{vc.IacSource.RepoURL: fetched.Provider}
+		}
 		workDir, werr := newJobWorkDir(job.ID)
 		if werr != nil {
 			return fmt.Errorf("create workdir: %w", werr)

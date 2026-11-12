@@ -40,7 +40,7 @@ func TestTransformURLToHTTPS(t *testing.T) {
 // TestNewGITWithTokenSSHURL confirms the constructor path (token auth) normalizes a full
 // ssh:// URL to https so BasicAuth token clones work — the end-to-end guard for the fix.
 func TestNewGITWithTokenSSHURL(t *testing.T) {
-	g := NewGITWithToken("ssh://git@github.com/owner/repo.git", "/tmp/x", false, "tok")
+	g := NewGITWithToken("ssh://git@github.com/owner/repo.git", "/tmp/x", false, "tok", "")
 	if g.RepoURL != "https://github.com/owner/repo.git" {
 		t.Fatalf("RepoURL = %q, want https://github.com/owner/repo.git", g.RepoURL)
 	}

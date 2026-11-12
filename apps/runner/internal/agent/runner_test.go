@@ -101,8 +101,8 @@ func (m *mockAPI) GetJob(jobID string) (*Job, error) {
 	return nil, fmt.Errorf("job not found: %s", jobID)
 }
 
-func (m *mockAPI) FetchGitToken(jobID, repoURL string) (string, error) {
-	return "", nil
+func (m *mockAPI) FetchGitToken(jobID, repoURL string) (GitToken, error) {
+	return GitToken{}, nil
 }
 
 func (m *mockAPI) FetchAddonSecrets(jobID string) (map[string]map[string]string, error) {

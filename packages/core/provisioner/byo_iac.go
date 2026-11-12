@@ -88,7 +88,7 @@ func prepareByoIacWorkdir(ctx context.Context, vc *types.ProjectConfig, gitToken
 	// token is present, else an SSH/public clone.
 	var repo *git.GIT
 	if strings.TrimSpace(gitToken) != "" {
-		repo = git.NewGITWithToken(src.RepoURL, cloneDir, false, gitToken)
+		repo = git.NewGITWithToken(src.RepoURL, cloneDir, false, gitToken, gitProviderFor(vc, src.RepoURL))
 	} else {
 		repo = git.NewGIT(src.RepoURL, cloneDir, false)
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	alethiaAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
 	"github.com/alethialabs-io/alethialabs/packages/core/compat"
+	"github.com/alethialabs-io/alethialabs/packages/core/git"
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
 	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
@@ -269,6 +270,21 @@ func byoIacCloneToken(params DeployParams) string {
 		return ""
 	}
 	return params.GitRepoTokens[params.ProjectConfig.IacSource.RepoURL]
+}
+
+// gitProviderFor is the git provider the console named for repo's token, as the runner recorded it
+// in vc.GitProviders, or "" when it named none. It picks the username sent with that token.
+func gitProviderFor(vc *types.ProjectConfig, repo string) string {
+	if vc == nil {
+		return ""
+	}
+	return vc.GitProviders[repo]
+}
+
+// gitUsernameFor is the HTTP Basic username repo's token is sent with: the one the token's provider
+// requires (git.TokenUsername). An ArgoCD repository Secret carries it, as a clone does.
+func gitUsernameFor(vc *types.ProjectConfig, repo string) string {
+	return git.TokenUsername(gitProviderFor(vc, repo))
 }
 
 // gitTokenValues collects every non-empty git token in play — the apps-repo GitAccessToken and each
@@ -1102,7 +1118,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			switch {
 			case params.GitAccessToken != "":
 				// Private or public: register the token so ArgoCD authenticates its clones.
-				if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, stdout, stderr); err != nil {
+				if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, gitUsernameFor(vc, vc.Repositories.AppsDestinationRepo), stdout, stderr); err != nil {
 					result.GitopsStatus = gitopsFailed(argocd.GitopsStepRepoCredentials, err)
 					return &result, fmt.Errorf("failed to connect ArgoCD to apps repo %s: %w", vc.Repositories.AppsDestinationRepo, err)
 				}

@@ -17,17 +17,18 @@ import (
 // repo only. No path asks for a token without naming its repo, and no token minted for one repo
 // is handed to another — a repo whose token could not be had is cloned without a credential.
 
-// fetchRepoToken requests the job owner's git token for exactly repoURL. It returns "" (and makes
-// no request) for an empty repo, and "" with a warning naming only the repo's host when the
-// console refuses or the request fails: the caller then clones without a credential.
-func (w *Runner) fetchRepoToken(jobID, repoURL string, stderr io.Writer) string {
+// fetchRepoToken requests the job owner's git token for exactly repoURL, with the provider the
+// console named for it. It returns the zero GitToken (and makes no request) for an empty repo, and
+// the zero GitToken with a warning naming only the repo's host when the console refuses or the
+// request fails: the caller then clones without a credential.
+func (w *Runner) fetchRepoToken(jobID, repoURL string, stderr io.Writer) GitToken {
 	if strings.TrimSpace(repoURL) == "" {
-		return ""
+		return GitToken{}
 	}
 	token, err := w.api.FetchGitToken(jobID, repoURL)
 	if err != nil {
 		fmt.Fprintf(stderr, "Warning: failed to fetch git token for the repo on host %s: %v\n", provisioner.RepoHostForLog(repoURL), err)
-		return ""
+		return GitToken{}
 	}
 	return token
 }
@@ -37,16 +38,22 @@ func (w *Runner) fetchRepoToken(jobID, repoURL string, stderr io.Writer) string 
 //     snapshot's own git_access_token is not read: the console always writes it empty, and a
 //     token there would not be scoped to any one repo;
 //   - repoTokens maps the BYO IaC module repo and each BYO git chart repo to its own token
-//     (DeployParams.GitRepoTokens). A repo with no token has no entry.
-func (w *Runner) deployGitTokens(jobID string, vc *types.ProjectConfig, stderr io.Writer) (appsToken string, repoTokens map[string]string) {
-	fetched := map[string]string{}
+//     (DeployParams.GitRepoTokens). A repo with no token has no entry;
+//   - providers maps every repo that got a token, the apps repo included, to the provider the
+//     console named for it (ProjectConfig.GitProviders), which picks the username sent with it.
+func (w *Runner) deployGitTokens(jobID string, vc *types.ProjectConfig, stderr io.Writer) (appsToken string, repoTokens, providers map[string]string) {
+	fetched := map[string]GitToken{}
+	providers = map[string]string{}
 	tokenFor := func(repo string) string {
 		if t, done := fetched[repo]; done {
-			return t
+			return t.Token
 		}
 		t := w.fetchRepoToken(jobID, repo, stderr)
 		fetched[repo] = t
-		return t
+		if t.Token != "" && t.Provider != "" {
+			providers[repo] = t.Provider
+		}
+		return t.Token
 	}
 
 	appsToken = tokenFor(vc.Repositories.AppsDestinationRepo)
@@ -68,18 +75,22 @@ func (w *Runner) deployGitTokens(jobID string, vc *types.ProjectConfig, stderr i
 			add(vc.AddOns[i].ChartRepo)
 		}
 	}
-	return appsToken, repoTokens
+	return appsToken, repoTokens, providers
 }
 
 // iacRepoTokens is the GitRepoTokens a PLAN needs: the BYO IaC module repo's own token, or an
 // empty map when the plan clones no customer module (a bundled-template plan touches no repo).
-func (w *Runner) iacRepoTokens(jobID string, vc *types.ProjectConfig, stderr io.Writer) map[string]string {
-	out := map[string]string{}
+// providers maps that repo to the provider the console named for its token, as in deployGitTokens.
+func (w *Runner) iacRepoTokens(jobID string, vc *types.ProjectConfig, stderr io.Writer) (tokens, providers map[string]string) {
+	tokens, providers = map[string]string{}, map[string]string{}
 	if vc.IacSource == nil {
-		return out
+		return tokens, providers
 	}
-	if t := w.fetchRepoToken(jobID, vc.IacSource.RepoURL, stderr); t != "" {
-		out[vc.IacSource.RepoURL] = t
+	if t := w.fetchRepoToken(jobID, vc.IacSource.RepoURL, stderr); t.Token != "" {
+		tokens[vc.IacSource.RepoURL] = t.Token
+		if t.Provider != "" {
+			providers[vc.IacSource.RepoURL] = t.Provider
+		}
 	}
-	return out
+	return tokens, providers
 }

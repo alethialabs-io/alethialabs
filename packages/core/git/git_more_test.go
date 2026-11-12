@@ -232,7 +232,7 @@ func TestAddCommitAndPushLandOnTheRemote(t *testing.T) {
 	gitCmd(t, t.TempDir(), "clone", "-q", "--bare", repo, bare)
 
 	cloneDir := filepath.Join(t.TempDir(), "clone")
-	g := NewGITWithToken("file://"+bare, cloneDir, false, "test-token")
+	g := NewGITWithToken("file://"+bare, cloneDir, false, "test-token", "")
 	if err := g.Clone(context.Background(), branch, true); err != nil {
 		t.Fatalf("Clone: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestBootstrapUpdateAndNoOpPaths(t *testing.T) {
 	logger := utils.NewLogger(nil, "")
 
 	cloneDir := filepath.Join(t.TempDir(), "clone")
-	client := NewGITWithToken("file://"+bare, cloneDir, false, "test-token")
+	client := NewGITWithToken("file://"+bare, cloneDir, false, "test-token", "")
 	if err := client.Clone(context.Background(), branch, true); err != nil {
 		t.Fatalf("Clone: %v", err)
 	}

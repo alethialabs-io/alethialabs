@@ -99,11 +99,12 @@ describe("POST /api/jobs/[id]/git-token", () => {
 		["https://github.com/acme/apps", "github"],
 		["https://bitbucket.org/acme/apps", "bitbucket"],
 		["https://code.acme.example/acme/apps", "gitlab"],
-	])("mints the token for %s from the %s link", async (repo, provider) => {
+	])("mints the token for %s from the %s link, and names that provider", async (repo, provider) => {
 		seed(repo);
 		const res = await post();
 		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual({ token: TOKEN });
+		// The provider rides back so the runner sends that provider's git username (#6599).
+		expect(await res.json()).toEqual({ token: TOKEN, provider });
 		expect(resolveAccountId).toHaveBeenCalledWith("user-1", provider);
 	});
 
@@ -159,7 +160,7 @@ describe("POST /api/jobs/[id]/git-token", () => {
 		seed("https://bitbucket.org/acme/apps", [], buildJob("https://github.com/acme/api"));
 		const res = await post("https://github.com/acme/api");
 		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual({ token: TOKEN });
+		expect(await res.json()).toEqual({ token: TOKEN, provider: "github" });
 		expect(resolveAccountId).toHaveBeenCalledWith("user-1", "github");
 	});
 

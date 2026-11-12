@@ -21,7 +21,9 @@ import {
 	addonMode,
 	type ComponentStatus,
 	projectAddons,
+	projectRepositories,
 } from "@/lib/db/schema";
+import { gitopsModeRefusal } from "@/lib/git/gitops-support";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { addOnDeprecationView, getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
 import { type AddOnDeprecationView, newInstallRefusal } from "@/lib/addons/deprecation";
@@ -92,6 +94,12 @@ export interface ProjectAddonsView {
 	 * request is opened (#6549); null when it is not one, absent from a view built before this field.
 	 */
 	appsRepoName?: string | null;
+	/**
+	 * Why GitOps delivery cannot be chosen for this environment's apps repo (it is not on GitHub,
+	 * #6599), as the sentence the card shows; null when it can, absent from a view built before
+	 * this field.
+	 */
+	gitopsRefusal?: string | null;
 }
 
 /** The sentence for an Advanced values override that is not a YAML mapping. */
@@ -179,6 +187,22 @@ export async function enableAddon(input: {
 	const mode: AddonMode = input.mode ?? "managed";
 
 	await withActorScope(actor, async (tx) => {
+		// GitOps delivery pushes the add-on's manifest into the apps repo, which only a GitHub link
+		// can do today (#6599). Refused here, when the mode is chosen, so the deploy never meets it.
+		if (mode === "gitops") {
+			const [repos] = await tx
+				.select({ appsRepo: projectRepositories.apps_destination_repo })
+				.from(projectRepositories)
+				.where(
+					and(
+						eq(projectRepositories.project_id, input.projectId),
+						eq(projectRepositories.environment_id, envId),
+					),
+				)
+				.limit(1);
+			const gitopsRefusal = gitopsModeRefusal(repos?.appsRepo);
+			if (gitopsRefusal) throw new ActionRefusal("conflict", gitopsRefusal);
+		}
 		// Encrypt secret knobs before they touch the DB (stored as EncryptedSecret, never plaintext —
 		// W4), PRESERVING any secret the user left blank: the row is replaced wholesale, so without
 		// this a reconfigure of other knobs would wipe a set secret. Read the existing envelopes and
