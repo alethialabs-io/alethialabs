@@ -42,6 +42,7 @@ import { encryptSecret, isCredEncryptionConfigured } from "@/lib/crypto/secrets"
 import { getServiceDb } from "@/lib/db";
 import { SsrfError } from "@/lib/net/ssrf-guard";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { log } from "@/lib/observability/log";
 
 const UUID = "11111111-1111-4111-8111-111111111111";
 /** A channel / rule id (the actions validate ids as uuids). */
@@ -320,7 +321,7 @@ describe("verifyChannel", () => {
 	});
 
 	it("a destination the outbound guard refuses gets one fixed sentence, never the guard's own words", async () => {
-		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
 		mockDb({ selectRows: [{ id: CH, type: "webhook" }] });
 		senderVerify.mockRejectedValue(
 			new SsrfError("Refusing to connect to non-public address 10.1.2.3 for host internal.example"),
@@ -331,6 +332,10 @@ describe("verifyChannel", () => {
 			data: { verified: false, error: "This destination isn't publicly reachable over HTTPS." },
 		});
 		expect(JSON.stringify(result)).not.toContain("10.1.2.3");
+		// The guard's own words stay on the server: the refusal goes to the logger under `err`.
+		expect(warn).toHaveBeenCalledWith("[alerts] channel destination refused by the outbound guard", {
+			err: expect.any(SsrfError),
+		});
 		warn.mockRestore();
 	});
 

@@ -31,6 +31,7 @@ import {
 	getLinkedProviders,
 	getValidProviderToken,
 } from "@/app/server/actions/identities";
+import { log } from "@/lib/observability/log";
 
 const fetchMock = vi.fn();
 
@@ -79,8 +80,8 @@ const bbRepo = {
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.stubGlobal("fetch", fetchMock);
-	// Silence the SUT's expected console.error in error-path tests.
-	vi.spyOn(console, "error").mockImplementation(() => {});
+	// Silence the SUT's expected logger errors in error-path tests.
+	vi.spyOn(log, "error").mockImplementation(() => {});
 	vi.mocked(getGitlabBaseUrl).mockReturnValue("https://gitlab.com");
 });
 
@@ -223,6 +224,9 @@ describe("fetchAllRepositories", () => {
 		expect(r).toEqual({
 			repositories: [],
 			error: "Failed to fetch repositories",
+		});
+		expect(log.error).toHaveBeenCalledWith("Error fetching all repositories", {
+			err: expect.objectContaining({ message: "session gone" }),
 		});
 	});
 });

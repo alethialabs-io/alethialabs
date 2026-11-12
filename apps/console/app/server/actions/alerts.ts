@@ -43,6 +43,7 @@ import {
 	channelInputSchema,
 	policyInputSchema,
 } from "@/lib/validations/alerts";
+import { log } from "@/lib/observability/log";
 
 // ── DTOs (client-safe; never carry the encrypted secret envelope) ───────────────
 // Declared here because the list builders (lib/queries/alerts-lists.ts) and the components both
@@ -332,7 +333,7 @@ async function verifyOwnedChannel(id: string): Promise<VerifyChannelOutcome> {
  */
 function friendlyVerifyError(err: unknown): string {
 	if (err instanceof SsrfError) {
-		console.warn("[alerts] channel destination refused by the outbound guard:", err.message);
+		log.warn("[alerts] channel destination refused by the outbound guard", { err });
 		return UNREACHABLE_DESTINATION;
 	}
 	const raw = err instanceof Error ? err.message : String(err);
