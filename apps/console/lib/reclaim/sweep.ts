@@ -290,7 +290,7 @@ export async function sweepOrphans(limit = 10): Promise<number> {
 			// every other job — log it and move on.
 			log.error("orphan reclaim: sweep failed", {
 				job_id: job.id,
-				err: String(err),
+				err,
 			});
 		}
 	}
