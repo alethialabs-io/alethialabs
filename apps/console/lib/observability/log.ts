@@ -41,13 +41,28 @@ function primitiveOrUndefined(value: unknown): string | number | boolean | undef
 	return undefined;
 }
 
-/** Serializes an `errors` array entry by entry, bounded by MAX_ERR_CHILDREN. */
+/**
+ * Serializes an `errors` array entry by entry, bounded by MAX_ERR_CHILDREN. A longer array ends in
+ * a `"[+N more]"` marker, so a reader can tell entries were left out.
+ */
 function serializeErrList(
 	list: readonly unknown[],
 	depth: number,
 	ancestors: Set<object>,
 ): SerializedErrValue[] {
-	return list.slice(0, MAX_ERR_CHILDREN).map((e) => serializeErrAt(e, depth, ancestors));
+	const out = list.slice(0, MAX_ERR_CHILDREN).map((e) => serializeErrAt(e, depth, ancestors));
+	if (list.length > MAX_ERR_CHILDREN) out.push(`[+${list.length - MAX_ERR_CHILDREN} more]`);
+	return out;
+}
+
+/** Copies `code`, `status` and `statusCode` from `value` onto `out` when each is a primitive. */
+function copyStatusFields(value: object, out: SerializedErr): void {
+	const code = "code" in value ? primitiveOrUndefined(value.code) : undefined;
+	if (code !== undefined) out.code = code;
+	const status = "status" in value ? primitiveOrUndefined(value.status) : undefined;
+	if (status !== undefined) out.status = status;
+	const statusCode = "statusCode" in value ? primitiveOrUndefined(value.statusCode) : undefined;
+	if (statusCode !== undefined) out.statusCode = statusCode;
 }
 
 /** The recursive step of `serializeErr`; `ancestors` holds the objects on the current path. */
@@ -60,22 +75,20 @@ function serializeErrAt(
 		return String(value);
 	}
 	if (ancestors.has(value)) return "[Circular]";
-	if (depth > MAX_ERR_DEPTH) return "[MaxDepth]";
-	// Error-like, as pino's own serializer defines it: an object with a string `message`.
+	if (depth >= MAX_ERR_DEPTH) return "[MaxDepth]";
+	// Error-like, as pino's own serializer defines it: an object with a string `message`. Anything
+	// else keeps only its constructor's name and the primitive status fields — never its other fields.
 	if (!("message" in value) || typeof value.message !== "string") {
-		return { type: typeof value };
+		const other: SerializedErr = { type: value.constructor?.name || typeof value };
+		copyStatusFields(value, other);
+		return other;
 	}
 	const out: SerializedErr = {
 		type: value.constructor?.name || "Error",
 		message: value.message,
 	};
 	if ("stack" in value && typeof value.stack === "string") out.stack = value.stack;
-	const code = "code" in value ? primitiveOrUndefined(value.code) : undefined;
-	if (code !== undefined) out.code = code;
-	const status = "status" in value ? primitiveOrUndefined(value.status) : undefined;
-	if (status !== undefined) out.status = status;
-	const statusCode = "statusCode" in value ? primitiveOrUndefined(value.statusCode) : undefined;
-	if (statusCode !== undefined) out.statusCode = statusCode;
+	copyStatusFields(value, out);
 
 	ancestors.add(value);
 	try {
@@ -96,9 +109,11 @@ function serializeErrAt(
 /**
  * The logger's `err` serializer. Emits only `type`, `message` and `stack`, plus `code`, `status`
  * and `statusCode` when they are primitives, recursing into `cause` and `errors` under the same
- * rule (at most MAX_ERR_DEPTH levels and MAX_ERR_CHILDREN entries; a cycle becomes `"[Circular]"`).
- * Unlike `pino.stdSerializers.err`, no other enumerable property of the error is copied. A
- * primitive is written as `String(value)`; a non-error object as `{ type }`.
+ * rule (at most MAX_ERR_DEPTH levels, the deepest replaced by `"[MaxDepth]"`, and MAX_ERR_CHILDREN
+ * entries; a cycle becomes `"[Circular]"`). Unlike `pino.stdSerializers.err`, no other enumerable
+ * property of the error is copied, and a cause is nested under `cause` rather than folded into the
+ * top-level `message` / `stack`. A primitive is written as `String(value)`; a non-error object as
+ * `{ type }` (its constructor's name) plus any primitive `code` / `status` / `statusCode`.
  */
 function serializeErr(value: unknown): SerializedErrValue {
 	return serializeErrAt(value, 0, new Set());
@@ -116,9 +131,7 @@ function bridgeToOtel(level: string, msg: string, fields?: LogFields): void {
 		const attributes: Record<string, string | number | boolean> = {};
 		for (const [k, v] of Object.entries(fields ?? {})) {
 			if (v == null) continue;
-			if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
-				attributes[k] = v;
-			} else if (k === "err") {
+			if (k === "err") {
 				// The same allow-list as the pino line: never JSON-dump an arbitrary error object.
 				const e = serializeErr(v);
 				if (typeof e === "string") {
@@ -127,7 +140,10 @@ function bridgeToOtel(level: string, msg: string, fields?: LogFields): void {
 					attributes["error.type"] = e.type;
 					if (e.message !== undefined) attributes["error.message"] = e.message;
 					if (e.stack) attributes["error.stack"] = e.stack;
+					if (e.code !== undefined) attributes["error.code"] = e.code;
 				}
+			} else if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+				attributes[k] = v;
 			} else {
 				attributes[k] = JSON.stringify(v);
 			}

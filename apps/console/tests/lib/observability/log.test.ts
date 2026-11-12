@@ -151,14 +151,54 @@ describe("the logger's err serializer", () => {
 		expect(JSON.stringify(errOf(lines[0]))).toContain("[MaxDepth]");
 	});
 
-	it("writes a primitive as a string and a non-error object as its type only", () => {
+	it("writes exactly MAX_ERR_DEPTH (5) levels before the marker", () => {
+		const { log, lines } = collectLogger();
+		let e = new Error("level 0");
+		for (let i = 1; i <= 20; i++) e = new Error(`level ${i}`, { cause: e });
+		log.error("deep", { err: e });
+		let node: unknown = errOf(lines[0]);
+		let levels = 0;
+		while (typeof node === "object" && node !== null && "cause" in node) {
+			levels++;
+			node = node.cause;
+		}
+		expect(levels).toBe(5);
+		expect(node).toBe("[MaxDepth]");
+	});
+
+	it("keeps a primitive status", () => {
+		const { log, lines } = collectLogger();
+		log.error("upstream", { err: Object.assign(new Error("bad gateway"), { status: 503, body: "x" }) });
+		expect(errOf(lines[0])).toMatchObject({ type: "Error", message: "bad gateway", status: 503 });
+		expect(JSON.stringify(errOf(lines[0]))).not.toContain('"body"');
+	});
+
+	it("caps an errors array and marks how many entries it left out", () => {
+		const { log, lines } = collectLogger();
+		const many = Array.from({ length: 12 }, (_, i) => new Error(`attempt ${i}`));
+		log.error("retries", { err: new RetryWrapperError("exhausted", many) });
+		const err = errOf(lines[0]);
+		const list = typeof err === "object" && err !== null && "errors" in err ? err.errors : undefined;
+		expect(Array.isArray(list) ? list.length : -1).toBe(11);
+		expect(Array.isArray(list) ? list[10] : undefined).toBe("[+2 more]");
+	});
+
+	it("writes a primitive as a string and a non-error object as its type and status fields only", () => {
 		const { log, lines } = collectLogger();
 		log.error("string thrown", { err: "boom" });
 		log.error("number thrown", { err: 42 });
 		log.error("object thrown", { err: { token: "secret-ish", nested: { a: 1 } } });
+		/** A thrown non-error class instance. */
+		class Thrown {
+			token = "secret-ish";
+			code = "E_OBJ";
+			status = 503;
+		}
+		log.error("instance thrown", { err: new Thrown() });
 		expect(errOf(lines[0])).toBe("boom");
 		expect(errOf(lines[1])).toBe("42");
-		expect(errOf(lines[2])).toEqual({ type: "object" });
+		expect(errOf(lines[2])).toEqual({ type: "Object" });
+		expect(errOf(lines[3])).toEqual({ type: "Thrown", code: "E_OBJ", status: 503 });
 	});
 });
 
@@ -189,6 +229,7 @@ describe("the OTel log bridge", () => {
 		const attrs = records[0]?.attributes ?? {};
 		expect(attrs["error.type"]).toBe("ProviderCallError");
 		expect(attrs["error.message"]).toBe("outer");
+		expect(attrs["error.code"]).toBe("rate_limited");
 		expect(typeof attrs["error.stack"]).toBe("string");
 		expect(attrs.err).toBeUndefined();
 		expect(JSON.stringify(attrs)).not.toContain("the whole prompt");
@@ -199,7 +240,16 @@ describe("the OTel log bridge", () => {
 		const { log } = collectLogger();
 		log.error("object thrown", { err: { token: "secret-ish" } });
 		const attrs = records[0]?.attributes ?? {};
-		expect(attrs["error.type"]).toBe("object");
+		expect(attrs["error.type"]).toBe("Object");
 		expect(JSON.stringify(attrs)).not.toContain("secret-ish");
+	});
+
+	it("writes a string err as error.message", () => {
+		const records = captureOtel();
+		const { log } = collectLogger();
+		log.error("failed", { err: "boom" });
+		const attrs = records[0]?.attributes ?? {};
+		expect(attrs["error.message"]).toBe("boom");
+		expect(attrs.err).toBeUndefined();
 	});
 });
