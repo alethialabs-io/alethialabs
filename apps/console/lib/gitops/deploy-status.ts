@@ -7,7 +7,8 @@
 // execution_metadata (wiring outcome), the latest successful DETECT_DRIFT's snapshot
 // (day-2 freshness), `project_repositories`/`project_cluster`/`project_environments`
 // wiring facts, `project_addons` health columns, and the in-cluster data-service keys
-// of `addon_status`. No new DB columns — everything rides existing storage.
+// of `addon_status`, and `project_addons.gitops_bump` for the pull request a drifted GitOps add-on
+// row links to (#6549).
 //
 // Fail-loud rules encoded here:
 // - `failed_step` set on the latest deploy ⇒ the wiring died before any health read:
@@ -34,6 +35,7 @@ import type {
 	AddonDriftReport,
 	ByoAdmissionNamespaceReport,
 	ExecutionMetadata,
+	GitopsBumpRecord,
 	GitopsFailedStep,
 	GitopsStatusReport,
 } from "@/types/jsonb.types";
@@ -188,6 +190,16 @@ export interface AddonDriftRow {
 	seededVersion: string;
 	/** The version the deploy would seed. */
 	desiredVersion: string;
+	/** The pull request Alethia opened to move the file to `desiredVersion`, or null (#6549). A pull
+	 *  request for a different version is not this row's: the catalog has moved on since. */
+	pull: { number: number; url: string; state: GitopsBumpRecord["state"] } | null;
+}
+
+/** The stored GitOps bump pull requests, keyed by add-on id. */
+function bumpsByAddon(rows: GitopsAssemblyInputs["addonRows"]): Map<string, GitopsBumpRecord> {
+	const out = new Map<string, GitopsBumpRecord>();
+	for (const r of rows) if (r.gitopsBump) out.set(r.addonId, r.gitopsBump);
+	return out;
 }
 
 /**
@@ -200,11 +212,18 @@ export interface AddonDriftRow {
  * warning, including one that merely mentions an add-on, is kept. A runner that predates
  * `addon_drift` sends no entries, so all of its warnings are kept, its drift sentence among them.
  */
-export function splitDeployWarnings(report: GitopsStatusReport | null | undefined): {
+export function splitDeployWarnings(
+	report: GitopsStatusReport | null | undefined,
+	bumps: ReadonlyMap<string, GitopsBumpRecord> = new Map(),
+): {
 	warnings: string[];
 	addonDrift: AddonDriftRow[];
 } {
 	const drift = report?.addon_drift ?? [];
+	const pullFor = (addonId: string, version: string): AddonDriftRow["pull"] => {
+		const b = bumps.get(addonId);
+		return b && b.version === version ? { number: b.number, url: b.url, state: b.state } : null;
+	};
 	const paired = new Set(drift.map((d) => d.warning));
 	return {
 		warnings: (report?.manifest_warnings ?? []).filter((w) => !paired.has(w)),
@@ -214,6 +233,7 @@ export function splitDeployWarnings(report: GitopsStatusReport | null | undefine
 			chart: d.chart,
 			seededVersion: d.seeded_version,
 			desiredVersion: d.desired_version,
+			pull: pullFor(d.addon_id, d.desired_version),
 		})),
 	};
 }
@@ -241,7 +261,14 @@ export interface GitopsAssemblyInputs {
 	/** Designed service names (project_services) — skeleton rows even when unread. */
 	designedServices: string[];
 	/** Enabled add-on rows with their day-2-refreshed ArgoCD columns. */
-	addonRows: { addonId: string; health: string | null; sync: string | null; message: string | null }[];
+	addonRows: {
+		addonId: string;
+		health: string | null;
+		sync: string | null;
+		message: string | null;
+		/** The GitOps bump pull request on the row (#6549); absent = none. */
+		gitopsBump?: GitopsBumpRecord | null;
+	}[];
 }
 
 const UNKNOWN = "Unknown";
@@ -341,7 +368,7 @@ export function assembleGitopsDeployStatus(inputs: GitopsAssemblyInputs): Gitops
 		// Manifest-generation warnings are a DEPLOY-time artifact (drift never regenerates), so they
 		// come from the latest deploy's snapshot — valid until the next deploy re-renders. So does the
 		// GitOps add-on drift, which is read from the apps repo during that deploy's GitOps write.
-		...splitDeployWarnings(deployJob?.gitops),
+		...splitDeployWarnings(deployJob?.gitops, bumpsByAddon(inputs.addonRows)),
 		// Like the warnings, a DEPLOY-time artifact: drift never re-decides a namespace's mode.
 		byoAdmission: deployJob?.gitops?.byo_admission ?? [],
 		byoAdmissionReportAt: deployJob?.gitops?.byo_admission ? deployJob.createdAt.toISOString() : null,
@@ -461,6 +488,7 @@ export async function readGitopsDeployStatus(
 					health: projectAddons.health,
 					sync_status: projectAddons.sync_status,
 					status_message: projectAddons.status_message,
+					gitops_bump: projectAddons.gitops_bump,
 				})
 				.from(projectAddons)
 				.where(
@@ -484,6 +512,7 @@ export async function readGitopsDeployStatus(
 			health: r.health,
 			sync: r.sync_status,
 			message: r.status_message,
+			gitopsBump: r.gitops_bump,
 		})),
 	});
 }

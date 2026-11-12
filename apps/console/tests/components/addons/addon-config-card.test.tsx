@@ -20,6 +20,7 @@ const { enableMut, disableMut } = vi.hoisted(() => ({
 vi.mock("@/lib/query/use-addons-query", () => ({
 	useEnableAddon: () => enableMut,
 	useDisableAddon: () => disableMut,
+	useRequestGitopsBump: () => ({ mutate: () => {}, isPending: false }),
 	useAddonsQuery: vi.fn(),
 }));
 
@@ -67,6 +68,7 @@ const INSTALL: AddonInstallState = {
 	health: null,
 	sync: null,
 	lastSyncedAt: null,
+	gitopsBump: null,
 };
 
 /** An add-on exercising the new field types: enum (Select), secret (masked), nested (group). */

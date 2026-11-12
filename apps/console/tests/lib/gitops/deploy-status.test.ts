@@ -15,6 +15,7 @@ import {
 	type GitopsJobFacts,
 } from "@/lib/gitops/deploy-status";
 import { byoAdmissionReportComplete } from "@/lib/gitops/byo-admission-report";
+import type { GitopsBumpRecord } from "@/types/jsonb.types";
 
 /** A successful gitops-mode DEPLOY job carrying a full snapshot. */
 function successDeploy(overrides: Partial<GitopsJobFacts> = {}): GitopsJobFacts {
@@ -126,6 +127,7 @@ describe("assembleGitopsDeployStatus", () => {
 				chart: "ingress-nginx",
 				seededVersion: "4.11.2",
 				desiredVersion: "4.15.1",
+				pull: null,
 			},
 		]);
 		expect(s.warnings).toEqual([OTHER]);
@@ -148,6 +150,30 @@ describe("assembleGitopsDeployStatus", () => {
 			addon_drift: [drift],
 		});
 		expect(warnings).toEqual([mention]);
+	});
+
+	it("links a drift row to the stored pull request for ITS version only (#6549)", () => {
+		const record = (version: string): GitopsBumpRecord => ({
+			version,
+			provider: "github",
+			number: 42,
+			url: "https://github.com/acme/apps/pull/42",
+			branch: `alethia/addon-bump-ingress-nginx-${version}`,
+			state: "open",
+			opened_by: "u1",
+			updated_at: "2026-11-12T00:00:00.000Z",
+		});
+		const deployJob = successDeploy({
+			gitops: { mode: "gitops", manifest_warnings: [DRIFT_SENTENCE], addon_drift: [drift] },
+		});
+		const row = { addonId: "ingress-nginx", health: null, sync: null, message: null };
+		const linked = assembleGitopsDeployStatus({ ...BASE, deployJob, addonRows: [{ ...row, gitopsBump: record("4.15.1") }] });
+		expect(linked.addonDrift[0]?.pull).toEqual({ number: 42, url: "https://github.com/acme/apps/pull/42", state: "open" });
+		// A pull request for an older catalog version is not this row's.
+		const stale = assembleGitopsDeployStatus({ ...BASE, deployJob, addonRows: [{ ...row, gitopsBump: record("4.12.0") }] });
+		expect(stale.addonDrift[0]?.pull).toBeNull();
+		const none = assembleGitopsDeployStatus({ ...BASE, deployJob, addonRows: [row] });
+		expect(none.addonDrift[0]?.pull).toBeNull();
 	});
 
 	it("defaults to no drift for an environment that has never deployed (#6549)", () => {
