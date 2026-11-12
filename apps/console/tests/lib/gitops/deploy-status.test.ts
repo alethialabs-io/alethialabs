@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
 	assembleGitopsDeployStatus,
 	gitopsStatusReportSchema,
+	splitDeployWarnings,
 	type GitopsAssemblyInputs,
 	type GitopsJobFacts,
 } from "@/lib/gitops/deploy-status";
@@ -95,6 +96,63 @@ describe("assembleGitopsDeployStatus", () => {
 		});
 		expect(s.warnings).toHaveLength(1);
 		expect(s.warnings[0]).toContain("DB_HOST");
+	});
+
+	// #6549: a runner that reports `addon_drift` also sends each entry's sentence in
+	// `manifest_warnings`, for a console that predates the structured form.
+	const DRIFT_SENTENCE =
+		"GitOps add-on ingress-nginx: addons/ingress-nginx.yaml in your apps repo installs chart ingress-nginx 4.11.2";
+	const drift = {
+		addon_id: "ingress-nginx",
+		file: "addons/ingress-nginx.yaml",
+		chart: "ingress-nginx",
+		seeded_version: "4.11.2",
+		desired_version: "4.15.1",
+		warning: DRIFT_SENTENCE,
+	};
+	const OTHER = 'binding facet "endpoint" (env DB_HOST) could not be resolved — env omitted';
+
+	it("renders structured add-on drift and drops exactly its paired sentence (#6549)", () => {
+		const s = assembleGitopsDeployStatus({
+			...BASE,
+			deployJob: successDeploy({
+				gitops: { mode: "gitops", manifest_warnings: [OTHER, DRIFT_SENTENCE], addon_drift: [drift] },
+			}),
+		});
+		expect(s.addonDrift).toEqual([
+			{
+				addonId: "ingress-nginx",
+				file: "addons/ingress-nginx.yaml",
+				chart: "ingress-nginx",
+				seededVersion: "4.11.2",
+				desiredVersion: "4.15.1",
+			},
+		]);
+		expect(s.warnings).toEqual([OTHER]);
+	});
+
+	it("keeps every warning from a runner that predates addon_drift, the drift sentence included (#6549)", () => {
+		const s = assembleGitopsDeployStatus({
+			...BASE,
+			deployJob: successDeploy({ gitops: { mode: "gitops", manifest_warnings: [OTHER, DRIFT_SENTENCE] } }),
+		});
+		expect(s.addonDrift).toEqual([]);
+		expect(s.warnings).toEqual([OTHER, DRIFT_SENTENCE]);
+	});
+
+	it("pairs by the exact string, not by wording: a warning that only MENTIONS the add-on is kept (#6549)", () => {
+		const mention = `${DRIFT_SENTENCE} (and something else)`;
+		const { warnings } = splitDeployWarnings({
+			mode: "gitops",
+			manifest_warnings: [mention, DRIFT_SENTENCE],
+			addon_drift: [drift],
+		});
+		expect(warnings).toEqual([mention]);
+	});
+
+	it("defaults to no drift for an environment that has never deployed (#6549)", () => {
+		expect(assembleGitopsDeployStatus(BASE).addonDrift).toEqual([]);
+		expect(splitDeployWarnings(null)).toEqual({ warnings: [], addonDrift: [] });
 	});
 
 	it("failed wiring: banner facts set, services Unknown — never a stale pass", () => {
@@ -240,6 +298,20 @@ describe("gitopsStatusReportSchema", () => {
 			error: "failed to apply repo credentials: exit 1",
 		});
 		expect(parsed.success).toBe(true);
+	});
+
+	it("parses addon_drift, and rejects an entry missing a field (#6549)", () => {
+		const entry = {
+			addon_id: "ingress-nginx",
+			file: "addons/ingress-nginx.yaml",
+			chart: "ingress-nginx",
+			seeded_version: "4.11.2",
+			desired_version: "4.15.1",
+			warning: "w",
+		};
+		expect(gitopsStatusReportSchema.safeParse({ mode: "gitops", addon_drift: [entry] }).success).toBe(true);
+		const { warning: _dropped, ...partial } = entry;
+		expect(gitopsStatusReportSchema.safeParse({ mode: "gitops", addon_drift: [partial] }).success).toBe(false);
 	});
 
 	it("parses manifest_warnings (#717)", () => {

@@ -31,6 +31,7 @@ import {
 } from "@/lib/db/schema";
 import type {
 	AddOnStatusEntry,
+	AddonDriftReport,
 	ByoAdmissionNamespaceReport,
 	ExecutionMetadata,
 	GitopsFailedStep,
@@ -65,6 +66,16 @@ const byoAdmissionNamespaceSchema = z.object({
 		.optional(),
 }) satisfies z.ZodType<ByoAdmissionNamespaceReport>;
 
+/** Wire-shape validator for one `gitops_status.addon_drift` entry (Go `argocd.AddonDriftStatus`). */
+const addonDriftSchema = z.object({
+	addon_id: z.string(),
+	file: z.string(),
+	chart: z.string(),
+	seeded_version: z.string(),
+	desired_version: z.string(),
+	warning: z.string(),
+}) satisfies z.ZodType<AddonDriftReport>;
+
 /** Wire-shape validator for `execution_metadata.gitops_status` (Go `argocd.GitopsStatus`).
  *  Every field beyond `mode` is optional so pre-#574 and partial payloads parse. */
 export const gitopsStatusReportSchema = z.object({
@@ -87,6 +98,7 @@ export const gitopsStatusReportSchema = z.object({
 		.optional(),
 	manifest_warnings: z.array(z.string()).optional(),
 	byo_admission: z.array(byoAdmissionNamespaceSchema).optional(),
+	addon_drift: z.array(addonDriftSchema).optional(),
 });
 
 /** One component row on the Deploy tab: ArgoCD health + sync + optional message. */
@@ -134,6 +146,9 @@ export interface GitopsDeployStatus {
 	 *  unresolved binding endpoint (#710), an unsatisfiable credential facet — why a rendered
 	 *  service may boot misconfigured. Empty ⇒ generation was clean (or bring-your-own). */
 	warnings: string[];
+	/** Each GitOps-mode add-on whose seeded manifest installs an older chart than the LATEST deploy
+	 *  would seed (#6549). Its sentence is NOT also in `warnings`: see `splitDeployWarnings`. */
+	addonDrift: AddonDriftRow[];
 	/** Each bring-your-own namespace's admission mode as the LATEST deploy left it, and what its rules
 	 *  refuse there (#6541). Empty when the environment has no BYO chart, or the latest deploy came
 	 *  from a runner that predates it. */
@@ -158,9 +173,50 @@ export const EMPTY_GITOPS_DEPLOY_STATUS: GitopsDeployStatus = {
 	addons: [],
 	dataServices: [],
 	warnings: [],
+	addonDrift: [],
 	byoAdmission: [],
 	byoAdmissionReportAt: null,
 };
+
+/** One GitOps add-on drift row on the Deploy tab (#6549). */
+export interface AddonDriftRow {
+	addonId: string;
+	/** The manifest's path inside the apps repo. */
+	file: string;
+	chart: string;
+	/** The file's `spec.source.targetRevision`, exactly as written. */
+	seededVersion: string;
+	/** The version the deploy would seed. */
+	desiredVersion: string;
+}
+
+/**
+ * Splits a deploy's report into the plain warnings and the structured add-on drift rows (#6549).
+ *
+ * A runner that reports `addon_drift` ALSO puts each entry's sentence in `manifest_warnings`, so a
+ * console that predates the structured form still shows the drift. This console renders the
+ * structured row, so it drops exactly the `manifest_warnings` entries that a drift entry names as its
+ * own `warning`. The pairing is by that exact string, never by the sentence's wording; any other
+ * warning, including one that merely mentions an add-on, is kept. A runner that predates
+ * `addon_drift` sends no entries, so all of its warnings are kept, its drift sentence among them.
+ */
+export function splitDeployWarnings(report: GitopsStatusReport | null | undefined): {
+	warnings: string[];
+	addonDrift: AddonDriftRow[];
+} {
+	const drift = report?.addon_drift ?? [];
+	const paired = new Set(drift.map((d) => d.warning));
+	return {
+		warnings: (report?.manifest_warnings ?? []).filter((w) => !paired.has(w)),
+		addonDrift: drift.map((d) => ({
+			addonId: d.addon_id,
+			file: d.file,
+			chart: d.chart,
+			seededVersion: d.seeded_version,
+			desiredVersion: d.desired_version,
+		})),
+	};
+}
 
 /** A gitops-carrying job reduced to what assembly needs. */
 export interface GitopsJobFacts {
@@ -283,8 +339,9 @@ export function assembleGitopsDeployStatus(inputs: GitopsAssemblyInputs): Gitops
 		addons,
 		dataServices,
 		// Manifest-generation warnings are a DEPLOY-time artifact (drift never regenerates), so they
-		// come from the latest deploy's snapshot — valid until the next deploy re-renders.
-		warnings: deployJob?.gitops?.manifest_warnings ?? [],
+		// come from the latest deploy's snapshot — valid until the next deploy re-renders. So does the
+		// GitOps add-on drift, which is read from the apps repo during that deploy's GitOps write.
+		...splitDeployWarnings(deployJob?.gitops),
 		// Like the warnings, a DEPLOY-time artifact: drift never re-decides a namespace's mode.
 		byoAdmission: deployJob?.gitops?.byo_admission ?? [],
 		byoAdmissionReportAt: deployJob?.gitops?.byo_admission ? deployJob.createdAt.toISOString() : null,

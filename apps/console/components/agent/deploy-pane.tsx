@@ -13,6 +13,7 @@ import { formatRelative } from "@repo/format";
 import { EmptyState } from "@repo/ui/empty";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import type {
+	AddonDriftRow,
 	GitopsComponentRow,
 	GitopsDeployStatus,
 } from "@/lib/gitops/deploy-status";
@@ -70,13 +71,37 @@ function rollup(status: GitopsDeployStatus): string {
 	const rows = [...status.services, ...status.addons, ...status.dataServices];
 	const degraded = rows.filter((r) => r.health === "Degraded" || r.health === "Missing").length;
 	const outOfSync = rows.filter((r) => r.sync === "OutOfSync").length;
-	const warned = status.warnings.length;
+	// A drifted GitOps add-on is a warning too; it is rendered in its own section (#6549).
+	const warned = status.warnings.length + status.addonDrift.length;
 	const parts = [`${rows.length} component${rows.length === 1 ? "" : "s"}`];
 	if (degraded) parts.push(`${degraded} degraded`);
 	if (outOfSync) parts.push(`${outOfSync} out of sync`);
 	if (warned) parts.push(`${warned} warning${warned === 1 ? "" : "s"}`);
 	if (!degraded && !outOfSync && !warned) parts.push("all healthy");
 	return parts.join(" · ");
+}
+
+/**
+ * One GitOps add-on whose seeded manifest is behind the chart the deploy would seed (#6549): the
+ * add-on, the file and both versions, and the one field to change. Alethia never rewrites the file.
+ */
+function AddonDriftItem({ drift }: { drift: AddonDriftRow }) {
+	return (
+		<div className="flex items-start gap-2.5 border-b border-border py-2 last:border-0">
+			<span className="flex-none pt-px font-mono text-ui-xs leading-none text-muted-foreground">!</span>
+			<div className="min-w-0 space-y-0.5 text-ui-xs leading-snug">
+				<div className="font-mono text-foreground">
+					{drift.addonId} · {drift.seededVersion} → {drift.desiredVersion}
+				</div>
+				<div className="text-muted-foreground">
+					<span className="font-mono">{drift.file}</span> in your apps repo installs chart{" "}
+					<span className="font-mono">{drift.chart}</span> {drift.seededVersion}. Set{" "}
+					<span className="font-mono">spec.source.targetRevision</span> in that file to{" "}
+					<span className="font-mono">{drift.desiredVersion}</span> to move it.
+				</div>
+			</div>
+		</div>
+	);
 }
 
 /** Section — the panel's shared eyebrow + bordered-rows idiom. */
@@ -237,6 +262,17 @@ export function DeployPane({ status }: { status: GitopsDeployStatus | null }) {
 						</span>
 					</div>
 				</div>
+			)}
+
+			{status.addonDrift.length > 0 && (
+				<Section
+					title={`GitOps add-on updates · ${status.addonDrift.length}`}
+					hint="Alethia seeds a GitOps add-on's file once and never rewrites it, so these stay on the older chart until the file changes. The add-on's card says whether the newer version is a security release."
+				>
+					{status.addonDrift.map((d) => (
+						<AddonDriftItem key={d.addonId} drift={d} />
+					))}
+				</Section>
 			)}
 
 			{status.warnings.length > 0 && (

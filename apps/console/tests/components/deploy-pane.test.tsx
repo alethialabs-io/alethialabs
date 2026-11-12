@@ -39,6 +39,7 @@ function base(overrides: Partial<GitopsDeployStatus> = {}): GitopsDeployStatus {
 			{ name: "db-primary", health: "Healthy", sync: "Synced", message: null },
 		],
 		warnings: [],
+		addonDrift: [],
 		byoAdmission: [],
 		byoAdmissionReportAt: null,
 		...overrides,
@@ -68,6 +69,36 @@ describe("DeployPane", () => {
 	it("no Warnings section when the deploy generated cleanly", () => {
 		render(<DeployPane status={base({ warnings: [] })} />);
 		expect(screen.queryByText(/Warnings ·/)).toBeNull();
+	});
+
+	it("GitOps add-on drift: its own section naming the add-on, the file and both versions, counted in the rollup (#6549)", () => {
+		render(
+			<DeployPane
+				status={base({
+					addonDrift: [
+						{
+							addonId: "ingress-nginx",
+							file: "addons/ingress-nginx.yaml",
+							chart: "ingress-nginx",
+							seededVersion: "4.11.2",
+							desiredVersion: "4.15.1",
+						},
+					],
+				})}
+			/>,
+		);
+		expect(screen.getByText(/GitOps add-on updates · 1/)).toBeDefined();
+		expect(screen.getByText("ingress-nginx · 4.11.2 → 4.15.1")).toBeDefined();
+		expect(screen.getByText("addons/ingress-nginx.yaml")).toBeDefined();
+		expect(screen.getByText("spec.source.targetRevision")).toBeDefined();
+		// It is a warning for the rollup, though it is not in the plain Warnings section.
+		expect(screen.getByText("4 components · 1 degraded · 1 warning")).toBeDefined();
+		expect(screen.queryByText(/^Warnings ·/)).toBeNull();
+	});
+
+	it("no GitOps add-on section when nothing drifted", () => {
+		render(<DeployPane status={base()} />);
+		expect(screen.queryByText(/GitOps add-on updates/)).toBeNull();
 	});
 
 	it("failed FIRST deploy: banner with step + fix hint, all rows Unknown", () => {
