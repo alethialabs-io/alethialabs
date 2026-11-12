@@ -65,6 +65,44 @@ function copyStatusFields(value: object, out: SerializedErr): void {
 	if (statusCode !== undefined) out.statusCode = statusCode;
 }
 
+/**
+ * The SQL text of a failed database query, when `value` is drizzle-orm's `DrizzleQueryError`, else
+ * `undefined`. That error's `message` is `Failed query: <sql>\nparams: <values>`, so it carries the
+ * query's bound parameter values (an email, a token) and must not be written as it is.
+ *
+ * Recognised by shape, an own `query` string and an own `params` array, which drizzle-orm's
+ * constructor sets on every instance. Not by `instanceof`: that fails open when a second copy of
+ * drizzle-orm is loaded (a peer-dependency or patch variant in the pnpm store, a separately
+ * bundled server entry), and `DrizzleQueryError` declares no `entityKind`, so drizzle's own `is()`
+ * cannot match across copies either. A missed match writes the parameter values; a shape match on
+ * some other error only replaces its message with `Failed query: <its query>`.
+ */
+function failedQueryText(value: object): string | undefined {
+	if (
+		Object.hasOwn(value, "query") &&
+		"query" in value &&
+		typeof value.query === "string" &&
+		Object.hasOwn(value, "params") &&
+		"params" in value &&
+		Array.isArray(value.params)
+	) {
+		return value.query;
+	}
+	return undefined;
+}
+
+/**
+ * Returns `stack` with its first copy of `original` (the error's own message, which V8 writes into
+ * the stack's first line) replaced by `replacement`. When the stack does not contain `original`,
+ * which it would not if the message was changed after the error was built, the stack is dropped
+ * (`undefined`), because nothing then shows the stack is free of what the message held.
+ */
+function replaceInStack(stack: string, original: string, replacement: string): string | undefined {
+	const at = stack.indexOf(original);
+	if (at === -1) return undefined;
+	return stack.slice(0, at) + replacement + stack.slice(at + original.length);
+}
+
 /** The recursive step of `serializeErr`; `ancestors` holds the objects on the current path. */
 function serializeErrAt(
 	value: unknown,
@@ -83,11 +121,19 @@ function serializeErrAt(
 		copyStatusFields(value, other);
 		return other;
 	}
+	// A failed database query's message is rebuilt from its SQL text, so the bound parameter values
+	// in the original message are written neither here nor in the stack, which repeats the message.
+	const query = failedQueryText(value);
+	const message = query === undefined ? value.message : `Failed query: ${query}`;
 	const out: SerializedErr = {
 		type: value.constructor?.name || "Error",
-		message: value.message,
+		message,
 	};
-	if ("stack" in value && typeof value.stack === "string") out.stack = value.stack;
+	if ("stack" in value && typeof value.stack === "string") {
+		const stack =
+			query === undefined ? value.stack : replaceInStack(value.stack, value.message, message);
+		if (stack !== undefined) out.stack = stack;
+	}
 	copyStatusFields(value, out);
 
 	ancestors.add(value);
@@ -113,7 +159,10 @@ function serializeErrAt(
  * entries; a cycle becomes `"[Circular]"`). Unlike `pino.stdSerializers.err`, no other enumerable
  * property of the error is copied, and a cause is nested under `cause` rather than folded into the
  * top-level `message` / `stack`. A primitive is written as `String(value)`; a non-error object as
- * `{ type }` (its constructor's name) plus any primitive `code` / `status` / `statusCode`.
+ * `{ type }` (its constructor's name) plus any primitive `code` / `status` / `statusCode`. A
+ * drizzle-orm `DrizzleQueryError` (see `failedQueryText`) is written with the message
+ * `Failed query: <sql>`: its parameter values are left out of `message` and `stack`, and its `cause`
+ * (the driver's error, with the Postgres `code`) is kept as for any error.
  */
 function serializeErr(value: unknown): SerializedErrValue {
 	return serializeErrAt(value, 0, new Set());
@@ -175,7 +224,8 @@ export interface LogFields {
 	 * plus `code` / `status` / `statusCode` when they are primitives, and recurses into `cause` and
 	 * `errors` (`aggregateErrors` for an `AggregateError`) under the same rule. Any other property
 	 * of the error is not written. A non-error value is written as `String(value)` if it is a
-	 * primitive, else as `{ type }`.
+	 * primitive, else as `{ type }`. A failed database query (drizzle-orm's `DrizzleQueryError`) is
+	 * written without its bound parameter values: its message becomes `Failed query: <sql>`.
 	 */
 	err?: unknown;
 	[key: string]: unknown;
