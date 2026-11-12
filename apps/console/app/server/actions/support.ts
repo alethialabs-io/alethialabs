@@ -49,6 +49,7 @@ import {
 import type { AlertSeverity } from "@/lib/db/schema/enums";
 import type { SupportContactPrefs } from "@/types/jsonb.types";
 import { getActiveOrgSlug } from "./resolve";
+import { log } from "@/lib/observability/log";
 
 /** The one argument the per-case actions take. */
 const caseIdInput = z.object({ id: z.string().uuid() });
@@ -79,7 +80,7 @@ async function safeNotify(label: string, fn: () => Promise<void>): Promise<void>
 	try {
 		await fn();
 	} catch (err) {
-		console.warn(`[support] ${label} failed:`, err);
+		log.warn(`[support] ${label} failed`, { err, label });
 	}
 }
 
