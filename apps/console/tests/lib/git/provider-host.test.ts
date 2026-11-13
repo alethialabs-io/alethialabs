@@ -4,13 +4,15 @@
 
 // Pins how a repo URL is tied to a git provider (#6600). The provider decides whose token the runner
 // receives for the repo, so the match is an EXACT hostname comparison against the configured hosts,
-// and anything that does not match is refused rather than defaulted to GitHub.
+// and anything that does not match is refused rather than defaulted to GitHub. The port a token
+// would go to is part of the match.
 
 import { describe, expect, it } from "vitest";
 import { repoHostForLog, resolveGitProvider } from "@/lib/git/provider-host";
 
 const PUBLIC = { gitlabBaseUrl: "https://gitlab.com" };
 const SELF_HOSTED = { gitlabBaseUrl: "https://code.acme.example:8443" };
+const CUSTOM_DOMAIN = { gitlabBaseUrl: "https://code.acme.example" };
 
 describe("resolveGitProvider", () => {
 	it.each([
@@ -26,16 +28,45 @@ describe("resolveGitProvider", () => {
 		expect(resolveGitProvider(url, PUBLIC)).toEqual({ ok: true, provider, host });
 	});
 
-	it("resolves a custom-domain GitLab from the configured base URL, ignoring the port", () => {
-		expect(resolveGitProvider("https://code.acme.example/platform/api", SELF_HOSTED)).toEqual({
+	it("resolves a custom-domain GitLab from the configured base URL, on the base URL's port", () => {
+		expect(resolveGitProvider("https://code.acme.example:8443/platform/api", SELF_HOSTED)).toEqual({
 			ok: true,
 			provider: "gitlab",
 			host: "code.acme.example",
 		});
-		expect(resolveGitProvider("git@code.acme.example:platform/api.git", SELF_HOSTED)).toMatchObject({
+		expect(resolveGitProvider("https://code.acme.example/platform/api", CUSTOM_DOMAIN)).toEqual({
+			ok: true,
+			provider: "gitlab",
+			host: "code.acme.example",
+		});
+		expect(resolveGitProvider("git@code.acme.example:platform/api.git", CUSTOM_DOMAIN)).toMatchObject({
 			ok: true,
 			provider: "gitlab",
 		});
+		expect(resolveGitProvider("ssh://git@code.acme.example:2222/platform/api.git", CUSTOM_DOMAIN)).toMatchObject({
+			ok: true,
+			provider: "gitlab",
+		});
+		// An explicit :443 is the default port, written out.
+		expect(resolveGitProvider("https://code.acme.example:443/platform/api", CUSTOM_DOMAIN)).toMatchObject({
+			ok: true,
+			provider: "gitlab",
+		});
+	});
+
+	it.each([
+		// The base URL names :8443, so a remote whose token would go to :443 is another service.
+		["https://code.acme.example/platform/api", SELF_HOSTED],
+		["https://code.acme.example:9443/platform/api", SELF_HOSTED],
+		// An ssh or scp remote is cloned with a token over https on the default port.
+		["git@code.acme.example:platform/api.git", SELF_HOSTED],
+		["ssh://git@code.acme.example:8443/platform/api.git", SELF_HOSTED],
+		// No port in the base URL means the default https port.
+		["https://code.acme.example:8443/platform/api", CUSTOM_DOMAIN],
+		["https://github.com:8443/acme/shop", PUBLIC],
+		["https://bitbucket.org:444/team/svc", PUBLIC],
+	] as const)("refuses %s on a port the provider is not configured at", (url, hosts) => {
+		expect(resolveGitProvider(url, hosts)).toMatchObject({ ok: false, reason: "port_mismatch" });
 	});
 
 	it("does not treat gitlab.com as GitLab once a self-hosted GitLab is configured", () => {
@@ -62,6 +93,11 @@ describe("resolveGitProvider", () => {
 
 	it("refuses an unknown host instead of defaulting to GitHub", () => {
 		expect(resolveGitProvider("https://git.example.net/acme/shop", PUBLIC)).toEqual({
+			ok: false,
+			reason: "unknown_host",
+			host: "git.example.net",
+		});
+		expect(resolveGitProvider("git@git.example.net:acme/shop.git", CUSTOM_DOMAIN)).toEqual({
 			ok: false,
 			reason: "unknown_host",
 			host: "git.example.net",

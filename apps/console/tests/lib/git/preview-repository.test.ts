@@ -37,6 +37,31 @@ describe("parsePreviewRepositoryUrl", () => {
 		});
 	});
 
+	it("parses a custom-domain GitLab with no 'gitlab' in its name, on the base URL's port", () => {
+		expect(
+			parsePreviewRepositoryUrl("https://code.acme.example:8443/acme/platform", "https://code.acme.example:8443"),
+		).toEqual({ git_provider: "gitlab", repo_owner: "acme", repo_name: "platform" });
+		expect(
+			parsePreviewRepositoryUrl("https://code.acme.example/acme/platform", "https://code.acme.example:8443"),
+		).toBeNull();
+	});
+
+	it("does not treat gitlab.com as GitLab once a self-hosted GitLab is configured", () => {
+		expect(parsePreviewRepositoryUrl("https://gitlab.com/acme/shop", "https://code.acme.example")).toBeNull();
+	});
+
+	it.each([
+		"https://git.example.net/acme/shop",
+		"https://www.github.com/acme/shop",
+		"https://api.bitbucket.org/team/svc",
+		"https://evil.code.acme.example/acme/shop",
+		"https://github.com.evil.io/acme/shop",
+		"http://github.com/acme/shop",
+		"git@github.com:acme/shop.git",
+	])("refuses %s instead of guessing a provider", (url) => {
+		expect(parsePreviewRepositoryUrl(url, "https://code.acme.example")).toBeNull();
+	});
+
 	it("rejects unsupported hosts and nested namespaces", () => {
 		expect(parsePreviewRepositoryUrl("https://example.com/acme/shop")).toBeNull();
 		expect(parsePreviewRepositoryUrl("https://gitlab.com/acme/team/shop")).toBeNull();

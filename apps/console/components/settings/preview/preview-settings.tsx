@@ -302,6 +302,7 @@ export function PreviewSettings({
 								variant="settings"
 								providerAvailability={providerAvailability}
 								linkedProviders={linkedProviders}
+								gitlabBaseUrl={gitlabBaseUrl}
 							/>
 							<div className="flex items-center gap-2 text-ui-xs text-text-tertiary">
 								<GitProviderIcon provider={selectedProvider} size={14} mono={false} />

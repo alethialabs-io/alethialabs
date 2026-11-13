@@ -27,6 +27,7 @@ import type { Tx } from "@/lib/db";
 import { projectAddons, projectRepositories } from "@/lib/db/schema";
 import type { GitopsBumpRecord } from "@/types/jsonb.types";
 import type { BumpEditRefusal } from "./edit";
+import { configuredGitProviderHosts } from "@/lib/git/configured-hosts";
 import { resolveGitProvider } from "@/lib/git/provider-host";
 import { type FetchLike, githubClient, githubRepoFromUrl } from "./github";
 import { type BumpOutcome, openGitopsBump } from "./open-bump";
@@ -281,7 +282,7 @@ export async function requestGitopsBumpFor(
 	// The host decides where the token may go, BEFORE any token is read. `resolveGitProvider` is the
 	// one exact-host resolver (github.com, bitbucket.org, the configured GitLab's host); an unknown
 	// host, a non-https URL and a malformed one are refused there.
-	const provider = resolveGitProvider(appsRepo);
+	const provider = resolveGitProvider(appsRepo, configuredGitProviderHosts());
 	if (!provider.ok) {
 		return refused("unknown-host", "Alethia does not recognise the apps repo's host, so it will not send a token there.");
 	}

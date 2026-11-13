@@ -8,6 +8,7 @@ import { resolveAccountId } from "@/lib/auth/accounts";
 import { getServiceDb } from "@/lib/db";
 import { compareChartVersions } from "@/lib/addons/update-notice";
 import { type ProvisionJobType, jobs, projectAddons, projectRepositories, runners } from "@/lib/db/schema";
+import { configuredGitProviderHosts } from "@/lib/git/configured-hosts";
 import {
 	type GitProviderRefusal,
 	repoHostForLog,
@@ -344,7 +345,7 @@ export async function POST(
 		// The provider decides WHOSE token leaves the console, so it is resolved from the repo's exact
 		// host against the configured ones (#6600). An unknown host is refused, never defaulted — a
 		// default would send one provider's token toward another provider's host.
-		const resolved = resolveGitProvider(repoUrl);
+		const resolved = resolveGitProvider(repoUrl, configuredGitProviderHosts());
 		if (!resolved.ok) {
 			console.warn(
 				`git-token: refused for job ${jobId} — repo provider unresolved (${resolved.reason}, host ${resolved.host ?? UNPARSED_REPO_HOST})`,

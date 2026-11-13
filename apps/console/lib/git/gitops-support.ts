@@ -13,6 +13,7 @@
 // push it could never make.
 
 import type { GitProvider } from "@/lib/db/schema";
+import { configuredGitProviderHosts } from "@/lib/git/configured-hosts";
 import { type GitProviderHosts, resolveGitProvider } from "@/lib/git/provider-host";
 
 /** The display name of each git provider, as the console's sentences spell it. */
@@ -35,7 +36,7 @@ const PUSH_CAPABLE: ReadonlySet<GitProvider> = new Set<GitProvider>(["github"]);
  */
 export function gitopsModeRefusal(
 	appsRepo: string | null | undefined,
-	hosts?: GitProviderHosts,
+	hosts: GitProviderHosts = configuredGitProviderHosts(),
 ): string | null {
 	if (!appsRepo || !appsRepo.trim()) return null;
 	const resolved = resolveGitProvider(appsRepo, hosts);
