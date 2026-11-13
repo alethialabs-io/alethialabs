@@ -19,6 +19,7 @@ import { getServiceDb } from "@/lib/db";
 import { cliLogins } from "@/lib/db/schema";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { NextResponse } from "next/server";
+import { log } from "@/lib/observability/log";
 
 /**
  * Approves one CLI device code for the signed-in user. Called by /cli/login ONLY from an
@@ -158,7 +159,7 @@ export async function POST(req: Request) {
 				),
 			});
 	} catch (err) {
-		console.error("Error saving CLI login attempt:", err);
+		log.error("Error saving CLI login attempt", { err });
 		return deviceCodeFail("Failed to save login attempt", 500);
 	}
 

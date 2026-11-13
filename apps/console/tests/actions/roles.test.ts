@@ -31,6 +31,7 @@ import { authorizeQuiet } from "@/lib/authz/guard";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
+import { log } from "@/lib/observability/log";
 
 /** Role ids as the actions now require them: uuids. */
 const R1 = "00000000-0000-4000-8000-0000000000b1";
@@ -276,6 +277,25 @@ describe("updateRole", () => {
 			"edit",
 			{ type: "role", id: R1 },
 		);
+	});
+
+	it("a failed tuple resync is logged with the role and the caught error under `err`, and the edit still succeeds", async () => {
+		enterpriseActor();
+		vi.mocked(getTupleSync).mockReturnValue({
+			resyncRole: vi.fn(() => Promise.reject(new Error("fga down"))),
+		} as never);
+		mockDb([[{ id: R1 }], [], [], []]);
+		const logged = vi.spyOn(log, "error").mockImplementation(() => undefined);
+
+		await updateRole({ id: R1, name: "Renamed", permissionKeys: ["org:view"] });
+
+		await vi.waitFor(() =>
+			expect(logged).toHaveBeenCalledWith("[authz] role resync failed", {
+				err: expect.objectContaining({ message: "fga down" }),
+				role_id: R1,
+			}),
+		);
+		logged.mockRestore();
 	});
 
 	it("does not re-insert permissions when none survive sanitisation", async () => {

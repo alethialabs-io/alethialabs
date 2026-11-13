@@ -33,9 +33,20 @@ const FIXED_HOSTS: ReadonlyMap<string, GitProvider> = new Map([
 
 /**
  * An scp-style git remote, `user@host:path` — the `git@…` form the BYO IaC and BYO chart validators
- * accept. The host may not contain a `/` or `:`, and the path must not start with `//` (that is a URL).
+ * accept. The host may not contain a `/`, `:` or `@`, and the path must not start with `//` (that is
+ * a URL). Excluding `@` keeps a second `user@` segment from being read as part of the host.
  */
-const SCP_REMOTE = /^[^@\s/]+@([^:\s/]+):(?!\/\/)\S+$/;
+const SCP_REMOTE = /^[^@\s/]+@([^:\s/@]+):(?!\/\/)\S+$/;
+
+/**
+ * The shape of a host this module will name: dot-separated labels of letters, digits, `-` and `_`,
+ * or a bracketed IPv6 literal. A host outside it is refused as malformed, so the host a refusal or a
+ * log line reports is always a plain hostname and never other text from the remote.
+ */
+const HOST_SHAPE = /^(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)*|\[[0-9a-f:.]+\])$/;
+
+/** What a log line or an error body says in place of a host that could not be read from a repo URL. */
+export const UNPARSED_REPO_HOST = "(unparsed repo URL)";
 
 /**
  * Printable ASCII with no backslash or whitespace. The URL parser here reads a backslash as `/` and folds
@@ -69,7 +80,7 @@ function remoteHost(
 ): { ok: true; host: string } | { ok: false; reason: GitProviderRefusal } {
 	if (!PLAIN_REMOTE.test(repoUrl)) return { ok: false, reason: "malformed" };
 	const scp = SCP_REMOTE.exec(repoUrl);
-	if (scp) return { ok: true, host: scp[1].toLowerCase() };
+	if (scp) return shapedHost(scp[1]);
 
 	let url: URL;
 	try {
@@ -81,8 +92,15 @@ function remoteHost(
 		return { ok: false, reason: "unsupported_scheme" };
 	}
 	if (!LITERAL_AUTHORITY.test(repoUrl)) return { ok: false, reason: "malformed" };
-	const host = url.hostname.toLowerCase();
-	if (!host) return { ok: false, reason: "malformed" };
+	return shapedHost(url.hostname);
+}
+
+/** Lowercases a host read from a remote, refusing it as malformed when it is not hostname-shaped. */
+function shapedHost(
+	rawHost: string,
+): { ok: true; host: string } | { ok: false; reason: GitProviderRefusal } {
+	const host = rawHost.toLowerCase();
+	if (!HOST_SHAPE.test(host)) return { ok: false, reason: "malformed" };
 	return { ok: true, host };
 }
 
@@ -99,8 +117,9 @@ function remoteHost(
  * `api.github.com` are all refused. The comparison ignores case and the port. Accepted forms are
  * `https://` and `ssh://` URLs and scp-style `git@host:owner/repo` remotes; anything else, and any
  * host that matches nothing, is refused rather than defaulted. A remote containing a backslash,
- * whitespace or a non-ASCII character, or a URL that does not spell `scheme://host` literally, is
- * refused as malformed.
+ * whitespace or a non-ASCII character, a URL that does not spell `scheme://host` literally, and a
+ * host that is not hostname-shaped are refused as malformed. A refusal therefore only ever reports a
+ * plain hostname, or `null` when none could be read.
  */
 export function resolveGitProvider(
 	repoUrl: string,
@@ -130,5 +149,5 @@ export function resolveGitProvider(
  */
 export function repoHostForLog(repoUrl: string): string {
 	const remote = remoteHost(repoUrl.trim());
-	return remote.ok ? remote.host : "(unparsed repo URL)";
+	return remote.ok ? remote.host : UNPARSED_REPO_HOST;
 }

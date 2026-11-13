@@ -497,7 +497,7 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 	if gitopsRequested {
 		switch {
 		case params.GitAccessToken != "":
-			if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, stdout, stderr); err != nil {
+			if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, gitUsernameFor(vc, vc.Repositories.AppsDestinationRepo), stdout, stderr); err != nil {
 				result.GitopsStatus = gitopsFailed(argocd.GitopsStepRepoCredentials, err)
 				return &result, fmt.Errorf("failed to connect ArgoCD to apps repo %s: %w", vc.Repositories.AppsDestinationRepo, err)
 			}

@@ -157,13 +157,48 @@ export function providerErrorCodeOf(text: string): ProviderErrorCode | undefined
 }
 
 /**
- * What a chat route LOGS about a failure, instead of the raw error. pino's `err` serializer copies
- * every enumerable property, and an `APICallError` carries the whole request it sent
- * (`requestBodyValues`: the system prompt and the user's conversation) plus the provider's response
- * headers and body — none of which belongs in a log line. This keeps what an operator needs to
+ * The SQL text of a failed database query when `err` is drizzle-orm's `DrizzleQueryError`, else
+ * undefined. Recognised by shape (an own `query` string and an own `params` array), exactly as the
+ * logger's `err` serializer (`failedQueryText` in lib/observability/log.ts) recognises it: that
+ * error's message is `Failed query: <sql>\nparams: <values>`, so it carries bound parameter values.
+ */
+function failedQueryText(err: Error): string | undefined {
+	if (
+		Object.hasOwn(err, "query") &&
+		"query" in err &&
+		typeof err.query === "string" &&
+		Object.hasOwn(err, "params") &&
+		"params" in err &&
+		Array.isArray(err.params)
+	) {
+		return err.query;
+	}
+	return undefined;
+}
+
+/**
+ * The name, message and stack of a failure that is not a provider call, written by the same rules
+ * as the logger's `err` serializer. Its callers log the summary under `error`, which pino does not
+ * serialize, so the rules are applied here: nothing but these three fields is copied, and a failed
+ * database query is written as `Failed query: <sql>` with no stack, because the original message and
+ * the stack (which repeats it) carry the query's parameter values. The serializer is not exported
+ * from lib/observability/log.ts, so this mirrors its rule for that error rather than calling it.
+ */
+function errorFields(err: Error): { name: string; message: string; stack?: string } {
+	const query = failedQueryText(err);
+	if (query !== undefined) return { name: err.name, message: `Failed query: ${query}` };
+	return { name: err.name, message: err.message, stack: err.stack };
+}
+
+/**
+ * What a chat route LOGS about a failure, instead of the raw error. An `APICallError` carries the
+ * whole request it sent (`requestBodyValues`: the system prompt and the user's conversation) plus
+ * the provider's response headers and body — none of which belongs in a log line. The callers log
+ * this summary under `error`, which the logger's `err` serializer does not see, so this function is
+ * the only allow-list on that field. It keeps what an operator needs to
  * diagnose the failure and nothing the user typed: the class, the HTTP status, the provider's typed
  * fields and request id, and — for a failure that is not a provider call, i.e. a bug of ours — the
- * error's name, message and stack.
+ * error's name, message and stack, held to the `err` serializer's rules (see {@link errorFields}).
  */
 export function providerErrorSummary(err: unknown): Record<string, unknown> {
 	const code = classifyProviderError(err);
@@ -182,7 +217,7 @@ export function providerErrorSummary(err: unknown): Record<string, unknown> {
 		};
 	}
 	if (cause instanceof Error) {
-		return { code, attempts, name: cause.name, message: cause.message, stack: cause.stack };
+		return { code, attempts, ...errorFields(cause) };
 	}
 	return { code, attempts, provider_type: streamedErrorType(cause) };
 }

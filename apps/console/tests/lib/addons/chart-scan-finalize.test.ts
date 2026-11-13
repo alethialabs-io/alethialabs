@@ -78,6 +78,7 @@ vi.mock("@/lib/db", () => ({ getServiceDb: () => fake.db }));
 
 import { finalizeChartScan } from "@/lib/addons/chart-scan-finalize";
 import { projectAddons, projectChartWorkloads } from "@/lib/db/schema";
+import { log } from "@/lib/observability/log";
 
 const OLD_FLAG = process.env.ALETHIA_BYO_DESCRIBE_ENABLED;
 
@@ -192,10 +193,14 @@ describe("finalizeChartScan — DESCRIBE (ALETHIA_BYO_DESCRIBE_ENABLED)", () => 
 
 	it("refuses an invalid workloads wire without writing any workload", async () => {
 		process.env.ALETHIA_BYO_DESCRIBE_ENABLED = "true";
-		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		const error = vi.spyOn(log, "error").mockImplementation(() => {});
 		fake.selects.push([scanJob({ execution_metadata: { verify_result: {}, chart_workloads: [{ name: "" }] } })]);
 		await finalizeChartScan("job-1");
 		expect(fake.writes.map((w) => w.op)).toEqual(["update"]);
-		expect(error).toHaveBeenCalled();
+		expect(error).toHaveBeenCalledWith(
+			"finalizeChartScan: invalid chart_workloads wire",
+			expect.objectContaining({ err: expect.any(Error) }),
+		);
+		error.mockRestore();
 	});
 });

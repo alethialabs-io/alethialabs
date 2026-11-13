@@ -41,6 +41,8 @@ import {
 	writeSubscriptionToBilling,
 } from "@/lib/billing/queries";
 import { alertOperator } from "@/lib/billing/operator-alert";
+import { sendPlanWelcomeEmail } from "@/lib/email/billing-email";
+import { log } from "@/lib/observability/log";
 
 /** A subscription carrying only the fields planFromSubscription reads. */
 function subWithPlan(plan?: string): Stripe.Subscription {
@@ -323,6 +325,24 @@ describe("syncSubscriptionToBilling", () => {
 		expect(claimPlanWelcome).not.toHaveBeenCalled();
 		expect(warn).toHaveBeenCalledWith(expect.stringContaining("not applied to org org_1"));
 		warn.mockRestore();
+	});
+	it("a failed welcome email never fails the sync, and is logged with the org under `err`", async () => {
+		const boom = new Error("smtp down");
+		vi.mocked(writeSubscriptionToBilling).mockResolvedValueOnce({
+			applied: true,
+			before: { subscriptionId: "sub_1", status: "active", currentPeriodEnd: null },
+		});
+		vi.mocked(claimPlanWelcome).mockResolvedValueOnce(true);
+		vi.mocked(sendPlanWelcomeEmail).mockRejectedValueOnce(boom);
+		const logged = vi.spyOn(log, "error").mockImplementation(() => {});
+
+		const outcome = await syncSubscriptionToBilling(sub([flat], { status: "active" }), {
+			eventAt: new Date("2026-10-01T12:00:10Z"),
+		});
+
+		expect(outcome).toBe("applied");
+		expect(logged).toHaveBeenCalledWith("[stripe] plan-welcome email failed for org_1", { org_id: "org_1", err: boom });
+		logged.mockRestore();
 	});
 	// ── ADR 0004 D6b: a write that REPLACED a live slot is reported, for every caller of the sync ─────
 

@@ -320,7 +320,7 @@ func TestTail_ApplyManifestReportsTempFileFailure(t *testing.T) {
 func TestTail_ConfigureRepoCredentialsReportsTempFileFailure(t *testing.T) {
 	tailBrokenTempDir(t)
 	var stdout, stderr bytes.Buffer
-	err := ConfigureRepoCredentials("https://git.example.com/a.git", "tok", &stdout, &stderr)
+	err := ConfigureRepoCredentials("https://git.example.com/a.git", "tok", "x-access-token", &stdout, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "failed to create temp file") {
 		t.Fatalf("ConfigureRepoCredentials error = %v, want the temp-file failure", err)
 	}

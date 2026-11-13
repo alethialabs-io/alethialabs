@@ -77,6 +77,7 @@ import type { withPurchaseLock } from "@/lib/billing/purchase-lock";
 import { getPurchaseStripe } from "@/lib/billing/stripe";
 import { isOrgPlanSubscription } from "@/lib/billing/sync";
 import { getServiceDb } from "@/lib/db";
+import { log as logger } from "@/lib/observability/log";
 import type { BillingStatus } from "@/lib/db/schema/enums";
 import { PAYMENT_HOLD_NOTIFIED_STATES, type PaymentHoldRow } from "@/lib/db/schema";
 import { sendGuardedEmail } from "@/lib/email/guard";
@@ -324,8 +325,7 @@ describe("ageAlertFor (§5.4)", () => {
 		await sweeper.liveSweepDeps().alert(input);
 		expect(alertPaymentNeedsSupport).toHaveBeenCalledWith({ ...input, context: "payment_hold" });
 		const real = await vi.importActual<typeof import("@/lib/billing/payment-alert")>("@/lib/billing/payment-alert");
-		const logged = vi.mocked(console.error);
-		logged.mockClear();
+		const logged = vi.spyOn(logger, "error").mockImplementation(() => undefined);
 		await real.alertPaymentNeedsSupport({ ...input, context: "payment_hold" });
 		expect(String(logged.mock.calls[0]?.[0])).toMatch(/a payment hold is settling/);
 		expect(String(logged.mock.calls[0]?.[0])).not.toMatch(/purchase flow/);

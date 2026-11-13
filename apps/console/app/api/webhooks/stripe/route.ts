@@ -31,6 +31,7 @@ import {
 } from "@/lib/billing/webhook-events";
 import { wakePaymentHoldSweeper } from "@/lib/billing/payment-holds/sweeper";
 import { handleStripeEvent } from "@/lib/billing/webhook-handler";
+import { log } from "@/lib/observability/log";
 
 /**
  * Receives a Stripe webhook delivery: verifies its signature before anything else, runs the dispatcher
@@ -77,7 +78,7 @@ export async function POST(req: Request): Promise<Response> {
 		}
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		console.error(`[stripe] handler error for ${event.type}:`, err);
+		log.error("[stripe] handler error", { event_type: event.type, err });
 		await markWebhookEventError(event.id, message);
 		await captureServerException(err, {
 			props: { source: "stripe_webhook", event_type: event.type },

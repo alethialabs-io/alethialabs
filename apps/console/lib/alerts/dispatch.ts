@@ -13,6 +13,7 @@ import { alertChannels, alertDeliveries } from "@/lib/db/schema";
 import type { AlertDelivery } from "@/lib/db/schema";
 import { SsrfError, UNREACHABLE_DESTINATION } from "@/lib/net/ssrf-guard";
 import { getChannelSender } from "./channels";
+import { log } from "@/lib/observability/log";
 
 /** Exponential backoff (capped) for attempt N: 1m, 2m, 4m, 8m, 16m, … ≤ 1h. */
 function backoffMs(attempt: number): number {
@@ -94,7 +95,7 @@ export async function deliverOne(delivery: AlertDelivery): Promise<void> {
 		// The ledger's last_error is shown on the Activity panel. A refusal by the outbound-URL guard
 		// is stored as the one fixed sentence; its own message is logged here only.
 		if (err instanceof SsrfError) {
-			console.warn("[alerts] delivery destination refused by the outbound guard:", err.message);
+			log.warn("[alerts] delivery destination refused by the outbound guard", { err });
 		}
 		const message =
 			err instanceof SsrfError ? UNREACHABLE_DESTINATION : err instanceof Error ? err.message : String(err);

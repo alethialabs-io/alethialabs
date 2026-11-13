@@ -174,6 +174,26 @@ describe("providerErrorSummary", () => {
 			stack: bug.stack,
 		});
 	});
+
+	it("writes a failed database query without its parameter values, as the err serializer does", () => {
+		// drizzle-orm's DrizzleQueryError shape: own `query` and `params`, and a message (repeated in
+		// the stack) that carries the bound values.
+		const failed = Object.assign(new Error("Failed query: select * from u where email = $1\nparams: a@b.example"), {
+			query: "select * from u where email = $1",
+			params: ["a@b.example"],
+		});
+		const summary = providerErrorSummary(failed);
+		expect(summary).toMatchObject({ code: "network", message: "Failed query: select * from u where email = $1" });
+		expect(JSON.stringify(summary)).not.toContain("a@b.example");
+	});
+
+	it("copies no field of a non-provider error beyond its name, message and stack", () => {
+		const bug = Object.assign(new Error("boom"), { requestBody: "USER-TYPED", headers: { authorization: "SECRET" } });
+		const summary = providerErrorSummary(bug);
+		expect(Object.keys(summary).sort()).toEqual(["attempts", "code", "message", "name", "stack"]);
+		const line = JSON.stringify(summary);
+		for (const secret of ["USER-TYPED", "SECRET"]) expect(line).not.toContain(secret);
+	});
 });
 
 describe("providerErrorMessage", () => {

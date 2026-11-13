@@ -494,6 +494,7 @@ import {
 } from "@/lib/billing/pending-org-setup";
 import { stampHoldNotice } from "@/lib/billing/payment-holds/store";
 import { getOrgBilling } from "@/lib/billing/queries";
+import { log } from "@/lib/observability/log";
 
 /** A full `payment_holds` row, with `overrides`. */
 function holdRow(overrides: Partial<PaymentHoldRow>): PaymentHoldRow {
@@ -1288,10 +1289,13 @@ describe("#6025 — the refund notice's 14 days are the DATABASE's, and a return
 	it("a stamp that fails is logged, and the response still goes out", async () => {
 		refundedAgo(DAY);
 		vi.mocked(stampHoldNotice).mockRejectedValueOnce(new Error("database is unavailable"));
-		const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const logged = vi.spyOn(log, "error").mockImplementation(() => undefined);
 
 		expect(noticeOf(await buy())).toMatch(/refunded in full/);
-		expect(logged).toHaveBeenCalledWith(expect.stringMatching(/could not stamp notice_last_sent_at/), expect.any(Error));
+		expect(logged).toHaveBeenCalledWith(
+			expect.stringMatching(/could not stamp notice_last_sent_at/),
+			expect.objectContaining({ err: expect.objectContaining({ message: "database is unavailable" }) }),
+		);
 		logged.mockRestore();
 	});
 });

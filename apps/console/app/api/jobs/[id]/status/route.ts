@@ -107,7 +107,7 @@ export async function PUT(
 				const anchor = await anchorReceipt(execution_metadata.verify_receipt);
 				if (anchor) execution_metadata.verify_receipt.rekor = anchor;
 			} catch (err) {
-				jlog.error("rekor anchoring threw unexpectedly (fail-open)", { err: String(err) });
+				jlog.error("rekor anchoring threw unexpectedly (fail-open)", { err });
 			}
 		}
 
@@ -123,7 +123,7 @@ export async function PUT(
 		// that has stopped. Housekeeping — it must never sink the report, hence the catch.
 		if (status === "SUCCESS" || status === "FAILED" || status === "CANCELLED") {
 			const released = await releaseStateLocksForJob(jobId).catch((err) => {
-				jlog.error("failed to release state locks for terminal job", { err: String(err) });
+				jlog.error("failed to release state locks for terminal job", { err });
 				return 0;
 			});
 			if (released > 0) {

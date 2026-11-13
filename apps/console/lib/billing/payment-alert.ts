@@ -17,6 +17,7 @@
 
 import "server-only";
 import { emitAlertEvent } from "@/lib/alerts/emit";
+import { log } from "@/lib/observability/log";
 
 /**
  * What the alert's subject is to the flow that raises it — the clause the summary uses to say how the
@@ -68,7 +69,7 @@ export async function alertPaymentNeedsSupport(input: {
 	const summary = `Subscription ${input.subscriptionId} (customer ${input.customerId}${
 		input.paymentIntentId ? `, PaymentIntent ${input.paymentIntentId}` : ""
 	}), ${clause}: ${input.detail}`;
-	console.error(`[billing] payment needs support — ${summary}`, input.error ?? "");
+	log.error(`[billing] payment needs support — ${summary}`, { err: input.error });
 	const orgId = process.env.ALETHIA_PLATFORM_ALERT_ORG_ID;
 	if (!orgId) return false;
 	try {
@@ -81,7 +82,7 @@ export async function alertPaymentNeedsSupport(input: {
 		});
 		return queued > 0;
 	} catch (err) {
-		console.error(`[alerts] emit failed (${PAYMENT_NEEDS_SUPPORT_EVENT}):`, err);
+		log.error(`[alerts] emit failed (${PAYMENT_NEEDS_SUPPORT_EVENT})`, { err });
 		return false;
 	}
 }
