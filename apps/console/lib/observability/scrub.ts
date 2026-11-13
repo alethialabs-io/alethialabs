@@ -10,7 +10,9 @@
 //     stack frame's `vars`) whose name matches the denylist has its value replaced with [REDACTED].
 //  2. VALUE redaction — the process's secret env VALUES (BETTER_AUTH_SECRET, ALETHIA_CRED_ENCRYPTION_KEY,
 //     STRIPE_SECRET_KEY, DATABASE_URL, …) are stripped verbatim from every string, so a secret echoed
-//     into an error message or breadcrumb can never reach the wire.
+//     into an error message or breadcrumb can never reach the wire. An object KEY whose text carries
+//     one is renamed the same way in the copy (#6678), so a map keyed by a token does not send it as
+//     a property name.
 //
 // Both are keyed off ONE denylist (`SECRET_KEY_SUBSTRINGS`) so there is a single source of truth for
 // "what is secret" — nothing hand-rolled per call site. Kept in sync with the runner denylist.
@@ -82,7 +84,10 @@ export function isSecretKey(key: string): boolean {
 /**
  * Collects the process's secret env VALUES — those whose key matches the denylist and are long
  * enough (≥ 6 chars) to be a real secret rather than a generic token that would over-redact.
- * Recomputed per call: scrubbing only runs on captured errors (rare), so cost is irrelevant.
+ * It walks all of `process.env`, so a scrub reads it ONCE per event or breadcrumb (`scrubTopLevel`)
+ * and hands the list down, rather than once per string (#6668): a breadcrumb is not normalized
+ * before `beforeBreadcrumb`, so a large `console.*` call put tens of thousands of strings through
+ * it. Not cached across calls, so a value set in `process.env` after start-up is still redacted.
  */
 function secretEnvValues(): string[] {
 	const out: string[] = [];
@@ -94,10 +99,13 @@ function secretEnvValues(): string[] {
 	return out;
 }
 
-/** Replaces every known secret env value found in `s` with [REDACTED]. */
-export function scrubString(s: string): string {
+/**
+ * Replaces every known secret env value found in `s` with [REDACTED]. `secrets` is the list
+ * `secretEnvValues` returns; a walk passes the one it read for the whole scrub.
+ */
+export function scrubString(s: string, secrets: readonly string[] = secretEnvValues()): string {
 	let out = s;
-	for (const secret of secretEnvValues()) {
+	for (const secret of secrets) {
 		if (secret) out = out.split(secret).join(REDACTED);
 	}
 	return out;
@@ -199,6 +207,27 @@ function stripQueryParams(s: string, rewrites: readonly QueryRewrite[] = []): st
  */
 type ScrubMemo = Map<object, unknown>;
 
+/** What one scrub reads once and every value it walks uses. */
+interface ScrubContext {
+	/** The exact failed-query rewrites for the thrown value (`queryRewrites`). */
+	rewrites: readonly QueryRewrite[];
+	/** The secret env values, read once for the whole scrub (`secretEnvValues`). */
+	secrets: readonly string[];
+	/**
+	 * The length of the shortest non-empty secret (Infinity when there is none). A key shorter than
+	 * it cannot contain any secret, so `renamedKeys` skips it without scanning the secret list.
+	 */
+	shortestSecret: number;
+}
+
+/** Builds the per-scrub context: reads the secret env values once and measures the shortest. */
+function scrubContext(rewrites: readonly QueryRewrite[]): ScrubContext {
+	const secrets = secretEnvValues();
+	let shortestSecret = Number.POSITIVE_INFINITY;
+	for (const secret of secrets) if (secret) shortestSecret = Math.min(shortestSecret, secret.length);
+	return { rewrites, secrets, shortestSecret };
+}
+
 /**
  * Returns `value` with secret-named keys redacted, failed-query parameter values stripped (see
  * `stripQueryParams`) and secret values scrubbed out of every string. COPY-ON-WRITE (#6662): an
@@ -207,12 +236,14 @@ type ScrubMemo = Map<object, unknown>;
  * integration holds the logged arguments themselves, so writing through it once changed a logged
  * error's own `params` for the code that still held it. Cycle-safe via `memo`.
  */
-function scrubValue(value: unknown, memo: ScrubMemo, rewrites: readonly QueryRewrite[]): unknown {
-	if (typeof value === "string") return scrubString(stripQueryParams(value, rewrites));
+function scrubValue(value: unknown, memo: ScrubMemo, ctx: ScrubContext): unknown {
+	if (typeof value === "string") {
+		return scrubString(stripQueryParams(value, ctx.rewrites), ctx.secrets);
+	}
 	if (typeof value !== "object" || value === null) return value;
 	if (memo.has(value)) return memo.get(value);
-	if (Array.isArray(value)) return scrubArray(value, memo, rewrites);
-	if (isRecord(value)) return scrubRecord(value, memo, rewrites);
+	if (Array.isArray(value)) return scrubArray(value, memo, ctx);
+	if (isRecord(value)) return scrubRecord(value, memo, ctx);
 	return value;
 }
 
@@ -220,14 +251,14 @@ function scrubValue(value: unknown, memo: ScrubMemo, rewrites: readonly QueryRew
 function scrubArray(
 	value: readonly unknown[],
 	memo: ScrubMemo,
-	rewrites: readonly QueryRewrite[],
+	ctx: ScrubContext,
 ): unknown {
 	const copy: unknown[] = [];
 	memo.set(value, copy);
 	let changed = false;
 	for (let i = 0; i < value.length; i++) {
 		const el: unknown = value[i];
-		const out = scrubValue(el, memo, rewrites);
+		const out = scrubValue(el, memo, ctx);
 		copy.push(out);
 		if (!Object.is(out, el)) changed = true;
 	}
@@ -242,6 +273,52 @@ interface RecordScan {
 	read: Map<string, unknown>;
 	/** The scrubbed value of each key that scrubbing changes; empty means no copy is needed. */
 	changes: Map<string, unknown>;
+	/**
+	 * Each key whose NAME carries a secret value, and the name it has in the copy (`renamedKeys`).
+	 * Empty, with `changes` empty, means no copy is needed.
+	 */
+	renames: Map<string, string>;
+}
+
+/** Joins a redacted key name and a collision number: the second `[REDACTED]` key is `[REDACTED]#2`. */
+const COLLISION_SEPARATOR = "#";
+
+/**
+ * The name each key of `value` gets in the copy when its own text contains a known secret value
+ * (#6678): the key passed through `scrubString`, so `tok-<secret>` becomes `tok-[REDACTED]`. A key
+ * is data as much as a value is (a map keyed by token, a header object keyed by a credential), and
+ * judging it only by `isSecretKey` let the secret through as the property name.
+ *
+ * Two keys can come out with the same name (two different secrets, or a renamed key and a key
+ * already called `[REDACTED]`). Neither is dropped: the first renamed key, in `Object.keys` order,
+ * takes the plain name, and each later one takes the first free `<name>#2`, `<name>#3`, …. A name is
+ * free when no own property of `value` that keeps its name has it (non-enumerable ones included, so
+ * a copied error's `message` is never overwritten) and no earlier rename took it. Deterministic for
+ * a given object and secret list.
+ */
+function renamedKeys(
+	value: Record<string, unknown>,
+	keys: readonly string[],
+	ctx: ScrubContext,
+): Map<string, string> {
+	const renames = new Map<string, string>();
+	for (const key of keys) {
+		if (key.length < ctx.shortestSecret) continue;
+		const scrubbed = scrubString(key, ctx.secrets);
+		if (scrubbed !== key) renames.set(key, scrubbed);
+	}
+	if (renames.size === 0) return renames;
+	const taken = new Set<string>();
+	for (const name of Object.getOwnPropertyNames(value)) {
+		if (!renames.has(name)) taken.add(name);
+	}
+	for (const [key, scrubbed] of renames) {
+		let name = scrubbed;
+		for (let n = 2; taken.has(name); n++) name = `${scrubbed}${COLLISION_SEPARATOR}${n}`;
+		taken.add(name);
+		renames.set(key, name);
+	}
+	return renames;
 }
 
 /**
@@ -250,17 +327,19 @@ interface RecordScan {
  * fails) is redacted rather than letting the scrub throw: a throwing `beforeSend` makes Sentry send
  * its own internal error report, which skips this scrub. A secret-named key is redacted whole, and a failed query copied into
  * the event as an object (a serialized thrown value, extra error data, a logged error) has its own
- * `params` array redacted too, because it carries the values there and not only in its message.
+ * `params` array redacted too, because it carries the values there and not only in its message. A
+ * key whose own text carries a secret value is listed in `renames` (`renamedKeys`).
  */
 function changedEntries(
 	value: Record<string, unknown>,
 	memo: ScrubMemo,
-	rewrites: readonly QueryRewrite[],
+	ctx: ScrubContext,
 ): RecordScan {
 	const read = new Map<string, unknown>();
 	const changes = new Map<string, unknown>();
 	if (failedQueryText(value) !== undefined) changes.set("params", REDACTED);
-	for (const key of Object.keys(value)) {
+	const keys = Object.keys(value);
+	for (const key of keys) {
 		let original: unknown;
 		try {
 			original = value[key];
@@ -269,10 +348,17 @@ function changedEntries(
 			continue;
 		}
 		read.set(key, original);
-		const out = isSecretKey(key) ? REDACTED : scrubValue(original, memo, rewrites);
+		const out = isSecretKey(key) ? REDACTED : scrubValue(original, memo, ctx);
 		if (!Object.is(out, original)) changes.set(key, out);
 	}
-	return { read, changes };
+	return { read, changes, renames: renamedKeys(value, keys, ctx) };
+}
+
+/**
+ * The value a key ends up with: its scrubbed value when scrubbing changed it, else the value read.
+ */
+function finalValue(scan: RecordScan, key: string): unknown {
+	return scan.changes.has(key) ? scan.changes.get(key) : scan.read.get(key);
 }
 
 /**
@@ -281,17 +367,19 @@ function changedEntries(
  * kept so a copied `Error` is still one to Sentry's serializer, which then reads its `message` and
  * `stack` as it would have read the original's. An own accessor (V8 defines an error's `stack` as
  * one, and its getter reads an internal slot the copy does not have) is copied as the value it
- * returns on the original.
+ * returns on the original. A key listed in `renames` is moved to its new name in the copy, at the
+ * end of the key order; the original object keeps the old name.
  */
 function scrubRecord(
 	value: Record<string, unknown>,
 	memo: ScrubMemo,
-	rewrites: readonly QueryRewrite[],
+	ctx: ScrubContext,
 ): unknown {
 	const copy: object = Object.create(Object.getPrototypeOf(value));
 	memo.set(value, copy);
-	const { read, changes } = changedEntries(value, memo, rewrites);
-	if (changes.size === 0) {
+	const scan = changedEntries(value, memo, ctx);
+	const { read, changes, renames } = scan;
+	if (changes.size === 0 && renames.size === 0) {
 		memo.set(value, value);
 		return value;
 	}
@@ -322,6 +410,17 @@ function scrubRecord(
 	for (const [key, out] of changes) {
 		descriptors[key] = { value: out, writable: true, enumerable: true, configurable: true };
 	}
+	// Every old name is removed before any new one is set, so a rename can never land on a name
+	// that a later rename then deletes.
+	for (const key of renames.keys()) delete descriptors[key];
+	for (const [key, name] of renames) {
+		descriptors[name] = {
+			value: finalValue(scan, key),
+			writable: true,
+			enumerable: true,
+			configurable: true,
+		};
+	}
 	Object.defineProperties(copy, descriptors);
 	return copy;
 }
@@ -340,7 +439,12 @@ function scrubTopLevel<T>(root: T, rewrites: readonly QueryRewrite[]): T {
 	if (!isRecord(record)) return root;
 	const memo: ScrubMemo = new Map();
 	memo.set(record, record);
-	for (const [key, out] of changedEntries(record, memo, rewrites).changes) record[key] = out;
+	const ctx = scrubContext(rewrites);
+	const scan = changedEntries(record, memo, ctx);
+	for (const [key, out] of scan.changes) record[key] = out;
+	const moved = [...scan.renames].map(([key, name]) => ({ name, out: finalValue(scan, key) }));
+	for (const key of scan.renames.keys()) delete record[key];
+	for (const { name, out } of moved) record[name] = out;
 	return root;
 }
 

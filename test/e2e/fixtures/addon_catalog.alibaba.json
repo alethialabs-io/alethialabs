@@ -433,7 +433,7 @@
 		"mode": "managed",
 		"chartRepo": "https://traefik.github.io/charts",
 		"chart": "traefik",
-		"version": "42.3.2",
+		"version": "42.4.0",
 		"namespace": "traefik",
 		"values": {
 			"ingressClass": {
