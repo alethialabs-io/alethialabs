@@ -3,6 +3,7 @@
 
 import type { Repository } from "@/app/server/actions/git/types";
 import type { GitProvider } from "@/lib/db/schema";
+import { resolveGitProvider } from "@/lib/git/provider-host";
 
 export interface PreviewRepositoryParts {
 	git_provider: Extract<GitProvider, "github" | "gitlab" | "bitbucket">;
@@ -10,37 +11,7 @@ export interface PreviewRepositoryParts {
 	repo_name: string;
 }
 
-const PROVIDER_HOSTS = {
-	"github.com": "github",
-	"bitbucket.org": "bitbucket",
-} as const;
-
-function hostOf(rawUrl: string): string | null {
-	try {
-		return new URL(rawUrl).hostname.toLowerCase();
-	} catch {
-		return null;
-	}
-}
-
-function gitlabHost(gitlabBaseUrl: string): string {
-	return hostOf(gitlabBaseUrl) ?? "gitlab.com";
-}
-
-function providerForHost(
-	host: string,
-	gitlabBaseUrl: string,
-): PreviewRepositoryParts["git_provider"] | null {
-	for (const [providerHost, provider] of Object.entries(PROVIDER_HOSTS)) {
-		if (host === providerHost || host.endsWith(`.${providerHost}`)) {
-			return provider;
-		}
-	}
-	const glHost = gitlabHost(gitlabBaseUrl);
-	if (host === glHost || host.endsWith(`.${glHost}`)) return "gitlab";
-	return null;
-}
-
+/** The owner/repo fields from a URL path of exactly two segments, or null for any other shape. */
 function partsFromPath(
 	provider: PreviewRepositoryParts["git_provider"],
 	pathname: string,
@@ -59,21 +30,22 @@ function partsFromPath(
 	};
 }
 
-/** Parses an HTTP(S) git repository URL into the project_preview_config repo fields. */
+/**
+ * Parses an HTTPS git repository URL into the project_preview_config repo fields. The provider is
+ * {@link resolveGitProvider}'s exact-host answer against `gitlabBaseUrl` (github.com, bitbucket.org,
+ * the configured GitLab's host and port), so a subdomain, a look-alike and an unknown host all give
+ * null rather than a guessed provider. Only an `https://` URL is read: the fields name an owner and a
+ * repo, which the URL's path must spell as exactly two segments.
+ */
 export function parsePreviewRepositoryUrl(
 	rawUrl: string,
 	gitlabBaseUrl = "https://gitlab.com",
 ): PreviewRepositoryParts | null {
-	let url: URL;
-	try {
-		url = new URL(rawUrl.trim());
-	} catch {
-		return null;
-	}
-	if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-	const provider = providerForHost(url.hostname.toLowerCase(), gitlabBaseUrl);
-	if (!provider) return null;
-	return partsFromPath(provider, url.pathname);
+	const trimmed = rawUrl.trim();
+	if (!/^https:\/\//i.test(trimmed)) return null;
+	const resolved = resolveGitProvider(trimmed, { gitlabBaseUrl });
+	if (!resolved.ok) return null;
+	return partsFromPath(resolved.provider, new URL(trimmed).pathname);
 }
 
 /** Maps a selected repository row into the project_preview_config repo fields. */

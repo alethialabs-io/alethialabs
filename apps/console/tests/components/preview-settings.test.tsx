@@ -189,6 +189,17 @@ describe("PreviewSettings", () => {
 		expect(toast.success).toHaveBeenCalledWith("Preview settings saved.");
 	});
 
+	it("refuses a non-https repository URL, saying which hosts an https:// URL may use", async () => {
+		const user = userEvent.setup();
+		renderPanel();
+		await user.type(screen.getByLabelText("Preview repository"), "http://github.com/acme/shop");
+		expect(
+			await screen.findByText(
+				"Use an https:// URL on github.com, bitbucket.org or gitlab.com, naming the owner and repo (owner/repo).",
+			),
+		).toBeInTheDocument();
+	});
+
 	it("#6128: puts a server field error under its field, not in a toast", async () => {
 		savePreviewConfig.mockResolvedValue({
 			ok: false,
