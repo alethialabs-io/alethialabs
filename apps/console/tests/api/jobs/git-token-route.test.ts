@@ -130,6 +130,22 @@ describe("POST /api/jobs/[id]/git-token", () => {
 		expect(getAccessToken).not.toHaveBeenCalled();
 	});
 
+	it.each([
+		["https://code.acme.example:8443/acme/apps", "8443", "code.acme.example:443"],
+		["https://github.com:8443/acme/apps", "8443", "only served on port 443"],
+	])("refuses %s as a port mismatch, naming the port rather than an unknown host", async (repo, port, expected) => {
+		seed(repo);
+		const res = await post();
+		expect(res.status).toBe(422);
+		const body = JSON.parse(await res.text());
+		expect(body).toMatchObject({ code: "git_provider_unresolved", reason: "port_mismatch" });
+		expect(body.error).toContain(`on port ${port}`);
+		expect(body.error).toContain(expected);
+		expect(body.error).toContain("no git token was issued");
+		expect(body.error).not.toContain("Cannot tell which git provider");
+		expect(getAccessToken).not.toHaveBeenCalled();
+	});
+
 	it("refuses a per-repo request for a BYO chart on an unknown host", async () => {
 		seed("https://github.com/acme/apps", ["https://charts.example.net/acme/chart"]);
 		const res = await post("https://charts.example.net/acme/chart");

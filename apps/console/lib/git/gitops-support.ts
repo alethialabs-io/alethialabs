@@ -14,7 +14,7 @@
 
 import type { GitProvider } from "@/lib/db/schema";
 import { configuredGitProviderHosts } from "@/lib/git/configured-hosts";
-import { type GitProviderHosts, resolveGitProvider } from "@/lib/git/provider-host";
+import { type GitProviderHosts, portMismatchMessage, resolveGitProvider } from "@/lib/git/provider-host";
 
 /** The display name of each git provider, as the console's sentences spell it. */
 const PROVIDER_NAMES: Readonly<Record<GitProvider, string>> = {
@@ -31,7 +31,9 @@ const PUSH_CAPABLE: ReadonlySet<GitProvider> = new Set<GitProvider>(["github"]);
  * can. The provider is resolved by {@link resolveGitProvider} from the repo's exact host, never by a
  * substring match. A repo on GitHub is allowed. A repo on GitLab or Bitbucket is refused because the
  * linked token cannot push, and a repo whose host matches no configured provider is refused because
- * no token is issued for it at all. An environment with no apps repo answers null: GitOps delivery
+ * no token is issued for it at all. A GitHub repo on a port GitHub is not served at is refused with
+ * the port named; a GitLab or Bitbucket repo on the wrong port gets the provider's sentence, which is
+ * true whatever the port. An environment with no apps repo answers null: GitOps delivery
  * then writes nothing, and the add-on card already says the mode needs an apps repo.
  */
 export function gitopsModeRefusal(
@@ -40,15 +42,23 @@ export function gitopsModeRefusal(
 ): string | null {
 	if (!appsRepo || !appsRepo.trim()) return null;
 	const resolved = resolveGitProvider(appsRepo, hosts);
-	if (!resolved.ok) {
+	if (!resolved.ok && resolved.reason === "port_mismatch" && PUSH_CAPABLE.has(resolved.provider)) {
+		return (
+			"GitOps delivery cannot push to this environment's apps repository. " +
+			portMismatchMessage(resolved, "Alethia will not send a token there") +
+			" Or use Managed delivery instead."
+		);
+	}
+	const provider = resolved.ok || resolved.reason === "port_mismatch" ? resolved.provider : null;
+	if (!provider) {
 		return (
 			"GitOps delivery works only with an apps repository on GitHub for now. Alethia cannot tell " +
 			"which Git provider hosts this environment's apps repository, so it cannot push an add-on " +
 			"manifest there. Use Managed delivery instead."
 		);
 	}
-	if (PUSH_CAPABLE.has(resolved.provider)) return null;
-	const name = PROVIDER_NAMES[resolved.provider];
+	if (PUSH_CAPABLE.has(provider)) return null;
+	const name = PROVIDER_NAMES[provider];
 	return (
 		`GitOps delivery works only with an apps repository on GitHub for now. This environment's apps ` +
 		`repository is on ${name}, and Alethia's ${name} connection can read repositories but cannot ` +

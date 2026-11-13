@@ -10,7 +10,8 @@ import { compareChartVersions } from "@/lib/addons/update-notice";
 import { type ProvisionJobType, jobs, projectAddons, projectRepositories, runners } from "@/lib/db/schema";
 import { configuredGitProviderHosts } from "@/lib/git/configured-hosts";
 import {
-	type GitProviderRefusal,
+	type GitProviderRefused,
+	portMismatchMessage,
 	repoHostForLog,
 	resolveGitProvider,
 	UNPARSED_REPO_HOST,
@@ -19,21 +20,22 @@ import { verifyRunnerToken } from "@/lib/runners/auth";
 import { log } from "@/lib/observability/log";
 
 /**
- * The refusal body for a repo whose host is not one of the configured git providers. `host` is the
- * hostname the resolver read (always hostname-shaped), or null when none could be read, in which case
- * the body names no host at all.
+ * The refusal body for a repo URL the resolver could not tie to a configured git provider. The runner
+ * shows only `error`, so its text follows the reason: a port mismatch names the host, the port the URL
+ * uses and the port the provider is at (the host IS a configured one there), and every other refusal
+ * says the host matches no provider. The host is the one the resolver read (always hostname-shaped),
+ * or null when none could be read, in which case the body names no host at all.
  */
-function unknownProviderResponse(
-	reason: GitProviderRefusal,
-	host: string | null,
-): NextResponse {
-	const what = host ? `host ${host}` : "this repository URL";
+function unknownProviderResponse(refusal: GitProviderRefused): NextResponse {
+	let error: string;
+	if (refusal.reason === "port_mismatch") {
+		error = portMismatchMessage(refusal, "no git token was issued");
+	} else {
+		const what = refusal.host ? `host ${refusal.host}` : "this repository URL";
+		error = `Cannot tell which git provider serves ${what}; no git token was issued. Supported hosts are github.com, bitbucket.org and the configured GitLab host.`;
+	}
 	return NextResponse.json(
-		{
-			error: `Cannot tell which git provider serves ${what}; no git token was issued. Supported hosts are github.com, bitbucket.org and the configured GitLab host.`,
-			code: "git_provider_unresolved",
-			reason,
-		},
+		{ error, code: "git_provider_unresolved", reason: refusal.reason },
 		{ status: 422 },
 	);
 }
@@ -350,7 +352,7 @@ export async function POST(
 			console.warn(
 				`git-token: refused for job ${jobId} — repo provider unresolved (${resolved.reason}, host ${resolved.host ?? UNPARSED_REPO_HOST})`,
 			);
-			return unknownProviderResponse(resolved.reason, resolved.host);
+			return unknownProviderResponse(resolved);
 		}
 		const gitProvider = resolved.provider;
 

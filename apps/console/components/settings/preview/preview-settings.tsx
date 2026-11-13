@@ -97,6 +97,7 @@ const METHOD_LABELS: Record<GitCredentialOption["method"], string> = {
 	deploy_key: "Deploy key",
 };
 
+/** The configured GitLab's host, with its port when it names one, or gitlab.com when the URL does not parse. */
 function gitlabHost(gitlabBaseUrl: string): string {
 	try {
 		return new URL(gitlabBaseUrl).host;
@@ -200,8 +201,9 @@ export function PreviewSettings({
 		}
 		const parts = parsePreviewRepositoryUrl(nextUrl, gitlabBaseUrl);
 		if (!parts) {
+			// Preview stores provider/owner/name only, so the URL must be https:// on a configured host.
 			setRepoError(
-				"Use a GitHub, GitLab, or Bitbucket repository URL with owner/repo.",
+				`Use an https:// URL on github.com, bitbucket.org or ${gitlabHost(gitlabBaseUrl)}, naming the owner and repo (owner/repo).`,
 			);
 			form.setValue("repo_owner", "", { shouldDirty: true, shouldValidate: true });
 			form.setValue("repo_name", "", { shouldDirty: true, shouldValidate: true });

@@ -112,7 +112,19 @@ describe("requestGitopsBumpFor: the host allowlist (#6549)", () => {
 		["http://github.com/acme/apps", "unknown-host"],
 		["https://github.com/acme", "unknown-host"],
 		["https://github.com/acme/apps/tree/main", "unknown-host"],
+		["https://github.com:8443/acme/apps", "unknown-host"],
 	];
+	it("names the port when the apps repo is github.com on another port", async () => {
+		const { fn } = fakeFetch();
+		const { s } = store("https://github.com:8443/acme/apps");
+		const r = await requestGitopsBumpFor(s, INPUT, fn, reader);
+		expect(r).toMatchObject({ status: "refused", reason: "unknown-host" });
+		if (r.status !== "refused") throw new Error("unreachable");
+		expect(r.message).toContain("on port 8443");
+		expect(r.message).toContain("only served on port 443");
+		expect(reader).not.toHaveBeenCalled();
+	});
+
 	for (const [repo, reason] of hosts) {
 		it(`${repo} → ${reason}, and no token is read or sent`, async () => {
 			const { fn } = fakeFetch();
