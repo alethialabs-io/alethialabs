@@ -5,9 +5,9 @@
 // Scrubbing a large console breadcrumb costs time in proportion to its size (#6668). A breadcrumb
 // is not normalized before `beforeBreadcrumb`, so a `console.error` of 20,000 rows reaches the
 // scrub whole; reading `process.env` once per string made that block the event loop for about a
-// second. The bound below is deliberately loose (about 10x the measured cost, see the test) so a
-// loaded CI runner cannot fail it; the redaction assertions are what keep it from passing on a
-// scrub that does nothing.
+// second. What is pinned is the CAUSE, deterministically: one scrub enumerates `process.env` once,
+// however many strings it walks. A wall-clock bound is kept only as a loose backstop, because a
+// loaded CI runner has run this folder's timing checks about 80x slower than a laptop.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { scrubBreadcrumb } from "@/lib/observability/scrub";
@@ -19,12 +19,32 @@ const LATE_SECRET = "zz-late-secret-value-2b9d";
 /** How many rows the logged table has: the size #6668 measured. */
 const ROWS = 20_000;
 /**
- * The time bound for one scrub of ROWS rows. Measured at about 45 ms on a developer machine with
- * the env read once per scrub, and at about 3.2 s there with it read once per string (#6668
- * measured about 920 ms on its machine). 500 ms is about 10x the fixed cost, so a slow runner
- * should not cross it and a return to per-string env reads should.
+ * A backstop for one scrub of ROWS rows: about 45 ms on a developer machine with the fix, about
+ * 3.2 s there without it. Far above both, so only a pathological slowdown crosses it; the
+ * enumeration count below is the real check.
  */
-const BOUND_MS = 500;
+const BOUND_MS = 15_000;
+
+/**
+ * Runs `fn` with `process.env` replaced by a proxy that counts how many times its keys are
+ * enumerated, and returns that count. The real environment object is restored afterwards.
+ */
+function countEnvEnumerations(fn: () => void): number {
+	const real = process.env;
+	let count = 0;
+	process.env = new Proxy(real, {
+		ownKeys(target) {
+			count += 1;
+			return Reflect.ownKeys(target);
+		},
+	});
+	try {
+		fn();
+	} finally {
+		process.env = real;
+	}
+	return count;
+}
 
 /** One row of a logged query result, with the secret echoed into every hundredth row. */
 interface Row {
@@ -73,8 +93,18 @@ describe("scrubbing a 20,000-row console breadcrumb", () => {
 		delete process.env.ZZ_LATE_TOKEN;
 	});
 
+	it("reads process.env once per scrub, however many strings it walks", () => {
+		const crumb = consoleBreadcrumb(rows());
+		let out: unknown;
+		const reads = countEnvEnumerations(() => {
+			out = scrubBreadcrumb(crumb);
+		});
+		expect(reads).toBe(1);
+		expect(JSON.stringify(out)).not.toContain(SECRET);
+	}, 30_000);
+
 	it(
-		"finishes under the bound and still redacts every secret",
+		"finishes under the backstop and still redacts every secret",
 		() => {
 			const crumb = consoleBreadcrumb(rows());
 			const t0 = performance.now();
@@ -87,7 +117,7 @@ describe("scrubbing a 20,000-row console breadcrumb", () => {
 			expect(text.split("[REDACTED]").length - 1).toBe(ROWS / 100);
 			expect(elapsed).toBeLessThan(BOUND_MS);
 		},
-		30_000,
+		60_000,
 	);
 
 	it(
