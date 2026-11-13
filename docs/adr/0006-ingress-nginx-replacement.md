@@ -61,9 +61,10 @@ marketplace add-on, because the clouds then differ only in a values key.
 
 ## Decision
 
-**Traefik**, chart `traefik/traefik` 42.3.2 (proxy v3.7.17), namespace `traefik`. v3.7.17 is the
-newest proxy version any published chart carries. Traefik v3.7.18 was released on 2026-11-10, but no
-chart ships it yet, so the pin moves to the first chart that does. Reasons:
+**Traefik**, chart `traefik/traefik` 42.4.0 (proxy v3.7.18), namespace `traefik`. The decision was
+taken on chart 42.3.2 (proxy v3.7.17), the newest chart on 2026-11-11. Traefik v3.7.18 was released
+on 2026-11-10 with fixes for five advisories, and chart 42.4.0, published on 2026-11-12, is the first
+to carry it. #6598 moved the pin to it, and the catalogue entry sets `securityRelease`. Reasons:
 
 1. **It fits the catalogue's checks.** It is the only candidate in a classic HTTPS Helm repository.
    `check-addon-charts-render.mjs`, `check-render-determinism.sh`, `check-published-defaults.sh`,
@@ -114,7 +115,7 @@ The migration guide is `apps/docs/content/docs/guides/design-project/migrate-fro
 
 - **Security cadence.** Traefik publishes advisories often, several of them in the ingress-nginx
   provider. The chart pin must follow Traefik patch releases closely, and `securityRelease` is the
-  marker to set when a bump carries a fix. The first such bump is to the chart that carries v3.7.18.
+  marker to set when a bump carries a fix. The first such bump is chart 42.4.0 (v3.7.18), in #6598.
 - **Weak Gateway API extended conformance.** HTTPRoute timeouts, retry and CORS are not supported in
   Gateway mode; they need Traefik Middlewares, which do not carry over to another implementation.
 - **Gateway API CRDs are a follow-up.** Until something installs the standard-channel CRDs, Gateway

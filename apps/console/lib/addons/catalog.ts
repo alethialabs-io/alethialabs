@@ -1071,7 +1071,16 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		license: "MIT",
 		chartRepo: "https://traefik.github.io/charts",
 		chart: "traefik",
-		version: "42.3.2",
+		version: "42.4.0",
+		// #6598. Chart 42.4.0 is the first to ship proxy v3.7.18, which carries the fixes for five
+		// advisories published with it, among them the ingress-nginx provider, the entry points' path
+		// sanitising and the auth middlewares. Every earlier chart ships v3.7.17 or older, so pinned
+		// and GitOps installs are told to move.
+		securityRelease: {
+			summary:
+				"Traefik v3.7.18 fixes five published advisories, including client-certificate authentication on NGINX-class Ingresses that share a host, path-based authorization with dot-segments, and ForwardAuth and BasicAuth handling. Traefik v3.7.17 and earlier are affected.",
+			advisoryUrl: "https://github.com/traefik/traefik/releases/tag/v3.7.18",
+		},
 		namespace: "traefik",
 		defaultValues: {
 			// The chart marks its IngressClass as the cluster default. An add-on must not silently take
