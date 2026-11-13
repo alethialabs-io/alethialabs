@@ -37,6 +37,7 @@ import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositori
 import { Repository } from "@/app/server/actions/git/types";
 import { getLinkedProviders } from "@/app/server/actions/identities";
 import { useRepositoryContext } from "@/components/design-project/repository-context";
+import { resolveGitProvider } from "@/lib/git/provider-host";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 
@@ -65,6 +66,12 @@ interface RepositorySelectorProps {
    * followed, so an array rebuilt on every parent render cannot re-trigger the load.
    */
   linkedProviders?: PublicGitProvider[];
+  /**
+   * The configured GitLab base URL (`getGitlabBaseUrl()` on the server page), so a saved repo on a
+   * self-hosted GitLab opens the selector on GitLab. Omitted, GitLab is taken to be gitlab.com. It
+   * only decides which provider the selector OPENS on; no token is chosen from it.
+   */
+  gitlabBaseUrl?: string;
 }
 
 /** The order the Link buttons are offered in. */
@@ -90,14 +97,6 @@ function linkCallbackUrl(): string {
   return `${origin}${pathname}${search}`;
 }
 
-const PROVIDER_HOSTS: Record<string, PublicGitProvider> = {
-  "github.com": "github",
-  "gitlab.com": "gitlab",
-  "bitbucket.org": "bitbucket",
-};
-
-/** Maps a saved repo URL to its git provider by exact host match; null for
- *  non-URLs (e.g. an `owner/repo` slug) or unrecognized hosts. */
 const GIT_PROVIDERS = [
   "github",
   "bitbucket",
@@ -106,27 +105,19 @@ const GIT_PROVIDERS = [
 
 /**
  * The provider the selector opens on: the one a saved repo URL names when that provider is linked,
- * else the first linked one; null when none is linked.
+ * else the first linked one; null when none is linked. The saved URL's provider is the shared
+ * exact-host resolver's answer (`resolveGitProvider`); a URL it refuses (an `owner/repo` slug, an
+ * unknown host) names none.
  */
 function initialProviderFor(
   providers: PublicGitProvider[],
   savedUrl: string | undefined,
+  gitlabBaseUrl: string,
 ): PublicGitProvider | null {
-  const detected = savedUrl ? providerFromRepoUrl(savedUrl) : null;
+  const resolved = savedUrl ? resolveGitProvider(savedUrl, { gitlabBaseUrl }) : null;
+  const detected = resolved?.ok ? resolved.provider : null;
   if (detected && providers.includes(detected)) return detected;
   return providers[0] ?? null;
-}
-
-function providerFromRepoUrl(url: string): PublicGitProvider | null {
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    for (const [h, p] of Object.entries(PROVIDER_HOSTS)) {
-      if (host === h || host.endsWith(`.${h}`)) return p;
-    }
-  } catch {
-    // not a URL — fall through to null
-  }
-  return null;
 }
 
 /**
@@ -200,6 +191,7 @@ export function RepositorySelector({
   onRepositorySelect,
   providerAvailability,
   linkedProviders: seededProviders,
+  gitlabBaseUrl = "https://gitlab.com",
 }: RepositorySelectorProps) {
   const sharedCtx = useRepositoryContext();
   // THE FIRST RENDER IS THE SETTLED LAYOUT WHEN ANYTHING ALREADY KNOWS THE ANSWER (F034). This used
@@ -219,14 +211,14 @@ export function RepositorySelector({
   );
   const [pickedProvider, setSelectedProvider] =
     useState<PublicGitProvider | null>(() =>
-      seed ? initialProviderFor(seed, initialValue) : null,
+      seed ? initialProviderFor(seed, initialValue, gitlabBaseUrl) : null,
     );
   const linkedProviders = sharedCtx ? sharedCtx.linkedProviders : ownLinkedProviders;
   const loading = sharedCtx ? sharedCtx.loadingProviders : ownLoading;
   // Until one is picked, a shared context's provider defaults the way a seed's does.
   const selectedProvider =
     pickedProvider ??
-    (sharedCtx ? initialProviderFor(sharedCtx.linkedProviders, initialValue) : null);
+    (sharedCtx ? initialProviderFor(sharedCtx.linkedProviders, initialValue, gitlabBaseUrl) : null);
   // What the mount knew, kept so `loadInitialData` can skip the provider read it no longer needs.
   const [seededAtMount] = useState(() => !sharedCtx && seededProviders !== undefined);
   const [selectedAtMount] = useState(selectedProvider);
@@ -329,7 +321,7 @@ export function RepositorySelector({
     return getLinkedProviders()
       .then(async (providers) => {
         setLinkedProviders(providers);
-        const initialProvider = initialProviderFor(providers, initialValue);
+        const initialProvider = initialProviderFor(providers, initialValue, gitlabBaseUrl);
         if (initialProvider) {
           setSelectedProvider(initialProvider);
           await fetchRepositories(initialProvider);
