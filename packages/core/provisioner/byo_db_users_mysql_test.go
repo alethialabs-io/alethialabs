@@ -178,6 +178,38 @@ func TestByoDBUsers_SessionsWarningClaimsNoSession(t *testing.T) {
 	}
 }
 
+// TestByoDBUsers_SessionsWarningNamesEveryCause (#6536): the runner names a user whose session was
+// past its kill bound, or whose kill failed, with every privilege held, so neither the per-user
+// warning, the "+n more" doubt, nor the Job log line may give a missing privilege as THE cause, and
+// the log line may not say that sessions exist.
+func TestByoDBUsers_SessionsWarningNamesEveryCause(t *testing.T) {
+	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+	c := newUsersCluster(t)
+	api, worker := usersFor()
+	gone := "alethia_byo_eeeeeeeeeeee"
+	c.message = resultOf(api, worker, byoDBUsersSessionsPrefix+gone, byoDBUsersDoubtPrefix+"sessions-not-ended +3 more")
+	vc := mysqlUsersConfig("8.0")
+	out, log := runUsers(vc, usersOutputs(vc), nil)
+	if out.Failed || len(out.Warnings) != 2 {
+		t.Fatalf("outcome %+v\n%s", out, log)
+	}
+	for _, w := range out.Warnings {
+		for _, want := range []string{"PROCESS or CONNECTION_ADMIN privilege, or a session could not be ended", "more were open than one deploy ends", "ending one failed"} {
+			if !strings.Contains(w, want) {
+				t.Errorf("warning %q does not say %q", w, want)
+			}
+		}
+	}
+	for _, claim := range []string{"the sessions of revoked user", "(no PROCESS or CONNECTION_ADMIN)"} {
+		if strings.Contains(log, claim) {
+			t.Errorf("the Job log line claims %q:\n%s", claim, log)
+		}
+	}
+	if !strings.Contains(log, "any open session of revoked user "+gone+" was not terminated") {
+		t.Errorf("the Job log does not report %s:\n%s", gone, log)
+	}
+}
+
 // TestByoDBUsers_DoubtLinesAreWarnings (#6536): each doubt line the runner writes — the lost session
 // record, and the "+n more" past either capped list — is accepted inside the counted entries and
 // surfaced as its own Deploy-tab warning, never a failure and never a provisioned user. A doubt of

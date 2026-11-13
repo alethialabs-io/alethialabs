@@ -91,9 +91,10 @@ const byoDBUsersEngineUnknownReason = "the database's engine family is not set, 
 // (apps/runner db_bootstrap_byo.go byoPendingPrefix).
 const byoDBUsersPendingPrefix = "revocation-pending:"
 
-// byoDBUsersSessionsPrefix starts a result line naming a revoked user whose open sessions the Job
-// could not end, because the administrator lacks PROCESS or CONNECTION_ADMIN (apps/runner
-// db_bootstrap_byo_mysql.go mysqlByoSessionsPrefix; MySQL only).
+// byoDBUsersSessionsPrefix starts a result line naming a revoked user that may still have a session
+// the Job did not end: the administrator lacks PROCESS (so no session can be ruled out) or
+// CONNECTION_ADMIN, the user's session was past the run's kill bound, or its kill failed (apps/runner
+// db_bootstrap_byo_mysql.go mysqlByoSessionsPrefix and mysqlByoUnkilledSQL; MySQL only).
 const byoDBUsersSessionsPrefix = "sessions-not-ended:"
 
 // byoDBUsersDoubtPrefix starts a result line saying the Job cannot vouch for part of its own report
@@ -193,12 +194,18 @@ func byoDBUsersFailedWarning(reason string) string {
 // byoDBUsersSessionsWarning is the Deploy-tab warning for one revoked user whose open sessions the
 // Job could not end. It is a warning, not a failure: the user is locked and dropped regardless. The
 // Job names a user only when it saw a session of it, or when it could not see sessions at all (no
-// PROCESS), so the text claims no session exists: it says any it had was not terminated.
+// PROCESS), so the text claims no session exists: it says any it had was not terminated. Nor does it
+// claim one cause: a missing privilege is the usual one, but the Job's measurement also names a user
+// whose session was past the run's kill bound or whose kill failed, with every privilege held.
 func byoDBUsersSessionsWarning(user string) string {
-	return fmt.Sprintf("Database user %s belongs to a bring-your-own binding that was removed. Any session it had open was not terminated, "+
-		"because the database administrator lacks the PROCESS or CONNECTION_ADMIN privilege; such a session keeps running until it "+
-		"disconnects. The user cannot log in again.", user)
+	return fmt.Sprintf("Database user %s belongs to a bring-your-own binding that was removed. Any session it had open was not terminated: "+
+		byoDBUsersSessionsCause+" Such a session keeps running until it disconnects. The user cannot log in again.", user)
 }
+
+// byoDBUsersSessionsCause names every reason the Job reports a session it did not end
+// (mysqlByoUnkilledSQL in apps/runner), shared by the per-user warning and the "+n more" doubt.
+const byoDBUsersSessionsCause = "the database administrator lacks the PROCESS or CONNECTION_ADMIN privilege, or a session could " +
+	"not be ended on this deploy (more were open than one deploy ends, or ending one failed)."
 
 // byoDBUsersDoubtWarning is the Deploy-tab warning for one doubt line (byoDBUsersDoubtRe), which the
 // parser has already accepted.
@@ -216,8 +223,8 @@ func byoDBUsersDoubtWarning(line string) string {
 			"one by one. They can no longer log in, but they still exist. The next deploy tries the drop again.", m[3])
 	default:
 		return fmt.Sprintf("%s more database users of removed bring-your-own bindings may have sessions open that were not terminated, and "+
-			"are not listed one by one: the database administrator lacks the PROCESS or CONNECTION_ADMIN privilege. Such a session keeps "+
-			"running until it disconnects. These users cannot log in again.", m[3])
+			"are not listed one by one: "+byoDBUsersSessionsCause+" Such a session keeps running until it disconnects. "+
+			"These users cannot log in again.", m[3])
 	}
 }
 
@@ -568,7 +575,7 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 		out.Warnings = append(out.Warnings, byoDBUsersPendingWarning(u))
 	}
 	for _, u := range unended {
-		fmt.Fprintf(stderr, "Warning: BYO users Job: the sessions of revoked user %s were not terminated (no PROCESS or CONNECTION_ADMIN)\n", u)
+		fmt.Fprintf(stderr, "Warning: BYO users Job: any open session of revoked user %s was not terminated\n", u)
 		out.Warnings = append(out.Warnings, byoDBUsersSessionsWarning(u))
 	}
 	for _, d := range doubts {
