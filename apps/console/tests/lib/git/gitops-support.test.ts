@@ -44,6 +44,17 @@ describe("gitopsModeRefusal", () => {
 		expect(gitopsModeRefusal(repo, HOSTS)).toContain("cannot tell which Git provider hosts");
 	});
 
+	it("refuses a GitHub apps repo on another port, naming the port", () => {
+		const refusal = gitopsModeRefusal("https://github.com:8443/acme/apps", HOSTS);
+		expect(refusal).toContain("points at github.com on port 8443");
+		expect(refusal).toContain("only served on port 443");
+		expect(refusal).not.toContain("cannot tell which Git provider hosts");
+	});
+
+	it("refuses a GitLab apps repo on another port with the GitLab sentence", () => {
+		expect(gitopsModeRefusal("https://code.acme.example:8443/acme/apps", HOSTS)).toContain("is on GitLab");
+	});
+
 	it.each([null, undefined, "", "   "])("says nothing for an environment with no apps repo (%j)", (repo) => {
 		expect(gitopsModeRefusal(repo, HOSTS)).toBeNull();
 	});

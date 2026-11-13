@@ -27,7 +27,8 @@ import type { Tx } from "@/lib/db";
 import { projectAddons, projectRepositories } from "@/lib/db/schema";
 import type { GitopsBumpRecord } from "@/types/jsonb.types";
 import type { BumpEditRefusal } from "./edit";
-import { resolveGitProvider } from "@/lib/git/provider-host";
+import { configuredGitProviderHosts } from "@/lib/git/configured-hosts";
+import { portMismatchMessage, resolveGitProvider } from "@/lib/git/provider-host";
 import { type FetchLike, githubClient, githubRepoFromUrl } from "./github";
 import { type BumpOutcome, openGitopsBump } from "./open-bump";
 
@@ -281,12 +282,19 @@ export async function requestGitopsBumpFor(
 	// The host decides where the token may go, BEFORE any token is read. `resolveGitProvider` is the
 	// one exact-host resolver (github.com, bitbucket.org, the configured GitLab's host); an unknown
 	// host, a non-https URL and a malformed one are refused there.
-	const provider = resolveGitProvider(appsRepo);
-	if (!provider.ok) {
+	// A port mismatch names a KNOWN provider's host on the wrong port, so its refusal says which port
+	// rather than claiming the host is unrecognised. On GitLab or Bitbucket the pull request is refused
+	// whatever the port, so those keep the provider's sentence.
+	const resolved = resolveGitProvider(appsRepo, configuredGitProviderHosts());
+	if (!resolved.ok && resolved.reason === "port_mismatch" && resolved.provider === "github") {
+		return refused("unknown-host", portMismatchMessage(resolved, "Alethia will not send a token there"));
+	}
+	const provider = resolved.ok || resolved.reason === "port_mismatch" ? resolved.provider : null;
+	if (!provider) {
 		return refused("unknown-host", "Alethia does not recognise the apps repo's host, so it will not send a token there.");
 	}
-	if (provider.provider !== "github") {
-		const name = provider.provider === "gitlab" ? "GitLab" : "Bitbucket";
+	if (provider !== "github") {
+		const name = provider === "gitlab" ? "GitLab" : "Bitbucket";
 		return refused("provider-not-supported", `Alethia opens these pull requests on GitHub only. On ${name}, change the file yourself.`);
 	}
 	const repo = githubRepoFromUrl(appsRepo);

@@ -11,6 +11,7 @@
 // opening pull requests needs Pull requests: read and write (fine-grained token names). The
 // console's GitHub OAuth app asks for `repo`, which covers all of them.
 
+import { configuredGitProviderHosts } from "@/lib/git/configured-hosts";
 import { resolveGitProvider } from "@/lib/git/provider-host";
 
 const API = "https://api.github.com";
@@ -62,7 +63,7 @@ export function githubRepoFromUrl(repoUrl: string): GithubRepoRef | null {
  */
 export function githubRepoName(repoUrl: string | null | undefined): string | null {
 	if (!repoUrl) return null;
-	const provider = resolveGitProvider(repoUrl);
+	const provider = resolveGitProvider(repoUrl, configuredGitProviderHosts());
 	if (!provider.ok || provider.provider !== "github") return null;
 	const ref = githubRepoFromUrl(repoUrl);
 	return ref ? `${ref.owner}/${ref.repo}` : null;
