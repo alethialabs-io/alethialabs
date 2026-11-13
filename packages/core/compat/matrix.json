@@ -99,7 +99,7 @@
 		"vault": { "k8s_min": "1.20", "k8s_max": "", "note": "Chart kubeVersion '>= 1.20.0-0' (vault@0.28.1); derived by derive-compat.mjs." },
 		"cert-manager": { "k8s_min": "1.22", "k8s_max": "", "note": "Chart kubeVersion '>= 1.22.0-0' (cert-manager@v1.15.3); derived by derive-compat.mjs." },
 		"ingress-nginx": { "k8s_min": "1.21", "k8s_max": "", "note": "Chart kubeVersion '>=1.21.0-0' (ingress-nginx@4.15.1); derived by derive-compat.mjs." },
-		"traefik": { "k8s_min": "1.30", "k8s_max": "", "note": "Chart kubeVersion '>=1.30.0-0' (traefik@42.3.2); derived by derive-compat.mjs." },
+		"traefik": { "k8s_min": "1.30", "k8s_max": "", "note": "Chart kubeVersion '>=1.30.0-0' (traefik@42.4.0); derived by derive-compat.mjs." },
 		"velero": { "k8s_min": "1.16", "k8s_max": "", "note": "Chart kubeVersion '>=1.16.0-0' (velero@7.2.1); derived by derive-compat.mjs." },
 		"kyverno": { "k8s_min": "1.25", "k8s_max": "", "note": "Chart kubeVersion '>=1.25.0-0' (kyverno@3.2.6); derived by derive-compat.mjs." },
 		"tempo": { "k8s_min": "", "k8s_max": "" },
