@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.1](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.10.0...runner-v0.10.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **gitops:** refuse GitOps add-on delivery off GitHub, and send each provider its git username ([#6599](https://github.com/alethialabs-io/alethialabs/issues/6599)) ([#6640](https://github.com/alethialabs-io/alethialabs/issues/6640)) ([170e629](https://github.com/alethialabs-io/alethialabs/commit/170e629ccf74dd0a8ac4f32ae0f463bce6d022d2))
+* **git:** request a git token for each repo a job clones, not one for the whole job ([#6611](https://github.com/alethialabs-io/alethialabs/issues/6611)) ([#6624](https://github.com/alethialabs-io/alethialabs/issues/6624)) ([ad6f845](https://github.com/alethialabs-io/alethialabs/commit/ad6f845603efeb1e744ff548081064c70d69b45b))
+
 ## [0.10.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.9.0...runner-v0.10.0) (2026-11-12)
 
 
