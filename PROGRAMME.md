@@ -354,11 +354,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 43205702783 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 43205702783 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 43205702783 |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ⛔ **unwired** | a gate-off proof was recorded — run 43205702783 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 43205702783 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 43412909399 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 43412909399 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 43412909399 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ⛔ **unwired** | a gate-off proof was recorded — run 43412909399 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 43412909399 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -387,11 +387,11 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 
 | cloud | state | durable evidence |
 |---|:---:|---|
-| **aws** | ✅ clean | run 43253461007 at 2026-11-12T16:09:29Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
-| **gcp** | ✅ clean | run 43253461007 at 2026-11-12T16:09:29Z found no orphan runs and verified clean |
-| **azure** | ✅ clean | run 43253461007 at 2026-11-12T16:09:29Z found no orphan runs and verified clean |
-| **alibaba** | ? indeterminate | run 43253461007 at 2026-11-12T16:09:29Z skipped its cloud gate |
-| **hetzner** | ? indeterminate | run 43253461007 at 2026-11-12T16:09:29Z found 1 unattributable resource(s) |
+| **aws** | ✅ clean | run 43452040890 at 2026-11-13T15:34:17Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
+| **gcp** | ✅ clean | run 43452040890 at 2026-11-13T15:34:17Z found no orphan runs and verified clean |
+| **azure** | ✅ clean | run 43452040890 at 2026-11-13T15:34:17Z found no orphan runs and verified clean |
+| **alibaba** | ? indeterminate | run 43452040890 at 2026-11-13T15:34:17Z skipped its cloud gate |
+| **hetzner** | ? indeterminate | run 43452040890 at 2026-11-13T15:34:17Z found 1 unattributable resource(s) |
 
 ### Blocked on a human
 
@@ -431,7 +431,7 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-11-12T17:08:23Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-11-13T16:46:19Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
