@@ -256,7 +256,7 @@ export const MATRIX: Matrix = {
 			"traefik": {
 				"k8s_min": "1.30",
 				"k8s_max": "",
-				"note": "Chart kubeVersion '>=1.30.0-0' (traefik@42.3.2); derived by derive-compat.mjs."
+				"note": "Chart kubeVersion '>=1.30.0-0' (traefik@42.4.0); derived by derive-compat.mjs."
 			},
 			"velero": {
 				"k8s_min": "1.16",
