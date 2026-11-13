@@ -74,6 +74,33 @@ describe("an object key that carries a secret value", () => {
 		});
 	});
 
+	it("never overwrites an own non-enumerable property that already has the renamed name", () => {
+		// An error's own properties (`message`, `stack`) are non-enumerable; plant one named exactly
+		// like SECRET's redacted form, so a rename that only checked enumerable keys would land on it.
+		const error = new Error("kept");
+		Object.defineProperty(error, "[REDACTED]", { value: "hidden", enumerable: false });
+		Object.assign(error, { [SECRET]: "renamed" });
+		const out = scrubEvent({ extra: { error } });
+		const copy = out.extra.error;
+		expect(copy).toBeInstanceOf(Error);
+		expect(copy.message).toBe("kept");
+		expect(Object.getOwnPropertyDescriptor(copy, "[REDACTED]#2")?.value).toBe("renamed");
+		expect(Object.keys(copy)).not.toContain(SECRET);
+	});
+
+	it("is renamed when it is exactly as long as the shortest secret", () => {
+		// Six characters is the shortest value `secretEnvValues` accepts, so this one is the shortest
+		// secret whatever else the environment holds: the length pre-check must still scan it.
+		const short = "zq7k3w";
+		process.env.ZZ_TEST_KEY_SHORT_SECRET = short;
+		try {
+			const out = scrubEvent({ extra: { map: { [short]: 1, zq7k3: 2 } } });
+			expect(out.extra.map).toEqual({ "[REDACTED]": 1, zq7k3: 2 });
+		} finally {
+			delete process.env.ZZ_TEST_KEY_SHORT_SECRET;
+		}
+	});
+
 	it("is renamed in a breadcrumb's data, and at the top level of a breadcrumb", () => {
 		const data = { [SECRET]: 1 };
 		const crumb: Record<string, unknown> = { data, [`x-${SECRET}`]: "y" };

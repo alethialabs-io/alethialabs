@@ -213,6 +213,19 @@ interface ScrubContext {
 	rewrites: readonly QueryRewrite[];
 	/** The secret env values, read once for the whole scrub (`secretEnvValues`). */
 	secrets: readonly string[];
+	/**
+	 * The length of the shortest non-empty secret (Infinity when there is none). A key shorter than
+	 * it cannot contain any secret, so `renamedKeys` skips it without scanning the secret list.
+	 */
+	shortestSecret: number;
+}
+
+/** Builds the per-scrub context: reads the secret env values once and measures the shortest. */
+function scrubContext(rewrites: readonly QueryRewrite[]): ScrubContext {
+	const secrets = secretEnvValues();
+	let shortestSecret = Number.POSITIVE_INFINITY;
+	for (const secret of secrets) if (secret) shortestSecret = Math.min(shortestSecret, secret.length);
+	return { rewrites, secrets, shortestSecret };
 }
 
 /**
@@ -286,11 +299,12 @@ const COLLISION_SEPARATOR = "#";
 function renamedKeys(
 	value: Record<string, unknown>,
 	keys: readonly string[],
-	secrets: readonly string[],
+	ctx: ScrubContext,
 ): Map<string, string> {
 	const renames = new Map<string, string>();
 	for (const key of keys) {
-		const scrubbed = scrubString(key, secrets);
+		if (key.length < ctx.shortestSecret) continue;
+		const scrubbed = scrubString(key, ctx.secrets);
 		if (scrubbed !== key) renames.set(key, scrubbed);
 	}
 	if (renames.size === 0) return renames;
@@ -337,7 +351,7 @@ function changedEntries(
 		const out = isSecretKey(key) ? REDACTED : scrubValue(original, memo, ctx);
 		if (!Object.is(out, original)) changes.set(key, out);
 	}
-	return { read, changes, renames: renamedKeys(value, keys, ctx.secrets) };
+	return { read, changes, renames: renamedKeys(value, keys, ctx) };
 }
 
 /**
@@ -425,7 +439,7 @@ function scrubTopLevel<T>(root: T, rewrites: readonly QueryRewrite[]): T {
 	if (!isRecord(record)) return root;
 	const memo: ScrubMemo = new Map();
 	memo.set(record, record);
-	const ctx: ScrubContext = { rewrites, secrets: secretEnvValues() };
+	const ctx = scrubContext(rewrites);
 	const scan = changedEntries(record, memo, ctx);
 	for (const [key, out] of scan.changes) record[key] = out;
 	const moved = [...scan.renames].map(([key, name]) => ({ name, out: finalValue(scan, key) }));
