@@ -17,6 +17,7 @@ import { cliLogins } from "@/lib/db/schema";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { NextResponse } from "next/server";
 import type { CliDeviceClientMetadata } from "@/types/jsonb.types";
+import { log } from "@/lib/observability/log";
 
 /**
  * Registers a pending CLI device request — the server half of `alethia login`'s first
@@ -106,7 +107,7 @@ export async function POST(req: Request) {
 				),
 			);
 	} catch (err) {
-		console.error("Error sweeping stale CLI login requests:", err);
+		log.error("Error sweeping stale CLI login requests", { err });
 	}
 
 	try {
@@ -122,7 +123,7 @@ export async function POST(req: Request) {
 				),
 			);
 	} catch (err) {
-		console.error("Error scrubbing refused CLI login requests:", err);
+		log.error("Error scrubbing refused CLI login requests", { err });
 	}
 
 	try {
@@ -143,7 +144,7 @@ export async function POST(req: Request) {
 			})
 			.onConflictDoNothing({ target: cliLogins.device_code });
 	} catch (err) {
-		console.error("Error registering CLI login request:", err);
+		log.error("Error registering CLI login request", { err });
 		return deviceCodeFail("Failed to register login request", 500);
 	}
 

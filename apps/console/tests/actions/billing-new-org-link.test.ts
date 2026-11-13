@@ -456,6 +456,7 @@ import { advanceHold } from "@/lib/billing/payment-holds/machine";
 import { stampHoldNotice } from "@/lib/billing/payment-holds/store";
 import { liveSweepDeps, machineDepsFor, relinkAdoptedSetup } from "@/lib/billing/payment-holds/sweeper";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
+import { log } from "@/lib/observability/log";
 
 const LEASE = { key: "user:user-1", holder: "holder-1" };
 const ALERTED = /We have raised this with support\.$/;
@@ -574,6 +575,8 @@ beforeEach(() => {
 	vi.spyOn(console, "info").mockImplementation(() => undefined);
 	vi.spyOn(console, "error").mockImplementation(() => undefined);
 	vi.spyOn(console, "warn").mockImplementation(() => undefined);
+	vi.spyOn(log, "error").mockImplementation(() => undefined);
+	vi.spyOn(log, "warn").mockImplementation(() => undefined);
 	Object.assign(world.state, {
 		row: null,
 		onUpdate: null,
@@ -953,7 +956,7 @@ describe("C120 — the resume lookup leaves an incomplete X's setup open beside 
 	}
 
 	/** Whether a lookup logged that its closer could not check X. */
-	const closerFailed = () => vi.mocked(console.error).mock.calls.some((c) => String(c[0]).includes("setup closer could not check"));
+	const closerFailed = () => vi.mocked(log.error).mock.calls.some((c) => String(c[0]).includes("setup closer could not check"));
 
 	/** X `incomplete` and awaiting the customer, linked in Stripe to org-1, with a hosted invoice page. */
 	function incompleteLinkedX(): FakeSub {

@@ -23,6 +23,7 @@ import {
 import { sendPlanWelcomeEmail } from "@/lib/email/billing-email";
 import { billingPlan } from "@/lib/db/schema/enums";
 import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
+import { log } from "@/lib/observability/log";
 
 /**
  * Resolves the org plan a subscription grants. The platform stamps `metadata.plan` when it
@@ -216,7 +217,7 @@ export async function syncSubscriptionToBilling(
 			try {
 				await sendPlanWelcomeEmail(sub);
 			} catch (err) {
-				console.error(`[stripe] plan-welcome email failed for ${orgId}:`, err);
+				log.error(`[stripe] plan-welcome email failed for ${orgId}`, { org_id: orgId, err });
 			}
 		}
 	}

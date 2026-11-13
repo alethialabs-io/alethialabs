@@ -18,6 +18,7 @@ import { isStripeConfigured } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
 import { planFromSubscription, planItem } from "@/lib/billing/sync";
 import { planIncludedCreditCents, planMeta } from "@repo/plan-catalog";
+import { log } from "@/lib/observability/log";
 
 /**
  * Ensures the subscription's current period has its plan's included usage credit (a
@@ -95,6 +96,6 @@ export async function ensureIncludedCredit(sub: Stripe.Subscription): Promise<vo
 			metadata: { period: periodKey, organization_id: orgId },
 		});
 	} catch (e) {
-		console.error("[billing] included-credit grant failed:", e);
+		log.error("[billing] included-credit grant failed", { err: e });
 	}
 }

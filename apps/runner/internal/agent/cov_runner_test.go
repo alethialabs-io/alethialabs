@@ -77,9 +77,11 @@ type covRunAPI struct {
 
 	mu sync.Mutex
 
-	updateErr     error
-	getJobFn      func(jobID string) (*Job, error)
-	gitTokenFn    func(jobID, repoURL string) (string, error)
+	updateErr  error
+	getJobFn   func(jobID string) (*Job, error)
+	gitTokenFn func(jobID, repoURL string) (string, error)
+	// gitProviders is the provider FetchGitToken names for a repo's token, by repo URL (#6599).
+	gitProviders  map[string]string
 	addonSecretFn func(jobID string) (map[string]map[string]string, error)
 	stateTokenErr error
 	downloadOK    bool // true ⇒ DownloadPlanArtifact creates the file and succeeds
@@ -120,12 +122,14 @@ func (a *covRunAPI) GetJob(jobID string) (*Job, error) {
 	return a.mockAPI.GetJob(jobID)
 }
 
-// FetchGitToken delegates to the test hook when one is set.
-func (a *covRunAPI) FetchGitToken(jobID, repoURL string) (string, error) {
+// FetchGitToken delegates to the test hook when one is set, naming the provider gitProviders holds
+// for the repo.
+func (a *covRunAPI) FetchGitToken(jobID, repoURL string) (GitToken, error) {
 	if a.gitTokenFn != nil {
-		return a.gitTokenFn(jobID, repoURL)
+		tok, err := a.gitTokenFn(jobID, repoURL)
+		return GitToken{Token: tok, Provider: a.gitProviders[repoURL]}, err
 	}
-	return "", nil
+	return GitToken{}, nil
 }
 
 // FetchAddonSecrets delegates to the test hook when one is set.
@@ -1556,8 +1560,10 @@ func TestRun_ExecuteDeploy_WarnsOnCredentialFetchFailures(t *testing.T) {
 
 	stdout := NewJobLogger(api, "covrun-warn", "STDOUT")
 	stderr := NewJobLogger(api, "covrun-warn", "STDERR")
+	snap := covRunDeploySnapshot("")
+	snap["repositories"] = map[string]any{"apps_destination_repo": "https://user:pw@github.com/acme/apps.git"}
 	if err := w.executeDeploy(t.Context(),
-		&Job{ID: "covrun-warn", ConfigSnapshot: covRunDeploySnapshot("")}, "aws", nil, nil, stdout, stderr); err != nil {
+		&Job{ID: "covrun-warn", ConfigSnapshot: snap}, "aws", nil, nil, stdout, stderr); err != nil {
 		t.Fatalf("a failed credential fetch must not fail the deploy: %v", err)
 	}
 	stdout.Close()
@@ -1565,9 +1571,12 @@ func TestRun_ExecuteDeploy_WarnsOnCredentialFetchFailures(t *testing.T) {
 
 	var sawGit, sawAddon bool
 	for _, c := range api.getLogChunks() {
-		// The apps-repo warning has no repo in it; the per-repo BYO ones read "… token for <url>".
-		if strings.Contains(c.chunk, "failed to fetch git token: ") {
+		// Every git-token warning names the repo's host only, never its URL (#6611).
+		if strings.Contains(c.chunk, "failed to fetch git token for the repo on host github.com: ") {
 			sawGit = true
+		}
+		if strings.Contains(c.chunk, "pw@") || strings.Contains(c.chunk, "acme/apps") {
+			t.Errorf("a warning printed the repo URL, not just its host: %q", c.chunk)
 		}
 		if strings.Contains(c.chunk, "failed to fetch add-on secrets") {
 			sawAddon = true
@@ -1775,7 +1784,10 @@ func TestRun_ExecutePlan_RejectsBeforeAnyWork(t *testing.T) {
 		w.sandbox = &covRunSandbox{}
 		stdout := NewJobLogger(api, "covrun-gitwarn", "STDOUT")
 		stderr := NewJobLogger(api, "covrun-gitwarn", "STDERR")
-		if err := w.executePlan(t.Context(), &Job{ID: "covrun-gitwarn", ConfigSnapshot: covRunSnapshot()}, "", nil, nil, stdout, stderr); err != nil {
+		// Only a BYO IaC plan clones a repo, so only it asks for a token.
+		snap := covRunSnapshot()
+		snap["iac_source"] = map[string]any{"repo_url": "https://github.com/acme/infra.git", "commit_sha": "abc"}
+		if err := w.executePlan(t.Context(), &Job{ID: "covrun-gitwarn", ConfigSnapshot: snap}, "", nil, nil, stdout, stderr); err != nil {
 			t.Fatalf("a missing git token must only warn: %v", err)
 		}
 		stdout.Close()

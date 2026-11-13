@@ -111,6 +111,9 @@ describe("resolveGitProvider", () => {
 		// Not an scp remote: its path starts with `//`, which git reads as a URL. Without the scp
 		// pattern's lookahead this would resolve to github.com.
 		["git@github.com://evil.io/acme/shop", "malformed"],
+		// A second `user@` segment is not part of an scp remote's host, and a host must be hostname-shaped.
+		["git@tok@evil.io:acme/shop", "malformed"],
+		["ssh://git@gh%2fx/acme/shop", "malformed"],
 	] as const)("refuses %j as %s", (url, reason) => {
 		expect(resolveGitProvider(url, PUBLIC)).toEqual({ ok: false, reason, host: null });
 	});
@@ -127,5 +130,6 @@ describe("repoHostForLog", () => {
 		expect(repoHostForLog("https://user:secret@github.com/acme/shop")).toBe("github.com");
 		expect(repoHostForLog("git@Code.Acme.Example:a/b.git")).toBe("code.acme.example");
 		expect(repoHostForLog("https:/github.com/x")).toBe("(unparsed repo URL)");
+		expect(repoHostForLog("git@tok@evil.io:a/b")).toBe("(unparsed repo URL)");
 	});
 });

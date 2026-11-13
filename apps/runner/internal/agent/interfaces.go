@@ -16,7 +16,9 @@ type JobAPI interface {
 	// cancel missed on the wake stream (SSE disconnected at notify time) is still delivered.
 	Heartbeat() ([]string, error)
 	GetJob(jobID string) (*Job, error)
-	FetchGitToken(jobID, repoURL string) (string, error)
+	// FetchGitToken mints the job owner's git token for repoURL, with the provider the console says
+	// minted it (which picks the username the git client sends).
+	FetchGitToken(jobID, repoURL string) (GitToken, error)
 	// FetchAddonSecrets pulls the decrypted add-on secret-knob values for a DEPLOY job the
 	// runner owns (W4.5 #640) — addon id → field key → plaintext, seeded as in-cluster
 	// Secrets pre-sync. Values are never logged and never persisted runner-side.

@@ -35,6 +35,9 @@ type GIT struct {
 	Repo      *gogit.Repository
 	DryRun    bool
 	Token     string
+	// Provider is the git provider that minted Token, as the console named it (see TokenUsername).
+	// It decides the HTTP Basic username sent with the token. Empty means "not named".
+	Provider string
 }
 
 // NewGIT creates a GIT wrapper for a TOKEN-LESS clone, PRESERVING the caller's transport.
@@ -90,13 +93,16 @@ func normalizeRepoURL(rawURL string) string {
 	return "https://" + u
 }
 
-// NewGITWithToken creates a GIT wrapper that uses HTTPS + token auth.
-func NewGITWithToken(repoURL string, localPath string, dryRun bool, token string) *GIT {
+// NewGITWithToken creates a GIT wrapper that uses HTTPS + token auth. provider is the git provider
+// the console said minted token ("github", "gitlab", "bitbucket", or "" when it named none); it
+// picks the username sent with the token (see TokenUsername).
+func NewGITWithToken(repoURL string, localPath string, dryRun bool, token, provider string) *GIT {
 	return &GIT{
 		RepoURL:   transformURLToHTTPS(repoURL),
 		LocalPath: localPath,
 		DryRun:    dryRun,
 		Token:     token,
+		Provider:  provider,
 	}
 }
 
@@ -156,7 +162,7 @@ func transformURLToHTTPS(rawURL string) string {
 func (g *GIT) getAuth() (transport.AuthMethod, error) {
 	if g.Token != "" {
 		return &githttp.BasicAuth{
-			Username: "x-access-token",
+			Username: TokenUsername(g.Provider),
 			Password: g.Token,
 		}, nil
 	}
@@ -206,7 +212,7 @@ func getSSHAuthMethod() (transport.AuthMethod, error) {
 // passes a user-supplied ref (chart scan, IaC scan, repo analysis) passes force=true and so never
 // reaches it.
 func (g *GIT) Clone(ctx context.Context, branch string, force bool) error {
-	fmt.Printf("Cloning %s into %s...\n", g.RepoURL, g.LocalPath)
+	fmt.Printf("Cloning %s into %s...\n", g.redactedURL(), g.LocalPath)
 	// `HEAD` names the remote's default branch, exactly as an empty ref does. It is NOT a branch
 	// called "HEAD": handing it to NewBranchReferenceName asks the remote for refs/heads/HEAD,
 	// which no repository has (cli-demo grid 36652642517: `couldn't find remote ref
@@ -343,7 +349,7 @@ func (g *GIT) cloneRef(ctx context.Context, ref string, auth transport.AuthMetho
 		return repo, nil
 	}
 	if errors.Is(tagErr, gogit.NoMatchingRefSpecError{}) {
-		return nil, fmt.Errorf("failed to clone repository '%s': ref %q is neither a branch nor a tag on the remote (a commit must be given as its full 40-character SHA)", g.RepoURL, ref)
+		return nil, fmt.Errorf("failed to clone repository '%s': ref %q is neither a branch nor a tag on the remote (a commit must be given as its full 40-character SHA)", g.redactedURL(), ref)
 	}
 	return nil, mapCloneError(g.RepoURL, tagErr)
 }
@@ -363,16 +369,20 @@ func isFullCommitSHA(ref string) bool {
 
 // mapCloneError normalizes go-git clone/transport errors to the package's sentinel
 // errors so callers can distinguish not-found / empty / auth failures.
+//
+// The remote is named by RedactURL(repoURL), never by the URL as given, and the wrapped cause has
+// the URL's userinfo scrubbed from its text (scrubCause), so the error can be logged or shown as is.
 func mapCloneError(repoURL string, err error) error {
+	shown := RedactURL(repoURL)
 	switch {
 	case errors.Is(err, transport.ErrRepositoryNotFound):
-		return fmt.Errorf("%w: %s", ErrRepoNotFound, repoURL)
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, shown)
 	case errors.Is(err, transport.ErrEmptyRemoteRepository):
-		return fmt.Errorf("%w: %s", ErrRepoEmpty, repoURL)
+		return fmt.Errorf("%w: %s", ErrRepoEmpty, shown)
 	case errors.Is(err, transport.ErrAuthorizationFailed), errors.Is(err, transport.ErrAuthenticationRequired):
-		return fmt.Errorf("%w: %s", ErrAuthFailed, repoURL)
+		return fmt.Errorf("%w: %s", ErrAuthFailed, shown)
 	default:
-		return fmt.Errorf("failed to clone repository '%s': %w", repoURL, err)
+		return fmt.Errorf("failed to clone repository '%s': %w", shown, scrubCause(repoURL, err))
 	}
 }
 
@@ -386,9 +396,9 @@ func mapCloneError(repoURL string, err error) error {
 // commit (TOCTOU), so only the pinned bytes may be provisioned.
 func (g *GIT) CloneAndCheckoutCommit(ctx context.Context, ref, commitSHA string, force bool) error {
 	if strings.TrimSpace(commitSHA) == "" {
-		return fmt.Errorf("commit SHA is required for a pinned checkout of %s", g.RepoURL)
+		return fmt.Errorf("commit SHA is required for a pinned checkout of %s", g.redactedURL())
 	}
-	fmt.Printf("Cloning %s (ref %q) and pinning commit %s into %s...\n", g.RepoURL, ref, commitSHA, g.LocalPath)
+	fmt.Printf("Cloning %s (ref %q) and pinning commit %s into %s...\n", g.redactedURL(), ref, commitSHA, g.LocalPath)
 
 	auth, authErr := g.getAuth()
 	if authErr != nil {
@@ -453,7 +463,7 @@ func (g *GIT) Checkout(sha string) error {
 	// Confirm the object is present so we fail closed rather than checking out
 	// whatever HEAD happens to be.
 	if _, err := g.Repo.CommitObject(h); err != nil {
-		return fmt.Errorf("pinned commit %s not present in clone of %s (fail-closed; no fallback to ref tip): %w", trimmed, g.RepoURL, err)
+		return fmt.Errorf("pinned commit %s not present in clone of %s (fail-closed; no fallback to ref tip): %w", trimmed, g.redactedURL(), err)
 	}
 	w, err := g.Repo.Worktree()
 	if err != nil {
@@ -475,7 +485,7 @@ func (g *GIT) HeadSHA() (string, error) {
 	}
 	ref, err := g.Repo.Head()
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve HEAD for %s: %w", g.RepoURL, err)
+		return "", fmt.Errorf("failed to resolve HEAD for %s: %w", g.redactedURL(), err)
 	}
 	return ref.Hash().String(), nil
 }
@@ -507,7 +517,7 @@ func (g *GIT) Pull(ctx context.Context) error {
 	if g.Repo == nil {
 		return fmt.Errorf("repository not initialized")
 	}
-	fmt.Printf("Pulling changes for %s...\n", g.RepoURL)
+	fmt.Printf("Pulling changes for %s...\n", g.redactedURL())
 
 	w, err := g.Repo.Worktree()
 	if err != nil {
@@ -526,10 +536,10 @@ func (g *GIT) Pull(ctx context.Context) error {
 	err = w.PullContext(ctx, pullOptions)
 	if err != nil && err != gogit.NoErrAlreadyUpToDate {
 		if err == transport.ErrEmptyRemoteRepository {
-			fmt.Printf("Remote repository %s is empty.\n", g.RepoURL)
+			fmt.Printf("Remote repository %s is empty.\n", g.redactedURL())
 			return nil
 		}
-		return fmt.Errorf("failed to pull changes: %w", err)
+		return fmt.Errorf("failed to pull changes: %w", scrubCause(g.RepoURL, err))
 	}
 
 	fmt.Println("Pulled latest changes.")
@@ -550,11 +560,11 @@ func (g *GIT) Push(ctx context.Context) error {
 	}
 
 	if g.DryRun {
-		fmt.Printf("Dry-run mode: Skipping actual push for %s.\n", g.RepoURL)
+		fmt.Printf("Dry-run mode: Skipping actual push for %s.\n", g.redactedURL())
 		return nil
 	}
 
-	fmt.Printf("Pushing changes to %s...\n", g.RepoURL)
+	fmt.Printf("Pushing changes to %s...\n", g.redactedURL())
 	auth, err := g.getAuth()
 	if err != nil {
 		return fmt.Errorf("failed to get auth method for push: %w", err)
@@ -567,7 +577,7 @@ func (g *GIT) Push(ctx context.Context) error {
 
 	err = g.Repo.PushContext(ctx, pushOptions)
 	if err != nil && err != gogit.NoErrAlreadyUpToDate {
-		return fmt.Errorf("failed to push changes: %w", err)
+		return fmt.Errorf("failed to push changes: %w", scrubCause(g.RepoURL, err))
 	}
 
 	fmt.Println("Pushed changes successfully.")
@@ -581,7 +591,7 @@ func (g *GIT) AddAndCommit(message string) error {
 	}
 
 	if g.DryRun {
-		fmt.Printf("Dry-run mode: Skipping commit for %s.\n", g.RepoURL)
+		fmt.Printf("Dry-run mode: Skipping commit for %s.\n", g.redactedURL())
 		return nil
 	}
 

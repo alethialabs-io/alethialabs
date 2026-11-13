@@ -95,6 +95,7 @@ import { ensureMemberGrant } from "@/lib/authz/grants";
 import { provisionPrimaryOrg } from "@/lib/auth/onboarding";
 import { sendSignInCodeEmail } from "@/lib/email/auth-email";
 import { sendWelcomeEmail } from "@/lib/email/notify-email";
+import { log } from "@/lib/observability/log";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const opts = (auth as any).options;
@@ -225,13 +226,14 @@ describe("databaseHooks.user.create.after", () => {
 	});
 
 	it("does not throw when org provisioning rejects (best-effort, logged)", async () => {
-		const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-		vi.mocked(provisionPrimaryOrg).mockRejectedValueOnce(new Error("provision boom"));
+		const errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
+		const boom = new Error("provision boom");
+		vi.mocked(provisionPrimaryOrg).mockRejectedValueOnce(boom);
 
 		await expect(
 			afterCreate()({ id: "u3", email: "u3@test.io", name: null }),
 		).resolves.toBeUndefined();
-		expect(errSpy).toHaveBeenCalled();
+		expect(errSpy).toHaveBeenCalledWith("[onboarding] org provision failed", { err: boom });
 		// the welcome email still goes out despite the provisioning failure
 		expect(sendWelcomeEmail).toHaveBeenCalledWith("u3@test.io");
 		errSpy.mockRestore();

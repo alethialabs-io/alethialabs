@@ -82,13 +82,13 @@ func prepareByoIacWorkdir(ctx context.Context, vc *types.ProjectConfig, gitToken
 		return "", nil, nil, fmt.Errorf("BYO IaC source is missing commit_sha (a pinned commit is required — a ref alone is TOCTOU-unsafe)")
 	}
 
-	fmt.Fprintf(stdout, "BYO IaC: cloning %s (ref %q) at pinned commit %s\n", src.RepoURL, src.Ref, src.CommitSHA)
+	fmt.Fprintf(stdout, "BYO IaC: cloning %s (ref %q) at pinned commit %s\n", git.RedactURL(src.RepoURL), src.Ref, src.CommitSHA)
 
 	// Parent clone (trusted: holds the git token + egress). Uses token auth when a
 	// token is present, else an SSH/public clone.
 	var repo *git.GIT
 	if strings.TrimSpace(gitToken) != "" {
-		repo = git.NewGITWithToken(src.RepoURL, cloneDir, false, gitToken)
+		repo = git.NewGITWithToken(src.RepoURL, cloneDir, false, gitToken, gitProviderFor(vc, src.RepoURL))
 	} else {
 		repo = git.NewGIT(src.RepoURL, cloneDir, false)
 	}
@@ -148,7 +148,7 @@ func validateByoRepoURL(repoURL string) error {
 	if allowInsecureRepoURLForTest && strings.HasPrefix(lower, "file://") {
 		return nil
 	}
-	return fmt.Errorf("BYO IaC repo_url %q must use an https or ssh git transport (insecure/local schemes such as file:// are rejected on the untrusted path)", repoURL)
+	return fmt.Errorf("BYO IaC repo_url %q must use an https or ssh git transport (insecure/local schemes such as file:// are rejected on the untrusted path)", git.RedactURL(repoURL))
 }
 
 // resolveByoModuleDir resolves the customer's module path inside the clone and

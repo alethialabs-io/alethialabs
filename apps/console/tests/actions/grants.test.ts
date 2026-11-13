@@ -48,6 +48,7 @@ import {
 	UNKNOWN_RESOURCE_TYPE,
 } from "@/lib/validations/grants";
 import { member } from "@/lib/db/schema";
+import { log } from "@/lib/observability/log";
 
 /** Grant ids as `revokeGrant` now requires them: uuids. */
 const G1 = "00000000-0000-4000-8000-0000000000c1";
@@ -607,6 +608,7 @@ describe("assignGrant persistence", () => {
 	it("swallows a tuple-sync failure without rejecting the action", async () => {
 		mockDb();
 		syncScopedGrant.mockRejectedValueOnce(new Error("fga down"));
+		const logged = vi.spyOn(log, "error").mockImplementation(() => undefined);
 		await expect(
 			assignGrant({
 				principalType: "user",
@@ -616,6 +618,13 @@ describe("assignGrant persistence", () => {
 				resourceType: "project",
 			}),
 		).resolves.toEqual({ ok: true, data: { assigned: true } });
+		// The sync is fire-and-forget, so its failure is logged on a later tick, the error under `err`.
+		await vi.waitFor(() =>
+			expect(logged).toHaveBeenCalledWith("[authz] grant tuple sync failed", {
+				err: expect.objectContaining({ message: "fga down" }),
+			}),
+		);
+		logged.mockRestore();
 	});
 });
 

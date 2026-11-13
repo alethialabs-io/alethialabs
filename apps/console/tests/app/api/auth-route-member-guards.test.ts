@@ -39,6 +39,10 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/auth", () => ({ auth: {} }));
+vi.mock("@/lib/observability/log", () => {
+	const l = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: () => l };
+	return { log: l };
+});
 vi.mock("@/lib/auth/trusted-ip", () => ({ trustedIpFailure: () => null }));
 vi.mock("@/lib/authz/entitlements", () => ({ getEntitlements: () => ({ organizations: true }) }));
 vi.mock("@/lib/authz/guard", () => ({ currentActor: async () => ({ orgId: "org-1" }) }));
@@ -94,6 +98,7 @@ vi.mock("better-auth/next-js", () => ({
 }));
 
 import { POST } from "@/app/api/auth/[...all]/route";
+import { log } from "@/lib/observability/log";
 
 /** Whether `value` (a drizzle predicate) carries the string `needle` anywhere inside it. */
 function mentions(value: unknown, needle: string, seen = new WeakSet<object>()): boolean {
@@ -258,9 +263,9 @@ describe("a failed invitation cancel after a committed exit is logged, not answe
 		expect(res instanceof Response && res.status).toBe(200);
 		if (!(res instanceof Response)) return;
 		expect(await res.json()).toMatchObject({ member: { userId: "user-9" } });
-		expect(console.error).toHaveBeenCalledWith(
+		expect(vi.mocked(log.error)).toHaveBeenCalledWith(
 			expect.stringContaining("still pending"),
-			expect.any(Error),
+			expect.objectContaining({ err: expect.any(Error) }),
 		);
 	});
 
@@ -273,9 +278,9 @@ describe("a failed invitation cancel after a committed exit is logged, not answe
 		expect(res instanceof Response && res.status).toBe(200);
 		if (!(res instanceof Response)) return;
 		expect(await res.text()).toBe("post-handler");
-		expect(console.error).toHaveBeenCalledWith(
+		expect(vi.mocked(log.error)).toHaveBeenCalledWith(
 			expect.stringContaining("still pending"),
-			expect.any(Error),
+			expect.objectContaining({ err: expect.any(Error) }),
 		);
 	});
 });

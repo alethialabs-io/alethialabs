@@ -31,6 +31,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { purchaseLeases } from "@/lib/db/schema";
+import { log } from "@/lib/observability/log";
 
 /** How long a lease lasts from its last acquisition or renewal. */
 const PURCHASE_LEASE_TTL_SECONDS = 120;
@@ -157,7 +158,7 @@ export async function withPurchaseLease<T>(
 		try {
 			await releasePurchaseLease(lease);
 		} catch (e) {
-			console.error(`[billing] could not release the purchase lease ${key}; it lapses on its own:`, e);
+			log.error(`[billing] could not release the purchase lease ${key}; it lapses on its own`, { err: e });
 		}
 	}
 }

@@ -185,11 +185,11 @@ func (a *covBuildAPI) UpdateRunnerMetadata(runnerID string, metadata map[string]
 	return a.metadataErr
 }
 
-func (a *covBuildAPI) FetchGitToken(jobID, repoURL string) (string, error) {
+func (a *covBuildAPI) FetchGitToken(jobID, repoURL string) (GitToken, error) {
 	if a.gitTokenErr != nil {
-		return "", a.gitTokenErr
+		return GitToken{}, a.gitTokenErr
 	}
-	return a.gitToken, nil
+	return GitToken{Token: a.gitToken}, nil
 }
 
 // covBuildRunner builds a Runner over the decorated mock with the default Passthrough

@@ -163,7 +163,7 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 	// never reaches the in-cluster Job spec or execution_metadata.
 	sha, err := w.resolveHeadSHA(ctx, job.ID, svc.Source.RepoURL, stderr)
 	if err != nil {
-		return "", fmt.Errorf("resolve HEAD of %s: %w", svc.Source.RepoURL, err)
+		return "", fmt.Errorf("resolve HEAD of the repo on host %s: %w", provisioner.RepoHostForLog(svc.Source.RepoURL), err)
 	}
 
 	manifest, err := imagebuild.RenderBuildJob(svc, imagebuild.Options{
@@ -281,12 +281,12 @@ func (w *Runner) resolveHeadSHA(ctx context.Context, jobID, repoURL string, stde
 	}
 	defer os.RemoveAll(dir)
 
-	token, err := w.api.FetchGitToken(jobID, repoURL)
-	if err != nil {
-		fmt.Fprintf(stderr, "No git token (%v); attempting public clone.\n", err)
-		token = ""
+	fetched := w.fetchRepoToken(jobID, repoURL, stderr)
+	token := fetched.Token
+	if token == "" {
+		fmt.Fprintln(stderr, "No git token; attempting public clone.")
 	}
-	repo := git.NewGITWithToken(repoURL, dir, false, token)
+	repo := git.NewGITWithToken(repoURL, dir, false, token, fetched.Provider)
 	if err := repo.Clone(ctx, "", false); err != nil {
 		return "", fmt.Errorf("clone for commit pinning: %w", err)
 	}

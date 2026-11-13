@@ -55,6 +55,7 @@ vi.mock("@/lib/email/auth-email", () => ({
 vi.mock("@/lib/email/notify-email", () => ({ sendWelcomeEmail: vi.fn(async () => {}) }));
 
 import { auth } from "@/lib/auth/index";
+import { log } from "@/lib/observability/log";
 
 const KNOWN = "known@example.com";
 const UNKNOWN = "nobody@example.com";
@@ -133,14 +134,20 @@ describe("sending a sign-in code (#6109)", () => {
 
 	it("reports the failure exactly once", async () => {
 		providerDown();
-		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const spy = vi.spyOn(log, "error").mockImplementation(() => {});
 		try {
 			await requestCode(KNOWN);
-			// Better Auth's own "Failed to run background task" log is the second report the
-			// sender's catch exists to prevent; ours is the only line.
+			// Better Auth's own "Failed to run background task" log (console.error) is the second
+			// report the sender's catch exists to prevent; ours, through the logger, is the only line.
+			expect(consoleSpy).not.toHaveBeenCalled();
 			expect(spy).toHaveBeenCalledTimes(1);
-			expect(String(spy.mock.calls[0]?.[0])).toContain("[auth] sign-in code email failed");
+			expect(spy).toHaveBeenCalledWith(
+				"[auth] sign-in code email failed",
+				expect.objectContaining({ err: expect.any(Error) }),
+			);
 		} finally {
+			consoleSpy.mockRestore();
 			spy.mockRestore();
 		}
 	});

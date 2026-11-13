@@ -5,6 +5,7 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
+import { log } from "@/lib/observability/log";
 
 // The `usage` topic's producer (#6127, spec-6115 §1.1): an APP-LAYER hint, not a trigger.
 //
@@ -55,7 +56,7 @@ export function createUsageHinter(deps: UsageHinterDeps): (orgId: string) => voi
 
 	const send = (orgId: string) => {
 		deps.emit(orgId).catch((error: unknown) => {
-			console.error("[realtime] usage hint failed; the page refreshes on focus instead", error);
+			log.error("[realtime] usage hint failed; the page refreshes on focus instead", { org_id: orgId, err: error });
 		});
 	};
 

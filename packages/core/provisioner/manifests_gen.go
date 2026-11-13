@@ -107,7 +107,7 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 	}
 	defer os.RemoveAll(dir)
 
-	repo := git.NewGITWithToken(vc.Repositories.AppsDestinationRepo, dir, false, token)
+	repo := git.NewGITWithToken(vc.Repositories.AppsDestinationRepo, dir, false, token, gitProviderFor(vc, vc.Repositories.AppsDestinationRepo))
 	if err := repo.Clone(ctx, "", false); err != nil {
 		return warnings, keyless, fmt.Errorf("clone apps repo: %w", err)
 	}

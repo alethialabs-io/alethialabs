@@ -17,6 +17,7 @@ import { getServiceDb } from "@/lib/db";
 import { cliLogins } from "@/lib/db/schema";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { NextResponse } from "next/server";
+import { log } from "@/lib/observability/log";
 
 /**
  * Records a refusal of one CLI device request — the server half of "This isn't me".
@@ -117,7 +118,7 @@ export async function POST(req: Request) {
 				},
 			});
 	} catch (err) {
-		console.error("Error recording CLI login denial:", err);
+		log.error("Error recording CLI login denial", { err });
 		return deviceCodeFail("Failed to record the refusal", 500);
 	}
 

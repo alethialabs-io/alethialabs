@@ -23,6 +23,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	alethiaAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
 	"github.com/alethialabs-io/alethialabs/packages/core/compat"
+	"github.com/alethialabs-io/alethialabs/packages/core/git"
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
 	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
@@ -74,10 +75,14 @@ type DeployParams struct {
 	DryRun         bool
 	UpdateInfra    bool
 	InfracostToken string
+	// GitAccessToken is the token the runner requested for the apps-destination repo, and is used
+	// for that repo alone: ArgoCD's apps-repo credential and the GitOps manifest push.
 	GitAccessToken string
-	// GitRepoTokens maps a BYO chart repo URL → its git token, for charts whose repo lives on a
-	// different provider than the apps-destination repo (GitAccessToken). Empty/missing entries
-	// fall back to GitAccessToken. Only the BYO-chart credential path consults this.
+	// GitRepoTokens maps every OTHER repo the deploy clones — the BYO IaC module
+	// (ProjectConfig.IacSource.RepoURL) and each BYO git chart repo — to the token the runner
+	// requested for exactly that repo. There is no fallback: a repo with no entry is cloned (or
+	// registered with ArgoCD) without a credential, never with GitAccessToken or another repo's
+	// token.
 	GitRepoTokens map[string]string
 	// AddOnSecretValues maps add-on id → secret field key → plaintext, fetched by the RUNNER
 	// at execution time over the authenticated job channel (W4.5 #640 — the git-token
@@ -255,6 +260,31 @@ type PlanResult struct {
 	// result alongside the error) so the console can show WHY GitOps isn't wired
 	// instead of a bare failed job. Nil on dry-runs and cluster-less deploys.
 	GitopsStatus *argocd.GitopsStatus
+}
+
+// byoIacCloneToken is the token a BYO IaC deploy or plan clones the customer's module with: the one
+// the runner requested for exactly the module's repo, from GitRepoTokens. It is never GitAccessToken,
+// which was minted for the apps repo; with no entry the module is cloned without a credential.
+func byoIacCloneToken(params DeployParams) string {
+	if params.ProjectConfig == nil || params.ProjectConfig.IacSource == nil {
+		return ""
+	}
+	return params.GitRepoTokens[params.ProjectConfig.IacSource.RepoURL]
+}
+
+// gitProviderFor is the git provider the console named for repo's token, as the runner recorded it
+// in vc.GitProviders, or "" when it named none. It picks the username sent with that token.
+func gitProviderFor(vc *types.ProjectConfig, repo string) string {
+	if vc == nil {
+		return ""
+	}
+	return vc.GitProviders[repo]
+}
+
+// gitUsernameFor is the HTTP Basic username repo's token is sent with: the one the token's provider
+// requires (git.TokenUsername). An ArgoCD repository Secret carries it, as a clone does.
+func gitUsernameFor(vc *types.ProjectConfig, repo string) string {
+	return git.TokenUsername(gitProviderFor(vc, repo))
 }
 
 // gitTokenValues collects every non-empty git token in play — the apps-repo GitAccessToken and each
@@ -643,7 +673,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// self-contained.
 		cloneDir := filepath.Join(tmpRoot, "clone")
 		var restore func()
-		tfDir, byoTfvars, restore, err = prepareByoIacWorkdir(ctx, vc, params.GitAccessToken, cloneDir, stdout, stderr)
+		tfDir, byoTfvars, restore, err = prepareByoIacWorkdir(ctx, vc, byoIacCloneToken(params), cloneDir, stdout, stderr)
 		if err != nil {
 			return nil, err
 		}
@@ -1088,7 +1118,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			switch {
 			case params.GitAccessToken != "":
 				// Private or public: register the token so ArgoCD authenticates its clones.
-				if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, stdout, stderr); err != nil {
+				if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, gitUsernameFor(vc, vc.Repositories.AppsDestinationRepo), stdout, stderr); err != nil {
 					result.GitopsStatus = gitopsFailed(argocd.GitopsStepRepoCredentials, err)
 					return &result, fmt.Errorf("failed to connect ArgoCD to apps repo %s: %w", vc.Repositories.AppsDestinationRepo, err)
 				}

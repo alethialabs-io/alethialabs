@@ -71,7 +71,7 @@ func TestConstructorsAndURLTransforms(t *testing.T) {
 		t.Fatal("an ssh remote with no agent must fail rather than silently going anonymous")
 	}
 
-	withToken := NewGITWithToken("github.com/acme/repo.git", "/tmp/repo", false, "tok")
+	withToken := NewGITWithToken("github.com/acme/repo.git", "/tmp/repo", false, "tok", "")
 	if withToken.RepoURL != "https://github.com/acme/repo.git" || withToken.Token != "tok" {
 		t.Fatalf("NewGITWithToken returned unexpected wrapper: %#v", withToken)
 	}

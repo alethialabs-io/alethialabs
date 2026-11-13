@@ -14,6 +14,7 @@
 import { NextResponse } from "next/server";
 import { isInternalAuthorized } from "@/lib/auth/internal-auth";
 import { runPaymentHoldSweep } from "@/lib/billing/payment-holds/sweeper";
+import { log } from "@/lib/observability/log";
 
 /** Runs one payment-hold sweeper tick for an authorized internal caller. */
 export async function POST(req: Request): Promise<NextResponse> {
@@ -30,7 +31,7 @@ export async function POST(req: Request): Promise<NextResponse> {
 	try {
 		return NextResponse.json(await runPaymentHoldSweep());
 	} catch (err) {
-		console.error("[billing] payment-hold sweep (internal route) failed:", err);
+		log.error("[billing] payment-hold sweep (internal route) failed", { err });
 		return NextResponse.json({ error: "sweep failed" }, { status: 500 });
 	}
 }

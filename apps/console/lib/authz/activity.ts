@@ -21,6 +21,7 @@ import {
 	ForbiddenError,
 	type ResourceRef,
 } from "@/lib/authz/types";
+import { log } from "@/lib/observability/log";
 
 // Successful reads are not recorded (they fire on every page load and would flood the
 // log); their DENIALS still are. Everything else is recorded on allow.
@@ -52,7 +53,7 @@ export function recordActivity(
 			decision: opts?.decision ?? true,
 			reason: opts?.reason ?? null,
 		})
-		.catch((err) => console.error("[authz] activity write failed:", err));
+		.catch((err) => log.error("[authz] activity write failed", { err }));
 }
 
 /**

@@ -4,6 +4,7 @@
 import { NextResponse } from "next/server";
 import type { z } from "zod";
 import type { CliEnvTarget } from "@/lib/cli/resolve-project";
+import { log } from "@/lib/observability/log";
 
 /**
  * Serializes a CLI response and validates it against its wire contract before
@@ -24,10 +25,7 @@ export function cliJson<S extends z.ZodType>(
 	const wire: unknown = JSON.parse(JSON.stringify(payload));
 	const parsed = schema.safeParse(wire);
 	if (!parsed.success) {
-		console.error(
-			"[cli] wire contract violation:",
-			JSON.stringify(parsed.error.issues, null, 2),
-		);
+		log.error("[cli] wire contract violation", { issues: parsed.error.issues });
 		return NextResponse.json(
 			{ error: "Internal contract error" },
 			{ status: 500 },

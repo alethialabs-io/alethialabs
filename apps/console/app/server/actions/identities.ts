@@ -22,6 +22,7 @@ import { auth } from "@/lib/auth";
 import { resolveAccountId } from "@/lib/auth/accounts";
 import { getOwner } from "@/lib/auth/owner";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
+import { log } from "@/lib/observability/log";
 
 // Git provider tokens live in Better Auth's `account` table (Phase D full
 // consolidation). Better Auth captures them on link and refreshes them on
@@ -49,7 +50,7 @@ export async function getLinkedProviders(): Promise<PublicGitProvider[]> {
 		}
 		return Array.from(set);
 	} catch (error) {
-		console.error("Unexpected error fetching linked providers:", error);
+		log.error("Unexpected error fetching linked providers", { err: error });
 		return [];
 	}
 }

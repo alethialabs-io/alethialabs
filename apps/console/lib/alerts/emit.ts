@@ -25,6 +25,7 @@ import { authzEventKey, eventMatches, isSecurityKey, labelForKey } from "./catal
 import { dispatchDeliveries } from "./dispatch";
 import { matchesRule, meetsSeverity } from "./events";
 import { getEnabledRules } from "./rule-cache";
+import { log } from "@/lib/observability/log";
 
 /** The event "subject" — distinguishes throttle buckets within one rule+channel. */
 function subjectOf(context: AlertEventContext): string {
@@ -124,7 +125,7 @@ export function emitAlertEventSafe(
 	context: AlertEventContext,
 ): void {
 	void emitAlertEvent(orgId, eventKey, context).catch((err) =>
-		console.error(`[alerts] emit failed (${eventKey}):`, err),
+		log.error(`[alerts] emit failed (${eventKey})`, { event_key: eventKey, err }),
 	);
 }
 

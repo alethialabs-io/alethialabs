@@ -85,17 +85,41 @@ func TestConfigureByoCharts_PerRepoTokenIsTheOneRegistered(t *testing.T) {
 	}
 }
 
-// TestByoRepoHost reads the host out of each remote form a BYO chart repo can take.
-func TestByoRepoHost(t *testing.T) {
+// TestRepoHostForLog reads the host out of each remote form a repo can take, and prints the
+// placeholder — never other text from the URL — when the host is not a plain hostname.
+func TestRepoHostForLog(t *testing.T) {
 	for in, want := range map[string]string{
 		"https://user:pw@Charts.Example.net:8443/a/b.git": "charts.example.net",
 		"ssh://git@github.com/a/b.git":                    "github.com",
 		"git@GitLab.com:a/b.git":                          "gitlab.com",
-		"not a url":                                       "(unparsed repo URL)",
-		"https://":                                        "(unparsed repo URL)",
+		"https://[::1]:8443/a/b.git":                      "[::1]",
+		"git@github.com:org/repo@v1.git":                  "github.com",
+		"git@tok-5d1e@evil.example:a/b.git":               UnparsedRepoHost,
+		"ssh://git@gh%2Fx/a/b.git":                        UnparsedRepoHost,
+		"not a url":                                       UnparsedRepoHost,
+		"https://":                                        UnparsedRepoHost,
 	} {
-		if got := byoRepoHost(in); got != want {
-			t.Errorf("byoRepoHost(%q) = %q, want %q", in, got, want)
+		if got := RepoHostForLog(in); got != want {
+			t.Errorf("RepoHostForLog(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestByoIacCloneToken_IsTheModuleReposOwnToken pins #6611: a BYO IaC module is cloned with the token
+// requested for exactly its repo, never with the apps repo's GitAccessToken, and with none when the
+// runner has no token for it.
+func TestByoIacCloneToken_IsTheModuleReposOwnToken(t *testing.T) {
+	const module = "https://bitbucket.org/acme/infra.git"
+	vc := &types.ProjectConfig{IacSource: &types.ProjectIacSourceConfig{RepoURL: module}}
+	params := DeployParams{ProjectConfig: vc, GitAccessToken: sharedTokenCanary, GitRepoTokens: map[string]string{module: perRepoTokenCanary}}
+	if got := byoIacCloneToken(params); got != perRepoTokenCanary {
+		t.Errorf("byoIacCloneToken = %q, want the module repo's own token", got)
+	}
+	params.GitRepoTokens = nil
+	if got := byoIacCloneToken(params); got != "" {
+		t.Errorf("byoIacCloneToken with no per-repo token = %q, want none (never the apps repo's token)", got)
+	}
+	if got := byoIacCloneToken(DeployParams{ProjectConfig: &types.ProjectConfig{}, GitAccessToken: sharedTokenCanary}); got != "" {
+		t.Errorf("byoIacCloneToken without an IaC source = %q, want none", got)
 	}
 }

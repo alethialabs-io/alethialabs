@@ -17,6 +17,7 @@ import { isByoDescribeEnabled } from "@/lib/addons/describe-flag";
 import { getServiceDb } from "@/lib/db";
 import { jobs, projectAddons, projectChartWorkloads } from "@/lib/db/schema";
 import { chartWorkloadWireArraySchema } from "@/lib/validations/chart-workloads";
+import { log } from "@/lib/observability/log";
 
 /**
  * Writes a finished CHART_SCAN job's verify.Report back onto its chart row (called from the job
@@ -86,7 +87,7 @@ async function reconcileChartWorkloads(
 ): Promise<void> {
 	const parsed = chartWorkloadWireArraySchema.safeParse(args.workloads ?? []);
 	if (!parsed.success) {
-		console.error("finalizeChartScan: invalid chart_workloads wire", parsed.error);
+		log.error("finalizeChartScan: invalid chart_workloads wire", { err: parsed.error });
 		return;
 	}
 	const workloads = parsed.data;

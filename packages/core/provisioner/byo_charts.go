@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -623,8 +624,10 @@ func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[stri
 // failed cluster. Returns whether any BYO chart was configured, the refusals and the moves.
 // commonLabels are the classification/sweep labels stamped onto the AppProject (BYOC B1.4); the BYO
 // chart Applications themselves are labelled by RenderManagedAddOns.
-// repoTokens maps a chart repo URL → its git token (for BYO charts on a different provider than the
-// apps-destination repo); token is the fallback used when a repo has no dedicated entry.
+// repoTokens maps a chart repo URL → the git token the runner requested for exactly that repo. A
+// chart repo with no entry gets NO credential: it is deployed as a public repo, and a private one
+// fails to sync. token (the apps repo's) is never registered for a chart repo — it is passed only so
+// it can be redacted from error text.
 func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[string]string, commonLabels map[string]string, stdout, stderr io.Writer) byoConfigured {
 	projName := argocd.ByoProjectName(vc.ProjectName)
 
@@ -902,34 +905,57 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 		seen[repo] = true
 		repoToken := repoTokens[repo]
 		if repoToken == "" {
-			fmt.Fprintf(stderr, "Warning: no git access token for BYO repo on host %s — no credential registered; a private chart there will fail to sync (reconnect the git provider)\n", byoRepoHost(repo))
+			fmt.Fprintf(stderr, "Warning: no git access token for BYO repo on host %s — no credential registered; a private chart there will fail to sync (reconnect the git provider)\n", RepoHostForLog(repo))
 			continue
 		}
-		if err := argocd.ConfigureRepoCredentialsNamed(repo, repoToken, argocd.ByoRepoSecretName(repo), stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo %s: %s\n", repo, argocd.RedactTokens(err.Error(), allTokens...))
+		if err := argocd.ConfigureRepoCredentialsNamed(repo, repoToken, gitUsernameFor(vc, repo), argocd.ByoRepoSecretName(repo), stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo on host %s: %s\n", RepoHostForLog(repo), argocd.RedactTokens(err.Error(), allTokens...))
 		}
 	}
 	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, NewlyReserved: newlyReserved, Admission: admission, PlacementOverlaps: placementOverlaps, HeldMoves: heldMoves,
 		AdmissionChanges: admissionChanges, AdmissionStatus: admissionStatus}
 }
 
-// byoRepoHost is the host a BYO chart repo names, for a log line — never the full URL, whose
-// userinfo can carry a credential. It reads https/ssh URLs and scp-style user@host:path remotes,
-// and returns a placeholder for anything else.
-func byoRepoHost(repo string) string {
+// UnparsedRepoHost is what a log line says in place of a host that could not be read from a repo
+// URL. It matches the console's placeholder for the same case.
+const UnparsedRepoHost = "(unparsed repo URL)"
+
+// repoHostShape is a host RepoHostForLog will print: dot-separated labels of letters, digits, '-'
+// and '_', or a bracketed IPv6 literal. Anything else is reported as UnparsedRepoHost, so no other
+// text from the repo URL can reach a log line through the host.
+var repoHostShape = regexp.MustCompile(`^(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)*|\[[0-9a-f:.]+\])$`)
+
+// RepoHostForLog is the host a git repo URL names, for a log line or an error — never the full URL,
+// whose userinfo can carry a credential. It reads https/ssh URLs and scp-style user@host:path
+// remotes, and returns UnparsedRepoHost for anything else, including a host that is not
+// hostname-shaped (an scp remote with a second '@' before its ':' is one).
+func RepoHostForLog(repo string) string {
+	host := ""
 	if !strings.Contains(repo, "://") {
-		if at := strings.Index(repo, "@"); at >= 0 {
-			if colon := strings.Index(repo[at+1:], ":"); colon > 0 {
-				return strings.ToLower(repo[at+1 : at+1+colon])
-			}
+		colon := strings.Index(repo, ":")
+		if colon < 0 {
+			return UnparsedRepoHost
 		}
-		return "(unparsed repo URL)"
+		at := strings.Index(repo[:colon], "@")
+		if at < 0 {
+			return UnparsedRepoHost
+		}
+		host = repo[at+1 : colon]
+	} else {
+		u, err := url.Parse(repo)
+		if err != nil {
+			return UnparsedRepoHost
+		}
+		host = u.Hostname()
+		if strings.Contains(host, ":") {
+			host = "[" + host + "]"
+		}
 	}
-	u, err := url.Parse(repo)
-	if err != nil || u.Hostname() == "" {
-		return "(unparsed repo URL)"
+	host = strings.ToLower(host)
+	if !repoHostShape.MatchString(host) {
+		return UnparsedRepoHost
 	}
-	return strings.ToLower(u.Hostname())
+	return host
 }
 
 // byoNamespaceLabels are the labels the runner stamps on a BYO chart's namespace beyond the

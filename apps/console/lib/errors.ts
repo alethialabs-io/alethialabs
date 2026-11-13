@@ -23,13 +23,6 @@ export function errorCode(e: unknown): string | undefined {
 	return isObject(e) && "code" in e && e.code != null ? String(e.code) : undefined;
 }
 
-/** The `stack` of an unknown error, or undefined. */
-export function errorStack(e: unknown): string | undefined {
-	return isObject(e) && "stack" in e && typeof e.stack === "string"
-		? e.stack
-		: undefined;
-}
-
 /** The Next.js `digest` of an unknown error, or undefined. */
 export function errorDigest(e: unknown): string | undefined {
 	return isObject(e) && "digest" in e && typeof e.digest === "string"

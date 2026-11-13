@@ -131,6 +131,7 @@ import {
 import { PurchaseLeaseLostError, renewPurchaseLease } from "@/lib/billing/purchase-lease";
 import { markPendingOrgSetupLinked, pendingOrgSetupFor, recordSetupRefusal } from "@/lib/billing/pending-org-setup";
 import { getPurchaseStripe } from "@/lib/billing/stripe";
+import { log } from "@/lib/observability/log";
 
 const USER = "user-1";
 const ORG = "org-1";
@@ -231,9 +232,16 @@ describe("#6043: a lease lost in the link's refusal after X's metadata names O",
 			world.row = { stripeSubscriptionId: Y, status: "active" };
 		};
 		world.openOnXThrows = true;
+		const logged = vi.spyOn(log, "error").mockImplementation(() => {});
 
 		await expect(link(sub)).rejects.toBeInstanceOf(PurchaseLeaseLostError);
 		expect(alertsOnX()).toHaveLength(1);
+		// The caught read error reaches the logger as the error itself, under `err`.
+		expect(logged).toHaveBeenCalledWith(
+			expect.stringContaining(`could not read the open hold on ${X}`),
+			{ err: expect.objectContaining({ message: "connection reset" }) },
+		);
+		logged.mockRestore();
 	});
 
 	it("control: refused BEFORE any Stripe write, X naming no org, and the lease lost — nothing written and no alert, as before", async () => {

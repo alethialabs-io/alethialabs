@@ -36,6 +36,7 @@ import {
 	ssoActionRefusal,
 	stringField,
 } from "./member-guards";
+import { log } from "@/lib/observability/log";
 
 const handlers = toNextJsHandler(auth);
 
@@ -49,9 +50,9 @@ async function cancelInvitationsAfterExit(orgId: string, userId: string): Promis
 	try {
 		await cancelPendingInvitationsFrom(getServiceDb(), orgId, userId);
 	} catch (error) {
-		console.error(
-			`[auth] member ${userId} left or was removed from ${orgId}, but cancelling their pending invitations failed; they are still pending:`,
-			error,
+		log.error(
+			"[auth] a member left or was removed, but cancelling their pending invitations failed; they are still pending",
+			{ user_id: userId, org_id: orgId, err: error },
 		);
 	}
 }
@@ -143,7 +144,7 @@ export async function POST(req: Request): Promise<Response> {
 		try {
 			ssoCaller = await findOwnerScope();
 		} catch (error) {
-			console.error("[auth] session lookup failed before an SSO action:", error);
+			log.error("[auth] session lookup failed before an SSO action", { err: error });
 			return sessionLookupFailed();
 		}
 		if (ssoCaller) {
@@ -168,7 +169,7 @@ export async function POST(req: Request): Promise<Response> {
 		try {
 			caller = await findOwnerScope();
 		} catch (error) {
-			console.error("[auth] session lookup failed before an organization action:", error);
+			log.error("[auth] session lookup failed before an organization action", { err: error });
 			return sessionLookupFailed();
 		}
 	}

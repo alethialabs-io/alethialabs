@@ -14,6 +14,19 @@
 //
 // Both are keyed off ONE denylist (`SECRET_KEY_SUBSTRINGS`) so there is a single source of truth for
 // "what is secret" — nothing hand-rolled per call site. Kept in sync with the runner denylist.
+//
+// Separately, a failed database query is sent without its bound parameter values (#6633), by the
+// rule the log serializer applies (lib/observability/log.ts, #6630): drizzle-orm's
+// `DrizzleQueryError` message is `Failed query: <sql>\nparams: <values>`, and Sentry sends an error's
+// `message` as the exception value, so every string in the event has that message rewritten to
+// `Failed query: <sql>`. See `stripQueryParams`. The driver error under it has the values Postgres
+// quotes in its message and detail removed the same way (#6645, lib/observability/query-error.ts).
+
+import {
+	failedQueryText,
+	isDriverError,
+	redactDriverText,
+} from "@/lib/observability/query-error";
 
 /**
  * Substring denylist (case-insensitive) identifying secret-bearing KEY names. The first block mirrors
@@ -95,47 +108,257 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** One error's text as the error carries it, and the text it is rewritten to. */
+interface QueryRewrite {
+	message: string;
+	replacement: string;
+}
+
 /**
- * Deep-walks a value IN PLACE: redacts secret-named keys and scrubs secret values out of every
- * string. Cycle-safe via a WeakSet. Mutating in place preserves the caller's concrete type (a Sentry
- * Event / Breadcrumb) rather than degrading it to a plain record.
+ * The exact rewrites for a thrown value and its `cause` chain. For each failed query on the chain:
+ * its exact `message` (which carries the parameter values) and `Failed query: <sql>`. For each
+ * database driver's error on the chain (usually a failed query's cause, as drizzle-orm wraps it):
+ * its `message` and `detail` with the values Postgres quotes in them removed (`redactDriverText`).
+ * Cycle-safe. Sentry sends each error in the chain as its own exception value, which is why the whole
+ * chain is read, and why the driver's message is rewritten wherever it appears rather than only on
+ * the thrown value.
+ *
+ * A driver error is rewritten wherever it is on the chain, not only under a failed query: a COMMIT
+ * that fails a deferred constraint is raised by the driver directly, with no `DrizzleQueryError`
+ * around it, and the log serializer redacts it there too. A `Failing row contains (...)` DETAIL is
+ * covered by `redactDriverText`.
  */
-function scrubInPlace(value: unknown, seen: WeakSet<object>): void {
-	if (Array.isArray(value)) {
-		for (let i = 0; i < value.length; i++) {
-			const el: unknown = value[i];
-			if (typeof el === "string") value[i] = scrubString(el);
-			else scrubInPlace(el, seen);
-		}
-		return;
-	}
-	if (isRecord(value)) {
-		if (seen.has(value)) return;
-		seen.add(value);
-		for (const key of Object.keys(value)) {
-			if (isSecretKey(key)) {
-				value[key] = REDACTED;
-				continue;
+function queryRewrites(thrown: unknown): QueryRewrite[] {
+	const out: QueryRewrite[] = [];
+	const seen = new Set<object>();
+	let current: unknown = thrown;
+	while (typeof current === "object" && current !== null && !seen.has(current)) {
+		seen.add(current);
+		const query = failedQueryText(current);
+		if (query !== undefined) {
+			if ("message" in current && typeof current.message === "string") {
+				pushRewrite(out, current.message, `Failed query: ${query}`);
 			}
-			const v: unknown = value[key];
-			if (typeof v === "string") value[key] = scrubString(v);
-			else scrubInPlace(v, seen);
+		} else if (isDriverError(current)) {
+			pushRewrite(out, current.message, redactDriverText(current.message));
+			if ("detail" in current && typeof current.detail === "string") {
+				pushRewrite(out, current.detail, redactDriverText(current.detail));
+			}
 		}
+		current = "cause" in current ? current.cause : undefined;
 	}
+	return out;
+}
+
+/** Adds `message` → `replacement` to `out` unless the two are the same text. */
+function pushRewrite(out: QueryRewrite[], message: string, replacement: string): void {
+	if (message !== "" && message !== replacement) out.push({ message, replacement });
+}
+
+/** The separators that end a failed query's SQL: raw, and as it reads once JSON-escaped. */
+const PARAMS_MARKERS = ["\nparams: ", "\\nparams: "] as const;
+
+/**
+ * Cuts a failed query's parameter values out of `s` by the message's shape: everything from the
+ * first `\nparams: ` (raw or JSON-escaped) that follows a `Failed query: ` is dropped, to the END of
+ * the string. The values are not escaped, so no later marker can be trusted to end them (a value can
+ * forge a stack-frame line); the trailing text this also drops is the price of that. Two `indexOf`
+ * scans, so its cost is linear in the length of `s`.
+ */
+function cutParamsByShape(s: string): string {
+	const head = s.indexOf("Failed query: ");
+	if (head === -1) return s;
+	let cut = -1;
+	for (const marker of PARAMS_MARKERS) {
+		const at = s.indexOf(marker, head);
+		if (at !== -1 && (cut === -1 || at < cut)) cut = at;
+	}
+	return cut === -1 ? s : s.slice(0, cut);
 }
 
 /**
- * Sentry `beforeSend` scrubber: strips secrets from the entire event (message, exception values,
- * tags, extra, request data/headers/cookies, and stack-frame vars) before it leaves the process.
- * Returns the same (mutated) event so the concrete type is preserved.
+ * Removes the bound parameter values from every failed-query message in `s`: first each exact
+ * message in `rewrites` (taken from the original exception), which keeps any text after it, then
+ * any remaining text of the `Failed query: <sql>\nparams: <values>` shape (`cutParamsByShape`) —
+ * which also covers a breadcrumb that quotes a message from another error.
  */
-export function scrubEvent<T>(event: T): T {
-	scrubInPlace(event, new WeakSet());
-	return event;
+function stripQueryParams(s: string, rewrites: readonly QueryRewrite[] = []): string {
+	let out = s;
+	for (const { message, replacement } of rewrites) {
+		out = out.split(message).join(replacement);
+	}
+	return cutParamsByShape(out);
 }
 
-/** Sentry `beforeBreadcrumb` scrubber — same deep scrub over a breadcrumb. */
+/**
+ * What the walk has already produced for each object it reached: the object itself when scrubbing
+ * left it as it was, or the copy that replaces it. An object is entered here BEFORE its children are
+ * walked, as its (still empty) copy, so a cycle back to it resolves to the copy and a shared object
+ * is scrubbed once. A consequence: every object on a cycle is copied, even a clean one, because the
+ * back-reference already points at a copy. That costs memory, not correctness.
+ */
+type ScrubMemo = Map<object, unknown>;
+
+/**
+ * Returns `value` with secret-named keys redacted, failed-query parameter values stripped (see
+ * `stripQueryParams`) and secret values scrubbed out of every string. COPY-ON-WRITE (#6662): an
+ * object or array is returned as it is when nothing in it changes, and as a fresh copy when anything
+ * does; the object reached is never written to. That matters because a breadcrumb from the console
+ * integration holds the logged arguments themselves, so writing through it once changed a logged
+ * error's own `params` for the code that still held it. Cycle-safe via `memo`.
+ */
+function scrubValue(value: unknown, memo: ScrubMemo, rewrites: readonly QueryRewrite[]): unknown {
+	if (typeof value === "string") return scrubString(stripQueryParams(value, rewrites));
+	if (typeof value !== "object" || value === null) return value;
+	if (memo.has(value)) return memo.get(value);
+	if (Array.isArray(value)) return scrubArray(value, memo, rewrites);
+	if (isRecord(value)) return scrubRecord(value, memo, rewrites);
+	return value;
+}
+
+/** `scrubValue` for an array: the array itself when no element changes, else a new array. */
+function scrubArray(
+	value: readonly unknown[],
+	memo: ScrubMemo,
+	rewrites: readonly QueryRewrite[],
+): unknown {
+	const copy: unknown[] = [];
+	memo.set(value, copy);
+	let changed = false;
+	for (let i = 0; i < value.length; i++) {
+		const el: unknown = value[i];
+		const out = scrubValue(el, memo, rewrites);
+		copy.push(out);
+		if (!Object.is(out, el)) changed = true;
+	}
+	if (changed) return copy;
+	memo.set(value, value);
+	return value;
+}
+
+/** What `changedEntries` read from an object: every own enumerable value, and the ones that change. */
+interface RecordScan {
+	/** The value each own enumerable key returned, read ONCE (a getter is never read twice). */
+	read: Map<string, unknown>;
+	/** The scrubbed value of each key that scrubbing changes; empty means no copy is needed. */
+	changes: Map<string, unknown>;
+}
+
+/**
+ * Reads each of `value`'s own enumerable keys once, and scrubs it; `changes` holds the keys whose
+ * scrubbed value differs (empty means `value` needs no copy). A key whose read throws (a getter that
+ * fails) is redacted rather than letting the scrub throw: a throwing `beforeSend` makes Sentry send
+ * its own internal error report, which skips this scrub. A secret-named key is redacted whole, and a failed query copied into
+ * the event as an object (a serialized thrown value, extra error data, a logged error) has its own
+ * `params` array redacted too, because it carries the values there and not only in its message.
+ */
+function changedEntries(
+	value: Record<string, unknown>,
+	memo: ScrubMemo,
+	rewrites: readonly QueryRewrite[],
+): RecordScan {
+	const read = new Map<string, unknown>();
+	const changes = new Map<string, unknown>();
+	if (failedQueryText(value) !== undefined) changes.set("params", REDACTED);
+	for (const key of Object.keys(value)) {
+		let original: unknown;
+		try {
+			original = value[key];
+		} catch {
+			changes.set(key, REDACTED);
+			continue;
+		}
+		read.set(key, original);
+		const out = isSecretKey(key) ? REDACTED : scrubValue(original, memo, rewrites);
+		if (!Object.is(out, original)) changes.set(key, out);
+	}
+	return { read, changes };
+}
+
+/**
+ * `scrubValue` for a non-array object: the object itself when nothing in it changes, else a copy
+ * with the same prototype and the same own properties, the changed ones replaced. The prototype is
+ * kept so a copied `Error` is still one to Sentry's serializer, which then reads its `message` and
+ * `stack` as it would have read the original's. An own accessor (V8 defines an error's `stack` as
+ * one, and its getter reads an internal slot the copy does not have) is copied as the value it
+ * returns on the original.
+ */
+function scrubRecord(
+	value: Record<string, unknown>,
+	memo: ScrubMemo,
+	rewrites: readonly QueryRewrite[],
+): unknown {
+	const copy: object = Object.create(Object.getPrototypeOf(value));
+	memo.set(value, copy);
+	const { read, changes } = changedEntries(value, memo, rewrites);
+	if (changes.size === 0) {
+		memo.set(value, value);
+		return value;
+	}
+	const descriptors = Object.getOwnPropertyDescriptors(value);
+	for (const key of Object.keys(descriptors)) {
+		const d = descriptors[key];
+		if (d !== undefined && (d.get !== undefined || d.set !== undefined)) {
+			// An enumerable accessor was read once above, and that read is what was scrubbed; a
+			// non-enumerable one (an error's `stack`) is read here, and left out if its getter throws.
+			let current: unknown;
+			if (read.has(key)) current = read.get(key);
+			else {
+				try {
+					current = Reflect.get(value, key);
+				} catch {
+					delete descriptors[key];
+					continue;
+				}
+			}
+			descriptors[key] = {
+				value: current,
+				writable: true,
+				enumerable: d.enumerable ?? false,
+				configurable: true,
+			};
+		}
+	}
+	for (const [key, out] of changes) {
+		descriptors[key] = { value: out, writable: true, enumerable: true, configurable: true };
+	}
+	Object.defineProperties(copy, descriptors);
+	return copy;
+}
+
+/**
+ * Scrubs the top-level event or breadcrumb Sentry hands a hook, keeping its concrete type: each key
+ * whose value scrubbing changes is pointed at the scrubbed copy (`scrubValue`), so nothing below the
+ * top level is written to. The top-level object itself is Sentry's own, not the caller's: Sentry
+ * builds a fresh breadcrumb (`{ timestamp, ...breadcrumb }`) before `beforeBreadcrumb` and a fresh
+ * event (`{ ...event, event_id, ... }`) before `beforeSend`, so writing its keys reaches no
+ * application object.
+ */
+function scrubTopLevel<T>(root: T, rewrites: readonly QueryRewrite[]): T {
+	// Widened to `unknown` so the narrowing yields a plain record whose keys can be written.
+	const record: unknown = root;
+	if (!isRecord(record)) return root;
+	const memo: ScrubMemo = new Map();
+	memo.set(record, record);
+	for (const [key, out] of changedEntries(record, memo, rewrites).changes) record[key] = out;
+	return root;
+}
+
+/**
+ * Sentry `beforeSend` scrubber: strips secrets and failed-query parameter values from the entire
+ * event (message, exception values, breadcrumbs, tags, extra, request data/headers/cookies, and
+ * stack-frame vars) before it leaves the process. `hint.originalException` is the thrown value;
+ * when it or an error on its `cause` chain is a failed database query, its exact message is
+ * rewritten to `Failed query: <sql>` wherever it appears, and the driver error under it has its
+ * message and detail rewritten without the values Postgres quotes in them (see `queryRewrites`).
+ * Returns the same event object, with every changed part below it replaced by a scrubbed copy, so
+ * the concrete type is preserved and no object the event refers to is changed (`scrubTopLevel`).
+ */
+export function scrubEvent<T>(event: T, hint?: { originalException?: unknown }): T {
+	return scrubTopLevel(event, queryRewrites(hint?.originalException));
+}
+
+/** Sentry `beforeBreadcrumb` scrubber — same deep, copy-on-write scrub over a breadcrumb. */
 export function scrubBreadcrumb<T>(breadcrumb: T): T {
-	scrubInPlace(breadcrumb, new WeakSet());
-	return breadcrumb;
+	return scrubTopLevel(breadcrumb, []);
 }
