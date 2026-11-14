@@ -1,5 +1,6 @@
-# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in CI.
-# Alibaba provider auth comes from ALICLOUD_ACCESS_KEY / ALICLOUD_SECRET_KEY.
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env.
+# Alibaba provider auth: short-lived STS credentials (ALICLOUD_ACCESS_KEY / ALICLOUD_SECRET_KEY
+# with ALICLOUD_SECURITY_TOKEN) or an `aliyun` CLI profile (ALICLOUD_PROFILE), not a long-lived AccessKey.
 
 region  = "eu-central-1" # must offer the x86 g7 family
 zone_id = ""             # empty = provider picks an AZ that has the instance type

@@ -23,7 +23,8 @@ The Cloud Assistant agent (preinstalled on the Ubuntu image) dials out:
 - **Automation:** `aliyun ecs RunCommand`.
 
 ## Prerequisites
-- An Alibaba Cloud account with a **RAM access key** (ECS + VPC permissions).
+- Alibaba Cloud credentials with ECS + VPC permissions. Use short-lived STS credentials, such as an
+  `aliyun` CLI profile that assumes a RAM role, instead of a RAM user's long-lived AccessKey.
 - A Cloudflare **API token** (DNS edit + Zero Trust), the **zone id**, and the **account id**.
 
 ## Apply
@@ -31,7 +32,7 @@ The Cloud Assistant agent (preinstalled on the Ubuntu image) dials out:
 cd infra/cp-alibaba
 cp backend.hcl.example backend.hcl
 cp terraform.tfvars.example terraform.tfvars  # region, cloudflare_* (token/zone/account)
-export ALICLOUD_ACCESS_KEY=... ALICLOUD_SECRET_KEY=...
+export ALICLOUD_PROFILE=<profile>   # an `aliyun configure` profile that assumes a RAM role
 tofu init -backend-config=backend.hcl
 tofu plan && tofu apply
 export TUNNEL_TOKEN="$(tofu output -raw tunnel_token)"

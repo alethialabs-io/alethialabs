@@ -1,0 +1,11 @@
+# terraform.tfvars is COMMITTED (public values only), so `tofu plan` works from a fresh clone.
+#
+# The ONE file you must create is emails.auto.tfvars, gitignored because it holds personal
+# addresses and this repo is public:
+#
+#   e2e_budget_alert_emails = ["you@example.com"]
+#
+# Required, no default: a default of [] would make a bare apply silently drop the cost alerts.
+# Pass [] explicitly to opt out.
+#
+# You also need backend.hcl (see backend.hcl.example), and the bootstrap applied first (bootstrap/).

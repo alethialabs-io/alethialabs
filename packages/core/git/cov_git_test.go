@@ -13,6 +13,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 // tailIsolateAmbientGit removes every ambient identity this host carries but CI does not: the SSH
@@ -235,9 +236,11 @@ func TestTail_PushFailureArms(t *testing.T) {
 	})
 }
 
-// TestTail_AddAndCommitFailureArms covers AddAndCommit's worktree, add and commit refusals. The
-// commit arm is the load-bearing one: with no author identity anywhere, go-git must refuse rather
-// than write a commit with an empty author.
+// TestTail_AddAndCommitFailureArms covers AddAndCommit's worktree and add refusals, and the
+// identity rules of its commit: with no identity in any git config (the runner container and CI
+// have no ~/.gitconfig) it commits as the fixed Alethia identity instead of refusing — the refusal
+// silently skipped every app-manifest scaffold in a real deploy (e2e run 43592824666) — while an
+// identity that IS configured still wins.
 func TestTail_AddAndCommitFailureArms(t *testing.T) {
 	t.Run("bare clone has no worktree", func(t *testing.T) {
 		g := tailOpenBare(t)
@@ -272,7 +275,8 @@ func TestTail_AddAndCommitFailureArms(t *testing.T) {
 		}
 	})
 
-	t.Run("no author identity fails the commit", func(t *testing.T) {
+	commitNew := func(t *testing.T, configure func(*gogit.Repository)) *object.Commit {
+		t.Helper()
 		tailIsolateAmbientGit(t)
 		repo, branch, _, _ := makeFixtureRepo(t)
 		cloneDir := filepath.Join(t.TempDir(), "clone")
@@ -280,11 +284,51 @@ func TestTail_AddAndCommitFailureArms(t *testing.T) {
 		if err := g.Clone(context.Background(), branch, true); err != nil {
 			t.Fatalf("Clone: %v", err)
 		}
+		if configure != nil {
+			configure(g.Repo)
+		}
 		if err := os.WriteFile(filepath.Join(cloneDir, "new.txt"), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := g.AddAndCommit("m"); err == nil || !strings.Contains(err.Error(), "failed to commit changes") {
-			t.Fatalf("AddAndCommit error = %v, want the commit failure", err)
+		if err := g.AddAndCommit("m"); err != nil {
+			t.Fatalf("AddAndCommit: %v", err)
+		}
+		head, err := g.Repo.Head()
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := g.Repo.CommitObject(head.Hash())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Message != "m" {
+			t.Fatalf("HEAD message = %q, want the commit just made", c.Message)
+		}
+		return c
+	}
+
+	t.Run("no identity anywhere commits as the fallback identity", func(t *testing.T) {
+		c := commitNew(t, nil)
+		for role, sig := range map[string]object.Signature{"author": c.Author, "committer": c.Committer} {
+			if sig.Name != FallbackAuthorName || sig.Email != FallbackAuthorEmail {
+				t.Fatalf("%s = %s <%s>, want %s <%s>", role, sig.Name, sig.Email, FallbackAuthorName, FallbackAuthorEmail)
+			}
+		}
+	})
+
+	t.Run("a configured identity wins over the fallback", func(t *testing.T) {
+		c := commitNew(t, func(r *gogit.Repository) {
+			cfg, err := r.Config()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.User.Name, cfg.User.Email = "Self Hosted", "ops@example.com"
+			if err := r.SetConfig(cfg); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if c.Author.Name != "Self Hosted" || c.Author.Email != "ops@example.com" {
+			t.Fatalf("author = %s <%s>, want the configured identity", c.Author.Name, c.Author.Email)
 		}
 	})
 }
@@ -524,10 +568,11 @@ func TestTail_BootstrapFailureArms(t *testing.T) {
 	})
 }
 
-// TestTail_BootstrapSurfacesCommitFailure covers the commit arm: real changes are staged, but with
-// no author identity anywhere the commit must fail and abort the bootstrap rather than push
-// nothing and report success.
-func TestTail_BootstrapSurfacesCommitFailure(t *testing.T) {
+// TestTail_BootstrapCommitsWithoutAmbientIdentity covers the commit arm on a host with no git
+// identity anywhere — the runner container. It used to assert that the commit FAILED there, which
+// pinned the defect that silently skipped the app-manifest scaffold in real deploys; the bootstrap
+// must instead commit as the fallback identity.
+func TestTail_BootstrapCommitsWithoutAmbientIdentity(t *testing.T) {
 	tailIsolateAmbientGit(t)
 	repo, branch, _, _ := makeFixtureRepo(t)
 	cloneDir := filepath.Join(t.TempDir(), "clone")
@@ -540,8 +585,21 @@ func TestTail_BootstrapSurfacesCommitFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmplDir, "main.tf"), []byte("# tf"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The fixture's remote is a non-bare repo with its branch checked out, so the push that
+	// follows the commit is refused. Reaching the push is the proof: the commit arm passed.
 	err := g.Bootstrap(context.Background(), &GIT{LocalPath: tmplDir}, nil, false, utils.NewLogger(nil, ""))
-	if err == nil || !strings.Contains(err.Error(), "failed to commit changes") {
-		t.Fatalf("Bootstrap error = %v, want the commit failure", err)
+	if err == nil || !strings.Contains(err.Error(), "failed to push changes") {
+		t.Fatalf("Bootstrap error = %v, want it to get past the commit and fail only at the push", err)
+	}
+	head, herr := g.Repo.Head()
+	if herr != nil {
+		t.Fatal(herr)
+	}
+	c, cerr := g.Repo.CommitObject(head.Hash())
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	if c.Author.Name != FallbackAuthorName || c.Author.Email != FallbackAuthorEmail {
+		t.Fatalf("author = %s <%s>, want the fallback identity", c.Author.Name, c.Author.Email)
 	}
 }

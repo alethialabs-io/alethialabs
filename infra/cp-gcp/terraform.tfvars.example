@@ -1,5 +1,6 @@
-# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in CI.
-# GCP provider auth comes from GOOGLE_CREDENTIALS / GOOGLE_APPLICATION_CREDENTIALS.
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env.
+# GCP provider auth: Application Default Credentials (`gcloud auth application-default login`).
+# Prefer that, or Workload Identity Federation, over a service-account JSON key.
 
 gcp_project = "your-gcp-project-id"
 gcp_region  = "europe-west4"

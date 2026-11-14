@@ -38,9 +38,9 @@ func fixtureGit(t *testing.T, dir string, args ...string) {
 //
 // The env vars fixtureGit sets only reach the `git` BINARY. The code under test commits
 // through go-git, which ignores GIT_AUTHOR_* and resolves its identity from the repo config
-// and then ~/.gitconfig — so on a machine with no global git config it fails with
-// "author field is required". A developer's laptop has that config and CI does not, which is
-// the whole reason this is here: without it these tests pass locally and fail in CI.
+// and then ~/.gitconfig, falling back to a fixed Alethia identity when neither names one. A
+// developer's laptop has a global config and CI does not, so without this the commit author
+// would differ between the two; pinning it keeps these tests' commits identical everywhere.
 func hermeticGitIdentity(t *testing.T) {
 	t.Helper()
 	home := t.TempDir()
