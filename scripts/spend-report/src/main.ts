@@ -18,7 +18,7 @@ import { SpendReportEmail } from "./email";
 import { fetchEcbRates } from "./fx";
 import { renderText, subjectLine } from "./render-text";
 import { readAlibaba } from "./sources/alibaba";
-import { DEFAULT_AWS_TAG_KEYS, readAws, readVault, scanAwsLeaks } from "./sources/aws";
+import { DEFAULT_AWS_TAG_KEYS, readAws, readVault, scanAwsLeaks, type AwsAccount } from "./sources/aws";
 import { readAzure } from "./sources/azure";
 import { readGcp } from "./sources/gcp";
 import { readHetzner } from "./sources/hetzner";
@@ -55,6 +55,18 @@ async function main(): Promise<number> {
 
 	const awsReady = env("AWS_READY") === "true";
 	const awsReason = env("AWS_REASON") ?? "AWS credentials were not configured";
+	// Two accounts: the platform one through the ambient credentials (also the vault's), and the
+	// dedicated e2e account through the named profile its credential step wrote. Cost Explorer in a
+	// member account sees only that account, so neither reading covers the other.
+	const awsAccounts: AwsAccount[] = [
+		{ name: "platform", ready: awsReady, reason: awsReason },
+		{
+			name: "e2e",
+			profile: env("AWS_E2E_PROFILE") ?? "spend-e2e",
+			ready: env("AWS_E2E_READY") === "true",
+			reason: env("AWS_E2E_REASON") ?? "AWS e2e-account credentials were not configured",
+		},
+	];
 	const awsCfg = {
 		tagKeys: list("SPEND_AWS_TAG_KEYS", DEFAULT_AWS_TAG_KEYS),
 		groupByLinkedAccount: env("SPEND_AWS_GROUP_BY_LINKED_ACCOUNT") === "true",
@@ -62,8 +74,8 @@ async function main(): Promise<number> {
 	};
 
 	const [aws, awsLeaks, azure, gcp, hetzner, alibaba, fx] = await Promise.all([
-		readAws(w, awsCfg, awsReady, awsReason),
-		scanAwsLeaks(awsCfg, awsReady, awsReason),
+		readAws(w, awsCfg, awsAccounts),
+		scanAwsLeaks(awsCfg, awsAccounts),
 		readAzure(w, env("AZURE_SUBSCRIPTION_ID") ?? "", env("AZURE_READY") === "true", env("AZURE_REASON") ?? "Azure credentials were not configured"),
 		readGcp(
 			w,
@@ -86,7 +98,7 @@ async function main(): Promise<number> {
 	const report = buildReport({
 		window: w,
 		results: [aws, azure, gcp, hetzner.result, alibaba],
-		leakResults: [awsLeaks, hetzner.leaks],
+		leakResults: [...awsLeaks, hetzner.leaks],
 		fx: fx.fx,
 		thresholds,
 		warnings,

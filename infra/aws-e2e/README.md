@@ -23,6 +23,7 @@ account.
 | `e2e-nightly.tf` | `alethia-e2e-nightly`: the same name, path, trust subjects, boundary and identity policy as `infra/aws-oidc`. It adds denies that protect the ways back into the account (`DenyTamperWithBreakGlass`, `DenyTamperWithTrustAnchors`, `DenyTamperWithCostGuard`) and drops the human `AdminAssume` path. |
 | `e2e-broker.tf` | The #4226 assertion-broker trust, with the same contract as `infra/aws-oidc/e2e-broker.tf`. |
 | `e2e-budget.tf` | The monthly budget and its SNS topic. The budget now covers the **whole** account, so every dollar it counts is e2e spend. |
+| `spend-reporter.tf` | `alethia-spend-reporter`: the weekly spend report's reader in this account. Cost Explorer and `tag:GetResources` only, trusting only `…:environment:spend-report`. Under `/alethia-e2e/`, so the nightly role's boundary forbids it to edit or delete the role. |
 | `e2e-dns.tf` | A **second** public zone `e2e.alethialabs.io`, with its apex NS TTL lowered to 300s. |
 | `checks.tf` / `checks.tftest.hcl` | Invariants, and a credential-free test that the committed posture plans as claimed and that each refusal and check fires. CI runs it in `.github/workflows/infra-aws-e2e.yml`. |
 
@@ -149,9 +150,11 @@ AWS_PROFILE=alethia-sso tofu plan -out=aws-e2e.tfplan
 AWS_PROFILE=alethia-sso tofu apply aws-e2e.tfplan
 ```
 
-- **Expect:** `10 + <number of emails>` to add, 0 to change, 0 to destroy. That is two OIDC
-  providers (GitHub, broker), the boundary policy, the role and its inline policy, the SNS topic and
-  its policy, the budget, the zone and its apex NS record, plus one email subscription per address.
+- **Expect:** `12 + <number of emails>` to add, 0 to change, 0 to destroy. That is two OIDC
+  providers (GitHub, broker), the boundary policy, the role and its inline policy, the spend
+  reporter role and its inline policy, the SNS topic and its policy, the budget, the zone and its
+  apex NS record, plus one email subscription per address. (Applied before `spend-reporter.tf`
+  existed? See [The weekly spend report](#the-weekly-spend-report) for the 2-resource apply.)
   The plan must show **no** `check` warning. Read the rendered trust: it names exactly
   `repo:alethialabs-io/alethialabs:ref:refs/heads/main` and `…:environment:e2e-dev`, plus the
   `E2EBrokerAssertion` statement.
@@ -260,12 +263,28 @@ A separate, reviewed PR, applied by the maintainer:
   ("the SHARED platform account"), `scripts/e2e/nightly-rollup.sh`, the `infra/.trivyignore`
   comments, `infra/README.md`, and `e2e-nightly.yml`'s comments pointing at `infra/aws-oidc`.
 
+## The weekly spend report
+
+A member account's Cost Explorer sees only its own spend. So after step 6, the platform account's
+`alethia-spend-reporter` no longer sees any AWS e2e spend. `spend-reporter.tf` adds a second
+reporter here, and `spend-report.yml` reads both accounts and sums them. If this stack was applied
+before `spend-reporter.tf` existed, apply only the reporter:
+
+```bash
+cd infra/aws-e2e
+AWS_PROFILE=alethia-sso tofu plan  -target=aws_iam_role.spend_reporter -target=aws_iam_role_policy.spend_reporter
+#   expect: 2 to add, 0 to change, 0 to destroy
+AWS_PROFILE=alethia-sso tofu apply -target=aws_iam_role.spend_reporter -target=aws_iam_role_policy.spend_reporter
+gh variable set SPEND_REPORTER_E2E_ROLE_ARN --body "$(AWS_PROFILE=alethia-sso tofu output -raw spend_reporter_role_arn)"
+```
+
+The role trusts `repo:alethialabs-io/alethialabs:environment:spend-report`, the same subject as the
+platform reporter. That environment is already restricted to `main` (`infra/github`), so there is no
+ordering constraint. Setting the variable before step 6 is harmless: the report then shows the e2e
+account at zero.
+
 ## Not moved by this stack, and what each needs
 
-- **The weekly spend report** (`spend-report.yml`) reads Cost Explorer as `alethia-spend-reporter`
-  in the **platform** account. A member account's Cost Explorer sees only its own spend, so after
-  step 6 the report no longer includes AWS e2e spend. Either add a read-only reporter role here, or
-  read the organization's consolidated billing. Either one is a follow-up.
 - **The cross-account secrets lane** (`infra/aws-secrets-e2e`, `E2E_SECRETS_XACCT_*`, not enabled
   today). Its `cluster_account_id` is "account A", the account the cluster runs in. That becomes
   556074788436 when the lane is enabled.
