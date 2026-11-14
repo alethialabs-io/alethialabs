@@ -64,9 +64,10 @@ Then wire the tunnel token into the bundle `.env`:
 export TUNNEL_TOKEN="$(tofu output -raw tunnel_token)"
 ```
 
-State lives in an S3-compatible bucket (`TF_STATE_S3_*`), one key per stack
+State lives in an S3-compatible bucket that you name in `backend.hcl`, one key per stack
 (`<cloud>-cp/terraform.tfstate`). DNS records are **proxied** CNAMEs onto the tunnel — there is no
-open origin. See each cloud's page for the exact GitHub secrets.
+open origin. See each cloud's page for the credentials its provider reads. Use short-lived
+credentials (each cloud's CLI sign-in, or federation) rather than long-lived keys.
 
 ## Prerequisites
 

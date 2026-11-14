@@ -21,7 +21,8 @@ terraform {
 
 provider "alicloud" {
   region = var.region
-  # Auth via ALICLOUD_ACCESS_KEY / ALICLOUD_SECRET_KEY env in CI.
+  # Auth from the environment: short-lived STS credentials (ALICLOUD_SECURITY_TOKEN alongside the
+  # key pair) or an `aliyun` CLI profile (ALICLOUD_PROFILE). CI only validates this stack.
 }
 
 provider "cloudflare" {

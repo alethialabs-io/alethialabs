@@ -21,7 +21,8 @@ terraform {
 
 provider "azurerm" {
   features {}
-  # Auth via ARM_* env (service principal) in CI; subscription via ARM_SUBSCRIPTION_ID.
+  # Auth from the Azure CLI session (`az login`) or OIDC federation; subscription via
+  # ARM_SUBSCRIPTION_ID. CI only validates this stack.
 }
 
 provider "cloudflare" {

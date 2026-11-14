@@ -26,9 +26,9 @@
 // ── What is a NOTE (surfaced, not failed) ──
 //   A static cloud SECRET/cred-action reachable from a plain `pull_request` (not target). GitHub
 //   withholds secrets from FORK `pull_request` runs, so this only exposes them to same-repo
-//   (push-access) PRs — the pre-existing, accepted posture of the infra-cp-* plan jobs. It is
-//   reported so the debt stays visible, but it does not block CI. (Tightening these to move creds
-//   into the push-gated apply job is a separate follow-up.)
+//   (push-access) PRs — the posture the infra-cp-{aws,gcp,azure,alibaba} workflows held until
+//   2026-11-14, when they became validate-only with no secret at all. It is reported so the debt
+//   stays visible, but it does not block CI.
 //
 // Run: `node scripts/check-workflow-oidc-isolation.mjs` (wired into ci.yml → guards).
 
@@ -42,12 +42,13 @@ const OIDC_MARKER = /^\s*id-token:\s*write\b/;
 
 // Cloud credential markers: an OIDC/cred-exchange action, or a static cloud secret reference.
 // Cred actions must be a `uses:` line, and detection runs on non-comment lines only, so a mention
-// in prose never counts.
+// in prose never counts. `ARM_CLIENT_SECRET` is the azurerm provider's own env name: before it was
+// listed, infra-cp-azure.yml exported it to a PR job and this guard did not see it.
 const CRED_MARKERS = [
   /uses:\s*['"]?aws-actions\/configure-aws-credentials/,
   /uses:\s*['"]?google-github-actions\/auth/,
   /uses:\s*['"]?azure\/login/,
-  /\$\{\{\s*secrets\.(HCLOUD_TOKEN|AWS_ACCESS_KEY|AWS_SECRET_ACCESS_KEY|AWS_SESSION|AZURE_CREDENTIALS|AZURE_CLIENT_SECRET|GCP_SA_KEY|GOOGLE_CREDENTIALS|ALICLOUD_ACCESS_KEY|ALICLOUD_SECRET_KEY|ALIBABA_CLOUD_ACCESS_KEY)/,
+  /\$\{\{\s*secrets\.(HCLOUD_TOKEN|AWS_ACCESS_KEY|AWS_SECRET_ACCESS_KEY|AWS_SESSION|AZURE_CREDENTIALS|AZURE_CLIENT_SECRET|ARM_CLIENT_SECRET|GCP_SA_KEY|GOOGLE_CREDENTIALS|ALICLOUD_ACCESS_KEY|ALICLOUD_SECRET_KEY|ALIBABA_CLOUD_ACCESS_KEY)/,
 ];
 
 // `if:` fragments that PROVE a job cannot run on a PR event.

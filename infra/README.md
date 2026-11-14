@@ -18,8 +18,8 @@ push to `main`). PR jobs run **no cloud/state credentials** (static checks only:
 |---|---|---|---|---|
 | `email-ses/` | AWS SES transactional email (acct **270587882865**) | **GitHub OIDC** (`alethia-ses-deployer`) | `alethia-tofu-state-270587882865` · `ses/` | `email-ses/bootstrap/` — owns the account's OIDC provider + state bucket |
 | `connector-assets/` | Public S3 bucket serving cloud-connector setup artifacts (acct **270587882865**) | **GitHub OIDC** (`alethia-connector-assets-deployer`) | `…270587882865` · `connector-assets/` | `connector-assets/bootstrap/` — adopts the OIDC provider + state bucket |
-| `cp-gcp` / `cp-azure` / `cp-alibaba` / `cp-hetzner` | Per-cloud control-plane box | Static cloud keys (CI secrets) | S3-**compatible** `terraform-state` · `<cloud>-cp/` (custom endpoint) | — |
-| `cp-aws` | Self-host option: control-plane box on EC2. Not a deployment target of ours | **None** — CI is validate-only (no backend, no secrets); a self-hoster applies it locally | S3-compatible, the self-hoster's own (`backend.hcl`) | — |
+| `cp-hetzner` | The hosted control-plane box (prod) | **GitHub OIDC** (`alethia-cp-deployer`); Hetzner + Cloudflare tokens from AWS Secrets Manager | `…270587882865` · `hetzner/` | — |
+| `cp-aws` / `cp-gcp` / `cp-azure` / `cp-alibaba` | Self-host options: the control-plane box on another cloud. Not deployment targets of ours | **None** — CI is validate-only (no backend, no secrets); a self-hoster applies it locally | S3-compatible, the self-hoster's own (`backend.hcl`) | — |
 | `status/` | `status.alethialabs.io` Gatus VPS (Hetzner) | Static keys (CI secrets) | S3-compatible `terraform-state` · `status/` | — |
 
 ### The e2e federation stacks
