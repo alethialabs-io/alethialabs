@@ -32,6 +32,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
+	"github.com/alethialabs-io/alethialabs/packages/core/git"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/selfimage"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -1640,18 +1641,19 @@ func TestProv_WriteAddOnGitOpsReportsEveryFailureMode(t *testing.T) {
 		}
 	})
 
-	t.Run("no git identity to commit with", func(t *testing.T) {
+	t.Run("no git identity commits as the fallback identity", func(t *testing.T) {
 		bare := newBareAppsRepo(t, nil)
 		vc := &types.ProjectConfig{AddOns: []types.AddOnInstall{provGitopsAddOn("grafana")}}
 		vc.Repositories.AppsDestinationRepo = "file://" + bare
-		// newBareAppsRepo installed a HOME holding a .gitconfig; take it away so the commit
-		// cannot resolve an author. CI has no global identity either — this is that case.
+		// newBareAppsRepo installed a HOME holding a .gitconfig; take it away. The runner
+		// container and CI have no global identity either — this is that case, and it used to
+		// fail every add-on write there.
 		t.Setenv("HOME", t.TempDir())
 
-		_, err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard)
-		if err == nil || !strings.Contains(err.Error(), "commit add-on manifests") {
-			t.Fatalf("want the commit failure named, got: %v", err)
+		if _, err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard); err != nil {
+			t.Fatalf("writeAddOnGitOps with no git identity: %v", err)
 		}
+		provAssertFallbackAuthor(t, bare)
 	})
 }
 
@@ -1785,17 +1787,17 @@ func TestProv_GenerateAppManifestsReportsEveryRepoFailure(t *testing.T) {
 		}
 	})
 
-	t.Run("no git identity to commit with", func(t *testing.T) {
+	t.Run("no git identity commits as the fallback identity", func(t *testing.T) {
 		bare := newBareAppsRepo(t, nil)
 		vc := provAppsRepoConfig(bare, imageService("web", "nginx:1.27"))
-		// Take the fixture's .gitconfig away: go-git then cannot resolve an author. CI has no
-		// global identity either — this is that case.
+		// Take the fixture's .gitconfig away. The runner container has none either: this is the
+		// case that silently skipped the scaffold in a real deploy (e2e run 43592824666).
 		t.Setenv("HOME", t.TempDir())
 
-		_, _, err := generateAppManifests(context.Background(), vc, nil, "tok", nil, io.Discard, io.Discard)
-		if err == nil || !strings.Contains(err.Error(), "commit generated manifests") {
-			t.Fatalf("want the commit failure named, got: %v", err)
+		if _, _, err := generateAppManifests(context.Background(), vc, nil, "tok", nil, io.Discard, io.Discard); err != nil {
+			t.Fatalf("generateAppManifests with no git identity: %v", err)
 		}
+		provAssertFallbackAuthor(t, bare)
 	})
 
 	t.Run("the apps repo cannot be pushed to", func(t *testing.T) {
@@ -2550,5 +2552,21 @@ func TestProv_PrepareByoChartsRefusesAnInvalidNamespace(t *testing.T) {
 	// destination.
 	if got := vc.AddOns[0].Project; got != "byo-acme-corp" {
 		t.Errorf("AddOns[0].Project = %q, want it pinned to the hardened project so nothing syncs", got)
+	}
+}
+
+// provAssertFallbackAuthor asserts the bare repo's HEAD commit is authored as the fallback
+// identity — read with the git binary, independently of the go-git code under test.
+func provAssertFallbackAuthor(t *testing.T, bare string) {
+	t.Helper()
+	cmd := exec.Command("git", "--git-dir", bare, "log", "-1", "--format=%an <%ae>")
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git log on the bare repo: %v", err)
+	}
+	want := git.FallbackAuthorName + " <" + git.FallbackAuthorEmail + ">"
+	if got := strings.TrimSpace(string(out)); got != want {
+		t.Fatalf("HEAD author = %q, want %q", got, want)
 	}
 }
