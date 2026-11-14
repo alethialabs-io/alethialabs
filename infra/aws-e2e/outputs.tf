@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Two of these become repo VARIABLES at the cutover (README step 6). Neither is a secret.
+# Two of these become repo VARIABLES at the cutover (README step 6), and spend_reporter_role_arn
+# becomes SPEND_REPORTER_E2E_ROLE_ARN. None is a secret.
 
 output "e2e_nightly_role_arn" {
   description = "The NEW value of the repo variable E2E_AWS_ROLE_ARN. Flipping it moves every AWS e2e workflow (e2e-nightly, e2e-orphan-reaper, catalog-drift, byo-users-managed-mysql) into this account."
@@ -16,6 +17,11 @@ output "e2e_dns_zone_id" {
 output "e2e_dns_zone_name_servers" {
   description = "Paste these four into Cloudflare as the NS record set for the e2e zone name (README step 5). Verify with: dig +short NS <zone> @1.1.1.1"
   value       = aws_route53_zone.e2e.name_servers
+}
+
+output "spend_reporter_role_arn" {
+  description = "Set as the repo variable SPEND_REPORTER_E2E_ROLE_ARN (spend-report.yml reads this account's Cost Explorer and leak list through it)."
+  value       = aws_iam_role.spend_reporter.arn
 }
 
 output "github_oidc_provider_arn" {

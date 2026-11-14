@@ -22,18 +22,28 @@ Resend key is read from AWS Secrets Manager `alethia/prod/env`. No GitHub secret
 | **not readable — reason** | That cloud could not be read this week. The reason names the variable or the refusal. The run still succeeds. |
 | **Red flags** | A cloud whose 7-day EUR spend is over its threshold, or any leaked resource. A cloud with only an MTD figure is held to `MTD × 7 / days elapsed`, and the flag says so. |
 | **Top 10 line items** | The largest services or resources across all clouds, in EUR, each labelled with its basis (7 days, month to date, est. 7 days). |
-| **Leak list** | Resources that still exist and carry an e2e handle: `alethia:project-id=e2e-*`, or `alethia:e2e-run=e2e-<run>-<attempt>` (`alethia_*` labels on Hetzner). This is the selector the sweepers use (`scripts/e2e/lib/scope-key.sh`), and a test fails if the two drift apart. AWS is scanned in `SPEND_AWS_LEAK_REGIONS`. Hetzner is scanned across the whole project. Azure, GCP and Alibaba are **not** scanned. If no cloud could be scanned, the leak list says "not known". It never says "none found" in that case. |
+| **Leak list** | Resources that still exist and carry an e2e handle: `alethia:project-id=e2e-*`, or `alethia:e2e-run=e2e-<run>-<attempt>` (`alethia_*` labels on Hetzner). This is the selector the sweepers use (`scripts/e2e/lib/scope-key.sh`), and a test fails if the two drift apart. AWS is scanned in `SPEND_AWS_LEAK_REGIONS`, in **each** AWS account, and each account gets its own "scanned" line. Hetzner is scanned across the whole project. Azure, GCP and Alibaba are **not** scanned. If no cloud could be scanned, the leak list says "not known". It never says "none found" in that case. |
 
 Per cloud:
 
-- **AWS**: Cost Explorer `GetCostAndUsage`, `UnblendedCost`. One daily query grouped by `SERVICE`,
-  and one 7-day query for each tag key in `SPEND_AWS_TAG_KEYS` (default `alethia:project-id`,
-  `alethia:environment-id`, `alethia:e2e-run`). A tag breakdown is useful only after the tag is
-  **activated** as a cost-allocation tag in Billing. Until then every cost shows as `(untagged)`,
-  and the email says so. AWS bills each Cost Explorer request at USD 0.01, so the defaults cost
-  4 requests (USD 0.04) a week. Set `SPEND_AWS_GROUP_BY_LINKED_ACCOUNT=true` once the account is an
-  Organization's **payer**. The same role then also reports spend per member account. On a
-  standalone account that breakdown has one row.
+- **AWS**: two accounts, summed into one AWS line. The **platform** account (270587882865) is read
+  as `alethia-spend-reporter` from `infra/aws-oidc`. The **e2e** account (`alethia-e2e`,
+  556074788436) is read as `alethia-spend-reporter` from `infra/aws-e2e`. Both are member accounts,
+  and a member account's Cost Explorer shows only its own spend. So each account needs its own
+  reader. Under the AWS line, "Last 7 days by account" shows the split, and every service and
+  breakdown is labelled with its account. If one account cannot be read, the AWS line shows the
+  other account only. The first note under it says which account is missing and why. The AWS
+  threshold applies to the **sum**.
+  Per account: Cost Explorer `GetCostAndUsage`, `UnblendedCost`. One daily query grouped by
+  `SERVICE`, and one 7-day query for each tag key in `SPEND_AWS_TAG_KEYS` (default
+  `alethia:project-id`, `alethia:environment-id`, `alethia:e2e-run`). A tag breakdown is useful only
+  after the tag is **activated** as a cost-allocation tag in Billing, in that account. Until then
+  every cost shows as `(untagged)`, and the email says so. AWS bills each Cost Explorer request at
+  USD 0.01, so the defaults cost 4 requests per account: 8 requests (USD 0.08) a week. The
+  organization's consolidated bill would show both accounts in one query, but it is read from the
+  management account, which this repository does not grant from.
+  `SPEND_AWS_GROUP_BY_LINKED_ACCOUNT=true` is meaningful only on an Organization's **payer**
+  account. On a member account that breakdown has one row.
 - **Azure**: the Cost Management query API (`ActualCost`, daily, by `ServiceName`), scoped to the e2e
   subscription.
 - **GCP**: the Budget API stores a budget's **amount** but not its spend. Spend appears only in the
@@ -80,6 +90,13 @@ cd infra/aws-oidc && tofu init -backend-config=backend.hcl && \
   tofu apply -target=aws_iam_role.spend_reporter -target=aws_iam_role_policy.spend_reporter
 gh variable set SPEND_REPORTER_ROLE_ARN -b "$(tofu output -raw spend_reporter_role_arn)"
 
+# 2b. AWS e2e account: its own alethia-spend-reporter (infra/aws-e2e/spend-reporter.tf). Adds 2
+#     resources in 556074788436. Federation only, no secret read, under /alethia-e2e/ so the nightly
+#     role's boundary forbids it to edit the role.
+cd infra/aws-e2e && AWS_PROFILE=alethia-sso tofu init -backend-config=backend.hcl && \
+  AWS_PROFILE=alethia-sso tofu apply -target=aws_iam_role.spend_reporter -target=aws_iam_role_policy.spend_reporter
+gh variable set SPEND_REPORTER_E2E_ROLE_ARN -b "$(AWS_PROFILE=alethia-sso tofu output -raw spend_reporter_role_arn)"
+
 # 3. Azure: a separate Cost-Management-Reader app (infra/azure-e2e/spend-reporter.tf). Adds 4 resources.
 cd infra/azure-e2e && tofu init -backend-config=backend.hcl && \
   tofu apply -var "subscription_id=<e2e subscription>" \
@@ -101,8 +118,8 @@ gh variable set SPEND_GCP_BUDGET_SUBSCRIPTION -b "$(tofu output -raw spend_repor
 gh variable set SPEND_GCP_BILLING_ACCOUNT     -b "<XXXXXX-XXXXXX-XXXXXX>"
 ```
 
-Each stack still needs the inputs its own README requires. `infra/aws-oidc` and `infra/azure-e2e`
-need `e2e_budget_alert_emails`, which goes in their gitignored `emails.auto.tfvars`. `infra/github`
+Each stack still needs the inputs its own README requires. `infra/aws-oidc`, `infra/aws-e2e` and
+`infra/azure-e2e` need `e2e_budget_alert_emails`, which goes in their gitignored `emails.auto.tfvars`. `infra/github`
 needs `github_token` (`TF_VAR_github_token`).
 
 The applies use `-target` on purpose. The committed `terraform.tfvars` of `azure-e2e` and `gcp-e2e`
@@ -116,7 +133,8 @@ same `-target`s first. The plan should only **add** resources.
 |---|---|---|
 | `SPEND_REPORT_TO` | `borislav@alethialabs.io` | The recipient. |
 | `SPEND_REPORT_THRESHOLDS_EUR` | `{"aws":30,"azure":15,"gcp":15,"hetzner":30,"alibaba":10}` | Red-flag limits, **EUR per 7 days**, as JSON. Name only the clouds you want to change, for example `{"aws":50}`. A malformed value falls back to the defaults, and the email says so. |
-| `SPEND_REPORTER_ROLE_ARN` | — | Output of step 2. Without it, AWS is not readable **and the email cannot be sent**: the Resend key is in AWS. |
+| `SPEND_REPORTER_ROLE_ARN` | — | Output of step 2. Without it, the platform account is not readable **and the email cannot be sent**: the Resend key is in AWS. |
+| `SPEND_REPORTER_E2E_ROLE_ARN` | — | Output of step 2b (`arn:aws:iam::556074788436:role/alethia-e2e/alethia-spend-reporter`). Without it, the AWS line covers the platform account only and says so. The workflow refuses credentials for any other account (`allowed-account-ids`). |
 | `SPEND_AWS_TAG_KEYS` | `alethia:project-id,alethia:environment-id,alethia:e2e-run` | Cost-allocation tags to break AWS spend down by. |
 | `SPEND_AWS_GROUP_BY_LINKED_ACCOUNT` | `false` | `true` on an Organization payer account. |
 | `SPEND_AWS_LEAK_REGIONS` | `us-east-1` | Regions the AWS leak scan reads (the tagging API is regional; `us-east-1` is `e2e_region`). |

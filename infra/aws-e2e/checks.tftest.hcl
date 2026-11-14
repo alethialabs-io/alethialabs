@@ -127,6 +127,38 @@ run "committed_posture_plans_the_same_trust_in_the_new_account" {
   }
 }
 
+run "the_spend_reporter_is_a_narrow_reader_in_the_e2e_account" {
+  command = plan
+
+  assert {
+    condition     = aws_iam_role.spend_reporter.name == "alethia-spend-reporter" && aws_iam_role.spend_reporter.path == "/alethia-e2e/"
+    error_message = "the e2e reporter must be alethia-spend-reporter under /alethia-e2e/ (the path is what the boundary's DenyTamperWithGuardrails protects)."
+  }
+  assert {
+    condition = alltrue([
+      strcontains(aws_iam_role.spend_reporter.assume_role_policy, "repo:alethialabs-io/alethialabs:environment:spend-report"),
+      strcontains(aws_iam_role.spend_reporter.assume_role_policy, "arn:aws:iam::556074788436:oidc-provider/token.actions.githubusercontent.com"),
+      !strcontains(aws_iam_role.spend_reporter.assume_role_policy, "ref:refs/heads"),
+      !strcontains(aws_iam_role.spend_reporter.assume_role_policy, "e2e-dev"),
+      !strcontains(aws_iam_role.spend_reporter.assume_role_policy, "270587882865"),
+    ])
+    error_message = "the e2e reporter must trust ONLY the spend-report environment subject, through the e2e account's own GitHub provider."
+  }
+  assert {
+    condition = alltrue([
+      strcontains(aws_iam_role_policy.spend_reporter.policy, "ce:GetCostAndUsage"),
+      strcontains(aws_iam_role_policy.spend_reporter.policy, "tag:GetResources"),
+      !strcontains(aws_iam_role_policy.spend_reporter.policy, "secretsmanager"),
+      !strcontains(aws_iam_role_policy.spend_reporter.policy, "tag:TagResources"),
+    ])
+    error_message = "the e2e reporter reads Cost Explorer and the tagging API, and nothing else - no secret, no tag write."
+  }
+  assert {
+    condition     = !strcontains(aws_iam_role.e2e_nightly.assume_role_policy, "environment:spend-report")
+    error_message = "the spend-report subject must not reach the nightly role."
+  }
+}
+
 run "broker_unset_plans_no_broker_trust" {
   command = plan
   variables {
@@ -156,11 +188,13 @@ run "the_prod_account_as_the_e2e_account_is_refused" {
       account_id = "270587882865"
     }
   }
-  # The precondition is the refusal under test. The three ARN checks fire too, and correctly: the
+  # The two preconditions (the nightly role's and the spend reporter's) are the refusal under test.
+  # The three ARN checks fire too, and correctly: the
   # file-level overrides pin the providers and the topic to the e2e account, so every ARN built from
   # the (wrong) e2e_account_id disagrees with them.
   expect_failures = [
     aws_iam_role.e2e_nightly,
+    aws_iam_role.spend_reporter,
     check.e2e_account_is_the_dedicated_one,
     check.github_oidc_provider_arn_matches,
     check.e2e_broker_provider_arn_matches,
@@ -201,6 +235,14 @@ run "a_wildcard_environment_is_refused" {
     e2e_github_environment = "e2e-*"
   }
   expect_failures = [var.e2e_github_environment]
+}
+
+run "a_wildcard_spend_report_environment_is_refused" {
+  command = plan
+  variables {
+    spend_reporter_environment = "spend-*"
+  }
+  expect_failures = [var.spend_reporter_environment]
 }
 
 run "an_issuer_with_a_path_is_refused" {

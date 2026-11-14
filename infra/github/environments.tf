@@ -90,9 +90,10 @@ resource "github_repository_environment_deployment_policy" "cli_release_tags" {
 }
 
 # The `spend-report` environment is the weekly spend report's credential scope
-# (.github/workflows/spend-report.yml). Three identities trust ITS subject and nothing else:
+# (.github/workflows/spend-report.yml). Four identities trust ITS subject and nothing else:
 # `alethia-spend-reporter` (infra/aws-oidc/spend-reporter.tf — Cost Explorer, the tagging API, and a
-# READ of the prod secret for the Resend key), the Azure Cost Management Reader SP
+# READ of the prod secret for the Resend key), its e2e-account twin (infra/aws-e2e/spend-reporter.tf —
+# Cost Explorer and the tagging API only), the Azure Cost Management Reader SP
 # (infra/azure-e2e/spend-reporter.tf) and the GCP billing-viewer SA (infra/gcp-e2e/spend-reporter.tf).
 #
 # A dedicated environment rather than `production`, because `production` is trusted by every deploy

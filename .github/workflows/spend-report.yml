@@ -12,8 +12,8 @@
 # job summary BEFORE the send, so a red run still shows the numbers.
 #
 # ONE ENVIRONMENT, AND IT IS THE TRUST. The job selects `spend-report`, so every OIDC token it mints
-# carries sub `repo:<repo>:environment:spend-report`. The three new identities trust exactly that
-# subject (infra/aws-oidc, infra/azure-e2e, infra/gcp-e2e — all `spend-reporter.tf`), and
+# carries sub `repo:<repo>:environment:spend-report`. The four new identities trust exactly that
+# subject (infra/aws-oidc, infra/aws-e2e, infra/azure-e2e, infra/gcp-e2e — all `spend-reporter.tf`), and
 # infra/github/environments.tf restricts the environment to `main`. No existing e2e identity is
 # widened: the Alibaba e2e role does not trust this subject, which is why Alibaba reports "not
 # readable" until somebody decides it should.
@@ -55,7 +55,28 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # ── AWS: Cost Explorer + the tagging API + the vault (the Resend key) ──
+      # ── AWS, the dedicated e2e account: Cost Explorer + the tagging API, nothing else ──
+      # A member account's Cost Explorer sees only that account, so the e2e account's spend needs its
+      # own reader (infra/aws-e2e/spend-reporter.tf). Written to the named profile `spend-e2e`, NOT
+      # exported: a second set of exported credentials would overwrite the platform account's, which
+      # the vault read below needs. The script reads it with `--profile spend-e2e`.
+      # FIRST, and with translate-env-variables off, so the platform step's exported AWS_* variables
+      # can never be taken as this step's base credentials (it must federate on its own OIDC token).
+      - name: Configure AWS credentials, e2e account (OIDC)
+        id: aws_e2e
+        if: vars.SPEND_REPORTER_E2E_ROLE_ARN != ''
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.SPEND_REPORTER_E2E_ROLE_ARN }}
+          aws-region: us-east-1
+          aws-profile: spend-e2e
+          translate-env-variables: false
+          # The alethia-e2e account (infra/aws-e2e/terraform.tfvars). A role ARN pointing anywhere
+          # else fails here instead of reporting some other account's spend as e2e spend.
+          allowed-account-ids: "556074788436"
+
+      # ── AWS, the platform account: Cost Explorer + the tagging API + the vault (the Resend key) ──
       - name: Configure AWS credentials (OIDC)
         id: aws
         if: vars.SPEND_REPORTER_ROLE_ARN != ''
@@ -109,6 +130,9 @@ jobs:
           # Each cloud's readiness is its credential step's OUTCOME, and its reason names the fix.
           AWS_READY: ${{ steps.aws.outcome == 'success' }}
           AWS_REASON: ${{ vars.SPEND_REPORTER_ROLE_ARN == '' && 'SPEND_REPORTER_ROLE_ARN is unset (apply infra/aws-oidc, then set the variable)' || 'assuming SPEND_REPORTER_ROLE_ARN via OIDC failed - see the Configure AWS credentials step' }}
+          AWS_E2E_READY: ${{ steps.aws_e2e.outcome == 'success' }}
+          AWS_E2E_PROFILE: spend-e2e
+          AWS_E2E_REASON: ${{ vars.SPEND_REPORTER_E2E_ROLE_ARN == '' && 'SPEND_REPORTER_E2E_ROLE_ARN is unset (apply infra/aws-e2e, then set the variable)' || 'assuming SPEND_REPORTER_E2E_ROLE_ARN via OIDC failed - see the Configure AWS credentials, e2e account step' }}
           SPEND_AWS_TAG_KEYS: ${{ vars.SPEND_AWS_TAG_KEYS }}
           SPEND_AWS_GROUP_BY_LINKED_ACCOUNT: ${{ vars.SPEND_AWS_GROUP_BY_LINKED_ACCOUNT }}
           SPEND_AWS_LEAK_REGIONS: ${{ vars.SPEND_AWS_LEAK_REGIONS }}

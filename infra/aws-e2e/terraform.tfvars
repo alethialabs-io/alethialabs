@@ -17,6 +17,10 @@ e2e_github_branch = "main"
 # The nightly job pins `environment: e2e-dev` (branch-restricted to `dev`). Same as infra/aws-oidc.
 e2e_github_environment = "e2e-dev"
 
+# The weekly spend report's environment (branch-restricted to `main`). Same as infra/aws-oidc's
+# spend_reporter_environment: both reporters trust the one subject the report's job presents.
+spend_reporter_environment = "spend-report"
+
 # Same ceiling as the live infra/aws-oidc budget. It now covers the whole e2e account.
 e2e_monthly_budget_usd = 50
 

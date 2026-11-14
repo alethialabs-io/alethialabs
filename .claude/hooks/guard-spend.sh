@@ -115,7 +115,7 @@ REAP_PLIST="$HOME/Library/LaunchAgents/io.alethialabs.sandbox-reap.plist"
 # workflow_dispatch one, but `gh run rerun` can re-run any of them. --self-test checks both
 # directions (an unclassified workflow, and an entry naming no file).
 #   free     costs nothing worth metering (CI minutes on the repo's own runners)
-#            (spend-report.yml: read-only cost APIs — 4 Cost Explorer requests at USD 0.01 each — and one email)
+#            (spend-report.yml: read-only cost APIs — 4 Cost Explorer requests per AWS account, two accounts, at USD 0.01 each — and one email)
 #   prod     ships or changes production — refused (R-PROD)
 #   nightly  priced from its inputs (C-NIGHTLY)
 #   ai       C-AI
