@@ -115,6 +115,7 @@ REAP_PLIST="$HOME/Library/LaunchAgents/io.alethialabs.sandbox-reap.plist"
 # workflow_dispatch one, but `gh run rerun` can re-run any of them. --self-test checks both
 # directions (an unclassified workflow, and an entry naming no file).
 #   free     costs nothing worth metering (CI minutes on the repo's own runners)
+#            (spend-report.yml: read-only cost APIs — 4 Cost Explorer requests at USD 0.01 each — and one email)
 #   prod     ships or changes production — refused (R-PROD)
 #   nightly  priced from its inputs (C-NIGHTLY)
 #   ai       C-AI
@@ -125,7 +126,8 @@ wf_class() {
 		merge-signal-health.yml | addon-render-determinism.yml | catalog-drift.yml | compat-drift.yml | \
 		posthog-error-issues.yml | gate-fixme-currency.yml | template-proof-currency.yml | programme.yml | \
 		go-floors-rerecord.yml | e2e-issuer-health.yml | e2e-orphan-reaper.yml | hcloud-zone-probe.yml | \
-		branch-flow-guard.yml | capabilities-security.yml | cla.yml | close-on-dev-merge.yml | byo-admission-kind.yml)
+		branch-flow-guard.yml | capabilities-security.yml | cla.yml | close-on-dev-merge.yml | byo-admission-kind.yml | \
+		spend-report.yml)
 		echo free
 		;;
 	deploy-*.yml | release-cli.yml | release-runner.yml | release-please.yml | publish-cli-release-metadata.yml | \

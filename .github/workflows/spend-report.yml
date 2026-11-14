@@ -1,0 +1,130 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# WEEKLY CLOUD SPEND — one email, Monday 07:00 UTC, to vars.SPEND_REPORT_TO (default
+# borislav@alethialabs.io). What it reads, what each line means and the applies it needs are in
+# scripts/spend-report/README.md.
+#
+# THE FAILURE CONTRACT. Every cloud degrades: a missing variable, a refused OIDC exchange or a 403
+# becomes "<Cloud>: not readable — <reason>" in the email, and the run carries on. Each credential
+# step is therefore `continue-on-error`, and its OUTCOME (not its success) is handed to the script.
+# The run goes red for exactly one thing: the email could not be sent. The report is written to the
+# job summary BEFORE the send, so a red run still shows the numbers.
+#
+# ONE ENVIRONMENT, AND IT IS THE TRUST. The job selects `spend-report`, so every OIDC token it mints
+# carries sub `repo:<repo>:environment:spend-report`. The three new identities trust exactly that
+# subject (infra/aws-oidc, infra/azure-e2e, infra/gcp-e2e — all `spend-reporter.tf`), and
+# infra/github/environments.tf restricts the environment to `main`. No existing e2e identity is
+# widened: the Alibaba e2e role does not trust this subject, which is why Alibaba reports "not
+# readable" until somebody decides it should.
+#
+# id-token: write is safe here for the reason scripts/check-workflow-oidc-isolation.mjs enforces:
+# this workflow triggers ONLY on `schedule` / `workflow_dispatch`, never on a pull request.
+
+name: Weekly spend report
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build the report and write it to the job summary, but do not send the email."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spend-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Build + send the weekly spend email
+    runs-on: ubuntu-latest
+    # The environment's branch policy is what pins the trust to main (see the header); this `if` makes
+    # a dispatch from another branch a clean skip instead of a refused deployment.
+    if: github.ref == 'refs/heads/main'
+    environment: spend-report
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # ── AWS: Cost Explorer + the tagging API + the vault (the Resend key) ──
+      - name: Configure AWS credentials (OIDC)
+        id: aws
+        if: vars.SPEND_REPORTER_ROLE_ARN != ''
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.SPEND_REPORTER_ROLE_ARN }}
+          # Cost Explorer's endpoint is us-east-1; the vault region is passed per call.
+          aws-region: us-east-1
+
+      # ── Azure: Cost Management Reader on the e2e subscription ──
+      - name: Configure Azure credentials (OIDC)
+        id: azure
+        if: vars.SPEND_AZURE_CLIENT_ID != '' && vars.E2E_AZURE_TENANT_ID != '' && vars.E2E_AZURE_SUBSCRIPTION_ID != ''
+        continue-on-error: true
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.SPEND_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.E2E_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.E2E_AZURE_SUBSCRIPTION_ID }}
+
+      # ── GCP: billing viewer + the budget-notification subscription ──
+      - name: Configure GCP credentials (WIF)
+        id: gcp
+        if: vars.E2E_GCP_WIF_PROVIDER != '' && vars.SPEND_GCP_SA_EMAIL != ''
+        continue-on-error: true
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.E2E_GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.SPEND_GCP_SA_EMAIL }}
+          token_format: access_token
+          create_credentials_file: false
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install the report's dependencies only
+        run: pnpm install --frozen-lockfile --filter @repo/spend-report...
+
+      - name: Build and send the report
+        env:
+          # @repo/email swallows a failed send unless NODE_ENV=production (src/main.ts asserts it).
+          NODE_ENV: production
+          SPEND_REPORT_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
+          SPEND_REPORT_TO: ${{ vars.SPEND_REPORT_TO }}
+          SPEND_REPORT_THRESHOLDS_EUR: ${{ vars.SPEND_REPORT_THRESHOLDS_EUR }}
+          # Each cloud's readiness is its credential step's OUTCOME, and its reason names the fix.
+          AWS_READY: ${{ steps.aws.outcome == 'success' }}
+          AWS_REASON: ${{ vars.SPEND_REPORTER_ROLE_ARN == '' && 'SPEND_REPORTER_ROLE_ARN is unset (apply infra/aws-oidc, then set the variable)' || 'assuming SPEND_REPORTER_ROLE_ARN via OIDC failed - see the Configure AWS credentials step' }}
+          SPEND_AWS_TAG_KEYS: ${{ vars.SPEND_AWS_TAG_KEYS }}
+          SPEND_AWS_GROUP_BY_LINKED_ACCOUNT: ${{ vars.SPEND_AWS_GROUP_BY_LINKED_ACCOUNT }}
+          SPEND_AWS_LEAK_REGIONS: ${{ vars.SPEND_AWS_LEAK_REGIONS }}
+          ASM_SECRET_ID: alethia/prod/env
+          ASM_REGION: eu-central-1
+          AZURE_READY: ${{ steps.azure.outcome == 'success' }}
+          AZURE_REASON: ${{ vars.SPEND_AZURE_CLIENT_ID == '' && 'SPEND_AZURE_CLIENT_ID is unset (apply infra/azure-e2e, then set the variable)' || 'azure/login with SPEND_AZURE_CLIENT_ID failed - see the Configure Azure credentials step' }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.E2E_AZURE_SUBSCRIPTION_ID }}
+          GCP_ACCESS_TOKEN: ${{ steps.gcp.outputs.access_token }}
+          GCP_REASON: ${{ vars.SPEND_GCP_SA_EMAIL == '' && 'SPEND_GCP_SA_EMAIL is unset (apply infra/gcp-e2e, then set the variable)' || 'federating into SPEND_GCP_SA_EMAIL failed - see the Configure GCP credentials step' }}
+          SPEND_GCP_BILLING_ACCOUNT: ${{ vars.SPEND_GCP_BILLING_ACCOUNT }}
+          SPEND_GCP_BUDGET_SUBSCRIPTION: ${{ vars.SPEND_GCP_BUDGET_SUBSCRIPTION }}
+          # The e2e Hetzner project's token — the same repo secret e2e-nightly.yml uses. Read-only here
+          # (GET /pricing and the list endpoints).
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          E2E_ALIBABA_ROLE_ARN: ${{ vars.E2E_ALIBABA_ROLE_ARN }}
+          E2E_ALIBABA_OIDC_PROVIDER_ARN: ${{ vars.E2E_ALIBABA_OIDC_PROVIDER_ARN }}
+          SPEND_ALIBABA_BSS_ENDPOINT: ${{ vars.SPEND_ALIBABA_BSS_ENDPOINT }}
+        run: pnpm -C scripts/spend-report run start

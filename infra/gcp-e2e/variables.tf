@@ -189,3 +189,15 @@ variable "broker_provider_id" {
   type        = string
   default     = "alethia-e2e-broker-oidc"
 }
+
+# ── Weekly spend report ──────────────────────────────────────────────────────
+variable "spend_reporter_github_environment" {
+  description = "GitHub Actions environment the weekly spend report job selects (spend-report.yml). The spend-reporter SA's WIF binding names EXACTLY the subject repo:<repo>:environment:<this>. The environment must be branch-restricted to main (infra/github/environments.tf). Changes no provider or pool condition."
+  type        = string
+  default     = "spend-report"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+$", var.spend_reporter_github_environment))
+    error_message = "spend_reporter_github_environment must be a plain environment name (no '*', ':' or spaces)."
+  }
+}

@@ -42,6 +42,10 @@ resource "google_project_service" "apis" {
     "storage.googleapis.com",
     # Cost guard
     "billingbudgets.googleapis.com",
+    # The weekly spend report reads the billing account's open/closed state (cloudbilling) as well
+    # as its budgets (billingbudgets). Calls made with the spend reporter's token bill quota to this
+    # project, so the API must be on HERE. Additive: adding a key to this set changes no other one.
+    "cloudbilling.googleapis.com",
     # GKE application-layer Secrets encryption (#2092). Missing here is what made the first
     # post-promotion nightly fail at `google_kms_key_ring.gke_secrets` with a 403 SERVICE_DISABLED
     # (run 31356854945, #2262) — the code was correct and had simply never been applied for real.

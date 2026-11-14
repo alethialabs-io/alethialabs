@@ -36,3 +36,9 @@ output "e2e_broker_credential_id" {
   description = "The federated identity credential trusting the E2E assertion broker, or null while e2e_broker_issuer_url is unset. A broker assertion is exchanged for the SAME application (e2e_azure_client_id)."
   value       = one(azuread_application_federated_identity_credential.e2e_broker[*].credential_id)
 }
+
+# ── Weekly spend report ───────────────────────────────────────────────────────
+output "spend_reporter_client_id" {
+  description = "Set as the repo Actions VARIABLE SPEND_AZURE_CLIENT_ID (the Cost Management Reader application spend-report.yml federates into). Tenant + subscription reuse E2E_AZURE_TENANT_ID / E2E_AZURE_SUBSCRIPTION_ID."
+  value       = azuread_application.spend_reporter.client_id
+}

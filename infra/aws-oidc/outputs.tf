@@ -16,6 +16,11 @@ output "deploy_reader_role_arn" {
   value       = aws_iam_role.deploy_reader.arn
 }
 
+output "spend_reporter_role_arn" {
+  description = "Set as the repo Actions variable SPEND_REPORTER_ROLE_ARN (used by spend-report.yml)."
+  value       = aws_iam_role.spend_reporter.arn
+}
+
 output "prod_env_secret_arn" {
   description = "ARN of the alethia/prod/env Secrets Manager secret."
   value       = aws_secretsmanager_secret.prod_env.arn

@@ -1,6 +1,9 @@
 packages:
   - "apps/*"
   - "packages/*"
+  # The weekly spend report (.github/workflows/spend-report.yml). A workspace member so it can import
+  # @repo/email rather than re-implement the Resend send.
+  - "scripts/spend-report"
   # Enterprise edition (commercial license). Optional: the community build omits it;
   # apps/console loads it at runtime via createRequire when present.
   - "ee"

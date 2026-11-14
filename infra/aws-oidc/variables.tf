@@ -45,6 +45,17 @@ variable "cli_release_environment" {
   default     = "cli-release"
 }
 
+variable "spend_reporter_environment" {
+  description = "GitHub Actions environment the weekly spend report job (spend-report.yml) selects. alethia-spend-reporter trusts the exact `repo:<repo>:environment:<this>` sub and nothing else. The environment MUST be restricted to `main` (infra/github/environments.tf) before this role exists - an unrestricted environment is selectable from any branch."
+  type        = string
+  default     = "spend-report"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+$", var.spend_reporter_environment))
+    error_message = "spend_reporter_environment must be a plain environment name (no '*', ':' or spaces) - it is interpolated into an exact OIDC subject."
+  }
+}
+
 variable "oidc_provider_arn" {
   description = "ARN of the existing GitHub OIDC provider. Empty = look it up by URL (it already exists from infra/email-ses/bootstrap)."
   type        = string

@@ -105,3 +105,14 @@ variable "e2e_broker_issuer_url" {
     error_message = "e2e_broker_issuer_url must be null or a bare lowercase https origin (no path, port or trailing slash) that is not the GitHub Actions issuer."
   }
 }
+
+variable "spend_reporter_github_environment" {
+  description = "GitHub Actions environment the weekly spend report job selects (spend-report.yml). The spend-reporter application trusts EXACTLY repo:<repo>:environment:<this>. The environment must be branch-restricted to main (infra/github/environments.tf)."
+  type        = string
+  default     = "spend-report"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+$", var.spend_reporter_github_environment))
+    error_message = "spend_reporter_github_environment must be a plain environment name (no '*', ':' or spaces)."
+  }
+}
