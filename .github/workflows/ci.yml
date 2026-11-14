@@ -2276,6 +2276,12 @@ jobs:
         run: |
           node scripts/check-tfvars-safety.mjs --self-test
           node scripts/check-tfvars-safety.mjs
+      # The production deploy's email-transport gate (deploy-console.yml preflight + the deploy
+      # script) runs only on `main`, against the live vault, so nothing on a PR would ever see it
+      # refuse. The self-test runs it on fixtures and fails on any case whose exit code is wrong.
+      - name: The deploy's email-transport gate refuses what it should (self-test)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/ci/check-email-provider-keys.sh --self-test
       # The E2E issuer origin has a committed copy in every place the script's PATHS lists — infra/e2e-issuer's
       # hostname, its tls-ca-pin.json, and e2e_broker_issuer_url in each trust stack (aws-oidc, aws-e2e,
       # gcp-e2e, azure-e2e, alibaba-e2e) — and four clouds pin it byte for byte (#4226). Here in the always-run guards job, not behind a path

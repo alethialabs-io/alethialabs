@@ -1,0 +1,12 @@
+# AWS-native S3 backend for the email-ses-account BOOTSTRAP. Copy to backend.hcl (gitignored):
+#
+#   cp backend.hcl.example backend.hcl
+#   AWS_PROFILE=alethia-sso tofu init -backend-config=backend.hcl
+#
+# The Alethia platform account's existing state bucket (the one infra/aws-oidc and infra/aws-e2e
+# use), under a NEW key, so nothing here can collide with another stack's state.
+
+bucket       = "alethia-tofu-state-270587882865"
+key          = "email-ses-account/bootstrap/terraform.tfstate"
+region       = "eu-central-1"
+use_lockfile = true

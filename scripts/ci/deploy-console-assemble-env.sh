@@ -49,7 +49,27 @@ SERVER_TYPE="$(val HCLOUD_SERVER_TYPE)"; SERVER_TYPE="${SERVER_TYPE:-cax21}"
 PUBLIC_PHONE="$(val ALETHIA_PUBLIC_PHONE)"
 [ -n "$PUBLIC_PHONE" ] || { echo "::error::ALETHIA_PUBLIC_PHONE is required for the production company-information surface."; exit 1; }
 RESEND_KEY="$(val RESEND_API_KEY)"
-[ -n "$RESEND_KEY" ] || { echo "::error::EMAIL_PROVIDER=resend requires RESEND_API_KEY."; exit 1; }
+# Required whichever transport is selected below: Resend is the default and the ROLLBACK from SES,
+# and a rollback that first needs the vault repaired is not one.
+[ -n "$RESEND_KEY" ] || { echo "::error::RESEND_API_KEY is required: Resend is the default transport and the rollback path from SES."; exit 1; }
+
+# The transport, chosen in the VAULT so switching to SES and back is a vault edit and a redeploy,
+# not a PR (infra/email-ses-account/README.md, steps 7 and 8). Unset means resend, which is what
+# this script pinned before. Hosted production accepts only these two; packages/email throws in
+# hosted mode for a named provider without credentials, but SES with only a region would fall back
+# to the AWS default chain, which the box does not have, and fail at the first send instead.
+#
+# The SES keys are refused here only when SES is selected, so they are NOT in
+# deploy/prod/required-vault-keys.txt (that list is unconditional). The preflight job runs the same
+# conditional check before any image is built: scripts/ci/check-email-provider-keys.sh.
+MAIL_PROVIDER="$(val EMAIL_PROVIDER)"; MAIL_PROVIDER="${MAIL_PROVIDER:-resend}"
+EMAIL_PROVIDER_JSON="$json" bash "$(dirname "$0")/check-email-provider-keys.sh"
+# The exact SNS topic(s) the console's SES webhook accepts (apps/console/lib/email/ses-events-topic.ts).
+# Not a secret. The default is the events topic infra/email-ses-account creates; its checks.tftest.hcl
+# pins the same literal. Emitted whichever transport is selected, so the webhook is ready before
+# the subscription exists.
+SES_TOPIC_ARNS="$(val ALETHIA_SES_EVENTS_TOPIC_ARNS)"
+SES_TOPIC_ARNS="${SES_TOPIC_ARNS:-arn:aws:sns:eu-central-1:604925221417:alethia-ses-events}"
 
 # Sender addresses — vault first, apex fallback. The fallback domain MUST be one the
 # provider has verified; a subdomain here is rejected at send time, long after this job
@@ -242,10 +262,18 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   # safe default-off (needs BOTH URL + token), same "stay dark when unset" semantics as STRIPE_PRICE_AI_*.
   emit ODOO_INVOICE_URL
   emit ODOO_INVOICE_TOKEN
-  # Transactional email: hosted production uses Resend while SES production
-  # access remains unavailable. Self-hosted deployments retain every adapter.
-  echo "EMAIL_PROVIDER=resend"
+  # Transactional email: the vault-selected transport (resend unless the vault says ses; validated
+  # above). Both transports' keys are emitted so the two stay one vault edit apart. The SES ones
+  # are the alethia-email account's (infra/email-ses-account); empty while unset, which the app
+  # ignores under EMAIL_PROVIDER=resend.
+  echo "EMAIL_PROVIDER=$MAIL_PROVIDER"
   emit RESEND_API_KEY
+  emit ALETHIA_SES_REGION
+  emit ALETHIA_SES_ACCESS_KEY_ID
+  emit ALETHIA_SES_SECRET_ACCESS_KEY
+  emit ALETHIA_SES_AUTH_CONFIG_SET
+  emit ALETHIA_SES_GENERAL_CONFIG_SET
+  echo "ALETHIA_SES_EVENTS_TOPIC_ARNS=$SES_TOPIC_ARNS"
   # Support: staff Slack ping on a new case/reply (lib/support/slack-notify.ts). Unset → no-op.
   emit SUPPORT_SLACK_WEBHOOK_URL
   # Admin staff dashboard @ admin.alethialabs.io (apps/admin): the Cloudflare-Access allowlist

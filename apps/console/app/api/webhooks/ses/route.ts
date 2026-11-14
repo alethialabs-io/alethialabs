@@ -9,8 +9,15 @@
 // notifications are harmless.
 //
 // Public endpoint: every message is signature-verified before we act, and we
-// only accept messages from our own events topic.
+// only accept messages from the exact topic ARNs the operator configured in
+// ALETHIA_SES_EVENTS_TOPIC_ARNS (lib/email/ses-events-topic). With none
+// configured the route refuses everything.
 
+import {
+	allowedSesEventsTopicArns,
+	isAllowedSesEventsTopic,
+	SES_EVENTS_TOPIC_ARNS_ENV,
+} from "@/lib/email/ses-events-topic";
 import { recordSuppression } from "@/lib/email/suppression";
 import { verifySnsSignature } from "@/lib/email/sns-signature";
 import { sesEventSchema, snsMessageSchema } from "@/lib/validations/ses-event";
@@ -18,9 +25,6 @@ import type { EmailSuppressionDetail } from "@/types/jsonb.types";
 
 // node:crypto signature verification needs the Node runtime, not edge.
 export const runtime = "nodejs";
-
-// Defense in depth: only our events topic may drive suppression.
-const EXPECTED_TOPIC_SUFFIX = ":alethia-ses-events";
 
 export async function POST(req: Request): Promise<Response> {
 	const raw = await req.text();
@@ -38,7 +42,15 @@ export async function POST(req: Request): Promise<Response> {
 	}
 	const msg = envelope.data;
 
-	if (!msg.TopicArn.endsWith(EXPECTED_TOPIC_SUFFIX)) {
+	// 503, not 403, when nothing is configured: the fault is this server's
+	// configuration, not the message, and the body names the setting to fix.
+	const allowed = allowedSesEventsTopicArns();
+	if (allowed.length === 0) {
+		return new Response(`${SES_EVENTS_TOPIC_ARNS_ENV} is not configured`, {
+			status: 503,
+		});
+	}
+	if (!isAllowedSesEventsTopic(msg.TopicArn, allowed)) {
 		return new Response("unexpected topic", { status: 403 });
 	}
 
@@ -55,13 +67,18 @@ export async function POST(req: Request): Promise<Response> {
 		return new Response("ok", { status: 200 });
 	}
 
-	// Notification — parse the SES event carried in Message.
-	let event: ReturnType<typeof sesEventSchema.safeParse>;
+	// Notification — parse the SES event carried in Message. A signed message
+	// from an allowed topic whose body is not JSON is SES's own plain-text
+	// "Successfully validated SNS topic for Amazon SES event publishing" note,
+	// sent once when a configuration set's destination is created. It carries
+	// no event, so it is acknowledged and nothing else happens.
+	let payload: unknown;
 	try {
-		event = sesEventSchema.safeParse(JSON.parse(msg.Message));
+		payload = JSON.parse(msg.Message);
 	} catch {
-		return new Response("invalid event payload", { status: 400 });
+		return new Response("ignored", { status: 200 });
 	}
+	const event = sesEventSchema.safeParse(payload);
 	if (!event.success) {
 		return new Response("invalid event payload", { status: 400 });
 	}

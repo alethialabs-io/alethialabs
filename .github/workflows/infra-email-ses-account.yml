@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Static validation for infra/email-ses-account (the dedicated alethia-email AWS account: SES
+# configuration sets, the events/alarms topics, reputation alarms, VDM and the alethia-ses-sender
+# user) and its bootstrap. Credential-free by design: both stacks create IAM, so they are APPLIED
+# MANUALLY by a maintainer (runbook in infra/email-ses-account/README.md), the same as
+# infra/aws-e2e. There is deliberately NO apply job and no `id-token` permission — the run only
+# fmt/validate/tests/lints/scans, so no cloud or state credential ever touches it (safe on
+# contributor PRs).
+
+name: Infra - email SES account
+
+on:
+  pull_request:
+    paths:
+      - "infra/email-ses-account/**"
+      - "infra/.trivyignore"
+      - "infra/.tflint.hcl"
+      - "infra/.trivy.yaml"
+      - ".github/workflows/infra-email-ses-account.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/email-ses-account/**"
+
+# `github.ref`, not the PR number: this also fires on `push`, where the number renders empty and
+# every push to main would collapse into one group (see infra-aws-oidc.yml).
+concurrency:
+  group: infra-email-ses-account-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TF_DIR: infra/email-ses-account
+  TOFU_VERSION: "1.10.10"
+
+jobs:
+  validate:
+    name: Validate + test + IaC checks (no backend, no secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: OpenTofu validate (bootstrap)
+        working-directory: ${{ env.TF_DIR }}/bootstrap
+        run: |
+          tofu init -backend=false
+          tofu validate
+
+      # The test file replaces the provider with a credential-free one and overrides the two data
+      # sources that would call AWS (STS, and the SES identity), so `tofu test` plans offline. It
+      # proves the committed posture, every refusal, and the checks that read live values.
+      - name: OpenTofu validate + test
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          tofu init -backend=false
+          tofu validate
+          tofu test
+
+      - name: IaC checks (fmt + tflint + Trivy)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: ${{ env.TF_DIR }}
