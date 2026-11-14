@@ -34,8 +34,9 @@ rather than shipping a default.
 - **`infra/cp-hetzner/`** / **`infra/cp-aws/`** — OpenTofu for the VM + cloud-init (installs
   Docker, clones the repo). Each creates the **Cloudflare Tunnel** (+ proxied CNAMEs) and outputs
   `tunnel_token`. Apply **one**.
-- **`.github/workflows/infra-cp-hetzner.yml`** / **`infra-cp-aws.yml`** — plan-on-PR /
-  apply-on-`main`.
+- **`.github/workflows/infra-cp-hetzner.yml`** — plan-on-PR / apply-on-`main`.
+  **`infra-cp-aws.yml`** validates on PR only: hosted prod does not deploy `cp-aws`, so it has no
+  apply job and no AWS credential.
 - **`.github/workflows/deploy-console.yml`** — on `main`/manual: builds `console`,
   `console-migrate`, `docs`, `blog`, `marketing`, `runner` + per-cloud `runner-{aws,gcp,azure}`
   (arm64) → **public GHCR**, then SSHes to `DEPLOY_HOST` and `compose pull && up -d` with
