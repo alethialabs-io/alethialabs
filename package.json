@@ -110,7 +110,7 @@
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
-    "prettier": "^3.9.10",
+    "prettier": "^3.10.0",
     "turbo": "^2.11.10",
     "typescript": "5.9.3"
   },
