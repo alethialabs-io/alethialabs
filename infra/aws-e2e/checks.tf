@@ -71,8 +71,10 @@ check "e2e_entities_path_scoped" {
     condition = alltrue([
       aws_iam_role.e2e_nightly.path == "/alethia-e2e/",
       aws_iam_policy.e2e_boundary.path == "/alethia-e2e/",
+      # The path is what puts the reporter under DenyTamperWithGuardrails (spend-reporter.tf).
+      aws_iam_role.spend_reporter.path == "/alethia-e2e/",
     ])
-    error_message = "e2e IAM role + boundary policy must be path-scoped under /alethia-e2e/."
+    error_message = "e2e IAM roles (nightly, spend reporter) + the boundary policy must be path-scoped under /alethia-e2e/."
   }
 }
 
@@ -133,6 +135,39 @@ check "e2e_region_not_prod" {
   assert {
     condition     = !contains(["eu-central-1", "eu-west-1"], var.e2e_region)
     error_message = "e2e_region must not be a prod region (eu-central-1 / eu-west-1)."
+  }
+}
+
+# ── The spend reporter: one exact environment subject, reads only ────────────────────────────────
+check "spend_reporter_trust_is_one_exact_environment_sub" {
+  assert {
+    condition = alltrue([
+      can(regex("^repo:[^:*]+/[^:*]+:environment:[^:*]+$", local.spend_reporter_sub)),
+      strcontains(data.aws_iam_policy_document.spend_reporter_trust.json, local.spend_reporter_sub),
+      strcontains(data.aws_iam_policy_document.spend_reporter_trust.json, "sts.amazonaws.com"),
+      !strcontains(data.aws_iam_policy_document.spend_reporter_trust.json, "StringLike"),
+      !strcontains(data.aws_iam_policy_document.spend_reporter_trust.json, ":ref:refs/"),
+      !strcontains(data.aws_iam_policy_document.spend_reporter_trust.json, "\"sts:AssumeRole\""),
+    ])
+    error_message = "alethia-spend-reporter must trust exactly ${local.spend_reporter_sub} (StringEquals, aud=sts.amazonaws.com), federation only, and no ref subject."
+  }
+}
+
+check "spend_reporter_sub_does_not_reach_the_nightly_role" {
+  assert {
+    condition     = !strcontains(data.aws_iam_policy_document.e2e_nightly_trust.json, local.spend_reporter_sub)
+    error_message = "the ${local.spend_reporter_sub} subject must reach alethia-spend-reporter ONLY - it is a read-only report identity."
+  }
+}
+
+check "spend_reporter_policy_is_read_only" {
+  assert {
+    # No secretsmanager:GetSecretValue here, unlike the platform reporter: the Resend key is read there.
+    condition = alltrue([
+      for a in flatten([for st in jsondecode(data.aws_iam_policy_document.spend_reporter.json).Statement : flatten([st.Action])]) :
+      contains(["ce:GetCostAndUsage", "ce:GetCostForecast", "tag:GetResources"], a)
+    ])
+    error_message = "the e2e alethia-spend-reporter may hold only ce:GetCostAndUsage, ce:GetCostForecast and tag:GetResources."
   }
 }
 

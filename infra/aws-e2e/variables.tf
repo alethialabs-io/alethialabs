@@ -76,6 +76,16 @@ variable "e2e_github_environment" {
   }
 }
 
+variable "spend_reporter_environment" {
+  description = "GitHub Actions environment the weekly spend report job (spend-report.yml) selects. This account's alethia-spend-reporter trusts the exact `repo:<repo>:environment:<this>` sub and nothing else — the same subject as infra/aws-oidc's reporter. The environment is restricted to `main` (infra/github/environments.tf). Required, and committed in terraform.tfvars."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+$", var.spend_reporter_environment))
+    error_message = "spend_reporter_environment must be a plain environment name (no '*', ':' or spaces) - it is interpolated into an exact OIDC subject."
+  }
+}
+
 # ── Region lock ───────────────────────────────────────────────────────────────────────────────────
 
 variable "e2e_region" {
