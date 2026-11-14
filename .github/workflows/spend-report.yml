@@ -100,7 +100,6 @@ jobs:
         run: pnpm install --frozen-lockfile --filter @repo/spend-report...
 
       - name: Build and send the report
-        working-directory: scripts/spend-report
         env:
           # @repo/email swallows a failed send unless NODE_ENV=production (src/main.ts asserts it).
           NODE_ENV: production
@@ -128,4 +127,4 @@ jobs:
           E2E_ALIBABA_ROLE_ARN: ${{ vars.E2E_ALIBABA_ROLE_ARN }}
           E2E_ALIBABA_OIDC_PROVIDER_ARN: ${{ vars.E2E_ALIBABA_OIDC_PROVIDER_ARN }}
           SPEND_ALIBABA_BSS_ENDPOINT: ${{ vars.SPEND_ALIBABA_BSS_ENDPOINT }}
-        run: pnpm -s start
+        run: pnpm -C scripts/spend-report run start

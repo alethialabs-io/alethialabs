@@ -56,7 +56,7 @@ Per cloud:
 gh workflow run spend-report.yml --ref main -f dry_run=true
 
 # Locally, the pure half (no cloud, no network):
-pnpm -F @repo/spend-report test
+pnpm -C scripts/spend-report run test
 ```
 
 The run fails in **one** case only: the email could not be sent. When that happens, the report is
