@@ -160,10 +160,21 @@ How it fits together:
 - That handler verifies the SNS signature and, on a **permanent** bounce or a
   **complaint**, adds the recipient to the **suppression list**. Every send then
   skips suppressed addresses.
+- The handler acts only on messages from the topics you list in
+  `ALETHIA_SES_EVENTS_TOPIC_ARNS`. Give the full topic ARN, which includes your
+  account ID and region. Separate more than one with commas. If you do not set
+  it, the handler refuses every message with HTTP 503, and the SNS subscription
+  cannot be confirmed. Set it before you subscribe the handler to the topic:
 
-For the hosted platform this whole stack — identities, DKIM, MAIL FROM, the
-configuration sets, the SNS topic + subscription, account VDM, and reputation
-alarms — is codified in OpenTofu at **`infra/email-ses/`** (see its `README.md`).
+```bash
+ALETHIA_SES_EVENTS_TOPIC_ARNS=arn:aws:sns:eu-west-1:123456789012:alethia-ses-events
+```
+
+The OpenTofu stack **`infra/email-ses/`** codifies this whole setup —
+identities, DKIM, MAIL FROM, the configuration sets, the SNS topic and
+subscription, account VDM, and reputation alarms (see its `README.md`). The
+hosted platform sends from a dedicated AWS account, which
+**`infra/email-ses-account/`** configures.
 Self-hosters can either run that stack against their own domain or wire the same
 pieces by hand; leaving the config-set vars unset keeps the simpler send-only
 behavior.
