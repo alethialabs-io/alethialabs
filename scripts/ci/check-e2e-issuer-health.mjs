@@ -33,7 +33,8 @@
 //                          merging the custom-domain change and runbook step 3. The workflow skips the
 //                          deploy with a notice for exactly this, and stays red for every exit-1 case.
 //   --static               HERMETIC. The committed copies of the issuer origin agree: the stack's
-//                          hostname, tls-ca-pin.json, and the four trust stacks' e2e_broker_issuer_url.
+//                          hostname, tls-ca-pin.json, and every trust stack's e2e_broker_issuer_url
+//                          (PATHS.trustTfvars).
 //                          And tls-ca-pin.json is well formed. Exit 0 · 1.
 //   --print-pin --expected-url <url> [--out <file>]
 //                          Read the live chain — VERIFIED to a trusted root and for this host name, or
@@ -66,6 +67,9 @@ export const PATHS = {
 		"infra/gcp-e2e/terraform.tfvars",
 		"infra/azure-e2e/terraform.tfvars",
 		"infra/alibaba-e2e/terraform.tfvars",
+		// The dedicated AWS e2e account's copy of the AWS trust. It sits beside aws-oidc's until the
+		// cleanup PR removes the old one, and both must agree with the issuer while they coexist.
+		"infra/aws-e2e/terraform.tfvars",
 	],
 };
 
@@ -338,7 +342,7 @@ export function evaluate(obs, cfg) {
 	if (on("config")) {
 		if (!isBareOrigin(url)) add("config", `E2E_ISSUER_URL must be a bare https origin — got ${JSON.stringify(url)}`);
 		if (url !== cfg.committedUrl) {
-			add("config", `E2E_ISSUER_URL is ${url}, but infra/e2e-issuer serves ${cfg.committedUrl} and the four trust stacks pin that. Finish the migration runbook (infra/e2e-issuer/README.md).`);
+			add("config", `E2E_ISSUER_URL is ${url}, but infra/e2e-issuer serves ${cfg.committedUrl} and the trust stacks pin that. Finish the migration runbook (infra/e2e-issuer/README.md).`);
 		}
 	}
 
@@ -810,7 +814,7 @@ async function main() {
 			for (const p of problems) console.error(`::error::${p}`);
 			process.exit(1);
 		}
-		console.log(`e2e issuer origin: ${committedIssuerUrl()} — the stack, the pin and the four trust stacks agree.`);
+		console.log(`e2e issuer origin: ${committedIssuerUrl()} — the stack, the pin and the ${PATHS.trustTfvars.length} trust stacks agree.`);
 		return;
 	}
 
