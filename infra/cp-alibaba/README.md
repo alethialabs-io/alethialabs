@@ -13,8 +13,11 @@ what's best on Alibaba rather than a 1:1 clone.
 - **Provider:** Alibaba Cloud (`aliyun/alicloud ~> 1.230`) + Cloudflare (`~> 4.40`). **State:**
   S3-compatible `terraform-state` · key `alibaba-cp/terraform.tfstate` (custom endpoint — see
   `backend.hcl.example`).
-- **CI auth:** static keys via `.github/workflows/infra-cp-alibaba.yml`
-  (`ALICLOUD_ACCESS_KEY` / `ALICLOUD_SECRET_KEY` + `CLOUDFLARE_*`).
+- **CI:** `.github/workflows/infra-cp-alibaba.yml` is **validate-only** (`tofu validate` + fmt/
+  tflint/Trivy, no backend, no secrets). This repository does not deploy this stack, so CI holds no
+  Alibaba Cloud credential for it. Apply it yourself, with short-lived STS credentials (for example
+  an `aliyun` CLI profile that assumes a RAM role, `ALICLOUD_PROFILE`) rather than a long-lived
+  AccessKey.
 
 ```bash
 cp backend.hcl.example backend.hcl   # fill in endpoint + creds (gitignored)
@@ -50,8 +53,10 @@ tofu plan && tofu apply
 
 The `cp-*` siblings all serve the **same domain/zone**. They are alternatives — apply **one instead of
 another**, never two at once (two would fight over the apex DNS + tunnel). Prod currently runs on
-`cp-hetzner`, so this stack's `apply` job stays **gated off** (`vars.INFRA_ALIBABA_APPLY != 'true'`);
-the PR `plan` job still validates the Terraform.
+`cp-hetzner`, so this stack has **no CI `apply` job** (the gated-off one, and the static
+`ALICLOUD_*` key it named, were removed on 2026-11-14); the PR `plan` job still validates the
+Terraform. To deploy it from CI, add a RAM OIDC role (the [`alibaba-e2e`](../alibaba-e2e) pattern)
+first — never a static AccessKey.
 
 ## Not managed here — inbound email
 

@@ -16,7 +16,8 @@ output "tunnel_id" {
   value       = cloudflare_zero_trust_tunnel_cloudflared.cp.id
 }
 
-# infra-cp-gcp CI merges this into the alethia/prod/env vault as TUNNEL_TOKEN:
+# Export it as TUNNEL_TOKEN in the bundle `.env` (CI only validates this stack, so nothing reads
+# it automatically):
 #   tofu output -raw tunnel_token
 output "tunnel_token" {
   description = "Connector token for cloudflared (TUNNEL_TOKEN)."

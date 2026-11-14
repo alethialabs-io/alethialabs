@@ -1,11 +1,19 @@
 name: Infra - CP GCP
 
+# VALIDATE-ONLY, and credential-free by construction. `infra/cp-gcp` is a self-hosting option a
+# user applies in THEIR OWN GCP project (apps/docs/.../self-hosting/terraform/gcp.mdx); it is not a
+# deployment target of ours. Hosted prod runs on `cp-hetzner`. Until 2026-11-14 this file also
+# carried a push-to-main `apply` job behind `vars.INFRA_GCP_APPLY` and a static service-account
+# JSON key (`secrets.GOOGLE_CREDENTIALS`). That job never applied anything: its one run (the
+# 2026-07-03 go-live push, a day before the variable gate existed) failed at `tofu init`, every push
+# run since was `skipped`, and the variable was never set. The `TF_STATE_S3_*` secrets its
+# `tofu init` needed do not exist, no `gcp-cp/` state exists, and `GOOGLE_CREDENTIALS` is not set at
+# repo, environment or org scope, so the job could not have authenticated either. It was removed
+# rather than moved to federation: a deploy identity for a target nobody deploys is standing
+# privilege with no user. To make GCP a real target again, add Workload Identity Federation (the
+# `infra/gcp-e2e` pattern) and a `google-github-actions/auth` apply job — never a JSON key.
 on:
   pull_request:
-    paths:
-      - 'infra/cp-gcp/**'
-  push:
-    branches: [main]
     paths:
       - 'infra/cp-gcp/**'
 
@@ -18,35 +26,20 @@ on:
 # away. The currency is slots REQUESTED, so a superseded run costs the same as a useful one until
 # it dies.
 #
-# `github.ref` and NOT `github.event.pull_request.number || github.ref`: this workflow also fires on
-# `push`, where the number renders EMPTY and every push to `main` would collapse into one group,
-# cancelling a real deploy-path run. `cla.yml` records that trap; it is PR-only, so it can use the
-# number. `github.ref` is distinct for both events here.
+# `github.ref` is `refs/pull/<n>/merge` on a pull_request, so it is distinct per PR.
 concurrency:
   group: infra-cp-gcp-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  pull-requests: write
 
 env:
   TF_DIR: infra/cp-gcp
   TOFU_VERSION: "1.10.10"
 
-  # GCP provider auth (service-account JSON key).
-  GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-
-  # OpenTofu variables.
-  TF_VAR_gcp_project: ${{ secrets.GCP_PROJECT }}
-  TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-  TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-  TF_VAR_cloudflare_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-  TF_VAR_ssh_public_key: ${{ secrets.DEPLOY_SSH_PUBLIC_KEY }}
-
 jobs:
   plan:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -56,8 +49,7 @@ jobs:
 
       - name: OpenTofu Validate (no backend, no secrets)
         working-directory: ${{ env.TF_DIR }}
-        # PR plans are validate-only: no backend, no cloud/state secrets reach a
-        # PR job (the repo is contributor-facing). Real plan+apply run on main.
+        # No backend and no secrets: this workflow references none, so none can reach a PR job.
         run: |
           tofu init -backend=false
           tofu validate
@@ -66,38 +58,3 @@ jobs:
         uses: ./.github/actions/iac-checks
         with:
           working-directory: ${{ env.TF_DIR }}
-
-  apply:
-    # Gated OFF by default. This is the "run the Alethia control plane ON GCP" OSS option,
-    # NOT used by the hosted deploy (Hetzner) — its backend/creds are unconfigured, so an
-    # auto-apply on push only fails. Set repo variable INFRA_GCP_APPLY=true to enable when
-    # actually deploying the control plane on GCP. The PR `plan` job still validates the tf.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.INFRA_GCP_APPLY == 'true'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v7
-      - uses: opentofu/setup-opentofu@v2
-        with:
-          tofu_version: ${{ env.TOFU_VERSION }}
-
-      - name: OpenTofu Init
-        working-directory: ${{ env.TF_DIR }}
-        run: |
-          tofu init -upgrade \
-            -backend-config="bucket=terraform-state" \
-            -backend-config="key=gcp-cp/terraform.tfstate" \
-            -backend-config="endpoint=${{ secrets.TF_STATE_S3_ENDPOINT }}" \
-            -backend-config="region=${{ secrets.TF_STATE_S3_REGION }}" \
-            -backend-config="access_key=${{ secrets.TF_STATE_S3_ACCESS_KEY_ID }}" \
-            -backend-config="secret_key=${{ secrets.TF_STATE_S3_SECRET_ACCESS_KEY }}" \
-            -backend-config="skip_credentials_validation=true" \
-            -backend-config="skip_metadata_api_check=true" \
-            -backend-config="skip_region_validation=true" \
-            -backend-config="skip_requesting_account_id=true" \
-            -backend-config="skip_s3_checksum=true" \
-            -backend-config="force_path_style=true"
-
-      - name: OpenTofu Apply
-        working-directory: ${{ env.TF_DIR }}
-        run: tofu apply -auto-approve

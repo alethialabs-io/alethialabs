@@ -1,6 +1,6 @@
-# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in CI.
-# Azure provider auth comes from ARM_CLIENT_ID / ARM_CLIENT_SECRET /
-# ARM_SUBSCRIPTION_ID / ARM_TENANT_ID (service principal).
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env.
+# Azure provider auth: the Azure CLI session (`az login`, then ARM_SUBSCRIPTION_ID), or OIDC
+# federation. Prefer either over a service-principal client secret (ARM_CLIENT_SECRET).
 
 location            = "westeurope"
 resource_group_name = "alethia-cp"
