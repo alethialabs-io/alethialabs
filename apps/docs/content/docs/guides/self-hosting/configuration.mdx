@@ -79,6 +79,8 @@ to mail arbitrary recipients):
 |---|---|
 | `ALETHIA_SES_REGION` | SES region, e.g. `eu-central-1`. Selects SES. |
 | `ALETHIA_SES_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | Optional; omit to use the AWS default credential chain (IAM role / `AWS_*`). |
+| `ALETHIA_SES_AUTH_CONFIG_SET` / `_GENERAL_CONFIG_SET` | Optional. The configuration set each stream sends through, so its bounce and complaint events reach SNS. |
+| `ALETHIA_SES_EVENTS_TOPIC_ARNS` | The exact SNS topic ARNs, comma-separated, that `/api/webhooks/ses` accepts. Unset: the webhook refuses every message. |
 
 **All providers:**
 
