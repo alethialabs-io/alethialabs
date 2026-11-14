@@ -235,7 +235,7 @@ export const NOT_A_MEASUREMENT = {
 			"derives a verdict from it. It runs the DEFAULT branch's tree on purpose — it holds id-token: write " +
 			"and an AWS role that reads the prod secret, and its trust is pinned to main by the spend-report " +
 			"environment's branch policy.",
-		issue: "#0",
+		issue: "#6694",
 	},
 	"template-proof-currency.yml": {
 		why:
