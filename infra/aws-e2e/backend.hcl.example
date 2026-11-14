@@ -1,0 +1,12 @@
+# AWS-native S3 backend for infra/aws-e2e. Copy to backend.hcl (gitignored):
+#
+#   cp backend.hcl.example backend.hcl
+#   AWS_PROFILE=alethia-sso tofu init -backend-config=backend.hcl
+#
+# The Alethia platform account's existing state bucket (the one infra/aws-oidc uses), under a NEW
+# key. The e2e account holds no copy of this state and no grant on this bucket.
+
+bucket       = "alethia-tofu-state-270587882865"
+key          = "aws-e2e/terraform.tfstate"
+region       = "eu-central-1"
+use_lockfile = true
