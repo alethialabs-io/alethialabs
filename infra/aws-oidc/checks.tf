@@ -180,6 +180,44 @@ check "cli_release_sub_does_not_reach_the_write_roles" {
   }
 }
 
+# ── The spend reporter's trust: one exact environment subject, and nothing shared ──────────────
+# Its grant includes reading the prod secret, so its trust is the thing to keep honest. Two ways it
+# can rot: the subject relaxed (a wildcard, a StringLike, a dropped aud), or the role moved onto the
+# shared `deployer_trust`, which every workflow on main can present.
+check "spend_reporter_trust_is_one_exact_environment_sub" {
+  assert {
+    condition = alltrue([
+      can(regex("^repo:[^:*]+/[^:*]+:environment:[^:*]+$", local.spend_reporter_sub)),
+      strcontains(data.aws_iam_policy_document.spend_reporter_trust.json, local.spend_reporter_sub),
+      strcontains(data.aws_iam_policy_document.spend_reporter_trust.json, "sts.amazonaws.com"),
+      !strcontains(data.aws_iam_policy_document.spend_reporter_trust.json, "StringLike"),
+      !strcontains(data.aws_iam_policy_document.spend_reporter_trust.json, ":ref:refs/"),
+    ])
+    error_message = "alethia-spend-reporter must trust exactly ${local.spend_reporter_sub} (StringEquals, aud=sts.amazonaws.com) and no ref subject."
+  }
+}
+
+check "spend_reporter_sub_does_not_reach_other_roles" {
+  assert {
+    condition = alltrue([
+      !strcontains(data.aws_iam_policy_document.deployer_trust.json, local.spend_reporter_sub),
+      !strcontains(data.aws_iam_policy_document.deploy_reader_trust.json, local.spend_reporter_sub),
+      !strcontains(data.aws_iam_policy_document.e2e_nightly_trust.json, local.spend_reporter_sub),
+    ])
+    error_message = "the ${local.spend_reporter_sub} subject must reach alethia-spend-reporter ONLY - it is a read-only report identity."
+  }
+}
+
+check "spend_reporter_policy_is_read_only" {
+  assert {
+    condition = alltrue([
+      for a in flatten([for st in jsondecode(data.aws_iam_policy_document.spend_reporter.json).Statement : flatten([st.Action])]) :
+      contains(["ce:GetCostAndUsage", "ce:GetCostForecast", "tag:GetResources", "secretsmanager:GetSecretValue"], a)
+    ])
+    error_message = "alethia-spend-reporter may hold only ce:GetCostAndUsage, ce:GetCostForecast, tag:GetResources and secretsmanager:GetSecretValue."
+  }
+}
+
 # ── The E2E assertion broker trust (#4226): exact, additive, and absent unless asked for ──────────
 # Three ways it can rot silently, one assertion each. (1) The broker statement could be relaxed —
 # a StringLike, a dropped aud, or a sub that is not the contract's. (2) Enabling it could REPLACE

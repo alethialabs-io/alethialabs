@@ -15,6 +15,7 @@ from those workflows — they assume a scoped role via OIDC instead.
 | `alethia-deploy-reader` | `deploy-console.yml` | **read** the `alethia/prod/env` secret only |
 | `alethia-runner-release-deployer` | `release-runner.yml`, `deploy-fleet-aws.yml` | ECR push to the runner repo (created here since #3438) + `ecs:UpdateService` on the one service |
 | `alethia-e2e-nightly` | `e2e-nightly.yml` (schedule/dispatch **only**) | Provision + tear down an ephemeral AWS EKS estate — see below |
+| `alethia-spend-reporter` | `spend-report.yml` (schedule/dispatch, `spend-report` environment **only**) | `ce:GetCostAndUsage` + `ce:GetCostForecast` + `tag:GetResources` (all resource-less, `*`); **read** the `alethia/prod/env` secret (for the Resend key — Secrets Manager cannot scope to one key, so this is the whole blob, the same reach as the deploy reader). Trusts ONLY `repo:<repo>:environment:spend-report`, which `infra/github` restricts to `main` — apply that environment FIRST. See `scripts/spend-report/README.md`. |
 
 This module also creates the **runner ECR repository** (`runner-ecr.tf`, #3438) — the registry
 `alethia-runner-release-deployer` pushes to. It was created by nothing for two months: the name
@@ -83,6 +84,7 @@ this automatically; manual fallback):
 gh variable set CP_HETZNER_DEPLOYER_ROLE_ARN     -b "$(tofu output -raw cp_deployer_role_arn)"
 gh variable set RUNNER_RELEASE_DEPLOYER_ROLE_ARN -b "$(tofu output -raw runner_release_deployer_role_arn)"
 gh variable set DEPLOY_READER_ROLE_ARN           -b "$(tofu output -raw deploy_reader_role_arn)"
+gh variable set SPEND_REPORTER_ROLE_ARN          -b "$(tofu output -raw spend_reporter_role_arn)"
 ```
 
 ## `alethia-e2e-nightly` — the T2 real-cloud provisioning role (BYOC A1.1)

@@ -36,3 +36,14 @@ output "e2e_broker_gcp_wif_audience" {
   description = "The STS `audience` a broker-assertion exchange must name — the broker provider's full resource name — or null while e2e_broker_issuer_url is unset. Distinct from the JWT `aud` (alethia-gcp-wif), which is what allowed_audiences pins."
   value       = one([for p in google_iam_workload_identity_pool_provider.e2e_broker : "//iam.googleapis.com/${p.name}"])
 }
+
+# ── Weekly spend report ───────────────────────────────────────────────────────
+output "spend_reporter_sa_email" {
+  description = "Set as the repo Actions VARIABLE SPEND_GCP_SA_EMAIL. spend-report.yml federates through the SAME provider as E2E_GCP_WIF_PROVIDER and impersonates this SA."
+  value       = google_service_account.spend_reporter.email
+}
+
+output "spend_reporter_subscription" {
+  description = "Set as the repo Actions VARIABLE SPEND_GCP_BUDGET_SUBSCRIPTION (projects/<p>/subscriptions/<s>) — where the report reads budget notifications."
+  value       = google_pubsub_subscription.spend_reporter.id
+}

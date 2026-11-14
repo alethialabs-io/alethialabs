@@ -44,6 +44,7 @@ export const NOT_COMPILED_IN = {
 	"@repo/eslint-config": "lint configuration; it reaches the console only through a surface package's devDependencies",
 	"@repo/typescript-config": "tsconfig bases, the same way — neither changes what the browser renders",
 	"@repo/e2e-issuer": "a standalone OIDC issuer the E2E rig runs as its own app; the console never imports it",
+	"@repo/spend-report": "the weekly cloud-spend email a scheduled workflow runs (spend-report.yml); the console never imports it",
 };
 
 /** The package whose dependency graph IS the surface. */
