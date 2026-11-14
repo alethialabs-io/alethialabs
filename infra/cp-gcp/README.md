@@ -11,8 +11,10 @@ see [`infra/README.md`](../README.md). It ports the working [`cp-hetzner`](../cp
 
 - **Provider:** GCP (`hashicorp/google ~> 6.0`) + Cloudflare (`~> 4.40`). **State:** S3-compatible
   `terraform-state` · key `gcp-cp/terraform.tfstate` (custom endpoint — see `backend.hcl.example`).
-- **CI auth:** static service-account JSON via `.github/workflows/infra-cp-gcp.yml`
-  (`GOOGLE_CREDENTIALS`, `GCP_PROJECT` + `CLOUDFLARE_*`, `DEPLOY_SSH_PUBLIC_KEY`).
+- **CI:** `.github/workflows/infra-cp-gcp.yml` is **validate-only** (`tofu validate` + fmt/tflint/
+  Trivy, no backend, no secrets). This repository does not deploy this stack, so CI holds no GCP
+  credential for it. Apply it yourself, with short-lived credentials (Application Default
+  Credentials from `gcloud auth application-default login`) rather than a service-account key file.
 
 ```bash
 cp backend.hcl.example backend.hcl   # fill in endpoint + creds (gitignored)
@@ -49,8 +51,10 @@ tofu plan && tofu apply
 
 The `cp-*` siblings all serve the **same domain/zone**. They are alternatives — apply **one instead of
 another**, never two at once (two would fight over the apex DNS + tunnel). Prod currently runs on
-`cp-hetzner`, so this stack's `apply` job stays **gated off** (`vars.INFRA_GCP_APPLY != 'true'`); the PR
-`plan` job still validates the Terraform.
+`cp-hetzner`, so this stack has **no CI `apply` job** (the gated-off one, and the static
+`GOOGLE_CREDENTIALS` key it named, were removed on 2026-11-14); the PR `plan` job still validates the
+Terraform. To deploy it from CI, add Workload Identity Federation (the [`gcp-e2e`](../gcp-e2e)
+pattern) first — never a service-account key.
 
 ## Not managed here — inbound email
 
