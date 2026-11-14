@@ -1,11 +1,19 @@
 name: Infra - CP AWS
 
+# VALIDATE-ONLY, and credential-free by construction. `infra/cp-aws` is a self-hosting option a
+# user applies in THEIR OWN AWS account (apps/docs/.../self-hosting/terraform/aws.mdx); it is not a
+# deployment target of ours. Hosted prod runs on `cp-hetzner`. Until 2026-11-14 this file also
+# carried a push-to-main `apply` job behind `vars.INFRA_AWS_APPLY` and static
+# `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` repo secrets. That job never ran (every push run was
+# `skipped`, the variable was never set), the `TF_STATE_S3_*` secrets its `tofu init` needed do not
+# exist, no `aws-cp/` state exists, and the static key (set 2026-05-31) predates every IAM key the
+# account still holds, so it could not authenticate either. It was
+# removed rather than moved to OIDC: a deploy role for a target nobody deploys is standing
+# privilege with no user. To make AWS a real target again, add a role to `infra/aws-oidc/roles.tf`
+# (the `alethia-cp-deployer` pattern) and an `aws-actions/configure-aws-credentials` apply job —
+# never a static key.
 on:
   pull_request:
-    paths:
-      - 'infra/cp-aws/**'
-  push:
-    branches: [main]
     paths:
       - 'infra/cp-aws/**'
 
@@ -18,34 +26,20 @@ on:
 # away. The currency is slots REQUESTED, so a superseded run costs the same as a useful one until
 # it dies.
 #
-# `github.ref` and NOT `github.event.pull_request.number || github.ref`: this workflow also fires on
-# `push`, where the number renders EMPTY and every push to `main` would collapse into one group,
-# cancelling a real deploy-path run. `cla.yml` records that trap; it is PR-only, so it can use the
-# number. `github.ref` is distinct for both events here.
+# `github.ref` is `refs/pull/<n>/merge` on a pull_request, so it is distinct per PR.
 concurrency:
   group: infra-cp-aws-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  pull-requests: write
 
 env:
   TF_DIR: infra/cp-aws
   TOFU_VERSION: "1.10.10"
 
-  # AWS provider creds (the lab account that hosts the EC2 box).
-  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
-  # OpenTofu variables.
-  TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-  TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-  TF_VAR_cloudflare_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
 jobs:
   plan:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -55,8 +49,7 @@ jobs:
 
       - name: OpenTofu Validate (no backend, no secrets)
         working-directory: ${{ env.TF_DIR }}
-        # PR plans are validate-only: no backend, no cloud/state secrets reach a
-        # PR job (the repo is contributor-facing). Real plan+apply run on main.
+        # No backend and no secrets: this workflow references none, so none can reach a PR job.
         run: |
           tofu init -backend=false
           tofu validate
@@ -65,38 +58,3 @@ jobs:
         uses: ./.github/actions/iac-checks
         with:
           working-directory: ${{ env.TF_DIR }}
-
-  apply:
-    # Gated OFF by default. This is the "run the Alethia control plane ON AWS" OSS option,
-    # NOT used by the hosted deploy (Hetzner) — its backend/creds are unconfigured, so an
-    # auto-apply on push only fails. Set repo variable INFRA_AWS_APPLY=true to enable when
-    # actually deploying the control plane on AWS. The PR `plan` job still validates the tf.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.INFRA_AWS_APPLY == 'true'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v7
-      - uses: opentofu/setup-opentofu@v2
-        with:
-          tofu_version: ${{ env.TOFU_VERSION }}
-
-      - name: OpenTofu Init
-        working-directory: ${{ env.TF_DIR }}
-        run: |
-          tofu init -upgrade \
-            -backend-config="bucket=terraform-state" \
-            -backend-config="key=aws-cp/terraform.tfstate" \
-            -backend-config="endpoint=${{ secrets.TF_STATE_S3_ENDPOINT }}" \
-            -backend-config="region=${{ secrets.TF_STATE_S3_REGION }}" \
-            -backend-config="access_key=${{ secrets.TF_STATE_S3_ACCESS_KEY_ID }}" \
-            -backend-config="secret_key=${{ secrets.TF_STATE_S3_SECRET_ACCESS_KEY }}" \
-            -backend-config="skip_credentials_validation=true" \
-            -backend-config="skip_metadata_api_check=true" \
-            -backend-config="skip_region_validation=true" \
-            -backend-config="skip_requesting_account_id=true" \
-            -backend-config="skip_s3_checksum=true" \
-            -backend-config="force_path_style=true"
-
-      - name: OpenTofu Apply
-        working-directory: ${{ env.TF_DIR }}
-        run: tofu apply -auto-approve
