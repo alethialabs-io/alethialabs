@@ -229,6 +229,14 @@ export const NOT_A_MEASUREMENT = {
 			"issue, and uploads no artifact any repo file reads back, so there is no producer/consumer pair for S3.",
 		issue: "#5410",
 	},
+	"spend-report.yml": {
+		why:
+			"Its output is an email and a job summary, not an artifact: nothing in the tree reads it back or " +
+			"derives a verdict from it. It runs the DEFAULT branch's tree on purpose — it holds id-token: write " +
+			"and an AWS role that reads the prod secret, and its trust is pinned to main by the spend-report " +
+			"environment's branch policy.",
+		issue: "#0",
+	},
 	"template-proof-currency.yml": {
 		why:
 			"A currency check that reports in place: it reds, and upserts one issue, when a starter repo's HEAD has " +

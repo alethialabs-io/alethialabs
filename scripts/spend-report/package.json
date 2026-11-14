@@ -1,0 +1,28 @@
+{
+  "name": "@repo/spend-report",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The weekly cloud-spend email (.github/workflows/spend-report.yml). See README.md.",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "lint": "eslint . --max-warnings 0",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@react-email/components": "^1.0.12",
+    "@repo/email": "workspace:*",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^20",
+    "@types/react": "19.3.0",
+    "eslint": "^9.39.5",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.12"
+  }
+}
