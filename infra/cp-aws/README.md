@@ -12,8 +12,10 @@ AWS rather than a 1:1 clone.
 
 - **Provider:** AWS (`hashicorp/aws ~> 5.0`) + Cloudflare (`~> 4.40`). **State:** S3-compatible
   `terraform-state` · key `aws-cp/terraform.tfstate` (custom endpoint — see `backend.hcl.example`).
-- **CI auth:** static keys via `.github/workflows/infra-cp-aws.yml` (`AWS_ACCESS_KEY_ID` /
-  `AWS_SECRET_ACCESS_KEY` + `CLOUDFLARE_*`).
+- **CI:** `.github/workflows/infra-cp-aws.yml` is **validate-only** (`tofu validate` + fmt/tflint/
+  Trivy, no backend, no secrets). This repository does not deploy this stack, so CI holds no AWS
+  credential for it. Apply it yourself, with short-lived credentials (`AWS_PROFILE` from
+  `aws sso login`) rather than a long-lived access key.
 
 ```bash
 cp backend.hcl.example backend.hcl   # fill in endpoint + creds (gitignored)
@@ -53,8 +55,10 @@ tofu plan && tofu apply
 
 The `cp-*` siblings all serve the **same domain/zone**. They are alternatives — apply **one instead of
 another**, never two at once (two would fight over the apex DNS + tunnel). Prod currently runs on
-`cp-hetzner`, so this stack's `apply` job stays **gated off** (`vars.INFRA_AWS_APPLY != 'true'`); the
-PR `plan` job still validates the Terraform.
+`cp-hetzner`, so this stack has **no CI `apply` job** (the gated-off one, and the static AWS key it
+named, were removed on 2026-11-14); the PR `plan` job still validates the Terraform. To deploy it
+from CI, add a GitHub OIDC role in `infra/aws-oidc/roles.tf` (the `alethia-cp-deployer` pattern)
+first — never a static key.
 
 ## Not managed here — inbound email
 
