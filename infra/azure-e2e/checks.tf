@@ -110,3 +110,18 @@ check "e2e_broker_credential_absent_when_unset" {
     error_message = "with e2e_broker_issuer_url unset there must be no broker federated credential."
   }
 }
+
+# ── The spend reporter: one exact environment subject, one read-only role, subscription scope ────
+# It exists BECAUSE the e2e SP is too broad to lend to a report, so the two ways it can rot are the
+# two ways it would stop being narrower than that SP: a second, wider role, or a subject that is not
+# the spend-report environment.
+check "spend_reporter_is_cost_reader_only" {
+  assert {
+    condition = alltrue([
+      azurerm_role_assignment.spend_reporter_cost_reader.role_definition_name == "Cost Management Reader",
+      azurerm_role_assignment.spend_reporter_cost_reader.scope == local.subscription_scope,
+      can(regex("^repo:[^:*]+/[^:*]+:environment:[^:*]+$", azuread_application_federated_identity_credential.spend_reporter.subject)),
+    ])
+    error_message = "the spend-reporter application must hold only Cost Management Reader on var.subscription_id, federated to exactly repo:<repo>:environment:<env> (no wildcard, no ref subject)."
+  }
+}

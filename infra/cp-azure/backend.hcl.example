@@ -18,5 +18,5 @@ use_path_style              = true
 use_lockfile                = true
 
 # Credentials via env:
-#   export AWS_ACCESS_KEY_ID="..."      # the TF_STATE_S3_* keys
+#   export AWS_ACCESS_KEY_ID="..."      # your S3-compatible state store's keys
 #   export AWS_SECRET_ACCESS_KEY="..."

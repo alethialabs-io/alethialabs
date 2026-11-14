@@ -22,6 +22,8 @@ on:
       - '.github/workflows/deploy-console.yml'
       # The deploy step's script (#6582) — the same reasoning: a fix to it must deploy itself.
       - 'scripts/ci/deploy-console-assemble-env.sh'
+      # …and the email-transport check it calls.
+      - 'scripts/ci/check-email-provider-keys.sh'
   workflow_dispatch:
 
 # SERIALIZE deploys; never cancel one. Two merges to `main` in quick succession currently run two
@@ -337,6 +339,15 @@ jobs:
             exit 1
           fi
           echo "✓ every required key present"
+
+      # The CONDITIONAL half of the list above: the vault selects the email transport
+      # (EMAIL_PROVIDER, unset = resend), and SES needs keys Resend does not. The deploy step runs
+      # the same script again; this run is here so a missing SES key fails before the builds.
+      - name: The selected email transport has its keys
+        run: |
+          set -euo pipefail
+          json="$(aws secretsmanager get-secret-value --secret-id "$ASM_SECRET_ID" --region "$ASM_REGION" --query SecretString --output text)"
+          EMAIL_PROVIDER_JSON="$json" bash scripts/ci/check-email-provider-keys.sh
 
   changes:
     # Gated on preflight because EVERY build job needs `changes` — so one edge here puts the vault
@@ -1070,11 +1081,13 @@ jobs:
       ASM_SECRET_ID: alethia/prod/env
       ASM_REGION: eu-central-1
     steps:
-      # Only the deploy script — nothing else in the tree is read here, and no token is left in
-      # .git/config in the one job that holds the production host key.
+      # Only the deploy script and the one check it calls — nothing else in the tree is read here,
+      # and no token is left in .git/config in the one job that holds the production host key.
       - uses: actions/checkout@v7
         with:
-          sparse-checkout: scripts/ci/deploy-console-assemble-env.sh
+          sparse-checkout: |
+            scripts/ci/deploy-console-assemble-env.sh
+            scripts/ci/check-email-provider-keys.sh
           sparse-checkout-cone-mode: false
           persist-credentials: false
       # Read-only OIDC role (infra/aws-oidc → alethia-deploy-reader): GetSecretValue on

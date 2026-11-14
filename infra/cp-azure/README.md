@@ -12,8 +12,10 @@ Azure rather than a 1:1 clone.
 
 - **Provider:** Azure (`hashicorp/azurerm ~> 4.0`) + Cloudflare (`~> 4.40`). **State:** S3-compatible
   `terraform-state` · key `azure-cp/terraform.tfstate` (custom endpoint — see `backend.hcl.example`).
-- **CI auth:** static service-principal via `.github/workflows/infra-cp-azure.yml`
-  (`ARM_CLIENT_ID` / `ARM_CLIENT_SECRET` / `ARM_SUBSCRIPTION_ID` / `ARM_TENANT_ID` + `CLOUDFLARE_*`).
+- **CI:** `.github/workflows/infra-cp-azure.yml` is **validate-only** (`tofu validate` + fmt/tflint/
+  Trivy, no backend, no secrets). This repository does not deploy this stack, so CI holds no Azure
+  credential for it. Apply it yourself, signed in with `az login` (the azurerm provider reads the
+  Azure CLI session) rather than a service-principal client secret.
 
 ```bash
 cp backend.hcl.example backend.hcl   # fill in endpoint + creds (gitignored)
@@ -56,8 +58,10 @@ tofu plan && tofu apply
 
 The `cp-*` siblings all serve the **same domain/zone**. They are alternatives — apply **one instead of
 another**, never two at once (two would fight over the apex DNS + tunnel). Prod currently runs on
-`cp-hetzner`, so this stack's `apply` job stays **gated off** (`vars.INFRA_AZURE_APPLY != 'true'`); the
-PR `plan` job still validates the Terraform.
+`cp-hetzner`, so this stack has **no CI `apply` job** (the gated-off one, and the static
+`ARM_CLIENT_SECRET` it named, were removed on 2026-11-14); the PR `plan` job still validates the
+Terraform. To deploy it from CI, add a federated identity credential (the
+[`azure-e2e`](../azure-e2e) pattern) first — never a client secret.
 
 ## Not managed here — inbound email
 

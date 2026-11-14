@@ -88,3 +88,36 @@ resource "github_repository_environment_deployment_policy" "cli_release_tags" {
   environment = github_repository_environment.cli_release.environment
   tag_pattern = "cli-v*"
 }
+
+# The `spend-report` environment is the weekly spend report's credential scope
+# (.github/workflows/spend-report.yml). Four identities trust ITS subject and nothing else:
+# `alethia-spend-reporter` (infra/aws-oidc/spend-reporter.tf — Cost Explorer, the tagging API, and a
+# READ of the prod secret for the Resend key), its e2e-account twin (infra/aws-e2e/spend-reporter.tf —
+# Cost Explorer and the tagging API only), the Azure Cost Management Reader SP
+# (infra/azure-e2e/spend-reporter.tf) and the GCP billing-viewer SA (infra/gcp-e2e/spend-reporter.tf).
+#
+# A dedicated environment rather than `production`, because `production` is trusted by every deploy
+# role — state write, ECR push, ECS roll — and a read-only report has no business presenting a subject
+# that reaches them. A dedicated environment rather than the bare `ref:refs/heads/main` subject,
+# because that one is presented by EVERY workflow on main, while this one is presented only by a job
+# that names it.
+#
+# The `main` policy is the load-bearing half, exactly as for `production`: without it any branch could
+# select the environment and read the prod secret through the AWS role. GitHub creates an environment
+# UNRESTRICTED the first time a job names one that does not exist, so this resource must be applied
+# BEFORE infra/aws-oidc creates the role, not after.
+resource "github_repository_environment" "spend_report" {
+  repository  = var.repository
+  environment = "spend-report"
+
+  deployment_branch_policy {
+    protected_branches     = false
+    custom_branch_policies = true
+  }
+}
+
+resource "github_repository_environment_deployment_policy" "spend_report_main" {
+  repository     = var.repository
+  environment    = github_repository_environment.spend_report.environment
+  branch_pattern = "main"
+}

@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars (gitignored in this directory):
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# The management-account profile is NOT set here. Pass it on the command line so it never lands in
+# a file next to this repo:
+#
+#   TF_VAR_management_profile=<your management-account profile> tofu plan
+
+e2e_account_id     = "556074788436"
+alethia_account_id = "270587882865"
+
+# The maintainer's Alethia SSO role, PATH INCLUDED. Print it with:
+#   AWS_PROFILE=alethia-sso aws iam list-roles --path-prefix /aws-reserved/ --query 'Roles[].Arn'
+admin_principal_arns = [
+  "arn:aws:iam::270587882865:role/aws-reserved/sso.amazonaws.com/eu-central-1/AWSReservedSSO_AdministratorAccess_REPLACE",
+]

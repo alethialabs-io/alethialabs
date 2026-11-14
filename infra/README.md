@@ -17,28 +17,34 @@ push to `main`). PR jobs run **no cloud/state credentials** (static checks only:
 | Stack | Purpose | Auth (CI) | State | Bootstrap |
 |---|---|---|---|---|
 | `email-ses/` | AWS SES transactional email (acct **270587882865**) | **GitHub OIDC** (`alethia-ses-deployer`) | `alethia-tofu-state-270587882865` · `ses/` | `email-ses/bootstrap/` — owns the account's OIDC provider + state bucket |
+| `email-ses-account/` | Hosted transactional email: AWS SES in the dedicated `alethia-email` account (**604925221417**, which holds SES production access): config sets, events topic → `/api/webhooks/ses`, reputation alarms, VDM, the `alethia-ses-sender` user. **Applied by hand** (it creates IAM); CI validates only | none — the provider assumes `alethia-email-admin` from the maintainer's `alethia-sso` session | `alethia-tofu-state-270587882865` · `email-ses-account/` | `email-ses-account/bootstrap/` — the `alethia-email-admin` role, applied once with the organization's management-account credentials |
 | `connector-assets/` | Public S3 bucket serving cloud-connector setup artifacts (acct **270587882865**) | **GitHub OIDC** (`alethia-connector-assets-deployer`) | `…270587882865` · `connector-assets/` | `connector-assets/bootstrap/` — adopts the OIDC provider + state bucket |
-| `cp-aws` / `cp-gcp` / `cp-azure` / `cp-alibaba` / `cp-hetzner` | Per-cloud control-plane box | Static cloud keys (CI secrets) | S3-**compatible** `terraform-state` · `<cloud>-cp/` (custom endpoint) | — |
+| `cp-hetzner` | The hosted control-plane box (prod) | **GitHub OIDC** (`alethia-cp-deployer`); Hetzner + Cloudflare tokens from AWS Secrets Manager | `…270587882865` · `hetzner/` | — |
+| `cp-aws` / `cp-gcp` / `cp-azure` / `cp-alibaba` | Self-host options: the control-plane box on another cloud. Not deployment targets of ours | **None** — CI is validate-only (no backend, no secrets); a self-hoster applies it locally | S3-compatible, the self-hoster's own (`backend.hcl`) | — |
 | `status/` | `status.alethialabs.io` Gatus VPS (Hetzner) | Static keys (CI secrets) | S3-compatible `terraform-state` · `status/` | — |
 
 ### The e2e federation stacks
 
 The OIDC/WIF plane the T2 real-cloud nightly authenticates through. **Never applied by CI** — each
 one mints broad provisioning identity, so a maintainer applies it by hand with an admin identity
-(`tofu apply` on `infra/` identity stacks is maintainer-only). All four keep state remotely, in the
-same account/project/subscription as the identity they describe, so the admin's own credentials
-authenticate the backend and no static state keys exist.
+(`tofu apply` on `infra/` identity stacks is maintainer-only). All of them keep state remotely and
+no static state keys exist. `aws-oidc`, `gcp-e2e`, `azure-e2e` and `alibaba-e2e` keep it in the same
+account/project/subscription as the identity they describe. `aws-e2e` is the deliberate exception:
+its state stays in the platform account's bucket, OUTSIDE the e2e account whose role holds `s3:*`
+and `iam:*` there (see its README, "Where the state lives").
 
 | Stack | Purpose | State | Bootstrap |
 |---|---|---|---|
 | `aws-oidc/` | GitHub-OIDC deploy roles + the runner ECR repository + the `alethia-e2e-nightly` provisioning role + budget | `s3` · `alethia-tofu-state-270587882865` · `aws-oidc/` | `email-ses/bootstrap/` already owns the bucket |
+| `aws-e2e/` | The dedicated `alethia-e2e` account (556074788436): GitHub OIDC provider + `alethia-e2e-nightly` + broker trust + budget + the `e2e.alethialabs.io` zone. Replaces the e2e half of `aws-oidc/` once its runbook's cutover is done | `s3` · `alethia-tofu-state-270587882865` · `aws-e2e/` | `aws-e2e/bootstrap/`, which is NOT a state container: it is the `alethia-e2e-admin` role the stack applies through (applied once with the organization's management-account credentials) |
 | `gcp-e2e/` | WIF pool + ref-bound provider + provisioner SA + billing budget | `gcs` · `alethia-tofu-state-<project_id>` · `gcp-e2e/` | `gcp-e2e/bootstrap/` — the GCS bucket |
 | `azure-e2e/` | Entra app + federated credential + subscription roles + AKS admin group | `azurerm` · `alethiatfstate`/`tfstate` · `azure-e2e.tfstate` | `azure-e2e/bootstrap/` — RG + storage account + container |
 | `alibaba-e2e/` | RAM OIDC provider + `alethia-e2e-nightly` role + least-priv policy | `oss` · `alethia-tofu-state-e2e-alibaba` · `alibaba-e2e/` | `alibaba-e2e/bootstrap/` — the OSS bucket |
 | `e2e-issuer/` | The E2E assertion issuer's origin `e2e-issuer.alethialabs.io`: the Workers Custom Domain, its CAA set, and the reviewed TLS CA pin `alibaba-e2e` reads | `s3` · `alethia-tofu-state-270587882865` · `e2e-issuer/` | none (the bucket exists). Applied with a zone-scoped Cloudflare token, never the deploy token |
 | `aws-secrets-e2e/` | Account-B canary for the cross-account keyless secret proof | `s3` · `alethia-tofu-state-270587882865` | — |
 
-Each `bootstrap/` owns exactly one thing: the container its parent's state lives in. It exists
+Each `bootstrap/` owns exactly one thing. Except for `aws-e2e/bootstrap/` (it owns the apply role,
+since the bucket already exists), that thing is the container its parent's state lives in. It exists
 because a stack cannot keep its state in a bucket it has not created yet — the same chicken-and-egg
 `email-ses/bootstrap/` solves on the AWS side. Every state container is **versioned**, refuses
 public access, and carries `prevent_destroy`.

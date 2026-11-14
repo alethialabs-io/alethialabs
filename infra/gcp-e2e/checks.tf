@@ -220,3 +220,18 @@ check "e2e_broker_trust_absent_when_unset" {
     error_message = "with e2e_broker_issuer_url unset there must be no broker pool, provider or SA binding."
   }
 }
+
+# ── The spend reporter's binding names ONE subject and the pool condition is untouched ──────────
+# Two ways it can rot: the binding widened to the repo-wide principalSet (every workflow on main
+# could then read billing), or the subject drifting off the spend-report environment.
+check "spend_reporter_binding_is_one_subject" {
+  assert {
+    condition = alltrue([
+      startswith(google_service_account_iam_member.spend_reporter_wif.member, "principal://"),
+      !strcontains(google_service_account_iam_member.spend_reporter_wif.member, "principalSet://"),
+      endswith(google_service_account_iam_member.spend_reporter_wif.member, "/subject/${local.spend_reporter_subject}"),
+      can(regex("^repo:[^:*]+/[^:*]+:environment:[^:*]+$", local.spend_reporter_subject)),
+    ])
+    error_message = "the spend-reporter WIF binding must be principal://…/subject/${local.spend_reporter_subject} — one exact subject, never a principalSet."
+  }
+}
