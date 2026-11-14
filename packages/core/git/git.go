@@ -12,11 +12,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
@@ -584,6 +586,26 @@ func (g *GIT) Push(ctx context.Context) error {
 	return nil
 }
 
+// FallbackAuthorName and FallbackAuthorEmail are the commit identity used only when no git config
+// (repo, global or system) names one.
+const (
+	FallbackAuthorName  = "Alethia"
+	FallbackAuthorEmail = "no-reply@alethialabs.io"
+)
+
+// commitOptions returns the options for a commit in r. An identity found in git config wins, so
+// a self-hosted runner with user.name/user.email set commits as that identity. Without one —
+// the runner container and CI have no ~/.gitconfig — go-git refuses with ErrMissingAuthor, and
+// before this fallback every product commit (the app-manifest scaffold among them) failed there.
+func commitOptions(r *gogit.Repository) *gogit.CommitOptions {
+	probe := &gogit.CommitOptions{}
+	if err := probe.Validate(r); errors.Is(err, gogit.ErrMissingAuthor) {
+		sig := &object.Signature{Name: FallbackAuthorName, Email: FallbackAuthorEmail, When: time.Now()}
+		return &gogit.CommitOptions{Author: sig, Committer: sig}
+	}
+	return &gogit.CommitOptions{}
+}
+
 // AddAndCommit stages all changes and commits them.
 func (g *GIT) AddAndCommit(message string) error {
 	if g.Repo == nil {
@@ -606,8 +628,7 @@ func (g *GIT) AddAndCommit(message string) error {
 		return fmt.Errorf("failed to add changes to git index: %w", err)
 	}
 
-	// Commit changes
-	_, err = w.Commit(message, &gogit.CommitOptions{})
+	_, err = w.Commit(message, commitOptions(g.Repo))
 	if err != nil {
 		return fmt.Errorf("failed to commit changes: %w", err)
 	}
