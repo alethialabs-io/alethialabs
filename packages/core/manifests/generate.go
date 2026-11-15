@@ -109,7 +109,19 @@ type Sidecar struct {
 	// workload does not know it has, so this is a package default rather than a canvas field — but
 	// it stays overridable for a caller that knows better.
 	Resources *types.ServiceResources
+	// RunAsUser is the numeric UID (and GID) the container runs as; 0 → not rendered. Required for
+	// an image whose USER is a NAME, such as the runner image's `runner`: with runAsNonRoot and no
+	// numeric UID, the kubelet cannot verify the user is non-root and refuses to start the container
+	// (CreateContainerConfigError). That is how the keyless db-authproxy never started on run
+	// 43734395743.
+	RunAsUser int64
 }
+
+// RunnerImageUID is the UID of the `runner` user in the runner image (apps/runner/Dockerfile.base,
+// `adduser -D -u 1000 runner`). Every container that runs the runner image under runAsNonRoot must
+// render it, because the image names its user rather than numbering it. Pinned to the Dockerfile by
+// TestRunnerImageUIDMatchesDockerfile.
+const RunnerImageUID int64 = 1000
 
 // defaultSidecarResources is the compute envelope every auxiliary container gets unless its caller
 // overrides it. Sidecars here are auth proxies and token refreshers: near-idle at steady state, with
@@ -328,6 +340,10 @@ spec:
               memory: {{ .Resources.Limits.Memory }}
           securityContext:
             runAsNonRoot: true
+            {{- if .RunAsUser }}
+            runAsUser: {{ .RunAsUser }}
+            runAsGroup: {{ .RunAsUser }}
+            {{- end }}
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
