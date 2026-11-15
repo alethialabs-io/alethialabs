@@ -39,11 +39,19 @@
 #                      floor: a small k3s cluster for about an hour plus a bucket (estimate from the
 #                      floor's shape; the nightly's own cost ceiling is the hard bound).
 #               +1500  for EACH heavy input, PER PROVIDER the run reaches: full_bar, fabric_demo,
-#                      keyless_db, secrets_xacct, xacct_registry, cli_demo_grid, and dimension=
+#                      secrets_xacct, xacct_registry, cli_demo_grid, and dimension=
 #                      maxconfig|addons|full (the input's own description: "heavy + costly"). A
 #                      managed-cloud max-config apply (EKS/GKE/AKS + a managed DB + 18 add-ons) for
 #                      a 3–6 h run is EUR 10–20; 15 is the midpoint. cli_demo_grid reaches FOUR
 #                      providers (hetzner, aws, gcp, azure), everything else one.
+#               +300   for keyless_db, which is NOT a max-config run: one floor-sized cluster plus
+#                      one small IAM-auth database for about 80 minutes. MEASURED 2026-11-15 in Cost
+#                      Explorer (RECORD_TYPE=Usage, before credits), account 270587882865: usage
+#                      was USD 0.25-0.29/day on 2026-11-10..13 (one scheduled aws leg a day) and
+#                      USD 0.55 on 2026-11-14, the day the keyless aws dispatch (run 43592824666,
+#                      78 min provision job) ran on top: about USD 0.30 for the leg. 300 is ~10x
+#                      that on purpose: Cost Explorer lags up to a day, and an orphaned EKS
+#                      control plane or RDS instance bills until the reaper finds it.
 #   C-AI          10   `gh workflow run e2e-ai-nightly.yml` — real-model tokens, cents per run.
 #   C-BYOMYSQL   200   `gh workflow run byo-users-managed-mysql.yml` — one Aurora MySQL db.t4g.medium
 #                      and one RDS MySQL db.t4g.micro for about an hour, created and deleted by the
@@ -503,7 +511,7 @@ rule_workflow() {
 		return 0
 	fi
 	# nightly
-	local heavy=0 providers=1 names="" maxcfg=0
+	local heavy=0 keyless=0 providers=1 names="" maxcfg=0
 	for a in "${inputs[@]}"; do
 		k="${a%%=*}"
 		v="${a#*=}"
@@ -533,13 +541,16 @@ rule_workflow() {
 			names="$names $k"
 			;;
 		keyless_db=?*)
-			heavy=$((heavy + 1))
-			names="$names $k"
+			# Priced from a measurement, not the max-config midpoint (see C-NIGHTLY above).
+			if [ "$keyless" = 0 ]; then
+				keyless=1
+				names="$names $k"
+			fi
 			;;
 		esac
 	done
-	local cents=$((50 + heavy * 1500 * providers))
-	charge C-NIGHTLY "$cents" "gh workflow run e2e-nightly.yml (floor + $heavy heavy × $providers provider(s):${names:- none})"
+	local cents=$((50 + heavy * 1500 * providers + keyless * 300 * providers))
+	charge C-NIGHTLY "$cents" "gh workflow run e2e-nightly.yml (floor + $heavy heavy + $keyless keyless × $providers provider(s):${names:- none})"
 }
 
 wf_file_for_name() { # <workflow name> — print the file whose `name:` it is (or the name back)
@@ -1022,7 +1033,9 @@ STUB
 	c 1550 'gh workflow run e2e-nightly.yml -f dimension=maxconfig'
 	c 1550 'gh workflow run e2e-nightly.yml -f full_bar=true -f dimension=full'
 	c 1550 'gh workflow run e2e-nightly.yml -f dimension=full -f full_bar=true'
-	c 1550 'gh workflow run e2e-nightly.yml --field keyless_db=postgres'
+	c 350 'gh workflow run e2e-nightly.yml --field keyless_db=postgres'
+	c 350 'gh workflow run e2e-nightly.yml --ref dev -f provider=aws -f keyless_db=postgres'
+	c 1850 'gh workflow run e2e-nightly.yml -f keyless_db=postgres -f full_bar=true'
 	c 50 'gh workflow run e2e-nightly.yml -f keyless_db='
 	c 1550 'gh workflow run e2e-nightly.yml -f fabric_demo=true'
 	# two heavy inputs on one provider: 0.50 + 2 × 15 = 30.50, over the budget on its own
