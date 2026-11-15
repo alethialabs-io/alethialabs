@@ -1288,6 +1288,8 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		manifestWarnings, keylessBindings, genErr := generateAppManifests(ctx, vc, result.Outputs, params.GitAccessToken, facts, stdout, stderr)
 		if genErr != nil {
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
+		} else if vc.Repositories.AppsDestinationRepo != "" && params.GitAccessToken != "" {
+			requestAppsRefresh(stdout, stderr)
 		}
 		// Attached to the RESULT, not to GitopsStatus: the keyless decisions are a security posture
 		// fact about the deploy, and GitopsStatus is nil on every path that skipped the wiring. They
