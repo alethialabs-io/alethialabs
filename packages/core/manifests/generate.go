@@ -46,6 +46,11 @@ type App struct {
 	Replicas int
 	// Optional external host; when set an Ingress is emitted.
 	Host string
+	// IngressClassName / IngressAnnotations are the cloud's ingress controller binding for that
+	// Ingress (see ingressExposure). Empty → not rendered, and the cluster's default IngressClass
+	// (if any) decides.
+	IngressClassName   string
+	IngressAnnotations map[string]string
 	// Optional ServiceAccount name (e.g. a workload-identity KSA).
 	ServiceAccount string
 	// When set (keyless-DB path, #722), a ServiceAccount object named ServiceAccount is EMITTED with
@@ -381,7 +386,16 @@ metadata:
   namespace: {{ .Namespace }}
   labels:
     app.kubernetes.io/name: {{ .Name }}
+  {{- if .IngressAnnotations }}
+  annotations:
+    {{- range $k, $v := .IngressAnnotations }}
+    {{ $k }}: {{ printf "%q" $v }}
+    {{- end }}
+  {{- end }}
 spec:
+  {{- if .IngressClassName }}
+  ingressClassName: {{ .IngressClassName }}
+  {{- end }}
   rules:
     - host: {{ printf "%q" .Host }}
       http:
@@ -967,6 +981,7 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 		if len(s.Ports) > 0 {
 			port = s.Ports[0].ContainerPort
 		}
+		ingClass, ingAnn := ingressExposure(opts)
 		host := ""
 		if opts.Domain != "" {
 			host = name + "." + opts.Domain
@@ -993,6 +1008,8 @@ func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []A
 			Port:                      port,
 			Replicas:                  s.Replicas,
 			Host:                      host,
+			IngressClassName:          ingClass,
+			IngressAnnotations:        ingAnn,
 			ServiceAccount:            sa,
 			ServiceAccountAnnotations: binds.saAnnotations,
 			ServiceAccountLabels:      binds.saLabels,
@@ -1132,4 +1149,39 @@ func dns1123Max(s string, max int) string {
 		out = out[:max]
 	}
 	return strings.Trim(out, "-")
+}
+
+// awsALBIngressClass is the IngressClass the aws-load-balancer-controller chart creates. The chart
+// does not mark it default, so an Ingress that names no class is reconciled by nothing on EKS.
+const awsALBIngressClass = "alb"
+
+// acmARNRe is the shape of an ACM certificate ARN, checked before it is written into an annotation.
+var acmARNRe = regexp.MustCompile(`^arn:aws[a-z-]*:acm:[a-z0-9-]+:[0-9]{12}:certificate/[A-Za-z0-9-]+$`)
+
+// ingressExposure returns the IngressClass and annotations that bind a generated app's Ingress to
+// the cloud's ingress controller.
+//
+// AWS: a public ALB (maintainer decision, 2026-11-15). Without a class the Ingress was never
+// reconciled and never got an address, so ArgoCD reported the app Progressing forever (e2e run
+// 43747878988). target-type ip routes straight to pod IPs, so the ClusterIP Service suffices. When
+// the deploy issued an ACM certificate (the acm_certificate_arn output), the ALB serves HTTPS with
+// it and redirects HTTP; with none it serves HTTP only, because the controller's certificate
+// auto-discovery fails the whole Ingress when no certificate matches the host.
+//
+// Other clouds return nothing: their rendering is unchanged.
+func ingressExposure(opts Options) (string, map[string]string) {
+	if opts.Provider != providerAWS {
+		return "", nil
+	}
+	ann := map[string]string{
+		"alb.ingress.kubernetes.io/scheme":       "internet-facing",
+		"alb.ingress.kubernetes.io/target-type":  "ip",
+		"alb.ingress.kubernetes.io/listen-ports": `[{"HTTP":80}]`,
+	}
+	if arn := opts.Outputs["acm_certificate_arn"]; acmARNRe.MatchString(arn) {
+		ann["alb.ingress.kubernetes.io/certificate-arn"] = arn
+		ann["alb.ingress.kubernetes.io/listen-ports"] = `[{"HTTP":80},{"HTTPS":443}]`
+		ann["alb.ingress.kubernetes.io/ssl-redirect"] = "443"
+	}
+	return awsALBIngressClass, ann
 }
