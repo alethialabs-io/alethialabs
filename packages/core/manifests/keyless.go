@@ -390,9 +390,10 @@ func authProxySidecar(provider, engine, upstreamHost, region, runnerImage string
 		args = append(args, "--region", region)
 	}
 	return Sidecar{
-		Name:  "db-authproxy",
-		Image: runnerImage,
-		Args:  args,
-		Ports: []int{portInt},
+		Name:      "db-authproxy",
+		Image:     runnerImage,
+		Args:      args,
+		Ports:     []int{portInt},
+		RunAsUser: RunnerImageUID,
 	}
 }
