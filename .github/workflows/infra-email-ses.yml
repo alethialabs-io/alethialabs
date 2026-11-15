@@ -1,11 +1,18 @@
 name: Infra - Email SES
 
+# VALIDATE-ONLY, and credential-free by construction. `infra/email-ses` is a self-hosting
+# reference: SES in the self-hoster's OWN AWS account (apps/docs/.../self-hosting/email.mdx). It is
+# not a deployment target of ours. Hosted transactional email is `infra/email-ses-account`, in the
+# dedicated `alethia-email` account, applied by hand and validated by infra-email-ses-account.yml.
+#
+# Until 2026-11-15 this file also carried a push-to-main `apply` job that assumed
+# `alethia-ses-deployer` (vars.SES_DEPLOYER_ROLE_ARN) through GitHub OIDC and applied this stack in
+# the platform account, where SES production access was refused. Its last run was 2026-08-09. It
+# was removed so that an edit under `infra/email-ses/**` reaching `main` applies nothing, and so the
+# hosted resources it managed can be retired by hand (infra/email-ses/RETIRE.md). Do not add an
+# apply job back: a self-hoster applies this stack locally, against their own account and state.
 on:
   pull_request:
-    paths:
-      - 'infra/email-ses/**'
-  push:
-    branches: [main]
     paths:
       - 'infra/email-ses/**'
 
@@ -18,10 +25,7 @@ on:
 # away. The currency is slots REQUESTED, so a superseded run costs the same as a useful one until
 # it dies.
 #
-# `github.ref` and NOT `github.event.pull_request.number || github.ref`: this workflow also fires on
-# `push`, where the number renders EMPTY and every push to `main` would collapse into one group,
-# cancelling a real deploy-path run. `cla.yml` records that trap; it is PR-only, so it can use the
-# number. `github.ref` is distinct for both events here.
+# `github.ref` is `refs/pull/<n>/merge` on a pull_request, so it is distinct per PR.
 concurrency:
   group: infra-email-ses-${{ github.ref }}
   cancel-in-progress: true
@@ -35,7 +39,6 @@ env:
 
 jobs:
   plan:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -43,10 +46,9 @@ jobs:
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
-      - name: OpenTofu Validate (no backend, no creds)
+      - name: OpenTofu Validate (no backend, no secrets)
         working-directory: ${{ env.TF_DIR }}
-        # PR plans are validate-only: no backend, no cloud/state creds reach a PR
-        # job (the repo is contributor-facing). Real plan+apply run on main.
+        # No backend and no secrets: this workflow references none, so none can reach a PR job.
         run: |
           tofu init -backend=false
           tofu validate
@@ -55,39 +57,3 @@ jobs:
         uses: ./.github/actions/iac-checks
         with:
           working-directory: ${{ env.TF_DIR }}
-
-  apply:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: production
-    permissions:
-      contents: read
-      id-token: write # assume the deploy role via GitHub OIDC — no stored AWS keys
-    steps:
-      - uses: actions/checkout@v7
-      - uses: opentofu/setup-opentofu@v2
-        with:
-          tofu_version: ${{ env.TOFU_VERSION }}
-
-      # Least-privilege deploy role from infra/email-ses/bootstrap (its ARN is a
-      # non-secret Actions variable). Sets AWS_* env for the OpenTofu provider.
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ vars.SES_DEPLOYER_ROLE_ARN }}
-          aws-region: eu-central-1
-
-      - name: OpenTofu Init
-        working-directory: ${{ env.TF_DIR }}
-        # AWS S3 backend in the same account — the assumed OIDC deploy role
-        # authenticates the backend too, so there are no static state keys.
-        run: |
-          tofu init -upgrade \
-            -backend-config="bucket=alethia-tofu-state-270587882865" \
-            -backend-config="key=ses/terraform.tfstate" \
-            -backend-config="region=eu-central-1" \
-            -backend-config="use_lockfile=true"
-
-      - name: OpenTofu Apply
-        working-directory: ${{ env.TF_DIR }}
-        run: tofu apply -auto-approve
