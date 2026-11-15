@@ -635,3 +635,24 @@ func liveCellKeylessFailures(decisions []manifests.KeylessBindingDecision) []str
 	}
 	return failed
 }
+
+// appsRefreshCommand asks ArgoCD to re-read the apps repo for the `apps` Application now.
+const appsRefreshCommand = "kubectl annotate --overwrite applications.argoproj.io/apps -n argocd argocd.argoproj.io/refresh=normal"
+
+// requestAppsRefresh tells ArgoCD to re-read the apps repo straight after the manifest scaffold.
+//
+// The `apps` Application is created (installArgoCD) BEFORE generateAppManifests pushes into its
+// repo, so ArgoCD's first compare saw the repo without the scaffold. Left alone it picks the push up
+// on its next git poll (~3 min by default), and until then the Application reads Healthy+Synced while
+// managing nothing — what a customer saw on a first deploy, and what failed the keyless e2e twice
+// (runs 43592824666, 43722379866: "apps manages ZERO resources"). A refresh closes that window.
+//
+// Best-effort: the poll still converges if this fails, so a failure is a warning, never a deploy
+// error. Runs through the executeCommand seam so unit tests never touch a real cluster.
+func requestAppsRefresh(stdout, stderr io.Writer) {
+	if err := executeCommand(appsRefreshCommand, ".", nil, io.Discard, stderr); err != nil {
+		fmt.Fprintf(stderr, "Warning: could not ask ArgoCD to re-read the apps repo (it picks the push up on its next poll): %v\n", err)
+		return
+	}
+	fmt.Fprintln(stdout, "Asked ArgoCD to re-read the apps repo.")
+}

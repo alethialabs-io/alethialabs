@@ -850,13 +850,20 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		// chart never deployed, and the e2e proved a path a customer does not have. The chart must
 		// now converge unaided, which is what a customer actually gets.
 		t.Logf("A0.6: repo-apps (apps) + repo-byo (%s) derived + credentialed; converging (BYO auto-syncs, unaided)...", byoApp)
+		convergeDeadline := time.Now().Add(ArgoAssertTimeout())
 		if e := AssertArgoReposConverge(ctx, kc, assertedApps, nil, ArgoAssertTimeout()); e != nil {
 			t.Fatalf("A0.6 ArgoCD-with-repos convergence failed: %v", e)
 		}
 		// Not vacuous: both repo-sourced apps must MANAGE ≥1 resource — an empty repo/chart
 		// renders nothing yet reports Healthy+Synced, which would prove a credentialed clone but
 		// NOT that GitOps actually deployed a workload.
-		if e := assertArgoAppManagesResources(ctx, kc, "apps"); e != nil {
+		//
+		// `apps` is WAITED for, inside the convergence window it already has, not read once. Its
+		// repo can be scaffolded by the runner AFTER the Application was created (the keyless leg
+		// resets its repo to a README first), so the convergence above can pass on the README-only
+		// revision. A one-shot count then read zero on runs 43592824666 and 43722379866. The runner
+		// now asks ArgoCD to re-read the repo after its push; this wait is what proves it landed.
+		if e := waitArgoAppManagesResources(ctx, kc, "apps", convergeDeadline); e != nil {
 			t.Fatalf("A0.6 repo-apps workload: %v", e)
 		}
 		if e := assertArgoAppManagesResources(ctx, kc, byoApp); e != nil {
