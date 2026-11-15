@@ -5,13 +5,18 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # infra/email-ses
 
-Production AWS SES for **alethialabs.io** transactional email — codified.
+AWS SES for transactional email — codified. The defaults are the values the hosted alethialabs.io instance used.
 
-> **Status: not used by hosted prod.** AWS denied SES production access for this
-> account (both `eu-central-1` and `us-east-1`, "final decision"), so hosted
-> alethialabs.io sends via **Resend** (`EMAIL_PROVIDER=resend`, `RESEND_API_KEY`).
-> This stack is retained for self-hosters who *do* have SES production access — the
-> email transport is pluggable (Resend / SMTP / SES); see docs → Self-Hosting → Email.
+> **Status: a self-hosting reference, not a deployment target of ours.** AWS denied SES
+> production access for the platform account (both `eu-central-1` and `us-east-1`, "final
+> decision"). Hosted alethialabs.io email is **`infra/email-ses-account`**, in the dedicated
+> `alethia-email` account, with Resend as the fallback. This stack is kept for self-hosters who run
+> SES in their **own** account and have production access; the email transport is pluggable
+> (Resend / SMTP / SES), see docs → Self-Hosting → Email. CI only validates it. The resources it
+> created in the platform account are retired by hand: **[`RETIRE.md`](RETIRE.md)**.
+>
+> The account, bucket, role and domain names below are the values the hosted instance used. A
+> self-hoster replaces them with their own (`terraform.tfvars`, `backend.hcl`).
 
 - **Account:** `270587882865` · **Region:** `eu-central-1`
 - Two reputation-isolated sending subdomains: `auth.alethialabs.io` (auth/security,
@@ -45,9 +50,13 @@ tofu apply
 tofu output -raw deployer_role_arn
 ```
 
-Set that ARN as the repo **Actions variable** `SES_DEPLOYER_ROLE_ARN` (not a secret) so CI
-can assume it via OIDC. To run the main stack locally, add your admin ARN to
-`admin_principal_arns` and assume the role, or just use admin creds directly.
+To run the main stack as that role, add your admin ARN to `admin_principal_arns` and assume
+it, or use admin credentials directly. This repository's CI no longer assumes the role (see
+[CI](#ci)), so the hosted `alethia-ses-deployer` is retired in `RETIRE.md` step 3.
+
+**In the hosted platform account, `bootstrap/` also owns two things other stacks share:** the
+account's GitHub Actions OIDC provider and the state bucket `alethia-tofu-state-270587882865`.
+Both stay. Never run an untargeted `tofu destroy` there.
 
 ## 1. DNS records (set once, any provider — NOT managed here)
 
@@ -153,8 +162,9 @@ IAM user rather than reusing the least-priv one above.)
 
 ## CI
 
-`.github/workflows/infra-email-ses.yml`: PRs run `tofu validate` (no creds); pushes to `main` assume
-the deploy role via **GitHub OIDC** (`id-token: write`) and apply — **no stored AWS keys, no state
-keys** (S3 backend in-account). Config: just the Actions **variable** `SES_DEPLOYER_ROLE_ARN`
-(= the bootstrap `deployer_role_arn`). The deploy role trusts `alethialabs-io/alethialabs@main` —
-change `github_repo` / `github_branch` in the bootstrap stack if that moves.
+`.github/workflows/infra-email-ses.yml` is **validate-only**: pull requests that touch
+`infra/email-ses/**` run `tofu validate` with no backend, plus fmt, tflint and Trivy. It references
+no secret, no variable and no role, and there is no job on push to `main`. Until 2026-11-15 a push
+to `main` also applied this stack as `alethia-ses-deployer` through GitHub OIDC; that job was
+removed when the hosted resources were retired (`RETIRE.md`). A self-hoster applies the stack
+locally, with their own credentials and state backend.
