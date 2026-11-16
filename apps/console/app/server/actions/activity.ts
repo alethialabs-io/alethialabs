@@ -9,6 +9,7 @@
 // log as much as a read of it. It is a `defineAction` returning `ActionResult<string>`.
 
 import { desc, eq } from "drizzle-orm";
+import type { RangePresetId } from "@/lib/query/range-filter";
 import { z } from "zod";
 import { defineAction } from "@/lib/actions/define-action";
 import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
@@ -56,6 +57,12 @@ export interface ActivityQuery {
 	/** SCOPE, not a filter: a project's own Activity page pins the feed to this project id. The
 	 *  facet counts see it; they never see any of the filters below. */
 	projectId?: string;
+	/**
+	 * A relative window ("the last 30 days") by its quick-range preset id, resolved against the
+	 * clock when the page is READ (`activityTimeBounds`), so a shared link stays relative (#6740).
+	 * Wins over `from`/`to`.
+	 */
+	within?: RangePresetId;
 	/** ISO timestamps bounding `ts` (inclusive). */
 	from?: string;
 	to?: string;

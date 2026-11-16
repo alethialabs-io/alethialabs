@@ -41,6 +41,12 @@ interface DateRangeFilterProps {
   onChange: (range: DateRange) => void;
   /** Initial display timezone (IANA); defaults to the browser's. */
   defaultTimeZone?: string;
+  /**
+   * When set, the filter has NO window and the trigger says this instead of a range; `value` is
+   * then only where the popover opens. Without it an unbounded list's trigger showed the
+   * fallback window as if it were the filter (#6731).
+   */
+  emptyLabel?: string;
 }
 
 // What the trigger says for the one frame before mount. The control's own name rather than a
@@ -67,6 +73,7 @@ export function DateRangeFilter({
   value,
   onChange,
   defaultTimeZone,
+  emptyLabel,
 }: DateRangeFilterProps) {
   const [open, setOpen] = useState(false);
   const [tz, setTz] = useState(defaultTimeZone ?? localTimeZone());
@@ -138,7 +145,9 @@ export function DateRangeFilter({
         render={
           <Button variant="outline" size="sm" className="gap-1.5">
             <CalendarDays size={14} />
-            {mounted ? (
+            {emptyLabel !== undefined ? (
+              emptyLabel
+            ) : mounted ? (
               formatRangeLabel(value, tz)
             ) : (
               <span className="inline-grid">

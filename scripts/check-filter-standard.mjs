@@ -810,10 +810,32 @@ function resolveObjectLiteral(ident, fromFile, sources) {
  */
 export function deriveUrlParams(surface, sources) {
 	const neighbourhood = [surface.file, ...surface.consumers];
-	const call = new RegExp(`useFilterUrlSync\\(\\s*${surface.symbol}\\s*,\\s*([A-Za-z_$][\\w$]*)\\s*(?:,\\s*(\\{[^}]*\\}|[A-Za-z_$][\\w$]*)\\s*)?,?\\s*\\)`);
+	// `(<symbol>, <defaults>, <names>?, <options>?)`. `<names>` may be written `undefined` to reach
+	// `<options>` (`{ retiredParams }`, #6740), which names params the hook DELETES, never writes,
+	// so it adds nothing to the params read here.
+	const arg = String.raw`(?:\{[^}]*\}|[A-Za-z_$][\w$]*)`;
+	const call = new RegExp(
+		String.raw`useFilterUrlSync\(\s*${surface.symbol}\s*,\s*([A-Za-z_$][\w$]*)\s*(?:,\s*(${arg})\s*(?:,\s*${arg}\s*)?)?,?\s*\)`,
+	);
+	// Any call to this store at all, whatever its arguments — so a call the shape above cannot read
+	// is reported as UNREAD rather than as a surface that writes no params (#6740: a fourth argument
+	// once made activity's call invisible here, and the live pass got `params: []`).
+	const anyCall = new RegExp(String.raw`useFilterUrlSync\(\s*${surface.symbol}\s*,`);
 	for (const file of neighbourhood) {
-		const m = call.exec(sources.get(file) ?? "");
-		if (m === null) continue;
+		const text = sources.get(file) ?? "";
+		const m = call.exec(text);
+		if (m === null) {
+			if (anyCall.test(text)) {
+				return {
+					params: [],
+					search: null,
+					caller: file,
+					defaults: null,
+					problem: `${file}: \`useFilterUrlSync(${surface.symbol}, …)\` is called with arguments this reader does not follow, so the params this surface writes are UNREAD`,
+				};
+			}
+			continue;
+		}
 		const defaults = resolveObjectLiteral(m[1], file, sources);
 		if (defaults === null) {
 			return {
@@ -826,7 +848,7 @@ export function deriveUrlParams(surface, sources) {
 		}
 		/** @type {Map<string, string>} */
 		const renames = new Map();
-		if (m[2] !== undefined) {
+		if (m[2] !== undefined && m[2] !== "undefined") {
 			const namesBody = m[2].startsWith("{") ? m[2].slice(1, -1) : resolveObjectLiteral(m[2], file, sources)?.body;
 			if (namesBody === undefined) {
 				return {
@@ -1762,6 +1784,20 @@ export function positiveControl() {
 	if (renamed.search !== "q" || renamed.params.find((p) => p.key === "kinds")?.param !== "kind") {
 		problems.push(`a third-argument RENAME was not followed — the live pass would drive \`search\` on a page that writes \`q\`: ${JSON.stringify(renamed)}`);
 	}
+	// A fourth (options) argument, reached past an `undefined` third: the params are still the
+	// defaults' keys, unrenamed (#6740 — this shape once read as `params: []`).
+	const withOptions = params(
+		fixtureIo({ [CLIENT]: clean.readFile(CLIENT).replace("useFilterUrlSync(useWidgetFilters, DEFAULTS);", "useFilterUrlSync(useWidgetFilters, DEFAULTS, undefined, {\n\tretiredParams: RETIRED,\n});") }),
+	);
+	if (JSON.stringify(withOptions.params) !== JSON.stringify(cleanParams.params) || withOptions.search !== "search" || withOptions.problem !== undefined) {
+		problems.push(`a fourth OPTIONS argument hid the params: ${JSON.stringify(withOptions)}`);
+	}
+	// A call shape nothing here follows must say UNREAD, never "writes no params".
+	refuses(
+		"a URL sync call whose arguments this reader cannot follow",
+		{ [CLIENT]: clean.readFile(CLIENT).replace("useFilterUrlSync(useWidgetFilters, DEFAULTS);", "useFilterUrlSync(useWidgetFilters, pick(DEFAULTS));") },
+		/arguments this reader does not follow/,
+	);
 	// Through an IMPORT, and past a same-named constant elsewhere with different keys: the console
 	// declares `DEFAULT_ACTIVITY_FILTERS` twice, so resolving by name alone picks the wrong one.
 	const imported = params(
