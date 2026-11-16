@@ -19,6 +19,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import {
 	makeDefaultCard,
+	recordCardSaved,
 	removeCard as removeCardAction,
 	saveBackupCards,
 	startAddCard,
@@ -142,17 +143,28 @@ export function PaymentMethodsCard() {
 	// list, so two reorders racing from two rows would each persist an order built from a stale one.
 	const busy = setDefault.isPending || setBackups.isPending || remove.isPending;
 
-	/** Open the add-card dialog after creating a SetupIntent for the embedded form. */
+	/**
+	 * Open the add-card dialog. The SetupIntent is created on the first open and REUSED until a card
+	 * is saved with it, so opening and closing the dialog does not leave a trail of unconfirmed
+	 * SetupIntents in Stripe (#6733). Opening it records nothing; saving does.
+	 */
 	function openAddCard() {
+		if (clientSecret) {
+			setAddOpen(true);
+			return;
+		}
 		if (addIntent.isPending) return;
 		addIntent.mutate({});
 	}
 
-	/** Card saved in Stripe — close the dialog and re-read the list. */
-	function handleCardAdded() {
+	/** Card saved in Stripe — record it, close the dialog and re-read the list. */
+	function handleCardAdded(setupIntentId: string | null) {
 		setAddOpen(false);
 		setClientSecret(null);
 		toast.success("Card saved.");
+		// The Activity record of the save. The card is saved whatever this answers, so a failure is
+		// not shown as one: telling the user "something went wrong" would read as the card failing.
+		if (setupIntentId) void recordCardSaved({ setupIntentId }).catch(() => undefined);
 		void queryClient.invalidateQueries({ queryKey: orpc.billing.paymentMethods.key() });
 	}
 
@@ -326,10 +338,8 @@ export function PaymentMethodsCard() {
 			{/* Add-card dialog — confirms a SetupIntent (card data stays in Stripe's iframe). */}
 			<Dialog
 				open={addOpen}
-				onOpenChange={(o) => {
-					setAddOpen(o);
-					if (!o) setClientSecret(null);
-				}}
+				// Closing keeps the SetupIntent: the next open reuses it rather than minting another.
+				onOpenChange={setAddOpen}
 			>
 				<DialogContent>
 					<DialogHeader>
