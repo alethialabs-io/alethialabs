@@ -15,7 +15,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
 	makeDefaultCard,
@@ -156,6 +156,28 @@ export function PaymentMethodsCard() {
 		if (addIntent.isPending) return;
 		addIntent.mutate({});
 	}
+
+	// A card whose 3-D Secure step needed a FULL-PAGE redirect comes back here (the form's `return_url`
+	// is this page) with Stripe's `setup_intent` / `redirect_status` params, and the inline success
+	// path above never ran. This is the only place that save can be recorded: the webhook endpoint
+	// is not subscribed to SetupIntent events (scripts/stripe-setup.ts WEBHOOK_EVENTS), and could
+	// not name who saved the card. The server checks the SetupIntent with Stripe and records it at
+	// most once, so a reload of this URL records nothing twice. The params are then removed.
+	useEffect(() => {
+		const params = new URLSearchParams(window.location.search);
+		const setupIntentId = params.get("setup_intent");
+		if (!setupIntentId) return;
+		const succeeded = params.get("redirect_status") === "succeeded";
+		for (const key of ["setup_intent", "setup_intent_client_secret", "redirect_status"]) {
+			params.delete(key);
+		}
+		const query = params.toString();
+		window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+		if (!succeeded) return;
+		toast.success("Card saved.");
+		void recordCardSaved({ setupIntentId }).catch(() => undefined);
+		void queryClient.invalidateQueries({ queryKey: orpc.billing.paymentMethods.key() });
+	}, [queryClient]);
 
 	/** Card saved in Stripe — record it, close the dialog and re-read the list. */
 	function handleCardAdded(setupIntentId: string | null) {

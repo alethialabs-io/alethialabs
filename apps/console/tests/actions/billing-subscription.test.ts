@@ -22,6 +22,17 @@ vi.mock("@/lib/authz/guard", () => {
 	return { currentActor: vi.fn(), authorize, authorizeDeferred, authorizeRead: authorize, authorizeQuiet: authorize, authorizeInOrg: vi.fn() };
 });
 vi.mock("@/lib/authz/activity", () => ({ recordAllowed: vi.fn() }));
+// The exactly-once ledger a saved card's SetupIntent is claimed in (#6733): a stand-in that answers
+// "claimed" the first time an id is seen and "already there" every time after.
+const claimed = vi.hoisted(() => new Set<string>());
+vi.mock("@/lib/billing/webhook-events", () => ({
+	claimWebhookEvent: vi.fn(async (id: string) => {
+		if (claimed.has(id)) return { claimed: false, alreadyDone: true };
+		claimed.add(id);
+		return { claimed: true };
+	}),
+	markWebhookEventDone: vi.fn(async () => undefined),
+}));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/billing/invoices", () => ({
 	listOrgInvoices: vi.fn(),
@@ -2613,6 +2624,8 @@ describe("createSetupIntent", () => {
 
 // ── the add-card form is not a billing change; the saved card is (#6733) ─────
 describe("add-card activity", () => {
+	beforeEach(() => claimed.clear());
+
 	it("opening the form records nothing: the SetupIntent is authorized WITHOUT an activity row", async () => {
 		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
 		stripe.setupIntents.create.mockResolvedValue({ client_secret: "seti_cs" } as never);
@@ -2636,6 +2649,18 @@ describe("add-card activity", () => {
 			{ type: "billing" },
 			{ recordAs: "add_payment_method" },
 		);
+	});
+
+	it("is idempotent per SetupIntent: the inline save and the redirect landing record ONE row", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		stripe.setupIntents.retrieve.mockResolvedValue({ customer: "cus_1", status: "succeeded" } as never);
+
+		expect(await confirmCardSaved("seti_1")).toEqual({ ok: true });
+		expect(await confirmCardSaved("seti_1")).toEqual({ ok: true });
+		expect(vi.mocked(recordAllowed)).toHaveBeenCalledTimes(1);
+		// A different card is its own save.
+		await confirmCardSaved("seti_2");
+		expect(vi.mocked(recordAllowed)).toHaveBeenCalledTimes(2);
 	});
 
 	it("records nothing for a SetupIntent that was never confirmed (the form closed)", async () => {

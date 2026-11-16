@@ -154,6 +154,7 @@ import {
 	type ResourceCounts,
 } from "@/lib/queries/usage-counts";
 import { recordAllowed } from "@/lib/authz/activity";
+import { claimWebhookEvent, markWebhookEventDone } from "@/lib/billing/webhook-events";
 import { authorize, authorizeDeferred, authorizeInOrg, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import type {
@@ -3569,6 +3570,9 @@ export async function createSetupIntent(): Promise<{ clientSecret: string }> {
 	return { clientSecret: si.client_secret };
 }
 
+/** The ledger `type` under which a saved card's SetupIntent is claimed (see {@link confirmCardSaved}). */
+const SETUP_INTENT_RECORDED = "setup_intent.recorded";
+
 /**
  * Records that a card was saved: the add-card form's SetupIntent was confirmed (#6733).
  *
@@ -3594,9 +3598,16 @@ export async function confirmCardSaved(setupIntentId: string): Promise<{ ok: tru
 	if (si?.status !== "succeeded") {
 		throw new ActionRefusal("conflict", "The card has not been saved yet.");
 	}
+	// Once per SetupIntent. Both the inline confirm and the 3-D Secure redirect landing call this, and
+	// either can repeat (a reload of the landing URL, a retried request), so the SetupIntent id is
+	// claimed in the Stripe exactly-once ledger the webhook already uses (`stripe_webhook_event`, PK
+	// insert). A `seti_…` id cannot collide with an `evt_…` one. A second claim records nothing.
+	const claim = await claimWebhookEvent(setupIntentId, SETUP_INTENT_RECORDED);
+	if (!claim.claimed) return { ok: true };
 	// Recorded under its own name so the feed can say what happened; emitted as `manage_billing`, so
 	// an org's alert rule on billing changes still fires on a card being added.
 	recordAllowed(actor, "manage_billing", { type: "billing" }, { recordAs: "add_payment_method" });
+	await markWebhookEventDone(setupIntentId);
 	return { ok: true };
 }
 
