@@ -7,6 +7,7 @@ import {
 	CLUSTER_CARD_BLOCK,
 	CLUSTER_CARD_FRAME,
 	CLUSTER_COMPONENT_ROW,
+	CLUSTER_OBSERVED_BLOCK,
 	CLUSTERS_GRID,
 	type ClusterCardShape,
 } from "@/components/clusters/cluster-card-shape";
@@ -31,6 +32,7 @@ const UNKNOWN_CARD: ClusterCardShape = {
 	projectId: "",
 	components: 2,
 	access: { codeRows: 2, captions: 0, download: false },
+	observed: 1,
 	argocd: false,
 	dns: false,
 };
@@ -96,6 +98,11 @@ function ClusterCardSkeleton({ shape }: { shape: ClusterCardShape }) {
 					<div key={i} className={CLUSTER_COMPONENT_ROW}>
 						<Skeleton className="h-5 w-full" />
 					</div>
+				))}
+			</div>
+			<div data-slot="cluster-card-skeleton-observed" className={CLUSTER_OBSERVED_BLOCK}>
+				{Array.from({ length: shape.observed }, (_, i) => (
+					<Skeleton key={i} className="h-3 w-2/3" />
 				))}
 			</div>
 			{shape.access && (

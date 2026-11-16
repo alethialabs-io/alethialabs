@@ -23,6 +23,10 @@ vi.mock("@/lib/cli/project-access", () => ({
 vi.mock("@/lib/gitops/deploy-status", () => ({
 	readGitopsDeployStatus: vi.fn(),
 }));
+// The drift/probe evidence read (#6736) — its own scoping is lib/clusters/observed-evidence.ts's.
+vi.mock("@/lib/clusters/observed-evidence", () => ({
+	readClusterEvidence: vi.fn(async () => ({ drift: evidenceDrift, probes: new Map() })),
+}));
 
 import { GET } from "@/app/api/cli/clusters/[id]/route";
 import { authorizeCli } from "@/lib/authz/guard";
@@ -65,6 +69,10 @@ function clusterRow(over: Record<string, unknown> = {}) {
 /** The second query's row: the owning environment joined to what its last successful DEPLOY recorded. */
 let deployRows: unknown[];
 let clusterRows: unknown[];
+/** The owning environment's deploy stamp and stage (the observation read, #6736). */
+let envRows: unknown[];
+/** The latest drift scan per environment the evidence read answers. */
+let evidenceDrift: Map<string, { scannedAt: string; details: { address: string; type: string; kind: "deleted" }[] }>;
 /** Every `.where` the route issued, in order. */
 let wheres: unknown[];
 
@@ -74,7 +82,10 @@ function fakeDb() {
 	return {
 		select: () => {
 			call += 1;
-			const rows = call === 1 ? clusterRows : deployRows;
+			// The kubeconfig builder's deploy read comes second only when the cluster has a name.
+			const named = (clusterRows[0] as { cluster_name?: string | null } | undefined)?.cluster_name;
+			const order = named ? [clusterRows, deployRows, envRows] : [clusterRows, envRows];
+			const rows = order[call - 1] ?? [];
 			const chain = {
 				from: () => chain,
 				innerJoin: () => chain,
@@ -105,6 +116,8 @@ describe("GET /api/cli/clusters/:id — kubeconfig (#5250)", () => {
 		wheres = [];
 		clusterRows = [clusterRow()];
 		deployRows = [];
+		envRows = [{ last_deployed_at: new Date("2026-07-16T00:00:00Z"), stage: "production" }];
+		evidenceDrift = new Map();
 		vi.mocked(authorizeCli).mockResolvedValue({
 			actor: { credential: "session", userId: USER, orgId: ORG },
 			credential: "session",
@@ -136,8 +149,15 @@ describe("GET /api/cli/clusters/:id — kubeconfig (#5250)", () => {
 		// The internal join columns never reach the wire.
 		expect(body.cluster).not.toHaveProperty("provider");
 		expect(body.cluster).not.toHaveProperty("environment_id");
-		// Two reads: the org-scoped cluster row, then its deploy history.
-		expect(wheres).toHaveLength(2);
+		// Three reads: the org-scoped cluster row, its deploy history, its environment's deploy stamp.
+		expect(wheres).toHaveLength(3);
+		// Deployed months ago and observed by nothing since: the CLI is told so, not "ACTIVE".
+		expect(parsed.observation).toEqual({
+			state: "unverified",
+			observed_at: "2026-07-16T00:00:00.000Z",
+			source: "deploy",
+			detail: null,
+		});
 	});
 
 	it("prints no guessed cloud command when a value is unrecorded — the mint still stands", async () => {
@@ -187,7 +207,31 @@ describe("GET /api/cli/clusters/:id — kubeconfig (#5250)", () => {
 			alternative: null,
 			note: null,
 		});
-		expect(wheres).toHaveLength(1);
+		// The cluster row and the environment's deploy stamp — no deploy-history read.
+		expect(wheres).toHaveLength(2);
+	});
+
+	it("says Missing and prints no command for a cluster a drift scan since its deploy found deleted (#6736)", async () => {
+		evidenceDrift = new Map([
+			[
+				ENV_ID,
+				{
+					scannedAt: "2026-11-09T00:00:00.000Z",
+					details: [{ address: "azurerm_resource_group.main", type: "azurerm_resource_group", kind: "deleted" }],
+				},
+			],
+		]);
+		const { body } = await drive();
+		const parsed = cliClusterDetailResponse.parse(body);
+		expect(parsed.observation).toEqual({
+			state: "missing",
+			observed_at: "2026-11-09T00:00:00.000Z",
+			source: "drift",
+			detail: "deleted: azurerm_resource_group.main",
+		});
+		expect(parsed.kubeconfig.command).toBeNull();
+		expect(parsed.kubeconfig.alternative).toBeNull();
+		expect(parsed.kubeconfig.note).toMatch(/deleted outside Alethia/);
 	});
 
 	it("404s for a cluster outside the org before reading any deploy", async () => {

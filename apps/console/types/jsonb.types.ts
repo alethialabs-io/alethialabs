@@ -338,6 +338,9 @@ export interface ProbeDetail {
 	latencyMs?: number;
 	/** Failure reason when unreachable (dial error / TLS / timeout) — a message, never a secret. */
 	error?: string;
+	/** The failure POSITIVELY shows the cluster no longer exists — a cloud "not found", or its
+	 *  cloud-managed API hostname no longer resolves (Go `clusterGone`, #6736). */
+	gone?: boolean;
 }
 
 /**

@@ -66,6 +66,8 @@ export interface EnvRow {
 	name: string;
 	stage: string;
 	is_default: boolean;
+	/** The environment's provisioning lifecycle (`project_environments.status`). */
+	status: string;
 	updated_at: string;
 	/** The BYO admission setting (#6541): every BYO namespace of this environment in `enforce`. */
 	byo_admission_enforce: boolean;
@@ -406,6 +408,7 @@ export async function readEnvironmentsOverview(slug: string): Promise<Environmen
 			name: e.name,
 			stage: e.stage,
 			is_default: e.is_default,
+			status: e.status,
 			updated_at: e.updated_at.toISOString(),
 			byo_admission_enforce: e.byo_admission_enforce,
 			byo_admission_has_charts: byoAdmission.get(e.id)?.hasByoCharts ?? true,

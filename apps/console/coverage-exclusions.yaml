@@ -242,8 +242,8 @@ tier_separation:
   # "convergence/reap/GC". It verifies the first two. See the gc.ts entry below and in `baseline:`.
   - path: lib/reconcile/converge.ts
     suite: [tests/integration/reconcile-b2c.test.ts]
-    symbols: [convergeEnvStatuses]
-    reason: Environment-status convergence over real job rows, against real Postgres.
+    symbols: [convergeEnvStatuses, UNCLAIMED_JOB_TTL_HOURS, UNCLAIMED_JOB_REASON]
+    reason: Environment-status convergence over real job rows, against real Postgres — including the unclaimed-job expiry and the jobless in-flight env (#6736).
 
   - path: lib/reconcile/reap.ts
     suite: [tests/integration/reconcile-b2c.test.ts, tests/lib/reconcile/reap-decision.test.ts]

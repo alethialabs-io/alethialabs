@@ -7,7 +7,14 @@ import type { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
 import { cliMayActOnProject } from "@/lib/cli/project-access";
 import { cliJson } from "@/lib/cli/respond";
-import { readKubeconfigAccess } from "@/lib/clusters/kubeconfig-access";
+import { type KubeconfigAccess, readKubeconfigAccess } from "@/lib/clusters/kubeconfig-access";
+import { readClusterEvidence } from "@/lib/clusters/observed-evidence";
+import {
+	KUBECONFIG_MISSING_CLUSTER_NOTE,
+	type ObservationWire,
+	observationWire,
+	observeControlPlane,
+} from "@/lib/clusters/observed-state";
 import { getServiceDb } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -123,7 +130,7 @@ export async function GET(
 
 		// Not best-effort, unlike gitops: it is one indexed read in the same database as the row
 		// above, and a silently-absent command would read as "this cloud has none".
-		const kubeconfig = await readKubeconfigAccess(getServiceDb(), {
+		const access = await readKubeconfigAccess(getServiceDb(), {
 			clusterId: cluster.id,
 			projectId: project_id,
 			environmentId: environment_id,
@@ -132,7 +139,31 @@ export async function GET(
 			region: cluster.region,
 		});
 
-		return cliJson(cliClusterDetailResponse, { cluster, gitops, kubeconfig });
+		// What has been observed of it since its deploy — the cluster card's own answer (#6736). A
+		// cluster a drift scan or a probe found deleted gets no command: it would point at nothing.
+		let observation: ObservationWire | null = null;
+		let kubeconfig: KubeconfigAccess = access;
+		if (environment_id) {
+			const [env] = await getServiceDb()
+				.select({ last_deployed_at: projectEnvironments.last_deployed_at, stage: projectEnvironments.stage })
+				.from(projectEnvironments)
+				.where(eq(projectEnvironments.id, environment_id))
+				.limit(1);
+			const evidence = await readClusterEvidence(actor.orgId, [environment_id]);
+			const observed = observeControlPlane({
+				lastDeployedAt: env?.last_deployed_at?.toISOString() ?? null,
+				stage: env?.stage ?? null,
+				drift: evidence.drift.get(environment_id) ?? null,
+				probe: evidence.probes.get(environment_id) ?? null,
+				now: new Date(),
+			});
+			observation = observationWire(observed);
+			if (observed.kind === "missing") {
+				kubeconfig = { command: null, alternative: null, note: KUBECONFIG_MISSING_CLUSTER_NOTE };
+			}
+		}
+
+		return cliJson(cliClusterDetailResponse, { cluster, gitops, kubeconfig, observation });
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";

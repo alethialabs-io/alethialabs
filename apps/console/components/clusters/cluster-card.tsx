@@ -3,8 +3,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { ClassificationControl } from "@/components/classification/classification-control";
-import { CLUSTER_CARD_BLOCK, CLUSTER_CARD_FRAME, CLUSTER_COMPONENT_ROW } from "@/components/clusters/cluster-card-shape";
+import {
+	CLUSTER_CARD_BLOCK,
+	CLUSTER_CARD_FRAME,
+	CLUSTER_COMPONENT_ROW,
+	CLUSTER_OBSERVED_BLOCK,
+	runInFlight,
+} from "@/components/clusters/cluster-card-shape";
 import { KubeconfigDownload } from "@/components/clusters/kubeconfig-download/kubeconfig-download";
+import { RelativeStamp } from "@/components/environments/env-ui";
+import type { ControlPlaneObservation } from "@/lib/clusters/observed-state";
 import { getProvider } from "@/lib/cloud-providers";
 import type { ClusterListItem } from "@/lib/rpc/procedures/clusters";
 import { SectionHeading } from "@repo/ui/section-heading";
@@ -63,30 +71,71 @@ interface Posture {
 	health: ComponentHealth;
 }
 
+/** What the console has observed of the control plane, and since when the environment's status holds. */
+export interface Observed {
+	observation: ControlPlaneObservation;
+	/** When the environment's status was last written (ISO). */
+	statusSince: string;
+}
+
+/** No contradicting reading and a fresh one: what a caller that passes no observation means. */
+const OBSERVED_FRESH: Observed = {
+	observation: { kind: "reported", observedAt: null, source: "deploy", fresh: true },
+	statusSince: new Date(0).toISOString(),
+};
+
+/**
+ * The control plane's own badge: what was recorded, unless something observed since says otherwise.
+ * A drift scan reporting it deleted reads "Missing"; a probe that could not reach it "Unreachable";
+ * and an "Active" no reading has backed recently reads "Unverified" — the console has no fresh
+ * evidence for it, so it does not repeat it (#6736).
+ */
+export function controlPlaneBadge(
+	clusterStatus: string,
+	observation: ControlPlaneObservation,
+): { tier: StatusTier; label: string } {
+	if (observation.kind === "missing") return { tier: "failed", label: "Missing" };
+	if (observation.kind === "unreachable") return { tier: "failed", label: "Unreachable" };
+	const tier = statusTier(clusterStatus);
+	if (tier === "active" && !observation.fresh) return { tier: "idle", label: "Unverified" };
+	return { tier, label: humanize(clusterStatus) };
+}
+
 /**
  * Rolls the cluster's own status and every database/cache status into a single posture, then lets
  * the ENVIRONMENT's lifecycle speak to what is happening to it. Every card is a cluster under
  * management — its environment has a live deployment (lib/queries/usage-counts.ts) — so:
+ *   · a control plane a drift scan reports deleted reads as missing — unless a run started after
+ *     that scan, which is then what is happening to it;
  *   · a run in flight (queued, provisioning, tearing down) reads as in flight;
  *   · a failed last run (a plan, a redeploy, a teardown) does NOT make a running cluster "Failed":
  *     the cluster keeps the posture its rows report, and the rollup says the last run failed;
- *   · otherwise a failed data service reads as degraded and a reconcile as reconciling.
+ *   · otherwise a failed data service reads as degraded and a reconcile as reconciling;
+ *   · and a control plane nothing has observed recently is never counted healthy (#6736).
  * The badge is DERIVED, never hardcoded.
  */
 export function deriveHealth(
 	clusterStatus: string,
 	envStatus: string,
 	componentStatuses: string[],
+	observed: Observed = OBSERVED_FRESH,
 ): Posture {
-	const statuses = [clusterStatus, ...componentStatuses];
-	const total = statuses.length;
-	const healthy = statuses.filter((s) => statusTier(s) === "active").length;
-	const failed = statuses.filter((s) => statusTier(s) === "failed").length;
-	const pending = statuses.filter((s) => statusTier(s) === "pending").length;
+	const { observation } = observed;
+	const cp = controlPlaneBadge(clusterStatus, observation);
+	const tiers = [cp.tier, ...componentStatuses.map((s) => statusTier(s))];
+	const total = tiers.length;
+	const healthy = tiers.filter((t) => t === "active").length;
+	const failed = tiers.filter((t) => t === "failed").length;
+	const pending = tiers.filter((t) => t === "pending").length;
 	const health: ComponentHealth = { total, healthy, failed, pending };
 	const detail = `${healthy} / ${total} healthy`;
 
 	const envTier = statusTier(envStatus);
+	const runAfterScan =
+		observation.kind === "missing" && Date.parse(observed.statusSince) > Date.parse(observation.observedAt);
+	if (observation.kind === "missing" && !(envTier === "pending" && runAfterScan)) {
+		return { tier: "failed", name: "Missing", rollup: "Deleted outside Alethia", rollupTier: "failed", detail, health };
+	}
 	if (envTier === "pending") {
 		return {
 			tier: "pending",
@@ -97,26 +146,36 @@ export function deriveHealth(
 			health,
 		};
 	}
-	const posture = rowPosture(clusterStatus, health, detail);
+	const posture = rowPosture(clusterStatus, cp, health, detail);
 	return envTier === "failed" ? { ...posture, rollup: "Last run failed", rollupTier: "failed" } : posture;
 }
 
 /** The posture the cluster's own rows report, with no run in flight. */
-function rowPosture(clusterStatus: string, health: ComponentHealth, detail: string): Posture {
+function rowPosture(
+	clusterStatus: string,
+	cp: { tier: StatusTier; label: string },
+	health: ComponentHealth,
+	detail: string,
+): Posture {
 	const { total, healthy, failed, pending } = health;
+	if (cp.tier === "failed" && cp.label === "Unreachable") {
+		return { tier: "failed", name: "Unreachable", rollup: "Unreachable", rollupTier: "failed", detail, health };
+	}
 	if (failed > 0) {
 		return { tier: "failed", name: "Degraded", rollup: `${failed} failed`, rollupTier: "failed", detail, health };
 	}
 	if (pending > 0) {
 		// Surface the control plane's own in-flight verb when it's the one moving.
-		const name = statusTier(clusterStatus) === "pending" ? humanize(clusterStatus) : "Reconciling";
+		const name = cp.tier === "pending" ? humanize(clusterStatus) : "Reconciling";
 		return { tier: "pending", name, rollup: "Reconciling", rollupTier: "pending", detail, health };
 	}
 	if (healthy === total) {
 		return { tier: "active", name: "Active", rollup: "Healthy", rollupTier: "active", detail, health };
 	}
-	const tier = statusTier(clusterStatus);
-	return { tier, name: humanize(clusterStatus), rollup: humanize(clusterStatus), rollupTier: tier, detail, health };
+	if (cp.label === "Unverified") {
+		return { tier: "idle", name: "Unverified", rollup: "Not observed recently", rollupTier: "idle", detail, health };
+	}
+	return { tier: cp.tier, name: cp.label, rollup: cp.label, rollupTier: cp.tier, detail, health };
 }
 
 /**
@@ -157,6 +216,7 @@ function ComponentRow({
 	endpoint,
 	status,
 	label,
+	tier,
 }: {
 	icon: typeof Database;
 	name: string;
@@ -165,6 +225,8 @@ function ComponentRow({
 	status: string;
 	/** Overrides the badge label (e.g. DNS "Enabled" instead of the raw status). */
 	label?: string;
+	/** Overrides the tier the status resolves to (the control plane's is derived, not looked up). */
+	tier?: StatusTier;
 }) {
 	return (
 		<div className={CLUSTER_COMPONENT_ROW}>
@@ -182,8 +244,54 @@ function ComponentRow({
 				</div>
 			)}
 			<div className={endpoint ? "shrink-0" : "ml-auto shrink-0"}>
-				<StatusBadge status={status} label={label ?? humanize(status)} />
+				<StatusBadge status={status} tier={tier} label={label ?? humanize(status)} />
 			</div>
+		</div>
+	);
+}
+
+/**
+ * When the card's status was last observed, and by what — so a status nothing has looked at for
+ * months reads as months old (#6736). A run in flight says how long it has been in flight; a drift
+ * scan that reports the control plane deleted names what it found gone.
+ */
+function ObservationLine({ observed, envStatus }: { observed: Observed; envStatus: string }) {
+	const { observation } = observed;
+	const inFlight = runInFlight(envStatus);
+	return (
+		<div data-slot="cluster-card-observed" className={`${CLUSTER_OBSERVED_BLOCK} text-ui-2xs text-text-tertiary`}>
+			{inFlight && (
+				<p>
+					{humanize(envStatus)} since <RelativeStamp at={observed.statusSince} />
+				</p>
+			)}
+			{observation.kind === "missing" &&
+				(observation.source === "drift" ? (
+					<p className="text-text-secondary">
+						Drift scan <RelativeStamp at={observation.observedAt} /> reports deleted:{" "}
+						<span className="font-mono">{observation.deleted.join(", ")}</span>
+					</p>
+				) : (
+					<p className="text-text-secondary">
+						Probe <RelativeStamp at={observation.observedAt} /> found the cluster deleted: the cloud
+						reports it not found
+					</p>
+				))}
+			{observation.kind === "unreachable" && (
+				<p className="text-text-secondary">
+					Probe <RelativeStamp at={observation.observedAt} /> could not reach the control plane
+					{observation.message ? `: ${observation.message}` : ""}
+				</p>
+			)}
+			{observation.kind === "reported" &&
+				(observation.observedAt ? (
+					<p>
+						Control plane last observed <RelativeStamp at={observation.observedAt} />, by{" "}
+						{observation.source === "probe" ? "a liveness probe" : "the last successful deploy"}
+					</p>
+				) : (
+					<p>Control plane never observed</p>
+				))}
 		</div>
 	);
 }
@@ -203,10 +311,14 @@ export function ClusterCard({ data }: { data: ClusterListItem }) {
 	const caches = data.project_caches;
 	const dns = data.project_dns;
 
-	const health = deriveHealth(cluster.status, data.status, [
-		...databases.map((d) => d.status),
-		...caches.map((c) => c.status),
-	]);
+	const observed: Observed = { observation: cluster.observation, statusSince: data.status_since };
+	const health = deriveHealth(
+		cluster.status,
+		data.status,
+		[...databases.map((d) => d.status), ...caches.map((c) => c.status)],
+		observed,
+	);
+	const controlPlane = controlPlaneBadge(cluster.status, cluster.observation);
 
 	// How to get a kubeconfig — `alethia cluster kubeconfig` on every cloud it can mint on, and the
 	// cloud's own CLI command as the alternative on aws/gcp/azure — built on the server by the same
@@ -278,7 +390,9 @@ export function ClusterCard({ data }: { data: ClusterListItem }) {
 					icon={Boxes}
 					name="Control plane"
 					engine={K8S_KIND[provider] ?? "k8s"}
-					status={cluster.status}
+					status={controlPlane.tier}
+					tier={controlPlane.tier}
+					label={controlPlane.label}
 				/>
 				{databases.map((db) => (
 					<ComponentRow
@@ -310,6 +424,8 @@ export function ClusterCard({ data }: { data: ClusterListItem }) {
 					/>
 				)}
 			</div>
+
+			<ObservationLine observed={observed} envStatus={data.status} />
 
 			{/* Cluster access. */}
 			{cluster.cluster_endpoint && (
