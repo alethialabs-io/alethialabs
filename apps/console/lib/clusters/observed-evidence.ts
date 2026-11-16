@@ -39,6 +39,7 @@ export async function readClusterEvidence(
 			reachable: environmentProbes.reachable,
 			message: environmentProbes.message,
 			probed_at: environmentProbes.probed_at,
+			detail: environmentProbes.detail,
 		})
 		.from(environmentProbes)
 		.where(eq(environmentProbes.environment_id, projectEnvironments.id))
@@ -64,6 +65,7 @@ export async function readClusterEvidence(
 				reachable: latestProbe.reachable,
 				message: latestProbe.message,
 				probed_at: latestProbe.probed_at,
+				detail: latestProbe.detail,
 			})
 			.from(projectEnvironments)
 			.innerJoin(projects, eq(projectEnvironments.project_id, projects.id))
@@ -80,6 +82,7 @@ export async function readClusterEvidence(
 			reachable: r.reachable,
 			probedAt: r.probed_at.toISOString(),
 			message: r.message,
+			gone: r.detail?.gone === true,
 		});
 	}
 	return { drift, probes };

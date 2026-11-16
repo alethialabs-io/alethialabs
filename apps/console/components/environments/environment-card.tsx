@@ -161,10 +161,16 @@ export function EnvironmentCard({
 				{/* meta */}
 				<div className="mt-1.5 flex items-center gap-2 text-ui-sm text-text-tertiary">
 					{clusterMissing ? (
-						<span>
-							Drift scan <RelativeStamp at={clusterMissing.scannedAt} /> reports deleted:{" "}
-							<span className="font-mono">{clusterMissing.deleted.join(", ")}</span>
-						</span>
+						clusterMissing.source === "drift" ? (
+							<span>
+								Drift scan <RelativeStamp at={clusterMissing.observedAt} /> reports deleted:{" "}
+								<span className="font-mono">{clusterMissing.deleted.join(", ")}</span>
+							</span>
+						) : (
+							<span>
+								Probe <RelativeStamp at={clusterMissing.observedAt} /> found the cluster deleted
+							</span>
+						)
 					) : drifted ? (
 						<span>Diverged from provisioned state</span>
 					) : reconcile?.driftInSync !== true ? (

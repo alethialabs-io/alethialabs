@@ -344,6 +344,7 @@ describe("readClusterList", () => {
 		const [c] = await readClusterList(ACTOR);
 		expect(c.project_cluster.observation).toEqual({
 			kind: "missing",
+			source: "drift",
 			observedAt: "2026-11-09T00:00:00Z",
 			deleted: ["azurerm_resource_group.main"],
 		});

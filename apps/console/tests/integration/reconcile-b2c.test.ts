@@ -53,6 +53,9 @@ async function seedEnv(
 		reapAttempts?: number;
 		lastReapAt?: Date | null;
 		reapGaveUpAt?: Date | null;
+		/** Set at INSERT: the `update_updated_at` BEFORE UPDATE trigger (programmables.sql) rewrites
+		 *  `updated_at` to now() on every UPDATE, so a fixture can only age it when it inserts. */
+		updatedAt?: Date;
 	} = {},
 ): Promise<string> {
 	const [e] = await db
@@ -70,6 +73,7 @@ async function seedEnv(
 			reap_attempts: opts.reapAttempts ?? 0,
 			last_reap_at: opts.lastReapAt ?? null,
 			reap_gave_up_at: opts.reapGaveUpAt ?? null,
+			...(opts.updatedAt ? { updated_at: opts.updatedAt } : {}),
 		})
 		.returning({ id: projectEnvironments.id });
 	return e.id;
@@ -106,6 +110,8 @@ async function seedJob(
 	status: "QUEUED" | "PROCESSING" | "SUCCESS" | "FAILED" | "CANCELLED",
 	createdAt: Date,
 	completedAt?: Date,
+	/** Set at INSERT — an UPDATE cannot age it (see seedEnv's `updatedAt`). */
+	updatedAt?: Date,
 ): Promise<string> {
 	const terminal = status === "SUCCESS" || status === "FAILED" || status === "CANCELLED";
 	const [j] = await db
@@ -119,6 +125,7 @@ async function seedJob(
 			config_snapshot: { seed: true },
 			created_at: createdAt,
 			completed_at: terminal ? (completedAt ?? createdAt) : null,
+			...(updatedAt ? { updated_at: updatedAt } : {}),
 		})
 		.returning({ id: jobs.id });
 	return j.id;
@@ -258,21 +265,15 @@ describeIfDb("B2c reconcile — real Postgres", () => {
 	it("convergence (#6736): an UNCLAIMED job past the TTL is cancelled with a reason, then its env settles", async () => {
 		// The production shape: a DEPLOY requeued after its runner died, or never claimed, sits QUEUED
 		// while its env says PROVISIONING — for months. recover_stale_jobs never sees a QUEUED row.
+		// Aged at INSERT: the updated_at trigger would rewrite an UPDATE's value to now().
+		const pastTtl = new Date(Date.now() - (UNCLAIMED_JOB_TTL_HOURS + 1) * 3_600_000);
 		const stuck = await seedEnv(projectId, "conv-unclaimed", "PROVISIONING");
-		const jobId = await seedJob(projectId, stuck, "DEPLOY", "QUEUED", min(2));
-		await db
-			.update(jobs)
-			.set({ updated_at: new Date(Date.now() - (UNCLAIMED_JOB_TTL_HOURS + 1) * 3_600_000) })
-			.where(eq(jobs.id, jobId));
+		const jobId = await seedJob(projectId, stuck, "DEPLOY", "QUEUED", min(2), undefined, pastTtl);
 
 		// A QUEUED job behind a SETTLED env is someone's pending work, and one inside the TTL is waiting
 		// for a runner: neither is touched.
 		const settled = await seedEnv(projectId, "conv-unclaimed-settled", "ACTIVE");
-		const settledJob = await seedJob(projectId, settled, "PLAN", "QUEUED", min(2));
-		await db
-			.update(jobs)
-			.set({ updated_at: new Date(Date.now() - (UNCLAIMED_JOB_TTL_HOURS + 1) * 3_600_000) })
-			.where(eq(jobs.id, settledJob));
+		const settledJob = await seedJob(projectId, settled, "PLAN", "QUEUED", min(2), undefined, pastTtl);
 		const waiting = await seedEnv(projectId, "conv-unclaimed-fresh", "QUEUED");
 		const waitingJob = await seedJob(projectId, waiting, "DEPLOY", "QUEUED", min(2));
 
@@ -301,13 +302,11 @@ describeIfDb("B2c reconcile — real Postgres", () => {
 	});
 
 	it("convergence (#6736): an env in flight past the TTL with NO lifecycle job at all settles FAILED", async () => {
-		const orphan = await seedEnv(projectId, "conv-orphan", "PROVISIONING");
-		const orphanTeardown = await seedEnv(projectId, "conv-orphan-destroy", "DESTROYING");
-		const recent = await seedEnv(projectId, "conv-orphan-recent", "QUEUED");
+		// Aged at INSERT: the updated_at trigger would rewrite an UPDATE's value to now().
 		const old = new Date(Date.now() - (UNCLAIMED_JOB_TTL_HOURS + 1) * 3_600_000);
-		for (const id of [orphan, orphanTeardown]) {
-			await db.update(projectEnvironments).set({ updated_at: old }).where(eq(projectEnvironments.id, id));
-		}
+		const orphan = await seedEnv(projectId, "conv-orphan", "PROVISIONING", { updatedAt: old });
+		const orphanTeardown = await seedEnv(projectId, "conv-orphan-destroy", "DESTROYING", { updatedAt: old });
+		const recent = await seedEnv(projectId, "conv-orphan-recent", "QUEUED");
 
 		await convergeEnvStatuses(db);
 

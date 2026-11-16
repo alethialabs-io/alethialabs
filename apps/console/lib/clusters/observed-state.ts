@@ -9,8 +9,9 @@
 // at `project_environments.last_deployed_at` — not "it is running now". Two later signals can say
 // more, and neither ever wrote back into that column:
 //
-//   · the liveness probe (`environment_probes`, PROBE_CLUSTER) — scheduled ONLY for ACTIVE
-//     environments (lib/probes/dispatch.ts), so an environment stuck in flight is never probed;
+//   · the liveness probe (`environment_probes`, PROBE_CLUSTER) — scheduled for every environment
+//     believed to hold a cluster, at a backed-off cadence when it is not ACTIVE
+//     (lib/probes/dispatch.ts); its failure can POSITIVELY say the cluster is gone (`detail.gone`);
 //   · the drift scan (`environment_drift`, DETECT_DRIFT) — scheduled for every environment with a
 //     successful deploy (lib/drift/dispatch.ts), whatever its status.
 //
@@ -57,20 +58,23 @@ export interface ProbeEvidence {
 	reachable: boolean;
 	probedAt: string;
 	message: string | null;
+	/** The probe POSITIVELY showed the cluster is gone (`environment_probes.detail.gone`). */
+	gone?: boolean;
 }
 
 /**
  * What may be said about a control plane.
  *
- *  · `missing` — a drift scan taken AFTER the last successful deploy reports the cluster (or the
- *    resource group holding it) deleted.
+ *  · `missing` — a reading taken AFTER the last successful deploy shows the cluster gone: a drift
+ *    scan reporting it (or the resource group holding it) deleted, or a probe whose failure was a
+ *    cloud "not found" (`source` says which; `deleted` lists a scan's addresses).
  *  · `unreachable` — a liveness probe taken after the last successful deploy could not reach it.
  *  · `reported` — nothing contradicts the recorded status; `observedAt` is the newest reading that
  *    backs it (the deploy, or a probe that reached it) and `fresh` says whether that reading is
  *    recent enough to repeat as current (see {@link freshnessWindowMs}).
  */
 export type ControlPlaneObservation =
-	| { kind: "missing"; observedAt: string; deleted: string[] }
+	| { kind: "missing"; source: "drift" | "probe"; observedAt: string; deleted: string[] }
 	| { kind: "unreachable"; observedAt: string; message: string | null }
 	| { kind: "reported"; observedAt: string | null; source: "deploy" | "probe"; fresh: boolean };
 
@@ -111,14 +115,24 @@ export function observeControlPlane(input: {
 	const deployedAt = ms(input.lastDeployedAt);
 
 	const scannedAt = ms(input.drift?.scannedAt);
-	if (input.drift && scannedAt !== null && sinceDeploy(scannedAt, deployedAt)) {
-		const deleted = deletedControlPlaneResources(input.drift.details);
-		if (deleted.length > 0) return { kind: "missing", observedAt: input.drift.scannedAt, deleted };
-	}
+	const deleted =
+		input.drift && scannedAt !== null && sinceDeploy(scannedAt, deployedAt)
+			? deletedControlPlaneResources(input.drift.details)
+			: [];
 
 	const probedAt = ms(input.probe?.probedAt);
 	const probeCounts = input.probe !== null && probedAt !== null && sinceDeploy(probedAt, deployedAt);
+
+	// The NEWEST decisive reading wins: a scan that found the cluster deleted, unless a probe since
+	// then reached it (it exists again, or the scan's deletion was wrong); a probe that found it gone.
+	if (deleted.length > 0 && input.drift && scannedAt !== null) {
+		const probeAfter = probeCounts && probedAt !== null && probedAt > scannedAt && input.probe?.reachable === true;
+		if (!probeAfter) return { kind: "missing", source: "drift", observedAt: input.drift.scannedAt, deleted };
+	}
 	if (input.probe && probeCounts && !input.probe.reachable) {
+		if (input.probe.gone) {
+			return { kind: "missing", source: "probe", observedAt: input.probe.probedAt, deleted: [] };
+		}
 		return { kind: "unreachable", observedAt: input.probe.probedAt, message: input.probe.message };
 	}
 
@@ -134,4 +148,34 @@ export function observeControlPlane(input: {
  * scan reports deleted — the command would point at a cluster (or resource group) that is gone.
  */
 export const KUBECONFIG_MISSING_CLUSTER_NOTE =
-	"No kubeconfig is offered: the latest drift scan reports this cluster deleted outside Alethia. Redeploy the environment to recreate it, or tear it down.";
+	"No kubeconfig is offered: Alethia's latest check found this cluster deleted outside Alethia. Redeploy the environment to recreate it, or tear it down.";
+
+/**
+ * The observation as the CLI receives it (`GET /api/cli/clusters/:id`, `alethia cluster get`): flat,
+ * so the terminal can print it without re-deriving anything. `state` is the word both surfaces show.
+ */
+export interface ObservationWire {
+	state: "missing" | "unreachable" | "unverified" | "observed" | "never_observed";
+	observed_at: string | null;
+	source: "drift" | "probe" | "deploy" | null;
+	/** One line of what was seen: the deleted addresses, or the probe's message. */
+	detail: string | null;
+}
+
+/** Flattens an observation for the CLI wire. */
+export function observationWire(o: ControlPlaneObservation): ObservationWire {
+	switch (o.kind) {
+		case "missing":
+			return {
+				state: "missing",
+				observed_at: o.observedAt,
+				source: o.source,
+				detail: o.deleted.length > 0 ? `deleted: ${o.deleted.join(", ")}` : "the cloud reports the cluster not found",
+			};
+		case "unreachable":
+			return { state: "unreachable", observed_at: o.observedAt, source: "probe", detail: o.message };
+		case "reported":
+			if (o.observedAt === null) return { state: "never_observed", observed_at: null, source: null, detail: null };
+			return { state: o.fresh ? "observed" : "unverified", observed_at: o.observedAt, source: o.source, detail: null };
+	}
+}

@@ -101,10 +101,11 @@ type OrphanEnv = {
  * while its env is stuck in flight. The flip is conditional on `status = 'QUEUED'` in the same
  * statement, so a runner claiming the job concurrently wins (claim_next_job locks QUEUED rows FOR
  * UPDATE SKIP LOCKED; this UPDATE then re-checks and skips the claimed row). `updated_at` is the
- * clock because a requeue (recover_stale_jobs) restamps it: the TTL runs from when the job last
- * became claimable, not from when it was first enqueued. Returns what it cancelled.
+ * clock because every UPDATE of the row restamps it (the `update_updated_at` trigger,
+ * programmables.sql) — a requeue included: the TTL runs from when the job last changed, not from
+ * when it was first enqueued. Returns what it cancelled.
  */
-export async function expireUnclaimedLifecycleJobs(db: Db): Promise<ExpiredJob[]> {
+async function expireUnclaimedLifecycleJobs(db: Db): Promise<ExpiredJob[]> {
 	const rows = await db.execute<ExpiredJob>(sql`
 		UPDATE public.jobs j
 		   SET status = 'CANCELLED',
@@ -141,7 +142,7 @@ export async function expireUnclaimedLifecycleJobs(db: Db): Promise<ExpiredJob[]
 }
 
 /** The CAS context that settles an orphaned in-flight env: a teardown fails as a teardown. */
-export function orphanContextFor(status: ProjectStatus): EnvTransitionContext | null {
+function orphanContextFor(status: ProjectStatus): EnvTransitionContext | null {
 	switch (status) {
 		case "QUEUED":
 		case "PROVISIONING":

@@ -46,7 +46,7 @@ describe("deriveHealth", () => {
 describe("deriveHealth — what has been observed", () => {
 	const SCAN = "2026-11-09T00:00:00.000Z";
 	const missing: Observed = {
-		observation: { kind: "missing", observedAt: SCAN, deleted: ["azurerm_resource_group.main"] },
+		observation: { kind: "missing", source: "drift", observedAt: SCAN, deleted: ["azurerm_resource_group.main"] },
 		statusSince: "2026-07-16T00:00:00.000Z",
 	};
 	const stale: Observed = {

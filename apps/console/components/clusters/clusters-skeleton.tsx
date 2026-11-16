@@ -32,6 +32,7 @@ const UNKNOWN_CARD: ClusterCardShape = {
 	projectId: "",
 	components: 2,
 	access: { codeRows: 2, captions: 0, download: false },
+	observed: 1,
 	argocd: false,
 	dns: false,
 };

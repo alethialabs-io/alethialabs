@@ -265,12 +265,18 @@ function ObservationLine({ observed, envStatus }: { observed: Observed; envStatu
 					{humanize(envStatus)} since <RelativeStamp at={observed.statusSince} />
 				</p>
 			)}
-			{observation.kind === "missing" && (
-				<p className="text-text-secondary">
-					Drift scan <RelativeStamp at={observation.observedAt} /> reports deleted:{" "}
-					<span className="font-mono">{observation.deleted.join(", ")}</span>
-				</p>
-			)}
+			{observation.kind === "missing" &&
+				(observation.source === "drift" ? (
+					<p className="text-text-secondary">
+						Drift scan <RelativeStamp at={observation.observedAt} /> reports deleted:{" "}
+						<span className="font-mono">{observation.deleted.join(", ")}</span>
+					</p>
+				) : (
+					<p className="text-text-secondary">
+						Probe <RelativeStamp at={observation.observedAt} /> found the cluster deleted: the cloud
+						reports it not found
+					</p>
+				))}
 			{observation.kind === "unreachable" && (
 				<p className="text-text-secondary">
 					Probe <RelativeStamp at={observation.observedAt} /> could not reach the control plane

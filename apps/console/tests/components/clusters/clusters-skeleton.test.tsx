@@ -137,7 +137,7 @@ const STUCK = item(
 	{ status: "PROVISIONING" },
 	{
 		cluster_endpoint: "https://k8s.example.com",
-		observation: { kind: "missing", observedAt: "2026-11-09T00:00:00.000Z", deleted: ["azurerm_resource_group.main"] },
+		observation: { kind: "missing", source: "drift", observedAt: "2026-11-09T00:00:00.000Z", deleted: ["azurerm_resource_group.main"] },
 		kubeconfig: { command: null, alternative: null, note: "No kubeconfig is offered." },
 	},
 );

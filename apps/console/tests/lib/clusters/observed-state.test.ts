@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
 	deletedControlPlaneResources,
 	freshnessWindowMs,
+	observationWire,
 	observeControlPlane,
 } from "@/lib/clusters/observed-state";
 import type { DriftDetail } from "@/types/jsonb.types";
@@ -60,6 +61,7 @@ describe("observeControlPlane", () => {
 		});
 		expect(o).toEqual({
 			kind: "missing",
+			source: "drift",
 			observedAt: "2026-11-09T12:00:00.000Z",
 			deleted: ["azurerm_resource_group.main"],
 		});
@@ -119,5 +121,41 @@ describe("observeControlPlane", () => {
 	it("a cluster never deployed has nothing observed", () => {
 		const o = observeControlPlane({ lastDeployedAt: null, stage: null, drift: null, probe: null, now: NOW });
 		expect(o).toEqual({ kind: "reported", observedAt: null, source: "deploy", fresh: false });
+	});
+
+	it("a probe the cloud answered 'not found' reads as missing, timed by the probe", () => {
+		const o = observeControlPlane({
+			lastDeployedAt: DEPLOYED,
+			stage: "development",
+			drift: null,
+			probe: { reachable: false, probedAt: "2026-11-16T06:00:00.000Z", message: "cluster not found", gone: true },
+			now: NOW,
+		});
+		expect(o).toEqual({ kind: "missing", source: "probe", observedAt: "2026-11-16T06:00:00.000Z", deleted: [] });
+	});
+
+	it("a probe that REACHED the cluster after the scan that found it deleted outranks the scan", () => {
+		const o = observeControlPlane({
+			lastDeployedAt: DEPLOYED,
+			stage: "development",
+			drift: { scannedAt: "2026-11-09T12:00:00.000Z", details: [detail("azurerm_resource_group", "deleted")] },
+			probe: { reachable: true, probedAt: "2026-11-16T06:00:00.000Z", message: null },
+			now: NOW,
+		});
+		expect(o).toMatchObject({ kind: "reported", source: "probe" });
+	});
+});
+
+describe("observationWire", () => {
+	it("flattens each kind into the word the CLI prints", () => {
+		expect(
+			observationWire({ kind: "missing", source: "drift", observedAt: "t", deleted: ["azurerm_resource_group.main"] }),
+		).toEqual({ state: "missing", observed_at: "t", source: "drift", detail: "deleted: azurerm_resource_group.main" });
+		expect(observationWire({ kind: "reported", observedAt: "t", source: "deploy", fresh: false }).state).toBe(
+			"unverified",
+		);
+		expect(observationWire({ kind: "reported", observedAt: null, source: "deploy", fresh: false }).state).toBe(
+			"never_observed",
+		);
 	});
 });
