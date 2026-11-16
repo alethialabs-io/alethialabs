@@ -74,12 +74,14 @@ cluster is an error, not an empty screen.`,
 		// render the cluster (without the GitOps and Kubeconfig lines).
 		var gitops *api.ClusterGitops
 		var kubeconfig *api.ClusterKubeconfig
+		var observation *api.ClusterObservation
 		if detail, derr := apiClient.GetCluster(c.ID); derr == nil && detail != nil {
 			gitops = detail.Gitops
 			kubeconfig = detail.Kubeconfig
+			observation = detail.Observation
 		}
 
-		if err := renderCluster(os.Stdout, outputFormat(cmd), c, gitops, kubeconfig); err != nil {
+		if err := renderCluster(os.Stdout, outputFormat(cmd), c, gitops, kubeconfig, observation); err != nil {
 			fail(err)
 		}
 	},
@@ -237,27 +239,71 @@ func pickCluster(clusters []api.ClusterSummary, title string) (*api.ClusterSumma
 // the typed object for json, Field/Value rows for csv.
 // The parameter is `outFormat`, not `format`: this file imports packages/core/format, and a
 // parameter of that name shadows the package for the whole body.
-func renderCluster(out io.Writer, outFormat string, c *api.ClusterSummary, g *api.ClusterGitops, k *api.ClusterKubeconfig) error {
-	// json/csv emit the cluster fields inline plus the gitops and kubeconfig objects; table gets
-	// the card. The objects are emitted only when present, so a server that sent neither gives
-	// the plain cluster exactly as before.
+func renderCluster(out io.Writer, outFormat string, c *api.ClusterSummary, g *api.ClusterGitops, k *api.ClusterKubeconfig, o *api.ClusterObservation) error {
+	// json/csv emit the cluster fields inline plus the gitops, kubeconfig and observation objects;
+	// table gets the card. The objects are emitted only when present, so a server that sent none
+	// gives the plain cluster exactly as before.
 	record := any(c)
-	if g != nil || k != nil {
+	if g != nil || k != nil || o != nil {
 		record = struct {
 			*api.ClusterSummary
-			Gitops     *api.ClusterGitops     `json:"gitops,omitempty"`
-			Kubeconfig *api.ClusterKubeconfig `json:"kubeconfig,omitempty"`
-		}{c, g, k}
+			Gitops      *api.ClusterGitops      `json:"gitops,omitempty"`
+			Kubeconfig  *api.ClusterKubeconfig  `json:"kubeconfig,omitempty"`
+			Observation *api.ClusterObservation `json:"observation,omitempty"`
+		}{c, g, k, o}
 	}
-	return ui.RenderCard(out, outFormat, clusterLabel(*c), clusterFieldRows(c, g, k, outFormat), record)
+	return ui.RenderCard(out, outFormat, clusterLabel(*c), clusterFieldRows(c, g, k, o, outFormat), record)
+}
+
+// observedRow is the "Observed" row (#6736): what has been seen of the control plane since the
+// deploy that recorded Status, and when — so a terminal never repeats a months-old ACTIVE as
+// current. No row for a server that sent no observation.
+func observedRow(o *api.ClusterObservation) ([]string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	at := ""
+	if o.ObservedAt != nil && *o.ObservedAt != "" {
+		at = " at " + *o.ObservedAt
+	}
+	by := ""
+	if o.Source != nil {
+		switch *o.Source {
+		case "drift":
+			by = " by a drift scan"
+		case "probe":
+			by = " by a liveness probe"
+		case "deploy":
+			by = " by the last successful deploy"
+		}
+	}
+	detail := ""
+	if o.Detail != nil && *o.Detail != "" {
+		detail = " — " + *o.Detail
+	}
+	switch o.State {
+	case "missing":
+		return []string{"Observed", "MISSING — found deleted outside Alethia" + by + at + detail + ". Redeploy the environment to recreate it, or tear it down."}, true
+	case "unreachable":
+		return []string{"Observed", "UNREACHABLE" + by + at + detail}, true
+	case "unverified":
+		return []string{"Observed", "unverified — last observed" + by + at + "; the status above may be out of date"}, true
+	case "never_observed":
+		return []string{"Observed", "never observed"}, true
+	default:
+		return []string{"Observed", "observed" + by + at}, true
+	}
 }
 
 // clusterFieldRows returns the present-only key/value fields of a cluster, ending with
 // the kubeconfig command, the ArgoCD access block and the GitOps posture when the cluster is
 // provisioned.
-func clusterFieldRows(c *api.ClusterSummary, g *api.ClusterGitops, k *api.ClusterKubeconfig, outFmt string) [][]string {
+func clusterFieldRows(c *api.ClusterSummary, g *api.ClusterGitops, k *api.ClusterKubeconfig, o *api.ClusterObservation, outFmt string) [][]string {
 	rows := [][]string{
 		{"Status", ui.Cell(outFmt, c.Status, ui.StatusCell(c.Status))},
+	}
+	if row, ok := observedRow(o); ok {
+		rows = append(rows, row)
 	}
 	if c.StatusMessage != "" {
 		rows = append(rows, []string{"Message", c.StatusMessage})

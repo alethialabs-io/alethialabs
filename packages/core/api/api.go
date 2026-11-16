@@ -274,9 +274,23 @@ type ClusterKubeconfig struct {
 // Kubeconfig is a pointer because a server older than #5250 does not send it; nil there means
 // "this server cannot say", not "this cloud has no command".
 type ClusterDetail struct {
-	Cluster    ClusterSummary     `json:"cluster"`
-	Gitops     *ClusterGitops     `json:"gitops"`
-	Kubeconfig *ClusterKubeconfig `json:"kubeconfig"`
+	Cluster     ClusterSummary      `json:"cluster"`
+	Gitops      *ClusterGitops      `json:"gitops"`
+	Kubeconfig  *ClusterKubeconfig  `json:"kubeconfig"`
+	Observation *ClusterObservation `json:"observation"`
+}
+
+// ClusterObservation is what the console has OBSERVED of the cluster's control plane since its
+// last deploy (#6736) — the same answer the console's cluster card shows. Cluster.Status is what
+// that deploy recorded and is never refreshed; this is what has been seen since. State is one of
+// "missing" (a drift scan or a probe found it deleted), "unreachable", "unverified" (nothing has
+// looked recently), "observed", "never_observed". Nil from a server older than #6736, or for a
+// cluster with no environment. Mirrors clusterObservation in cli-contract.ts.
+type ClusterObservation struct {
+	State      string  `json:"state"`
+	ObservedAt *string `json:"observed_at"`
+	Source     *string `json:"source"`
+	Detail     *string `json:"detail"`
 }
 
 type CloudIdentity struct {
