@@ -81,4 +81,16 @@ describe("MultiCombobox", () => {
 		await user.click(screen.getByRole("button", { name: /clear 1 selected/i }));
 		expect(onChange).toHaveBeenLastCalledWith([]);
 	});
+
+	// #6734: the selected state was only a drawn check, and the hint ran into the label in the name.
+	it("exposes each option's on/off state as aria-pressed and names it with its hint", async () => {
+		const user = userEvent.setup();
+		render(<Harness onChange={vi.fn()} />);
+		await user.click(screen.getByPlaceholderText("All clouds"));
+
+		expect(screen.getByRole("button", { name: "AWS, 2" })).toHaveAttribute("aria-pressed", "false");
+		await user.click(screen.getByRole("button", { name: "AWS, 2" }));
+		expect(screen.getByRole("button", { name: "AWS, 2" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByRole("button", { name: "Hetzner" })).toHaveAttribute("aria-pressed", "false");
+	});
 });
