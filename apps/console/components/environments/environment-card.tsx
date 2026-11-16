@@ -18,7 +18,7 @@ import { ClassificationControl } from "@/components/classification/classificatio
 import type { AssignedValue } from "@/lib/queries/classification";
 import { envHref } from "@/lib/routing";
 import type { EnvRow } from "@/lib/rpc/procedures/environments";
-import { RelativeStamp, StatusDot } from "./env-ui";
+import { RelativeStamp, StatusDot, type StatusTier } from "./env-ui";
 
 /**
  * Gates a classification value tagged on this env forces onto promotions into it (the label drives
@@ -37,6 +37,31 @@ function inheritedGateChips(assignments: AssignedValue[] | undefined) {
 		if (e.require_verify_pass) out.push({ label: "Verify", source: a.value_label });
 	}
 	return out;
+}
+
+/**
+ * The environment's lifecycle badge, from its OWN status (#6736). It used to read `deployPending` —
+ * "the design moved ahead of what was deployed" — and call that "Deploying", so an environment with
+ * an unsaved edit and no job at all read as deploying for as long as the edit stayed undeployed.
+ * Undeployed changes are now their own chip; this says what the lifecycle says.
+ */
+export function envLifecycleBadge(status: string): { tier: StatusTier; label: string } {
+	switch (status) {
+		case "QUEUED":
+			return { tier: "pending", label: "Queued" };
+		case "PROVISIONING":
+			return { tier: "live", label: "Deploying" };
+		case "DESTROYING":
+			return { tier: "live", label: "Tearing down" };
+		case "FAILED":
+			return { tier: "failed", label: "Failed" };
+		case "DRAFT":
+			return { tier: "idle", label: "Draft" };
+		case "DESTROYED":
+			return { tier: "disabled", label: "Destroyed" };
+		default:
+			return { tier: "active", label: "Live" };
+	}
 }
 
 /** The protection rules → gate chips (on = enforced, off = not required). */
@@ -90,6 +115,8 @@ export function EnvironmentCard({
 }) {
 	const drifted = reconcile?.driftInSync === false;
 	const deployPending = Boolean(reconcile?.deployPending);
+	const clusterMissing = reconcile?.clusterMissing ?? null;
+	const lifecycle = envLifecycleBadge(env.status);
 	const isProd = env.stage === "production";
 	const chips = gateChips(protection);
 	const hasRules = chips.some((c) => c.on);
@@ -106,17 +133,24 @@ export function EnvironmentCard({
 					>
 						{env.name}
 					</Link>
-					<StatusDot
-						tier={deployPending ? "live" : "active"}
-						label={deployPending ? "Deploying" : "Live"}
-						className="text-ui-xs"
-					/>
+					<StatusDot tier={lifecycle.tier} label={lifecycle.label} className="text-ui-xs" />
 					{env.is_default && (
 						<span className="shrink-0 rounded-full border px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
 							Default
 						</span>
 					)}
-					{drifted && (
+					{deployPending && (
+						<Badge variant="secondary" className="text-ui-2xs">
+							Undeployed changes
+						</Badge>
+					)}
+					{clusterMissing && (
+						<Badge variant="destructive" className="gap-1.5 text-ui-2xs">
+							<TriangleAlert className="size-3" />
+							Cluster missing
+						</Badge>
+					)}
+					{drifted && !clusterMissing && (
 						<Badge variant="secondary" className="gap-1.5 text-ui-2xs">
 							<TriangleAlert className="size-3" />
 							Drifted
@@ -126,8 +160,16 @@ export function EnvironmentCard({
 
 				{/* meta */}
 				<div className="mt-1.5 flex items-center gap-2 text-ui-sm text-text-tertiary">
-					{drifted ? (
+					{clusterMissing ? (
+						<span>
+							Drift scan <RelativeStamp at={clusterMissing.scannedAt} /> reports deleted:{" "}
+							<span className="font-mono">{clusterMissing.deleted.join(", ")}</span>
+						</span>
+					) : drifted ? (
 						<span>Diverged from provisioned state</span>
+					) : reconcile?.driftInSync !== true ? (
+						// Never scanned is not "in sync": nothing has compared the cloud with the state.
+						<span>Not scanned for drift</span>
 					) : (
 						<span className="inline-flex items-center gap-1.5">
 							<Check className="size-3" />

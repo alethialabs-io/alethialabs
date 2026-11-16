@@ -13,6 +13,12 @@ import {
 	MINT_UNPROVISIONED_ENV_STATUSES,
 } from "@/lib/clusters/mint-eligibility";
 import { type KubeconfigAccess, readKubeconfigAccess } from "@/lib/clusters/kubeconfig-access";
+import { readClusterEvidence } from "@/lib/clusters/observed-evidence";
+import {
+	type ControlPlaneObservation,
+	KUBECONFIG_MISSING_CLUSTER_NOTE,
+	observeControlPlane,
+} from "@/lib/clusters/observed-state";
 import { withActorScope } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -42,6 +48,9 @@ export interface ClusterData {
 	environment_stage: string;
 	/** That environment's provisioning lifecycle (`project_environments.status`). */
 	status: string;
+	/** When that status was last written (`project_environments.updated_at`) — how long a run has
+	 *  been "in flight", so a status nothing has moved for months is not shown as current. */
+	status_since: string;
 	cloud_identities: { provider: string } | null;
 	project_cluster: {
 		/** project_cluster row id — the classifiable `project_cluster` resource. */
@@ -55,7 +64,12 @@ export interface ClusterData {
 		 *  elsewhere it is `cluster_version`. Null when unset. */
 		k8s_version: string | null;
 		argocd_url: string | null;
+		/** What the last successful deploy recorded (`project_cluster.status`) — never refreshed after. */
 		status: string;
+		/** What the console has OBSERVED of the control plane since that deploy: a drift scan reporting
+		 *  it deleted, a probe that could not reach it, or how fresh the reading behind `status` is
+		 *  (lib/clusters/observed-state.ts, #6736). */
+		observation: ControlPlaneObservation;
 		/** How to get a kubeconfig — `alethia cluster kubeconfig`, and the cloud-CLI alternative where
 		 *  there is one — the same object `alethia cluster get` prints (lib/clusters/kubeconfig-access.ts). */
 		kubeconfig: KubeconfigAccess;
@@ -125,6 +139,9 @@ export async function readClusters(actor: Actor): Promise<ClusterData[]> {
 				region: sql<string>`coalesce(${projectCluster.region}, ${projects.region})`,
 				environment_stage: projectEnvironments.name,
 				environment_status: projectEnvironments.status,
+				environment_status_since: projectEnvironments.updated_at,
+				environment_tier_stage: projectEnvironments.stage,
+				last_deployed_at: projectEnvironments.last_deployed_at,
 				provider: cloudIdentities.provider,
 				cluster_id: projectCluster.id,
 				cluster_environment_id: projectCluster.environment_id,
@@ -219,37 +236,60 @@ export async function readClusters(actor: Actor): Promise<ClusterData[]> {
 			),
 		]);
 
-		return baseRows.map((r, i) => ({
-			id: r.id,
-			project_name: r.project_name,
-			region: r.region,
-			environment_stage: r.environment_stage,
-			status: r.environment_status,
-			cloud_identities: r.provider ? { provider: r.provider } : null,
-			project_cluster: {
-				id: r.cluster_id,
-				cluster_name: r.cluster_name,
-				cluster_endpoint: r.cluster_endpoint,
-				cluster_arn: r.cluster_outputs?.arn ?? null,
-				cluster_version: r.cluster_version,
-				k8s_version: displayedK8sVersion(r.provider, r.cluster_version),
-				argocd_url: r.argocd_url,
-				status: r.cluster_status,
-				kubeconfig: kubeconfigs[i],
-			},
-			project_databases: dbRows
-				.filter((d) => d.environment_id === r.cluster_environment_id)
-				.map(({ environment_id: _e, provider_outputs, ...db }) => ({
-					...db,
-					master_credentials_secret_arn: provider_outputs?.secret_ref ?? null,
-				})),
-			project_caches: cacheRows
-				.filter((c) => c.environment_id === r.cluster_environment_id)
-				.map(({ environment_id: _e, ...c }) => c),
-			project_dns:
-				r.dns_enabled !== null ? { domain_name: r.dns_domain_name, enabled: r.dns_enabled } : null,
-			apps_destination_repo: r.apps_destination_repo ?? null,
-		}));
+		// What has been observed since each deploy (#6736) — read after the rows above, scoped to the
+		// org and to the environments this caller's list already holds.
+		const evidence = await readClusterEvidence(actor.orgId, envIds);
+		const now = new Date();
+
+		return baseRows.map((r, i) => {
+			const envId = r.cluster_environment_id;
+			const observation = observeControlPlane({
+				lastDeployedAt: r.last_deployed_at?.toISOString() ?? null,
+				stage: r.environment_tier_stage,
+				drift: envId ? (evidence.drift.get(envId) ?? null) : null,
+				probe: envId ? (evidence.probes.get(envId) ?? null) : null,
+				now,
+			});
+			// A cluster a drift scan reports deleted gets no command: it would point at a cluster —
+			// or a resource group — that is gone.
+			const kubeconfig: KubeconfigAccess =
+				observation.kind === "missing"
+					? { command: null, alternative: null, note: KUBECONFIG_MISSING_CLUSTER_NOTE }
+					: kubeconfigs[i];
+			return {
+				id: r.id,
+				project_name: r.project_name,
+				region: r.region,
+				environment_stage: r.environment_stage,
+				status: r.environment_status,
+				status_since: r.environment_status_since.toISOString(),
+				cloud_identities: r.provider ? { provider: r.provider } : null,
+				project_cluster: {
+					id: r.cluster_id,
+					cluster_name: r.cluster_name,
+					cluster_endpoint: r.cluster_endpoint,
+					cluster_arn: r.cluster_outputs?.arn ?? null,
+					cluster_version: r.cluster_version,
+					k8s_version: displayedK8sVersion(r.provider, r.cluster_version),
+					argocd_url: r.argocd_url,
+					status: r.cluster_status,
+					observation,
+					kubeconfig,
+				},
+				project_databases: dbRows
+					.filter((d) => d.environment_id === r.cluster_environment_id)
+					.map(({ environment_id: _e, provider_outputs, ...db }) => ({
+						...db,
+						master_credentials_secret_arn: provider_outputs?.secret_ref ?? null,
+					})),
+				project_caches: cacheRows
+					.filter((c) => c.environment_id === r.cluster_environment_id)
+					.map(({ environment_id: _e, ...c }) => c),
+				project_dns:
+					r.dns_enabled !== null ? { domain_name: r.dns_domain_name, enabled: r.dns_enabled } : null,
+				apps_destination_repo: r.apps_destination_repo ?? null,
+			};
+		});
 	});
 }
 
@@ -306,10 +346,13 @@ export async function readClusterList(actor: Actor): Promise<ClusterListItem[]> 
 		// live cluster; say so to a viewer who could otherwise download, rather than offer a button
 		// the request will refuse.
 		const refused = MINT_UNPROVISIONED_ENV_STATUSES.has(c.status);
+		// A cluster a drift scan reports deleted has nothing to mint for; its kubeconfig note says why.
+		const missing = c.project_cluster.observation.kind === "missing";
 		return {
 			...c,
-			can_download_kubeconfig: permitted && !refused,
-			kubeconfig_download_note: permitted && refused ? KUBECONFIG_MINT_UNPROVISIONED_REASON : null,
+			can_download_kubeconfig: permitted && !refused && !missing,
+			kubeconfig_download_note:
+				permitted && refused && !missing ? KUBECONFIG_MINT_UNPROVISIONED_REASON : null,
 			classification: chips.get(c.project_cluster.id) ?? [],
 		};
 	});

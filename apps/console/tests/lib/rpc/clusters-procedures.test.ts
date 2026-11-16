@@ -39,6 +39,10 @@ const h = vi.hoisted(() => ({
 	viewableAsked: 0,
 	/** Every `where(...)` argument, in order; the first is the base list's. */
 	wheres: [] as unknown[],
+	/** The latest drift scan per environment id (#6736). */
+	drift: new Map<string, { scannedAt: string; details: { address: string; type: string; kind: "modified" | "deleted" | "other" }[] }>(),
+	/** The environment ids and org the evidence was asked for. */
+	evidenceAsked: [] as { orgId: string; ids: readonly string[] }[],
 }));
 
 vi.mock("server-only", () => ({}));
@@ -77,6 +81,12 @@ vi.mock("@/lib/cli/project-access", () => ({
 }));
 vi.mock("@/lib/db", () => ({
 	withActorScope: (_actor: unknown, fn: (tx: unknown) => unknown) => fn(fakeTx()),
+}));
+vi.mock("@/lib/clusters/observed-evidence", () => ({
+	readClusterEvidence: async (orgId: string, ids: readonly string[]) => {
+		h.evidenceAsked.push({ orgId, ids });
+		return { drift: h.drift, probes: new Map() };
+	},
 }));
 vi.mock("@/lib/queries/classification", () => ({
 	assignmentsForKind: async (_tx: unknown, _kind: string, ids: string[]) => {
@@ -136,6 +146,9 @@ function baseRow(over: Record<string, unknown>) {
 		region: "europe-west3",
 		environment_stage: "prod",
 		environment_status: "ACTIVE",
+		environment_status_since: new Date("2026-11-01T00:00:00Z"),
+		environment_tier_stage: "production",
+		last_deployed_at: new Date("2026-11-01T00:00:00Z"),
 		provider: "gcp",
 		cluster_id: "c1",
 		cluster_environment_id: "e1",
@@ -173,6 +186,8 @@ beforeEach(() => {
 	h.viewable = ["p1"];
 	h.viewableAsked = 0;
 	h.wheres = [];
+	h.drift = new Map();
+	h.evidenceAsked = [];
 });
 
 describe("readClusters", () => {
@@ -318,6 +333,38 @@ describe("readClusterList", () => {
 		const [c] = await readClusterList(ACTOR);
 		expect(c.can_download_kubeconfig).toBe(false);
 		expect(c.kubeconfig_download_note).toMatch(/undeployed plan/);
+	});
+
+	it("offers no kubeconfig for a cluster a drift scan since its deploy reports deleted (#6736)", async () => {
+		h.results = [[baseRow({ environment_status: "PROVISIONING" })], [], [], [GCP_DEPLOY]];
+		h.drift.set("e1", {
+			scannedAt: "2026-11-09T00:00:00Z",
+			details: [{ address: "azurerm_resource_group.main", type: "azurerm_resource_group", kind: "deleted" }],
+		});
+		const [c] = await readClusterList(ACTOR);
+		expect(c.project_cluster.observation).toEqual({
+			kind: "missing",
+			observedAt: "2026-11-09T00:00:00Z",
+			deleted: ["azurerm_resource_group.main"],
+		});
+		expect(c.project_cluster.kubeconfig.command).toBeNull();
+		expect(c.project_cluster.kubeconfig.alternative).toBeNull();
+		expect(c.project_cluster.kubeconfig.note).toMatch(/deleted outside Alethia/);
+		expect([c.can_download_kubeconfig, c.kubeconfig_download_note]).toEqual([false, null]);
+		expect(c.status_since).toBe("2026-11-01T00:00:00.000Z");
+		// Scoped to the address's org and the environments this list holds.
+		expect(h.evidenceAsked).toEqual([{ orgId: "o1", ids: ["e1"] }]);
+	});
+
+	it("a drift scan OLDER than the last deploy does not mark the cluster missing — the deploy replaced it", async () => {
+		h.results = [[baseRow({})], [], [], [GCP_DEPLOY]];
+		h.drift.set("e1", {
+			scannedAt: "2026-10-01T00:00:00Z",
+			details: [{ address: "google_container_cluster.main", type: "google_container_cluster", kind: "deleted" }],
+		});
+		const [c] = await readClusterList(ACTOR);
+		expect(c.project_cluster.observation.kind).toBe("reported");
+		expect(c.project_cluster.kubeconfig.command).toBe("alethia cluster kubeconfig gke-euw3-prod-web");
 	});
 
 	it("says nothing about the mint to a viewer without the permission", async () => {

@@ -20,6 +20,21 @@
 //     if the env moved between our SELECT and the UPDATE, the CAS rejects and we no-op. We pass
 //     `silent` so an expected rejection doesn't emit a status-conflict alert (this reconciler probes
 //     many envs speculatively).
+//
+// What the rule above could not see (#6736). It settles an env only BEHIND a terminal job, so an env
+// whose newest lifecycle job never reaches a terminal state stays in flight for ever — and one did,
+// for four months, on production. Two shapes of that, both handled below before the candidates are
+// read, and both bounded by UNCLAIMED_JOB_TTL_HOURS:
+//   • An UNCLAIMED job. recover_stale_jobs (programmables.sql) sweeps CLAIMED/PROCESSING jobs only;
+//     a QUEUED job no runner ever claims — or one it requeued after its runner died, which leaves the
+//     env PROVISIONING — waits for ever, and the NOT EXISTS below keeps its env out of convergence.
+//     Past the TTL such a job is CANCELLED with a reason, exactly as a user cancel writes it
+//     (lib/jobs/cancel.ts: CANCELLED + completed_at + error_message), and the ordinary convergence
+//     then settles its env once the job is CONVERGE_MIN_AGE_MINUTES terminal: a DEPLOY or DESTROY to
+//     FAILED, a PLAN to DRAFT. Only a job whose env is itself stuck in flight is touched — a QUEUED
+//     job behind a settled env is someone's pending work, not a stuck lifecycle.
+//   • An env in flight with NO lifecycle job at all (the LATERAL below then yields no row). Past the
+//     TTL it is settled FAILED through the same CAS, with no job to name.
 
 import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db";
@@ -32,6 +47,7 @@ import type {
 	ProvisionJobStatus,
 	ProvisionJobType,
 } from "@/lib/db/schema/enums";
+import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { log } from "@/lib/observability/log";
 
 const clog = log.child({ component: "reconcile", reconciler: "env-convergence" });
@@ -49,6 +65,109 @@ const CONVERGE_MIN_AGE_MINUTES = (() => {
 	const raw = Number(process.env.ALETHIA_CONVERGE_MIN_AGE_MINUTES);
 	return Number.isFinite(raw) && raw > 0 ? raw : 5;
 })();
+
+/**
+ * Hours a lifecycle job may sit QUEUED, unclaimed, while its env is stuck in flight, before it is
+ * cancelled so the env can settle. Generous on purpose: it must outlast any runner outage worth
+ * waiting through, and a cancelled job is re-run with one click. Env-tunable.
+ */
+export const UNCLAIMED_JOB_TTL_HOURS = (() => {
+	const raw = Number(process.env.ALETHIA_UNCLAIMED_JOB_TTL_HOURS);
+	return Number.isFinite(raw) && raw > 0 ? raw : 24;
+})();
+
+/** The reason written on a job cancelled because no runner claimed it — the env's "why" for FAILED. */
+export const UNCLAIMED_JOB_REASON = `No runner claimed this job within ${UNCLAIMED_JOB_TTL_HOURS} hours, so it was cancelled and its environment settled instead of waiting for ever. Check that a runner is online for this cloud, then run it again.`;
+
+/** A lifecycle job cancelled because no runner claimed it in time. */
+type ExpiredJob = {
+	job_id: string;
+	job_type: ProvisionJobType;
+	environment_id: string;
+	org_id: string | null;
+	project_id: string | null;
+};
+
+/** An env stuck in flight with no lifecycle job at all. */
+type OrphanEnv = {
+	env_id: string;
+	org_id: string | null;
+	project_id: string | null;
+	current_status: ProjectStatus;
+};
+
+/**
+ * Cancels every DEPLOY/DESTROY/PLAN job that has sat QUEUED past {@link UNCLAIMED_JOB_TTL_HOURS}
+ * while its env is stuck in flight. The flip is conditional on `status = 'QUEUED'` in the same
+ * statement, so a runner claiming the job concurrently wins (claim_next_job locks QUEUED rows FOR
+ * UPDATE SKIP LOCKED; this UPDATE then re-checks and skips the claimed row). `updated_at` is the
+ * clock because a requeue (recover_stale_jobs) restamps it: the TTL runs from when the job last
+ * became claimable, not from when it was first enqueued. Returns what it cancelled.
+ */
+export async function expireUnclaimedLifecycleJobs(db: Db): Promise<ExpiredJob[]> {
+	const rows = await db.execute<ExpiredJob>(sql`
+		UPDATE public.jobs j
+		   SET status = 'CANCELLED',
+		       completed_at = now(),
+		       updated_at = now(),
+		       error_message = ${UNCLAIMED_JOB_REASON}
+		  FROM public.project_environments e
+		 WHERE e.id = j.environment_id
+		   AND e.status IN ('QUEUED', 'PROVISIONING', 'DESTROYING')
+		   AND j.status = 'QUEUED'
+		   AND j.job_type IN ('DEPLOY', 'DESTROY', 'PLAN')
+		   AND j.updated_at < now() - make_interval(hours => ${UNCLAIMED_JOB_TTL_HOURS})
+		RETURNING j.id AS job_id, j.job_type, j.environment_id, j.org_id, j.project_id
+	`);
+	const expired = [...rows];
+	for (const j of expired) {
+		clog.warn("cancelled an unclaimed lifecycle job so its env can settle", {
+			job_id: j.job_id,
+			env_id: j.environment_id,
+			job_type: j.job_type,
+		});
+		if (j.org_id) {
+			emitAlertEventSafe(j.org_id, "system.job.cancelled", {
+				title: `Job cancelled: ${j.job_type}`,
+				summary: UNCLAIMED_JOB_REASON,
+				severity: "warning",
+				job_id: j.job_id,
+				job_type: j.job_type,
+				project_id: j.project_id ?? undefined,
+			});
+		}
+	}
+	return expired;
+}
+
+/** The CAS context that settles an orphaned in-flight env: a teardown fails as a teardown. */
+export function orphanContextFor(status: ProjectStatus): EnvTransitionContext | null {
+	switch (status) {
+		case "QUEUED":
+		case "PROVISIONING":
+			return "deployFailed";
+		case "DESTROYING":
+			return "destroyFailed";
+		default:
+			return null;
+	}
+}
+
+/** Envs stuck in flight past the TTL with no DEPLOY/DESTROY/PLAN job at all. */
+async function findOrphans(db: Db): Promise<OrphanEnv[]> {
+	const rows = await db.execute<OrphanEnv>(sql`
+		SELECT e.id AS env_id, e.org_id AS org_id, e.project_id AS project_id, e.status AS current_status
+		  FROM public.project_environments e
+		 WHERE e.status IN ('QUEUED', 'PROVISIONING', 'DESTROYING')
+		   AND e.updated_at < now() - make_interval(hours => ${UNCLAIMED_JOB_TTL_HOURS})
+		   AND NOT EXISTS (
+		     SELECT 1 FROM public.jobs j
+		      WHERE j.environment_id = e.id
+		        AND j.job_type IN ('DEPLOY', 'DESTROY', 'PLAN')
+		   )
+	`);
+	return [...rows];
+}
 
 /** A stuck env + the terminal lifecycle job the reconciler should converge it toward. */
 type ConvergeCandidate = {
@@ -108,7 +227,7 @@ async function findCandidates(db: Db): Promise<ConvergeCandidate[]> {
 		       l.status         AS job_status
 		FROM public.project_environments e
 		CROSS JOIN LATERAL (
-		    SELECT j.id, j.job_type, j.status, j.completed_at
+		    SELECT j.id, j.job_type, j.status, j.completed_at, j.updated_at
 		    FROM public.jobs j
 		    WHERE j.environment_id = e.id
 		      AND j.job_type IN ('DEPLOY', 'DESTROY', 'PLAN')
@@ -120,8 +239,9 @@ async function findCandidates(db: Db): Promise<ConvergeCandidate[]> {
 		  -- Staleness gate: only a job that went terminal well outside the live-callback window,
 		  -- with its env STILL stuck, is a genuinely dropped update. Skips the sub-second race
 		  -- against the normal deploy callback and against a concurrent re-enqueue.
-		  AND l.completed_at IS NOT NULL
-		  AND l.completed_at < now() - make_interval(mins => ${CONVERGE_MIN_AGE_MINUTES})
+		  -- A terminal job written without completed_at (no writer in this repo does, but the column is
+		  -- nullable) falls back to when its row last changed, rather than holding its env for ever.
+		  AND coalesce(l.completed_at, l.updated_at) < now() - make_interval(mins => ${CONVERGE_MIN_AGE_MINUTES})
 		  AND NOT EXISTS (
 		    SELECT 1 FROM public.jobs j2
 		    WHERE j2.environment_id = e.id
@@ -137,7 +257,35 @@ async function findCandidates(db: Db): Promise<ConvergeCandidate[]> {
  * session). Best-effort per row: one env's CAS failing never blocks the rest. Returns how many envs
  * were actually moved (a moved count > 0 means a CAS drop was silently repaired — worth noticing).
  */
-export async function convergeEnvStatuses(db: Db): Promise<{ converged: number; candidates: number }> {
+export async function convergeEnvStatuses(
+	db: Db,
+): Promise<{ converged: number; candidates: number; expired: number; orphans: number }> {
+	// First, unstick what no terminal job will ever settle (#6736). A job cancelled here is
+	// converged on a later pass, once it is CONVERGE_MIN_AGE_MINUTES terminal.
+	const expired = await expireUnclaimedLifecycleJobs(db);
+	let orphans = 0;
+	for (const o of await findOrphans(db)) {
+		const context = orphanContextFor(o.current_status);
+		if (!context) continue;
+		try {
+			const moved = await transitionEnv(db, o.env_id, context, null, {
+				orgId: o.org_id,
+				projectId: o.project_id,
+				silent: true,
+			});
+			if (moved) {
+				orphans += 1;
+				clog.warn("settled an in-flight env with no lifecycle job", {
+					env_id: o.env_id,
+					from_status: o.current_status,
+					context,
+				});
+			}
+		} catch (err) {
+			clog.error("orphan env CAS failed", { err, env_id: o.env_id });
+		}
+	}
+
 	const candidates = await findCandidates(db);
 	let converged = 0;
 	for (const c of candidates) {
@@ -168,5 +316,5 @@ export async function convergeEnvStatuses(db: Db): Promise<{ converged: number; 
 			clog.error("env convergence CAS failed", { err, env_id: c.env_id });
 		}
 	}
-	return { converged, candidates: candidates.length };
+	return { converged, candidates: candidates.length, expired: expired.length, orphans };
 }

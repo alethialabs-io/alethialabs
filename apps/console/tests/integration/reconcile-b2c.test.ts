@@ -25,7 +25,11 @@ import {
 	projects,
 } from "@/lib/db/schema";
 import type { ProjectStatus } from "@/lib/db/schema/enums";
-import { convergeEnvStatuses } from "@/lib/reconcile/converge";
+import {
+	convergeEnvStatuses,
+	UNCLAIMED_JOB_TTL_HOURS,
+	UNCLAIMED_JOB_REASON,
+} from "@/lib/reconcile/converge";
 import {
 	MAX_REAP_ATTEMPTS,
 	reapBackoffMs,
@@ -249,6 +253,67 @@ describeIfDb("B2c reconcile — real Postgres", () => {
 		await convergeEnvStatuses(db);
 
 		expect(await statusOf(planCancelled)).toBe("DRAFT"); // read-only plan → DRAFT, not FAILED
+	});
+
+	it("convergence (#6736): an UNCLAIMED job past the TTL is cancelled with a reason, then its env settles", async () => {
+		// The production shape: a DEPLOY requeued after its runner died, or never claimed, sits QUEUED
+		// while its env says PROVISIONING — for months. recover_stale_jobs never sees a QUEUED row.
+		const stuck = await seedEnv(projectId, "conv-unclaimed", "PROVISIONING");
+		const jobId = await seedJob(projectId, stuck, "DEPLOY", "QUEUED", min(2));
+		await db
+			.update(jobs)
+			.set({ updated_at: new Date(Date.now() - (UNCLAIMED_JOB_TTL_HOURS + 1) * 3_600_000) })
+			.where(eq(jobs.id, jobId));
+
+		// A QUEUED job behind a SETTLED env is someone's pending work, and one inside the TTL is waiting
+		// for a runner: neither is touched.
+		const settled = await seedEnv(projectId, "conv-unclaimed-settled", "ACTIVE");
+		const settledJob = await seedJob(projectId, settled, "PLAN", "QUEUED", min(2));
+		await db
+			.update(jobs)
+			.set({ updated_at: new Date(Date.now() - (UNCLAIMED_JOB_TTL_HOURS + 1) * 3_600_000) })
+			.where(eq(jobs.id, settledJob));
+		const waiting = await seedEnv(projectId, "conv-unclaimed-fresh", "QUEUED");
+		const waitingJob = await seedJob(projectId, waiting, "DEPLOY", "QUEUED", min(2));
+
+		const first = await convergeEnvStatuses(db);
+		expect(first.expired).toBeGreaterThanOrEqual(1);
+		const [cancelled] = await db
+			.select({ status: jobs.status, error_message: jobs.error_message, completed_at: jobs.completed_at })
+			.from(jobs)
+			.where(eq(jobs.id, jobId));
+		expect(cancelled.status).toBe("CANCELLED");
+		expect(cancelled.error_message).toBe(UNCLAIMED_JOB_REASON);
+		expect(cancelled.completed_at).not.toBeNull();
+		// Just cancelled, so inside CONVERGE_MIN_AGE: the env waits one more pass, as for any fresh terminal.
+		expect(await statusOf(stuck)).toBe("PROVISIONING");
+
+		// Age the cancellation past the min-age gate; the ordinary convergence then settles the env.
+		await db.update(jobs).set({ completed_at: min(1) }).where(eq(jobs.id, jobId));
+		await convergeEnvStatuses(db);
+		expect(await statusOf(stuck)).toBe("FAILED");
+
+		const statusOfJob = async (id: string) =>
+			(await db.select({ status: jobs.status }).from(jobs).where(eq(jobs.id, id)))[0].status;
+		expect(await statusOfJob(settledJob)).toBe("QUEUED");
+		expect(await statusOfJob(waitingJob)).toBe("QUEUED");
+		expect(await statusOf(waiting)).toBe("QUEUED");
+	});
+
+	it("convergence (#6736): an env in flight past the TTL with NO lifecycle job at all settles FAILED", async () => {
+		const orphan = await seedEnv(projectId, "conv-orphan", "PROVISIONING");
+		const orphanTeardown = await seedEnv(projectId, "conv-orphan-destroy", "DESTROYING");
+		const recent = await seedEnv(projectId, "conv-orphan-recent", "QUEUED");
+		const old = new Date(Date.now() - (UNCLAIMED_JOB_TTL_HOURS + 1) * 3_600_000);
+		for (const id of [orphan, orphanTeardown]) {
+			await db.update(projectEnvironments).set({ updated_at: old }).where(eq(projectEnvironments.id, id));
+		}
+
+		await convergeEnvStatuses(db);
+
+		expect(await statusOf(orphan)).toBe("FAILED");
+		expect(await statusOf(orphanTeardown)).toBe("FAILED");
+		expect(await statusOf(recent)).toBe("QUEUED"); // inside the TTL — an enqueue may be landing
 	});
 
 	it("ephemeral reaper: enqueues DESTROY for an expired env, and re-running is a no-op", async () => {
