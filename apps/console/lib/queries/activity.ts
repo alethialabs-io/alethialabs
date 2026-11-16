@@ -76,6 +76,7 @@ export function activitySelect() {
 		action: authzActivityLog.action,
 		resourceType: authzActivityLog.resource_type,
 		resourceId: authzActivityLog.resource_id,
+		resourceName: authzActivityLog.resource_name,
 		decision: authzActivityLog.decision,
 		reason: authzActivityLog.reason,
 		ts: authzActivityLog.ts,
@@ -139,6 +140,7 @@ export async function queryActivityPage(
 				ilike(user.email, like),
 				ilike(authzActivityLog.action, like),
 				ilike(authzActivityLog.resource_type, like),
+				ilike(authzActivityLog.resource_name, like),
 			),
 		);
 	}

@@ -225,7 +225,7 @@ async function removeRole(id: string): Promise<void> {
 	const actor = await requireCustomRoles();
 	// Grants referencing the role cascade-delete (FK); their tuples reconcile on the
 	// next backfill. Only this org's non-built-in roles may be deleted.
-	await getServiceDb()
+	const [gone] = await getServiceDb()
 		.delete(role)
 		.where(
 			and(
@@ -233,7 +233,8 @@ async function removeRole(id: string): Promise<void> {
 				eq(role.organization_id, actor.orgId),
 				eq(role.is_builtin, false),
 			),
-		);
+		)
+		.returning({ name: role.name });
 	emitAlertEventSafe(actor.orgId, "authz.role.delete", {
 		title: "Role deleted",
 		severity: "warning",
@@ -242,5 +243,6 @@ async function removeRole(id: string): Promise<void> {
 		resource_type: "role",
 		resource_id: id,
 	});
-	recordActivity(actor, "destroy", { type: "role", id });
+	// The row is gone, so its name is passed rather than looked up (#6735).
+	recordActivity(actor, "destroy", { type: "role", id }, { resourceName: gone?.name ?? null });
 }

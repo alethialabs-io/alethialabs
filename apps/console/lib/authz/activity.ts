@@ -11,9 +11,10 @@
 // `recordActivity` directly. Personal-scope mutations (agent threads, provider-token
 // unlink) are intentionally NOT logged here — they aren't org activity.
 
+import { and, eq, isNull, or, type SQL, sql } from "drizzle-orm";
 import { emitActionEvent } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
-import { authzActivityLog } from "@/lib/db/schema";
+import { authzActivityLog, cloudIdentities, projects, role, runners } from "@/lib/db/schema";
 import type { Action } from "@/lib/authz/registry";
 import {
 	type ResolvedScope,
@@ -32,16 +33,52 @@ const READ_ONLY: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The resource's current display name as a scalar subquery, for the resource types that have one
+ * and are not a person (#6735) — or `null` when the type carries no name here.
+ *
+ * Evaluated INSIDE the insert, so it costs no round trip and the write stays fire-and-forget. Every
+ * lookup is scoped to `orgId` (the actor's org — the row's own `org_id`): a DENIED attempt on
+ * another org's resource id must not copy that org's name into this org's log. A built-in role has
+ * no organization and its name is the registry's, so it is the one exception to that scope.
+ *
+ * Members and invitations are deliberately absent: their names are personal data and this table is
+ * WORM, so a copy could never be erased (lib/privacy/erasure-plan.ts).
+ */
+function liveNameOf(orgId: string, type: string, id: string): SQL | null {
+	switch (type) {
+		case "project":
+			return sql`(select ${projects.project_name} from ${projects} where ${and(eq(projects.id, id), eq(projects.org_id, orgId))})`;
+		case "runner":
+			return sql`(select ${runners.name} from ${runners} where ${and(eq(runners.id, id), eq(runners.org_id, orgId))})`;
+		case "cloud_identity":
+			return sql`(select ${cloudIdentities.name} from ${cloudIdentities} where ${and(eq(cloudIdentities.id, id), eq(cloudIdentities.org_id, orgId))})`;
+		case "role":
+			return sql`(select ${role.name} from ${role} where ${and(eq(role.id, id), or(eq(role.organization_id, orgId), isNull(role.organization_id)))})`;
+		default:
+			return null;
+	}
+}
+
+/**
  * Fire-and-forget Activity record; never blocks the request. Free-form `action`/`type`
  * so non-registry governance events (role / grant / member) can be logged alongside the
  * PDP-enforced ones. `decision` defaults to true (an allowed action).
+ *
+ * The resource's display name is recorded WITH the event (#6735), so the line still names the
+ * thing once it is gone. `opts.resourceName` is the caller's own copy and wins; a caller recording
+ * a deletion AFTER the row is gone must pass it, because the fallback — the resource's current
+ * name, read in the same statement ({@link liveNameOf}) — can no longer find it.
  */
 export function recordActivity(
 	actor: ResolvedScope,
 	action: string,
 	resource: { type: string; id?: string | null },
-	opts?: { decision?: boolean; reason?: string },
+	opts?: { decision?: boolean; reason?: string; resourceName?: string | null },
 ): void {
+	const resourceId = resource.id ?? null;
+	const resourceName =
+		opts?.resourceName ??
+		(resourceId ? liveNameOf(actor.orgId, resource.type, resourceId) : null);
 	void getServiceDb()
 		.insert(authzActivityLog)
 		.values({
@@ -49,11 +86,30 @@ export function recordActivity(
 			actor_id: actor.userId,
 			action,
 			resource_type: resource.type,
-			resource_id: resource.id ?? null,
+			resource_id: resourceId,
+			resource_name: resourceName,
 			decision: opts?.decision ?? true,
 			reason: opts?.reason ?? null,
 		})
 		.catch((err) => log.error("[authz] activity write failed", { err }));
+}
+
+/**
+ * Records an ALLOWED action after it has happened, and emits it as an action event — the half of
+ * {@link enforceDecision} that a caller using `authorizeDeferred` (lib/authz/guard.ts) owes once
+ * its operation succeeded. `resourceName` is for a resource the operation just created (its id did
+ * not exist at the check) or just deleted (its row is gone now).
+ */
+export function recordAllowed(
+	actor: ResolvedScope,
+	action: Action,
+	resource: ResourceRef,
+	opts?: { resourceName?: string | null; recordAs?: string },
+): void {
+	recordActivity(actor, opts?.recordAs ?? action, resource, {
+		resourceName: opts?.resourceName,
+	});
+	emitActionEvent(actor, action, resource, true);
 }
 
 /**

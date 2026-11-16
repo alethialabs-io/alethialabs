@@ -11,10 +11,17 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", () => ({
-	authorize: vi.fn(),
-	authorizeRead: vi.fn(),
-	currentActor: vi.fn(),
+vi.mock("@/lib/authz/guard", () => {
+	const authorize = vi.fn();
+	// `authorizeDeferred` answers what `authorize` answers (the same mocked outcome), but is its own
+	// spy: create and delete record their allow AFTER the write (#6735), so the tests assert which.
+	const authorizeDeferred = vi.fn((...args: Parameters<typeof authorize>) => authorize(...args));
+	return { authorize, authorizeDeferred, authorizeRead: vi.fn(), currentActor: vi.fn() };
+});
+vi.mock("@/lib/authz/activity", () => ({
+	recordAllowed: vi.fn(),
+	recordActivity: vi.fn(),
+	enforceDecision: vi.fn(),
 }));
 // The org binding reads the projects table on the service role; its own behaviour is integration-
 // tested (tests/integration/console-project-bound.test.ts). Here it is a seam whose ORDER is asserted.
@@ -98,7 +105,8 @@ import {
 import { webhookCaConsumersForTemplate } from "@/lib/addons/webhook-ca-consumers";
 import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
 import { requireOwner } from "@/lib/auth/owner";
-import { authorize, authorizeRead, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeDeferred, authorizeRead, currentActor } from "@/lib/authz/guard";
+import { recordAllowed } from "@/lib/authz/activity";
 import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { assertUsageAllowed, UsageLimitError } from "@/lib/billing/usage-guard";
@@ -412,7 +420,15 @@ describe("createProject", () => {
 
 		const r = await createProject(baseInput as never);
 
-		expect(authorize).toHaveBeenCalledWith("create", { type: "project" });
+		expect(authorizeDeferred).toHaveBeenCalledWith("create", { type: "project" });
+		// #6735: recorded AFTER the insert, so the row carries the new project's id AND its name — the
+		// "created a project" line used to be nameless even while the project existed.
+		expect(recordAllowed).toHaveBeenCalledWith(
+			expect.anything(),
+			"create",
+			{ type: "project", id: "p1" },
+			{ resourceName: baseInput.project.project_name.trim() },
+		);
 
 		// pickFreeSlug bumped the collision to "my-app-2"; environment_stage is destructured OUT
 		// of the projects row (it seeds the env, it is not a project column).
@@ -753,7 +769,7 @@ describe("tryCreateProject", () => {
 		// The guard was REACHED. Without this, a wrapper that pre-validated and returned
 		// `{ ok: false }` would fail only on the `rejects` line, which reads as "it didn't throw"
 		// rather than "it answered a caller who never cleared authz".
-		expect(authorize).toHaveBeenCalledWith("create", { type: "project" });
+		expect(authorizeDeferred).toHaveBeenCalledWith("create", { type: "project" });
 	});
 
 	// An unexpected failure is a DEFECT, not advice. Turning it into `{ ok: false, error }` would
@@ -2826,7 +2842,7 @@ describe("deleteProject", () => {
 	it("authorizes destroy, deletes the project row (CASCADE), and returns success", async () => {
 		const { deleteSpy } = setupDb({});
 		const r = await deleteProject("p1");
-		expect(authorize).toHaveBeenCalledWith("destroy", {
+		expect(authorizeDeferred).toHaveBeenCalledWith("destroy", {
 			type: "project",
 			id: "p1",
 		});
@@ -2851,6 +2867,25 @@ describe("deleteProject", () => {
 				"This project has live or in-flight environments. Destroy them before deleting the project.",
 		});
 		expect(deleteSpy).not.toHaveBeenCalled();
+		// A refused delete is not a deletion, so nothing says one happened.
+		expect(recordAllowed).not.toHaveBeenCalled();
+	});
+
+	// #6735: the deletion row must still name the project once the project is gone, so the name is
+	// the one the DELETE itself returned, and the row is written only after the delete succeeded.
+	it("records the deletion AFTER the delete, keeping the project's name", async () => {
+		// `default` answers every query here: the env read (no status → nothing live) and the
+		// delete's `returning`, which is the name as it was at the delete.
+		setupDb({ default: [{ name: "qa-20261116-proj" }] });
+		const r = await deleteProject("p1");
+		expect(r).toEqual({ ok: true });
+		expect(recordAllowed).toHaveBeenCalledTimes(1);
+		expect(recordAllowed).toHaveBeenCalledWith(
+			expect.anything(),
+			"destroy",
+			{ type: "project", id: "p1" },
+			{ resourceName: "qa-20261116-proj" },
+		);
 	});
 });
 
@@ -3264,7 +3299,7 @@ describe("duplicateProjectForProvider", () => {
 			"europe-west1",
 		);
 
-		expect(authorize).toHaveBeenCalledWith("create", { type: "project" });
+		expect(authorizeDeferred).toHaveBeenCalledWith("create", { type: "project" });
 		expect(r.newProjectId).toBe("new-proj");
 		expect(r.newProjectSlug).toBe("new-proj");
 		// the real converter always emits at least the cluster k8s-version info note cross-provider
@@ -3975,7 +4010,7 @@ describe("webhook_ca_consumers — the project-level webhook-CA marker (#4990)",
 	it("refuses a consumer nobody verified, after the guard and before any write", async () => {
 		const { insertSpy } = createDb();
 		await expect(createProject(input(["istio"]) as never)).rejects.toThrow();
-		expect(authorize).toHaveBeenCalledWith("create", { type: "project" });
+		expect(authorizeDeferred).toHaveBeenCalledWith("create", { type: "project" });
 		expect(insertSpy).not.toHaveBeenCalled();
 	});
 

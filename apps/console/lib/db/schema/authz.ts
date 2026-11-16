@@ -112,6 +112,12 @@ export const authzActivityLog = pgTable(
 		action: text().notNull(),
 		resource_type: text().notNull(),
 		resource_id: uuid(),
+		// The resource's display name AS IT WAS when the event was written (#6735). The feed used to
+		// resolve names live, so a deleted project's own deletion row read "deleted a project". Null on
+		// rows written before this column, on org-wide resources (billing, the org itself), and on
+		// people (member / invitation): a person's name is personal data, and this table is WORM —
+		// it could never be erased from here, so it is never copied in.
+		resource_name: text(),
 		decision: boolean().notNull(),
 		reason: text(),
 		ts: timestamp({ withTimezone: true }).defaultNow().notNull(),

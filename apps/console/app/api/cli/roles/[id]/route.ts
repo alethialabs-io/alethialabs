@@ -32,7 +32,7 @@ export async function DELETE(
 	}
 
 	try {
-		await getServiceDb()
+		const [gone] = await getServiceDb()
 			.delete(role)
 			.where(
 				and(
@@ -40,7 +40,8 @@ export async function DELETE(
 					eq(role.organization_id, actor.orgId),
 					eq(role.is_builtin, false),
 				),
-			);
+			)
+			.returning({ name: role.name });
 
 		emitAlertEventSafe(actor.orgId, "authz.role.delete", {
 			title: "Role deleted",
@@ -50,7 +51,8 @@ export async function DELETE(
 			resource_type: "role",
 			resource_id: id,
 		});
-		recordActivity(actor, "destroy", { type: "role", id });
+		// The row is gone, so its name is passed rather than looked up (#6735).
+		recordActivity(actor, "destroy", { type: "role", id }, { resourceName: gone?.name ?? null });
 
 		return cliJson(cliOkResponse, { ok: true });
 	} catch (err: unknown) {
