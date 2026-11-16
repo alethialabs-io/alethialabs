@@ -60,9 +60,12 @@ export function StepContact({ attachmentCount }: StepContactProps) {
 					type="email"
 					placeholder="you@company.com"
 					className="max-w-md"
+					aria-invalid={errors.contact?.notifyEmail ? true : undefined}
+					aria-describedby="support-notify-email-message"
 					{...register("contact.notifyEmail")}
 				/>
 				<FieldMessage
+					id="support-notify-email-message"
 					message={errors.contact?.notifyEmail ? "Enter a valid email address." : undefined}
 				/>
 			</div>

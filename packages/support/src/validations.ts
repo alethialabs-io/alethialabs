@@ -20,7 +20,7 @@ import { supportCases } from "./schema";
 
 /** Where + how the customer wants to be reached about a case (mirrors SupportContactPrefs). */
 export const contactPrefsSchema = z.object({
-	notifyEmail: z.string().email(),
+	notifyEmail: z.string().email("Enter a valid email address."),
 	ccEmails: z.array(z.string().email()).max(5).optional(),
 	channel: z.enum(["email", "in_app"]).default("email"),
 	locale: z.string().optional(),
@@ -67,8 +67,16 @@ export const submitCaseSchema = createInsertSchema(supportCases, {
 		abuse: true,
 	})
 	.extend({
-		subject: z.string().min(3).max(200),
-		description: z.string().min(10).max(10000),
+		// Written messages, not zod's defaults: they render under the field verbatim, and
+		// "Too small: expected string to have >=3 characters" is not a sentence (#6729).
+		subject: z
+			.string()
+			.min(3, "Enter a subject of at least 3 characters.")
+			.max(200, "Keep the subject to 200 characters or fewer."),
+		description: z
+			.string()
+			.min(10, "Describe the issue in at least 10 characters.")
+			.max(10000, "Keep the description to 10,000 characters or fewer."),
 		// Optional at the schema level: the submit form always supplies contact prefs,
 		// but the Ask-AI escalation path omits them and `submitCase` defaults them to the
 		// session user's email server-side.
