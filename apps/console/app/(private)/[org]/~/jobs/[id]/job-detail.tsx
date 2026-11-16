@@ -337,7 +337,18 @@ export function JobDetail({
 									<StatusBadge status={jobState ?? job.status} />
 									{/* A finished job's duration is fixed; a running one reads the clock, so it
 									    waits for hydration in a reserved slot (React #418, columns.tsx). */}
-									{job.created_at && job.completed_at ? (
+									{/* A job that finished without ever starting (cancelled or failed in the
+									    queue) has no run time: `completed_at - created_at` is all wait. Showing
+									    that bare made a Plan cancelled after 120 days in the queue read as a
+									    120-day run (#6732). `started_at` is stamped on the first PROCESSING. */}
+									{job.created_at && job.completed_at && !job.started_at ? (
+										<span>
+											Never started · waited{" "}
+											{formatDuration(
+												new Date(job.completed_at).getTime() - new Date(job.created_at).getTime(),
+											)}
+										</span>
+									) : job.created_at && job.completed_at ? (
 										<span>
 											{formatDuration(
 												new Date(job.completed_at).getTime() - new Date(job.created_at).getTime(),

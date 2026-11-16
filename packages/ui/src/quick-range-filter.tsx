@@ -118,6 +118,8 @@ export function QuickRangeFilter({
                 <button
                   key={p.id}
                   type="button"
+                  // The applied preset's state is `aria-pressed` (#6734); the check is drawing.
+                  aria-pressed={active}
                   onClick={() => apply(presetRange(p.id), p.label)}
                   className={cn(
                     "flex items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-[13px] transition-colors",

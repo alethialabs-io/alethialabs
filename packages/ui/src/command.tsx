@@ -181,18 +181,26 @@ function CommandInput({
   )
 }
 
-/** The scrolling list of rows. */
+/**
+ * The scrolling list of rows (`role="listbox"`). Pass `multiselectable` when its rows toggle a SET
+ * of values (a facet filter), so `aria-selected` on each row reads as "in the set" rather than as
+ * the single current choice — see `CommandItem`'s `selected`.
+ */
 function CommandList({
   className,
   children,
+  multiselectable,
   ...props
 }: Omit<React.ComponentProps<typeof Autocomplete.List>, "className" | "children"> & {
   className?: string
   children?: React.ReactNode
+  /** The rows toggle membership of a set; sets `aria-multiselectable` on the listbox. */
+  multiselectable?: boolean
 }) {
   return (
     <Autocomplete.List
       data-slot="command-list"
+      aria-multiselectable={multiselectable ? true : undefined}
       className={cn(
         "max-h-[300px] scroll-py-1 overflow-x-hidden overflow-y-auto",
         className
@@ -277,12 +285,21 @@ function CommandSeparator({
 /**
  * A row. `onSelect` runs on a click and on Enter while the row is highlighted. `disabledReason`
  * disables it and shows the reason IN the row — see disabled-reason.tsx.
+ *
+ * `selected` exposes the row's on/off state as `aria-selected` (#6734). Base UI renders the row as
+ * `role="option"` inside a `role="listbox"`, and sets `aria-selected` itself only for a Combobox
+ * with a selection mode — an Autocomplete has none, so without this a checked facet option said
+ * nothing to assistive tech. `aria-selected` is the state `option` supports; `aria-checked` is not
+ * (it belongs to `menuitemcheckbox`, which needs a `menu` parent this list is not). Pair it with
+ * `CommandList multiselectable` when the rows toggle a set. Omitted, the attribute is not rendered,
+ * so palettes and switchers are unchanged.
  */
 function CommandItem({
   className,
   disabled,
   disabledReason,
   onSelect,
+  selected,
   children,
   "aria-describedby": ariaDescribedBy,
   ...props
@@ -296,6 +313,8 @@ function CommandItem({
   onSelect?: () => void
   /** Why the row cannot be run. Set, it disables the row and renders the reason as secondary text. */
   disabledReason?: string | null
+  /** Whether the row is in the selected set; rendered as `aria-selected`. Omit for an action row. */
+  selected?: boolean
 }) {
   const reasonId = React.useId()
   const isDisabled = Boolean(disabledReason) || Boolean(disabled)
@@ -303,6 +322,7 @@ function CommandItem({
     <Autocomplete.Item
       data-slot="command-item"
       disabled={isDisabled}
+      aria-selected={selected}
       onClick={() => {
         if (!isDisabled) onSelect?.()
       }}
