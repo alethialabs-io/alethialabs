@@ -6,5 +6,6 @@
   "nodeCount": 3,
   "readyNodeCount": 2,
   "latencyMs": 84,
-  "error": "1 node NotReady: worker-2 (KubeletNotReady)"
+  "error": "1 node NotReady: worker-2 (KubeletNotReady)",
+  "gone": true
 }
