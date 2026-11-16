@@ -123,7 +123,20 @@ Each surface repeats a value written at a different moment, and none says when:
   - An environment stuck in flight past the same TTL with no lifecycle job at all is settled FAILED.
   - A terminal job with no `completed_at` falls back to its `updated_at` for the staleness gate.
 
-## 5. Left for a product decision
+## 5. Follow-up on the same branch (maintainer decision: probe environments that are not ACTIVE)
+
+- `lib/probes/dispatch.ts` now probes every environment believed to hold a cluster: one deployed,
+  not torn down and not tearing down. A non-ACTIVE environment is probed at its tier cadence, never
+  tighter, and the interval doubles for each consecutive miss, up to 7 days
+  (`lib/probes/schedule.ts` `probeCadenceMs`). Its reachable-to-unreachable transition does not
+  page.
+- The Go probe (`packages/core/provisioner/probe.go` `clusterGone`) marks `detail.gone` on a cloud
+  not-found code, or on NXDOMAIN for a cloud-managed API hostname. `observed-state` reads that as
+  Missing.
+- `GET /api/cli/clusters/:id` carries the same `observation`, and `alethia cluster get` prints it
+  on an Observed row, with the note in place of a kubeconfig command for a missing cluster.
+
+## 6. Left for a product decision
 
 - **Auto-marking an environment or cluster DESTROYED when drift reports it deleted.** Not done. A
   refresh-only plan can report a deletion that a credential or permission problem produced, and
@@ -131,10 +144,6 @@ Each surface repeats a value written at a different moment, and none says when:
   and withhold credentials, and nothing is written.
 - **The TTL values**: 24h for an unclaimed lifecycle job, and the freshness window of two probe
   intervals (20m prod, 2h staging, 12h dev).
-- **Probing environments that are not ACTIVE.** `lib/probes/dispatch.ts` deliberately probes only
-  ACTIVE environments.
-- **`alethia cluster get` / `GET /api/cli/clusters`** still print the kubeconfig command for a missing
-  cluster. They build it in the same module, but they do not read the observation yet.
 - **A promotion whose deploy job is cancelled this way** stays DEPLOYING. This was already true of a
   job a user cancels.
 - **A PROCESSING job whose runner is alive but has a NULL `progress_at`** matches neither recovery
