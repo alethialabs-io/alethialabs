@@ -3,12 +3,14 @@
 
 // The per-page filter-store factory (lib/stores/create-filter-store.ts): defaults,
 // set/patch/reset semantics, sessionStorage persistence (round-trip + version
-// invalidation), and the active-filter counter that drives FilterBarReset.
+// invalidation), its per-scope keying (#6730), and the active-filter counter that drives
+// FilterBarReset.
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
 	countActiveFilters,
 	createFilterStore,
+	scopedFilterKey,
 } from "@/lib/stores/create-filter-store";
 
 interface TestFilters extends Record<string, unknown> {
@@ -58,10 +60,12 @@ describe("createFilterStore", () => {
 		expect(store.getState().filters).toEqual(DEFAULTS);
 	});
 
-	it("persists filters to sessionStorage under its name", () => {
+	it("persists filters to sessionStorage under its name and scope", () => {
 		const store = makeStore();
+		store.getState().enterScope("/acme/~/jobs");
 		store.getState().set("providers", ["gcp", "aws"]);
-		const raw = sessionStorage.getItem(`test-filters-${seq}`);
+		expect(sessionStorage.getItem(`test-filters-${seq}`)).toBeNull();
+		const raw = sessionStorage.getItem(scopedFilterKey(`test-filters-${seq}`, "/acme/~/jobs"));
 		expect(raw).not.toBeNull();
 		const parsed: { state: { filters: TestFilters }; version: number } =
 			JSON.parse(raw ?? "{}");
@@ -73,7 +77,7 @@ describe("createFilterStore", () => {
 		// Persist v1 state under a fixed name, then re-create the store at v2.
 		const name = "test-filters-versioned";
 		sessionStorage.setItem(
-			name,
+			scopedFilterKey(name, "/acme/~/jobs"),
 			JSON.stringify({
 				state: { filters: { ...DEFAULTS, search: "stale" } },
 				version: 1,
@@ -84,6 +88,7 @@ describe("createFilterStore", () => {
 			defaults: DEFAULTS,
 			version: 2,
 		});
+		store.getState().enterScope("/acme/~/jobs");
 		// No migration is defined, so a version mismatch falls back to the defaults.
 		expect(store.getState().filters.search).toBe("");
 	});
@@ -93,7 +98,9 @@ describe("createFilterStore({ persist: false }) (#6320)", () => {
 	it("neither rehydrates a session's selection nor writes one", () => {
 		const name = "test-filters-memory-only";
 		sessionStorage.setItem(name, JSON.stringify({ state: { filters: { ...DEFAULTS, search: "stale" } }, version: 1 }));
+		sessionStorage.setItem(scopedFilterKey(name, "/acme/~/jobs"), JSON.stringify({ state: { filters: { ...DEFAULTS, search: "stale" } }, version: 1 }));
 		const store = createFilterStore<TestFilters>({ name, defaults: DEFAULTS, persist: false });
+		store.getState().enterScope("/acme/~/jobs");
 		expect(store.getState().filters.search).toBe("");
 		sessionStorage.clear();
 		expect(store.getState().filters).toEqual(DEFAULTS);
@@ -104,6 +111,71 @@ describe("createFilterStore({ persist: false }) (#6320)", () => {
 		expect(sessionStorage.length).toBe(0);
 		store.getState().reset();
 		expect(store.getState().filters).toEqual(DEFAULTS);
+	});
+});
+
+describe("createFilterStore scopes what it remembers (#6730)", () => {
+	const ORG_JOBS = "/acme/~/jobs";
+	const PROJECT_JOBS = "/acme/demo-aws-pilot/jobs";
+	const OTHER_ORG_JOBS = "/globex/~/jobs";
+
+	it("remembers nothing before a scope is entered", () => {
+		const store = makeStore();
+		store.getState().set("search", "azdemo");
+		expect(sessionStorage.length).toBe(0);
+	});
+
+	it("a filter set on the org page is not visible on a project page", () => {
+		const store = makeStore();
+		store.getState().enterScope(ORG_JOBS);
+		store.getState().patch({ search: "azdemo", stages: ["CANCELLED"] });
+
+		store.getState().enterScope(PROJECT_JOBS);
+		// Neither the in-memory selection nor the persisted one crosses over.
+		expect(store.getState().filters).toEqual(DEFAULTS);
+		// And entering the project scope did not overwrite what the org scope remembered.
+		const raw = sessionStorage.getItem(scopedFilterKey(`test-filters-${seq}`, ORG_JOBS));
+		const parsed: { state: { filters: TestFilters } } = JSON.parse(raw ?? "{}");
+		expect(parsed.state.filters.search).toBe("azdemo");
+	});
+
+	it("a filter set in one org is not visible in another", () => {
+		const store = makeStore();
+		store.getState().enterScope(ORG_JOBS);
+		store.getState().set("search", "azdemo");
+		store.getState().enterScope(OTHER_ORG_JOBS);
+		expect(store.getState().filters.search).toBe("");
+	});
+
+	it("returning to a scope restores what that scope remembered", () => {
+		const store = makeStore();
+		store.getState().enterScope(ORG_JOBS);
+		store.getState().set("search", "org-search");
+		store.getState().enterScope(PROJECT_JOBS);
+		store.getState().set("search", "project-search");
+
+		store.getState().enterScope(ORG_JOBS);
+		expect(store.getState().filters.search).toBe("org-search");
+		store.getState().enterScope(PROJECT_JOBS);
+		expect(store.getState().filters.search).toBe("project-search");
+	});
+
+	it("re-entering the current scope keeps the in-memory selection", () => {
+		const store = makeStore();
+		store.getState().enterScope(ORG_JOBS);
+		store.getState().set("search", "kept");
+		store.getState().enterScope(ORG_JOBS);
+		expect(store.getState().filters.search).toBe("kept");
+	});
+
+	it("an in-memory-only store still drops another scope's selection", () => {
+		seq += 1;
+		const store = createFilterStore<TestFilters>({ name: `test-filters-${seq}`, defaults: DEFAULTS, persist: false });
+		store.getState().enterScope(ORG_JOBS);
+		store.getState().set("search", "azdemo");
+		store.getState().enterScope(PROJECT_JOBS);
+		expect(store.getState().filters.search).toBe("");
+		expect(sessionStorage.length).toBe(0);
 	});
 });
 

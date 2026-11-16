@@ -30,20 +30,20 @@ import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
-import {
-	type DateRange,
-	DEFAULT_PRESET,
-	formatRangeLabel,
-	presetRange,
-} from "@repo/ui/range";
+import { type DateRange, DEFAULT_PRESET, presetRange } from "@repo/ui/range";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 import {
 	ALL_TIME_LABEL,
 	DEFAULT_INVOICE_FILTERS,
 	INVOICE_STATUS_OPTIONS,
+	invoiceRangeFromPick,
+	invoiceRangeLabel,
 	invoiceStatusCounts,
+	invoiceWindowValue,
+	NO_WINDOW_LABEL,
 	normalizeInvoiceQuery,
+	parseInvoiceRange,
 } from "./invoices-filters";
 import { InvoicePreviewDialog } from "./invoice-preview-dialog";
 import { InvoicesTable } from "./invoices-table";
@@ -53,7 +53,6 @@ export function InvoicesPanel() {
 	// Filter state lives in the store; the URL mirrors it so a filtered view is shareable.
 	const filters = useInvoiceFilters((s) => s.filters);
 	const set = useInvoiceFilters((s) => s.set);
-	const patch = useInvoiceFilters((s) => s.patch);
 	const reset = useInvoiceFilters((s) => s.reset);
 	const urlRead = useFilterUrlSync(useInvoiceFilters, DEFAULT_INVOICE_FILTERS);
 
@@ -94,30 +93,18 @@ export function InvoicesPanel() {
 	// tech and for the audit's F8–F9 `settle()` (#5494).
 	const busy = !urlRead || invoices.isPending || invoices.isPlaceholderData;
 
-	// A null window means "no date constraint"; the pickers still need a concrete value to
-	// render, so they fall back to the default preset without that becoming a filter.
-	//
-	// Resolved ONCE, as every other page carrying this filter bar does (activity-log.tsx:95,
-	// usage-panel.tsx:95, jobs-client.tsx:103). Called in the render body it re-read the clock
-	// on every paint, so the window the picker opened on was never the one the trigger had just
-	// shown, and each render produced a new `to`.
-	const [defaultRange] = useState<DateRange>(() => presetRange(DEFAULT_PRESET));
-	const range: DateRange = useMemo(
-		() =>
-			filters.from && filters.to
-				? { from: new Date(filters.from), to: new Date(filters.to) }
-				: defaultRange,
-		[filters.from, filters.to, defaultRange],
-	);
-
-	/** Apply a picked time window as the paid-date filter. */
-	function applyRange(next: DateRange, label: string) {
-		patch({
-			from: next.from.toISOString(),
-			to: next.to.toISOString(),
-			rangeLabel: label,
-		});
-	}
+	// The paid-date choice (#6731): all time (the default — no bound), a relative preset, or an
+	// explicit window. Only an explicit window is a set of dates the pickers can show as such; a
+	// preset shows the window it means right now, and all time shows none.
+	const choice = useMemo(() => parseInvoiceRange(filters.range), [filters.range]);
+	// The pickers still need a concrete value to open on. Resolved ONCE, as every other page
+	// carrying this filter bar does (activity-log.tsx, usage-panel.tsx, jobs-client.tsx): called in
+	// the render body it re-read the clock on every paint, so each render produced a new `to`.
+	const [now] = useState(() => new Date());
+	const range: DateRange = useMemo(() => {
+		if (choice.kind === "window") return { from: new Date(choice.from), to: new Date(choice.to) };
+		return presetRange(choice.kind === "preset" ? choice.preset : DEFAULT_PRESET, now);
+	}, [choice, now]);
 
 	return (
 		<SettingsSection
@@ -140,13 +127,15 @@ export function InvoicesPanel() {
 						emptyText="No statuses."
 					/>
 					<QuickRangeFilter
-						label={filters.rangeLabel || ALL_TIME_LABEL}
+						label={invoiceRangeLabel(choice)}
 						value={range}
-						onChange={applyRange}
+						onChange={(r, label) => set("range", invoiceRangeFromPick(r, label))}
+						unbounded={{ label: ALL_TIME_LABEL, onSelect: () => set("range", "") }}
 					/>
 					<DateRangeFilter
 						value={range}
-						onChange={(r) => applyRange(r, formatRangeLabel(r))}
+						onChange={(r) => set("range", invoiceWindowValue(r))}
+						emptyLabel={choice.kind === "all" ? NO_WINDOW_LABEL : undefined}
 					/>
 					<FilterBarReset count={activeFilters} onReset={reset} />
 				</FilterBar>

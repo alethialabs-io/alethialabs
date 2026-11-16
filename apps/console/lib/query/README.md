@@ -126,13 +126,27 @@ zustand store  →  debounce  →  normalize  →  TanStack key  →  server act
 (per page)        (search)      (stable obj)   qk.foo(org, q)    (filters + facets)
 ```
 
-1. **Store** — one per page via `createFilterStore` (`lib/stores/create-filter-store.ts`):
-   sessionStorage-persisted `{ filters, set, patch, reset }`. `countActiveFilters`
-   drives the reset affordance / badge counts.
+1. **Store** — one per surface via `createFilterStore` (`lib/stores/create-filter-store.ts`):
+   sessionStorage-persisted `{ filters, set, patch, reset, enterScope }`. `countActiveFilters`
+   drives the reset affordance / badge counts, so **one user choice must be one key**: a date
+   choice is a single `range` value, never `from` + `to` + a label (#6731), or one pick reads
+   as "Reset · 3".
+   **Persistence is per page, not per store (#6730).** A store is a module singleton, and one
+   definition can back several routes — jobs serves `/{org}/~/jobs` and every
+   `/{org}/{project}/jobs`; access and activity serve an org and a project settings page; every
+   store serves every org the tab visits. The storage key is `<name>:<pathname>`, and the
+   store reads and writes nothing until `useFilterUrlSync` enters the page's pathname on mount.
+   Entering a different pathname drops the in-memory selection of the last one, so a search
+   typed on org jobs is not restored onto a project's jobs page, nor into another org.
 2. **URL sync** — `useFilterUrlSync(store, defaults)` (`hooks/use-filter-url-sync.ts`)
    mirrors non-default filters into the search params (arrays comma-joined) so filtered
-   views are shareable. On mount, URL params win over persisted session state; the
-   page's RSC should parse the same params and prefetch the matching key.
+   views are shareable. **Precedence on mount: a link that carries ANY of the store's filter
+   params shows exactly that link's view** — the defaults with those params applied, nothing
+   from the session. Only a link carrying none of them (a bare URL, or unrelated params only)
+   restores what this page persisted. They are never merged: `?statuses=CANCELLED` once came
+   back with a remembered `search` folded in, a view the link did not describe and the server
+   had not prefetched. That makes the store equal `filterStateFromUrl` for every filtered link,
+   which is what the page's RSC parses to prefetch the matching key.
 3. **Debounce** — free-text goes through `useDebouncedValue` (`hooks/use-debounced-value.ts`)
    before it reaches the key, handed what `useFilterUrlSync` returned:
    `useDebouncedValue(filters.search, 250, { urlRead })`. Only TYPING is debounced; a search the

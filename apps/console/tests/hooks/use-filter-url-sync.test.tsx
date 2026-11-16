@@ -1,27 +1,29 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The URL half of the filter standard (hooks/use-filter-url-sync.ts): URL-wins
-// hydration on mount, non-default-only mirroring into the query string, array
-// comma-codec round-trip, unrelated-param preservation, and replace-loop safety.
+// The URL half of the filter standard (hooks/use-filter-url-sync.ts): the per-page scope and
+// the link-replaces-session precedence on mount (#6730), non-default-only mirroring into the
+// query string, array comma-codec round-trip, unrelated-param preservation, and replace-loop
+// safety.
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // next/navigation is mocked per-test: the URL is a mutable module-level string.
 let currentSearch = "";
+let currentPath = "/acme/~/evidence";
 const replace = vi.fn((url: string) => {
 	currentSearch = url.includes("?") ? url.split("?")[1] : "";
 });
 
 vi.mock("next/navigation", () => ({
 	useRouter: () => ({ replace }),
-	usePathname: () => "/acme/~/evidence",
+	usePathname: () => currentPath,
 	useSearchParams: () => new URLSearchParams(currentSearch),
 }));
 
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import { createFilterStore } from "@/lib/stores/create-filter-store";
+import { createFilterStore, scopedFilterKey } from "@/lib/stores/create-filter-store";
 
 interface TestFilters extends Record<string, string | string[]> {
 	search: string;
@@ -40,9 +42,18 @@ function makeStore() {
 	});
 }
 
+/** Plant what the current test's store persisted for one page, as an earlier visit leaves it. */
+function persistFor(path: string, filters: TestFilters) {
+	sessionStorage.setItem(
+		scopedFilterKey(`url-sync-test-${seq}`, path),
+		JSON.stringify({ state: { filters }, version: 1 }),
+	);
+}
+
 beforeEach(() => {
 	sessionStorage.clear();
 	currentSearch = "";
+	currentPath = "/acme/~/evidence";
 	replace.mockClear();
 });
 
@@ -133,5 +144,72 @@ describe("useFilterUrlSync", () => {
 		expect(result.current).toBe(true);
 		// Never "read" over the pre-URL state: the render that says read already holds the link.
 		for (const r of seen) if (r.synced) expect(r.stages).toEqual(["production"]);
+	});
+});
+
+describe("useFilterUrlSync — scope and precedence (#6730)", () => {
+	it("a link carrying some filter params is not merged with persisted ones", () => {
+		const store = makeStore();
+		currentPath = "/acme/~/jobs";
+		persistFor("/acme/~/jobs", { search: "azdemo", stages: [] });
+		currentSearch = "stages=CANCELLED";
+
+		renderHook(() => useFilterUrlSync(store, DEFAULTS));
+
+		// Exactly the link's view: its one param over the defaults, no remembered search.
+		expect(store.getState().filters).toEqual({ search: "", stages: ["CANCELLED"] });
+		expect(replace).not.toHaveBeenCalled();
+	});
+
+	it("a bare URL restores what this page persisted", () => {
+		const store = makeStore();
+		currentPath = "/acme/~/jobs";
+		persistFor("/acme/~/jobs", { search: "azdemo", stages: [] });
+
+		renderHook(() => useFilterUrlSync(store, DEFAULTS));
+
+		expect(store.getState().filters.search).toBe("azdemo");
+		expect(replace).toHaveBeenCalledWith("/acme/~/jobs?search=azdemo", { scroll: false });
+	});
+
+	it("a URL with unrelated params only is still a bare URL for the filters", () => {
+		const store = makeStore();
+		currentPath = "/acme/~/jobs";
+		persistFor("/acme/~/jobs", { search: "azdemo", stages: [] });
+		currentSearch = "tab=report";
+
+		renderHook(() => useFilterUrlSync(store, DEFAULTS));
+
+		expect(store.getState().filters.search).toBe("azdemo");
+	});
+
+	it("a search set on the org page is not restored onto a project page", () => {
+		const store = makeStore();
+		currentPath = "/acme/~/jobs";
+		const org = renderHook(() => useFilterUrlSync(store, DEFAULTS));
+		act(() => store.getState().set("search", "azdemo"));
+		org.unmount();
+
+		currentPath = "/acme/demo-aws-pilot/jobs";
+		currentSearch = "";
+		replace.mockClear();
+		renderHook(() => useFilterUrlSync(store, DEFAULTS));
+
+		expect(store.getState().filters).toEqual(DEFAULTS);
+		expect(replace).not.toHaveBeenCalled();
+	});
+
+	it("a search set in one org is not restored in another", () => {
+		const store = makeStore();
+		currentPath = "/acme/~/jobs";
+		const acme = renderHook(() => useFilterUrlSync(store, DEFAULTS));
+		act(() => store.getState().set("search", "azdemo"));
+		acme.unmount();
+
+		currentPath = "/globex/~/jobs";
+		currentSearch = "";
+		renderHook(() => useFilterUrlSync(store, DEFAULTS));
+
+		expect(store.getState().filters.search).toBe("");
 	});
 });
