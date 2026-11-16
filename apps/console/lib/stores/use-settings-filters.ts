@@ -73,11 +73,12 @@ export const useRolesFilters = createFilterStore<RolesFilters>({
 	version: 1,
 });
 
-/** Session-persisted filter selections for /~/settings/billing/invoices. */
+/** Session-persisted filter selections for /~/settings/billing/invoices. `version: 2` is the one
+ * `range` key that replaced `from` + `to` + `rangeLabel` (#6731). */
 export const useInvoiceFilters = createFilterStore<InvoiceFilters>({
 	name: "settings-invoice-filters",
 	defaults: DEFAULT_INVOICE_FILTERS,
-	version: 1,
+	version: 2,
 });
 
 /** Session-persisted filter selections for /~/settings/access (and the project surface). */

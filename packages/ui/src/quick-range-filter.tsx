@@ -42,6 +42,12 @@ interface QuickRangeFilterProps {
   onChange: (range: DateRange, label: string) => void;
   /** Override the preset list (defaults to the shared RANGE_PRESETS). */
   presets?: RangePreset[];
+  /**
+   * An unbounded first entry ("All time"), for a list whose default is no window at all. The
+   * presets all resolve to a window, so without it such a list's default label named an option
+   * the menu could not select (#6731).
+   */
+  unbounded?: { label: string; onSelect: () => void };
   align?: "start" | "center" | "end";
 }
 
@@ -69,10 +75,41 @@ function Chip({
   );
 }
 
+/** One entry of the preset list, checked when it is the current selection. */
+function PresetButton({
+  label,
+  active,
+  onPick,
+}: {
+  label: string;
+  active: boolean;
+  onPick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      // The applied preset's state is `aria-pressed` (#6734); the check is drawing.
+      aria-pressed={active}
+      onClick={onPick}
+      className={cn(
+        "flex items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-[13px] transition-colors",
+        active
+          ? "bg-surface-muted text-text-primary"
+          : "text-text-secondary hover:bg-surface-muted hover:text-text-primary",
+      )}
+    >
+      {label}
+      {active && <Check size={13} />}
+    </button>
+  );
+}
+
+/** The quick-range dropdown: presets on the left, typed relative/fixed entry on the right. */
 export function QuickRangeFilter({
   label,
   onChange,
   presets = RANGE_PRESETS,
+  unbounded,
   align = "end",
 }: QuickRangeFilterProps) {
   const [open, setOpen] = useState(false);
@@ -112,25 +149,26 @@ export function QuickRangeFilter({
         <div className="grid grid-cols-[170px_1fr]">
           {/* Left — preset list. */}
           <div className="flex flex-col gap-0.5 border-r border-border p-1.5">
+            {unbounded && (
+              <PresetButton
+                label={unbounded.label}
+                active={unbounded.label === label}
+                onPick={() => {
+                  unbounded.onSelect();
+                  setTyped("");
+                  setTypedError(false);
+                  setOpen(false);
+                }}
+              />
+            )}
             {presets.map((p) => {
-              const active = p.label === label;
               return (
-                <button
+                <PresetButton
                   key={p.id}
-                  type="button"
-                  // The applied preset's state is `aria-pressed` (#6734); the check is drawing.
-                  aria-pressed={active}
-                  onClick={() => apply(presetRange(p.id), p.label)}
-                  className={cn(
-                    "flex items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-[13px] transition-colors",
-                    active
-                      ? "bg-surface-muted text-text-primary"
-                      : "text-text-secondary hover:bg-surface-muted hover:text-text-primary",
-                  )}
-                >
-                  {p.label}
-                  {active && <Check size={13} />}
-                </button>
+                  label={p.label}
+                  active={p.label === label}
+                  onPick={() => apply(presetRange(p.id), p.label)}
+                />
               );
             })}
           </div>

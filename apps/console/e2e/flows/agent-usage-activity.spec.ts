@@ -12,7 +12,7 @@
 //                         AI plan & usage.
 //   • /${org}/~/settings/activity — components/settings/activity/*: the natural-language audit feed
 //                         + the reusable filter bar, ON THE CONSOLE FILTER STANDARD (both halves —
-//                         see "Activity — the seven filter keys" below).
+//                         see "Activity — the five filter keys" below).
 //   • account menu → Settings dialog — components/shell/account-settings-dialog.tsx.
 //
 // Personas: `owner` = Hobby (community, free), `team` = Pro (card-less trialing). Gating /
@@ -299,10 +299,11 @@ test.describe("Activity — org feed (owner)", () => {
 	});
 });
 
-// ── Activity — the seven filter keys ────────────────────────────────────────────────────────
+// ── Activity — the five filter keys ─────────────────────────────────────────────────────────
 //
-// `ActivityFilters` (components/settings/activity/activity-filters.ts) has exactly seven fields —
-// `search, actorIds, projectIds, eventTokens, from, to, rangeLabel` — and `useFilterUrlSync`
+// `ActivityFilters` (components/settings/activity/activity-filters.ts) has exactly five fields —
+// `search, actorIds, projectIds, eventTokens, range` (one `range` since #6740 replaced the
+// three-key `from`, `to`, `rangeLabel` window, which links may still carry) — and `useFilterUrlSync`
 // mirrors each one into the search params under its own name. That mirror is the console filter
 // standard's shareable-view half, and until now NOTHING measured it: every activity test drove a
 // control and looked at the feed, which passes just as well if the URL is never written.
@@ -310,7 +311,7 @@ test.describe("Activity — org feed (owner)", () => {
 // So both directions, because they fail independently:
 //   • URL → store, on mount ("a pasted link shows what it says"), and
 //   • store → URL, on every change.
-test.describe("Activity — the seven filter keys round-trip through the URL (owner)", () => {
+test.describe("Activity — the five filter keys round-trip through the URL (owner)", () => {
 	test("a pasted link hydrates search and the three facet selections", async ({ owner }) => {
 		// Real ids, not placeholders: `actorIds` and `projectIds` are handed to the server query,
 		// and a made-up id would send the feed to its error branch — which still renders the
@@ -345,7 +346,7 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 		await expect(owner.page.getByRole("button", { name: /^events 1$/i })).toBeVisible();
 	});
 
-	test("a pasted link hydrates the window and its label", async ({ owner }) => {
+	test("an old from/to link still opens its window, rewritten as one `range`", async ({ owner }) => {
 		// A window INSIDE Hobby's 7-day retention: the retention guard lives in `applyRange`, so
 		// hydration is not gated by it, but a window the plan cannot show would make every later
 		// interaction in this test meaningless.
@@ -358,21 +359,17 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 		});
 		await owner.page.goto(`${activityPath(owner.orgSlug)}?${params}`);
 
-		// `rangeLabel` is carried precisely because it cannot be recovered from `from`/`to`
-		// (activity-filters.ts) — so the trigger reading it back IS the test for that key, and
-		// its arrival also proves the mount-hydration effect has run.
+		// The audit log keeps an old link's window (activity-filters.ts → `activityFiltersFromUrl`).
+		// Those bounds were frozen when the link was made, so the trigger says "Custom range" and
+		// never the old relative label. Its arrival also proves the mount effects have run.
 		await expect(
-			owner.page.getByRole("button", { name: /^Last 2 days$/i }),
+			owner.page.getByRole("button", { name: /^Custom range$/i }),
 		).toBeVisible({ timeout: 30_000 });
 
-		// `from`/`to` SURVIVING the round-trip is the assertion, not a formatted date on the
-		// calendar trigger (which would be a test of `formatRangeLabel`'s locale, and of the CI
-		// box's timezone, wearing this test's name). The store→URL effect rewrites the whole
-		// query string from the store and DELETES every key whose value equals its default — so
-		// a `from`/`to` that failed to hydrate would be actively removed from the address bar,
-		// not merely unread.
-		await expect(owner.page).toHaveURL(/[?&]from=\d{4}-\d{2}-\d{2}T/);
-		await expect(owner.page).toHaveURL(/[?&]to=\d{4}-\d{2}-\d{2}T/);
+		// The window SURVIVED as one `range` interval, and the retired params are gone. Asserted on
+		// the URL rather than on a formatted date, which would test the CI box's timezone.
+		await expect(owner.page).toHaveURL(/[?&]range=\d{4}-\d{2}-\d{2}T[^&]*%2F\d{4}-\d{2}-\d{2}T/);
+		await expect(owner.page).not.toHaveURL(/[?&](from|to|rangeLabel)=/);
 	});
 
 	test("typing a search writes `search` to the URL", async ({ owner }) => {
@@ -400,7 +397,7 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 		});
 	});
 
-	test("picking a window writes `from`, `to` and `rangeLabel` to the URL", async ({ owner }) => {
+	test("picking a window writes one `range` to the URL", async ({ owner }) => {
 		// THE CLICK LANDS THE MOMENT THE TRIGGER IS VISIBLE after `load` — no hydration wait (#5849).
 		// This used to need `untilFilterBarHydrated`: the click went to server HTML that React could
 		// not hydrate yet because the shell's modules were still evaluating, or to where the trigger
@@ -424,9 +421,12 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 		// badge while the click has to land on the button.
 		await owner.page.getByRole("button", { name: "yesterday", exact: true }).click();
 
-		await expect(owner.page).toHaveURL(/[?&]rangeLabel=yesterday\b/, { timeout: 15_000 });
-		await expect(owner.page).toHaveURL(/[?&]from=\d{4}-\d{2}-\d{2}T/);
-		await expect(owner.page).toHaveURL(/[?&]to=\d{4}-\d{2}-\d{2}T/);
+		// A typed chip is a fixed window, not a preset, so it travels as an explicit interval and
+		// the trigger names it "Custom range" (#6740).
+		await expect(owner.page).toHaveURL(/[?&]range=\d{4}-\d{2}-\d{2}T[^&]*%2F\d{4}-\d{2}-\d{2}T/, {
+			timeout: 15_000,
+		});
+		await expect(owner.page).not.toHaveURL(/[?&](from|to|rangeLabel)=/);
 	});
 });
 
