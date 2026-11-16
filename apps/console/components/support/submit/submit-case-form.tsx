@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useState } from "react";
+import { type FormEvent, type MouseEvent, useEffect, useState } from "react";
 import { type FieldPath, FormProvider, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import type { z } from "zod";
@@ -160,16 +160,45 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 	const answered = stepAnswered(step, values);
 
 	/** Validates the current step, then advances. */
-	async function handleNext() {
+	async function advance() {
 		const valid = await trigger(STEP_FIELDS[step]);
 		if (valid) setStep((s) => Math.min(s + 1, STEP_LABELS.length - 1));
 	}
 
-	/** Creates the case (and its attachments) through the mutation contract. */
-	const onSubmit = handleSubmit((parsed) => {
+	/**
+	 * Continue's click handler. It cancels the click's default action FIRST, synchronously, because
+	 * the step change lands before the browser runs that action (#6728): `advance` awaits `trigger`,
+	 * the browser drains microtasks between the listeners and the button's activation, and React
+	 * flushes the discrete-priority `setStep` in that drain — so by activation time the last step is
+	 * on screen. Cancelling the click means no activation runs at all, whatever the button has become.
+	 * The distinct `key`s on Continue and Submit are the second half: React mounts a new node for
+	 * Submit instead of re-typing the one being clicked.
+	 */
+	function handleNext(event: MouseEvent<HTMLButtonElement>) {
+		event.preventDefault();
+		void advance();
+	}
+
+	/** Validates every step, then creates the case (and its attachments) through the mutation contract. */
+	const submitCaseValues = handleSubmit((parsed) => {
 		if (submit.isPending) return;
 		submit.mutate({ values: parsed, files });
 	});
+
+	/**
+	 * The form's submit handler. Only the last step files the case. Before it, a submit can only be
+	 * the browser's implicit submission — Enter in the Details step's one-line Subject field submits a
+	 * form that has no submit button (#6728) — so it is turned into Continue: the step validates and
+	 * advances, and the Contact step is still shown before anything is filed.
+	 */
+	function onSubmit(event: FormEvent<HTMLFormElement>) {
+		if (!isLastStep) {
+			event.preventDefault();
+			void advance();
+			return;
+		}
+		void submitCaseValues(event);
+	}
 
 	return (
 		<FormProvider {...form}>
@@ -205,11 +234,11 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 							</Button>
 						)}
 						{isLastStep ? (
-							<Button type="submit" disabled={submit.isPending}>
+							<Button key="submit" type="submit" disabled={submit.isPending}>
 								{submit.isPending ? "Submitting…" : "Submit case"}
 							</Button>
 						) : (
-							<Button type="button" onClick={handleNext} disabled={!answered}>
+							<Button key="continue" type="button" onClick={handleNext} disabled={!answered}>
 								Continue
 							</Button>
 						)}
