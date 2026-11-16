@@ -205,9 +205,29 @@
         "want": "2h 5m"
       },
       {
-        "id": "duration/many-hours",
+        "id": "duration/NINETY-NINE-HOURS-ROLLS-INTO-DAYS",
         "in": 356400000,
-        "want": "99h 0m"
+        "want": "4d 3h"
+      },
+      {
+        "id": "duration/JUST-UNDER-A-DAY-DOES-NOT-ROLL",
+        "in": 86399999,
+        "want": "23h 59m"
+      },
+      {
+        "id": "duration/EXACTLY-A-DAY",
+        "in": 86400000,
+        "want": "1d 0h"
+      },
+      {
+        "id": "duration/days-and-hours-drop-the-minutes",
+        "in": 98700000,
+        "want": "1d 3h"
+      },
+      {
+        "id": "duration/a-120-day-queue",
+        "in": 10369140000,
+        "want": "120d 0h"
       }
     ],
     "date": [

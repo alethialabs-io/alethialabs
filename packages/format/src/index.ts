@@ -93,9 +93,10 @@ export function formatQuota(usedMinutes: number, includedMinutes: number): strin
 }
 
 /**
- * An elapsed millisecond span as `47s`, `3m 20s` or `2h 5m`.
+ * An elapsed millisecond span as `47s`, `3m 20s`, `2h 5m` or `5d 3h`.
  *
- * ROLLS INTO HOURS at 60 minutes, and drops the seconds when it does.
+ * ROLLS INTO HOURS at 60 minutes, and drops the seconds when it does. ROLLS INTO DAYS at 24 hours,
+ * and drops the minutes when it does — the same rule one unit up (#6732).
  *
  * This was the console-vs-CLI disagreement, settled on merit in favour of the CLI's answer
  * (`apps/cli/cmd/jobs_list.go`, which already rolled). The console rendered a two-hour provision as
@@ -119,7 +120,13 @@ export function formatDuration(ms: number): string {
 	// did this provision take" is served by the difference between 2h 5m 03s and 2h 5m 41s, and the
 	// two extra digits push the useful ones further from the eye. Dropping them is why this rolls
 	// rather than just adding a third field.
-	return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h ${minutes % 60}m`;
+	// At a day the MINUTES become the noise, for the same reason. Without this unit a job cancelled
+	// after 120 days in the queue read `2880h 19m`, a number the reader had to divide by 24 to
+	// understand (#6732). Days are the last unit: a week is ordinary arithmetic on days, while a
+	// month is not a fixed length.
+	return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
 /** How much of a timestamp to show. */

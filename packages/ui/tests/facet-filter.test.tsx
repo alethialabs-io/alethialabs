@@ -185,4 +185,45 @@ describe("FacetFilter", () => {
 		await user.type(search, "zzzz");
 		expect(screen.getByText("No matches.")).toBeInTheDocument();
 	});
+
+	// #6734: the on/off state reached assistive tech only as a drawn check, and the options were
+	// unnamed. A facet option is an `option` in a multi-select `listbox`, so its state is
+	// `aria-selected` and its name carries the trailing hint and count.
+	it("exposes each option's selected state and names it with its hint and count", async () => {
+		const user = userEvent.setup();
+		const onChange = vi.fn();
+		render(
+			<Harness
+				onChange={onChange}
+				label="Kind"
+				options={[
+					{ value: "builtin", label: "Built-in", count: 4 },
+					{ value: "custom", label: "Custom", hint: "org", count: 2 },
+				]}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: /^kind/i }));
+
+		expect(screen.getByRole("listbox")).toHaveAttribute("aria-multiselectable", "true");
+		const builtIn = screen.getByRole("option", { name: "Built-in, 4" });
+		const custom = screen.getByRole("option", { name: "Custom, org, 2" });
+		expect(builtIn).toHaveAttribute("aria-selected", "false");
+		expect(custom).toHaveAttribute("aria-selected", "false");
+
+		await user.click(builtIn);
+		expect(onChange).toHaveBeenLastCalledWith(["builtin"]);
+		expect(screen.getByRole("option", { name: "Built-in, 4" })).toHaveAttribute("aria-selected", "true");
+		// Selection is per row, not the highlight: the other row stays unselected.
+		expect(screen.getByRole("option", { name: "Custom, org, 2" })).toHaveAttribute("aria-selected", "false");
+
+		await user.click(screen.getByRole("option", { name: "Built-in, 4" }));
+		expect(screen.getByRole("option", { name: "Built-in, 4" })).toHaveAttribute("aria-selected", "false");
+	});
+
+	it("names an option with neither hint nor count by its label alone", async () => {
+		const user = userEvent.setup();
+		await open(user);
+		expect(screen.getByRole("option", { name: "Carol" })).toBeInTheDocument();
+		expect(screen.getByRole("option", { name: "Alice, alice@acme.io" })).toBeInTheDocument();
+	});
 });

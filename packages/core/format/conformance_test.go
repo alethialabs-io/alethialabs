@@ -212,6 +212,10 @@ var requiredIDs = []string{
 	"duration/TWO-HOURS-ROLLS-INTO-HOURS",
 	"duration/JUST-UNDER-AN-HOUR-DOES-NOT-ROLL",
 	"duration/EXACTLY-AN-HOUR",
+	// The roll into days (#6732), from both sides.
+	"duration/JUST-UNDER-A-DAY-DOES-NOT-ROLL",
+	"duration/EXACTLY-A-DAY",
+	"duration/days-and-hours-drop-the-minutes",
 	// hourCycle h23, not hour12:false — the option that renders midnight as 24:00 in some locales.
 	"date/MIDNIGHT-IS-00-NOT-24",
 	// A zone that shifts the calendar day is the case `_ "time/tzdata"` is imported for.

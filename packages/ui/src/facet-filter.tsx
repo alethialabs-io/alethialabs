@@ -20,7 +20,7 @@ import {
   CommandList,
 } from "./command";
 import { useCommandSearch } from "./command-search";
-import { CountFigure } from "./count-pill";
+import { CountFigure, rowAccessibleName } from "./count-pill";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover";
 import { cn } from "./utils";
 
@@ -95,7 +95,9 @@ function FacetCommand({
       filteredItems={search.results}
     >
       <CommandInput placeholder={placeholder} className="text-[12.5px]" />
-      <CommandList>
+      {/* A facet's rows toggle a SET of values, so the listbox is multi-select and each row
+          reports membership as `aria-selected` (#6734). The check box below is drawing only. */}
+      <CommandList multiselectable>
         <CommandEmpty>{emptyText}</CommandEmpty>
         <CommandGroup>
           {search.results.map((o) => {
@@ -104,9 +106,12 @@ function FacetCommand({
               <CommandItem
                 key={o.value}
                 onSelect={() => onToggle(o.value)}
+                selected={isOn}
+                aria-label={rowAccessibleName(o.label, o.hint, o.count)}
                 className="gap-2"
               >
                 <span
+                  aria-hidden
                   className={cn(
                     "flex size-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors",
                     isOn
