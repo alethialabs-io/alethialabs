@@ -18,9 +18,11 @@ and what makes it citable; it is also why a run with no build id in its header i
 
 Newest first. Each entry is `<file> — <build id> — <PASS/FAIL/NOT MEASURED counts>`.
 
-_No production run has been taken yet._ **#4287** is the unit that takes the first one; the skill
-is `disable-model-invocation: true`, so it happens when the maintainer names it, never because a
-session decided a QA pass was due.
+- [`2026-11-16-1521.md`](2026-11-16-1521.md) — `703d40d9` — gap-filling pass on the same build: filter surfaces 9 PASS / 6 NOT MEASURED (plan-gated) · per-control activation sampled on 4 routes · 0 rows created
+- [`2026-11-16-1417.md`](2026-11-16-1417.md) — `703d40d9` — routes 40 PASS (overflow and per-control NOT MEASURED) · journeys 6 PASS / 2 FAIL / 4 NOT MEASURED · destructive 7 PASS / 42 NOT MEASURED — the first run (#4287)
+
+The skill is `disable-model-invocation: true`, so a run happens when the maintainer names it, never
+because a session decided a QA pass was due.
 
 ## The report schema
 
