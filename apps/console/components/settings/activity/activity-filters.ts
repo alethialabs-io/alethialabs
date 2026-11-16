@@ -6,13 +6,25 @@
 // is unit-testable on its own and safe to import from both the store and the component.
 //
 // Every field is a string or string[] because `useFilterUrlSync`'s codec only represents
-// those: the time window therefore travels as two ISO strings rather than a `DateRange`, and
-// an empty pair means "the default preset window", resolved once at mount.
+// those. The time window is ONE `range` value (`lib/query/range-filter.ts`, #6740): "" is the
+// default preset window (resolved once, by the route), a preset id stays relative and is resolved
+// by the read, and "<from>/<to>" is an explicit window. It used to be `from` + `to` + `rangeLabel`:
+// one choice counted 3 on Reset, and a preset was frozen into absolute bounds under its relative
+// name.
+//
+// OLD LINKS STILL OPEN THEIR WINDOW. This is the audit log, and a link carrying `from`/`to` is
+// usually evidence someone shared: "this is what happened between these two instants". Dropping it
+// to the default window would silently show different rows under the same link. So when a link has
+// no `range` but has a valid `from` AND `to`, `activityFiltersFromUrl` opens exactly that window,
+// as an explicit window. It is labelled "Custom range" even if the old link's `rangeLabel` said
+// "Last 30 days": those bounds were frozen when the link was made, so reading them as "the last 30
+// days from now" would be the old defect again. The retired params are then removed from the URL.
 
 import type { ActivityQuery } from "@/app/server/actions/activity";
 import { normalizeActivityQuery } from "@/lib/query/activity-query";
 import { filterStateFromUrl, type ParamReader } from "@/lib/query/filter-url-codec";
-import type { DateRange } from "@repo/ui/range";
+import { parseRangeFilter, rangeWindowValue, windowFilter } from "@/lib/query/range-filter";
+import { type DateRange, presetRange } from "@repo/ui/range";
 
 /**
  * The Activity feed's filter state. A type alias (not an interface) so it satisfies the
@@ -23,12 +35,8 @@ export type ActivityFilters = {
 	actorIds: string[];
 	projectIds: string[];
 	eventTokens: string[];
-	/** ISO window bounds. Both empty = the default preset, resolved against the clock. */
-	from: string;
-	to: string;
-	/** The label the range picker shows. Carried so a shared link reproduces the trigger
-	 *  text ("Last 30 days"), which cannot be recovered from `from`/`to` alone. */
-	rangeLabel: string;
+	/** The time-window choice (`lib/query/range-filter.ts`). "" = the default preset window. */
+	range: string;
 };
 
 /** Pristine filters — the store's defaults and the Reset target. */
@@ -37,10 +45,27 @@ export const DEFAULT_ACTIVITY_FILTERS: ActivityFilters = {
 	actorIds: [],
 	projectIds: [],
 	eventTokens: [],
-	from: "",
-	to: "",
-	rangeLabel: "",
+	range: "",
 };
+
+/** The params the three-key window used, which a link may still carry (see the header). */
+export const RETIRED_ACTIVITY_PARAMS = ["from", "to", "rangeLabel"] as const;
+
+/**
+ * The full filter state a link describes: `filterStateFromUrl`, plus an old `from`/`to` link
+ * read as the explicit window it names. The route's prefetch and the feed's first render both
+ * decode through this, so they agree about the key.
+ */
+export function activityFiltersFromUrl(params: ParamReader): ActivityFilters {
+	const filters = filterStateFromUrl(params, DEFAULT_ACTIVITY_FILTERS);
+	if (params.get("range") !== null) return filters;
+	const legacy = windowFilter(params.get("from") ?? "", params.get("to") ?? "");
+	if (legacy === null) return filters;
+	return {
+		...filters,
+		range: rangeWindowValue({ from: new Date(legacy.from), to: new Date(legacy.to) }),
+	};
+}
 
 /** Splits the event-type tokens into the resource-type + decision filters the query takes. */
 export function splitEventTokens(tokens: string[]): {
@@ -59,23 +84,19 @@ export function splitEventTokens(tokens: string[]): {
 }
 
 /**
- * The stored window as a concrete `DateRange`, falling back to the caller's default when the
- * filters are pristine. `fallback` must be a stable value (resolved once at mount) — resolving
- * a preset per render would produce a new `to` every time and a query key that never settles.
+ * The window the pickers show for the current choice. `fallback` is the default window and `now`
+ * the instant a preset is shown against. Both must be stable values, resolved once at mount:
+ * resolving per render would move `to` every time.
  */
 export function activityRange(
 	filters: ActivityFilters,
 	fallback: DateRange,
+	now: Date = fallback.to,
 ): DateRange {
-	return explicitRange(filters) ?? fallback;
-}
-
-/** The window the viewer picked (both bounds present and valid), or null for the default one. */
-function explicitRange(filters: ActivityFilters): DateRange | null {
-	if (!filters.from || !filters.to) return null;
-	const from = new Date(filters.from);
-	const to = new Date(filters.to);
-	return Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) ? null : { from, to };
+	const choice = parseRangeFilter(filters.range);
+	if (choice.kind === "window") return { from: new Date(choice.from), to: new Date(choice.to) };
+	if (choice.kind === "preset") return presetRange(choice.preset, now);
+	return fallback;
 }
 
 /**
@@ -105,13 +126,16 @@ export function activityQueryFrom({
 	// THE DEFAULT WINDOW IS OPEN-ENDED (#6129). The default preset ("Last 7 days") means "from a
 	// week ago until now", and now keeps moving: a `to` frozen at the instant the page resolved it
 	// would make the server answer `ts <= that instant` forever, so a live `activity` hint would
-	// refetch the very same rows and a new entry would never appear. Only a range the viewer PICKED
-	// carries its `to`. The key stays stable either way: the default `from` is resolved once.
-	const picked = explicitRange(filters) !== null;
+	// refetch the very same rows and a new entry would never appear. Its `from` is the route's,
+	// resolved once, so the key stays stable. A PICKED preset travels as `within` and the read
+	// resolves it (#6740), so it is open-ended for the same reason and its link stays relative.
+	// Only an explicit window carries both bounds.
+	const choice = parseRangeFilter(filters.range);
 	return normalizeActivityQuery({
 		projectId: pinnedProjectId,
-		from: range.from.toISOString(),
-		to: picked ? range.to.toISOString() : undefined,
+		...(choice.kind === "preset" ? { within: choice.preset } : {}),
+		...(choice.kind === "window" ? { from: choice.from, to: choice.to } : {}),
+		...(choice.kind === "default" ? { from: range.from.toISOString() } : {}),
 		actorIds: filters.actorIds,
 		resourceTypes,
 		decision,
@@ -142,7 +166,7 @@ export function activityQueryFromUrl(
 	defaultWindow: ActivityWindow,
 	pinnedProjectId?: string,
 ): ActivityQuery {
-	const filters = filterStateFromUrl(params, DEFAULT_ACTIVITY_FILTERS);
+	const filters = activityFiltersFromUrl(params);
 	const range = activityRange(filters, {
 		from: new Date(defaultWindow.from),
 		to: new Date(defaultWindow.to),

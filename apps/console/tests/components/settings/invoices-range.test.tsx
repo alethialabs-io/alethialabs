@@ -26,15 +26,22 @@ vi.mock("@/components/settings/billing/invoice-preview-dialog", () => ({
 
 import {
 	ALL_TIME_LABEL,
-	CUSTOM_RANGE_LABEL,
 	DEFAULT_INVOICE_FILTERS,
-	invoiceRangeFromPick,
-	invoiceRangeLabel,
-	invoiceWindowValue,
 	NO_WINDOW_LABEL,
 	normalizeInvoiceQuery,
-	parseInvoiceRange,
 } from "@/components/settings/billing/invoices-filters";
+import {
+	CUSTOM_RANGE_LABEL,
+	parseRangeFilter as parseInvoiceRange,
+	rangeFilterLabel,
+	rangeFromPick as invoiceRangeFromPick,
+	rangeWindowValue as invoiceWindowValue,
+} from "@/lib/query/range-filter";
+
+/** The invoices trigger label for a decoded choice (all time is this page's default). */
+function invoiceRangeLabel(range: ReturnType<typeof parseInvoiceRange>): string {
+	return rangeFilterLabel(range, ALL_TIME_LABEL);
+}
 import { InvoicesPanel } from "@/components/settings/billing/invoices-panel";
 import { filterStateFromUrl } from "@/lib/query/filter-url-codec";
 import { invoiceReaderFilters } from "@/lib/rpc/inputs/invoices";
@@ -62,7 +69,7 @@ beforeEach(() => {
 
 describe("the invoices default is all time, and the bar says so (#6731)", () => {
 	it("the pristine filter asks for no bound at all", () => {
-		expect(parseInvoiceRange(DEFAULT_INVOICE_FILTERS.range)).toEqual({ kind: "all" });
+		expect(parseInvoiceRange(DEFAULT_INVOICE_FILTERS.range)).toEqual({ kind: "default" });
 		expect(normalizeInvoiceQuery(DEFAULT_INVOICE_FILTERS)).toEqual({});
 		expect(invoiceRangeLabel(parseInvoiceRange(""))).toBe(ALL_TIME_LABEL);
 	});
@@ -126,8 +133,8 @@ describe("a relative preset round-trips as relative (#6731)", () => {
 	});
 
 	it("an unreadable range decodes as all time, not as a window nobody chose", () => {
-		expect(parseInvoiceRange("last-fortnight")).toEqual({ kind: "all" });
-		expect(parseInvoiceRange("nope/2026-11-16T00:00:00.000Z")).toEqual({ kind: "all" });
+		expect(parseInvoiceRange("last-fortnight")).toEqual({ kind: "default" });
+		expect(parseInvoiceRange("nope/2026-11-16T00:00:00.000Z")).toEqual({ kind: "default" });
 	});
 });
 

@@ -34,16 +34,18 @@ import { type DateRange, DEFAULT_PRESET, presetRange } from "@repo/ui/range";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 import {
+	parseRangeFilter,
+	rangeFilterLabel,
+	rangeFromPick,
+	rangeWindowValue,
+} from "@/lib/query/range-filter";
+import {
 	ALL_TIME_LABEL,
 	DEFAULT_INVOICE_FILTERS,
 	INVOICE_STATUS_OPTIONS,
-	invoiceRangeFromPick,
-	invoiceRangeLabel,
 	invoiceStatusCounts,
-	invoiceWindowValue,
 	NO_WINDOW_LABEL,
 	normalizeInvoiceQuery,
-	parseInvoiceRange,
 } from "./invoices-filters";
 import { InvoicePreviewDialog } from "./invoice-preview-dialog";
 import { InvoicesTable } from "./invoices-table";
@@ -96,7 +98,7 @@ export function InvoicesPanel() {
 	// The paid-date choice (#6731): all time (the default — no bound), a relative preset, or an
 	// explicit window. Only an explicit window is a set of dates the pickers can show as such; a
 	// preset shows the window it means right now, and all time shows none.
-	const choice = useMemo(() => parseInvoiceRange(filters.range), [filters.range]);
+	const choice = useMemo(() => parseRangeFilter(filters.range), [filters.range]);
 	// The pickers still need a concrete value to open on. Resolved ONCE, as every other page
 	// carrying this filter bar does (activity-log.tsx, usage-panel.tsx, jobs-client.tsx): called in
 	// the render body it re-read the clock on every paint, so each render produced a new `to`.
@@ -127,15 +129,15 @@ export function InvoicesPanel() {
 						emptyText="No statuses."
 					/>
 					<QuickRangeFilter
-						label={invoiceRangeLabel(choice)}
+						label={rangeFilterLabel(choice, ALL_TIME_LABEL)}
 						value={range}
-						onChange={(r, label) => set("range", invoiceRangeFromPick(r, label))}
+						onChange={(r, label) => set("range", rangeFromPick(r, label))}
 						unbounded={{ label: ALL_TIME_LABEL, onSelect: () => set("range", "") }}
 					/>
 					<DateRangeFilter
 						value={range}
-						onChange={(r) => set("range", invoiceWindowValue(r))}
-						emptyLabel={choice.kind === "all" ? NO_WINDOW_LABEL : undefined}
+						onChange={(r) => set("range", rangeWindowValue(r))}
+						emptyLabel={choice.kind === "default" ? NO_WINDOW_LABEL : undefined}
 					/>
 					<FilterBarReset count={activeFilters} onReset={reset} />
 				</FilterBar>

@@ -32,11 +32,6 @@ export interface InvoiceListParams {
 	limit?: number;
 }
 
-/** Type guard: a string is one of the relative windows the read resolves. */
-export function isInvoicePaidWithin(s: string): s is InvoicePaidWithin {
-	return INVOICE_PAID_WITHIN.some((p) => p === s);
-}
-
 /** The reader's filters for one request: a relative window resolved to its lower bound at `now`. */
 export function invoiceReaderFilters(
 	params: InvoiceListParams,

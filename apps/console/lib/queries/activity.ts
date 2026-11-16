@@ -23,6 +23,7 @@ import type {
 import { getServiceDb } from "@/lib/db";
 import { likeTerm } from "@/lib/db/like";
 import { authzActivityLog, projects, user } from "@/lib/db/schema";
+import { activityTimeBounds } from "@/lib/query/activity-query";
 import { asOptions, type FacetOption, orderedOptions, searchTerm } from "./facets";
 
 // Settings › Activity, filtered in SQL (the console filter standard's server half). Service path
@@ -115,12 +116,14 @@ export async function queryActivityPage(
 	const limit = query.limit ?? pageSize;
 	const scope = scopeOf(orgId, query.projectId);
 	const search = searchTerm(query.search);
+	// A relative window (`within`) is resolved now, at read time (#6740).
+	const bounds = activityTimeBounds(query);
 
 	const conditions: (SQL | undefined)[] = [
 		...scope,
 		query.cursor != null ? lt(authzActivityLog.id, query.cursor) : undefined,
-		query.from ? gte(authzActivityLog.ts, new Date(query.from)) : undefined,
-		query.to ? lte(authzActivityLog.ts, new Date(query.to)) : undefined,
+		bounds.from ? gte(authzActivityLog.ts, bounds.from) : undefined,
+		bounds.to ? lte(authzActivityLog.ts, bounds.to) : undefined,
 		query.actorIds?.length
 			? inArray(authzActivityLog.actor_id, query.actorIds)
 			: undefined,

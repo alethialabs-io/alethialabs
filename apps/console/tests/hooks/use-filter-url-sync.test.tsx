@@ -212,4 +212,11 @@ describe("useFilterUrlSync — scope and precedence (#6730)", () => {
 
 		expect(store.getState().filters.search).toBe("");
 	});
+
+	it("removes retired params on its next write, keeping unrelated ones (#6740)", async () => {
+		const store = makeStore();
+		currentSearch = "from=2026-10-01&to=2026-10-31&rangeLabel=Last+30+days&tab=report";
+		renderHook(() => useFilterUrlSync(store, DEFAULTS, undefined, { retiredParams: ["from", "to", "rangeLabel"] }));
+		await waitFor(() => expect(replace).toHaveBeenCalledWith("/acme/~/evidence?tab=report", { scroll: false }));
+	});
 });

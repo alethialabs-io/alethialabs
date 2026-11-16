@@ -40,6 +40,9 @@ import type { FilterStoreState } from "@/lib/stores/create-filter-store";
 /**
  * Two-way sync between a page filter store and the URL search params.
  * `paramNames` optionally renames a filter's param (defaults to the key itself).
+ * `options.retiredParams` names params an older version of the page wrote: the page reads
+ * them itself (to keep old links working) and this hook removes them on its next URL write, so
+ * a link is never re-shared carrying both the old shape and the new one.
  *
  * Returns whether the URL has been read into the store yet. It is `false` for the server render
  * and the hydration render — the store still holds its defaults there, whatever the link says —
@@ -49,6 +52,7 @@ export function useFilterUrlSync<F extends Record<string, UrlFilterValue>>(
 	store: UseBoundStore<StoreApi<FilterStoreState<F>>>,
 	defaults: F,
 	paramNames?: Partial<Record<keyof F, string>>,
+	options?: { retiredParams?: readonly string[] },
 ): boolean {
 	const router = useRouter();
 	const pathname = usePathname();
@@ -81,6 +85,7 @@ export function useFilterUrlSync<F extends Record<string, UrlFilterValue>>(
 		if (!hydrated.current) return;
 		const fresh = store.getState().filters;
 		const params = new URLSearchParams(searchParams.toString());
+		for (const retired of options?.retiredParams ?? []) params.delete(retired);
 		for (const key of Object.keys(defaults)) {
 			const param = paramFor(key);
 			if (isDefaultFilterValue(fresh[key], defaults[key])) params.delete(param);
