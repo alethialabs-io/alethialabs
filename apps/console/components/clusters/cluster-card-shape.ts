@@ -5,6 +5,7 @@
 // `loading.tsx` (server) all read this module, so a card and its placeholder are drawn from one
 // answer to "which blocks does this cluster's card have".
 
+import { statusTier } from "@repo/ui/status-badge";
 import type { ClusterListItem } from "@/lib/rpc/procedures/clusters";
 
 /** The card's outer frame — `ClusterCard` and its placeholder both take it. */
@@ -15,6 +16,9 @@ export const CLUSTER_COMPONENT_ROW = "flex items-center gap-2.5 py-2 first:pt-0 
 
 /** A titled block under the component rows (cluster access, ArgoCD). */
 export const CLUSTER_CARD_BLOCK = "flex flex-col gap-1.5 border-t pt-3";
+
+/** The "last observed" lines under the component rows (#6736). */
+export const CLUSTER_OBSERVED_BLOCK = "flex flex-col gap-0.5";
 
 /** The grid the cards sit in — the grid's render and the skeleton's. */
 export const CLUSTERS_GRID = "grid grid-cols-1 gap-4 lg:grid-cols-2";
@@ -39,10 +43,18 @@ export interface ClusterCardShape {
 		/** Whether the read-only kubeconfig download button renders. */
 		download: boolean;
 	} | null;
+	/** Lines of the "last observed" block: one for the control plane's observation, and one more
+	 *  saying since when a run has been in flight (#6736). */
+	observed: number;
 	/** Whether the ArgoCD block renders. */
 	argocd: boolean;
 	/** Whether the DNS row renders (it is counted in `components`). */
 	dns: boolean;
+}
+
+/** Whether the card says since when the environment's run has been in flight. */
+export function runInFlight(envStatus: string): boolean {
+	return statusTier(envStatus) === "pending";
 }
 
 /** The blocks `ClusterCard` draws for one cluster (see `ClusterCardShape`). */
@@ -62,6 +74,7 @@ export function clusterCardShape(data: ClusterListItem): ClusterCardShape {
 					download: data.can_download_kubeconfig,
 				}
 			: null,
+		observed: 1 + (runInFlight(data.status) ? 1 : 0),
 		argocd: Boolean(cluster.argocd_url),
 		dns,
 	};

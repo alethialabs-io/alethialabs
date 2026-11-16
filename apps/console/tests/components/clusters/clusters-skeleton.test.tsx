@@ -80,6 +80,7 @@ function item(projectId: string, extra: Partial<ClusterListItem> = {}, cluster: 
 		region: "eu-central-1",
 		environment_stage: "production",
 		status: "ACTIVE",
+		status_since: "2026-11-01T00:00:00.000Z",
 		cloud_identities: { provider: "aws" },
 		project_cluster: {
 			id: `cluster-${projectId}`,
@@ -90,6 +91,7 @@ function item(projectId: string, extra: Partial<ClusterListItem> = {}, cluster: 
 			k8s_version: null,
 			argocd_url: null,
 			status: "ACTIVE",
+			observation: { kind: "reported", observedAt: "2026-11-01T00:00:00.000Z", source: "deploy", fresh: true },
 			kubeconfig: { command: null, alternative: null, note: null },
 			...cluster,
 		},
@@ -129,10 +131,22 @@ const BARE = item("p2");
 /** A cluster with an endpoint but no command: the access block's note instead of the command rows. */
 const NOTED = item("p3", {}, { cluster_endpoint: "https://k8s.example.com", kubeconfig: { command: null, alternative: null, note: "No command for this cloud." } });
 
+/** A run in flight over a cluster a drift scan reports deleted (#6736): two observed lines. */
+const STUCK = item(
+	"p4",
+	{ status: "PROVISIONING" },
+	{
+		cluster_endpoint: "https://k8s.example.com",
+		observation: { kind: "missing", source: "drift", observedAt: "2026-11-09T00:00:00.000Z", deleted: ["azurerm_resource_group.main"] },
+		kubeconfig: { command: null, alternative: null, note: "No kubeconfig is offered." },
+	},
+);
+
 /** The blocks a rendered card or placeholder draws, counted the same way for both. */
 interface Drawn {
 	components: number;
 	access: { codeRows: number; captions: number; download: boolean } | null;
+	observed: number;
 	argocd: boolean;
 }
 
@@ -150,6 +164,7 @@ function drawnCard(container: HTMLElement): Drawn {
 					download: access.querySelector('[data-testid="kubeconfig-download"]') !== null,
 				}
 			: null,
+		observed: container.querySelector('[data-slot="cluster-card-observed"]')?.children.length ?? 0,
 		argocd: blocks.some((el) => el.textContent?.includes("ArgoCD")),
 	};
 }
@@ -166,6 +181,7 @@ function drawnPlaceholder(card: Element): Drawn {
 					download: access.querySelector('[data-row="download"]') !== null,
 				}
 			: null,
+		observed: card.querySelector('[data-slot="cluster-card-skeleton-observed"]')?.children.length ?? 0,
 		argocd: card.querySelector('[data-slot="cluster-card-skeleton-argocd"]') !== null,
 	};
 }
@@ -202,17 +218,18 @@ describe("clusterCardShape — the card's own blocks", () => {
 		["everything", FULL],
 		["a bare cluster", BARE],
 		["an endpoint with a note", NOTED],
+		["a stuck run over a missing cluster", STUCK],
 	])("matches what ClusterCard renders for %s", (_, data) => {
 		const { container } = render(<ClusterCard data={data} />);
 		const shape = clusterCardShape(data);
-		expect(drawnCard(container)).toEqual({ components: shape.components, access: shape.access, argocd: shape.argocd });
+		expect(drawnCard(container)).toEqual({ components: shape.components, access: shape.access, observed: shape.observed, argocd: shape.argocd });
 	});
 
 	it("a placeholder draws its cluster's shape block for block", () => {
-		for (const data of [FULL, BARE, NOTED]) {
+		for (const data of [FULL, BARE, NOTED, STUCK]) {
 			const shape = clusterCardShape(data);
 			const result = drawn(render(<ClustersSkeleton shapes={[shape]} />).container);
-			expect(result).toEqual([{ components: shape.components, access: shape.access, argocd: shape.argocd }]);
+			expect(result).toEqual([{ components: shape.components, access: shape.access, observed: shape.observed, argocd: shape.argocd }]);
 		}
 	});
 });
@@ -256,8 +273,8 @@ describe("the org route's loading.tsx reads the cluster list before it draws", (
 		const result = drawn(render(await ClustersLoading()).container);
 		expect(result).toEqual(
 			[FULL, BARE].map((d) => {
-				const { components, access, argocd } = clusterCardShape(d);
-				return { components, access, argocd };
+				const { components, access, observed, argocd } = clusterCardShape(d);
+				return { components, access, observed, argocd };
 			}),
 		);
 	});

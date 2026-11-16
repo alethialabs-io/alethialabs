@@ -116,11 +116,25 @@ export const clusterKubeconfig = z.object({
 	note: z.string().nullable(),
 });
 
+/**
+ * What the console has observed of the cluster's control plane since its last deploy
+ * (lib/clusters/observed-state.ts `observationWire`, #6736) — the same answer the cluster card
+ * shows. `missing` means a drift scan or a probe found it deleted; `unverified` that nothing has
+ * looked recently. Null when the cluster has no environment to observe.
+ */
+export const clusterObservation = z.object({
+	state: z.enum(["missing", "unreachable", "unverified", "observed", "never_observed"]),
+	observed_at: z.string().nullable(),
+	source: z.enum(["drift", "probe", "deploy"]).nullable(),
+	detail: z.string().nullable(),
+});
+
 /** A single cluster + its GitOps posture + its kubeconfig command (GET /api/cli/clusters/:id). */
 export const cliClusterDetailResponse = z.object({
 	cluster: clusterWire,
 	gitops: clusterGitops.nullable(),
 	kubeconfig: clusterKubeconfig,
+	observation: clusterObservation.nullable(),
 });
 
 /** A cloud identity (GET /api/cli/cloud-identities). `label` is computed. */

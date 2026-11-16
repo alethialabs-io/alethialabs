@@ -15,6 +15,8 @@ import { environmentDrift, jobs, projectEnvironments } from "@/lib/db/schema";
 import { gitopsStatusReportSchema } from "@/lib/gitops/deploy-status";
 import { structuralHash } from "@/lib/promotions/diff";
 import { getLatestProbesByEnv } from "@/lib/probes/persistence";
+import { readClusterEvidence } from "@/lib/clusters/observed-evidence";
+import { observeControlPlane } from "@/lib/clusters/observed-state";
 import { getProjectAsFormData } from "./projects";
 
 // maybeAutoHeal — the service-role re-apply the job-status route fires on drift — lives in
@@ -75,8 +77,13 @@ export interface EnvReconcileState {
 	 * delivery drifts per-Environment; both are self-healed by the shared re-deploy.
 	 */
 	deliveryInSync: boolean | null;
-	/** True when the env's designed structure has moved ahead of what's deployed. */
+	/** True when the env's designed structure has moved ahead of what's deployed. This is "undeployed
+	 *  changes", NOT a deploy in flight — the env's own `status` says whether one is running (#6736). */
 	deployPending: boolean;
+	/** A reading taken after the last successful deploy shows the cluster gone — a drift scan
+	 *  reporting it (or the resource group holding it) deleted, or a probe the cloud answered "not
+	 *  found" (lib/clusters/observed-state.ts). Null otherwise. */
+	clusterMissing: { observedAt: string; source: "drift" | "probe"; deleted: string[] } | null;
 	lastDeployedAt: string | null;
 	/**
 	 * Latest cluster-alive signal (BYOC B2). `reachable` null = never probed. The console badge
@@ -100,12 +107,22 @@ export async function getEnvReconcileStates(
 	// Latest cluster-alive probe per env (BYOC B2), fetched once for the project (org-scoped join
 	// inside). Envs never probed are simply absent → the badge shows null (never probed).
 	const probesByEnv = await getLatestProbesByEnv(projectId, actor.orgId);
+	// The same evidence the clusters list reads, so the two cards cannot disagree about a missing
+	// cluster — including a probe that positively found it gone (#6736).
+	const evidence = await readClusterEvidence(
+		actor.orgId,
+		envs.map((e) => e.id),
+	);
 
 	return Promise.all(
 		envs.map(async (env) => {
 			const db = getServiceDb();
 			const [drift] = await db
-				.select({ in_sync: environmentDrift.in_sync })
+				.select({
+					in_sync: environmentDrift.in_sync,
+					details: environmentDrift.details,
+					scanned_at: environmentDrift.scanned_at,
+				})
 				.from(environmentDrift)
 				.where(eq(environmentDrift.environment_id, env.id))
 				.orderBy(desc(environmentDrift.scanned_at))
@@ -125,12 +142,23 @@ export async function getEnvReconcileStates(
 				}
 			}
 			const probe = probesByEnv.get(env.id);
+			const observation = observeControlPlane({
+				lastDeployedAt: env.last_deployed_at?.toISOString() ?? null,
+				stage: env.stage,
+				drift: drift ? { scannedAt: drift.scanned_at.toISOString(), details: drift.details ?? [] } : null,
+				probe: evidence.probes.get(env.id) ?? null,
+				now: new Date(),
+			});
 			return {
 				environmentId: env.id,
 				autoHeal: env.auto_heal,
 				driftInSync: drift ? drift.in_sync : null,
 				deliveryInSync,
 				deployPending,
+				clusterMissing:
+					observation.kind === "missing"
+						? { observedAt: observation.observedAt, source: observation.source, deleted: observation.deleted }
+						: null,
 				lastDeployedAt: env.last_deployed_at?.toISOString() ?? null,
 				probe: {
 					reachable: probe ? probe.reachable : null,

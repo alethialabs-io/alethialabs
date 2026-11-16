@@ -51,8 +51,8 @@ const KEY = orpc.environments.overview.queryKey({ input: { project: "payments" }
 const OVERVIEW: EnvironmentsOverview = {
 	projectId: "11111111-1111-4111-8111-111111111111",
 	envs: [
-		{ id: "env-dev", name: "development", stage: "development", is_default: true, updated_at: "2026-10-01T00:00:00.000Z", byo_admission_enforce: false, byo_admission_has_charts: true, byo_admission_pending: false },
-		{ id: "env-prod", name: "production", stage: "production", is_default: false, updated_at: "2026-10-02T00:00:00.000Z", byo_admission_enforce: true, byo_admission_has_charts: true, byo_admission_pending: true },
+		{ id: "env-dev", name: "development", stage: "development", is_default: true, status: "ACTIVE", updated_at: "2026-10-01T00:00:00.000Z", byo_admission_enforce: false, byo_admission_has_charts: true, byo_admission_pending: false },
+		{ id: "env-prod", name: "production", stage: "production", is_default: false, status: "ACTIVE", updated_at: "2026-10-02T00:00:00.000Z", byo_admission_enforce: true, byo_admission_has_charts: true, byo_admission_pending: true },
 	],
 	consistency: { envs: [], rows: [] },
 	reconcile: [],

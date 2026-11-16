@@ -121,16 +121,51 @@ describeIfDb("BYOC B2.3 probe dispatch + ingest + query — real Postgres", () =
 		expect(await probeJobCount(env)).toBe(1);
 	});
 
-	it("does NOT probe a non-ACTIVE env, nor one without a successful DEPLOY", async () => {
+	it("does NOT probe a torn-down env, nor one without a successful DEPLOY", async () => {
 		// DESTROYED env with a past DEPLOY — no live cluster to dial.
 		const destroyed = await seedEnv(projectId, "probe-destroyed", "DESTROYED", "production");
 		await seedJob(projectId, destroyed, "DEPLOY", "SUCCESS", ago(60_000));
 		// ACTIVE env that never deployed successfully — nothing to locate state for.
 		const neverDeployed = await seedEnv(projectId, "probe-nodeploy", "ACTIVE", "production");
+		// A teardown in flight is expected to go dark: not probed.
+		const tearing = await seedEnv(projectId, "probe-destroying", "DESTROYING", "production");
+		await seedJob(projectId, tearing, "DEPLOY", "SUCCESS", ago(60_000));
+		await db.update(projectEnvironments).set({ last_deployed_at: ago(60_000) }).where(eq(projectEnvironments.id, tearing));
+		// A non-ACTIVE env whose deploy stamp a DESTROY cleared holds no cluster.
+		const replanned = await seedEnv(projectId, "probe-replanned", "DRAFT", "production");
+		await seedJob(projectId, replanned, "DEPLOY", "SUCCESS", ago(60_000));
 
 		await sweepProbeSchedule(now);
 		expect(await probeJobCount(destroyed)).toBe(0);
 		expect(await probeJobCount(neverDeployed)).toBe(0);
+		expect(await probeJobCount(tearing)).toBe(0);
+		expect(await probeJobCount(replanned)).toBe(0);
+	});
+
+	it("probes a non-ACTIVE env still believed to hold a cluster — stranded in flight, or FAILED (#6736)", async () => {
+		const stuck = await seedEnv(projectId, "probe-stuck", "PROVISIONING", "development");
+		await seedJob(projectId, stuck, "DEPLOY", "SUCCESS", ago(60_000));
+		const failed = await seedEnv(projectId, "probe-failed", "FAILED", "development");
+		await seedJob(projectId, failed, "DEPLOY", "SUCCESS", ago(60_000));
+		for (const id of [stuck, failed]) {
+			await db.update(projectEnvironments).set({ last_deployed_at: ago(60_000) }).where(eq(projectEnvironments.id, id));
+		}
+
+		await sweepProbeSchedule(now);
+		expect(await probeJobCount(stuck)).toBe(1);
+		expect(await probeJobCount(failed)).toBe(1);
+	});
+
+	it("backs a non-ACTIVE env off on consecutive misses: two failed probes push a 6h dev cadence to 24h", async () => {
+		const env = await seedEnv(projectId, "probe-backoff", "FAILED", "development");
+		await seedJob(projectId, env, "DEPLOY", "SUCCESS", ago(48 * 3_600_000));
+		await db.update(projectEnvironments).set({ last_deployed_at: ago(48 * 3_600_000) }).where(eq(projectEnvironments.id, env));
+		await seedJob(projectId, env, "PROBE_CLUSTER", "FAILED", ago(20 * 3_600_000));
+		await seedJob(projectId, env, "PROBE_CLUSTER", "FAILED", ago(8 * 3_600_000));
+
+		await sweepProbeSchedule(now);
+		// 8h since the last probe is past the 6h base cadence, but inside the backed-off 24h.
+		expect(await probeJobCount(env)).toBe(2);
 	});
 
 	it("does NOT double-enqueue while a probe is in flight, and respects per-tier cadence", async () => {
