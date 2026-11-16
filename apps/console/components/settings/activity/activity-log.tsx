@@ -7,8 +7,10 @@
 // User, Project, and an event-type sheet. Viewing is available on every plan; CSV export is
 // Enterprise-gated, and time windows older than the plan's retention prompt an upgrade.
 // Filtering + pagination are server-side (cursor by id): every filter change refetches page 1,
-// and "Load more" pages in older rows. Resource names are resolved from the projects store +
-// members for the humanizer; the Project filter is resolved to project ids server-side. When
+// and "Load more" pages in older rows. A row carries the resource's name as it was recorded with
+// the event (#6735); only a row without one (older rows, people) is named from the projects store +
+// members, which cannot name what has since been deleted. The Project filter is resolved to
+// project ids server-side. When
 // pinned to a `projectId` (project settings) the feed locks to that project and hides the facet.
 
 import { Boxes, Download, ListFilter, Users } from "lucide-react";

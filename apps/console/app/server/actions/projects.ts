@@ -25,7 +25,8 @@ import {
 	projectSchema,
 } from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
-import { authorize, authorizeRead, currentActor } from "@/lib/authz/guard";
+import { recordAllowed } from "@/lib/authz/activity";
+import { authorize, authorizeDeferred, authorizeRead, currentActor } from "@/lib/authz/guard";
 import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import type { Actor } from "@/lib/authz/types";
@@ -769,7 +770,9 @@ async function clearComponents(
  * the wrapper below re-asks nothing.
  */
 export async function createProject(data: CreateProjectInput) {
-	const actor = await authorize("create", { type: "project" });
+	// Recorded AFTER the insert (#6735): `authorize()` recorded the create before the project had an
+	// id, so the Activity line could never name it — and recorded it for a create that was refused.
+	const actor = await authorizeDeferred("create", { type: "project" });
 	const problem = projectNameProblem(data.project.project_name);
 	if (problem) throw new ProjectNameInvalidError(problem);
 	// Parsed behind `authorize` like the name: this is a POST-addressable action, so the TypeScript
@@ -794,7 +797,7 @@ export async function createProject(data: CreateProjectInput) {
 	// projects the CLI's `alethia project get <name>` cannot tell apart.
 	const project_name = data.project.project_name.trim();
 
-	return withScope({ ownerId: owner, orgId }, async (tx) => {
+	const created = await withScope({ ownerId: owner, orgId }, async (tx) => {
 		// Before any row is written: every cloud identity the design names must be one this caller
 		// may use (an org identity, or a person's own personal one).
 		await assertDesignIdentitiesUsable(tx, data, {
@@ -835,6 +838,8 @@ export async function createProject(data: CreateProjectInput) {
 
 		return { project };
 	});
+	recordAllowed(actor, "create", { type: "project", id: created.project.id }, { resourceName: project_name });
+	return created;
 }
 
 /**
@@ -3071,8 +3076,11 @@ const LIVE_ENV_STATUSES = new Set([
 export async function deleteProject(
 	projectId: string,
 ): Promise<DeleteProjectResult> {
-	const actor = await authorize("destroy", { type: "project", id: projectId });
-	return withActorScope(actor, async (tx) => {
+	// Recorded AFTER the delete, with the name read BEFORE it (#6735): the row is gone by the time
+	// anything could look the name up, and `authorize()` also recorded a deletion the live-env check
+	// below then refused.
+	const actor = await authorizeDeferred("destroy", { type: "project", id: projectId });
+	const outcome = await withActorScope(actor, async (tx): Promise<{ ok: true; name: string | undefined } | ProjectRefusal> => {
 		// Refuse while any environment is live/in-flight — deleting would orphan cloud resources.
 		const envs = await tx
 			.select({ status: projectEnvironments.status })
@@ -3085,10 +3093,16 @@ export async function deleteProject(
 					"This project has live or in-flight environments. Destroy them before deleting the project.",
 			};
 		}
-		// CASCADE handles all component tables.
-		await tx.delete(projects).where(eq(projects.id, projectId));
-		return { ok: true };
+		// CASCADE handles all component tables. `returning` is the name as it was at the delete.
+		const [gone] = await tx
+			.delete(projects)
+			.where(eq(projects.id, projectId))
+			.returning({ name: projects.project_name });
+		return { ok: true, name: gone?.name };
 	});
+	if (!outcome.ok) return outcome;
+	recordAllowed(actor, "destroy", { type: "project", id: projectId }, { resourceName: outcome.name ?? null });
+	return { ok: true };
 }
 
 // ============================================================
@@ -3336,7 +3350,9 @@ export async function duplicateProjectForProvider(
 	targetRegion: string,
 	projectName?: string,
 ): Promise<DuplicatedProject> {
-	const actor = await authorize("create", { type: "project" });
+	// Not recorded here: `createProject` below records the create, under the clone's id and name. This
+	// recorded a second, nameless "created a project" for every duplicate (#6735).
+	const actor = await authorizeDeferred("create", { type: "project" });
 	const owner = actor.userId;
 
 	const { formData, provider: sourceProvider } =

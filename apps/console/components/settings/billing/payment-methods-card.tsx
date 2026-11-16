@@ -15,10 +15,11 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
 	makeDefaultCard,
+	recordCardSaved,
 	removeCard as removeCardAction,
 	saveBackupCards,
 	startAddCard,
@@ -142,17 +143,50 @@ export function PaymentMethodsCard() {
 	// list, so two reorders racing from two rows would each persist an order built from a stale one.
 	const busy = setDefault.isPending || setBackups.isPending || remove.isPending;
 
-	/** Open the add-card dialog after creating a SetupIntent for the embedded form. */
+	/**
+	 * Open the add-card dialog. The SetupIntent is created on the first open and REUSED until a card
+	 * is saved with it, so opening and closing the dialog does not leave a trail of unconfirmed
+	 * SetupIntents in Stripe (#6733). Opening it records nothing; saving does.
+	 */
 	function openAddCard() {
+		if (clientSecret) {
+			setAddOpen(true);
+			return;
+		}
 		if (addIntent.isPending) return;
 		addIntent.mutate({});
 	}
 
-	/** Card saved in Stripe — close the dialog and re-read the list. */
-	function handleCardAdded() {
+	// A card whose 3-D Secure step needed a FULL-PAGE redirect comes back here (the form's `return_url`
+	// is this page) with Stripe's `setup_intent` / `redirect_status` params, and the inline success
+	// path above never ran. This is the only place that save can be recorded: the webhook endpoint
+	// is not subscribed to SetupIntent events (scripts/stripe-setup.ts WEBHOOK_EVENTS), and could
+	// not name who saved the card. The server checks the SetupIntent with Stripe and records it at
+	// most once, so a reload of this URL records nothing twice. The params are then removed.
+	useEffect(() => {
+		const params = new URLSearchParams(window.location.search);
+		const setupIntentId = params.get("setup_intent");
+		if (!setupIntentId) return;
+		const succeeded = params.get("redirect_status") === "succeeded";
+		for (const key of ["setup_intent", "setup_intent_client_secret", "redirect_status"]) {
+			params.delete(key);
+		}
+		const query = params.toString();
+		window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+		if (!succeeded) return;
+		toast.success("Card saved.");
+		void recordCardSaved({ setupIntentId }).catch(() => undefined);
+		void queryClient.invalidateQueries({ queryKey: orpc.billing.paymentMethods.key() });
+	}, [queryClient]);
+
+	/** Card saved in Stripe — record it, close the dialog and re-read the list. */
+	function handleCardAdded(setupIntentId: string | null) {
 		setAddOpen(false);
 		setClientSecret(null);
 		toast.success("Card saved.");
+		// The Activity record of the save. The card is saved whatever this answers, so a failure is
+		// not shown as one: telling the user "something went wrong" would read as the card failing.
+		if (setupIntentId) void recordCardSaved({ setupIntentId }).catch(() => undefined);
 		void queryClient.invalidateQueries({ queryKey: orpc.billing.paymentMethods.key() });
 	}
 
@@ -326,10 +360,8 @@ export function PaymentMethodsCard() {
 			{/* Add-card dialog — confirms a SetupIntent (card data stays in Stripe's iframe). */}
 			<Dialog
 				open={addOpen}
-				onOpenChange={(o) => {
-					setAddOpen(o);
-					if (!o) setClientSecret(null);
-				}}
+				// Closing keeps the SetupIntent: the next open reuses it rather than minting another.
+				onOpenChange={setAddOpen}
 			>
 				<DialogContent>
 					<DialogHeader>

@@ -153,7 +153,9 @@ import {
 	queryRunningJobs,
 	type ResourceCounts,
 } from "@/lib/queries/usage-counts";
-import { authorize, authorizeInOrg, authorizeQuiet, currentActor } from "@/lib/authz/guard";
+import { recordAllowed } from "@/lib/authz/activity";
+import { claimWebhookEvent, markWebhookEventDone } from "@/lib/billing/webhook-events";
+import { authorize, authorizeDeferred, authorizeInOrg, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import type {
 	BillingPlan,
@@ -3532,9 +3534,17 @@ export async function createCreditPackIntent(
 
 // ── Payment methods (embedded card management) ──────────────────────────────
 
-/** Creates a SetupIntent to add/save a card via the embedded Payment Element. */
+/**
+ * Creates a SetupIntent to add/save a card via the embedded Payment Element.
+ *
+ * NOT recorded in the Activity log when allowed (#6733): this only prepares the form, and nothing
+ * about the account has changed until the card is confirmed. `authorize()` recorded the allow, so
+ * opening and closing the dialog read "updated billing". The save itself is recorded by
+ * {@link confirmCardSaved}, once Stripe says the SetupIntent succeeded. A DENIED attempt is still
+ * recorded here (`authorizeDeferred`).
+ */
 export async function createSetupIntent(): Promise<{ clientSecret: string }> {
-	const actor = await authorize("manage_billing", { type: "billing" });
+	const actor = await authorizeDeferred("manage_billing", { type: "billing" });
 	requireHostedBilling();
 	if (actor.orgId === actor.userId) {
 		throw new ActionRefusal("conflict", "Create an organization before adding a card.");
@@ -3560,6 +3570,46 @@ export async function createSetupIntent(): Promise<{ clientSecret: string }> {
 	return { clientSecret: si.client_secret };
 }
 
+/** The ledger `type` under which a saved card's SetupIntent is claimed (see {@link confirmCardSaved}). */
+const SETUP_INTENT_RECORDED = "setup_intent.recorded";
+
+/**
+ * Records that a card was saved: the add-card form's SetupIntent was confirmed (#6733).
+ *
+ * The card is confirmed in the browser (Stripe's iframe), so nothing on the server sees the save
+ * happen. This is that sighting, and it is checked against Stripe rather than taken on the
+ * client's word: the SetupIntent must belong to THIS org's customer and must have `succeeded`. A
+ * foreign or unconfirmed id records nothing and is refused. It writes nothing to Stripe.
+ */
+export async function confirmCardSaved(setupIntentId: string): Promise<{ ok: true }> {
+	const actor = await authorizeDeferred("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const billing = await getOrgBilling(actor.orgId);
+	if (!billing?.stripeCustomerId) throw new ActionRefusal("conflict", "No billing account yet.");
+	// An id Stripe does not know answers exactly as another org's does, so the reply cannot tell a
+	// caller whether some SetupIntent exists on the account.
+	const si = await getStripe()
+		.setupIntents.retrieve(setupIntentId)
+		.catch(() => null);
+	const ownerId = typeof si?.customer === "string" ? si.customer : (si?.customer?.id ?? null);
+	if (ownerId !== billing.stripeCustomerId) {
+		throw new ActionRefusal("not-found", "Card setup not found.");
+	}
+	if (si?.status !== "succeeded") {
+		throw new ActionRefusal("conflict", "The card has not been saved yet.");
+	}
+	// Once per SetupIntent. Both the inline confirm and the 3-D Secure redirect landing call this, and
+	// either can repeat (a reload of the landing URL, a retried request), so the SetupIntent id is
+	// claimed in the Stripe exactly-once ledger the webhook already uses (`stripe_webhook_event`, PK
+	// insert). A `seti_…` id cannot collide with an `evt_…` one. A second claim records nothing.
+	const claim = await claimWebhookEvent(setupIntentId, SETUP_INTENT_RECORDED);
+	if (!claim.claimed) return { ok: true };
+	// Recorded under its own name so the feed can say what happened; emitted as `manage_billing`, so
+	// an org's alert rule on billing changes still fires on a card being added.
+	recordAllowed(actor, "manage_billing", { type: "billing" }, { recordAs: "add_payment_method" });
+	await markWebhookEventDone(setupIntentId);
+	return { ok: true };
+}
 
 /**
  * Sets the org's backup-card order (for dunning failover) — the given ids become the
@@ -3737,6 +3787,16 @@ export async function startAddCard(
 	raw: z.input<typeof noInput>,
 ): Promise<ActionResult<{ clientSecret: string }>> {
 	return defineAction({ input: noInput, run: () => createSetupIntent() })(raw);
+}
+
+/** A Stripe SetupIntent id, as Stripe mints them. */
+const setupIntentInput = z.object({ setupIntentId: z.string().regex(/^seti_[A-Za-z0-9]+$/).max(255) });
+
+/** {@link confirmCardSaved} through the mutation contract: records a confirmed card save. */
+export async function recordCardSaved(
+	raw: z.input<typeof setupIntentInput>,
+): Promise<ActionResult<{ ok: true }>> {
+	return defineAction({ input: setupIntentInput, run: ({ input }) => confirmCardSaved(input.setupIntentId) })(raw);
 }
 
 /** {@link setDefaultPaymentMethod} through the mutation contract. */
