@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -410,8 +411,11 @@ func TestList_InteractiveTableFetchFailureIsFatal(t *testing.T) {
 	run := covListEnv(t, covListBroken)
 	for _, tc := range covListCommands {
 		t.Run(strings.Join(tc.args, "_"), func(t *testing.T) {
-			if got := run(tc.args...); got != 1 {
-				t.Errorf("exit code = %d, want 1", got)
+			// A server fault is the "unavailable" class. A command that reports the failure
+			// with %w keeps that class; one that flattens it with %v first has only a
+			// string left and exits unclassified. Both are fatal, which is what this pins.
+			if got := run(tc.args...); got != clierr.ExitUnavailable && got != clierr.ExitUnclassified {
+				t.Errorf("exit code = %d, want %d or %d", got, clierr.ExitUnavailable, clierr.ExitUnclassified)
 			}
 		})
 	}
