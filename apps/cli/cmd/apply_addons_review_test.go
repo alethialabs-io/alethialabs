@@ -54,7 +54,7 @@ func TestPlan_NeverPrintsAnOverridesContent(t *testing.T) {
 		}
 	}
 	// The content is still what apply SENDS.
-	if req := plan.Environments[0].Addons[0].request; req.ValuesYAML == nil || !strings.Contains(*req.ValuesYAML, sentinel+"-file") {
+	if req := plan.Environments[0].Addons[0].Request; req.ValuesYAML == nil || !strings.Contains(*req.ValuesYAML, sentinel+"-file") {
 		t.Errorf("apply would not send the file: %+v", req.ValuesYAML)
 	}
 }
@@ -70,7 +70,7 @@ func TestPlan_ABrokenValuesFileIsRefusedWithoutQuotingIt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		refusal := plan.refusal()
+		refusal := plan.Refusal()
 		if refusal == nil || strings.Contains(refusal.Error(), sentinel) || !strings.Contains(refusal.Error(), "is not valid YAML") {
 			t.Errorf("%s: refusal = %v — want a refusal that does not quote the file", name, refusal)
 		}
@@ -79,7 +79,7 @@ func TestPlan_ABrokenValuesFileIsRefusedWithoutQuotingIt(t *testing.T) {
 
 func TestRenderAddons_RedactsASecretTheRowNames(t *testing.T) {
 	// The catalog names no secret; the row's own list does. The plan must still redact it.
-	e := EnvPlan{Name: "prod", Addons: []AddonPlan{{ID: "custom", Action: ActionUpdate, secretKeys: []string{"token"},
+	e := EnvPlan{Name: "prod", Addons: []AddonPlan{{ID: "custom", Action: ActionUpdate, SecretKeys: []string{"token"},
 		Changes: []FieldChange{{Field: "settings", Key: "token", From: sentinel, To: sentinel + "2"}}}}}
 	var out bytes.Buffer
 	renderAddons(&out, e, func(string) []string { return nil })

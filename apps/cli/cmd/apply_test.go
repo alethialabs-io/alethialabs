@@ -503,7 +503,7 @@ func TestApply_RenderPlanUnmanagedAndNarrowed(t *testing.T) {
 		{Name: "prod", Placement: "dedicated", Action: ActionUnchanged, Deploy: false},
 		{Name: "dev", Placement: "namespace", Action: ActionCreate, Deploy: true},
 	}}
-	if err := p.restrictTo([]string{"dev"}); err != nil {
+	if err := p.RestrictTo([]string{"dev"}); err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
@@ -853,7 +853,7 @@ func TestMatchCloudIdentity(t *testing.T) {
 	if _, err := findEnv(&manifest.Manifest{}, "x"); err == nil {
 		t.Error("an environment absent from the file must be an error")
 	}
-	if err := (&ApplyPlan{}).restrictTo(nil); err != nil {
+	if err := (&ApplyPlan{}).RestrictTo(nil); err != nil {
 		t.Error(err)
 	}
 }
