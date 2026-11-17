@@ -12,8 +12,7 @@
 // keeps the ledger true to the tree, but its `lifts` rule still accepts the word "unassigned".
 
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -358,7 +357,7 @@ describe("useEventStream", () => {
 	});
 });
 
-const LEDGER = resolve(dirname(fileURLToPath(import.meta.url)), "../../no-polling-ledger.json");
+const LEDGER = join(__dirname, "../../no-polling-ledger.json");
 
 const ledgerSchema = z.object({
 	polls: z.record(z.string(), z.object({ count: z.number(), lifts: z.string() })),
