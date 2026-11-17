@@ -318,41 +318,40 @@ func TestHygCliStdout_ARefusalFromCobraIsPrintedOnceOnStderr(t *testing.T) {
 	}
 }
 
-// TestHygCliStdout_ARejectedFlagHonoursTheFormatAlreadyParsed pins how far `--output json` reaches
-// into cobra's own refusals, in both directions, because the boundary is not where one would guess.
+// TestHygCliStdout_ARefusalFromCobraHonoursTheFormatOnTheLine pins that `--output json` reaches
+// cobra's own refusals wherever it stands on the command line.
 //
-// Flags are parsed left to right and parsing stops at the one cobra rejects, so a format given
-// BEFORE it is known and the refusal is an envelope. A command cobra cannot resolve is refused
-// before any flag is parsed at all, so that refusal is always the human form — with the same exit
-// code, which is the half a script reads.
-func TestHygCliStdout_ARejectedFlagHonoursTheFormatAlreadyParsed(t *testing.T) {
-	t.Run("a rejected flag after --output json is an envelope", func(t *testing.T) {
-		resetFlagsAroundTest(t)
-		stdout, stderr, code := hygCliStdoutFatal(t, func() {
-			execRootArgs([]string{"version", "--output", "json", "--definitely-not-a-flag"})
-			Execute()
+// cobra parses flags left to right and stops at the one it rejects, and it refuses a command it
+// cannot resolve before parsing any flag at all. So the format cobra parsed is not the whole
+// answer: Execute reads the line a second time for it (refusalFormat). Each case below is a place
+// the first reading alone does not reach, beside the one it does.
+func TestHygCliStdout_ARefusalFromCobraHonoursTheFormatOnTheLine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		code string
+	}{
+		{"a rejected flag after --output json", []string{"version", "--output", "json", "--definitely-not-a-flag"}, clierr.CodeInvalidFlag},
+		{"a rejected flag before --output json", []string{"version", "--definitely-not-a-flag", "--output", "json"}, clierr.CodeInvalidFlag},
+		{"an unknown command after --output json", []string{"--output", "json", "definitely-not-a-command"}, clierr.CodeInvalidUsage},
+		{"an unknown command before -o json", []string{"definitely-not-a-command", "-o", "json"}, clierr.CodeInvalidUsage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetFlagsAroundTest(t)
+			stdout, stderr, code := hygCliStdoutFatal(t, func() {
+				execRootArgs(tc.args)
+				Execute()
+			})
+			if stdout != "" {
+				t.Errorf("stdout is not empty: %q", stdout)
+			}
+			gotCode, gotExit := hygCliStdoutEnvelope(t, stderr)
+			if code != clierr.ExitUsage || gotExit != clierr.ExitUsage || gotCode != tc.code {
+				t.Errorf("exit=%d envelope exit_code=%d code=%q, want %d and %q",
+					code, gotExit, gotCode, clierr.ExitUsage, tc.code)
+			}
 		})
-		if stdout != "" {
-			t.Errorf("stdout is not empty: %q", stdout)
-		}
-		gotCode, gotExit := hygCliStdoutEnvelope(t, stderr)
-		if code != clierr.ExitUsage || gotExit != clierr.ExitUsage || gotCode != clierr.CodeInvalidFlag {
-			t.Errorf("exit=%d envelope exit_code=%d code=%q", code, gotExit, gotCode)
-		}
-	})
-	t.Run("an unknown command is refused before --output is read", func(t *testing.T) {
-		resetFlagsAroundTest(t)
-		stdout, stderr, code := hygCliStdoutFatal(t, func() {
-			execRootArgs([]string{"--output", "json", "definitely-not-a-command"})
-			Execute()
-		})
-		if code != clierr.ExitUsage || stdout != "" {
-			t.Errorf("exit=%d stdout=%q", code, stdout)
-		}
-		if !strings.Contains(stderr, ui.SymbolError+` unknown command "definitely-not-a-command"`) {
-			t.Errorf("stderr = %q", stderr)
-		}
-	})
+	}
 }
 
 // TestHygCliStdout_TheHumanFormCarriesTheHintAndTheRequestID pins the lines under the message: what
