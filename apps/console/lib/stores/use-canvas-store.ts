@@ -36,7 +36,7 @@ import type {
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
 import { kindFromCollectionId, type CollectionPositions } from "@/lib/canvas/collections";
-import type { ContainerBox, ContainerGeometry } from "@/lib/canvas/zones";
+import type { ContainerGeometry } from "@/lib/canvas/zones";
 import { applyLayout, layoutZoned } from "@/lib/canvas/layout";
 import { randomUuid } from "@/lib/random-id";
 
@@ -125,46 +125,9 @@ export function deriveEdges(nodes: CanvasNode[]): CanvasEdge[] {
 	return edges;
 }
 
-/** Approximate node footprint used by overlap repair + relayout (px). */
+/** Approximate node footprint used by overlap repair (px). */
 const NODE_W = 240;
 const NODE_H = 130;
-
-/**
- * Deterministic tidy layout by kind — mirrors formToGraph's grid so "Reset canvas"
- * returns a readable arrangement without destroying any nodes/config. Project sits up
- * top; singletons in an infrastructure row; array kinds stack in rows below.
- */
-function layoutByKind(nodes: CanvasNode[]): CanvasNode[] {
-	const singletonRow: NodeKind[] = ["network", "cluster", "dns", "repositories"];
-	const arrayRows: NodeKind[] = [
-		"database",
-		"cache",
-		"queue",
-		"topic",
-		"nosql",
-		"secret",
-		"bucket",
-		"registry",
-		"helm_registry",
-	];
-	const counts = new Map<NodeKind, number>();
-	return nodes.map((n) => {
-		const kind = n.data.kind;
-		if (kind === "project") return { ...n, position: { x: 260, y: 0 } };
-		const si = singletonRow.indexOf(kind);
-		if (si !== -1) return { ...n, position: { x: 60 + si * 220, y: 180 } };
-		const ri = arrayRows.indexOf(kind);
-		if (ri !== -1) {
-			const i = counts.get(kind) ?? 0;
-			counts.set(kind, i + 1);
-			return { ...n, position: { x: 120 + i * 220, y: 340 + ri * 130 } };
-		}
-		// Unknown kinds (e.g. future storage) flow into a trailing grid.
-		const i = counts.get(kind) ?? 0;
-		counts.set(kind, i + 1);
-		return { ...n, position: { x: 120 + i * 220, y: 340 + arrayRows.length * 130 } };
-	});
-}
 
 /** Push apart any nodes whose footprints overlap (keeps the project root anchored). */
 function spreadOverlaps(nodes: CanvasNode[]): CanvasNode[] {
@@ -617,20 +580,12 @@ interface CanvasStore {
 	collectionPositions: CollectionPositions;
 	setCollectionPosition: (kind: NodeKind, position: { x: number; y: number }) => void;
 
-	/** User-overridden geometry (position + size) per CONTAINER (VPC / cluster / BYO module). Containers
-	 * are synthetic — no store row — so their user-set box lives here, session-only, exactly like
-	 * `collectionPositions`. Absent = derive the box from members. NEVER in the DB or the Deploy diff. */
+	/** A key of the persisted draft that nothing on the board writes or reads any more: the container
+	 * regions that set it are gone, so the store only ever sets it to `{}` (a draft rehydrated from
+	 * an older tab can still carry boxes, until `setGraph`, a discard or a reset clears them). It stays
+	 * because the version-1 draft's key set is pinned by
+	 * `tests/lib/stores/use-canvas-store-draft-persist.test.ts`. NEVER in the DB or the Deploy diff. */
 	containerGeometry: ContainerGeometry;
-	/** Pin a container's box (a drag or resize). */
-	setContainerGeometry: (id: string, box: ContainerBox) => void;
-	/** Drop a container's override so it auto-fits its members again (the "re-fit" affordance). */
-	resetContainerGeometry: (id: string) => void;
-	/** Drag a container: shift its members' absolute positions by `delta`, and shift each pinned box in
-	 * `pins` (the dragged container itself + any pinned nested child) by the same delta so it tracks. */
-	translateContainer: (
-		delta: { x: number; y: number },
-		opts: { memberIds: string[]; pins: { id: string; box: ContainerBox }[] },
-	) => void;
 
 	/** Canvas view prefs (ephemeral UI state, not persisted). */
 	showConnections: boolean;
@@ -639,12 +594,10 @@ interface CanvasStore {
 	toggleKindVisibility: (kind: NodeKind) => void;
 	/** Non-destructive tidy actions for the canvas-settings popover. */
 	repairOverlaps: () => void;
-	relayout: () => void;
 	/** W3 — apply computed auto-layout positions (elkjs, async in the caller) onto the nodes, and
 	 * re-anchor the collapsed collection cards so a "tidy" lays the whole board out at once. */
 	arrange: (positions: Record<string, XYPosition>) => void;
 
-	getNode: (id: string) => CanvasNode | undefined;
 	getCoreIdentity: () => string | null;
 	getEffectiveProvider: (id: string) => CloudProviderSlug | null;
 }
@@ -743,8 +696,7 @@ export const useCanvasStore = create<CanvasStore>()(
 					// The loaded graph is the saved state → it becomes the diff baseline. (Chart
 					// nodes ride along but diffNodes skips them, so they never show as changes.)
 					baseline: structuredClone(withRoot),
-					// A freshly laid-out graph derives fresh container boxes; a stale override from a prior
-					// project must not survive and strand a region away from its members.
+					// A stale box from an older draft does not outlive a freshly loaded graph.
 					containerGeometry: {},
 				});
 			},
@@ -1186,7 +1138,7 @@ export const useCanvasStore = create<CanvasStore>()(
 					dirty: false,
 					past: [],
 					future: [],
-					// Discard reverts the VIEW too — container overrides go back to derived with the graph.
+					// Discard reverts the VIEW too — a stale box from an older draft goes with it.
 					containerGeometry: {},
 				});
 			},
@@ -1198,42 +1150,6 @@ export const useCanvasStore = create<CanvasStore>()(
 					collectionPositions: { ...s.collectionPositions, [kind]: position },
 					dirty: true,
 				})),
-
-			setContainerGeometry: (id, box) =>
-				set((s) => ({
-					containerGeometry: { ...s.containerGeometry, [id]: box },
-					dirty: true,
-				})),
-
-			resetContainerGeometry: (id) =>
-				set((s) => {
-					if (!(id in s.containerGeometry)) return {};
-					const containerGeometry = { ...s.containerGeometry };
-					delete containerGeometry[id];
-					return { containerGeometry, dirty: true };
-				}),
-
-			translateContainer: (delta, { memberIds, pins }) =>
-				set((s) => {
-					const moving = new Set(memberIds);
-					// A no-op delta happens on click-without-move — don't churn the store.
-					if (delta.x === 0 && delta.y === 0) return {};
-					const nodes = s.nodes.map((n) =>
-						moving.has(n.id)
-							? { ...n, position: { x: n.position.x + delta.x, y: n.position.y + delta.y } }
-							: n,
-					);
-					const containerGeometry = { ...s.containerGeometry };
-					for (const p of pins) {
-						containerGeometry[p.id] = {
-							x: p.box.x + delta.x,
-							y: p.box.y + delta.y,
-							width: p.box.width,
-							height: p.box.height,
-						};
-					}
-					return { nodes, containerGeometry, dirty: true };
-				}),
 
 			toggleConnections: () => set((s) => ({ showConnections: !s.showConnections })),
 
@@ -1250,21 +1166,6 @@ export const useCanvasStore = create<CanvasStore>()(
 				set({ nodes: next, dirty: true });
 			},
 
-			relayout: () => {
-				get().commit();
-				// Zone-aware: the cluster's workloads inside the cluster, managed data in the VPC beside
-				// it, periphery clear of both — so the board lays out the way the system is actually
-				// shaped rather than as one row per kind.
-				const next = applyLayout(
-					get().nodes,
-					layoutZoned(get().nodes, (id) => get().getEffectiveProvider(id)),
-				);
-				// Drop the collection cards' pinned positions AND the container overrides too, so a "tidy"
-				// re-anchors the vaults + re-fits every region on their freshly-laid-out members instead of
-				// stranding them where they were dragged.
-				set({ nodes: next, collectionPositions: {}, containerGeometry: {}, dirty: true });
-			},
-
 			arrange: (positions) => {
 				get().commit();
 				set((s) => ({
@@ -1277,7 +1178,6 @@ export const useCanvasStore = create<CanvasStore>()(
 				}));
 			},
 
-			getNode: (id) => get().nodes.find((n) => n.id === id),
 			getCoreIdentity: () => coreIdentity(get().nodes),
 			getEffectiveIdentity: (id) => {
 				const { nodes, identities } = get();
@@ -1303,9 +1203,9 @@ export const useCanvasStore = create<CanvasStore>()(
 			storage: createJSONStorage(() => sessionStorage),
 			version: 1,
 			// Persist the graph + baseline (so the pending-changes diff survives reload), where the
-			// collection cards were dragged to, any container geometry the user set, which server
-			// revision all of it was seeded from, and WHETHER IT IS DIRTY; identities are server data
-			// and history is ephemeral.
+			// collection cards were dragged to, the `containerGeometry` key (see its declaration), which
+			// server revision all of it was seeded from, and WHETHER IT IS DIRTY; identities are server
+			// data and history is ephemeral.
 			//
 			// `dirty` is part of the draft, not a fact about this page load. Without it a draft
 			// restored from another environment's slot came back reading clean, and `reseed` asks

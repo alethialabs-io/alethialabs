@@ -110,7 +110,6 @@ export default async function ProjectArchitecturePage({
 					sourceProject={sourceProject}
 					projectId={projectId}
 					environmentId={environmentId ?? undefined}
-					dockInShell
 					byoHelmEnabled={byoHelmEnabled}
 					byoDescribeEnabled={byoDescribeEnabled}
 					byoIacEnabled={byoIacEnabled}

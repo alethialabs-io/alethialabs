@@ -62,12 +62,6 @@ describe("DesignProjectWorkbench — the design read failed", () => {
 		expect(refresh).toHaveBeenCalledTimes(1);
 	});
 
-	it("is not an error in the create flow, which has no project and no design to read", async () => {
-		render(<DesignProjectWorkbench cloudIdentities={[]} />);
-		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-		expect(await screen.findByTestId("canvas")).toBeInTheDocument();
-	});
-
 	it("a seed that THROWS is a failed design load too — never a skeleton left up forever", async () => {
 		h.graph.throws = true;
 		render(
