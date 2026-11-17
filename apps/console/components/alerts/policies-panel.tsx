@@ -9,6 +9,10 @@
 // the caller can't manage; security
 // (authz.*) events are locked without the advancedAlerting entitlement.
 //
+// An edit draft carries the id of the policy it was opened on. The selection is shared state that
+// other surfaces move, so save targets the draft's id, and a selection that moves off a policy
+// with unsaved edits is held behind a discard question rather than followed.
+//
 // Every write goes through `useActionMutation` (#6125): its pending state disables the trigger
 // (the double-submit guard), a refusal is one toast in the server's words, and success
 // invalidates every key that shows alert data — no `router.refresh()`. The panel renders its
@@ -62,6 +66,12 @@ import { Textarea } from "@repo/ui/textarea";
 import { cn } from "@repo/ui/utils";
 
 interface Draft {
+	/**
+	 * The policy this draft was opened on. Save writes to this id and to no other: the selection
+	 * lives in a store that the Channels panel's cross-link and the list itself can both move, so
+	 * "the selected policy" at save time is not a statement about which policy was being edited.
+	 */
+	policyId: string;
 	name: string;
 	description: string;
 	events: Set<string>;
@@ -74,8 +84,10 @@ interface Draft {
 	throttle: number;
 }
 
+/** A fresh edit draft of `p`, carrying `p`'s id. */
 function draftFrom(p: PolicyDTO): Draft {
 	return {
+		policyId: p.id,
 		name: p.name,
 		description: p.description ?? "",
 		events: new Set(p.event_patterns),
@@ -135,7 +147,7 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 	const selectedId = useAlertsSection((s) => s.selectedPolicyId);
 	const setSelectedId = useAlertsSection((s) => s.setSelectedPolicyId);
 
-	const [editing, setEditing] = useState(false);
+	// Editing IS having a draft — there is no separate flag to fall out of step with it.
 	const [draft, setDraft] = useState<Draft | null>(null);
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const [deleteTarget, setDeleteTarget] = useState<PolicyDTO | null>(null);
@@ -144,10 +156,7 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 	const update = useActionMutation(updatePolicy, {
 		invalidates: alertsKeys(),
 		successMessage: "Policy saved",
-		onSuccess: () => {
-			setEditing(false);
-			setDraft(null);
-		},
+		onSuccess: () => setDraft(null),
 	});
 	const toggle = useActionMutation(togglePolicy, {
 		invalidates: alertsKeys(),
@@ -164,6 +173,25 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 
 	const selected =
 		policies.find((p) => p.id === selectedId) ?? policies[0] ?? null;
+	// The draft's own policy, found by the id the draft carries — never by the selection.
+	const draftPolicy =
+		draft === null ? null : (policies.find((p) => p.id === draft.policyId) ?? null);
+	const dirty =
+		draft !== null && draftPolicy !== null && draftIsDirty(draft, draftPolicy);
+	// The selection moved off the policy being edited while the draft holds unsaved edits. The
+	// selection can move from outside this panel (a channel's "Used by" link), so this cannot be
+	// asked before the move; instead the detail HOLDS on the draft's policy and the question is
+	// asked now. Discard lets the selection through; Cancel puts it back.
+	const held = dirty && draftPolicy !== null && selected?.id !== draftPolicy.id;
+	const shown = held ? draftPolicy : selected;
+	// A draft with nothing to lose does not outlive its policy being shown: the selection moved
+	// off it, or the policy left the list. Dropped during render, so no frame pairs it with
+	// another policy. Not while the list is unanswered — `[]` then does not mean "gone".
+	if (draft !== null && !held && hub.policiesKnown && selected?.id !== draft.policyId) {
+		setDraft(null);
+	}
+	const activeDraft =
+		draft !== null && shown !== null && draft.policyId === shown.id ? draft : null;
 	const { rows, facets, stale } = view;
 	const resetFilters = useAlertPolicyFilters((s) => s.reset);
 	// One batched query hydrates every rail row's classification chips.
@@ -183,15 +211,17 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 	const startEdit = () => {
 		if (!selected) return;
 		setDraft(draftFrom(selected));
-		setEditing(true);
+		// Pin the selection. `selected` may be the first-row fallback of a null selection, and a
+		// fallback follows the list: a new first row would otherwise read as a selection change.
+		setSelectedId(selected.id);
 	};
-	const cancel = () => {
-		setEditing(false);
-		setDraft(null);
-	};
+	const cancel = () => setDraft(null);
 
 	const save = () => {
-		if (!draft || !selected || update.isPending) return;
+		if (!draft || !draftPolicy || !selected || update.isPending) return;
+		// Refused unless the selection still names the draft's policy — while it does not, the
+		// discard question is on screen and is the only thing to answer.
+		if (selected.id !== draft.policyId) return;
 		if (draft.events.size === 0) return toast.error("Pick at least one event.");
 		if (draft.channels.length === 0)
 			return toast.error("Bind at least one channel.");
@@ -219,9 +249,9 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 			throttle_seconds: draft.throttle,
 			escalate: false,
 			recipient: undefined,
-			enabled: selected.enabled,
+			enabled: draftPolicy.enabled,
 		};
-		update.mutate({ ...input, id: selected.id });
+		update.mutate({ ...input, id: draft.policyId });
 	};
 
 	// The mutation itself, split from the click handler so the confirm path can reach it.
@@ -308,15 +338,13 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 											key={p.id}
 											type="button"
 											role="option"
-											aria-selected={selected?.id === p.id}
-											onClick={() => {
-												setEditing(false);
-												setDraft(null);
-												setSelectedId(p.id);
-											}}
+											aria-selected={shown?.id === p.id}
+											// Only moves the selection. What that does to a draft is
+											// decided in one place above, for every way it can move.
+											onClick={() => setSelectedId(p.id)}
 											className={cn(
 												"flex w-full items-center gap-3 border-b border-l-2 border-border/60 px-3.5 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/40",
-												selected?.id === p.id
+												shown?.id === p.id
 													? "border-l-foreground bg-muted/40"
 													: "border-l-transparent",
 											)}
@@ -362,13 +390,15 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 						</div>
 
 						<div className="min-w-[min(500px,100%)] flex-[100]">
-							{selected ? (
+							{shown ? (
 								<PolicyDetail
-									policy={selected}
-									draft={draft}
-									editing={editing}
+									// Keyed by policy: nothing a field holds for one policy is
+									// carried into the detail of the next.
+									key={shown.id}
+									policy={shown}
+									draft={activeDraft}
 									saving={update.isPending}
-									dirty={draft !== null && draftIsDirty(draft, selected)}
+									dirty={dirty}
 									togglePending={toggle.isPending}
 									hub={hub}
 									patch={patch}
@@ -398,6 +428,19 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 					onGoChannels={() => onOpenChannel()}
 				/>
 			)}
+
+			<ConfirmDialog
+				open={held}
+				// Cancel: back to the policy being edited, draft intact.
+				onOpenChange={(o) => {
+					if (!o && draft) setSelectedId(draft.policyId);
+				}}
+				title="Discard unsaved changes?"
+				description={`Your edits to "${draftPolicy?.name ?? ""}" have not been saved. Opening another policy discards them.`}
+				confirmLabel="Discard changes"
+				// The selection has already moved; dropping the draft is what lets it through.
+				onConfirm={() => setDraft(null)}
+			/>
 
 			<ConfirmDialog
 				open={disableTarget !== null}
@@ -430,8 +473,8 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 
 interface DetailProps {
 	policy: PolicyDTO;
+	/** The edit draft OF THIS POLICY, or null when it is only being viewed. */
 	draft: Draft | null;
-	editing: boolean;
 	saving: boolean;
 	/** The draft differs from the saved policy — Save does nothing until it does. */
 	dirty: boolean;
@@ -452,7 +495,6 @@ interface DetailProps {
 function PolicyDetail({
 	policy,
 	draft,
-	editing,
 	saving,
 	dirty,
 	togglePending,
@@ -467,7 +509,7 @@ function PolicyDetail({
 	onOpenChannel,
 }: DetailProps) {
 	const { categories, channels, conditionOptions, canManage, advancedAlerting } = hub;
-	const ed = editing && draft !== null;
+	const ed = draft !== null;
 
 	const events = ed ? [...draft.events] : policy.event_patterns;
 	const channelBindings: ChannelBinding[] = ed
@@ -699,6 +741,7 @@ function PolicyDetail({
 	);
 }
 
+/** One labelled figure in the detail's summary strip. */
 function MetaCell({ k, v }: { k: string; v: string }) {
 	return (
 		<div className="min-w-[120px] flex-1 border-r border-border/60 px-5 py-3 last:border-r-0">
