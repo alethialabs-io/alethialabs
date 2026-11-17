@@ -4536,12 +4536,16 @@ func TestProj_DesignApplyRefusalTheCOMMANDPrintsNamesTheReason(t *testing.T) {
 		{"kind": "storage_buckets", "name": "receipts", "action": "DELETE"},
 	}}
 	h := projEnv(t, s)
-	out := projCaptureStdout(t)
 
-	if !h.run("project", "design", "apply", "--project", "web", "-f", projDesignDoc(t), "--no-input") {
+	// The refusal is read from stderr: the fatal path writes nothing to stdout.
+	var refused bool
+	_, out := captureStreams(t, func() {
+		refused = h.run("project", "design", "apply", "--project", "web", "-f", projDesignDoc(t), "--no-input")
+	})
+	if !refused {
 		t.Fatal("a deleting apply must be refused without --yes")
 	}
-	got := projFlatten(out())
+	got := projFlatten(out)
 	for _, want := range []string{
 		"--yes",
 		"THIS PLAN removes components",
