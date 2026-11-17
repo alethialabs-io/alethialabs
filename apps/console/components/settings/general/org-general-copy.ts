@@ -74,7 +74,9 @@ export const ORG_DEFAULTS_SAVE_NOTE = "Applies to new resources only";
 
 /**
  * The Danger zone's two rows. The delete row's description names the org between `before` and
- * `after`, so it is two strings around the name rather than one.
+ * `after`, so it is two strings around the name rather than one. It says what the delete does NOT
+ * do (destroy anything in the cloud) and what the server therefore refuses (`deleteOrganization`
+ * answers `conflict` while an environment is live or in flight, #6752).
  */
 export const ORG_DANGER_ROWS = {
 	transfer: {
@@ -86,6 +88,6 @@ export const ORG_DANGER_ROWS = {
 		title: "Delete organization",
 		before: "Permanently delete",
 		after:
-			"and all its Projects. This destroys no cloud resources — run destroy first. Cannot be undone.",
+			"and all its Projects. Deleting destroys no cloud resources, so it is refused while any environment is live or in flight — destroy those first. Cannot be undone.",
 	},
 } as const;
