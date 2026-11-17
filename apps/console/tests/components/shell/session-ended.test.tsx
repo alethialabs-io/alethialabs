@@ -6,7 +6,7 @@
 // page" swaps the dialog for a banner that cannot be closed, so the page can be copied from; a new
 // report that the session has ended brings the dialog back.
 
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { SessionEnded } from "@/components/shell/session-ended";
 import { endSession, useSessionState } from "@/lib/stores/use-session-state";
@@ -34,6 +34,17 @@ describe("SessionEnded", () => {
 		const dialog = await screen.findByRole("alertdialog");
 		expect(dialog).toHaveTextContent("Your session has ended");
 		expect((await signInLink())?.getAttribute("href")).toBe("/login?next=%2Facme%2F~%2Fjobs%3Fstatus%3Dfailed");
+	});
+
+	it("opens with focus on \"Sign in\", the primary action, which comes before \"Stay on this page\"", async () => {
+		render(<SessionEnded />);
+		act(() => endSession());
+		const link = await signInLink();
+		expect(link).not.toBeNull();
+		await waitFor(() => expect(link).toHaveFocus());
+		const stay = within(screen.getByRole("alertdialog")).getByText("Stay on this page");
+		// Sign in precedes the secondary action in the document, which is what gives it the focus.
+		expect(link?.compareDocumentPosition(stay)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 	});
 
 	it("stays open on Escape: there is nothing to go back to", async () => {

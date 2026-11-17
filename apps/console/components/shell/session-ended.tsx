@@ -64,7 +64,7 @@ export function SessionEnded({ ended = false }: { ended?: boolean }) {
 	return dismissed ? <SessionEndedBanner /> : <SessionEndedDialog onStay={stay} />;
 }
 
-/** The dialog form. `onStay` adds the "Stay on this page" action. */
+/** The dialog form. `onStay` adds the secondary "Stay on this page" action. */
 function SessionEndedDialog({ onStay }: { onStay?: () => void }) {
 	const href = useSignInHref();
 	return (
@@ -76,15 +76,18 @@ function SessionEndedDialog({ onStay }: { onStay?: () => void }) {
 						Sign in again to continue. You will come back to this page.
 					</AlertDialogDescription>
 				</AlertDialogHeader>
-				<AlertDialogFooter>
+				{/* "Sign in" is FIRST in the DOM: the dialog focuses its first focusable element when it
+				    opens, and that must be the primary action. The classes then lay it out as the
+				    primary one: on top when the buttons stack, rightmost when they sit in a row. */}
+				<AlertDialogFooter className="flex-col sm:flex-row-reverse sm:justify-start">
+					<Button nativeButton={false} render={<a href={href} />}>
+						Sign in
+					</Button>
 					{onStay ? (
 						<Button variant="outline" onClick={onStay}>
 							Stay on this page
 						</Button>
 					) : null}
-					<Button nativeButton={false} render={<a href={href} />}>
-						Sign in
-					</Button>
 				</AlertDialogFooter>
 			</AlertDialogContent>
 		</AlertDialog>
