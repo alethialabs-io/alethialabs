@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/selfimage"
@@ -207,7 +208,12 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	}
 	out.AddonDrift = drift
 	if gitErr != nil {
-		fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %v\n", gitErr)
+		// Reported on the Deploy tab as well as in the job log (#6971): the deploy still completes,
+		// because the add-on sync is best-effort like the steps around it, but a person who reads only
+		// the result must be told the repository was not synced. The same redacted text goes to both.
+		w := appsRepoSyncWarning(gitErr, in.GitAccessToken, in.GitRepoTokens)
+		fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %s\n", w)
+		out.Warnings = append(out.Warnings, w)
 	}
 	// One-shot in-cluster bootstraps for the add-ons that ask for one — today, initialising and
 	// unsealing a marketplace Vault (#2717).
@@ -221,6 +227,26 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 
 	out.Deployable = deployable
 	return out, nil
+}
+
+// urlUserinfo matches the credential part of a URL (`scheme://user:secret@`), up to and including
+// the `@`. It stops at a slash or whitespace, so an `@` in a path or in the following text is not
+// part of the match.
+var urlUserinfo = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s@]+@`)
+
+// appsRepoSyncWarning is the Deploy-tab warning for a deploy that could not sync the apps repository
+// (clone, write, commit or push). The reason is the error text with every known git token replaced
+// and with the credential part of any URL removed, so it never carries a secret into the job result.
+func appsRepoSyncWarning(err error, appsToken string, repoTokens map[string]string) string {
+	tokens := make([]string, 0, len(repoTokens)+1)
+	tokens = append(tokens, appsToken)
+	for _, t := range repoTokens {
+		tokens = append(tokens, t)
+	}
+	reason := argocd.SanitizeGitopsError(err, tokens...)
+	reason = urlUserinfo.ReplaceAllString(reason, "${1}[REDACTED]@")
+	return fmt.Sprintf("The apps repository could not be read or updated: %s. The cluster was created; "+
+		"this deploy did not sync add-on manifests to the repository, and applications that deploy from it may not sync.", reason)
 }
 
 // sweepByoSecretSyncSkipped is the Deploy-tab warning for a deploy that did not run the sweep.
