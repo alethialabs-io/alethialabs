@@ -125,9 +125,10 @@ describe("external tool contract — the declared tools", () => {
 	});
 
 	it("breaks no contract rule", () => {
-		for (const tool of listExternalTools()) {
-			expect(toolContractViolations(tool.name, tool), tool.name).toEqual([]);
-		}
+		const broken = listExternalTools()
+			.map((tool) => ({ name: tool.name, violations: toolContractViolations(tool.name, tool) }))
+			.filter((entry) => entry.violations.length > 0);
+		expect(broken).toEqual([]);
 	});
 
 	it("uses only declared scopes and groups, and every scope and group is used", () => {
@@ -156,14 +157,16 @@ describe("external tool contract — the declared tools", () => {
 	it("marks the approval requests destructive and every read non-destructive", () => {
 		expect(EXTERNAL_TOOLS.request_apply.annotations.destructiveHint).toBe(true);
 		expect(EXTERNAL_TOOLS.request_destroy.annotations.destructiveHint).toBe(true);
-		for (const tool of listExternalTools().filter((t) => t.kind === "read")) {
-			expect(tool.annotations, tool.name).toEqual({
+		const reads = listExternalTools().filter((tool) => tool.kind === "read");
+		expect(reads.map((tool) => ({ name: tool.name, ...tool.annotations }))).toEqual(
+			reads.map((tool) => ({
+				name: tool.name,
 				readOnlyHint: true,
 				destructiveHint: false,
 				idempotentHint: true,
 				openWorldHint: false,
-			});
-		}
+			})),
+		);
 	});
 
 	it("requires an idempotency key on every write that creates something", () => {
@@ -263,22 +266,37 @@ describe("external tool contract — toolContractViolations", () => {
 
 describe("external tool contract — schemas", () => {
 	it("every input and output schema is an object at the JSON Schema root", () => {
-		for (const tool of listExternalTools()) {
-			expect(tool.inputSchema, tool.name).toBeInstanceOf(z.ZodObject);
-			expect(tool.outputSchema, tool.name).toBeInstanceOf(z.ZodObject);
-			expect(z.toJSONSchema(tool.inputSchema, { io: "input" }).type, tool.name).toBe("object");
-			expect(z.toJSONSchema(tool.outputSchema, { io: "output" }).type, tool.name).toBe("object");
-		}
+		const tools = listExternalTools();
+		const roots = tools.map((tool) => ({
+			name: tool.name,
+			inputIsObject: tool.inputSchema instanceof z.ZodObject,
+			outputIsObject: tool.outputSchema instanceof z.ZodObject,
+			input: z.toJSONSchema(tool.inputSchema, { io: "input" }).type,
+			output: z.toJSONSchema(tool.outputSchema, { io: "output" }).type,
+		}));
+		expect(roots).toEqual(
+			tools.map((tool) => ({
+				name: tool.name,
+				inputIsObject: true,
+				outputIsObject: true,
+				input: "object",
+				output: "object",
+			})),
+		);
 	});
 
 	it("every tool has a title and a description, and names its arguments in snake_case", () => {
-		for (const tool of listExternalTools()) {
-			expect(tool.title.length, tool.name).toBeGreaterThan(0);
-			expect(tool.description.length, tool.name).toBeGreaterThan(20);
-			for (const key of Object.keys(tool.inputSchema.shape)) {
-				expect(key, `${tool.name}.${key}`).toMatch(/^[a-z][a-z0-9_]*$/);
-			}
-		}
+		const tools = listExternalTools();
+		expect(tools.filter((tool) => tool.title.length === 0).map((tool) => tool.name)).toEqual([]);
+		expect(
+			tools.filter((tool) => tool.description.length <= 20).map((tool) => tool.name),
+		).toEqual([]);
+		const badArguments = tools.flatMap((tool) =>
+			Object.keys(tool.inputSchema.shape)
+				.filter((key) => !/^[a-z][a-z0-9_]*$/.test(key))
+				.map((key) => `${tool.name}.${key}`),
+		);
+		expect(badArguments).toEqual([]);
 	});
 
 	it("wait_for_job takes exactly one of job_id and approval_id, and at most 50 seconds", () => {
@@ -387,7 +405,7 @@ describe("external tool contract — schemas", () => {
 		const output = EXTERNAL_TOOLS.list_resources.outputSchema;
 		for (const [kind, item] of Object.entries(samples)) {
 			const result = { kind, items: [item], truncated: false };
-			expect(output.parse(result), kind).toEqual(result);
+			expect(output.parse(result)).toEqual(result);
 		}
 		// A field that belongs to no kind is refused rather than dropped.
 		expect(
@@ -434,7 +452,7 @@ describe("external tool contract — schemas", () => {
 		const output = EXTERNAL_TOOLS.get_resource.outputSchema;
 		for (const [kind, resource] of Object.entries(samples)) {
 			const result = { kind, resource };
-			expect(output.parse(result), kind).toEqual(result);
+			expect(output.parse(result)).toEqual(result);
 		}
 	});
 
@@ -480,7 +498,7 @@ describe("external tool contract — schemas", () => {
 		const output = EXTERNAL_TOOLS.get_usage.outputSchema;
 		for (const [kind, usage] of Object.entries(samples)) {
 			const result = { kind, usage };
-			expect(output.parse(result), kind).toEqual(result);
+			expect(output.parse(result)).toEqual(result);
 		}
 	});
 });
