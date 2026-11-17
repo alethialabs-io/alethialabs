@@ -1,0 +1,999 @@
+{
+	"schemaVersion": 1,
+	"documents": [
+		{
+			"id": "terms",
+			"title": "Terms of Service",
+			"kind": "public-page",
+			"route": "/terms",
+			"source": "apps/marketing/app/terms/page.tsx",
+			"status": "current",
+			"sealed": true,
+			"version": "2026-08-24",
+			"displayedDate": "2026-08-12",
+			"contentHash": "3683a200589f3764906256446a625f94230c46c6c42844efd2ad23fbd7a79261",
+			"owner": "LEG-L2"
+		},
+		{
+			"id": "privacy",
+			"title": "Privacy Policy",
+			"kind": "public-page",
+			"route": "/privacy",
+			"source": "apps/marketing/app/privacy/page.tsx",
+			"status": "current",
+			"sealed": true,
+			"version": "2026-08-12",
+			"displayedDate": "2026-08-12",
+			"contentHash": "ce8bc10300de7ed09712681012120d6db120b9ea62faf61bf4f25ce52cb0d93e",
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "privacy-requests",
+			"title": "Privacy requests",
+			"kind": "public-page",
+			"route": "/privacy/requests",
+			"source": "apps/marketing/app/privacy/requests/page.tsx",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-07-29",
+			"displayedDate": "2026-07-29",
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "cookies",
+			"title": "Cookie Notice",
+			"kind": "public-page",
+			"route": "/cookies",
+			"source": "apps/marketing/app/cookies/page.tsx",
+			"status": "current",
+			"sealed": true,
+			"version": "2026-08-12",
+			"displayedDate": "2026-08-12",
+			"contentHash": "d50c62eeca64f1dc066c9d1c35c4f2f72a060cf70379e0484669fdf0e4dbac00",
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "imprint",
+			"title": "Company information (imprint)",
+			"kind": "public-page",
+			"route": "/imprint",
+			"source": "apps/marketing/app/imprint/page.tsx",
+			"status": "current",
+			"sealed": true,
+			"version": "2026-08-12",
+			"displayedDate": "2026-08-12",
+			"contentHash": "e7b9229a65873c1e2eb3f4bc88213b8582afb1220e473fb1b211b6c0ddb1b291",
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "acceptable-use",
+			"title": "Acceptable Use Policy",
+			"kind": "public-page",
+			"route": "/acceptable-use",
+			"source": "apps/marketing/app/acceptable-use/page.tsx",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-07-29",
+			"displayedDate": "2026-07-29",
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "dpa",
+			"title": "Data Processing Addendum",
+			"kind": "public-page",
+			"route": "/legal/dpa",
+			"source": "apps/marketing/app/legal/dpa/page.tsx",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-07-29",
+			"displayedDate": "2026-07-29",
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "subprocessors",
+			"title": "Subprocessors",
+			"kind": "public-page",
+			"route": "/legal/subprocessors",
+			"source": "apps/marketing/app/legal/subprocessors/page.tsx",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-08-12",
+			"displayedDate": "2026-08-12",
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "source-offer",
+			"title": "Source and licences (AGPL source offer)",
+			"kind": "public-page",
+			"route": "/legal/source",
+			"source": "apps/marketing/app/legal/source/page.tsx",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-07-29",
+			"displayedDate": "2026-07-29",
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "data-act",
+			"title": "Switching and data portability (Data Act)",
+			"kind": "public-page",
+			"route": "/legal/data-act",
+			"source": "apps/marketing/app/legal/data-act/page.tsx",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-08-24",
+			"displayedDate": "2026-08-24",
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "ai-transparency",
+			"title": "AI transparency",
+			"kind": "public-page",
+			"route": "/ai-transparency",
+			"source": "apps/marketing/app/ai-transparency/page.tsx",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-08-24",
+			"displayedDate": "2026-08-24",
+			"contentHash": null,
+			"owner": "LEG-L4"
+		},
+		{
+			"id": "consumer-rights",
+			"title": "Consumer rights",
+			"kind": "public-page",
+			"route": "/consumer-rights",
+			"source": "apps/marketing/app/consumer-rights/page.tsx",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-08-24",
+			"displayedDate": "2026-08-24",
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "security",
+			"title": "Security",
+			"kind": "public-page",
+			"route": "/security",
+			"source": "apps/marketing/app/security/page.tsx",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-08-05",
+			"displayedDate": "2026-08-05",
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "gdpr-accountability",
+			"title": "GDPR accountability record",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/GDPR_ACCOUNTABILITY.md",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-08-12",
+			"displayedDate": "2026-08-12",
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "privacy-request-runbook",
+			"title": "Privacy request runbook",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/PRIVACY_REQUEST_RUNBOOK.md",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "breach-runbook",
+			"title": "Personal data breach runbook",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/PERSONAL_DATA_BREACH_RUNBOOK.md",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "paid-markets",
+			"title": "Paid markets: the evidence a cell needs",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/PAID_MARKETS.md",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-08-24",
+			"displayedDate": "2026-08-24",
+			"contentHash": null,
+			"owner": "REL-L4"
+		},
+		{
+			"id": "tax-market-preconditions",
+			"title": "Tax and market preconditions",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/TAX_MARKET_PRECONDITIONS.md",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-11-17",
+			"displayedDate": "2026-11-17",
+			"contentHash": null,
+			"owner": "LEG-L6"
+		},
+		{
+			"id": "brand-design-provenance",
+			"title": "Brand and design provenance",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/BRAND_DESIGN_PROVENANCE.md",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave: no unit in board-proposal.md section 3 names this file in its scope."
+		},
+		{
+			"id": "design-system-audit",
+			"title": "Design-system provenance and similarity audit",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/DESIGN_SYSTEM_AUDIT.md",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave: no unit in board-proposal.md section 3 names this file in its scope."
+		},
+		{
+			"id": "open-core-boundary-decision",
+			"title": "Decision: ee/ stays in this repository",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/OPEN_CORE_BOUNDARY_DECISION.md",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave: no unit in board-proposal.md section 3 names this file in its scope."
+		},
+		{
+			"id": "ownership-activation-checklist",
+			"title": "Activating company ownership",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/OWNERSHIP_ACTIVATION_CHECKLIST.md",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave: no unit in board-proposal.md section 3 names this file in its scope."
+		},
+		{
+			"id": "module-documents",
+			"title": "Sealed document registry",
+			"kind": "source-module",
+			"route": null,
+			"source": "packages/legal/src/documents.ts",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "LEG-L2"
+		},
+		{
+			"id": "module-processing",
+			"title": "Processing parties and device storage",
+			"kind": "source-module",
+			"route": null,
+			"source": "packages/legal/src/processing.ts",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "module-entity",
+			"title": "Legal entity",
+			"kind": "source-module",
+			"route": null,
+			"source": "packages/legal/src/entity.ts",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "REL-L4"
+		},
+		{
+			"id": "module-commerce",
+			"title": "Paid markets and consumer-rights constants",
+			"kind": "source-module",
+			"route": null,
+			"source": "packages/legal/src/commerce.ts",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "REL-L4"
+		},
+		{
+			"id": "module-consent",
+			"title": "Consent record and the analytics decision",
+			"kind": "source-module",
+			"route": null,
+			"source": "packages/privacy/src/consent.ts",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave: no unit in board-proposal.md section 3 names this file in its scope."
+		},
+		{
+			"id": "module-retention-registry",
+			"title": "Retention register",
+			"kind": "source-module",
+			"route": null,
+			"source": "apps/console/lib/retention/registry.ts",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "No unit's scope names this file. LEG-L4 writes docs/legal/RETENTION_SCHEDULE.md, which has to agree with it."
+		},
+		{
+			"id": "module-ai-disclosure",
+			"title": "In-product AI disclosure and the provider gate",
+			"kind": "source-module",
+			"route": null,
+			"source": "apps/console/lib/ai/transparency.ts",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "No unit's scope names this file. LEG-L4 owns the AI Act position and the public page, which have to agree with it."
+		},
+		{
+			"id": "console-accept-terms",
+			"title": "Terms acceptance page (console)",
+			"kind": "source-module",
+			"route": null,
+			"source": "apps/console/app/(public)/accept-terms/page.tsx",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "WIZ-W6"
+		},
+		{
+			"id": "licence-agpl",
+			"title": "Community licence (AGPL-3.0-only)",
+			"kind": "repository-file",
+			"route": null,
+			"source": "LICENSE",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave: no unit in board-proposal.md section 3 names this file in its scope."
+		},
+		{
+			"id": "licence-map",
+			"title": "Repository licence map",
+			"kind": "repository-file",
+			"route": null,
+			"source": "LICENSING.md",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave: no unit in board-proposal.md section 3 names this file in its scope."
+		},
+		{
+			"id": "licence-notice",
+			"title": "Copyright and third-party notices",
+			"kind": "repository-file",
+			"route": null,
+			"source": "NOTICE",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave: no unit in board-proposal.md section 3 names this file in its scope."
+		},
+		{
+			"id": "licence-commercial",
+			"title": "Commercial licence for ee/",
+			"kind": "repository-file",
+			"route": null,
+			"source": "ee/LICENSE",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave: no unit in board-proposal.md section 3 names this file in its scope."
+		},
+		{
+			"id": "security-policy",
+			"title": "Security policy (vulnerability reporting)",
+			"kind": "repository-file",
+			"route": null,
+			"source": "SECURITY.md",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave: no unit in board-proposal.md section 3 names this file in its scope."
+		},
+		{
+			"id": "code-of-conduct",
+			"title": "Code of conduct",
+			"kind": "repository-file",
+			"route": null,
+			"source": "CODE_OF_CONDUCT.md",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave: no unit in board-proposal.md section 3 names this file in its scope."
+		},
+		{
+			"id": "cla-individual",
+			"title": "Individual contributor licence agreement",
+			"kind": "repository-file",
+			"route": null,
+			"source": "cla/ICLA.md",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave. Sealed separately in cla/DOCUMENTS.json and checked by scripts/legal/check-cla-hashes.mjs."
+		},
+		{
+			"id": "cla-corporate",
+			"title": "Corporate contributor licence agreement",
+			"kind": "repository-file",
+			"route": null,
+			"source": "cla/CCLA.md",
+			"status": "current",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Outside the LEG wave. Sealed separately in cla/DOCUMENTS.json and checked by scripts/legal/check-cla-hashes.mjs."
+		},
+		{
+			"id": "claims-ledger-notes",
+			"title": "Claims ledger: the audit's written record",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/claims-ledger.md",
+			"status": "planned",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "LEG-L1"
+		},
+		{
+			"id": "records-of-processing",
+			"title": "Records of processing activities",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/RECORDS_OF_PROCESSING.md",
+			"status": "planned",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "LEG-L4"
+		},
+		{
+			"id": "dpia",
+			"title": "Data protection impact assessment",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/DPIA.md",
+			"status": "planned",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "LEG-L4"
+		},
+		{
+			"id": "retention-schedule",
+			"title": "Retention schedule",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/RETENTION_SCHEDULE.md",
+			"status": "planned",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "LEG-L4"
+		},
+		{
+			"id": "ai-act-position",
+			"title": "AI Act position",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/AI_ACT_POSITION.md",
+			"status": "planned",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "LEG-L4"
+		},
+		{
+			"id": "terms-acceptance",
+			"title": "Terms acceptance: wording, links and record",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/TERMS_ACCEPTANCE.md",
+			"status": "planned",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "LEG-L5"
+		},
+		{
+			"id": "terms-acceptance-copy",
+			"title": "Inline terms-acceptance wording (console)",
+			"kind": "source-module",
+			"route": null,
+			"source": "apps/console/components/legal/terms-acceptance-copy.ts",
+			"status": "planned",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "LEG-L5"
+		},
+		{
+			"id": "security-txt",
+			"title": "security.txt",
+			"kind": "public-page",
+			"route": "/.well-known/security.txt",
+			"source": "apps/marketing/public/.well-known/security.txt",
+			"status": "planned",
+			"sealed": false,
+			"version": null,
+			"displayedDate": null,
+			"contentHash": null,
+			"owner": "LEG-L2"
+		}
+	],
+	"claims": [
+		{
+			"id": "privacy.retention.job-logs",
+			"document": "privacy",
+			"kind": "retention",
+			"status": "tied",
+			"quote": "Provisioning job logs: 30 days by default.",
+			"evidence": [
+				{
+					"path": "apps/console/lib/retention/registry.ts",
+					"pattern": "jobLogs: 30,",
+					"shows": "The published default window for job logs is 30 days."
+				},
+				{
+					"path": "apps/console/lib/reconcile/gc.ts",
+					"pattern": "RETENTION_DEFAULT_DAYS\\.jobLogs",
+					"shows": "The collector reads its default window from that same constant."
+				},
+				{
+					"path": "apps/console/lib/reconcile/gc.ts",
+					"pattern": "select public\\.gc_job_logs\\(make_interval\\(days => \\$\\{JOB_LOG_RETENTION_DAYS\\}\\)",
+					"shows": "The collector passes that window to the SQL function that deletes."
+				},
+				{
+					"path": "apps/console/lib/db/programmables.sql",
+					"pattern": "FUNCTION public\\.gc_job_logs\\(\\s*p_age INTERVAL DEFAULT INTERVAL '30 days'",
+					"shows": "The SQL function's own default is also 30 days."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-17"
+		},
+		{
+			"id": "privacy.retention.removed-inventory",
+			"document": "privacy",
+			"kind": "retention",
+			"status": "tied",
+			"quote": "Removed cloud inventory and capability observations: 7 days by default.",
+			"evidence": [
+				{
+					"path": "apps/console/lib/cloud-providers/sweep.ts",
+					"pattern": "RETENTION_DAYS = Number\\(process\\.env\\.ALETHIA_INVENTORY_RETENTION_DAYS \\?\\? \"7\"\\)",
+					"shows": "The sweep's default window is 7 days, overridable by one environment variable."
+				},
+				{
+					"path": "apps/console/lib/cloud-providers/sweep.ts",
+					"pattern": "gcRemovedInventory\\(RETENTION_DAYS\\)",
+					"shows": "Removed inventory rows are purged with that window."
+				},
+				{
+					"path": "apps/console/lib/cloud-providers/sweep.ts",
+					"pattern": "gcRemovedServiceCapabilities\\(RETENTION_DAYS\\)",
+					"shows": "Removed capability observations are purged with the same window."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-17"
+		},
+		{
+			"id": "cookies.consent-cookie.lifetime",
+			"document": "cookies",
+			"kind": "device-storage",
+			"status": "tied",
+			"quote": "<code>{CONSENT_COOKIE_NAME}</code>: records the analytics choice, the policy version, and the decision time for 183 days.",
+			"evidence": [
+				{
+					"path": "packages/privacy/src/consent.ts",
+					"pattern": "CONSENT_MAX_AGE_SECONDS = 60 \\* 60 \\* 24 \\* 183;",
+					"shows": "The cookie's lifetime is 183 days."
+				},
+				{
+					"path": "packages/privacy/src/consent.ts",
+					"pattern": "Max-Age=\\$\\{CONSENT_MAX_AGE_SECONDS\\}",
+					"shows": "That lifetime is what the cookie is written with."
+				},
+				{
+					"path": "packages/privacy/src/consent.ts",
+					"pattern": "version: CONSENT_VERSION,\\s*decidedAt: new Date\\(\\)\\.toISOString\\(\\)",
+					"shows": "The record holds the policy version and the decision time beside the choice."
+				},
+				{
+					"path": "packages/privacy/src/consent.ts",
+					"pattern": "export const CONSENT_COOKIE = \"alethia_consent_v2\";",
+					"shows": "The name the browser holds."
+				},
+				{
+					"path": "packages/legal/src/processing.ts",
+					"pattern": "export const CONSENT_COOKIE_NAME = \"alethia_consent_v2\";",
+					"shows": "The name the page prints is the same string."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-17"
+		},
+		{
+			"id": "cookies.analytics-off-until-consent",
+			"document": "cookies",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "There is exactly one optional choice — product analytics — and it is off until you turn it on.",
+			"evidence": [
+				{
+					"path": "packages/privacy/src/consent.ts",
+					"pattern": "analytics: z\\.boolean\\(\\),\\s*\\}\\);",
+					"shows": "The consent record carries one optional choice."
+				},
+				{
+					"path": "packages/privacy/src/consent.ts",
+					"pattern": "return record\\?\\.analytics === true;",
+					"shows": "With no stored record the answer is no."
+				},
+				{
+					"path": "apps/console/components/providers/analytics-provider.tsx",
+					"pattern": "if \\(!analyticsAllowed\\) \\{\\s*purgePostHogStorage\\(\\);\\s*return;",
+					"shows": "Without that answer the console does not load the analytics SDK."
+				},
+				{
+					"path": "apps/console/components/providers/analytics-provider.tsx",
+					"pattern": "opt_out_capturing_by_default: true",
+					"shows": "The SDK itself starts opted out."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-17"
+		},
+		{
+			"id": "cookies.global-privacy-control",
+			"document": "cookies",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "if your browser sends the GPC signal, optional analytics stays off and the stored choice cannot override it",
+			"evidence": [
+				{
+					"path": "packages/privacy/src/consent.ts",
+					"pattern": "if \\(globalPrivacyControlEnabled\\(\\)\\) return false;\\s*return record\\?\\.analytics === true;",
+					"shows": "The signal is read before the stored choice and wins over it."
+				},
+				{
+					"path": "apps/console/components/providers/analytics-provider.tsx",
+					"pattern": "const \\{ analyticsAllowed \\} = useConsent\\(\\);",
+					"shows": "The console asks for that combined answer, not for the stored field."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-17"
+		},
+		{
+			"id": "cookies.no-session-replay",
+			"document": "cookies",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "the analytics SDK is configured so that recording cannot start.",
+			"evidence": [
+				{
+					"path": "apps/console/components/providers/analytics-provider.tsx",
+					"pattern": "disable_session_recording: true",
+					"shows": "The SDK is initialised with recording disabled."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-17"
+		},
+		{
+			"id": "privacy.subprocessor.stripe",
+			"document": "privacy",
+			"kind": "subprocessor",
+			"status": "tied",
+			"quote": "Paid plans are billed through <strong>Stripe</strong>, which acts as our payment processor.",
+			"evidence": [
+				{
+					"path": "packages/legal/src/processing.ts",
+					"pattern": "id: \"stripe\",(?:(?!\\n\\t\\},)[\\s\\S])*?status: \"active\"",
+					"shows": "Stripe is in the processing register as an active party, so the subprocessors page lists it."
+				},
+				{
+					"path": "apps/console/package.json",
+					"pattern": "\"stripe\": \"",
+					"shows": "The console depends on the Stripe SDK."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-17"
+		},
+		{
+			"id": "terms.not-vat-registered",
+			"document": "terms",
+			"kind": "entity",
+			"status": "tied",
+			"quote": "The company is not registered for VAT.",
+			"evidence": [
+				{
+					"path": "packages/legal/src/entity.ts",
+					"pattern": "vatRegistered: false,",
+					"shows": "The entity record says the company is not registered for VAT."
+				}
+			],
+			"owner": "LEG-L2",
+			"verifiedOn": "2026-11-17"
+		},
+		{
+			"id": "privacy.email-provider",
+			"document": "privacy",
+			"kind": "subprocessor",
+			"status": "outside-repo",
+			"quote": "Transactional email is currently delivered through Resend.",
+			"evidence": [
+				{
+					"path": "packages/email/src/config.ts",
+					"pattern": "EMAIL_PROVIDER",
+					"shows": "The transport is chosen at run time; the code can send through Resend, SES or SMTP."
+				},
+				{
+					"path": "packages/legal/src/processing.ts",
+					"pattern": "id: \"aws-ses\",(?:(?!\\n\\t\\},)[\\s\\S])*?status: \"inactive\"",
+					"shows": "The processing register records SES as inactive."
+				}
+			],
+			"requires": "The value of EMAIL_PROVIDER in the production vault. The repository holds only the example file, which defaults to resend; infra/email-ses-account/README.md records that a second AWS account now has SES production access, so the statement stops being true the day the vault value changes.",
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-17"
+		}
+	],
+	"findings": [
+		{
+			"id": "terms.displayed-date-behind-sealed-version",
+			"document": "terms",
+			"quote": "<LegalShell title=\"Terms of Service\" lastUpdated=\"August 12, 2026\">",
+			"says": "The page tells the reader the Terms were last updated on August 12, 2026.",
+			"actually": "The sealed version is 2026-08-24: sections 5 and 13 were changed on that date and the version was bumped for it. The date on the page was not moved, so a reader who accepts version 2026-08-24 is shown a date twelve days older.",
+			"evidence": [
+				{
+					"path": "packages/legal/src/documents.ts",
+					"pattern": "id: \"terms\",(?:(?!\\n\\t\\},)[\\s\\S])*?version: \"2026-08-24\"",
+					"shows": "The registry's version for the Terms."
+				}
+			],
+			"owner": "LEG-L2",
+			"foundOn": "2026-11-17"
+		},
+		{
+			"id": "privacy-requests.replay-consent",
+			"document": "privacy-requests",
+			"quote": "can change analytics and replay consent immediately",
+			"says": "The page says a visitor can change a replay consent.",
+			"actually": "There is no replay consent. The consent record holds one choice, analytics; the Cookie Notice says there is no replay choice to make.",
+			"evidence": [
+				{
+					"path": "packages/privacy/src/consent.ts",
+					"pattern": "consentPreferencesSchema = z\\.object\\(\\{\\s*analytics: z\\.boolean\\(\\),\\s*\\}\\);",
+					"shows": "The consent record has exactly one field."
+				},
+				{
+					"path": "apps/marketing/app/cookies/page.tsx",
+					"pattern": "no replay choice to make",
+					"shows": "The Cookie Notice says the opposite of this page."
+				}
+			],
+			"owner": "LEG-L1",
+			"foundOn": "2026-11-17"
+		},
+		{
+			"id": "data-act.console-export",
+			"document": "data-act",
+			"quote": "You can export all of it in a machine-readable archive from the console, at any time and without asking us.",
+			"says": "The page says the console offers a self-service export of everything Alethia holds, with a manifest.",
+			"actually": "The console has no export. The manifest format exists (apps/console/lib/privacy/manifest.ts) and the privacy case table has columns for an export, but on 2026-11-17 nothing under apps/console imported the manifest module except its own test, and no server action or route builds an archive. Board unit LEG-L3 builds the export; until it lands the sentence is not true. The page's 30-day transition and retrieval windows were also searched for in apps/console/lib/privacy and apps/console/app/server/actions/privacy and nothing there enforces them; the rest of the tree was not searched for those.",
+			"evidence": [
+				{
+					"path": "apps/console/app/server/actions/privacy/self-serve.ts",
+					"absent": "privacy/manifest",
+					"shows": "The self-service privacy actions open an erasure case and do not build an export."
+				},
+				{
+					"path": "apps/console/app/server/actions/privacy/cases.ts",
+					"absent": "privacy/manifest",
+					"shows": "The case actions do not build an export either."
+				}
+			],
+			"owner": "LEG-L1",
+			"foundOn": "2026-11-17"
+		},
+		{
+			"id": "consumer-rights.vat-given-as-the-reason",
+			"document": "consumer-rights",
+			"quote": "{CURRENT_LEGAL_OPERATOR} is not yet registered for VAT, so we do not currently take payment from individuals in any country.",
+			"says": "The page gives the missing VAT registration as the reason no individual can pay.",
+			"actually": "No individual can pay because PAID_MARKETS is empty, which is what the page's own condition reads. The tax research found that a VAT registration is not a precondition for selling to buyers in Bulgaria, nor to individuals elsewhere in the EU while those sales stay at or under EUR 10,000 a year. The stated reason is therefore not the real one, and it will read as false the day a consumer cell opens with the company still unregistered.",
+			"evidence": [
+				{
+					"path": "packages/legal/src/commerce.ts",
+					"pattern": "PAID_MARKETS: readonly PaidMarketCell\\[\\] = \\[\\];",
+					"shows": "No market is open, for either kind of buyer."
+				},
+				{
+					"path": "docs/legal/TAX_MARKET_PRECONDITIONS.md",
+					"pattern": "\\| Bulgaria \\| Business or individual \\| \\*\\*May open with no registration \\[C\\]\\*\\*",
+					"shows": "The tax research's verdict for Bulgaria."
+				}
+			],
+			"owner": "LEG-L1",
+			"foundOn": "2026-11-17"
+		},
+		{
+			"id": "privacy.inventory-window-not-in-retention-register",
+			"document": "privacy",
+			"quote": "Removed cloud inventory and capability observations: 7 days by default.",
+			"says": "The page publishes a 7-day window for removed inventory and capability observations.",
+			"actually": "The window is real (see the claim privacy.retention.removed-inventory), but the retention register has no entry for it, although that file states that nothing may be retained without appearing there. Its test covers only the gc_* SQL functions, and this purge is TypeScript, so nothing reports the gap. Not a false statement on the page; a hole in the register LEG-L4's retention schedule is to agree with.",
+			"evidence": [
+				{
+					"path": "apps/console/lib/retention/registry.ts",
+					"absent": "inventory",
+					"shows": "The retention register does not mention inventory."
+				},
+				{
+					"path": "apps/console/lib/retention/registry.ts",
+					"pattern": "nothing may be retained by this product\\s*//\\s*without appearing here",
+					"shows": "The register's own statement of completeness."
+				}
+			],
+			"owner": "LEG-L4",
+			"foundOn": "2026-11-17"
+		},
+		{
+			"id": "tax.art-97a-statement-incomplete",
+			"document": "tax-market-preconditions",
+			"quote": "Art. 97a(1) imposes the same registration on a company that **receives**",
+			"says": "Flagged by the tax research (1 of 3). The decisions of 2026-11-17 record that a Bulgarian company needs the Art. 97a registration before its first sale to a business in another member state.",
+			"actually": "Correct but incomplete. The same registration is triggered by receiving a taxable service from a supplier outside Bulgaria, whether or not anything has been sold, so it may already be due; the repository cannot see the purchase invoices that decide it. The dividing line is also not organization against consumer, as PayerCapacity draws it, but whether the customer has given a VAT number.",
+			"evidence": [],
+			"owner": "REL-L4",
+			"foundOn": "2026-11-17"
+		},
+		{
+			"id": "tax.no-registration-against-eu-business-cells",
+			"document": "tax-market-preconditions",
+			"quote": "\"No VAT registration now\" and \"EU businesses\" do not fit together",
+			"says": "Flagged by the tax research (2 of 3). The decisions of 2026-11-17 open the EU to businesses and individuals with no VAT registration now, registering on traction.",
+			"actually": "The two cannot both hold for a business in another member state that gives a VAT number: the Art. 97a application is due seven days before that customer is first charged, so registering once there is a customer is too late. Either the registration is filed before launch or those cells stay closed.",
+			"evidence": [],
+			"owner": "REL-L4",
+			"foundOn": "2026-11-17"
+		},
+		{
+			"id": "paid-markets.withdrawal-function-not-listed",
+			"document": "paid-markets",
+			"quote": null,
+			"says": "Flagged by the tax research (3 of 3). The paid-markets record lists what a consumer cell needs: pre-contractual information, the payment-obligation button, the 14-day withdrawal right, durable confirmation and dispute-body information.",
+			"actually": "It does not list the online withdrawal function that the Consumer Rights Directive has required since 19 June 2026 (Art. 11a; Bulgarian Consumer Protection Act Art. 52a, in force 24 September 2026): a control labelled \"withdraw from contract here\", a confirmation step, and an acknowledgement on a durable medium. Whether the console's withdrawal flow meets those labels was not checked here.",
+			"evidence": [
+				{
+					"path": "docs/legal/PAID_MARKETS.md",
+					"absent": "withdrawal function|Art\\. 11a|52a",
+					"shows": "The paid-markets record does not mention the function or either article."
+				},
+				{
+					"path": "docs/legal/TAX_MARKET_PRECONDITIONS.md",
+					"pattern": "`docs/legal/PAID_MARKETS\\.md`\\s+does not list it\\.",
+					"shows": "The tax research says so."
+				}
+			],
+			"owner": "REL-L4",
+			"foundOn": "2026-11-17"
+		},
+		{
+			"id": "paid-markets.oss-stated-as-needed-for-any-eu-consumer-sale",
+			"document": "paid-markets",
+			"quote": "Without an OSS registration there is no return through which to report VAT collected in another member state",
+			"says": "The tax condition says a sale to an individual elsewhere in the EU is taxed where the customer is and needs an OSS registration to report it.",
+			"actually": "The tax research found that this holds only above EUR 10,000 a year of such sales across the EU. At or under that total the place of supply stays in Bulgaria, an unregistered company charges no VAT on the sale, and no OSS registration is needed. Follows from the tax research; not one of the three points it raises itself.",
+			"evidence": [
+				{
+					"path": "docs/legal/TAX_MARKET_PRECONDITIONS.md",
+					"pattern": "No OSS registration is needed, and none is possible on these facts",
+					"shows": "The tax research's conclusion below the threshold."
+				}
+			],
+			"owner": "REL-L4",
+			"foundOn": "2026-11-17"
+		}
+	]
+}
