@@ -255,7 +255,9 @@ export function ProviderSheet({
 							key={t}
 							type="button"
 							disabled={!canManage || isEdit}
-							onClick={() => form.setValue("type", t, { shouldValidate: true })}
+							onClick={() =>
+								form.setValue("type", t, { shouldValidate: true, shouldDirty: true })
+							}
 							className={cn(
 								"flex-1 rounded-lg border px-3 py-2.5 text-left transition-colors",
 								v.type === t
