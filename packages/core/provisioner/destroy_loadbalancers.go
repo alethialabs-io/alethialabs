@@ -47,6 +47,22 @@ import (
 // the cloud resource is gone. So "the object has disappeared from the API" is not a proxy for "the
 // load balancer was released": it is the same fact. Nothing here polls a cloud API, and nothing
 // needs cloud credentials.
+//
+// ── And why the ORDER is the whole design (#6970) ──────────────────────────────────────────────
+//
+// The finalizer is only removed by a controller that is still RUNNING. On AWS the Ingress
+// controller is itself an ArgoCD Application (infra/templates/argocd/aws-load-balancer-controller.yaml),
+// carrying `resources-finalizer.argocd.argoproj.io`, so deleting that Application removes the
+// controller's Deployment. This file used to delete every Application FIRST — the cheapest way to
+// stop self-heal — and then delete the Ingress, whose finalizer nothing was left to clear: seven
+// nightly aws legs in a row waited the full four minutes on `ingress/argocd/argo-cd-argocd-server`
+// and then failed `tofu destroy` on the subnets, the internet gateway and the certificate.
+//
+// So the two things the old first step did at once are now separate. Reconciliation is stopped by
+// scaling the ArgoCD APPLICATION CONTROLLER to zero, which deletes nothing; the cloud-backed
+// objects are deleted and OBSERVED GONE while every controller that can release them is still
+// there; and only then are the Applications marked for deletion and the application controller
+// brought back to cascade them. See releaseCloudLoadBalancers.
 
 // lbReleaseTimeout bounds the whole wait. A controller that never releases must not hold a teardown
 // open — the timeout expires and `tofu destroy` runs anyway.
@@ -174,39 +190,201 @@ func listCloudBackedObjects(ctx context.Context) ([]cloudBackedObject, error) {
 	return objs, nil
 }
 
-// stopArgoCDReconciling deletes every ArgoCD Application before anything else is touched.
+// argoCDNamespace is where installArgoCD puts the argo-cd release (`--namespace argocd`).
+const argoCDNamespace = "argocd"
+
+// argoCDControllerSelector matches the application controller's workload and its pods. It is the
+// argo-cd chart's own `app.kubernetes.io/name` label, which does not depend on the release name —
+// the workload's NAME does (`argo-cd-argocd-application-controller` here), so the name is read from
+// the cluster rather than assumed.
+const argoCDControllerSelector = "app.kubernetes.io/name=argocd-application-controller"
+
+// argoCDPauseTimeout bounds the wait for the application controller's pods to terminate after the
+// scale to zero. A var for the same reason lbReleaseTimeout is one.
+var argoCDPauseTimeout = 90 * time.Second
+
+// argoCDWorkload is one application-controller workload and the replica count it had before the
+// pause, which is what the resume puts back.
+type argoCDWorkload struct {
+	Kind     string
+	Name     string
+	Replicas int
+}
+
+// argoCDPause is what the pause established.
+type argoCDPause struct {
+	// Paused is true when nothing is reconciling: the application controller was scaled to zero
+	// and its pods were observed gone, or the cluster has no application controller at all.
+	Paused bool
+	// Workloads are the ones found, with their original replica counts.
+	Workloads []argoCDWorkload
+}
+
+// parseArgoCDControllers reads the application controller's workloads out of a `kubectl get
+// statefulsets.apps,deployments.apps -o json` document. Both kinds, because the chart renders a
+// StatefulSet by default and a Deployment under dynamic cluster distribution.
+func parseArgoCDControllers(listJSON []byte) ([]argoCDWorkload, error) {
+	var list struct {
+		Items []struct {
+			Kind     string `json:"kind"`
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Spec struct {
+				Replicas *int `json:"replicas"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(listJSON, &list); err != nil {
+		return nil, err
+	}
+	out := make([]argoCDWorkload, 0, len(list.Items))
+	for _, it := range list.Items {
+		// An absent `spec.replicas` is the API default of one, not zero.
+		replicas := 1
+		if it.Spec.Replicas != nil {
+			replicas = *it.Spec.Replicas
+		}
+		out = append(out, argoCDWorkload{Kind: strings.ToLower(it.Kind), Name: it.Metadata.Name, Replicas: replicas})
+	}
+	return out, nil
+}
+
+// countItems returns how many objects a `kubectl get … -o json` list document holds.
+func countItems(listJSON []byte) (int, error) {
+	var list struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(listJSON, &list); err != nil {
+		return 0, err
+	}
+	return len(list.Items), nil
+}
+
+// pauseArgoCDReconciling stops ArgoCD from re-creating what the release is about to delete, WITHOUT
+// removing anything ArgoCD installed.
 //
-// ⚠️ WITHOUT THIS THE REST OF THE FILE IS WORSE THAN USELESS. The add-ons that own these load
-// balancers run under Applications rendered `automated: {prune: true, selfHeal: true}`
-// (argocd/addons.go), beneath an app-of-apps that is also self-healing. So `kubectl delete svc` is
-// out-of-band DRIFT: the application controller re-creates the Service within seconds, the cloud
-// controller manager creates a NEW load balancer, and the wait below burns its whole budget while
-// the environment ends up with MORE orphans than it started with — the original released, a
-// replacement created.
+// The add-ons that own load balancers run under Applications rendered `automated: {prune: true,
+// selfHeal: true}` (argocd/addons.go), beneath an app-of-apps that is also self-healing. So a bare
+// `kubectl delete svc` is out-of-band drift: the application controller re-creates the Service
+// within seconds, the cloud controller manager creates a NEW load balancer, and the environment
+// ends up with more orphans than it started with. Something has to stop reconciliation first.
 //
-// This repo already states the invariant on the placed path: runNamespaceDestroy deletes "the
-// Application first — otherwise ArgoCD re-syncs the tenant's resources into the namespace", with
-// tests pinning it. The dedicated path needs the same and did not have it.
+// Scaling the application controller to zero is the form of "stop" that has no second effect. It is
+// the only component that syncs, self-heals or runs an Application's deletion cascade, so with it
+// gone the Applications — and every controller Deployment they installed — sit exactly as they are.
 //
-// `--wait=false`: an Application carries `resources-finalizer.argocd.argoproj.io` and survives its
-// own deletion until ArgoCD has removed everything it manages — which is exactly the cascade we
-// want, but waiting for it here would serialise the whole add-on set behind one slow chart. Marking
-// them for deletion is enough to stop reconciliation; the wait that matters is the one on the
-// objects that hold cloud resources.
-func stopArgoCDReconciling(ctx context.Context, out io.Writer) {
+// The pods are WAITED for, not assumed: a controller that is still terminating can still sync.
+//
+// Any failure returns Paused=false after putting back whatever was already scaled, and the caller
+// falls back to the previous ordering. It never returns an error because nothing here may stop a
+// teardown.
+func pauseArgoCDReconciling(ctx context.Context, out io.Writer) argoCDPause {
+	listOut, err := runKubectlBounded(ctx, lbKubectlTimeout, "get", "statefulsets.apps,deployments.apps",
+		"-n", argoCDNamespace, "-l", argoCDControllerSelector, "-o", "json")
+	if err != nil {
+		fmt.Fprintf(out, "   Warning: could not read the ArgoCD application controller (%v).\n", err)
+		return argoCDPause{}
+	}
+	workloads, err := parseArgoCDControllers([]byte(listOut))
+	if err != nil {
+		fmt.Fprintf(out, "   Warning: could not parse the ArgoCD application controller list (%v).\n", err)
+		return argoCDPause{}
+	}
+	if len(workloads) == 0 {
+		fmt.Fprintln(out, "   No ArgoCD application controller on this cluster — nothing re-creates what is deleted next.")
+		return argoCDPause{Paused: true}
+	}
+	pause := argoCDPause{Workloads: workloads}
+	for i, w := range workloads {
+		if w.Replicas == 0 {
+			continue
+		}
+		if _, err := runKubectlBounded(ctx, lbKubectlTimeout,
+			"scale", w.Kind+"/"+w.Name, "-n", argoCDNamespace, "--replicas=0"); err != nil {
+			fmt.Fprintf(out, "   Warning: could not scale %s/%s to zero (%v).\n", w.Kind, w.Name, err)
+			resumeArgoCDReconciling(ctx, out, argoCDPause{Workloads: workloads[:i]})
+			return argoCDPause{}
+		}
+	}
+	deadline := time.Now().Add(argoCDPauseTimeout)
+	for {
+		podsOut, perr := runKubectlBounded(ctx, lbKubectlTimeout, "get", "pods",
+			"-n", argoCDNamespace, "-l", argoCDControllerSelector, "-o", "json")
+		left := -1
+		if perr == nil {
+			left, perr = countItems([]byte(podsOut))
+		}
+		if perr == nil && left == 0 {
+			fmt.Fprintln(out, "   ArgoCD application controller paused — nothing self-heals what is deleted next, "+
+				"and the controllers that release load balancers keep running.")
+			pause.Paused = true
+			return pause
+		}
+		if ctx.Err() != nil || time.Now().After(deadline) {
+			fmt.Fprintf(out, "   Warning: the ArgoCD application controller did not stop within %s.\n", argoCDPauseTimeout)
+			resumeArgoCDReconciling(ctx, out, pause)
+			return argoCDPause{}
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(lbReleasePoll):
+		}
+	}
+}
+
+// resumeArgoCDReconciling scales the application controller back to what it was.
+//
+// It runs on a context that survives the caller's cancellation: a teardown that was cancelled
+// mid-release leaves a cluster that is still serving, and that cluster must not be left with its
+// GitOps controller at zero replicas. A workload that was ALREADY at zero comes back at one — the
+// previous count is unknown (an earlier pass left it paused) and one is what processes deletions.
+func resumeArgoCDReconciling(ctx context.Context, out io.Writer, pause argoCDPause) {
+	rctx := context.WithoutCancel(ctx)
+	for _, w := range pause.Workloads {
+		replicas := w.Replicas
+		if replicas < 1 {
+			replicas = 1
+		}
+		if _, err := runKubectlBounded(rctx, lbKubectlTimeout,
+			"scale", w.Kind+"/"+w.Name, "-n", argoCDNamespace, fmt.Sprintf("--replicas=%d", replicas)); err != nil {
+			fmt.Fprintf(out, "   Warning: could not scale %s/%s back to %d (%v) — ArgoCD is not reconciling on this cluster.\n",
+				w.Kind, w.Name, replicas, err)
+		}
+	}
+}
+
+// stopArgoCDReconciling marks every ArgoCD Application for deletion, and reports whether that
+// worked (a cluster with no Application CRD counts: there is nothing to mark).
+//
+// ⚠️ THIS REMOVES CONTROLLERS, so it runs AFTER the cloud-backed objects are gone. An Application
+// carries `resources-finalizer.argocd.argoproj.io`, and its deletion cascades to everything it
+// manages — which on AWS includes the load balancer controller, the only thing that can clear an
+// ALB Ingress's finalizer. Run first, it guaranteed the wait below could never finish (#6970).
+// It is still the first step on ONE path: when the application controller could not be paused,
+// this is the only remaining way to stop self-heal, and re-creating load balancers is the worse of
+// the two failures.
+//
+// The cascade itself is wanted — it is what removes the rest of what ArgoCD created — which is why
+// the Applications are deleted at all rather than left for the cluster's own deletion.
+//
+// `--wait=false`: waiting for the cascade here would serialise the whole add-on set behind one slow
+// chart. Marking them is enough; the wait that matters is the one on the objects that hold cloud
+// resources, and by now it is over.
+func stopArgoCDReconciling(ctx context.Context, out io.Writer) bool {
 	if _, err := runKubectlBounded(ctx, lbKubectlTimeout,
 		"delete", "applications.argoproj.io", "--all-namespaces", "--all", "--ignore-not-found", "--wait=false"); err != nil {
 		if noIngressAPI(err) {
 			fmt.Fprintln(out, "   No ArgoCD Applications on this cluster (no CRD) — nothing to stop reconciling.")
-			return
+			return true
 		}
-		// NAMED and not fatal, because it is the most likely reason the wait below fails: anything
-		// still reconciling will put back whatever is deleted next.
+		// NAMED and not fatal: anything still reconciling will put back whatever was deleted.
 		fmt.Fprintf(out, "   Warning: could not delete ArgoCD Applications (%v) — anything still "+
 			"reconciling will re-create the objects deleted below.\n", err)
-		return
+		return false
 	}
-	fmt.Fprintln(out, "   ArgoCD Applications marked for deletion (they self-heal what follows otherwise).")
+	fmt.Fprintln(out, "   ArgoCD Applications marked for deletion.")
+	return true
 }
 
 // deleteAll issues a delete for every object, reporting the ones it could not.
@@ -346,6 +524,37 @@ func (r releaseOutcome) warning(tone warningTone) string {
 	return b.String()
 }
 
+// LoadBalancersStillHeldError reports that the bounded wait ended with objects that own cloud load
+// balancers still present in the cluster. It is a type rather than a sentence so a caller can ask
+// WHAT is held with errors.As instead of matching the wording, and it stays in the chain of the
+// error RunDestroy returns when the destroy then fails.
+type LoadBalancersStillHeldError struct {
+	// Held names each object as kind/namespace/name, as last observed.
+	Held []string
+	// Waited is the bound that expired.
+	Waited time.Duration
+}
+
+// Error names what is held and what follows from it.
+func (e *LoadBalancersStillHeldError) Error() string {
+	return fmt.Sprintf("%d object(s) still held after %s: %s — their controllers have not "+
+		"released the cloud load balancers, and the destroy that follows will fail on "+
+		"whatever those are attached to",
+		len(e.Held), e.Waited, strings.Join(e.Held, ", "))
+}
+
+// stillHeld returns the typed form of Remaining, or nil when nothing was observed held.
+func (r releaseOutcome) stillHeld() *LoadBalancersStillHeldError {
+	if len(r.Remaining) == 0 {
+		return nil
+	}
+	held := make([]string, 0, len(r.Remaining))
+	for _, o := range r.Remaining {
+		held = append(held, o.String())
+	}
+	return &LoadBalancersStillHeldError{Held: held, Waited: lbReleaseTimeout}
+}
+
 // releaseCloudLoadBalancers deletes the in-cluster objects that own cloud load balancers and waits
 // for their controllers to release the cloud resources.
 //
@@ -354,9 +563,47 @@ func (r releaseOutcome) warning(tone warningTone) string {
 // first is worse than the bug this fixes — and the common case for a repeated destroy is a cluster
 // that is already gone, where there is nothing to tidy and nothing to reach.
 func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) (releaseOutcome, error) {
-	// FIRST, always — before anything is listed, let alone deleted.
-	stopArgoCDReconciling(ctx, out)
+	// THE ORDER (#6970): pause reconciliation, release and OBSERVE GONE, and only then remove what
+	// carries the controllers. Each later step is conditional on what the earlier one established.
+	pause := pauseArgoCDReconciling(ctx, out)
+	if !pause.Paused {
+		// The one path that still deletes the Applications first. Self-heal could not be stopped
+		// any other way, and a release that re-creates load balancers behind itself is worse than
+		// one that may leave an Ingress its controller can no longer finalize — said out loud,
+		// because that is exactly what the wait below will then report.
+		fmt.Fprintln(out, "   Falling back to deleting the ArgoCD Applications first. That also removes any "+
+			"load-balancer controller ArgoCD installed, so an Ingress it owns may not be released.")
+		stopArgoCDReconciling(ctx, out)
+		return deleteAndAwaitCloudBackedObjects(ctx, out)
+	}
+	rel, err := deleteAndAwaitCloudBackedObjects(ctx, out)
+	switch {
+	case rel.Clean:
+		// Marked BEFORE the controller comes back, so it returns to Applications that are already
+		// deleting and cascades them; it never gets a pass in which to re-create anything.
+		if stopArgoCDReconciling(ctx, out) {
+			resumeArgoCDReconciling(ctx, out, pause)
+		} else {
+			fmt.Fprintln(out, "   Leaving the ArgoCD application controller paused: resuming it over "+
+				"Applications that could not be deleted would re-create what was just released.")
+		}
+	case ctx.Err() != nil:
+		// A cancelled teardown leaves a cluster that still serves. Put its GitOps controller back
+		// and leave its Applications alone.
+		resumeArgoCDReconciling(ctx, out, pause)
+	default:
+		// Something is still held, or the cluster could not be read. The controllers that can
+		// release it are intact ONLY while the Applications are, so nothing is marked and nothing
+		// is resumed: a retry then gets a fresh window against a cluster that can still finish.
+		fmt.Fprintln(out, "   Leaving the ArgoCD Applications in place and the application controller paused, "+
+			"so the controllers that release load balancers stay installed for a retry.")
+	}
+	return rel, err
+}
 
+// deleteAndAwaitCloudBackedObjects lists the objects that own cloud load balancers, deletes them and
+// waits, bounded by lbReleaseTimeout, until the cluster no longer lists any.
+func deleteAndAwaitCloudBackedObjects(ctx context.Context, out io.Writer) (releaseOutcome, error) {
 	objs, err := listCloudBackedObjects(ctx)
 	if err != nil {
 		return releaseOutcome{Unknown: true}, err
@@ -413,14 +660,10 @@ func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) (releaseOutco
 					"follows will fail on whatever they are attached to",
 					consecutiveErrs, lbReleaseTimeout, lastErr)
 			}
-			left := make([]string, 0, len(remaining))
-			for _, o := range remaining {
-				left = append(left, o.String())
-			}
-			return releaseOutcome{Remaining: remaining}, fmt.Errorf("%d object(s) still held after %s: %s — their controllers have not "+
-				"released the cloud load balancers, and the destroy that follows will fail on "+
-				"whatever those are attached to",
-				len(remaining), lbReleaseTimeout, strings.Join(left, ", "))
+			// `remaining` is non-empty here: an empty list returned above, and an unreadable one
+			// took the branch before this.
+			rel := releaseOutcome{Remaining: remaining}
+			return rel, error(rel.stillHeld())
 		}
 		select {
 		case <-ctx.Done():
