@@ -21,7 +21,7 @@ import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { addChannel } from "@/app/server/actions/alerts";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { DiscardPrompt, useUnsavedGuard } from "@/components/confirm/use-unsaved-guard";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { alertsKeys } from "@/lib/query/use-alerts-query";
 import {
@@ -209,7 +209,6 @@ export function ChannelSheet({
 	encryptionConfigured,
 }: ChannelSheetProps) {
 	const [submitError, setSubmitError] = useState<string | null>(null);
-	const [confirmDiscard, setConfirmDiscard] = useState(false);
 	const wasOpen = useRef(false);
 	const blockedReasonId = useId();
 
@@ -255,16 +254,16 @@ export function ChannelSheet({
 		},
 	});
 	const saving = mutation.isPending;
-	// Read during render: react-hook-form tracks `isDirty` only for a formState field read here.
-	const dirty = form.formState.isDirty;
+	// The guard reads `isDirty` during render: react-hook-form tracks it only for a formState field
+	// read there.
+	const unsaved = useUnsavedGuard(form);
 
 	// Closing with something typed asks first; closing a pristine sheet just closes it. Nothing
 	// closes it while the verification is in flight — its answer is about to land here.
 	const requestOpenChange = (next: boolean) => {
 		if (next) return onOpenChange(true);
 		if (saving) return;
-		if (dirty) setConfirmDiscard(true);
-		else onOpenChange(false);
+		unsaved.guard(() => onOpenChange(false));
 	};
 
 	const create = form.handleSubmit((values) => {
@@ -501,16 +500,11 @@ export function ChannelSheet({
 				</SheetFooter>
 			</SheetContent>
 		</Sheet>
-		<ConfirmDialog
-			open={confirmDiscard}
-			onOpenChange={setConfirmDiscard}
+		<DiscardPrompt
+			{...unsaved.prompt}
 			title="Discard this channel?"
 			description="What you entered has not been saved."
 			confirmLabel="Discard"
-			onConfirm={() => {
-				setConfirmDiscard(false);
-				onOpenChange(false);
-			}}
 		/>
 		</>
 	);

@@ -57,7 +57,7 @@ vi.mock("@/lib/query/use-classification-query", () => ({
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => false }));
 vi.mock("@/components/settings/members/invite-member-dialog", () => ({ InviteMemberDialog: () => null }));
 vi.mock("@/components/settings/upgrade/upgrade-dialog", () => ({ UpgradeDialog: () => null }));
-vi.mock("@/components/alerts/confirm-dialog", () => ({ ConfirmDialog: () => null }));
+vi.mock("@/components/confirm/confirm-action", () => ({ ConfirmAction: () => null }));
 vi.mock("@/components/classification/classification-control", () => ({ ClassificationControl: () => null }));
 
 import { MembersTable } from "@/components/settings/members/members-table";

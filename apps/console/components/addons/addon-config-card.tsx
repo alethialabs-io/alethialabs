@@ -22,7 +22,7 @@ import { Badge } from "@repo/ui/badge";
 import { addonCompat } from "@/lib/compat";
 import { useClusterK8sVersion } from "@/components/design-project/canvas/use-cluster-k8s-version";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { SheetCard } from "@/components/design-project/canvas/cards/sheet-card";
 import { EmptyState } from "@repo/ui/empty";
 import { Button } from "@repo/ui/button";
@@ -330,9 +330,12 @@ export function AddonConfigForm({
     void onSubmit();
   };
 
-  /** Remove the add-on from this environment (reconciled away on the next Deploy). */
-  const onRemove = async () => {
-    if (disable.isPending) return;
+  /**
+   * Remove the add-on from this environment (reconciled away on the next Deploy). Answers whether
+   * it was removed, which is what closes the confirmation or keeps it open.
+   */
+  const onRemove = async (): Promise<boolean> => {
+    if (disable.isPending) return false;
     setRefusal(null);
     try {
       await disable.mutateAsync({
@@ -341,8 +344,10 @@ export function AddonConfigForm({
         addonId: item.id,
       });
       onDone();
+      return true;
     } catch {
       // Already said by the mutation (see onSubmit).
+      return false;
     }
   };
 
@@ -701,7 +706,7 @@ export function AddonConfigForm({
             </Collapsible>
         </form>
 
-        <ConfirmDialog
+        <ConfirmAction
           open={confirmRemove}
           onOpenChange={setConfirmRemove}
           title="Remove this add-on?"
@@ -713,9 +718,9 @@ export function AddonConfigForm({
               : `${item.name} is uninstalled from this environment on your next Deploy, along with anything its chart owns in the cluster. Its configuration is not kept — re-enabling it starts from the defaults.`
           }
           confirmLabel="Remove add-on"
-          onConfirm={() => {
-            void onRemove();
-          }}
+          pendingLabel="Removing…"
+          severity={{ level: "confirm" }}
+          run={onRemove}
         />
       </div>
     </SheetCard>

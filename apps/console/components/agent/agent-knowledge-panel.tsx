@@ -20,7 +20,7 @@ import {
 	getProjectKnowledgePreview,
 	upsertAgentContext,
 } from "@/app/server/actions/agent-context";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { KNOWLEDGE_LIMIT } from "@/lib/ai/knowledge-limits";
 import type { KnowledgeDoc } from "@/types/jsonb.types";
 import { Button } from "@repo/ui/button";
@@ -496,7 +496,7 @@ export function AgentKnowledgePanel({
 				</div>
 			</ScrollArea>
 
-			<ConfirmDialog
+			<ConfirmAction
 				open={pendingDelete !== null}
 				onOpenChange={(o) => {
 					if (!o) setPendingDelete(null);
@@ -504,9 +504,9 @@ export function AgentKnowledgePanel({
 				title={`Delete ${pendingDelete?.title ?? "this document"}?`}
 				description="Elench stops reading it on the next turn, and its text is not kept anywhere else. This cannot be undone."
 				confirmLabel="Delete document"
-				onConfirm={() => {
+				severity={{ level: "confirm" }}
+				run={() => {
 					if (pendingDelete) removeDoc(pendingDelete.id);
-					setPendingDelete(null);
 				}}
 			/>
 		</div>
