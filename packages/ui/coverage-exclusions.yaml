@@ -328,12 +328,6 @@ baseline:
     state: no-test
     reason: The scroll area and its bar are named by no suite in this package.
 
-  - path: src/section-heading.tsx
-    symbols: [SectionHeading]
-    issue: "#2649"
-    state: no-test
-    reason: SectionHeading — the shared-surface row that replaced every hand-rolled h2 through h6 in the console — is named by no suite in this package.
-
   - path: src/segmented-control.tsx
     symbols: [SegmentedControl]
     issue: "#2649"
@@ -351,12 +345,6 @@ baseline:
     issue: "#2649"
     state: no-test
     reason: The toast host is named by no suite in this package.
-
-  - path: src/spinner.tsx
-    symbols: [Spinner]
-    issue: "#2649"
-    state: no-test
-    reason: The spinner is named by no suite in this package.
 
   - path: src/switch.tsx
     symbols: [Switch]
