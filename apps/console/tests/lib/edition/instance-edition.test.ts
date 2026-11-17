@@ -293,7 +293,9 @@ describe("a licence state that cannot be relied on", () => {
 		loader.editionState.mockReturnValue({ kind: "enterprise" });
 		loader.getEnterprise.mockReturnValue(null);
 
-		expectCommunityAnswer(await getInstanceEdition(NOW), "no-report");
+		const edition = await getInstanceEdition(NOW);
+		expectCommunityAnswer(edition, "no-report");
+		expect(edition.capabilities).toEqual([]);
 	});
 
 	it("grants nothing when asking for the report throws, and does not throw itself", async () => {
@@ -304,7 +306,9 @@ describe("a licence state that cannot be relied on", () => {
 			},
 		});
 
-		expectCommunityAnswer(await getInstanceEdition(NOW), "report-failed");
+		const edition = await getInstanceEdition(NOW);
+		expectCommunityAnswer(edition, "report-failed");
+		expect(edition.capabilities).toEqual([]);
 	});
 
 	it("grants nothing when the report throws synchronously", async () => {
@@ -315,7 +319,9 @@ describe("a licence state that cannot be relied on", () => {
 			},
 		});
 
-		expectCommunityAnswer(await getInstanceEdition(NOW), "report-failed");
+		const edition = await getInstanceEdition(NOW);
+		expectCommunityAnswer(edition, "report-failed");
+		expect(edition.capabilities).toEqual([]);
 	});
 
 	it("grants nothing when the loader throws after reporting an enterprise build", async () => {
@@ -324,7 +330,9 @@ describe("a licence state that cannot be relied on", () => {
 			throw new Error("load failed");
 		});
 
-		expectCommunityAnswer(await getInstanceEdition(NOW), "enterprise-load-failed");
+		const edition = await getInstanceEdition(NOW);
+		expectCommunityAnswer(edition, "enterprise-load-failed");
+		expect(edition.capabilities).toEqual([]);
 	});
 
 	it("answers as a community build when the enterprise load failed", async () => {
