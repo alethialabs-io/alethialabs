@@ -4,8 +4,10 @@
 		"aws",
 		"gcp",
 		"azure",
-		"alibaba",
 		"hetzner"
+	],
+	"retired_clouds": [
+		"alibaba"
 	],
 	"kinds": [
 		{
@@ -13,11 +15,6 @@
 			"doc": "the VPC/network the cluster lives in — provisioned in-template.",
 			"foundational": true,
 			"cells": {
-				"alibaba": {
-					"carriage": "tofu",
-					"offered": true,
-					"resource": "alicloud_vpc"
-				},
 				"aws": {
 					"carriage": "tofu",
 					"offered": true,
@@ -45,11 +42,6 @@
 			"doc": "the Kubernetes cluster (EKS/GKE/AKS/ACK — and self-managed Talos on Hetzner).",
 			"foundational": true,
 			"cells": {
-				"alibaba": {
-					"carriage": "tofu",
-					"offered": true,
-					"resource": "alicloud_cs_managed_kubernetes"
-				},
 				"aws": {
 					"carriage": "tofu",
 					"offered": true,
@@ -77,11 +69,6 @@
 			"doc": "a managed SQL database. NOTE: AWS reads only databases[0] — one entry exercises the kind.",
 			"foundational": false,
 			"cells": {
-				"alibaba": {
-					"carriage": "tofu",
-					"offered": true,
-					"resource": "alicloud_db_instance"
-				},
 				"aws": {
 					"carriage": "tofu",
 					"offered": true,
@@ -110,11 +97,6 @@
 			"doc": "a managed Redis/Valkey cache. NOTE: AWS reads only caches[0].",
 			"foundational": false,
 			"cells": {
-				"alibaba": {
-					"carriage": "tofu",
-					"offered": true,
-					"resource": "alicloud_kvstore_instance"
-				},
 				"aws": {
 					"carriage": "tofu",
 					"offered": true,
@@ -143,11 +125,6 @@
 			"doc": "a message queue — SQS / Pub-Sub / Service Bus queue / MNS queue, and an in-cluster RabbitMQ on Hetzner. Per-cloud gotcha: AWS's signal is sqs_queues, NOT provision_sqs (topics set that too).",
 			"foundational": false,
 			"cells": {
-				"alibaba": {
-					"carriage": "tofu",
-					"offered": true,
-					"resource": "alicloud_message_service_queue"
-				},
 				"aws": {
 					"carriage": "tofu",
 					"offered": true,
@@ -176,11 +153,6 @@
 			"doc": "a pub/sub topic with a subscription — SNS / Pub-Sub / Service Bus topic / MNS topic. The one kind Hetzner neither has a service for nor offers a chart for.",
 			"foundational": false,
 			"cells": {
-				"alibaba": {
-					"carriage": "tofu",
-					"offered": true,
-					"resource": "alicloud_message_service_topic"
-				},
 				"aws": {
 					"carriage": "tofu",
 					"offered": true,
@@ -209,11 +181,6 @@
 			"doc": "a NoSQL table — DynamoDB / Firestore / Cosmos DB container / Tablestore, and on Hetzner a ScyllaCluster serving the DynamoDB-compatible Alternator API.",
 			"foundational": false,
 			"cells": {
-				"alibaba": {
-					"carriage": "tofu",
-					"offered": true,
-					"resource": "alicloud_ots_table"
-				},
 				"aws": {
 					"carriage": "tofu",
 					"offered": true,
@@ -242,11 +209,6 @@
 			"doc": "a generated secret in the cloud secret store — Secrets Manager / Secret Manager / Key Vault / KMS. Hetzner has none and carries the kind in-cluster as a platform-operated Vault, read through an ESO ClusterSecretStore exactly as the other four clouds are.",
 			"foundational": false,
 			"cells": {
-				"alibaba": {
-					"carriage": "tofu",
-					"offered": true,
-					"resource": "alicloud_kms_secret"
-				},
 				"aws": {
 					"carriage": "tofu",
 					"offered": true,
@@ -275,11 +237,6 @@
 			"doc": "an object-storage bucket (S3).",
 			"foundational": false,
 			"cells": {
-				"alibaba": {
-					"carriage": "tofu",
-					"offered": true,
-					"resource": "alicloud_oss_bucket"
-				},
 				"aws": {
 					"carriage": "tofu",
 					"offered": true,
@@ -307,12 +264,6 @@
 			"doc": "a container image registry — ECR / Artifact Registry / ACR / CR EE. Hetzner has none and carries the kind in-cluster as Harbor, with a minted robot account for pulls. Per-cloud gotcha: AWS emits provision_ecr as a plain boolean (the registry NAME is unused there).",
 			"foundational": false,
 			"cells": {
-				"alibaba": {
-					"carriage": "cost",
-					"offered": false,
-					"why": "Container Registry Enterprise Edition has NO pay-as-you-go model — DescribePricingModule for ProductCode=acr returns five pricing modules under Subscription and ZERO under PayAsYouGo — so a registry cannot be rented by the hour on alibaba the way ECR/Artifact Registry/ACR can. Proving this one kind would cost ~98% of an alibaba full bar and leave a monthly commitment behind that the teardown cannot refund (#2333). The free Personal Edition is not a substitute: one instance per ACCOUNT, public preview, no SLA, no immutable tags, and BOTH its provider resources are deprecated since v1.276.0 and slated for removal.",
-					"cost": "alicloud_cr_ee_instance — 150 USD/month (Basic, eu-central-1; 1800/year, no term discount; Advanced 617; no tier below Basic), bought PER RUN because instance_name carries the environment"
-				},
 				"aws": {
 					"carriage": "tofu",
 					"offered": true,
@@ -341,11 +292,6 @@
 			"doc": "cloud-native DNS (Route 53). cloud_dns_enabled fires only when enabled AND no zone_id is brought.",
 			"foundational": false,
 			"cells": {
-				"alibaba": {
-					"carriage": "tofu",
-					"offered": true,
-					"resource": "alicloud_alidns_domain"
-				},
 				"aws": {
 					"carriage": "tofu",
 					"offered": true,
