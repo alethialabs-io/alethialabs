@@ -338,8 +338,9 @@ describe("useEventStream", () => {
 	it("an address that becomes null (the resource finished) closes the stream and shows no state", async () => {
 		const s = openBody();
 		const { calls } = stubFetch([() => s.response]);
+		const initialProps: { url: string | null } = { url: URL_A };
 		const { result, rerender } = renderHook(({ url }: { url: string | null }) => useEventStream(url), {
-			initialProps: { url: URL_A },
+			initialProps,
 		});
 		await waitFor(() => expect(result.current.state).toBe("open"));
 		rerender({ url: null });
