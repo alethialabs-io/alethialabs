@@ -37,6 +37,7 @@ type Job struct {
 	ClusterID         *string        `json:"cluster_id"`
 	ConfigurationID   *string        `json:"configuration_id"`
 	PlanJobID         *string        `json:"plan_job_id"`
+	PlanSHA256        *string        `json:"plan_sha256"` // digest of the reviewed plan; see plan_binding.go
 	ConfigSnapshot    map[string]any `json:"config_snapshot"`
 	ConfigurationHash *string        `json:"configuration_hash"`
 	// VerifyOverride, when present, is an authorized waiver of failing verification
