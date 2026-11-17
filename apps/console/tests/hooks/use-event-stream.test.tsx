@@ -6,9 +6,17 @@
 // composes with the session state: a 401 ends the session, and a session ended by any source stops
 // the stream. The run loop is driven over a fake `fetch` whose bodies are real ReadableStreams, with
 // waiting counted in event-loop turns (tests/lib/realtime/client/harness.ts), never in milliseconds.
+//
+// The last block is the other half of the same convention (lib/realtime/README.md, rule 4): every
+// data poll left in `no-polling-ledger.json` names the issue that lifts it. `check:no-polling`
+// keeps the ledger true to the tree, but its `lifts` rule still accepts the word "unassigned".
 
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
 	EVENT_STREAM_RETRIES,
 	EVENT_STREAM_STATES,
@@ -347,5 +355,21 @@ describe("useEventStream", () => {
 		expect(result.current.state).toBeNull();
 		expect(calls[0]?.signal?.aborted).toBe(true);
 		expect(calls).toHaveLength(1);
+	});
+});
+
+const LEDGER = resolve(dirname(fileURLToPath(import.meta.url)), "../../no-polling-ledger.json");
+
+const ledgerSchema = z.object({
+	polls: z.record(z.string(), z.object({ count: z.number(), lifts: z.string() })),
+});
+
+describe("no-polling-ledger.json", () => {
+	it("names an issue for every poll: no entry is unassigned", () => {
+		const ledger = ledgerSchema.parse(JSON.parse(readFileSync(LEDGER, "utf8")));
+		const unowned = Object.entries(ledger.polls)
+			.filter(([, entry]) => !/^#\d+$/.test(entry.lifts))
+			.map(([key]) => key);
+		expect(unowned).toEqual([]);
 	});
 });

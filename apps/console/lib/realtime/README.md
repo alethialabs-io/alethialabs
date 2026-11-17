@@ -80,7 +80,8 @@ Two things enforce this:
 - `pnpm -C apps/console run check:no-polling` (`scripts/check-no-polling.mjs`) fails on an interval
   that is not in the ledger, on an entry that is no longer in the tree, and on a poll count that
   grew against `origin/dev`. Its own `lifts` rule still accepts the word `unassigned`.
-- `tests/lib/realtime/no-polling-ledger.test.ts` fails on a `lifts` that is not an issue number.
+- `tests/hooks/use-event-stream.test.tsx` (its last block) fails on a `lifts` that is not an issue
+  number.
 
 ## Session end
 
