@@ -92,6 +92,10 @@ export default defineConfig({
 				// answer every clock- and zone-reading surface gates on. tests/use-hydrated.test.tsx
 				// proves the server render, the hydrating render and the render after.
 				"src/use-hydrated.ts",
+				// Authored behaviour: the wizard's step rail, footer, disclosure, step heading and
+				// notices. tests/wizard.test.tsx proves what a screen reader is told, that "next" and
+				// "submit" are different nodes, and when the disclosure opens and the heading takes focus.
+				"src/wizard.tsx",
 			],
 			// These shadcn/Radix wrappers are deliberately proved through the composed-component
 			// suites that mount them, rather than counted in the authored-logic unit badge. Naming
