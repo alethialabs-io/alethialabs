@@ -12,9 +12,7 @@
 // No "use client": the component is presentational and renders from either side.
 
 import { ORPCError } from "@orpc/client";
-import { Lock } from "lucide-react";
-import { EmptyState } from "@repo/ui/empty";
-import { cn } from "@repo/ui/utils";
+import { RegionRefusal as SharedRegionRefusal } from "@/components/errors/region-refusal";
 
 /** The expected refusals a billing/usage read can answer with. */
 export type Refusal = "forbidden" | "plan" | "not-found";
@@ -52,8 +50,10 @@ const COPY: Record<Refusal, { title: string; description: string }> = {
 };
 
 /**
- * The refused render of ONE section. `data-state="refused"` and a lock mark set it apart from the
- * section's empty state and from `RegionError` (`data-state="error"`), for a reader and a test.
+ * The refused render of ONE billing or usage section: the console's one refused render
+ * (`components/errors/region-refusal.tsx`) with billing's own lines, because what decides a billing
+ * read is the billing permission and hosted billing, not the viewer's role alone. The look, the
+ * lock and `data-state="refused"` are the shared component's.
  */
 export function RegionRefusal({
 	refusal,
@@ -70,13 +70,11 @@ export function RegionRefusal({
 }) {
 	const copy = COPY[refusal];
 	return (
-		<EmptyState
-			data-state="refused"
-			data-refusal={refusal}
-			className={cn("border border-dashed border-border p-6 md:p-6", className)}
-			icon={<Lock size={18} aria-hidden />}
+		<SharedRegionRefusal
+			refusal={refusal}
 			title={title ?? copy.title}
 			description={description ?? copy.description}
+			className={className}
 		/>
 	);
 }

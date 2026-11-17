@@ -4,8 +4,8 @@
 import { HydrationBoundary, type Query, dehydrate } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
-import { resolveProjectId } from "@/app/server/actions/resolve";
 import { ProjectShell } from "@/components/design-project/project-shell";
+import { resolveProjectOr404 } from "@/lib/projects/resolve-project-or-404";
 import { getQueryClient } from "@/lib/query/client";
 import { serverOrpc } from "@/lib/rpc/server";
 
@@ -33,11 +33,18 @@ function isEnvSwitcherRead(query: Query): boolean {
  * `[org]/not-found.tsx` — which answered "Organization not found" for a project that is missing
  * while its org is fine (#3880).
  *
- * So the layout resolves for `ProjectShell` and stops there. When the slug does not resolve there
+ * So the layout resolves for `ProjectShell` and stops there. When the slug names no project there
  * is no shell to render and no `projectId` to render it with, so the layout renders the routed
  * segment bare; every page under `[project]` resolves the same slug and calls `notFound()` itself,
  * and THAT throw is inside this segment's children slot, so `[project]/not-found.tsx` catches it
  * and the response is a real 404 rather than a 200 carrying not-found content.
+ *
+ * ONLY a slug that names no project is answered that way (`resolveProjectOr404`,
+ * `lib/projects/resolve-project-or-404.ts`). A lost session redirects to sign-in, and any other
+ * failure is rethrown as it is: this layout used to swallow every throw into "no project", so a
+ * failed lookup rendered the page with no shell around it, or as "Project not found". A throw from
+ * a layout is outside its own segment's `error.tsx` for the same reason as above, so that one
+ * lands on `[org]/error.tsx`, inside the app shell, with its retry.
  */
 export default async function ProjectLayout({
 	children,
@@ -47,12 +54,7 @@ export default async function ProjectLayout({
 	params: Promise<{ org: string; project: string }>;
 }) {
 	const { project } = await params;
-	let projectId: string | null = null;
-	try {
-		projectId = await resolveProjectId(project);
-	} catch {
-		projectId = null;
-	}
+	const projectId = await resolveProjectOr404(project);
 	// No project, no shell — the page below answers the miss inside the boundary (see above).
 	if (projectId === null) return <>{children}</>;
 
