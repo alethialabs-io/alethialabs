@@ -401,7 +401,34 @@ type APIError struct {
 	// RetryAfter is the wait a 429 named in its Retry-After header, or zero when it named none. Only
 	// the verbs that read the header set it (kubeconfig_mint.go); it never changes Error().
 	RetryAfter time.Duration
+	// Code is the control plane's stable identifier for the failure ("not_found"), or empty when it
+	// sent none. A control plane older than the field never sends one, so a caller that classifies
+	// must fall back to StatusCode.
+	Code string
+	// Hint is the next step the control plane suggests, or empty.
+	Hint string
+	// DocsURL is the documentation page the control plane names for this failure, or empty.
+	DocsURL string
+	// RequestID identifies the failed request to the control plane: the X-Request-Id response header,
+	// or the body's request_id when the header is absent. Empty when neither was sent.
+	RequestID string
 }
+
+// TransportError is a request that got no answer: the dial, the TLS handshake, the write or the
+// read failed, or the round trip ran out of time. It is a type so a caller can tell "the control
+// plane could not be reached" from "the control plane said no" (an *APIError) with errors.As.
+type TransportError struct {
+	// Err is the failure the HTTP client reported.
+	Err error
+}
+
+// Error renders the failure with the prefix every verb helper has always used for it.
+func (e *TransportError) Error() string {
+	return fmt.Sprintf("failed to send request: %v", e.Unwrap())
+}
+
+// Unwrap returns the HTTP client's error, so errors.Is and errors.As still reach it.
+func (e *TransportError) Unwrap() error { return e.Err }
 
 // Error renders the failure. It NEVER renders empty: the control plane's own explanation when there
 // is one, and the bare status code when the body carried nothing usable. Returning a non-nil error
@@ -427,26 +454,49 @@ const errorSnippetRunes = 200
 // OAuth-shaped answer emits `error_description`, and only Alethia's own handlers emit `error` — and
 // falls back to a bounded, whitespace-collapsed snippet of the body when none of them yields text.
 // The status code is always carried, so 401, 403 and 500 stay distinguishable.
+//
+// `code`, `hint`, `docs_url` and `request_id` are read from the same object when it carries them,
+// and the request id from the X-Request-Id header in preference to the body. All four are
+// additive: an answer without them yields the same error it always did.
 func responseError(resp *http.Response) *APIError {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
-	apiErr := &APIError{StatusCode: resp.StatusCode}
+	apiErr := &APIError{
+		StatusCode: resp.StatusCode,
+		RequestID:  strings.TrimSpace(resp.Header.Get("X-Request-Id")),
+	}
 
 	var fields struct {
 		Error            string `json:"error"`
 		Message          string `json:"message"`
 		ErrorDescription string `json:"error_description"`
+		Code             string `json:"code"`
+		Hint             string `json:"hint"`
+		DocsURL          string `json:"docs_url"`
+		RequestID        string `json:"request_id"`
 	}
 	if err := json.Unmarshal(body, &fields); err == nil {
-		for _, candidate := range []string{fields.Error, fields.Message, fields.ErrorDescription} {
-			if text := strings.TrimSpace(candidate); text != "" {
-				apiErr.Message = text
-				return apiErr
-			}
+		apiErr.Code = strings.TrimSpace(fields.Code)
+		apiErr.Hint = strings.TrimSpace(fields.Hint)
+		apiErr.DocsURL = strings.TrimSpace(fields.DocsURL)
+		apiErr.RequestID = firstText(apiErr.RequestID, fields.RequestID)
+		if text := firstText(fields.Error, fields.Message, fields.ErrorDescription); text != "" {
+			apiErr.Message = text
+			return apiErr
 		}
 	}
 
 	apiErr.Message = bodySnippet(body)
 	return apiErr
+}
+
+// firstText returns the first candidate that is not blank, trimmed, or "" when all of them are.
+func firstText(candidates ...string) string {
+	for _, candidate := range candidates {
+		if text := strings.TrimSpace(candidate); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 // bodySnippet collapses every run of whitespace to a single space and truncates, so an HTML error
@@ -469,7 +519,7 @@ func (c *Client) doGet(endpoint string, result interface{}) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return &TransportError{Err: err}
 	}
 	defer resp.Body.Close()
 
@@ -495,7 +545,7 @@ func (c *Client) doPost(endpoint string, payload interface{}, result interface{}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return &TransportError{Err: err}
 	}
 	defer resp.Body.Close()
 
@@ -524,7 +574,7 @@ func (c *Client) doPut(endpoint string, payload interface{}, result interface{})
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return &TransportError{Err: err}
 	}
 	defer resp.Body.Close()
 
@@ -547,7 +597,7 @@ func (c *Client) doDelete(endpoint string) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return &TransportError{Err: err}
 	}
 	defer resp.Body.Close()
 
@@ -575,7 +625,7 @@ func (c *Client) doDeleteWithBody(endpoint string, payload interface{}) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return &TransportError{Err: err}
 	}
 	defer resp.Body.Close()
 
@@ -601,7 +651,7 @@ func (c *Client) GetRepositories(provider string) ([]Repository, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, &TransportError{Err: err}
 	}
 	defer resp.Body.Close()
 
