@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	tea "github.com/charmbracelet/bubbletea"
@@ -460,8 +461,8 @@ func TestConn_FinalizeTransportError(t *testing.T) {
 			if err != nil {
 				t.Fatalf("execute: %v", err)
 			}
-			if !exited || code != 1 {
-				t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+			if !exited || code != clierr.ExitUnavailable {
+				t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitUnavailable)
 			}
 		})
 	}
@@ -485,8 +486,8 @@ func TestConn_InitIdentityFailureIsFatal(t *testing.T) {
 			if err != nil {
 				t.Fatalf("execute: %v", err)
 			}
-			if !exited || code != 1 {
-				t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+			if !exited || code != clierr.ExitUnavailable {
+				t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitUnavailable)
 			}
 		})
 	}
@@ -1123,8 +1124,8 @@ func TestConn_RemoveListFailureIsFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitUnavailable {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitUnavailable)
 	}
 }
 
@@ -1209,8 +1210,8 @@ func TestConn_RemoveDisconnectFailureIsFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitForbidden {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitForbidden)
 	}
 }
 
@@ -1384,9 +1385,9 @@ func connFormCounter(t *testing.T) *int {
 	return &opened
 }
 
-// connCaptureStdout runs fn with os.Stdout redirected and returns what it printed. The
-// fatal path prints through ui.Error, so this is how a refusal's WORDING is read — an exit
-// code alone cannot tell "pass --role-arn" from "could not open a new TTY".
+// connCaptureStdout runs fn with os.Stdout redirected and returns what it printed. It reads
+// a command's OUTPUT. A refusal is not on this stream — the fatal path writes to stderr — so
+// the tests that read a refusal's wording use captureStreams and take its second value.
 func connCaptureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -1526,7 +1527,8 @@ func TestConnField_MissingFieldRefusalNamesTheFlag(t *testing.T) {
 
 			var exited bool
 			var code int
-			out := connCaptureStdout(t, func() {
+			// The refusal is read from stderr: the fatal path writes nothing to stdout.
+			_, out := captureStreams(t, func() {
 				exited, code, _ = connInvoke(t, run, append(append([]string{}, tc.args...), "--no-input")...)
 			})
 			if !exited || code == 0 {
@@ -2294,7 +2296,8 @@ func TestConnField_ConflictingSetupModesAreRefused(t *testing.T) {
 
 			var exited bool
 			var code int
-			out := connCaptureStdout(t, func() {
+			// The refusal is read from stderr: the fatal path writes nothing to stdout.
+			_, out := captureStreams(t, func() {
 				exited, code, _ = connInvoke(t, run, tc.args...)
 			})
 			if !exited || code == 0 {

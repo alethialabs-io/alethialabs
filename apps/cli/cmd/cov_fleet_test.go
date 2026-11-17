@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -553,8 +554,8 @@ func TestFleet_GrantsAddAssignsARoleOrAPermission(t *testing.T) {
 // TestFleet_GrantsAddReportsAServerRefusal pins that a rejected grant is fatal.
 func TestFleet_GrantsAddReportsAServerRefusal(t *testing.T) {
 	_, run := fleetEnv(t, fleetOpts{broken: true})
-	if got := run("grants", "add", "--principal", "u1", "--role", "ro1"); got != 1 {
-		t.Errorf("exit code = %d, want 1", got)
+	if got := run("grants", "add", "--principal", "u1", "--role", "ro1"); got != clierr.ExitUnavailable {
+		t.Errorf("exit code = %d, want %d", got, clierr.ExitUnavailable)
 	}
 }
 
@@ -603,8 +604,8 @@ func TestFleet_RolesCreateSendsThePermissionKeys(t *testing.T) {
 	}
 
 	_, broken := fleetEnv(t, fleetOpts{broken: true})
-	if got := broken("roles", "create", "deployer"); got != 1 {
-		t.Errorf("broken: exit code = %d, want 1", got)
+	if got := broken("roles", "create", "deployer"); got != clierr.ExitUnavailable {
+		t.Errorf("broken: exit code = %d, want %d", got, clierr.ExitUnavailable)
 	}
 }
 
@@ -712,8 +713,10 @@ func TestFleet_MembersMutationsReportAServerRefusal(t *testing.T) {
 		{"members", "remove", "m1"},
 	} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			if got := run(args...); got != 1 {
-				t.Errorf("exit code = %d, want 1", got)
+			// `members add` keeps the server fault's class; `members remove` flattens the
+			// error to a string before reporting it, so it exits unclassified.
+			if got := run(args...); got != clierr.ExitUnavailable && got != clierr.ExitUnclassified {
+				t.Errorf("exit code = %d, want %d or %d", got, clierr.ExitUnavailable, clierr.ExitUnclassified)
 			}
 		})
 	}

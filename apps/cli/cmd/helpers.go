@@ -4,10 +4,10 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -18,17 +18,56 @@ import (
 // fatal path without the test binary being killed by a real exit.
 var exitFunc = os.Exit
 
-// fail prints err in the standard grayscale error style and exits non-zero.
-// This is the single fatal-error path for the CLI.
+// errorFormat is the --output value the running command was given, recorded by the root
+// PersistentPreRun so the fatal path can render an error in the form the caller asked for. It is
+// the ROOT's persistent flag and nothing else: a subcommand that reuses the name for a file path
+// leaves it at its default, so a path is never mistaken for a format.
+//
+// It is a recorded value rather than a read of rootCmd for a compile-time reason: fail is reachable
+// from rootCmd's own initializer, so naming rootCmd here is an initialization cycle.
+var errorFormat = ui.FormatTable
+
+// fail renders err on stderr and exits with the code its class owns. It is the single fatal-error
+// path for the CLI: clierr.From decides the class, pkg/clierr/registry.go decides the number, and
+// nothing is written to stdout — that stream is the command's document.
+//
+// Under `--output json` the error is one alethia.error/v1 object on stderr; otherwise it is the
+// message in the standard grayscale error style, followed by a hint, a docs link and a request id
+// when the error carries them.
 func fail(err error) {
-	ui.Error(err.Error())
-	exitFunc(1)
+	e := clierr.From(err)
+	if errorFormat == ui.FormatJSON {
+		_ = clierr.WriteJSON(os.Stderr, e)
+	} else {
+		clierr.WriteHuman(os.Stderr, e, ui.SymbolError, clierr.Styles{
+			Headline: func(s string) string { return ui.ErrorStyle.Render(s) },
+			Detail:   func(s string) string { return ui.MutedStyle.Render(s) },
+		})
+	}
+	exitFunc(e.Exit)
 }
 
-// failf formats a message, prints it in the error style, and exits non-zero.
+// failf formats an error and dies on the fatal path. A %w verb keeps the wrapped error reachable,
+// so a typed cause still decides the exit code.
 func failf(format string, args ...any) {
-	ui.Error(fmt.Sprintf(format, args...))
-	exitFunc(1)
+	fail(fmt.Errorf(format, args...))
+}
+
+// usageError classifies an error cobra returned from Execute. No command in the tree returns an
+// error from its run function, so what arrives here is cobra's own refusal — an unknown command or
+// a rejected argument — and nothing has been sent anywhere. An error that already carries a class
+// keeps it.
+func usageError(err error) error {
+	if clierr.From(err).Class != clierr.ClassUnclassified {
+		return err
+	}
+	return clierr.Wrap(clierr.CodeInvalidUsage, err)
+}
+
+// flagError classifies a flag cobra could not parse. It is the root's FlagErrorFunc, which every
+// subcommand inherits.
+func flagError(_ *cobra.Command, err error) error {
+	return clierr.Wrap(clierr.CodeInvalidFlag, err)
 }
 
 // confirm shows a yes/no dialog and reports whether the user confirmed. It
@@ -77,9 +116,10 @@ var confirm = func(title, description string) bool {
 // scripted invocation destructive; exiting 0 having done nothing — the behaviour
 // this replaced — let a scripted teardown silently no-op while the cloud
 // resources it was meant to destroy kept billing.
-var errConfirmRequiresYes = errors.New(
-	"this command is destructive and interactive prompts are unavailable " +
-		"(--no-input, or stdin is not a terminal, or the stream the prompt draws on is redirected): " +
+var errConfirmRequiresYes = clierr.New(
+	clierr.CodeConfirmationRequired,
+	"this command is destructive and interactive prompts are unavailable "+
+		"(--no-input, or stdin is not a terminal, or the stream the prompt draws on is redirected): "+
 		"pass --yes to confirm",
 )
 

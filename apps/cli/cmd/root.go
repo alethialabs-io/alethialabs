@@ -26,6 +26,9 @@ func init() {
 	// all come from shellFields — see shell_fields.go for why a global is the value most likely to
 	// drift, and hyg_cli_shellform_test.go for what holds the renderings together.
 	registerShellGlobalFlags(rootCmd)
+	// A flag cobra cannot parse is a usage error with its own code. Set on the root, inherited by
+	// every subcommand.
+	rootCmd.SetFlagErrorFunc(flagError)
 }
 
 var rootCmd = &cobra.Command{
@@ -42,6 +45,7 @@ AWS, GCP, and Azure from the terminal.`,
 	// incidental: cobra runs the nearest one and no others, so a subcommand growing its own would
 	// silently stop resolving both. hyg_cli_orgscope_test.go asserts it.
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		errorFormat = rootOutputFormat(cmd)
 		resolveInputMode(cmd)
 		applyOrgScope()
 	},
@@ -53,6 +57,11 @@ AWS, GCP, and Azure from the terminal.`,
 		}
 		update.CheckAndNotify(version.Version, WebOrigin())
 	},
+	// The fatal path prints every error once, on stderr, in the form the caller asked for. Left
+	// unset, cobra prints the same error a second time itself and follows it with the whole usage
+	// text.
+	SilenceErrors: true,
+	SilenceUsage:  true,
 	Run: func(cmd *cobra.Command, args []string) {
 		printBanner()
 		fmt.Println()
@@ -89,8 +98,18 @@ func WebOrigin() string {
 	return origin
 }
 
+// rootOutputFormat returns the value of the root's persistent --output flag as cmd sees it. A
+// subcommand that declares its own --output shadows the name, and the root's flag then keeps its
+// default.
+func rootOutputFormat(cmd *cobra.Command) string {
+	return cmd.Root().PersistentFlags().Lookup(mustShellField("alethia", shellKeyOutput).Flag).Value.String()
+}
+
+// Execute runs the command tree and reports an error cobra returned on the fatal path.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fail(err)
+		// A refusal from cobra never reaches PersistentPreRun, so the format is read here.
+		errorFormat = rootOutputFormat(rootCmd)
+		fail(usageError(err))
 	}
 }

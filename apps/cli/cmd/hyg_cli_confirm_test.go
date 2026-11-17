@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -545,8 +546,16 @@ func TestHygCliConfirm_NoInputWithoutYesIsFatal(t *testing.T) {
 	for _, tc := range hygCliConfirmDestructive {
 		t.Run(tc.name, func(t *testing.T) {
 			s.forget()
-			if got := run(append(append([]string{}, tc.args...), "--no-input")...); got != 1 {
-				t.Errorf("exit code = %d, want 1 (a scripted destructive command must not exit 0)", got)
+			// Every command that refuses through confirmDestructive exits with the
+			// input-required code. `project design apply` refuses earlier, with its own
+			// sentence naming what the plan removes; that error carries no class yet, so
+			// it exits unclassified.
+			want := clierr.ExitInputRequired
+			if tc.name == "project_design_apply" {
+				want = clierr.ExitUnclassified
+			}
+			if got := run(append(append([]string{}, tc.args...), "--no-input")...); got != want {
+				t.Errorf("exit code = %d, want %d (a scripted destructive command must not exit 0)", got, want)
 			}
 			if muts := s.mutations(); len(muts) > 0 {
 				t.Errorf("state was changed without a confirmation: %v", muts)
@@ -718,7 +727,7 @@ func TestHygCliConfirm_ConfirmDestructiveMatrix(t *testing.T) {
 	}{
 		{"yes flag skips the prompt", true, false, false, true, false, -1},
 		{"yes flag skips the prompt when scripted", true, true, false, true, false, -1},
-		{"scripted without yes is fatal", false, true, true, false, false, 1},
+		{"scripted without yes is fatal", false, true, true, false, false, clierr.ExitInputRequired},
 		{"interactive accept", false, false, true, true, true, -1},
 		{"interactive decline", false, false, false, false, true, -1},
 	}
