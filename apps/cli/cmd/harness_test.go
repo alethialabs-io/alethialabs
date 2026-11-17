@@ -155,9 +155,13 @@ func resetRootPersistentFlags() {
 // the only way to start the tree cannot be forgotten by the lane that adds the next env.
 //
 // TestHygCliHarness_NothingBypassesTheSharedRunner keeps it the only way.
+//
+// It also points commandLine at the same arguments, so the second reading Execute gives the line
+// when cobra refuses it reads this invocation and not the test binary's own flags.
 func execRootArgs(args []string) {
 	resetRootPersistentFlags()
 	rootCmd.SetArgs(args)
+	commandLine = func() []string { return args }
 }
 
 // resetFlagsAroundTest puts the tree in its pristine state now AND after the test.
