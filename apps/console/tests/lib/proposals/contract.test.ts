@@ -36,12 +36,11 @@ import {
 	proposalChangesetSchema,
 } from "@/lib/proposals/contract";
 
-const DESIGNFILE_DIR = join(__dirname, "../../../../../packages/core/designfile");
-
-/** Reads one Go source of the design-file package. */
-function goSource(name: string): string {
-	return readFileSync(join(DESIGNFILE_DIR, name), "utf8");
-}
+// Each Go source is named by a whole literal path, not joined from a directory: the paths a test
+// reads are derived from its source to build the test task's cache key, and a directory would put
+// the entire package in it.
+const COMPARE_GO = readFileSync(join(__dirname, "../../../../../packages/core/designfile/compare.go"), "utf8");
+const EDIT_GO = readFileSync(join(__dirname, "../../../../../packages/core/designfile/edit.go"), "utf8");
 
 const PROPOSAL_ID = "0b0e7c3a-6d0f-4a52-9d55-0f6f6f0c1a11";
 const IDENTITY_ID = "5f1d2a90-3c44-4e0b-8a37-2b7d1e9c4f02";
@@ -85,7 +84,7 @@ function changeset(): ProposalChangeset {
 
 describe("the design file's words", () => {
 	it("names the same actions as the Go Action constants, in the same order", () => {
-		const declared = [...goSource("compare.go").matchAll(/^\tAction[A-Z]\w* Action = "([a-z_]+)"$/gm)].map(
+		const declared = [...COMPARE_GO.matchAll(/^\tAction[A-Z]\w* Action = "([a-z_]+)"$/gm)].map(
 			(m) => m[1],
 		);
 		expect(declared.length).toBeGreaterThan(0);
@@ -93,7 +92,7 @@ describe("the design file's words", () => {
 	});
 
 	it("gives an edit the fields the Go Edit struct has", () => {
-		const struct = /^type Edit struct \{\n([\s\S]*?)\n\}/m.exec(goSource("edit.go"));
+		const struct = /^type Edit struct \{\n([\s\S]*?)\n\}/m.exec(EDIT_GO);
 		const fields = [...(struct?.[1] ?? "").matchAll(/^\t([A-Z]\w*)\s+\S/gm)].map((m) => m[1].toLowerCase());
 		expect(fields.length).toBeGreaterThan(0);
 		const edit: Required<DesignFileEdit> = {
