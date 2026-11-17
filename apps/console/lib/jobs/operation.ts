@@ -7,11 +7,13 @@
 // update or destroy; a project's scan, build, drift check or probe. Acting on the job is acting on
 // that thing, so:
 //
-//   · RE-RUNNING a project's plan, deploy or destroy runs the operation again through the entry
-//     point a fresh run uses (the project permission for it, the environment's one-job-in-flight
-//     guard, the queue-time gates, the project's CURRENT configuration). Every other kind of job is
-//     run again from where it was started — the runner, the project — and is refused here with a
-//     sentence that says so. The one exception is an explicit ALLOW-LIST of job kinds whose copy
+//   · RE-RUNNING a project's plan or deploy runs the operation again through the entry point a
+//     fresh run uses (the project permission for it, the environment's one-job-in-flight guard, the
+//     queue-time gates, the project's CURRENT configuration). A DESTROY is never re-run from a job:
+//     a destroy starts from the environment, where its confirmation lives, and {@link RerunRoute}
+//     has no way to express one. Every other kind of job is run again from where it was started —
+//     the runner, the project — and is refused here with a sentence that says so. The one
+//     exception is an explicit ALLOW-LIST of job kinds whose copy
 //     acts on nothing but its own input ({@link COPYABLE}): those are re-queued as a copy under the
 //     org's job permission. A job is copyable because of its KIND, never because a column happens
 //     to be empty: a runner's lifecycle job and a project's scan carry their target in the config
@@ -27,10 +29,13 @@ import type { ProvisionJobType } from "@/lib/db/schema";
 /** A project operation a job can be an instance of — the project permission acting on it takes. */
 export type ProjectOperation = "plan" | "deploy" | "destroy";
 
+/** The project operations a job may be re-run as: every one but a destroy. */
+export type RerunnableOperation = Exclude<ProjectOperation, "destroy">;
+
 /** How a job may be run again. */
 export type RerunRoute =
-	/** A project's plan, deploy or destroy: run the operation again through its own entry point. */
-	| { kind: "project"; operation: ProjectOperation; projectId: string; environmentId: string | null }
+	/** A project's plan or deploy: run the operation again through its own entry point. */
+	| { kind: "project"; operation: RerunnableOperation; projectId: string; environmentId: string | null }
 	/** A job of an allow-listed kind: re-queue a copy of it. */
 	| { kind: "copy" }
 	/** Not re-runnable from the job. `reason` is shown to the user as written. */
@@ -38,6 +43,8 @@ export type RerunRoute =
 
 /** The sentence for a job that is run again from its project. */
 export const RERUN_FROM_PROJECT = "This job can't be re-run from here. Run it again from the project.";
+/** The sentence for a project's destroy: it starts from the environment, never from a job. */
+export const RERUN_DESTROY = "A destroy can't be re-run from a job. Destroy the environment from the project.";
 /** The sentence for a runner's lifecycle job. */
 export const RERUN_FROM_RUNNER = "This job can't be re-run from here. Run it again from the runner.";
 /** The sentence for any other job that is run again where it was started. */
@@ -155,6 +162,11 @@ export function permissionToCancel(job: JobTarget): CancelPermission {
 export function rerunRouteOf(job: JobTarget): RerunRoute {
 	if (isRunnerLifecycle(job.job_type)) return { kind: "refuse", reason: RERUN_FROM_RUNNER };
 	const operation = operationOf(job.job_type);
+	// A destroy is refused whatever else the job carries. With its project gone there is no
+	// environment left to send the reader to, so that case keeps the project sentence.
+	if (operation === "destroy") {
+		return { kind: "refuse", reason: job.project_id !== null ? RERUN_DESTROY : RERUN_FROM_PROJECT };
+	}
 	if (operation !== null && job.project_id !== null) {
 		return { kind: "project", operation, projectId: job.project_id, environmentId: job.environment_id };
 	}
