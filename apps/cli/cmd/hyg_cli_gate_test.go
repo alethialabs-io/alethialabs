@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/charmbracelet/huh"
 )
@@ -309,9 +310,9 @@ func TestConfirm_IsGatedOnTheFormPredicate(t *testing.T) {
 	if confirmDestructive(false, "Destroy?", "") {
 		t.Error("confirmDestructive must not proceed unconfirmed")
 	}
-	if code != 1 {
-		t.Errorf("confirmDestructive exit code = %d, want 1 — a scripted destroy that exits 0 "+
-			"having done nothing is the defect errConfirmRequiresYes exists to prevent", code)
+	if code != clierr.ExitInputRequired {
+		t.Errorf("confirmDestructive exit code = %d, want %d — a scripted destroy that exits 0 "+
+			"having done nothing is the defect errConfirmRequiresYes exists to prevent", code, clierr.ExitInputRequired)
 	}
 	if forms != 0 {
 		t.Errorf("confirmDestructive opened %d form(s) into a redirected stream", forms)

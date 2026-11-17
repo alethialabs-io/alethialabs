@@ -248,9 +248,11 @@ func orgFormEnv(t *testing.T, p orgFormPayloads) (*orgFormServer, func(args ...s
 	})
 
 	return s, func(args ...string) (code int, out string) {
-		read := orgFormCaptureStdout(t)
+		read := orgFormCapture(t, &os.Stdout)
+		readRefusal := orgFormCapture(t, &os.Stderr)
 		defer func() {
 			out = read()
+			refusal := readRefusal()
 			hygCliConfirmResetFlags()
 			if r := recover(); r != nil {
 				e, ok := r.(hygCliConfirmExit)
@@ -258,6 +260,11 @@ func orgFormEnv(t *testing.T, p orgFormPayloads) (*orgFormServer, func(args ...s
 					panic(r)
 				}
 				code = e.code
+				// A fatal exit says why on stderr and writes nothing to stdout, so the refusal
+				// is what "everything the CLI printed" means for a command that died. A run that
+				// succeeds keeps stdout alone: stderr then holds only narration, and a caller
+				// reading a document must not find it there.
+				out += refusal
 			}
 		}()
 		hygCliConfirmResetFlags()
@@ -281,20 +288,20 @@ func orgSelectClearActiveOrg(t *testing.T) {
 // orgFormAnsi strips the terminal styling lipgloss may add, so an assertion is about the words.
 var orgFormAnsi = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
-// orgFormCaptureStdout redirects os.Stdout into a pipe and returns a func that restores it and
-// yields everything written.
+// orgFormCapture redirects one of the process's streams (&os.Stdout or &os.Stderr) into a pipe and
+// returns a func that restores it and yields everything written.
 //
-// ui.Error goes through fmt.Printf, which resolves os.Stdout at call time, so swapping the package
-// variable is what catches it. The pipe is drained on its own goroutine: a refusal is short, but a
+// The CLI resolves os.Stdout and os.Stderr at call time, so swapping the package variable is what
+// catches a write. The pipe is drained on its own goroutine: a refusal is short, but a
 // test that deadlocks on a full pipe buffer would look like a hang rather than a failure.
-func orgFormCaptureStdout(t *testing.T) func() string {
+func orgFormCapture(t *testing.T, stream **os.File) func() string {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
 	}
-	prev := os.Stdout
-	os.Stdout = w
+	prev := *stream
+	*stream = w
 	done := make(chan string, 1)
 	go func() {
 		b, _ := io.ReadAll(r)
@@ -304,7 +311,7 @@ func orgFormCaptureStdout(t *testing.T) func() string {
 	restore := func() string {
 		var text string
 		once.Do(func() {
-			os.Stdout = prev
+			*stream = prev
 			_ = w.Close()
 			text = orgFormAnsi.ReplaceAllString(<-done, "")
 			_ = r.Close()

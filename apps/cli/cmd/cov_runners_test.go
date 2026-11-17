@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/runners"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -793,36 +794,17 @@ func TestRunnerField_DeployDefaultsItsOwnFieldsUnderNoInput(t *testing.T) {
 	}
 }
 
-// runnerCaptureStdout runs fn with os.Stdout replaced by a pipe and returns what was written.
+// runnerCaptureRefusal runs fn and returns what it wrote to stderr.
 //
-// The CLI's fatal path is ui.Error, which fmt.Printf's to the process's stdout rather than to a
-// writer a caller supplies, so a test that wants to read a refusal has to take the file
-// descriptor. Without this the assertions below could only see the EXIT CODE — and an exit code
-// cannot tell "refused, and here is the flag to add" apart from "refused, interactive input
-// required", which is the whole difference this lane is making.
-func runnerCaptureStdout(t *testing.T, fn func()) string {
+// The CLI's fatal path writes a refusal to the process's stderr rather than to a writer a caller
+// supplies, so a test that wants to read one has to take the file descriptor. Without this the
+// assertions below could only see the EXIT CODE — and an exit code cannot tell "refused, and here
+// is the flag to add" apart from "refused, interactive input required", which is the whole
+// difference this lane is making.
+func runnerCaptureRefusal(t *testing.T, fn func()) string {
 	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	prev := os.Stdout
-	os.Stdout = w
-	done := make(chan string, 1)
-	go func() {
-		b, _ := io.ReadAll(r)
-		done <- string(b)
-	}()
-	func() {
-		defer func() {
-			os.Stdout = prev
-			_ = w.Close()
-		}()
-		fn()
-	}()
-	out := <-done
-	_ = r.Close()
-	return out
+	_, refusal := captureStreams(t, fn)
+	return refusal
 }
 
 // TestRunnerField_ARefusalNamesTheFlagToAdd is the arm an exit code cannot carry.
@@ -871,9 +853,11 @@ func TestRunnerField_ARefusalNamesTheFlagToAdd(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s.forget()
 			var code int
-			out := runnerCaptureStdout(t, func() { code = run(tc.args...) })
-			if code != 1 {
-				t.Fatalf("exit code = %d, want 1; requests = %v", code, s.seen())
+			out := runnerCaptureRefusal(t, func() { code = run(tc.args...) })
+			// These refusals are reported as plain sentences, so they carry no class yet and
+			// exit unclassified.
+			if code != clierr.ExitUnclassified {
+				t.Fatalf("exit code = %d, want %d; requests = %v", code, clierr.ExitUnclassified, s.seen())
 			}
 			if s.saw(tc.method, tc.path) {
 				t.Errorf("a command that refused still reached %s %s", tc.method, tc.path)
