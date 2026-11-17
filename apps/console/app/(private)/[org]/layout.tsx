@@ -3,11 +3,14 @@
 
 import type React from "react";
 import { HydrationBoundary, type Query, dehydrate } from "@tanstack/react-query";
+import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { resolveOrgScope } from "@/app/server/actions/resolve";
 import { currentActor } from "@/lib/authz/guard";
 import { classifyOrgScopeFailure } from "@/lib/auth/org-scope-failure";
 import { getOwner } from "@/lib/auth/owner";
+import { signInHref } from "@/lib/auth/sign-in-href";
+import { ORG_PATH_HEADER } from "@/lib/authz/org-path";
 import { deploymentMode } from "@/lib/billing/config";
 import { getQueryClient } from "@/lib/query/client";
 import { orgHasSelfRunners } from "@/lib/queries/runner-capabilities";
@@ -23,6 +26,16 @@ import { UpgradeSheetProvider } from "@/components/org/upgrade-sheet-provider";
 function isShellRead(query: Query): boolean {
 	const [path] = query.queryKey;
 	return query.state.status === "success" && Array.isArray(path) && path[0] === "workspace";
+}
+
+/**
+ * Sign-in, coming back to the address this request is for. A layout is not given the path, so it
+ * is read from the header `proxy.ts` publishes it on. That header carries the path WITHOUT its
+ * query, so the query is not kept here; the session-ended dialog (`components/shell/session-ended.tsx`),
+ * which runs in the browser, keeps both.
+ */
+async function signInForThisAddress(): Promise<string> {
+	return signInHref((await headers()).get(ORG_PATH_HEADER));
 }
 
 /**
@@ -45,8 +58,11 @@ export default async function OrgLayout({
 }) {
 	const { org } = await params;
 	// No valid session (e.g. a stale/expired cookie the optimistic middleware let
-	// through, or a failed session lookup) → sign-in, not a dead-end 404.
-	if (!(await getOwner())) redirect("/login");
+	// through, or a failed session lookup) → sign-in, not a dead-end 404. This is also what an
+	// anonymous visitor to any org address gets (`proxy.ts` does not cover these routes), so it is
+	// a redirect and not the session-ended dialog: that dialog is for a session that ended under a
+	// page already open. Sign-in comes back to this address.
+	if (!(await getOwner())) redirect(await signInForThisAddress());
 	let orgId: string;
 	// The org a chat turn names (ADR 0003 §6.1): the page's `currentActor().orgId`, which in
 	// community collapses to the user id. NOT `orgId` above, which is the real organization's id
@@ -56,15 +72,15 @@ export default async function OrgLayout({
 		({ orgId } = await resolveOrgScope(org));
 		({ orgId: pageOrgId } = await currentActor());
 	} catch (e) {
-		// A lost session → sign-in; an org this user is not in → the 404. Anything else is rethrown
-		// by the classifier, so it reaches the error boundary and is logged (#5001) instead of being
-		// reported as "Organization not found" about the user's own org.
+		// A lost session → sign-in, coming back here; an org this user is not in → the 404. Anything
+		// else is rethrown by the classifier, so it reaches the error boundary and is logged (#5001)
+		// instead of being reported as "Organization not found" about the user's own org.
 		//
 		// Both answers here still THROW, and that is deliberate: redirect() throws NEXT_REDIRECT,
 		// which no not-found boundary catches, so adding one above cannot turn this branch into a
 		// render. notFound() throws NEXT_NOT_FOUND and lands on `(private)/not-found.tsx` with a real
 		// 404 status — the alternative, returning a not-found body from here, answers 200.
-		if (classifyOrgScopeFailure(e) === "sign-in") redirect("/login");
+		if (classifyOrgScopeFailure(e) === "sign-in") redirect(await signInForThisAddress());
 		notFound();
 	}
 	// Feedback is a hosted-only feature (it emails Alethia Labs); the shell hides it
