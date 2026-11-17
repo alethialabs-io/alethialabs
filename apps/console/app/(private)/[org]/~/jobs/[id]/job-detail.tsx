@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { applyPlan, cancelJob, rerunJob } from "@/app/server/actions/jobs";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { RegionError } from "@/components/errors/region-error";
 import { ClockSlot, JOB_TYPES, LiveDuration, RelativeTime } from "@/components/jobs/columns";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
@@ -595,7 +595,7 @@ export function JobDetail({
 			    server, so the worst case is an honest error toast rather than a vanished dialog.
 			    `confirmLabel` is NOT "Cancel": the dialog's own way out is already called that, and
 			    two buttons reading "Cancel" is the one confirmation that means nothing. */}
-			<ConfirmDialog
+			<ConfirmAction
 				open={confirmCancel}
 				onOpenChange={setConfirmCancel}
 				title="Cancel this job?"
@@ -605,25 +605,25 @@ export function JobDetail({
 						: "This job has not started — no runner has claimed it and nothing has been applied. It is marked cancelled and never runs. A cancelled job cannot be resumed — re-running it starts a new one."
 				}
 				confirmLabel="Cancel job"
-				onConfirm={() => {
-					cancel.mutate({ jobId });
-				}}
+				pendingLabel="Cancelling…"
+				severity={{ level: "confirm" }}
+				mutation={cancel}
+				variables={{ jobId }}
 			/>
 			{/* Mounted on the route rather than on `isTerminal`, for the reason above. It stays open
 			    while the re-run is in flight and closes when the new job exists; a refusal leaves the
 			    question on screen with its sentence beside it. */}
 			{rerunnable && (
-				<ConfirmDialog
+				<ConfirmAction
 					open={confirmRerun}
 					onOpenChange={setConfirmRerun}
 					title="Re-run this job?"
 					description={rerunDescription(rerunnable, job)}
 					confirmLabel="Re-run job"
 					pendingLabel="Re-running…"
-					pending={rerun.isPending}
-					onConfirm={() => {
-						rerun.mutate({ jobId });
-					}}
+					severity={{ level: "confirm" }}
+					mutation={rerun}
+					variables={{ jobId }}
 				/>
 			)}
 		</div>

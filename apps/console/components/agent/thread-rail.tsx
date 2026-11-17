@@ -8,7 +8,7 @@ import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
 import { ScrollArea } from "@repo/ui/scroll-area";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import {
 	type ConversationDraftFacts,
 	type UnsentConversation,
@@ -350,7 +350,7 @@ export function ThreadRail({
 				</div>
 			</ScrollArea>
 
-			<ConfirmDialog
+			<ConfirmAction
 				open={pendingDelete !== null}
 				onOpenChange={(o) => {
 					if (!o) {
@@ -361,10 +361,9 @@ export function ThreadRail({
 				title={`Delete ${pendingDelete?.title ?? "this chat"}?`}
 				description={deleteDescription(deleteCount)}
 				confirmLabel="Delete chat"
-				onConfirm={() => {
+				severity={{ level: "confirm" }}
+				run={() => {
 					if (pendingDelete) onDelete(pendingDelete.id);
-					setPendingDelete(null);
-					setDeleteCount(null);
 				}}
 			/>
 		</aside>
