@@ -64,7 +64,7 @@ type EnvPlan struct {
 	// ID is the existing environment's id; empty until created.
 	ID         string          `json:"id,omitempty"`
 	Components []ComponentPlan `json:"components"`
-	// Addons are the catalog add-ons the file declares for this environment (apply_addons.go).
+	// Addons are the catalog add-ons the file declares for this environment (plan_addons.go).
 	Addons []AddonPlan `json:"addons,omitempty"`
 	// UnmanagedAddons are add-ons enabled on the server that the file does not mention. Listed,
 	// never disabled — the rule Unmanaged states for environments.
@@ -353,7 +353,8 @@ func (p *Plan) Counts() (envs, comps, updates int) {
 				comps++
 			case ActionUpdate:
 				updates++
-			case ActionUnchanged:
+			case ActionUnchanged, ActionOmitted, ActionRemove:
+				// Nothing to count: unchanged is left as it is, and the other two are never in a plan.
 			}
 		}
 	}
@@ -394,7 +395,8 @@ func (p *Plan) AddonCounts() (enable, update int) {
 				enable++
 			case ActionUpdate:
 				update++
-			case ActionUnchanged:
+			case ActionUnchanged, ActionOmitted, ActionRemove:
+				// Nothing to count: unchanged is left as it is, and the other two are never in a plan.
 			}
 		}
 	}

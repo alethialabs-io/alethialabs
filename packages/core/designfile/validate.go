@@ -14,7 +14,7 @@ import (
 )
 
 // Rules are the vocabularies Validate checks against. They are PASSED IN rather than imported:
-// the stage and placement enums are generated into the cmd package from the console's schema, and
+// the stage and placement enums are generated into the CLI's `cmd` package from the console's schema, and
 // the component schema comes from the server at run time. This package owns the checking, not the
 // vocabulary, so it can never hold a second opinion about either.
 type Rules struct {

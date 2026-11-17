@@ -15,6 +15,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/spec"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/designfile"
 	"github.com/alethialabs-io/alethialabs/packages/core/names"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
@@ -400,9 +401,13 @@ func glyphFor(a Action) string {
 		return "~"
 	case ActionUnchanged:
 		return "="
+	case designfile.ActionOmitted, designfile.ActionRemove:
+		// Neither is ever in a plan: what the file leaves out is listed as unmanaged rather than
+		// given an action, and nothing a file says is a removal. They are named so the `exhaustive`
+		// linter keeps this switch complete, and they take the arm below.
 	}
-	// Unreachable for the three declared actions, and the `exhaustive` linter is what keeps it
-	// that way: a fourth action added without a glyph fails the build here rather than rendering
+	// Unreachable for every action a plan carries, and the `exhaustive` linter is what keeps it
+	// that way: an action added without a glyph fails the build here rather than rendering
 	// as whatever the default arm happened to be.
 	return "?"
 }
@@ -600,7 +605,9 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 		for _, comp := range e.Components {
 			label := componentLabel(comp)
 			switch comp.Action {
-			case ActionUnchanged:
+			case ActionUnchanged, designfile.ActionOmitted, designfile.ActionRemove:
+				// Unchanged is left as it is. The other two are never in a plan, and if one ever
+				// were it would be left alone too: apply creates and updates, and deletes nothing.
 				continue
 			case ActionCreate:
 				if _, err := c.AddComponent(result.ProjectID, comp.Kind, comp.Name, envID(e.Name), comp.Fields); err != nil {

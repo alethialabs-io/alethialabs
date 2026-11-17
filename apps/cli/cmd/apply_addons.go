@@ -11,7 +11,9 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 )
 
-// The add-ons half of `plan` and `apply` (#5528).
+// The add-ons half of `plan` and `apply` (#5528), as it is PRINTED. The comparing is
+// `packages/core/designfile`'s (plan_addons.go); what follows is the rule it applies, kept here
+// because it is what the lines below show a person.
 //
 // An add-on in alethia.yaml is reconciled through the SAME request `alethia addon enable` sends, so
 // it carries the same keep/clear rule: an omitted field keeps what is stored, `version: ""` removes
@@ -27,14 +29,6 @@ import (
 
 // addonSecretLabel stands in for a secret setting's value, which a plan never prints.
 const addonSecretLabel = "(secret)"
-
-// derefString reads an optional string, "" for none.
-func derefString(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
 
 // renderAddons prints one environment's add-ons: a line of `+ id`, `~ id`, `= id` cells, a line per
 // changed field, and the unmanaged ones. A secret setting's value is never printed.

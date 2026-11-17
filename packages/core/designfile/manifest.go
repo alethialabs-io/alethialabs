@@ -1,8 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Package manifest reads and writes `alethia.yaml`, the declarative description of a project that
+// Package designfile reads and writes `alethia.yaml`, the declarative description of a project that
 // `alethia apply` reconciles and `alethia plan` previews.
+//
+// It is in `packages/core` so that everything which touches the file — the CLI, and the runner's
+// design-file job for a project managed in git — goes through one implementation:
+//
+//   - manifest.go, addons.go, validate.go: the file's types, Parse, Render, Normalize, Validate;
+//   - document.go: the file as text, changed in place so a pull request shows only what changed;
+//   - fields.go: how a declared value is compared with a stored one;
+//   - plan.go, plan_addons.go: the file against the organization (ComputePlan);
+//   - compare.go: one version of the file against another (Compare), and Action;
+//   - edit.go: a component change made elsewhere, written into the file.
+//
+// The CLI's `pkg/manifest` is this package under its old name, as aliases.
 //
 // # What the file is
 //

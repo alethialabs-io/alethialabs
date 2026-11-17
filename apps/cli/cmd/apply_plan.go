@@ -50,8 +50,6 @@ type (
 )
 
 var (
-	// planAddons compares one environment's declared add-ons with the ones the server holds there.
-	planAddons = designfile.PlanAddons
 	// componentValues is the server's current value of every settable field of a component.
 	componentValues = designfile.ComponentValues
 	// parseOverride reads an Advanced override as a mapping.

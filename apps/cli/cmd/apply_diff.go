@@ -17,8 +17,6 @@ var (
 	diffFields = designfile.DiffFields
 	// stringKeyed reads a decoded mapping as a map[string]any, and reports whether it was one.
 	stringKeyed = designfile.StringKeyed
-	// sortChanges orders changes by field, then key.
-	sortChanges = designfile.SortChanges
 	// valuesEqual reports whether two decoded values mean the same thing.
 	valuesEqual = designfile.ValuesEqual
 	// formatFieldValue renders one side of a change for a person.

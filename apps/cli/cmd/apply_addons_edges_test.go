@@ -155,9 +155,6 @@ func TestOverrideText(t *testing.T) {
 			t.Errorf("%s: overrideText = %v, want %v", name, got, tc.want)
 		}
 	}
-	if derefString(nil) != "" {
-		t.Error("derefString(nil) must be empty")
-	}
 }
 
 // initAddonClient is an applyClient that serves only the catalog.
