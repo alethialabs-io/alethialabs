@@ -5,10 +5,12 @@
 // `notFound()`. A transient failure told a user their own org "doesn't exist, or you don't have
 // access to it", and the real error was never logged.
 //
-// These tests call the layout itself with `resolveOrgScope` stubbed. Next's real `notFound()` and
-// `redirect()` run, and each answer is read off the thrown value's `digest`, which is how Next
-// itself tells a 404 from a redirect from an error. A mocked `notFound` would only show that a
-// function was called.
+// These tests call the layout itself with `resolveOrgScope` stubbed. Next's real `notFound()`
+// runs, and a thrown answer is read off the value's `digest`, which is how Next itself tells a 404
+// from an error. A mocked `notFound` would only show that a function was called.
+//
+// #6756: a lost session no longer throws a redirect. The layout RENDERS the session-ended dialog,
+// so that answer is read off the returned element.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { notFound } from "next/navigation";
@@ -25,6 +27,7 @@ vi.mock("@/lib/queries/runner-capabilities", () => ({
 }));
 // The chrome is irrelevant here, and importing the real shell pulls in the whole client graph.
 vi.mock("@/components/shell/app-shell", () => ({ AppShell: () => null }));
+vi.mock("@/components/shell/session-ended", () => ({ SessionEnded: () => null }));
 vi.mock("@/components/org/upgrade-sheet-provider", () => ({
 	UpgradeSheetProvider: () => null,
 }));
@@ -48,6 +51,7 @@ import { resolveOrgScope } from "@/app/server/actions/resolve";
 import { NotOrgMemberError, UnauthorizedError } from "@/lib/auth/errors";
 import { getOwner } from "@/lib/auth/owner";
 import { classifyOrgScopeFailure } from "@/lib/auth/org-scope-failure";
+import { SessionEnded } from "@/components/shell/session-ended";
 
 /** Renders the layout for `/acme` and returns what it threw (or `null` if it rendered). */
 async function thrownBy(): Promise<unknown> {
@@ -101,11 +105,23 @@ describe("[org]/layout — what a resolveOrgScope failure renders", () => {
 		expect(digestOf(await thrownBy())).toBe(NOT_FOUND);
 	});
 
-	it("a session lost mid-request is sign-in, not a 404", async () => {
+	// ── No session → the session-ended dialog, RENDERED (#6756): no redirect, no 404 ──────────
+
+	it("a session lost mid-request renders the session-ended dialog, not a 404 and not a redirect", async () => {
 		vi.mocked(resolveOrgScope).mockRejectedValue(new UnauthorizedError());
-		const digest = digestOf(await thrownBy()) ?? "";
-		expect(digest.startsWith("NEXT_REDIRECT;")).toBe(true);
-		expect(digest).toContain("/login");
+		await expect(thrownBy()).resolves.toBeNull();
+		const tree = await OrgLayout({ children: null, params: Promise.resolve({ org: "acme" }) });
+		expect(tree.type).toBe(SessionEnded);
+		expect(tree.props).toEqual({ ended: true });
+	});
+
+	it("a request with no session at all renders it too, before the org is resolved", async () => {
+		vi.mocked(getOwner).mockResolvedValue(null);
+		await expect(thrownBy()).resolves.toBeNull();
+		const tree = await OrgLayout({ children: null, params: Promise.resolve({ org: "acme" }) });
+		expect(tree.type).toBe(SessionEnded);
+		expect(tree.props).toEqual({ ended: true });
+		expect(resolveOrgScope).not.toHaveBeenCalled();
 	});
 
 	// ── Everything else is NOT a statement about the org → the error boundary ─────────────────

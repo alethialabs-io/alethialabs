@@ -3,7 +3,7 @@
 
 import type React from "react";
 import { HydrationBoundary, type Query, dehydrate } from "@tanstack/react-query";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { resolveOrgScope } from "@/app/server/actions/resolve";
 import { currentActor } from "@/lib/authz/guard";
 import { classifyOrgScopeFailure } from "@/lib/auth/org-scope-failure";
@@ -13,6 +13,7 @@ import { getQueryClient } from "@/lib/query/client";
 import { orgHasSelfRunners } from "@/lib/queries/runner-capabilities";
 import { serverOrpc } from "@/lib/rpc/server";
 import { AppShell } from "@/components/shell/app-shell";
+import { SessionEnded } from "@/components/shell/session-ended";
 import { UpgradeSheetProvider } from "@/components/org/upgrade-sheet-provider";
 
 /**
@@ -45,8 +46,10 @@ export default async function OrgLayout({
 }) {
 	const { org } = await params;
 	// No valid session (e.g. a stale/expired cookie the optimistic middleware let
-	// through, or a failed session lookup) → sign-in, not a dead-end 404.
-	if (!(await getOwner())) redirect("/login");
+	// through, or a failed session lookup) → the session-ended dialog, not a dead-end 404. The
+	// dialog's link reads the address in the browser, so sign-in comes back to this page; a
+	// redirect from here could not say where "here" is, because a layout is not given the path.
+	if (!(await getOwner())) return <SessionEnded ended />;
 	let orgId: string;
 	// The org a chat turn names (ADR 0003 §6.1): the page's `currentActor().orgId`, which in
 	// community collapses to the user id. NOT `orgId` above, which is the real organization's id
@@ -56,15 +59,15 @@ export default async function OrgLayout({
 		({ orgId } = await resolveOrgScope(org));
 		({ orgId: pageOrgId } = await currentActor());
 	} catch (e) {
-		// A lost session → sign-in; an org this user is not in → the 404. Anything else is rethrown
-		// by the classifier, so it reaches the error boundary and is logged (#5001) instead of being
-		// reported as "Organization not found" about the user's own org.
+		// A lost session → the session-ended dialog; an org this user is not in → the 404. Anything
+		// else is rethrown by the classifier, so it reaches the error boundary and is logged (#5001)
+		// instead of being reported as "Organization not found" about the user's own org.
 		//
-		// Both answers here still THROW, and that is deliberate: redirect() throws NEXT_REDIRECT,
-		// which no not-found boundary catches, so adding one above cannot turn this branch into a
-		// render. notFound() throws NEXT_NOT_FOUND and lands on `(private)/not-found.tsx` with a real
-		// 404 status — the alternative, returning a not-found body from here, answers 200.
-		if (classifyOrgScopeFailure(e) === "sign-in") redirect("/login");
+		// The lost session RENDERS (the same component the shell shows when a session ends under an
+		// open page). The 404 still THROWS, and that is deliberate: notFound() throws NEXT_NOT_FOUND
+		// and lands on `(private)/not-found.tsx` with a real 404 status — the alternative, returning
+		// a not-found body from here, answers 200.
+		if (classifyOrgScopeFailure(e) === "sign-in") return <SessionEnded ended />;
 		notFound();
 	}
 	// Feedback is a hosted-only feature (it emails Alethia Labs); the shell hides it

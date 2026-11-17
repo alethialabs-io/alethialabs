@@ -9,7 +9,6 @@ import {
 	useMutation,
 	useQueryClient,
 } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
 import { useCallback, useRef } from "react";
 import type { FieldValues, Path, UseFormReturn } from "react-hook-form";
 import { toast } from "sonner";
@@ -22,6 +21,7 @@ import {
 	describeActionError,
 	toActionFailure,
 } from "@/lib/actions/result";
+import { endSession } from "@/lib/stores/use-session-state";
 
 /** An optimistic patch: apply `update` to the cached value at `key` before the server answers. */
 export interface OptimisticPatch<V> {
@@ -93,7 +93,8 @@ function isBrowserOffline(): boolean {
  * - applies optional optimistic patches and restores the snapshot on failure;
  * - invalidates every declared key when it settles, so no screen keeps stale data (F036, F040);
  * - routes failures by kind: validation → the form, entitlement → the caller's upgrade surface,
- *   unauthenticated → sign-in, a refusal → the caller's inline alert when it renders one
+ *   unauthenticated → the session-ended dialog (`endSession`, not a redirect: the page and what
+ *   was typed into it stay where they are), a refusal → the caller's inline alert when it renders one
  *   (`onRefusal`), everything else → one toast with a human message (never raw validator text,
  *   F013);
  * - treats a call that got no server answer as a failure of kind `network`. When the browser is
@@ -110,7 +111,6 @@ export function useActionMutation<T, V, F extends FieldValues = FieldValues>(
 	options: ActionMutationOptions<T, V, F>,
 ): ActionMutation<T, V> {
 	const queryClient = useQueryClient();
-	const router = useRouter();
 	/** Set synchronously by `submit`, because `isPending` only changes on the next render. */
 	const inFlight = useRef(false);
 
@@ -145,9 +145,7 @@ export function useActionMutation<T, V, F extends FieldValues = FieldValues>(
 			}
 			// Next's control flow (a redirect) is rethrown by `toActionFailure` and is not a failure.
 			if (!(failure instanceof ActionFailure)) return;
-			handleFailure(failure.error, options, () =>
-				router.push(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`),
-			);
+			handleFailure(failure.error, options);
 		},
 		onSuccess: (data, variables) => {
 			const message =
@@ -187,7 +185,6 @@ export function useActionMutation<T, V, F extends FieldValues = FieldValues>(
 function handleFailure<T, V, F extends FieldValues>(
 	error: ActionError,
 	options: ActionMutationOptions<T, V, F>,
-	toSignIn: () => void,
 ): void {
 	switch (error.kind) {
 		case "validation":
@@ -214,7 +211,7 @@ function handleFailure<T, V, F extends FieldValues>(
 			toast.error(error.message);
 			return;
 		case "unauthenticated":
-			toSignIn();
+			endSession();
 			return;
 		case "conflict":
 		case "not-found":

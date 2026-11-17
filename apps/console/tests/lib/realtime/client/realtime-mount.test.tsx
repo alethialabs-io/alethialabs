@@ -4,8 +4,11 @@
 // #6115 PR B: the shell's mount. It starts one runtime per org segment with THAT org's QueryClient
 // (captured at start), restarts on an org switch, and its indicator stays quiet for a blip under
 // 3 s, then speaks through a polite live region. (Kept under tests/lib/realtime/ — the unit's scope.)
+// #6756: a stream that reports `signed-out` ends the session state, and the mount shows the one
+// session-ended dialog instead of a line of text.
 
-import { act, render, screen } from "@testing-library/react";
+import { onlineManager } from "@tanstack/react-query";
+import { act, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** The hoisted state the mocks read. */
@@ -45,6 +48,7 @@ vi.mock("@/lib/realtime/client/runtime", () => ({
 import { RealtimeMount } from "@/components/shell/realtime-mount";
 import { getQueryClient } from "@/lib/query/client";
 import { connectionStore } from "@/lib/realtime/client/connection-state";
+import { endSession, useSessionState } from "@/lib/stores/use-session-state";
 
 describe("RealtimeMount", () => {
 	beforeEach(() => {
@@ -55,9 +59,14 @@ describe("RealtimeMount", () => {
 		h.viewerId = "u1";
 		connectionStore.reset();
 		connectionStore.set("live");
+		useSessionState.setState({ status: "active" });
+		window.history.replaceState(null, "", "/acme/~/jobs?status=failed");
 	});
 	afterEach(() => {
 		vi.useRealTimers();
+		// An ended session tells TanStack the browser is offline (lib/query/client.ts); undo it here.
+		useSessionState.setState({ status: "active" });
+		onlineManager.setOnline(true);
 	});
 
 	it("starts with the org's own QueryClient and restarts only on an org switch", () => {
@@ -119,9 +128,27 @@ describe("RealtimeMount", () => {
 		expect(region).toHaveTextContent("");
 	});
 
-	it("says signed-out at once", () => {
+	it("a signed-out stream ends the session and shows the dialog at once, not a line of text", async () => {
 		render(<RealtimeMount />);
+		expect(screen.queryByRole("alertdialog")).toBeNull();
 		act(() => connectionStore.set("signed-out"));
-		expect(screen.getByRole("status")).toHaveTextContent("Signed out");
+		expect(useSessionState.getState().status).toBe("ended");
+		const dialog = await screen.findByRole("alertdialog");
+		expect(dialog).toHaveTextContent("Your session has ended");
+		expect(within(dialog).getByText("Sign in").closest("a")?.getAttribute("href")).toBe(
+			"/login?next=%2Facme%2F~%2Fjobs%3Fstatus%3Dfailed",
+		);
+		expect(screen.getByRole("status")).toHaveTextContent("");
+	});
+
+	it("a session ended by another source silences the paused notice behind the dialog", async () => {
+		vi.useFakeTimers();
+		render(<RealtimeMount />);
+		act(() => connectionStore.set("reconnecting"));
+		act(() => vi.advanceTimersByTime(3000));
+		expect(screen.getByRole("status")).toHaveTextContent("Live updates paused — retrying");
+		act(() => endSession());
+		expect(screen.getByRole("status")).toHaveTextContent("");
+		expect(useSessionState.getState().status).toBe("ended");
 	});
 });
