@@ -7,12 +7,15 @@
 //     and sent with its code — which answers the same every time, so it gets its own calm render
 //     and no retry;
 //   · a real failure, which gets `RegionError` and a retry.
+// A third answer is not about the page at all: UNAUTHORIZED means the session is gone. It is read
+// here as `"sign-in"` and handled ONCE, by the `QueryCache` `onError` in `lib/query/client.ts`,
+// which ends the session state; `components/shell/session-ended.tsx` then shows the one dialog.
 // Here, inside `lib/rpc/`, because `@orpc/*` imports stay confined to it (ADR 0005 §10 D1).
 
 import { ORPCError } from "@orpc/client";
 
-/** The expected refusals a read can answer with. */
-export type ReadRefusal = "forbidden" | "not-found" | "plan";
+/** The expected refusals a read can answer with. `"sign-in"`: there is no session any more. */
+export type ReadRefusal = "forbidden" | "not-found" | "plan" | "sign-in";
 
 /** The read router's typed refusal behind a failed read, or null for a real failure. */
 export function readRefusalOf(error: unknown): ReadRefusal | null {
@@ -20,6 +23,7 @@ export function readRefusalOf(error: unknown): ReadRefusal | null {
 	if (error.code === "FORBIDDEN") return "forbidden";
 	if (error.code === "NOT_FOUND") return "not-found";
 	if (error.code === "ENTITLEMENT_REQUIRED") return "plan";
+	if (error.code === "UNAUTHORIZED") return "sign-in";
 	return null;
 }
 

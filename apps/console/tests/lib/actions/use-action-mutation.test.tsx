@@ -21,6 +21,7 @@ vi.mock("sonner", () => ({ toast }));
 
 import type { ActionResult } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { endSession, useSessionState } from "@/lib/stores/use-session-state";
 
 const KEY = ["projects", "acme"];
 
@@ -40,6 +41,7 @@ Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () 
 
 beforeEach(() => {
 	online = true;
+	useSessionState.setState({ status: "active", dismissed: false });
 	push.mockReset();
 	toast.success.mockReset();
 	toast.error.mockReset();
@@ -101,7 +103,7 @@ describe("useActionMutation", () => {
 		expect(toast.error).not.toHaveBeenCalled();
 	});
 
-	it("routes an entitlement refusal to the caller's upgrade surface and a lost session to sign-in", async () => {
+	it("routes an entitlement refusal to the caller's upgrade surface and a lost session to the session-ended state", async () => {
 		const { wrapper } = setup();
 		const onEntitlement = vi.fn();
 		const refusal = async (): Promise<ActionResult<string>> => ({
@@ -113,13 +115,42 @@ describe("useActionMutation", () => {
 			await a.current.mutateAsync(undefined).catch(() => {});
 		});
 		expect(onEntitlement).toHaveBeenCalledWith("teams", "Teams are a Pro feature.");
+		expect(useSessionState.getState().status).toBe("active");
 
 		const signedOut = async (): Promise<ActionResult<string>> => ({ ok: false, error: { kind: "unauthenticated" } });
 		const { result: b } = renderHook(() => useActionMutation(signedOut, { invalidates: [] }), { wrapper });
 		await act(async () => {
 			await b.current.mutateAsync(undefined).catch(() => {});
 		});
-		expect(push).toHaveBeenCalledWith(expect.stringMatching(/^\/login\?next=/));
+		// #6756: the session-ended dialog, not a redirect — the page stays where it is.
+		expect(useSessionState.getState().status).toBe("ended");
+		expect(push).not.toHaveBeenCalled();
+		expect(toast.error).not.toHaveBeenCalled();
+	});
+
+	it("after the session has ended, an attempt calls no action and brings the dialog back", async () => {
+		const { wrapper } = setup();
+		// Ended, and the person chose "Stay on this page": the banner is up, not the dialog.
+		endSession();
+		useSessionState.getState().stay();
+		expect(useSessionState.getState()).toMatchObject({ status: "ended", dismissed: true });
+
+		const action = vi.fn(async (name: string): Promise<ActionResult<string>> => ({ ok: true, data: name }));
+		const onSuccess = vi.fn();
+		const { result } = renderHook(() => useActionMutation(action, { invalidates: [], onSuccess }), { wrapper });
+		let failure: unknown;
+		await act(async () => {
+			await result.current.mutateAsync("alpha").catch((e: unknown) => {
+				failure = e;
+			});
+		});
+
+		expect(action).not.toHaveBeenCalled();
+		expect(onSuccess).not.toHaveBeenCalled();
+		expect(failure).toMatchObject({ error: { kind: "unauthenticated" } });
+		expect(useSessionState.getState()).toMatchObject({ status: "ended", dismissed: false });
+		expect(toast.error).not.toHaveBeenCalled();
+		expect(push).not.toHaveBeenCalled();
 	});
 
 	it("is pending while the action runs (the double-submit guard binds to this)", async () => {

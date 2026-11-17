@@ -5,9 +5,12 @@
 // polls; this is what keeps a page from going silently stale when the stream it relies on is down.
 // It runs only while the stream is NOT live — after 15 s of that, every 30 s, and only in a tab
 // someone is looking at — and stops the moment the stream says hello again (whose reconnect resync
-// then refreshes everything once). `pnpm check:no-polling` allows this file's interval and no other
-// poll under lib/realtime/.
+// then refreshes everything once). It also stops once the session state is `ended`, whichever
+// source ended it: the stream may still read "reconnecting" at that moment, and every refresh would
+// only be refused. `pnpm check:no-polling` allows this file's interval and no other poll under
+// lib/realtime/.
 
+import { isSessionEnded, useSessionState } from "@/lib/stores/use-session-state";
 import { type ConnectionStore, isTerminal } from "./connection-state";
 
 /** How long the stream must be down before polling starts, and the poll's period. */
@@ -37,8 +40,9 @@ export function startFallbackPoll(options: FallbackPollOptions): () => void {
 	const react = () => {
 		const { state } = options.store.get();
 		// Live: nothing to make up for. Terminal: a poll would only be refused (signed out) or would
-		// read an address that is no longer ours (removed) — the page is refreshed instead.
-		if (state === "live" || isTerminal(state)) {
+		// read an address that is no longer ours (removed) — the page is refreshed instead. A session
+		// that has ended is the same as signed out, before the stream has found out for itself.
+		if (state === "live" || isTerminal(state) || isSessionEnded()) {
 			halt();
 			return;
 		}
@@ -54,9 +58,11 @@ export function startFallbackPoll(options: FallbackPollOptions): () => void {
 	};
 
 	const unsubscribe = options.store.subscribe(react);
+	const unsubscribeSession = useSessionState.subscribe(react);
 	react();
 	return () => {
 		unsubscribe();
+		unsubscribeSession();
 		halt();
 	};
 }
