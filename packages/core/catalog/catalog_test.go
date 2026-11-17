@@ -4,6 +4,7 @@
 package catalog
 
 import (
+	"encoding/json"
 	"reflect"
 	"slices"
 	"strconv"
@@ -170,6 +171,169 @@ func TestInstanceOwners(t *testing.T) {
 	for sku, want := range cases {
 		if got := c.InstanceOwners(sku); !reflect.DeepEqual(got, want) {
 			t.Errorf("InstanceOwners(%q) = %v, want %v", sku, got, want)
+		}
+	}
+}
+
+// TestAvailabilityIsDeclaredForEveryCloud holds the catalog to the rules the TypeScript generator
+// also enforces, so each reader fails on its own: every cloud carries one of the two values, a
+// cloud listed in both blocks carries the same value in each, and at least one cloud is available.
+func TestAvailabilityIsDeclaredForEveryCloud(t *testing.T) {
+	c := MustLoad()
+	if len(c.Live.Providers) == 0 {
+		t.Fatal("live.providers decoded to no clouds")
+	}
+	available := 0
+	for _, p := range c.Live.Providers {
+		switch p.Availability {
+		case AvailabilityAvailable:
+			available++
+		case AvailabilityHidden:
+		default:
+			t.Errorf("live.providers.%s availability = %q, want available or hidden", p.Slug, p.Availability)
+		}
+	}
+	if available == 0 {
+		t.Error("no cloud is available")
+	}
+	for _, p := range c.Providers {
+		live, ok := c.Availability(p.Slug)
+		if !ok {
+			t.Errorf("providers[] lists %q but live.providers does not", p.Slug)
+			continue
+		}
+		if p.Availability != live {
+			t.Errorf("%s availability: providers[] says %q, live.providers says %q", p.Slug, p.Availability, live)
+		}
+	}
+}
+
+// TestOfferedClouds fixes the offered set by decision (2026-11-17): AWS, GCP, Azure and Hetzner are
+// offered; Alibaba, DigitalOcean and Civo are hidden. The order is catalog.json's.
+func TestOfferedClouds(t *testing.T) {
+	t.Setenv(HiddenCloudsEnv, "")
+	c := MustLoad()
+
+	all := make([]string, 0, len(c.Live.Providers))
+	for _, p := range c.Live.Providers {
+		all = append(all, p.Slug)
+	}
+	wantAll := []string{"aws", "gcp", "azure", "alibaba", "digitalocean", "hetzner", "civo"}
+	if !slices.Equal(all, wantAll) {
+		t.Fatalf("connectable clouds = %v, want %v (catalog.json order)", all, wantAll)
+	}
+
+	want := []string{"aws", "gcp", "azure", "hetzner"}
+	if got := c.OfferedProviders(); !slices.Equal(got, want) {
+		t.Errorf("OfferedProviders() = %v, want %v", got, want)
+	}
+	for _, slug := range want {
+		if !c.Offered(slug) {
+			t.Errorf("Offered(%q) = false, want true", slug)
+		}
+	}
+	for _, slug := range []string{"alibaba", "digitalocean", "civo"} {
+		if c.Offered(slug) {
+			t.Errorf("Offered(%q) = true, want false", slug)
+		}
+		if a, ok := c.Availability(slug); !ok || a != AvailabilityHidden {
+			t.Errorf("Availability(%q) = %q, %v; want hidden, true", slug, a, ok)
+		}
+	}
+	for _, slug := range []string{"", "nimbus", "AWS", " aws"} {
+		if c.Offered(slug) {
+			t.Errorf("Offered(%q) = true for a slug the catalog does not list", slug)
+		}
+	}
+}
+
+// TestHiddenCloudOverride covers the operator setting: it re-enables exactly the hidden clouds it
+// names, never removes an available one, and reports a slug the catalog does not list.
+func TestHiddenCloudOverride(t *testing.T) {
+	c := MustLoad()
+
+	t.Run("re-enables only the named hidden cloud", func(t *testing.T) {
+		t.Setenv(HiddenCloudsEnv, "alibaba")
+		if !c.Offered("alibaba") {
+			t.Error("alibaba is not offered under the override")
+		}
+		if c.Offered("civo") {
+			t.Error("civo is offered although the override does not name it")
+		}
+		want := []string{"aws", "gcp", "azure", "alibaba", "hetzner"}
+		if got := c.OfferedProviders(); !slices.Equal(got, want) {
+			t.Errorf("OfferedProviders() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("accepts spaces, blanks and repeats", func(t *testing.T) {
+		t.Setenv(HiddenCloudsEnv, " civo , ,alibaba,civo,")
+		got, err := c.HiddenCloudOverride()
+		if err != nil {
+			t.Fatalf("HiddenCloudOverride: %v", err)
+		}
+		if want := []string{"civo", "alibaba"}; !slices.Equal(got, want) {
+			t.Errorf("HiddenCloudOverride() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("cannot narrow the offered set", func(t *testing.T) {
+		t.Setenv(HiddenCloudsEnv, "aws")
+		want := []string{"aws", "gcp", "azure", "hetzner"}
+		if got := c.OfferedProviders(); !slices.Equal(got, want) {
+			t.Errorf("OfferedProviders() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("reports an unknown slug and enables nothing for it", func(t *testing.T) {
+		t.Setenv(HiddenCloudsEnv, "alibaba,nimbus,Civo")
+		got, err := c.HiddenCloudOverride()
+		if err == nil {
+			t.Fatal("HiddenCloudOverride returned no error for unknown slugs")
+		}
+		for _, slug := range []string{"nimbus", "Civo"} {
+			if !strings.Contains(err.Error(), slug) {
+				t.Errorf("error %q does not name %q", err, slug)
+			}
+		}
+		if want := []string{"alibaba"}; !slices.Equal(got, want) {
+			t.Errorf("HiddenCloudOverride() = %v, want %v", got, want)
+		}
+		if c.Offered("nimbus") || c.Offered("civo") {
+			t.Error("an unknown or differently-cased slug enabled a cloud")
+		}
+		if !c.Offered("alibaba") {
+			t.Error("the valid item of a partly invalid override was not applied")
+		}
+	})
+
+	t.Run("unset means nothing is re-enabled", func(t *testing.T) {
+		t.Setenv(HiddenCloudsEnv, "")
+		got, err := c.HiddenCloudOverride()
+		if err != nil || len(got) != 0 {
+			t.Errorf("HiddenCloudOverride() = %v, %v; want empty, nil", got, err)
+		}
+	})
+}
+
+// TestConnectableProvidersDecoding covers the ordered decoder's refusals: the block must be an
+// object, and an entry's slug must equal the key it sits under.
+func TestConnectableProvidersDecoding(t *testing.T) {
+	var ordered ConnectableProviders
+	if err := json.Unmarshal([]byte(`{"b":{"slug":"b","availability":"hidden"},"a":{"slug":"a","availability":"available"}}`), &ordered); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(ordered) != 2 || ordered[0].Slug != "b" || ordered[1].Slug != "a" {
+		t.Errorf("decoded order = %+v, want b then a", ordered)
+	}
+	for name, doc := range map[string]string{
+		"array":         `[]`,
+		"slug mismatch": `{"a":{"slug":"b","availability":"available"}}`,
+		"bad entry":     `{"a":7}`,
+	} {
+		var p ConnectableProviders
+		if err := json.Unmarshal([]byte(doc), &p); err == nil {
+			t.Errorf("%s: Unmarshal accepted %s", name, doc)
 		}
 	}
 }
