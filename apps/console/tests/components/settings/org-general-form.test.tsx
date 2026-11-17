@@ -312,6 +312,34 @@ describe("F050 — four renders, never confused", () => {
 });
 
 describe("delete organization", () => {
+	it("the confirmation states the live-environment rule before anything is sent (#6800)", async () => {
+		const user = userEvent.setup();
+		renderOrgGeneral();
+		await user.click(screen.getByRole("button", { name: "Delete organization" }));
+		const dialog = await screen.findByRole("alertdialog");
+
+		expect(dialog).toHaveTextContent(
+			"An organization with a live or in-flight environment cannot be deleted: destroy those environments first.",
+		);
+		expect(dialog).toHaveTextContent("destroys nothing in the cloud");
+		expect(deleteOrganization).not.toHaveBeenCalled();
+	});
+
+	it("toasts the server's sentence when a live environment blocks the delete (#6800)", async () => {
+		const refusal =
+			"This organization has a live or in-flight environment: payments / production. Destroy it before deleting the organization.";
+		deleteOrganization.mockResolvedValue({ ok: false, error: { kind: "conflict", message: refusal } });
+		const user = userEvent.setup();
+		renderOrgGeneral();
+		await user.click(screen.getByRole("button", { name: "Delete organization" }));
+		const dialog = await screen.findByRole("alertdialog");
+		await user.click(within(dialog).getByRole("button", { name: "Delete organization" }));
+
+		await waitFor(() => expect(toastError).toHaveBeenCalledWith(refusal));
+		expect(toastSuccess).not.toHaveBeenCalled();
+		expect(push).not.toHaveBeenCalled();
+	});
+
 	it("deletes once and leaves for the dashboard", async () => {
 		const user = userEvent.setup();
 		renderOrgGeneral();
