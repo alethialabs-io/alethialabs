@@ -13,11 +13,13 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The link the panel is opened on: `useFilterUrlSync` replaces the store with it on mount (#6814).
+const nav = vi.hoisted(() => ({ search: "" }));
 vi.mock("next/navigation", () => ({
 	useParams: () => ({ org: "acme" }),
 	useRouter: () => ({ replace: vi.fn() }),
 	usePathname: () => "/acme/~/settings/billing/invoices",
-	useSearchParams: () => new URLSearchParams(""),
+	useSearchParams: () => new URLSearchParams(nav.search),
 }));
 vi.mock("@/lib/rpc/client", async () => ({ orpc: (await import("./billing-rpc-fake")).fakeOrpc }));
 vi.mock("@/components/settings/billing/invoice-preview-dialog", () => ({
@@ -62,6 +64,7 @@ function tree(): ReactNode {
 
 beforeEach(() => {
 	sessionStorage.clear();
+	nav.search = "";
 	useInvoiceFilters.getState().reset();
 	resetReads();
 	reads.invoices.mockResolvedValue([]);
@@ -87,7 +90,7 @@ describe("the invoices default is all time, and the bar says so (#6731)", () => 
 	});
 
 	it("offers All time in the menu, and picking it clears a chosen window", async () => {
-		useInvoiceFilters.getState().set("range", "30d");
+		nav.search = "range=30d";
 		render(tree());
 		fireEvent.click(await screen.findByRole("button", { name: "Last 30 days" }));
 		fireEvent.click(await screen.findByRole("button", { name: ALL_TIME_LABEL }));

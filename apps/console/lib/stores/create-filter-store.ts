@@ -3,20 +3,30 @@
 
 // The per-page filter-store factory of the console filter standard (see
 // lib/query/README.md → "Server-side filters"). One store per list page holds the
-// user's filter selections; sessionStorage persistence keeps them across
-// navigations, and the page's query hook feeds them (debounced + normalized)
+// user's filter selections, and the page's query hook feeds them (debounced + normalized)
 // into a parameterized TanStack Query key.
 //
-// PERSISTENCE IS SCOPED, NOT GLOBAL (#6730). A store is a module singleton, so one
-// definition serves every route that renders its surface: the jobs store backs both
+// THE URL IS A STORE'S ONLY MEMORY, UNLESS IT ASKS FOR ANOTHER (#6814). A store is built
+// with `persist: false` by default: nothing is written to, or read from, sessionStorage.
+// A list route prefetches its first page from the link alone (`filterStateFromUrl`), so a
+// selection remembered anywhere else is state the server cannot see — the browser's first
+// query key then differs from the prefetched one and the first paint changes after
+// hydration (#6320). `useFilterUrlSync` therefore REPLACES a store's filters with the
+// link's on mount (`replace`), and never merges a link over what the store held.
+//
+// EVERY STORE HAS A SCOPE KEY, PERSISTED OR NOT (#6730). A store is a module singleton, so
+// one definition serves every route that renders its surface: the jobs store backs both
 // `/{org}/~/jobs` and every `/{org}/{project}/jobs`, the access and activity stores both
-// an org and a project settings page, and every store every org a tab visits. Keyed on
-// `name` alone, a search typed on org jobs was restored onto a project's jobs page as
-// "No jobs match these filters", and into another org's. So the storage key is
-// `<name>:<scope>`, and a store remembers nothing — neither reads nor writes — until
-// `enterScope` names one. `useFilterUrlSync` enters the page's pathname on mount, which
-// carries the org and the project, so every store reaches the scope through the one
-// call F2 of `pnpm check:filter-standard` already requires of it.
+// an org and a project settings page, and every store every org a tab visits. The scope
+// key is the page's pathname, which carries the org and the project; `useFilterUrlSync`
+// enters it on mount through the one call F2 of `pnpm check:filter-standard` already
+// requires. Entering a different scope drops the filters held in memory for the last one.
+// A store built with `persist: true` additionally keys what it writes on `<name>:<scope>`,
+// and reads and writes nothing until a scope is entered.
+//
+// The scope is NOT one of the filters. Which org and which project a list belongs to is a
+// predicate the server applies to the rows pass AND to the facet pass; a filter is applied
+// to the rows pass only. See the README's "Scope is a predicate, never a filter".
 
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
@@ -28,6 +38,12 @@ export interface FilterStoreState<F extends Record<string, unknown>> {
 	set: <K extends keyof F>(key: K, value: F[K]) => void;
 	/** Merge a partial filter update (multi-key changes). */
 	patch: (partial: Partial<F>) => void;
+	/**
+	 * Hold exactly `filters`: the whole state at once, nothing kept from before. This is how a
+	 * link's view lands in the store (`useFilterUrlSync`). Handing it what the store already
+	 * holds changes nothing, so subscribers are not told of a change that did not happen.
+	 */
+	replace: (filters: F) => void;
 	/** Restore every filter to its default. */
 	reset: () => void;
 	/**
@@ -36,6 +52,11 @@ export interface FilterStoreState<F extends Record<string, unknown>> {
 	 * the defaults when it persisted nothing. Re-entering the current scope is a no-op.
 	 */
 	enterScope: (scope: string) => void;
+	/**
+	 * Whether this store keeps a scope's filters in sessionStorage (`persist: true`). When it
+	 * does not, the URL is its only memory and a link with no filter params means the defaults.
+	 */
+	remembers: boolean;
 }
 
 /** Storage that holds nothing: what a store passed `persist: false` reads and writes. */
@@ -60,28 +81,30 @@ function sessionStorageOrNothing(): StateStorage {
 }
 
 /**
- * Create a sessionStorage-persisted zustand store for one page's filter state.
- * `name` must be unique per store definition (it prefixes the storage key; the scope
- * completes it); bump `version` to invalidate previously persisted shapes when the
- * filter set changes.
+ * Create the zustand store for one page's filter state.
  *
- * `persist: false` keeps the store in memory only, so the URL is its only memory across
- * loads (#6320). That is for a page whose route prefetches the first page from the link's
- * filters: a selection remembered in the session is state the server cannot see, so it made the
- * browser's first query key differ from the prefetched one and the first paint changed after
- * hydration (B1). The store is still built here, so it keeps the factory's mutators — and its
- * scope: entering another scope still drops the in-memory filters of the last one.
+ * By default it lives in memory only and the URL is its only memory across loads: the route
+ * prefetches the first page from the link's filters, and a selection remembered in the session
+ * is state the server cannot see (#6320, #6814).
+ *
+ * `persist: true` is the opt-in for a surface whose route does NOT prefetch from the link and
+ * that wants a bare URL to bring back the last selection made on that same page. It writes to
+ * sessionStorage under `<name>:<scope>`, so `name` must be unique per store definition; bump
+ * `version` to invalidate previously persisted shapes when the filter set changes. Neither
+ * `name` nor `version` has any effect on a store that does not persist.
+ *
+ * Either way the store has a scope: entering another one drops the in-memory filters of the last.
  */
 export function createFilterStore<F extends Record<string, unknown>>({
 	name,
 	defaults,
 	version = 1,
-	persist: persisted = true,
+	persist: persisted = false,
 }: {
 	name: string;
 	defaults: F;
 	version?: number;
-	/** `false`: never written to, nor rehydrated from, sessionStorage. */
+	/** `true`: written to, and rehydrated from, sessionStorage under the entered scope. */
 	persist?: boolean;
 }) {
 	// The scope this store currently reads and writes. `null` until a page enters one, and
@@ -114,14 +137,17 @@ export function createFilterStore<F extends Record<string, unknown>>({
 					set((s) => ({ filters: { ...s.filters, [key]: value } })),
 				patch: (partial) =>
 					set((s) => ({ filters: { ...s.filters, ...partial } })),
+				replace: (filters) =>
+					set((s) => (sameFilters(s.filters, filters) ? s : { filters })),
 				reset: () => set({ filters: defaults }),
+				remembers: persisted,
 				enterScope: (next) => {
 					if (next === scope) return;
 					const left = scope;
 					scope = next;
 					// Filters held for another scope never carry over. The very first entry keeps
-					// what is in memory: nothing has been persisted or restored yet, so that is
-					// the defaults on a page (and whatever a test planted before mounting).
+					// what is in memory: no scope has been left yet, so there is nothing of
+					// another scope's to drop.
 					if (left !== null) {
 						muted = true;
 						try {
@@ -146,6 +172,20 @@ export function createFilterStore<F extends Record<string, unknown>>({
 		),
 	);
 	return store;
+}
+
+/** Exact equality of two filter states: the same keys, and each value the same in the same order. */
+function sameFilters<F extends Record<string, unknown>>(a: F, b: F): boolean {
+	const keys = Object.keys(a);
+	if (keys.length !== Object.keys(b).length) return false;
+	return keys.every((key) => {
+		const x = a[key];
+		const y = b[key];
+		if (Array.isArray(x) && Array.isArray(y)) {
+			return x.length === y.length && x.every((item, i) => Object.is(item, y[i]));
+		}
+		return Object.is(x, y);
+	});
 }
 
 /** Order-insensitive equality for one filter value (arrays compare as sets). */
