@@ -297,7 +297,7 @@ type jobRef struct {
 // rendering of the spec that nothing keeps in step, and the reader of this message is exactly
 // the person who cannot afford to be told about two of the three flags that exist.
 var errJobIDRequired = func() *clierr.Error {
-	e := clierr.New(clierr.CodeMissingArgument,
+	e := clierr.New(clierr.CodeInputRequired,
 		"no job id given, and the picker cannot be shown: "+
 			"pass the job id, or --latest to take the most recent job (narrow it with "+
 			strings.Join(jobSelectorFlagNames(), "/")+")")

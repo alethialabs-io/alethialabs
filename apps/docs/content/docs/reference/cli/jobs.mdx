@@ -25,8 +25,8 @@ was:
 | `4`, `5` | Not signed in, or your role does not allow it. |
 | `6` | No such job, or no job matches the flags. |
 | `7` | The job is not in a state that allows it, for example cancelling a job that already finished. |
-| `8` | A flag or argument is wrong or missing. Nothing was sent. |
-| `9` | A confirmation is needed and there is no terminal: pass `--yes`. |
+| `8` | The command line is wrong as written: an unknown flag, a bad value, an id together with `--latest`. Nothing was sent. |
+| `9` | The command needs an answer and there is no terminal to ask on: a job id or `--latest`, or `--yes` for a confirmation. |
 | `11` | The control plane could not be reached, or answered with a server fault. A retry can help. |
 | `12` | `jobs logs --follow --timeout` passed its limit. The job is still running. |
 | `13` | The job you followed ended without succeeding: it failed or was cancelled. |
@@ -62,7 +62,7 @@ Two combinations are refused rather than guessed:
 - An id **and** a narrowing flag. `jobs logs <the id> --type DEPLOY` on a `PLAN` job would print
   the plan's logs and look as though it had filtered.
 
-Without a terminal, without an id and without `--latest`, the command exits `8` and names the two
+Without a terminal, without an id and without `--latest`, the command exits `9` and names the two
 things it accepts. It never blocks on a prompt nobody can answer. When no job matches the flags, it
 exits `6`.
 

@@ -138,7 +138,7 @@ func clusterTokenTarget(args []string) (string, error) {
 		return args[0], nil
 	}
 	if err := requireInteractiveForm(); err != nil {
-		return "", clierr.New(clierr.CodeMissingArgument,
+		return "", clierr.New(clierr.CodeInputRequired,
 			"a cluster id is required (kubectl passes it; at a terminal, omit it to pick one)")
 	}
 	token, err := getAuthTokenInternal(false)

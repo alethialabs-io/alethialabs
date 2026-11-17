@@ -250,7 +250,7 @@ func TestClusterToken_RefusalsOwnTheirExitCodes(t *testing.T) {
 	t.Run("no id and no terminal", func(t *testing.T) {
 		env := newKCEnv(t)
 		stdout, stderr, code := env.runCode("cluster", "token", "--no-input")
-		if code != clierr.ExitUsage || stdout != "" || !strings.Contains(stderr, "a cluster id is required") {
+		if code != clierr.ExitInputRequired || stdout != "" || !strings.Contains(stderr, "a cluster id is required") {
 			t.Errorf("exit %d stdout %q stderr %q", code, stdout, stderr)
 		}
 	})
@@ -316,12 +316,12 @@ func TestCluster_SelectorRefusalsOwnTheirExitCodes(t *testing.T) {
 		t.Errorf("no match: %+v", e)
 	}
 	_, err = resolveCluster([]api.ClusterSummary{prod, staging}, "web")
-	if e := clierr.From(err); e.Exit != clierr.ExitUsage || !strings.Contains(e.Message, "web-staging") {
+	if e := clierr.From(err); e.Exit != clierr.ExitInputRequired || !strings.Contains(e.Message, "web-staging") {
 		t.Errorf("ambiguous: %+v", e)
 	}
 	_, err = resolveCluster([]api.ClusterSummary{prod, staging}, "")
 	e := clierr.From(err)
-	if e.Exit != clierr.ExitUsage || !strings.Contains(e.Message, "web-production") {
+	if e.Exit != clierr.ExitInputRequired || !strings.Contains(e.Message, "web-production") {
 		t.Errorf("no selector and no terminal: %+v", e)
 	}
 	if !errors.Is(err, errNoInput) {

@@ -194,7 +194,9 @@ func resolveCluster(clusters []api.ClusterSummary, query string) (*api.ClusterSu
 	// Ambiguous. With prompting off the only safe answer is to refuse and name the candidates:
 	// picking one would be picking FOR the caller, which is the defect above wearing a new hat.
 	if !canPromptForm() {
-		return nil, clierr.New(clierr.CodeInvalidUsage, fmt.Sprintf(
+		// input_required, not a usage error: the command line is valid, and at a terminal the
+		// same line is answered by the picker below.
+		return nil, clierr.New(clierr.CodeInputRequired, fmt.Sprintf(
 			"%q matches %d clusters (%s) — re-run with one of the bracketed names or ids",
 			query, len(matches), clusterChoices(matches),
 		))
@@ -246,7 +248,7 @@ func pickCluster(clusters []api.ClusterSummary, title string) (*api.ClusterSumma
 // It names what to pass instead and keeps the gate's own error as its cause, because "prompts are
 // disabled" and "the stream the prompt draws on is redirected" have different next steps.
 func errClusterSelectorRequired(clusters []api.ClusterSummary, cause error) error {
-	e := clierr.New(clierr.CodeMissingArgument, fmt.Sprintf(
+	e := clierr.New(clierr.CodeInputRequired, fmt.Sprintf(
 		"which cluster? Pass a project name, cluster name or id — have: %s (%v)",
 		clusterChoices(clusters), cause))
 	e.Hint = "alethia cluster list"

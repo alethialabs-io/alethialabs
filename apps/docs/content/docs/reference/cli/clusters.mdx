@@ -69,11 +69,11 @@ first and copy a name out of it.
 
 The selector is required when a prompt could not work: with `--no-input`, with a piped stdin that
 could never answer one, and with a redirected stdout that has no screen to draw one on. In each
-case the command exits `8` explaining what to pass. The last is the easy one to hit —
+case the command exits `9` explaining what to pass. The last is the easy one to hit —
 `alethia cluster get -o json > clusters.json` refuses rather than writing a form into your file.
 A selector that matches **nothing** is an error too, not an empty screen: the command exits `6`,
 lists the clusters you have, and `alethia cluster get typo || echo missing` prints `missing`. A
-selector that matches **several** clusters exits `8` and lists them, unless a terminal is there to
+selector that matches **several** clusters exits `9` and lists them, unless a terminal is there to
 ask which one.
 
 A selector that matches **more than one** cluster — the usual case is one project with a production
@@ -218,8 +218,8 @@ A spinner shows while the runner works, but only at a terminal with prompts turn
 
 The command exits `0` when it wrote the kubeconfig. Every error is one line on stderr, with a hint
 when there is a next command to run, and an exit code that says what kind of failure it was. A flag
-that is wrong, a selector that matches several clusters, or a missing selector without a terminal
-exits `8` before anything is sent. A selector that matches nothing exits `6`. These are the refusals
+that is wrong exits `8` before anything is sent. A missing selector, or one that matches several
+clusters, exits `9` when there is no terminal to ask on. A selector that matches nothing exits `6`. These are the refusals
 from the control plane, and what the CLI prints:
 
 | Status | Exit | Cause | The CLI prints |
@@ -269,7 +269,7 @@ else: the token and its expiry. **Stderr** carries every error, as one line that
 the token. The command exits `0` when it printed a credential. Otherwise it exits with the code of
 the failure, the same codes as [`alethia cluster kubeconfig`](#exit-codes-and-refusals): `4` for a
 session that is not valid, `5` when your role no longer allows the mint, `8` for an argument that
-is not a cluster id. It never prompts: if your session expired, it fails and tells you to run
+is not a cluster id, `9` for no cluster id without a terminal. It never prompts: if your session expired, it fails and tells you to run
 `alethia login`. It never prints the update notice.
 
 ### The cache

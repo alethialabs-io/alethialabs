@@ -703,21 +703,24 @@ func TestJobCancel_RefusalsOwnTheirExitCodes(t *testing.T) {
 
 // --- through the cobra tree: the refusal's exit code and its stream ---
 
-// TestJobsFamily_RefusalsExitWithAUsageCodeOnStderr drives the real tree with prompting off: each
+// TestJobsFamily_RefusalsExitWithTheirClassOnStderr drives the real tree with prompting off: each
 // command names what is missing, on stderr, with stdout empty and before any request.
-func TestJobsFamily_RefusalsExitWithAUsageCodeOnStderr(t *testing.T) {
+func TestJobsFamily_RefusalsExitWithTheirClassOnStderr(t *testing.T) {
+	// Two classes, and the difference is the contract: an input a prompt would have supplied is
+	// input_required (9); a command line that is wrong as written is a usage error (8).
 	cases := []struct {
 		want string
+		exit int
 		args []string
 	}{
-		{"no job id given", []string{"jobs", "get", "--no-input"}},
-		{"no job id given", []string{"jobs", "logs", "--no-input"}},
-		{"no job id given", []string{"jobs", "cancel", "--no-input", "--yes"}},
-		{"not a job status", []string{"jobs", "get", "--latest", "--status", "DONE", "--no-input"}},
-		{"pass a job id or --latest", []string{"jobs", "logs", "job-older", "--latest", "--no-input"}},
-		{"invalid --status", []string{"jobs", "list", "--status", "DONE", "--no-input"}},
-		{"--offset cannot be negative", []string{"jobs", "list", "--offset", "-1", "--no-input"}},
-		{"--timeout bounds a follow", []string{"jobs", "logs", "job-older", "--timeout", "5m", "--no-input"}},
+		{"no job id given", clierr.ExitInputRequired, []string{"jobs", "get", "--no-input"}},
+		{"no job id given", clierr.ExitInputRequired, []string{"jobs", "logs", "--no-input"}},
+		{"no job id given", clierr.ExitInputRequired, []string{"jobs", "cancel", "--no-input", "--yes"}},
+		{"not a job status", clierr.ExitUsage, []string{"jobs", "get", "--latest", "--status", "DONE", "--no-input"}},
+		{"pass a job id or --latest", clierr.ExitUsage, []string{"jobs", "logs", "job-older", "--latest", "--no-input"}},
+		{"invalid --status", clierr.ExitUsage, []string{"jobs", "list", "--status", "DONE", "--no-input"}},
+		{"--offset cannot be negative", clierr.ExitUsage, []string{"jobs", "list", "--offset", "-1", "--no-input"}},
+		{"--timeout bounds a follow", clierr.ExitUsage, []string{"jobs", "logs", "job-older", "--timeout", "5m", "--no-input"}},
 	}
 	for _, tc := range cases {
 		want, args := tc.want, tc.args
@@ -725,8 +728,8 @@ func TestJobsFamily_RefusalsExitWithAUsageCodeOnStderr(t *testing.T) {
 			s, run := jobsCmdEnv(t)
 			var code int
 			out, diag := captureStreams(t, func() { code = run(args...) })
-			if code != clierr.ExitUsage {
-				t.Errorf("exit = %d, want %d\n%s", code, clierr.ExitUsage, diag)
+			if code != tc.exit {
+				t.Errorf("exit = %d, want %d\n%s", code, tc.exit, diag)
 			}
 			if out != "" {
 				t.Errorf("stdout is not empty on a refusal: %q", out)
