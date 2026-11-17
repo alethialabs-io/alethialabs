@@ -102,9 +102,7 @@ func Render(out io.Writer, format string, spec TableSpec, records any) error {
 	case "", FormatTable:
 		return renderStaticTable(out, spec)
 	case FormatJSON:
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(records)
+		return RenderJSON(out, records)
 	case FormatCSV:
 		w := csv.NewWriter(out)
 		if len(spec.Columns) > 0 {
@@ -122,6 +120,21 @@ func Render(out io.Writer, format string, spec TableSpec, records any) error {
 	default:
 		return fmt.Errorf("unknown output format %q (want table, json, or csv)", format)
 	}
+}
+
+// RenderJSON writes v to out as indented json followed by a newline. It is the json branch of
+// Render, exported so a result that is one value rather than a result set is written by the same
+// encoder with the same indentation.
+func RenderJSON(out io.Writer, v any) error {
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
+}
+
+// Tabular is a value that can describe itself as rows, so a single result has a csv form as well
+// as a json one. The cells follow the house rule on Render: wire values, never humanised ones.
+type Tabular interface {
+	Table() TableSpec
 }
 
 // MaxColWidth bounds a table cell's displayed width so a long value (a joined
