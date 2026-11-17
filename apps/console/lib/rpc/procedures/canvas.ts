@@ -25,7 +25,7 @@ import "server-only";
 // shares it), and `iacSource` calls `getIacSource` in-process (app/server/actions/byo-iac.ts belongs
 // to another unit's scope).
 
-import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, lt, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import type {
 	AddonInstallState,
@@ -52,13 +52,19 @@ import { authorize } from "@/lib/authz/guard";
 import {
 	EMPTY_ENVIRONMENT_STATUS,
 	externalStatusKey,
+	planStaleReason,
+	resolveDeployState,
 	type ComponentServerStatus,
+	type DeployRefusal,
 	type EnvironmentStatus,
 	type IacEnvironment,
+	type ReviewPlan,
 } from "@/lib/canvas/component-status";
 import { attributeDrift, kindForResourceType, type DriftTarget } from "@/lib/canvas/drift-map";
 import { buildIacInventory, parsePlanInventory } from "@/lib/canvas/iac-inventory";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
+import { CloudNotOfferedError, isCloudOffered } from "@/lib/cloud-providers/availability";
+import { isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import {
 	buildDestroyTree,
@@ -66,8 +72,12 @@ import {
 	readLiveFabricTenants,
 } from "@/lib/queries/destroy-tree";
 import { serviceBindingsByOwner } from "@/lib/db/normalized-reads";
+import { parsePlanJSON } from "@/lib/plan/parse-plan";
+import { assertProjectCloudOffered } from "@/lib/queries/projects";
 import {
+	auditLog,
 	cloudIdentities,
+	environmentCost,
 	environmentDrift,
 	environmentProbes,
 	jobs,
@@ -388,6 +398,11 @@ export async function readEnvironmentStatus(
 	]);
 
 	const cost = await getLatestEnvironmentCost(projectId, envId).catch(() => null);
+	const deployState = resolveDeployState(
+		env.deployed_config_hash,
+		await readDesignHash(projectId, envId, env.deployed_config_hash),
+	);
+	const deployRefusal = await readDeployRefusal(actor, projectId);
 
 	// GitOps wiring + ArgoCD health (#574) — the Deploy tab's read model, shared here so
 	// canvas badges ride the same poll. Best-effort: a read failure must not blank the board.
@@ -467,7 +482,9 @@ export async function readEnvironmentStatus(
 					status: activeJobRow.status,
 				}
 			: null,
-		updatePending: await isDeployPending(projectId, envId, env.deployed_config_hash),
+		updatePending: deployState === "ahead",
+		deployState,
+		deployRefusal,
 		probe: probeRow
 			? { reachable: probeRow.reachable, message: probeRow.message }
 			: null,
@@ -613,23 +630,43 @@ function attributeToIacGroups(
 }
 
 /**
- * Whether the saved design has moved ahead of what was last deployed — the SAME comparison
- * `getEnvReconcileStates` makes (`structuralHash(design) !== deployed_config_hash`), so the canvas
- * badge and the environment card can never disagree. No deployed hash = never deployed, which is
- * "not deployed", not "update pending". Reading the design can throw (e.g. a since-deleted cloud
- * identity); degrade to "not pending" rather than failing the whole status read.
+ * The saved design's `structuralHash`, for the comparison `getEnvReconcileStates` also makes
+ * (`structuralHash(design) !== deployed_config_hash`), so the canvas badge and the environment card
+ * give one answer. Null when there is no deployed hash to compare it with (the design is not read),
+ * and null when reading the design throws (e.g. a since-deleted cloud identity): the status read
+ * then answers `in-sync` for a deployed environment (`resolveDeployState`) and does not fail.
  */
-async function isDeployPending(
+async function readDesignHash(
 	projectId: string,
 	environmentId: string,
 	deployedHash: string | null,
-): Promise<boolean> {
-	if (!deployedHash) return false;
+): Promise<string | null> {
+	if (!deployedHash) return null;
 	try {
-		const design = (await getProjectAsFormData(projectId, environmentId)).formData;
-		return structuralHash(design) !== deployedHash;
+		return structuralHash((await getProjectAsFormData(projectId, environmentId)).formData);
 	} catch {
-		return false;
+		return null;
+	}
+}
+
+/**
+ * Why the project may not be planned or deployed, or null. The one reason today is a cloud account
+ * on a cloud this deployment does not offer, asked through `assertProjectCloudOffered`
+ * (lib/queries/projects.ts) so this read and the check it reports cannot disagree. This is a read:
+ * it refuses nothing. Any error other than that refusal is rethrown.
+ */
+async function readDeployRefusal(
+	actor: Awaited<ReturnType<typeof authorize>>,
+	projectId: string,
+): Promise<DeployRefusal | null> {
+	try {
+		await withActorScope(actor, (tx) => assertProjectCloudOffered(tx, projectId));
+		return null;
+	} catch (error) {
+		if (error instanceof CloudNotOfferedError) {
+			return { reason: "cloud-not-offered", message: error.message };
+		}
+		throw error;
 	}
 }
 
@@ -962,16 +999,187 @@ export async function readEnvironmentJobs(
 	};
 }
 
+// ── The review plan: the environment's latest plan, and whether it is the one to deploy ────────
+
+/** The audit actions that record a write of the whole design (create, and `updateProjectDesign`). */
+const DESIGN_WRITE_ACTIONS = ["CREATED", "UPDATED"] as const;
+
+/** The job types that change what is deployed, or carry a snapshot a later deploy applies. */
+const RUN_JOB_TYPES = ["BUILD", "DEPLOY", "DESTROY"] as const;
+
+/** A SHA-256 as the runner compares it: exactly 64 lowercase hex characters. */
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * The project's design revision: the id of its latest design-write audit row, as a decimal string,
+ * or `"0"` when it has none. With `asOfJobId`, only rows written at or before that job was queued
+ * count, which gives the revision that job was queued at; the two timestamps are compared in the
+ * database, at its precision. The read uses the service db, which bypasses RLS, so the org boundary
+ * is the join to the project's org here.
+ */
+async function readDesignRevision(
+	projectId: string,
+	orgId: string,
+	asOfJobId: string | null,
+): Promise<string> {
+	const [row] = await getServiceDb()
+		.select({ id: auditLog.id })
+		.from(auditLog)
+		.innerJoin(projects, eq(auditLog.project_id, projects.id))
+		.where(
+			and(
+				eq(auditLog.project_id, projectId),
+				eq(projects.org_id, orgId),
+				inArray(auditLog.action, [...DESIGN_WRITE_ACTIONS]),
+				asOfJobId
+					? lte(
+							auditLog.created_at,
+							sql`(select created_at from jobs where id = ${asOfJobId}::uuid)`,
+						)
+					: undefined,
+			),
+		)
+		.orderBy(desc(auditLog.id))
+		.limit(1);
+	return String(row?.id ?? 0);
+}
+
+/** The counts of a stored plan result; null when there is none or it does not parse as a plan. */
+function planCounts(planResult: Record<string, unknown> | undefined): ReviewPlan["summary"] {
+	if (!planResult) return null;
+	try {
+		return parsePlanJSON(planResult).counts;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The environment's latest PLAN job and whether it is the plan to deploy (`ReviewPlan`): a deploy
+ * from the board is offered only for a plan this read calls `current`. It is a read and enforces
+ * nothing; the deploy path makes its own checks.
+ *
+ * `view`, like the board's other reads. The environment is resolved as they resolve it (a null id
+ * is the project's default) and must belong to the project in the actor's org, else NOT_FOUND.
+ * Every row is bounded by project, environment and org.
+ *
+ * `current` is decided by `planStaleReason` from three facts read here: the plan job's status, the
+ * design revision it was queued at against the saved one, and whether a build, deploy or destroy of
+ * the environment was queued after it.
+ */
+export async function readReviewPlan(
+	projectId: string,
+	environmentId?: string | null,
+): Promise<ReviewPlan> {
+	const actor = await authorize("view", { type: "project", id: projectId });
+	const envId = await resolveEnvironment(projectId, environmentId);
+	await assertEnvironmentInOrg(projectId, envId, actor.orgId);
+	const db = getServiceDb();
+	const inEnvironment = and(
+		eq(jobs.project_id, projectId),
+		eq(jobs.environment_id, envId),
+		eq(jobs.org_id, actor.orgId),
+	);
+
+	const [plan] = await db
+		.select({
+			id: jobs.id,
+			status: jobs.status,
+			created_at: jobs.created_at,
+			metadata: jobs.execution_metadata,
+		})
+		.from(jobs)
+		.where(and(inEnvironment, eq(jobs.job_type, "PLAN")))
+		.orderBy(desc(jobs.created_at), desc(jobs.id))
+		.limit(1);
+
+	const savedRevision = await readDesignRevision(projectId, actor.orgId, null);
+	if (!plan) {
+		const staleReason = planStaleReason({
+			status: null,
+			planRevision: null,
+			savedRevision,
+			runSincePlan: false,
+		});
+		return {
+			environmentId: envId,
+			planJobId: null,
+			status: null,
+			createdAt: null,
+			summary: null,
+			cost: null,
+			designRevision: null,
+			savedRevision,
+			digest: null,
+			current: staleReason === null,
+			staleReason,
+		};
+	}
+
+	const designRevision = await readDesignRevision(projectId, actor.orgId, plan.id);
+	const [laterRun] = await db
+		.select({ id: jobs.id })
+		.from(jobs)
+		.where(
+			and(
+				inEnvironment,
+				inArray(jobs.job_type, [...RUN_JOB_TYPES]),
+				gt(jobs.created_at, plan.created_at),
+			),
+		)
+		.limit(1);
+	const [cost] = await db
+		.select({
+			total_monthly: environmentCost.total_monthly,
+			currency: environmentCost.currency,
+		})
+		.from(environmentCost)
+		.innerJoin(projects, eq(environmentCost.project_id, projects.id))
+		.where(
+			and(
+				eq(environmentCost.plan_job_id, plan.id),
+				eq(environmentCost.project_id, projectId),
+				eq(environmentCost.environment_id, envId),
+				eq(projects.org_id, actor.orgId),
+			),
+		)
+		.orderBy(desc(environmentCost.captured_at))
+		.limit(1);
+
+	const receiptDigest = plan.metadata?.verify_receipt?.receipt?.plan_sha256;
+	const staleReason = planStaleReason({
+		status: plan.status,
+		planRevision: designRevision,
+		savedRevision,
+		runSincePlan: Boolean(laterRun),
+	});
+	return {
+		environmentId: envId,
+		planJobId: plan.id,
+		status: plan.status,
+		createdAt: plan.created_at.toISOString(),
+		summary: planCounts(plan.metadata?.plan_result),
+		cost: cost ? { totalMonthly: cost.total_monthly, currency: cost.currency } : null,
+		designRevision,
+		savedRevision,
+		digest: receiptDigest && SHA256_HEX.test(receiptDigest) ? receiptDigest : null,
+		current: staleReason === null,
+		staleReason,
+	};
+}
+
 // ── Capabilities: what a cloud identity can actually launch ───────────────────────────────────
 
 /** Rows=0 with a stamp this fresh is read as "still enumerating" rather than "nothing to report". */
 const SYNCING_WINDOW_MS = 5 * 60_000;
 
-/** The clouds with a provisioning-option catalog. Cast-free narrowing: returns the matching literal
- * (already the union type) so a wider `cloud_provider` value degrades to null instead of lying. */
+/**
+ * The provider as a cloud with a provisioning-option catalog that this deployment offers
+ * (`isCloudOffered`), or null. A wider `cloud_provider` value, and a cloud that is not offered,
+ * are both null, and the caller then answers the empty bag.
+ */
 function asCatalogued(p: string): CloudProviderSlug | null {
-	const catalogued: CloudProviderSlug[] = ["aws", "gcp", "azure", "hetzner", "alibaba"];
-	return catalogued.find((c) => c === p) ?? null;
+	return isCloudProviderSlug(p) && isCloudOffered(p) ? p : null;
 }
 
 /**
@@ -1285,6 +1493,10 @@ export const canvasRouter = {
 	environmentStatus: query
 		.input(environmentInput)
 		.handler(({ input }) => readEnvironmentStatus(input.projectId, input.environmentId)),
+	/** The environment's latest plan, and whether it is the plan to deploy. */
+	reviewPlan: query
+		.input(environmentInput)
+		.handler(({ input }) => readReviewPlan(input.projectId, input.environmentId)),
 	/** The add-on catalog joined with the environment's install state. */
 	addons: query
 		.input(environmentInput)

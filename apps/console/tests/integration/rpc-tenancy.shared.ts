@@ -537,6 +537,12 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: boardInput,
 		reveals: (out, s, org) => field(out, "environmentId") === envOf(s, org),
 	},
+	// The review plan (#6831) names the environment it answers for; another org's is refused.
+	"canvas.reviewPlan": {
+		kind: "by-id",
+		input: boardInput,
+		reveals: (out, s, org) => field(out, "environmentId") === envOf(s, org),
+	},
 	"canvas.environmentJobs": {
 		// The seeded environments have no jobs, so the reveal is that the read ANSWERED (a page) —
 		// another org's environment is refused before any row is read.
