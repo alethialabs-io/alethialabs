@@ -31,6 +31,7 @@ import { enforceDecision, recordActivity } from "@/lib/authz/activity";
 import { authorizeInOrg, currentActor } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError, type ResourceRef } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
+import { liveEnvironmentsInOrg, liveEnvironmentsRefusal } from "@/lib/db/live-env-statuses";
 import { organization } from "@/lib/db/schema";
 import { type OrgPrimaryAddress, withPrimaryAddress } from "@/lib/org/settings";
 import { ORG_SLUG_RESERVED_CODE, ORG_SLUG_RESERVED_MESSAGE } from "@/lib/routing";
@@ -225,6 +226,10 @@ async function writeOrgGeneral(input: OrgGeneralValues): Promise<OrgGeneralSaved
  * Deletes the addressed org. The PDP's `edit` on the org runs first (it refuses a member whose
  * membership is not active, as the `/api/auth` route does); better-auth then holds deletion to the
  * org's owner.
+ *
+ * Deleting the org deletes its projects' rows and runs no destroy job, so it answers `conflict`
+ * while any environment of any project in the org is live or in flight (#6752), naming the first
+ * few (`liveEnvironmentsRefusal`). They are destroyed first, then the org is deleted.
  */
 export async function deleteOrganization(raw: Record<string, never>): Promise<ActionResult<{ deleted: true }>> {
 	return defineAction({
@@ -240,6 +245,10 @@ async function removeOrganization(): Promise<{ deleted: true }> {
 		throw new ActionRefusal("not-found", "The personal workspace can't be deleted.");
 	}
 	await decideOrgEdit();
+	// Asked after the PDP, so only someone who may edit the org learns what is in it; and on the
+	// service client, because the environments that block the delete may be another member's.
+	const blockers = await liveEnvironmentsInOrg(getServiceDb(), actor.orgId);
+	if (blockers.length > 0) throw new ActionRefusal("conflict", liveEnvironmentsRefusal(blockers));
 	const outcome = await callOrganizationEndpoint("/organization/delete", {
 		organizationId: actor.orgId,
 	});
