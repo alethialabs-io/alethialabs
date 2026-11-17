@@ -3,10 +3,13 @@
 
 // #6113 (ADR 0005 D4): the client half of the mutation contract — pending state, optimistic patch
 // with snapshot rollback, invalidation of every declared key, and one treatment per error kind.
+// #6755: a call that gets no server answer is a `network` failure the person is told about, and
+// the declared keys are still invalidated.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { useForm } from "react-hook-form";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { push, toast } = vi.hoisted(() => ({
@@ -31,7 +34,12 @@ function setup() {
 	return { client, wrapper };
 }
 
+/** What `navigator.onLine` answers in this file; reset to online before every test. */
+let online = true;
+Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => online });
+
 beforeEach(() => {
+	online = true;
 	push.mockReset();
 	toast.success.mockReset();
 	toast.error.mockReset();
@@ -162,5 +170,168 @@ describe("useActionMutation", () => {
 		});
 		expect(onRefusal).not.toHaveBeenCalled();
 		expect(toast.error).toHaveBeenCalledWith("Something went wrong on our side. Reference: abc123");
+	});
+
+	it("tells the person when the call itself rejects, rolls back, and still invalidates (#6755)", async () => {
+		const { client, wrapper } = setup();
+		const invalidate = vi.spyOn(client, "invalidateQueries");
+		const action = vi.fn(async (): Promise<ActionResult<string>> => {
+			throw new TypeError("Failed to fetch");
+		});
+		const { result } = renderHook(
+			() =>
+				useActionMutation(action, {
+					invalidates: [KEY],
+					optimistic: [{ key: KEY, update: () => ["alpha", "beta"] }],
+				}),
+			{ wrapper },
+		);
+		await act(async () => {
+			await result.current.mutateAsync(undefined).catch(() => {});
+		});
+		expect(action).toHaveBeenCalledTimes(1);
+		expect(client.getQueryData(KEY)).toEqual(["alpha"]);
+		expect(toast.error).toHaveBeenCalledTimes(1);
+		expect(toast.error).toHaveBeenCalledWith(
+			"We couldn't confirm that change. Check it before trying again.",
+		);
+		expect(invalidate).toHaveBeenCalledWith({ queryKey: KEY });
+		await waitFor(() => expect(result.current.error?.error).toEqual({ kind: "network", sent: true }));
+	});
+
+	it("does not call the action while the browser is offline, and says nothing was changed (#6755)", async () => {
+		const { client, wrapper } = setup();
+		online = false;
+		const action = vi.fn(async (): Promise<ActionResult<string>> => ({ ok: true, data: "x" }));
+		const { result } = renderHook(
+			() =>
+				useActionMutation(action, {
+					invalidates: [KEY],
+					optimistic: [{ key: KEY, update: () => ["alpha", "beta"] }],
+				}),
+			{ wrapper },
+		);
+		await act(async () => {
+			await result.current.mutateAsync(undefined).catch(() => {});
+		});
+		expect(action).not.toHaveBeenCalled();
+		expect(client.getQueryData(KEY)).toEqual(["alpha"]);
+		expect(toast.error).toHaveBeenCalledWith("You appear to be offline. Nothing was changed.");
+		await waitFor(() => expect(result.current.error?.error).toEqual({ kind: "network", sent: false }));
+		expect(result.current.isPaused).toBe(false);
+	});
+
+	it("lets a redirect thrown by the action through without a toast (#6755)", async () => {
+		const { wrapper } = setup();
+		const redirect = Object.assign(new Error("NEXT_REDIRECT"), {
+			digest: "NEXT_REDIRECT;push;/acme;307;",
+		});
+		const action = async (): Promise<ActionResult<string>> => {
+			throw redirect;
+		};
+		const { result } = renderHook(() => useActionMutation(action, { invalidates: [] }), { wrapper });
+		let caught: unknown;
+		await act(async () => {
+			await result.current.mutateAsync(undefined).catch((e: unknown) => {
+				caught = e;
+			});
+		});
+		expect(caught).toBe(redirect);
+		expect(toast.error).not.toHaveBeenCalled();
+		expect(push).not.toHaveBeenCalled();
+	});
+
+	it("writes validation errors to the given form: known fields in place, the rest in the root error (#6755)", async () => {
+		const { wrapper } = setup();
+		const onValidationError = vi.fn();
+		const action = async (): Promise<ActionResult<string>> => ({
+			ok: false,
+			error: {
+				kind: "validation",
+				message: "Check the highlighted fields.",
+				fields: { name: ["That name is taken."], region: ["Pick a region."] },
+			},
+		});
+		const { result } = renderHook(
+			() => {
+				const form = useForm<{ name: string }>({ defaultValues: { name: "" } });
+				const mutation = useActionMutation(action, {
+					invalidates: [],
+					form: { instance: form, fields: ["name"] },
+					onValidationError,
+				});
+				return { form, mutation, errors: form.formState.errors };
+			},
+			{ wrapper },
+		);
+		await act(async () => {
+			await result.current.mutation.mutateAsync(undefined).catch(() => {});
+		});
+		await waitFor(() => expect(result.current.errors.name?.message).toBe("That name is taken."));
+		expect(result.current.errors.root?.server?.message).toBe("Pick a region.");
+		expect(onValidationError).not.toHaveBeenCalled();
+		expect(toast.error).not.toHaveBeenCalled();
+	});
+
+	it("puts the summary sentence in the root error when a validation result names no field (#6755)", async () => {
+		const { wrapper } = setup();
+		const action = async (): Promise<ActionResult<string>> => ({
+			ok: false,
+			error: { kind: "validation", message: "Check the highlighted fields.", fields: {} },
+		});
+		const { result } = renderHook(
+			() => {
+				const form = useForm<{ name: string }>({ defaultValues: { name: "" } });
+				const mutation = useActionMutation(action, {
+					invalidates: [],
+					form: { instance: form, fields: ["name"] },
+				});
+				return { mutation, errors: form.formState.errors };
+			},
+			{ wrapper },
+		);
+		await act(async () => {
+			await result.current.mutation.mutateAsync(undefined).catch(() => {});
+		});
+		await waitFor(() =>
+			expect(result.current.errors.root?.server?.message).toBe("Check the highlighted fields."),
+		);
+		expect(toast.error).not.toHaveBeenCalled();
+	});
+
+	it("calls closes(false) on success and not on failure (#6755)", async () => {
+		const { wrapper } = setup();
+		const closes = vi.fn();
+		const good = async (): Promise<ActionResult<string>> => ({ ok: true, data: "x" });
+		const { result: a } = renderHook(() => useActionMutation(good, { invalidates: [], closes }), { wrapper });
+		await act(() => a.current.mutateAsync(undefined));
+		expect(closes).toHaveBeenCalledTimes(1);
+		expect(closes).toHaveBeenCalledWith(false);
+
+		closes.mockReset();
+		const bad = async (): Promise<ActionResult<string>> => ({ ok: false, error: { kind: "unexpected", ref: "r1" } });
+		const { result: b } = renderHook(() => useActionMutation(bad, { invalidates: [], closes }), { wrapper });
+		await act(async () => {
+			await b.current.mutateAsync(undefined).catch(() => {});
+		});
+		expect(closes).not.toHaveBeenCalled();
+	});
+
+	it("submit ignores a second call made before the first has settled, then accepts one again (#6755)", async () => {
+		const { wrapper } = setup();
+		let release: (v: ActionResult<string>) => void = () => {};
+		const action = vi.fn(() => new Promise<ActionResult<string>>((r) => (release = r)));
+		const { result } = renderHook(() => useActionMutation(action, { invalidates: [] }), { wrapper });
+		act(() => {
+			result.current.submit(undefined);
+			result.current.submit(undefined);
+		});
+		await waitFor(() => expect(result.current.isPending).toBe(true));
+		act(() => result.current.submit(undefined));
+		expect(action).toHaveBeenCalledTimes(1);
+		await act(async () => release({ ok: true, data: "x" }));
+		await waitFor(() => expect(result.current.isPending).toBe(false));
+		act(() => result.current.submit(undefined));
+		await waitFor(() => expect(action).toHaveBeenCalledTimes(2));
 	});
 });
