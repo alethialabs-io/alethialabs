@@ -1104,6 +1104,13 @@ export const UNSEEDABLE: ReadonlyMap<string, string> = new Map([
 			"the cascade one and fail that entry; a second, dedicated environment is unreachable by the route this spec drives.",
 	],
 	[
+		"terminal-job",
+		"`/[org]/~/jobs/[id]` is materialised with the audit's ONE job id (`e2e/audit/context.ts` → `valueFor`), and the " +
+			"`active-job` seeder flips that same row to QUEUED so `jobs.cancel` can be measured. Re-run renders only for a " +
+			"terminal job (`isTerminal` in job-detail.tsx) and Cancel only for an active one, so the one row this route can " +
+			"reach cannot satisfy both entries; a second, finished job would sit under an id no route this spec visits resolves.",
+	],
+	[
 		"backup-payment-method",
 		"a payment method is a STRIPE object attached to a Stripe customer. There is no table to write, and the `stripe` capability " +
 			"the `audit-interaction` leg promises is an API key, not a seeded card.",

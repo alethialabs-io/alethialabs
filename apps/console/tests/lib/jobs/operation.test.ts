@@ -3,7 +3,8 @@
 
 // A job is an operation ON SOMETHING (#6121, lib/jobs/operation.ts): re-running it runs the operation
 // again through its own entry point or is refused with where to do it, only an allow-listed kind is
-// copied, and stopping it takes the permission its operation takes on its target.
+// copied, and stopping it takes the permission its operation takes on its target. A DESTROY is
+// never re-run from a job (#6749): it is refused, and no route this module returns names one.
 //
 // THE TABLES ARE KEYED BY EVERY JOB KIND (`Record<ProvisionJobType, …>`), so a new kind in the enum
 // fails to compile here until someone decides how it is re-run and who may stop it.
@@ -14,6 +15,7 @@ import { provisionJobType } from "@/lib/db/schema/enums";
 import {
 	permissionToCancel,
 	type JobTarget,
+	RERUN_DESTROY,
 	RERUN_FROM_ORIGIN,
 	RERUN_FROM_PROJECT,
 	RERUN_FROM_RUNNER,
@@ -45,7 +47,7 @@ const STORED: Record<ProvisionJobType, JobTarget> = {
 const RERUN: Record<ProvisionJobType, ReturnType<typeof rerunRouteOf>> = {
 	PLAN: { kind: "project", operation: "plan", projectId: "p", environmentId: "e" },
 	DEPLOY: { kind: "project", operation: "deploy", projectId: "p", environmentId: "e" },
-	DESTROY: { kind: "project", operation: "destroy", projectId: "p", environmentId: "e" },
+	DESTROY: { kind: "refuse", reason: RERUN_DESTROY },
 	BUILD: { kind: "refuse", reason: RERUN_FROM_PROJECT },
 	DETECT_DRIFT: { kind: "refuse", reason: RERUN_FROM_PROJECT },
 	PROBE_CLUSTER: { kind: "refuse", reason: RERUN_FROM_PROJECT },
@@ -81,6 +83,8 @@ const CANCEL: Record<ProvisionJobType, ReturnType<typeof permissionToCancel>> = 
 };
 
 const ALL: ProvisionJobType[] = [...provisionJobType.enumValues];
+/** The three kinds that are a project's plan, deploy or destroy. */
+const PROJECT_OPERATION_KINDS: ProvisionJobType[] = ["PLAN", "DEPLOY", "DESTROY"];
 
 describe("rerunRouteOf — every job kind, as stored", () => {
 	it("the tables name every kind in the enum", () => {
@@ -101,11 +105,41 @@ describe("rerunRouteOf — every job kind, as stored", () => {
 		expect(rerunRouteOf({ job_type: "AUDIT", project_id: null, environment_id: "e" }).kind).toBe("refuse");
 	});
 
-	it("a plan, deploy or destroy whose project is gone is not re-run from the job", () => {
-		expect(rerunRouteOf({ job_type: "DEPLOY", project_id: null, environment_id: "e" })).toEqual({
+	it.each(PROJECT_OPERATION_KINDS)("a %s whose project is gone is not re-run from the job", (kind) => {
+		expect(rerunRouteOf({ job_type: kind, project_id: null, environment_id: "e" })).toEqual({
 			kind: "refuse",
 			reason: RERUN_FROM_PROJECT,
 		});
+	});
+
+	it("a destroy is refused whatever the job carries, with the sentence that says where a destroy starts", () => {
+		const carried: Array<Pick<JobTarget, "project_id" | "environment_id">> = [
+			{ project_id: "p", environment_id: "e" },
+			// A job stored before jobs carried their environment.
+			{ project_id: "p", environment_id: null },
+		];
+		for (const target of carried) {
+			expect(rerunRouteOf({ job_type: "DESTROY", ...target })).toEqual({ kind: "refuse", reason: RERUN_DESTROY });
+		}
+		expect(RERUN_DESTROY).toBe("A destroy can't be re-run from a job. Destroy the environment from the project.");
+	});
+
+	it("no kind, with or without its project and environment, is routed to a destroy", () => {
+		const shapes: Array<Pick<JobTarget, "project_id" | "environment_id">> = [
+			{ project_id: "p", environment_id: "e" },
+			{ project_id: "p", environment_id: null },
+			{ project_id: null, environment_id: "e" },
+			{ project_id: null, environment_id: null },
+		];
+		// Read as a string so the assertion is about the VALUE: the type already has no destroy member.
+		const operations: string[] = [];
+		for (const kind of ALL) {
+			for (const shape of shapes) {
+				const route = rerunRouteOf({ job_type: kind, ...shape });
+				if (route.kind === "project") operations.push(route.operation);
+			}
+		}
+		expect([...new Set(operations)].sort()).toEqual(["deploy", "plan"]);
 	});
 });
 
