@@ -117,7 +117,10 @@ describe("the gates are decided on the server (F021)", () => {
 	it("a member without view_alerts gets the no-access notice, and nothing is read", async () => {
 		h.canView = false;
 		const node = await route({});
-		expect(JSON.stringify(node)).toContain("No access to alerts");
+		// The console's one refused render (CON-SM4), naming what was asked for.
+		const notice = JSON.stringify(node);
+		expect(notice).toContain('"refusal":"forbidden"');
+		expect(notice).toContain('"subject":"alerts"');
 		expect(h.calls).toEqual([]);
 	});
 
