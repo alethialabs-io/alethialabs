@@ -84,17 +84,4 @@ describe("SessionEnded", () => {
 		expect(await screen.findByRole("alertdialog")).toHaveTextContent("Your session has ended");
 		expect(screen.queryByRole("alert")).toBeNull();
 	});
-
-	it("the layout's form offers no \"Stay on this page\": there is no page behind it", async () => {
-		render(<SessionEnded ended />);
-		const dialog = await screen.findByRole("alertdialog");
-		expect(within(dialog).queryByText("Stay on this page")).toBeNull();
-	});
-
-	it("shows the same dialog when the layout says the request had no session", async () => {
-		render(<SessionEnded ended />);
-		expect(useSessionState.getState().status).toBe("active");
-		expect(await screen.findByRole("alertdialog")).toHaveTextContent("Your session has ended");
-		expect((await signInLink())?.getAttribute("href")).toBe("/login?next=%2Facme%2F~%2Fjobs%3Fstatus%3Dfailed");
-	});
 });

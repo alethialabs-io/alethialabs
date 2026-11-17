@@ -43,29 +43,29 @@ function useSignInHref(): string {
 }
 
 /**
- * The console's one session-ended surface. It shows when `useSessionState` is `ended`, or when
- * `ended` is passed: `[org]/layout.tsx` passes it when the request itself had no session.
+ * The console's one session-ended surface. It shows when `useSessionState` is `ended`: a session
+ * that ended under a page already open. A request that arrives with no session is not this — it is
+ * redirected to sign-in by `[org]/layout.tsx`.
  *
  * It has two forms. First the dialog: controlled, with no close control, so Escape and a click
  * outside leave it open. Its "Stay on this page" swaps it for a banner at the top of the window,
  * which has no way to be closed; the page behind can then be selected and copied. The session is
  * still ended in that form, and the next report that it has ended (a write the person attempts)
- * brings the dialog back. The layout's form has no "Stay on this page": there is no page behind it.
+ * brings the dialog back.
  *
  * The page is never navigated away from. "Sign in" is a plain link, so it is a full page load. The
  * new document starts with an active session state and empty query caches.
  */
-export function SessionEnded({ ended = false }: { ended?: boolean }) {
+export function SessionEnded() {
 	const status = useSessionState((state) => state.status);
 	const dismissed = useSessionState((state) => state.dismissed);
 	const stay = useSessionState((state) => state.stay);
-	if (ended) return <SessionEndedDialog />;
 	if (status !== "ended") return null;
 	return dismissed ? <SessionEndedBanner /> : <SessionEndedDialog onStay={stay} />;
 }
 
-/** The dialog form. `onStay` adds the secondary "Stay on this page" action. */
-function SessionEndedDialog({ onStay }: { onStay?: () => void }) {
+/** The dialog form. `onStay` is its secondary "Stay on this page" action. */
+function SessionEndedDialog({ onStay }: { onStay: () => void }) {
 	const href = useSignInHref();
 	return (
 		<AlertDialog open>
@@ -83,11 +83,9 @@ function SessionEndedDialog({ onStay }: { onStay?: () => void }) {
 					<Button nativeButton={false} render={<a href={href} />}>
 						Sign in
 					</Button>
-					{onStay ? (
-						<Button variant="outline" onClick={onStay}>
-							Stay on this page
-						</Button>
-					) : null}
+					<Button variant="outline" onClick={onStay}>
+						Stay on this page
+					</Button>
 				</AlertDialogFooter>
 			</AlertDialogContent>
 		</AlertDialog>
