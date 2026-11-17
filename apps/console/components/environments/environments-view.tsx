@@ -66,6 +66,14 @@ const STAGE_LABEL: Record<string, string> = {
 const DESCRIPTION = "Isolated instances of this project's services.";
 
 /**
+ * What the delete confirmation says before anything is sent: the rule the server applies
+ * (`deleteEnvironment` refuses a live or in-flight environment), then what the delete does and
+ * does not do.
+ */
+const DELETE_RULE =
+	"An environment that is live or in flight cannot be deleted: destroy it first. Deleting removes the following and destroys nothing in the cloud. This cannot be undone.";
+
+/**
  * The Environments page for the project `project` (its slug) of org `org`. Reads the page's data
  * through the `environments.overview` query the route prefetched, and renders the four states of
  * that read distinctly (RUBRIC B4): pending (the route's own skeleton), refused (forbidden, or a
@@ -136,6 +144,8 @@ function EnvironmentsBody({
 	const [protectFor, setProtectFor] = useState<EnvRow | null>(null);
 	const [admissionFor, setAdmissionFor] = useState<EnvRow | null>(null);
 	const [pendingDelete, setPendingDelete] = useState<EnvRow | null>(null);
+	// The server's sentence for a refused delete, shown in the confirmation that is still open.
+	const [deleteRefusal, setDeleteRefusal] = useState<string | null>(null);
 	const [detailOpen, setDetailOpen] = useState(false);
 	const [confirmReject, setConfirmReject] = useState(false);
 	const [confirmCancel, setConfirmCancel] = useState(false);
@@ -156,14 +166,12 @@ function EnvironmentsBody({
 		successMessage: "Promotion cancelled",
 	});
 	const remove = useActionMutation(
-		(env: EnvRow) =>
-			settleThrown(async () => {
-				await deleteEnvironment(projectId, env.id);
-				return env.name;
-			}),
+		(env: EnvRow) => deleteEnvironment({ projectId, environmentId: env.id }),
 		{
 			invalidates: environmentReads,
-			successMessage: (name) => `Deleted ${name}`,
+			successMessage: (deleted) => `Deleted ${deleted.name}`,
+			// Shown in the dialog, which stays open on a refusal, and so not toasted as well.
+			onRefusal: (error) => setDeleteRefusal(error.message),
 		},
 	);
 	const heal = useActionMutation(
@@ -278,7 +286,10 @@ function EnvironmentsBody({
 									setDuplicateFrom(env);
 									setCreateOpen(true);
 								}}
-								onDelete={() => setPendingDelete(env)}
+								onDelete={() => {
+									setDeleteRefusal(null);
+									setPendingDelete(env);
+								}}
 							/>
 						))}
 					</div>
@@ -366,7 +377,7 @@ function EnvironmentsBody({
 				onOpenChange={(o) => !o && setPendingDelete(null)}
 				title={`Delete ${pendingDelete?.name ?? "environment"}?`}
 				confirmLabel="Delete environment"
-				description="This permanently deletes the following. Provisioned infrastructure is not destroyed. This cannot be undone."
+				description={deleteRefusal ? `Not deleted. ${deleteRefusal}` : DELETE_RULE}
 				pendingLabel="Deleting…"
 				severity={{
 					level: "destroy",
