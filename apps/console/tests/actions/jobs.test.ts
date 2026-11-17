@@ -152,7 +152,6 @@ describe("rerunJob — a project's operation runs again through its own entry po
 	it.each([
 		["PLAN", () => tryPlanProject, ["proj-1", null, "env-1"]],
 		["DEPLOY", () => tryProvisionProject, ["proj-1", undefined, null, "env-1"]],
-		["DESTROY", () => tryDestroyProject, ["proj-1", "env-1", null]],
 	] as const)("re-runs a %s through the entry point a fresh run uses, with its project and environment", async (type, entry, args) => {
 		const { valuesSpy } = mockDb([[projectJob(type)]]);
 		vi.mocked(entry()).mockResolvedValue({ ok: true, jobId: "new-job" } as never);
@@ -163,6 +162,18 @@ describe("rerunJob — a project's operation runs again through its own entry po
 		// Its permission is the operation's on the project (inside the entry point), not `create` on job.
 		expect(authorize).toHaveBeenCalledWith("view", { type: "job", id: JOB });
 		expect(authorize).not.toHaveBeenCalledWith("create", { type: "job" });
+	});
+
+	it("refuses a DESTROY — a destroy starts from the environment — and reaches no entry point", async () => {
+		const { valuesSpy } = mockDb([[projectJob("DESTROY")]]);
+		expect(await rerunJob({ jobId: JOB })).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: "A destroy can't be re-run from a job. Destroy the environment from the project." },
+		});
+		expect(tryDestroyProject).not.toHaveBeenCalled();
+		expect(tryProvisionProject).not.toHaveBeenCalled();
+		expect(tryPlanProject).not.toHaveBeenCalled();
+		expect(valuesSpy).not.toHaveBeenCalled();
 	});
 
 	it("returns the entry point's refusal (a job already in flight, a gate) as its own sentence", async () => {
