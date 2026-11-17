@@ -10,10 +10,14 @@
 package catalog
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"slices"
+	"strings"
 	"sync"
 )
 
@@ -30,23 +34,94 @@ type Catalog struct {
 	Cache     map[string]CacheProvider    `json:"cache"`
 	// ControlPlane prices each cloud's managed control plane, one entry per catalog provider (#5371).
 	ControlPlane map[string]ControlPlanePricing `json:"control_plane"`
+	// Live is the console's "live" block. Go reads one thing from it: which clouds can be connected
+	// and whether each is offered. Every other key of that block is TypeScript-only and is not parsed.
+	Live Live `json:"live"`
+}
+
+// Availability says whether the product offers a cloud. It is set per cloud in catalog.json and is
+// the one field every offer list derives from.
+type Availability string
+
+const (
+	// AvailabilityAvailable is a cloud that is offered and accepted everywhere.
+	AvailabilityAvailable Availability = "available"
+	// AvailabilityHidden is a cloud whose code is kept but which is not offered and not accepted
+	// for anything new, unless the operator re-enables it (see HiddenCloudsEnv).
+	AvailabilityHidden Availability = "hidden"
+)
+
+// HiddenCloudsEnv names the setting that re-enables hidden clouds: a comma-separated list of cloud
+// slugs. It can only widen the offered set. A cloud enabled this way is not covered by the
+// release's support or proofs. This package is the only Go reader of the variable.
+const HiddenCloudsEnv = "ALETHIA_ENABLE_HIDDEN_CLOUDS"
+
+// Live is the part of the catalog's "live" block that Go reads.
+type Live struct {
+	Providers ConnectableProviders `json:"providers"`
+}
+
+// ConnectableProvider is one cloud an account can be connected for, with its availability.
+type ConnectableProvider struct {
+	Slug         string       `json:"slug"`
+	ShortName    string       `json:"shortName"`
+	Availability Availability `json:"availability"`
+}
+
+// ConnectableProviders is every connectable cloud in the order catalog.json lists them. The source
+// is a JSON object keyed by slug; it is decoded into a slice so the order survives, because the
+// TypeScript mirror keeps the same order and the two must list clouds identically.
+type ConnectableProviders []ConnectableProvider
+
+// UnmarshalJSON decodes the slug-keyed object in document order.
+func (p *ConnectableProviders) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil {
+		return err
+	} else if tok != json.Delim('{') {
+		return fmt.Errorf("catalog: live.providers must be an object, got %v", tok)
+	}
+	var out ConnectableProviders
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return fmt.Errorf("catalog: live.providers has a non-string key %v", keyTok)
+		}
+		var entry ConnectableProvider
+		if err := dec.Decode(&entry); err != nil {
+			return fmt.Errorf("catalog: live.providers.%s: %w", key, err)
+		}
+		if entry.Slug != key {
+			return fmt.Errorf("catalog: live.providers.%s carries slug %q", key, entry.Slug)
+		}
+		out = append(out, entry)
+	}
+	*p = out
+	return nil
 }
 
 // ProviderMeta carries display + service-naming metadata for one cloud.
 type ProviderMeta struct {
-	Slug            string `json:"slug"`
-	Name            string `json:"name"`
-	ClusterService  string `json:"cluster_service"`
-	NetworkName     string `json:"network_name"`
-	DNSService      string `json:"dns_service"`
-	DatabaseService string `json:"database_service"`
-	CacheService    string `json:"cache_service"`
-	NosqlService    string `json:"nosql_service"`
-	QueueService    string `json:"queue_service"`
-	TopicService    string `json:"topic_service"`
-	StorageService  string `json:"storage_service"`
-	RegistryService string `json:"registry_service"`
-	SecretsService  string `json:"secrets_service"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+	// Availability is whether the product offers this cloud. Ask Offered rather than comparing
+	// this field: Offered also applies the operator override.
+	Availability    Availability `json:"availability"`
+	ClusterService  string       `json:"cluster_service"`
+	NetworkName     string       `json:"network_name"`
+	DNSService      string       `json:"dns_service"`
+	DatabaseService string       `json:"database_service"`
+	CacheService    string       `json:"cache_service"`
+	NosqlService    string       `json:"nosql_service"`
+	QueueService    string       `json:"queue_service"`
+	TopicService    string       `json:"topic_service"`
+	StorageService  string       `json:"storage_service"`
+	RegistryService string       `json:"registry_service"`
+	SecretsService  string       `json:"secrets_service"`
 }
 
 // Region is a canonical (cloud-indifferent) region with its concrete per-provider code.
@@ -199,6 +274,82 @@ func (c *Catalog) Provider(slug string) (ProviderMeta, bool) {
 		}
 	}
 	return ProviderMeta{}, false
+}
+
+// Availability returns the catalog's availability for a connectable cloud, before any override.
+// The second result is false for a slug the catalog does not list.
+func (c *Catalog) Availability(slug string) (Availability, bool) {
+	for _, p := range c.Live.Providers {
+		if p.Slug == slug {
+			return p.Availability, true
+		}
+	}
+	return "", false
+}
+
+// Offered reports whether a cloud is offered: the catalog marks it available, or it is hidden and
+// the operator re-enabled it through HiddenCloudsEnv. A slug the catalog does not list, and a
+// cloud whose availability is missing or unrecognised, is not offered.
+func (c *Catalog) Offered(slug string) bool {
+	availability, ok := c.Availability(slug)
+	if !ok {
+		return false
+	}
+	switch availability {
+	case AvailabilityAvailable:
+		return true
+	case AvailabilityHidden:
+		enabled, _ := c.parseHiddenCloudOverride(os.Getenv(HiddenCloudsEnv))
+		return slices.Contains(enabled, slug)
+	default:
+		return false
+	}
+}
+
+// OfferedProviders returns the slug of every offered cloud, in catalog order. It includes clouds
+// that can be connected but not provisioned; intersect with Providers for the provisionable ones.
+func (c *Catalog) OfferedProviders() []string {
+	var out []string
+	for _, p := range c.Live.Providers {
+		if c.Offered(p.Slug) {
+			out = append(out, p.Slug)
+		}
+	}
+	return out
+}
+
+// HiddenCloudOverride returns the clouds named by HiddenCloudsEnv, and an error when the setting
+// names a slug the catalog does not list. Offered never fails on a bad setting, since an unknown
+// slug cannot enable anything; a process that wants a bad setting to stop it at startup calls this
+// and exits on the error.
+func (c *Catalog) HiddenCloudOverride() ([]string, error) {
+	return c.parseHiddenCloudOverride(os.Getenv(HiddenCloudsEnv))
+}
+
+// parseHiddenCloudOverride splits a comma-separated override into the catalog clouds it names.
+// Blank items are skipped and repeats collapse. The known clouds are returned even when the error
+// is non-nil; the error lists every item that is not a catalog cloud.
+func (c *Catalog) parseHiddenCloudOverride(raw string) ([]string, error) {
+	var known, unknown []string
+	for _, item := range strings.Split(raw, ",") {
+		slug := strings.TrimSpace(item)
+		if slug == "" {
+			continue
+		}
+		if _, ok := c.Availability(slug); !ok {
+			if !slices.Contains(unknown, slug) {
+				unknown = append(unknown, slug)
+			}
+			continue
+		}
+		if !slices.Contains(known, slug) {
+			known = append(known, slug)
+		}
+	}
+	if len(unknown) > 0 {
+		return known, fmt.Errorf("catalog: %s names %s, which the catalog does not list", HiddenCloudsEnv, strings.Join(unknown, ", "))
+	}
+	return known, nil
 }
 
 // Region resolves a canonical region id to a provider-specific region code.
