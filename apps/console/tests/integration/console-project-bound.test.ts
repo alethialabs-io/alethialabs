@@ -573,9 +573,12 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 			await expect(
 				actingAs(OPERATOR, () => setAutoHeal(PERSONAL, ENV[PERSONAL] ?? "", true)),
 			).rejects.toThrow("Project not found.");
-			await expect(
-				actingAs(OPERATOR, () => deleteEnvironment(PERSONAL, SPARE[PERSONAL] ?? "")),
-			).rejects.toThrow("Project not found.");
+			// On the mutation contract (#6800): the same refusal, returned.
+			expect(
+				await actingAs(OPERATOR, () =>
+					deleteEnvironment({ projectId: PERSONAL, environmentId: SPARE[PERSONAL] ?? "" }),
+				),
+			).toEqual({ ok: false, error: { kind: "not-found", message: "Project not found." } });
 			expect(await envNames(PERSONAL)).toEqual(before);
 			expect(await autoHeal(ENV[PERSONAL] ?? "")).toBe(false);
 		});
@@ -587,7 +590,9 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 			).rejects.toThrow();
 			await expect(actingAs(EDIT_DENIED, () => duplicateEnvironment(P, ENV[P] ?? "", fresh("x")))).rejects.toThrow();
 			await expect(actingAs(EDIT_DENIED, () => setAutoHeal(P, ENV[P] ?? "", true))).rejects.toThrow();
-			await expect(actingAs(EDIT_DENIED, () => deleteEnvironment(P, SPARE[P] ?? ""))).rejects.toThrow();
+			expect(
+				await actingAs(EDIT_DENIED, () => deleteEnvironment({ projectId: P, environmentId: SPARE[P] ?? "" })),
+			).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 			expect(await envNames(P)).toEqual(before);
 			expect(await autoHeal(ENV[P] ?? "")).toBe(false);
 		});
