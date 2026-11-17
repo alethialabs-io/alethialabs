@@ -19,7 +19,6 @@ const m = vi.hoisted(() => ({
 	tryDestroyProject: vi.fn(),
 	tryPlanProject: vi.fn(),
 	tryQueueDriftDetection: vi.fn(),
-	tryCreateProject: vi.fn(),
 	readDestroyTree: vi.fn(),
 }));
 vi.mock("@/app/server/actions/resolve", () => ({
@@ -35,7 +34,6 @@ vi.mock("@/app/server/actions/projects", () => ({
 	tryDestroyProject: m.tryDestroyProject,
 	tryPlanProject: m.tryPlanProject,
 	tryQueueDriftDetection: m.tryQueueDriftDetection,
-	tryCreateProject: m.tryCreateProject,
 }));
 // The design schema is the project form's own subject (tests/validations); here it passes the
 // design through untouched, so the fixture below arrives at the domain function as it was sent.
@@ -45,7 +43,6 @@ vi.mock("@/lib/validations/project-form.schema", async () => {
 });
 
 import {
-	createProjectFromDesignAction,
 	deployDesignAction,
 	destroyEnvironmentAction,
 	detectDriftAction,
@@ -215,27 +212,6 @@ describe("the Run menu's Plan and Detect drift", () => {
 		const reason = "The Hobby plan allows 25 provisioning jobs per day.";
 		m.tryPlanProject.mockResolvedValue({ ok: false, error: reason });
 		expect(await planEnvironmentAction({ projectId: PROJECT, environmentId: ENV })).toEqual({
-			ok: false,
-			error: { kind: "conflict", message: reason },
-		});
-	});
-});
-
-describe("createProjectFromDesignAction", () => {
-	it("answers the new project's id and slug", async () => {
-		m.tryCreateProject.mockResolvedValue({ ok: true, project: { id: PROJECT, slug: "shop" } });
-
-		expect(await createProjectFromDesignAction({ design: DESIGN })).toEqual({
-			ok: true,
-			data: { projectId: PROJECT, slug: "shop" },
-		});
-	});
-
-	it("answers a name the org already holds as a conflict with its sentence", async () => {
-		const reason = "A project named “shop” already exists in this organization.";
-		m.tryCreateProject.mockResolvedValue({ ok: false, error: reason });
-
-		expect(await createProjectFromDesignAction({ design: DESIGN })).toEqual({
 			ok: false,
 			error: { kind: "conflict", message: reason },
 		});

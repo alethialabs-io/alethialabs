@@ -12,7 +12,6 @@ import {
 	designRevision,
 	draftScope,
 	fnv1a32,
-	NEW_DRAFT_SCOPE,
 	stableStringify,
 } from "@/lib/canvas/design-revision";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
@@ -136,11 +135,6 @@ describe("designRevision", () => {
 });
 
 describe("draftScope", () => {
-	it("is the create-flow scope without a project", () => {
-		expect(draftScope(undefined, undefined)).toBe(NEW_DRAFT_SCOPE);
-		expect(draftScope(undefined, "env-1")).toBe("new");
-	});
-
 	it("is project:environment, with 'default' for an unresolved environment", () => {
 		expect(draftScope("proj-1", "env-a")).toBe("proj-1:env-a");
 		expect(draftScope("proj-1", undefined)).toBe("proj-1:default");
