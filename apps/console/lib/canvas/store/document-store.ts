@@ -95,8 +95,8 @@ export interface DocumentState extends DraftState {
 	history: HistoryState;
 	/** True between the first and the last frame of a drag. The draft is not written meanwhile. */
 	moving: boolean;
-	/** A wizard hand-off waiting to be applied to this draft. */
-	seedSlot: { key: string; seed: BoardSeed } | null;
+	/** A wizard hand-off waiting to be applied to this draft: its wire string and what it parsed to. */
+	seedSlot: { wire: string; seed: BoardSeed } | null;
 	/** The plan last reviewed for this draft, and the design it was computed for. */
 	reviewedPlan: ReviewedPlan | null;
 }
@@ -179,8 +179,13 @@ export interface DocumentActions {
 	stageOperation: (operation: StagedOperation) => void;
 	unstageOperation: (id: string) => void;
 
-	/** Offer a wizard hand-off. False when this draft already applied it. */
-	offerSeed: (seed: BoardSeed) => boolean;
+	/**
+	 * Offer a wizard hand-off: `wire` is its URL form (`v1.template.standard.aws`) and `seed` is what
+	 * the hand-off contract parsed it to. The wire string is the seed's identity and the only form
+	 * that is kept in the draft, because the contract's version lives in the string. False when this
+	 * draft already applied that wire string.
+	 */
+	offerSeed: (wire: string, seed: BoardSeed) => boolean;
 	/** Apply the offered hand-off through `apply`, as one undo step, and empty the slot. False when
 	 * the slot was empty. */
 	consumeSeed: (apply: (seed: BoardSeed) => void) => boolean;
@@ -199,20 +204,6 @@ export interface DocumentActions {
 }
 
 export type DocumentStore = StoreApi<DocumentState & DocumentActions>;
-
-/** A stable identity for a hand-off, so the same one offered twice is recognised. */
-export function seedKey(seed: BoardSeed): string {
-	switch (seed.kind) {
-		case "proposal":
-			return `proposal:${seed.proposalId}`;
-		case "template":
-			return `template:${seed.templateId}:${seed.provider}`;
-		case "byo":
-			return `byo:${seed.attach}`;
-		case "blank":
-			return "blank";
-	}
-}
 
 /**
  * A board node reduced to what the design owns: its id, type, deletability and data, at `at`.
@@ -643,10 +634,9 @@ export function createDocumentStore(): DocumentStore {
 				set((s) => ({ operations: s.operations.filter((o) => o.id !== id) }));
 			},
 
-			offerSeed: (seed) => {
-				const key = seedKey(seed);
-				if (get().appliedSeedKeys.includes(key)) return false;
-				set({ seedSlot: { key, seed } });
+			offerSeed: (wire, seed) => {
+				if (get().appliedSeedKeys.includes(wire)) return false;
+				set({ seedSlot: { wire, seed } });
 				return true;
 			},
 
@@ -657,7 +647,7 @@ export function createDocumentStore(): DocumentStore {
 				// applied again on the next render.
 				set((s) => ({
 					seedSlot: null,
-					appliedSeedKeys: [...s.appliedSeedKeys, slot.key],
+					appliedSeedKeys: [...s.appliedSeedKeys, slot.wire],
 				}));
 				get().transact("seed", () => apply(slot.seed));
 				return true;

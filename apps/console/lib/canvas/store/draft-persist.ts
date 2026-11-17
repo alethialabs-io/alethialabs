@@ -48,7 +48,8 @@ export interface DraftState {
 	operations: StagedOperation[];
 	/** True once a person has arranged the board, so a moved server design keeps their layout. */
 	arranged: boolean;
-	/** The wizard hand-offs already applied to this draft; applying one again is a no-op. */
+	/** The wizard hand-offs already applied to this draft, as their wire strings; applying one
+	 * again is a no-op. */
 	appliedSeedKeys: string[];
 }
 

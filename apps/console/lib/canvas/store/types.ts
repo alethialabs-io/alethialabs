@@ -87,9 +87,11 @@ export interface StagedOperation {
 }
 
 /**
- * What the wizard hands the board to start from. The wizard spec's `CanvasSeed`
- * (`lib/projects/canvas-handoff.ts`) is assignable to this: a template id is a string here so the
- * store does not depend on the create flow's catalogue.
+ * What the wizard hands the board to start from, already parsed. The hand-off contract's
+ * `CanvasSeed` (`lib/projects/canvas-handoff.ts`) is assignable to this: a template id is a string
+ * here so the store does not depend on the create flow's catalogue. The store never parses or
+ * validates a seed — the caller does, through that contract, with the offered-cloud list the server
+ * gave it — and a seed carries no environments and no cloud account.
  */
 export type BoardSeed =
 	| { readonly kind: "proposal"; readonly proposalId: string }

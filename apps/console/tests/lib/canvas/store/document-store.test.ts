@@ -13,7 +13,6 @@ import {
 	draftOf,
 	pendingCount,
 	placeNodes,
-	seedKey,
 	type DocumentStore,
 } from "@/lib/canvas/store/document-store";
 import { UNPLACED } from "@/lib/canvas/store/draft-persist";
@@ -338,9 +337,11 @@ describe("staged operations", () => {
 describe("the seed slot", () => {
 	it("holds an offered hand-off until it is applied, as one undo step", () => {
 		const store = seeded();
-		expect(store.getState().offerSeed({ kind: "template", templateId: "standard", provider: "aws" })).toBe(
-			true,
-		);
+		expect(
+			store
+				.getState()
+				.offerSeed("v1.template.standard.aws", { kind: "template", templateId: "standard", provider: "aws" }),
+		).toBe(true);
 		expect(store.getState().seedSlot?.seed.kind).toBe("template");
 
 		const applied = store.getState().consumeSeed(() => {
@@ -358,19 +359,26 @@ describe("the seed slot", () => {
 	it("applying the same hand-off twice is a no-op", () => {
 		const store = seeded();
 		const seed = { kind: "proposal", proposalId: "p-1" } as const;
-		store.getState().offerSeed(seed);
+		store.getState().offerSeed("v1.proposal.p-1", seed);
 		store.getState().consumeSeed(() => store.getState().addNode("bucket"));
 
-		expect(store.getState().offerSeed(seed)).toBe(false);
+		expect(store.getState().offerSeed("v1.proposal.p-1", seed)).toBe(false);
 		expect(store.getState().consumeSeed(() => store.getState().addNode("queue"))).toBe(false);
 		expect(ids(store)).toHaveLength(3);
-		expect(draftOf(store.getState()).appliedSeedKeys).toEqual(["proposal:p-1"]);
+		// What is kept is the wire string, whose version travels with it.
+		expect(draftOf(store.getState()).appliedSeedKeys).toEqual(["v1.proposal.p-1"]);
 	});
 
-	it("gives each kind of hand-off its own key", () => {
-		expect(seedKey({ kind: "blank" })).toBe("blank");
-		expect(seedKey({ kind: "byo", attach: "chart" })).toBe("byo:chart");
-		expect(seedKey({ kind: "template", templateId: "ai", provider: "gcp" })).toBe("template:ai:gcp");
+	it("tells hand-offs apart by their wire string, not by what they parse to", () => {
+		const store = seeded();
+		store.getState().offerSeed("v1.blank", { kind: "blank" });
+		store.getState().consumeSeed(() => undefined);
+		expect(store.getState().offerSeed("v1.blank", { kind: "blank" })).toBe(false);
+		expect(store.getState().offerSeed("v1.byo.chart", { kind: "byo", attach: "chart" })).toBe(true);
+		expect(store.getState().seedSlot).toEqual({
+			wire: "v1.byo.chart",
+			seed: { kind: "byo", attach: "chart" },
+		});
 	});
 });
 

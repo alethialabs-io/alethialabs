@@ -63,7 +63,7 @@ function v2Draft(): DraftState {
 			},
 		],
 		arranged: true,
-		appliedSeedKeys: ["blank"],
+		appliedSeedKeys: ["v1.blank"],
 	};
 }
 

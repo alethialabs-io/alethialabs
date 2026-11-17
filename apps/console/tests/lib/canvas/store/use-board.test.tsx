@@ -222,7 +222,7 @@ describe("the board as a component reads it", () => {
 		const { result } = renderHook(() => useSeedSlot(), { wrapper });
 		expect(result.current).toBeNull();
 		act(() => {
-			board.document.getState().offerSeed({ kind: "blank" });
+			board.document.getState().offerSeed("v1.blank", { kind: "blank" });
 		});
 		expect(result.current).toEqual({ kind: "blank" });
 		act(() => {
