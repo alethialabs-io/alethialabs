@@ -5,9 +5,12 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // noInputMode is set once per invocation from the --no-input flag (or a non-TTY
@@ -23,21 +26,67 @@ var noInputMode bool
 var errNoInput = errors.New("interactive input required but prompts are disabled " +
 	"(--no-input, or stdin is not a terminal): pass the id/name as a flag/argument")
 
-// resolveInputMode computes noInputMode from the command's --no-input flag and
-// whether stdin is a terminal. Wired as the root PersistentPreRun.
+// resolveInputMode resolves who the invocation is talking to and builds its Printer. Wired as the
+// root PersistentPreRun, so it runs once, before any command body.
+//
+// It keeps its name because the root calls it by that name; what it computes grew from the input
+// mode alone to the whole Mode (printer.go), of which noInputMode is one field.
 func resolveInputMode(cmd *cobra.Command) {
-	if v, _ := cmd.Flags().GetBool("no-input"); v {
-		noInputMode = true
+	mode, err := resolveMode(cmd, lookupEnv)
+	if err != nil {
+		fail(err)
 		return
 	}
-	noInputMode = !stdinIsTTY()
+	noInputMode = mode.NoInput
+	if !mode.Color {
+		ui.DisableColor()
+	}
+
+	format := ui.FormatTable
+	if flag := rootOutputFlag(cmd); flag != nil {
+		format = flag.Value.String()
+	}
+	if agentDefaultsToJSON(mode, cmd) {
+		format = ui.FormatJSON
+		// The fatal path renders in the format the caller is reading, and an agent that named
+		// none is reading json.
+		errorFormat = ui.FormatJSON
+	}
+	if !ui.ValidFormat(format) {
+		// A command that never renders a result set does not validate --output, and this is not
+		// the place to start refusing it: outputFormat does, for the commands that read it.
+		format = ui.FormatTable
+	}
+	printer = newPrinter(format, mode)
 }
 
-// outputFormat returns the validated --output value, exiting on an invalid one.
+// rootOutputFlag returns the root's persistent --output flag as cmd reaches it, or nil for a
+// command tree that does not carry one. It is the root's flag and never a subcommand's own
+// --output, which may be a file path.
+func rootOutputFlag(cmd *cobra.Command) *pflag.Flag {
+	return cmd.Root().PersistentFlags().Lookup(mustShellField("alethia", shellKeyOutput).Flag)
+}
+
+// agentDefaultsToJSON reports whether the output format is the agent default rather than a choice:
+// agent mode, and no --output on the command line. An explicit -o always wins, table included.
+func agentDefaultsToJSON(mode Mode, cmd *cobra.Command) bool {
+	if !mode.Agent {
+		return false
+	}
+	flag := rootOutputFlag(cmd)
+	return flag == nil || !flag.Changed
+}
+
+// outputFormat returns the validated --output value, exiting on an invalid one. In agent mode with
+// no --output given it is json.
 func outputFormat(cmd *cobra.Command) string {
 	f, _ := cmd.Flags().GetString("output")
 	if !ui.ValidFormat(f) {
-		failf("invalid --output %q (want table, json, or csv)", f)
+		fail(clierr.New(clierr.CodeInvalidFlag,
+			fmt.Sprintf("invalid --output %q (want table, json, or csv)", f)))
+	}
+	if agentDefaultsToJSON(printer.Mode, cmd) {
+		return ui.FormatJSON
 	}
 	return f
 }
@@ -123,7 +172,8 @@ func requireInteractiveForm() error {
 // would leave the fetch undone — and every one of these call sites reads its result out of a
 // captured variable rather than a return value, so an undone fetch reads as an empty answer.
 func runSpinner(title string, action func()) {
-	if !interactiveOutIsTTY() {
+	// An agent is never shown a spinner, terminal or not: the frames are noise in its transcript.
+	if printer.Mode.Agent || !interactiveOutIsTTY() {
 		action()
 		return
 	}
