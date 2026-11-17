@@ -7,7 +7,7 @@ import { GripVertical, RefreshCw, Snowflake, Trash2, Zap } from "lucide-react";
 import { useState } from "react";
 import { formatRelative } from "@repo/format";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { cn } from "@repo/ui/utils";
 import type { ThreadWidget } from "@/lib/db/schema";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
@@ -297,13 +297,14 @@ export function WidgetCard({
         onPointerDown={(e) => onDragStart(e, widget.id, "resize")}
       />
 
-      <ConfirmDialog
+      <ConfirmAction
         open={confirmRemove}
         onOpenChange={setConfirmRemove}
         title={`Remove ${widget.title}?`}
         description="This takes the widget off this conversation's grid and deletes it. Artifacts you already saved keep their own copy. This cannot be undone."
         confirmLabel="Remove widget"
-        onConfirm={() => remove(widget.id)}
+        severity={{ level: "confirm" }}
+        run={() => remove(widget.id)}
       />
     </div>
   );

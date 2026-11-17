@@ -8,7 +8,7 @@ import { listSharedArtifacts } from "@/app/server/actions/artifact-shares";
 import { deleteArtifact, listArtifacts } from "@/app/server/actions/artifacts";
 import { AgentArtifactViewer } from "@/components/agent/agent-artifact-viewer";
 import { GALLERY_EMPTY } from "@/components/agent/gallery-empty";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import type { AgentArtifact } from "@/lib/db/schema";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
@@ -100,7 +100,7 @@ export function AgentArtifactGallery({
 	 * view it was opened from cannot be answered.
 	 */
 	const confirmDelete = (
-		<ConfirmDialog
+		<ConfirmAction
 			open={pendingDelete !== null}
 			onOpenChange={(o) => {
 				if (!o) setPendingDelete(null);
@@ -108,9 +108,9 @@ export function AgentArtifactGallery({
 			title={`Delete ${pendingDelete?.name ?? "artifact"}?`}
 			description="This permanently deletes the saved artifact and every widget in it. Conversations that used it are unaffected. This cannot be undone."
 			confirmLabel="Delete artifact"
-			onConfirm={() => {
+			severity={{ level: "confirm" }}
+			run={() => {
 				if (pendingDelete) void remove(pendingDelete.id);
-				setPendingDelete(null);
 			}}
 		/>
 	);

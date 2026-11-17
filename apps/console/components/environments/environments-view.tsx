@@ -7,7 +7,7 @@
 // already name the page (F010). Then the active-promotion panel (when a promotion is in flight), the
 // environments spine (grouped by stage, each with drift/deploy, classification, the "gates into this
 // env" protection summary, and auto-heal/duplicate/delete), a consistency matrix, and the promotions
-// history. Destructive/confirm actions go through the shared ConfirmDialog.
+// history. Destructive/confirm actions go through the shared ConfirmAction.
 //
 // DATA (#6120, ADR 0005). Everything here is ONE read, `environments.overview`, which the route
 // prefetches on the server and hydrates — so the first paint carries it and nothing is fetched on
@@ -27,7 +27,7 @@ import {
 	rejectPromotion,
 } from "@/app/server/actions/promotions";
 import type { SwitcherEnv } from "@/app/server/actions/resolve";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { RegionError } from "@/components/errors/region-error";
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
 import { ByoAdmissionSheet } from "@/components/environments/byo-admission-sheet";
@@ -361,35 +361,42 @@ function EnvironmentsBody({
 				onClose={() => setDetailOpen(false)}
 			/>
 
-			<ConfirmDialog
+			<ConfirmAction
 				open={!!pendingDelete}
 				onOpenChange={(o) => !o && setPendingDelete(null)}
 				title={`Delete ${pendingDelete?.name ?? "environment"}?`}
-				description="This permanently deletes the environment and its staged configuration. Provisioned infrastructure is not destroyed. This cannot be undone."
 				confirmLabel="Delete environment"
-				onConfirm={() => {
-					if (pendingDelete && !remove.isPending) remove.mutate(pendingDelete);
+				description="This permanently deletes the following. Provisioned infrastructure is not destroyed. This cannot be undone."
+				pendingLabel="Deleting…"
+				severity={{
+					level: "destroy",
+					subject: pendingDelete?.name ?? "",
+					consequences: ["The environment record", "Its staged configuration"],
 				}}
+				mutation={remove}
+				variables={pendingDelete}
 			/>
-			<ConfirmDialog
+			<ConfirmAction
 				open={confirmReject}
 				onOpenChange={setConfirmReject}
 				title="Reject this promotion?"
 				description="The promotion is cancelled and nothing is deployed. The initiator can start a new one."
 				confirmLabel="Reject promotion"
-				onConfirm={() => {
-					if (activePromotion && !deciding) reject.mutate({ promotionId: activePromotion.id });
-				}}
+				pendingLabel="Rejecting…"
+				severity={{ level: "confirm" }}
+				mutation={reject}
+				variables={activePromotion ? { promotionId: activePromotion.id } : null}
 			/>
-			<ConfirmDialog
+			<ConfirmAction
 				open={confirmCancel}
 				onOpenChange={setConfirmCancel}
 				title="Cancel this promotion?"
 				description="The in-flight promotion is stopped. Nothing further is deployed."
 				confirmLabel="Cancel promotion"
-				onConfirm={() => {
-					if (activePromotion && !deciding) cancel.mutate({ promotionId: activePromotion.id });
-				}}
+				pendingLabel="Cancelling…"
+				severity={{ level: "confirm" }}
+				mutation={cancel}
+				variables={activePromotion ? { promotionId: activePromotion.id } : null}
 			/>
 		</div>
 	);

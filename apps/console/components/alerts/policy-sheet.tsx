@@ -23,7 +23,7 @@ import { z } from "zod";
 import { createPolicy } from "@/app/server/actions/alerts";
 import type { AlertsHub } from "@/components/alerts/alerts-hub";
 import { ChannelRouting } from "@/components/alerts/channel-routing";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { DiscardPrompt, useUnsavedGuard } from "@/components/confirm/use-unsaved-guard";
 import { EventMatrix } from "@/components/alerts/event-matrix";
 import { FieldHelp } from "@/components/alerts/field-help";
 import { PolicyConditions } from "@/components/alerts/policy-conditions";
@@ -128,7 +128,6 @@ export function PolicySheet({
 	onGoChannels,
 }: PolicySheetProps) {
 	const { categories, channels, advancedAlerting, conditionOptions } = hub;
-	const [confirmDiscard, setConfirmDiscard] = useState(false);
 	// A server validation message that names no field on this sheet — shown under the form, never lost.
 	const [formError, setFormError] = useState<string | null>(null);
 	const wasOpen = useRef(false);
@@ -174,14 +173,13 @@ export function PolicySheet({
 		},
 	});
 	const saving = mutation.isPending;
-	const dirty = form.formState.isDirty;
+	const unsaved = useUnsavedGuard(form);
 
 	// Closing with something entered asks first; nothing closes it while the create is in flight.
 	const requestOpenChange = (next: boolean) => {
 		if (next) return onOpenChange(true);
 		if (saving) return;
-		if (dirty) setConfirmDiscard(true);
-		else onOpenChange(false);
+		unsaved.guard(() => onOpenChange(false));
 	};
 
 	const onSubmit = form.handleSubmit((values) => {
@@ -413,16 +411,11 @@ export function PolicySheet({
 				</SheetFooter>
 			</SheetContent>
 		</Sheet>
-		<ConfirmDialog
-			open={confirmDiscard}
-			onOpenChange={setConfirmDiscard}
+		<DiscardPrompt
+			{...unsaved.prompt}
 			title="Discard this policy?"
 			description="What you entered has not been saved."
 			confirmLabel="Discard"
-			onConfirm={() => {
-				setConfirmDiscard(false);
-				onOpenChange(false);
-			}}
 		/>
 		</>
 	);

@@ -31,7 +31,7 @@ import { cn } from "@repo/ui/utils";
 import { detachIacSourceAction, type IacSourceState } from "@/app/server/actions/byo-iac";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { useIacSourceCanvas } from "@/components/design-project/byo/iac-source-canvas-context";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { IacScanReport } from "@/types/jsonb.types";
@@ -92,11 +92,6 @@ export function IacNode({ source }: { source: IacSourceState }) {
 	const repoLabel = source.repoUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\.git$/, "");
 	const pinned = shortSha(source.commitSha);
 	const deployed = shortSha(source.deployedCommitSha);
-
-	const detach = () => {
-		if (!ctx || detaching) return;
-		detachSource.mutate({ projectId: ctx.projectId, environmentId: ctx.environmentId });
-	};
 
 	return (
 		<div className="min-w-[240px] rounded-none border border-border bg-card text-card-foreground">
@@ -182,13 +177,18 @@ export function IacNode({ source }: { source: IacSourceState }) {
 				)}
 			</div>
 
-			<ConfirmDialog
+			<ConfirmAction
 				open={confirmDetach}
 				onOpenChange={setConfirmDetach}
 				title="Detach this IaC source?"
 				description="This environment falls back to the built-in template and the module's resources leave the board. The module itself is untouched, and the next deploy applies the template rather than your module. Detaching is refused while the environment holds live infrastructure — destroy it first."
 				confirmLabel="Detach source"
-				onConfirm={detach}
+				pendingLabel="Detaching…"
+				severity={{ level: "confirm" }}
+				mutation={detachSource}
+				variables={
+					ctx ? { projectId: ctx.projectId, environmentId: ctx.environmentId } : null
+				}
 			/>
 		</div>
 	);
