@@ -42,13 +42,25 @@ vi.mock("@/lib/authz/guard", () => ({
 const pdp = vi.hoisted(() => ({ enforce: vi.fn() }));
 vi.mock("@/lib/authz", () => ({ getPdp: () => ({ enforce: pdp.enforce }) }));
 
+// The connection library is stubbed for the two route tests at the end of this file: what they pin
+// is how a route answers the library's refusal, and the refusal itself is the library's own test
+// (tests/lib/cloud-providers/connections.test.ts). `providers.ts` imports only a type from it.
+vi.mock("@/lib/cloud-providers/connections", () => ({
+	initIdentity: vi.fn(),
+	saveAlibabaIdentity: vi.fn(),
+}));
+
 import { getActiveScope } from "@/lib/auth/scope";
 import {
 	assertMintingProfileStillMember,
 	ensureCliOrgAccess,
 } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
+import { POST as connectRoute } from "@/app/api/cli/providers/[provider]/connect/route";
+import { POST as initRoute } from "@/app/api/cli/providers/[provider]/init/route";
 import { type CliTokenPayload, verifyCliToken } from "@/lib/cli/auth";
+import { CloudNotOfferedError } from "@/lib/cloud-providers/availability";
+import { initIdentity, saveAlibabaIdentity } from "@/lib/cloud-providers/connections";
 import {
 	credentialOf,
 	enforceProviderPermission,
@@ -87,6 +99,12 @@ describe("isCloudProvider", () => {
 		expect(isCloudProvider("AWS")).toBe(false);
 		expect(isCloudProvider("")).toBe(false);
 	});
+
+	// The segment is parsed, not offered: /status, /verify and /disconnect must keep answering for
+	// an account on a cloud this deployment no longer offers.
+	it.each(["hetzner", "alibaba", "digitalocean", "civo"])("accepts %s, offered or not", (cloud) => {
+		expect(isCloudProvider(cloud)).toBe(true);
+	});
 });
 
 describe("errorResponse", () => {
@@ -103,6 +121,12 @@ describe("errorResponse", () => {
 	it("falls back to a generic message for non-Error values", async () => {
 		const resp = errorResponse("weird", 500);
 		expect(await resp.json()).toEqual({ error: "Internal Server Error" });
+	});
+
+	it("answers the refusal of a cloud that is not offered with a 400, whatever status was passed", async () => {
+		const resp = errorResponse(new CloudNotOfferedError("alibaba"), 500);
+		expect(resp.status).toBe(400);
+		expect(await resp.json()).toEqual({ error: "Alibaba Cloud is not available in this release." });
 	});
 });
 
@@ -567,4 +591,47 @@ describe("the provider routes enforce in the resolved scope", () => {
 			expect(src).not.toContain("authorizeUserId");
 		});
 	}
+});
+
+describe("the routes that write a connection answer the library's refusal", () => {
+	/** A POST to one provider route with a session token and an optional JSON body. */
+	function post(path: string, body?: unknown) {
+		return new Request(`http://localhost/api/cli/providers/${path}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: body === undefined ? undefined : JSON.stringify(body),
+		});
+	}
+
+	beforeEach(() => {
+		mockedVerify.mockResolvedValue({ payload: { sub: "user-123" }, error: null });
+	});
+
+	it("init answers 400 with the refusal, not its usual 500", async () => {
+		vi.mocked(initIdentity).mockRejectedValue(new CloudNotOfferedError("alibaba"));
+		const res = await initRoute(post("alibaba/init"), {
+			params: Promise.resolve({ provider: "alibaba" }),
+		});
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "Alibaba Cloud is not available in this release." });
+	});
+
+	it("init still answers 500 for any other failure", async () => {
+		vi.mocked(initIdentity).mockRejectedValue(new Error("the database fell over"));
+		const res = await initRoute(post("aws/init"), { params: Promise.resolve({ provider: "aws" }) });
+		expect(res.status).toBe(500);
+	});
+
+	it("connect answers 400 with the refusal", async () => {
+		vi.mocked(saveAlibabaIdentity).mockRejectedValue(new CloudNotOfferedError("alibaba"));
+		const res = await connectRoute(
+			post("alibaba/connect", {
+				identity_id: "ci-1",
+				credentials: { role_arn: "acs:ram::5123456789012345:role/R" },
+			}),
+			{ params: Promise.resolve({ provider: "alibaba" }) },
+		);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "Alibaba Cloud is not available in this release." });
+	});
 });

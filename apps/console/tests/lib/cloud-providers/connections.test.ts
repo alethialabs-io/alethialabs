@@ -57,6 +57,7 @@ import {
 	saveGcpIdentity,
 	saveTokenCloudIdentity,
 } from "@/lib/cloud-providers/connections";
+import { CloudNotOfferedError, withHiddenClouds } from "@/lib/cloud-providers/availability";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
 import { probeHealth } from "@/lib/cloud-providers/health";
@@ -261,16 +262,139 @@ describe("initIdentity", () => {
 
 	it("creates a keyless Alibaba pending row with empty credentials (no external id)", async () => {
 		queue([], [{ id: "ci-ali" }]);
-		const r = await initIdentity(SCOPE, "alibaba");
+		const r = await withHiddenClouds(["alibaba"], () => initIdentity(SCOPE, "alibaba"));
 		expect(r).toEqual({ identityId: "ci-ali" });
 		expect(db._values[0].credentials).toEqual({});
 	});
 
 	it("creates a token-cloud pending row with empty credentials and no external id", async () => {
 		queue([], [{ id: "ci-do" }]);
-		const r = await initIdentity(SCOPE, "digitalocean");
+		const r = await withHiddenClouds(["digitalocean"], () => initIdentity(SCOPE, "digitalocean"));
 		expect(r).toEqual({ identityId: "ci-do" });
 		expect(db._values[0].credentials).toEqual({});
+	});
+});
+
+// --- a cloud this deployment does not offer ---
+
+describe("a cloud this deployment does not offer", () => {
+	const HIDDEN = ["alibaba", "digitalocean", "civo"] as const;
+	const TOKEN = "t".repeat(24);
+	const RAM_ROLE = "acs:ram::5123456789012345:role/MyRole";
+
+	it.each(HIDDEN)("initIdentity refuses %s before any read, and writes nothing", async (cloud) => {
+		// An existing pending row is queued: a refusal that came after the read would hand it back.
+		queue([{ id: "ci-existing" }]);
+		await expect(initIdentity(SCOPE, cloud)).rejects.toBeInstanceOf(CloudNotOfferedError);
+		expect(db._results).toHaveLength(1);
+		expect(db._values).toHaveLength(0);
+	});
+
+	it("names the cloud in the refusal and gives no reason", async () => {
+		await expect(initIdentity(SCOPE, "alibaba")).rejects.toThrow(
+			/^Alibaba Cloud is not available in this release\.$/,
+		);
+	});
+
+	it.each(["aws", "gcp", "azure", "hetzner"] as const)("initIdentity accepts %s", async (cloud) => {
+		queue([{ id: "ci-offered" }]);
+		await expect(initIdentity(SCOPE, cloud)).resolves.toEqual({ identityId: "ci-offered" });
+	});
+
+	it.each(HIDDEN)("initIdentity accepts %s once the operator setting names it", async (cloud) => {
+		queue([], [{ id: "ci-new" }]);
+		const r = await withHiddenClouds([cloud], () => initIdentity(SCOPE, cloud));
+		expect(r).toEqual({ identityId: "ci-new" });
+		expect(db._values[0]).toMatchObject({ provider: cloud });
+	});
+
+	it("re-enabling one cloud leaves the others refused", async () => {
+		await withHiddenClouds(["civo"], async () => {
+			await expect(initIdentity(SCOPE, "alibaba")).rejects.toBeInstanceOf(CloudNotOfferedError);
+		});
+	});
+
+	it("saveAlibabaIdentity refuses before it validates or reads", async () => {
+		await expect(saveAlibabaIdentity(SCOPE, "ci-al", RAM_ROLE)).rejects.toBeInstanceOf(
+			CloudNotOfferedError,
+		);
+		// The refusal comes first, so a malformed value is not reported as a format problem.
+		await expect(saveAlibabaIdentity(SCOPE, "ci-al", "acs:bad")).rejects.toBeInstanceOf(
+			CloudNotOfferedError,
+		);
+		expect(db._sets).toHaveLength(0);
+		expect(probeHealth).not.toHaveBeenCalled();
+	});
+
+	it.each(["digitalocean", "civo"] as const)(
+		"saveTokenCloudIdentity refuses %s and encrypts nothing",
+		async (cloud) => {
+			await expect(saveTokenCloudIdentity(SCOPE, "ci", cloud, TOKEN)).rejects.toBeInstanceOf(
+				CloudNotOfferedError,
+			);
+			expect(encryptSecret).not.toHaveBeenCalled();
+			expect(db._sets).toHaveLength(0);
+		},
+	);
+
+	it("an offered cloud's form cannot complete a pending row on a cloud that is not offered", async () => {
+		// The row the id addresses is an Alibaba one; the form submitted is the AWS one.
+		queue([{ id: "ci-al", provider: "alibaba", status: "pending", credentials: {} }]);
+		await expect(
+			saveAwsIdentity(SCOPE, "ci-al", "arn:aws:iam::123456789012:role/R"),
+		).rejects.toBeInstanceOf(CloudNotOfferedError);
+		expect(db._sets).toHaveLength(0);
+		expect(probeHealth).not.toHaveBeenCalled();
+	});
+
+	it("the same holds for the GCP, Azure and Hetzner forms", async () => {
+		const wif = JSON.stringify({
+			type: "external_account",
+			audience: "//iam.googleapis.com/projects/123456/locations/global/workloadIdentityPools/p/providers/x",
+			service_account_impersonation_url:
+				"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/sa@my-proj.iam.gserviceaccount.com:generateAccessToken",
+			credential_source: { url: "https://issuer.example/token" },
+		});
+		const hiddenRow = [{ id: "ci-h", provider: "civo", status: "pending", credentials: {} }];
+		queue(hiddenRow);
+		await expect(saveGcpIdentity(SCOPE, "ci-h", wif)).rejects.toBeInstanceOf(CloudNotOfferedError);
+		queue(hiddenRow);
+		await expect(
+			saveAzureIdentity(
+				SCOPE,
+				"ci-h",
+				"11111111-1111-4111-8111-111111111111",
+				"22222222-2222-4222-8222-222222222222",
+				"33333333-3333-4333-8333-333333333333",
+			),
+		).rejects.toBeInstanceOf(CloudNotOfferedError);
+		queue(hiddenRow);
+		await expect(saveTokenCloudIdentity(SCOPE, "ci-h", "hetzner", TOKEN)).rejects.toBeInstanceOf(
+			CloudNotOfferedError,
+		);
+		expect(db._sets).toHaveLength(0);
+	});
+
+	it("an account on such a cloud can still be re-verified", async () => {
+		queue([]); // status → testing
+		queueVerify("alibaba");
+		const r = await reverifyConnection(SCOPE, "ci");
+		expect(r).toMatchObject({ verified: true, status: "connected" });
+	});
+
+	it("an account on such a cloud can still be disconnected", async () => {
+		queue(
+			[{ provider: "alibaba", credentials: {} }], // provider-assert select
+			[{ org_id: "org-1" }], // reset update → returning
+			[], // projects orphan update
+		);
+		await expect(disconnectIdentity(SCOPE, "ci-al", "alibaba")).resolves.toEqual({ success: true });
+		expect(purgeCloudInventory).toHaveBeenCalledWith("ci-al");
+	});
+
+	it("an account on such a cloud is still read", async () => {
+		queue([{ id: "ci-al", provider: "alibaba", is_verified: true, name: "A", credentials: {} }]);
+		await expect(getStatus(SCOPE, "alibaba")).resolves.toMatchObject({ connected: true });
 	});
 });
 
@@ -566,10 +690,8 @@ describe("saveAlibabaIdentity", () => {
 	it("parses the RAM role ARN, persists account id, and verifies server-side (STS)", async () => {
 		queue([{ id: "ci-al", provider: "alibaba", status: "testing", credentials: {} }], []);
 		queueVerify("alibaba");
-		const r = await saveAlibabaIdentity(
-			SCOPE,
-			"ci-al",
-			"acs:ram::5123456789012345:role/MyRole",
+		const r = await withHiddenClouds(["alibaba"], () =>
+			saveAlibabaIdentity(SCOPE, "ci-al", "acs:ram::5123456789012345:role/MyRole"),
 		);
 		expect(r).toMatchObject({ identityId: "ci-al", verified: true, status: "connected" });
 		expect(db._sets[0]).toMatchObject({
@@ -583,8 +705,8 @@ describe("saveAlibabaIdentity", () => {
 	});
 
 	it("throws on a malformed RAM ARN", async () => {
-		await expect(saveAlibabaIdentity(SCOPE, "ci-al", "acs:bad")).rejects.toThrow(
-			/Invalid format/,
+		await withHiddenClouds(["alibaba"], () =>
+			expect(saveAlibabaIdentity(SCOPE, "ci-al", "acs:bad")).rejects.toThrow(/Invalid format/),
 		);
 	});
 });
@@ -595,11 +717,8 @@ describe("saveTokenCloudIdentity", () => {
 	it("encrypts the token, stores it under credentials.token, and verifies server-side", async () => {
 		queue([{ id: "ci-do", provider: "digitalocean", status: "testing", credentials: {} }], []);
 		queueVerify("digitalocean");
-		const r = await saveTokenCloudIdentity(
-			SCOPE,
-			"ci-do",
-			"digitalocean",
-			"  dop_v1_supersecrettoken  ",
+		const r = await withHiddenClouds(["digitalocean"], () =>
+			saveTokenCloudIdentity(SCOPE, "ci-do", "digitalocean", "  dop_v1_supersecrettoken  "),
 		);
 		expect(r).toMatchObject({ identityId: "ci-do", verified: true, status: "connected" });
 		expect(encryptSecret).toHaveBeenCalledWith({ api_token: "dop_v1_supersecrettoken" });

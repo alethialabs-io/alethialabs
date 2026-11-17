@@ -8,8 +8,10 @@ import {
 	type WebhookCaConsumer,
 } from "@/lib/addons/webhook-ca-consumers";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
+import { assertCloudOffered } from "@/lib/cloud-providers/availability";
 import { claimPlacementNamespace } from "@/lib/projects/placement-namespace-claim";
 import {
+	cloudIdentities,
 	type EnvironmentLifecycle,
 	type EnvironmentStage,
 	type PlacementMode,
@@ -314,10 +316,54 @@ async function refuseClaimedPlacementNamespaces(
 	}
 }
 
+/**
+ * Refuses a cloud account whose cloud this deployment does not offer, by throwing
+ * `CloudNotOfferedError`. The cloud is the stored row's, read in the caller's transaction, never a
+ * value the caller sent.
+ *
+ * An id that matches no row the transaction can read is not refused here. Whether the caller may
+ * use an account at all is a different question, and each write path asks it before it gets this
+ * far; this function answers only for a row it has read.
+ */
+async function assertIdentityCloudOffered(tx: Tx, cloudIdentityId: string): Promise<void> {
+	const rows = await tx
+		.select({ provider: cloudIdentities.provider })
+		.from(cloudIdentities)
+		.where(eq(cloudIdentities.id, cloudIdentityId));
+	for (const row of rows) assertCloudOffered(row.provider);
+}
+
+/**
+ * Refuses a project whose cloud account is on a cloud this deployment does not offer, by throwing
+ * `CloudNotOfferedError`. It is the check for the two operations that put new infrastructure on a
+ * cloud, plan and deploy. Reading the project, drift detection, kubeconfig minting, destroy and
+ * removing the account do not call it and stay open.
+ *
+ * A project with no cloud account, and an id that matches no row the transaction can read, are not
+ * refused: there is no cloud to refuse.
+ *
+ * The enqueue paths for plan and deploy do not call this yet. #6811 added the check; the call
+ * sites are in files other units own.
+ */
+export async function assertProjectCloudOffered(tx: Tx, projectId: string): Promise<void> {
+	const rows = await tx
+		.select({ cloud_identity_id: projects.cloud_identity_id })
+		.from(projects)
+		.where(eq(projects.id, projectId));
+	for (const row of rows) {
+		if (row.cloud_identity_id) await assertIdentityCloudOffered(tx, row.cloud_identity_id);
+	}
+}
+
 export async function insertProjectWithDefaultFabric(
 	tx: Tx,
 	input: CreateProjectCoreInput,
 ): Promise<CreateProjectCoreResult> {
+	// Before any read or write: a new project is accepted only on a cloud this deployment offers.
+	// This is the one insert path for a project, so it covers the console create, the duplicate
+	// (which creates through the same action) and the CLI route.
+	if (input.cloud_identity_id) await assertIdentityCloudOffered(tx, input.cloud_identity_id);
+
 	// One org-scoped read serves both uniqueness questions, and they are answered DIFFERENTLY on
 	// purpose (#3145). The slug is DERIVED, so a collision is de-duplicated silently — that is what
 	// `api-2` is for, and no user ever typed it. The NAME is the user's, and is the token

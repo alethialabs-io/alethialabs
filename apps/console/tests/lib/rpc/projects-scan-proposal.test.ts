@@ -15,7 +15,11 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const db = vi.hoisted(() => {
-	const state: { row: unknown; where: unknown } = { row: undefined, where: undefined };
+	const state: { row: unknown; where: unknown; rows: unknown[] } = {
+		row: undefined,
+		where: undefined,
+		rows: [],
+	};
 	return state;
 });
 
@@ -37,6 +41,8 @@ vi.mock("@/lib/db", () => ({
 				return tx;
 			},
 			limit: () => Promise.resolve(db.row === undefined ? [] : [db.row]),
+			// A query awaited with no `.limit()` (the duplicate read's list of names) answers `rows`.
+			then: (resolve: (rows: unknown[]) => void) => resolve(db.rows),
 		});
 		return fn(tx);
 	},
@@ -59,10 +65,21 @@ vi.mock("@/lib/billing/ai-quota", () => ({
 vi.mock("@/app/server/actions/aws/identities", () => ({ getVerifiedCloudIdentities: vi.fn(async () => []) }));
 vi.mock("@/app/server/actions/projects", () => ({ getProjectAsFormData: vi.fn() }));
 vi.mock("@/lib/auth", () => ({ auth: { api: {} } }));
+// The mapper from an inferred stack to a project form is its own module with its own tests; here it
+// only has to show WHICH account the proposal was placed on.
+vi.mock("@/lib/scanner/to-project", () => ({ inferredStackToFormData: vi.fn(() => ({})) }));
 
 const { inferStack } = await import("@/lib/scanner/infer");
 const { recordAiUsage } = await import("@/lib/billing/ai-quota");
-const { readScanProposal, readScanStatus } = await import("@/lib/rpc/procedures/projects");
+const { getVerifiedCloudIdentities } = await import("@/app/server/actions/aws/identities");
+const { getProjectAsFormData } = await import("@/app/server/actions/projects");
+const { withHiddenClouds } = await import("@/lib/cloud-providers/availability");
+const { readDuplicateTargets, readScanProposal, readScanStatus } = await import(
+	"@/lib/rpc/procedures/projects"
+);
+
+/** A verified cloud account on `provider`, as the identity read returns it. */
+const account = (provider: string) => ({ id: `ci-${provider}`, provider, name: provider, displayId: provider });
 
 /** A scanned job's row: a digest is there. */
 const scanned = (status = "SUCCESS") => ({
@@ -74,8 +91,10 @@ const scanned = (status = "SUCCESS") => ({
 beforeEach(() => {
 	vi.mocked(inferStack).mockClear();
 	vi.mocked(recordAiUsage).mockClear();
+	vi.mocked(getVerifiedCloudIdentities).mockResolvedValue([]);
 	db.row = undefined;
 	db.where = undefined;
+	db.rows = [];
 });
 
 describe("readScanProposal — one inference per scan", () => {
@@ -117,5 +136,64 @@ describe("the scan reads address a SCAN the reader may see", () => {
 		expect(where.sql).toContain('"jobs"."job_type" = $2');
 		expect(where.sql).toContain("job_visible_to_reader");
 		expect(where.params).toEqual(["00000000-0000-4000-8000-000000000005", "ANALYZE_REPO"]);
+	});
+});
+
+describe("readScanProposal — the account a proposal is placed on", () => {
+	it("an org whose only account is on a cloud that is not offered still needs setup", async () => {
+		db.row = scanned();
+		vi.mocked(getVerifiedCloudIdentities).mockResolvedValue([account("alibaba"), account("civo")]);
+		expect(await readScanProposal("00000000-0000-4000-8000-000000000011")).toEqual({
+			status: "NEEDS_SETUP",
+			needsIdentity: true,
+		});
+	});
+
+	it("skips an account on a cloud that is not offered and takes the first offered one", async () => {
+		db.row = scanned();
+		vi.mocked(getVerifiedCloudIdentities).mockResolvedValue([account("alibaba"), account("gcp")]);
+		const result = await readScanProposal("00000000-0000-4000-8000-000000000012");
+		expect(result).toMatchObject({ status: "READY", proposal: { identityId: "ci-gcp", provider: "gcp" } });
+	});
+
+	it("takes that account once the operator setting names its cloud", async () => {
+		db.row = scanned();
+		vi.mocked(getVerifiedCloudIdentities).mockResolvedValue([account("alibaba"), account("gcp")]);
+		const result = await withHiddenClouds(["alibaba"], () =>
+			readScanProposal("00000000-0000-4000-8000-000000000013"),
+		);
+		expect(result).toMatchObject({ status: "READY", proposal: { identityId: "ci-alibaba" } });
+	});
+});
+
+describe("readDuplicateTargets — the accounts a clone can go to", () => {
+	const everyCloud = ["aws", "gcp", "azure", "alibaba", "digitalocean", "hetzner", "civo"].map(account);
+
+	beforeEach(() => {
+		vi.mocked(getProjectAsFormData).mockResolvedValue({
+			formData: { project: { project_name: "My App" } },
+			provider: "aws",
+		} as never);
+		vi.mocked(getVerifiedCloudIdentities).mockResolvedValue(everyCloud);
+		db.rows = [{ project_name: "My App" }];
+	});
+
+	it("lists the other offered clouds a project can be provisioned on — Hetzner among them", async () => {
+		const targets = await readDuplicateTargets("00000000-0000-4000-8000-000000000021");
+		// Not aws (the source's own cloud), not alibaba (not offered), not digitalocean or civo
+		// (not offered, and no project can be provisioned on them at all).
+		expect(targets.identities.map((i) => i.provider)).toEqual(["gcp", "azure", "hetzner"]);
+	});
+
+	it("adds a provisioning cloud once the operator setting names it, and only that one", async () => {
+		const targets = await withHiddenClouds(["alibaba", "digitalocean", "civo"], () =>
+			readDuplicateTargets("00000000-0000-4000-8000-000000000022"),
+		);
+		expect(targets.identities.map((i) => i.provider)).toEqual(["gcp", "azure", "alibaba", "hetzner"]);
+	});
+
+	it("still suggests a name per provisioning slug: the map is a parser's, not an offer", async () => {
+		const targets = await readDuplicateTargets("00000000-0000-4000-8000-000000000023");
+		expect(Object.keys(targets.suggestedNames).sort()).toEqual(["alibaba", "aws", "azure", "gcp", "hetzner"]);
 	});
 });

@@ -349,6 +349,9 @@ importers:
       '@repo/brand':
         specifier: workspace:*
         version: link:../../packages/brand
+      '@repo/cloud-catalog':
+        specifier: workspace:*
+        version: link:../../packages/cloud-catalog
       '@repo/email':
         specifier: workspace:*
         version: link:../../packages/email

@@ -15,7 +15,14 @@ import {
 	PROVIDERS,
 } from "./generated/catalog";
 
-/** The provisioning-slug values as a runtime set, kept in lockstep with the type via `satisfies`. */
+/**
+ * The provisioning-slug values as a runtime set, kept in lockstep with the type via `satisfies`.
+ *
+ * Every provisioning cloud is here, including one the product does not offer: this list parses what
+ * a stored row carries, so a project on such a cloud still reads, renders and can be destroyed. It
+ * does not say what a user may choose. For that, filter it through `isCloudOffered`
+ * (./availability, server only).
+ */
 export const CLOUD_PROVIDER_SLUGS = [
 	"aws",
 	"gcp",

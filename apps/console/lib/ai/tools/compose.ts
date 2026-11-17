@@ -25,7 +25,8 @@ import {
 	type CloudProviderMeta,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
-import { cidrForHosts } from "@/lib/cloud-providers/cidr";
+import { isCloudOffered } from "@/lib/cloud-providers/availability";
+import { cidrForHosts, NETWORK_CIDR_MAX_PREFIX } from "@/lib/cloud-providers/cidr";
 import { CLOUD_PROVIDER_SLUGS } from "@/lib/cloud-providers/provider-slug";
 import { computeCostItems } from "@/lib/cost/compute-cost-items";
 import { clusterCostMeta } from "@/lib/cost/project-cost";
@@ -53,20 +54,34 @@ const SERVICE_FIELD: Partial<Record<NodeKind, keyof CloudProviderMeta>> = {
 	secret: "secretsService",
 };
 
-/** The clouds a project can be provisioned on today — the AI reasons across all of them. */
-const PROVISIONABLE_CLOUDS: CloudProviderSlug[] = [
-	"aws",
-	"gcp",
-	"azure",
-	"alibaba",
-	"hetzner",
-];
+/**
+ * The clouds a project can be provisioned on in this deployment: every provisioning cloud that is
+ * offered, in catalog order. The tool schemas and descriptions below are built from it on each
+ * call, so a cloud that is not offered is not a value the model can pass or a name it is shown.
+ */
+export function offeredProvisioningClouds(): CloudProviderSlug[] {
+	return CLOUD_PROVIDER_SLUGS.filter((slug) => isCloudOffered(slug));
+}
 
 /**
- * Where a component actually runs on a given cloud. The big managed clouds (aws/gcp/azure/alibaba)
- * back each component with a **managed service**; compute-only **Hetzner** provisions only the
- * cluster + network natively and runs data/registry/dns as **in-cluster OSS Helm charts** (via
- * ArgoCD) — so the agent must reason about what will actually be deployed, not just a service name.
+ * The network floors of the given clouds as one phrase for a prompt or a tool description:
+ * "aws /18, gcp none, azure /18, hetzner /22". "none" is a cloud whose template does not carve
+ * its subnets out of the project network.
+ */
+export function cidrFloorsLabel(clouds: readonly CloudProviderSlug[]): string {
+	return clouds
+		.map((cloud) => {
+			const floor = NETWORK_CIDR_MAX_PREFIX[cloud];
+			return `${cloud} ${floor >= 32 ? "none" : `/${floor}`}`;
+		})
+		.join(", ");
+}
+
+/**
+ * Where a component actually runs on a given cloud. Most clouds back each component with a
+ * **managed service**; compute-only **Hetzner** provisions only the cluster + network natively and
+ * runs data/registry/dns as **in-cluster OSS Helm charts** (via ArgoCD) — so the agent must reason
+ * about what will actually be deployed, not just a service name.
  */
 function deploymentKind(
 	kind: NodeKind,
@@ -88,10 +103,11 @@ function deploymentKind(
  * provider's valid options, and CIDR sizing.
  */
 export function catalogTools() {
+	const clouds = offeredProvisioningClouds();
 	return {
 		list_services: tool({
 			description:
-				"List the infrastructure services that can be added to the canvas. For each, gives every cloud's concrete service name (aws/gcp/azure/alibaba/hetzner) AND how it is deployed there — 'managed' (a managed cloud service), 'native' (cluster/network), 'in-cluster-helm' (Hetzner runs data as OSS Helm charts via ArgoCD — CloudNativePG, Valkey, RabbitMQ, Harbor, Vault, NATS, ScyllaDB), or 'unsupported' (that cloud's template can't provision this kind). Each entry also carries `unsupportedOn`: the clouds whose template can't provision that kind — do NOT propose a kind on a cloud listed there (today it is EMPTY — every cloud backs every kind). Use this to reason about what actually gets provisioned on each cloud.",
+				`List the infrastructure services that can be added to the canvas. For each, gives every cloud's concrete service name (${clouds.join("/")}) AND how it is deployed there — 'managed' (a managed cloud service), 'native' (cluster/network), 'in-cluster-helm' (Hetzner runs data as OSS Helm charts via ArgoCD — CloudNativePG, Valkey, RabbitMQ, Harbor, Vault, NATS, ScyllaDB), or 'unsupported' (that cloud's template can't provision this kind). Each entry also carries `unsupportedOn`: the clouds whose template can't provision that kind — do NOT propose a kind on a cloud listed there (today it is EMPTY — every cloud backs every kind). Use this to reason about what actually gets provisioned on each cloud.`,
 			inputSchema: z.object({}),
 			execute: async () => ({
 				services: ADDABLE_KINDS.map((kind) => {
@@ -102,17 +118,17 @@ export function catalogTools() {
 						classification: NODE_REGISTRY[kind].classification,
 						serviceNames: field
 							? Object.fromEntries(
-									PROVISIONABLE_CLOUDS.map((p) => [p, PROVIDERS[p][field]]),
+									clouds.map((p) => [p, PROVIDERS[p][field]]),
 								)
 							: null,
 						deployment: field
 							? Object.fromEntries(
-									PROVISIONABLE_CLOUDS.map((p) => [p, deploymentKind(kind, p)]),
+									clouds.map((p) => [p, deploymentKind(kind, p)]),
 								)
 							: null,
 						// Clouds whose built-in template can't provision this kind — derived from the
 						// SAME set the Add-palette hides (addableKindsFor), so it can't drift.
-						unsupportedOn: PROVISIONABLE_CLOUDS.filter(
+						unsupportedOn: clouds.filter(
 							(p) => !addableKindsFor(p).includes(kind),
 						),
 					};
@@ -124,7 +140,7 @@ export function catalogTools() {
 			description:
 				"Per-provider catalog of valid values: instance types, k8s versions, db engines + capacity model, cache node types, regions, nosql, messaging, autoscaler key, WAF/cert. Use this to map a request like 'size X' onto valid node configs/enums.",
 			inputSchema: z.object({
-				provider: z.enum(["aws", "gcp", "azure", "alibaba", "hetzner"]),
+				provider: z.enum(clouds),
 			}),
 			execute: async ({ provider }) => {
 				const p: CloudProviderSlug = provider;
@@ -156,13 +172,13 @@ export function catalogTools() {
 			description:
 				"Compute the smallest VPC CIDR block that fits N hosts AND that the target cloud's " +
 				"template can still carve its subnets out of. Pass `cloud` whenever it is known — the " +
-				"clouds disagree (AWS and Azure need a /18 or wider, Hetzner a /22, Alibaba a /28), and " +
+				`clouds disagree (the narrowest network each accepts: ${cidrFloorsLabel(clouds)}), and ` +
 				"the apply gate rejects a network below its cloud's floor. Without `cloud` the answer is " +
 				"widened to a /18 so it is valid everywhere. Pass the result as the network node's cidr_block.",
 			inputSchema: z.object({
 				hosts: z.number().int().positive(),
 				base: z.string().optional(),
-				cloud: z.enum(CLOUD_PROVIDER_SLUGS).optional(),
+				cloud: z.enum(clouds).optional(),
 			}),
 			execute: async ({ hosts, base, cloud }) => cidrForHosts(hosts, base, cloud),
 		}),
