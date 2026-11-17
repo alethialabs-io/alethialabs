@@ -82,15 +82,15 @@
 	"polls": {
 		"components/agent/elench/elench-conversation.tsx :: setInterval": {
 			"count": 1,
-			"lifts": "unassigned"
+			"lifts": "#7005"
 		},
 		"components/org/pending-paid-setup.ts :: setInterval": {
 			"count": 1,
-			"lifts": "unassigned"
+			"lifts": "#7004"
 		},
 		"lib/stores/elench-drafts/store.ts :: setInterval": {
 			"count": 1,
-			"lifts": "unassigned"
+			"lifts": "#7006"
 		}
 	}
 }
