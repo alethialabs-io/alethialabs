@@ -598,7 +598,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			// wearing the same `signal: interrupt`. Both live in t2TeardownFailureLine, which is
 			// untagged and unit-tested, because this branch only executes on a paid cloud run.
 			// `dctx.Err()` is read AFTER the call returns, so it is the deadline's own verdict.
-			t.Logf("%s", t2TeardownFailureLine(provider, window, dctx.Err(), derr))
+			//
+			// IT FAILS THE LEG (#6970), on every cloud — this one call site serves all of them.
+			// The destroy is the product's, and a customer has no sweeper behind it: this line was
+			// a t.Logf, and seven nightly aws legs in a row went green over a destroy that left a
+			// load balancer, its subnets and a certificate behind. t.Errorf, never t.Fatal: the
+			// leg is marked failed and everything after it still runs, including the workflow's
+			// always() sweeper, which stays the guarantee that nothing is left billing.
+			t.Errorf("%s", t2TeardownFailureLine(provider, window, dctx.Err(), derr))
 		} else {
 			t.Log("teardown: cluster destroyed via RunDestroy")
 		}
