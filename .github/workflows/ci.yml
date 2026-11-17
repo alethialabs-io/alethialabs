@@ -1740,6 +1740,17 @@ jobs:
       - name: Contributor agreements match their sealed hash
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/legal/check-cla-hashes.mjs
+      # No lawyer reviews the legal set, so the text has to be checkable against the code (#6778).
+      # docs/legal/legal-set.json lists every legal document with its owner unit, and ties quoted
+      # statements to the file that makes each one true. This fails when a document is missing from
+      # the register, when a quoted statement has left its page, and when the code a statement
+      # rests on has changed. It reads no network and needs no install.
+      - name: Legal-set register and claims ledger still match the tree
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-legal-set.mjs
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-legal-set.mjs --self-test
       # Four hermetic suites that ran NOWHERE until now — no network, no gh, no docker.
       # wt-lease-hook-test.sh replays incident #1247 (one instance committing another's
       # uncommitted work) against a real throwaway leased worktree; it is the only proof
