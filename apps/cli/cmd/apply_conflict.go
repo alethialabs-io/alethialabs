@@ -54,7 +54,7 @@ func componentUpdateRefusal(comp ComponentPlan, err error) string {
 	if conflict.Current == nil {
 		return fmt.Sprintf("%s no longer exists on the server — it was removed after `alethia plan` read it; %s", label, rerunPlanHint)
 	}
-	changed := serverSideChanges(comp.read, componentValues(*conflict.Current))
+	changed := serverSideChanges(comp.Read, componentValues(*conflict.Current))
 	if len(changed) == 0 {
 		return fmt.Sprintf("%s was saved on the server after `alethia plan` read it (none of its settings differ — it was re-saved or redeployed); %s",
 			label, rerunPlanHint)
