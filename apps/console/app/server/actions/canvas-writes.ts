@@ -4,9 +4,9 @@
 
 // THE ARCHITECTURE BOARD'S DESIGN AND JOB WRITES, ON THE MUTATION CONTRACT (ADR 0005 §D4, #6119).
 //
-// Save, Deploy, Discard, Destroy, the create flow's Save and the Run menu's Plan and Detect drift
-// all run functions that live with the project domain (`projects.ts`, `staged-changes.ts`) and that
-// the CLI, the jobs API and the assistant call too, in their own shapes. These actions are the
+// Save, Deploy, Discard, Destroy and the Run menu's Plan and Detect drift all run functions that
+// live with the project domain (`projects.ts`, `staged-changes.ts`) and that the CLI, the jobs API
+// and the assistant call too, in their own shapes. These actions are the
 // board's door to them: each parses its input, resolves the environment inside the actor's org
 // (`resolveActiveEnvironmentId` joins the project's org, so a foreign project's id resolves to
 // nothing and writes nothing), runs the SAME function every other caller runs — so each authorize,
@@ -17,7 +17,7 @@
 // (scripts/check-action-boundary.mjs) follows it to the function it runs and on to its `authorize`.
 
 import { z } from "zod";
-import { tryCreateProject, tryDestroyProject, tryPlanProject, tryProvisionProject, tryQueueDriftDetection } from "@/app/server/actions/projects";
+import { tryDestroyProject, tryPlanProject, tryProvisionProject, tryQueueDriftDetection } from "@/app/server/actions/projects";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { applyStagedChanges, discardStagedChanges } from "@/app/server/actions/staged-changes";
 import { readDestroyTree } from "@/lib/rpc/procedures/canvas";
@@ -37,8 +37,10 @@ const environmentInput = z.object({
 const designInput = environmentInput.extend({ design: projectFormSchema });
 
 /**
- * Saves the board's design to the environment WITHOUT provisioning it: the live design tables and
- * the durable staged rows. Answers the environment it resolved.
+ * Saves the board's design to the environment WITHOUT provisioning it: it writes the live design
+ * tables and then DELETES the environment's staged rows (`applyStagedChanges`). The board never
+ * stages a change itself — `stageChanges` is called only by the CLI's design route — so the rows
+ * this clears are ones staged from there. Answers the environment it resolved.
  */
 export async function saveDesignAction(raw: z.input<typeof designInput>) {
 	return defineAction({
@@ -53,7 +55,8 @@ export async function saveDesignAction(raw: z.input<typeof designInput>) {
 }
 
 /**
- * Saves the board's design to the environment, then queues its DEPLOY. A refused deploy (no cloud
+ * Saves the board's design to the environment exactly as {@link saveDesignAction} does (the staged
+ * rows are deleted here too), then queues its DEPLOY. A refused deploy (no cloud
  * account, a job already in flight, the job cap) is a `conflict` — the design IS saved by then, and
  * only the deploy was refused. Answers the environment and the queued job.
  */
@@ -137,23 +140,6 @@ export async function detectDriftAction(raw: z.input<typeof environmentJobInput>
 				tryQueueDriftDetection(input.projectId, input.environmentId),
 			);
 			return { jobId };
-		},
-	})(raw);
-}
-
-const createInput = z.object({ design: projectFormSchema });
-
-/**
- * The create flow's Save: turns the board's design into a new project. A name another project of the
- * org holds, or one that breaks the name rules, is a `conflict` with the sentence to show. Answers the
- * new project's slug.
- */
-export async function createProjectFromDesignAction(raw: z.input<typeof createInput>) {
-	return defineAction({
-		input: createInput,
-		run: async ({ input }) => {
-			const { project } = await returnedRefusalAsConflict(() => tryCreateProject(input.design));
-			return { projectId: project.id, slug: project.slug };
 		},
 	})(raw);
 }
