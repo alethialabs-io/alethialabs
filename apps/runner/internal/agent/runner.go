@@ -618,6 +618,10 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				failMeta["orphan_resource_cloud_id"] = f.CloudID
 			}
 			fmt.Fprintf(stderrLogger, "ORPHAN RISK (%s) — %s\n", f.Evidence, f.Reason)
+		} else if code, ok := planBindingRefusal(execErr); ok {
+			// The apply was refused before it started because it could not be shown to run its
+			// reviewed plan. The code lets the console say which rule refused it.
+			failMeta = map[string]any{planBindingMetadataKey: string(code)}
 		}
 		stderrLogger.Close()
 		_ = w.postTerminal(jlog, job.ID, "FAILED", execErr.Error(), failMeta) // logged inside; this path already returns its error
@@ -726,7 +730,19 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		return err
 	}
 
-	if job.PlanJobID != nil && *job.PlanJobID != "" {
+	// A job that carries a plan digest applies that plan and no other (plan_binding.go). Checked
+	// before any token is minted or workdir created, so a refusal costs nothing.
+	binding, planBound, err := jobPlanBinding(job)
+	if err != nil {
+		return err
+	}
+	if planBound {
+		fmt.Fprintf(stdout, "Validating against plan job %s...\n", binding.planJobID)
+		if err := w.checkPlanJob(job, binding); err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, "Plan job validated.")
+	} else if job.PlanJobID != nil && *job.PlanJobID != "" {
 		fmt.Fprintf(stdout, "Validating against plan job %s...\n", *job.PlanJobID)
 		planJob, err := w.api.GetJob(*job.PlanJobID)
 		if err != nil {
@@ -782,10 +798,17 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	}
 	defer os.RemoveAll(workDir)
 
-	// Download the pre-approved plan into the workdir (mounted into the sandbox) so the
-	// child can read it.
+	// Download the pre-approved plan into the workdir (mounted into the sandbox) so the child can
+	// read it. For a job that carries a plan digest it is handed on only once its digest equals
+	// that one, and such a job never falls back to computing a new plan.
 	planFile := ""
-	if job.PlanJobID != nil && *job.PlanJobID != "" {
+	if planBound {
+		planFile, err = w.fetchReviewedPlan(binding, workDir)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Using the reviewed plan from plan job %s (digest %s).\n", binding.planJobID, shortDigest(binding.digest))
+	} else if job.PlanJobID != nil && *job.PlanJobID != "" {
 		planFileDest := filepath.Join(workDir, "plan-apply.out")
 		if dlErr := w.api.DownloadPlanArtifact(*job.PlanJobID, planFileDest); dlErr != nil {
 			fmt.Fprintf(stdout, "Warning: could not download plan artifact: %v (will re-plan)\n", dlErr)
