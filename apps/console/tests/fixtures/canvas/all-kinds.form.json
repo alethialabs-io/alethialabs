@@ -1,0 +1,149 @@
+{
+	"project": {
+		"project_name": "Acme Shop",
+		"environment_stage": "production",
+		"region": "eu-central-1",
+		"iac_version": "1.11.4",
+		"cloud_identity_id": "5b1f0c9e-2a3d-4e6f-8a7b-1c2d3e4f5a6b"
+	},
+	"network": {
+		"provision_network": true,
+		"cidr_block": "10.20.0.0/16",
+		"single_nat_gateway": false,
+		"allowed_cidr_blocks": ["203.0.113.0/24"]
+	},
+	"cluster": {
+		"cluster_version": "1.31",
+		"instance_types": ["t3.large"],
+		"node_min_size": 2,
+		"node_max_size": 6,
+		"node_desired_size": 3,
+		"capacity_type": "on_demand",
+		"node_disk_size_gb": 50,
+		"provider_config": { "enable_karpenter": true },
+		"cluster_admins": [{ "username": "alice", "groups": ["system:masters"] }]
+	},
+	"dns": {
+		"enabled": true,
+		"domain_name": "shop.example.com",
+		"managed_certificate": true,
+		"waf_enabled": false,
+		"provider_config": {}
+	},
+	"repositories": {
+		"apps_destination_repo": "https://github.com/acme/apps",
+		"apps_path": "overlays/prod"
+	},
+	"source_repos": [
+		{
+			"repo_url": "https://github.com/acme/shop",
+			"ref": "main",
+			"scan_path": "",
+			"services": []
+		}
+	],
+	"databases": [
+		{
+			"name": "orders",
+			"engine_family": "postgres",
+			"min_capacity": 0.5,
+			"max_capacity": 4,
+			"port": 5432,
+			"backup_retention_days": 7,
+			"iam_auth": false,
+			"cloud_identity_id": "9d8c7b6a-5f4e-4d3c-9b2a-1f0e9d8c7b6a"
+		}
+	],
+	"caches": [
+		{
+			"name": "sessions",
+			"engine": "redis",
+			"node_type": "cache.t3.micro",
+			"num_cache_nodes": 1,
+			"multi_az": false
+		}
+	],
+	"queues": [
+		{
+			"name": "jobs",
+			"ordered": true,
+			"visibility_timeout": 45,
+			"message_retention": 86400
+		}
+	],
+	"topics": [
+		{
+			"name": "events",
+			"subscriptions": [
+				{ "protocol": "https", "endpoint": "https://hooks.example.com/events" }
+			]
+		}
+	],
+	"nosql_tables": [
+		{
+			"name": "ledger",
+			"partition_key": "account_id",
+			"partition_key_type": "S",
+			"sort_key": "posted_at",
+			"sort_key_type": "N",
+			"table_type": "standard",
+			"capacity_mode": "on_demand",
+			"point_in_time_recovery": true
+		}
+	],
+	"secrets": [
+		{
+			"name": "api-key",
+			"generate": true,
+			"length": 48,
+			"special_chars": false
+		}
+	],
+	"storage_buckets": [
+		{
+			"name": "assets",
+			"versioning": true,
+			"encryption_enabled": true,
+			"public_access": false,
+			"cors_origins": ["https://shop.example.com"]
+		}
+	],
+	"container_registries": [
+		{
+			"name": "apps",
+			"immutable_tags": false,
+			"vulnerability_scanning": false,
+			"provider_config": {}
+		}
+	],
+	"helm_registries": [
+		{
+			"name": "ghcr-io",
+			"provider": "oci-github-cr",
+			"provider_config": {}
+		}
+	],
+	"services": [
+		{
+			"name": "api",
+			"type": "deployment",
+			"source": {
+				"kind": "repo",
+				"repo_url": "https://github.com/acme/shop",
+				"path": "apps/api"
+			},
+			"env": [{ "name": "LOG_LEVEL", "value": "info" }],
+			"bindings": [
+				{
+					"target": { "kind": "database", "name": "orders" },
+					"inject": [
+						{ "env": "DATABASE_HOST", "from": "endpoint" },
+						{ "env": "DATABASE_PASSWORD", "from": "password" }
+					]
+				}
+			],
+			"ports": [{ "container_port": 8080, "protocol": "TCP" }],
+			"replicas": 3
+		}
+	]
+}

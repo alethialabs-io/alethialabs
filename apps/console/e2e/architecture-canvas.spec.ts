@@ -37,14 +37,26 @@
 // Neither reaches the Run menu's four job actions, which queue real work through small-bodied
 // server actions. Those are opened and never clicked, and that one remains a convention — stated
 // here rather than left to be assumed.
+//
+// ── THE ONE WRITE ─────────────────────────────────────────────────────────────────────────────
+//
+// "Save clears the bar and a reload shows no pending changes" is the single journey here that puts
+// the design on the wire. It cannot use the fixture above, for the reason the first paragraph
+// gives: with no cloud identity the save is refused in the browser. So it seeds its own project
+// with a connected (fixture) cloud account and a region, straight into the database, and saves
+// THAT. A save writes the design tables and queues nothing, so it costs nothing. The test raises
+// `designWritesAllowed` to exactly 1 for itself, and the `afterEach` holds every test to its own
+// number — zero for all the others — so the exception is counted rather than waved through.
 
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { resolveOwner } from "./audit/context";
 import {
 	breachMessage,
 	neverActivated,
 	watchPage,
 	type DesignPayloadWatch,
 } from "./helpers/deploy-guard";
+import { seedCloudIdentity, seedProject } from "./helpers/seed";
 
 test.describe("Architecture canvas", () => {
 	// Runs on the `canvas` project: ONE shared persona from the `setup` project, not a signup per
@@ -94,7 +106,14 @@ test.describe("Architecture canvas", () => {
 	 */
 	let boundary: DesignPayloadWatch | null = null;
 
+	/**
+	 * How many requests carrying the design the test in flight is entitled to make. Zero, reset
+	 * before every test; the one journey that saves raises it to exactly 1 for itself.
+	 */
+	let designWritesAllowed = 0;
+
 	test.beforeEach(async ({ page }, testInfo) => {
+		designWritesAllowed = 0;
 		// The stored session lands on the org; read the slug off the URL rather than signing up again.
 		await page.goto("/");
 		await page.waitForURL((url) => /^\/[^/]+/.test(url.pathname), { timeout: 60_000 });
@@ -129,7 +148,12 @@ test.describe("Architecture canvas", () => {
 	test.afterEach(() => {
 		const crossed = boundary?.stop() ?? [];
 		boundary = null;
-		expect(crossed, breachMessage(crossed)).toHaveLength(0);
+		expect(
+			crossed,
+			designWritesAllowed === 0
+				? breachMessage(crossed)
+				: `expected exactly ${designWritesAllowed} request(s) carrying the design, saw ${crossed.length}`,
+		).toHaveLength(designWritesAllowed);
 	});
 
 	/**
@@ -593,6 +617,44 @@ test.describe("Architecture canvas", () => {
 		// menu is opened and closed; that is the whole journey.
 		await page.keyboard.press("Escape");
 		await expect(page.getByRole("menuitem", { name: "Plan" })).toHaveCount(0);
+	});
+
+	test("Save clears the bar and a reload shows no pending changes", async ({ page }, testInfo) => {
+		// This journey's own project: a connected cloud account and a region are what the save's
+		// validation needs and the blank fixture lacks. Seeded rows, fixture credentials, no cloud.
+		const orgSlug = new URL(page.url()).pathname.split("/")[1] ?? "";
+		const owner = await resolveOwner(orgSlug);
+		const identity = await seedCloudIdentity(owner, { provider: "aws" });
+		const project = await seedProject(owner, {
+			name: `canvas-save-${testInfo.workerIndex}-${Date.now()}`,
+			cloudIdentityId: identity.id,
+		});
+		await page.goto(`/${orgSlug}/${project.slug}/architecture`);
+		await expect(
+			page.getByRole("button", { name: "Add", exact: true }).first(),
+		).toBeVisible({ timeout: 60_000 });
+
+		// One staged change is what renders the bar.
+		await addService(page, "Bucket");
+		await expect(pendingBar(page)).toBeVisible();
+
+		// Save persists the design WITHOUT provisioning: one request carries it, and nothing is queued.
+		designWritesAllowed = 1;
+		await pendingBar(page).getByRole("button", { name: "Save", exact: true }).click();
+
+		// The bar diffs the draft against the saved baseline, so a saved design has no bar.
+		await expect(pendingBar(page)).toHaveCount(0);
+		await expect(card(page, /^Bucket/)).toHaveCount(1);
+
+		await page.reload();
+
+		// The saved card is still on the board, and nothing is pending: what came back from the
+		// server is what was saved.
+		await expect(
+			card(page, /^Bucket/),
+			"the saved bucket is on the board after the reload",
+		).toHaveCount(1, { timeout: 60_000 });
+		await expect(pendingBar(page)).toHaveCount(0);
 	});
 
 	test("? opens the shortcuts sheet, and it advertises only gestures this board binds", async ({
