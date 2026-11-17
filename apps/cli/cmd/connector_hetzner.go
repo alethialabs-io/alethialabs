@@ -4,13 +4,10 @@
 package cmd
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"strings"
 
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
-	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
@@ -27,10 +24,19 @@ var (
 // characters; the check stays loose because that length is Hetzner's to change, not ours.
 const hetznerTokenMinLength = 16
 
+// hetznerConnector is the Hetzner entry of the parent command's help.
+var hetznerConnector = registerConnector(connectorInfo{
+	Slug: "hetzner",
+	Exception: `Hetzner is the exception, and the exception is the cloud's, not Alethia's: Hetzner
+Cloud offers no OIDC or role-assumption mechanism, so it authenticates with a scoped
+API token. The token is encrypted at rest server-side and never returned.`,
+})
+
 var connectorHetznerCmd = &cobra.Command{
 	Use:   "hetzner",
 	Short: "Connect a Hetzner Cloud account",
-	Long: `Connect a Hetzner Cloud account with a scoped API token.
+	Long: `Connect a Hetzner Cloud account with a scoped API token. Run it once per Hetzner
+project, before the first deploy into that project.
 
 Hetzner is the one supported cloud that cannot be connected keylessly, and the limit is
 Hetzner's rather than Alethia's: Hetzner Cloud exposes no OIDC provider and no
@@ -46,49 +52,65 @@ project dedicated to Alethia rather than one already holding infrastructure you 
 Object Storage (S3-compatible) uses a SEPARATE credential pair, which Hetzner issues
 under Security → S3 credentials. It is optional: pass it only if this project's
 environments declare storage buckets. It is a pair — give both keys or neither.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Half an S3 pair is a complaint about the COMMAND LINE, so it is made before anything
-		// exists server-side. initProviderIdentity creates a pending cloud identity, and refusing
-		// after it left that identity orphaned — the user had to `connector remove` it before
-		// retrying, for a mistake the shape of the flags already showed.
-		if _, _, err := validateHetznerS3Pair(
-			strings.TrimSpace(connectorHetznerS3AccessKey),
-			strings.TrimSpace(connectorHetznerS3SecretKey),
-		); err != nil {
+		if err := runConnect(cmd, hetznerConnectFlow(os.Stdin)); err != nil {
 			fail(err)
-		}
-
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		apiClient := api.NewClient(token)
-		steps := []string{"Initialize", "Capture API token", "Connection test"}
-
-		ui.PrintStepper(steps, 0)
-		initResp, err := initProviderIdentity(apiClient, "hetzner")
-		if err != nil {
-			fail(err)
-		}
-
-		ui.PrintStepper(steps, 1)
-		apiToken, err := resolveHetznerToken(os.Stdin)
-		if err != nil {
-			fail(err)
-		}
-
-		s3Access, s3Secret, err := resolveHetznerS3(connectorHetznerS3AccessKey, connectorHetznerS3SecretKey)
-		if err != nil {
-			fail(err)
-		}
-
-		ui.PrintStepper(steps, 2)
-		if err := finalizeConnection(apiClient, "hetzner", initResp.IdentityID, hetznerCreds(
-			apiToken, s3Access, s3Secret,
-		)); err != nil {
-			failf("Failed to connect Hetzner: %v", err)
 		}
 	},
+}
+
+// hetznerConnectFlow is the Hetzner half of the connection pipeline, for the flags this
+// invocation gave. stdin is where --token-stdin reads from.
+//
+// The token and the storage keys are collected BEFORE the pending identity is opened. A token
+// that cannot be right, and half a storage pair, are complaints about the input: refusing them
+// after the identity existed left it orphaned, to be removed by hand before a retry.
+func hetznerConnectFlow(stdin io.Reader) connectFlow {
+	mode := "prompt"
+	switch {
+	case connectorHetznerTokenStdin:
+		mode = "token-stdin"
+	case connectorHetznerToken != "":
+		mode = "token"
+	}
+
+	var apiToken, s3Access, s3Secret string
+	return connectFlow{
+		Provider: hetznerConnector.Slug,
+		Mode:     mode,
+		Steps:    []string{"API token", "Initialize", "Connection test"},
+		Check: func() error {
+			if _, _, err := validateHetznerS3Pair(
+				strings.TrimSpace(connectorHetznerS3AccessKey),
+				strings.TrimSpace(connectorHetznerS3SecretKey),
+			); err != nil {
+				return err
+			}
+			switch mode {
+			case "token":
+				_, err := validateHetznerToken(strings.TrimSpace(connectorHetznerToken))
+				return err
+			case "prompt":
+				if err := requireInteractiveForm(); err != nil {
+					return inputRequiredError(err, "no token given: pass --token, or pipe it with --token-stdin")
+				}
+			}
+			return nil
+		},
+		Prepare: func(_ *Printer) error {
+			var err error
+			if apiToken, err = resolveHetznerToken(stdin); err != nil {
+				return err
+			}
+			s3Access, s3Secret, err = resolveHetznerS3(connectorHetznerS3AccessKey, connectorHetznerS3SecretKey)
+			return err
+		},
+		Capture: func(_ *Printer, _ string) (map[string]interface{}, error) {
+			return hetznerCreds(apiToken, s3Access, s3Secret), nil
+		},
+		Connected: func() string { return "Hetzner Cloud account connected" },
+	}
 }
 
 // hetznerCreds builds the credentials payload. The S3 pair is OMITTED when unset rather than sent
@@ -135,7 +157,7 @@ func resolveHetznerS3(access, secret string) (string, string, error) {
 			Negative("No").
 			Value(&wanted),
 	)); err != nil {
-		return "", "", err
+		return "", "", formError(err)
 	}
 	if !wanted {
 		return "", "", nil
@@ -150,7 +172,7 @@ func resolveHetznerS3(access, secret string) (string, string, error) {
 			EchoMode(huh.EchoModePassword).
 			Value(&secret),
 	)); err != nil {
-		return "", "", err
+		return "", "", formError(err)
 	}
 	return validateHetznerS3Pair(strings.TrimSpace(access), strings.TrimSpace(secret))
 }
@@ -167,9 +189,9 @@ func validateHetznerS3Pair(access, secret string) (string, string, error) {
 	case access == "" && secret == "":
 		return "", "", nil
 	case access == "":
-		return "", "", fmt.Errorf("an S3 secret key was given without an access key — pass --s3-access-key too, or neither")
+		return "", "", invalidInputError("an S3 secret key was given without an access key — pass --s3-access-key too, or neither")
 	case secret == "":
-		return "", "", fmt.Errorf("an S3 access key was given without a secret key — pass --s3-secret-key too, or neither")
+		return "", "", invalidInputError("an S3 access key was given without a secret key — pass --s3-secret-key too, or neither")
 	}
 	return access, secret, nil
 }
@@ -181,7 +203,7 @@ func resolveHetznerToken(stdin io.Reader) (string, error) {
 	if connectorHetznerTokenStdin {
 		raw, err := io.ReadAll(stdin)
 		if err != nil {
-			return "", fmt.Errorf("read token from stdin: %w", err)
+			return "", invalidInputError("read token from stdin: %v", err)
 		}
 		return validateHetznerToken(strings.TrimSpace(string(raw)))
 	}
@@ -189,7 +211,7 @@ func resolveHetznerToken(stdin io.Reader) (string, error) {
 		return validateHetznerToken(strings.TrimSpace(connectorHetznerToken))
 	}
 	if err := requireInteractiveForm(); err != nil {
-		return "", fmt.Errorf("no token given: pass --token, or pipe it with --token-stdin (%w)", err)
+		return "", inputRequiredError(err, "no token given: pass --token, or pipe it with --token-stdin")
 	}
 	var entered string
 	if err := runHuhForm(
@@ -201,7 +223,7 @@ func resolveHetznerToken(stdin io.Reader) (string, error) {
 				Value(&entered),
 		),
 	); err != nil {
-		return "", err
+		return "", formError(err)
 	}
 	return validateHetznerToken(strings.TrimSpace(entered))
 }
@@ -210,13 +232,13 @@ func resolveHetznerToken(stdin io.Reader) (string, error) {
 // with a clear message instead of as a connection-test failure that reads like a cloud problem.
 func validateHetznerToken(token string) (string, error) {
 	if token == "" {
-		return "", fmt.Errorf("a Hetzner Cloud API token is required")
+		return "", invalidInputError("a Hetzner Cloud API token is required")
 	}
 	if len(token) < hetznerTokenMinLength {
-		return "", fmt.Errorf("that does not look like a Hetzner Cloud API token (%d characters; expected at least %d) — check you copied the whole value", len(token), hetznerTokenMinLength)
+		return "", invalidInputError("that does not look like a Hetzner Cloud API token (%d characters; expected at least %d) — check you copied the whole value", len(token), hetznerTokenMinLength)
 	}
 	if strings.ContainsAny(token, " \t\n") {
-		return "", fmt.Errorf("the token contains whitespace — copy it without line breaks")
+		return "", invalidInputError("the token contains whitespace — copy it without line breaks")
 	}
 	return token, nil
 }

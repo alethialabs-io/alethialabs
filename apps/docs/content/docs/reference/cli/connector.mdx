@@ -1,6 +1,6 @@
 ---
 title: Connector Commands
-description: Connect AWS, GCP, Azure, Alibaba and Hetzner cloud accounts to Alethia entirely from the terminal.
+description: Connect AWS, GCP, Azure and Hetzner cloud accounts to Alethia entirely from the terminal.
 ---
 
 # Connector Commands
@@ -18,9 +18,9 @@ points at exactly one. Every cloud-identity query is filtered by provider, so ac
 across providers.
 </Callout>
 
-Every connection to a cloud that supports it uses **short-lived, keyless credentials** — AWS
-cross-account roles, GCP Workload Identity Federation, Azure federated identity, Alibaba RAM
-`AssumeRoleWithOIDC`. No access keys or client secrets are created or stored for any of them.
+Every connection to a cloud that supports it uses **short-lived, keyless credentials** — an AWS
+role assumed with a web identity, GCP Workload Identity Federation, an Azure federated identity.
+No access keys or client secrets are created or stored for any of them.
 
 **Hetzner is the single exception, and the exception is the cloud's.** Hetzner Cloud exposes no OIDC
 provider and no role-assumption API, so it authenticates with a scoped API token — see
@@ -54,8 +54,8 @@ Each `connector` subcommand runs the same three-stage pipeline, verified server-
 
 <Mermaid chart={`
 flowchart LR
-  A[alethia connector<br/>aws · gcp · azure · alibaba · hetzner] --> B[Init pending<br/>cloud identity]
-  B --> C[Run provider setup<br/>IAM OIDC role · WIF pool · federated cred · RAM OIDC · API token]
+  A[alethia connector<br/>aws · gcp · azure · hetzner] --> B[Init pending<br/>cloud identity]
+  B --> C[Run provider setup<br/>IAM OIDC role · WIF pool · federated cred · API token]
   C --> D[Submit captured<br/>credentials]
   D --> E[Server-side verify<br/>auth + permission probe]
   E --> F{Verdict}
@@ -90,7 +90,6 @@ server-side [asset inventory](/guides/connectors/health-and-inventory).
   - GCP → `gcloud` (used to drive Google Cloud Shell)
   - AWS → `aws`
   - Azure → `az`
-  - Alibaba → `aliyun`
   - Hetzner → **none**; it is a token, so there is nothing to install
 - The `--manual` flows require **none** of the above — you run a one-liner in the provider's
   browser shell and paste the result back.
@@ -102,13 +101,11 @@ server-side [asset inventory](/guides/connectors/health-and-inventory).
 | GCP | Runs the installer inside your **Google Cloud Shell** (via local `gcloud`) | Cloud Shell is already authenticated to your GCP org and has every tool preinstalled |
 | AWS | Deploys CloudFormation with the **local `aws` CLI** | AWS CloudShell is browser-only — there is no remote-exec CLI |
 | Azure | Runs the setup script with the **local `az` CLI** | Azure Cloud Shell is browser-only — there is no remote-exec CLI |
-| Alibaba | Runs the setup script with the **local `aliyun` CLI** | Alibaba Cloud Shell is browser-only — there is no remote-exec CLI (as with AWS and Azure) |
 | Hetzner | Prompts for a scoped **API token** | Hetzner Cloud has no OIDC or role assumption, so there is nothing to set up — only a credential to capture |
 
-The four keyless providers support `--manual`, which prints a link + command to run in the browser
+The three keyless providers support `--manual`, which prints a link + command to run in the browser
 shell and prompts you to paste the result — use it when you cannot or prefer not to install the local
-CLI. Alibaba additionally supports `--terraform`, which writes an OpenTofu module you apply yourself
-(see [`alethia connector alibaba`](#alethia-connector-alibaba)).
+CLI.
 
 Hetzner needs no such flow: there is no installer, only the token itself, and `--token-stdin` covers
 the non-interactive case.
@@ -132,20 +129,69 @@ alethia connector azure --no-input \
   --tenant-id 11111111-1111-1111-1111-111111111111 \
   --client-id 22222222-2222-2222-2222-222222222222
 
-alethia connector alibaba --no-input \
-  --role-arn acs:ram::123456789012:role/AlethiaProvisioner
-
 echo "$HCLOUD_TOKEN" | alethia connector hetzner --no-input --token-stdin
 ```
 
-Leave a required field out under `--no-input` and the command exits non-zero **naming the
-flag** that would have supplied it, rather than failing at a prompt it cannot open.
+Leave a required field out under `--no-input` and the command exits `9` **naming the
+flag** that would have supplied it, rather than failing at a prompt it cannot open. The same
+is true of `--manual`: it ends in a paste, so without a terminal it is refused and the refusal
+names the flag form of that paste.
 
 Each command takes **one** setup mode. Submitting something you already have and asking for the
 setup that creates it are two different answers to the same question, so combining them is
-refused by name rather than resolved by precedence — `--role-arn` with `--manual`, `--terraform`
+refused by name rather than resolved by precedence — `--role-arn` with `--manual`
 or `--script`, `--wif-config` with `--manual`, and `--tenant-id`/`--client-id` with `--manual`.
 An ignored flag is the same class of defect as a missing one.
+
+## Output and exit codes
+
+Every `connector` command writes its **result on stdout** and everything else on stderr: the
+stage it has reached, the output of the cloud CLI it drives, warnings and errors. With
+`-o json`, stdout is one object and nothing else, so it can be piped into a parser.
+
+A command that connects or disconnects an account returns the result every command that
+changes something returns:
+
+```json
+{
+  "id": "0b9f6c1e-2a4d-4c3b-9e7f-5d1a8c2b3e4f",
+  "kind": "cloud_identity",
+  "action": "created",
+  "job": null,
+  "dry_run": false,
+  "object": {
+    "provider": "aws",
+    "status": "connected",
+    "verified": true,
+    "missing_permissions": []
+  }
+}
+```
+
+`action` is `created` for a connection, `deleted` for `connector remove`, and `unchanged` when
+`connector remove` found nothing to disconnect. `status` is `connected` or `degraded`; a
+degraded connection lists the permissions it is missing.
+
+Each of these commands takes `--dry-run`. A dry run checks the command line, reports what the
+command would do with `"dry_run": true`, and changes nothing: no request that writes is sent
+and no cloud CLI is run.
+
+A failure writes nothing on stdout. The exit code says what kind of failure it was:
+
+| Exit | Meaning for these commands |
+|------|----------------------------|
+| `4` | The control plane did not accept the credential. Run `alethia login`. |
+| `6` | No connected account matches what you named. |
+| `7` | The default setup needs a cloud CLI this machine does not have. The error says how to go on without it. |
+| `8` | The command line cannot work: two setup modes, half a pair of values, a value that cannot be right, or a cloud this release does not offer. Nothing was sent. |
+| `9` | A value or a confirmation is needed and nothing can ask for it. The error names the flag. |
+| `11` | The control plane could not be reached or answered with a server fault. |
+| `13` | The control plane ran the connection test and it failed. The error carries the reason. |
+
+A cloud that this release does not offer is refused before anything is sent, with one sentence
+and exit `8`. On a self-hosted control plane, an operator can re-enable such a cloud with the
+`ALETHIA_ENABLE_HIDDEN_CLOUDS` setting, on the control plane and in the environment the CLI runs
+in. A cloud enabled this way is not covered by this release's support.
 
 ## `alethia connector gcp`
 
@@ -160,6 +206,7 @@ alethia connector gcp --project my-gcp-project
 | `--project` | No | GCP project ID. Prompted interactively if omitted. |
 | `--wif-config` | No | Path to a WIF credential config JSON you already have, or `-` to read it from stdin. The flag form of the `--manual` paste. |
 | `--manual` | No | Run the installer in the browser Cloud Shell and paste the result instead of using local `gcloud`. |
+| `--dry-run` | No | Check the command line and report what would be connected. Nothing is created. |
 
 By default, the CLI runs an installer **inside your Google Cloud Shell**. Cloud Shell is
 authenticated as you, so the provisioner service account and a workload identity pool that trusts
@@ -193,11 +240,12 @@ Running installer via gcloud Cloud Shell (the first run can take a minute)...
 { ...WIF credential config... }
 --- END CONFIG ---
 
-✓ Verifying connection (server-side)...
-✓ Connected
+◆ Project ── ◆ Cloud Shell setup ── ◆ Connection test
 
 ✓ GCP project "my-gcp-project" connected
 ```
+
+Only the last line is on stdout. The stages and the installer's output are on stderr.
 
 <Callout type="warn">
 If `gcloud` is not logged in, Cloud Shell cannot authenticate non-interactively and you will see a
@@ -205,9 +253,7 @@ reauth error. Run `gcloud auth login`, then retry — or use `alethia connector 
 
 ```
 ✗ gcloud is not authenticated
-Run this, then retry:
-
-  gcloud auth login
+  hint     Run `gcloud auth login`, then retry. Or re-run with --manual to set it up in the browser Cloud Shell.
 ```
 </Callout>
 
@@ -244,6 +290,7 @@ alethia connector aws
 | `--role-arn` | No | ARN of a role you already created. Submits it instead of prompting — the flag form of the `--manual` paste. |
 | `--manual` | No | Deploy from the AWS console and paste the role ARN instead of using local `aws`. |
 | `--script` | No | Use the `aws`-CLI setup script instead of the CloudFormation stack. |
+| `--dry-run` | No | Check the command line and report what would be connected. Nothing is created. |
 
 <Tabs items={["Local aws CLI (default)", "Manual (console)"]}>
   <Tab value="Local aws CLI (default)">
@@ -304,6 +351,7 @@ alethia connector azure
 | `--tenant-id` | No | Tenant ID of a managed identity you already created. Requires `--client-id`. |
 | `--client-id` | No | Client (application) ID of that managed identity. Requires `--tenant-id`. |
 | `--manual` | No | Run setup in Azure Cloud Shell and paste the result instead of using local `az`. |
+| `--dry-run` | No | Check the command line and report what would be connected. Nothing is created. |
 
 <Tabs items={["Local az CLI (default)", "Manual (Cloud Shell)"]}>
   <Tab value="Local az CLI (default)">
@@ -348,55 +396,6 @@ alethia connector azure --manual
   </Tab>
 </Tabs>
 
-## `alethia connector alibaba`
-
-Connect an Alibaba Cloud account using keyless `AssumeRoleWithOIDC`. By default the CLI runs a setup
-script with your local `aliyun` CLI: it creates a RAM OIDC provider trusting the Alethia issuer plus
-a RAM role, and captures the resulting role ARN automatically. Use `--manual` to run the same script
-in the Alibaba Cloud Shell, or `--terraform` to apply an OpenTofu module instead. Alethia stores
-nothing but the role ARN — no AccessKey.
-
-```bash
-alethia connector alibaba
-```
-
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--region` | No | Alibaba region for the RAM provider. Defaults to `cn-hangzhou`. |
-| `--role-arn` | No | ARN of a RAM role you already created. Submits it instead of prompting — the flag form of the `--manual` paste. |
-| `--manual` | No | Run the setup script in the Alibaba Cloud Shell and paste the role ARN. |
-| `--terraform` | No | Apply the OpenTofu module instead of running the setup script. |
-| `--dir` | No | Directory to write the OpenTofu module into (with `--terraform`). Defaults to `./alethia-alibaba-connector`. |
-
-<Steps>
-
-### Initialize
-Alethia creates a pending [cloud identity](/reference/glossary) for the connection.
-
-### Create the RAM role
-The CLI runs the setup script with your local `aliyun` CLI, creating a RAM OIDC provider trusting the
-Alethia issuer (`<control-plane>/api/oidc`) plus a RAM role, and captures the role ARN from its
-output. With `--manual`, run the same script in the Alibaba Cloud Shell and paste the ARN back.
-
-### Connection test
-The role ARN is submitted, verified instantly server-side, and the identity is marked Connected (or
-Degraded/Disconnected). Alethia stores nothing but the role ARN — no AccessKey.
-
-</Steps>
-
-### OpenTofu module (`--terraform`)
-
-With `--terraform`, the CLI writes `main.tf` into the target directory (`--dir`) instead of running
-the setup script. It provisions the same RAM OIDC provider + role. Authenticate to Alibaba (the
-`aliyun` CLI, or `ALICLOUD_ACCESS_KEY` / `ALICLOUD_SECRET_KEY`), apply it, then paste the `role_arn`
-output at the prompt:
-
-```bash
-cd alethia-alibaba-connector
-tofu init
-tofu apply -var "region=cn-hangzhou" -var "alethia_issuer_url=https://alethialabs.io/api/oidc"
-```
-
 ## `alethia connector hetzner`
 
 Connect a Hetzner Cloud account with a scoped API token.
@@ -419,6 +418,7 @@ alethia connector hetzner --token-stdin \
 | `--token` | No | Pass the token inline. Convenient, but it lands in your shell history and the process list. |
 | `--s3-access-key` | No | Hetzner Object Storage access key. Only needed for storage buckets, and only together with `--s3-secret-key`. |
 | `--s3-secret-key` | No | Hetzner Object Storage secret key. Only together with `--s3-access-key`. |
+| `--dry-run` | No | Check the command line and report what would be connected. Nothing is created. |
 
 The Object Storage keys are a **pair**: give both or neither. Half a pair is refused rather
 than stored, because an access key with no secret is a credential that cannot work and whose
@@ -431,8 +431,8 @@ separate pair under **Security → S3 credentials**.
 
 <Callout type="info">
 **Why Hetzner is the one cloud that is not keyless.** Every other supported cloud is connected by
-federation — an AWS cross-account role, GCP Workload Identity Federation, an Azure federated
-credential, Alibaba RAM `AssumeRoleWithOIDC` — so Alethia stores no secret at all. Hetzner Cloud
+federation — an AWS role assumed with a web identity, GCP Workload Identity Federation, an Azure
+federated credential — so Alethia stores no secret at all. Hetzner Cloud
 exposes neither an OIDC provider nor a role-assumption API, so a token is the only mechanism it
 offers. The limit is Hetzner's, not Alethia's. The token is encrypted at rest server-side with the
 same discipline as any other credential, and is never returned to the browser or the CLI.
@@ -465,6 +465,9 @@ AZURE      Azure (3f9a1c2b-...)                 5 days ago
 
 The table is interactive — sort and navigate with the keyboard (see [TUI Components](https://github.com/alethialabs-io/alethialabs/blob/dev/docs/contributing/cli-tui.md)).
 
+With nothing connected, the table form prints nothing on stdout and says on stderr how to connect
+an account. `-o json` prints an empty list.
+
 **PROVIDER** is upper-cased and **CONNECTED** is an age for a person reading the column. Under
 `-o csv` a script gets the values instead: the provider is the lower-case wire value — the same
 string `alethia connector aws` takes and `-o json` marshals — and **CONNECTED** is the RFC3339
@@ -480,19 +483,32 @@ Add `-o json` for the full records, including each connection's `id`.
 Disconnect a cloud account.
 
 ```bash
-alethia connector remove gcp
+# Choose the account from a picker, and confirm
+alethia connector remove
+
+# Show which account would be disconnected
+alethia connector remove gcp --dry-run
+
+# From a script
+alethia connector remove gcp --yes
 ```
 
-If you omit the provider, the CLI shows a picker of connected accounts. Under `--no-input`
-there is no picker to show, so the provider argument is required and the refusal says so.
+If you omit the argument, the CLI shows a picker of connected accounts. Under `--no-input`
+there is no picker to show, so the argument is required and the refusal says so.
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `[provider]` | No | `aws`, `gcp`, `azure`, `alibaba`, or `hetzner`. Omit for a picker. |
+| `[provider\|cloud-identity-id]` | No | `aws`, `gcp`, `azure`, or `hetzner`, or the id of one connection. Omit for a picker. |
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `-y`, `--yes` | No | Skip the confirmation prompt. Required with `--no-input`. |
+| `--dry-run` | No | Report which account would be disconnected. Nothing is changed. |
+
+When two accounts are connected on the same cloud, naming the cloud is refused with exit `8` and
+the error lists their ids: pass the id of the one you mean. `alethia connector list -o json`
+shows each connection's id. Without `--yes` and without a terminal the command exits `9` and
+disconnects nothing.
 
 <Callout type="warn">
 Disconnecting resets the identity to a pending state and **orphans any projects** that referenced it
@@ -507,8 +523,8 @@ reconnect the same provider later.
 |---------|-------------|
 | `gcloud is not authenticated` / reauth error | Cloud Shell cannot prompt non-interactively. Run `gcloud auth login`, then retry — or use `--manual`. |
 | `gcloud CLI not found on PATH` | Install the [Google Cloud CLI](https://cloud.google.com/sdk/docs/install), or use `--manual`. |
-| `aws CLI not found on PATH` / `az CLI not found on PATH` | Install the provider CLI, or use `--manual` to set the connection up from the browser. |
+| `aws CLI not found on PATH` / `az CLI not found on PATH` | Install the provider CLI, or use `--manual` to set the connection up from the browser. The command exits `7` before it creates anything. |
 | `could not find WIF config in installer output` | The Cloud Shell installer did not finish. Re-run, or use `--manual` and paste the config yourself. |
-| `Captured WIF config is not valid JSON` | The pasted block was truncated. Copy everything between `--- START CONFIG ---` and `--- END CONFIG ---`. |
-| Connection test fails | Alethia could not assume the credentials. Confirm the role trust policy pins the Alethia issuer + sub/aud (AWS), the workload identity binding (GCP), or the federated credential + least-privilege role (Azure). The verify runs inline server-side and returns the reason with the result — re-run the connector command to see it. |
+| `the WIF config is not valid JSON` | The pasted block was truncated. Copy everything between `--- START CONFIG ---` and `--- END CONFIG ---`. |
+| `connection test failed` (exit `13`) | Alethia could not assume the credentials. Confirm the role trust policy pins the Alethia issuer + sub/aud (AWS), the workload identity binding (GCP), or the federated credential + least-privilege role (Azure). The verify runs inline server-side and returns the reason with the result — re-run the connector command to see it. |
 | `Invalid format. Expected: arn:aws:iam::…` | The pasted role ARN is malformed — copy the exact `RoleArn` from the stack Outputs. |
