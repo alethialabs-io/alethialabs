@@ -51,9 +51,11 @@ func decodeExecCredential(t *testing.T, stdout string) kcExecCredential {
 // whether it took the fatal path.
 func (e *kcEnv) runToken(args ...string) (stdout, stderr string, err error) {
 	e.t.Helper()
-	_, restore := captureStderr(e.t)
+	// e.run collects the process's stderr, which is where both the plugin's notes and its fatal
+	// errors go; it is reset first so each call reports only its own.
+	e.stderr.Reset()
 	stdout, err = e.run(append([]string{"cluster", "token"}, args...)...)
-	return stdout, restore(), err
+	return stdout, e.stderr.String(), err
 }
 
 // TestClusterToken_MissThenHit: a cold cache mints once and prints the credential; the next call is
@@ -278,7 +280,7 @@ func TestClusterToken_Refusals(t *testing.T) {
 			if stdout != "" {
 				t.Errorf("stdout must stay empty on failure, got %q", stdout)
 			}
-			if !strings.HasPrefix(stderr, "alethia cluster token: ") || !strings.Contains(stderr, tc.want) {
+			if !strings.Contains(stderr, "alethia cluster token: ") || !strings.Contains(stderr, tc.want) {
 				t.Errorf("stderr %q does not say %q", stderr, tc.want)
 			}
 		})

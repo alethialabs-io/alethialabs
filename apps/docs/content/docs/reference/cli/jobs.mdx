@@ -1,6 +1,6 @@
 ---
 title: Job Commands
-description: List, stream logs, and cancel infrastructure jobs.
+description: List jobs, read one, follow its log to the end, and cancel it.
 ---
 
 # Job Commands
@@ -9,9 +9,28 @@ Monitor and manage provision jobs from the terminal. For how jobs work internall
 
 <Callout type="info">
 There is no `alethia jobs wait` command. To block until a job finishes, pass `-w/--wait` to the
-command that queues it — `project plan|apply|destroy` and `runner deploy|destroy`. See
+command that queues it — `project plan|apply|destroy` and `runner deploy|destroy` — or follow the
+job with `alethia jobs logs --follow`, which exits with the job's result. See
 [Plan & Apply](/reference/cli/plan-and-apply).
 </Callout>
+
+Every command here writes its result on stdout and everything else on stderr: notes, warnings,
+progress and errors. So `-o json` output is always one document a parser can read. An error is one
+line on stderr with a hint naming the next command, and its exit code says what kind of failure it
+was:
+
+| Exit | Meaning here |
+|------|--------------|
+| `0` | The command did what it was asked. |
+| `4`, `5` | Not signed in, or your role does not allow it. |
+| `6` | No such job, or no job matches the flags. |
+| `7` | The job is not in a state that allows it, for example cancelling a job that already finished. |
+| `8` | A flag or argument is wrong or missing. Nothing was sent. |
+| `9` | A confirmation is needed and there is no terminal: pass `--yes`. |
+| `11` | The control plane could not be reached, or answered with a server fault. A retry can help. |
+| `12` | `jobs logs --follow --timeout` passed its limit. The job is still running. |
+| `13` | The job you followed ended without succeeding: it failed or was cancelled. |
+| `130` | You interrupted a follow. The job is still running. |
 
 ## Choosing the job
 
@@ -43,23 +62,53 @@ Two combinations are refused rather than guessed:
 - An id **and** a narrowing flag. `jobs logs <the id> --type DEPLOY` on a `PLAN` job would print
   the plan's logs and look as though it had filtered.
 
-Without a terminal, without an id and without `--latest`, the command fails and says so. It never
-blocks on a prompt nobody can answer.
+Without a terminal, without an id and without `--latest`, the command exits `8` and names the two
+things it accepts. It never blocks on a prompt nobody can answer. When no job matches the flags, it
+exits `6`.
 
 ## `alethia jobs list`
 
 List jobs for the active organization.
 
 ```bash
-alethia jobs list                       # every job, newest first
-alethia jobs list --status PROCESSING   # only what is running now
-alethia jobs list --limit 50 -o json    # a page a script can read
+alethia jobs list                              # page through the jobs, newest first
+alethia jobs list --status PROCESSING          # only what is running now
+alethia jobs list --limit 50 --offset 50       # the second page of 50
+alethia jobs list --all -o json                # every job, as one JSON object
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--status` | No | Filter by status — one of the STATUS lifecycle values below. |
-| `-n`, `--limit` | No | Jobs per page (default `20`). |
+| `-n`, `--limit` | No | Jobs per page (default `20`). The control plane serves at most `100` in one page. |
+| `--offset` | No | Skip this many of the newest matching jobs, to print a later page (default `0`). |
+| `--all` | No | Print every matching job. The CLI walks every page for you. |
+
+On a terminal the list is a table you page through with the keyboard. Anywhere else, and whenever
+you pass `--offset` or `--all`, the command prints the jobs you asked for and exits. When a printed
+page stops short of the whole set, one line on stderr says how many there are and which flags reach
+the rest.
+
+`-o json` prints one object, not a bare array:
+
+```json
+{
+  "jobs": [],
+  "total": 134,
+  "total_exact": true,
+  "limit": 20,
+  "offset": 0,
+  "has_more": true
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `jobs` | The jobs on this page, or every job with `--all`. Always an array. |
+| `total` | How many jobs match the filter. |
+| `total_exact` | `false` when the control plane stopped counting at its ceiling. `total` is then a lower bound. |
+| `limit`, `offset` | The page size and start that were served. |
+| `has_more` | `true` when older matching jobs follow this page. Ask for them with `--offset` set to `offset` plus the number of jobs returned, or use `--all`. |
 
 On a terminal, and only when you did not name a `--status` yourself, the command asks which slice
 of the lifecycle you want before it draws the table. **Every status** is the first option, so
@@ -103,6 +152,22 @@ Shows: type, status, assigned Runner, all timestamps, the Elench `verify_result`
 PLAN/DEPLOY jobs, the monthly cost estimate, and the error message (if failed). Add `-o json` for
 the full execution metadata (OpenTofu outputs, cost data).
 
+### Deploy warnings
+
+A deploy can succeed and still have skipped something: a workload whose image is not built yet, an
+add-on that did not sync. The deploy records each of these as a sentence, and the console shows the
+same sentences on the environment's Deploy tab. `jobs get` prints them after the card, on stderr:
+
+```
+! The deploy finished with 1 warning:
+  ▸ api: repo-sourced service not built yet (resolved_image empty)
+```
+
+`-o json` carries them in a `warnings` array at the top level of the job object. The array is always
+present, and empty when there are none. Warnings do not change the exit status: `jobs get` exits `0`
+whenever it could read the job. A waited deploy (`--wait`) and `jobs logs --follow` print the same
+warnings when the job ends.
+
 Timestamps are UTC, written the way the console writes them: `9 Mar 2026, 15:04`.
 
 The `Verify` line here is a one-line summary — a verdict and a count. To check the receipt's
@@ -115,26 +180,56 @@ rounding to something that looks free.
 
 ## `alethia jobs logs`
 
-Stream job logs to the terminal.
+Print a job's log, or follow it until the job ends.
 
 ```bash
-alethia jobs logs --follow            # a picker, then stream what it chose
-alethia jobs logs --latest --follow   # the most recent job — no id needed
+alethia jobs logs --latest                               # what the newest job has logged so far
+alethia jobs logs --latest --follow                      # follow it to the end
+alethia jobs logs --latest --follow --timeout 30m        # stop following after 30 minutes
+alethia jobs logs --follow                               # a picker, then follow what it chose
 ```
 
 | Argument / Flag | Required | Description |
 |------|----------|-------------|
 | `job_id` | No | Job ID (positional). Omit it and use `--latest` or the picker. |
-| `-f`, `--follow` | No | Continuously stream new log entries (like `tail -f`) |
+| `-f`, `--follow` | No | Keep printing new log lines until the job ends, then exit with the job's result. |
+| `--timeout` | No | With `--follow`, stop after this long, for example `30m`. The job keeps running. `0` (the default) follows without a limit. |
 
 Plus the selector flags from [Choosing the job](#choosing-the-job).
 
-Without `--follow`, prints all existing logs and exits. With `--follow`, the command blocks and prints new log lines as the Runner writes them. Logs include `tofu` (OpenTofu) plan/apply output, resource creation progress, and error messages.
+Without `--follow`, the command prints the log written so far and exits `0`, whatever state the job
+is in. With `--follow`, it prints new lines as the Runner writes them. Logs include `tofu`
+(OpenTofu) plan/apply output, resource creation progress, and error messages.
 
-When the CLI picked the job for you, it names which one on **stderr** before the output starts, so
-`alethia jobs logs --latest | grep Error` still gets only the logs.
+### How a follow ends
 
-Press `Ctrl+C` to stop following.
+A follow answers "did it work" with its exit status, so a script can run it after any command that
+queued a job:
+
+| The follow ended because | Exit | The job |
+|--------------------------|------|---------|
+| The job succeeded | `0` | Done. |
+| The job failed or was cancelled | `13` | Done. The error names the job and points at `alethia jobs get`. |
+| `--timeout` passed | `12` | Still running. The error gives the command that resumes the follow. |
+| You pressed `Ctrl+C` | `130` | Still running. |
+
+```bash
+alethia jobs logs --latest --type DEPLOY --follow || echo "the deploy did not succeed"
+```
+
+One poll that fails for a passing reason, such as a dropped connection or a server fault, does not
+end a follow. The CLI tries again at the next poll and gives up only after five failures in a row,
+with exit `11`. An error a retry cannot fix, such as a job that does not exist, ends it at once.
+
+### What goes where
+
+The log is on **stdout** and nothing else is. On **stderr**: which job `--latest` or the picker
+chose, the closing `--- Job <status> ---` line of a follow, and a deploy's
+[warnings](#deploy-warnings). So `alethia jobs logs --latest | grep Error` gets only the log.
+
+`-o json` prints one object when the command ends: `job_id`, `logs` (the chunks in order, each
+with its `stream_type` and `created_at`), and after a follow `status`, the job's final status.
+There is no `csv` form.
 
 ## `alethia jobs cancel`
 
@@ -145,8 +240,16 @@ alethia jobs cancel                                # a picker over the cancellab
 alethia jobs cancel --latest --type DEPLOY --yes   # scripted: skip the confirmation
 ```
 
+| Argument / Flag | Required | Description |
+|------|----------|-------------|
+| `job_id` | No | Job ID (positional). Omit it and use `--latest` or the picker. |
+| `-y`, `--yes` | Without a terminal | Skip the confirmation. |
+| `--dry-run` | No | Resolve the job and report which one would be cancelled. Nothing is cancelled and nothing is asked. |
+
+Plus the selector flags from [Choosing the job](#choosing-the-job).
+
 Cancelling is destructive, so it asks before acting. In a pipeline there is no terminal to ask, so
-`--yes` is **required** — without it the command fails rather than cancelling silently.
+`--yes` is **required** — without it the command exits `9` rather than cancelling silently.
 
 When `--latest` chose the job, the command names it: in the confirmation on a terminal, and on
 stderr before it acts when `--yes` skipped the confirmation. A cancellation you cannot check is
@@ -159,6 +262,24 @@ control plane's refusal or cancel something you did not mean while the deploy ke
 
 Sets the job status to CANCELLED. If the job is currently being executed by a Runner, the Runner detects the cancellation on its next status check and terminates the `tofu` process gracefully.
 
+A job that has already finished cannot be cancelled. The command exits `7` and points at
+`alethia jobs get`, which shows how the job ended.
+
+`-o json` prints the result every command that changes something prints:
+
+```json
+{
+  "id": "8f3c2a1e-9d40-4b1e-b0a7-5c2f6e83d411",
+  "kind": "job",
+  "action": "updated",
+  "job": null,
+  "dry_run": false,
+  "object": { "id": "8f3c2a1e-9d40-4b1e-b0a7-5c2f6e83d411", "status": "CANCELLED" }
+}
+```
+
+With `--dry-run`, `action` is `unchanged`, `dry_run` is `true` and `object` is `null`.
+
 ## Waiting for jobs
 
 To block on a job from a script, queue it with `-w/--wait` rather than polling:
@@ -170,7 +291,9 @@ PLAN_JOB=$(alethia jobs get --latest --type PLAN --project $ID -o json | jq -r .
 alethia project apply --project-id $ID --plan-job-id $PLAN_JOB --wait
 ```
 
-On success, `--wait` prints the job's cost estimate through the same renderer `jobs get` uses.
+On success, `--wait` prints the job's cost estimate through the same renderer `jobs get` uses, and
+then any [warnings](#deploy-warnings) the deploy recorded. A deploy that ends with warnings still
+exits `0`.
 
 `--plan-job-id` is what makes the second command an *apply of the first one's plan*: the Runner
 checks the referenced PLAN job succeeded and downloads its artifact. Drop it and the DEPLOY

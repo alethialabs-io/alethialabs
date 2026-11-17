@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/kubecache"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/kubeaccess"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -57,6 +57,10 @@ do not normally run it yourself. The credential is cached on disk until shortly 
 so only the first kubectl call in each token's lifetime waits for a new one to be minted. It never
 prompts: an expired session is an error telling you to run ` + "`alethia login`" + `.
 
+Stdout carries the credential document and nothing else. Every error is on stderr with a non-zero
+exit, which kubectl shows as the reason its call failed, and no error or note ever contains the
+token.
+
 Run it at a terminal without a cluster id and it asks which cluster, which is a way to check that
 your session can still mint a credential.`,
 	Args: cobra.MaximumNArgs(1),
@@ -64,8 +68,9 @@ your session can still mint a credential.`,
 	Annotations: map[string]string{skipUpdateNoticeAnnotation: "true"},
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := runClusterToken(args, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "alethia cluster token: "+err.Error())
-			exitFunc(1)
+			// The prefix names the plugin: kubectl shows this line to a person who ran kubectl,
+			// not alethia, and never saw this command's name.
+			fail(fmt.Errorf("alethia cluster token: %w", err))
 		}
 	},
 }
@@ -127,12 +132,14 @@ func openKubeCache() (*kubecache.Cache, error) {
 func clusterTokenTarget(args []string) (string, error) {
 	if len(args) == 1 {
 		if !canonicalClusterID.MatchString(args[0]) {
-			return "", fmt.Errorf("%q is not a cluster id (a lowercase uuid, as `alethia cluster get` shows it)", args[0])
+			return "", clierr.New(clierr.CodeInvalidUsage,
+				fmt.Sprintf("%q is not a cluster id (a lowercase uuid, as `alethia cluster get` shows it)", args[0]))
 		}
 		return args[0], nil
 	}
 	if err := requireInteractiveForm(); err != nil {
-		return "", errors.New("a cluster id is required (kubectl passes it; at a terminal, omit it to pick one)")
+		return "", clierr.New(clierr.CodeMissingArgument,
+			"a cluster id is required (kubectl passes it; at a terminal, omit it to pick one)")
 	}
 	token, err := getAuthTokenInternal(false)
 	if err != nil {
