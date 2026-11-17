@@ -92,15 +92,22 @@ func TestCLIDemoGapsAndCeilingsAreFiled(t *testing.T) {
 }
 
 // A per-cloud step must name clouds that exist, or it silently applies to nothing.
+//
+// A retired cloud exists: its step stays in the table so the run half still drives it on a manual
+// dispatch, and the rollup leaves a step scoped only to retired clouds out of the bar. What this
+// refuses is a name in neither set, which is a typo.
 func TestCLIDemoCloudsAreReal(t *testing.T) {
 	known := map[string]bool{}
 	for _, c := range DemoClouds {
 		known[c] = true
 	}
+	for _, c := range RetiredClouds {
+		known[c] = true
+	}
 	for _, s := range CLIDemoSteps {
 		for _, c := range s.Clouds {
 			if !known[c] {
-				t.Errorf("step %q names cloud %q, which is not in DemoClouds — the step would apply to nothing and read as covered", s.ID, c)
+				t.Errorf("step %q names cloud %q, which is in neither DemoClouds nor RetiredClouds — the step would apply to nothing and read as covered", s.ID, c)
 			}
 		}
 	}
