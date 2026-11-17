@@ -110,6 +110,12 @@ const REFUSAL_COPY: Record<ReadRefusal, { title: string; description: string }> 
 		title: "Not on this plan",
 		description: "Your plan doesn't include these settings.",
 	},
+	// Shown behind the session-ended dialog (`components/shell/session-ended.tsx`), which is what
+	// offers the way back in.
+	"sign-in": {
+		title: "Your session has ended",
+		description: "Sign in again to see these settings.",
+	},
 };
 
 /**
