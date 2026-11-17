@@ -3,14 +3,18 @@
 
 // THE ENVIRONMENT WRITES THIS UNIT DOES NOT OWN, ON THE MUTATION CONTRACT'S CLIENT HALF.
 //
-// Creating, duplicating and deleting an environment and its auto-heal switch are server actions in
+// Creating and duplicating an environment and its auto-heal switch are server actions in
 // `app/server/actions/projects.ts`, which belongs to another unit and still answers in its own
 // shapes: `addEnvironment` / `duplicateEnvironment` RETURN a name refusal (`{ ok: false, error }`),
-// and `deleteEnvironment` / `setAutoHeal` THROW. `useActionMutation` takes an `ActionResult`, so
-// these two adapters translate — on the client, without changing what the server returns — and the
-// page gets the contract's pending state, double-submit guard, inline validation and invalidation
-// for every write it makes. When the projects unit moves those actions onto `defineAction`, the
-// adapters are deleted and the actions are passed to `useActionMutation` directly.
+// and `setAutoHeal` THROWS. `useActionMutation` takes an `ActionResult`, so these two adapters
+// translate — on the client, without changing what the server returns — and the page gets the
+// contract's pending state, double-submit guard, inline validation and invalidation for every
+// write it makes. When the projects unit moves those actions onto `defineAction`, the adapters are
+// deleted and the actions are passed to `useActionMutation` directly, as `deleteEnvironment`
+// already is (#6800).
+//
+// `settleThrown` is for an action that THROWS and returns nothing the page reads. It reports
+// whatever the action returns as a success, so it must not wrap an action that returns a refusal.
 
 import type { ActionResult } from "@/lib/actions/result";
 import { errorDigest } from "@/lib/errors";
