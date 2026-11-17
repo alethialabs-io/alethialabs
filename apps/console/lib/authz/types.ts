@@ -9,8 +9,46 @@
 
 import type { Action, Resource } from "./registry";
 
-/** What kind of credential an actor was built from. See {@link Actor.credential}. */
-export type ActorCredential = "session" | "service_token";
+/**
+ * The five kinds of credential an actor can be built from. See {@link Actor.credential}.
+ *
+ * | Kind            | Meant for                                |
+ * |-----------------|------------------------------------------|
+ * | `session`       | a console browser session                |
+ * | `cli_session`   | a CLI device-login token stored on disk  |
+ * | `agent_oauth`   | an MCP OAuth access token                |
+ * | `agent_in_app`  | an in-product agent turn                 |
+ * | `service_token` | a `cli_service_tokens` row               |
+ *
+ * WHAT IS ACTUALLY BOUND TODAY IS NARROWER THAN THE TABLE, in two places. Nothing in the type
+ * enforces which builder binds which kind, so read this before relying on a member:
+ *
+ * - `cli_session` is bound by `POST /api/jobs` only (app/api/jobs/route.ts). Every other CLI
+ *   route goes through `authorizeCli` (lib/authz/guard.ts), which still binds a device login as
+ *   `session`. So `session` does not yet mean "a person present in a browser" everywhere.
+ * - `agent_in_app` is bound by nothing yet.
+ */
+export const CREDENTIAL_KINDS = [
+	"session",
+	"cli_session",
+	"agent_oauth",
+	"agent_in_app",
+	"service_token",
+] as const;
+
+/** One of {@link CREDENTIAL_KINDS}. */
+export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
+
+/**
+ * The two kinds a CLI bearer token is classified as — the members of `CliCredential`
+ * (lib/authz/guard.ts), which is this type under another name. It is NOT the type of
+ * {@link Actor.credential}; that is {@link CredentialKind}.
+ *
+ * It keeps its two members because every `switch` over a CLI bearer (guard.ts, runner-org.ts,
+ * lib/cli/providers.ts, app/api/jobs/route.ts) is closed over exactly these, and a CLI bearer can
+ * be nothing else: `credentialOf` (lib/cli/providers.ts) returns one of the two or refuses.
+ */
+export type ActorCredential = Extract<CredentialKind, "session" | "service_token">;
 
 /** The principal making a request, resolved once per request via getActiveScope(). */
 export interface Actor {
@@ -30,7 +68,10 @@ export interface Actor {
 	 * (`ResolvedScope`) and becomes an `Actor` only through `actorWithCredential`
 	 * (lib/authz/actor-credential.ts).
 	 *
-	 * - `session` — a person: a console session, a CLI device login, an MCP OAuth grant.
+	 * - `session` — a person at the console. `userId` is the caller.
+	 * - `cli_session`, `agent_oauth`, `agent_in_app` — a person's own grant, held by a program.
+	 *   `userId` is still the person the grant belongs to, so an identity rule treats these as it
+	 *   treats `session`; what differs is that nobody need be present.
 	 * - `service_token` — a CLI machine credential pinned to `orgId`. `userId` is the profile that
 	 *   MINTED it, not a caller, so a rule keyed on "the person asking" must not read `userId` as
 	 *   that person. Server actions see only the `Actor` (the CLI routes reach them through
@@ -38,7 +79,7 @@ export interface Actor {
 	 *
 	 * Read it through the helpers in lib/authz/actor-credential.ts, not directly.
 	 */
-	credential: ActorCredential;
+	credential: CredentialKind;
 }
 
 /**

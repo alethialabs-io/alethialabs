@@ -32,6 +32,7 @@ import { authorize, authorizeDeferred, authorizeRead, currentActor } from "@/lib
 import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import type { Actor } from "@/lib/authz/types";
+import { ApplyAuthorizationError, requireApplyAuthorization } from "@/lib/approvals/types";
 import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
@@ -2303,7 +2304,9 @@ export type QueueJobResult<T extends object> = ({ ok: true } & T) | ProjectRefus
 /**
  * Runs a job-queueing action and returns a refusal the user can act on as a VALUE.
  *
- * Exactly four types are refusals, each already written as a sentence for a person:
+ * Exactly five types are refusals, each already written as a sentence for a person:
+ *   · `ApplyAuthorizationError` — the apply or destroy was not authorized for this caller
+ *     (lib/approvals/types.ts; nothing throws it while that module allows every call);
  *   · {@link JobRefusalError} — the deploy-time gates (no cloud account, a dangling binding, a WAF
  *     the cloud cannot provide, a Hetzner node name, no network selected, an unscanned IaC source…);
  *   · `EnvStateConflictError` — a job is already in flight on the environment; the same request
@@ -2320,6 +2323,7 @@ async function refusalAsValue<T extends object>(
 		return { ok: true, ...(await run()) };
 	} catch (err) {
 		if (
+			err instanceof ApplyAuthorizationError ||
 			err instanceof JobRefusalError ||
 			err instanceof EnvStateConflictError ||
 			err instanceof UsageLimitError ||
@@ -2589,11 +2593,15 @@ function hasRepoSourcedServices(configSnapshot: {
  * project_services.resolved_image and chains the app DEPLOY (builds.ts), which renders
  * the services with real images. The build runs in-cluster, so it only queues off an
  * ACTIVE (provisioned) environment.
+ *
+ * The chained DEPLOY is queued with nobody asking, so the deploy is authorized here, where the
+ * BUILD is queued (`requireApplyAuthorization`); `approvalId` is the approval the caller presents.
  */
 export async function buildProject(
 	projectId: string,
 	environmentId?: string | null,
 	runnerId?: string | null,
+	approvalId?: string | null,
 ) {
 	const actor = await authorize("deploy", { type: "project", id: projectId });
 	// Defense-in-depth: a client-supplied assigned runner must belong to the
@@ -2643,6 +2651,19 @@ export async function buildProject(
 				)
 				.returning({ id: jobs.id });
 
+			await requireApplyAuthorization(
+				tx,
+				{ kind: "actor", actor },
+				"deploy",
+				{
+					orgId: actor.orgId,
+					projectId,
+					environmentId: environment.id,
+					jobId: job.id,
+				},
+				approvalId,
+			);
+
 			await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
 				orgId: actor.orgId,
 				projectId,
@@ -2682,6 +2703,11 @@ function keyedDeployResult(
  * Queues a DEPLOY job (or, for a redeploy with repo-sourced services, the BUILD that chains it).
  * `approvalKey` makes it at most once per key, as in {@link planProject} (#5797): a repeated
  * approval of one deploy proposal returns the job it already queued and applies nothing twice.
+ *
+ * `approvalKey` and `approvalId` are different things. The key only makes a repeated call return
+ * the same job. `approvalId` names the approval the caller presents for this deploy, and is
+ * handed to `requireApplyAuthorization` with every job this queues — the DEPLOY, or the BUILD
+ * that will chain it. A job a key already queued is returned as it is and is not asked about again.
  */
 export async function provisionProject(
 	projectId: string,
@@ -2689,6 +2715,7 @@ export async function provisionProject(
 	runnerId?: string | null,
 	environmentId?: string | null,
 	approvalKey?: string | null,
+	approvalId?: string | null,
 ) {
 	const actor = await authorize("deploy", { type: "project", id: projectId });
 	// Defense-in-depth: a client-supplied assigned runner must belong to the
@@ -2754,6 +2781,19 @@ export async function provisionProject(
 				// A concurrent approval of the same proposal committed first: its job IS this one.
 				if (!job.created) return keyedDeployResult(job.id, job.jobType);
 
+				await requireApplyAuthorization(
+					tx,
+					{ kind: "actor", actor },
+					"deploy",
+					{
+						orgId: actor.orgId,
+						projectId,
+						environmentId: environment.id,
+						jobId: job.id,
+					},
+					approvalId,
+				);
+
 				await enqueueEnvTransition(
 					tx,
 					environment.id,
@@ -2808,6 +2848,20 @@ export async function provisionProject(
 			);
 			// A concurrent approval of the same proposal committed first: its job IS this one.
 			if (!job.created) return keyedDeployResult(job.id, job.jobType);
+
+			await requireApplyAuthorization(
+				tx,
+				{ kind: "actor", actor },
+				"deploy",
+				{
+					orgId: actor.orgId,
+					projectId,
+					environmentId: environment.id,
+					jobId: job.id,
+					...(planJobId ? { planJobId } : {}),
+				},
+				approvalId,
+			);
 
 			await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
 				orgId: actor.orgId,
@@ -2890,6 +2944,11 @@ export interface DestroyProjectOptions {
 	 * {@link FabricHasLiveTenantsError} naming them. Ignored for a target that owns no Fabric.
 	 */
 	cascade?: boolean;
+	/**
+	 * The approval the caller presents for this destroy. Handed to `requireApplyAuthorization` with
+	 * every DESTROY the call queues, the cascaded ones included.
+	 */
+	approvalId?: string | null;
 }
 
 /** One DESTROY job a {@link destroyProject} call queued, in the order the tree destroys them. */
@@ -3018,6 +3077,23 @@ export async function destroyProject(
 					}),
 				)
 				.returning({ id: jobs.id });
+
+			await requireApplyAuthorization(
+				tx,
+				{ kind: "actor", actor },
+				"destroy",
+				{
+					orgId: actor.orgId,
+					projectId,
+					environmentId: snap.environment.id,
+					jobId: job.id,
+					// A tenant's DESTROY exists because the target's cascaded to it.
+					...(snap === target
+						? {}
+						: { cascadeOfEnvironmentId: target.environment.id }),
+				},
+				options.approvalId,
+			);
 
 			await enqueueEnvTransition(
 				tx,
