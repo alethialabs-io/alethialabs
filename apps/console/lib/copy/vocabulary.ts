@@ -60,8 +60,13 @@ export const FABRIC = {
 /** The three things a user queues against an environment. */
 export const JOB_ACTION = { plan: "Plan", deploy: "Deploy", destroy: "Destroy" } as const;
 
-/** What an environment or a job is called while one of those is under way. */
-export const IN_FLIGHT = { queued: "Queued", deploying: "Deploying", destroying: "Destroying" } as const;
+/**
+ * What an environment or a job is called while one of those is under way: waiting its turn, or
+ * with a deploy or a destroy running. Keyed by the ACTION under way, like `JOB_ACTION`, and not by
+ * a status value: which status values exist and how each one looks is `@repo/ui/status-badge`'s
+ * to say, and `pnpm check:shared-surface` refuses a second table keyed on them.
+ */
+export const IN_FLIGHT = { queued: "Queued", deploy: "Deploying", destroy: "Destroying" } as const;
 
 /** The two authentication verbs. */
 export const AUTH = { signIn: "Sign in", signOut: "Sign out" } as const;
@@ -139,7 +144,7 @@ export const VOCABULARY = [
 	{
 		id: "in-flight",
 		concept: "In-flight states",
-		labels: [IN_FLIGHT.queued, IN_FLIGHT.deploying, IN_FLIGHT.destroying],
+		labels: [IN_FLIGHT.queued, IN_FLIGHT.deploy, IN_FLIGHT.destroy],
 		glossary: null,
 		not: ["Processing", "Provisioning"],
 	},
