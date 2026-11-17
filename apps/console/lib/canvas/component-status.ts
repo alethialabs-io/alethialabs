@@ -15,6 +15,7 @@ import type {
 } from "@/lib/db/schema/enums";
 import type { DriftDetail } from "@/types/jsonb.types";
 import type { GitopsDeployStatus } from "@/lib/gitops/deploy-status";
+import type { PlanSummary } from "@/lib/plan/parse-plan";
 import type { IacGroup } from "./iac-inventory";
 
 /**
@@ -131,6 +132,112 @@ export interface ActiveJob {
 }
 
 /**
+ * Where the saved design stands against what the environment last deployed:
+ * - `never`: the environment has no deployed design.
+ * - `ahead`: the saved design differs from the deployed one.
+ * - `in-sync`: the saved design is the deployed one.
+ */
+export type DeployState = "never" | "ahead" | "in-sync";
+
+/**
+ * The deploy state from the two fingerprints the environment status read compares: the one stored
+ * at the last deploy (`project_environments.deployed_config_hash`) and the saved design's
+ * (`structuralHash`). A null `designHash` means the saved design could not be read; a deployed
+ * environment then reads `in-sync`, the same answer `updatePending` gives for it.
+ *
+ * The fingerprint is `structuralHash`, which leaves out sizing and placement fields
+ * (lib/promotions/diff.ts), so a saved change to one of those alone reads `in-sync`.
+ */
+export function resolveDeployState(deployedHash: string | null, designHash: string | null): DeployState {
+	if (!deployedHash) return "never";
+	if (designHash === null) return "in-sync";
+	return designHash === deployedHash ? "in-sync" : "ahead";
+}
+
+/**
+ * Why the environment may not be planned or deployed, whatever its {@link DeployState}. `message`
+ * is the sentence to show.
+ * - `cloud-not-offered`: the project's cloud account is on a cloud this deployment does not offer.
+ */
+export interface DeployRefusal {
+	reason: "cloud-not-offered";
+	message: string;
+}
+
+/**
+ * Why the environment's latest plan is not the one to deploy:
+ * - `no-plan`: the environment has no plan job.
+ * - `plan-not-succeeded`: the latest plan job is queued, running, failed or cancelled.
+ * - `design-changed`: the design was saved after the plan was queued.
+ * - `run-since-plan`: a build, deploy or destroy of the environment was queued after the plan.
+ */
+export type PlanStaleReason = "no-plan" | "plan-not-succeeded" | "design-changed" | "run-since-plan";
+
+/** What {@link planStaleReason} decides from. */
+export interface PlanCurrencyFacts {
+	/** The latest plan job's status; null when the environment has no plan job. */
+	status: ProvisionJobStatus | null;
+	/** The design revision the plan was queued at; null when it is not known. */
+	planRevision: string | null;
+	/** The saved design's revision now. */
+	savedRevision: string;
+	/** True when a build, deploy or destroy of the environment was queued after the plan. */
+	runSincePlan: boolean;
+}
+
+/**
+ * The staleness rule: the reason the latest plan is not current, or null when it is. A plan is
+ * current when it succeeded, its design revision equals the saved design's revision, and no build,
+ * deploy or destroy of the environment was queued after it. The reasons are checked in that order,
+ * and an unknown plan revision is `design-changed`.
+ */
+export function planStaleReason(facts: PlanCurrencyFacts): PlanStaleReason | null {
+	if (facts.status === null) return "no-plan";
+	if (facts.status !== "SUCCESS") return "plan-not-succeeded";
+	if (facts.planRevision === null || facts.planRevision !== facts.savedRevision) return "design-changed";
+	if (facts.runSincePlan) return "run-since-plan";
+	return null;
+}
+
+/**
+ * The environment's latest plan as the board's review reads it (`canvas.reviewPlan`). The three
+ * values a deploy of this plan carries are `planJobId`, `designRevision` and `digest`.
+ *
+ * A design revision is the id of the project's latest design-write audit row (`audit_log`, actions
+ * CREATED and UPDATED), as a decimal string; `"0"` when there is none. It moves on every design
+ * save that goes through `updateProjectDesign`: the board's save and the CLI design route. It does
+ * not move on a write to one component row from the CLI's component routes, or on an add-on
+ * change. It is not the client's `designRevision` content hash (lib/canvas/design-revision.ts).
+ */
+export interface ReviewPlan {
+	/** The environment the answer is for. */
+	environmentId: string;
+	/** The latest PLAN job of the environment, whatever its status; null when there is none. */
+	planJobId: string | null;
+	/** That job's status; null when there is none. */
+	status: ProvisionJobStatus | null;
+	/** ISO timestamp the plan job was queued; null when there is none. */
+	createdAt: string | null;
+	/** What the plan would add, change, destroy and replace; null until the job stores a plan result. */
+	summary: PlanSummary["counts"] | null;
+	/** The monthly cost priced from THIS plan job; null when it was never priced. */
+	cost: { totalMonthly: number | null; currency: string } | null;
+	/** The design revision the plan was queued at; null when there is no plan job. */
+	designRevision: string | null;
+	/** The saved design's revision now. */
+	savedRevision: string;
+	/**
+	 * The SHA-256 of the plan file, lowercase hex, from the plan job's verify receipt
+	 * (`plan_sha256`); null when the job has no receipt or the receipt's value is not a SHA-256.
+	 */
+	digest: string | null;
+	/** True when {@link planStaleReason} finds no reason: this is the plan to deploy. */
+	current: boolean;
+	/** Why the plan is not current; null when it is. */
+	staleReason: PlanStaleReason | null;
+}
+
+/**
  * Everything the canvas needs to resolve live status for one environment, in a single round-trip.
  * Keyed by `nodeStatusKey()` (kind for singletons, `kind:name` for array kinds) — the join key the
  * canvas was always designed for.
@@ -141,6 +248,10 @@ export interface EnvironmentStatus {
 	activeJob: ActiveJob | null;
 	/** True when the design has moved ahead of what was last deployed (structuralHash mismatch). */
 	updatePending: boolean;
+	/** The saved design against the deployed one. `updatePending` is true exactly when this is `ahead`. */
+	deployState: DeployState;
+	/** Why this environment may not be planned or deployed; null when nothing refuses it. */
+	deployRefusal: DeployRefusal | null;
 	/** Cluster liveness (PROBE_CLUSTER). `reachable: null` = never probed. */
 	probe: { reachable: boolean | null; message: string | null } | null;
 	/** Drifted resources we could not place on a node. Surfaced at the environment — never dropped. */
@@ -176,6 +287,8 @@ export const EMPTY_ENVIRONMENT_STATUS: EnvironmentStatus = {
 	components: {},
 	activeJob: null,
 	updatePending: false,
+	deployState: "never",
+	deployRefusal: null,
 	probe: null,
 	unattributedDrift: [],
 	driftScannedAt: null,

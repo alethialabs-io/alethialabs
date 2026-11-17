@@ -96,6 +96,7 @@ vi.mock("@/app/server/actions/cloud-resources", () => ({
 
 import { readIdentityCapabilities as getIdentityCapabilities } from "@/lib/rpc/procedures/canvas";
 import { authorize } from "@/lib/authz/guard";
+import { withHiddenClouds } from "@/lib/cloud-providers/availability";
 
 beforeEach(() => {
 	state.identity = [{ provider: "aws", syncedAt: null }];
@@ -195,6 +196,34 @@ describe("getIdentityCapabilities", () => {
 		const bag = await getIdentityCapabilities("ci-1", "eu-west-1");
 		expect(bag.networks[0].nativeId).toBe("vpc-abc");
 		expect(bag.subnets[0].networkRowId).toBe("vpc-abc");
+	});
+
+	describe("a cloud this deployment does not offer (#6831)", () => {
+		// The catalogued set is the offered set: an identity on a hidden cloud resolves nothing, as an
+		// identity on a cloud with no catalog does, and no reader is asked about it.
+		it("answers the empty bag for an identity on a hidden cloud, and reads no axis", async () => {
+			state.identity = [{ provider: "alibaba", syncedAt: null }];
+			const bag = await getIdentityCapabilities("ci-1", "cn-hangzhou");
+			expect(bag.provider).toBeNull();
+			expect(bag.identityId).toBeNull();
+			expect(bag.state).toBe("idle");
+			expect(state.regionCalls).toEqual([]);
+			expect(state.instanceCalls).toEqual([]);
+		});
+
+		it("resolves the same identity once the operator setting offers that cloud", async () => {
+			state.identity = [{ provider: "alibaba", syncedAt: null }];
+			const bag = await withHiddenClouds(["alibaba"], () => getIdentityCapabilities("ci-1", "cn-hangzhou"));
+			expect(bag.provider).toBe("alibaba");
+			expect(state.regionCalls).toEqual([["ci-1", "alibaba"]]);
+		});
+
+		it("still resolves every offered cloud", async () => {
+			for (const provider of ["aws", "gcp", "azure", "hetzner"]) {
+				state.identity = [{ provider, syncedAt: null }];
+				expect((await getIdentityCapabilities("ci-1", null)).provider).toBe(provider);
+			}
+		});
 	});
 
 	describe("sync state (the honest heuristic)", () => {
