@@ -85,7 +85,7 @@
 # that a script could count all along. Nothing compared them, which is exactly why it went unnoticed
 # — it is prose, and prose is not measured. Now it is.
 #
-#   census: 49 controls — 49 confirmed
+#   census: 50 controls — 50 confirmed
 
 version: 1
 
@@ -841,6 +841,24 @@ controls:
     status: confirmed
     prod-qa: skip
     reason: needs an active job, which needs a running deploy
+
+  # A re-run starts a new plan or deploy against the job's environment with the project's CURRENT
+  # configuration, or re-queues an org-level audit. The button exists only for a job `rerunRouteOf`
+  # (lib/jobs/operation.ts) does not refuse: a DESTROY job, a scan and a runner's lifecycle job
+  # render no Re-run at all, and `rerunJob` refuses them on the server as well (#6749).
+  - id: jobs.rerun
+    route: /[org]/~/jobs/[id]
+    surface: apps/console/app/(private)/[org]/~/jobs/[id]/job-detail.tsx
+    mutation: rerunJob
+    control: { role: button, name: "Re-run" }
+    confirm: confirm-dialog
+    confirm_action: "Re-run job"
+    dialog_title: "Re-run this job?"
+    fixture: terminal-job
+    persona: owner
+    status: confirmed
+    prod-qa: open-cancel
+    reason: opening the dialog and pressing Cancel queues nothing; confirming would start a real plan or deploy
 
   # ── the agent ──────────────────────────────────────────────────────────────────────────────
   - id: agent.artifact.delete
