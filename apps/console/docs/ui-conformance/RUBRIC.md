@@ -654,6 +654,65 @@ removes; `reason:` is a decision. Both directions are checked — a FAIL with no
 no longer fails are both errors. It is a ledger, not a ratchet: it records what fails, and nothing in it
 stops a PASS from becoming a FAIL except the row that FAIL then has to gain.
 
+## The skeleton rules  ·  written rules, not predicates
+
+Five rules for how a skeleton is BUILT (CON-SM7, #6759). They add no predicate and move no score:
+the predicates above already measure what a skeleton *does* — T1 which one renders, S3 its width, B2
+its shape, B4 that it ends. These say how to write one so that it passes them, and each names what
+enforces it, because a rule nothing enforces reads exactly like one that is.
+
+1. **One root, and it is `SkeletonRoot`** (`components/skeleton/skeleton-root.tsx`). It is a `div`
+   with `aria-busy="true"` and `data-slot="skeleton-root"`, and its type refuses `aria-busy`,
+   `aria-hidden` and `role` from the caller. A skeleton root is never `aria-hidden`: that removes
+   the region from the accessibility tree, which says "nothing here" about a region whose whole
+   meaning is "something is coming", and it is not what `settle()` in `e2e/audit/filters.ts` or B4
+   read — both read `aria-busy`. One wrapper per skeleton; a part drawn inside it does not declare
+   `aria-busy` again. Decorative parts inside the root may still be `aria-hidden`.
+2. **A skeleton is built from the page's own primitives.** The same panel, table, grid and class
+   constants the answered page renders through, with `@repo/ui/skeleton` blocks where the data
+   goes — not a parallel drawing of the page in bare `div`s. That is what keeps B2 true after the
+   page changes, and it is why the rows of CLAUDE.md §6 need no skeleton edition: a skeleton
+   draws no page title (H1) and no stat-card strip (H6) because the page it copies has neither,
+   and it declares no `max-w-*` of its own (S3, S4) because the width is the shell's.
+3. **A skeleton keys on the same gate as the page.** Where the page draws a different shape for a
+   manager and a member — the select and actions columns, an Invite button, a Save band — the
+   skeleton takes that same answer as a prop and draws the same branch. A skeleton that always
+   draws the manager's shape is the wrong shape for every member.
+4. **A skeleton is synchronous. An async `loading.tsx` is banned** (decision CON-M4): no `async`
+   default export and no `await` in the file. A `loading.tsx` that awaits suspends, so the
+   boundary above it can paint first and the user gets three renders — the ancestor's skeleton,
+   this one, the page. That sequence is read from the code, not observed: the route audit marks
+   every instance "not observed", and CON-M4 chose the ban over a browser session per route to
+   measure it. What to do instead depends on why the file awaited:
+   - *for the gate of rule 3* — resolve it in the nearest **layout** and hand it down: the layout
+     renders its own `<Suspense>` around `children` with the gated skeleton as the fallback, or
+     provides the answer to a client skeleton. The `loading.tsx` becomes a plain function, or
+     goes. The layout may await only what the request has already resolved (`currentActor()` is
+     request-cached); a layout that starts a new read has moved the wait, not removed it;
+   - *for anything else* (a row count, the list of cards) — draw the shape that does not need it.
+     B2 leaves the bottom edge of an open-ended list out of its score, so a skeleton never has to
+     know how many rows there are.
+5. **A skeleton is never a spinner.** A spinner has no shape, so it cannot have the page's. A
+   spinner belongs on a control that is working (a submitting button), never in a `loading.tsx`
+   or a pending region.
+
+**What enforces them.** Rule 1's shape is `SkeletonRoot`'s own type and
+`tests/components/skeleton/skeleton-root.test.tsx`. Rules 4 and 5 are
+`tests/components/skeleton/skeleton-rules.test.ts`, which reads every `loading.tsx` under `app/`
+and carries the files that break either rule today as a ledger that fails in **both** directions —
+a new async or spinner `loading.tsx` fails it, and so does an entry whose file has been fixed. On
+the day this section was written that ledger held **ten** async files and **one** spinner
+(`[project]/loading.tsx`); the area lanes remove them, and no route was migrated here.
+
+**What does not, stated rather than implied.** Nothing measures that an existing skeleton's root is
+`SkeletonRoot`: at least eight skeleton roots under `components/` are still `aria-hidden`, and
+adopting the wrapper is the area lanes' sweep. Rules 2 and 3 have no static instrument at all —
+B2 sees their failure in a browser, as the persona the audit runs as, so a skeleton that is wrong
+only on the other side of a gate is measured by nothing. The rule-4 matcher reads the tokens
+`async` and `await`: a synchronous `loading.tsx` that suspends through React's `use()` is the same
+defect and is not matched. The rule-5 matcher reads `animate-spin` in the `loading.tsx` itself,
+not in a component it renders.
+
 ## The scoreboard and the ratchet
 
 **Both halves are built** — the static one in #3618, the live one in #3634.
