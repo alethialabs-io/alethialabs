@@ -7,6 +7,7 @@
 		"./commerce": "./src/commerce.ts",
 		"./documents": "./src/documents.ts",
 		"./entity": "./src/entity.ts",
+		"./launch": "./src/launch.ts",
 		"./processing": "./src/processing.ts"
 	},
 	"scripts": {
