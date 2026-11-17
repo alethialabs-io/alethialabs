@@ -87,6 +87,12 @@ interface DesignProjectCanvasProps {
 	byoIacEnabled?: boolean;
 }
 
+/** True when a key event's target is a text field: the key belongs to the field, not the board. */
+function isTyping(target: EventTarget | null): boolean {
+	if (!(target instanceof HTMLElement)) return false;
+	return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+}
+
 /** The canvas editor surface (inside its own ReactFlowProvider and environment-status read). */
 export function DesignProjectCanvas(props: DesignProjectCanvasProps) {
 	return (
@@ -459,6 +465,9 @@ function CanvasInner({
 				return;
 			}
 			if (mod && e.key.toLowerCase() === "z") {
+				// In a text field ⌘Z belongs to the field: it undoes the typing, natively, and the
+				// board's history is not touched. Asked before the board acts, not after.
+				if (isTyping(e.target)) return;
 				e.preventDefault();
 				if (e.shiftKey) redo();
 				else undo();
@@ -475,12 +484,7 @@ function CanvasInner({
 				return;
 			}
 			const t = e.target instanceof HTMLElement ? e.target : null;
-			const typing =
-				!!t &&
-				(t.tagName === "INPUT" ||
-					t.tagName === "TEXTAREA" ||
-					t.isContentEditable);
-			if (typing) return;
+			if (isTyping(e.target)) return;
 			if (e.key === "Escape") {
 				// A dialog or menu owns its own Escape; the rail's card closes on the board's.
 				if (t?.closest('[role="dialog"],[role="menu"],[role="listbox"]')) return;

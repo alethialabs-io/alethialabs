@@ -20,6 +20,8 @@ import type {
 	CanvasNode,
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
+import { coreIdentity, isDesignNode } from "@/lib/canvas/store/derive";
+import { useDesignNodes } from "@/lib/canvas/store/use-board";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import type { DriftDetail } from "@/types/jsonb.types";
@@ -191,10 +193,19 @@ export function nodeStatusKey(node: CanvasNode): string {
 	return `${node.data.kind}:${name}`;
 }
 
-// The whole-graph parse is O(nodes); memoize on the nodes array reference so every node component
-// reuses a single computation per render/commit (zustand keeps `nodes` referentially stable).
+// The whole-graph parse is O(nodes), so it is computed once per DESIGN and reused by every node
+// component. The key is the design itself — each node's id and data — not the array it arrived in:
+// a card being dragged produces a new board array on every frame, with the same design in it, and
+// that must not re-validate the project. Cards the design does not own are not part of the key
+// (and not part of the parse: `graphToForm` reads only the kinds it knows).
 let cacheRef: CanvasNode[] | null = null;
+let cacheDesign: CanvasNode[] = [];
 let cacheIssues: Record<string, string> = {};
+
+/** True when two node lists describe the same design: the same ids holding the same data. */
+function sameDesign(a: CanvasNode[], b: CanvasNode[]): boolean {
+	return a.length === b.length && a.every((n, i) => n.id === b[i].id && n.data === b[i].data);
+}
 
 /**
  * Maps each node id → its first config issue (absent = complete). Reuses the EXACT deploy-time
@@ -248,11 +259,15 @@ function computeIssues(nodes: CanvasNode[]): Record<string, string> {
 	return issues;
 }
 
+/** The issue map for `nodes`, recomputed only when the design in them changed. */
 function issueMap(nodes: CanvasNode[]): Record<string, string> {
-	if (nodes !== cacheRef) {
-		cacheRef = nodes;
-		cacheIssues = computeIssues(nodes);
+	if (nodes === cacheRef) return cacheIssues;
+	const design = nodes.filter(isDesignNode);
+	if (cacheRef === null || !sameDesign(design, cacheDesign)) {
+		cacheIssues = computeIssues(design);
 	}
+	cacheRef = nodes;
+	cacheDesign = design;
 	return cacheIssues;
 }
 
@@ -280,10 +295,14 @@ export function nodeReadiness(
 	return { state, issue, complete, gated };
 }
 
-/** {@link nodeReadiness} for a single node, bound to the store. */
+/**
+ * {@link nodeReadiness} for a single node, bound to the store. It subscribes to the DESIGN nodes,
+ * which a drag does not replace, so moving a card re-validates nothing. A card the design does not
+ * own is not among them and reads as ready, which is what it always resolved to.
+ */
 export function useNodeReadiness(id: string): NodeReadiness {
-	const nodes = useCanvasStore((s) => s.nodes);
-	const core = useCanvasStore((s) => s.getCoreIdentity());
+	const nodes = useDesignNodes();
+	const core = useMemo(() => coreIdentity(nodes), [nodes]);
 	return useMemo(() => nodeReadiness(nodes, core, id), [id, nodes, core]);
 }
 
