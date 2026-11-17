@@ -53,8 +53,11 @@ export type ConfirmSeverity =
 export interface ConfirmableMutation<V> {
 	/** True while a call is in flight. */
 	isPending: boolean;
-	/** Starts the call; `onSuccess` runs after the mutation's own success handling. */
-	mutate: (variables: V, options?: { onSuccess?: () => void }) => void;
+	/** Starts the call; `onSuccess` and `onSettled` run after the mutation's own handling. */
+	mutate: (
+		variables: V,
+		options?: { onSuccess?: () => void; onSettled?: () => void },
+	) => void;
 }
 
 interface ConfirmActionBase {
@@ -105,7 +108,9 @@ export function ConfirmAction<V = never>({
 }: ConfirmActionProps<V>) {
 	const [running, setRunning] = useState(false);
 	const pending = mutation ? mutation.isPending : running;
-	/** Set on the click itself, because `pending` only changes on the next render. */
+	// Set on the click itself, because `pending` only changes on the next render. Cleared when the
+	// call settles; a call that starts and settles between two renders never shows as `pending`, so
+	// the effect alone would leave it set.
 	const started = useRef(false);
 	useEffect(() => {
 		if (!pending) started.current = false;
@@ -117,7 +122,12 @@ export function ConfirmAction<V = never>({
 		if (mutation) {
 			if (variables == null) return;
 			started.current = true;
-			mutation.mutate(variables, { onSuccess: () => onOpenChange(false) });
+			mutation.mutate(variables, {
+				onSuccess: () => onOpenChange(false),
+				onSettled: () => {
+					started.current = false;
+				},
+			});
 			return;
 		}
 		if (!run) return;
