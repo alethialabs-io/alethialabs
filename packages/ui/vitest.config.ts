@@ -96,6 +96,12 @@ export default defineConfig({
 				// notices. tests/wizard.test.tsx proves what a screen reader is told, that "next" and
 				// "submit" are different nodes, and when the disclosure opens and the heading takes focus.
 				"src/wizard.tsx",
+				// Counted since the wizard suite began rendering them: the step heading is a
+				// SectionHeading and the footer's pending state is a Spinner. Both left the debt list in
+				// coverage-exclusions.yaml for the scope rather than for a weaker claim.
+				// tests/section-heading.test.tsx proves the heading's own slots.
+				"src/section-heading.tsx",
+				"src/spinner.tsx",
 			],
 			// These shadcn/Radix wrappers are deliberately proved through the composed-component
 			// suites that mount them, rather than counted in the authored-logic unit badge. Naming
