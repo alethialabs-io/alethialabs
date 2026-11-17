@@ -80,10 +80,10 @@ const maxAPIRedirects = 3
 // console keeps working.
 func refuseCrossOriginRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= maxAPIRedirects {
-		return fmt.Errorf("stopped after %d redirects", maxAPIRedirects)
+		return &redirectError{message: fmt.Sprintf("stopped after %d redirects", maxAPIRedirects)}
 	}
 	if origin, to := requestOrigin(via[0].URL), requestOrigin(req.URL); origin != to {
-		return fmt.Errorf("refusing redirect from the control plane %q to %q: the request carries credentials that must not leave that origin", origin, to)
+		return &redirectError{message: fmt.Sprintf("refusing redirect from the control plane %q to %q: the request carries credentials that must not leave that origin", origin, to)}
 	}
 	return nil
 }
@@ -368,7 +368,7 @@ type DestroyTreeWaiting struct {
 // boundary) uniform across the API. The scope is the `--org` override when one was named,
 // otherwise the CLI config's active organization — see resolveOrgScope in org_scope.go.
 func (c *Client) setAuthHeaders(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer "+c.authToken)
+	req.Header.Set("Authorization", "Bearer "+c.token())
 	if org := resolveOrgScope(); org != "" {
 		req.Header.Set("X-Alethia-Org", org)
 	}
@@ -398,8 +398,8 @@ func (c *Client) getProviderToken() string {
 type APIError struct {
 	StatusCode int
 	Message    string
-	// RetryAfter is the wait a 429 named in its Retry-After header, or zero when it named none. Only
-	// the verbs that read the header set it (kubeconfig_mint.go); it never changes Error().
+	// RetryAfter is the wait a 429 or a 503 named in its Retry-After header, or zero when it named
+	// none. The header is not read on any other status. It never changes Error().
 	RetryAfter time.Duration
 	// Code is the control plane's stable identifier for the failure ("not_found"), or empty when it
 	// sent none. A control plane older than the field never sends one, so a caller that classifies
@@ -457,12 +457,16 @@ const errorSnippetRunes = 200
 //
 // `code`, `hint`, `docs_url` and `request_id` are read from the same object when it carries them,
 // and the request id from the X-Request-Id header in preference to the body. All four are
-// additive: an answer without them yields the same error it always did.
+// additive: an answer without them yields the same error it always did. The Retry-After header is
+// read on a 429 and a 503, the two answers that mean "later", for every verb.
 func responseError(resp *http.Response) *APIError {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
 	apiErr := &APIError{
 		StatusCode: resp.StatusCode,
 		RequestID:  strings.TrimSpace(resp.Header.Get("X-Request-Id")),
+	}
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+		apiErr.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 	}
 
 	var fields struct {
@@ -517,9 +521,9 @@ func (c *Client) doGet(endpoint string, result interface{}) error {
 	}
 	c.setAuthHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return &TransportError{Err: err}
+		return err
 	}
 	defer resp.Body.Close()
 
@@ -543,9 +547,9 @@ func (c *Client) doPost(endpoint string, payload interface{}, result interface{}
 	req.Header.Set("Content-Type", "application/json")
 	c.setAuthHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return &TransportError{Err: err}
+		return err
 	}
 	defer resp.Body.Close()
 
@@ -572,9 +576,9 @@ func (c *Client) doPut(endpoint string, payload interface{}, result interface{})
 	req.Header.Set("Content-Type", "application/json")
 	c.setAuthHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return &TransportError{Err: err}
+		return err
 	}
 	defer resp.Body.Close()
 
@@ -595,9 +599,9 @@ func (c *Client) doDelete(endpoint string) error {
 	}
 	c.setAuthHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return &TransportError{Err: err}
+		return err
 	}
 	defer resp.Body.Close()
 
@@ -623,9 +627,9 @@ func (c *Client) doDeleteWithBody(endpoint string, payload interface{}) error {
 	c.setAuthHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return &TransportError{Err: err}
+		return err
 	}
 	defer resp.Body.Close()
 
@@ -649,9 +653,9 @@ func (c *Client) GetRepositories(provider string) ([]Repository, error) {
 		req.Header.Set("X-Provider-Token", providerToken)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return nil, &TransportError{Err: err}
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -1049,7 +1053,7 @@ func (c *Client) UpdateBootstrapJobStatus(jobID, status, errorMessage string) er
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.setAuthHeaders(req)
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return err
 	}
@@ -1093,7 +1097,7 @@ func (c *Client) UnregisterCluster(id, name string) error {
 	}
 	req.URL.RawQuery = q.Encode()
 	c.setAuthHeaders(req)
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return err
 	}
