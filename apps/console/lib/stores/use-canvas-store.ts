@@ -1,472 +1,79 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
-import {
-	applyNodeChanges,
-	type NodeChange,
-	type XYPosition,
-} from "@xyflow/react";
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+// THE LEGACY CANVAS STORE API, OVER THE SPLIT STORES (#6764).
+//
+// The canvas store is now `lib/canvas/store/`: a document store, a view store, the undo history,
+// the draft slot and the functions that derive everything else. This file holds no design state.
+// It is the old single-store API — `useCanvasStore((s) => s.nodes)`, `getState()`, `setState()` —
+// implemented as a PROJECTION of those stores, so the shell files that have not been rebuilt yet
+// keep compiling and behaving as they did. Each shell lane moves its files onto
+// `lib/canvas/store/use-board.ts`; the close-out deletes this file.
+//
+// Three things live here only because the unconverted shell still needs them, and go with it:
+//
+//   - the MIRROR of server data (the identity list, the out-of-band cards, the BYO-IaC outputs).
+//     `design-project-canvas.tsx` still copies its queries in through `setChartNodes`,
+//     `setAddonNodes`, `setIacNodes` and friends. The copy is kept OUT of the document, which is
+//     what stops undo, discard and the draft from ever containing one of those cards; the
+//     replacement that needs no copy is `use-board-sources.ts`;
+//   - `setState`, which the tests of unconverted files use to arrange a board. It routes each key
+//     to the store that owns it;
+//   - a `dirty` flag. It is derived (anything pending against the saved design), with one legacy
+//     allowance: `setState({ dirty: true })` holds it true until the next save, discard or load.
+
+import type { NodeChange, XYPosition } from "@xyflow/react";
+import { useStore } from "zustand";
+import { createStore } from "zustand/vanilla";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { ByoChartState, ChartWorkloadState } from "@/app/server/actions/byo-charts";
-import type { IacGroup } from "@/lib/canvas/iac-inventory";
-import {
-	normalizeKeylessAuth,
-	normalizeManagedCertificate,
-	normalizeWafEnabled,
-	type CloudProviderSlug,
-} from "@/lib/cloud-providers";
-import {
-	type ConversionWarning,
-	convertInstanceTypes,
-} from "@/lib/cloud-providers/convert";
-import { normalizeCapacityMode } from "@/lib/cloud-providers/nosql-capacity";
-import {
-	NODE_REGISTRY,
-	SINGLETON_KINDS,
-} from "@/components/design-project/canvas/graph/node-registry";
-import { configName } from "@/components/design-project/canvas/graph/node-config";
 import type {
 	CanvasEdge,
 	CanvasNode,
-	CanvasNodeData,
-	NodeConfigMap,
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
-import { kindFromCollectionId, type CollectionPositions } from "@/lib/canvas/collections";
-import type { ContainerGeometry } from "@/lib/canvas/zones";
-import { applyLayout, layoutZoned } from "@/lib/canvas/layout";
-import { randomUuid } from "@/lib/random-id";
+import type { CollectionPositions } from "@/lib/canvas/collections";
+import type { IacGroup } from "@/lib/canvas/iac-inventory";
+import { board, flagsOf } from "@/lib/canvas/store/board";
+import {
+	coreIdentity,
+	deriveEdges,
+	diffNodes,
+	effectiveIdentity,
+	effectiveProvider,
+	isDesignNode,
+	OUT_OF_BAND,
+} from "@/lib/canvas/store/derive";
+import { designPart, pendingCount, placeNodes } from "@/lib/canvas/store/document-store";
+import { draftStorageKey } from "@/lib/canvas/store/draft-persist";
+import type { HistoryEntry } from "@/lib/canvas/store/history";
+import { withConfig } from "@/lib/canvas/store/normalize";
+import {
+	addonNodes,
+	chartNodes,
+	chartWorkloadNodes,
+	iacNodes,
+	type AddonCard,
+} from "@/lib/canvas/store/out-of-band";
+import {
+	PROJECT_NODE_ID,
+	type DraftSeed,
+	type NodeViewFlags,
+	type PendingChange,
+	type Positions,
+	type WorkspaceCard,
+} from "@/lib/canvas/store/types";
+import { subjectOfCard, tabOfCard } from "@/lib/canvas/store/view-store";
+import type { CloudProviderSlug } from "@/lib/cloud-providers";
+import type { ConversionWarning } from "@/lib/cloud-providers/convert";
+import { isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 
-const PROJECT_NODE_ID = "project-root";
-const HISTORY_CAP = 50;
-/** Prefix of every persisted-draft key; `draftStorageKey(scope)` appends the scope. */
-const DRAFT_STORAGE_PREFIX = "design-project-canvas-draft";
-
-/** A browser-only stable id for new nodes (canvas is client-side). */
-function newId(kind: NodeKind): string {
-	return `${kind}-${randomUuid().slice(0, 8)}`;
-}
-
-/** The project root node's chosen identity = the stack's CORE; null until picked. */
-function coreIdentity(nodes: CanvasNode[]): string | null {
-	return nodes.find((n) => n.id === PROJECT_NODE_ID)?.data.cloud_identity_id ?? null;
-}
-
-/** A node's effective cloud identity (its own, else the project CORE). */
-function effectiveIdentity(node: CanvasNode, core: string | null): string | null {
-	return node.data.cloud_identity_id ?? core;
-}
-
-/**
- * Canonical dependency edges, derived from the nodes (not user-drawn): network→
- * cluster and cluster→{every leaf}. A CORE↔CORE edge whose endpoints resolve to
- * different cloud identities is a hot cross-cloud edge → typed "gated".
- */
-export function deriveEdges(nodes: CanvasNode[]): CanvasEdge[] {
-	const byKind = (kind: NodeKind) => nodes.filter((n) => n.data.kind === kind);
-	const edges: CanvasEdge[] = [];
-
-	// W2 — the board draws NO substrate spine. The old network→cluster→every-leaf dependency edges
-	// existed only to say "this all runs on the cluster"; the cluster/network are env settings now
-	// (implicit substrate), so the only edges are the derived service→resource bindings below.
-
-	// W3: a service's declared bindings become service→resource edges — derived from the model like
-	// every other edge (the binding lives on the service's config). A binding whose target isn't
-	// placed draws nothing; the service node's readiness surfaces that dangling binding instead.
-	for (const svc of nodes) {
-		if (svc.data.kind !== "service") continue;
-		for (const b of svc.data.config.bindings ?? []) {
-			const target = nodes.find(
-				(n) => n.data.kind === b.target.kind && configName(n.data) === b.target.name,
-			);
-			if (!target) continue;
-			edges.push({
-				// One edge per (service, resource) relationship — collapses multiple injects to one wire.
-				id: `bind:${svc.id}->${target.id}`,
-				source: svc.id,
-				target: target.id,
-				type: "binding",
-			});
-		}
-	}
-
-	// W5 Path A — described chart workloads. Each is drawn as a child of its parent `chart-` node
-	// (a solid parent edge), and each of its W3 bindings draws a dotted "consumes" edge to the
-	// backing resource it binds to — resolved by (kind, name) exactly like the service binding rule.
-	// A binding whose target isn't placed on the canvas simply draws nothing (never a dangling edge).
-	for (const wl of byKind("chart_workload")) {
-		if (wl.data.kind !== "chart_workload") continue;
-		const config = wl.data.config;
-		const parent = nodes.find((n) => n.id === `chart-${config.chartId}`);
-		if (parent) {
-			edges.push({
-				id: `${parent.id}->${wl.id}`,
-				source: parent.id,
-				target: wl.id,
-				type: "dependency",
-			});
-		}
-		for (const b of config.bindings ?? []) {
-			const target = nodes.find(
-				(n) => n.data.kind === b.target.kind && configName(n.data) === b.target.name,
-			);
-			if (!target) continue;
-			edges.push({
-				id: `cwbind:${wl.id}->${target.id}`,
-				source: wl.id,
-				target: target.id,
-				type: "cw_binding",
-			});
-		}
-	}
-	return edges;
-}
-
-/** Approximate node footprint used by overlap repair (px). */
-const NODE_W = 240;
-const NODE_H = 130;
-
-/** Push apart any nodes whose footprints overlap (keeps the project root anchored). */
-function spreadOverlaps(nodes: CanvasNode[]): CanvasNode[] {
-	const placed: CanvasNode[] = [];
-	const overlaps = (a: CanvasNode, b: CanvasNode) =>
-		Math.abs(a.position.x - b.position.x) < NODE_W &&
-		Math.abs(a.position.y - b.position.y) < NODE_H;
-	for (const node of nodes) {
-		if (node.id === PROJECT_NODE_ID) {
-			placed.push(node);
-			continue;
-		}
-		let pos = { ...node.position };
-		let guard = 0;
-		while (placed.some((p) => overlaps({ ...node, position: pos }, p)) && guard < 200) {
-			pos = { x: pos.x, y: pos.y + NODE_H + 20 };
-			guard++;
-		}
-		placed.push({ ...node, position: pos });
-	}
-	return placed;
-}
-
-/**
- * Kinds persisted OUT-OF-BAND rather than through the form graph: BYO Helm charts and marketplace
- * add-ons (`project_addons`), and the external cards of a bring-your-own IaC module
- * (`project_iac_sources` + the last plan). They're loaded straight from the server, never written by
- * `graphToForm`, and must never appear in the Deploy diff — they aren't staged changes. Deploying a
- * card the design does not own would be the Deploy button lying.
- */
-export const OUT_OF_BAND = new Set<NodeKind>([
-	"chart",
-	"chart_workload",
-	"addon",
-	"external",
-]);
-
-/** A staged difference between the canvas (desired) and the saved baseline. */
-export interface PendingChange {
-	id: string;
-	op: "new" | "modified" | "removed";
-	kind: NodeKind;
-	name: string;
-}
-
-/** Human label for a node from its config (resource name, else project name, else kind). */
-function nodeName(n: CanvasNode): string {
-	return configName(n.data) || n.data.kind;
-}
-
-// ── discriminant/config reunion helpers ─────────────────────────────────────
-// TypeScript can't correlate a node's runtime `kind` with its `config` type through
-// an object spread (the classic discriminated-union limitation), so the few spots that
-// rebuild a node's data from an edited config/placement assert the reunion here, once.
-
-/** Assemble a node's data payload from a kind + config (+ placement). */
-function buildNodeData<K extends NodeKind>(
-	kind: K,
-	config: NodeConfigMap[K],
-	cloudIdentityId: string | null,
-	provider: CloudProviderSlug | null,
-): CanvasNodeData<K> {
-	return {
-		kind,
-		config,
-		cloud_identity_id: cloudIdentityId,
-		provider,
-	};
-}
-
-/** Merge a (partial) config patch into a node's data, keeping its kind. */
-function withConfig<T extends CanvasNodeData>(
-	data: T,
-	patch: Partial<T["config"]>,
-): T {
-	return { ...data, config: { ...data.config, ...patch } };
-}
-
-/** Update a node's placement (identity + derived provider), keeping its kind + config. */
-function withPlacement(
-	data: CanvasNodeData,
-	cloudIdentityId: string | null,
-	provider: CloudProviderSlug | null,
-): CanvasNodeData {
-	return { ...data, cloud_identity_id: cloudIdentityId, provider };
-}
-
-/** The cloud a node deploys to: its own placement, else the project root's. */
-function effectiveProviderIn(
-	nodes: CanvasNode[],
-	node: CanvasNode,
-): CloudProviderSlug | null {
-	return (
-		node.data.provider ??
-		nodes.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ??
-		null
-	);
-}
-
-/**
- * Carry each cluster's PINNED machine types onto the cloud it now deploys to (#5269).
- *
- * Re-placing a node on another cloud's identity used to rewrite only its placement, so an AWS
- * cluster moved onto a GCP account still said `t3.large` and failed at plan, inside GCP's API.
- * The mapping is convert.ts's `convertInstanceTypes` — the same rule the whole-project conversion
- * applies, not a copy of it — including its fallback to the target's default with a notice.
- *
- * Compares each cluster's effective cloud BEFORE and AFTER, rather than looking only at the node
- * that moved, because repointing the PROJECT root moves every cluster that inherits from it. A
- * cluster sized by `node_size` (empty instance_types) is left alone: it re-resolves on the new
- * cloud by itself.
- */
-function convertInstanceTypesAcrossNodes(
-	before: CanvasNode[],
-	after: CanvasNode[],
-): { nodes: CanvasNode[]; warnings: ConversionWarning[] } {
-	const warnings: ConversionWarning[] = [];
-	const nodes = after.map((n) => {
-		if (n.data.kind !== "cluster") return n;
-		const pinned = n.data.config.instance_types ?? [];
-		if (pinned.length === 0) return n;
-		const old = before.find((b) => b.id === n.id);
-		const from = old ? effectiveProviderIn(before, old) : null;
-		const to = effectiveProviderIn(after, n);
-		if (!from || !to || from === to) return n;
-		const converted = convertInstanceTypes(pinned, from, to);
-		warnings.push(...converted.warnings);
-		return {
-			...n,
-			data: {
-				...n.data,
-				config: { ...n.data.config, instance_types: converted.instanceTypes },
-			},
-		};
-	});
-	return { nodes, warnings };
-}
-
-/**
- * Clear `iam_auth` on every database node whose cell can no longer honor it.
- *
- * The canvas gate is a RENDER filter — it decides what the inspector draws and nothing else. Without
- * this, enabling keyless on AWS and then re-placing the node (or the whole project) on Hetzner left
- * `iam_auth: true` in the config, in the persisted draft, and all the way into the deployed snapshot,
- * with a disabled toggle showing "off" above it. That gap is the whole reason the toggle was
- * dishonest in the first place, so the display and the value are moved together (#1510).
- *
- * Runs over ALL nodes rather than the one that changed, because repointing the PROJECT node changes
- * the effective provider of every database that inherits from it.
- */
-function normalizeKeylessAcrossNodes(nodes: CanvasNode[]): CanvasNode[] {
-	const projectProvider =
-		nodes.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ?? null;
-	return nodes.map((n) => {
-		if (n.data.kind !== "database") return n;
-		const config = normalizeKeylessAuth(
-			n.data.config,
-			n.data.provider ?? projectProvider,
-		);
-		return config === n.data.config ? n : { ...n, data: { ...n.data, config } };
-	});
-}
-
-/**
- * Clear `waf_enabled` on the DNS node when the cloud does not offer a WAF.
- *
- * Same shape and same reason as `normalizeKeylessAcrossNodes` above, for the offer withdrawn on
- * Alibaba by #1841 — without it, a project designed on AWS with the WAF on and re-placed on Alibaba
- * carries `waf_enabled: true` into the config snapshot, the deployment payload, the clone path and
- * env promotions, under a disabled toggle reading "off".
- *
- * One difference worth knowing: this one ALSO runs at load (`setGraph`), which the keyless
- * normalizer does not. It has to. The switch renders disabled, so a user cannot toggle a stale
- * `true` off by hand, and the deploy gate will refuse the project until it is cleared — normalizing
- * at load is what turns that dead end into a staged change they can simply save.
- */
-function normalizeWafAcrossNodes(nodes: CanvasNode[]): CanvasNode[] {
-	const projectProvider =
-		nodes.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ?? null;
-	let changed = false;
-	const next = nodes.map((n) => {
-		if (n.data.kind !== "dns") return n;
-		// The Managed TLS switch beside it is withheld on Alibaba for the same reason and by the same
-		// mechanism (#4320), so one pass over the DNS node clears both.
-		const provider = n.data.provider ?? projectProvider;
-		const config = normalizeManagedCertificate(
-			normalizeWafEnabled(n.data.config, provider),
-			provider,
-		);
-		if (config === n.data.config) return n;
-		changed = true;
-		return { ...n, data: { ...n.data, config } };
-	});
-	// Returns the SAME array when nothing was coerced. `setGraph` derives `dirty` from that identity,
-	// and a `.map()` result is always a fresh array — without this, every project load would open
-	// with unsaved changes.
-	return changed ? next : nodes;
-}
-
-/**
- * Rewrite a NoSQL table's `capacity_mode` to one its cloud can build — in practice, Azure rows saved
- * as `provisioned` before #4320 made Cosmos serverless only.
- *
- * Same shape as `normalizeWafAcrossNodes`, and it runs at the same four moments (load, reseed, edit,
- * re-placement) for the same reason: the Capacity mode card no longer offers the stored value, so the
- * user could not clear it by hand, and normalising the DESIRED graph but not the baseline turns it
- * into a staged change they can see and save. Returns the SAME array when nothing was rewritten, so
- * a clean project does not open dirty.
- */
-function normalizeCapacityAcrossNodes(nodes: CanvasNode[]): CanvasNode[] {
-	const projectProvider =
-		nodes.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ?? null;
-	let changed = false;
-	const next = nodes.map((n) => {
-		if (n.data.kind !== "nosql") return n;
-		const config = normalizeCapacityMode(
-			n.data.config,
-			n.data.provider ?? projectProvider,
-		);
-		if (config === n.data.config) return n;
-		changed = true;
-		return { ...n, data: { ...n.data, config } };
-	});
-	return changed ? next : nodes;
-}
-
-/** For array kinds, suffix the config's `name` so it's unique among same-kind nodes. */
-function applyUniqueName<K extends NodeKind>(
-	kind: K,
-	config: NodeConfigMap[K],
-	nodes: CanvasNode[],
-): NodeConfigMap[K] {
-	// @ts-expect-error distributed-union variance (see buildNodeData): the generic {kind,config} can't be proven a CanvasNodeData member
-	const nodeData: CanvasNodeData = {
-		kind,
-		config,
-		cloud_identity_id: null,
-		provider: null,
-	};
-	const current = configName(nodeData);
-	if (NODE_REGISTRY[kind].cardinality !== "array" || !current) return config;
-	const taken = new Set(
-		nodes
-			.filter((n) => n.data.kind === kind)
-			.map((n) => configName(n.data))
-			.filter((v): v is string => typeof v === "string"),
-	);
-	return { ...config, name: uniqueName(current, taken) };
-}
-
-/**
- * Diff the desired canvas against the saved baseline → the staged-change list shown in
- * the Pending Changes bar. The project root is excluded (it isn't a provisionable add).
- */
-export function diffNodes(baseline: CanvasNode[], nodes: CanvasNode[]): PendingChange[] {
-	const base = new Map(baseline.map((n) => [n.id, n]));
-	const cur = new Map(nodes.map((n) => [n.id, n]));
-	const changes: PendingChange[] = [];
-	for (const n of nodes) {
-		// The project root isn't a provisionable add; chart nodes are persisted out-of-band
-		// (project_addons) so they never belong in the Deploy diff.
-		if (n.id === PROJECT_NODE_ID || OUT_OF_BAND.has(n.data.kind)) continue;
-		const prev = base.get(n.id);
-		if (!prev) {
-			changes.push({ id: n.id, op: "new", kind: n.data.kind, name: nodeName(n) });
-		} else if (
-			JSON.stringify(prev.data.config) !== JSON.stringify(n.data.config) ||
-			prev.data.cloud_identity_id !== n.data.cloud_identity_id
-		) {
-			changes.push({ id: n.id, op: "modified", kind: n.data.kind, name: nodeName(n) });
-		}
-	}
-	for (const n of baseline) {
-		if (n.id === PROJECT_NODE_ID || OUT_OF_BAND.has(n.data.kind)) continue;
-		if (!cur.has(n.id)) {
-			changes.push({ id: n.id, op: "removed", kind: n.data.kind, name: nodeName(n) });
-		}
-	}
-	return changes;
-}
-
-/**
- * The card to keep after the node set changed. A non-inspector card is untouched (undoing a drag
- * must not close the activity log); an inspector survives only while its node — or, for a
- * collection card, any member of its kind — is still on the board.
- */
-function keepCard(card: WorkspaceCard | null, nodes: CanvasNode[]): WorkspaceCard | null {
-	if (!card || card.kind !== "inspector") return card;
-	if (nodes.some((n) => n.id === card.nodeId)) return card;
-	const collection = kindFromCollectionId(card.nodeId);
-	if (collection && nodes.some((n) => n.data.kind === collection)) return card;
-	return null;
-}
+export { deriveEdges, diffNodes, draftStorageKey, OUT_OF_BAND, PROJECT_NODE_ID };
+export type { DraftSeed, PendingChange, WorkspaceCard };
 
 /** The inspector's node id, or null when the rail shows something else (or nothing). */
 export function selectInspectorNodeId(s: { card: WorkspaceCard | null }): string | null {
 	return s.card?.kind === "inspector" ? s.card.nodeId : null;
-}
-
-/** A name unique among existing names of the same kind. */
-function uniqueName(base: string, taken: Set<string>): string {
-	if (!taken.has(base)) return base;
-	let i = 2;
-	while (taken.has(`${base}-${i}`)) i++;
-	return `${base}-${i}`;
-}
-
-/**
- * What the workspace's right-hand rail is showing. ONE field, ONE surface: every "open on the
- * right" on the Architecture page — the node inspector, environment settings, the activity log, an
- * add-on's install config, a BYO chart/IaC scan verdict — is a non-blocking docked card, and this
- * union is the only thing that says which. It replaced `inspectorNodeId` + `envSettingsOpen` + four
- * component-local `useState`s, which between them let a modal Sheet open over a docked card and
- * had no answer to "what is on the rail right now".
- *
- * Not persisted: a card is a view, not a draft.
- */
-export type WorkspaceCard =
-	| { kind: "inspector"; nodeId: string }
-	| { kind: "env-settings" }
-	| { kind: "activity" }
-	| { kind: "addon"; itemId: string }
-	| { kind: "chart-scan"; chartId: string }
-	| { kind: "iac-scan" };
-
-/**
- * Where the persisted draft came from. `scope` is the project:environment (or "new" for the
- * create flow) the draft belongs to; `revision` is the server design's content hash at the time
- * it was seeded. `reseed` compares both so a server re-render that changed nothing is a no-op
- * instead of a graph reset that closes the open card and drops in-flight edits.
- */
-export interface DraftSeed {
-	scope: string;
-	revision: string;
-}
-
-/** The sessionStorage key a draft scope persists under — one slot per project:environment. */
-export function draftStorageKey(scope: string): string {
-	return `${DRAFT_STORAGE_PREFIX}:${scope}`;
 }
 
 interface CanvasStore {
@@ -477,8 +84,9 @@ interface CanvasStore {
 	card: WorkspaceCard | null;
 	/** Which scope + server revision the persisted draft was seeded from (null = never seeded). */
 	seed: DraftSeed | null;
+	/** True when anything is pending against the saved design. */
 	dirty: boolean;
-	/** Undo/redo snapshot stacks (node sets; edges re-derived on restore). */
+	/** The undo and redo steps, as the node sets they restore. */
 	past: CanvasNode[][];
 	future: CanvasNode[][];
 	/** Last-saved/loaded snapshot the Pending Changes bar diffs against. */
@@ -487,55 +95,32 @@ interface CanvasStore {
 	discardChanges: () => void;
 	/** Mark the current canvas as the new saved baseline (after a successful deploy). */
 	commitBaseline: () => void;
-	/** Verified cloud identities (server data) — seeded for label/provider lookup. */
+	/** Verified cloud identities (server data) — for label/provider lookup. */
 	identities: CloudIdentityOption[];
 	setIdentities: (identities: CloudIdentityOption[]) => void;
 	getEffectiveIdentity: (id: string) => CloudIdentityOption | null;
 
 	onNodesChange: (changes: NodeChange<CanvasNode>[]) => void;
 	setGraph: (graph: { nodes: CanvasNode[] }) => void;
-	/**
-	 * Seed the draft from the server design WITHOUT discarding what the user is doing:
-	 *   - same scope and revision → nothing changes (the common re-render case);
-	 *   - same scope, new revision, clean draft → the graph and baseline are replaced, and the
-	 *     open inspector survives when its node still exists (form-derived ids are deterministic);
-	 *   - same scope, new revision, dirty draft → only the BASELINE moves, so the pending-changes bar
-	 *     diffs the user's draft against the new server truth instead of losing it;
-	 *   - different scope → a full load, exactly like `setGraph`.
-	 */
+	/** Seed the draft from the server design without discarding what the user is doing. */
 	reseed: (graph: { nodes: CanvasNode[] }, seed: DraftSeed) => void;
 	/** Record the revision the draft now matches (after a save/deploy wrote the design). */
 	setSeedRevision: (revision: string) => void;
-	/** Replace all BYO chart nodes from getProjectByoCharts (out-of-band; not a staged change). */
+	/** Replace all BYO chart nodes (out-of-band; not a staged change). */
 	setChartNodes: (charts: ByoChartState[]) => void;
-	/** Replace all described chart-workload nodes from getProjectChartWorkloads (W5 Path A;
-	 * out-of-band; read-mostly; not a staged change). Each renders as a child of its `chart-` node. */
+	/** Replace all described chart-workload nodes (out-of-band; not a staged change). */
 	setChartWorkloadNodes: (workloads: ChartWorkloadState[]) => void;
-	/** Replace the external cards of a BYO IaC module (out-of-band; read-only; not a staged
-	 * change). Built by `buildIacInventory` from the module's scan + last plan. */
+	/** Replace the external cards of a BYO IaC module (out-of-band; read-only). */
 	setIacNodes: (groups: IacGroup[]) => void;
-	/** The BYO-IaC module's ROOT output names (IacScanReport.outputs) — the choices the service
-	 * bind sheet offers when mapping a facet to an output (#823). Rides the same env round-trip as
-	 * the external cards; empty when there is no BYO-IaC source or it exports none. */
+	/** The BYO-IaC module's ROOT output names — the choices the service bind sheet offers. */
 	iacOutputs: string[];
 	setIacOutputs: (outputs: string[]) => void;
 	/** Replace all marketplace add-on nodes (out-of-band; not a staged change). */
-	setAddonNodes: (
-		addons: {
-			id: string;
-			name: string;
-			version: string;
-			namespace: string;
-			status?: string;
-			health?: string | null;
-			sync?: string | null;
-		}[],
-	) => void;
-	/** Add a node; returns the new node's id (or the existing one's, for a singleton already placed)
-	 * so callers can immediately configure it inline (W5). */
+	setAddonNodes: (addons: AddonCard[]) => void;
+	/** Add a node; returns the new node's id (or the existing one's, for a singleton already placed). */
 	addNode: (kind: NodeKind, position?: { x: number; y: number }) => string;
-	/** Add a node with an explicit config + placement (used by Ask AI proposals + palette variants).
-	 * Returns the new node's id (or the existing singleton's). */
+	/** Add a node with an explicit config + placement. Returns the new node's id (or the existing
+	 * singleton's). */
 	addNodeWithConfig: (
 		kind: NodeKind,
 		config?: Record<string, unknown>,
@@ -543,24 +128,17 @@ interface CanvasStore {
 		position?: { x: number; y: number },
 	) => string;
 	updateNodeConfig: (id: string, patch: Record<string, unknown>) => void;
-	/** Re-place a node on another cloud identity. Returns the notices the move produced — a
-	 * cluster's pinned machine type mapped to the new cloud, or defaulted because it has no
-	 * equivalent there (#5269) — for the caller to SHOW; empty when nothing had to change. */
+	/** Re-place a node on another cloud identity. Returns the notices the move produced. */
 	setNodeIdentity: (
 		id: string,
 		cloudIdentityId: string | null,
 		provider: CloudProviderSlug | null,
 	) => ConversionWarning[];
-	/** Remove nodes. The project root and any `deletable: false` node (out-of-band kinds) are kept;
-	 * commits an undo step. Every delete path — keyboard, danger zone, context menu, AI proposal —
-	 * goes through here, so every delete is undoable. */
+	/** Remove nodes. The project root and any `deletable: false` node are kept; one undo step. */
 	removeNodes: (ids: string[]) => void;
 	duplicateNodes: (ids: string[]) => void;
-	/**
-	 * Show a card on the workspace rail, replacing whatever is there. Pass `{ back: true }` when
-	 * the card is a DETOUR — a control that sends you to the setting that answers it — and the
-	 * card you left is remembered so it can offer a way back.
-	 */
+	/** Show a card on the workspace rail, replacing whatever is there. `{ back: true }` remembers
+	 * the card it replaced, for a detour. */
 	openCard: (card: WorkspaceCard, opts?: { back?: boolean }) => void;
 	/** The card a detour came from, or null. Cleared by any non-detour open. */
 	cardBack: WorkspaceCard | null;
@@ -568,709 +146,446 @@ interface CanvasStore {
 	goBackCard: () => void;
 	/** Close the rail. */
 	closeCard: () => void;
-	/** Compat: `openInspector(id)` = `openCard({kind:"inspector", nodeId})`; null closes the rail. */
+	/** `openInspector(id)` = `openCard({kind:"inspector", nodeId})`; null closes the rail. */
 	openInspector: (id: string | null) => void;
+	/** Take an undo checkpoint ahead of a change. */
 	commit: () => void;
 	undo: () => void;
 	redo: () => void;
 	reset: () => void;
 
-	/** Where each collection card (the Secrets vault) sits. A collection has no store row of its own,
-	 * and its members' positions are never drawn, so the collapsed card needs a position here. */
+	/** Where each collection card (the Secrets vault) sits. */
 	collectionPositions: CollectionPositions;
 	setCollectionPosition: (kind: NodeKind, position: { x: number; y: number }) => void;
-
-	/** A key of the persisted draft that nothing on the board writes or reads any more: the container
-	 * regions that set it are gone, so the store only ever sets it to `{}` (a draft rehydrated from
-	 * an older tab can still carry boxes, until `setGraph`, a discard or a reset clears them). It stays
-	 * because the version-1 draft's key set is pinned by
-	 * `tests/lib/stores/use-canvas-store-draft-persist.test.ts`. NEVER in the DB or the Deploy diff. */
-	containerGeometry: ContainerGeometry;
 
 	/** Canvas view prefs (ephemeral UI state, not persisted). */
 	showConnections: boolean;
 	toggleConnections: () => void;
 	hiddenKinds: NodeKind[];
 	toggleKindVisibility: (kind: NodeKind) => void;
-	/** Non-destructive tidy actions for the canvas-settings popover. */
+	/** Push apart overlapping cards. */
 	repairOverlaps: () => void;
-	/** W3 — apply computed auto-layout positions (elkjs, async in the caller) onto the nodes, and
-	 * re-anchor the collapsed collection cards so a "tidy" lays the whole board out at once. */
+	/** Apply computed auto-layout positions and re-anchor the collection cards. */
 	arrange: (positions: Record<string, XYPosition>) => void;
 
 	getCoreIdentity: () => string | null;
 	getEffectiveProvider: (id: string) => CloudProviderSlug | null;
 }
 
-function makeProjectNode(): CanvasNode {
+/** The server data the unconverted shell still copies in, kept apart from the document. */
+interface LegacyMirror {
+	identities: CloudIdentityOption[];
+	iacOutputs: string[];
+	/** The out-of-band cards, as the legacy setters last built them. */
+	others: CanvasNode[];
+	/** `setState({ dirty: true })`, held until the next save, discard or load. */
+	dirtyHint: boolean;
+}
+
+const mirror = createStore<LegacyMirror>()(() => ({
+	identities: [],
+	iacOutputs: [],
+	others: [],
+	dirtyHint: false,
+}));
+
+/** The board's nodes as the legacy store presents them: the design, then the mirrored cards. */
+function boardNodes(): CanvasNode[] {
+	return board.nodes(mirror.getState().others);
+}
+
+/** The mirrored cards at their current positions, for commands that lay out around them. */
+function placedOthers(): CanvasNode[] {
+	return placeNodes(mirror.getState().others, board.document.getState().positions);
+}
+
+/** Replace the mirrored cards of one kind with `next`, keeping the rest in place. */
+function replaceOthers(kind: NodeKind, next: CanvasNode[]): void {
+	const others = mirror.getState().others;
+	const kept = others.filter((n) => n.data.kind !== kind);
+	// Nothing of this kind before and nothing now: the same array, so nothing re-renders.
+	if (next.length === 0 && kept.length === others.length) return;
+	mirror.setState({ others: [...kept, ...next] });
+}
+
+// ── the projection ───────────────────────────────────────────────────────────────────────────
+
+let edgesMemo: { designNodes: CanvasNode[]; others: CanvasNode[]; edges: CanvasEdge[] } | null =
+	null;
+
+/** The derived edges, recomputed only when the design or the mirrored cards change. */
+function projectEdges(designNodes: CanvasNode[], others: CanvasNode[]): CanvasEdge[] {
+	if (edgesMemo && edgesMemo.designNodes === designNodes && edgesMemo.others === others) {
+		return edgesMemo.edges;
+	}
+	const edges = deriveEdges([...designNodes, ...others]);
+	edgesMemo = { designNodes, others, edges };
+	return edges;
+}
+
+const entryNodes = new WeakMap<HistoryEntry, CanvasNode[]>();
+const stackMemo = new WeakMap<HistoryEntry[], CanvasNode[][]>();
+
+/** A history stack as the node sets its steps restore; the same array for the same stack. */
+function projectStack(stack: HistoryEntry[]): CanvasNode[][] {
+	const cached = stackMemo.get(stack);
+	if (cached) return cached;
+	const projected = stack.map((entry) => {
+		const known = entryNodes.get(entry);
+		if (known) return known;
+		const nodes = placeNodes(entry.designNodes, entry.positions);
+		entryNodes.set(entry, nodes);
+		return nodes;
+	});
+	stackMemo.set(stack, projected);
+	return projected;
+}
+
+let pendingMemo: {
+	designNodes: CanvasNode[];
+	baseline: CanvasNode[];
+	operations: unknown;
+	pending: boolean;
+} | null = null;
+
+/** Whether anything is pending against the saved design, recomputed only when an input moves. */
+function projectPending(): boolean {
+	const d = board.document.getState();
+	if (
+		pendingMemo &&
+		pendingMemo.designNodes === d.designNodes &&
+		pendingMemo.baseline === d.baseline &&
+		pendingMemo.operations === d.operations
+	) {
+		return pendingMemo.pending;
+	}
+	const pending = pendingCount(d) > 0;
+	pendingMemo = {
+		designNodes: d.designNodes,
+		baseline: d.baseline,
+		operations: d.operations,
+		pending,
+	};
+	return pending;
+}
+
+/** The legacy store's data fields, read off the stores that own them. */
+function project(): Pick<
+	CanvasStore,
+	| "nodes"
+	| "edges"
+	| "selectedIds"
+	| "card"
+	| "cardBack"
+	| "seed"
+	| "dirty"
+	| "past"
+	| "future"
+	| "baseline"
+	| "identities"
+	| "iacOutputs"
+	| "collectionPositions"
+	| "showConnections"
+	| "hiddenKinds"
+> {
+	const d = board.document.getState();
+	const v = board.view.getState();
+	const m = mirror.getState();
 	return {
-		id: PROJECT_NODE_ID,
-		type: "project",
-		position: { x: 0, y: 0 },
-		deletable: false,
-		data: {
-			kind: "project",
-			config: NODE_REGISTRY.project.defaultData("aws"),
-			cloud_identity_id: null,
-			provider: null,
-		},
+		nodes: board.nodes(m.others),
+		edges: projectEdges(d.designNodes, m.others),
+		selectedIds: v.selection,
+		card: v.card,
+		cardBack: v.cardBack,
+		seed: d.seed,
+		dirty: projectPending() || m.dirtyHint,
+		past: projectStack(d.history.past),
+		future: projectStack(d.history.future),
+		baseline: d.baseline,
+		identities: m.identities,
+		iacOutputs: m.iacOutputs,
+		collectionPositions: d.collectionPositions,
+		showConnections: v.showConnections,
+		hiddenKinds: v.hiddenKinds,
 	};
 }
 
-export const useCanvasStore = create<CanvasStore>()(
-	persist(
-		(set, get) => ({
-			nodes: [makeProjectNode()],
-			edges: [],
-			iacOutputs: [],
-			selectedIds: [],
-			card: null,
-			cardBack: null,
-			seed: null,
-			dirty: false,
-			past: [],
-			future: [],
-			baseline: [makeProjectNode()],
-			identities: [],
-			// Edges are ON: a dependency graph you have to opt into isn't a dependency graph. The
-			// derived edges (network → cluster → leaves) are what make the board readable as a system.
-			showConnections: true,
-			hiddenKinds: [],
-			collectionPositions: {},
-			containerGeometry: {},
+// A command that touches more than one store is ONE change to the legacy store's subscribers:
+// the projection is refreshed when the outermost command finishes, not after each store's write.
+let commands = 0;
+let stale = false;
 
-			setIdentities: (identities) => set({ identities }),
-
-			onNodesChange: (changes) => {
-				const nodes = applyNodeChanges(changes, get().nodes);
-				const selectedIds = nodes.filter((n) => n.selected).map((n) => n.id);
-				// Edges are derived; only recompute on add/remove, not every drag frame.
-				const structural = changes.some(
-					(c) => c.type === "remove" || c.type === "add",
-				);
-				const dirty =
-					get().dirty ||
-					changes.some(
-						(c) => c.type === "remove" || c.type === "add" || c.type === "position",
-					);
-				set({
-					nodes,
-					selectedIds,
-					dirty,
-					...(structural ? { edges: deriveEdges(nodes) } : {}),
-				});
-			},
-
-			setGraph: ({ nodes }) => {
-				// Preserve any already-loaded BYO chart nodes across a form reseed — they're
-				// out-of-band (loaded from getProjectByoCharts), not part of the form graph, so the
-				// incoming form-derived `nodes` never contain them and would otherwise wipe them.
-				const charts = get().nodes.filter((n) => OUT_OF_BAND.has(n.data.kind));
-				const base = nodes.some((n) => n.id === PROJECT_NODE_ID)
-					? nodes
-					: [makeProjectNode(), ...nodes];
-				// A freshly-loaded graph arrives from formToGraph as a flat grid. Lay it out by ZONE so it
-				// opens looking like the system it describes. Positions aren't part of the staged diff
-				// (diffNodes compares config + placement, never position), so this can never register as
-				// a pending change.
-				const seeded = [...base, ...charts];
-				const provider = (id: string) =>
-					seeded.find((n) => n.id === id)?.data.provider ??
-					seeded.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ??
-					null;
-				const withRoot = applyLayout(seeded, layoutZoned(seeded, provider));
-				// A project saved before its cloud's WAF offer was withdrawn (#1841) still carries
-				// `waf_enabled: true`. Normalize the DESIRED graph but NOT the baseline below, so
-				// the coercion appears in the staged-changes bar as a pending change the user can
-				// see and save — rather than either a silent rewrite or a disabled switch they have
-				// no way to clear. `dirty` follows suit, so Save is live.
-				const normalized = normalizeCapacityAcrossNodes(normalizeWafAcrossNodes(withRoot));
-				set({
-					nodes: normalized,
-					edges: deriveEdges(normalized),
-					selectedIds: [],
-					card: null,
-					dirty: normalized !== withRoot,
-					past: [],
-					future: [],
-					// The loaded graph is the saved state → it becomes the diff baseline. (Chart
-					// nodes ride along but diffNodes skips them, so they never show as changes.)
-					baseline: structuredClone(withRoot),
-					// A stale box from an older draft does not outlive a freshly loaded graph.
-					containerGeometry: {},
-				});
-			},
-
-			reseed: (graph, seed) => {
-				const cur = get();
-				const sameScope = cur.seed?.scope === seed.scope;
-				// The common case — a server re-render (revalidate, a sibling mutation, a status refetch)
-				// handed us the design we were already seeded from. Before this existed the effect
-				// re-ran `setGraph` on every prop identity change, which closed the open card and
-				// discarded every unsaved edit; the maintainer's words were "they don't hold their
-				// state". Nothing changed on the server, so nothing changes here.
-				if (sameScope && cur.seed?.revision === seed.revision) return;
-				if (!sameScope) {
-					get().setGraph(graph);
-					set({ seed });
-					return;
-				}
-				// Same scope, the server design moved. Lay the incoming graph out exactly as setGraph
-				// would (the seeded positions are a flat grid) so the baseline and a clean reload agree.
-				const charts = cur.nodes.filter((n) => OUT_OF_BAND.has(n.data.kind));
-				const base = graph.nodes.some((n) => n.id === PROJECT_NODE_ID)
-					? graph.nodes
-					: [makeProjectNode(), ...graph.nodes];
-				const seeded = [...base, ...charts];
-				const provider = (id: string) =>
-					seeded.find((n) => n.id === id)?.data.provider ??
-					seeded.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ??
-					null;
-				const withRoot = applyLayout(seeded, layoutZoned(seeded, provider));
-				if (cur.dirty) {
-					// The user has a draft in flight. The server truth is what the pending-changes bar
-					// must diff AGAINST, so only the baseline moves; the draft, the card, the undo history
-					// all stay. No three-way merge — the bar shows the honest diff and the user decides.
-					set({ baseline: structuredClone(withRoot), seed });
-					return;
-				}
-				const normalized = normalizeCapacityAcrossNodes(normalizeWafAcrossNodes(withRoot));
-				set({
-					nodes: normalized,
-					edges: deriveEdges(normalized),
-					baseline: structuredClone(withRoot),
-					dirty: normalized !== withRoot,
-					// Form-derived ids are deterministic (`${kind}-${name}`), so the card the user had open
-					// almost always still names a node in the new graph — keep it, and the selection.
-					card: keepCard(cur.card, normalized),
-					selectedIds: cur.selectedIds.filter((id) => normalized.some((n) => n.id === id)),
-					past: [],
-					future: [],
-					seed,
-				});
-			},
-
-			setSeedRevision: (revision) =>
-				set((s) => ({ seed: s.seed ? { ...s.seed, revision } : null })),
-
-			setChartNodes: (charts) => {
-				const nonChart = get().nodes.filter((n) => n.data.kind !== "chart");
-				const chartNodes: CanvasNode[] = charts.map((c, i) => ({
-					id: `chart-${c.id}`,
-					type: "chart",
-					// Non-deletable: detaching is out-of-band (detachByoChart) via the node's own
-					// action, so a stray keyboard-delete can't orphan a project_addons row.
-					deletable: false,
-					position: { x: 900, y: 160 + i * 150 },
-					data: {
-						kind: "chart",
-						config: {
-							id: c.id,
-							repoUrl: c.repoUrl,
-							chartPath: c.chartPath,
-							ref: c.ref,
-							namespace: c.namespace,
-							status: c.status,
-							health: c.health,
-							sync: c.sync,
-							scanStatus: c.scanStatus,
-							scanReport: c.scanReport,
-						},
-						cloud_identity_id: null,
-						provider: null,
-					},
-				}));
-				const next = [...nonChart, ...chartNodes];
-				set({ nodes: next, edges: deriveEdges(next) });
-			},
-
-			setChartWorkloadNodes: (workloads) => {
-				const others = get().nodes.filter((n) => n.data.kind !== "chart_workload");
-				// Stack each chart's described workloads beneath its parent `chart-` node (fallback to a
-				// column if the chart node hasn't loaded yet — the two loaders run independently). Like
-				// chart nodes, these are non-deletable: they're an out-of-band description, not a staged
-				// change, so a stray Backspace must not orphan the render.
-				const perChart = new Map<string, number>();
-				const workloadNodes: CanvasNode[] = workloads.map((w) => {
-					const parent = others.find((n) => n.id === `chart-${w.chartId}`);
-					const i = perChart.get(w.chartId) ?? 0;
-					perChart.set(w.chartId, i + 1);
-					const px = parent?.position.x ?? 900;
-					const py = parent?.position.y ?? 160;
-					return {
-						id: `cw-${w.id}`,
-						type: "chart_workload",
-						deletable: false,
-						position: { x: px + 40, y: py + 150 + i * 130 },
-						data: {
-							kind: "chart_workload",
-							config: {
-								id: w.id,
-								chartId: w.chartId,
-								name: w.name,
-								kind: w.kind,
-								rendered: w.rendered,
-								bindings: w.bindings,
-								config: w.config,
-								valuePaths: w.valuePaths,
-							},
-							cloud_identity_id: null,
-							provider: null,
-						},
-					};
-				});
-				const next = [...others, ...workloadNodes];
-				set({ nodes: next, edges: deriveEdges(next) });
-			},
-
-			setAddonNodes: (addons) => {
-				const others = get().nodes.filter((n) => n.data.kind !== "addon");
-				const addonNodes: CanvasNode[] = addons.map((a, i) => ({
-					id: `addon-${a.id}`,
-					type: "addon",
-					// Not keyboard-deletable: an add-on is removed by disabling it (which tears down its
-					// ArgoCD Application), never by a stray Backspace on the board.
-					deletable: false,
-					position: { x: 120 + (i % 2) * 270, y: 520 + Math.floor(i / 2) * 150 },
-					data: {
-						kind: "addon",
-						config: {
-							id: a.id,
-							name: a.name,
-							version: a.version,
-							namespace: a.namespace,
-							status: a.status,
-							health: a.health,
-							sync: a.sync,
-						},
-						cloud_identity_id: null,
-						provider: null,
-					},
-				}));
-				const next = [...others, ...addonNodes];
-				set({ nodes: next, edges: deriveEdges(next) });
-			},
-
-			setIacNodes: (groups) => {
-				const prev = get().nodes;
-				// Where each external card already sits. This is fed by the environment-status query,
-				// which refetches on every environment, job or add-on hint (it used to poll) — so without
-				// remembering positions, a card the user dragged somewhere sensible would snap back to the
-				// default grid on the next refetch, over and over. The card's CONTENT still refreshes; only its place is kept.
-				const placed = new Map(
-					prev
-						.filter((n) => n.data.kind === "external")
-						.map((n) => [n.id, n.position] as const),
-				);
-				const others = prev.filter((n) => n.data.kind !== "external");
-				const iacNodes: CanvasNode[] = groups.map((g, i) => {
-					const id = `external-${g.key}`;
-					return {
-						id,
-						type: "external",
-						// Read-only: the customer's module owns these. There is nothing to delete here —
-						// removing a resource means editing their Terraform, not this board.
-						deletable: false,
-						position:
-							placed.get(id) ??
-							// Only a card the board has never seen needs a home.
-							{ x: 120 + (i % 3) * 300, y: 340 + Math.floor(i / 3) * 190 },
-						data: {
-							kind: "external",
-							config: {
-								key: g.key,
-								mappedKind: g.kind,
-								module: g.module,
-								source: g.source,
-								members: g.members,
-							},
-							cloud_identity_id: null,
-							provider: null,
-						},
-					};
-				});
-				const next = [...others, ...iacNodes];
-				set({ nodes: next, edges: deriveEdges(next) });
-			},
-
-			setIacOutputs: (outputs) => set({ iacOutputs: outputs }),
-
-			commit: () =>
-				set((s) => ({
-					past: [...s.past, structuredClone(s.nodes)].slice(-HISTORY_CAP),
-					future: [],
-				})),
-
-			addNode: (kind, position) => {
-				const { nodes } = get();
-				if (SINGLETON_KINDS.includes(kind)) {
-					const existing = nodes.find((n) => n.data.kind === kind);
-					if (existing) {
-						set({ card: { kind: "inspector", nodeId: existing.id }, selectedIds: [existing.id] });
-						return existing.id;
-					}
-				}
-				get().commit();
-				const provider = get().getEffectiveProvider(PROJECT_NODE_ID) ?? "aws";
-				const count = nodes.length;
-				const config = applyUniqueName(
-					kind,
-					NODE_REGISTRY[kind].defaultData(provider),
-					nodes,
-				);
-				// Array kinds are UNIQUE on (project, name) — suffix to avoid clashes.
-				const node: CanvasNode = {
-					id: newId(kind),
-					type: kind,
-					position: position ?? { x: 120 + count * 48, y: 180 + count * 36 },
-					data: buildNodeData(kind, config, null, null),
-				};
-				const next = [...nodes, node];
-				set({
-					nodes: next,
-					edges: deriveEdges(next),
-					card: { kind: "inspector", nodeId: node.id },
-					selectedIds: [node.id],
-					dirty: true,
-				});
-				return node.id;
-			},
-
-			addNodeWithConfig: (kind, config, cloudIdentityId, position) => {
-				const { nodes, identities } = get();
-				if (SINGLETON_KINDS.includes(kind)) {
-					const existing = nodes.find((n) => n.data.kind === kind);
-					if (existing) {
-						set({ card: { kind: "inspector", nodeId: existing.id }, selectedIds: [existing.id] });
-						return existing.id;
-					}
-				}
-				get().commit();
-				const ownFound = identities.find(
-					(i) => i.id === cloudIdentityId,
-				)?.provider;
-				const ownProvider =
-					ownFound && isCloudProviderSlug(ownFound) ? ownFound : null;
-				const provider =
-					ownProvider ?? get().getEffectiveProvider(PROJECT_NODE_ID) ?? "aws";
-				const merged: Record<string, unknown> = {
-					...NODE_REGISTRY[kind].defaultData(provider),
-					...config,
-				};
-				if (typeof merged.name === "string") {
-					const taken = new Set(
-						nodes
-							.filter((n) => n.data.kind === kind)
-							.map((n) => configName(n.data))
-							.filter((v): v is string => typeof v === "string"),
-					);
-					merged.name = uniqueName(merged.name, taken);
-				}
-				const count = nodes.length;
-				const node: CanvasNode = {
-					id: newId(kind),
-					type: kind,
-					// W5 click-to-place: drop at the given position (viewport centre) or the cascade fallback.
-					position: position ?? { x: 120 + count * 48, y: 180 + count * 36 },
-					data: buildNodeData(kind, merged, cloudIdentityId ?? null, ownProvider),
-				};
-				const next = [...nodes, node];
-				set({
-					nodes: next,
-					edges: deriveEdges(next),
-					card: { kind: "inspector", nodeId: node.id },
-					selectedIds: [node.id],
-					dirty: true,
-				});
-				return node.id;
-			},
-
-			updateNodeConfig: (id, patch) => {
-				const next = normalizeCapacityAcrossNodes(
-					normalizeWafAcrossNodes(
-						normalizeKeylessAcrossNodes(
-							get().nodes.map((n) =>
-								n.id === id ? { ...n, data: withConfig(n.data, patch) } : n,
-							),
-						),
-					),
-				);
-				set({ nodes: next, edges: deriveEdges(next), dirty: true });
-			},
-
-			setNodeIdentity: (id, cloudIdentityId, provider) => {
-				get().commit();
-				const prev = get().nodes;
-				const placed = convertInstanceTypesAcrossNodes(
-					prev,
-					prev.map((n) =>
-						n.id === id
-							? { ...n, data: withPlacement(n.data, cloudIdentityId, provider) }
-							: n,
-					),
-				);
-				const next = normalizeCapacityAcrossNodes(
-					normalizeWafAcrossNodes(normalizeKeylessAcrossNodes(placed.nodes)),
-				);
-				set({ nodes: next, edges: deriveEdges(next), dirty: true });
-				return placed.warnings;
-			},
-
-			removeNodes: (ids) => {
-				const { nodes } = get();
-				// The project root and every `deletable: false` node (charts, described workloads,
-				// add-ons, BYO-IaC cards — all removed out-of-band by their own action) are kept.
-				//
-				// The danger zone, the collection row's remove and an accepted AI proposal all land
-				// here. React Flow's own `deleteKeyCode` does NOT: it applies the removal straight to
-				// the node array through `onNodesChange`, so a keyboard delete neither respects
-				// `deletable: false` nor commits an undo step. The board turns that key handling off
-				// and routes Backspace/Delete here — in the canvas lane (#4251), not this one — which
-				// is why this comment names the paths rather than claiming all of them.
-				const removable = ids.filter((id) => {
-					if (id === PROJECT_NODE_ID) return false;
-					const node = nodes.find((n) => n.id === id);
-					return !!node && node.deletable !== false;
-				});
-				if (removable.length === 0) return;
-				get().commit();
-				const next = nodes.filter((n) => !removable.includes(n.id));
-				set({
-					nodes: next,
-					edges: deriveEdges(next),
-					selectedIds: [],
-					card: keepCard(get().card, next),
-					dirty: true,
-				});
-			},
-
-			duplicateNodes: (ids) => {
-				const dupable = get().nodes.filter(
-					(n) =>
-						ids.includes(n.id) &&
-						NODE_REGISTRY[n.data.kind].cardinality === "array",
-				);
-				if (dupable.length === 0) return;
-				get().commit();
-				const taken = new Set(
-					get().nodes
-						.map((n) => configName(n.data))
-						.filter((v): v is string => typeof v === "string"),
-				);
-				const clones = dupable.map((n) => {
-					const base = `${configName(n.data) || n.data.kind}-copy`;
-					const name = uniqueName(base, taken);
-					taken.add(name);
-					return {
-						...structuredClone(n),
-						id: newId(n.data.kind),
-						position: { x: n.position.x + 48, y: n.position.y + 48 },
-						selected: false,
-						data: withConfig(n.data, { name }),
-					} satisfies CanvasNode;
-				});
-				const next = [...get().nodes, ...clones];
-				set({ nodes: next, edges: deriveEdges(next), dirty: true });
-			},
-
-			openCard: (card, opts) =>
-				set((s) => ({ card, cardBack: opts?.back ? s.card : null })),
-			closeCard: () => set({ card: null, cardBack: null }),
-			goBackCard: () =>
-				set((s) => (s.cardBack ? { card: s.cardBack, cardBack: null } : {})),
-			openInspector: (id) =>
-				set({ card: id ? { kind: "inspector", nodeId: id } : null }),
-
-			undo: () => {
-				const { past, nodes, future, card } = get();
-				if (past.length === 0) return;
-				const prev = past[past.length - 1];
-				set({
-					nodes: prev,
-					edges: deriveEdges(prev),
-					past: past.slice(0, -1),
-					future: [structuredClone(nodes), ...future].slice(0, HISTORY_CAP),
-					selectedIds: [],
-					// Undoing a drag must not close the activity log; only an inspector whose node the
-					// undo removed goes away.
-					card: keepCard(card, prev),
-					dirty: true,
-				});
-			},
-
-			redo: () => {
-				const { future, nodes, past, card } = get();
-				if (future.length === 0) return;
-				const nextNodes = future[0];
-				set({
-					nodes: nextNodes,
-					edges: deriveEdges(nextNodes),
-					future: future.slice(1),
-					past: [...past, structuredClone(nodes)].slice(-HISTORY_CAP),
-					selectedIds: [],
-					card: keepCard(card, nextNodes),
-					dirty: true,
-				});
-			},
-
-			reset: () =>
-				set({
-					nodes: [makeProjectNode()],
-					edges: [],
-					selectedIds: [],
-					card: null,
-					seed: null,
-					dirty: false,
-					past: [],
-					future: [],
-					baseline: [makeProjectNode()],
-					collectionPositions: {},
-					containerGeometry: {},
-				}),
-
-			discardChanges: () => {
-				const baseline = structuredClone(get().baseline);
-				set({
-					nodes: baseline,
-					edges: deriveEdges(baseline),
-					selectedIds: [],
-					card: keepCard(get().card, baseline),
-					dirty: false,
-					past: [],
-					future: [],
-					// Discard reverts the VIEW too — a stale box from an older draft goes with it.
-					containerGeometry: {},
-				});
-			},
-
-			commitBaseline: () => set((s) => ({ baseline: structuredClone(s.nodes), dirty: false })),
-
-			setCollectionPosition: (kind, position) =>
-				set((s) => ({
-					collectionPositions: { ...s.collectionPositions, [kind]: position },
-					dirty: true,
-				})),
-
-			toggleConnections: () => set((s) => ({ showConnections: !s.showConnections })),
-
-			toggleKindVisibility: (kind) =>
-				set((s) => ({
-					hiddenKinds: s.hiddenKinds.includes(kind)
-						? s.hiddenKinds.filter((k) => k !== kind)
-						: [...s.hiddenKinds, kind],
-				})),
-
-			repairOverlaps: () => {
-				get().commit();
-				const next = spreadOverlaps(get().nodes);
-				set({ nodes: next, dirty: true });
-			},
-
-			arrange: (positions) => {
-				get().commit();
-				set((s) => ({
-					nodes: s.nodes.map((n) =>
-						positions[n.id] ? { ...n, position: positions[n.id] } : n,
-					),
-					// A tidy re-anchors the collapsed vault cards on their freshly-laid-out members.
-					collectionPositions: {},
-					dirty: true,
-				}));
-			},
-
-			getCoreIdentity: () => coreIdentity(get().nodes),
-			getEffectiveIdentity: (id) => {
-				const { nodes, identities } = get();
-				const node = nodes.find((n) => n.id === id);
-				if (!node) return null;
-				const effId = node.data.cloud_identity_id ?? coreIdentity(nodes);
-				return identities.find((i) => i.id === effId) ?? null;
-			},
-			getEffectiveProvider: (id) => {
-				const node = get().nodes.find((n) => n.id === id);
-				if (!node) return null;
-				if (node.data.provider) return node.data.provider;
-				const project = get().nodes.find((n) => n.id === PROJECT_NODE_ID);
-				return project?.data.provider ?? null;
-			},
-		}),
-		{
-			// The un-scoped slot. `switchDraftScope` re-points persistence at a per-project:environment
-			// key before the workbench seeds, so one tab designing two environments keeps two drafts
-			// instead of showing staging's edits on production. Until the workbench calls it this is
-			// the legacy single slot, unchanged.
-			name: DRAFT_STORAGE_PREFIX,
-			storage: createJSONStorage(() => sessionStorage),
-			version: 1,
-			// Persist the graph + baseline (so the pending-changes diff survives reload), where the
-			// collection cards were dragged to, the `containerGeometry` key (see its declaration), which
-			// server revision all of it was seeded from, and WHETHER IT IS DIRTY; identities are server
-			// data and history is ephemeral.
-			//
-			// `dirty` is part of the draft, not a fact about this page load. Without it a draft
-			// restored from another environment's slot came back reading clean, and `reseed` asks
-			// exactly that question before deciding whether a moved server design may replace the
-			// graph — so the next revision bump would have overwritten unsaved work it believed
-			// wasn't there.
-			partialize: (state) => ({
-				nodes: state.nodes,
-				edges: state.edges,
-				baseline: state.baseline,
-				collectionPositions: state.collectionPositions,
-				containerGeometry: state.containerGeometry,
-				seed: state.seed,
-				dirty: state.dirty,
-			}),
-		},
-	),
-);
-
-/**
- * Point the persisted draft at `scope`'s own sessionStorage slot and load it. Returns true when a
- * draft seeded for exactly that scope was restored; false when the slot was empty or held another
- * scope's draft (a stale slot is discarded rather than shown as this environment's design), in
- * which case the store is reset and the caller seeds it from the server.
- */
-export async function switchDraftScope(
-	scope: string,
-	/**
-	 * Whether this switch is still the one the caller wants, asked AFTER the await. Both the store
-	 * and the persistence pointer are global, so a superseded switch resuming late would rehydrate
-	 * the NEW scope's slot, find it does not match the scope it was called for, and `reset()` a
-	 * board that had already been seeded correctly. The caller's own `cancelled` flag cannot reach
-	 * in here, so it is handed the question instead. Defaults to "yes" for callers with no race.
-	 * Found in review.
-	 */
-	stillWanted: () => boolean = () => true,
-): Promise<boolean> {
-	const key = draftStorageKey(scope);
-	useCanvasStore.persist.setOptions({ name: key });
-	let raw: string | null = null;
-	try {
-		raw = sessionStorage.getItem(key);
-	} catch {
-		raw = null;
+/** Refresh the projection, unless a command is still in progress. */
+function sync(): void {
+	if (commands > 0) {
+		stale = true;
+		return;
 	}
-	if (!raw) {
-		useCanvasStore.getState().reset();
-		return false;
-	}
-	await useCanvasStore.persist.rehydrate();
-	// Superseded while suspended: the pointer and the state now belong to another scope, so neither
-	// the mismatch below nor the history clear is ours to act on. Returning without touching the
-	// store leaves the run that overtook us in charge of it.
-	if (!stillWanted()) return false;
-	if (useCanvasStore.getState().seed?.scope !== scope) {
-		useCanvasStore.getState().reset();
-		return false;
-	}
-	// `rehydrate()` MERGES the persisted keys over the live state, so everything outside
-	// `partialize` — the undo stacks, the open card, the selection — is whatever the scope we just
-	// left had. An undo after switching would then replay the OTHER environment's node set into
-	// this environment's draft and mark it dirty. The history belongs to the editing session of one
-	// scope; it does not travel.
-	useCanvasStore.setState({ past: [], future: [], card: null, selectedIds: [] });
-	return true;
+	stale = false;
+	const next = project();
+	const current = facade.getState();
+	const changed =
+		next.nodes !== current.nodes ||
+		next.edges !== current.edges ||
+		next.selectedIds !== current.selectedIds ||
+		next.card !== current.card ||
+		next.cardBack !== current.cardBack ||
+		next.seed !== current.seed ||
+		next.dirty !== current.dirty ||
+		next.past !== current.past ||
+		next.future !== current.future ||
+		next.baseline !== current.baseline ||
+		next.identities !== current.identities ||
+		next.iacOutputs !== current.iacOutputs ||
+		next.collectionPositions !== current.collectionPositions ||
+		next.showConnections !== current.showConnections ||
+		next.hiddenKinds !== current.hiddenKinds;
+	if (changed) facade.setState(next);
 }
 
-export { PROJECT_NODE_ID };
+/** Run `command` as one change to the legacy store. */
+function run<T>(command: () => T): T {
+	commands++;
+	try {
+		return command();
+	} finally {
+		commands--;
+		if (commands === 0 && stale) sync();
+	}
+}
+
+const facade = createStore<CanvasStore>()(() => ({
+	...project(),
+
+	setIdentities: (identities) => mirror.setState({ identities }),
+
+	getEffectiveIdentity: (id) =>
+		effectiveIdentity(boardNodes(), id, mirror.getState().identities),
+
+	onNodesChange: (changes) =>
+		run(() => {
+			const others = mirror.getState().others;
+			const next = board.onNodesChange(changes, others);
+			if (next !== others) mirror.setState({ others: next });
+		}),
+
+	setGraph: (graph) =>
+		run(() => {
+			board.load(graph, mirror.getState().others);
+			mirror.setState({ dirtyHint: false });
+		}),
+
+	reseed: (graph, seed) =>
+		run(() => {
+			const outcome = board.reseed(graph, seed, mirror.getState().others);
+			if (outcome === "loaded" || outcome === "replaced") {
+				mirror.setState({ dirtyHint: false });
+			}
+		}),
+
+	setSeedRevision: (revision) => board.document.getState().setSeedRevision(revision),
+
+	setChartNodes: (charts) => replaceOthers("chart", chartNodes(charts)),
+
+	setChartWorkloadNodes: (workloads) => {
+		const kept = placedOthers().filter((n) => n.data.kind !== "chart_workload");
+		replaceOthers("chart_workload", chartWorkloadNodes(workloads, kept));
+	},
+
+	setIacNodes: (groups) => replaceOthers("external", iacNodes(groups)),
+
+	setIacOutputs: (outputs) => mirror.setState({ iacOutputs: outputs }),
+
+	setAddonNodes: (addons) => replaceOthers("addon", addonNodes(addons)),
+
+	addNode: (kind, position) => run(() => board.addNode(kind, position)),
+
+	addNodeWithConfig: (kind, config, cloudIdentityId, position) =>
+		run(() => {
+			const ownFound = mirror
+				.getState()
+				.identities.find((i) => i.id === cloudIdentityId)?.provider;
+			const ownProvider = ownFound && isCloudProviderSlug(ownFound) ? ownFound : null;
+			return board.addNodeWithConfig(
+				kind,
+				config,
+				cloudIdentityId ?? null,
+				position,
+				ownProvider,
+			);
+		}),
+
+	updateNodeConfig: (id, patch) => {
+		const others = mirror.getState().others;
+		if (others.some((n) => n.id === id)) {
+			// A card the design does not own: its config is not a design edit and is not undone.
+			mirror.setState({
+				others: others.map((n) =>
+					n.id === id ? { ...n, data: withConfig(n.data, patch) } : n,
+				),
+			});
+			return;
+		}
+		board.document.getState().updateNodeConfig(id, patch);
+	},
+
+	setNodeIdentity: (id, cloudIdentityId, provider) =>
+		board.document.getState().setNodeIdentity(id, cloudIdentityId, provider),
+
+	removeNodes: (ids) => run(() => board.removeNodes(ids, mirror.getState().others)),
+
+	duplicateNodes: (ids) => {
+		board.document.getState().duplicateNodes(ids);
+	},
+
+	openCard: (card, opts) => board.view.getState().openCard(card, opts),
+	goBackCard: () => board.view.getState().goBackCard(),
+	closeCard: () => board.view.getState().openCard(null),
+	openInspector: (id) => {
+		// The card a detour came from is left as it is, as it always was by this shim.
+		const card: WorkspaceCard | null = id ? { kind: "inspector", nodeId: id } : null;
+		board.view.setState({
+			card,
+			subject: subjectOfCard(card),
+			tab: tabOfCard(card),
+			focus: null,
+		});
+	},
+
+	commit: () => board.document.getState().checkpoint("commit"),
+	undo: () => run(() => board.undo(mirror.getState().others)),
+	redo: () => run(() => board.redo(mirror.getState().others)),
+
+	reset: () =>
+		run(() => {
+			board.reset();
+			mirror.setState({ others: [], dirtyHint: false });
+		}),
+
+	discardChanges: () =>
+		run(() => {
+			board.discard(mirror.getState().others);
+			mirror.setState({ dirtyHint: false });
+		}),
+
+	commitBaseline: () =>
+		run(() => {
+			board.document.getState().commitBaseline();
+			mirror.setState({ dirtyHint: false });
+		}),
+
+	setCollectionPosition: (kind, position) =>
+		board.document.getState().setCollectionPosition(kind, position),
+
+	toggleConnections: () => board.view.getState().toggleConnections(),
+	toggleKindVisibility: (kind) => board.view.getState().toggleKindVisibility(kind),
+
+	repairOverlaps: () => board.document.getState().repairOverlaps(placedOthers()),
+	arrange: (positions) => board.document.getState().arrange(positions),
+
+	getCoreIdentity: () => coreIdentity(board.document.getState().designNodes),
+	getEffectiveProvider: (id) => effectiveProvider(boardNodes(), id),
+}));
+
+board.document.subscribe(sync);
+board.view.subscribe(sync);
+mirror.subscribe(sync);
+
+/** A node set handed to `setState`, as a history step that restores it. */
+function entryOf(nodes: CanvasNode[]): HistoryEntry {
+	const d = board.document.getState();
+	const positions: Positions = { ...d.positions };
+	for (const node of nodes) positions[node.id] = node.position;
+	return {
+		designNodes: nodes.filter(isDesignNode).map((n) => designPart(n)),
+		positions,
+		collectionPositions: d.collectionPositions,
+		operations: d.operations,
+		label: "restored",
+		coalesceKey: null,
+		at: 0,
+	};
+}
+
+/**
+ * The legacy `setState`: each key is written to the store that owns it. `edges` is derived and is
+ * not written; `dirty` is derived too, and writing it sets or clears the legacy allowance only.
+ */
+function setLegacyState(
+	partial: Partial<CanvasStore> | ((state: CanvasStore) => Partial<CanvasStore>),
+): void {
+	const patch = typeof partial === "function" ? partial(facade.getState()) : partial;
+	run(() => {
+		const { nodes, baseline, past, future } = patch;
+		if (nodes !== undefined) {
+			board.document.getState().replaceNodes(nodes);
+			const nodeView: Record<string, NodeViewFlags> = {};
+			for (const node of nodes) {
+				const flags = flagsOf(node);
+				if (Object.keys(flags).length > 0) nodeView[node.id] = flags;
+			}
+			board.view.getState().setNodeView(nodeView);
+			mirror.setState({
+				others: nodes.filter((n) => !isDesignNode(n)).map((n) => designPart(n, n.position)),
+			});
+		}
+		if (baseline !== undefined) board.document.getState().replaceBaseline(baseline);
+		if (past !== undefined || future !== undefined) {
+			const history = board.document.getState().history;
+			board.document.getState().replaceHistory({
+				past: past === undefined ? history.past : past.map(entryOf),
+				future: future === undefined ? history.future : future.map(entryOf),
+			});
+		}
+		if ("seed" in patch) board.document.setState({ seed: patch.seed ?? null });
+		if (patch.collectionPositions !== undefined) {
+			board.document.setState({ collectionPositions: patch.collectionPositions });
+		}
+		if ("card" in patch) {
+			const card = patch.card ?? null;
+			board.view.setState({ card, subject: subjectOfCard(card), tab: tabOfCard(card) });
+		}
+		if ("cardBack" in patch) board.view.setState({ cardBack: patch.cardBack ?? null });
+		if (patch.selectedIds !== undefined) board.view.getState().setSelection(patch.selectedIds);
+		if (patch.showConnections !== undefined) {
+			board.view.setState({ showConnections: patch.showConnections });
+		}
+		if (patch.hiddenKinds !== undefined) board.view.setState({ hiddenKinds: patch.hiddenKinds });
+		if (patch.identities !== undefined) mirror.setState({ identities: patch.identities });
+		if (patch.iacOutputs !== undefined) mirror.setState({ iacOutputs: patch.iacOutputs });
+		if (patch.dirty !== undefined) mirror.setState({ dirtyHint: patch.dirty });
+	});
+}
+
+/** The legacy store as a hook: `useCanvasStore((s) => s.nodes)`. */
+function useCanvasStoreHook<T>(selector: (state: CanvasStore) => T): T {
+	return useStore(facade, selector);
+}
+
+/**
+ * The legacy canvas store. A hook with a selector, plus `getState`, `setState` and `subscribe` —
+ * the shape it always had. New code reads `lib/canvas/store/use-board.ts` instead.
+ */
+export const useCanvasStore = Object.assign(useCanvasStoreHook, {
+	getState: facade.getState,
+	setState: setLegacyState,
+	subscribe: facade.subscribe,
+	persist: {
+		/** Write the draft under another key from now on (the old `persist.setOptions`). */
+		setOptions: (options: { name: string }) => board.setDraftKey(options.name),
+	},
+});
+
+/**
+ * Point the persisted draft at `scope`'s own sessionStorage slot and load it. Resolves true when a
+ * draft seeded for exactly that scope was restored; false when the slot was empty or held another
+ * scope's draft, in which case the store is reset and the caller seeds it from the server.
+ *
+ * The read is synchronous; the promise is the signature the callers of the old store await.
+ */
+export async function switchDraftScope(scope: string): Promise<boolean> {
+	return run(() => {
+		mirror.setState({ others: [], dirtyHint: false });
+		return board.openDraftScope(scope);
+	});
+}

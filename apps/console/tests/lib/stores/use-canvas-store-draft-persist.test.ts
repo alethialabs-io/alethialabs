@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The draft a tab keeps across a reload (#6762): which sessionStorage slot it is written to, which
-// keys it holds, and that a draft written in today's format comes back as the same board with the
-// same pending changes.
+// keys it holds, and that a draft written in an earlier format comes back as the same board with
+// the same pending changes.
 //
 // `tests/fixtures/canvas/draft-v1.json` is a version-1 draft typed by hand — a saved design with one
 // field edited, one card added and one removed. It is not a capture of what the store wrote, so it
 // stays a fixed point: whatever the persisted format becomes, a tab that still holds this blob has
 // to open as this board.
+//
+// The format the store WRITES is version 2 since the store split (#6764): the design and the card
+// positions are stored apart, and nothing derivable is stored — no `edges`, no `dirty`, and no
+// `containerGeometry`, which nothing had read or written for some time.
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -79,7 +83,7 @@ describe("where and what the draft persists", () => {
 		expect(readSlot().state.seed).toEqual({ scope: SCOPE, revision: "rev-1" });
 	});
 
-	it("persists exactly these keys, at version 1", async () => {
+	it("persists exactly these keys, at version 2", async () => {
 		await switchDraftScope(SCOPE);
 		board().reseed(
 			{ nodes: [projectNode(), databaseNode("orders")] },
@@ -89,21 +93,23 @@ describe("where and what the draft persists", () => {
 		board().addNode("bucket");
 
 		const slot = readSlot();
-		expect(slot.version).toBe(1);
+		expect(slot.version).toBe(2);
 		expect(Object.keys(slot.state).sort()).toEqual([
+			"appliedSeedKeys",
+			"arranged",
 			"baseline",
 			"collectionPositions",
-			"containerGeometry",
-			"dirty",
-			"edges",
-			"nodes",
+			"designNodes",
+			"operations",
+			"positions",
 			"seed",
 		]);
 		expect(slot.state.seed).toEqual({ scope: SCOPE, revision: "rev-1" });
-		expect(slot.state.dirty).toBe(true);
+		// Whether the draft is dirty is not stored: it is what differs from the baseline.
+		expect(board().dirty).toBe(true);
 	});
 
-	it("the hand-written draft holds the same keys the store writes", () => {
+	it("the hand-written draft holds the keys version 1 wrote", () => {
 		expect(Object.keys(draftV1.state).sort()).toEqual([
 			"baseline",
 			"collectionPositions",

@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { draftScope, fnv1a32, stableStringify } from "@/lib/canvas/design-revision";
+import { CanvasStoreProvider } from "@/lib/canvas/store/canvas-store-provider";
 import { switchDraftScope, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { RegionError } from "@/components/errors/region-error";
 import { BoardPreview, BoardPreviewProvider } from "./canvas/board-preview";
@@ -90,11 +91,7 @@ export function DesignProjectWorkbench({
 	// failed design load, not a board still loading.
 	const [seedFailedFor, setSeedFailedFor] = useState<string | null>(null);
 
-	// Identities are server data the store looks up for labels; refresh them whenever the server
-	// sends a new list.
-	useEffect(() => {
-		useCanvasStore.getState().setIdentities(cloudIdentities);
-	}, [cloudIdentities]);
+	const scope = draftScope(projectId, environmentId);
 
 	// The seed effect is keyed on WHAT the server design is (project, environment, content hash),
 	// never on the identity of the prop carrying it: a server component re-renders on every
@@ -104,67 +101,65 @@ export function DesignProjectWorkbench({
 	//
 	// The identity list is part of the revision, and this is not belt-and-braces. `formToGraph`
 	// resolves `providerOf(id)` and BAKES the result into `data.provider` on every node, and
-	// `getEffectiveProvider` reads that rather than re-resolving against the store — so the provider
-	// stamped on a node is a snapshot of the identity list at seed time. With the seed no longer
-	// re-running on every render, a design referencing an identity that arrives in a LATER list
-	// would keep whatever provider it was seeded with. Hashing the list makes a real change re-seed
-	// while a re-render with the same list still does not, which is the whole point of this effect.
-	// Found in review.
+	// `getEffectiveProvider` reads that rather than re-resolving against the list — so the provider
+	// stamped on a node is a snapshot of the identity list at seed time. Hashing the list makes a
+	// real change re-seed while a re-render with the same list still does not. Found in review.
 	// `null` while there is no design to seed from: the design read failed, and nothing is seeded.
 	const revision = sourceProject
 		? `${sourceRevision(sourceProject)}:${fnv1a32(stableStringify(cloudIdentities))}`
 		: null;
-	// The design to seed from, read at seed time rather than listed as a dependency — its identity
-	// changes on every render, its content is what `revision` already keys on.
-	const sourceRef = useRef(sourceProject);
+	// What to seed from, read at seed time rather than listed as a dependency — the identity of both
+	// props changes on every render, and their content is what `revision` already keys on.
+	const latest = useRef({ sourceProject, cloudIdentities });
 	useEffect(() => {
-		sourceRef.current = sourceProject;
-	}, [sourceProject]);
-	// The scope persistence is pointed at, with the switch that pointed it there. `switchDraftScope`
-	// moves the pointer synchronously and rehydrates asynchronously, so a later run for the SAME
-	// scope awaits the same switch instead of starting another, and a revision change within one
-	// scope re-seeds without rehydrating at all.
-	const switchRef = useRef<{ scope: string; done: Promise<boolean> } | null>(null);
+		latest.current = { sourceProject, cloudIdentities };
+	}, [sourceProject, cloudIdentities]);
+	// The scope whose draft slot this mount has opened. Opening a scope restores its draft (or
+	// resets the board), so it happens once per scope: a revision change within one scope re-seeds
+	// the board that is already open.
+	const openedScope = useRef<string | null>(null);
+	// THE ONE SEED. Everything the board holds of the server design arrives here, keyed on the
+	// design's revision. The identity list rides the same call for the legacy store's lookups (the
+	// revision moves when the list does); the shell reads it from `CanvasStoreProvider` below, so
+	// no effect keeps a copy of it in step.
 	useEffect(() => {
-		// An environment switch while the previous switch is still in flight: whichever run
-		// resolves later must not seed the store for a scope the user has already left.
+		// An environment switch while a seed is still pending: whichever run settles later must not
+		// seed the board, or report a failure, for a scope the user has already left.
 		let cancelled = false;
-		const scope = draftScope(projectId, environmentId);
 		// The page passes `getProjectAsFormData(...).catch(() => undefined)`, so `sourceProject` is
 		// undefined on any transient failure — a DB hiccup, an authz blip, a revalidate racing a
 		// write — and seeding the blank default over a real board would look exactly like the user's
 		// design being deleted. Found in review.
-		if (revision === null || !sourceRef.current) return;
-		/** Point persistence at this scope's slot (if not already), then seed under the revision. */
+		const source = latest.current.sourceProject;
+		if (revision === null || !source) return;
+		const identities = latest.current.cloudIdentities;
+		/** Open this scope's draft slot (if this mount has not), then seed under the revision. */
 		const seed = async () => {
-			let pending = switchRef.current;
-			if (!pending || pending.scope !== scope) {
-				// `switchDraftScope` writes to the store AFTER its own await, and the store and the
-				// persistence pointer are both global — so a superseded switch resuming late would
-				// rehydrate the NEW scope's slot, decide it does not match the scope it was called
-				// for, and `reset()` a board that had already been seeded correctly. `cancelled`
-				// cannot reach inside it, so it is handed the question instead. Found in review.
-				pending = { scope, done: switchDraftScope(scope, () => !cancelled) };
-				switchRef.current = pending;
+			if (openedScope.current !== scope) {
+				// Recorded BEFORE the await: the slot is read synchronously inside the call, so a run
+				// that overtakes this one must see the scope this run already opened and open its own.
+				openedScope.current = scope;
+				await switchDraftScope(scope);
 			}
-			await pending.done;
+			// Superseded while suspended: the board now belongs to the scope that overtook this run.
 			if (cancelled) return;
 			const store = useCanvasStore.getState();
-			store.reseed(
-				formToGraph(buildDefaultFormValues(sourceRef.current), store.identities),
-				{ scope, revision },
-			);
+			store.setIdentities(identities);
+			store.reseed(formToGraph(buildDefaultFormValues(source), identities), {
+				scope,
+				revision,
+			});
 		};
-		// A seed that throws (`formToGraph` on a design it cannot read, a rehydrate that rejects) would
-		// leave the store unseeded — and the board's skeleton up forever (RUBRIC B4). It is the design
-		// load failing, so it renders as one. Keyed by revision, so a later good design clears it.
+		// A seed that throws (`formToGraph` on a design it cannot read) would leave the store
+		// unseeded — and the board's skeleton up forever (RUBRIC B4). It is the design load failing,
+		// so it renders as one. Keyed by revision, so a later good design clears it.
 		seed().catch(() => {
 			if (!cancelled) setSeedFailedFor(revision);
 		});
 		return () => {
 			cancelled = true;
 		};
-	}, [projectId, environmentId, revision]);
+	}, [scope, revision]);
 
 	if (revision === null || seedFailedFor === revision) return <DesignLoadError />;
 
@@ -172,19 +167,21 @@ export function DesignProjectWorkbench({
 		<BoardPreviewProvider
 			value={{ sourceProject, cloudIdentities, projectId, environmentId, byoHelmEnabled }}
 		>
-			<ConnectorsProvider connectors={connectors}>
-				<RepositoryProvider>
-					<DesignProjectCanvas
-						cloudIdentities={cloudIdentities}
-						projectId={projectId}
-						environmentId={environmentId}
-						projectName={sourceProject?.formData.project.project_name}
-						byoHelmEnabled={byoHelmEnabled}
-						byoDescribeEnabled={byoDescribeEnabled}
-						byoIacEnabled={byoIacEnabled}
-					/>
-				</RepositoryProvider>
-			</ConnectorsProvider>
+			<CanvasStoreProvider scope={scope} identities={cloudIdentities}>
+				<ConnectorsProvider connectors={connectors}>
+					<RepositoryProvider>
+						<DesignProjectCanvas
+							cloudIdentities={cloudIdentities}
+							projectId={projectId}
+							environmentId={environmentId}
+							projectName={sourceProject?.formData.project.project_name}
+							byoHelmEnabled={byoHelmEnabled}
+							byoDescribeEnabled={byoDescribeEnabled}
+							byoIacEnabled={byoIacEnabled}
+						/>
+					</RepositoryProvider>
+				</ConnectorsProvider>
+			</CanvasStoreProvider>
 		</BoardPreviewProvider>
 	);
 }

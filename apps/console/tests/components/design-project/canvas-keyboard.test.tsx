@@ -9,7 +9,7 @@
 // the control that proves the handler is mounted and listening, so "nothing happened" in the input
 // half means something.
 //
-// One case is `it.fails`: ⌘Z inside an input runs the board's undo today.
+// One case was `it.fails` until #6764: ⌘Z inside an input ran the board's undo.
 //
 // The board is other files' subject (React Flow, every card, the palettes), so each of its pieces is
 // a stub, the same set `canvas-deploy-destroy-refusal.test.tsx` uses. What is real is
@@ -168,7 +168,7 @@ describe("undo (⌘Z)", () => {
 		expect(ids()).not.toContain(card);
 	});
 
-	it.fails("in a text field, does not run the board's undo", () => {
+	it("in a text field, does not run the board's undo", () => {
 		const card = addSelectedCard();
 		const field = renderBoardWithField();
 
