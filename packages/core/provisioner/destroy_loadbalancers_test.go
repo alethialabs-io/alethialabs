@@ -26,6 +26,20 @@ const svcListJSON = `{"items":[
 
 const emptyList = `{"items":[]}`
 
+// argoControllerListJSON is the application controller as the argo-cd chart renders it by default.
+const argoControllerListJSON = `{"items":[
+ {"kind":"StatefulSet","metadata":{"name":"argo-cd-argocd-application-controller"},"spec":{"replicas":1}}
+]}`
+
+// albIngressListJSON is the object the seven nightly aws legs waited four minutes on.
+const albIngressListJSON = `{"items":[{"metadata":{"name":"argo-cd-argocd-server","namespace":"argocd"}}]}`
+
+const (
+	scaleDownCall = "scale statefulset/argo-cd-argocd-application-controller -n argocd --replicas=0"
+	scaleUpCall   = "scale statefulset/argo-cd-argocd-application-controller -n argocd --replicas=1"
+	deleteApps    = "delete applications.argoproj.io"
+)
+
 func TestParseLoadBalancerServicesTakesOnlyTheCloudBackedOnes(t *testing.T) {
 	got, err := parseLoadBalancerServices([]byte(svcListJSON))
 	if err != nil {
@@ -118,6 +132,12 @@ func stubKubectlForRelease(t *testing.T, svcAnswers []string, repeatLast bool, i
 	}
 	write("ing", ingAnswer)
 	write("ingerr", ingErr)
+	// The ArgoCD application controller: one StatefulSet at one replica whose pod is already gone,
+	// which is the ordinary cluster. A test overrides these files with set() to drive the others.
+	write("ctl", argoControllerListJSON)
+	write("ctlexit", "0")
+	write("pods", emptyList)
+	write("appsexit", "0")
 	repeat := "0"
 	if repeatLast {
 		repeat = "1"
@@ -133,12 +153,50 @@ func stubKubectlForRelease(t *testing.T, svcAnswers []string, repeatLast bool, i
 		"    if [ -n \"$f\" ] && [ -f \"$f\" ]; then cat \"$f\"; exit 0; fi\n" +
 		"    echo 'Error from server (TooManyRequests): please try again later' >&2; exit 1;;\n" +
 		"  *'get ingresses'*) cat " + dir + "/ing; cat " + dir + "/ingerr >&2; exit " + strconv.Itoa(ingExit) + ";;\n" +
+		"  *'get statefulsets.apps,deployments.apps'*)\n" +
+		"    x=$(cat " + dir + "/ctlexit)\n" +
+		"    if [ \"$x\" -ne 0 ]; then echo 'Error from server (Forbidden): statefulsets.apps is forbidden' >&2; exit \"$x\"; fi\n" +
+		"    cat " + dir + "/ctl; exit 0;;\n" +
+		"  *'get pods'*) cat " + dir + "/pods; exit 0;;\n" +
+		"  *'delete applications.argoproj.io'*)\n" +
+		"    x=$(cat " + dir + "/appsexit)\n" +
+		"    if [ \"$x\" -ne 0 ]; then echo 'Error from server (Forbidden): applications.argoproj.io is forbidden' >&2; fi\n" +
+		"    exit \"$x\";;\n" +
 		"esac\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return &kubectlRecorder{dir: dir}
+}
+
+// set overrides one of the stub's answer files after it was installed.
+func (k *kubectlRecorder) set(t *testing.T, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(k.dir, name), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// firstCall returns the index of the first recorded argv containing needle, or -1.
+func firstCall(calls []string, needle string) int {
+	for i, c := range calls {
+		if strings.Contains(c, needle) {
+			return i
+		}
+	}
+	return -1
+}
+
+// lastCall returns the index of the last recorded argv containing needle, or -1.
+func lastCall(calls []string, needle string) int {
+	at := -1
+	for i, c := range calls {
+		if strings.Contains(c, needle) {
+			at = i
+		}
+	}
+	return at
 }
 
 func (k *kubectlRecorder) calls(t *testing.T) []string {
@@ -159,33 +217,240 @@ func shortWaits(t *testing.T) {
 	t.Cleanup(func() { lbReleaseTimeout, lbReleasePoll = pt, pp })
 }
 
-// THE DECISIVE ONE. The add-ons that own these load balancers run under Applications with
-// `selfHeal: true`, so deleting a Service without stopping ArgoCD first is out-of-band drift: the
-// controller puts it back, the CCM creates a NEW load balancer, and the environment ends up with
-// more orphans than it started with.
-func TestReleaseCloudLoadBalancersStopsArgoCDBeforeItListsAnything(t *testing.T) {
+// THE DECISIVE ONE, in both directions. The add-ons that own these load balancers run under
+// Applications with `selfHeal: true`, so reconciliation must be stopped before anything is deleted
+// — and the Applications carry the controllers that release those load balancers, so they must
+// outlive every object that holds one (#6970). An ordering is only observable in the argv.
+func TestReleaseCloudLoadBalancersReleasesBeforeItRemovesTheControllers(t *testing.T) {
+	shortWaits(t)
+	rec := stubKubectlForRelease(t, []string{svcListJSON, svcListJSON, emptyList}, true, emptyList, 0, "")
+	var buf bytes.Buffer
+	rel, err := releaseCloudLoadBalancers(context.Background(), &buf)
+	if err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if !rel.Clean {
+		t.Fatalf("want a clean release, got %+v", rel)
+	}
+	calls := rec.calls(t)
+	trace := strings.Join(calls, "\n")
+	paused := firstCall(calls, scaleDownCall)
+	podsGone := firstCall(calls, "get pods")
+	firstDelete := firstCall(calls, "delete service")
+	lastList := lastCall(calls, "get services")
+	apps := firstCall(calls, deleteApps)
+	resumed := firstCall(calls, scaleUpCall)
+	for name, at := range map[string]int{"pause": paused, "pod wait": podsGone, "object delete": firstDelete,
+		"list": lastList, "Application delete": apps, "resume": resumed} {
+		if at < 0 {
+			t.Fatalf("the %s never happened:\n%s", name, trace)
+		}
+	}
+	if paused >= firstDelete || podsGone >= firstDelete {
+		t.Errorf("an object was deleted (call %d) before reconciliation was stopped (scale %d, pods "+
+			"observed gone %d) — self-heal re-creates it:\n%s", firstDelete, paused, podsGone, trace)
+	}
+	if apps <= lastList {
+		t.Errorf("Applications deleted at call %d, but the objects were only observed gone at %d — "+
+			"that removes the controllers before they have released anything:\n%s", apps, lastList, trace)
+	}
+	if resumed <= apps {
+		t.Errorf("the application controller came back (call %d) before the Applications were marked "+
+			"for deletion (%d), so it gets a pass in which to re-create what was released:\n%s", resumed, apps, trace)
+	}
+}
+
+// The nightly's own shape: one ALB Ingress and no LoadBalancer Service. While it is held, nothing
+// that carries its controller may be touched — and the failure is a TYPE that names it.
+func TestReleaseCloudLoadBalancersKeepsTheControllersWhileAnIngressIsHeld(t *testing.T) {
+	shortWaits(t)
+	rec := stubKubectlForRelease(t, []string{emptyList}, true, albIngressListJSON, 0, "")
+	var buf bytes.Buffer
+	rel, err := releaseCloudLoadBalancers(context.Background(), &buf)
+	var held *LoadBalancersStillHeldError
+	if !errors.As(err, &held) {
+		t.Fatalf("want a *LoadBalancersStillHeldError, got %T: %v", err, err)
+	}
+	if len(held.Held) != 1 || held.Held[0] != "ingress/argocd/argo-cd-argocd-server" {
+		t.Errorf("the error does not name what is held: %+v", held.Held)
+	}
+	if held.Waited != lbReleaseTimeout {
+		t.Errorf("Waited = %s, want the bound that expired (%s)", held.Waited, lbReleaseTimeout)
+	}
+	if rel.Clean || len(rel.Remaining) != 1 {
+		t.Errorf("the outcome must carry the held object and not be Clean: %+v", rel)
+	}
+	calls := rec.calls(t)
+	trace := strings.Join(calls, "\n")
+	if firstCall(calls, "delete ingress argo-cd-argocd-server -n argocd") < 0 {
+		t.Fatalf("the Ingress was never deleted:\n%s", trace)
+	}
+	if at := firstCall(calls, deleteApps); at >= 0 {
+		t.Errorf("the Applications were deleted (call %d) while an Ingress was still held — that "+
+			"removes the only controller that can release it:\n%s", at, trace)
+	}
+	if at := firstCall(calls, scaleUpCall); at >= 0 {
+		t.Errorf("the application controller was resumed (call %d) over a release that did not "+
+			"finish:\n%s", at, trace)
+	}
+	if !strings.Contains(buf.String(), "stay installed for a retry") {
+		t.Errorf("the log does not say why ArgoCD was left as it is:\n%s", buf.String())
+	}
+}
+
+// When reconciliation cannot be paused, the previous ordering is the fallback: Applications first,
+// because re-creating load balancers behind the release is the worse failure. It says so.
+func TestReleaseCloudLoadBalancersFallsBackWhenArgoCDCannotBePaused(t *testing.T) {
 	shortWaits(t)
 	rec := stubKubectlForRelease(t, []string{svcListJSON, emptyList}, true, emptyList, 0, "")
+	rec.set(t, "ctlexit", "1")
 	var buf bytes.Buffer
 	if _, err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
 		t.Fatalf("release: %v", err)
 	}
 	calls := rec.calls(t)
-	appsAt, listAt := -1, -1
-	for i, c := range calls {
-		if appsAt < 0 && strings.Contains(c, "delete applications.argoproj.io") {
-			appsAt = i
-		}
-		if listAt < 0 && strings.Contains(c, "get services") {
-			listAt = i
+	trace := strings.Join(calls, "\n")
+	apps, firstDelete := firstCall(calls, deleteApps), firstCall(calls, "delete service")
+	if apps < 0 || firstDelete < 0 || apps > firstDelete {
+		t.Errorf("Applications deleted at %d, first object delete at %d — with nothing paused, "+
+			"self-heal re-creates whatever is deleted first:\n%s", apps, firstDelete, trace)
+	}
+	if firstCall(calls, "scale ") >= 0 {
+		t.Errorf("nothing was read, so nothing may be scaled:\n%s", trace)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Forbidden") || !strings.Contains(out, "Falling back") {
+		t.Errorf("the fallback and its reason are not stated:\n%s", out)
+	}
+}
+
+// A controller whose pod never terminates is not paused, and must not be left scaled to zero.
+func TestPauseArgoCDReconcilingPutsTheControllerBackWhenItsPodsNeverStop(t *testing.T) {
+	shortWaits(t)
+	prev := argoCDPauseTimeout
+	argoCDPauseTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { argoCDPauseTimeout = prev })
+	rec := stubKubectlForRelease(t, []string{emptyList}, true, emptyList, 0, "")
+	rec.set(t, "pods", `{"items":[{"metadata":{"name":"argo-cd-argocd-application-controller-0"}}]}`)
+	var buf bytes.Buffer
+	pause := pauseArgoCDReconciling(context.Background(), &buf)
+	if pause.Paused {
+		t.Fatal("a controller whose pod is still there was reported as paused")
+	}
+	calls := rec.calls(t)
+	down, up := firstCall(calls, scaleDownCall), firstCall(calls, scaleUpCall)
+	if down < 0 || up < down {
+		t.Errorf("scaled down at %d, back up at %d — a failed pause must undo itself:\n%s",
+			down, up, strings.Join(calls, "\n"))
+	}
+	if !strings.Contains(buf.String(), "did not stop within") {
+		t.Errorf("the reason is not stated:\n%s", buf.String())
+	}
+}
+
+// A cluster with no application controller has nothing reconciling: that is paused, with nothing
+// to scale and nothing to put back.
+func TestPauseArgoCDReconcilingOnAClusterWithoutArgoCD(t *testing.T) {
+	shortWaits(t)
+	rec := stubKubectlForRelease(t, []string{emptyList}, true, emptyList, 0, "")
+	rec.set(t, "ctl", emptyList)
+	var buf bytes.Buffer
+	pause := pauseArgoCDReconciling(context.Background(), &buf)
+	if !pause.Paused || len(pause.Workloads) != 0 {
+		t.Fatalf("want paused with no workloads, got %+v", pause)
+	}
+	if at := firstCall(rec.calls(t), "scale "); at >= 0 {
+		t.Errorf("nothing exists to scale, yet a scale was issued at call %d", at)
+	}
+}
+
+// An undecodable controller list is "could not look", never "there is none".
+func TestPauseArgoCDReconcilingDoesNotReadGarbageAsNoController(t *testing.T) {
+	shortWaits(t)
+	rec := stubKubectlForRelease(t, []string{emptyList}, true, emptyList, 0, "")
+	rec.set(t, "ctl", "not json")
+	var buf bytes.Buffer
+	if pause := pauseArgoCDReconciling(context.Background(), &buf); pause.Paused {
+		t.Fatalf("an undecodable list was read as paused:\n%s", buf.String())
+	}
+}
+
+// Applications that could not be marked for deletion would be re-synced by a resumed controller,
+// which re-creates the load balancers just released. So it stays paused, and says so.
+func TestReleaseCloudLoadBalancersStaysPausedWhenTheApplicationsCannotBeDeleted(t *testing.T) {
+	shortWaits(t)
+	rec := stubKubectlForRelease(t, []string{svcListJSON, emptyList}, true, emptyList, 0, "")
+	rec.set(t, "appsexit", "1")
+	var buf bytes.Buffer
+	rel, err := releaseCloudLoadBalancers(context.Background(), &buf)
+	if err != nil || !rel.Clean {
+		t.Fatalf("the objects were released; want Clean and no error, got %+v, %v", rel, err)
+	}
+	if at := firstCall(rec.calls(t), scaleUpCall); at >= 0 {
+		t.Errorf("the application controller was resumed at call %d over Applications still present", at)
+	}
+	if !strings.Contains(buf.String(), "Leaving the ArgoCD application controller paused") {
+		t.Errorf("the decision is not stated:\n%s", buf.String())
+	}
+}
+
+func TestParseArgoCDControllersReadsKindNameAndReplicas(t *testing.T) {
+	got, err := parseArgoCDControllers([]byte(`{"items":[
+	  {"kind":"StatefulSet","metadata":{"name":"a"},"spec":{"replicas":3}},
+	  {"kind":"Deployment","metadata":{"name":"b"},"spec":{}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []argoCDWorkload{{Kind: "statefulset", Name: "a", Replicas: 3}, {Kind: "deployment", Name: "b", Replicas: 1}}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			// An absent spec.replicas is the API default of ONE: reading it as zero would skip
+			// the scale-down and report a running controller as paused.
+			t.Errorf("workload %d = %+v, want %+v", i, got[i], want[i])
 		}
 	}
-	if appsAt < 0 {
-		t.Fatalf("the ArgoCD Applications were never deleted:\n%s", strings.Join(calls, "\n"))
+	if _, err := parseArgoCDControllers([]byte("not json")); err == nil {
+		t.Error("want an error for an undecodable list")
 	}
-	if listAt < 0 || appsAt > listAt {
-		t.Errorf("Applications deleted at %d, first list at %d — self-heal re-creates whatever is "+
-			"deleted after that point:\n%s", appsAt, listAt, strings.Join(calls, "\n"))
+}
+
+// A workload found ALREADY at zero was paused by an earlier pass, so its original count is unknown;
+// it comes back at one, which is what processes the Applications' deletion.
+func TestResumeArgoCDReconcilingBringsAZeroedControllerBackAtOne(t *testing.T) {
+	rec := stubKubectlForRelease(t, []string{emptyList}, true, emptyList, 0, "")
+	var buf bytes.Buffer
+	resumeArgoCDReconciling(context.Background(), &buf, argoCDPause{Paused: true, Workloads: []argoCDWorkload{
+		{Kind: "statefulset", Name: "argo-cd-argocd-application-controller", Replicas: 0},
+		{Kind: "deployment", Name: "other", Replicas: 3},
+	}})
+	calls := rec.calls(t)
+	if firstCall(calls, scaleUpCall) < 0 || firstCall(calls, "scale deployment/other -n argocd --replicas=3") < 0 {
+		t.Errorf("unexpected resume calls:\n%s", strings.Join(calls, "\n"))
+	}
+}
+
+// The destroy's own failure keeps the typed list in its chain, with the text unchanged.
+func TestDestroyOutcomeErrorCarriesWhatIsStillHeld(t *testing.T) {
+	tofuErr := errors.New("exit status 1")
+	rel := releaseOutcome{Remaining: []cloudBackedObject{{Kind: "ingress", Namespace: "argocd", Name: "argo-cd-argocd-server"}}}
+	err := destroyOutcomeError(rel, tofuErr)
+	var held *LoadBalancersStillHeldError
+	if !errors.As(err, &held) || len(held.Held) != 1 || held.Held[0] != "ingress/argocd/argo-cd-argocd-server" {
+		t.Fatalf("the chain does not carry what is held: %T %v", err, err)
+	}
+	if !errors.Is(err, tofuErr) {
+		t.Error("the destroy's own error fell out of the chain")
+	}
+	if want := "tofu destroy failed: exit status 1" + rel.billingWarning(); err.Error() != want {
+		t.Errorf("the text changed:\n got %q\nwant %q", err.Error(), want)
+	}
+	// And with nothing observed held there is no typed link to find — not a typed nil.
+	plain := destroyOutcomeError(releaseOutcome{Skipped: "x"}, tofuErr)
+	if errors.As(plain, &held) {
+		t.Error("a destroy with nothing observed held claims a held list")
 	}
 }
 
@@ -683,7 +948,7 @@ func TestReleaseOnACancelledContextIsNotARelease(t *testing.T) {
 	lbReleaseTimeout, lbReleasePoll = time.Minute, 20*time.Millisecond
 	t.Cleanup(func() { lbReleaseTimeout, lbReleasePoll = prevT, prevP })
 
-	stubKubectlForRelease(t, []string{svcListJSON}, true, emptyList, 0, "")
+	rec := stubKubectlForRelease(t, []string{svcListJSON}, true, emptyList, 0, "")
 	// ⚠️ THE CANCELLATION IS CAUSAL, NOT TIMED, and that is the whole reliability of this test.
 	//
 	// It used to be a 1500 ms window sized to "long enough that the first list and the deletes
@@ -719,6 +984,15 @@ func TestReleaseOnACancelledContextIsNotARelease(t *testing.T) {
 	}
 	if len(rel.Remaining) == 0 {
 		t.Error("Remaining is empty — a cancelled wait must still report what it had already seen")
+	}
+	// A cancelled teardown leaves a cluster that still serves: its GitOps controller goes back,
+	// and its Applications are not touched.
+	calls := rec.calls(t)
+	if firstCall(calls, scaleUpCall) < 0 {
+		t.Errorf("the application controller was left at zero after a cancelled teardown:\n%s", strings.Join(calls, "\n"))
+	}
+	if firstCall(calls, deleteApps) >= 0 {
+		t.Errorf("a cancelled teardown deleted the Applications:\n%s", strings.Join(calls, "\n"))
 	}
 }
 
