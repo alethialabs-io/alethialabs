@@ -5,13 +5,13 @@ package cmd
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/spec"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -63,11 +63,12 @@ func TestUp_WithEverythingInPlaceIsApply(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	read := projCaptureStdout(t)
-	if h.run("up", "--yes", "--runner", "primary", "--no-wait", "--no-input") {
-		t.Error("up exited fatally")
+	// The steps are narrated on stderr and the apply prints on stdout; a person reads both.
+	code, stdout, stderr := firstRunExec(t, h, "up", "--yes", "--runner", "primary", "--no-wait", "--no-input")
+	if code != -1 {
+		t.Errorf("up exited fatally (%d)", code)
 	}
-	out := read()
+	out := stderr + stdout
 	// It says what it SKIPPED. "Already signed in" is the difference between a command that
 	// looks like it did nothing and one a person can trust to be re-runnable.
 	for _, want := range []string{"Already signed in", "cloud account", "created project boutique"} {
@@ -97,12 +98,11 @@ func TestUp_AuthorsTheManifestWhenThereIsNone(t *testing.T) {
 	h := upEnv(t, s)
 	dir := chdirTo(t)
 
-	read := projCaptureStdout(t)
-	if h.run("up", "--project", "boutique", "--region", "eu-west-1",
-		"--cloud-account", "prod-account", "--yes", "--runner", "primary", "--no-wait", "--no-input") {
-		t.Error("up exited fatally")
+	code, _, out := firstRunExec(t, h, "up", "--project", "boutique", "--region", "eu-west-1",
+		"--cloud-account", "prod-account", "--yes", "--runner", "primary", "--no-wait", "--no-input")
+	if code != -1 {
+		t.Errorf("up exited fatally (%d)", code)
 	}
-	out := read()
 	if !strings.Contains(out, "Wrote "+manifest.FileName) {
 		t.Errorf("no manifest was written:\n%s", out)
 	}
@@ -188,27 +188,39 @@ func TestUp_JSONOutputCarriesNoProse(t *testing.T) {
 
 func TestEnsureCloudAccount(t *testing.T) {
 	none := &fakeIdentities{}
-	if err := ensureCloudAccount(none, os.Stdout, "json", ""); err == nil {
+	if _, err := ensureCloudAccount(none, firstRunQuiet("json"), ""); err == nil {
 		t.Fatal("no accounts must be an error")
 	} else {
-		for _, want := range []string{"connector hetzner", "connector aws", "connector gcp", "connector azure", "connector alibaba"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("the refusal does not name `alethia %s`:\n%v", want, err)
+		// The list is the offered clouds, derived: every one of them is named, and a cloud the
+		// catalog hides is not.
+		offered := EnabledCloudProviders()
+		if len(offered) == 0 {
+			t.Fatal("no cloud is offered, so the loop below would assert nothing")
+		}
+		for _, cloud := range offered {
+			if want := "alethia connector " + string(cloud); !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name `%s`:\n%v", want, err)
 			}
+		}
+		if strings.Contains(err.Error(), "alibaba") {
+			t.Errorf("the refusal names a cloud that is not offered:\n%v", err)
+		}
+		if e := clierr.From(err); e.Exit != clierr.ExitConflict || !strings.HasPrefix(e.Hint, "alethia connector ") {
+			t.Errorf("exit %d, hint %q: want a failed precondition whose hint is a connector command", e.Exit, e.Hint)
 		}
 	}
 	some := &fakeIdentities{ids: []api.CloudIdentity{{ID: "ci1", Provider: "aws", Label: "prod-account"}}}
-	if err := ensureCloudAccount(some, os.Stdout, "json", ""); err != nil {
+	if _, err := ensureCloudAccount(some, firstRunQuiet("json"), ""); err != nil {
 		t.Errorf("a connected account must satisfy the check: %v", err)
 	}
 	// A named account is resolved HERE, before a form asks five questions against a typo.
-	if err := ensureCloudAccount(some, os.Stdout, "json", "prod-account"); err != nil {
+	if _, err := ensureCloudAccount(some, firstRunQuiet("json"), "prod-account"); err != nil {
 		t.Errorf("a matching label was refused: %v", err)
 	}
-	if err := ensureCloudAccount(some, os.Stdout, "json", "nope"); err == nil {
+	if _, err := ensureCloudAccount(some, firstRunQuiet("json"), "nope"); err == nil {
 		t.Error("an unknown label must be refused before anything is asked")
 	}
-	if err := ensureCloudAccount(&fakeIdentities{err: errBoom}, os.Stdout, "json", ""); err == nil {
+	if _, err := ensureCloudAccount(&fakeIdentities{err: errBoom}, firstRunQuiet("json"), ""); err == nil {
 		t.Error("a failed listing must be reported, not read as an empty organization")
 	}
 }
@@ -223,9 +235,9 @@ func (f *fakeIdentities) GetCloudIdentities() ([]api.CloudIdentity, error) { ret
 func TestEnsureLoggedIn_SkipsWhenACredentialIsLive(t *testing.T) {
 	h := upEnv(t, &projServer{})
 	_ = h
-	read := projCaptureStdout(t)
-	token, err := ensureLoggedIn(os.Stdout, "table")
-	out := read()
+	p, _, errOut := firstRunPrinter("table")
+	token, err := ensureLoggedIn(p)
+	out := errOut.String()
 	if err != nil || token == "" {
 		t.Fatalf("ensureLoggedIn: %q %v", token, err)
 	}
@@ -238,9 +250,9 @@ func TestEnsureLoggedIn_RefusesWithNoCredentialAndNoTerminal(t *testing.T) {
 	isolatedHome(t)
 	t.Setenv(ServiceTokenEnv, "")
 	hygCliConfirmSetNoInput(t, true)
-	if _, err := ensureLoggedIn(os.Stdout, "table"); err == nil {
+	if _, err := ensureLoggedIn(firstRunQuiet("table")); err == nil {
 		t.Fatal("a scripted run with no credential must be refused")
-	} else if !strings.Contains(err.Error(), ServiceTokenEnv) {
+	} else if !strings.Contains(firstRunSaid(err), ServiceTokenEnv) {
 		t.Errorf("the refusal does not name the environment variable that answers it: %v", err)
 	}
 }
@@ -393,12 +405,11 @@ func TestInit_AuthorsTheManifestAfterTheLogin(t *testing.T) {
 	s := &projServer{}
 	h := upEnv(t, s)
 	dir := chdirTo(t)
-	read := projCaptureStdout(t)
-	if h.run("init", "--web-origin", WebOrigin(), "--project", "boutique",
-		"--region", "eu-west-1", "--cloud-account", "prod-account", "--no-input") {
-		t.Error("init exited fatally")
+	code, _, out := firstRunExec(t, h, "init", "--web-origin", WebOrigin(), "--project", "boutique",
+		"--region", "eu-west-1", "--cloud-account", "prod-account", "--no-input")
+	if code != -1 {
+		t.Errorf("init exited fatally (%d)", code)
 	}
-	out := read()
 	if !strings.Contains(out, "Already signed in") {
 		t.Errorf("init did not skip the login it already had:\n%s", out)
 	}
@@ -449,7 +460,7 @@ func TestEnsureLoggedIn_RunsTheFirstRunSetupWhenThereIsNone(t *testing.T) {
 	authCovForm(t, nil)
 	authCovHeadless(t)
 
-	_, err := ensureLoggedIn(io.Discard, "table")
+	_, err := ensureLoggedIn(firstRunQuiet("table"))
 	if err == nil {
 		t.Error("a login leaving an unusable credential must be reported rather than passing as signed in")
 	}
@@ -558,7 +569,7 @@ func TestAuthorManifest_CarriesEachPromptsRefusal(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := authorManifest(api.NewClient("tok"), "tok", io.Discard, "table", path, values); err == nil {
+			if _, err := authorManifest(api.NewClient("tok"), "tok", path, values); err == nil {
 				t.Fatal("a refused question must stop the authoring")
 			}
 			if manifest.Exists(path) {
@@ -612,7 +623,7 @@ func TestEnsureLoggedIn_CarriesTheSetupsOwnRefusals(t *testing.T) {
 		authCovTTY(t)
 		authCovForm(t, errBoom)
 		authCovHeadless(t)
-		if _, err := ensureLoggedIn(io.Discard, "table"); err == nil {
+		if _, err := ensureLoggedIn(firstRunQuiet("table")); err == nil {
 			t.Error("a dismissed origin form must stop the setup")
 		}
 	})
@@ -625,7 +636,7 @@ func TestEnsureLoggedIn_CarriesTheSetupsOwnRefusals(t *testing.T) {
 		authCovTTY(t)
 		authCovForm(t, nil)
 		authCovHeadless(t)
-		if _, err := ensureLoggedIn(io.Discard, "table"); err == nil {
+		if _, err := ensureLoggedIn(firstRunQuiet("table")); err == nil {
 			t.Error("a failed device login must stop the setup")
 		}
 	})
@@ -646,7 +657,7 @@ func TestAuthorManifest_CarriesTheAccountPickersRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := authorManifest(api.NewClient("tok"), "tok", io.Discard, "table", path, values); err == nil {
+	if _, err := authorManifest(api.NewClient("tok"), "tok", path, values); err == nil {
 		t.Fatal("a picker that cannot run must stop the authoring")
 	}
 	if manifest.Exists(path) {
@@ -807,12 +818,12 @@ func TestEnsureLoggedIn_RefusesFirstRunSignInForAMachineFormat(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
 	t.Setenv(ServiceTokenEnv, "")
-	_, err := ensureLoggedIn(io.Discard, ui.FormatJSON)
+	_, err := ensureLoggedIn(firstRunQuiet(ui.FormatJSON))
 	if err == nil {
 		t.Fatal("--output json with no credential must refuse rather than print a device code")
 	}
 	for _, want := range []string{"alethia login", ServiceTokenEnv} {
-		if !strings.Contains(err.Error(), want) {
+		if !strings.Contains(firstRunSaid(err), want) {
 			t.Errorf("the refusal does not name %q, so it is not actionable:\n%v", want, err)
 		}
 	}
