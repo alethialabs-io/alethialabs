@@ -58,6 +58,8 @@
 				"$TURBO_ROOT$/packages/core/cloud/hetzner_provider.go",
 				"$TURBO_ROOT$/packages/core/cloud/testdata/k8s_version_resolution.json",
 				"$TURBO_ROOT$/packages/core/compat/testdata/engine_parity.json",
+				"$TURBO_ROOT$/packages/core/designfile/compare.go",
+				"$TURBO_ROOT$/packages/core/designfile/edit.go",
 				"$TURBO_ROOT$/packages/core/format/format.go",
 				"$TURBO_ROOT$/packages/core/kubeaccess/testdata/seal_vectors.json",
 				"$TURBO_ROOT$/packages/core/provisioner/testdata/addon_bump/*",
