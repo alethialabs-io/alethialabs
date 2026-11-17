@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { cloudListLabel } from "@repo/cloud-catalog";
 import { HydrationBoundary, type Query, dehydrate } from "@tanstack/react-query";
 import { ConnectorsPage } from "@/components/connectors/connectors-page";
 import {
@@ -14,7 +15,8 @@ import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export const metadata = pageMetadata({
 	title: "Connectors",
-	description: "Connect AWS, GCP, Azure, Alibaba Cloud, and Hetzner accounts to Alethia.",
+	// Static metadata, so the clouds named are the ones offered at build time.
+	description: `Connect ${cloudListLabel()} accounts to Alethia.`,
 });
 
 /**

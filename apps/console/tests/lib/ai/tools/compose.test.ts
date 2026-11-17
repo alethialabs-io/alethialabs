@@ -11,7 +11,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/pricing/region-prices", () => ({ getRegionPrices: vi.fn() }));
 
-import { catalogTools, composeTools } from "@/lib/ai/tools/compose";
+import type { z } from "zod";
+import {
+	catalogTools,
+	cidrFloorsLabel,
+	composeTools,
+	offeredProvisioningClouds,
+} from "@/lib/ai/tools/compose";
+import { withHiddenClouds } from "@/lib/cloud-providers/availability";
 import { getRegionPrices, type RegionPrices } from "@/lib/pricing/region-prices";
 import { ADDABLE_KINDS } from "@/components/design-project/canvas/graph/node-registry";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
@@ -46,13 +53,21 @@ describe("catalogTools.list_services", () => {
 			services: Array<{ kind: string; serviceNames: Record<string, string> | null }>;
 		};
 		const db = out.services.find((s) => s.kind === "database");
+		// Exactly the offered provisioning clouds: `toEqual` on the object fails on an extra key.
 		expect(db?.serviceNames).toEqual({
 			aws: "Aurora",
 			gcp: expect.any(String),
 			azure: expect.any(String),
-			alibaba: expect.any(String),
 			hetzner: expect.any(String),
 		});
+	});
+
+	it("names a re-enabled cloud's service too", async () => {
+		const out = (await withHiddenClouds(["alibaba"], () => run(catalogTools().list_services, {}))) as {
+			services: Array<{ kind: string; serviceNames: Record<string, string> | null }>;
+		};
+		const db = out.services.find((s) => s.kind === "database");
+		expect(Object.keys(db?.serviceNames ?? {})).toEqual(["aws", "gcp", "azure", "hetzner", "alibaba"]);
 	});
 
 	it("emits null serviceNames for a kind with no provider service field (repositories)", async () => {
@@ -356,5 +371,58 @@ describe("composeTools.propose_changes", () => {
 				actions: [{ kind: "add_node", nodeKind: "cluster" }],
 			}).success,
 		).toBe(true);
+	});
+});
+
+describe("the catalog tools offer only the clouds this deployment offers", () => {
+	/** A tool's input schema as the zod type it is at run time (the AI SDK's type erases it). */
+	const schemaOf = (t: { inputSchema: unknown }) => t.inputSchema as z.ZodType;
+
+	it("the offered provisioning clouds are the four available ones, in catalog order", () => {
+		expect(offeredProvisioningClouds()).toEqual(["aws", "gcp", "azure", "hetzner"]);
+	});
+
+	it("a connect-only cloud is never a provisioning cloud, even when re-enabled", async () => {
+		const clouds = await withHiddenClouds(["digitalocean", "civo"], () => offeredProvisioningClouds());
+		expect(clouds).toEqual(["aws", "gcp", "azure", "hetzner"]);
+	});
+
+	it("list_service_options refuses a cloud that is not offered and accepts it once re-enabled", async () => {
+		const input = { provider: "alibaba" };
+		expect(schemaOf(catalogTools().list_service_options).safeParse(input).success).toBe(false);
+		expect(schemaOf(catalogTools().list_service_options).safeParse({ provider: "hetzner" }).success).toBe(true);
+		const reEnabled = await withHiddenClouds(["alibaba"], () =>
+			schemaOf(catalogTools().list_service_options).safeParse(input),
+		);
+		expect(reEnabled.success).toBe(true);
+	});
+
+	it("cidr_for_hosts refuses a cloud that is not offered and accepts it once re-enabled", async () => {
+		const input = { hosts: 10, cloud: "alibaba" };
+		expect(schemaOf(catalogTools().cidr_for_hosts).safeParse(input).success).toBe(false);
+		expect(schemaOf(catalogTools().cidr_for_hosts).safeParse({ hosts: 10 }).success).toBe(true);
+		const reEnabled = await withHiddenClouds(["alibaba"], () =>
+			schemaOf(catalogTools().cidr_for_hosts).safeParse(input),
+		);
+		expect(reEnabled.success).toBe(true);
+	});
+
+	it("no description names a cloud that is not offered", async () => {
+		const descriptions = () =>
+			Object.values(catalogTools())
+				.map((t) => t.description ?? "")
+				.join("\n");
+		expect(descriptions()).not.toMatch(/alibaba/i);
+		expect(descriptions()).toContain("aws/gcp/azure/hetzner");
+		const reEnabled = await withHiddenClouds(["alibaba"], descriptions);
+		expect(reEnabled).toContain("aws/gcp/azure/hetzner/alibaba");
+		expect(reEnabled).toContain("alibaba /28");
+	});
+
+	it("states each cloud's network floor from the same table the validator reads", () => {
+		expect(cidrFloorsLabel(["aws", "gcp", "azure", "hetzner"])).toBe(
+			"aws /18, gcp none, azure /18, hetzner /22",
+		);
+		expect(cidrFloorsLabel([])).toBe("");
 	});
 });

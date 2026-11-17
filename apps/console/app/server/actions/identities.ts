@@ -9,8 +9,10 @@ import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
 import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
 import { isEnumMember } from "@/lib/coerce";
+import { CloudNotOfferedError } from "@/lib/cloud-providers/availability";
 import { azureIdConflict, AZURE_GUID_REGEX } from "@/lib/cloud-providers/azure-ids";
 import * as conn from "@/lib/cloud-providers/connections";
+import { CONNECTABLE_CLOUDS } from "@/lib/cloud-providers/generated/catalog";
 import { GCP_PROJECT_ID_REGEX } from "@/lib/cloud-providers/gcp-wif";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
@@ -130,9 +132,24 @@ async function runDeleteProviderToken(input: z.output<typeof deleteProviderToken
 //      `personalIdentityAuthor`) — AND bound to the addressed org. An id that fails either test
 //      is "not found", whatever the PDP answered;
 //   3. only then calls the connection library (`lib/cloud-providers/connections.ts`).
+//
+// WHICH CLOUDS. The input schemas below accept every cloud in the catalog; they parse a slug, they
+// do not decide what is offered. The connection library decides that when it is called, from the
+// offered set of this deployment, and refuses with `CloudNotOfferedError`. `offeredOnly` turns that
+// into a `conflict` refusal whose sentence the client shows as it is.
 
-/** Every cloud a connect flow exists for. */
-const CLOUD_PROVIDERS = ["aws", "gcp", "azure", "alibaba", "digitalocean", "hetzner", "civo"] as const;
+/**
+ * Runs a start or a save of a cloud connection, and turns the library's refusal of a cloud this
+ * deployment does not offer into an `ActionRefusal` the client can show.
+ */
+async function offeredOnly<T>(run: () => Promise<T>): Promise<T> {
+	try {
+		return await run();
+	} catch (error) {
+		if (error instanceof CloudNotOfferedError) throw new ActionRefusal("conflict", error.message);
+		throw error;
+	}
+}
 
 /** The clouds connected by a scoped API token. */
 const TOKEN_CLOUD_PROVIDERS = ["digitalocean", "hetzner", "civo"] as const;
@@ -194,7 +211,7 @@ function toVerifyResult(r: conn.ConnectionResult): CloudVerifyResult {
 	};
 }
 
-const startCloudConnectInput = z.object({ provider: z.enum(CLOUD_PROVIDERS) });
+const startCloudConnectInput = z.object({ provider: z.enum(CONNECTABLE_CLOUDS) });
 
 /**
  * Starts a connect flow: the pending identity the connect sheet binds its form to. Reuses the org's
@@ -209,7 +226,7 @@ export async function startCloudConnect(
 /** The body of {@link startCloudConnect}, on already-validated input. */
 async function runStartCloudConnect(input: z.output<typeof startCloudConnectInput>): Promise<{ identityId: string; externalId?: string }> {
 	const actor = await authorizeQuiet("manage_identities", { type: "cloud_identity" });
-	return conn.initIdentity(actor, input.provider);
+	return offeredOnly(() => conn.initIdentity(actor, input.provider));
 }
 
 const ALIBABA_ROLE_ARN = /^acs:ram::\d+:role\/[\w+=,.@-]+$/;
@@ -336,31 +353,34 @@ async function runConnectCloudAccount(input: z.output<typeof connectCloudAccount
 	if (identity.provider !== provider) {
 		throw new ActionRefusal("conflict", "That connect session belongs to a different cloud. Close the sheet and start again.");
 	}
+	return toVerifyResult(await offeredOnly(() => saveConnection(actor, identity.id, input)));
+}
+
+/** Hands one validated connect form to the connection library function for its method. */
+function saveConnection(
+	actor: Actor,
+	id: string,
+	input: z.output<typeof connectCloudAccountInput>,
+): Promise<conn.ConnectionResult> {
 	switch (input.method) {
 		case "aws":
-			return toVerifyResult(await conn.saveAwsIdentity(actor, identity.id, input.roleArn));
+			return conn.saveAwsIdentity(actor, id, input.roleArn);
 		case "gcp-wif":
-			return toVerifyResult(await conn.saveGcpIdentity(actor, identity.id, input.wifConfigJson));
+			return conn.saveGcpIdentity(actor, id, input.wifConfigJson);
 		case "gcp-ids":
-			return toVerifyResult(
-				await conn.saveGcpIdentityFromIds(actor, identity.id, input.projectId, input.projectNumber),
-			);
+			return conn.saveGcpIdentityFromIds(actor, id, input.projectId, input.projectNumber);
 		case "azure":
-			return toVerifyResult(
-				await conn.saveAzureIdentity(actor, identity.id, input.tenantId, input.clientId, input.subscriptionId),
-			);
+			return conn.saveAzureIdentity(actor, id, input.tenantId, input.clientId, input.subscriptionId);
 		case "alibaba":
-			return toVerifyResult(await conn.saveAlibabaIdentity(actor, identity.id, input.roleArn));
+			return conn.saveAlibabaIdentity(actor, id, input.roleArn);
 		case "token":
-			return toVerifyResult(
-				await conn.saveTokenCloudIdentity(
-					actor,
-					identity.id,
-					input.provider,
-					input.token,
-					input.s3AccessKey || undefined,
-					input.s3SecretKey || undefined,
-				),
+			return conn.saveTokenCloudIdentity(
+				actor,
+				id,
+				input.provider,
+				input.token,
+				input.s3AccessKey || undefined,
+				input.s3SecretKey || undefined,
 			);
 	}
 }
@@ -414,9 +434,6 @@ export async function disconnectCloudAccount(
 /** The body of {@link disconnectCloudAccount}, on already-validated input. */
 async function runDisconnectCloudAccount(input: z.output<typeof disconnectCloudAccountInput>): Promise<{ identityId: string }> {
 	const { actor, identity } = await authorizeIdentity(input.identityId);
-	if (!isEnumMember(identity.provider, CLOUD_PROVIDERS)) {
-		throw new ActionRefusal("conflict", "This cloud account cannot be disconnected from here.");
-	}
 	await conn.disconnectIdentity(actor, identity.id, identity.provider);
 	return { identityId: identity.id };
 }

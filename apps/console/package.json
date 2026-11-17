@@ -132,6 +132,7 @@
     "@react-email/components": "^1.0.12",
     "@repo/assets": "workspace:*",
     "@repo/brand": "workspace:*",
+    "@repo/cloud-catalog": "workspace:*",
     "@repo/format": "workspace:*",
     "@repo/email": "workspace:*",
     "@repo/legal": "workspace:*",

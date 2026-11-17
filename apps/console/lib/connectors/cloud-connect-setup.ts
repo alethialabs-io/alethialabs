@@ -22,6 +22,11 @@ import {
 	initExtraCloudIdentity,
 } from "@/app/(private)/dashboard/providers/extra-cloud-actions";
 import { currentActor } from "@/lib/authz/guard";
+import { offeredClouds } from "@/lib/cloud-providers/availability";
+import {
+	CONNECTABLE_CLOUDS,
+	type ConnectableCloudSlug,
+} from "@/lib/cloud-providers/generated/catalog";
 import { getPdp } from "@/lib/authz";
 import { getAuthConfig } from "@/lib/config/auth";
 import { oidcIssuerConfigured } from "@/lib/oidc/issuer";
@@ -43,7 +48,10 @@ export interface CloudConnectSetup {
 	 * (github/gitlab/bitbucket) need an OAuth app registered in Better Auth — without its
 	 * client id/secret `linkSocial` rejects. In both cases the UI says "not enabled on this
 	 * instance" up-front instead of offering a doomed Connect. Token clouds
-	 * (hetzner/digitalocean/civo) need nothing → always true.
+	 * (hetzner/digitalocean/civo) need nothing from the platform.
+	 *
+	 * A cloud this deployment does not offer is `false` whatever the platform has: the server
+	 * refuses a new connection for it, so a Connect control for it could only fail.
 	 */
 	platformConfigured: Record<string, boolean>;
 }
@@ -52,10 +60,14 @@ export interface CloudConnectSetup {
  * Per-provider connect-availability on this instance — mirrors what each session/health probe reads
  * (clouds) and what Better Auth has registered (git OAuth apps). Slugs absent from the map default to
  * available at the call site.
+ *
+ * Every cloud entry is also gated on the cloud being offered by this deployment
+ * (`offeredClouds`), so the answer for a cloud that is not offered is `false`.
  */
 export function computePlatformConfigured(): Record<string, boolean> {
 	const gitProviders = getAuthConfig().providers;
-	return {
+	const offered = offeredClouds();
+	const clouds: Record<ConnectableCloudSlug, boolean> = {
 		// AWS is keyless via DIRECT OIDC: the customer's IAM role trusts the Alethia issuer (an IAM OIDC
 		// provider), so the console/runner federate straight in via AssumeRoleWithWebIdentity — no platform
 		// AWS account, no ExternalId. Available whenever the issuer is configured.
@@ -76,6 +88,12 @@ export function computePlatformConfigured(): Record<string, boolean> {
 		hetzner: true,
 		digitalocean: true,
 		civo: true,
+	};
+	for (const slug of CONNECTABLE_CLOUDS) {
+		clouds[slug] = clouds[slug] && offered.includes(slug);
+	}
+	return {
+		...clouds,
 		// Git providers are connectable only when their OAuth app is registered (client id + secret
 		// present). Otherwise `authClient.linkSocial` rejects → the tile would toast "Failed to
 		// connect". google is login-only (not a connector), so it's intentionally omitted.
@@ -83,6 +101,19 @@ export function computePlatformConfigured(): Record<string, boolean> {
 		gitlab: !!gitProviders.gitlab,
 		bitbucket: !!gitProviders.bitbucket,
 	};
+}
+
+/** A cloud other than the three whose pending identity has a setup field of its own. */
+type ExtraCloud = Exclude<ConnectableCloudSlug, "aws" | "gcp" | "azure">;
+
+/** Narrows a cloud slug to one of the extra clouds. */
+function isExtraCloud(slug: ConnectableCloudSlug): slug is ExtraCloud {
+	return slug !== "aws" && slug !== "gcp" && slug !== "azure";
+}
+
+/** The offered clouds whose pending identity is carried in `extraSetup`, in catalog order. */
+function offeredExtraClouds(): ExtraCloud[] {
+	return offeredClouds().filter(isExtraCloud);
 }
 
 /** Whether the actor may add/edit connections (clouds + api_key connectors). */
@@ -154,10 +185,9 @@ export async function getCloudConnectSetup(): Promise<CloudConnectSetup> {
 		}
 
 		// Initialise pending identities for the extra clouds (so the connect sheet has an
-		// identityId / Alibaba external_id to bind to). Only for clouds not yet connected.
-		const EXTRA = ["alibaba", "digitalocean", "hetzner", "civo"] as const;
+		// identityId to bind to). Only for clouds this deployment offers, and not yet connected.
 		await Promise.all(
-			EXTRA.map(async (slug) => {
+			offeredExtraClouds().map(async (slug) => {
 				try {
 					const status = await getExtraCloudStatus(slug);
 					if (status.connected) return;

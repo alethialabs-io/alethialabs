@@ -37,6 +37,9 @@ type ConnectBody = {
  *  - azure: { tenant_id, client_id, subscription_id }
  *  - alibaba: { role_arn }
  *  - hetzner / digitalocean / civo: { api_token } (+ hetzner's optional s3_access_key/s3_secret_key)
+ *
+ * Every cloud in the catalog has a case here. A cloud this deployment does not offer is refused by
+ * the `save*` function it reaches, and that refusal is answered with a 400 and its sentence.
  */
 export async function POST(
 	req: Request,
