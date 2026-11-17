@@ -5,12 +5,14 @@
 import { Check, Plus } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import type { SwitcherEnv } from "@/app/server/actions/resolve";
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
 import { orpc } from "@/lib/rpc/client";
+import { SHORTCUT_ENVIRONMENT_NEXT } from "@/lib/shortcuts/registry";
+import { useShortcut } from "@/lib/shortcuts/use-shortcut";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import {
 	Command,
@@ -89,33 +91,24 @@ export function EnvSwitcher() {
 	const envs = envsQuery.data ?? NO_ENVS;
 	const refetchEnvs = envsQuery.refetch;
 
-	// Shift+Tab cycles environments for fast switching (skips while typing in a field so
-	// normal reverse-tab focus still works).
-	useEffect(() => {
-		if (!isDrilldown || envs.length < 2) return;
-		const onKey = (e: KeyboardEvent) => {
-			const t = e.target instanceof HTMLElement ? e.target : null;
-			const typing =
-				!!t &&
-				(t.tagName === "INPUT" ||
-					t.tagName === "TEXTAREA" ||
-					t.tagName === "SELECT" ||
-					t.isContentEditable);
-			if (typing) return;
-			if (e.key !== "Tab" || !e.shiftKey) return;
-			e.preventDefault();
-			const current =
-				envs.find((x) => x.id === envId) ??
-				envs.find((x) => x.is_default) ??
-				envs[0];
-			const idx = envs.findIndex((x) => x.id === current.id);
-			const next = envs[(idx + 1) % envs.length];
-			syncElench(next.id, envs);
-			router.push(`${pathname}?environment_id=${encodeURIComponent(next.id)}`);
-		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
-	}, [isDrilldown, envs, envId, pathname, router, syncElench]);
+	/** Move the current view to the project's next environment, wrapping after the last. */
+	const switchToNextEnvironment = () => {
+		const current =
+			envs.find((x) => x.id === envId) ??
+			envs.find((x) => x.is_default) ??
+			envs[0];
+		const idx = envs.findIndex((x) => x.id === current.id);
+		const next = envs[(idx + 1) % envs.length];
+		syncElench(next.id, envs);
+		router.push(envUrl(next.id));
+	};
+
+	// The chord, and where it may fire, are the registry's (`lib/shortcuts/registry.ts`); this only
+	// says what it does here. With one environment there is nowhere to switch to, so the chord is
+	// left to the browser.
+	useShortcut(SHORTCUT_ENVIRONMENT_NEXT, switchToNextEnvironment, {
+		enabled: isDrilldown && envs.length >= 2,
+	});
 
 	// Ranked by the shared ranker; the query starts empty each time the popover opens.
 	const envSearch = useCommandSearch(envs, envSearchText, { open });
