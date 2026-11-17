@@ -324,6 +324,7 @@ describe("ConnectorsPage — ~/connectors?search=…", () => {
 				integrations: [datadog, grafana],
 				canManage: false,
 				platformConfigured: {},
+				offeredClouds: [],
 			}),
 		);
 		await settleWithoutTime();

@@ -68,6 +68,7 @@ import {
 } from "@/app/server/actions/identities";
 import { authorize, authorizeQuiet } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
+import { CloudNotOfferedError } from "@/lib/cloud-providers/availability";
 import * as conn from "@/lib/cloud-providers/connections";
 
 const ID = "11111111-1111-4111-8111-111111111111";
@@ -222,5 +223,64 @@ describe("startCloudConnect", () => {
 		const r = await startCloudConnect({ provider: "github" });
 		expect(!r.ok && r.error.kind).toBe("validation");
 		expect(conn.initIdentity).not.toHaveBeenCalled();
+	});
+});
+
+describe("a cloud this deployment does not offer", () => {
+	// The schema parses every cloud in the catalog; the connection library decides what is offered
+	// and throws. What is pinned here is that its refusal reaches the client as a `conflict` with
+	// the library's own sentence, never as an `unexpected` reference number.
+	it.each(["alibaba", "digitalocean", "civo"] as const)(
+		"startCloudConnect returns the library's refusal of %s as a conflict",
+		async (provider) => {
+			const refusal = new CloudNotOfferedError(provider);
+			vi.mocked(conn.initIdentity).mockRejectedValue(refusal);
+			const r = await startCloudConnect({ provider });
+			expect(r).toEqual({ ok: false, error: { kind: "conflict", message: refusal.message } });
+			expect(conn.initIdentity).toHaveBeenCalledWith(actor, provider);
+		},
+	);
+
+	it("connectCloudAccount returns the library's refusal as a conflict", async () => {
+		h.rows = [{ id: ID, provider: "alibaba" }];
+		vi.mocked(conn.saveAlibabaIdentity).mockRejectedValue(new CloudNotOfferedError("alibaba"));
+		const r = await connectCloudAccount({
+			method: "alibaba",
+			identityId: ID,
+			roleArn: "acs:ram::5123456789012345:role/R",
+		});
+		expect(r).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: "Alibaba Cloud is not available in this release." },
+		});
+	});
+
+	it("the same refusal from a token cloud's save is a conflict too", async () => {
+		h.rows = [{ id: ID, provider: "civo" }];
+		vi.mocked(conn.saveTokenCloudIdentity).mockRejectedValue(new CloudNotOfferedError("civo"));
+		const r = await connectCloudAccount({
+			method: "token",
+			identityId: ID,
+			provider: "civo",
+			token: "t".repeat(24),
+		});
+		expect(!r.ok && r.error.kind).toBe("conflict");
+	});
+
+	it("any other failure of the library is not turned into a refusal", async () => {
+		vi.mocked(conn.initIdentity).mockRejectedValue(new Error("the database fell over"));
+		const r = await startCloudConnect({ provider: "aws" });
+		expect(!r.ok && r.error.kind).toBe("unexpected");
+	});
+
+	it("an account on such a cloud can still be re-verified, renamed and disconnected", async () => {
+		h.rows = [{ id: ID, provider: "alibaba" }];
+		vi.mocked(conn.reverifyConnection).mockResolvedValue(verified);
+		vi.mocked(conn.renameIdentity).mockResolvedValue({ success: true });
+		vi.mocked(conn.disconnectIdentity).mockResolvedValue({ success: true });
+		expect((await verifyCloudAccount({ identityId: ID })).ok).toBe(true);
+		expect((await renameCloudAccount({ identityId: ID, name: "Old account" })).ok).toBe(true);
+		expect(await disconnectCloudAccount({ identityId: ID })).toEqual({ ok: true, data: { identityId: ID } });
+		expect(conn.disconnectIdentity).toHaveBeenCalledWith(actor, ID, "alibaba");
 	});
 });

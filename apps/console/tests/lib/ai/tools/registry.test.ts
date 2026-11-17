@@ -34,6 +34,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import type { ToolSet } from "ai";
 
 import { registerAiToolsOnMcp } from "@/lib/ai/mcp/adapter";
+import { withHiddenClouds } from "@/lib/cloud-providers/availability";
 import {
 	buildAgentTools,
 	buildExternalAgentTools,
@@ -146,5 +147,50 @@ describe("tool audience registry", () => {
 			"get_job",
 			"list_projects",
 		]);
+	});
+});
+
+describe("the serialised MCP tool list names only offered clouds", () => {
+	/**
+	 * The tool list as an MCP client receives it: per tool, its name, its description and its input
+	 * schema as JSON Schema. Built the way app/api/mcp/route.ts builds it, with a server that
+	 * records what `registerAiToolsOnMcp` registers.
+	 */
+	function serialisedToolList(): string {
+		const listed: { name: string; description: unknown; inputSchema: unknown }[] = [];
+		const server = {
+			registerTool: (name: string, config: { description?: string; inputSchema: z.ZodType }) => {
+				listed.push({
+					name,
+					description: config.description,
+					// "any" for a type JSON Schema cannot express, so one such field in an unrelated
+					// tool cannot stop the list being serialised.
+					inputSchema: z.toJSONSchema(config.inputSchema, { unrepresentable: "any" }),
+				});
+			},
+		} as unknown as McpServer;
+		registerAiToolsOnMcp(server, buildExternalAgentTools() as ToolSet);
+		return JSON.stringify(listed);
+	}
+
+	const HIDDEN = /alibaba|digitalocean|civo/i;
+
+	it("serialises the tools whose schemas carry a cloud", () => {
+		// The assertion below is only worth something if the list holds the cloud enums at all.
+		const list = serialisedToolList();
+		expect(list).toContain('"list_service_options"');
+		expect(list).toContain('"cidr_for_hosts"');
+		expect(list).toContain('"enum":["aws","gcp","azure","hetzner"]');
+	});
+
+	it("holds no hidden cloud slug by default", () => {
+		expect(serialisedToolList()).not.toMatch(HIDDEN);
+	});
+
+	it("holds a hidden cloud's slug once the operator setting names it", async () => {
+		// The same serialisation finds the slug when it is there, so the test above can fail.
+		const list = await withHiddenClouds(["alibaba"], serialisedToolList);
+		expect(list).toContain('"enum":["aws","gcp","azure","hetzner","alibaba"]');
+		expect(list).not.toMatch(/digitalocean|civo/i);
 	});
 });
