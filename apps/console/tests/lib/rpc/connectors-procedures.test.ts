@@ -26,6 +26,7 @@ import { getValidProviderToken } from "@/app/server/actions/identities";
 import { getPdp } from "@/lib/authz";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
+import { withHiddenClouds } from "@/lib/cloud-providers/availability";
 import type { Connector } from "@/lib/db/schema";
 import {
 	readConnectorsBoard,
@@ -353,12 +354,97 @@ describe("readConnectorsWithStatus", () => {
 			],
 			[],
 		]);
-		const [row] = await readConnectorsWithStatus();
+		// DigitalOcean is not offered by default, and a never-configured placeholder does not keep
+		// its card listed; the card is read here with the cloud re-enabled.
+		const [row] = await withHiddenClouds(["digitalocean"], () => readConnectorsWithStatus());
 		expect(row.connected).toBe(false);
 		expect(row.cloud_health).toBeUndefined();
 		expect(row.last_error).toBeUndefined();
 		expect(row.reverify_identity_id).toBeUndefined();
 		expect(row.accounts).toEqual([]);
+	});
+
+	describe("a cloud this deployment does not offer", () => {
+		/** A configured account on `provider`, as the identity read returns it. */
+		function configuredAccount(provider: string) {
+			return {
+				id: `acct-${provider}`,
+				name: `${provider} account`,
+				provider,
+				status: "connected",
+				last_error: null,
+				credentials: { token: "enc:…", role_arn: "acs:ram::5123456789012345:role/R", account_id: "5123456789012345" },
+				scope: "org",
+				missing_permissions: [],
+			};
+		}
+
+		it.each(["alibaba", "civo"] as const)(
+			"leaves the %s card out when the org has no account on it",
+			async (slug) => {
+				dbh.setQueue([
+					[
+						connector({ id: "c-aws", slug: "aws", category: "cloud", auth_method: "iam_role" }),
+						connector({ id: `c-${slug}`, slug, category: "cloud", auth_method: "api_key" }),
+					],
+					[],
+					[],
+					[],
+				]);
+				const rows = await readConnectorsWithStatus();
+				expect(rows.map((r) => r.slug)).toEqual(["aws"]);
+			},
+		);
+
+		it.each(["alibaba", "civo"] as const)(
+			"keeps the %s card, with its account, for an org that has one",
+			async (slug) => {
+				dbh.setQueue([
+					[connector({ id: `c-${slug}`, slug, category: "cloud", auth_method: "api_key" })],
+					[],
+					[configuredAccount(slug)],
+					[],
+				]);
+				const rows = await readConnectorsWithStatus();
+				expect(rows.map((r) => r.slug)).toEqual([slug]);
+				expect(rows[0].accounts?.map((a) => a.identityId)).toEqual([`acct-${slug}`]);
+			},
+		);
+
+		it("does not keep a card for a placeholder that was never configured", async () => {
+			dbh.setQueue([
+				[connector({ slug: "alibaba", category: "cloud", auth_method: "iam_role" })],
+				[],
+				[{ ...configuredAccount("alibaba"), credentials: {}, status: "pending" }],
+				[],
+			]);
+			expect(await readConnectorsWithStatus()).toEqual([]);
+		});
+
+		it.each(["alibaba", "civo"] as const)(
+			"lists the %s card with no account once the cloud is re-enabled",
+			async (slug) => {
+				dbh.setQueue([
+					[connector({ id: `c-${slug}`, slug, category: "cloud", auth_method: "api_key" })],
+					[],
+					[],
+					[],
+				]);
+				const rows = await withHiddenClouds([slug], () => readConnectorsWithStatus());
+				expect(rows.map((r) => r.slug)).toEqual([slug]);
+			},
+		);
+
+		it("never leaves out a card that is not a cloud", async () => {
+			dbh.setQueue([
+				[connector({ slug: "alibaba", category: "registry", auth_method: "api_key" })],
+				[],
+				[],
+				[],
+			]);
+			const rows = await readConnectorsWithStatus();
+			expect(rows.map((r) => r.slug)).toEqual(["alibaba"]);
+		});
 	});
 
 	it("still surfaces a genuine lost-access (disconnected) token cloud that has credentials", async () => {
@@ -444,6 +530,13 @@ describe("readConnectorsBoard", () => {
 		} as never);
 	});
 
+	it("names a re-enabled cloud in the offered set, in catalog order", async () => {
+		dbh.setQueue([[cloudCatalogRow], [], [configuredAws], []]);
+		const board = await withHiddenClouds(["civo", "alibaba"], () => readConnectorsBoard(actor));
+		expect(board.offeredClouds).toEqual(["aws", "gcp", "azure", "alibaba", "hetzner", "civo"]);
+		expect(board.platformConfigured).toHaveProperty("civo", true);
+	});
+
 	it("returns the catalog with status, the manage capability and the platform map — and writes nothing", async () => {
 		dbh.setQueue([[cloudCatalogRow], [], [configuredAws], []]);
 		const board = await readConnectorsBoard(actor);
@@ -451,6 +544,8 @@ describe("readConnectorsBoard", () => {
 		expect(board.integrations).toHaveLength(1);
 		expect(board.integrations[0].connected).toBe(true);
 		expect(board.platformConfigured).toHaveProperty("hetzner", true);
+		expect(board.platformConfigured).toHaveProperty("alibaba", false);
+		expect(board.offeredClouds).toEqual(["aws", "gcp", "azure", "hetzner"]);
 		// The page used to create a pending identity per unconnected cloud while rendering. A GET
 		// must not: no insert, update or delete is issued by the board read.
 		expect(dbh.spies.insert).not.toHaveBeenCalled();

@@ -45,7 +45,6 @@ export const NOT_COMPILED_IN = {
 	"@repo/typescript-config": "tsconfig bases, the same way — neither changes what the browser renders",
 	"@repo/e2e-issuer": "a standalone OIDC issuer the E2E rig runs as its own app; the console never imports it",
 	"@repo/spend-report": "the weekly cloud-spend email a scheduled workflow runs (spend-report.yml); the console never imports it",
-	"@repo/cloud-catalog": "which clouds are offered, for apps that cannot import the console; no app depends on it yet (#6765), and the console reads its own generated mirror of the same catalog. Delete this record in the change that adds it to apps/console's dependencies",
 };
 
 /** The package whose dependency graph IS the surface. */

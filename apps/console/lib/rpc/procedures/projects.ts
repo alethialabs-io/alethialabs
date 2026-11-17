@@ -16,6 +16,8 @@ import { getOwner } from "@/lib/auth/owner";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
+import { isCloudOffered } from "@/lib/cloud-providers/availability";
+import { isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { isGitProvider } from "@/lib/connectors/git-providers";
 import { withActorScope } from "@/lib/db";
 import { type GitProvider, jobs, projects } from "@/lib/db/schema";
@@ -185,7 +187,9 @@ export async function readScanProposal(jobId: string): Promise<ScanProposalResul
 		}).catch(meteringFailed(scanActor.orgId));
 	}
 
-	const identities = await getVerifiedCloudIdentities();
+	// Only an account on a cloud this deployment offers can take a new project: the create refuses
+	// any other, so proposing one would propose a project that cannot be made.
+	const identities = (await getVerifiedCloudIdentities()).filter((i) => isCloudOffered(i.provider));
 	if (identities.length === 0) {
 		return { status: "NEEDS_SETUP", needsIdentity: true };
 	}
@@ -282,8 +286,14 @@ export type DuplicateCategory =
 	| "topics"
 	| "secrets";
 
-/** Clouds with full provisioning templates + a conversion mapping — the only valid duplicate targets. */
-const DUPLICATE_TARGET_PROVIDERS: readonly string[] = ["aws", "gcp", "azure", "alibaba"];
+/**
+ * True when a clone can be created on `provider`: a cloud with provisioning templates and a
+ * conversion mapping (every provisioning slug has both) that this deployment also offers. Asked per
+ * read, because the offered set can differ between deployments.
+ */
+function isDuplicateTarget(provider: string): boolean {
+	return isCloudProviderSlug(provider) && isCloudOffered(provider);
+}
 
 /** {@link readDuplicateTargets}'s answer: everything the duplicate dialog shows before submit. */
 export interface DuplicateTargets {
@@ -343,9 +353,9 @@ export async function readDuplicateTargets(projectId: string): Promise<Duplicate
 		alibaba: deriveDuplicateName(sourceName, "alibaba", takenNames),
 	};
 
-	// Only other-provider accounts on a cloud we can actually provision + convert to.
+	// Only other-provider accounts on a cloud we can provision, convert to, and offer.
 	const identities = (await getVerifiedCloudIdentities()).filter(
-		(i) => i.provider !== provider && DUPLICATE_TARGET_PROVIDERS.includes(i.provider),
+		(i) => i.provider !== provider && isDuplicateTarget(i.provider),
 	);
 
 	return { provider, projectName: sourceName, categories, suggestedNames, identities };

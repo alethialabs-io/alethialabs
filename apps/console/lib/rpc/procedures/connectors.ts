@@ -23,6 +23,7 @@ import {
 import { getPdp } from "@/lib/authz";
 import { currentActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
+import { isCloudOffered, offeredClouds } from "@/lib/cloud-providers/availability";
 import { identityWasConfigured } from "@/lib/cloud-providers/identity-configured";
 import { computePlatformConfigured } from "@/lib/connectors/cloud-connect-setup";
 import { asGitProvider } from "@/lib/connectors/git-providers";
@@ -95,10 +96,15 @@ function accountStatus(status: string): CloudAccountStatus {
  * WHICH IDENTITIES. The `scoped_all` RLS policy decides (`withScope`) — the org-shared identities of
  * the actor's org plus the caller's own personal ones — narrowed to the identities that live in the
  * addressed org, the same binding the board's writes apply, so every listed account can be acted on.
+ *
+ * WHICH CLOUDS. A cloud card is listed when this deployment offers the cloud. A card for a cloud
+ * that is not offered is listed only for an org that has a configured account on it, so that
+ * account can still be re-verified and removed; the server refuses a new connection for it, and
+ * `platformConfigured` is `false` for it. The `connectors` table is not changed.
  */
 async function readConnectorsFor(actor: Actor | null): Promise<ConnectorWithConnection[]> {
 	// Public catalog — service connection (no owner scope).
-	const catalog = await getServiceDb()
+	const allConnectors = await getServiceDb()
 		.select()
 		.from(connectorsTable)
 		.orderBy(asc(connectorsTable.sort_order));
@@ -145,6 +151,13 @@ async function readConnectorsFor(actor: Actor | null): Promise<ConnectorWithConn
 	// not an account until a credential was submitted for it.
 	const configuredCloudRows = cloudIdentityRows.filter((r) =>
 		identityWasConfigured(r.provider, r.credentials),
+	);
+
+	const catalog = allConnectors.filter(
+		(connector) =>
+			connector.category !== "cloud" ||
+			isCloudOffered(connector.slug) ||
+			configuredCloudRows.some((ci) => ci.provider === connector.slug),
 	);
 
 	// api_key connector credentials, keyed by connector slug. Only `is_verified` and the scope are
@@ -318,8 +331,17 @@ export interface ConnectorsBoard {
 	integrations: ConnectorWithConnection[];
 	/** Whether the actor may add, re-verify, rename or remove connections. */
 	canManage: boolean;
-	/** Per slug: does this instance have what the provider's connect flow needs. */
+	/**
+	 * Per slug: does this instance have what the provider's connect flow needs. `false` for a cloud
+	 * this deployment does not offer.
+	 */
 	platformConfigured: Record<string, boolean>;
+	/**
+	 * The cloud slugs a new connection is accepted for on this deployment, in catalog order. A
+	 * client component reads the offered set from here and never from its own list, so the page
+	 * cannot show a Connect control the server would refuse.
+	 */
+	offeredClouds: string[];
 }
 
 /** Whether `actor` may add/edit connections (clouds + api_key connectors). */
@@ -362,6 +384,7 @@ export async function readConnectorsBoard(
 		integrations,
 		canManage,
 		platformConfigured,
+		offeredClouds: [...offeredClouds()],
 	};
 }
 
