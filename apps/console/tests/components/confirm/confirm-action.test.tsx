@@ -40,7 +40,7 @@ function deferred<T>() {
 }
 
 /** Renders under a fresh QueryClient, which the mutation contract reads. */
-function wrapper({ children }: { children: ReactNode }) {
+function Wrapper({ children }: { children: ReactNode }) {
 	const [client] = useState(
 		() =>
 			new QueryClient({
@@ -120,7 +120,7 @@ describe("ConfirmAction over a contract mutation", () => {
 		const action = vi.fn<DeleteAction>(() => answer.promise);
 		const onOpenChange = vi.fn();
 		render(<MutationHarness action={action} variables={{ id: "c-1" }} onOpenChange={onOpenChange} />, {
-			wrapper,
+			wrapper: Wrapper,
 		});
 
 		await user.click(screen.getByRole("button", { name: "Delete channel" }));
@@ -147,7 +147,7 @@ describe("ConfirmAction over a contract mutation", () => {
 				variables={{ id: "c-1" }}
 				onOpenChange={onOpenChange}
 			/>,
-			{ wrapper },
+			{ wrapper: Wrapper },
 		);
 
 		await user.click(screen.getByRole("button", { name: "Delete channel" }));
@@ -168,7 +168,7 @@ describe("ConfirmAction over a contract mutation", () => {
 		}));
 		const onOpenChange = vi.fn();
 		render(<MutationHarness action={action} variables={{ id: "c-1" }} onOpenChange={onOpenChange} />, {
-			wrapper,
+			wrapper: Wrapper,
 		});
 
 		await user.click(screen.getByRole("button", { name: "Delete channel" }));
@@ -187,7 +187,7 @@ describe("ConfirmAction over a contract mutation", () => {
 		const action = vi.fn<DeleteAction>(async (input) => ({ ok: true, data: input }));
 		const onOpenChange = vi.fn();
 		render(<MutationHarness action={action} variables={null} onOpenChange={onOpenChange} />, {
-			wrapper,
+			wrapper: Wrapper,
 		});
 
 		await user.click(screen.getByRole("button", { name: "Delete channel" }));
@@ -201,7 +201,7 @@ describe("ConfirmAction over a contract mutation", () => {
 		const action = vi.fn<DeleteAction>(async (input) => ({ ok: true, data: input }));
 		const onOpenChange = vi.fn();
 		render(<MutationHarness action={action} variables={{ id: "c-1" }} onOpenChange={onOpenChange} />, {
-			wrapper,
+			wrapper: Wrapper,
 		});
 
 		await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -292,7 +292,7 @@ describe("ConfirmAction at the destroy severity", () => {
 				onOpenChange={onOpenChange}
 				severity={severity}
 			/>,
-			{ wrapper },
+			{ wrapper: Wrapper },
 		);
 
 		expect(screen.getByText("The environment record")).toBeInTheDocument();
@@ -321,7 +321,7 @@ describe("ConfirmAction at the destroy severity", () => {
 				onOpenChange={vi.fn()}
 				severity={{ level: "destroy", subject: "", consequences: [] }}
 			/>,
-			{ wrapper },
+			{ wrapper: Wrapper },
 		);
 
 		expect(screen.getByRole("button", { name: "Delete channel" })).toBeDisabled();
