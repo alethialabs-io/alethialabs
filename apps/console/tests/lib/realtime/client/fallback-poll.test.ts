@@ -14,7 +14,7 @@ import { endSession, useSessionState } from "@/lib/stores/use-session-state";
 describe("startFallbackPoll", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
-		useSessionState.setState({ status: "active" });
+		useSessionState.setState({ status: "active", dismissed: false });
 	});
 	afterEach(() => {
 		vi.useRealTimers();

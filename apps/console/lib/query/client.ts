@@ -94,7 +94,7 @@ export function getQueryClient(scope: string = UNSCOPED): QueryClient {
 }
 
 /**
- * Stops the browser's reads once the session has ended. Runs when `useSessionState` becomes
+ * Stops the browser's reads once the session has ended. Runs once, when `useSessionState` becomes
  * `ended`, whichever of the three sources set it.
  *
  * - Every tenant's client cancels what it has in flight.
@@ -114,7 +114,7 @@ function haltQueries(): void {
 }
 
 if (!isServer) {
-	useSessionState.subscribe((state) => {
-		if (state.status === "ended") haltQueries();
+	useSessionState.subscribe((state, previous) => {
+		if (state.status === "ended" && previous.status !== "ended") haltQueries();
 	});
 }

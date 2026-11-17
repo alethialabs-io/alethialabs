@@ -59,13 +59,13 @@ describe("RealtimeMount", () => {
 		h.viewerId = "u1";
 		connectionStore.reset();
 		connectionStore.set("live");
-		useSessionState.setState({ status: "active" });
+		useSessionState.setState({ status: "active", dismissed: false });
 		window.history.replaceState(null, "", "/acme/~/jobs?status=failed");
 	});
 	afterEach(() => {
 		vi.useRealTimers();
 		// An ended session tells TanStack the browser is offline (lib/query/client.ts); undo it here.
-		useSessionState.setState({ status: "active" });
+		useSessionState.setState({ status: "active", dismissed: false });
 		onlineManager.setOnline(true);
 	});
 

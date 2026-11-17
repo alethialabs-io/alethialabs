@@ -21,7 +21,7 @@ vi.mock("sonner", () => ({ toast }));
 
 import type { ActionResult } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import { useSessionState } from "@/lib/stores/use-session-state";
+import { endSession, useSessionState } from "@/lib/stores/use-session-state";
 
 const KEY = ["projects", "acme"];
 
@@ -41,7 +41,7 @@ Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () 
 
 beforeEach(() => {
 	online = true;
-	useSessionState.setState({ status: "active" });
+	useSessionState.setState({ status: "active", dismissed: false });
 	push.mockReset();
 	toast.success.mockReset();
 	toast.error.mockReset();
@@ -126,6 +126,31 @@ describe("useActionMutation", () => {
 		expect(useSessionState.getState().status).toBe("ended");
 		expect(push).not.toHaveBeenCalled();
 		expect(toast.error).not.toHaveBeenCalled();
+	});
+
+	it("after the session has ended, an attempt calls no action and brings the dialog back", async () => {
+		const { wrapper } = setup();
+		// Ended, and the person chose "Stay on this page": the banner is up, not the dialog.
+		endSession();
+		useSessionState.getState().stay();
+		expect(useSessionState.getState()).toMatchObject({ status: "ended", dismissed: true });
+
+		const action = vi.fn(async (name: string): Promise<ActionResult<string>> => ({ ok: true, data: name }));
+		const onSuccess = vi.fn();
+		const { result } = renderHook(() => useActionMutation(action, { invalidates: [], onSuccess }), { wrapper });
+		let failure: unknown;
+		await act(async () => {
+			await result.current.mutateAsync("alpha").catch((e: unknown) => {
+				failure = e;
+			});
+		});
+
+		expect(action).not.toHaveBeenCalled();
+		expect(onSuccess).not.toHaveBeenCalled();
+		expect(failure).toMatchObject({ error: { kind: "unauthenticated" } });
+		expect(useSessionState.getState()).toMatchObject({ status: "ended", dismissed: false });
+		expect(toast.error).not.toHaveBeenCalled();
+		expect(push).not.toHaveBeenCalled();
 	});
 
 	it("is pending while the action runs (the double-submit guard binds to this)", async () => {

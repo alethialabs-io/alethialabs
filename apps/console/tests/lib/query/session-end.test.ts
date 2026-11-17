@@ -23,11 +23,11 @@ function tick(): Promise<void> {
 }
 
 beforeEach(() => {
-	useSessionState.setState({ status: "active" });
+	useSessionState.setState({ status: "active", dismissed: false });
 	onlineManager.setOnline(true);
 });
 afterEach(() => {
-	useSessionState.setState({ status: "active" });
+	useSessionState.setState({ status: "active", dismissed: false });
 	onlineManager.setOnline(true);
 });
 

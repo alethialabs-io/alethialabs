@@ -21,7 +21,7 @@ import {
 	describeActionError,
 	toActionFailure,
 } from "@/lib/actions/result";
-import { endSession } from "@/lib/stores/use-session-state";
+import { endSession, isSessionEnded } from "@/lib/stores/use-session-state";
 
 /** An optimistic patch: apply `update` to the cached value at `key` before the server answers. */
 export interface OptimisticPatch<V> {
@@ -94,7 +94,8 @@ function isBrowserOffline(): boolean {
  * - invalidates every declared key when it settles, so no screen keeps stale data (F036, F040);
  * - routes failures by kind: validation → the form, entitlement → the caller's upgrade surface,
  *   unauthenticated → the session-ended dialog (`endSession`, not a redirect: the page and what
- *   was typed into it stay where they are), a refusal → the caller's inline alert when it renders one
+ *   was typed into it stay where they are; once the session has ended no further action is
+ *   called, and each attempt brings that dialog back), a refusal → the caller's inline alert when it renders one
  *   (`onRefusal`), everything else → one toast with a human message (never raw validator text,
  *   F013);
  * - treats a call that got no server answer as a failure of kind `network`. When the browser is
@@ -117,6 +118,9 @@ export function useActionMutation<T, V, F extends FieldValues = FieldValues>(
 	const mutation = useMutation<T, ActionFailure, V, Snapshot>({
 		networkMode: "always",
 		mutationFn: async (variables) => {
+			// A session that has already ended: the action is not called. The failure below reaches
+			// `endSession()`, which brings the session-ended dialog back if it was set aside.
+			if (isSessionEnded()) throw new ActionFailure({ kind: "unauthenticated" });
 			if (isBrowserOffline()) throw new ActionFailure({ kind: "network", sent: false });
 			try {
 				const result = await action(variables);

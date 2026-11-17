@@ -3,13 +3,14 @@
 // @vitest-environment node
 
 // #6756: one store says whether the session is still good. It starts `active`, ends once, and a
-// second source reporting the same thing notifies nobody again.
+// second source reporting the same thing notifies nobody again. "Stay on this page" sets the dialog
+// aside without un-ending the session, and the next report that it has ended brings it back.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { endSession, isSessionEnded, useSessionState } from "@/lib/stores/use-session-state";
 
 beforeEach(() => {
-	useSessionState.setState({ status: "active" });
+	useSessionState.setState({ status: "active", dismissed: false });
 });
 
 describe("useSessionState", () => {
@@ -29,5 +30,19 @@ describe("useSessionState", () => {
 		expect(listener).toHaveBeenCalledTimes(1);
 		expect(useSessionState.getState().status).toBe("ended");
 		unsubscribe();
+	});
+
+	it("stay() sets the dialog aside, the session stays ended, and the next report brings it back", () => {
+		endSession();
+		useSessionState.getState().stay();
+		expect(useSessionState.getState()).toMatchObject({ status: "ended", dismissed: true });
+		expect(isSessionEnded()).toBe(true);
+		endSession();
+		expect(useSessionState.getState()).toMatchObject({ status: "ended", dismissed: false });
+	});
+
+	it("stay() does nothing while the session is active", () => {
+		useSessionState.getState().stay();
+		expect(useSessionState.getState()).toMatchObject({ status: "active", dismissed: false });
 	});
 });
