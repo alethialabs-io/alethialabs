@@ -6,7 +6,7 @@
 // tests/actions/projects.test.ts stubs — the PDP guard, the org binding and a thenable drizzle
 // chain wired through `withActorScope`; the status decision (lib/db/live-env-statuses.ts) is real.
 //
-// `deleteEnvironment` throws its refusals, so the kind is read off the thrown `ActionRefusal`.
+// `deleteEnvironment` is on the mutation contract (#6800), so the refusal is the RETURNED result.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -33,7 +33,6 @@ vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/authz/tuple-sync", () => ({ mirrorHierarchyEdge: vi.fn() }));
 
 import { deleteEnvironment } from "@/app/server/actions/projects";
-import { ActionRefusal } from "@/lib/actions/result";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
 import { projectEnvironments } from "@/lib/db/schema";
@@ -41,7 +40,7 @@ import { type ProjectStatus, projectStatus } from "@/lib/db/schema/enums";
 import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 
 /** Wires a transaction whose environment read answers `rows`; returns the delete spy. */
-function seedEnvironment(rows: { id: string; is_default: boolean; status: ProjectStatus }[]) {
+function seedEnvironment(rows: { id: string; name: string; is_default: boolean; status: ProjectStatus }[]) {
 	const deleteSpy = vi.fn<(table: unknown) => void>();
 	const chain: Record<string, unknown> = {};
 	Object.assign(chain, {
@@ -89,25 +88,29 @@ describe("deleteEnvironment while the environment is live or in flight", () => {
 	});
 
 	it.each(blocking)("%s → a conflict refusal, and the row is kept", async (status) => {
-		const { deleteSpy } = seedEnvironment([{ id: "env-2", is_default: false, status }]);
-		const thrown: unknown = await deleteEnvironment("p1", "env-2").catch((error: unknown) => error);
-		expect(thrown).toBeInstanceOf(ActionRefusal);
-		expect(thrown).toMatchObject({
-			kind: "conflict",
-			message: "Destroy this environment before deleting it.",
+		const { deleteSpy } = seedEnvironment([{ id: "env-2", name: "qa", is_default: false, status }]);
+		expect(await deleteEnvironment({ projectId: "p1", environmentId: "env-2" })).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: "Destroy this environment before deleting it." },
 		});
 		expect(deleteSpy).not.toHaveBeenCalled();
 	});
 
 	it.each(nonBlocking)("%s → the environment is deleted", async (status) => {
-		const { deleteSpy } = seedEnvironment([{ id: "env-2", is_default: false, status }]);
-		expect(await deleteEnvironment("p1", "env-2")).toEqual({ success: true });
+		const { deleteSpy } = seedEnvironment([{ id: "env-2", name: "qa", is_default: false, status }]);
+		expect(await deleteEnvironment({ projectId: "p1", environmentId: "env-2" })).toEqual({
+			ok: true,
+			data: { name: "qa" },
+		});
 		expect(deleteSpy).toHaveBeenCalledWith(projectEnvironments);
 	});
 
 	it("a live DEFAULT environment is still refused as the default, not as live", async () => {
-		const { deleteSpy } = seedEnvironment([{ id: "env-1", is_default: true, status: "ACTIVE" }]);
-		await expect(deleteEnvironment("p1", "env-1")).rejects.toThrow(/Cannot delete the project's default/);
+		const { deleteSpy } = seedEnvironment([{ id: "env-1", name: "dev", is_default: true, status: "ACTIVE" }]);
+		expect(await deleteEnvironment({ projectId: "p1", environmentId: "env-1" })).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: "The project's default environment cannot be deleted." },
+		});
 		expect(deleteSpy).not.toHaveBeenCalled();
 	});
 });

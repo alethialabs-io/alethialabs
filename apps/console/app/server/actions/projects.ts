@@ -26,7 +26,8 @@ import {
 } from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
 import { isLiveEnvStatus, LIVE_ENVIRONMENT_REFUSAL } from "@/lib/db/live-env-statuses";
-import { ActionRefusal } from "@/lib/actions/result";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
 import { recordAllowed } from "@/lib/authz/activity";
 import { authorize, authorizeDeferred, authorizeRead, currentActor } from "@/lib/authz/guard";
 import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
@@ -3864,43 +3865,55 @@ export async function getEnvConsistency(
 	};
 }
 
+/** `deleteEnvironment`'s argument: the project, and the environment of it to delete. */
+const deleteEnvironmentInput = z.object({
+	projectId: z.string().min(1),
+	environmentId: z.string().min(1),
+});
+
 /**
- * Deletes a non-default environment (the default is the project's anchor). Like `deleteProject`,
- * this removes the row and runs no destroy job, so it refuses while the environment is live or in
- * flight (#6752): the environment is destroyed first, then deleted.
+ * Deletes a non-default environment (the default is the project's anchor) and answers with its
+ * name. Like `deleteProject`, this removes the row and runs no destroy job, so it refuses while the
+ * environment is live or in flight (#6752): the environment is destroyed first, then deleted.
  *
- * The refusal is an `ActionRefusal` of kind `conflict`. This action still THROWS its refusals — its
- * one caller settles a thrown failure — so the kind is what `defineAction` will answer with once
- * the action moves onto the mutation contract; until then the caller reports a failed delete.
+ * On the mutation contract (#6800): every refusal is RETURNED. A project outside the addressed
+ * organization and an environment that is not this project's are `not-found`; a refused `edit` is
+ * `forbidden`; the default environment and a live or in-flight one are `conflict`, each with the
+ * sentence the page shows as it is.
  */
 export async function deleteEnvironment(
-	projectId: string,
-	environmentId: string,
-) {
-	// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS alone
-	// would let a team-org address reach the caller's personal-workspace project.
-	await assertProjectInActorOrg(await currentActor(), projectId);
-	const actor = await authorize("edit", { type: "project", id: projectId });
-	return withActorScope(actor, async (tx) => {
-		const [env] = await tx
-			.select()
-			.from(projectEnvironments)
-			.where(
-				and(
-					eq(projectEnvironments.id, environmentId),
-					eq(projectEnvironments.project_id, projectId),
-				),
-			)
-			.limit(1);
-		if (!env) throw new Error("Environment not found for this project");
-		if (env.is_default)
-			throw new Error("Cannot delete the project's default environment");
-		if (isLiveEnvStatus(env.status)) throw new ActionRefusal("conflict", LIVE_ENVIRONMENT_REFUSAL);
-		await tx
-			.delete(projectEnvironments)
-			.where(eq(projectEnvironments.id, environmentId));
-		return { success: true };
-	});
+	raw: z.input<typeof deleteEnvironmentInput>,
+): Promise<ActionResult<{ name: string }>> {
+	return defineAction({
+		input: deleteEnvironmentInput,
+		run: async ({ input: { projectId, environmentId } }) => {
+			// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS
+			// alone would let a team-org address reach the caller's personal-workspace project.
+			await assertProjectInActorOrg(await currentActor(), projectId);
+			const actor = await authorize("edit", { type: "project", id: projectId });
+			return withActorScope(actor, async (tx) => {
+				const [env] = await tx
+					.select()
+					.from(projectEnvironments)
+					.where(
+						and(
+							eq(projectEnvironments.id, environmentId),
+							eq(projectEnvironments.project_id, projectId),
+						),
+					)
+					.limit(1);
+				if (!env) throw new ActionRefusal("not-found", "Environment not found for this project.");
+				if (env.is_default)
+					throw new ActionRefusal("conflict", "The project's default environment cannot be deleted.");
+				if (isLiveEnvStatus(env.status))
+					throw new ActionRefusal("conflict", LIVE_ENVIRONMENT_REFUSAL);
+				await tx
+					.delete(projectEnvironments)
+					.where(eq(projectEnvironments.id, environmentId));
+				return { name: env.name };
+			});
+		},
+	})(raw);
 }
 
 // ============================================================

@@ -104,7 +104,9 @@ import {
 } from "@/app/server/actions/projects";
 import { webhookCaConsumersForTemplate } from "@/lib/addons/webhook-ca-consumers";
 import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
+import { ActionRefusal } from "@/lib/actions/result";
 import { requireOwner } from "@/lib/auth/owner";
+import { ForbiddenError } from "@/lib/authz/types";
 import { authorize, authorizeDeferred, authorizeRead, currentActor } from "@/lib/authz/guard";
 import { recordAllowed } from "@/lib/authz/activity";
 import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
@@ -3841,7 +3843,6 @@ describe("environment writes bind the project to the addressed organization firs
 		["addEnvironment", () => addEnvironment("p1", { name: "qa", stage: "development" })],
 		["duplicateEnvironment", () => duplicateEnvironment("p1", "env-1", "qa")],
 		["setAutoHeal", () => setAutoHeal("p1", "env-1", true)],
-		["deleteEnvironment", () => deleteEnvironment("p1", "env-2")],
 	];
 
 	it.each(writes)("%s refuses before the PDP is asked or anything is written", async (_name, call) => {
@@ -3858,35 +3859,75 @@ describe("environment writes bind the project to the addressed organization firs
 	});
 });
 
+// On the mutation contract (#6800): every outcome is a returned `ActionResult`, never a throw.
 describe("deleteEnvironment", () => {
-	it("deletes a non-default environment", async () => {
+	it("deletes a non-default environment and answers with its name", async () => {
 		const { deleteSpy } = setupDb({
 			select: new Map([
-				[projectEnvironments, [{ id: "env-2", is_default: false }]],
+				[projectEnvironments, [{ id: "env-2", name: "qa", is_default: false, status: "DRAFT" }]],
 			]),
 		});
-		const r = await deleteEnvironment("p1", "env-2");
+		const r = await deleteEnvironment({ projectId: "p1", environmentId: "env-2" });
 		expect(deleteSpy).toHaveBeenCalledWith(projectEnvironments);
-		expect(r).toEqual({ success: true });
+		expect(r).toEqual({ ok: true, data: { name: "qa" } });
 	});
 
-	it("refuses to delete the default environment", async () => {
+	it("returns a conflict for the default environment, and keeps the row", async () => {
 		const { deleteSpy } = setupDb({
 			select: new Map([
-				[projectEnvironments, [{ id: "env-1", is_default: true }]],
+				[projectEnvironments, [{ id: "env-1", name: "dev", is_default: true, status: "DRAFT" }]],
 			]),
 		});
-		await expect(deleteEnvironment("p1", "env-1")).rejects.toThrow(
-			/Cannot delete the project's default/,
-		);
+		expect(await deleteEnvironment({ projectId: "p1", environmentId: "env-1" })).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: "The project's default environment cannot be deleted." },
+		});
 		expect(deleteSpy).not.toHaveBeenCalled();
 	});
 
-	it("throws when the environment is not found for the project", async () => {
-		setupDb({ select: new Map([[projectEnvironments, []]]) });
-		await expect(deleteEnvironment("p1", "env-x")).rejects.toThrow(
-			/Environment not found/,
+	it("returns not-found when the environment is not this project's", async () => {
+		const { deleteSpy } = setupDb({ select: new Map([[projectEnvironments, []]]) });
+		expect(await deleteEnvironment({ projectId: "p1", environmentId: "env-x" })).toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Environment not found for this project." },
+		});
+		expect(deleteSpy).not.toHaveBeenCalled();
+	});
+
+	it("returns the org binding's not-found before the PDP is asked or anything is written", async () => {
+		const { insertSpy, updateSpy, deleteSpy } = setupDb({});
+		// Not `…Once`, as in the binding tests above; `beforeEach` resets this default.
+		vi.mocked(assertProjectInActorOrg).mockRejectedValue(
+			new ActionRefusal("not-found", "Project not found."),
 		);
+		expect(await deleteEnvironment({ projectId: "p1", environmentId: "env-2" })).toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Project not found." },
+		});
+		expect(assertProjectInActorOrg).toHaveBeenCalledWith(expect.objectContaining({ orgId: "org-1" }), "p1");
+		expect(authorize).not.toHaveBeenCalled();
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(updateSpy).not.toHaveBeenCalled();
+		expect(deleteSpy).not.toHaveBeenCalled();
+	});
+
+	it("returns forbidden when the PDP refuses the edit, and writes nothing", async () => {
+		const { deleteSpy } = setupDb({});
+		vi.mocked(authorize).mockRejectedValue(new ForbiddenError("edit", { type: "project", id: "p1" }));
+		expect(await deleteEnvironment({ projectId: "p1", environmentId: "env-2" })).toMatchObject({
+			ok: false,
+			error: { kind: "forbidden" },
+		});
+		expect(deleteSpy).not.toHaveBeenCalled();
+	});
+
+	it("returns a validation result for an empty id, before anything is read", async () => {
+		setupDb({});
+		expect(await deleteEnvironment({ projectId: "p1", environmentId: "" })).toMatchObject({
+			ok: false,
+			error: { kind: "validation" },
+		});
+		expect(assertProjectInActorOrg).not.toHaveBeenCalled();
 	});
 });
 
