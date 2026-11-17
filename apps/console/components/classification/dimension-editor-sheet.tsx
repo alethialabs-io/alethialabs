@@ -36,7 +36,7 @@ import {
 	type SeedValue,
 	updateDimension,
 } from "@/app/server/actions/classification/dimensions";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { DiscardPrompt, useUnsavedGuard } from "@/components/confirm/use-unsaved-guard";
 import type { ActionResult, FieldErrors } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { classificationReadKeys } from "@/lib/query/use-classification-query";
@@ -85,8 +85,6 @@ export function DimensionEditorSheet({
 	onOpenChange: (open: boolean) => void;
 }) {
 	const isEdit = Boolean(dimension);
-	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing.
-	const [confirmDiscard, setConfirmDiscard] = useState(false);
 	const [staged, setStaged] = useState<SeedValue[]>([]);
 	const [templateKey, setTemplateKey] = useState<string | null>(null);
 	const [addLabel, setAddLabel] = useState("");
@@ -207,11 +205,16 @@ export function DimensionEditorSheet({
 		save.mutate(data);
 	};
 
-	const dirty = form.formState.isDirty;
+	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing.
+	const unsaved = useUnsavedGuard(form);
+	const dirty = unsaved.dirty;
 	/** Closing asks first when there is something to lose; a pristine sheet just closes. */
 	function requestOpenChange(next: boolean) {
 		if (!next && dirty && !save.isPending) {
-			setConfirmDiscard(true);
+			unsaved.guard(() => {
+				form.reset();
+				onOpenChange(false);
+			});
 			return;
 		}
 		onOpenChange(next);
@@ -462,9 +465,8 @@ export function DimensionEditorSheet({
 				</form>
 			</SheetContent>
 		</Sheet>
-		<ConfirmDialog
-			open={confirmDiscard}
-			onOpenChange={setConfirmDiscard}
+		<DiscardPrompt
+			{...unsaved.prompt}
 			title="Discard your changes?"
 			description={
 				isEdit
@@ -472,10 +474,6 @@ export function DimensionEditorSheet({
 					: "This dimension is not created yet. Closing the editor drops what you entered."
 			}
 			confirmLabel="Discard changes"
-			onConfirm={() => {
-				form.reset();
-				onOpenChange(false);
-			}}
 		/>
 		</>
 	);

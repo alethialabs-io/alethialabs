@@ -509,11 +509,15 @@ test.describe("Projects — Environments view", () => {
 		// row states itself instead of surfacing as a strict-mode violation on the line below.
 		await expect(deleteControls(owner.page)).toHaveCount(1);
 		await deleteControls(owner.page).click();
-		// The confirm is a ConfirmDialog whose TITLE names the environment — that is where the row's
-		// identity is, since the trigger's name is the bare word "Delete".
+		// The confirm's TITLE names the environment — that is where the row's identity is, since the
+		// trigger's name is the bare word "Delete". Deleting an environment is confirmed by typing
+		// its name, and the button does nothing until it has been.
 		const confirm = owner.page.getByRole("alertdialog");
 		await expect(confirm.getByText(new RegExp(`delete ${envName}`, "i"))).toBeVisible();
-		await confirm.getByRole("button", { name: /delete environment/i }).click();
+		const deleteButton = confirm.getByRole("button", { name: /delete environment/i });
+		await expect(deleteButton).toBeDisabled();
+		await confirm.getByRole("textbox").fill(envName);
+		await deleteButton.click();
 		await expect(owner.page.getByRole("link", { name: envName })).toHaveCount(0, {
 			timeout: 20_000,
 		});

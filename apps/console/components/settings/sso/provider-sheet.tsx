@@ -17,7 +17,7 @@ import { KeyRound } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { FormProvider, useForm, useWatch } from "react-hook-form";
 import { type SsoProviderRow, updateSsoProvider } from "@/app/server/actions/sso";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { DiscardPrompt, useUnsavedGuard } from "@/components/confirm/use-unsaved-guard";
 import {
 	AccordionForm,
 	type FormSectionDef,
@@ -140,7 +140,6 @@ export function ProviderSheet({
 }: ProviderSheetProps) {
 	const [openSection, setOpenSection] = useState("protocol");
 	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing.
-	const [confirmDiscard, setConfirmDiscard] = useState(false);
 	const isEdit = provider != null;
 	const mode = isEdit ? "edit" : "create";
 
@@ -230,11 +229,16 @@ export function ProviderSheet({
 		save.mutate(v);
 	}
 
-	const dirty = form.formState.isDirty;
+	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing.
+	const unsaved = useUnsavedGuard(form);
+	const dirty = unsaved.dirty;
 	/** Closing asks first when there is something to lose; a pristine sheet just closes. */
 	function requestOpenChange(next: boolean) {
 		if (!next && dirty && !save.isPending) {
-			setConfirmDiscard(true);
+			unsaved.guard(() => {
+				form.reset();
+				onOpenChange(false);
+			});
 			return;
 		}
 		onOpenChange(next);
@@ -486,9 +490,8 @@ export function ProviderSheet({
 				</FormProvider>
 			</SheetContent>
 		</Sheet>
-		<ConfirmDialog
-			open={confirmDiscard}
-			onOpenChange={setConfirmDiscard}
+		<DiscardPrompt
+			{...unsaved.prompt}
 			title="Discard your changes?"
 			description={
 				isEdit
@@ -496,10 +499,6 @@ export function ProviderSheet({
 					: "This provider is not registered yet. Closing the editor drops what you entered."
 			}
 			confirmLabel="Discard changes"
-			onConfirm={() => {
-				form.reset();
-				onOpenChange(false);
-			}}
 		/>
 		</>
 	);

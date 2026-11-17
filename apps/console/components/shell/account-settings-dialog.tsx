@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { PRIVACY_RESPONSE_DAYS } from "@/app/server/actions/privacy/response-period";
 import { requestMyErasure } from "@/app/server/actions/privacy/self-serve";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { authClient } from "@/lib/auth/client";
 import { useViewer } from "@/components/providers/viewer-provider";
 import { formatDate } from "@repo/format";
@@ -126,9 +126,10 @@ export function AccountSettingsDialog({
 	 * Opens the erasure request for the signed-in user and says what happened — a request with a
 	 * reference that was sent to the privacy inbox, never a deletion. A second press while one is
 	 * open gets the existing reference back. A deployment with no privacy contact opens nothing, and
-	 * the toast says so rather than implying anyone was told.
+	 * the toast says so rather than implying anyone was told. Answers `false` only when the request
+	 * could not be made at all, which keeps the confirmation open to try again.
 	 */
-	const onRequestErasure = async () => {
+	const onRequestErasure = async (): Promise<boolean> => {
 		setRequesting(true);
 		try {
 			const result = await requestMyErasure();
@@ -145,8 +146,10 @@ export function AccountSettingsDialog({
 					"No request was opened: this deployment has no privacy contact configured. Ask your administrator to erase your account.",
 				);
 			}
+			return true;
 		} catch {
 			toast.error("Couldn't open the erasure request. Please try again.");
+			return false;
 		} finally {
 			setRequesting(false);
 		}
@@ -312,13 +315,15 @@ export function AccountSettingsDialog({
 					</div>
 				</DialogContent>
 			</Dialog>
-			<ConfirmDialog
+			<ConfirmAction
 				open={confirmOpen}
 				onOpenChange={setConfirmOpen}
 				title="Request deletion of your account?"
 				description={`This opens an erasure request for ${user?.email ?? "your account"} and sends it to the privacy team. Nothing is deleted now, and your account keeps working while the request is handled.`}
 				confirmLabel="Open erasure request"
-				onConfirm={onRequestErasure}
+				pendingLabel="Opening…"
+				severity={{ level: "confirm" }}
+				run={onRequestErasure}
 			/>
 		</>
 	);

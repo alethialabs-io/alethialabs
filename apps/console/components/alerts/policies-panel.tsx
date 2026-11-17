@@ -44,7 +44,8 @@ import { policyBadge } from "@/components/alerts/alerts-status";
 import { ClassificationChips } from "@/components/classification/classification-chips";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
+import { DiscardPrompt } from "@/components/confirm/use-unsaved-guard";
 import { EventMatrix } from "@/components/alerts/event-matrix";
 import {
 	type ConditionsValue,
@@ -429,43 +430,41 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 				/>
 			)}
 
-			<ConfirmDialog
+			<DiscardPrompt
 				open={held}
-				// Cancel: back to the policy being edited, draft intact.
-				onOpenChange={(o) => {
-					if (!o && draft) setSelectedId(draft.policyId);
-				}}
 				title="Discard unsaved changes?"
 				description={`Your edits to "${draftPolicy?.name ?? ""}" have not been saved. Opening another policy discards them.`}
 				confirmLabel="Discard changes"
+				// Keep editing: back to the policy being edited, draft intact.
+				onKeep={() => {
+					if (draft) setSelectedId(draft.policyId);
+				}}
 				// The selection has already moved; dropping the draft is what lets it through.
-				onConfirm={() => setDraft(null)}
+				onDiscard={() => setDraft(null)}
 			/>
 
-			<ConfirmDialog
+			<ConfirmAction
 				open={disableTarget !== null}
 				onOpenChange={(o) => !o && setDisableTarget(null)}
 				title="Disable this policy?"
 				description="This policy stops watching its events until you re-enable it, across every channel it routes to. You can re-enable any time."
 				confirmLabel="Disable"
 				pendingLabel="Disabling…"
-				pending={toggle.isPending}
-				onConfirm={() => {
-					if (disableTarget) applyEnabled(disableTarget, false);
-				}}
+				severity={{ level: "confirm" }}
+				mutation={toggle}
+				variables={disableTarget ? { id: disableTarget.id, enabled: false } : null}
 			/>
 
-			<ConfirmDialog
+			<ConfirmAction
 				open={deleteTarget !== null}
 				onOpenChange={(o) => !o && setDeleteTarget(null)}
 				title={`Delete policy "${deleteTarget?.name ?? ""}"?`}
 				description="This policy stops watching its events immediately. Delivery history is kept. This cannot be undone."
 				confirmLabel="Delete policy"
 				pendingLabel="Deleting…"
-				pending={remove.isPending}
-				onConfirm={() => {
-					if (deleteTarget && !remove.isPending) remove.mutate({ id: deleteTarget.id });
-				}}
+				severity={{ level: "confirm" }}
+				mutation={remove}
+				variables={deleteTarget ? { id: deleteTarget.id } : null}
 			/>
 		</div>
 	);

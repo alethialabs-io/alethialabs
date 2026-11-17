@@ -4,7 +4,7 @@
 
 import { Loader2, Rocket, Save } from "lucide-react";
 import { useMemo, useState } from "react";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { Button } from "@repo/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import { Separator } from "@repo/ui/separator";
@@ -199,13 +199,14 @@ export function PendingChangesBar({
         </Button>
       </div>
 
-      <ConfirmDialog
+      <ConfirmAction
         open={confirmDiscard}
         onOpenChange={setConfirmDiscard}
         title="Discard staged changes?"
         description="This reverts the canvas to the last deployed state and clears all pending changes. This cannot be undone."
         confirmLabel="Discard"
-        onConfirm={handleDiscard}
+        severity={{ level: "confirm" }}
+        run={handleDiscard}
       />
     </div>
   );
