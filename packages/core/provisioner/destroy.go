@@ -155,7 +155,9 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 	}
 	defer wd.cleanup()
 
-	// BEFORE the destroy: remove the in-cluster objects that own cloud load balancers.
+	// BEFORE the destroy: remove the in-cluster objects that own cloud load balancers, and see them
+	// gone while the controllers that release them are still installed (#6970 — the order is argued
+	// at the top of destroy_loadbalancers.go).
 	//
 	// A LoadBalancer Service and an ALB Ingress create cloud resources that are not in the state
 	// file, and `tofu destroy` then fails on the network they are attached to — measured on
@@ -210,7 +212,13 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 // is for, and anything it exposed through a LoadBalancer Service may still be billing.
 func destroyOutcomeError(rel releaseOutcome, destroyErr error) error {
 	if destroyErr != nil {
-		return fmt.Errorf("tofu destroy failed: %w%s", destroyErr, rel.billingWarning())
+		failed := fmt.Errorf("tofu destroy failed: %w%s", destroyErr, rel.billingWarning())
+		if held := rel.stillHeld(); held != nil {
+			// Same text, one more link in the chain: a caller can ask what is still held with
+			// errors.As instead of reading it back out of the warning.
+			return &destroyBlockedError{msg: failed.Error(), destroyErr: destroyErr, held: held}
+		}
+		return failed
 	}
 	if rel.MintFailed != "" {
 		return fmt.Errorf("the environment's cloud resources were destroyed, but its load balancers were not released: %s%s",
@@ -218,6 +226,20 @@ func destroyOutcomeError(rel releaseOutcome, destroyErr error) error {
 	}
 	return nil
 }
+
+// destroyBlockedError is a failed destroy that ended with cloud-backed objects still observed held.
+// It reads exactly like the untyped failure and unwraps to both causes.
+type destroyBlockedError struct {
+	msg        string
+	destroyErr error
+	held       *LoadBalancersStillHeldError
+}
+
+// Error returns the same sentence the untyped failure carries.
+func (e *destroyBlockedError) Error() string { return e.msg }
+
+// Unwrap exposes the destroy's own error and the typed list of what is still held.
+func (e *destroyBlockedError) Unwrap() []error { return []error{e.destroyErr, e.held} }
 
 // retryReleaseAndDestroy is the whole retry policy: whether to try again, which release outcome to
 // keep, what to tell the operator, and whether to re-run the destroy.
