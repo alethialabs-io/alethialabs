@@ -6,10 +6,10 @@
 // Asserted through what undo and redo DO to the board, never through the stacks that hold the
 // history, so the history can be rebuilt without rewriting this file.
 //
-// Three cases are `it.fails`: a field edit, a move and an out-of-band card are not handled by
-// today's history, and each case states what a user is entitled to expect. `it.fails` goes green on
-// ANY throw, including a broken setup, so every one of the three has a passing twin under "the
-// steps the three cases below take" that asserts the setup alone.
+// Three cases were `it.fails` until the store split (#6764): a field edit, a move and an
+// out-of-band card were not handled by the history, and each case states what a user is entitled
+// to expect. Each still has its twin under "the steps the three cases below take", which asserts
+// the setup alone, so a case that fails is the undo and not the steps before it.
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
@@ -175,14 +175,14 @@ describe("the steps the three cases below take", () => {
 	});
 });
 
-describe("what undo does not do yet", () => {
-	it.fails("undoes a field edit", () => {
+describe("what undo covers since the store split", () => {
+	it("undoes a field edit", () => {
 		editDatabasePort();
 		board().undo();
 		expect(databasePort()).toBe(5432);
 	});
 
-	it.fails("undoes a drag", () => {
+	it("undoes a drag", () => {
 		const start = databasePosition();
 		if (!start) throw new Error("the seeded database is not on the board");
 		dragDatabase(start);
@@ -190,7 +190,7 @@ describe("what undo does not do yet", () => {
 		expect(databasePosition()).toEqual(start);
 	});
 
-	it.fails("leaves an out-of-band card on the board", () => {
+	it("leaves an out-of-band card on the board", () => {
 		addSecretThenLoadAddon();
 		board().undo();
 		expect(ids()).toContain(ADDON);
