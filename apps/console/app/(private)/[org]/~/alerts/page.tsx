@@ -7,7 +7,7 @@ import { AlertsPage } from "@/components/alerts/alerts-page";
 import { alertsQueriesFromUrl } from "@/components/alerts/alerts-query";
 import { AlertsSkeleton } from "@/components/alerts/alerts-skeleton";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
-import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
+import { RegionRefusal } from "@/components/errors/region-refusal";
 import { getPdp } from "@/lib/authz";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { currentActor } from "@/lib/authz/guard";
@@ -44,13 +44,7 @@ export default async function AlertsRoute({ searchParams }: { searchParams: Sear
 	if (!canView) {
 		return (
 			<div className="p-6">
-				<Alert>
-					<AlertTitle>No access to alerts</AlertTitle>
-					<AlertDescription>
-						You don&apos;t have permission to view alerting for this organization.
-						Ask an owner or admin for the <code>view_alerts</code> permission.
-					</AlertDescription>
-				</Alert>
+				<RegionRefusal refusal="forbidden" subject="alerts" />
 			</div>
 		);
 	}
