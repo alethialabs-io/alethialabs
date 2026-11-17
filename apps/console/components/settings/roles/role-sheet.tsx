@@ -23,7 +23,7 @@ import {
 	type RoleRow,
 	updateRole,
 } from "@/app/server/actions/roles";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { DiscardPrompt, useUnsavedGuard } from "@/components/confirm/use-unsaved-guard";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import {
 	AccordionForm,
@@ -89,8 +89,6 @@ export function RoleSheet({
 	canManage,
 }: RoleSheetProps) {
 	const [openSection, setOpenSection] = useState("identity");
-	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing.
-	const [confirmDiscard, setConfirmDiscard] = useState(false);
 	const isEdit = role != null;
 
 	const form = useForm<RoleInput>({
@@ -137,11 +135,16 @@ export function RoleSheet({
 		save.mutate({ id: role?.id ?? null, values });
 	}
 
-	const dirty = form.formState.isDirty;
+	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing.
+	const unsaved = useUnsavedGuard(form);
+	const dirty = unsaved.dirty;
 	/** Closing asks first when there is something to lose; a pristine sheet just closes. */
 	function requestOpenChange(next: boolean) {
 		if (!next && dirty && !save.isPending) {
-			setConfirmDiscard(true);
+			unsaved.guard(() => {
+				form.reset();
+				onOpenChange(false);
+			});
 			return;
 		}
 		onOpenChange(next);
@@ -322,9 +325,8 @@ export function RoleSheet({
 				</FormProvider>
 			</SheetContent>
 		</Sheet>
-		<ConfirmDialog
-			open={confirmDiscard}
-			onOpenChange={setConfirmDiscard}
+		<DiscardPrompt
+			{...unsaved.prompt}
 			title="Discard your changes?"
 			description={
 				isEdit
@@ -332,10 +334,6 @@ export function RoleSheet({
 					: "This role is not created yet. Closing the editor drops what you entered."
 			}
 			confirmLabel="Discard changes"
-			onConfirm={() => {
-				form.reset();
-				onOpenChange(false);
-			}}
 		/>
 		</>
 	);

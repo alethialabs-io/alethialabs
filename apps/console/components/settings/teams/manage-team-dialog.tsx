@@ -13,7 +13,7 @@ import { X } from "lucide-react";
 import { useState } from "react";
 import type { TeamRow } from "@/app/server/actions/teams";
 import { Combobox } from "@/components/settings/access/combobox";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { viaAuth } from "@/components/settings/members/auth-action";
 import { Button } from "@repo/ui/button";
 import {
@@ -85,7 +85,7 @@ export function ManageTeamDialog({
 	return (
 		<>
 		{/* THE TEAM DIALOG CLOSES WHILE THE CONFIRMATION IS UP, and that is the whole mechanism.
-		    An earlier version of this file moved the `ConfirmDialog` from a JSX child of `<Dialog>`
+		    An earlier version of this file moved the confirmation from a JSX child of `<Dialog>`
 		    to its sibling and claimed that fixed which popup a `[role=dialog]`-style lookup binds.
 		    It does not: base-ui's `Dialog.Portal` and `AlertDialog.Portal` each append their
 		    container to `document.body` at mount, a CSS selector list returns matches in DOCUMENT
@@ -154,7 +154,7 @@ export function ManageTeamDialog({
 				</div>
 			</DialogContent>
 		</Dialog>
-		{/* MOUNTED, and driven by `open` — the shape the console's other six `ConfirmDialog` call
+		{/* MOUNTED, and driven by `open` — the shape the console's other `ConfirmAction` call
 		    sites use. The pending user id is still the single source of open state; what conditional
 		    mounting cost was the close, because `onOpenChange(false)` clears it in the same tick and
 		    the base-ui `AlertDialog.Root` was then torn out while still `open`: no exit transition,
@@ -162,7 +162,7 @@ export function ManageTeamDialog({
 		    `confirmLabel` is "Remove from team", not "Remove": the row’s own button is already called
 		    that, and a confirm button repeating its trigger’s label leaves the destructive-action
 		    spec with two matches on one page and therefore no attributable verdict. */}
-		<ConfirmDialog
+		<ConfirmAction
 			open={pendingRemoval !== null}
 			onOpenChange={(next) => {
 				if (!next) setPendingRemoval(null);
@@ -170,9 +170,10 @@ export function ManageTeamDialog({
 			title="Remove this team member?"
 			description={`${pendingName} leaves ${teamName}. Every grant that reached them through this team stops applying; their organization membership and role are untouched.`}
 			confirmLabel="Remove from team"
-			onConfirm={() => {
-				if (pendingRemoval) remove.mutate({ userId: pendingRemoval });
-			}}
+			pendingLabel="Removing…"
+			severity={{ level: "confirm" }}
+			mutation={remove}
+			variables={pendingRemoval ? { userId: pendingRemoval } : null}
 		/>
 		</>
 	);
