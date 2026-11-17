@@ -4,6 +4,7 @@
 		{
 			"slug": "aws",
 			"name": "Amazon Web Services",
+			"availability": "available",
 			"cluster_service": "EKS",
 			"network_name": "VPC",
 			"dns_service": "Route 53",
@@ -19,6 +20,7 @@
 		{
 			"slug": "gcp",
 			"name": "Google Cloud",
+			"availability": "available",
 			"cluster_service": "GKE",
 			"network_name": "VPC Network",
 			"dns_service": "Cloud DNS",
@@ -34,6 +36,7 @@
 		{
 			"slug": "azure",
 			"name": "Microsoft Azure",
+			"availability": "available",
 			"cluster_service": "AKS",
 			"network_name": "VNet",
 			"dns_service": "Azure DNS",
@@ -49,6 +52,7 @@
 		{
 			"slug": "hetzner",
 			"name": "Hetzner Cloud",
+			"availability": "available",
 			"cluster_service": "Talos Kubernetes",
 			"network_name": "Hetzner Network",
 			"dns_service": "ExternalDNS",
@@ -64,6 +68,7 @@
 		{
 			"slug": "alibaba",
 			"name": "Alibaba Cloud",
+			"availability": "hidden",
 			"cluster_service": "ACK",
 			"network_name": "VPC",
 			"dns_service": "Alibaba Cloud DNS",
@@ -1080,6 +1085,7 @@
 			"aws": {
 				"slug": "aws",
 				"name": "Amazon Web Services",
+				"availability": "available",
 				"shortName": "AWS",
 				"icon": "/aws/favicon_64x64.png",
 				"clusterService": "EKS",
@@ -1098,6 +1104,7 @@
 			"gcp": {
 				"slug": "gcp",
 				"name": "Google Cloud Platform",
+				"availability": "available",
 				"shortName": "GCP",
 				"icon": "/gcp/favicon_64x64.png",
 				"clusterService": "GKE",
@@ -1116,6 +1123,7 @@
 			"azure": {
 				"slug": "azure",
 				"name": "Microsoft Azure",
+				"availability": "available",
 				"shortName": "Azure",
 				"icon": "/azure/favicon_64x64.png",
 				"clusterService": "AKS",
@@ -1134,6 +1142,7 @@
 			"alibaba": {
 				"slug": "alibaba",
 				"name": "Alibaba Cloud",
+				"availability": "hidden",
 				"shortName": "Alibaba",
 				"icon": "/alibaba/favicon_64x64.png",
 				"clusterService": "ACK",
@@ -1152,6 +1161,7 @@
 			"digitalocean": {
 				"slug": "digitalocean",
 				"name": "DigitalOcean",
+				"availability": "hidden",
 				"shortName": "DO",
 				"icon": "/digitalocean/favicon_64x64.png",
 				"clusterService": "DOKS",
@@ -1170,6 +1180,7 @@
 			"hetzner": {
 				"slug": "hetzner",
 				"name": "Hetzner Cloud",
+				"availability": "available",
 				"shortName": "Hetzner",
 				"icon": "/hetzner/favicon_64x64.png",
 				"clusterService": "Talos Kubernetes",
@@ -1188,6 +1199,7 @@
 			"civo": {
 				"slug": "civo",
 				"name": "Civo",
+				"availability": "hidden",
 				"shortName": "Civo",
 				"icon": "/civo/favicon_64x64.png",
 				"clusterService": "Civo K3s",
