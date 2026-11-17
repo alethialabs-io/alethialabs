@@ -15,14 +15,38 @@
 //
 // A value is accepted only when it is a short identifier (letters, digits, `-`, `_`). Anything
 // else reads as absent, so a hand-edited link can select a step or an overlay and nothing more.
+//
+// A LIST page has three more pieces of view state, and they are decoded here for the same reason
+// (#6814):
+//   ?page=<n>          which page of the rows, 1-based; the first page is the absent param
+//   ?selected=<id>     which row is open beside the list (a detail pane or sheet)
+//   ?range=<value>     the time window, on a page that keeps it out of its filter store
+//
+// None of them is a filter-store key: a page number and a selected row mean something only for
+// the filters they were chosen under, so `useFilterUrlSync` is told to drop them when a filter
+// changes (`resetParams`), and neither counts on "Reset · N". Every decoder is total — an
+// unreadable value is the default view, never an error and never a view nobody chose.
 
 import type { ParamReader } from "@/lib/query/filter-url-codec";
+import { parseRangeFilter, type RangeFilter } from "@/lib/query/range-filter";
 
 /** The param naming the open overlay wizard. */
 export const WIZARD_PARAM = "wizard";
 
 /** The param naming the step on screen. */
 export const STEP_PARAM = "step";
+
+/** The param naming the page of a list's rows. */
+export const PAGE_PARAM = "page";
+
+/** The param naming the row open beside a list. */
+export const SELECTION_PARAM = "selected";
+
+/** The param naming a list's time window. */
+export const RANGE_PARAM = "range";
+
+/** The params `useFilterUrlSync` is handed as `resetParams` on a paged list with a detail pane. */
+export const FILTER_DEPENDENT_PARAMS: readonly string[] = [PAGE_PARAM, SELECTION_PARAM];
 
 /** A set of param changes: a string sets the param, `null` removes it. */
 export type ParamPatch = Readonly<Record<string, string | null>>;
@@ -97,4 +121,50 @@ export function applyParamPatch(search: string, patch: ParamPatch): string {
 export function hrefWithParamPatch(pathname: string, search: string, patch: ParamPatch): string {
 	const next = applyParamPatch(search, patch);
 	return next === "" ? pathname : `${pathname}?${next}`;
+}
+
+/** The highest page number the codec reads or writes (six digits). */
+const MAX_PAGE = 999_999;
+
+/**
+ * The 1-based page the URL names. Absent, not a whole number, below 1 or above the cap all read
+ * as the first page.
+ */
+export function pageFromUrl(params: ParamReader, name: string = PAGE_PARAM): number {
+	const raw = params.get(name);
+	if (raw === null || !/^[1-9][0-9]{0,5}$/.test(raw)) return 1;
+	return Number.parseInt(raw, 10);
+}
+
+/** The patch that shows `page`. The first page removes the param, so a pristine list keeps a clean URL. */
+export function pagePatch(page: number, name: string = PAGE_PARAM): ParamPatch {
+	const whole = Number.isFinite(page) ? Math.floor(page) : 1;
+	return { [name]: whole <= 1 || whole > MAX_PAGE ? null : String(whole) };
+}
+
+/** The id of the row the URL says is open, or `null` when it names none or the value is not an identifier. */
+export function selectionFromUrl(params: ParamReader, name: string = SELECTION_PARAM): string | null {
+	return readViewParam(params, name);
+}
+
+/** The patch that opens the row `id`, or closes the open one for `null` and for anything that is not an identifier. */
+export function selectionPatch(id: string | null, name: string = SELECTION_PARAM): ParamPatch {
+	return { [name]: id !== null && isViewId(id) ? id : null };
+}
+
+/**
+ * The time window the URL names, decoded exactly as a `range` filter value is
+ * (`lib/query/range-filter.ts`): a preset stays relative, an explicit window is its two bounds,
+ * and absent or unreadable is the page's default window.
+ */
+export function rangeFromUrl(params: ParamReader, name: string = RANGE_PARAM): RangeFilter {
+	return parseRangeFilter(params.get(name) ?? "");
+}
+
+/**
+ * The patch that shows the window `value` (a preset id, or `<from>/<to>`). The page's default
+ * window removes the param, and so does a value that does not decode.
+ */
+export function rangePatch(value: string, name: string = RANGE_PARAM): ParamPatch {
+	return { [name]: parseRangeFilter(value).kind === "default" ? null : value };
 }
