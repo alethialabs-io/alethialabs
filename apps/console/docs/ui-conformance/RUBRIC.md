@@ -697,8 +697,8 @@ enforces it, because a rule nothing enforces reads exactly like one that is.
    or a pending region.
 
 **What enforces them.** Rule 1's shape is `SkeletonRoot`'s own type and
-`tests/components/skeleton/skeleton-root.test.tsx`. Rules 4 and 5 are
-`tests/components/skeleton/skeleton-rules.test.ts`, which reads every `loading.tsx` under `app/`
+`tests/components/skeleton/skeleton-rules.test.tsx`. Rules 4 and 5 are the same file, which reads
+every `loading.tsx` under `app/`
 and carries the files that break either rule today as a ledger that fails in **both** directions —
 a new async or spinner `loading.tsx` fails it, and so does an entry whose file has been fixed. On
 the day this section was written that ledger held **ten** async files and **one** spinner

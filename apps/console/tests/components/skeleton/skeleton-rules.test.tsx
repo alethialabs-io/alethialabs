@@ -1,27 +1,34 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Rules 4 and 5 of "The skeleton rules" (docs/ui-conformance/RUBRIC.md; CON-SM7, #6759), read off
-// every `loading.tsx` under `app/`:
+// "The skeleton rules" (docs/ui-conformance/RUBRIC.md; CON-SM7, #6759) — the three of the five
+// that a test can hold:
 //
+//   1. one root, and it is `SkeletonRoot` — rendered here, so the wrapper's one statement
+//      (`aria-busy`, never `aria-hidden`) is pinned and a caller cannot unsay it;
 //   4. a skeleton is synchronous — an async `loading.tsx` is banned (decision CON-M4);
 //   5. a skeleton is never a spinner.
 //
-// The files that break either rule today are carried as two ledgers, each owned by the lane whose
-// scope holds the file. A ledger fails in BOTH directions: a file that breaks a rule and is not
-// listed fails, and so does an entry whose file no longer breaks it — so a list cannot outlive
-// what it excuses, and fixing a route moves a line here in the same diff.
+// Rules 4 and 5 are read off every `loading.tsx` under `app/`. The files that break either rule
+// today are carried as two ledgers, each owned by the lane whose scope holds the file. A ledger
+// fails in BOTH directions: a file that breaks a rule and is not listed fails, and so does an
+// entry whose file no longer breaks it — so a list cannot outlive what it excuses, and fixing a
+// route moves a line here in the same diff.
 //
 // WHAT THE MATCHERS READ, AND WHAT THEY DO NOT. Rule 4 is the tokens `async` and `await` anywhere
-// in the file outside a block comment or a whole-line `//` comment. A synchronous `loading.tsx` that suspends through React's `use()`
-// is the same defect and is NOT matched. Rule 5 is the class token `animate-spin` in the
-// `loading.tsx` itself; a spinner inside a component the file renders is NOT matched. Neither
-// reads a skeleton that is not a `loading.tsx` (a panel's own pending render).
+// in the file outside a block comment or a whole-line `//` comment. A synchronous `loading.tsx`
+// that suspends through React's `use()` is the same defect and is NOT matched. Rule 5 is the class
+// token `animate-spin` in the `loading.tsx` itself; a spinner inside a component the file renders
+// is NOT matched. Neither reads a skeleton that is not a `loading.tsx` (a panel's own pending
+// render), and nothing here checks that an existing skeleton's root is `SkeletonRoot`.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 
 const CONSOLE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const APP = join(CONSOLE, "app");
@@ -131,5 +138,53 @@ describe("loading.tsx", () => {
 	it("lists no spinner that has already been replaced", () => {
 		const found = matching(isSpinner);
 		expect(Object.keys(OWED_SPINNER).filter((f) => !found.includes(f))).toEqual([]);
+	});
+});
+
+describe("SkeletonRoot", () => {
+	it("marks the region busy, and names itself for a reader and a test", () => {
+		render(<SkeletonRoot data-testid="root" />);
+		const root = screen.getByTestId("root");
+		expect(root.tagName).toBe("DIV");
+		expect(root).toHaveAttribute("aria-busy", "true");
+		expect(root).toHaveAttribute("data-slot", "skeleton-root");
+	});
+
+	it("is not hidden from assistive technology and takes no role", () => {
+		render(<SkeletonRoot data-testid="root" />);
+		const root = screen.getByTestId("root");
+		expect(root).not.toHaveAttribute("aria-hidden");
+		expect(root).not.toHaveAttribute("role");
+	});
+
+	it("leaves its children in the accessibility tree", () => {
+		render(
+			<SkeletonRoot>
+				<button type="button">Invite</button>
+			</SkeletonRoot>,
+		);
+		expect(screen.getByRole("button", { name: "Invite" })).toBeInTheDocument();
+	});
+
+	it("passes layout through: className and other div attributes are the caller's", () => {
+		render(<SkeletonRoot data-testid="root" className="space-y-5" id="members-skeleton" />);
+		const root = screen.getByTestId("root");
+		expect(root).toHaveClass("space-y-5");
+		expect(root).toHaveAttribute("id", "members-skeleton");
+	});
+
+	it("keeps its own slot name when a caller passes one", () => {
+		render(<SkeletonRoot data-testid="root" data-slot="billing-skeleton" />);
+		expect(screen.getByTestId("root")).toHaveAttribute("data-slot", "skeleton-root");
+	});
+
+	it("is what a query for a pending region finds", () => {
+		const { container } = render(
+			<main>
+				<SkeletonRoot />
+			</main>,
+		);
+		// The selector `e2e/audit/filters.ts` reads to decide a page has not answered yet.
+		expect(container.querySelector('main [aria-busy="true"]')).not.toBeNull();
 	});
 });
