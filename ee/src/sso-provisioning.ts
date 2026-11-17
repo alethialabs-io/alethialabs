@@ -29,10 +29,9 @@
 //
 // Runtime access to core is through the injected capabilities only (see index.ts).
 
-import type { BetterAuthPlugin } from "better-auth";
 import { createAuthMiddleware } from "better-auth/api";
 import { sql } from "drizzle-orm";
-import type { CoreContext } from "@/lib/enterprise";
+import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
 import type { ScopeQueryRunner } from "./scope";
 
 /**
@@ -61,6 +60,13 @@ export const SSO_SIGN_IN_PATHS: readonly string[] = [
 /** The reason recorded in the activity log beside a grant this module wrote. */
 export const SSO_GRANT_REASON =
   "Single sign-on: granted the viewer role on sign-in through the organization's identity provider.";
+
+/**
+ * One Better Auth plugin as the enterprise module hands it to core. Taken from core's own
+ * `EnterpriseModule` type rather than from this package's `better-auth`, so a plugin built here is
+ * typed as the thing core mounts.
+ */
+export type EnterpriseAuthPlugin = NonNullable<EnterpriseModule["authPlugins"]>[number];
 
 /** The core capabilities this module uses; `db` only as a tagged-SQL runner. */
 export interface SsoProvisioningCore
@@ -278,7 +284,7 @@ export function isSsoSignInPath(path: string | undefined): boolean {
  *
  * @param core the injected core capabilities
  */
-export function ssoProvisioningPlugin(core: SsoProvisioningCore): BetterAuthPlugin {
+export function ssoProvisioningPlugin(core: SsoProvisioningCore): EnterpriseAuthPlugin {
   return {
     id: SSO_PROVISIONING_PLUGIN_ID,
     hooks: {

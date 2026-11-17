@@ -9,7 +9,6 @@
 
 import type { EnterpriseEntrypoint } from "@alethia/enterprise-api";
 import { sso } from "@better-auth/sso";
-import type { BetterAuthPlugin } from "better-auth";
 import { OpenFgaClient } from "@openfga/sdk";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { organization } from "better-auth/plugins/organization";
@@ -21,7 +20,11 @@ import { OpenFgaPdp } from "./openfga-pdp";
 import { newOrgSetupHooks } from "./new-org-setup-hooks";
 import { orgSlugHooks } from "./org-slug-hooks";
 import { resolveActiveScope } from "./scope";
-import { SSO_PROVISIONED_ROLE, ssoProvisioningPlugin } from "./sso-provisioning";
+import {
+  type EnterpriseAuthPlugin,
+  SSO_PROVISIONED_ROLE,
+  ssoProvisioningPlugin,
+} from "./sso-provisioning";
 
 /** One OpenFGA client when configured (shared by the engine + the dual-write writer). */
 function buildFgaClient(core: CoreContext): OpenFgaClient | null {
@@ -75,7 +78,7 @@ export interface EnterpriseFeature {
   /** The module's name; for the ones below it is also its directory under `ee/src/`. */
   id: string;
   /** The Better Auth plugins this module mounts, built from the injected core capabilities. */
-  authPlugins: (core: CoreContext) => BetterAuthPlugin[];
+  authPlugins: (core: CoreContext) => EnterpriseAuthPlugin[];
 }
 
 /** The entry of a module that is planned and not built: it registers nothing. */
