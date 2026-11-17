@@ -17,6 +17,7 @@
 //   4. THE DOCUMENT. `lib/ai/TOOLS.md` carries exactly the table the contract renders.
 
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
@@ -575,7 +576,7 @@ describe("external tool contract — URL scoping", () => {
 
 describe("external tool contract — TOOLS.md", () => {
 	it("carries exactly the table the contract renders", () => {
-		const doc = readFileSync(new URL("../../../../lib/ai/TOOLS.md", import.meta.url), "utf8");
+		const doc = readFileSync(join(__dirname, "../../../../lib/ai/TOOLS.md"), "utf8");
 		const start = "<!-- external-tools:start -->\n";
 		const end = "\n<!-- external-tools:end -->";
 		const from = doc.indexOf(start);
