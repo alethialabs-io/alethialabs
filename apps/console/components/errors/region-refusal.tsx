@@ -80,6 +80,8 @@ interface RegionRefusalProps {
  *   reader and a test.
  *
  * It is not announced (`role="alert"`): nothing went wrong, and it is the page's settled content.
+ * The full render keeps `EmptyState`'s own `data-slot="empty"`, which is what the e2e audits read
+ * a deliberate non-data render by; `data-state` is what tells it apart from a real empty list.
  *
  * THE RULE, with `RegionError`'s: a read that was REFUSED renders this; a read that FAILED renders
  * `RegionError`. Tell them apart with `readRefusalOf(error)`, never by message.
@@ -100,7 +102,6 @@ export function RegionRefusal({
 	if (compact) {
 		return (
 			<p
-				data-slot="region-refusal"
 				data-state="refused"
 				data-refusal={refusal}
 				className={cn("text-ui-sm text-muted-foreground", className)}
@@ -111,7 +112,6 @@ export function RegionRefusal({
 	}
 	return (
 		<EmptyState
-			data-slot="region-refusal"
 			data-state="refused"
 			data-refusal={refusal}
 			className={cn("border border-dashed border-border p-6 md:p-6", className)}

@@ -20,7 +20,7 @@ import type { ReadRefusal } from "@/lib/rpc/refusal";
 
 /** The one refused region a render produced. Fails when there are none, or more than one. */
 function refused(container: HTMLElement): Element {
-	const found = container.querySelectorAll('[data-slot="region-refusal"]');
+	const found = container.querySelectorAll('[data-state="refused"]');
 	expect(found).toHaveLength(1);
 	return found[0];
 }
@@ -32,6 +32,8 @@ describe("RegionRefusal", () => {
 		expect(region.getAttribute("data-state")).toBe("refused");
 		expect(region.getAttribute("data-refusal")).toBe("forbidden");
 		expect(container.querySelector('[data-state="error"]')).toBeNull();
+		// Still the shared empty-state frame, which the e2e audits read a deliberate render by.
+		expect(region.getAttribute("data-slot")).toBe("empty");
 		expect(screen.queryByRole("alert")).toBeNull();
 	});
 
