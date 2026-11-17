@@ -48,9 +48,9 @@ func newPlanBindAPI(artifact []byte) *planBindAPI {
 	return api
 }
 
-// runBoundDeploy runs executeDeploy for job against api and returns its error, how many times the
-// stage ran, and the plan file the stage was handed ("" when it was handed none).
-func runBoundDeploy(t *testing.T, api *planBindAPI, job *Job) (err error, runs int, handed string) {
+// runBoundDeploy runs executeDeploy for job against api and returns how many times the stage ran,
+// the plan file the stage was handed ("" when it was handed none), and executeDeploy's error.
+func runBoundDeploy(t *testing.T, api *planBindAPI, job *Job) (runs int, handed string, err error) {
 	t.Helper()
 	sb := &covRunSandbox{onRun: func(spec sandbox.Spec) error {
 		if b, readErr := os.ReadFile(filepath.Join(spec.WorkDir, "plan-apply.out")); readErr == nil {
@@ -65,7 +65,7 @@ func runBoundDeploy(t *testing.T, api *planBindAPI, job *Job) (err error, runs i
 	err = w.executeDeploy(t.Context(), job, "aws", nil, nil, stdout, stderr)
 	stdout.Close()
 	stderr.Close()
-	return err, sb.runs(), handed
+	return sb.runs(), handed, err
 }
 
 // boundJob is a DEPLOY job bound to planJobID with the given digest (nil = none carried).
@@ -82,7 +82,7 @@ func TestPlanBinding_MatchAppliesTheReviewedPlan(t *testing.T) {
 	planJobID := "plan-1"
 	api := newPlanBindAPI(plan)
 
-	err, runs, handed := runBoundDeploy(t, api, boundJob(&planJobID, planDigestOf(plan)))
+	runs, handed, err := runBoundDeploy(t, api, boundJob(&planJobID, planDigestOf(plan)))
 	if err != nil {
 		t.Fatalf("a matching digest must apply: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestPlanBinding_DigestIsTheReceiptDigest(t *testing.T) {
 	planJobID := "plan-1"
 	upper := strings.ToUpper(verify.PlanSHA256(plan))
 
-	err, runs, _ := runBoundDeploy(t, newPlanBindAPI(plan), boundJob(&planJobID, &upper))
+	runs, _, err := runBoundDeploy(t, newPlanBindAPI(plan), boundJob(&planJobID, &upper))
 	if err != nil || runs != 1 {
 		t.Fatalf("the receipt's plan_sha256 must bind the apply (err %v, runs %d)", err, runs)
 	}
@@ -146,7 +146,7 @@ func TestPlanBinding_Refusals(t *testing.T) {
 			if tc.getJob != nil {
 				api.getJobFn = tc.getJob
 			}
-			err, runs, handed := runBoundDeploy(t, api, tc.job)
+			runs, handed, err := runBoundDeploy(t, api, tc.job)
 			code, ok := planBindingRefusal(err)
 			if !ok {
 				t.Fatalf("want a plan-binding refusal %q, got %v", tc.want, err)
@@ -173,7 +173,7 @@ func TestPlanBinding_JobWithoutDigestIsUnchanged(t *testing.T) {
 
 	t.Run("no plan job", func(t *testing.T) {
 		api := newPlanBindAPI([]byte("unused"))
-		err, runs, handed := runBoundDeploy(t, api, boundJob(nil, nil))
+		runs, handed, err := runBoundDeploy(t, api, boundJob(nil, nil))
 		if err != nil || runs != 1 {
 			t.Fatalf("the deploy must run (err %v, runs %d)", err, runs)
 		}
@@ -184,7 +184,7 @@ func TestPlanBinding_JobWithoutDigestIsUnchanged(t *testing.T) {
 
 	for name, digest := range map[string]*string{"absent digest": nil, "blank digest": &empty} {
 		t.Run("named plan job, "+name+", saved plan used as saved", func(t *testing.T) {
-			err, runs, handed := runBoundDeploy(t, newPlanBindAPI([]byte("saved-plan")), boundJob(&planJobID, digest))
+			runs, handed, err := runBoundDeploy(t, newPlanBindAPI([]byte("saved-plan")), boundJob(&planJobID, digest))
 			if err != nil || runs != 1 || handed != "saved-plan" {
 				t.Fatalf("the saved plan must be applied (err %v, runs %d, handed %q)", err, runs, handed)
 			}
@@ -195,7 +195,7 @@ func TestPlanBinding_JobWithoutDigestIsUnchanged(t *testing.T) {
 		api := newPlanBindAPI(nil)
 		api.downloadErr = errors.New("plan artifact not found (expired or missing)")
 		api.getJobFn = func(string) (*Job, error) { return nil, errors.New("get job returned status 403") }
-		err, runs, handed := runBoundDeploy(t, api, boundJob(&planJobID, nil))
+		runs, handed, err := runBoundDeploy(t, api, boundJob(&planJobID, nil))
 		if err != nil || runs != 1 || handed != "" {
 			t.Fatalf("the deploy must run with no saved plan (err %v, runs %d, handed %q)", err, runs, handed)
 		}
