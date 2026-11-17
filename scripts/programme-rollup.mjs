@@ -4,8 +4,9 @@
 //
 // programme-rollup — derive PROGRAMME.md's generated half from the tree.
 //
-// WHY THIS EXISTS. The MVP programme is "5 clouds × the capability surface, proven e2e, driven from
-// the CLI". Its state was spread across ~15 hand-maintained Markdown boards, a Go harness and the
+// WHY THIS EXISTS. The MVP programme is "every offered cloud × the capability surface, proven e2e,
+// driven from the CLI". The cloud set is not written here: it is the `clouds` list of the Go mirror,
+// which test/e2e derives from packages/core/catalog/catalog.json. Its state was spread across ~15 hand-maintained Markdown boards, a Go harness and the
 // issue board, so answering "where are we?" meant re-reading all of it — and the boards did not
 // agree with each other:
 //
@@ -91,6 +92,9 @@ function addOnCatalogCount() {
 const ADDON_CATALOG = "test/e2e/fixtures/addon_catalog.hetzner.json";
 const LEDGER_BASELINE = "demos/proofs/ledger-baseline.json";
 const SPINE = "test/e2e/generated/programme.json";
+// Named in the rendered note about retired clouds, and nowhere else: this file does not read the
+// catalog. The Go mirror does, and SPINE carries the answer as `clouds` and `retired_clouds`.
+const CATALOG = "packages/core/catalog/catalog.json";
 const WORKFLOW = ".github/workflows/e2e-nightly.yml";
 // The fidelity table moved OUT of the workflow's inline `env:` and into the resolver (#2356), so a
 // gate is now "mentioned" if EITHER file mentions it. Reading only the workflow made two live gates
@@ -1050,6 +1054,34 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	const claims = collapseLedger(rows);
 	const clouds = spine.clouds;
 
+	// ── RETIRED CLOUDS: read, checked, never scored. ──────────────────────────────────────────────
+	//
+	// A cloud the catalog marks `hidden` leaves the exit criteria, and the Go mirror then lists it
+	// under `retired_clouds` instead of `clouds`. Its history does not leave with it: the proof
+	// ledger is append-only and still holds its rows, the demo table still holds its steps, and the
+	// board may still hold its nightly REDs. Each of those is ACCEPTED here, so retiring a cloud
+	// does not turn the rollup red, and none of them is SCORED: a retired cloud has no grid row, no
+	// tally, no rank in the mechanical next and no line in any table below.
+	//
+	// The list is what separates a retired cloud from a typo. A name in neither list is still an
+	// integrity failure, exactly as before. A mirror with no list at all fails too: reading a missing
+	// list as "nothing is retired" would be right by accident today and wrong the day the Go side
+	// stops exporting it.
+	/** @type {string[]} */
+	const retiredClouds = Array.isArray(spine.retired_clouds) ? spine.retired_clouds : [];
+	if (!Array.isArray(spine.retired_clouds)) {
+		failures.push(`${SPINE}: carries no \`retired_clouds\` list, so a retired cloud cannot be told from an undeclared one — regenerate the mirror (TestProgrammeExport)`);
+	}
+	for (const c of retiredClouds.filter((c) => clouds.includes(c))) {
+		failures.push(`${SPINE}: cloud ${JSON.stringify(c)} is listed as both scored and retired — it would be counted and ignored at once`);
+	}
+	/** Ledger rows that name a retired cloud. Counted for the rendered note; never a claim. */
+	const retiredRows = [];
+	/** Demo steps scoped only to retired clouds. Left out of the CLI bar. */
+	const retiredSteps = [];
+	/** Nightly REDs filed against a retired cloud. Reported as board hygiene; they contest nothing. */
+	const retiredReds = [];
+
 	// The board is read here, before the grid, because the grid needs gate state: whether this
 	// cloud's `full` claim may be credited to a dimension depends on that dimension's repo gates
 	// being wired. It is read once and reused by the gate-reality section further down.
@@ -1169,8 +1201,15 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 
 	// ── INTEGRITY: a ledger row naming a cloud or dimension nobody declares ──
 	for (const r of rows) {
-		if (!clouds.includes(r.cloud)) {
-			failures.push(`${LEDGER}:${r.line}: cloud ${JSON.stringify(r.cloud)} is not one of the declared clouds (${clouds.join(", ")})`);
+		if (retiredClouds.includes(r.cloud)) {
+			// Accepted and set aside. The checks below still run on it: a retired cloud's history is
+			// held to the same shape rules as any other row, it just proves nothing.
+			retiredRows.push(r);
+		} else if (!clouds.includes(r.cloud)) {
+			failures.push(
+				`${LEDGER}:${r.line}: cloud ${JSON.stringify(r.cloud)} is not one of the declared clouds (${clouds.join(", ")})` +
+					(retiredClouds.length > 0 ? ` and not a retired one (${retiredClouds.join(", ")})` : ""),
+			);
 		}
 		const rowDim = DIMENSIONS.find((d) => d.id === canonicalDimension(r.dimension));
 		if (rowDim && !dimensionRunsOn(rowDim, r.cloud)) {
@@ -1375,9 +1414,22 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	const cli = { cli: 0, cli_gap: 0, cloud_manual: 0, console_only: 0 };
 	const cliBlockers = [];
 	for (const s of spine.cli_steps) {
+		// A step with no `clouds` applies to every cloud. One that names clouds is scored only for
+		// the scored clouds among them, and a step naming ONLY retired clouds is not part of the bar
+		// at all: counting it would hold the bar to a ceiling on a cloud nobody is scored on.
+		const named = s.clouds ?? [];
+		const undeclared = named.filter((c) => !clouds.includes(c) && !retiredClouds.includes(c));
+		if (undeclared.length > 0) {
+			failures.push(`${SPINE}: CLI step ${JSON.stringify(s.id)} names ${undeclared.join(", ")}, which is neither a scored cloud nor a retired one — the step would apply to nothing`);
+		}
+		const scored = named.filter((c) => clouds.includes(c));
+		if (named.length > 0 && scored.length === 0) {
+			if (undeclared.length === 0) retiredSteps.push(s.id);
+			continue;
+		}
 		cli[s.reach] = (cli[s.reach] ?? 0) + 1;
 		if (s.reach === "cli_gap" || s.reach === "cloud_manual") {
-			cliBlockers.push({ id: s.id, reach: s.reach, issue: s.issue, clouds: s.clouds ?? [], why: s.why });
+			cliBlockers.push({ id: s.id, reach: s.reach, issue: s.issue, clouds: scored, why: s.why });
 		}
 	}
 
@@ -1385,7 +1437,9 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	const gates = referencedGates(workflowText, resolverText);
 
 	// ── the 19-kind canvas grid ──
-	const unsupported = parseUnsupportedKinds(unsupportedText);
+	// A retired cloud has no column in the parity sentence either. Only retired names are dropped: a
+	// name that is neither scored nor retired still renders, so a typo in that file stays visible.
+	const unsupported = Object.fromEntries(Object.entries(parseUnsupportedKinds(unsupportedText)).filter(([c]) => !retiredClouds.includes(c)));
 
 	// The live board half runs HERE, before the tally and the ranking, because it RECLASSIFIES cells
 	// to `stale` — a tally computed above it would report 2 failing / 0 stale, and the ranking would
@@ -1576,6 +1630,12 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	};
 
 	for (const red of board.openRedIssues) {
+		// A red on a retired cloud is about a cell that no longer exists. It is reported below as
+		// board hygiene and takes no part in contesting or superseding.
+		if (retiredClouds.includes(red.cloud)) {
+			retiredReds.push({ cloud: red.cloud, dimension: red.dimension, issue: `#${red.number}`, redFiledOn: red.date, open: true });
+			continue;
+		}
 		const { known, composite, dimensions } = redDimensions(red.dimension, dimensionIds, compositeDimensionIds);
 		if (!known) {
 			unmappedReds.push({ cloud: red.cloud, dimension: red.dimension, issue: `#${red.number}`, redFiledOn: red.date });
@@ -1659,6 +1719,10 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	// EVERY window-closed red is reported, whatever happens to its cell — "leaves no trace" is the
 	// defect, and a red that contests nothing because its cell was never proven still happened.
 	for (const red of board.windowClosedRedIssues) {
+		if (retiredClouds.includes(red.cloud)) {
+			retiredReds.push({ cloud: red.cloud, dimension: red.dimension, issue: `#${red.number}`, redFiledOn: red.date, open: false });
+			continue;
+		}
 		const { known, composite, dimensions } = redDimensions(red.dimension, dimensionIds, compositeDimensionIds);
 		const label = `#${red.number} (\`${red.cloud}/${red.dimension}\`, filed ${red.date}, closed ${red.closedOn})`;
 		if (!known) {
@@ -1730,6 +1794,16 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		notes.push(
 			`${s.issue} (\`${s.cloud}/${s.dimension}\`, filed ${s.redFiledOn}) is SUPERSEDED — that cell was proven ${s.provenOn}, on or after the red. ` +
 				`Evidence: ${s.evidence || "(none recorded)"}. Close it, or append a FAIL row if the later run did not in fact answer it.`,
+		);
+	}
+	// A red on a retired cloud. An ADVISORY for the same reason the two above are: it is a board
+	// entry, not a cell, and `render()` prints only how many clouds are retired, never these.
+	for (const r of retiredReds) {
+		notes.push(
+			`${r.issue} (\`${r.cloud}/${r.dimension}\`, filed ${r.redFiledOn}) names \`${r.cloud}\`, which is retired from the exit criteria — the catalog marks it hidden, so it has no cell to contest. ` +
+				(r.open
+					? "It is not programme work while the cloud stays hidden: close it, or relabel it so it is no longer read as a nightly RED."
+					: "It closed inside this derivation window and contests nothing."),
 		);
 	}
 	for (const c of compositeReds) {
@@ -1909,7 +1983,10 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		}
 	}
 
-	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, supersededReds, compositeReds, unmappedReds, costCells, gateReality, cloudGates, reaper, reaperClean, unreachedComposites };
+	// Surviving claims are counted for the scored clouds only. A retired cloud's claim is history.
+	const survivingClaims = [...claims.entries()].filter(([key, c]) => c !== null && !retiredClouds.includes(key.split("/")[0])).length;
+
+	return { rows, claims, survivingClaims, retiredClouds, retiredRows, retiredSteps, retiredReds, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, supersededReds, compositeReds, unmappedReds, costCells, gateReality, cloudGates, reaper, reaperClean, unreachedComposites };
 }
 
 // ───────────────────────────── rendering ─────────────────────────────
@@ -1953,6 +2030,17 @@ export function render(v) {
 	L.push("");
 	L.push(`Legend: ${Object.entries(STATE_GLYPH).map(([s, g]) => `${g} ${s.replace("_", "-")}`).join(" · ")}`);
 	L.push("");
+	// A row that leaves the grid says so. Without this line a reader comparing two versions of this
+	// file sees a cloud vanish and cannot tell a decision from a rendering fault.
+	if (v.retiredClouds.length > 0) {
+		L.push(
+			`**Not scored:** ${v.retiredClouds.map((c) => `\`${c}\``).join(", ")}. The catalog (\`${CATALOG}\`) marks ` +
+				"a cloud listed here `hidden`, which takes it out of the exit criteria: it has no row above and no cell in any count below. " +
+				`Ledger rows naming one: ${v.retiredRows.length} · demo steps scoped only to one: ${v.retiredSteps.length} — read and checked, never counted. ` +
+				"Marking the cloud `available` again and regenerating puts its row back.",
+		);
+		L.push("");
+	}
 	const evidence = [];
 	for (const cloud of v.clouds) {
 		for (const d of DIMENSIONS) {
@@ -2288,7 +2376,7 @@ export function render(v) {
 		L.push("");
 	}
 	L.push(
-		`Ledger rows read: **${v.rows.length}** · surviving claims: **${[...v.claims.values()].filter((c) => c !== null).length}** ` +
+		`Ledger rows read: **${v.rows.length}** · surviving claims: **${v.survivingClaims}** ` +
 			`(a \`RETRACTED\` row voids a claim rather than replacing it, so surviving < rows is expected).`,
 	);
 	L.push("");
@@ -2492,6 +2580,7 @@ function readInputs() {
 
 const FIXTURE_SPINE = {
 	clouds: ["aws", "hetzner"],
+	retired_clouds: [],
 	kinds: [
 		{ kind: "cluster", doc: "", foundational: true, cells: { aws: { carriage: "tofu", offered: true }, hetzner: { carriage: "tofu", offered: true } } },
 		{ kind: "nosql", doc: "", foundational: false, cells: { aws: { carriage: "tofu", offered: true }, hetzner: { carriage: "ceiling", offered: false, why: "no service" } } },
@@ -3979,6 +4068,83 @@ function runSelfTest() {
 		});
 		ok("the clean tally is per declared cloud", fullyClean.reaperClean === 2, JSON.stringify(fullyClean.reaper));
 		ok("the rendered table preserves reclaimed incident history", /reclaimed 2 orphan run/.test(render({ ...fullyClean, reaper: fullyClean.reaper.map((entry) => entry.cloud === "aws" ? { ...reclaimed, cloud: "aws" } : entry) })));
+	}
+
+	// ── A RETIRED CLOUD: its history is read, and none of it is scored. ──
+	//
+	// The fixture cloud is `scaleway`, which is not a cloud this product has ever had. The rule is
+	// "a cloud the mirror lists as retired", and a test written only against the one cloud retired
+	// today would pass just as well if that name were special-cased.
+	{
+		const retiredSpine = {
+			...FIXTURE_SPINE,
+			retired_clouds: ["scaleway"],
+			cli_steps: [
+				...FIXTURE_SPINE.cli_steps,
+				{ id: "scaleway-sweep", title: "", reach: "cloud_manual", issue: "#2", why: "console only", clouds: ["scaleway"] },
+				{ id: "shared-keys", title: "", reach: "cloud_manual", issue: "#3", why: "console only", clouds: ["hetzner", "scaleway"] },
+			],
+		};
+		const awsPass = row("2026-08-01", "aws", "floor", "PASS", "demos/proofs/aws/x");
+		const retiredPass = row("2026-08-02", "scaleway", "floor", "PASS", "demos/proofs/scaleway/x");
+		const without = derive({ ...base, spine: retiredSpine, ledgerText: hdr + awsPass });
+		r = derive({ ...base, spine: retiredSpine, ledgerText: hdr + awsPass + retiredPass });
+		ok("a ledger row naming a RETIRED cloud is accepted, not an integrity failure", r.failures.length === 0, JSON.stringify(r.failures));
+		ok("...and is counted as read", r.rows.length === 2 && r.retiredRows.length === 1, `${r.rows.length}/${r.retiredRows.length}`);
+		ok("...and gets no grid row", r.grid.scaleway === undefined && !r.clouds.includes("scaleway"), JSON.stringify(Object.keys(r.grid)));
+		ok("...and its PASS proves nothing: the tally is the one without the row", JSON.stringify(r.tally) === JSON.stringify(without.tally) && r.tally.proven === 1, JSON.stringify(r.tally));
+		ok("...and it is not a surviving claim", r.survivingClaims === 1 && without.survivingClaims === 1, `${r.survivingClaims}/${without.survivingClaims}`);
+		ok("...and it is never offered as next work", !r.next.some((n) => n.cloud === "scaleway"), JSON.stringify(r.next));
+		const text = render(r);
+		ok("the rendered grid has no row for a retired cloud", !text.includes("| **scaleway** |") && !/`scaleway\//.test(text), text.split("\n").find((l) => l.includes("scaleway/") || l.includes("**scaleway**")) ?? "");
+		ok("...and says which cloud left and how much history it still reads", /\*\*Not scored:\*\* `scaleway`\./.test(text) && text.includes("Ledger rows naming one: 1 · demo steps scoped only to one: 1"), text.split("\n").find((l) => l.includes("Not scored")) ?? "(no line)");
+		ok("a spine with nothing retired renders no such line", !render(derive({ ...base, ledgerText: hdr + awsPass })).includes("Not scored"));
+
+		// The list is what earns the acceptance. The SAME row against a mirror that does not list the
+		// cloud is the undeclared-cloud failure it always was.
+		const unlisted = derive({ ...base, ledgerText: hdr + awsPass + retiredPass });
+		ok("the same row with the cloud NOT listed as retired is still an integrity failure", unlisted.failures.some((f) => /"scaleway" is not one of the declared clouds/.test(f)), JSON.stringify(unlisted.failures));
+		const typo = derive({ ...base, spine: retiredSpine, ledgerText: hdr + row("2026-08-01", "scalewya", "floor", "PASS", "demos/proofs/scalewya/x") });
+		ok("a name in NEITHER list fails, and the message names both lists", typo.failures.some((f) => /not one of the declared clouds \(aws, hetzner\) and not a retired one \(scaleway\)/.test(f)), JSON.stringify(typo.failures));
+
+		// A retired row is still held to the ledger's shape rules.
+		const badDim = derive({ ...base, spine: retiredSpine, ledgerText: hdr + row("2026-08-01", "scaleway", "vibes", "PASS", "demos/proofs/scaleway/x") });
+		ok("a retired cloud's row with an unknown dimension is still an integrity failure", badDim.failures.some((f) => /"vibes" is not one of/.test(f)), JSON.stringify(badDim.failures));
+
+		// The mirror itself.
+		const noList = derive({ ...base, spine: { clouds: FIXTURE_SPINE.clouds, kinds: FIXTURE_SPINE.kinds, cli_steps: FIXTURE_SPINE.cli_steps }, ledgerText: hdr + awsPass });
+		ok("a mirror with NO retired_clouds list is an integrity failure, not 'nothing retired'", noList.failures.some((f) => /carries no `retired_clouds` list/.test(f)), JSON.stringify(noList.failures));
+		const both = derive({ ...base, spine: { ...FIXTURE_SPINE, retired_clouds: ["aws"] }, ledgerText: hdr + awsPass });
+		ok("a cloud listed as both scored and retired is an integrity failure", both.failures.some((f) => /"aws" is listed as both scored and retired/.test(f)), JSON.stringify(both.failures));
+
+		// The CLI bar.
+		ok("a demo step scoped ONLY to a retired cloud leaves the bar", r.cli.cloud_manual === without.cli.cloud_manual && r.cli.cloud_manual === 2 && !r.cliBlockers.some((b) => b.id === "scaleway-sweep"), JSON.stringify([r.cli, r.cliBlockers.map((b) => b.id)]));
+		ok("...and is recorded as set aside", JSON.stringify(r.retiredSteps) === JSON.stringify(["scaleway-sweep"]), JSON.stringify(r.retiredSteps));
+		ok(
+			"a step shared with a scored cloud stays in the bar, listed for the scored cloud only",
+			JSON.stringify(r.cliBlockers.find((b) => b.id === "shared-keys")?.clouds) === JSON.stringify(["hetzner"]),
+			JSON.stringify(r.cliBlockers.find((b) => b.id === "shared-keys")),
+		);
+		ok("a step with no clouds still applies to all", JSON.stringify(r.cliBlockers.find((b) => b.id === "dns-delegation")?.clouds) === "[]");
+		const strayStep = derive({
+			...base,
+			spine: { ...retiredSpine, cli_steps: [...retiredSpine.cli_steps, { id: "stray", title: "", reach: "cli", clouds: ["scalewya"] }] },
+			ledgerText: hdr + awsPass,
+		});
+		ok("a demo step naming a cloud in neither list is an integrity failure", strayStep.failures.some((f) => /CLI step "stray" names scalewya/.test(f)), JSON.stringify(strayStep.failures));
+		ok("...and is not quietly filed as retired", !strayStep.retiredSteps.includes("stray"), JSON.stringify(strayStep.retiredSteps));
+
+		// The board. A nightly RED on a retired cloud contests nothing and is reported as hygiene; the
+		// same title on a scored cloud still contests its cell, so the skip is about the cloud.
+		const redOn = (cloud, dimension) => ({ ...snap(), open_issues: [{ number: 7100, title: `e2e nightly: ${cloud} RED (${dimension})`, labels: [], createdAt: "2026-08-03T00:00:00Z" }] });
+		const retiredRed = derive({ ...base, spine: retiredSpine, ledgerText: hdr + awsPass, snapshot: redOn("scaleway", "floor") });
+		ok("an open nightly RED on a retired cloud contests nothing", retiredRed.contested.length === 0 && retiredRed.tally.proven === 1, JSON.stringify(retiredRed.tally));
+		ok("...and is reported as retired, with what to do about it", retiredRed.retiredReds.length === 1 && retiredRed.notes.some((n) => /#7100 .*retired from the exit criteria.*close it, or relabel it/.test(n)), JSON.stringify(retiredRed.notes));
+		const retiredBar = derive({ ...base, spine: retiredSpine, ledgerText: hdr + awsPass, snapshot: redOn("scaleway", "full-bar") });
+		ok("a bar-wide RED on a retired cloud is not kept open against cells that do not exist", retiredBar.compositeReds.length === 0 && retiredBar.retiredReds.length === 1, JSON.stringify(retiredBar.compositeReds));
+		const scoredRed = derive({ ...base, spine: retiredSpine, ledgerText: hdr + awsPass, snapshot: redOn("aws", "floor") });
+		ok("the same RED on a SCORED cloud still contests its cell", scoredRed.grid.aws.floor.state === "contested" && scoredRed.retiredReds.length === 0, scoredRed.grid.aws.floor.state);
+		ok("...and it adds no cell and no open-red line to the rendered half", !render(retiredRed).includes("#7100"));
 	}
 
 	// NO CLOCK IN THE RENDERED OUTPUT. An age is computed from Date.now(), so rendering one would make

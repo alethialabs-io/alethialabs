@@ -50,6 +50,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
 )
 
 // CLIReach is WHY one demo step is or is not reachable from `alethia` — the verdict for a step.
@@ -223,8 +225,39 @@ func (s DemoStep) Validate() error {
 	return nil
 }
 
-// DemoClouds are the clouds the demo bar is scored against.
-var DemoClouds = []string{"aws", "gcp", "azure", "alibaba", "hetzner"}
+// DemoClouds are the clouds the exit criteria are scored against: every cloud the catalog can
+// provision and marks `available`, in catalog order. RetiredClouds are the provisionable clouds the
+// catalog marks `hidden`. Their code, templates and tests stay, and their ledger rows stay readable,
+// but no grid scores them.
+//
+// Neither is a list written here. Both are read from packages/core/catalog/catalog.json, the one
+// field every offer list derives from, so hiding or restoring a cloud is one edit there followed by
+// regenerating the mirror (TestProgrammeExport) and PROGRAMME.md.
+var DemoClouds, RetiredClouds = exitCriteriaClouds(catalog.MustLoad())
+
+// exitCriteriaClouds splits the catalog's provisionable clouds into the scored set and the retired
+// set, in catalog order.
+//
+// It reads the catalog's own availability and NOT Catalog.Offered. Offered also applies the
+// operator setting that re-enables a hidden cloud, and that setting widens what a deployment
+// offers, not what the release has proven: a cloud enabled that way is outside the proofs. Reading
+// it here would also make the committed mirror depend on the environment of whoever regenerated it.
+//
+// A provisionable cloud whose availability is missing or unrecognised lands in neither set.
+// TestExitCriteriaCloudsPartitionTheCatalog fails on that rather than letting it vanish.
+func exitCriteriaClouds(c *catalog.Catalog) (scored, retired []string) {
+	scored, retired = []string{}, []string{}
+	for _, p := range c.Providers {
+		availability, _ := c.Availability(p.Slug)
+		switch availability {
+		case catalog.AvailabilityAvailable:
+			scored = append(scored, p.Slug)
+		case catalog.AvailabilityHidden:
+			retired = append(retired, p.Slug)
+		}
+	}
+	return scored, retired
+}
 
 // CLIDemoSteps is the demo, in the order it is performed. Read it top to bottom and you have the
 // script; read the verdict column and you have the honest answer to "can this be done from the
