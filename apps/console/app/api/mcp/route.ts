@@ -78,8 +78,10 @@ const withActorFromToken: Parameters<typeof requireMcpAuth>[1] = async (_req, ac
 			headers: { "content-type": "application/json" },
 		});
 	}
-	// An OAuth grant is a person's: the subject IS the caller.
-	const actor = actorWithCredential(await getActiveScope(subject), "session");
+	// An OAuth grant is a person's, so the subject is the person it acts for. It is bound as
+	// `agent_oauth` and not `session` because the token is held by an MCP client, not by a person
+	// at the console.
+	const actor = actorWithCredential(await getActiveScope(subject), "agent_oauth");
 
 	// The connector is a paid/ee surface; self-host (no Stripe) is always enabled.
 	if (!(await isAiSurfaceEnabled(actor.orgId))) {
