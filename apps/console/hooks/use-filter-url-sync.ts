@@ -68,7 +68,8 @@ export function useFilterUrlSync<F extends Record<string, UrlFilterValue>>(
 	const pathname = usePathname();
 	const searchParams = useSearchParams();
 	const filters = store((s) => s.filters);
-	const hydrated = useRef(false);
+	// The scope the link was last read under; `null` until the first read.
+	const entered = useRef<string | null>(null);
 	const [synced, setSynced] = useState(false);
 
 	const paramFor = (key: string): string => paramNames?.[key] ?? key;
@@ -76,7 +77,8 @@ export function useFilterUrlSync<F extends Record<string, UrlFilterValue>>(
 	// Mount, and a pathname change under a mounted page: enter the scope, then let the link
 	// REPLACE the store's state (see the header for why this is never a merge).
 	useEffect(() => {
-		hydrated.current = true;
+		if (entered.current === pathname) return;
+		entered.current = pathname;
 		const state = store.getState();
 		state.enterScope(pathname);
 		const named = Object.keys(filtersFromUrl(searchParams, defaults, paramNames)).length > 0;
@@ -92,7 +94,7 @@ export function useFilterUrlSync<F extends Record<string, UrlFilterValue>>(
 	// first run after mount-hydration sees the patched state, not the pre-patch
 	// snapshot — otherwise a shared link's params would be wiped and rewritten.
 	useEffect(() => {
-		if (!hydrated.current) return;
+		if (entered.current === null) return;
 		const fresh = store.getState().filters;
 		const params = new URLSearchParams(searchParams.toString());
 		for (const retired of options?.retiredParams ?? []) params.delete(retired);
