@@ -7,7 +7,7 @@
 // what stays here is the unfiltered list the shell reads, and the writes.
 
 import { z } from "zod";
-import { tryDestroyProject, tryPlanProject, tryProvisionProject } from "@/app/server/actions/projects";
+import { tryPlanProject, tryProvisionProject } from "@/app/server/actions/projects";
 import { defineAction } from "@/lib/actions/define-action";
 import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
 import { authorize } from "@/lib/authz/guard";
@@ -98,12 +98,14 @@ async function refuseOverUsage(orgId: string): Promise<void> {
 /**
  * Runs a job again (see lib/jobs/operation.ts for the rule).
  *
- * - A project's plan, deploy or destroy runs again through the entry point a fresh run uses
- *   (`tryPlanProject` / `tryProvisionProject` / `tryDestroyProject`) against the same project and
- *   environment: the project permission for that operation, the one-job-in-flight guard on the
- *   environment, the queue-time gates and the project's current configuration all come from there.
- * - A job with no project is re-queued as a copy of itself under the org's job permission.
- * - Any other project job is refused with a sentence that says where to run it again.
+ * - A project's plan or deploy runs again through the entry point a fresh run uses
+ *   (`tryPlanProject` / `tryProvisionProject`) against the same project and environment: the
+ *   project permission for that operation, the one-job-in-flight guard on the environment, the
+ *   queue-time gates and the project's current configuration all come from there.
+ * - A project's destroy is refused: a destroy starts from the environment. The route type has no
+ *   destroy member, so this function has no branch that could reach `tryDestroyProject`.
+ * - An allow-listed org-level job is re-queued as a copy of itself under the org's job permission.
+ * - Any other job is refused with a sentence that says where to run it again.
  *
  * Only a job of the actor's active org can be re-run, and a job the reader cannot see (job visibility
  * follows project visibility) is not found.
@@ -147,9 +149,7 @@ async function rerun(jobId: string): Promise<{ id: string }> {
 		const result =
 			route.operation === "plan"
 				? await tryPlanProject(route.projectId, null, route.environmentId)
-				: route.operation === "deploy"
-					? await tryProvisionProject(route.projectId, undefined, null, route.environmentId)
-					: await tryDestroyProject(route.projectId, route.environmentId, null);
+				: await tryProvisionProject(route.projectId, undefined, null, route.environmentId);
 		if (!result.ok) throw new ActionRefusal("conflict", result.error);
 		return { id: result.jobId };
 	}
