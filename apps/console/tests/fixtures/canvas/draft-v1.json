@@ -1,0 +1,112 @@
+{
+	"state": {
+		"nodes": [
+			{
+				"id": "project-root",
+				"type": "project",
+				"position": { "x": 0, "y": 0 },
+				"deletable": false,
+				"data": {
+					"kind": "project",
+					"config": {
+						"project_name": "Acme Shop",
+						"environment_stage": "production",
+						"region": "eu-central-1",
+						"iac_version": "1.11.4"
+					},
+					"cloud_identity_id": null,
+					"provider": null
+				}
+			},
+			{
+				"id": "database-orders",
+				"type": "database",
+				"position": { "x": 420, "y": 260 },
+				"data": {
+					"kind": "database",
+					"config": {
+						"name": "orders",
+						"engine_family": "postgres",
+						"port": 6543,
+						"iam_auth": false
+					},
+					"cloud_identity_id": null,
+					"provider": null
+				}
+			},
+			{
+				"id": "bucket-1a2b3c4d",
+				"type": "bucket",
+				"position": { "x": 700, "y": 260 },
+				"data": {
+					"kind": "bucket",
+					"config": {
+						"name": "uploads",
+						"versioning": false,
+						"encryption_enabled": true,
+						"public_access": false
+					},
+					"cloud_identity_id": null,
+					"provider": null
+				}
+			}
+		],
+		"edges": [],
+		"baseline": [
+			{
+				"id": "project-root",
+				"type": "project",
+				"position": { "x": 0, "y": 0 },
+				"deletable": false,
+				"data": {
+					"kind": "project",
+					"config": {
+						"project_name": "Acme Shop",
+						"environment_stage": "production",
+						"region": "eu-central-1",
+						"iac_version": "1.11.4"
+					},
+					"cloud_identity_id": null,
+					"provider": null
+				}
+			},
+			{
+				"id": "database-orders",
+				"type": "database",
+				"position": { "x": 120, "y": 340 },
+				"data": {
+					"kind": "database",
+					"config": {
+						"name": "orders",
+						"engine_family": "postgres",
+						"port": 5432,
+						"iam_auth": false
+					},
+					"cloud_identity_id": null,
+					"provider": null
+				}
+			},
+			{
+				"id": "cache-sessions",
+				"type": "cache",
+				"position": { "x": 340, "y": 340 },
+				"data": {
+					"kind": "cache",
+					"config": {
+						"name": "sessions",
+						"engine": "redis",
+						"num_cache_nodes": 1,
+						"multi_az": false
+					},
+					"cloud_identity_id": null,
+					"provider": null
+				}
+			}
+		],
+		"collectionPositions": { "secret": { "x": 40, "y": 80 } },
+		"containerGeometry": {},
+		"seed": { "scope": "proj-1:env-a", "revision": "rev-1" },
+		"dirty": true
+	},
+	"version": 1
+}
