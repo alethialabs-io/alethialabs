@@ -71,7 +71,8 @@ func TestProjDestroy_RefusalPrintsTheServersListAndTheWayOut(t *testing.T) {
 	projConfirm(t, true)
 
 	var exited bool
-	out, _ := captureStreams(t, func() {
+	// The refusal is read from stderr: the fatal path writes nothing to stdout.
+	_, out := captureStreams(t, func() {
 		exited = h.run("project", "destroy", "--project-id", "p1", "--runner-id", "r1", "--env", "production")
 	})
 	if !exited {
