@@ -95,7 +95,7 @@ func TestComputePlan_AnAddonValuesFileThatIsNotAMappingIsRefused(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			refusal := plan.refusal()
+			refusal := plan.Refusal()
 			if refusal == nil || !strings.Contains(refusal.Error(), "add-on loki: values_file v.yaml") {
 				t.Fatalf("refusal = %v, want the values file named", refusal)
 			}
@@ -128,8 +128,8 @@ func TestComputePlan_AddonModeAndEmptyOverride(t *testing.T) {
 		t.Fatalf("changes = %#v, want %#v", got.Changes, want)
 	}
 	// An empty inline mapping removes the override, exactly as values_file: "" does.
-	if got.request.ValuesYAML == nil || *got.request.ValuesYAML != "" || got.request.Mode != "gitops" {
-		t.Errorf("request = %+v, want mode gitops and the override removed", got.request)
+	if got.Request.ValuesYAML == nil || *got.Request.ValuesYAML != "" || got.Request.Mode != "gitops" {
+		t.Errorf("request = %+v, want mode gitops and the override removed", got.Request)
 	}
 	var out bytes.Buffer
 	renderAddons(&out, EnvPlan{Name: "prod", Addons: []AddonPlan{got}}, func(string) []string { return nil })
@@ -154,9 +154,6 @@ func TestOverrideText(t *testing.T) {
 		if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
 			t.Errorf("%s: overrideText = %v, want %v", name, got, tc.want)
 		}
-	}
-	if derefString(nil) != "" {
-		t.Error("derefString(nil) must be empty")
 	}
 }
 

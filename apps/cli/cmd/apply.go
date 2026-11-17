@@ -9,13 +9,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/spec"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/designfile"
 	"github.com/alethialabs-io/alethialabs/packages/core/names"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
@@ -151,7 +151,7 @@ func runApply(_ *cobra.Command, client applyClient, token string, o applyOptions
 	if err != nil {
 		fail(err)
 	}
-	if err := plan.restrictTo(o.only); err != nil {
+	if err := plan.RestrictTo(o.only); err != nil {
 		fail(err)
 	}
 	if o.format == ui.FormatTable {
@@ -159,7 +159,7 @@ func runApply(_ *cobra.Command, client applyClient, token string, o applyOptions
 	}
 	// A refusal exits 2, the code the default `plan` gives the same file (plan_exit.go), so a script
 	// can tell "this file cannot be applied as written" from an error.
-	if err := plan.refusal(); err != nil {
+	if err := plan.Refusal(); err != nil {
 		reportRefusal(err, o.format)
 		exitFunc(exitPlanRefused)
 		return
@@ -237,82 +237,6 @@ on its own.`,
 }
 
 // ── the plan ──────────────────────────────────────────────────────────────────────────────
-
-// Action is what apply will do with one thing the file declares.
-type Action string
-
-const (
-	// ActionCreate — it does not exist and will be created.
-	ActionCreate Action = "create"
-	// ActionUpdate — it exists and at least one field the file declares differs from the
-	// server's value. ComponentPlan.Changes lists them.
-	ActionUpdate Action = "update"
-	// ActionUnchanged — it exists, every field the file declares already matches, and it is left
-	// as it is.
-	ActionUnchanged Action = "unchanged"
-)
-
-// ApplyPlan is the difference between the file and the organization.
-type ApplyPlan struct {
-	Manifest *manifest.Manifest `json:"manifest"`
-	// Provider is the cloud the account belongs to, for the summary line. Empty when the file
-	// names no account.
-	Provider string `json:"provider,omitempty"`
-	// IdentityID is the cloud account resolved from the file's label; empty when none was named.
-	IdentityID string `json:"identity_id,omitempty"`
-	// ProjectID is the existing project, or empty when apply will create it.
-	ProjectID    string    `json:"project_id,omitempty"`
-	Environments []EnvPlan `json:"environments"`
-	// Unmanaged are environments the project has that the file does not mention. They are left
-	// alone and listed, so a file that forgot one does not read as a project that lost one.
-	Unmanaged []string `json:"unmanaged,omitempty"`
-
-	// catalog is the add-on catalog the plan was computed against — nil when the file declares no
-	// add-on. Kept so rendering can tell a secret setting by name.
-	catalog *api.AddonCatalogDocument
-}
-
-// EnvPlan is one environment's difference.
-type EnvPlan struct {
-	Name      string `json:"name"`
-	Stage     string `json:"stage"`
-	Placement string `json:"placement"`
-	Action    Action `json:"action"`
-	// ID is the existing environment's id; empty until created.
-	ID         string          `json:"id,omitempty"`
-	Components []ComponentPlan `json:"components"`
-	// Addons are the catalog add-ons the file declares for this environment (apply_addons.go).
-	Addons []AddonPlan `json:"addons,omitempty"`
-	// UnmanagedAddons are add-ons enabled on the server that the file does not mention. Listed,
-	// never disabled — the rule Unmanaged states for environments.
-	UnmanagedAddons []string `json:"unmanaged_addons,omitempty"`
-	// Problems are the reasons this environment cannot be reconciled from here — the file says
-	// one stage and the server has another, say. Any problem refuses the whole apply, because a
-	// deploy of an environment the file describes wrongly is not what the person asked for.
-	Problems []string `json:"problems,omitempty"`
-	// Deploy is false when --env narrowed the run to other environments.
-	Deploy bool `json:"deploy"`
-}
-
-// ComponentPlan is one component's difference.
-type ComponentPlan struct {
-	Kind   string         `json:"kind"`
-	Name   string         `json:"name,omitempty"`
-	Action Action         `json:"action"`
-	Fields map[string]any `json:"fields,omitempty"`
-	// Changes are the declared fields whose value differs from the server's, one per field, for
-	// an `update`. Empty for `create` (everything is new) and `unchanged` (nothing differs).
-	Changes []FieldChange `json:"changes,omitempty"`
-	// Revision is the server's revision of the component as the plan READ it (its updated_at); empty
-	// for `create`, and for a server too old to send one. Apply sends it back as If-Match, so a
-	// component that changed on the server after the plan read it is refused rather than overwritten
-	// (#5551). There is no saved plan file: apply recomputes the plan, and this is that read.
-	Revision string `json:"revision,omitempty"`
-
-	// read is every settable value the plan read from the server, so a refused update can name the
-	// fields that changed since (apply_conflict.go).
-	read map[string]any
-}
 
 // applyClient is the slice of the API the plan and the apply need. Narrow so the tests can fake
 // it, and so the compiler says which calls apply makes.
@@ -400,273 +324,6 @@ func planFromFile(c applyClient, path string) (*ApplyPlan, error) {
 	return plan, nil
 }
 
-// computePlan compares the manifest with the organization. It reads and never writes. catalog is the
-// add-on catalog when the file declares add-ons, and nil otherwise.
-func computePlan(c applyClient, m *manifest.Manifest, catalog *api.AddonCatalogDocument) (*ApplyPlan, error) {
-	plan := &ApplyPlan{Manifest: m, catalog: catalog}
-
-	if m.Cloud.Account != "" {
-		identities, err := c.GetCloudIdentities()
-		if err != nil {
-			return nil, fmt.Errorf("resolve cloud.account %q: %w", m.Cloud.Account, err)
-		}
-		id, err := matchCloudIdentity(identities, m.Cloud.Account)
-		if err != nil {
-			return nil, err
-		}
-		plan.IdentityID = id.ID
-		plan.Provider = id.Provider
-	}
-
-	configs, err := c.GetConfigurations()
-	if err != nil {
-		return nil, fmt.Errorf("list projects: %w", err)
-	}
-	var matches []types.ConfigurationSummary
-	for _, cfg := range configs {
-		// Case-insensitive, because the server's uniqueness index is on lower(project_name)
-		// — `Boutique` and `boutique` are one project there, so they must be one here.
-		if strings.EqualFold(cfg.ProjectName, m.Project) {
-			matches = append(matches, cfg)
-		}
-	}
-	if len(matches) > 1 {
-		return nil, fmt.Errorf("project name %q matches %d projects — rename one in the console before applying", m.Project, len(matches))
-	}
-
-	var existingEnvs []api.Environment
-	if len(matches) == 1 {
-		plan.ProjectID = matches[0].ID
-		existingEnvs, err = c.ListEnvironments(plan.ProjectID)
-		if err != nil {
-			return nil, fmt.Errorf("list environments of %s: %w", m.Project, err)
-		}
-	}
-	byName := map[string]api.Environment{}
-	for _, e := range existingEnvs {
-		byName[names.NormalizeEnvironmentName(e.Name)] = e
-	}
-
-	declared := map[string]bool{}
-	for _, env := range m.Environments {
-		ep := EnvPlan{Name: env.Name, Stage: env.Stage, Placement: env.Placement, Action: ActionCreate, Deploy: true}
-		key := names.NormalizeEnvironmentName(env.Name)
-		declared[key] = true
-		existing, exists := byName[key]
-		var existingComps []api.Component
-		var existingAddons []api.Addon
-		if exists {
-			ep.Action, ep.ID = ActionUnchanged, existing.ID
-			if existing.Stage != env.Stage {
-				ep.Problems = append(ep.Problems, fmt.Sprintf("the file says stage %s, the server has %s — a stage cannot be changed from here; edit it in the console or the file", env.Stage, existing.Stage))
-			}
-			if existing.PlacementMode != "" && existing.PlacementMode != env.Placement {
-				ep.Problems = append(ep.Problems, fmt.Sprintf("the file says placement %s, the server has %s — placement cannot be changed from here; edit it in the console or the file", env.Placement, existing.PlacementMode))
-			}
-			if why := lifecycleProblem(env.Lifecycle, existing.Lifecycle); why != "" {
-				ep.Problems = append(ep.Problems, why)
-			}
-			// Only when the file declares components for THIS environment. `existingComps` is read
-			// nowhere else, so a four-environment project declaring components on one of them was
-			// issuing three round trips whose results nobody looked at.
-			//
-			// Every per-environment read below addresses the environment by its ID, never its name
-			// (#5583). The server resolves `?env=` as id, name OR stage, so a NAME is ambiguous: with a
-			// default environment `main` at stage `staging` and a second environment literally named
-			// `staging`, the name `staging` once resolved to `main` — and this plan diffed, and apply
-			// then wrote, the other environment's components. The id is the one address that cannot
-			// land anywhere else; #5580 made the same change in export.
-			if len(env.Components) > 0 {
-				existingComps, err = c.ListComponents(plan.ProjectID, "", existing.ID)
-				if err != nil {
-					return nil, fmt.Errorf("list components of %s/%s: %w", m.Project, env.Name, err)
-				}
-			}
-			// Read for EVERY existing environment once the file declares an add-on anywhere, so an
-			// environment whose add-ons the file does not list still shows them as unmanaged. A file
-			// with no add-ons reads none, and plans exactly as before.
-			if m.DeclaresAddons() {
-				rows, err := c.GetProjectAddons(plan.ProjectID, existing.ID)
-				if err != nil {
-					return nil, fmt.Errorf("list add-ons of %s/%s: %w", m.Project, env.Name, err)
-				}
-				existingAddons = rows.Addons
-			}
-		}
-		for _, kind := range env.Components {
-			for _, entry := range kind.Entries {
-				cp := ComponentPlan{Kind: kind.Kind, Name: entry.Name, Action: ActionCreate, Fields: entry.Fields}
-				name := ""
-				if kind.List {
-					name = entry.Name
-				}
-				if current, ok := findComponent(existingComps, kind.Kind, name); ok {
-					// Only the fields the FILE declares are compared: an omitted field is left
-					// as the server has it, never cleared. Equal everywhere is `unchanged` and
-					// apply sends nothing; any difference is an `update` carrying the diff.
-					cp.read = componentValues(current)
-					cp.Changes = diffFields(entry.Fields, cp.read)
-					if current.UpdatedAt != nil {
-						cp.Revision = *current.UpdatedAt
-					}
-					cp.Action = ActionUnchanged
-					if len(cp.Changes) > 0 {
-						cp.Action = ActionUpdate
-					}
-				}
-				ep.Components = append(ep.Components, cp)
-			}
-		}
-		var addonProblems []string
-		ep.Addons, ep.UnmanagedAddons, addonProblems = planAddons(env, existingAddons, catalog)
-		ep.Problems = append(ep.Problems, addonProblems...)
-		plan.Environments = append(plan.Environments, ep)
-	}
-	for _, e := range existingEnvs {
-		if !declared[names.NormalizeEnvironmentName(e.Name)] {
-			plan.Unmanaged = append(plan.Unmanaged, e.Name)
-		}
-	}
-	sort.Strings(plan.Unmanaged)
-	return plan, nil
-}
-
-// lifecycleProblem is the refusal when the file's lifecycle for an EXISTING environment differs from
-// the server's, and "" when they agree (#5590).
-//
-// It is a refusal rather than an update because the server has no way to change a lifecycle: it is
-// written only when an environment is created (`POST /api/cli/projects/{id}/environments` and project
-// creation), and no route, server action or console screen updates it afterwards. Sending it on any
-// other request would be dropped, so the honest answer is to say so before a single write.
-//
-// An omitted key in the file means the default, `persistent` — the value apply would create — so a
-// file that leaves it out disagrees with an ephemeral environment. A server that reports no lifecycle
-// at all (one from before #5581) is not compared against: an empty value there is "not said", not a
-// lifecycle.
-func lifecycleProblem(declared, stored string) string {
-	if stored == "" {
-		return ""
-	}
-	if declared == "" {
-		declared = exportDefaultLifecycle
-	}
-	if declared == stored {
-		return ""
-	}
-	// Keeping the environment means making the file say what the server holds. For the default that
-	// is either spelling — the key removed or written out — so both are named.
-	keep := fmt.Sprintf("set it to `lifecycle: %s`", stored)
-	if stored == exportDefaultLifecycle {
-		keep = fmt.Sprintf("remove `lifecycle` or set it to `lifecycle: %s`", stored)
-	}
-	// The other remedy is a NEW environment, and two of its consequences are easy to miss: apply
-	// never deletes, so the old one keeps running (and billing) until someone destroys it; and a new
-	// environment that is not first in the file and names no placement is placed `namespace`
-	// (manifest.Normalize), not on a dedicated cluster like the one it may be replacing.
-	return fmt.Sprintf("the file says lifecycle %s, the server has %s — a lifecycle is set only when an environment is created, and nothing changes it afterwards (not apply, not the console). To keep this environment, %s. To get %s, declare a NEW environment with `lifecycle: %s`: apply creates it with `namespace` placement unless the file sets `placement` (or lists it first), and this environment keeps running until it is destroyed", declared, stored, keep, declared, declared)
-}
-
-// findComponent returns the existing component of the kind (and name, for a multi kind).
-func findComponent(comps []api.Component, kind, name string) (api.Component, bool) {
-	for _, c := range comps {
-		if c.Kind != kind {
-			continue
-		}
-		if name == "" || c.Name == name {
-			return c, true
-		}
-	}
-	return api.Component{}, false
-}
-
-// componentValues is the server's current value of every settable field of a component, keyed
-// the way a manifest names them. `cloud_identity_id` travels as its own wire field rather than in
-// Config, so it is folded back in for the comparison.
-func componentValues(c api.Component) map[string]any {
-	out := make(map[string]any, len(c.Config)+1)
-	for k, v := range c.Config {
-		out[k] = v
-	}
-	if c.CloudIdentityID != nil {
-		out["cloud_identity_id"] = *c.CloudIdentityID
-	}
-	return out
-}
-
-// restrictTo narrows the deploy to the named environments. Creation is NOT narrowed: the file
-// is applied whole, and --env says which environments to deploy afterwards.
-func (p *ApplyPlan) restrictTo(only []string) error {
-	if len(only) == 0 {
-		return nil
-	}
-	want := map[string]bool{}
-	for _, name := range only {
-		want[names.NormalizeEnvironmentName(name)] = true
-	}
-	found := map[string]bool{}
-	for i := range p.Environments {
-		key := names.NormalizeEnvironmentName(p.Environments[i].Name)
-		p.Environments[i].Deploy = want[key]
-		if want[key] {
-			found[key] = true
-		}
-	}
-	var missing []string
-	for _, name := range only {
-		if !found[names.NormalizeEnvironmentName(name)] {
-			missing = append(missing, name)
-		}
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("--env names %s, which the file does not declare (have: %s)",
-			strings.Join(missing, ", "), strings.Join(p.envNames(), ", "))
-	}
-	return nil
-}
-
-// envNames is every environment the file declares, in file order, for a refusal that has to list them.
-func (p *ApplyPlan) envNames() []string {
-	out := make([]string, len(p.Environments))
-	for i, e := range p.Environments {
-		out[i] = e.Name
-	}
-	return out
-}
-
-// refusal is the error when any environment carries a problem: the plan is shown in full first
-// (so the person sees everything at once), then the run stops before a single write.
-func (p *ApplyPlan) refusal() error {
-	var lines []string
-	for _, e := range p.Environments {
-		for _, why := range e.Problems {
-			lines = append(lines, e.Name+": "+why)
-		}
-	}
-	if len(lines) == 0 {
-		return nil
-	}
-	return fmt.Errorf("%s cannot be applied as written:\n  - %s", manifest.FileName, strings.Join(lines, "\n  - "))
-}
-
-// counts summarises what apply will create and what it will change.
-func (p *ApplyPlan) counts() (envs, comps, updates int) {
-	for _, e := range p.Environments {
-		if e.Action == ActionCreate {
-			envs++
-		}
-		for _, c := range e.Components {
-			switch c.Action {
-			case ActionCreate:
-				comps++
-			case ActionUpdate:
-				updates++
-			case ActionUnchanged:
-			}
-		}
-	}
-	return envs, comps, updates
-}
-
 // componentLabel is `kind` for a singleton and `kind/name` for a named component.
 func componentLabel(c ComponentPlan) string {
 	if c.Name != "" {
@@ -707,10 +364,10 @@ func renderPlan(out io.Writer, p *ApplyPlan) {
 		for _, c := range e.Components {
 			for _, ch := range c.Changes {
 				fmt.Fprintf(out, "    %s %s  %s: %s → %s\n", glyphFor(ActionUpdate), componentLabel(c),
-					ch.label(), formatFieldValue(ch.From), formatFieldValue(ch.To))
+					ch.Label(), formatFieldValue(ch.From), formatFieldValue(ch.To))
 			}
 		}
-		renderAddons(out, e, p.addonSecretKeys)
+		renderAddons(out, e, p.AddonSecretKeys)
 		for _, why := range e.Problems {
 			fmt.Fprintf(out, "    %s %s\n", ui.WarningStyle.Render(ui.SymbolError), why)
 		}
@@ -718,7 +375,7 @@ func renderPlan(out io.Writer, p *ApplyPlan) {
 	for _, name := range p.Unmanaged {
 		fmt.Fprintln(out, ui.MutedStyle.Render(fmt.Sprintf("  %s is on the server and not in the file — left alone", name)))
 	}
-	envs, comps, updates := p.counts()
+	envs, comps, updates := p.Counts()
 	projects := 0
 	if p.ProjectID == "" {
 		projects = 1
@@ -729,7 +386,7 @@ func renderPlan(out io.Writer, p *ApplyPlan) {
 		summary += fmt.Sprintf(" · %s to update", plural(updates, "component"))
 	}
 	// Only when there is something to say, so a plan without add-ons reads exactly as it did.
-	if enable, change := p.addonCounts(); enable > 0 || change > 0 {
+	if enable, change := p.AddonCounts(); enable > 0 || change > 0 {
 		summary += fmt.Sprintf(" · %s to enable · %d to change", plural(enable, "add-on"), change)
 	}
 	fmt.Fprintln(out, ui.MutedStyle.Render(summary))
@@ -744,9 +401,13 @@ func glyphFor(a Action) string {
 		return "~"
 	case ActionUnchanged:
 		return "="
+	case designfile.ActionOmitted, designfile.ActionRemove:
+		// Neither is ever in a plan: what the file leaves out is listed as unmanaged rather than
+		// given an action, and nothing a file says is a removal. They are named so the `exhaustive`
+		// linter keeps this switch complete, and they take the arm below.
 	}
-	// Unreachable for the three declared actions, and the `exhaustive` linter is what keeps it
-	// that way: a fourth action added without a glyph fails the build here rather than rendering
+	// Unreachable for every action a plan carries, and the `exhaustive` linter is what keeps it
+	// that way: an action added without a glyph fails the build here rather than rendering
 	// as whatever the default arm happened to be.
 	return "?"
 }
@@ -944,7 +605,9 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 		for _, comp := range e.Components {
 			label := componentLabel(comp)
 			switch comp.Action {
-			case ActionUnchanged:
+			case ActionUnchanged, designfile.ActionOmitted, designfile.ActionRemove:
+				// Unchanged is left as it is. The other two are never in a plan, and if one ever
+				// were it would be left alone too: apply creates and updates, and deletes nothing.
 				continue
 			case ActionCreate:
 				if _, err := c.AddComponent(result.ProjectID, comp.Kind, comp.Name, envID(e.Name), comp.Fields); err != nil {
@@ -989,7 +652,7 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 				continue
 			}
 			label := "addon/" + a.ID
-			req := a.request
+			req := a.Request
 			req.Project = result.ProjectID
 			req.Env = envID(e.Name)
 			if err := c.EnableAddon(req); err != nil {
