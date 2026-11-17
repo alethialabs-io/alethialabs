@@ -112,10 +112,13 @@ outside it is refused before apply.
 
 ### The guard that stops this regressing
 
-`scripts/check-e2e-spend-guard.mjs` runs in CI and fails the build unless every cloud in the
-scheduled matrix carries a pre-apply spend control — a cost-ceiling branch with a real default, or
-its shape control — whether or not a full-bar cron exists. There is no exemption list any more
-(#2385 removed it). The guard also refuses a prepaid waiver that a schedule could reach (`vars.`,
+`scripts/check-e2e-spend-guard.mjs` runs in CI and fails the build unless every cloud a run can
+reach carries a pre-apply spend control — a cost-ceiling branch with a real default, or its shape
+control — whether or not a full-bar cron exists. "Can reach" is the scheduled matrix plus every
+dispatch-only cloud: a cloud the catalog has hidden leaves the schedule and keeps its control,
+because a dispatch on it spends the same money. There is no exemption list any more
+(#2385 removed it). The guard also holds the scheduled matrix to the catalog in both directions, so
+a hidden cloud cannot stay on a timer and an available one cannot fall off it. The guard also refuses a prepaid waiver that a schedule could reach (`vars.`,
 `secrets.`, `env.`), and checks that the hetzner cap still admits every server type the e2e
 provisions. It does **not** read the proof log, so a green guard is not permission to restore the
 full-bar cron: that still needs a committed full-bar PASS row per cloud.
