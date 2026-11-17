@@ -42,12 +42,6 @@
     "components/create-project/scan-review-notice.tsx": [
       "files"
     ],
-    "components/design-project/canvas/nodes/zone-node.tsx": [
-      "files"
-    ],
-    "components/design-project/help-tooltip.tsx": [
-      "files"
-    ],
     "components/plan/plan-summary-bar.tsx": [
       "files"
     ],
