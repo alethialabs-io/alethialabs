@@ -6,6 +6,11 @@
  * (`packages/core/catalog/catalog.json`). The same JSON is embedded by the Go resolver,
  * so the UI and the provisioner never drift. Run via `pnpm -C apps/console run gen:catalog`;
  * CI re-runs it and fails on drift.
+ *
+ * It writes two files: the console mirror (`lib/cloud-providers/generated/catalog.ts`) and the
+ * data half of `@repo/cloud-catalog` (`packages/cloud-catalog/src/generated.ts`), which carries
+ * only which clouds exist and which of them are offered, so apps that must not import the console
+ * can read it.
  */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -15,6 +20,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
 const srcPath = resolve(repoRoot, "packages/core/catalog/catalog.json");
 const outPath = resolve(here, "../lib/cloud-providers/generated/catalog.ts");
+const cloudCatalogOutPath = resolve(repoRoot, "packages/cloud-catalog/src/generated.ts");
 
 const raw = readFileSync(srcPath, "utf8");
 // Parse to validate it's well-formed before we emit; re-stringify for stable formatting.
@@ -26,7 +32,14 @@ const emit = (v) => JSON.stringify(v, null, "\t").replace(/\n/g, "\n\t");
 // The legacy snake_case `CATALOG` mirror carries ONLY the original core sections — the `live`
 // block (Catalog #2, #1126) is emitted separately as its own typed consts below, so keep it out
 // of the `Catalog`-typed object.
-const { live: _live, ...catalogCore } = data;
+//
+// `availability` is likewise kept out of the two provider consts this file has always emitted
+// (`CATALOG.providers`, `PROVIDERS`): it is emitted once, as `CLOUD_AVAILABILITY`, so those consts
+// and their interfaces are unchanged by the field's arrival.
+/** Returns a provider entry without its `availability` field. */
+const withoutAvailability = ({ availability: _availability, ...rest }) => rest;
+const { live: _live, ...catalogRest } = data;
+const catalogCore = { ...catalogRest, providers: data.providers.map(withoutAvailability) };
 const json = emit(catalogCore);
 
 // The `live` block (Catalog #2, #1126): the full 7-provider / native-region / cross-provider /
@@ -48,6 +61,58 @@ const REQUIRED_LIVE_KEYS = [
 for (const k of REQUIRED_LIVE_KEYS) {
 	if (!(k in live)) throw new Error(`catalog.json live block is missing '${k}' (#1126)`);
 }
+
+// Cloud availability. `availability` on a provider entry decides whether the product offers that
+// cloud; every offer list derives from it. Four refusals, so a typo cannot hide a cloud, or all of
+// them, without a red run:
+//   - an entry with no `availability`, or a value other than the two below;
+//   - a `live.providers` key that differs from its entry's slug;
+//   - a `providers[]` cloud that `live.providers` does not list, or lists with a different value;
+//   - a catalog in which no cloud is available.
+// The Go side checks the same in TestAvailabilityIsDeclaredForEveryCloud; each reader fails on its own.
+const AVAILABILITY_VALUES = ["available", "hidden"];
+/** Throws unless `value` is one of the two availability values. */
+const assertAvailability = (where, value) => {
+	if (!AVAILABILITY_VALUES.includes(value)) {
+		throw new Error(
+			`catalog.json ${where} has availability ${JSON.stringify(value)} — it must be one of ${JSON.stringify(AVAILABILITY_VALUES)}`,
+		);
+	}
+};
+for (const [key, meta] of Object.entries(live.providers)) {
+	if (meta.slug !== key) {
+		throw new Error(`catalog.json live.providers.${key} carries slug ${JSON.stringify(meta.slug)}`);
+	}
+	assertAvailability(`live.providers.${key}`, meta.availability);
+}
+for (const p of data.providers) {
+	assertAvailability(`providers[] entry '${p.slug}'`, p.availability);
+	const liveMeta = live.providers[p.slug];
+	if (!liveMeta) {
+		throw new Error(`catalog.json providers[] lists '${p.slug}' but live.providers does not`);
+	}
+	if (liveMeta.availability !== p.availability) {
+		throw new Error(
+			`catalog.json availability drift for '${p.slug}': providers[] says ${JSON.stringify(p.availability)}, live.providers says ${JSON.stringify(liveMeta.availability)}`,
+		);
+	}
+}
+// Every connectable cloud, in the order catalog.json lists them. Go decodes the same block in the
+// same order (catalog.ConnectableProviders), so both languages list clouds identically.
+const allClouds = Object.keys(live.providers);
+const availableClouds = allClouds.filter((s) => live.providers[s].availability === "available");
+const hiddenClouds = allClouds.filter((s) => live.providers[s].availability === "hidden");
+if (availableClouds.length === 0) {
+	throw new Error("catalog.json marks no cloud as available — at least one must be");
+}
+const provisionableSlugs = new Set(data.providers.map((p) => p.slug));
+const provisionableClouds = availableClouds.filter((s) => provisionableSlugs.has(s));
+const cloudAvailability = Object.fromEntries(allClouds.map((s) => [s, live.providers[s].availability]));
+const cloudLabels = Object.fromEntries(allClouds.map((s) => [s, live.providers[s].shortName]));
+const liveProviders = Object.fromEntries(
+	Object.entries(live.providers).map(([slug, meta]) => [slug, withoutAvailability(meta)]),
+);
+
 const provisioningSlugs = Object.keys(live.instanceTypes).sort();
 for (const k of ["regionLabels", "defaultRegion", "regionMap", "k8sVersions", "autoscaler",
 	"defaultInstanceType", "defaultK8sVersion", "instanceTypeMap", "dbEngines", "dbCapacity",
@@ -476,7 +541,20 @@ export interface CloudProviderMeta {
 }
 
 /** Provider metadata keyed by slug (all connectable clouds). */
-export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = ${emit(live.providers)};
+export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = ${emit(liveProviders)};
+
+/** Whether the product offers a cloud: \`available\`, or \`hidden\` (code kept, not offered). */
+export type CloudAvailability = "available" | "hidden";
+
+/** Every connectable cloud, in catalog order. */
+export const CONNECTABLE_CLOUDS: readonly ConnectableCloudSlug[] = ${emit(allClouds)};
+
+/**
+ * Availability per connectable cloud, as catalog.json sets it. This is the build-time value only.
+ * Server code asks \`lib/cloud-providers/availability.ts\`, which also applies the operator
+ * override; nothing should decide an offer by reading this map directly.
+ */
+export const CLOUD_AVAILABILITY: Record<ConnectableCloudSlug, CloudAvailability> = ${emit(cloudAvailability)};
 
 export interface RegionMeta {
 	label: string;
@@ -640,3 +718,45 @@ export const MESSAGING: Record<CloudProviderSlug, MessagingConfig> = ${emit(live
 mkdirSync(dirname(outPath), { recursive: true });
 writeFileSync(outPath, out);
 console.log(`✓ wrote ${outPath}`);
+
+// The data half of @repo/cloud-catalog. Dependency-free on purpose — no import of the console's DB
+// enum — so marketing, docs and @repo/ui can read which clouds are offered. The hand-written half
+// (packages/cloud-catalog/src/index.ts) re-exports these and adds the helpers over them.
+/** Emits a JS value as a top-level TS literal. */
+const emitTop = (v) => JSON.stringify(v, null, "\t");
+const cloudSlugUnion = allClouds.map((s) => JSON.stringify(s)).join(" | ");
+const cloudCatalogOut = `// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// GENERATED by apps/console/scripts/gen-catalog.mjs — DO NOT EDIT.
+// Source of truth: packages/core/catalog/catalog.json (also embedded by the Go resolver).
+// Run \`pnpm -C apps/console run gen:catalog\` to regenerate.
+
+/** Every cloud an account can be connected for. */
+export type CloudSlug = ${cloudSlugUnion};
+
+/** Whether the product offers a cloud: \`available\`, or \`hidden\` (code kept, not offered). */
+export type CloudAvailability = "available" | "hidden";
+
+/** Every cloud, in catalog order. */
+export const ALL_CLOUDS: readonly CloudSlug[] = ${emitTop(allClouds)};
+
+/** The clouds the product offers at build time. */
+export const AVAILABLE_CLOUDS: readonly CloudSlug[] = ${emitTop(availableClouds)};
+
+/** The clouds whose code is kept but which are not offered. */
+export const HIDDEN_CLOUDS: readonly CloudSlug[] = ${emitTop(hiddenClouds)};
+
+/** The offered clouds a cluster can be provisioned on (the rest can only be connected). */
+export const PROVISIONABLE_CLOUDS: readonly CloudSlug[] = ${emitTop(provisionableClouds)};
+
+/** Availability per cloud. */
+export const CLOUD_AVAILABILITY: Record<CloudSlug, CloudAvailability> = ${emitTop(cloudAvailability)};
+
+/** The short display name per cloud. */
+export const CLOUD_LABELS: Record<CloudSlug, string> = ${emitTop(cloudLabels)};
+`;
+
+mkdirSync(dirname(cloudCatalogOutPath), { recursive: true });
+writeFileSync(cloudCatalogOutPath, cloudCatalogOut);
+console.log(`✓ wrote ${cloudCatalogOutPath}`);
