@@ -3,8 +3,8 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
-import { resolveProjectId } from "@/app/server/actions/resolve";
 import { DEFAULT_JOBS_FILTERS, normalizeJobsQuery } from "@/components/jobs/jobs-query";
+import { resolveProjectOr404 } from "@/lib/projects/resolve-project-or-404";
 import { getQueryClient } from "@/lib/query/client";
 import { filterStateFromUrl, paramReader } from "@/lib/query/filter-url-codec";
 import { JOBS_DEFAULT_PRESET, jobsPageInputFrom } from "@/lib/rpc/inputs/jobs";
@@ -33,12 +33,8 @@ export default async function ProjectJobsRoute({
 	searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
 	const { project } = await params;
-	let projectId: string;
-	try {
-		projectId = await resolveProjectId(project);
-	} catch {
-		notFound();
-	}
+	// Null is the project 404; a lost session or a real failure never reaches this line.
+	const projectId = (await resolveProjectOr404(project)) ?? notFound();
 
 	const filters = filterStateFromUrl(paramReader(await searchParams), DEFAULT_JOBS_FILTERS);
 	const input = jobsPageInputFrom(

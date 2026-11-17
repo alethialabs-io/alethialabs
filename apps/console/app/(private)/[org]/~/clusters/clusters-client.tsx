@@ -4,12 +4,13 @@
 
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
-import { Lock, Server } from "lucide-react";
+import { Server } from "lucide-react";
 import Link from "next/link";
 import { ClusterCard } from "@/components/clusters/cluster-card";
 import { CLUSTERS_GRID } from "@/components/clusters/cluster-card-shape";
 import { CLUSTERS_REGION, ClustersSkeleton } from "@/components/clusters/clusters-skeleton";
 import { RegionError } from "@/components/errors/region-error";
+import { RegionRefusal } from "@/components/errors/region-refusal";
 import { isForbidden } from "@/components/overview/overview-reads";
 import { useClustersQuery } from "@/lib/query/use-clusters-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
@@ -34,14 +35,7 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 	if (clusters.data === undefined) {
 		if (clusters.isError && isForbidden(clusters.error)) {
 			// An expected refusal, not a failure: retrying will not change it, so there is no button.
-			return (
-				<EmptyState
-					className={CLUSTERS_REGION}
-					icon={<Lock />}
-					title="You don't have access to clusters"
-					description="Ask an organization admin for a role that can view projects."
-				/>
-			);
+			return <RegionRefusal refusal="forbidden" subject="clusters" className={CLUSTERS_REGION} />;
 		}
 		if (clusters.isError) {
 			return (

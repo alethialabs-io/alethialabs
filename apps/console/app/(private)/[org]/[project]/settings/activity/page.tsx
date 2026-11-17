@@ -3,11 +3,11 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
-import { resolveProjectId } from "@/app/server/actions/resolve";
 import { ActivityLog } from "@/components/settings/activity/activity-log";
 import { ActivityNoAccess } from "@/components/settings/activity/activity-no-access";
 import { prefetchActivityFeed } from "@/components/settings/activity/activity-prefetch";
 import { settledReadOf } from "@/components/settings/members/people-reads";
+import { resolveProjectOr404 } from "@/lib/projects/resolve-project-or-404";
 import { getQueryClient } from "@/lib/query/client";
 import { paramReader } from "@/lib/query/filter-url-codec";
 import { readActivityPermissions } from "@/lib/rpc/procedures/activity";
@@ -31,12 +31,8 @@ export default async function ProjectActivityPage({
 	searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
 	const { project } = await params;
-	let projectId: string;
-	try {
-		projectId = await resolveProjectId(project);
-	} catch {
-		notFound();
-	}
+	// Null is the project 404; a lost session or a real failure never reaches this line.
+	const projectId = (await resolveProjectOr404(project)) ?? notFound();
 	const { canView } = await readActivityPermissions();
 	if (!canView) return <ActivityNoAccess />;
 

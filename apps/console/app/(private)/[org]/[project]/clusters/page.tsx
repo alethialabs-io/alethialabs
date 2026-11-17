@@ -3,8 +3,8 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
-import { resolveProjectId } from "@/app/server/actions/resolve";
 import { isClustersRead } from "@/components/clusters/clusters-reads";
+import { resolveProjectOr404 } from "@/lib/projects/resolve-project-or-404";
 import { getQueryClient } from "@/lib/query/client";
 import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
@@ -27,12 +27,8 @@ export default async function ProjectClustersRoute({
 	params: Promise<{ org: string; project: string }>;
 }) {
 	const { project } = await params;
-	let projectId: string;
-	try {
-		projectId = await resolveProjectId(project);
-	} catch {
-		notFound();
-	}
+	// Null is the project 404; a lost session or a real failure never reaches this line.
+	const projectId = (await resolveProjectOr404(project)) ?? notFound();
 
 	const queryClient = getQueryClient();
 	await queryClient.prefetchQuery(serverOrpc().clusters.list.queryOptions({ retry: false }));

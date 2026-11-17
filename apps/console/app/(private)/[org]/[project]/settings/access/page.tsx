@@ -3,7 +3,6 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
-import { resolveProjectId } from "@/app/server/actions/resolve";
 import { accessQueryFromUrl } from "@/components/settings/access/access-filters";
 import { AccessManager } from "@/components/settings/access/access-manager";
 import {
@@ -13,6 +12,7 @@ import {
 } from "@/components/settings/members/people-reads";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { currentActor } from "@/lib/authz/guard";
+import { resolveProjectOr404 } from "@/lib/projects/resolve-project-or-404";
 import { getQueryClient } from "@/lib/query/client";
 import { paramReader } from "@/lib/query/filter-url-codec";
 import { serverOrpc } from "@/lib/rpc/server";
@@ -43,12 +43,8 @@ export default async function ProjectAccessPage({
 	searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
 	const { project } = await params;
-	let projectId: string;
-	try {
-		projectId = await resolveProjectId(project);
-	} catch {
-		notFound();
-	}
+	// Null is the project 404; a lost session or a real failure never reaches this line.
+	const projectId = (await resolveProjectOr404(project)) ?? notFound();
 	const { customRoles } = getEntitlements(await currentActor());
 	if (!customRoles) return <AccessManager projectId={projectId} customRoles={false} />;
 

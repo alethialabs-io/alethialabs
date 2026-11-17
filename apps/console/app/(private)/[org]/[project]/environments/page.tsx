@@ -3,9 +3,9 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
-import { resolveProjectId } from "@/app/server/actions/resolve";
 import { prefetchClassificationOfList } from "@/components/classification/prefetch-classification";
 import { EnvironmentsView } from "@/components/environments/environments-view";
+import { resolveProjectOr404 } from "@/lib/projects/resolve-project-or-404";
 import { getQueryClient } from "@/lib/query/client";
 import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
@@ -41,11 +41,8 @@ export default async function ProjectEnvironmentsPage({
 	params: Promise<{ org: string; project: string }>;
 }) {
 	const { org, project } = await params;
-	try {
-		await resolveProjectId(project);
-	} catch {
-		notFound();
-	}
+	// Null is the project 404; a lost session or a real failure never reaches this line.
+	if ((await resolveProjectOr404(project)) === null) notFound();
 
 	const queryClient = getQueryClient();
 	const overview = serverOrpc().environments.overview.queryOptions({ input: { project } });
