@@ -128,6 +128,20 @@ render_storage_identity() {
 		"$(json_escape "$_id")" "$(json_escape "$_secret")" | $SUDO tee "$STORAGE_IDENTITY_FILE" >/dev/null
 }
 
+# warn_placeholders — when $stale names keys, print them with how to replace each one.
+# A warning only: the run continues and .env is left as it is.
+stale=""
+warn_placeholders() {
+	[ -n "$stale" ] || return 0
+	{
+		printf '\033[33m! %s/.env holds a placeholder value for: %s\033[0m\n' "$ALETHIA_DIR" "$stale"
+		printf '  .env was not changed. Replace each one:\n'
+		for _key in $stale; do
+			explain_placeholder "$_key"
+		done
+	} >&2
+}
+
 if [ ! -f .env ]; then
 	log "Creating .env with generated secrets…"
 	$SUDO cp .env.example .env
@@ -174,16 +188,9 @@ else
 		printf '\033[33m! DOMAIN=%s differs from the existing .env — not changed. Edit %s/.env to update it.\033[0m\n' "$DOMAIN" "$ALETHIA_DIR" >&2
 	fi
 	# An existing .env is never rewritten here. If it still holds a placeholder for a value
-	# a first install generates, say which and stop before the stack is touched.
+	# a first install generates, say which and how to replace each, then carry on.
 	stale="$(placeholder_keys)"
-	if [ -n "$stale" ]; then
-		printf '\033[31m✗ %s/.env holds a placeholder value for: %s\033[0m\n' "$ALETHIA_DIR" "$stale" >&2
-		printf '  The stack was not restarted and .env was not changed. Replace each one, then re-run:\n' >&2
-		for key in $stale; do
-			explain_placeholder "$key" >&2
-		done
-		exit 1
-	fi
+	warn_placeholders
 fi
 
 render_storage_identity
@@ -212,3 +219,5 @@ log "Alethia is starting at ${URL}"
 # The backticks below are literal help text, not a command substitution — SC2016 is a false positive.
 # shellcheck disable=SC2016
 printf '  Next: edit %s/.env for OAuth + email (ALETHIA_SES_*), then re-run this script (or `docker compose ... up -d`).\n' "$ALETHIA_DIR"
+# Repeated here so it is the last thing on screen, below the compose output.
+warn_placeholders
