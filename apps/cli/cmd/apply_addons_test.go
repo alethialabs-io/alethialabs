@@ -274,7 +274,7 @@ func TestComputePlan_ARowsSecretKeysRefuseEvenWithoutACatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	refusal := plan.refusal()
+	refusal := plan.Refusal()
 	if refusal == nil || !strings.Contains(refusal.Error(), "apiToken is a secret setting") || strings.Contains(refusal.Error(), "s3cr3t-value") {
 		t.Fatalf("refusal = %v, want the secret refused by name and never printed", refusal)
 	}
