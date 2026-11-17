@@ -21,8 +21,8 @@ import (
 // then poll it. The shapes are the wire-locked mirrors in packages/core/types/kubeconfig_mint.go.
 //
 // These two do not go through doPost/doGet, for two reasons the generic helpers cannot express. The
-// request route answers 202 Accepted, which doPost treats as a failure; and its 429 carries a
-// Retry-After the caller must be able to read, which responseError drops. Nothing else differs: the
+// request route answers 202 Accepted, which doPost treats as a failure; and its answer is read
+// through a bounded reader sized for a sealed credential. Nothing else differs: the
 // same auth headers, org scope, timeout and redirect policy, because the request is built on c.
 
 // kubeconfigMintBodyLimit bounds a mint answer. The largest legitimate one is a ready poll, whose
@@ -79,18 +79,14 @@ func (c *Client) doMint(method, endpoint string, body []byte, want int, result a
 	}
 	c.setAuthHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != want {
-		apiErr := responseError(resp)
-		if resp.StatusCode == http.StatusTooManyRequests {
-			apiErr.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
-		}
-		return apiErr
+		return responseError(resp)
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, kubeconfigMintBodyLimit)).Decode(result); err != nil {
 		return fmt.Errorf("failed to decode the response: %w", err)
