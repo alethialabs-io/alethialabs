@@ -9,6 +9,10 @@
 // #6129: the save goes through `useActionMutation` (pending, one toast policy, field errors under
 // their fields, every members read invalidated). The sheet TRACKS DIRTY STATE: an edit with no
 // change cannot be saved, and closing it with unsaved changes asks first instead of dropping them.
+//
+// #6751: `permissionKeys` has no registered input — the matrix and the templates write it through
+// `form.setValue`, which marks a field dirty only when asked to. Both writes pass `shouldDirty`, so
+// a change to the permissions alone counts as a change: Save enables and closing asks first.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ShieldPlus } from "lucide-react";
@@ -185,6 +189,7 @@ export function RoleSheet({
 										onClick={() =>
 											form.setValue("permissionKeys", [...t.permissionKeys], {
 												shouldValidate: true,
+												shouldDirty: true,
 											})
 										}
 										className="rounded-md border border-border px-2 py-1 text-ui-xs text-text-secondary transition-colors hover:border-border-strong"
@@ -211,7 +216,10 @@ export function RoleSheet({
 						onChange={
 							canManage
 								? (keys) =>
-										form.setValue("permissionKeys", keys, { shouldValidate: true })
+										form.setValue("permissionKeys", keys, {
+											shouldValidate: true,
+											shouldDirty: true,
+										})
 								: undefined
 						}
 						readOnly={!canManage}
