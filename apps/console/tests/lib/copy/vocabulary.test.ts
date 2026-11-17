@@ -57,11 +57,12 @@ describe("the table", () => {
 	});
 
 	it("gives every row at least one label, and no empty word anywhere", () => {
-		for (const row of ROWS) {
-			expect(row.labels.length, row.id).toBeGreaterThan(0);
-			for (const word of [...row.labels, ...row.not]) expect(word.trim(), row.id).toBe(word);
-			for (const word of [...row.labels, ...row.not]) expect(word, row.id).not.toBe("");
-		}
+		const unlabelled = ROWS.filter((row) => row.labels.length === 0).map((row) => row.id);
+		const malformed = ROWS.flatMap((row) =>
+			[...row.labels, ...row.not].filter((word) => word === "" || word.trim() !== word).map((word) => `${row.id}: "${word}"`),
+		);
+		expect(unlabelled).toEqual([]);
+		expect(malformed).toEqual([]);
 	});
 
 	it("never lists a word as a label in one row and as rejected in any row", () => {
