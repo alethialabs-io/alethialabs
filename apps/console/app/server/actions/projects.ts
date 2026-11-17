@@ -25,6 +25,8 @@ import {
 	projectSchema,
 } from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
+import { isLiveEnvStatus, LIVE_ENVIRONMENT_REFUSAL } from "@/lib/db/live-env-statuses";
+import { ActionRefusal } from "@/lib/actions/result";
 import { recordAllowed } from "@/lib/authz/activity";
 import { authorize, authorizeDeferred, authorizeRead, currentActor } from "@/lib/authz/guard";
 import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
@@ -3054,14 +3056,9 @@ export async function destroyProject(
 // Delete
 // ============================================================
 
-// Environment states that mean live (or in-flight) cloud infrastructure — a project can't be
-// deleted from under them; the environments must be destroyed first.
-const LIVE_ENV_STATUSES = new Set([
-	"QUEUED",
-	"PROVISIONING",
-	"ACTIVE",
-	"DESTROYING",
-]);
+// Which environment statuses mean live (or in-flight) cloud infrastructure is `isLiveEnvStatus`
+// (lib/db/live-env-statuses.ts) — a project can't be deleted from under one, and neither can the
+// environment itself (`deleteEnvironment`); it must be destroyed first.
 
 /**
  * Permanently deletes a project record. Child rows (environments, components, promotions, drift)
@@ -3086,7 +3083,7 @@ export async function deleteProject(
 			.select({ status: projectEnvironments.status })
 			.from(projectEnvironments)
 			.where(eq(projectEnvironments.project_id, projectId));
-		if (envs.some((e) => LIVE_ENV_STATUSES.has(e.status))) {
+		if (envs.some((e) => isLiveEnvStatus(e.status))) {
 			return {
 				ok: false,
 				error:
@@ -3791,7 +3788,15 @@ export async function getEnvConsistency(
 	};
 }
 
-/** Deletes a non-default environment (the default is the project's anchor). */
+/**
+ * Deletes a non-default environment (the default is the project's anchor). Like `deleteProject`,
+ * this removes the row and runs no destroy job, so it refuses while the environment is live or in
+ * flight (#6752): the environment is destroyed first, then deleted.
+ *
+ * The refusal is an `ActionRefusal` of kind `conflict`. This action still THROWS its refusals — its
+ * one caller settles a thrown failure — so the kind is what `defineAction` will answer with once
+ * the action moves onto the mutation contract; until then the caller reports a failed delete.
+ */
 export async function deleteEnvironment(
 	projectId: string,
 	environmentId: string,
@@ -3814,6 +3819,7 @@ export async function deleteEnvironment(
 		if (!env) throw new Error("Environment not found for this project");
 		if (env.is_default)
 			throw new Error("Cannot delete the project's default environment");
+		if (isLiveEnvStatus(env.status)) throw new ActionRefusal("conflict", LIVE_ENVIRONMENT_REFUSAL);
 		await tx
 			.delete(projectEnvironments)
 			.where(eq(projectEnvironments.id, environmentId));
