@@ -10,6 +10,7 @@ import { lookup } from "@/lib/typed-object";
 import { EmptyState } from "@repo/ui/empty";
 import { AddRunnerButton } from "@/components/runners/add-runner-button";
 import { RegionError } from "@/components/errors/region-error";
+import { RegionRefusal } from "@/components/errors/region-refusal";
 import { isForbidden } from "@/components/overview/overview-reads";
 import { PoolsSection } from "@/components/runners/pools-section";
 import { RunnerCard, RunnerCardSkeleton } from "@/components/runners/runner-card";
@@ -152,12 +153,7 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 
 				{isError && isForbidden(error) ? (
 					// An expected refusal is its own render: retrying it would answer the same (RUBRIC B4).
-					<EmptyState
-						icon={<Server />}
-						title="You don't have access to runners"
-						description="Your role in this workspace doesn't include viewing runners. Ask an admin for access."
-						className="py-12"
-					/>
+					<RegionRefusal refusal="forbidden" subject="runners" className="py-12" />
 				) : isError ? (
 					// A fetch failure must not render as "no runners".
 					<RegionError

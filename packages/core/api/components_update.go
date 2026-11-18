@@ -145,9 +145,9 @@ func (c *Client) doComponentWrite(method, endpoint string, payload interface{}, 
 	}
 	c.setAuthHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 

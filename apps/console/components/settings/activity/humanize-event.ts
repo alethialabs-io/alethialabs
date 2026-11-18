@@ -54,10 +54,16 @@ export interface ActivityContext {
 	resolveName: (resourceType: string, resourceId: string | null) => string | null;
 }
 
-/** The noun phrase for a row's resource: "project my-api", "runner web", else "a project". */
+/**
+ * The noun phrase for a row's resource: "project my-api", "runner web", else "a project".
+ *
+ * The name RECORDED with the event wins (#6735): it is what the thing was called when it happened,
+ * and it is the only name a deleted resource still has. The live lookup is for rows written before
+ * names were recorded.
+ */
 function resourcePhrase(row: ActivityRow, ctx: ActivityContext): string {
 	const n = noun(row.resourceType);
-	const name = ctx.resolveName(row.resourceType, row.resourceId);
+	const name = row.resourceName ?? ctx.resolveName(row.resourceType, row.resourceId);
 	if (name) return `${n} ${name}`;
 	return /^[aeiou]/.test(n) ? `an ${n}` : `a ${n}`;
 }
@@ -121,6 +127,9 @@ function pastPredicate(row: ActivityRow, ctx: ActivityContext): Predicate {
 			return { lead: "updated", target: "connectors" };
 		case "manage_billing":
 			return { lead: "updated", target: "billing" };
+		// Recorded when a card is SAVED (billing.ts `confirmCardSaved`), never when the form opens (#6733).
+		case "add_payment_method":
+			return { lead: "added", target: "a payment method" };
 		case "export_activity":
 			return { lead: "exported", target: "the activity log" };
 		case "view_activity":

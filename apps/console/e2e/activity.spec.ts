@@ -6,8 +6,8 @@
 // selecting a server-side filter drives a refetch — narrowing to denials, which an org created
 // seconds ago has none of, lands on the empty state.
 //
-// The FILTER STANDARD itself — that all seven `ActivityFilters` keys (search, actorIds,
-// projectIds, eventTokens, from, to, rangeLabel) round-trip through the URL in both directions —
+// The FILTER STANDARD itself — that all five `ActivityFilters` keys (search, actorIds,
+// projectIds, eventTokens, range) round-trip through the URL in both directions —
 // is `e2e/flows/agent-usage-activity.spec.ts`'s, because it needs seeded members and projects to
 // select. What this file owns is the fresh-org half: a filter bar with nothing behind it still
 // filters, and still says so.

@@ -114,17 +114,38 @@ test.describe("Connectors — a cloud this instance cannot connect", () => {
 	});
 
 	test("a coming-soon connector offers no action at all", async ({ owner }) => {
-		// DigitalOcean has no provisioning templates yet (`status: coming_soon` in the catalog), so
-		// the card states that and renders neither Connect nor Manage — connecting it would be a
-		// dead end rather than a slow one. Two rows match: the cloud, and its container registry
-		// (which IS connectable — that is the pair that makes the exact button names below load-bearing).
+		// The cross-account ECR registry is `status: coming_soon` in the catalog, so its card
+		// states that and renders neither Connect nor Manage — connecting it would be a dead end
+		// rather than a slow one. The term is the connector's whole name, which no other row's
+		// name, description, vendor or slug contains, so one row matches.
+		//
+		// This used to be asked of DigitalOcean. A cloud this deployment does not offer has no
+		// card at all now (#6811), which is the test below.
+		const COMING_SOON = "Amazon ECR (cross-account)";
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await filterTo(owner.page, "DigitalOcean", 2);
-		// `exact` is load-bearing here and was measured: without it this resolved to THREE
-		// elements on a two-row board — the card's status, the "Coming soon" filter chip (whose
-		// text is "Coming soon <count>"), and DigitalOcean's own description, which ends
-		// "Provisioning templates coming soon." on a case-insensitive substring match.
+		await filterTo(owner.page, COMING_SOON, 1);
+		// `exact` is load-bearing: without it `getByText` also reaches the "Coming soon" filter
+		// chip, whose text is "Coming soon <count>".
 		await expect(owner.page.getByText("Coming soon", { exact: true })).toHaveCount(1);
+		await expect(
+			owner.page.getByRole("button", { name: `Connect ${COMING_SOON}`, exact: true }),
+		).toHaveCount(0);
+		await expect(
+			owner.page.getByRole("button", { name: `Manage ${COMING_SOON}`, exact: true }),
+		).toHaveCount(0);
+	});
+
+	test("a cloud this deployment does not offer has no card", async ({ owner }) => {
+		// DigitalOcean is in the connector catalog and is not offered, so the board leaves its
+		// cloud card out for an org with no account on it. One row still matches the term: the
+		// DigitalOcean container registry, which is a registry connector and not the cloud.
+		//
+		// The row count is the precondition as well as the claim. An org that held a DigitalOcean
+		// account would keep the card, so that account could be re-verified and removed, and this
+		// would then read 2 and fail here rather than pass for a reason it never stated.
+		await gotoConnectors(owner.page, owner.orgSlug);
+		await filterTo(owner.page, "DigitalOcean", 1);
+		await expect(owner.page.getByText("DigitalOcean Container Registry").first()).toBeVisible();
 		await expect(
 			owner.page.getByRole("button", { name: "Connect DigitalOcean", exact: true }),
 		).toHaveCount(0);

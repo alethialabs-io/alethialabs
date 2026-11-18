@@ -9,6 +9,9 @@
 // `redirect()` run, and each answer is read off the thrown value's `digest`, which is how Next
 // itself tells a 404 from a redirect from an error. A mocked `notFound` would only show that a
 // function was called.
+//
+// #6756: a request with no session is redirected to sign-in WITH the address it was for, read from
+// the header the proxy publishes the path on.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { notFound } from "next/navigation";
@@ -25,6 +28,11 @@ vi.mock("@/lib/queries/runner-capabilities", () => ({
 }));
 // The chrome is irrelevant here, and importing the real shell pulls in the whole client graph.
 vi.mock("@/components/shell/app-shell", () => ({ AppShell: () => null }));
+// The path the proxy published for this request (`x-alethia-path`); null when it published none.
+const request = vi.hoisted((): { path: string | null } => ({ path: "/acme/~/jobs" }));
+vi.mock("next/headers", () => ({
+	headers: async () => new Headers(request.path === null ? {} : { "x-alethia-path": request.path }),
+}));
 vi.mock("@/components/org/upgrade-sheet-provider", () => ({
 	UpgradeSheetProvider: () => null,
 }));
@@ -72,6 +80,7 @@ const NOT_FOUND = "NEXT_HTTP_ERROR_FALLBACK;404";
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(getOwner).mockResolvedValue("user-1");
+	request.path = "/acme/~/jobs";
 });
 
 describe("[org]/layout — what a resolveOrgScope failure renders", () => {
@@ -101,11 +110,32 @@ describe("[org]/layout — what a resolveOrgScope failure renders", () => {
 		expect(digestOf(await thrownBy())).toBe(NOT_FOUND);
 	});
 
-	it("a session lost mid-request is sign-in, not a 404", async () => {
+	// ── No session → sign-in, coming back to the address the request was for (#6756) ──────────
+
+	it("a session lost mid-request is sign-in with this address as `next`, not a 404", async () => {
 		vi.mocked(resolveOrgScope).mockRejectedValue(new UnauthorizedError());
 		const digest = digestOf(await thrownBy()) ?? "";
 		expect(digest.startsWith("NEXT_REDIRECT;")).toBe(true);
-		expect(digest).toContain("/login");
+		expect(digest).toContain("/login?next=%2Facme%2F~%2Fjobs;");
+	});
+
+	it("a request with no session at all is the same redirect, before the org is resolved", async () => {
+		vi.mocked(getOwner).mockResolvedValue(null);
+		const digest = digestOf(await thrownBy()) ?? "";
+		expect(digest.startsWith("NEXT_REDIRECT;")).toBe(true);
+		expect(digest).toContain("/login?next=%2Facme%2F~%2Fjobs;");
+		expect(resolveOrgScope).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["no published path", null],
+		["a published path that is not a safe destination", "//elsewhere.test/acme"],
+	])("with %s it is plain sign-in", async (_, path) => {
+		request.path = path;
+		vi.mocked(getOwner).mockResolvedValue(null);
+		const digest = digestOf(await thrownBy()) ?? "";
+		expect(digest.startsWith("NEXT_REDIRECT;")).toBe(true);
+		expect(digest).toContain(";/login;");
 	});
 
 	// ── Everything else is NOT a statement about the org → the error boundary ─────────────────

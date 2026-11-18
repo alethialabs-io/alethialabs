@@ -9,7 +9,7 @@
 // pins a single project_iac_sources row per environment (v1 replace mode) and auto-queues the
 // IAC_SCAN so provisioning can unlock. Mirrors ByoChartDialog; react-hook-form + zod throughout.
 
-import { useCallback, useState } from "react";
+import { type FormEvent, type MouseEvent, useCallback, useState } from "react";
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowLeft, ArrowRight, Boxes, Check, Loader2, Plus, Trash2 } from "lucide-react";
@@ -149,6 +149,38 @@ export function ByoIacDialog({
 		[attach, projectId, environmentId, onAttached, close],
 	);
 
+	/**
+	 * Next's click handler. It cancels the click's default action synchronously, before `next`
+	 * awaits: the browser drains microtasks between the click listeners and the button's activation,
+	 * so the Variables → Review step change can land first and turn the clicked button into the
+	 * submit one — one click advancing AND attaching (#6728). The distinct `key`s on Next and Attach
+	 * keep React from re-typing that node at all.
+	 */
+	const handleNextClick = useCallback(
+		(event: MouseEvent<HTMLButtonElement>) => {
+			event.preventDefault();
+			void next();
+		},
+		[next],
+	);
+
+	/**
+	 * The form's submit handler: only Review attaches. Before it, a submit is the browser's implicit
+	 * submission (Enter in a field), which is treated as Next rather than attaching a source the
+	 * person has not reviewed.
+	 */
+	const handleFormSubmit = useCallback(
+		(event: FormEvent<HTMLFormElement>) => {
+			if (step < STEPS.length - 1) {
+				event.preventDefault();
+				void next();
+				return;
+			}
+			void handleSubmit(onSubmit)(event);
+		},
+		[step, next, handleSubmit, onSubmit],
+	);
+
 	const effectiveRef = ref?.trim() || "HEAD";
 	const effectivePath = path?.trim().replace(/^\/+|\/+$/g, "") || "(repo root)";
 	const varCount = fields.length;
@@ -189,7 +221,7 @@ export function ByoIacDialog({
 					))}
 				</div>
 
-				<form onSubmit={handleSubmit(onSubmit)}>
+				<form onSubmit={handleFormSubmit}>
 					<div className="min-h-[240px] py-2">
 						{step === 0 && (
 							<div className="flex flex-col gap-3">
@@ -385,11 +417,16 @@ export function ByoIacDialog({
 							)}
 						</Button>
 						{step < 3 ? (
-							<Button type="button" size="sm" onClick={next}>
+							<Button key="next" type="button" size="sm" onClick={handleNextClick}>
 								Next <ArrowRight className="h-3.5 w-3.5" />
 							</Button>
 						) : (
-							<Button type="submit" size="sm" disabled={isSubmitting || attach.isPending}>
+							<Button
+								key="attach"
+								type="submit"
+								size="sm"
+								disabled={isSubmitting || attach.isPending}
+							>
 								{isSubmitting || attach.isPending ? (
 									<Loader2 className="h-3.5 w-3.5 animate-spin" />
 								) : (

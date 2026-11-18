@@ -169,4 +169,19 @@ describe("GroupedFilterSheet", () => {
 		await user.keyboard("{Escape}");
 		expect(trigger()).toHaveTextContent(/^Event types$/);
 	});
+
+	// #6734: an option's on/off state was only a drawn check box. Each option is a toggle button,
+	// so the state is `aria-pressed`.
+	it("exposes each option's on/off state as aria-pressed", async () => {
+		const user = userEvent.setup();
+		render(<Harness onChange={vi.fn()} />);
+		await user.click(trigger());
+		await user.click(screen.getByRole("button", { name: "Auth" }));
+
+		const login = screen.getByRole("button", { name: "Login" });
+		expect(login).toHaveAttribute("aria-pressed", "false");
+		await user.click(login);
+		expect(screen.getByRole("button", { name: "Login" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByRole("button", { name: "Logout" })).toHaveAttribute("aria-pressed", "false");
+	});
 });

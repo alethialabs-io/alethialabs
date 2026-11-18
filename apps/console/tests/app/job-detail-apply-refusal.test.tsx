@@ -77,10 +77,10 @@ const PLAN = {
 	execution_metadata: null,
 };
 
-/** Renders the page over a cache already holding what the server prefetched. */
-function renderPage() {
+/** Renders the page over a cache already holding what the server prefetched (a finished PLAN, unless given another job). */
+function renderPage(job: typeof PLAN = PLAN) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-	client.setQueryData(orpc.jobs.detail.queryKey({ input: { id: JOB_ID } }), PLAN as never);
+	client.setQueryData(orpc.jobs.detail.queryKey({ input: { id: JOB_ID } }), job as never);
 	client.setQueryData(orpc.jobs.logsHead.queryKey({ input: { id: JOB_ID } }), { lines: [], lastId: 0 });
 	const invalidate = vi.spyOn(client, "invalidateQueries");
 	render(
@@ -141,16 +141,40 @@ describe("Job detail — Apply", () => {
 });
 
 describe("Job detail — Re-run", () => {
-	it("re-queues the job and goes to the new one", async () => {
+	it("asks first, naming the environment and the configuration the run uses; Cancel queues nothing", async () => {
+		const user = userEvent.setup();
+		renderPage();
+
+		await user.click(screen.getByRole("button", { name: "Re-run" }));
+
+		// The click alone reaches nothing: the confirmation stands between it and the action.
+		expect(rerunJob).not.toHaveBeenCalled();
+		const dialog = await screen.findByRole("alertdialog");
+		expect(dialog).toHaveTextContent("Re-run this job?");
+		expect(dialog).toHaveTextContent("the environment staging of payments");
+		expect(dialog).toHaveTextContent("the project's current configuration");
+
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+		await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+		expect(rerunJob).not.toHaveBeenCalled();
+	});
+
+	it("re-queues the job once confirmed and goes to the new one", async () => {
 		rerunJob.mockResolvedValue({ ok: true, data: { id: "job-rerun-2" } });
 		const user = userEvent.setup();
 		renderPage();
 
-		await user.click(screen.getByRole("button", { name: /re-run/i }));
+		await user.click(screen.getByRole("button", { name: "Re-run" }));
+		await user.click(await screen.findByRole("button", { name: "Re-run job" }));
 
 		expect(rerunJob).toHaveBeenCalledWith({ jobId: JOB_ID });
 		await vi.waitFor(() => expect(push).toHaveBeenCalledWith("/acme/~/jobs/job-rerun-2"));
 		expect(toastSuccess).toHaveBeenCalledWith("Job re-queued");
+	});
+
+	it("offers no Re-run on a finished DESTROY", () => {
+		renderPage({ ...PLAN, job_type: "DESTROY" });
+		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
 	});
 });
 

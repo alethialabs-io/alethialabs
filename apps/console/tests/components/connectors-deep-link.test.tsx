@@ -78,6 +78,7 @@ function settle(connector: ConnectorWithConnection, canManage: boolean): void {
 			view: { query: {}, rows: [connector], facets: { groups: [], health: [], vendors: [] }, total: 1 },
 			canManage,
 			platformConfigured: {},
+			offeredClouds: [],
 		},
 	};
 }

@@ -12,6 +12,7 @@ import {
 } from "@/app/server/actions/projects";
 import { destroyRunner } from "@/app/server/actions/runners";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { ApplyAuthorizationError } from "@/lib/approvals/types";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import { runWithActor } from "@/lib/authz/actor-context";
@@ -26,7 +27,7 @@ import {
 	assertRunnerInOrg,
 	personalRunnerArm,
 } from "@/lib/authz/runner-org";
-import { ForbiddenError } from "@/lib/authz/types";
+import { type CredentialKind, ForbiddenError } from "@/lib/authz/types";
 import { verifyCliToken } from "@/lib/cli/auth";
 import {
 	type CursorScope,
@@ -79,6 +80,27 @@ function scopedOrgOf(caller: CliCaller, req: Request): string | undefined {
 			const unhandled: never = caller;
 			return unhandled;
 		}
+	}
+}
+
+/**
+ * The credential kind the server actions see for a verified CLI call: what is bound on the
+ * `Actor` this route hands to `runWithActor`.
+ *
+ * A device login is `cli_session`, not `session`: it is a stored token, not a person at the
+ * console, and the actions that queue an apply or a destroy are told which
+ * (`requireApplyAuthorization`, lib/approvals/types.ts). Every identity rule treats the two alike
+ * (`personalIdentityAuthor`).
+ *
+ * This is the ACTOR's kind only. The route's own decisions — which org, which membership
+ * question, which runner arm — keep reading `caller.credential`, the two-member CLI union.
+ */
+function actorCredentialOf(caller: CliCaller): CredentialKind {
+	switch (caller.credential) {
+		case "service_token":
+			return "service_token";
+		case "session":
+			return "cli_session";
 	}
 }
 
@@ -182,6 +204,17 @@ export async function POST(req: Request) {
 		// #5249: DESTROY only. Opt-in to destroying the environments placed on the target's Fabric
 		// too, tenants first. STRICTLY `true` — a string "false" or a 1 is not a yes to a teardown.
 		const cascade = body?.cascade === true;
+		// DEPLOY and DESTROY only: the approval this request presents. Absent (or null) is "none",
+		// and the actions are then called exactly as before. Anything else that is not a UUID is
+		// refused here rather than passed on as if no approval had been named.
+		const approval = z.uuid().nullish().safeParse(body?.approval_id);
+		if (!approval.success) {
+			return NextResponse.json(
+				{ error: "approval_id must be a UUID" },
+				{ status: 400 },
+			);
+		}
+		const approvalId = approval.data ?? undefined;
 
 		if (!job_type) {
 			return NextResponse.json(
@@ -248,10 +281,11 @@ export async function POST(req: Request) {
 		}
 		const scopedOrg = scopedOrgOf(caller, req);
 		// Carries the credential kind, so the server actions below (reached through `runWithActor`)
-		// never treat a service token's minter as the person asking (`personalIdentityAuthor`).
+		// never treat a service token's minter as the person asking (`personalIdentityAuthor`), and
+		// can tell a device login from a person at the console (`actorCredentialOf`).
 		const actor = actorWithCredential(
 			await getActiveScope(userId, scopedOrg),
-			caller.credential,
+			actorCredentialOf(caller),
 		);
 		// WHICH QUESTION TO ASK DEPENDS ON WHAT THE CREDENTIAL IS (#4298).
 		//
@@ -458,12 +492,23 @@ export async function POST(req: Request) {
 							environment_id || null,
 						);
 					case "DEPLOY":
-						return provisionProject(
-							configuration_id,
-							plan_job_id || undefined,
-							assigned_runner_id || null,
-							environment_id || null,
-						);
+						// The approval id is the SIXTH argument; the fifth is the approval card's
+						// idempotency key, which a CLI call never has.
+						return approvalId === undefined
+							? provisionProject(
+									configuration_id,
+									plan_job_id || undefined,
+									assigned_runner_id || null,
+									environment_id || null,
+								)
+							: provisionProject(
+									configuration_id,
+									plan_job_id || undefined,
+									assigned_runner_id || null,
+									environment_id || null,
+									null,
+									approvalId,
+								);
 					case "DESTROY": {
 						// Same authz as any DESTROY: destroyProject authorizes `destroy` on the project,
 						// and every tenant a cascade queues is an environment OF that project.
@@ -471,7 +516,7 @@ export async function POST(req: Request) {
 							configuration_id,
 							environment_id || null,
 							assigned_runner_id || null,
-							{ cascade },
+							approvalId === undefined ? { cascade } : { cascade, approvalId },
 						);
 						// Report the whole tree only when it IS a tree; a plain destroy keeps the
 						// pre-#5249 response byte-for-byte.
@@ -502,6 +547,15 @@ export async function POST(req: Request) {
 			// which told the CLI user the console had broken when it had correctly refused.
 			if (e instanceof EnvStateConflictError) {
 				return NextResponse.json({ error: e.message }, { status: 409 });
+			}
+			// The apply or destroy was not authorized for this caller. A refusal, with the reason as
+			// a `code` a client can branch on. Nothing throws it while lib/approvals/types.ts allows
+			// every call.
+			if (e instanceof ApplyAuthorizationError) {
+				return NextResponse.json(
+					{ error: e.message, code: e.code },
+					{ status: 403 },
+				);
 			}
 			// #5249: a dedicated environment whose Fabric still hosts live tenants, destroyed without
 			// cascade. A conflict with the resource's current state, like the one above — and the body

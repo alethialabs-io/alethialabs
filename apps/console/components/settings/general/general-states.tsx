@@ -9,10 +9,9 @@
 // No "use client": presentational, rendered by the route's `loading.tsx` (a server component) and
 // by the client forms alike.
 
-import { Lock } from "lucide-react";
-import { EmptyState } from "@repo/ui/empty";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
+import { RegionRefusal } from "@/components/errors/region-refusal";
 import { SettingsPanel } from "@/components/settings/settings-ui";
 import { SETTINGS_FIELD_ROW_CLASS } from "@/components/settings/settings-field-row";
 import type { ReadRefusal } from "@/lib/rpc/refusal";
@@ -97,25 +96,12 @@ export function ProjectGeneralSkeleton() {
 	);
 }
 
-const REFUSAL_COPY: Record<ReadRefusal, { title: string; description: string }> = {
-	forbidden: {
-		title: "You can't see these settings",
-		description: "Your role in this organization doesn't include them. Ask an owner or admin.",
-	},
-	"not-found": {
-		title: "Not found",
-		description: "This no longer exists, or it isn't in this organization.",
-	},
-	plan: {
-		title: "Not on this plan",
-		description: "Your plan doesn't include these settings.",
-	},
-};
-
 /**
- * The refused render of a General page: an expected answer, not a failure — a lock, no retry (the
- * same question gets the same answer), and `data-state="refused"` to tell it apart from the error
- * render (`data-state="error"`) for a reader and a test.
+ * The refused render of a General page: the console's one refused render
+ * (`components/errors/region-refusal.tsx`), naming what was asked for as "these settings". An
+ * expected answer, not a failure — a lock, no retry (the same question gets the same answer), and
+ * `data-state="refused"` to tell it apart from the error render (`data-state="error"`) for a reader
+ * and a test.
  */
 export function GeneralRefusal({
 	refusal,
@@ -128,15 +114,12 @@ export function GeneralRefusal({
 	/** Overrides the refusal's default line. */
 	description?: string;
 }) {
-	const copy = REFUSAL_COPY[refusal];
 	return (
-		<EmptyState
-			data-state="refused"
-			data-refusal={refusal}
-			className="border border-dashed border-border p-6 md:p-6"
-			icon={<Lock size={18} aria-hidden />}
-			title={title ?? copy.title}
-			description={description ?? copy.description}
+		<RegionRefusal
+			refusal={refusal}
+			subject="these settings"
+			title={title}
+			description={description}
 		/>
 	);
 }

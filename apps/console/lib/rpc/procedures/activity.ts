@@ -10,6 +10,7 @@ import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { queryActivityPage } from "@/lib/queries/activity";
 import { query } from "@/lib/rpc/base";
+import { JOBS_RANGE_PRESETS } from "@/lib/rpc/inputs/jobs";
 
 // THE ACTIVITY READS (ADR 0005 D1, #6129). Both bodies MOVED here from `app/server/actions/
 // activity.ts` (`getActivityLog`, `getActivityPermissions`) — not wrapped — so the feed reads over
@@ -36,6 +37,7 @@ const activityPageInput = z.object({
 	cursor: z.number().int().positive().nullable().optional(),
 	limit: z.number().int().min(1).max(100).optional(),
 	projectId: z.string().uuid().optional(),
+	within: z.enum(JOBS_RANGE_PRESETS).optional(),
 	from: z.string().datetime({ offset: true }).optional(),
 	to: z.string().datetime({ offset: true }).optional(),
 	actorIds: idList,

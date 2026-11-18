@@ -12,7 +12,7 @@ import {
   shareArtifact,
   unshareArtifact,
 } from "@/app/server/actions/artifact-shares";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { track } from "@/lib/analytics/track";
 import { Button } from "@repo/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
@@ -197,7 +197,7 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
 
       {/* OUTSIDE the popover on purpose: opening the dialog moves focus, which closes the popover,
           and a confirmation that unmounts with its trigger cannot be answered. */}
-      <ConfirmDialog
+      <ConfirmAction
         open={pendingUnshare !== null}
         onOpenChange={(o) => {
           if (!o) setPendingUnshare(null);
@@ -205,10 +205,10 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
         title={`Stop sharing with ${pendingUnshare?.label ?? "this target"}?`}
         description="They lose access to this artifact immediately. Anything they already copied into their own conversations stays with them."
         confirmLabel="Stop sharing"
-        onConfirm={() => {
+        severity={{ level: "confirm" }}
+        run={() => {
           if (pendingUnshare)
             void applyToggle(pendingUnshare.scopeType, pendingUnshare.scopeId);
-          setPendingUnshare(null);
         }}
       />
     </>

@@ -61,12 +61,14 @@ const DEFAULT_WINDOW = {
 	from: new Date(NOW - 7 * DAY).toISOString(),
 	to: new Date(NOW).toISOString(),
 };
-/** A range the viewer picked on an earlier visit. */
+/** A window the viewer picked, as an OLD link carried it: three params (#6740 retired them). */
 const PICKED = {
 	from: new Date(NOW - DAY).toISOString(),
 	to: new Date(NOW).toISOString(),
 	rangeLabel: "Last 24 hours",
 };
+/** The same window as the one `range` value it is stored as now. */
+const PICKED_RANGE = `${PICKED.from}/${PICKED.to}`;
 
 /** One row of the page the route prefetched. */
 function row(id: string, actorName: string) {
@@ -106,7 +108,7 @@ beforeEach(() => {
 
 describe("Activity feed — the first render's key is the prefetched key (#6320, B1)", () => {
 	it("a range left in the store by an earlier visit neither changes the first key nor survives the mount", async () => {
-		useActivityFilters.getState().patch(PICKED);
+		useActivityFilters.getState().patch({ range: PICKED_RANGE });
 		render(
 			<QueryClientProvider client={prefetchedClient()}>
 				<ActivityLog defaultWindow={DEFAULT_WINDOW} />
@@ -116,12 +118,12 @@ describe("Activity feed — the first render's key is the prefetched key (#6320,
 		// The first paint carries the prefetched rows — no skeleton, no fetch.
 		expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
 		// The link (no range) replaced the stale selection on mount, so the feed stays on the default.
-		await waitFor(() => expect(useActivityFilters.getState().filters.from).toBe(""));
+		await waitFor(() => expect(useActivityFilters.getState().filters.range).toBe(""));
 		expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
 		expect(h.calls.filter((c) => c.path === "activity.page")).toEqual([]);
 	});
 
-	it("a link that carries a range renders that range on the first paint, as the route prefetched it", async () => {
+	it("an OLD from/to link still opens exactly its window on the first paint, as the route prefetched it (#6740)", async () => {
 		h.search = new URLSearchParams(PICKED).toString();
 		render(
 			<QueryClientProvider client={prefetchedClient()}>
@@ -130,7 +132,21 @@ describe("Activity feed — the first render's key is the prefetched key (#6320,
 		);
 
 		expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
-		await waitFor(() => expect(useActivityFilters.getState().filters.from).toBe(PICKED.from));
+		await waitFor(() => expect(useActivityFilters.getState().filters.range).toBe(PICKED_RANGE));
+		expect(h.calls.filter((c) => c.path === "activity.page")).toEqual([]);
+	});
+
+	it("a link carrying a relative preset keeps it relative, and paints the prefetched page (#6740)", async () => {
+		h.search = "range=30d";
+		render(
+			<QueryClientProvider client={prefetchedClient()}>
+				<ActivityLog defaultWindow={DEFAULT_WINDOW} />
+			</QueryClientProvider>,
+		);
+
+		expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+		await waitFor(() => expect(useActivityFilters.getState().filters.range).toBe("30d"));
+		expect(screen.getByRole("button", { name: "Last 30 days" })).toBeInTheDocument();
 		expect(h.calls.filter((c) => c.path === "activity.page")).toEqual([]);
 	});
 });

@@ -339,7 +339,7 @@ func TestClusterFieldRows(t *testing.T) {
 		Region: "eu-central-1", NodeMinSize: 1, NodeDesiredSize: 3, NodeMaxSize: 5,
 		EstimatedMonthlyCost: &cost, ArgocdURL: "https://argo.example",
 	}
-	rows := clusterFieldRows(full, nil, nil, ui.FormatTable)
+	rows := clusterFieldRows(full, nil, nil, nil, ui.FormatTable)
 	got := map[string]string{}
 	for _, r := range rows {
 		got[r[0]] = r[1]
@@ -358,7 +358,7 @@ func TestClusterFieldRows(t *testing.T) {
 	}
 
 	// Un-provisioned (no cluster name): no ArgoCD block, no optional fields.
-	bare := clusterFieldRows(&api.ClusterSummary{ProjectName: "x", Status: "QUEUED"}, nil, nil, ui.FormatTable)
+	bare := clusterFieldRows(&api.ClusterSummary{ProjectName: "x", Status: "QUEUED"}, nil, nil, nil, ui.FormatTable)
 	for _, r := range bare {
 		if r[0] == "ArgoCD" || r[0] == "ArgoCD admin" || r[0] == "Message" || r[0] == "Cluster" {
 			t.Errorf("un-provisioned cluster should not emit %q", r[0])
@@ -366,7 +366,7 @@ func TestClusterFieldRows(t *testing.T) {
 	}
 
 	// Provisioned but no managed ingress ⇒ port-forward note.
-	pf := clusterFieldRows(&api.ClusterSummary{ProjectName: "y", ClusterName: "y-eks", Status: "ACTIVE"}, nil, nil, ui.FormatTable)
+	pf := clusterFieldRows(&api.ClusterSummary{ProjectName: "y", ClusterName: "y-eks", Status: "ACTIVE"}, nil, nil, nil, ui.FormatTable)
 	var argocd string
 	for _, r := range pf {
 		if r[0] == "ArgoCD" {
@@ -401,7 +401,7 @@ func TestClusterKubeconfigRows(t *testing.T) {
 	}
 
 	const cmd = "alethia cluster kubeconfig web-eks"
-	withCmd := clusterFieldRows(c, nil, &api.ClusterKubeconfig{Command: str(cmd)}, ui.FormatTable)
+	withCmd := clusterFieldRows(c, nil, &api.ClusterKubeconfig{Command: str(cmd)}, nil, ui.FormatTable)
 	at := keys(withCmd)
 	if value(withCmd, "Kubeconfig") != cmd {
 		t.Errorf("Kubeconfig row = %q, want the server's command verbatim", value(withCmd, "Kubeconfig"))
@@ -414,12 +414,12 @@ func TestClusterKubeconfigRows(t *testing.T) {
 		t.Errorf("ArgoCD admin row should point at the kubeconfig first, got %q", admin)
 	}
 	// CSV keeps the bare command — a script wants the value, not the sentence.
-	if csv := value(clusterFieldRows(c, nil, &api.ClusterKubeconfig{Command: str(cmd)}, ui.FormatCSV), "ArgoCD admin"); csv != argocdAdminPasswordCmd {
+	if csv := value(clusterFieldRows(c, nil, &api.ClusterKubeconfig{Command: str(cmd)}, nil, ui.FormatCSV), "ArgoCD admin"); csv != argocdAdminPasswordCmd {
 		t.Errorf("csv ArgoCD admin = %q, want the bare command", csv)
 	}
 
 	const note = "Kubeconfig mints are not available for an environment placed on a shared cluster."
-	withNote := clusterFieldRows(c, nil, &api.ClusterKubeconfig{Note: str(note)}, ui.FormatTable)
+	withNote := clusterFieldRows(c, nil, &api.ClusterKubeconfig{Note: str(note)}, nil, ui.FormatTable)
 	if value(withNote, "Kubeconfig") != note {
 		t.Errorf("Kubeconfig row should carry the note when there is no command, got %q", value(withNote, "Kubeconfig"))
 	}
@@ -428,13 +428,13 @@ func TestClusterKubeconfigRows(t *testing.T) {
 	}
 
 	// An alternative never renders without a command above it: it is "or, instead", not an answer.
-	orphan := clusterFieldRows(c, nil, &api.ClusterKubeconfig{Note: str(note), Alternative: str("aws eks update-kubeconfig --name x --region y")}, ui.FormatTable)
+	orphan := clusterFieldRows(c, nil, &api.ClusterKubeconfig{Note: str(note), Alternative: str("aws eks update-kubeconfig --name x --region y")}, nil, ui.FormatTable)
 	if _, ok := keys(orphan)["Cloud CLI"]; ok {
 		t.Error("a Cloud CLI row rendered with no command above it")
 	}
 
 	for name, k := range map[string]*api.ClusterKubeconfig{"older server": nil, "both null": {}} {
-		if _, ok := keys(clusterFieldRows(c, nil, k, ui.FormatTable))["Kubeconfig"]; ok {
+		if _, ok := keys(clusterFieldRows(c, nil, k, nil, ui.FormatTable))["Kubeconfig"]; ok {
 			t.Errorf("%s: no Kubeconfig row expected", name)
 		}
 	}
@@ -470,7 +470,7 @@ func TestClusterKubeconfigRowsAgreeWithTheSharedTable(t *testing.T) {
 	for _, tc := range table.Cases {
 		access := tc.Access
 		var got [][]string
-		for _, r := range clusterFieldRows(c, nil, &access, ui.FormatTable) {
+		for _, r := range clusterFieldRows(c, nil, &access, nil, ui.FormatTable) {
 			if r[0] == "Kubeconfig" || r[0] == "Cloud CLI" {
 				got = append(got, r)
 			}
@@ -584,7 +584,7 @@ func TestRenderCluster(t *testing.T) {
 
 	for _, outFormat := range []string{"table", "json", "csv"} {
 		var buf bytes.Buffer
-		if err := renderCluster(&buf, outFormat, c, g, nil); err != nil {
+		if err := renderCluster(&buf, outFormat, c, g, nil, nil); err != nil {
 			t.Fatalf("renderCluster(%s) error: %v", outFormat, err)
 		}
 		if buf.Len() == 0 {
@@ -596,7 +596,7 @@ func TestRenderCluster(t *testing.T) {
 	// RenderCard upper-cases and letter-spaces its title, so the comparison drops the spacing
 	// rather than pinning a presentation the card owns.
 	var card bytes.Buffer
-	if err := renderCluster(&card, "table", c, g, nil); err != nil {
+	if err := renderCluster(&card, "table", c, g, nil, nil); err != nil {
 		t.Fatalf("renderCluster(table): %v", err)
 	}
 	squashed := strings.ReplaceAll(card.String(), " ", "")
@@ -606,7 +606,7 @@ func TestRenderCluster(t *testing.T) {
 
 	// Without gitops the plain cluster is still rendered.
 	var buf bytes.Buffer
-	if err := renderCluster(&buf, "json", c, nil, nil); err != nil {
+	if err := renderCluster(&buf, "json", c, nil, nil, nil); err != nil {
 		t.Fatalf("renderCluster(json, no gitops) error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "web-eks") {
@@ -720,5 +720,47 @@ func TestClusterGetE2E_AcceptsZeroOrOneArgument(t *testing.T) {
 	}
 	if err := clusterListCmd.ValidateArgs([]string{"web"}); err == nil {
 		t.Error("`cluster list` takes no arguments — a stray word must be a usage error")
+	}
+}
+
+// #6736: `cluster get` prints what the console has OBSERVED of the control plane since its deploy,
+// right under the Status that deploy recorded, so a months-old ACTIVE is never repeated as current
+// and a cluster found deleted says so with the time it was seen.
+func TestClusterFieldRows_Observation(t *testing.T) {
+	str := strptr
+	value := func(rows [][]string, key string) string {
+		for _, r := range rows {
+			if r[0] == key {
+				return r[1]
+			}
+		}
+		return ""
+	}
+	c := &api.ClusterSummary{ProjectName: "a640", ClusterName: "aks-a640", Status: "ACTIVE"}
+	missing := &api.ClusterObservation{
+		State:      "missing",
+		ObservedAt: str("2026-11-09T00:00:00.000Z"),
+		Source:     str("drift"),
+		Detail:     str("deleted: azurerm_resource_group.main"),
+	}
+	rows := clusterFieldRows(c, nil, &api.ClusterKubeconfig{Note: str("No kubeconfig is offered.")}, missing, ui.FormatTable)
+	if rows[1][0] != "Observed" {
+		t.Fatalf("the Observed row must follow Status, got %q", rows[1][0])
+	}
+	want := "MISSING — found deleted outside Alethia by a drift scan at 2026-11-09T00:00:00.000Z — deleted: azurerm_resource_group.main. Redeploy the environment to recreate it, or tear it down."
+	if rows[1][1] != want {
+		t.Fatalf("Observed = %q, want %q", rows[1][1], want)
+	}
+	if v := value(rows, "Kubeconfig"); v != "No kubeconfig is offered." {
+		t.Fatalf("a missing cluster prints the server's note, not a command; got %q", v)
+	}
+
+	stale := &api.ClusterObservation{State: "unverified", ObservedAt: str("2026-07-16T00:00:00.000Z"), Source: str("deploy")}
+	if got := value(clusterFieldRows(c, nil, nil, stale, ui.FormatTable), "Observed"); got != "unverified — last observed by the last successful deploy at 2026-07-16T00:00:00.000Z; the status above may be out of date" {
+		t.Fatalf("unverified row = %q", got)
+	}
+
+	if value(clusterFieldRows(c, nil, nil, nil, ui.FormatTable), "Observed") != "" {
+		t.Fatal("an older server that sends no observation gets no Observed row")
 	}
 }

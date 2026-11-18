@@ -6,10 +6,16 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 )
 
 // A machine-readable run's stdout is the document, and nothing else.
@@ -136,5 +142,284 @@ func TestHygCliStdout_TheSpinnerIsNotInTheDocument(t *testing.T) {
 	}
 	if !bytes.Equal(got, []byte(`{"jobs":[]}`)) {
 		t.Errorf("stdout is not exactly the document — the spinner is in it:\n%q", got)
+	}
+}
+
+// --- the fatal path: an error is never part of the document ------------------
+//
+// The same property as above, for the run that FAILS. `x=$(alethia … -o json)` must leave x either
+// a document or empty, and the exit code must say which kind of failure it was. Both halves live on
+// one path — fail — so both are asserted on it: where the error is written, and the number it exits
+// with. The numbers are pkg/clierr's table; one row per exit code is driven through fail here, so
+// the table is proven at the exit and not only in the classifier.
+
+// hygCliStdoutExit is what a trapped exitFunc panics with.
+type hygCliStdoutExit struct{ code int }
+
+// hygCliStdoutFatal runs fn with exitFunc trapped and both streams captured, and returns what was
+// written to each and the exit code. It fails the test when fn returns without exiting.
+func hygCliStdoutFatal(t *testing.T, fn func()) (stdout, stderr string, code int) {
+	t.Helper()
+	prevExit, prevFormat := exitFunc, errorFormat
+	exitFunc = func(c int) { panic(hygCliStdoutExit{c}) }
+	t.Cleanup(func() { exitFunc, errorFormat = prevExit, prevFormat })
+
+	exited := false
+	stdout, stderr = captureStreams(t, func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				return
+			}
+			e, ok := r.(hygCliStdoutExit)
+			if !ok {
+				panic(r)
+			}
+			exited, code = true, e.code
+		}()
+		fn()
+	})
+	if !exited {
+		t.Fatalf("the fatal path was not taken; stdout=%q stderr=%q", stdout, stderr)
+	}
+	return stdout, stderr, code
+}
+
+// hygCliStdoutEnvelope decodes the LAST line of stderr as the alethia.error/v1 envelope.
+func hygCliStdoutEnvelope(t *testing.T, stderr string) (code string, exit int) {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(stderr, "\n"), "\n")
+	var doc struct {
+		Error struct {
+			Code     string `json:"code"`
+			ExitCode int    `json:"exit_code"`
+		} `json:"error"`
+		Schema string `json:"schema"`
+	}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &doc); err != nil {
+		t.Fatalf("the last line of stderr is not a JSON object: %v\n%q", err, stderr)
+	}
+	if doc.Schema != clierr.Schema {
+		t.Fatalf("schema = %q, want %q", doc.Schema, clierr.Schema)
+	}
+	return doc.Error.Code, doc.Error.ExitCode
+}
+
+// TestHygCliStdout_FatalPathExitsWithTheTableAndWritesOnlyStderr drives one error per exit code
+// through fail, in both renderings.
+func TestHygCliStdout_FatalPathExitsWithTheTableAndWritesOnlyStderr(t *testing.T) {
+	rows := []struct {
+		name string
+		err  error
+		exit int
+		code string
+	}{
+		{"unclassified", errors.New("boom"), 1, clierr.CodeInternal},
+		{"auth", &api.APIError{StatusCode: 401, Message: "sign in"}, 4, clierr.CodeAuthRequired},
+		{"forbidden", &api.APIError{StatusCode: 403, Message: "no"}, 5, clierr.CodeForbidden},
+		{"not found", fmt.Errorf("failed to get cluster: %w", &api.APIError{StatusCode: 404, Message: "gone"}), 6, clierr.CodeNotFound},
+		{"conflict", &api.APIError{StatusCode: 409, Message: "exists"}, 7, clierr.CodeConflict},
+		{"usage", clierr.Wrap(clierr.CodeInvalidFlag, errors.New("unknown flag: --nope")), 8, clierr.CodeInvalidFlag},
+		{"confirmation required", errConfirmRequiresYes, 9, clierr.CodeConfirmationRequired},
+		{"rate limited", &api.APIError{StatusCode: 429, Message: "slow down"}, 10, clierr.CodeRateLimited},
+		{"unavailable", &api.TransportError{Err: errors.New("connection refused")}, 11, clierr.CodeNetworkUnreachable},
+		{"wait timeout", clierr.New(clierr.CodeWaitTimeout, "still running"), 12, clierr.CodeWaitTimeout},
+		{"operation failed", clierr.New(clierr.CodeOperationFailed, "job failed"), 13, clierr.CodeOperationFailed},
+		{"cli too old", &api.APIError{StatusCode: 400, Code: clierr.CodeCLITooOld, Message: "update"}, 14, clierr.CodeCLITooOld},
+		{"interrupted", clierr.New(clierr.CodeInterrupted, "interrupted"), 130, clierr.CodeInterrupted},
+	}
+
+	covered := map[int]bool{}
+	for _, row := range rows {
+		covered[row.exit] = true
+		t.Run(row.name+"/human", func(t *testing.T) {
+			stdout, stderr, code := hygCliStdoutFatal(t, func() {
+				errorFormat = ui.FormatTable
+				fail(row.err)
+			})
+			if code != row.exit {
+				t.Errorf("exit = %d, want %d", code, row.exit)
+			}
+			if stdout != "" {
+				t.Errorf("the error reached stdout, which is the document: %q", stdout)
+			}
+			if !strings.Contains(stderr, ui.SymbolError+" "+row.err.Error()) {
+				t.Errorf("stderr does not carry the error: %q", stderr)
+			}
+		})
+		t.Run(row.name+"/json", func(t *testing.T) {
+			stdout, stderr, code := hygCliStdoutFatal(t, func() {
+				errorFormat = ui.FormatJSON
+				fail(row.err)
+			})
+			if stdout != "" {
+				t.Errorf("the error reached stdout, which is the document: %q", stdout)
+			}
+			gotCode, gotExit := hygCliStdoutEnvelope(t, stderr)
+			if code != row.exit || gotExit != row.exit || gotCode != row.code {
+				t.Errorf("exit=%d envelope exit_code=%d code=%q, want %d and %q", code, gotExit, gotCode, row.exit, row.code)
+			}
+		})
+	}
+	for _, def := range clierr.Classes() {
+		if !covered[def.Exit] {
+			t.Errorf("exit %d (%s) is never driven through the fatal path here", def.Exit, def.Class)
+		}
+	}
+}
+
+// TestHygCliStdout_FailfKeepsATypedCause pins that failf wraps: a typed error passed with %w still
+// decides the exit code, and the caller's prefix is still what the person reads.
+func TestHygCliStdout_FailfKeepsATypedCause(t *testing.T) {
+	stdout, stderr, code := hygCliStdoutFatal(t, func() {
+		errorFormat = ui.FormatTable
+		failf("failed to list runners: %w", &api.APIError{StatusCode: 403, Message: "no"})
+	})
+	if code != clierr.ExitForbidden {
+		t.Errorf("exit = %d, want %d", code, clierr.ExitForbidden)
+	}
+	if stdout != "" || !strings.Contains(stderr, "failed to list runners: no (status 403)") {
+		t.Errorf("stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+// TestHygCliStdout_ARefusalFromCobraIsPrintedOnceOnStderr drives Execute with a command and a flag
+// cobra rejects. Each must be reported once — cobra printing it too, and following it with the usage
+// text, is the duplication the root's silence flags remove — and each is a usage error.
+func TestHygCliStdout_ARefusalFromCobraIsPrintedOnceOnStderr(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		say  string
+		code string
+	}{
+		{"unknown command", []string{"definitely-not-a-command"}, `unknown command "definitely-not-a-command"`, clierr.CodeInvalidUsage},
+		{"unknown flag", []string{"version", "--definitely-not-a-flag"}, "unknown flag: --definitely-not-a-flag", clierr.CodeInvalidFlag},
+	} {
+		t.Run(tc.name+"/human", func(t *testing.T) {
+			resetFlagsAroundTest(t)
+			stdout, stderr, code := hygCliStdoutFatal(t, func() {
+				execRootArgs(tc.args)
+				Execute()
+			})
+			if code != clierr.ExitUsage {
+				t.Errorf("exit = %d, want %d", code, clierr.ExitUsage)
+			}
+			if stdout != "" {
+				t.Errorf("stdout is not empty: %q", stdout)
+			}
+			if n := strings.Count(stderr, tc.say); n != 1 {
+				t.Errorf("the refusal appears %d times on stderr, want once: %q", n, stderr)
+			}
+			if strings.Contains(stderr, "Usage:") {
+				t.Errorf("the usage text was printed after the error: %q", stderr)
+			}
+		})
+	}
+}
+
+// TestHygCliStdout_ARefusalFromCobraHonoursTheFormatOnTheLine pins that `--output json` reaches
+// cobra's own refusals wherever it stands on the command line.
+//
+// cobra parses flags left to right and stops at the one it rejects, and it refuses a command it
+// cannot resolve before parsing any flag at all. So the format cobra parsed is not the whole
+// answer: Execute reads the line a second time for it (refusalFormat). Each case below is a place
+// the first reading alone does not reach, beside the one it does.
+func TestHygCliStdout_ARefusalFromCobraHonoursTheFormatOnTheLine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		code string
+	}{
+		{"a rejected flag after --output json", []string{"version", "--output", "json", "--definitely-not-a-flag"}, clierr.CodeInvalidFlag},
+		{"a rejected flag before --output json", []string{"version", "--definitely-not-a-flag", "--output", "json"}, clierr.CodeInvalidFlag},
+		{"an unknown command after --output json", []string{"--output", "json", "definitely-not-a-command"}, clierr.CodeInvalidUsage},
+		{"an unknown command before -o json", []string{"definitely-not-a-command", "-o", "json"}, clierr.CodeInvalidUsage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetFlagsAroundTest(t)
+			stdout, stderr, code := hygCliStdoutFatal(t, func() {
+				execRootArgs(tc.args)
+				Execute()
+			})
+			if stdout != "" {
+				t.Errorf("stdout is not empty: %q", stdout)
+			}
+			gotCode, gotExit := hygCliStdoutEnvelope(t, stderr)
+			if code != clierr.ExitUsage || gotExit != clierr.ExitUsage || gotCode != tc.code {
+				t.Errorf("exit=%d envelope exit_code=%d code=%q, want %d and %q",
+					code, gotExit, gotCode, clierr.ExitUsage, tc.code)
+			}
+		})
+	}
+}
+
+// TestHygCliStdout_TheHumanFormCarriesTheHintAndTheRequestID pins the lines under the message: what
+// the control plane sent to help — a next step, a docs link, the id of the failed request — reaches
+// the person, on stderr.
+func TestHygCliStdout_TheHumanFormCarriesTheHintAndTheRequestID(t *testing.T) {
+	stdout, stderr, code := hygCliStdoutFatal(t, func() {
+		errorFormat = ui.FormatTable
+		fail(&api.APIError{
+			StatusCode: 404, Message: "No such cluster",
+			Hint: "alethia cluster list", DocsURL: "https://example.test/e", RequestID: "req_01",
+		})
+	})
+	if code != clierr.ExitNotFound || stdout != "" {
+		t.Errorf("exit=%d stdout=%q", code, stdout)
+	}
+	for _, want := range []string{"hint     alethia cluster list", "docs     https://example.test/e", "request  req_01"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr is missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
+// TestHygCliStdout_UsageErrorKeepsAnExistingClass pins the one branch Execute cannot reach today:
+// an error that already carries a class is not re-labelled as a usage error.
+func TestHygCliStdout_UsageErrorKeepsAnExistingClass(t *testing.T) {
+	typed := error(&api.APIError{StatusCode: 404, Message: "gone"})
+	if got := usageError(typed); got != typed {
+		t.Errorf("a classified error was re-wrapped: %v", got)
+	}
+	if got := clierr.From(usageError(errors.New("accepts 1 arg(s), received 0"))); got.Code != clierr.CodeInvalidUsage {
+		t.Errorf("an unclassified error from cobra got code %q, want %q", got.Code, clierr.CodeInvalidUsage)
+	}
+}
+
+// TestHygCliStdout_ASuccessfulRunRecordsItsFormat pins the wiring between --output and the fatal
+// path: the root PersistentPreRun records the format of the run in progress, so an error raised
+// inside a `-o json` command is an envelope and one raised inside the next plain command is not.
+func TestHygCliStdout_ASuccessfulRunRecordsItsFormat(t *testing.T) {
+	run := miscEnv(t, miscFull)
+	prev := errorFormat
+	t.Cleanup(func() { errorFormat = prev })
+
+	for _, want := range []string{ui.FormatJSON, ui.FormatTable} {
+		_, _ = captureStreams(t, func() {
+			if err := run("version", "--output", want); err != nil {
+				t.Errorf("version --output %s: %v", want, err)
+			}
+		})
+		if errorFormat != want {
+			t.Errorf("after a --output %s run the fatal path would render %q", want, errorFormat)
+		}
+	}
+}
+
+// TestHygCliStdout_ASubcommandsOwnOutputFlagIsNotAFormat covers `cluster kubeconfig --output FILE`,
+// which reuses the flag's name for a path. The fatal path reads the ROOT's flag, so a file that
+// happens to be called "json" does not turn that command's errors into envelopes.
+func TestHygCliStdout_ASubcommandsOwnOutputFlagIsNotAFormat(t *testing.T) {
+	resetFlagsAroundTest(t)
+	kubeconfig, _, err := rootCmd.Find([]string{"cluster", "kubeconfig"})
+	if err != nil {
+		t.Fatalf("find cluster kubeconfig: %v", err)
+	}
+	if err := kubeconfig.Flags().Set("output", ui.FormatJSON); err != nil {
+		t.Fatalf("set the local --output: %v", err)
+	}
+	if got := rootOutputFormat(kubeconfig); got != ui.FormatTable {
+		t.Errorf("the fatal path read the subcommand's file path as a format: %q", got)
 	}
 }

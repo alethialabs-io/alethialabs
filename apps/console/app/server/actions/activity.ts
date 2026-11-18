@@ -9,6 +9,7 @@
 // log as much as a read of it. It is a `defineAction` returning `ActionResult<string>`.
 
 import { desc, eq } from "drizzle-orm";
+import type { RangePresetId } from "@/lib/query/range-filter";
 import { z } from "zod";
 import { defineAction } from "@/lib/actions/define-action";
 import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
@@ -29,6 +30,9 @@ export interface ActivityRow {
 	action: string;
 	resourceType: string;
 	resourceId: string | null;
+	/** The resource's display name as recorded with the event (#6735); null on older rows, on
+	 *  org-wide resources, and on people. The feed falls back to a live lookup only when null. */
+	resourceName: string | null;
 	decision: boolean;
 	reason: string | null;
 	ts: string;
@@ -53,6 +57,12 @@ export interface ActivityQuery {
 	/** SCOPE, not a filter: a project's own Activity page pins the feed to this project id. The
 	 *  facet counts see it; they never see any of the filters below. */
 	projectId?: string;
+	/**
+	 * A relative window ("the last 30 days") by its quick-range preset id, resolved against the
+	 * clock when the page is READ (`activityTimeBounds`), so a shared link stays relative (#6740).
+	 * Wins over `from`/`to`.
+	 */
+	within?: RangePresetId;
 	/** ISO timestamps bounding `ts` (inclusive). */
 	from?: string;
 	to?: string;
@@ -74,9 +84,15 @@ const EXPORT_LIMIT = 10_000;
 /** The export takes no arguments; the org is the request's address. */
 const exportInput = z.object({});
 
-/** Escapes a value as a CSV cell (always quoted, doubled inner quotes). */
+/**
+ * Escapes a value as a CSV cell (always quoted, doubled inner quotes). A value a spreadsheet would
+ * read as a formula (leading `=`, `+`, `-`, `@`, tab or CR) is prefixed with `'`: the export now
+ * carries resource names (#6735), which are text a member typed, and opening the file must not
+ * evaluate one.
+ */
 function csvCell(value: string | boolean | null): string {
-	const s = value === null ? "" : String(value);
+	const raw = value === null ? "" : String(value);
+	const s = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
 	return `"${s.replace(/"/g, '""')}"`;
 }
 
@@ -107,7 +123,7 @@ export async function getActivityExportCsv(raw: z.input<typeof exportInput> = {}
 				.orderBy(desc(authzActivityLog.id))
 				.limit(EXPORT_LIMIT);
 
-			const header = ["time", "actor", "action", "resource_type", "resource_id", "decision", "reason"].join(",");
+			const header = ["time", "actor", "action", "resource_type", "resource_id", "decision", "reason", "resource_name"].join(",");
 			const lines = rows.map((r) =>
 				[
 					csvCell(r.ts.toISOString()),
@@ -117,6 +133,7 @@ export async function getActivityExportCsv(raw: z.input<typeof exportInput> = {}
 					csvCell(r.resourceId),
 					csvCell(r.decision ? "allow" : "deny"),
 					csvCell(r.reason),
+					csvCell(r.resourceName),
 				].join(","),
 			);
 			return [header, ...lines].join("\n");

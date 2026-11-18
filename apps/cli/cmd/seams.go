@@ -54,4 +54,10 @@ var (
 	// The fd comes from ui.InteractiveOutput() rather than from os.Stderr written again here, so this
 	// gate and the form it gates read the same stream by construction.
 	interactiveOutIsTTY = func() bool { return isatty.IsTerminal(ui.InteractiveOutput().Fd()) }
+
+	// lookupEnv reads one environment variable. Drives resolveMode: the agent markers, NO_COLOR,
+	// TERM and the two ALETHIA_ switches are all read through it. A test process inherits the
+	// environment of whatever launched it — an agent harness included — so without this the mode
+	// a test runs under would be decided by where the suite was started.
+	lookupEnv = os.LookupEnv
 )

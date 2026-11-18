@@ -111,6 +111,7 @@ const nextConfig: NextConfig = {
 	transpilePackages: [
 		"@repo/ui",
 		"@repo/brand",
+		"@repo/cloud-catalog",
 		"@repo/format",
 		"@repo/legal",
 		"@repo/org-slug",

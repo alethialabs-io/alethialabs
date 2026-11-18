@@ -10,25 +10,26 @@
 // There is deliberately NO free-text search here: `InvoiceListParams` has no `search`, and the
 // standard forbids inventing a client-side filter over a server-paged list. Adding one means
 // adding it to the action first (see the follow-up on #2877).
+//
+// The paid-date choice is ONE `range` filter (lib/query/range-filter.ts, #6731). On this page its
+// default ("") is ALL TIME, with no bound: invoices are rare, and someone opening their invoice
+// history expects all of it.
 
-import type { InvoiceInfo, InvoiceListParams } from "@/lib/rpc/procedures/billing";
+import { parseRangeFilter } from "@/lib/query/range-filter";
+import type { InvoiceListParams } from "@/lib/rpc/inputs/invoices";
+import type { InvoiceInfo } from "@/lib/rpc/procedures/billing";
 
 /** The invoices list's filter state (a type alias, for the store's `Record` constraint). */
 export type InvoiceFilters = {
 	statuses: string[];
-	/** ISO paid-date bounds. Both empty = no date constraint ("All time"). */
-	from: string;
-	to: string;
-	/** The label the range picker shows; carried so a shared link reproduces the trigger. */
-	rangeLabel: string;
+	/** The paid-date choice (`lib/query/range-filter.ts`). "" = all time. */
+	range: string;
 };
 
-/** Pristine filters — the store's defaults and the Reset target. "All time", every status. */
+/** Pristine filters — the store's defaults and the Reset target. All time, every status. */
 export const DEFAULT_INVOICE_FILTERS: InvoiceFilters = {
 	statuses: [],
-	from: "",
-	to: "",
-	rangeLabel: "",
+	range: "",
 };
 
 /** The Billing page's Invoices section: the five newest, no filter. Shared with the route's prefetch. */
@@ -36,6 +37,9 @@ export const RECENT_INVOICES_INPUT: InvoiceListParams = { limit: 5 };
 
 /** The label shown when no date window is set. */
 export const ALL_TIME_LABEL = "All time";
+
+/** The date picker's trigger label while there is no window to show. */
+export const NO_WINDOW_LABEL = "Pick dates";
 
 /** The status facet's options (grayscale — no domain color). Mirrors `InvoiceInfo["status"]`. */
 export const INVOICE_STATUS_OPTIONS = [
@@ -60,8 +64,12 @@ export function normalizeInvoiceQuery(
 	const query: InvoiceListParams = {};
 	const statuses = [...new Set(filters.statuses)].filter(isInvoiceStatus).sort();
 	if (statuses.length) query.status = statuses;
-	if (filters.from) query.paidFrom = filters.from;
-	if (filters.to) query.paidTo = filters.to;
+	const range = parseRangeFilter(filters.range);
+	if (range.kind === "preset") query.paidWithin = range.preset;
+	if (range.kind === "window") {
+		query.paidFrom = range.from;
+		query.paidTo = range.to;
+	}
 	return query;
 }
 

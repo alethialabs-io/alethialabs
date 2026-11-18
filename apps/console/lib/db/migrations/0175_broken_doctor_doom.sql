@@ -1,0 +1,1 @@
+ALTER TABLE "authz_activity_log" ADD COLUMN "resource_name" text;

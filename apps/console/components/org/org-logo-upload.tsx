@@ -5,10 +5,9 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
-// The console's one destructive-confirmation dialog. It lives under `components/alerts/` for
-// historical reasons and is already consumed across features (environments-view.tsx, the canvas
+// The console's one confirmation dialog, shared across features (environments-view.tsx, the canvas
 // inspector) — a second copy here would be the drift CLAUDE.md §6 is about, not a fix for it.
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { OrgAvatar } from "@/components/org/org-avatar";
 
 const ACCEPT = "image/png,image/jpeg,image/webp,image/gif,image/svg+xml";
@@ -57,13 +56,16 @@ export function OrgLogoUpload({ name, logo, onChange, size = 56 }: OrgLogoUpload
 		}
 	}
 
-	async function remove() {
+	/** Removes the stored logo. Answers whether it was removed, which closes the confirmation. */
+	async function remove(): Promise<boolean> {
 		setBusy(true);
 		try {
 			await fetch("/api/org/logo", { method: "DELETE" });
 			onChange(null);
+			return true;
 		} catch {
 			toast.error("Couldn't remove the logo.");
+			return false;
 		} finally {
 			setBusy(false);
 		}
@@ -107,13 +109,15 @@ export function OrgLogoUpload({ name, logo, onChange, size = 56 }: OrgLogoUpload
 			{/* The dialog is rendered unconditionally rather than behind `logo &&`: unmounting it in
 			    the same commit that `onChange(null)` triggers is how a confirmation ends up leaking
 			    its overlay. `AlertDialog` handles its own closed state. */}
-			<ConfirmDialog
+			<ConfirmAction
 				open={confirmOpen}
 				onOpenChange={setConfirmOpen}
 				title="Remove the organization logo?"
 				description={`${name} will fall back to its initials everywhere it is shown. This cannot be undone — you would need the original image file to put it back.`}
 				confirmLabel="Remove logo"
-				onConfirm={() => void remove()}
+				pendingLabel="Removing…"
+				severity={{ level: "confirm" }}
+				run={remove}
 			/>
 		</div>
 	);

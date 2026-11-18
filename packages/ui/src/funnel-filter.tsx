@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Button } from "./button";
-import { CountFigure } from "./count-pill";
+import { CountFigure, rowAccessibleName } from "./count-pill";
 import { Input } from "./input";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover";
 import { cn } from "./utils";
@@ -255,12 +255,14 @@ function ChoiceRow({
   return (
     <button
       type="button"
+      // The check is drawing only; the state is `aria-pressed` (#6734).
+      aria-pressed={active}
       onClick={onClick}
       className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
     >
       {choice.icon && <choice.icon className="h-3.5 w-3.5" />}
       <span className="flex-1 text-left">{choice.label}</span>
-      {active && <Check className="h-3.5 w-3.5" />}
+      {active && <Check aria-hidden className="h-3.5 w-3.5" />}
     </button>
   );
 }
@@ -312,6 +314,9 @@ function FacetSelector({
               <button
                 key={o.value}
                 type="button"
+                // A toggle button's on/off state is `aria-pressed` (#6734); the name carries the count.
+                aria-pressed={on}
+                aria-label={typeof o.count === "number" ? rowAccessibleName(o.label, o.count) : undefined}
                 onClick={() => onToggle(o.value)}
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
@@ -327,7 +332,7 @@ function FacetSelector({
                 {typeof o.count === "number" && (
                   <CountFigure>{o.count}</CountFigure>
                 )}
-                {on && <Check className="h-3.5 w-3.5 shrink-0" />}
+                {on && <Check aria-hidden className="h-3.5 w-3.5 shrink-0" />}
               </button>
             );
           })

@@ -22,6 +22,7 @@ column is what the product, the schema, and the CLI actually call it.
 | Infrastructure app record | **project** | A declarative infrastructure configuration under an org. A project is an *app* that **owns N environments**. Links to exactly one [cloud identity](#connectivity). | — |
 | Deployment target | **environment** | An independently-provisionable target inside a project (`project_environments`). A project owns **N**; each has a `stage` (development / staging / production) and a `lifecycle` (`persistent` or `ephemeral`). The per-environment provisioning **status** lives here. | 1:1 phrasing; treating a project as having a single environment |
 | Configured resource | **component** | A cloud resource a project's environment declares — network, cluster, DNS, database, cache, queue, registry, secret, etc. Every component belongs to a `(project, environment)` pair. | — |
+| The infrastructure that hosts environments | **Fabric** | The cluster, network and shared add-ons that one or more environments run on, with its own OpenTofu state. A project owns one or more Fabrics, and a placement says how an environment sits on one. See [Fabrics & Placement](/concepts/fabrics-and-placement). | lowercase "fabric"; in the Console, the word without its one-line definition beside it |
 
 <Callout type="warn">
   **A project owns N environments — not one.** A common stale assumption is Project↔Environment 1:1.
@@ -32,8 +33,15 @@ column is what the product, the schema, and the CLI actually call it.
 
 | Concept | Canonical term | Definition | Avoid |
 |---|---|---|---|
-| A connected cloud account | **cloud identity** | The credential anchor for one connected cloud account (AWS / GCP / Azure / Hetzner / …). Keyless via a single Alethia OIDC issuer for the managed clouds; the runner assumes into it at job time. Queries always filter by `provider`. | ~~connector~~, ~~integration~~, ~~cloud connection~~, ~~connection~~ (for the account) |
+| A connected cloud account | **cloud identity** | The credential anchor for one connected cloud account (AWS / GCP / Azure / Hetzner / …). Keyless via a single Alethia OIDC issuer for the managed clouds; the runner assumes into it at job time. Queries always filter by `provider`. The Console labels it **cloud account**. | ~~connector~~, ~~integration~~, ~~cloud connection~~, ~~connection~~ (for the account) |
 | The catalog of provider types | **connector** | The registry of *connector types* per category (cloud, git, observability, registry, dns, secrets) plus git/pluggable providers. "Connector" names the **type in the catalog**, never a specific connected account. | using "connector" to mean a cloud identity |
+
+<Callout type="info">
+  **Cloud identity and cloud account are the same thing.** "Cloud identity" is the precise term. It
+  names the record (`cloud_identity` in the API), and these docs use it where precision matters. The
+  Console writes **cloud account** on its screens, because that is the word a new user arrives with.
+  The Console uses this page's term for every other concept.
+</Callout>
 
 ## Provisioning & execution
 
@@ -53,6 +61,7 @@ column is what the product, the schema, and the CLI actually call it.
 | Whole product / platform | **Alethia** | legacy working names |
 | The web control plane | **Console** (`apps/console`) | calling the web app "Alethia" |
 | The command-line tool | **`alethia`** (CLI) | — |
+| A project's design view in the Console | **Architecture** | calling the page "canvas" (the canvas is the board inside it); "Open in Elench" for a link to it |
 | The company | **Alethia Labs** | — |
 | Create or update a project from `alethia.yaml` and deploy every environment | **`alethia apply`** | calling it "project apply" |
 | Apply one queued plan job of an existing project | **`alethia project apply`** | using it to apply `alethia.yaml` |

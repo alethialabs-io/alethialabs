@@ -57,6 +57,31 @@ describe("the MCP route's token audience", () => {
 	});
 });
 
+// Runs between the two blocks around it on purpose: it reads the handler the first block's import
+// handed to `requireMcpAuth`, and the block below clears that call.
+describe("the actor an MCP access token is resolved into", () => {
+	it("is bound as agent_oauth, so a rule can tell it from a person at the console", async () => {
+		await import("@/app/api/mcp/route");
+		const { getActiveScope } = await import("@/lib/auth/scope");
+		const { runWithActor } = await import("@/lib/authz/actor-context");
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "user-1", orgId: "org-1" });
+
+		const withActorFromToken = requireMcpAuth.mock.calls[0][1];
+		if (typeof withActorFromToken !== "function") {
+			throw new Error("the route handed requireMcpAuth no handler");
+		}
+		await withActorFromToken(new Request("https://alethialabs.io/api/mcp", { method: "POST" }), {
+			sub: "user-1",
+		});
+
+		expect(runWithActor).toHaveBeenCalledTimes(1);
+		expect(runWithActor).toHaveBeenCalledWith(
+			{ userId: "user-1", orgId: "org-1", credential: "agent_oauth" },
+			expect.any(Function),
+		);
+	});
+});
+
 describe("a deployment that cannot form an MCP resource", () => {
 	it("answers 503 rather than a 401 pointing at a document it 404s", async () => {
 		vi.resetModules();

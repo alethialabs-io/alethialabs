@@ -164,7 +164,11 @@ const REQUIRED_IDS = [
 	// to 13, so five rows could be deleted with every layer green — and naming WHICH may not vanish
 	// is stronger than saying how many.
 	"duration/hours-and-minutes-drop-the-seconds",
-	"duration/many-hours",
+	"duration/NINETY-NINE-HOURS-ROLLS-INTO-DAYS",
+	// The roll into DAYS (#6732), pinned from both sides the same way as the hour.
+	"duration/JUST-UNDER-A-DAY-DOES-NOT-ROLL",
+	"duration/EXACTLY-A-DAY",
+	"duration/days-and-hours-drop-the-minutes",
 	// The charge-divisor rows the floor was leaving unprotected, named rather than counted — the
 	// same remedy the `duration` pair above got, and for the same reason. A zero-decimal currency
 	// has two independently wrong renderings and one row cannot pin both: `JPY-zero` fixes the
@@ -282,7 +286,7 @@ const REQUIRED_IDS = [
 const SECTION_FLOOR: Record<string, number> = {
 	minutes: 12,
 	quota: 6,
-	duration: 13,
+	duration: 17,
 	date: 10,
 	bytes: 8,
 	// Raised 6 -> 13 and 15 -> 24 with the money/monthlyRate rounding rows (#3899), then 13 -> 23

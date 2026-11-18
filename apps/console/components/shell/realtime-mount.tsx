@@ -10,6 +10,8 @@ import { useRealtimeConnection } from "@/hooks/use-realtime";
 import { getQueryClient } from "@/lib/query/client";
 import { startRealtime } from "@/lib/realtime/client/runtime";
 import { tenantSegment } from "@/lib/rpc/client";
+import { endSession, useSessionState } from "@/lib/stores/use-session-state";
+import { SessionEnded } from "./session-ended";
 
 /**
  * The single mount point for the org's real-time stream (ADR 0005 D3, #6115). #6113 placed it in
@@ -21,6 +23,9 @@ import { tenantSegment } from "@/lib/rpc/client";
  * never share an election or a relay. A remount starts from a first connect, so a `removed` from
  * before does not stick. The org's QueryClient is captured when it STARTS, so a hint that arrives
  * late for the org just left can only ever invalidate that org's cache, never the new one's.
+ *
+ * It also mounts the shell's one session-ended dialog (`SessionEnded`), and is the third of the
+ * three sources that end the session state: the stream reaching `signed-out`.
  */
 export function RealtimeMount() {
 	const tenant = tenantSegment(usePathname());
@@ -39,20 +44,32 @@ export function RealtimeMount() {
 		});
 	}, [userId, tenant, router]);
 
-	return <ConnectionIndicator />;
+	return (
+		<>
+			<ConnectionIndicator />
+			<SessionEnded />
+		</>
+	);
 }
 
 /**
  * A deliberately minimal "live updates paused" notice. Its visual design is the maintainer's call
  * (#6115); this is the smallest thing that meets R7: visible, announced politely, on the toast rung.
  * The live region is always in the DOM so a screen reader hears the text when it appears.
+ *
+ * A stream that reports `signed-out` ends the session state, and the notice then says nothing: the
+ * session-ended dialog is what the person is shown, whichever source ended the session, and a
+ * "retrying" line behind it would be about a stream that cannot come back.
  */
 function ConnectionIndicator() {
 	const { state, hasBeenLive, noticeable } = useRealtimeConnection();
-	const text = !noticeable
-		? ""
-		: state === "signed-out"
-			? "Signed out — live updates stopped. Sign in again to resume."
+	const sessionEnded = useSessionState((session) => session.status === "ended");
+	useEffect(() => {
+		if (state === "signed-out") endSession();
+	}, [state]);
+	const text =
+		!noticeable || sessionEnded || state === "signed-out"
+			? ""
 			: hasBeenLive
 				? "Live updates paused — retrying"
 				: "Connecting…"; // nothing was live yet, so nothing is "paused"

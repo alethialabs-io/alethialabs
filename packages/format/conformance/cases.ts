@@ -131,6 +131,9 @@ export const QUOTA: QuotaCase[] = [
  * roll fails `EXACTLY-AN-HOUR`, one that rolls a millisecond early fails
  * `JUST-UNDER-AN-HOUR-DOES-NOT-ROLL`, and one that keeps the seconds past the roll fails
  * `hours-and-minutes-drop-the-seconds`.
+ *
+ * The roll into DAYS at 24 hours (#6732) is pinned the same way, from both sides:
+ * `JUST-UNDER-A-DAY-DOES-NOT-ROLL`, `EXACTLY-A-DAY`, and `days-and-hours-drop-the-minutes`.
  */
 export const DURATION: NumberCase[] = [
 	{ id: "duration/zero", in: 0 },
@@ -148,7 +151,14 @@ export const DURATION: NumberCase[] = [
 	{ id: "duration/JUST-UNDER-AN-HOUR-DOES-NOT-ROLL", in: 3599999 },
 	{ id: "duration/EXACTLY-AN-HOUR", in: 3600000 },
 	{ id: "duration/hours-and-minutes-drop-the-seconds", in: 7505000 },
-	{ id: "duration/many-hours", in: 356400000 },
+	// RENAMED from `many-hours` (#6732): 99 hours now reads `4d 3h`, so the old name would assert
+	// the old behaviour.
+	{ id: "duration/NINETY-NINE-HOURS-ROLLS-INTO-DAYS", in: 356400000 },
+	{ id: "duration/JUST-UNDER-A-DAY-DOES-NOT-ROLL", in: 86399999 },
+	{ id: "duration/EXACTLY-A-DAY", in: 86400000 },
+	{ id: "duration/days-and-hours-drop-the-minutes", in: 98700000 },
+	// The production row #6732 was filed from: a Plan cancelled after 120 days and 19 minutes.
+	{ id: "duration/a-120-day-queue", in: 10369140000 },
 ];
 
 /**

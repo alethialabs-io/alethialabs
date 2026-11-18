@@ -41,7 +41,7 @@ import {
 	transitionEnv,
 } from "@/lib/db/env-status";
 import { JOB_NOT_OWNED_SQLSTATE, pgErrorCode } from "@/lib/db/pg-error";
-import { jobs } from "@/lib/db/schema";
+import { jobs, projectEnvironments } from "@/lib/db/schema";
 import { scrubExecutionMetadata } from "@/lib/jobs/scrub-metadata";
 import { releaseStateLocksForJob } from "@/lib/runners/state-lock";
 import { log } from "@/lib/observability/log";
@@ -502,7 +502,17 @@ export async function PUT(
 							detail: probe.detail ?? {},
 							probedAt: new Date().toISOString(),
 						});
-						if (becameUnreachable && job.org_id) {
+						// Page only for an ACTIVE env (#6736): a non-ACTIVE env is probed too now — one
+						// stranded in flight, FAILED, or a plan over a live cluster — and its cluster going
+						// dark is shown on its cards (Unreachable / Missing), not raised as an outage.
+						const [probedEnv] = becameUnreachable
+							? await db
+									.select({ status: projectEnvironments.status })
+									.from(projectEnvironments)
+									.where(eq(projectEnvironments.id, job.environment_id))
+									.limit(1)
+							: [];
+						if (becameUnreachable && job.org_id && probedEnv?.status === "ACTIVE") {
 							emitAlertEventSafe(job.org_id, "system.project.cluster_unreachable", {
 								title: "Cluster unreachable",
 								summary:

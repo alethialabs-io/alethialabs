@@ -75,4 +75,17 @@ function CountPill({
 	);
 }
 
-export { CountFigure, CountPill };
+/**
+ * The accessible name of a row that trails a {@link CountFigure}: its label, then each trailing
+ * figure, comma-separated — `"Built-in, 4"`, `"Alice, alice@acme.io, 12"`.
+ *
+ * Computed from contents, a row reads its spans run together (`"Built-in4"`), because the gap
+ * between the label and the figure is layout rather than text. And a figure dropped from the name
+ * is a count a screen-reader user never hears (#6734). Empty and absent parts are skipped, so a row
+ * with neither a hint nor a count is named by its label alone.
+ */
+function rowAccessibleName(label: string, ...trailing: Array<string | number | null | undefined>): string {
+	return [label, ...trailing.filter((t) => t !== undefined && t !== null && t !== "").map(String)].join(", ");
+}
+
+export { CountFigure, CountPill, rowAccessibleName };

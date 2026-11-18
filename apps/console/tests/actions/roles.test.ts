@@ -314,7 +314,8 @@ describe("deleteRole", () => {
 
 	it("deletes the org's role and emits the destroy side-effects", async () => {
 		enterpriseActor();
-		const { deleteTables } = mockDb([[]]);
+		// The delete's `returning` answers the role's name, which the deletion row keeps (#6735).
+		const { deleteTables } = mockDb([[{ name: "Auditors" }]]);
 		await deleteRole({ id: R1 });
 		expect(deleteTables).toHaveLength(1);
 		expect(emitAlertEventSafe).toHaveBeenCalledWith(
@@ -326,6 +327,7 @@ describe("deleteRole", () => {
 			expect.objectContaining({ orgId: "org-1" }),
 			"destroy",
 			{ type: "role", id: R1 },
+			{ resourceName: "Auditors" },
 		);
 	});
 });

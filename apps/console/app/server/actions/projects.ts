@@ -25,10 +25,15 @@ import {
 	projectSchema,
 } from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
-import { authorize, authorizeRead, currentActor } from "@/lib/authz/guard";
+import { isLiveEnvStatus, LIVE_ENVIRONMENT_REFUSAL } from "@/lib/db/live-env-statuses";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
+import { recordAllowed } from "@/lib/authz/activity";
+import { authorize, authorizeDeferred, authorizeRead, currentActor } from "@/lib/authz/guard";
 import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import type { Actor } from "@/lib/authz/types";
+import { ApplyAuthorizationError, requireApplyAuthorization } from "@/lib/approvals/types";
 import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
@@ -769,7 +774,9 @@ async function clearComponents(
  * the wrapper below re-asks nothing.
  */
 export async function createProject(data: CreateProjectInput) {
-	const actor = await authorize("create", { type: "project" });
+	// Recorded AFTER the insert (#6735): `authorize()` recorded the create before the project had an
+	// id, so the Activity line could never name it — and recorded it for a create that was refused.
+	const actor = await authorizeDeferred("create", { type: "project" });
 	const problem = projectNameProblem(data.project.project_name);
 	if (problem) throw new ProjectNameInvalidError(problem);
 	// Parsed behind `authorize` like the name: this is a POST-addressable action, so the TypeScript
@@ -794,7 +801,7 @@ export async function createProject(data: CreateProjectInput) {
 	// projects the CLI's `alethia project get <name>` cannot tell apart.
 	const project_name = data.project.project_name.trim();
 
-	return withScope({ ownerId: owner, orgId }, async (tx) => {
+	const created = await withScope({ ownerId: owner, orgId }, async (tx) => {
 		// Before any row is written: every cloud identity the design names must be one this caller
 		// may use (an org identity, or a person's own personal one).
 		await assertDesignIdentitiesUsable(tx, data, {
@@ -835,6 +842,8 @@ export async function createProject(data: CreateProjectInput) {
 
 		return { project };
 	});
+	recordAllowed(actor, "create", { type: "project", id: created.project.id }, { resourceName: project_name });
+	return created;
 }
 
 /**
@@ -2296,7 +2305,9 @@ export type QueueJobResult<T extends object> = ({ ok: true } & T) | ProjectRefus
 /**
  * Runs a job-queueing action and returns a refusal the user can act on as a VALUE.
  *
- * Exactly four types are refusals, each already written as a sentence for a person:
+ * Exactly five types are refusals, each already written as a sentence for a person:
+ *   · `ApplyAuthorizationError` — the apply or destroy was not authorized for this caller
+ *     (lib/approvals/types.ts; nothing throws it while that module allows every call);
  *   · {@link JobRefusalError} — the deploy-time gates (no cloud account, a dangling binding, a WAF
  *     the cloud cannot provide, a Hetzner node name, no network selected, an unscanned IaC source…);
  *   · `EnvStateConflictError` — a job is already in flight on the environment; the same request
@@ -2313,6 +2324,7 @@ async function refusalAsValue<T extends object>(
 		return { ok: true, ...(await run()) };
 	} catch (err) {
 		if (
+			err instanceof ApplyAuthorizationError ||
 			err instanceof JobRefusalError ||
 			err instanceof EnvStateConflictError ||
 			err instanceof UsageLimitError ||
@@ -2582,11 +2594,15 @@ function hasRepoSourcedServices(configSnapshot: {
  * project_services.resolved_image and chains the app DEPLOY (builds.ts), which renders
  * the services with real images. The build runs in-cluster, so it only queues off an
  * ACTIVE (provisioned) environment.
+ *
+ * The chained DEPLOY is queued with nobody asking, so the deploy is authorized here, where the
+ * BUILD is queued (`requireApplyAuthorization`); `approvalId` is the approval the caller presents.
  */
 export async function buildProject(
 	projectId: string,
 	environmentId?: string | null,
 	runnerId?: string | null,
+	approvalId?: string | null,
 ) {
 	const actor = await authorize("deploy", { type: "project", id: projectId });
 	// Defense-in-depth: a client-supplied assigned runner must belong to the
@@ -2636,6 +2652,19 @@ export async function buildProject(
 				)
 				.returning({ id: jobs.id });
 
+			await requireApplyAuthorization(
+				tx,
+				{ kind: "actor", actor },
+				"deploy",
+				{
+					orgId: actor.orgId,
+					projectId,
+					environmentId: environment.id,
+					jobId: job.id,
+				},
+				approvalId,
+			);
+
 			await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
 				orgId: actor.orgId,
 				projectId,
@@ -2675,6 +2704,11 @@ function keyedDeployResult(
  * Queues a DEPLOY job (or, for a redeploy with repo-sourced services, the BUILD that chains it).
  * `approvalKey` makes it at most once per key, as in {@link planProject} (#5797): a repeated
  * approval of one deploy proposal returns the job it already queued and applies nothing twice.
+ *
+ * `approvalKey` and `approvalId` are different things. The key only makes a repeated call return
+ * the same job. `approvalId` names the approval the caller presents for this deploy, and is
+ * handed to `requireApplyAuthorization` with every job this queues — the DEPLOY, or the BUILD
+ * that will chain it. A job a key already queued is returned as it is and is not asked about again.
  */
 export async function provisionProject(
 	projectId: string,
@@ -2682,6 +2716,7 @@ export async function provisionProject(
 	runnerId?: string | null,
 	environmentId?: string | null,
 	approvalKey?: string | null,
+	approvalId?: string | null,
 ) {
 	const actor = await authorize("deploy", { type: "project", id: projectId });
 	// Defense-in-depth: a client-supplied assigned runner must belong to the
@@ -2747,6 +2782,19 @@ export async function provisionProject(
 				// A concurrent approval of the same proposal committed first: its job IS this one.
 				if (!job.created) return keyedDeployResult(job.id, job.jobType);
 
+				await requireApplyAuthorization(
+					tx,
+					{ kind: "actor", actor },
+					"deploy",
+					{
+						orgId: actor.orgId,
+						projectId,
+						environmentId: environment.id,
+						jobId: job.id,
+					},
+					approvalId,
+				);
+
 				await enqueueEnvTransition(
 					tx,
 					environment.id,
@@ -2801,6 +2849,20 @@ export async function provisionProject(
 			);
 			// A concurrent approval of the same proposal committed first: its job IS this one.
 			if (!job.created) return keyedDeployResult(job.id, job.jobType);
+
+			await requireApplyAuthorization(
+				tx,
+				{ kind: "actor", actor },
+				"deploy",
+				{
+					orgId: actor.orgId,
+					projectId,
+					environmentId: environment.id,
+					jobId: job.id,
+					...(planJobId ? { planJobId } : {}),
+				},
+				approvalId,
+			);
 
 			await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
 				orgId: actor.orgId,
@@ -2883,6 +2945,11 @@ export interface DestroyProjectOptions {
 	 * {@link FabricHasLiveTenantsError} naming them. Ignored for a target that owns no Fabric.
 	 */
 	cascade?: boolean;
+	/**
+	 * The approval the caller presents for this destroy. Handed to `requireApplyAuthorization` with
+	 * every DESTROY the call queues, the cascaded ones included.
+	 */
+	approvalId?: string | null;
 }
 
 /** One DESTROY job a {@link destroyProject} call queued, in the order the tree destroys them. */
@@ -3012,6 +3079,23 @@ export async function destroyProject(
 				)
 				.returning({ id: jobs.id });
 
+			await requireApplyAuthorization(
+				tx,
+				{ kind: "actor", actor },
+				"destroy",
+				{
+					orgId: actor.orgId,
+					projectId,
+					environmentId: snap.environment.id,
+					jobId: job.id,
+					// A tenant's DESTROY exists because the target's cascaded to it.
+					...(snap === target
+						? {}
+						: { cascadeOfEnvironmentId: target.environment.id }),
+				},
+				options.approvalId,
+			);
+
 			await enqueueEnvTransition(
 				tx,
 				snap.environment.id,
@@ -3049,14 +3133,9 @@ export async function destroyProject(
 // Delete
 // ============================================================
 
-// Environment states that mean live (or in-flight) cloud infrastructure — a project can't be
-// deleted from under them; the environments must be destroyed first.
-const LIVE_ENV_STATUSES = new Set([
-	"QUEUED",
-	"PROVISIONING",
-	"ACTIVE",
-	"DESTROYING",
-]);
+// Which environment statuses mean live (or in-flight) cloud infrastructure is `isLiveEnvStatus`
+// (lib/db/live-env-statuses.ts) — a project can't be deleted from under one, and neither can the
+// environment itself (`deleteEnvironment`); it must be destroyed first.
 
 /**
  * Permanently deletes a project record. Child rows (environments, components, promotions, drift)
@@ -3071,24 +3150,33 @@ const LIVE_ENV_STATUSES = new Set([
 export async function deleteProject(
 	projectId: string,
 ): Promise<DeleteProjectResult> {
-	const actor = await authorize("destroy", { type: "project", id: projectId });
-	return withActorScope(actor, async (tx) => {
+	// Recorded AFTER the delete, with the name read BEFORE it (#6735): the row is gone by the time
+	// anything could look the name up, and `authorize()` also recorded a deletion the live-env check
+	// below then refused.
+	const actor = await authorizeDeferred("destroy", { type: "project", id: projectId });
+	const outcome = await withActorScope(actor, async (tx): Promise<{ ok: true; name: string | undefined } | ProjectRefusal> => {
 		// Refuse while any environment is live/in-flight — deleting would orphan cloud resources.
 		const envs = await tx
 			.select({ status: projectEnvironments.status })
 			.from(projectEnvironments)
 			.where(eq(projectEnvironments.project_id, projectId));
-		if (envs.some((e) => LIVE_ENV_STATUSES.has(e.status))) {
+		if (envs.some((e) => isLiveEnvStatus(e.status))) {
 			return {
 				ok: false,
 				error:
 					"This project has live or in-flight environments. Destroy them before deleting the project.",
 			};
 		}
-		// CASCADE handles all component tables.
-		await tx.delete(projects).where(eq(projects.id, projectId));
-		return { ok: true };
+		// CASCADE handles all component tables. `returning` is the name as it was at the delete.
+		const [gone] = await tx
+			.delete(projects)
+			.where(eq(projects.id, projectId))
+			.returning({ name: projects.project_name });
+		return { ok: true, name: gone?.name };
 	});
+	if (!outcome.ok) return outcome;
+	recordAllowed(actor, "destroy", { type: "project", id: projectId }, { resourceName: outcome.name ?? null });
+	return { ok: true };
 }
 
 // ============================================================
@@ -3336,7 +3424,9 @@ export async function duplicateProjectForProvider(
 	targetRegion: string,
 	projectName?: string,
 ): Promise<DuplicatedProject> {
-	const actor = await authorize("create", { type: "project" });
+	// Not recorded here: `createProject` below records the create, under the clone's id and name. This
+	// recorded a second, nameless "created a project" for every duplicate (#6735).
+	const actor = await authorizeDeferred("create", { type: "project" });
 	const owner = actor.userId;
 
 	const { formData, provider: sourceProvider } =
@@ -3775,34 +3865,55 @@ export async function getEnvConsistency(
 	};
 }
 
-/** Deletes a non-default environment (the default is the project's anchor). */
+/** `deleteEnvironment`'s argument: the project, and the environment of it to delete. */
+const deleteEnvironmentInput = z.object({
+	projectId: z.string().min(1),
+	environmentId: z.string().min(1),
+});
+
+/**
+ * Deletes a non-default environment (the default is the project's anchor) and answers with its
+ * name. Like `deleteProject`, this removes the row and runs no destroy job, so it refuses while the
+ * environment is live or in flight (#6752): the environment is destroyed first, then deleted.
+ *
+ * On the mutation contract (#6800): every refusal is RETURNED. A project outside the addressed
+ * organization and an environment that is not this project's are `not-found`; a refused `edit` is
+ * `forbidden`; the default environment and a live or in-flight one are `conflict`, each with the
+ * sentence the page shows as it is.
+ */
 export async function deleteEnvironment(
-	projectId: string,
-	environmentId: string,
-) {
-	// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS alone
-	// would let a team-org address reach the caller's personal-workspace project.
-	await assertProjectInActorOrg(await currentActor(), projectId);
-	const actor = await authorize("edit", { type: "project", id: projectId });
-	return withActorScope(actor, async (tx) => {
-		const [env] = await tx
-			.select()
-			.from(projectEnvironments)
-			.where(
-				and(
-					eq(projectEnvironments.id, environmentId),
-					eq(projectEnvironments.project_id, projectId),
-				),
-			)
-			.limit(1);
-		if (!env) throw new Error("Environment not found for this project");
-		if (env.is_default)
-			throw new Error("Cannot delete the project's default environment");
-		await tx
-			.delete(projectEnvironments)
-			.where(eq(projectEnvironments.id, environmentId));
-		return { success: true };
-	});
+	raw: z.input<typeof deleteEnvironmentInput>,
+): Promise<ActionResult<{ name: string }>> {
+	return defineAction({
+		input: deleteEnvironmentInput,
+		run: async ({ input: { projectId, environmentId } }) => {
+			// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS
+			// alone would let a team-org address reach the caller's personal-workspace project.
+			await assertProjectInActorOrg(await currentActor(), projectId);
+			const actor = await authorize("edit", { type: "project", id: projectId });
+			return withActorScope(actor, async (tx) => {
+				const [env] = await tx
+					.select()
+					.from(projectEnvironments)
+					.where(
+						and(
+							eq(projectEnvironments.id, environmentId),
+							eq(projectEnvironments.project_id, projectId),
+						),
+					)
+					.limit(1);
+				if (!env) throw new ActionRefusal("not-found", "Environment not found for this project.");
+				if (env.is_default)
+					throw new ActionRefusal("conflict", "The project's default environment cannot be deleted.");
+				if (isLiveEnvStatus(env.status))
+					throw new ActionRefusal("conflict", LIVE_ENVIRONMENT_REFUSAL);
+				await tx
+					.delete(projectEnvironments)
+					.where(eq(projectEnvironments.id, environmentId));
+				return { name: env.name };
+			});
+		},
+	})(raw);
 }
 
 // ============================================================

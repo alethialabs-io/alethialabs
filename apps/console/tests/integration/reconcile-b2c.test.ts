@@ -25,7 +25,11 @@ import {
 	projects,
 } from "@/lib/db/schema";
 import type { ProjectStatus } from "@/lib/db/schema/enums";
-import { convergeEnvStatuses } from "@/lib/reconcile/converge";
+import {
+	convergeEnvStatuses,
+	UNCLAIMED_JOB_TTL_HOURS,
+	UNCLAIMED_JOB_REASON,
+} from "@/lib/reconcile/converge";
 import {
 	MAX_REAP_ATTEMPTS,
 	reapBackoffMs,
@@ -49,6 +53,9 @@ async function seedEnv(
 		reapAttempts?: number;
 		lastReapAt?: Date | null;
 		reapGaveUpAt?: Date | null;
+		/** Set at INSERT: the `update_updated_at` BEFORE UPDATE trigger (programmables.sql) rewrites
+		 *  `updated_at` to now() on every UPDATE, so a fixture can only age it when it inserts. */
+		updatedAt?: Date;
 	} = {},
 ): Promise<string> {
 	const [e] = await db
@@ -66,6 +73,7 @@ async function seedEnv(
 			reap_attempts: opts.reapAttempts ?? 0,
 			last_reap_at: opts.lastReapAt ?? null,
 			reap_gave_up_at: opts.reapGaveUpAt ?? null,
+			...(opts.updatedAt ? { updated_at: opts.updatedAt } : {}),
 		})
 		.returning({ id: projectEnvironments.id });
 	return e.id;
@@ -102,6 +110,8 @@ async function seedJob(
 	status: "QUEUED" | "PROCESSING" | "SUCCESS" | "FAILED" | "CANCELLED",
 	createdAt: Date,
 	completedAt?: Date,
+	/** Set at INSERT — an UPDATE cannot age it (see seedEnv's `updatedAt`). */
+	updatedAt?: Date,
 ): Promise<string> {
 	const terminal = status === "SUCCESS" || status === "FAILED" || status === "CANCELLED";
 	const [j] = await db
@@ -115,6 +125,7 @@ async function seedJob(
 			config_snapshot: { seed: true },
 			created_at: createdAt,
 			completed_at: terminal ? (completedAt ?? createdAt) : null,
+			...(updatedAt ? { updated_at: updatedAt } : {}),
 		})
 		.returning({ id: jobs.id });
 	return j.id;
@@ -249,6 +260,59 @@ describeIfDb("B2c reconcile — real Postgres", () => {
 		await convergeEnvStatuses(db);
 
 		expect(await statusOf(planCancelled)).toBe("DRAFT"); // read-only plan → DRAFT, not FAILED
+	});
+
+	it("convergence (#6736): an UNCLAIMED job past the TTL is cancelled with a reason, then its env settles", async () => {
+		// The production shape: a DEPLOY requeued after its runner died, or never claimed, sits QUEUED
+		// while its env says PROVISIONING — for months. recover_stale_jobs never sees a QUEUED row.
+		// Aged at INSERT: the updated_at trigger would rewrite an UPDATE's value to now().
+		const pastTtl = new Date(Date.now() - (UNCLAIMED_JOB_TTL_HOURS + 1) * 3_600_000);
+		const stuck = await seedEnv(projectId, "conv-unclaimed", "PROVISIONING");
+		const jobId = await seedJob(projectId, stuck, "DEPLOY", "QUEUED", min(2), undefined, pastTtl);
+
+		// A QUEUED job behind a SETTLED env is someone's pending work, and one inside the TTL is waiting
+		// for a runner: neither is touched.
+		const settled = await seedEnv(projectId, "conv-unclaimed-settled", "ACTIVE");
+		const settledJob = await seedJob(projectId, settled, "PLAN", "QUEUED", min(2), undefined, pastTtl);
+		const waiting = await seedEnv(projectId, "conv-unclaimed-fresh", "QUEUED");
+		const waitingJob = await seedJob(projectId, waiting, "DEPLOY", "QUEUED", min(2));
+
+		const first = await convergeEnvStatuses(db);
+		expect(first.expired).toBeGreaterThanOrEqual(1);
+		const [cancelled] = await db
+			.select({ status: jobs.status, error_message: jobs.error_message, completed_at: jobs.completed_at })
+			.from(jobs)
+			.where(eq(jobs.id, jobId));
+		expect(cancelled.status).toBe("CANCELLED");
+		expect(cancelled.error_message).toBe(UNCLAIMED_JOB_REASON);
+		expect(cancelled.completed_at).not.toBeNull();
+		// Just cancelled, so inside CONVERGE_MIN_AGE: the env waits one more pass, as for any fresh terminal.
+		expect(await statusOf(stuck)).toBe("PROVISIONING");
+
+		// Age the cancellation past the min-age gate; the ordinary convergence then settles the env.
+		await db.update(jobs).set({ completed_at: min(1) }).where(eq(jobs.id, jobId));
+		await convergeEnvStatuses(db);
+		expect(await statusOf(stuck)).toBe("FAILED");
+
+		const statusOfJob = async (id: string) =>
+			(await db.select({ status: jobs.status }).from(jobs).where(eq(jobs.id, id)))[0].status;
+		expect(await statusOfJob(settledJob)).toBe("QUEUED");
+		expect(await statusOfJob(waitingJob)).toBe("QUEUED");
+		expect(await statusOf(waiting)).toBe("QUEUED");
+	});
+
+	it("convergence (#6736): an env in flight past the TTL with NO lifecycle job at all settles FAILED", async () => {
+		// Aged at INSERT: the updated_at trigger would rewrite an UPDATE's value to now().
+		const old = new Date(Date.now() - (UNCLAIMED_JOB_TTL_HOURS + 1) * 3_600_000);
+		const orphan = await seedEnv(projectId, "conv-orphan", "PROVISIONING", { updatedAt: old });
+		const orphanTeardown = await seedEnv(projectId, "conv-orphan-destroy", "DESTROYING", { updatedAt: old });
+		const recent = await seedEnv(projectId, "conv-orphan-recent", "QUEUED");
+
+		await convergeEnvStatuses(db);
+
+		expect(await statusOf(orphan)).toBe("FAILED");
+		expect(await statusOf(orphanTeardown)).toBe("FAILED");
+		expect(await statusOf(recent)).toBe("QUEUED"); // inside the TTL — an enqueue may be landing
 	});
 
 	it("ephemeral reaper: enqueues DESTROY for an expired env, and re-running is a no-op", async () => {

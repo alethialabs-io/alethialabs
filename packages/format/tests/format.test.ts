@@ -111,6 +111,15 @@ describe("formatDuration", () => {
 		expect(formatDuration(60_000)).toBe("1m 0s");
 	});
 
+	// #6732: a 120-day span read `2880h 19m`. Pinned from both sides of the day boundary.
+	it("rolls into days at 24 hours and drops the minutes", () => {
+		expect(formatDuration(86_399_999)).toBe("23h 59m");
+		expect(formatDuration(86_400_000)).toBe("1d 0h");
+		expect(formatDuration(98_700_000)).toBe("1d 3h");
+		expect(formatDuration(356_400_000)).toBe("4d 3h");
+		expect(formatDuration(10_369_140_000)).toBe("120d 0h");
+	});
+
 	it("clamps nonsense", () => {
 		expect(formatDuration(0)).toBe("0s");
 		expect(formatDuration(-1)).toBe("0s");

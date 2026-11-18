@@ -3,11 +3,16 @@
 
 # Enabling a cloud in the T2 real-cloud nightly
 
-`.github/workflows/e2e-nightly.yml` matrixes **all five clouds** — `hetzner`, `aws`, `gcp`, `azure`,
-`alibaba` — but each leg **green-skips** until a maintainer wires that cloud's gate. A skipped leg is a
-deliberate no-op that reports success, so a nightly can show five green checks while proving one cloud.
-The rollup states the ratio explicitly (`Coverage: N/5 clouds enabled`) and keeps one standing issue
-listing what each inert cloud needs.
+`.github/workflows/e2e-nightly.yml` schedules **the clouds the catalog offers** — `hetzner`, `aws`,
+`gcp`, `azure` — and each leg **green-skips** until a maintainer wires that cloud's gate. A skipped leg
+is a deliberate no-op that reports success, so a nightly can show a green check for every leg while
+proving one cloud. The rollup states the ratio explicitly (its `Coverage:` line) and keeps one standing
+issue listing what each inert cloud needs.
+
+The scheduled set is not chosen in the workflow. It is every cloud
+`packages/core/catalog/catalog.json` can provision and marks `available`, and
+`scripts/check-e2e-spend-guard.mjs` (rule R6) fails the build when the workflow's matrix and the
+catalog disagree. See [A hidden cloud is dispatch-only](#a-hidden-cloud-is-dispatch-only).
 
 This is the procedure to take a cloud from inert to proven. It applies real cloud infrastructure and
 commits real money, and its last step — setting the gate value — is the maintainer's alone.
@@ -148,11 +153,36 @@ bare region re-creates both.
 The matrix runs at most **3 real provisions concurrently** (`max-parallel: 3`), and a per-provider
 concurrency group serializes same-cloud runs.
 
-## Adding a sixth cloud
+## Adding a cloud
 
 Per the workflow's own note, extend all five places or the leg will half-work: the dispatch
 `options:`, the matrix `provider:` array, the gate `case`, the credential step, and the sweeper `case`
 in teardown. Then add a row to the coverage-issue table in the rollup step and to this document.
+
+The cloud must also be in the catalog, provisionable and marked `available`. The spend guard refuses
+a scheduled cloud the catalog does not list that way, and refuses any cloud a run can reach that has
+no pre-apply spend control.
+
+## A hidden cloud is dispatch-only
+
+A cloud the catalog marks `hidden` is outside the exit criteria (`PROGRAMME.md` §2 D6). In the
+nightly that means three things, and the spend guard checks each:
+
+- It is **absent from the scheduled matrix**, so no timer provisions it.
+- It **stays in the dispatch `options:`**, so its code can still be driven by hand, one run at a time.
+- It **keeps its spend control**, and its leg names it in `ALETHIA_ENABLE_HIDDEN_CLOUDS`, the setting
+  that re-enables a hidden cloud for one process. No scheduled leg may set that.
+
+`alibaba` is in this state. A manual `alibaba` dispatch still resolves its gate
+(`E2E_ALIBABA_ROLE_ARN`) exactly as before; what changed is that nothing starts one overnight.
+
+The verdict table in a scheduled run's summary still prints an `alibaba` row, as `SKIP`:
+`scripts/e2e/nightly-rollup.sh` carries its own provider list and does not yet read the catalog.
+Read that row as "not scheduled", not as an unwired gate.
+
+To put a hidden cloud back on the schedule: mark it `available` in the catalog, add it to the last
+literal of the matrix `provider:` expression, and remove its `ALETHIA_ENABLE_HIDDEN_CLOUDS` branch.
+The guard is red until all three agree.
 
 ## Cross-account keyless secret managers (#1268)
 

@@ -224,7 +224,9 @@ test.describe("Connectors — the board and its filter bar", () => {
 		await owner.page.getByRole("button", { name: /^Coming soon\b/ }).click();
 		// Every remaining row is coming-soon, so nothing on the board offers a connect action.
 		await expect(owner.page.getByRole("button", { name: /^Connect / })).toHaveCount(0);
-		await expect(owner.page.getByText("DigitalOcean").first()).toBeVisible();
+		// A coming-soon row that is not a cloud: a cloud this deployment does not offer has no card
+		// at all (#6811), so DigitalOcean, which this used to name, is no longer on the board.
+		await expect(owner.page.getByText("Amazon ECR (cross-account)").first()).toBeVisible();
 	});
 
 	test("the vendor combobox narrows the board to one organization", async ({ owner }) => {

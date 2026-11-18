@@ -126,13 +126,39 @@ zustand store  →  debounce  →  normalize  →  TanStack key  →  server act
 (per page)        (search)      (stable obj)   qk.foo(org, q)    (filters + facets)
 ```
 
-1. **Store** — one per page via `createFilterStore` (`lib/stores/create-filter-store.ts`):
-   sessionStorage-persisted `{ filters, set, patch, reset }`. `countActiveFilters`
-   drives the reset affordance / badge counts.
+1. **Store** — one per surface via `createFilterStore` (`lib/stores/create-filter-store.ts`):
+   `{ filters, set, patch, replace, reset, enterScope }`. `countActiveFilters`
+   drives the reset affordance / badge counts, so **one user choice must be one key**: a date
+   choice is a single `range` value, never `from` + `to` + a label (#6731), or one pick reads
+   as "Reset · 3".
+   **A store remembers nothing by default (#6814).** `persist` defaults to `false`: nothing is
+   written to, or read from, sessionStorage, and the URL is the store's only memory. A list
+   route prefetches its first page from the link alone, so a selection remembered anywhere
+   else is a key the server did not prefetch — the first paint then changes after hydration.
+   `persist: true` is an opt-in for a surface whose route does not prefetch from the link.
+   **Every store has a scope key, persisted or not (#6730).** A store is a module singleton,
+   and one definition can back several routes — jobs serves `/{org}/~/jobs` and every
+   `/{org}/{project}/jobs`; access and activity serve an org and a project settings page; every
+   store serves every org the tab visits. The scope key is the page's pathname, which
+   `useFilterUrlSync` enters on mount. Entering a different pathname drops the in-memory
+   selection of the last one, so a search typed on org jobs does not appear on a project's jobs
+   page, nor in another org. A `persist: true` store keys its storage on `<name>:<pathname>`
+   as well, and reads and writes nothing until a scope is entered.
 2. **URL sync** — `useFilterUrlSync(store, defaults)` (`hooks/use-filter-url-sync.ts`)
    mirrors non-default filters into the search params (arrays comma-joined) so filtered
-   views are shareable. On mount, URL params win over persisted session state; the
-   page's RSC should parse the same params and prefetch the matching key.
+   views are shareable. **On mount the link REPLACES the store; it is never patched over it
+   (#6814).** The store becomes `filterStateFromUrl`: the defaults with the link's filter
+   params applied. A param the link does not carry is that filter's default, whatever the
+   store held — so `?statuses=CANCELLED` is that one status and nothing else, and a bare URL
+   is the pristine list. Merging was the defect twice over: a link came back with a
+   remembered `search` folded in, and a bare link kept an earlier visit's selection; both are
+   views the link did not describe and the server had not prefetched. The store therefore
+   equals `filterStateFromUrl` for EVERY link, which is what the page's RSC parses to prefetch
+   the matching key. The one exception is a `persist: true` store, where a link carrying none
+   of the store's filter params leaves what that pathname persisted in place.
+   A page whose URL also carries a page number or a selected row passes
+   `{ resetParams: FILTER_DEPENDENT_PARAMS }`: those params are dropped by a URL write that
+   changes a filter, and kept by any other (see "View state in the URL" below).
 3. **Debounce** — free-text goes through `useDebouncedValue` (`hooks/use-debounced-value.ts`)
    before it reaches the key, handed what `useFilterUrlSync` returned:
    `useDebouncedValue(filters.search, 250, { urlRead })`. Only TYPING is debounced; a search the
@@ -149,7 +175,61 @@ zustand store  →  debounce  →  normalize  →  TanStack key  →  server act
    request lifecycle.
 6. **Facets** — the server action computes facet option counts over the **unfiltered**
    universe (options must not disappear as you select them) and returns them next to
-   the rows.
+   the rows. "Unfiltered" still means inside the scope — see the next section.
+
+### Scope is a predicate, never a filter
+
+The **scope** of a list is the part of the question the user did not choose on this page: the
+org, and on a project page the project. It comes from the route (`/{org}/…`,
+`/{org}/{project}/…`), never from the filter bar. A **filter** is what the user picked in the bar.
+The two are applied differently, and mixing them up is a defect in either direction:
+
+| | Rows pass | Facet pass | In the store | In the URL | Counts on "Reset · N" |
+| --- | --- | --- | --- | --- | --- |
+| Scope (org, project) | applied | **applied** | no | the pathname | no |
+| Filter (search, statuses, range…) | applied | not applied | yes | a search param | yes |
+
+- **A builder builds the scope predicates once and puts them in BOTH passes.**
+  `queryActivityPage` builds `scopeOf(orgId, projectId)` and hands it to the rows pass and to
+  every facet pass (`lib/queries/activity.ts`); `queryAccessGrantsPage` does the same with its
+  `scopeConditions` (`lib/queries/access-grants.ts`). In both, `projectId` selects the
+  universe; it is not one of the filter conditions. A project page whose facet pass sees only the org offers
+  options, with counts, for rows the page can never show.
+- **A project page never expresses its project as a filter.** Pre-selecting the project in a
+  `projects` filter leaves the facet pass org-wide, shows a removable chip for something the
+  user cannot change, counts 1 on "Reset · N", and writes `?projects=…` into a URL whose path
+  already says it. The filter that IS the scope is hidden on the scoped page instead (the
+  Project facet on a project's Activity feed).
+- **The scope reaches the read from the route, not from the filter store.** The page passes
+  the project it is under into the read's input (and so into the query key), the same on the
+  server component that prefetches and on the client that asks, so two scopes never share a
+  cache entry.
+- **The store's scope key is the same thing on the client.** `useFilterUrlSync` enters the
+  pathname, so a change of org or project is a change of scope and drops the filters.
+
+A builder's unit test should assert both halves: the facet options do not shrink as the query
+narrows (step 6), and they DO shrink to the project's rows when the scope narrows.
+
+### View state in the URL
+
+Three more params describe a list page, and none of them is a filter. They are decoded in
+`lib/query/view-url-params.ts`, on the same `ParamReader` as the filter codec, so the route's
+server component and the client read a link identically:
+
+| Param | Read | Write | Absent or unreadable means |
+| --- | --- | --- | --- |
+| `?page=<n>` | `pageFromUrl` | `pagePatch` | the first page |
+| `?selected=<id>` | `selectionFromUrl` | `selectionPatch` | nothing is open |
+| `?range=<value>` | `rangeFromUrl` | `rangePatch` | the page's default window |
+
+A patch goes through `hrefWithParamPatch`, which leaves every other param alone. A page number
+and a selected row only mean something under the filters they were chosen with, so they are
+`FILTER_DEPENDENT_PARAMS`: hand them to `useFilterUrlSync` as `resetParams` and a filter change
+goes back to the first page with nothing open, while a link that carries filters AND a page
+opens exactly that page. A cursor (the infinite variant) is never in the URL; it is the
+`pageParam`. `range` here is for a page that keeps its time window out of the filter store;
+where the window is a store key it is an ordinary filter and step 2 already mirrors it. Either
+way it is one value (`lib/query/range-filter.ts`), so a preset link stays relative.
 
 **Visual grammar** (primitives in `@repo/ui`): `FilterBar` is the row; `FilterSearch`
 is the input; `FacetFilter` (checkbox popover) for any option list; `FilterChipGroup`
@@ -191,9 +271,8 @@ store (shareable by construction, non-default-only params — the same codec
 `useFilterUrlSync` emits), the RSC re-resolves `queryProjects` server-side with facets
 over the unfiltered universe, `useTransition`'s `isPending` plays the `keepPreviousData`
 dim, the search box debounces its draft before touching the URL, and the count pill
-rule applies unchanged. What it deliberately trades away is sessionStorage persistence
-(a pristine `/{org}` URL means pristine filters — the right default for the org landing
-page). Use the TanStack form for client-fetched lists; use URL→RSC when the page is an
+rule applies unchanged. A pristine `/{org}` URL means pristine filters, which since #6814
+is what the store form does by default too. Use the TanStack form for client-fetched lists; use URL→RSC when the page is an
 RSC that renders the rows itself. Do not convert one into the other without a reason.
 
 ## Realtime

@@ -276,8 +276,8 @@ func assertNothingToDo(t *testing.T, plan *ApplyPlan, data []byte) {
 	if plan.ProjectID == "" {
 		t.Errorf("plan would create the project")
 	}
-	envs, comps, updates := plan.counts()
-	enable, change := plan.addonCounts()
+	envs, comps, updates := plan.Counts()
+	enable, change := plan.AddonCounts()
 	if envs+comps+updates+enable+change != 0 {
 		t.Errorf("plan is not empty: %d envs, %d components to create, %d to update, %d add-ons to enable, %d to change", envs, comps, updates, enable, change)
 	}

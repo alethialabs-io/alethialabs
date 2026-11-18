@@ -31,16 +31,19 @@
 //
 // ── The rules ──
 //
-//   R1  every scheduled-matrix cloud has a control — a ceiling branch or its shape control. A new
-//       sixth cloud therefore fails here until somebody decides its spend story.
+//   R1  every cloud the matrix can apply to has a control — a ceiling branch or its shape control.
+//       That is the scheduled set AND every dispatch-only cloud: a cloud a human can still start a
+//       run on spends the same money. A new cloud therefore fails here until somebody decides its
+//       spend story.
 //   R2  every control is REAL, not a name:
 //         · a ceiling branch must carry a positive numeric default — `vars.X || '300'` — because an
 //           unset variable evaluates to '' and cost_ceiling.go reads '' as "guard disabled", so a
 //           branch with no default is a control on paper only;
 //         · a shape control must carry a non-empty literal default for the same reason;
-//         · a branch naming a cloud that is NOT in the matrix is stale (how a real hole hides
-//           behind a reviewed-looking list), and a shape control naming a cloud it cannot guard (a
-//           hetzner server-type cap on an aws leg) controls nothing.
+//         · a branch naming a cloud the matrix cannot reach at all — neither scheduled nor a
+//           dispatch option — is stale (how a real hole hides behind a reviewed-looking list), and a
+//           shape control naming a cloud it cannot guard (a hetzner server-type cap on an aws leg)
+//           controls nothing.
 //   R3  a control that a waiver can switch off may be waived ONLY by a dispatch input. `vars.`,
 //       `secrets.` and `env.` apply to every scheduled run too, so a waiver through one of those
 //       would turn the control off for a timer — which is exactly the run nobody is watching. On
@@ -51,9 +54,20 @@
 //   R5  aws capacity type (#5316): every aws shape pins `capacity_type: spot` except ONE default
 //       cell, and each shape's worst-case monthly cost fits under the ceiling default its leg is
 //       priced against. The rules and the per-case cost assumption are stated at analyseAwsCapacity.
+//   R6  the scheduled set is the CATALOG's, held in both directions. It must equal the clouds
+//       packages/core/catalog/catalog.json can provision and marks `available`; a cloud the catalog
+//       marks `hidden` is RETIRED and may appear only as a dispatch option. So a retired cloud left
+//       on the timer fails, an available cloud dropped from the timer fails, and a dispatch option
+//       the catalog does not list as retired fails. A dispatch-only cloud must also name itself in
+//       ALETHIA_ENABLE_HIDDEN_CLOUDS, because a hidden cloud is refused without it, and no scheduled
+//       cloud may: that setting on a timer would re-enable a hidden cloud for a run nobody watches.
+//       The matrix literal is a hand-written copy because a workflow expression cannot read the
+//       catalog. This rule is what keeps the copy from drifting.
 //
 // Dispatches are NOT out of scope any more: a dispatched leg reads the same env, so a control is in
 // force for a human-started run as well — the alibaba waiver is the only hatch, and it is per-run.
+// That holds for a dispatch-only cloud too, which is why retiring a cloud from the schedule does not
+// retire its control: R1 still demands one and R2 still accepts it.
 //
 // A scheduled full bar (FULL_BAR_CRON, read from scripts/e2e/resolve-dimension.sh) is therefore no
 // longer refused by THIS guard once R1–R4 hold: that was the ruling. Restoring the cron still needs
@@ -67,7 +81,10 @@ import path from "node:path";
 
 const WORKFLOW = ".github/workflows/e2e-nightly.yml";
 const RESOLVER = "scripts/e2e/resolve-dimension.sh";
+const CATALOG = "packages/core/catalog/catalog.json";
 const CEILING_ENV = "ALETHIA_COST_CEILING_MONTHLY_USD";
+/** The operator setting that re-enables a hidden cloud. R6 holds it to the dispatch-only set. */
+const HIDDEN_CLOUDS_ENV = "ALETHIA_ENABLE_HIDDEN_CLOUDS";
 
 /**
  * The pre-apply shape controls, keyed by the env var the runner reads. `cloud` is the ONE cloud
@@ -137,6 +154,66 @@ export function scheduledMatrixProviders(workflowText) {
 }
 
 /**
+ * The clouds a DISPATCH can choose: the `options:` of the `provider` input. A cloud listed here and
+ * absent from the scheduled set is dispatch-only. Throws when the list cannot be found, because an
+ * empty answer would read as "no dispatch-only clouds" and switch R1 and R6 off for them.
+ * @param {string} workflowText
+ * @returns {string[]}
+ */
+export function dispatchProviders(workflowText) {
+	const lines = workflowText.split("\n");
+	// The input is `provider:` with nothing after the colon. The matrix key of the same name carries
+	// an expression on its line, so it cannot be mistaken for this one.
+	const at = lines.findIndex((l) => /^\s*provider:\s*$/.test(l));
+	if (at === -1) {
+		throw new Error(`${WORKFLOW}: no \`provider:\` dispatch input found — cannot determine which clouds a dispatch can reach`);
+	}
+	const indent = lines[at].search(/\S/);
+	const out = [];
+	let inOptions = false;
+	for (const l of lines.slice(at + 1)) {
+		if (/^\s*(#.*)?$/.test(l)) {
+			continue;
+		}
+		const depth = l.search(/\S/);
+		if (depth <= indent) {
+			break;
+		}
+		const item = l.match(/^\s*-\s*["']?([a-z0-9-]+)["']?\s*$/);
+		if (inOptions && item !== null) {
+			out.push(item[1]);
+			continue;
+		}
+		inOptions = /^\s*options:\s*$/.test(l);
+	}
+	if (out.length === 0) {
+		throw new Error(`${WORKFLOW}: the \`provider:\` dispatch input lists no \`options:\` — cannot determine which clouds a dispatch can reach`);
+	}
+	return out;
+}
+
+/**
+ * The exit-criteria clouds, read from the catalog: `available` is every cloud it can provision and
+ * marks available, `retired` every one it can provision and marks hidden. Availability is read from
+ * `live.providers`, the same place the Go and TypeScript readers take it from. A provisionable cloud
+ * with any other availability is in neither list, and R6 then fails on it wherever it appears.
+ * @param {string} catalogText
+ * @returns {{available: string[], retired: string[]}}
+ */
+export function catalogClouds(catalogText) {
+	const doc = JSON.parse(catalogText);
+	const provisionable = Array.isArray(doc?.providers) ? doc.providers.map((p) => p?.slug).filter((slug) => typeof slug === "string") : [];
+	if (provisionable.length === 0) {
+		throw new Error(`${CATALOG}: lists no provisionable cloud — R6 would hold the schedule to nothing`);
+	}
+	const availabilityOf = (slug) => doc?.live?.providers?.[slug]?.availability;
+	return {
+		available: provisionable.filter((slug) => availabilityOf(slug) === "available"),
+		retired: provisionable.filter((slug) => availabilityOf(slug) === "hidden"),
+	};
+}
+
+/**
  * The value of the first non-comment `NAME: ...` line, or undefined when no such line exists.
  * @param {string} workflowText
  * @param {string} name
@@ -184,17 +261,51 @@ function literals(branch) {
 }
 
 /**
- * Evaluate R1–R4 against already-read inputs. Pure, so `--self-test` drives it with fixtures.
- * @param {{workflowText: string, resolverText: string, hetznerTypes: {source: string, type: string}[]}} input
+ * Evaluate R1–R4 and R6 against already-read inputs. Pure, so `--self-test` drives it with fixtures.
+ * @param {{workflowText: string, resolverText: string, hetznerTypes: {source: string, type: string}[], catalog: {available: string[], retired: string[]}}} input
  * @returns {{failures: string[], notes: string[]}}
  */
-export function analyse({ workflowText, resolverText, hetznerTypes }) {
+export function analyse({ workflowText, resolverText, hetznerTypes, catalog }) {
 	const failures = [];
 	const notes = [];
 
 	const crons = scheduledCrons(workflowText);
 	const fullCron = fullBarCron(resolverText);
 	const matrix = scheduledMatrixProviders(workflowText);
+	const dispatch = dispatchProviders(workflowText);
+	/** Reachable by a dispatch and by no timer. */
+	const dispatchOnly = dispatch.filter((p) => !matrix.includes(p));
+	/** Every cloud a run can apply to, scheduled first. R1 and R2 range over this. */
+	const reachable = [...matrix, ...dispatchOnly];
+
+	// ── R6: the scheduled set is the catalog's. ──
+	for (const p of matrix.filter((p) => catalog.retired.includes(p))) {
+		failures.push(`R6 ${p}: in the SCHEDULED matrix, but ${CATALOG} marks it hidden — a retired cloud may be a dispatch option, never a timer's. Remove it from the last \`fromJSON\` literal of the \`provider:\` matrix.`);
+	}
+	for (const p of matrix.filter((p) => !catalog.retired.includes(p) && !catalog.available.includes(p))) {
+		failures.push(`R6 ${p}: in the scheduled matrix, but ${CATALOG} does not list it as a provisionable, available cloud.`);
+	}
+	for (const p of catalog.available.filter((p) => !matrix.includes(p))) {
+		failures.push(`R6 ${p}: ${CATALOG} marks it available, but it is NOT in the scheduled matrix — the nightly would stop proving a cloud the release is scored on. Add it to the last \`fromJSON\` literal, or mark it hidden in the catalog.`);
+	}
+	for (const p of matrix.filter((p) => !dispatch.includes(p))) {
+		failures.push(`R6 ${p}: scheduled, but not one of the \`provider\` dispatch options — it could never be driven alone.`);
+	}
+	for (const p of dispatchOnly.filter((p) => !catalog.retired.includes(p))) {
+		failures.push(`R6 ${p}: a dispatch option that no schedule runs, but ${CATALOG} does not mark it hidden — a cloud is dispatch-only because it is retired, and for no other reason.`);
+	}
+	// A hidden cloud is refused unless the operator setting names it, so its leg has to.
+	const override = envValue(workflowText, HIDDEN_CLOUDS_ENV);
+	const overrideBranches = override === undefined ? new Map() : providerBranches(override);
+	for (const p of dispatchOnly.filter((p) => !literals(overrideBranches.get(p) ?? "").includes(p))) {
+		failures.push(`R6 ${p}: dispatch-only, but ${HIDDEN_CLOUDS_ENV} has no \`matrix.provider == '${p}' && '${p}'\` branch — the leg would run with the cloud still hidden and be refused.`);
+	}
+	for (const p of [...overrideBranches.keys()].filter((p) => !dispatchOnly.includes(p))) {
+		failures.push(`R6 ${p}: ${HIDDEN_CLOUDS_ENV} has a branch for ${p}, which is not a dispatch-only cloud — on a scheduled leg that would re-enable a hidden cloud for a run nobody is watching.`);
+	}
+	if (override !== undefined && overrideBranches.size === 0 && literals(override).length > 0) {
+		failures.push(`R6: ${HIDDEN_CLOUDS_ENV} is set with no \`matrix.provider == '…'\` test, so it applies to every leg, scheduled ones included.`);
+	}
 
 	/** @type {Map<string, string[]>} cloud → the controls that guard it */
 	const controlledBy = new Map();
@@ -206,8 +317,8 @@ export function analyse({ workflowText, resolverText, hetznerTypes }) {
 		failures.push(`R1: ${CEILING_ENV} is not set anywhere in ${WORKFLOW} — no cloud has a cost ceiling.`);
 	} else {
 		for (const [p, branch] of providerBranches(ceiling)) {
-			if (!matrix.includes(p)) {
-				failures.push(`R2 ${p}: ${CEILING_ENV} has a branch for a cloud that is NOT in the scheduled matrix — a stale control; delete it.`);
+			if (!reachable.includes(p)) {
+				failures.push(`R2 ${p}: ${CEILING_ENV} has a branch for a cloud that is neither in the scheduled matrix nor a dispatch option — a stale control; delete it.`);
 				continue;
 			}
 			const numeric = literals(branch).filter((s) => /^\d+(\.\d+)?$/.test(s) && Number(s) > 0);
@@ -239,8 +350,8 @@ export function analyse({ workflowText, resolverText, hetznerTypes }) {
 				failures.push(`R2 ${p}: ${env} has a branch for ${p}, but it can only guard ${spec.cloud} — on a ${p} leg it reads nothing.`);
 				continue;
 			}
-			if (!matrix.includes(p)) {
-				failures.push(`R2 ${p}: ${env} guards a cloud that is NOT in the scheduled matrix — a stale control; delete it.`);
+			if (!reachable.includes(p)) {
+				failures.push(`R2 ${p}: ${env} guards a cloud that is neither in the scheduled matrix nor a dispatch option — a stale control; delete it.`);
 				continue;
 			}
 			if (literals(branch).length === 0) {
@@ -264,10 +375,10 @@ export function analyse({ workflowText, resolverText, hetznerTypes }) {
 		}
 	}
 
-	// R1 — every matrix cloud is controlled.
-	for (const p of matrix.filter((p) => !controlledBy.has(p))) {
+	// R1 — every cloud a run can apply to is controlled, dispatch-only ones included.
+	for (const p of reachable.filter((p) => !controlledBy.has(p))) {
 		failures.push(
-			`R1 ${p}: in the scheduled matrix with NO pre-apply spend control — neither a ${CEILING_ENV} branch nor a shape control ` +
+			`R1 ${p}: ${matrix.includes(p) ? "in the scheduled matrix" : "a dispatch-only cloud"} with NO pre-apply spend control — neither a ${CEILING_ENV} branch nor a shape control ` +
 				`(${Object.keys(SHAPE_CONTROLS).join(", ")}). Add one; there is no exemption list any more.`,
 		);
 	}
@@ -305,7 +416,8 @@ export function analyse({ workflowText, resolverText, hetznerTypes }) {
 	}
 	notes.push(`scheduled crons: ${crons.length === 0 ? "(none)" : crons.map((c) => `"${c}"`).join(", ")}`);
 	notes.push(`scheduled matrix: ${matrix.join(", ")}`);
-	for (const p of matrix) {
+	notes.push(`dispatch-only (retired in the catalog): ${dispatchOnly.length === 0 ? "(none)" : dispatchOnly.join(", ")}`);
+	for (const p of reachable) {
 		notes.push(`${p}: ${(controlledBy.get(p) ?? ["NO CONTROL"]).join(" + ")}`);
 	}
 
@@ -523,7 +635,13 @@ function readAwsFixtures() {
 // ───────────────────────────── self-test ─────────────────────────────
 
 const FIXTURE_RESOLVER = 'FULL_BAR_CRON="17 5 * * 0"\n';
-const FIVE = ["hetzner", "aws", "gcp", "azure", "alibaba"];
+// The fixture world mirrors today's: four scheduled clouds, and one the catalog has retired that is
+// still a dispatch option. The retired-cloud RULES are also driven with `oracle`, a cloud this
+// product has never had, so they are not tested only against the one name retired today.
+const SCHEDULED = ["hetzner", "aws", "gcp", "azure"];
+const RETIRED = ["alibaba"];
+const TODAY_CATALOG = { available: SCHEDULED, retired: RETIRED };
+const TODAY_OVERRIDE = `matrix.provider == 'alibaba' && 'alibaba' || ''`;
 const TODAY_CEILING = ["aws", "gcp", "azure"].map((p) => `matrix.provider == '${p}' && (vars.E2E_${p.toUpperCase()}_COST_CEILING_USD || '300')`).join(" || ");
 const TODAY_CAP = `matrix.provider == 'hetzner' && (vars.E2E_HETZNER_SERVER_TYPES || 'cpx22,cpx32') || ''`;
 const TODAY_PREPAID = `matrix.provider == 'alibaba' && !inputs.alibaba_allow_prepaid && '1' || ''`;
@@ -534,15 +652,34 @@ const E2E_TYPES = [
 ];
 
 /**
- * Build a workflow fixture. Any expression passed as `null` omits that env line entirely.
- * @param {{crons?: string[], matrix?: string[], ceiling?: string | null, cap?: string | null, prepaid?: string | null}} o
+ * Build a workflow fixture. Any expression passed as `null` omits that env line entirely. `dispatch`
+ * is the `provider` input's option list, or `null` to omit the input.
+ * @param {{crons?: string[], matrix?: string[], dispatch?: string[] | null, ceiling?: string | null, cap?: string | null, prepaid?: string | null, override?: string | null}} o
  * @returns {string}
  */
-function fixture({ crons = ["17 3 * * *"], matrix = FIVE, ceiling = `${TODAY_CEILING} || ''`, cap = TODAY_CAP, prepaid = TODAY_PREPAID } = {}) {
+function fixture({ crons = ["17 3 * * *"], matrix = SCHEDULED, dispatch = [...SCHEDULED, ...RETIRED], ceiling = `${TODAY_CEILING} || ''`, cap = TODAY_CAP, prepaid = TODAY_PREPAID, override = TODAY_OVERRIDE } = {}) {
 	return [
 		"on:",
 		"  schedule:",
 		...crons.map((c) => `    - cron: "${c}"`),
+		"  workflow_dispatch:",
+		"    inputs:",
+		...(dispatch === null
+			? []
+			: [
+					"      provider:",
+					'        description: "Cloud to prove."',
+					"        type: choice",
+					"        options:",
+					"          # - vultr  a commented option is not an option",
+					...dispatch.map((p) => `          - ${p}`),
+					"        default: hetzner",
+				]),
+		"      dimension:",
+		"        type: choice",
+		"        options:",
+		'          - ""',
+		"          - floor",
 		"    strategy:",
 		"      matrix:",
 		`        provider: \${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.provider)) || fromJSON('${JSON.stringify(matrix)}') }}`,
@@ -550,6 +687,7 @@ function fixture({ crons = ["17 3 * * *"], matrix = FIVE, ceiling = `${TODAY_CEI
 		...(ceiling === null ? [] : [`          ${CEILING_ENV}: \${{ ${ceiling} }}`]),
 		...(cap === null ? [] : [`          ALETHIA_SPEND_HCLOUD_SERVER_TYPES: \${{ ${cap} }}`]),
 		...(prepaid === null ? [] : [`          ALETHIA_SPEND_REFUSE_PREPAID: \${{ ${prepaid} }}`]),
+		...(override === null ? [] : [`          ${HIDDEN_CLOUDS_ENV}: \${{ ${override} }}`]),
 	].join("\n");
 }
 
@@ -564,14 +702,14 @@ function runSelfTest() {
 			fails++;
 		}
 	};
-	/** @param {string} wf @param {{source: string, type: string}[]} [types] */
-	const run = (wf, types = E2E_TYPES) => analyse({ workflowText: wf, resolverText: FIXTURE_RESOLVER, hetznerTypes: types });
+	/** @param {string} wf @param {{source: string, type: string}[]} [types] @param {{available: string[], retired: string[]}} [catalog] */
+	const run = (wf, types = E2E_TYPES, catalog = TODAY_CATALOG) => analyse({ workflowText: wf, resolverText: FIXTURE_RESOLVER, hetznerTypes: types, catalog });
 	/** @param {{failures: string[]}} r @param {string} prefix */
 	const has = (r, prefix) => r.failures.some((f) => f.startsWith(prefix));
 
-	// TODAY — all five controlled.
+	// TODAY — four scheduled, one retired and dispatch-only, all five controlled.
 	const today = run(fixture());
-	assert("today's shape (3 ceilings + hetzner cap + alibaba prepaid refusal) passes", today.failures.length === 0, JSON.stringify(today.failures));
+	assert("today's shape (3 ceilings + hetzner cap + alibaba prepaid refusal on a dispatch-only leg) passes", today.failures.length === 0, JSON.stringify(today.failures));
 
 	// THE REGRESSION. The world before #2385: an aws-only ceiling and no shape controls.
 	const before = run(fixture({ ceiling: "matrix.provider == 'aws' && (vars.X || '300') || ''", cap: null, prepaid: null }));
@@ -631,8 +769,98 @@ function runSelfTest() {
 	assert("the cap match ignores case, as the runner does", run(fixture(), [{ source: "x", type: "CPX22" }]).failures.length === 0);
 
 	// A new cloud.
-	const sixth = run(fixture({ matrix: [...FIVE, "oracle"] }));
-	assert("a sixth matrix cloud with no control FAILS R1", has(sixth, "R1 oracle:"), JSON.stringify(sixth.failures));
+	const sixth = run(fixture({ matrix: [...SCHEDULED, "oracle"], dispatch: [...SCHEDULED, ...RETIRED, "oracle"] }));
+	assert("a new matrix cloud with no control FAILS R1", has(sixth, "R1 oracle:"), JSON.stringify(sixth.failures));
+
+	// ── A RETIRED CLOUD (R6, and what R1/R2 owe a dispatch-only leg). ──
+	//
+	// `oracle` stands in for "a cloud the catalog has retired". Its world: retired in the catalog, a
+	// dispatch option, off the schedule, carrying a ceiling branch and naming itself in the override.
+	const ORACLE_CATALOG = { available: SCHEDULED, retired: ["oracle"] };
+	const ORACLE_CEILING = `${TODAY_CEILING} || matrix.provider == 'oracle' && (vars.E2E_ORACLE_COST_CEILING_USD || '300') || ''`;
+	const ORACLE_OVERRIDE = `matrix.provider == 'oracle' && 'oracle' || ''`;
+	/** @param {Parameters<typeof fixture>[0]} [o] */
+	const oracle = (o = {}) => run(fixture({ dispatch: [...SCHEDULED, "oracle"], ceiling: ORACLE_CEILING, prepaid: null, override: ORACLE_OVERRIDE, ...o }), E2E_TYPES, ORACLE_CATALOG);
+	const retiredOk = oracle();
+	assert("a retired cloud that is dispatch-only, controlled and named in the override passes", retiredOk.failures.length === 0, JSON.stringify(retiredOk.failures));
+	assert("...and the notes name it as dispatch-only", retiredOk.notes.some((n) => n === "dispatch-only (retired in the catalog): oracle"), JSON.stringify(retiredOk.notes));
+	const retiredOnTimer = oracle({ matrix: [...SCHEDULED, "oracle"] });
+	assert("a retired cloud left in the SCHEDULED matrix FAILS R6", retiredOnTimer.failures.some((f) => f.startsWith("R6 oracle:") && f.includes("marks it hidden")), JSON.stringify(retiredOnTimer.failures));
+	const alibabaOnTimer = run(fixture({ matrix: [...SCHEDULED, "alibaba"] }));
+	assert("...and so does today's retired cloud: the five-cloud schedule this replaced FAILS R6", alibabaOnTimer.failures.some((f) => f.startsWith("R6 alibaba:") && f.includes("marks it hidden")), JSON.stringify(alibabaOnTimer.failures));
+	const retiredNoControl = oracle({ ceiling: `${TODAY_CEILING} || ''` });
+	assert(
+		"a dispatch-only cloud with NO spend control FAILS R1, and only that",
+		retiredNoControl.failures.length === 1 && retiredNoControl.failures[0].startsWith("R1 oracle: a dispatch-only cloud"),
+		JSON.stringify(retiredNoControl.failures),
+	);
+	const retiredNoOverride = oracle({ override: null });
+	assert(
+		"a dispatch-only cloud that does not name itself in the override FAILS R6, and only that",
+		retiredNoOverride.failures.length === 1 && retiredNoOverride.failures[0].startsWith("R6 oracle: dispatch-only, but"),
+		JSON.stringify(retiredNoOverride.failures),
+	);
+	const wrongOverride = oracle({ override: `matrix.provider == 'oracle' && 'alibaba' || ''` });
+	assert("...and naming a DIFFERENT cloud in its branch is not naming itself", has(wrongOverride, "R6 oracle: dispatch-only, but"), JSON.stringify(wrongOverride.failures));
+	const overrideOnTimer = oracle({ override: `${ORACLE_OVERRIDE.replace(" || ''", "")} || matrix.provider == 'aws' && 'oracle' || ''` });
+	assert("an override branch on a SCHEDULED leg FAILS R6", overrideOnTimer.failures.some((f) => f.startsWith("R6 aws:") && f.includes("not a dispatch-only cloud")), JSON.stringify(overrideOnTimer.failures));
+	const overrideEverywhere = oracle({ override: "'oracle'" });
+	assert("an override with no provider test FAILS R6 (it applies to every leg)", overrideEverywhere.failures.some((f) => f.startsWith("R6: ") && f.includes("every leg")), JSON.stringify(overrideEverywhere.failures));
+	const retiredUnreachable = oracle({ dispatch: SCHEDULED });
+	assert("a control for a retired cloud that is not even a dispatch option FAILS R2 as stale", has(retiredUnreachable, "R2 oracle:"), JSON.stringify(retiredUnreachable.failures));
+	const droppedFromTimer = run(fixture({ matrix: SCHEDULED.filter((p) => p !== "gcp") }));
+	assert(
+		"an AVAILABLE cloud dropped from the schedule FAILS R6",
+		droppedFromTimer.failures.some((f) => f.startsWith("R6 gcp:") && f.includes("NOT in the scheduled matrix")) && droppedFromTimer.failures.some((f) => f.startsWith("R6 gcp:") && f.includes("does not mark it hidden")),
+		JSON.stringify(droppedFromTimer.failures),
+	);
+	const unlistedOption = run(fixture({ dispatch: [...SCHEDULED, ...RETIRED, "vultr"] }));
+	assert("a dispatch option the catalog does not list as retired FAILS R6 and R1", has(unlistedOption, "R6 vultr:") && has(unlistedOption, "R1 vultr:"), JSON.stringify(unlistedOption.failures));
+	const scheduledUnknown = run(fixture({ matrix: [...SCHEDULED, "vultr"], dispatch: [...SCHEDULED, ...RETIRED, "vultr"] }));
+	assert("a scheduled cloud the catalog does not list at all FAILS R6", scheduledUnknown.failures.some((f) => f.startsWith("R6 vultr:") && f.includes("does not list it")), JSON.stringify(scheduledUnknown.failures));
+	const notAnOption = run(fixture({ dispatch: [...SCHEDULED.filter((p) => p !== "azure"), ...RETIRED] }));
+	assert("a scheduled cloud that is not a dispatch option FAILS R6", notAnOption.failures.some((f) => f.startsWith("R6 azure:") && f.includes("not one of")), JSON.stringify(notAnOption.failures));
+	// Both ends of the switch: nothing retired, and the retired cloud restored.
+	const nothingRetired = run(fixture({ dispatch: SCHEDULED, prepaid: null, override: null }), E2E_TYPES, { available: SCHEDULED, retired: [] });
+	assert("a catalog with nothing retired, and no dispatch-only cloud, passes", nothingRetired.failures.length === 0, JSON.stringify(nothingRetired.failures));
+	const restored = run(fixture({ matrix: [...SCHEDULED, ...RETIRED], override: null }), E2E_TYPES, { available: [...SCHEDULED, ...RETIRED], retired: [] });
+	assert("restoring the cloud — available in the catalog, back on the schedule, override gone — passes", restored.failures.length === 0, JSON.stringify(restored.failures));
+	const halfRestored = run(fixture(), E2E_TYPES, { available: [...SCHEDULED, ...RETIRED], retired: [] });
+	assert("...and flipping the catalog WITHOUT restoring the schedule FAILS R6", has(halfRestored, "R6 alibaba:"), JSON.stringify(halfRestored.failures));
+
+	// The two readers R6 stands on.
+	assert("dispatchProviders reads the provider options, skipping comments and the next input's list", dispatchProviders(fixture()).join() === [...SCHEDULED, ...RETIRED].join(), dispatchProviders(fixture()).join());
+	for (const [what, wf] of [["no provider input", fixture({ dispatch: null })], ["a provider input with no options", fixture({ dispatch: [] })]]) {
+		let lost = false;
+		try {
+			run(wf);
+		} catch {
+			lost = true;
+		}
+		assert(`a workflow with ${what} throws rather than assuming no dispatch-only cloud`, lost);
+	}
+	const parsedCatalog = catalogClouds(
+		JSON.stringify({
+			providers: [{ slug: "north" }, { slug: "south" }, { slug: "west" }],
+			live: {
+				providers: {
+					north: { slug: "north", availability: "available" },
+					south: { slug: "south", availability: "hidden" },
+					west: { slug: "west", availability: "soon" },
+					"connect-only": { slug: "connect-only", availability: "hidden" },
+				},
+			},
+		}),
+	);
+	assert("catalogClouds: provisionable + available is scheduled", parsedCatalog.available.join() === "north", JSON.stringify(parsedCatalog));
+	assert("catalogClouds: provisionable + hidden is retired; a hidden cloud that is only connectable is not", parsedCatalog.retired.join() === "south", JSON.stringify(parsedCatalog));
+	let emptyCatalog = false;
+	try {
+		catalogClouds('{"providers":[],"live":{"providers":{}}}');
+	} catch {
+		emptyCatalog = true;
+	}
+	assert("catalogClouds: a catalog with no provisionable cloud throws", emptyCatalog);
 
 	// A scheduled full bar is allowed once everything is controlled — and the note does not let that read as permission.
 	const cron = run(fixture({ crons: ["17 3 * * *", "17 5 * * 0"] }));
@@ -657,7 +885,8 @@ function runSelfTest() {
 	// VACUITY — seed everything wrong at once; the guard must report a pile across every rule.
 	const allWrong = run(
 		fixture({
-			matrix: [...FIVE, "oracle"],
+			matrix: [...SCHEDULED, ...RETIRED, "oracle"],
+			dispatch: [...SCHEDULED, ...RETIRED, "oracle"],
 			ceiling: "matrix.provider == 'aws' && vars.X || matrix.provider == 'vultr' && '300' || ''",
 			cap: "matrix.provider == 'hetzner' && 'cpx22' || ''",
 			prepaid: "matrix.provider == 'alibaba' && vars.W != 'true' && '1' || ''",
@@ -665,7 +894,7 @@ function runSelfTest() {
 		[...E2E_TYPES],
 	);
 	assert("vacuity: a wholly broken input reports many failures", allWrong.failures.length >= 6, `only ${allWrong.failures.length}: ${JSON.stringify(allWrong.failures)}`);
-	assert("vacuity: and it spans all four rules", ["R1", "R2", "R3", "R4"].every((r) => has(allWrong, r)), JSON.stringify(allWrong.failures));
+	assert("vacuity: and it spans all five workflow rules", ["R1", "R2", "R3", "R4", "R6"].every((r) => has(allWrong, r)), JSON.stringify(allWrong.failures));
 
 	// R5 — aws capacity type and its cost (#5316).
 	const AWS_SHAPE = '{"instance_types":["t3.large"],"capacity_type":"spot","node_min_size":1,"node_max_size":2,"node_desired_size":1}';
@@ -712,7 +941,7 @@ function runSelfTest() {
 	// A resolver with no FULL_BAR_CRON must throw, never default.
 	let threw = false;
 	try {
-		analyse({ workflowText: fixture(), resolverText: "# nothing\n", hetznerTypes: E2E_TYPES });
+		analyse({ workflowText: fixture(), resolverText: "# nothing\n", hetznerTypes: E2E_TYPES, catalog: TODAY_CATALOG });
 	} catch {
 		threw = true;
 	}
@@ -742,6 +971,7 @@ if (!executedDirectly) {
 		workflowText,
 		resolverText: fs.readFileSync(RESOLVER, "utf8"),
 		hetznerTypes: readHetznerTypes(),
+		catalog: catalogClouds(fs.readFileSync(CATALOG, "utf8")),
 	});
 	const r5 = analyseAwsCapacity({ workflowText, cells: awsCells(workflowText, readAwsFixtures()) });
 	const failures = [...base.failures, ...r5.failures];

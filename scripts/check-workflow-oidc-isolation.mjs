@@ -9,8 +9,8 @@
 //
 // A fork/PR that could reach an OIDC `id-token` or cloud credentials is a confused-deputy: it would
 // let untrusted code assume a real cloud role. This guard scans every workflow and FAILS the build
-// when privilege is reachable from a PR event. The established safe pattern (infra-cp-*,
-// infra-email-ses, …) is a PR-triggered credential-FREE `plan`/`validate` job plus a privileged
+// when privilege is reachable from a PR event. The established safe pattern (infra-cp-hetzner,
+// infra-connector-assets, …) is a PR-triggered credential-FREE `plan`/`validate` job plus a privileged
 // `apply` job gated `if: github.event_name == 'push' …` (or `== 'workflow_dispatch'`); this guard
 // recognises those gates and passes them.
 //

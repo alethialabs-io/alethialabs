@@ -22,6 +22,14 @@ import type { ToolSet } from "ai";
  * NOT re-implemented here — each tool's `execute` still resolves the actor and
  * enforces its PDP verb; this map only decides *visibility*. The anti-drift test
  * (`assertAudienceCoverage`) guarantees no tool ships unclassified.
+ *
+ * This map is about the IN-APP tools and which of them the MCP route projects today. The tools an
+ * outside agent is to be offered — their own names, schemas, annotations and scopes, writes
+ * included — are declared in `lib/ai/mcp/surface.ts`. Nothing here reads that file. The link runs
+ * the other way: each of its read tools lists the names from this map that it stands for, and
+ * `tests/lib/ai/mcp/surface.test.ts` fails when those lists stop adding up to exactly the tools
+ * the route registers. Changing a `both` / `external` classification below therefore means placing
+ * the tool in that contract too.
  */
 
 export type ToolAudience = "in-app" | "external" | "both" | "support";

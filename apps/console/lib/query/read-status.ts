@@ -12,6 +12,12 @@ import { readRefusalOf } from "@/lib/rpc/refusal";
  * - `forbidden`: the read router REFUSED it with a typed refusal (FORBIDDEN, NOT_FOUND,
  *   ENTITLEMENT_REQUIRED), which answers the same every time, so it gets a calm note and no retry.
  *
+ * A read refused for want of a session (UNAUTHORIZED, `"sign-in"`) is none of the last two. It says
+ * nothing about what the viewer may see, so it is not `forbidden`; and it is not `error`, because
+ * the reads are stopped once the session has ended and a retry would be refused again. It stays
+ * `pending`: the session-ended dialog (`components/shell/session-ended.tsx`) is the answer, and the
+ * surface behind it keeps its waiting render rather than telling the viewer they have no access.
+ *
  * The shell's switchers and bell used to read `data ?? []`, which folded all four into one: a failed
  * or refused read rendered as "No projects yet." or "You're all caught up!".
  */
@@ -31,6 +37,8 @@ export interface StatusQuery {
  */
 export function readStatusOf(query: StatusQuery): ReadStatus {
 	if (query.data !== undefined) return "ready";
-	if (query.isError) return readRefusalOf(query.error) === null ? "error" : "forbidden";
-	return "pending";
+	if (!query.isError) return "pending";
+	const refusal = readRefusalOf(query.error);
+	if (refusal === null) return "error";
+	return refusal === "sign-in" ? "pending" : "forbidden";
 }

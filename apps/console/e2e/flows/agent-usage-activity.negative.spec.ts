@@ -73,15 +73,15 @@ test.describe("Activity — retention window gating (Hobby)", () => {
 		// WHY THE ASSERTION IS THE TRIGGER'S LABEL AND NOT A NEGATED `toHaveURL` (#4619 review).
 		//
 		// A web assertion — negated or not — retries until it holds and RETURNS ON THE FIRST
-		// PASSING POLL. The window starts with no `rangeLabel`/`from` in it, so
-		// `not.toHaveURL(/rangeLabel=/)` passed on its first evaluation whether or not the range
+		// PASSING POLL. The window starts with no `range` in it, so
+		// `not.toHaveURL(/range=/)` passed on its first evaluation whether or not the range
 		// was applied: had `applyRange` regressed to `patch({…}); setUpgradeOpen(true)`, the URL
 		// would only change AFTERWARDS, through `useFilterUrlSync`'s effect → `router.replace()`
 		// → a soft navigation, a few frames past the assertion that had already returned. The
 		// pair could not fail, which is the whole of what it was for.
 		//
 		// The trigger's label has no such window. It is rendered straight from the filter
-		// store's `rangeLabel`, and `patch` + `setUpgradeOpen(true)` would be batched into ONE
+		// store's `range`, and `patch` + `setUpgradeOpen(true)` would be batched into ONE
 		// React commit — so the sheet BEING VISIBLE, asserted above, already proves the label has
 		// been re-rendered from whatever the store now holds. There is no "not yet" state to be
 		// satisfied by.

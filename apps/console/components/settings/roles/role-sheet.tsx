@@ -9,6 +9,10 @@
 // #6129: the save goes through `useActionMutation` (pending, one toast policy, field errors under
 // their fields, every members read invalidated). The sheet TRACKS DIRTY STATE: an edit with no
 // change cannot be saved, and closing it with unsaved changes asks first instead of dropping them.
+//
+// #6751: `permissionKeys` has no registered input — the matrix and the templates write it through
+// `form.setValue`, which marks a field dirty only when asked to. Both writes pass `shouldDirty`, so
+// a change to the permissions alone counts as a change: Save enables and closing asks first.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ShieldPlus } from "lucide-react";
@@ -19,7 +23,7 @@ import {
 	type RoleRow,
 	updateRole,
 } from "@/app/server/actions/roles";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { DiscardPrompt, useUnsavedGuard } from "@/components/confirm/use-unsaved-guard";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import {
 	AccordionForm,
@@ -85,8 +89,6 @@ export function RoleSheet({
 	canManage,
 }: RoleSheetProps) {
 	const [openSection, setOpenSection] = useState("identity");
-	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing.
-	const [confirmDiscard, setConfirmDiscard] = useState(false);
 	const isEdit = role != null;
 
 	const form = useForm<RoleInput>({
@@ -133,11 +135,16 @@ export function RoleSheet({
 		save.mutate({ id: role?.id ?? null, values });
 	}
 
-	const dirty = form.formState.isDirty;
+	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing.
+	const unsaved = useUnsavedGuard(form);
+	const dirty = unsaved.dirty;
 	/** Closing asks first when there is something to lose; a pristine sheet just closes. */
 	function requestOpenChange(next: boolean) {
 		if (!next && dirty && !save.isPending) {
-			setConfirmDiscard(true);
+			unsaved.guard(() => {
+				form.reset();
+				onOpenChange(false);
+			});
 			return;
 		}
 		onOpenChange(next);
@@ -185,6 +192,7 @@ export function RoleSheet({
 										onClick={() =>
 											form.setValue("permissionKeys", [...t.permissionKeys], {
 												shouldValidate: true,
+												shouldDirty: true,
 											})
 										}
 										className="rounded-md border border-border px-2 py-1 text-ui-xs text-text-secondary transition-colors hover:border-border-strong"
@@ -211,7 +219,10 @@ export function RoleSheet({
 						onChange={
 							canManage
 								? (keys) =>
-										form.setValue("permissionKeys", keys, { shouldValidate: true })
+										form.setValue("permissionKeys", keys, {
+											shouldValidate: true,
+											shouldDirty: true,
+										})
 								: undefined
 						}
 						readOnly={!canManage}
@@ -314,9 +325,8 @@ export function RoleSheet({
 				</FormProvider>
 			</SheetContent>
 		</Sheet>
-		<ConfirmDialog
-			open={confirmDiscard}
-			onOpenChange={setConfirmDiscard}
+		<DiscardPrompt
+			{...unsaved.prompt}
 			title="Discard your changes?"
 			description={
 				isEdit
@@ -324,10 +334,6 @@ export function RoleSheet({
 					: "This role is not created yet. Closing the editor drops what you entered."
 			}
 			confirmLabel="Discard changes"
-			onConfirm={() => {
-				form.reset();
-				onOpenChange(false);
-			}}
 		/>
 		</>
 	);

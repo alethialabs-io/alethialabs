@@ -12,11 +12,11 @@ import {
 	type JobsFilters,
 } from "@/components/jobs/jobs-query";
 
-/** sessionStorage-persisted filter selections (search + authors/envs/projects/statuses/
- * types). `version: 2` adds `search` — the bump discards the older persisted shape rather
- * than shallow-merging it to a `search: undefined` that would uncontrol the search input. */
+/** Filter selections (search + authors/envs/projects/statuses/types) for the org jobs list and
+ * every project's jobs list. One store backs all of them, so it is not persisted (#6814): the
+ * pathname is its scope key, and the link is the only thing that carries a view from one visit
+ * to the next. */
 export const useJobsFilters = createFilterStore<JobsFilters>({
 	name: "jobs-filters",
 	defaults: DEFAULT_JOBS_FILTERS,
-	version: 2,
 });
