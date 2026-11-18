@@ -77,7 +77,9 @@ function item(projectId: string, extra: Partial<ClusterListItem> = {}, cluster: 
 	return {
 		id: projectId,
 		project_name: `project-${projectId}`,
+		project_slug: `project-${projectId}`,
 		region: "eu-central-1",
+		environment_id: `env-${projectId}`,
 		environment_stage: "production",
 		status: "ACTIVE",
 		status_since: "2026-11-01T00:00:00.000Z",

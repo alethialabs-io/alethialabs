@@ -273,6 +273,7 @@ function EnvironmentsBody({
 								env={env}
 								org={org}
 								project={project}
+								projectId={projectId}
 								reconcile={reconcileById.get(env.id)}
 								protection={protectionByEnv[env.id]}
 								classAssignments={classMap ? (classMap[env.id] ?? []) : undefined}

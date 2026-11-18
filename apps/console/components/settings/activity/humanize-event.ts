@@ -9,6 +9,7 @@
 // (role / grant / team / member / invitation).
 
 import type { ActivityRow } from "@/app/server/actions/activity";
+import { isSystemActor, SYSTEM_ACTOR_LABEL } from "@/lib/authz/system-actor";
 import { displayName } from "@/lib/user-display";
 import type { GroupedFilterGroup } from "@repo/ui/grouped-filter-sheet";
 
@@ -16,6 +17,7 @@ import type { GroupedFilterGroup } from "@repo/ui/grouped-filter-sheet";
 const NOUNS: Record<string, string> = {
 	org: "organization",
 	project: "project",
+	environment: "environment",
 	runner: "runner",
 	job: "job",
 	fleet: "fleet pool",
@@ -116,6 +118,13 @@ function pastPredicate(row: ActivityRow, ctx: ActivityContext): Predicate {
 				return { lead: "had their role changed", target: null };
 		}
 	}
+	// A missing cluster (#6736): Alethia's own finding, and a person's ruling on it.
+	if (row.action === "cluster_missing") {
+		return { lead: "found the cluster deleted outside Alethia in", target: resourcePhrase(row, ctx) };
+	}
+	if (row.action === "mark_destroyed") {
+		return { lead: "marked as destroyed", target: resourcePhrase(row, ctx) };
+	}
 	const verb = PAST_VERB[row.action];
 	if (verb) return { lead: verb, target: resourcePhrase(row, ctx) };
 	switch (row.action) {
@@ -159,17 +168,21 @@ export interface DescribedEvent {
 
 /** Describes one Activity row as a feed entry split into bold-able segments. */
 export function describeEvent(row: ActivityRow, ctx: ActivityContext): DescribedEvent {
-	const actor =
-		displayName({
-			name: row.actorName,
-			email: row.actorEmail,
-			username: row.actorUsername,
-		}) || `${row.actorId.slice(0, 8)}…`;
+	const actor = isSystemActor(row.actorId)
+		? SYSTEM_ACTOR_LABEL
+		: displayName({
+				name: row.actorName,
+				email: row.actorEmail,
+				username: row.actorUsername,
+			}) || `${row.actorId.slice(0, 8)}…`;
 	const denied = !row.decision;
 	const { lead, target } = denied
 		? { lead: "was denied", target: deniedTarget(row, ctx) }
 		: pastPredicate(row, ctx);
-	const detail = denied
+	// The evidence a missing-cluster row was recorded on is its detail line, for the finding and for
+	// the ruling alike (#6736).
+	const evidence = row.action === "cluster_missing" || row.action === "mark_destroyed";
+	const detail = denied || evidence
 		? (row.reason ?? null)
 		: row.actorEmail && row.actorEmail !== actor
 			? row.actorEmail
@@ -185,6 +198,7 @@ const CATEGORIES: { label: string; types: [string, string][] }[] = [
 		label: "Infrastructure",
 		types: [
 			["project", "Projects"],
+			["environment", "Environments"],
 			["runner", "Runners"],
 			["job", "Jobs"],
 			["fleet", "Fleet"],

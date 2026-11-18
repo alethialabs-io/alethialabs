@@ -20,6 +20,7 @@ import type {
 	ActivityQuery,
 	ActivityRow,
 } from "@/app/server/actions/activity";
+import { SYSTEM_ACTOR_ID, SYSTEM_ACTOR_LABEL } from "@/lib/authz/system-actor";
 import { getServiceDb } from "@/lib/db";
 import { likeTerm } from "@/lib/db/like";
 import { authzActivityLog, projects, user } from "@/lib/db/schema";
@@ -237,7 +238,8 @@ async function queryActivityFacets(
 		projectPass,
 	]);
 
-	const actorLabels = new Map<string, string>();
+	// The system actor has no user row; it is named as the feed names it (#6736).
+	const actorLabels = new Map<string, string>([[SYSTEM_ACTOR_ID, SYSTEM_ACTOR_LABEL]]);
 	for (const r of actorRows) {
 		const label = r.name?.trim() || r.email;
 		if (r.value && label) actorLabels.set(r.value, label);

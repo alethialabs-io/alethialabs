@@ -25,6 +25,7 @@ import {
 } from "@/lib/promotions/lifecycle";
 import { recordJobFailed } from "@/lib/jobs/job-failed";
 import { recordProbeResult } from "@/lib/probes/persistence";
+import { notifyIfClusterNewlyMissing, observationBeforeReading } from "@/lib/clusters/missing";
 import { maybeAutoHeal } from "@/lib/reconcile/auto-heal";
 import {
 	recordAddonHealth,
@@ -404,6 +405,9 @@ export async function PUT(
 						kind: d.kind,
 					}));
 					const scannedAt = posture.scanned_at ?? new Date().toISOString();
+					// The observation BEFORE this scan lands, so a scan that newly finds the cluster
+					// deleted is told apart from one that finds it still gone (lib/clusters/missing.ts).
+					const missingBefore = await observationBeforeReading(job.org_id, job.environment_id);
 					try {
 						await recordDriftPosture({
 							projectId: job.project_id,
@@ -413,6 +417,17 @@ export async function PUT(
 							details,
 							scannedAt,
 						});
+						// Says so, once per finding, when this scan turned the cluster missing — and changes
+						// nothing: what to do about it is the user's (#6736).
+						if (job.org_id && job.environment_id) {
+							await notifyIfClusterNewlyMissing({
+								orgId: job.org_id,
+								environmentId: job.environment_id,
+								before: missingBefore,
+								jobId,
+								jobType: job.job_type,
+							}).catch((err) => jlog.error("missing-cluster notify (drift) error", { err }));
+						}
 					} catch (err) {
 						jlog.error("persist drift posture error", { err });
 					}
@@ -491,6 +506,7 @@ export async function PUT(
 			) {
 				const probe = job.execution_metadata?.probe_result;
 				if (probe) {
+					const missingBefore = await observationBeforeReading(job.org_id, job.environment_id);
 					try {
 						// probed_at is the server clock at ingest — the honest "when the console learned
 						// it" axis (the runner's ProbeResult carries no timestamp).
@@ -523,6 +539,16 @@ export async function PUT(
 								job_type: job.job_type,
 								project_id: job.project_id,
 							});
+						}
+						// A probe the cloud answered "not found" can turn the cluster missing (#6736).
+						if (job.org_id) {
+							await notifyIfClusterNewlyMissing({
+								orgId: job.org_id,
+								environmentId: job.environment_id,
+								before: missingBefore,
+								jobId,
+								jobType: job.job_type,
+							}).catch((err) => jlog.error("missing-cluster notify (probe) error", { err }));
 						}
 					} catch (err) {
 						jlog.error("persist probe result error", { err });
