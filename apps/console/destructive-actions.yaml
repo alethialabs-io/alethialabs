@@ -85,7 +85,7 @@
 # that a script could count all along. Nothing compared them, which is exactly why it went unnoticed
 # — it is prose, and prose is not measured. Now it is.
 #
-#   census: 50 controls — 50 confirmed
+#   census: 51 controls — 51 confirmed
 
 version: 1
 
@@ -188,6 +188,22 @@ controls:
     confirm_action: "Destroy environment"
     dialog_title: "Destroy this environment?"
     fixture: project
+    persona: owner
+    status: confirmed
+    prod-qa: open-cancel
+
+  # A cluster found deleted outside Alethia (#6736): records the environment and its cluster as
+  # DESTROYED with no cloud call and no job. The SAME component renders on the environment card
+  # (/[org]/[project]/environments); the cluster card is the route recorded here.
+  - id: env.mark-destroyed
+    route: /[org]/~/clusters
+    surface: apps/console/components/clusters/missing-cluster-actions.tsx
+    mutation: markEnvironmentDestroyedAction
+    control: { role: button, name: "Mark as destroyed" }
+    confirm: confirm-dialog
+    confirm_action: "Mark as destroyed"
+    dialog_title: "Mark <name> as destroyed?"
+    fixture: missing-cluster
     persona: owner
     status: confirmed
     prod-qa: open-cancel

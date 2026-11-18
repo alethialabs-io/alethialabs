@@ -8,6 +8,7 @@ import {
 	CLUSTER_CARD_FRAME,
 	CLUSTER_COMPONENT_ROW,
 	CLUSTER_OBSERVED_BLOCK,
+	CLUSTER_RESOLVE_BLOCK,
 	CLUSTERS_GRID,
 	type ClusterCardShape,
 } from "@/components/clusters/cluster-card-shape";
@@ -35,6 +36,7 @@ const UNKNOWN_CARD: ClusterCardShape = {
 	observed: 1,
 	argocd: false,
 	dns: false,
+	resolve: false,
 };
 
 /** Placeholders drawn when the cluster list did not answer: two, side by side on a wide screen. */
@@ -105,6 +107,11 @@ function ClusterCardSkeleton({ shape }: { shape: ClusterCardShape }) {
 					<Skeleton key={i} className="h-3 w-2/3" />
 				))}
 			</div>
+			{shape.resolve && (
+				<div data-slot="cluster-card-skeleton-resolve" className={CLUSTER_RESOLVE_BLOCK}>
+					<Skeleton className="h-7 w-72" />
+				</div>
+			)}
 			{shape.access && (
 				<div data-slot="cluster-card-skeleton-access" className={CLUSTER_CARD_BLOCK}>
 					<Skeleton className="h-4 w-28" />

@@ -11,6 +11,7 @@ import {
 	type ActivityContext,
 	describeEvent,
 } from "@/components/settings/activity/humanize-event";
+import { SYSTEM_ACTOR_ID } from "@/lib/authz/system-actor";
 
 /** A context that resolves a single known project, nothing else. */
 const ctx: ActivityContext = {
@@ -147,5 +148,46 @@ describe("describeEvent — actor fallback", () => {
 		);
 		// Label is the local-part "borislav"; the full email is still useful below it.
 		expect(e.detail).toBe("borislav@tovr.eu");
+	});
+});
+
+describe("describeEvent — a missing cluster (#6736)", () => {
+	const evidence = "Drift scan at 2026-11-09T00:00:00.000Z found deleted: aws_eks_cluster.main";
+
+	it("names Alethia as the actor of its own finding, and shows the evidence", () => {
+		const e = describeEvent(
+			row({
+				actorId: SYSTEM_ACTOR_ID,
+				actorName: null,
+				actorEmail: null,
+				action: "cluster_missing",
+				resourceType: "environment",
+				resourceId: "env-1",
+				resourceName: "shop / production",
+				reason: evidence,
+			}),
+			ctx,
+		);
+		expect(e).toEqual({
+			actor: "Alethia",
+			lead: "found the cluster deleted outside Alethia in",
+			target: "environment shop / production",
+			denied: false,
+			detail: evidence,
+		});
+	});
+
+	it("names the person who marked it destroyed, with the evidence they decided on", () => {
+		const reason = `Recorded as destroyed without a cloud call. Evidence: ${evidence}`;
+		const e = describeEvent(
+			row({ action: "mark_destroyed", resourceType: "environment", resourceId: "env-1", resourceName: "shop / production", reason }),
+			ctx,
+		);
+		expect([e.actor, e.lead, e.target, e.detail]).toEqual([
+			"Boris Petrov",
+			"marked as destroyed",
+			"environment shop / production",
+			reason,
+		]);
 	});
 });

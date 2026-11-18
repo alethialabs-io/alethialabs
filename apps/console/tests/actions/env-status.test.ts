@@ -108,12 +108,20 @@ describe("ENV_TRANSITIONS table", () => {
 		"destroyStart",
 		"destroySuccess",
 		"destroyFailed",
+		"markDestroyed",
 	];
 
 	it("covers every context used by a real flow", () => {
 		for (const ctx of REQUIRED_CONTEXTS) {
 			expect(ENV_TRANSITIONS[ctx]).toBeDefined();
 			expect(ENV_TRANSITIONS[ctx].from.length).toBeGreaterThan(0);
+		}
+	});
+
+	it("a person's Mark as destroyed (#6736) moves only a SETTLED env — never one with a job in flight", () => {
+		expect(ENV_TRANSITIONS.markDestroyed.to).toBe("DESTROYED");
+		for (const inFlight of ["QUEUED", "PROVISIONING", "DESTROYING"] as const) {
+			expect(ENV_TRANSITIONS.markDestroyed.from).not.toContain(inFlight);
 		}
 	});
 

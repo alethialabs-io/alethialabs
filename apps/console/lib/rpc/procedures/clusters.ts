@@ -43,7 +43,11 @@ export interface ClusterData {
 	/** The PROJECT's id (the project drilldown filters on it). The cluster's own id is `project_cluster.id`. */
 	id: string;
 	project_name: string;
+	/** The project's URL slug, for links into it; null on a project written before slugs. */
+	project_slug: string | null;
 	region: string;
+	/** The id of the environment that owns this cluster — what a missing cluster's actions act on. */
+	environment_id: string | null;
 	/** The name of the environment that owns this cluster. */
 	environment_stage: string;
 	/** That environment's provisioning lifecycle (`project_environments.status`). */
@@ -136,6 +140,7 @@ export async function readClusters(actor: Actor): Promise<ClusterData[]> {
 			.select({
 				id: projects.id,
 				project_name: projects.project_name,
+				project_slug: projects.slug,
 				region: sql<string>`coalesce(${projectCluster.region}, ${projects.region})`,
 				environment_stage: projectEnvironments.name,
 				environment_status: projectEnvironments.status,
@@ -259,7 +264,9 @@ export async function readClusters(actor: Actor): Promise<ClusterData[]> {
 			return {
 				id: r.id,
 				project_name: r.project_name,
+				project_slug: r.project_slug,
 				region: r.region,
+				environment_id: envId,
 				environment_stage: r.environment_stage,
 				status: r.environment_status,
 				status_since: r.environment_status_since.toISOString(),

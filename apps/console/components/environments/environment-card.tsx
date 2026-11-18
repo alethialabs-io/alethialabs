@@ -4,7 +4,8 @@
 
 // One environment card — identity + drift/deploy badges, classification chips, the "gates into this
 // env" protection summary, and a right rail (auto-heal + BYO admission + duplicate + delete). Presentational; the
-// mutations are handled by the orchestrator.
+// mutations are handled by the orchestrator — except a missing cluster's actions (#6736), which are
+// the shared `MissingClusterActions` the cluster card renders too, so both offer the same three.
 
 import { formatMonthlyRate } from "@repo/format";
 import { Badge } from "@repo/ui/badge";
@@ -15,6 +16,8 @@ import Link from "next/link";
 import type { ProtectionSummary } from "@/app/server/actions/protection";
 import type { EnvReconcileState } from "@/app/server/actions/reconcile";
 import { ClassificationControl } from "@/components/classification/classification-control";
+import { runInFlight } from "@/components/clusters/cluster-card-shape";
+import { MissingClusterActions } from "@/components/clusters/missing-cluster-actions";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { envHref } from "@/lib/routing";
 import type { EnvRow } from "@/lib/rpc/procedures/environments";
@@ -89,6 +92,7 @@ export function EnvironmentCard({
 	env,
 	org,
 	project,
+	projectId,
 	reconcile,
 	protection,
 	classAssignments,
@@ -102,6 +106,8 @@ export function EnvironmentCard({
 	env: EnvRow;
 	org: string;
 	project: string;
+	/** The project's id — what a missing cluster's "Mark as destroyed" names. */
+	projectId: string;
 	reconcile: EnvReconcileState | undefined;
 	protection: ProtectionSummary | undefined;
 	classAssignments: AssignedValue[] | undefined;
@@ -189,6 +195,19 @@ export function EnvironmentCard({
 						Updated <RelativeStamp at={env.updated_at} />
 					</span>
 				</div>
+
+				{/* Nothing changes a missing cluster's status by itself: these are the ways out (#6736).
+				    Not while a run is in flight — it will write its own outcome. */}
+				{clusterMissing && canEdit && !runInFlight(env.status) && (
+					<MissingClusterActions
+						className="mt-2.5"
+						orgSlug={org}
+						projectSlug={project}
+						projectId={projectId}
+						environmentId={env.id}
+						environmentName={env.name}
+					/>
+				)}
 
 				{/* classification chips + picker */}
 				<ClassificationControl

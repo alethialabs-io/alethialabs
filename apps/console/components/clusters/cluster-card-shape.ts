@@ -50,11 +50,27 @@ export interface ClusterCardShape {
 	argocd: boolean;
 	/** Whether the DNS row renders (it is counted in `components`). */
 	dns: boolean;
+	/** Whether the missing-cluster actions render (redeploy, tear down, mark as destroyed — #6736). */
+	resolve: boolean;
 }
+
+/** The missing-cluster actions block's box — the card's and the placeholder's. */
+export const CLUSTER_RESOLVE_BLOCK = "flex flex-col border-t pt-3";
 
 /** Whether the card says since when the environment's run has been in flight. */
 export function runInFlight(envStatus: string): boolean {
 	return statusTier(envStatus) === "pending";
+}
+
+/**
+ * Whether the card offers the missing-cluster actions: the control plane is observed missing, its
+ * environment is known, and no run is in flight on it — a run in flight will write its own outcome,
+ * and the mark would be refused while it runs.
+ */
+export function offersMissingActions(data: ClusterListItem): boolean {
+	return (
+		data.project_cluster.observation.kind === "missing" && data.environment_id !== null && !runInFlight(data.status)
+	);
 }
 
 /** The blocks `ClusterCard` draws for one cluster (see `ClusterCardShape`). */
@@ -77,5 +93,6 @@ export function clusterCardShape(data: ClusterListItem): ClusterCardShape {
 		observed: 1 + (runInFlight(data.status) ? 1 : 0),
 		argocd: Boolean(cluster.argocd_url),
 		dns,
+		resolve: offersMissingActions(data),
 	};
 }
