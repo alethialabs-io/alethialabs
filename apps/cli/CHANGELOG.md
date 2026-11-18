@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.10.0...cli-v0.11.0) (2026-11-18)
+
+
+### Features
+
+* **cli:** a command registry, grouped help and capability switches ([#6845](https://github.com/alethialabs-io/alethialabs/issues/6845)) ([#6979](https://github.com/alethialabs-io/alethialabs/issues/6979)) ([69d67a9](https://github.com/alethialabs-io/alethialabs/commit/69d67a937f4276323da033b14c339709dfe5683a))
+* **cli:** one output writer, resolved modes and a typed job wait ([#6844](https://github.com/alethialabs-io/alethialabs/issues/6844)) ([#6961](https://github.com/alethialabs-io/alethialabs/issues/6961)) ([3d7b90c](https://github.com/alethialabs-io/alethialabs/commit/3d7b90cbbbf4c3b365f33a7cad6751184560f7ea))
+* **cli:** typed errors, one exit table and a stderr-only fatal path ([#6789](https://github.com/alethialabs-io/alethialabs/issues/6789)) ([ea30860](https://github.com/alethialabs-io/alethialabs/commit/ea30860cd8ba05c616de5485b9e74daab45b049a)), closes [#6770](https://github.com/alethialabs-io/alethialabs/issues/6770)
+
+
+### Bug Fixes
+
+* **console:** show the cluster and environment status the console has actually observed ([#6736](https://github.com/alethialabs-io/alethialabs/issues/6736)) ([#6739](https://github.com/alethialabs-io/alethialabs/issues/6739)) ([2662af9](https://github.com/alethialabs-io/alethialabs/commit/2662af9c94f7512053fe5ff8506153044242a2c8))
+
 ## [0.10.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.9.0...cli-v0.10.0) (2026-11-12)
 
 
