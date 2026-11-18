@@ -40,9 +40,11 @@ export function StepDetails({ files, onFilesChange, onFileReject }: StepDetailsP
 				<Input
 					id="support-subject"
 					placeholder="Short summary of the issue"
+					aria-invalid={errors.subject ? true : undefined}
+					aria-describedby="support-subject-message"
 					{...register("subject")}
 				/>
-				<FieldMessage message={errors.subject?.message} />
+				<FieldMessage id="support-subject-message" message={errors.subject?.message} />
 			</div>
 
 			<div className="space-y-2">
@@ -51,9 +53,14 @@ export function StepDetails({ files, onFilesChange, onFileReject }: StepDetailsP
 					id="support-description"
 					rows={7}
 					placeholder="What happened, what you expected, and any steps to reproduce…"
+					aria-invalid={errors.description ? true : undefined}
+					aria-describedby="support-description-message"
 					{...register("description")}
 				/>
-				<FieldMessage message={errors.description?.message} />
+				<FieldMessage
+					id="support-description-message"
+					message={errors.description?.message}
+				/>
 			</div>
 
 			<div className="space-y-2">

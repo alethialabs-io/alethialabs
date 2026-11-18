@@ -112,6 +112,39 @@ var shellFields = []shellField{
 	},
 }
 
+// The mode flags. Both are persistent flags of the root, registered from shellModeFields below.
+const (
+	shellFlagAgent = "agent"
+	shellFlagDebug = "debug"
+)
+
+// shellModeFields are the two global flags that say WHO is reading the output rather than what the
+// command should do: --agent and --debug.
+//
+// They are declared in the same shape as shellFields and registered by the same function, and they
+// are a separate table for one reason: an entry in shellFields must name the docs pages that carry
+// its row, and the two global-flag tables do not carry these rows yet. When the tables gain them,
+// these entries move into shellFields with their Pages and this table goes.
+var shellModeFields = []shellField{
+	{
+		Command: "alethia",
+		Key:     shellFlagAgent,
+		Flag:    shellFlagAgent,
+		Default: "auto",
+		// The backquoted word is cobra's own convention for naming a flag's argument in --help.
+		Usage: "Agent `mode`: yes, no, or auto (or set $" + AgentEnv + "). An agent gets json by default and is never prompted",
+		Docs:  "Whether the caller is a program driving the CLI for a person: `yes`, `no`, or `auto`, which detects an agent harness from its environment. Agent mode never prompts, prints no colour or spinner, writes progress as plain lines on stderr, and makes `json` the default `--output`.",
+	},
+	{
+		Command: "alethia",
+		Key:     shellFlagDebug,
+		Flag:    shellFlagDebug,
+		Default: "off",
+		Usage:   "Print request diagnostics on stderr (or set $" + DebugEnv + "=api)",
+		Docs:    "Print request diagnostics on stderr. A credential is never printed.",
+	},
+}
+
 // shellLeafTakesNoInput records, for each shell leaf, whether it takes a value from a person — and
 // when it does not, why that is a decision rather than an omission.
 //
@@ -202,4 +235,9 @@ func registerShellGlobalFlags(cmd *cobra.Command) {
 	// for why a second registration on `members`/`teams` would be worse than none (#3817).
 	org := mustShellField("alethia", shellKeyOrg)
 	cmd.PersistentFlags().StringVar(&orgFlag, org.Flag, "", org.Usage)
+
+	// WHO IS READING. Resolved once per invocation by resolveMode (printer.go).
+	agent, debug := shellModeFields[0], shellModeFields[1]
+	cmd.PersistentFlags().String(agent.Flag, agent.Default, agent.Usage)
+	cmd.PersistentFlags().Bool(debug.Flag, false, debug.Usage)
 }

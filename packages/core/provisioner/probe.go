@@ -49,6 +49,52 @@ type ProbeDetail struct {
 	// Error is the failure reason when unreachable (dial error / TLS / timeout) — a
 	// message, never a secret.
 	Error string `json:"error,omitempty"`
+	// Gone is true when the failure POSITIVELY shows the cluster no longer exists (#6736) — the
+	// cloud answered "not found", or the cluster's own cloud-managed API hostname no longer
+	// resolves — as opposed to "did not answer". See clusterGone for the exact markers.
+	Gone bool `json:"gone,omitempty"`
+}
+
+// goneMarkers are the cloud API answers that say the cluster (or what holds it) does not exist.
+// Exact provider error codes, not a loose "not found": a missing kubeconfig output, a 404 on some
+// other path or a transient error must stay "unreachable".
+var goneMarkers = []string{
+	"ResourceGroupNotFound",     // azure: the resource group holding the AKS cluster is gone
+	"ResourceNotFound",          // azure ResourceNotFound, aws ResourceNotFoundException
+	"No cluster found for name", // aws eks update-kubeconfig / describe-cluster
+}
+
+// managedAPIHostSuffixes are API-server hostnames the cloud creates and deletes WITH the cluster.
+// NXDOMAIN on one of them means the cluster's DNS record is gone, i.e. the cluster is. An IP
+// endpoint (GKE) or a customer-managed name never qualifies — the probe cannot tell those apart
+// from a resolver problem.
+var managedAPIHostSuffixes = []string{".azmk8s.io", ".eks.amazonaws.com"}
+
+// clusterGone reports whether a probe failure positively shows the cluster is gone: a cloud
+// not-found answer, or "no such host" for a cloud-managed API hostname. Everything else is merely
+// unreachable.
+func clusterGone(reason, endpoint string) bool {
+	for _, m := range goneMarkers {
+		if strings.Contains(reason, m) {
+			return true
+		}
+	}
+	if !strings.Contains(reason, "no such host") {
+		return false
+	}
+	host := strings.ToLower(endpoint)
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	if i := strings.IndexAny(host, ":/"); i >= 0 {
+		host = host[:i]
+	}
+	for _, suffix := range managedAPIHostSuffixes {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // ProbeResult is the honest outcome of a cluster-alive probe. An UNREACHABLE cluster is a
@@ -259,6 +305,13 @@ func probeFromOutputs(ctx context.Context, params ProbeParams, provider cloud.Cl
 		// never echo the outputs.
 		reason := sanitizeProbeError(err.Error())
 		fmt.Fprintf(stderr, "Probe: cluster unreachable (kubeconfig unavailable): %s\n", reason)
+		if clusterGone(reason, endpoint) {
+			return &ProbeResult{
+				Reachable: false,
+				Message:   "cluster not found: the cloud reports it deleted",
+				Detail:    ProbeDetail{Endpoint: endpoint, Method: probeMethod, Error: reason, Gone: true},
+			}
+		}
 		return &ProbeResult{
 			Reachable: false,
 			Message:   "cluster unreachable: kubeconfig unavailable",
@@ -297,9 +350,14 @@ func probeAPIServer(ctx context.Context, timeout time.Duration, endpoint string,
 		}
 		fmt.Fprintf(stderr, "Probe: cluster unreachable: %s\n", reason)
 		detail.Error = reason
+		message := "cluster unreachable"
+		if clusterGone(reason, endpoint) {
+			detail.Gone = true
+			message = "cluster not found: its API server's hostname no longer exists"
+		}
 		return &ProbeResult{
 			Reachable: false,
-			Message:   "cluster unreachable",
+			Message:   message,
 			Detail:    detail,
 		}
 	}

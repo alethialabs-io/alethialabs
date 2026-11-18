@@ -11,6 +11,7 @@ import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
 import { Skeleton } from "@repo/ui/skeleton";
 import { RegionError } from "@/components/errors/region-error";
+import { RegionRefusal } from "@/components/errors/region-refusal";
 import { isForbidden } from "@/components/overview/overview-reads";
 import { ClockSlot } from "@/components/overview/clock-slot";
 import { ReleaseNotesPopover } from "@/components/runners/release-notes-popover";
@@ -77,7 +78,7 @@ export function VersionsPanel() {
 				<span className="text-sm font-semibold tracking-tight text-foreground">Versions</span>
 				{isForbidden(error) ? (
 					// An expected refusal, not a failure: no retry that would answer the same (RUBRIC B4).
-					<p className="text-xs text-muted-foreground">You don&rsquo;t have access to runner versions.</p>
+					<RegionRefusal compact refusal="forbidden" subject="runner versions" />
 				) : (
 					<RegionError
 						title="Couldn't load runner versions"

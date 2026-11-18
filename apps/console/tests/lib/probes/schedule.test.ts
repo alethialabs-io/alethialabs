@@ -3,8 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 import {
+	countLeadingMisses,
+	PROBE_BACKOFF_CAP_MS,
 	type ProbeCandidate,
 	PROBE_CADENCE_MS,
+	probeCadenceMs,
 	selectDueForProbe,
 	shouldAlertUnreachable,
 	tierForStage,
@@ -96,3 +99,43 @@ describe("shouldAlertUnreachable — fires ONLY on true→false", () => {
 		expect(shouldAlertUnreachable(null, true)).toBe(false);
 	});
 });
+
+// #6736: non-ACTIVE environments are probed too, never tighter than ACTIVE's cadence, and backed off.
+describe("probeCadenceMs / countLeadingMisses", () => {
+	it("an ACTIVE env keeps its tier cadence however often it misses", () => {
+		expect(probeCadenceMs("prod", true, 9)).toBe(PROBE_CADENCE_MS.prod);
+	});
+
+	it("a non-ACTIVE env starts at the same tier cadence and doubles per consecutive miss", () => {
+		expect(probeCadenceMs("dev", false, 0)).toBe(PROBE_CADENCE_MS.dev);
+		expect(probeCadenceMs("dev", false, 1)).toBe(2 * PROBE_CADENCE_MS.dev);
+		expect(probeCadenceMs("dev", false, 2)).toBe(4 * PROBE_CADENCE_MS.dev);
+	});
+
+	it("is capped at a week, and never overflows", () => {
+		expect(probeCadenceMs("dev", false, 5)).toBe(PROBE_BACKOFF_CAP_MS);
+		expect(probeCadenceMs("prod", false, 10_000)).toBe(PROBE_BACKOFF_CAP_MS);
+	});
+
+	it("counts misses only up to the newest hit", () => {
+		expect(countLeadingMisses([{ hit: false }, { hit: false }, { hit: true }, { hit: false }])).toBe(2);
+		expect(countLeadingMisses([{ hit: true }, { hit: false }])).toBe(0);
+		expect(countLeadingMisses([])).toBe(0);
+	});
+
+	it("selectDueForProbe applies the backoff to a non-ACTIVE candidate only", () => {
+		const now = new Date("2026-11-16T12:00:00Z");
+		const lastCheckedAt = new Date(now.getTime() - 8 * 3_600_000);
+		const base = { projectId: "p", tier: "dev" as const, lastCheckedAt };
+		const due = selectDueForProbe(
+			[
+				{ ...base, environmentId: "active", active: true, misses: 2 },
+				{ ...base, environmentId: "failed", active: false, misses: 2 },
+				{ ...base, environmentId: "failed-fresh-miss", active: false, misses: 0 },
+			],
+			now,
+		);
+		expect(due.map((c) => c.environmentId)).toEqual(["active", "failed-fresh-miss"]);
+	});
+});
+

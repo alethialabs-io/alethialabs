@@ -17,7 +17,7 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from "./collapsible";
-import { CountFigure } from "./count-pill";
+import { CountFigure, rowAccessibleName } from "./count-pill";
 import {
 	Sheet,
 	SheetContent,
@@ -49,10 +49,11 @@ interface GroupedFilterSheetProps {
 	description?: string;
 }
 
-/** A small grayscale checkbox box. */
+/** A small grayscale checkbox box. Drawing only: the button around it carries the state. */
 function CheckBox({ on }: { on: boolean }) {
 	return (
 		<span
+			aria-hidden
 			className={cn(
 				"flex size-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors",
 				on ? "border-text-primary bg-text-primary text-surface" : "border-border",
@@ -122,6 +123,10 @@ function Group({
 							<button
 								key={o.value}
 								type="button"
+								// A toggle button's on/off state is `aria-pressed` (#6734); the check box
+								// is drawing only. The name carries the count the row trails.
+								aria-pressed={on}
+								aria-label={o.count !== undefined ? rowAccessibleName(o.label, o.count) : undefined}
 								onClick={() => onToggle(o.value)}
 								className="flex items-center gap-2 rounded-sm px-1.5 py-1.5 text-left transition-colors hover:bg-surface-muted"
 							>

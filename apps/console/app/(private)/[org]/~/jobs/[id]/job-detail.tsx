@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { applyPlan, cancelJob, rerunJob } from "@/app/server/actions/jobs";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { RegionError } from "@/components/errors/region-error";
 import { ClockSlot, JOB_TYPES, LiveDuration, RelativeTime } from "@/components/jobs/columns";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
@@ -16,6 +16,7 @@ import { Fact, FactList } from "@/components/settings/usage/usage-primitives";
 import { useHydrated } from "@repo/ui/use-hydrated";
 import { useJobLogStream } from "@/hooks/use-job-log-stream";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { type RerunRoute, rerunRouteOf } from "@/lib/jobs/operation";
 import { qk } from "@/lib/query/keys";
 import { orpc } from "@/lib/rpc/client";
 import type { JobDetail as JobDetailRow } from "@/lib/rpc/procedures/jobs";
@@ -151,6 +152,23 @@ function jobKeys(org: string, job: Pick<JobDetailRow, "project_id" | "environmen
 }
 
 /**
+ * What the re-run confirmation says a re-run will do. A plan or a deploy names the environment it
+ * runs against and says it uses the project's current configuration — not the configuration this
+ * job ran with, which is the difference a reader of an old job cannot see from the job itself.
+ */
+function rerunDescription(
+	route: Exclude<RerunRoute, { kind: "refuse" }>,
+	job: Pick<JobDetailRow, "project_name" | "environment_name">,
+): string {
+	if (route.kind === "copy") return "A new job is queued with the same input as this one.";
+	const environment = job.environment_name
+		? `the environment ${job.environment_name}`
+		: "the project's default environment";
+	const project = job.project_name ? ` of ${job.project_name}` : "";
+	return `A new ${route.operation} is queued for ${environment}${project}. It runs with the project's current configuration, not the configuration this job ran with.`;
+}
+
+/**
  * Full-page job detail view with realtime log streaming (SSE).
  *
  * THE FRAME IS HYBRID, and `detail-column.ts` carries the reason: the log runs the full width of
@@ -186,12 +204,18 @@ export function JobDetail({
 	// in-flight tofu run — so the click opens a confirmation rather than reaching the action.
 	// Registry: `jobs.cancel` in apps/console/destructive-actions.yaml.
 	const [confirmCancel, setConfirmCancel] = useState(false);
+	// A re-run starts a new operation, so its click opens a confirmation too.
+	// Registry: `jobs.rerun` in apps/console/destructive-actions.yaml.
+	const [confirmRerun, setConfirmRerun] = useState(false);
 
 	const invalidates = () => jobKeys(org, job);
 	const rerun = useActionMutation(rerunJob, {
 		invalidates,
 		successMessage: "Job re-queued",
-		onSuccess: (created) => router.push(`/${org}/~/jobs/${created.id}`),
+		onSuccess: (created) => {
+			setConfirmRerun(false);
+			router.push(`/${org}/~/jobs/${created.id}`);
+		},
 	});
 	const cancel = useActionMutation(cancelJob, {
 		invalidates,
@@ -229,6 +253,13 @@ export function JobDetail({
 	// sentence tracks the job rather than freezing at click time.
 	const cancelStarted = jobState !== "QUEUED";
 	const isPlanSuccess = job?.job_type === "PLAN" && jobState === "SUCCESS";
+	// How this job may be run again — the same rule `rerunJob` applies on the server
+	// (lib/jobs/operation.ts). A kind it refuses (a destroy, a scan, a runner's lifecycle job) gets
+	// no Re-run button: the control is absent rather than present and refused.
+	const rerunRoute = job
+		? rerunRouteOf({ job_type: job.job_type, project_id: job.project_id, environment_id: job.environment_id })
+		: null;
+	const rerunnable = rerunRoute !== null && rerunRoute.kind !== "refuse" ? rerunRoute : null;
 	const info = job ? JOB_TYPES[job.job_type] : null;
 	const Icon = info?.icon;
 
@@ -337,7 +368,18 @@ export function JobDetail({
 									<StatusBadge status={jobState ?? job.status} />
 									{/* A finished job's duration is fixed; a running one reads the clock, so it
 									    waits for hydration in a reserved slot (React #418, columns.tsx). */}
-									{job.created_at && job.completed_at ? (
+									{/* A job that finished without ever starting (cancelled or failed in the
+									    queue) has no run time: `completed_at - created_at` is all wait. Showing
+									    that bare made a Plan cancelled after 120 days in the queue read as a
+									    120-day run (#6732). `started_at` is stamped on the first PROCESSING. */}
+									{job.created_at && job.completed_at && !job.started_at ? (
+										<span>
+											Never started · waited{" "}
+											{formatDuration(
+												new Date(job.completed_at).getTime() - new Date(job.created_at).getTime(),
+											)}
+										</span>
+									) : job.created_at && job.completed_at ? (
 										<span>
 											{formatDuration(
 												new Date(job.completed_at).getTime() - new Date(job.created_at).getTime(),
@@ -389,12 +431,12 @@ export function JobDetail({
 											disabled={actionLoading}
 										/>
 									)}
-									{isTerminal && (
+									{isTerminal && rerunnable && (
 										<Button
 											variant="outline"
 											size="sm"
 											className="h-8"
-											onClick={() => rerun.mutate({ jobId })}
+											onClick={() => setConfirmRerun(true)}
 											disabled={actionLoading}
 										>
 											{actionLoading ? (
@@ -553,7 +595,7 @@ export function JobDetail({
 			    server, so the worst case is an honest error toast rather than a vanished dialog.
 			    `confirmLabel` is NOT "Cancel": the dialog's own way out is already called that, and
 			    two buttons reading "Cancel" is the one confirmation that means nothing. */}
-			<ConfirmDialog
+			<ConfirmAction
 				open={confirmCancel}
 				onOpenChange={setConfirmCancel}
 				title="Cancel this job?"
@@ -563,10 +605,27 @@ export function JobDetail({
 						: "This job has not started — no runner has claimed it and nothing has been applied. It is marked cancelled and never runs. A cancelled job cannot be resumed — re-running it starts a new one."
 				}
 				confirmLabel="Cancel job"
-				onConfirm={() => {
-					cancel.mutate({ jobId });
-				}}
+				pendingLabel="Cancelling…"
+				severity={{ level: "confirm" }}
+				mutation={cancel}
+				variables={{ jobId }}
 			/>
+			{/* Mounted on the route rather than on `isTerminal`, for the reason above. It stays open
+			    while the re-run is in flight and closes when the new job exists; a refusal leaves the
+			    question on screen with its sentence beside it. */}
+			{rerunnable && (
+				<ConfirmAction
+					open={confirmRerun}
+					onOpenChange={setConfirmRerun}
+					title="Re-run this job?"
+					description={rerunDescription(rerunnable, job)}
+					confirmLabel="Re-run job"
+					pendingLabel="Re-running…"
+					severity={{ level: "confirm" }}
+					mutation={rerun}
+					variables={{ jobId }}
+				/>
+			)}
 		</div>
 	);
 }

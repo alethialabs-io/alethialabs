@@ -7,7 +7,7 @@
 
 import type {
 	Actor,
-	ActorCredential,
+	CredentialKind,
 	ResolvedScope,
 } from "@/lib/authz/types";
 
@@ -19,17 +19,31 @@ import type {
  */
 export function actorWithCredential(
 	scope: ResolvedScope,
-	credential: ActorCredential,
+	credential: CredentialKind,
 ): Actor {
 	return { ...scope, credential };
 }
+
+/**
+ * Whether an actor's `userId` is the person the credential belongs to (`true`), or the profile
+ * that minted a machine credential (`false`). Read by {@link personalIdentityAuthor}.
+ */
+const USER_ID_IS_THE_OWNER: Record<CredentialKind, boolean> = {
+	session: true,
+	cli_session: true,
+	agent_oauth: true,
+	agent_in_app: true,
+	service_token: false,
+};
 
 /**
  * Whose `personal` cloud identities `actor` may bind or use — the `personalAuthorId` argument of
  * `identityScopeWhere` / `actorIdentityWhere` (lib/runners/claim-identity.ts). Every identity rule
  * asks this one function.
  *
- * - A person (`session`): their own id.
+ * - A person's own credential (`session`, `cli_session`, `agent_oauth`, `agent_in_app`): their own
+ *   id. For all four `userId` is the person the credential belongs to; whether that person is
+ *   present is a different question, and not this function's.
  * - A service token pinned to its minter's OWN personal workspace (`orgId === userId`): the minter's
  *   id. A personal workspace has no other member, so the token acts for the only person who could
  *   use those identities anyway.
@@ -37,13 +51,31 @@ export function actorWithCredential(
  *   MINTED it, and a credential issued to a shared org must not reach one member's personal
  *   accounts; it uses the org's shared identities only.
  *
- * A `switch` so a third credential kind is a type error here, not a silent fall-through.
+ * The split between the first bullet and the other two is {@link USER_ID_IS_THE_OWNER}, a record
+ * keyed by every kind, so a sixth kind is a type error there until it is given an answer. A
+ * `switch` here would not be: this return type contains `undefined`, so one that answered for
+ * fewer kinds than exist would still compile, and the missing kind would silently get "nobody".
  */
 export function personalIdentityAuthor(actor: Actor): string | undefined {
-	switch (actor.credential) {
+	if (USER_ID_IS_THE_OWNER[actor.credential]) return actor.userId;
+	return actor.orgId === actor.userId ? actor.userId : undefined;
+}
+
+/**
+ * Whether `credential` is a person present in a browser — the only kind whose own action can
+ * stand as a decision to apply or destroy. Every other kind can be held by a program.
+ *
+ * It answers for the KIND. Which requests are bound to `session` is the builders' business, and
+ * {@link CredentialKind} says where that is still wider than this function's name.
+ */
+export function isInteractiveCredential(credential: CredentialKind): boolean {
+	switch (credential) {
 		case "session":
-			return actor.userId;
+			return true;
+		case "cli_session":
+		case "agent_oauth":
+		case "agent_in_app":
 		case "service_token":
-			return actor.orgId === actor.userId ? actor.userId : undefined;
+			return false;
 	}
 }

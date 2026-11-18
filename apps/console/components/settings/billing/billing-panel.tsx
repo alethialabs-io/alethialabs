@@ -28,7 +28,7 @@ import Link from "next/link";
 import { type ReactNode, useState } from "react";
 import { formatDate, formatMoney, scaleMoney } from "@repo/format";
 import { cancelPlan, resumePlan } from "@/app/server/actions/billing";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { RegionError } from "@/components/errors/region-error";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
@@ -330,7 +330,7 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 
 			{/* Cancelling asks first. The copy states the two facts a person needs to decide:
 			    entitlement runs to the period end, and the decision is reversible until then. */}
-			<ConfirmDialog
+			<ConfirmAction
 				open={cancelOpen}
 				onOpenChange={setCancelOpen}
 				title="Cancel this subscription?"
@@ -340,7 +340,10 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 						: `${meta.name} stays active until the end of the current billing period, then this organization moves to the Hobby plan. You can resume any time before then.`
 				}
 				confirmLabel="Confirm cancellation"
-				onConfirm={() => cancel.mutate({})}
+				pendingLabel="Cancelling…"
+				severity={{ level: "confirm" }}
+				mutation={cancel}
+				variables={{}}
 			/>
 		</div>
 	);

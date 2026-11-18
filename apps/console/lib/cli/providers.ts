@@ -13,7 +13,9 @@ import {
 	ensureCliOrgAccess,
 } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
+import { CloudNotOfferedError } from "@/lib/cloud-providers/availability";
 import type { CloudProvider } from "@/lib/cloud-providers/connections";
+import { CONNECTABLE_CLOUDS } from "@/lib/cloud-providers/generated/catalog";
 import { NextResponse } from "next/server";
 
 /**
@@ -31,17 +33,16 @@ import { NextResponse } from "next/server";
  *
  * The real authority on what a token cloud is remains `TOKEN_CLOUDS` in
  * lib/cloud-providers/connections.ts; this list only says which the CLI surface exposes.
+ *
+ * It is the catalog's full list, and it is a parser, not an offer. `/status`, `/verify` and
+ * `/disconnect` have to keep answering for an account on a cloud this deployment no longer offers,
+ * so the segment is accepted for every cloud. What may be newly connected is decided where a
+ * connection is written: `initIdentity` and the `save*` functions refuse a cloud that is not
+ * offered, and {@link errorResponse} answers that refusal with a 400.
  */
-const PROVIDERS: readonly CloudProvider[] = [
-	"aws",
-	"gcp",
-	"azure",
-	"alibaba",
-	"hetzner",
-	"digitalocean",
-	"civo",
-];
+const PROVIDERS: readonly CloudProvider[] = CONNECTABLE_CLOUDS;
 
+/** True when the `[provider]` route segment names a cloud in the catalog, offered or not. */
 export function isCloudProvider(value: string): value is CloudProvider {
 	return isEnumMember(value, PROVIDERS);
 }
@@ -355,8 +356,15 @@ export async function enforceProviderPermission(
 	return null;
 }
 
-/** Maps a thrown error to a JSON error response with the given status. */
+/**
+ * Maps a thrown error to a JSON error response with the given status. The refusal of a cloud this
+ * deployment does not offer is always a 400, whatever status the route passes for its other
+ * failures: the request named something the server will not do, and retrying cannot change that.
+ */
 export function errorResponse(err: unknown, status = 400): NextResponse {
 	const message = err instanceof Error ? err.message : "Internal Server Error";
-	return NextResponse.json({ error: message }, { status });
+	return NextResponse.json(
+		{ error: message },
+		{ status: err instanceof CloudNotOfferedError ? 400 : status },
+	);
 }

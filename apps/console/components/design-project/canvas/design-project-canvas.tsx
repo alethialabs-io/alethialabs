@@ -11,7 +11,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
-	createProjectFromDesignAction,
 	deployDesignAction,
 	destroyEnvironmentAction,
 	discardStagedDesignAction,
@@ -41,8 +40,6 @@ import {
 } from "@repo/ui/dialog";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import { orgHref, projectHref } from "@/lib/routing";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import { SourceReposCard } from "../source-repos-card";
 import { ActivityStatusLine } from "./cards/activity-status-line";
@@ -72,20 +69,13 @@ import { EnvironmentStatusScope } from "./environment-status-scope";
 
 interface DesignProjectCanvasProps {
 	cloudIdentities: CloudIdentityOption[];
-	/** Optional — only present while the legacy form view still exists. */
-	onToggleForm?: () => void;
-	/** Edit mode: persist + provision/destroy this live project's active environment.
-	 * Absent in the create flow (Deploy creates a new project instead). */
-	projectId?: string;
+	/** The live project whose active environment the board saves, deploys and destroys. */
+	projectId: string;
+	/** The environment the page resolved; absent when it could not resolve one, and the server
+	 * then falls back to the project's default. */
 	environmentId?: string;
-	/** Edit mode: the project's name — what a cascading destroy asks the user to type. */
+	/** The project's name — what a cascading destroy asks the user to type. */
 	projectName?: string;
-	/**
-	 * Inert. The workspace rail renders inside the canvas on every route now; the prop stays only
-	 * because the workbench and the Architecture page still pass it, and both are other lanes'
-	 * files. Delete it with them.
-	 */
-	dockInShell?: boolean;
 	/** Whether bring-your-own Helm charts are enabled on this instance (server flag). Gates the
 	 * ⌘K "Sources" entry. Server actions enforce the real gate regardless. */
 	byoHelmEnabled?: boolean;
@@ -95,6 +85,12 @@ interface DesignProjectCanvasProps {
 	/** Whether bring-your-own IaC is enabled on this instance (server flag). Gates the ⌘K "Bring
 	 * your own IaC" entry + the module's source card. Server actions enforce the real gate. */
 	byoIacEnabled?: boolean;
+}
+
+/** True when a key event's target is a text field: the key belongs to the field, not the board. */
+function isTyping(target: EventTarget | null): boolean {
+	if (!(target instanceof HTMLElement)) return false;
+	return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
 }
 
 /** The canvas editor surface (inside its own ReactFlowProvider and environment-status read). */
@@ -110,7 +106,6 @@ export function DesignProjectCanvas(props: DesignProjectCanvasProps) {
 
 function CanvasInner({
 	cloudIdentities,
-	onToggleForm,
 	projectId,
 	environmentId,
 	projectName,
@@ -121,7 +116,6 @@ function CanvasInner({
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const searchParams = useSearchParams();
-	const orgSlug = useActiveOrgSlug();
 	const { fitView } = useReactFlow();
 	const hasDrawnNodes = useHasDrawnNodes();
 	// W5 click-to-place — computed here (inside the ReactFlowProvider) and handed to the palettes so
@@ -142,13 +136,13 @@ function CanvasInner({
 	// interaction, not design state. The three handlers go to the board (React Flow raises the
 	// events); the menu itself renders below, next to the palettes.
 	const contextMenu = useCanvasContextMenu();
-	// Cluster add-ons for this environment (edit mode only) — browsed from the Add palette,
+	// Cluster add-ons for this environment — browsed from the Add palette,
 	// configured in a card on the workspace rail. Add-ons live on the canvas now (the standalone
 	// page was retired).
 	const addonsQuery = useAddonsQuery(projectId, environmentId);
 	const [byoDialogOpen, setByoDialogOpen] = useState(false);
 	const [iacDialogOpen, setIacDialogOpen] = useState(false);
-	// The environment's attached BYO IaC source (edit mode + flag on) — the module's provenance:
+	// The environment's attached BYO IaC source (flag on) — the module's provenance:
 	// repo · ref · pinned commit · scan verdict, with detach/rescan. Its RESOURCES are separate: they
 	// are external nodes on the board (see the setIacNodes effect below), because a customer who
 	// brought an entire infrastructure should see an architecture, not one card over a dimmed graph.
@@ -223,24 +217,15 @@ function CanvasInner({
 		successMessage: (data) =>
 			data.queued > 1 ? `Destroy queued for ${data.queued} environments` : "Destroy queued",
 	});
-	const createFromDesign = useActionMutation(createProjectFromDesignAction, {
-		invalidates: [orpc.workspace.projects.key()],
-		successMessage: "Project created!",
-		onSuccess: (data) => {
-			useCanvasStore.getState().reset();
-			router.push(data.slug ? projectHref(orgSlug, data.slug) : orgHref(orgSlug));
-		},
-	});
-	const deploying = deployDesign.isPending || createFromDesign.isPending;
+	const deploying = deployDesign.isPending;
 	const saving = saveDesign.isPending;
 
 	/**
-	 * Edit mode: read the active environment's destroy tree (#5261) — the `canvas.destroyTree` GET
+	 * Read the active environment's destroy tree (#5261) — the `canvas.destroyTree` GET
 	 * procedure, always fresh: the Environment settings card reads it BEFORE it offers to destroy, so
 	 * the tenants it names are seen first, and an answer from before a tenant moved would be a wrong one.
 	 */
 	const loadDestroyTree = useCallback(async () => {
-		if (!projectId) return [];
 		const { tree } = await queryClient.fetchQuery({
 			...orpc.canvas.destroyTree.queryOptions({
 				input: environmentStatusInput(projectId, environmentId),
@@ -253,13 +238,13 @@ function CanvasInner({
 	const destroyIsPending = destroyEnv.isPending;
 	const mutateDestroy = destroyEnv.mutateAsync;
 	/**
-	 * Edit mode: tear down the environment the destroy tree named — with `cascade`, every tenant on
+	 * Tear down the environment the destroy tree named — with `cascade`, every tenant on
 	 * its cluster too. The id comes from the tree the dialog showed, never from the board's own
 	 * (possibly stale) environment, so what is destroyed is what was confirmed.
 	 */
 	const handleDestroyEnvironment = useCallback(
 		async ({ cascade, environmentId: target }: DestroyOptions) => {
-			if (!projectId || destroyIsPending) return;
+			if (destroyIsPending) return;
 			try {
 				await mutateDestroy({ projectId, environmentId: target, cascade });
 			} catch {
@@ -270,34 +255,31 @@ function CanvasInner({
 	);
 
 	const destroyEnvironment = useMemo(
-		() =>
-			projectId
-				? {
-						projectName: projectName ?? null,
-						loadTree: loadDestroyTree,
-						destroy: handleDestroyEnvironment,
-					}
-				: undefined,
-		[projectId, projectName, loadDestroyTree, handleDestroyEnvironment],
+		() => ({
+			projectName: projectName ?? null,
+			loadTree: loadDestroyTree,
+			destroy: handleDestroyEnvironment,
+		}),
+		[projectName, loadDestroyTree, handleDestroyEnvironment],
 	);
 
 	// The reads below are the board's out-of-band layers. Each is a GET procedure the Architecture
 	// page prefetched under this same input, so the first paint carries them; a change to any of
 	// them arrives as a hint on the org's change stream and invalidates the key (lib/query/topics.ts).
-	const envInput = environmentStatusInput(projectId ?? "", environmentId);
+	const envInput = environmentStatusInput(projectId, environmentId);
 
 	// BYO chart nodes are out-of-band: they come from `canvas.byoCharts`, never from the design.
-	// Only in edit mode with the feature on.
+	// Only with the feature on.
 	const byoChartsQuery = useQuery({
 		...orpc.canvas.byoCharts.queryOptions({ input: envInput }),
-		enabled: !!projectId && !!byoHelmEnabled,
+		enabled: !!byoHelmEnabled,
 	});
 	// Described chart workloads (W5 Path A) are out-of-band too: children of their chart nodes. Only
-	// in edit mode with the describe flag on; a failed read leaves the workloads absent (the honest
+	// with the describe flag on; a failed read leaves the workloads absent (the honest
 	// empty state — a chart with no described children yet).
 	const chartWorkloadsQuery = useQuery({
 		...orpc.canvas.chartWorkloads.queryOptions({ input: envInput }),
-		enabled: !!projectId && !!byoDescribeEnabled,
+		enabled: !!byoDescribeEnabled,
 	});
 	const byoCharts = byoChartsQuery.data?.charts;
 	const chartWorkloads = chartWorkloadsQuery.data?.workloads;
@@ -341,11 +323,11 @@ function CanvasInner({
 		setIacOutputs(envStatus.iac?.outputs ?? []);
 	}, [envStatus.iac, setIacNodes, setIacOutputs, seed]);
 
-	// BYO IaC source is single-per-env: the module's provenance card, from `canvas.iacSource`. Only in
-	// edit mode with the feature on; attach / detach / rescan invalidate it (their mutations' keys).
+	// BYO IaC source is single-per-env: the module's provenance card, from `canvas.iacSource`. Only
+	// with the feature on; attach / detach / rescan invalidate it (their mutations' keys).
 	const iacSourceQuery = useQuery({
 		...orpc.canvas.iacSource.queryOptions({ input: envInput }),
-		enabled: !!projectId && !!byoIacEnabled,
+		enabled: !!byoIacEnabled,
 	});
 	const iacSource = iacSourceQuery.data?.source ?? null;
 
@@ -362,32 +344,24 @@ function CanvasInner({
 	// Repo-first on-ramp: the new-project "Bring your own Helm chart" path lands here with
 	// ?attachChart=1 → auto-open the attach flow, then strip the param so a refresh doesn't re-open.
 	useEffect(() => {
-		if (
-			projectId &&
-			byoHelmEnabled &&
-			searchParams.get("attachChart") === "1"
-		) {
+		if (byoHelmEnabled && searchParams.get("attachChart") === "1") {
 			setByoDialogOpen(true);
 			router.replace(window.location.pathname);
 		}
-	}, [projectId, byoHelmEnabled, searchParams, router]);
+	}, [byoHelmEnabled, searchParams, router]);
 
 	// Repo-first on-ramp: the new-project "Bring your own IaC" path lands here with
 	// ?attachIac=1 → auto-open the attach flow, then strip the param so a refresh doesn't re-open.
 	useEffect(() => {
-		if (projectId && byoIacEnabled && searchParams.get("attachIac") === "1") {
+		if (byoIacEnabled && searchParams.get("attachIac") === "1") {
 			setIacDialogOpen(true);
 			router.replace(window.location.pathname);
 		}
-	}, [projectId, byoIacEnabled, searchParams, router]);
+	}, [byoIacEnabled, searchParams, router]);
 
-	/** Open the Elench assistant as a docked panel for this project (or org pre-creation). */
+	/** Open the Elench assistant as a docked panel for this project. */
 	const openAssistantExclusive = useCallback(() => {
-		openPanel(
-			projectId
-				? { kind: "project", projectId, environmentId: environmentId ?? null }
-				: { kind: "org" },
-		);
+		openPanel({ kind: "project", projectId, environmentId: environmentId ?? null });
 	}, [openPanel, projectId, environmentId]);
 
 	/** Open a node's inspector (the assistant is a separate overlay now). */
@@ -404,44 +378,22 @@ function CanvasInner({
 		const isMac =
 			typeof navigator !== "undefined" &&
 			/Mac|iP(hone|ad|od)/.test(navigator.platform);
-		return buildShortcuts(isMac, !projectId);
-	}, [projectId]);
-
-	const createIsPending = createFromDesign.isPending;
-	const mutateCreate = createFromDesign.mutate;
-	/**
-	 * Create flow ONLY: turn the canvas into a new project.
-	 *
-	 * There is deliberately no edit-mode counterpart. On a live project the pending-changes bar is
-	 * the one path changes take — it diffs against `baseline`, and only `commitBaseline()` clears
-	 * it, so a second "save" that persisted without committing would leave the bar reporting changes
-	 * that are already written. The guard below is defence in depth: before it existed, ⌘S on an
-	 * existing project ran this handler and FORKED it into a duplicate.
-	 */
-	const handleSave = useCallback(() => {
-		if (projectId || createIsPending) return;
-		const nodes = useCanvasStore.getState().nodes;
-		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
-		if (!parsed.success) {
-			const first = parsed.error.issues[0];
-			toast.error(
-				`Can't save: ${first?.path.join(".") || "project"} — ${first?.message}`,
-			);
-			return;
-		}
-		mutateCreate({ design: parsed.data });
-	}, [projectId, createIsPending, mutateCreate]);
+		// A live project has no save shortcut to advertise (see `buildShortcuts`).
+		return buildShortcuts(isMac, false);
+	}, []);
 
 	const saveIsPending = saveDesign.isPending;
 	const mutateSave = saveDesign.mutate;
 	/**
-	 * Edit mode: persist the desired config to the live project WITHOUT provisioning. There was no
-	 * such path — the pending-changes bar's only verb was Deploy, so a design you were not ready to
-	 * provision had nowhere to go but the tab's sessionStorage draft. `saveDesignAction` writes the
-	 * live design tables and the durable staged rows; `commitBaseline` clears the bar.
+	 * Persist the desired config to the live project WITHOUT provisioning. There was no such path —
+	 * the pending-changes bar's only verb was Deploy, so a design you were not ready to provision had
+	 * nowhere to go but the tab's sessionStorage draft. `saveDesignAction` writes the live design
+	 * tables and clears the environment's staged rows; `commitBaseline` clears the bar. There is one
+	 * save: a second one that persisted without committing the baseline would leave the bar
+	 * reporting changes that are already written.
 	 */
 	const handleSaveDesign = useCallback(() => {
-		if (!projectId || saveIsPending) return;
+		if (saveIsPending) return;
 		const nodes = useCanvasStore.getState().nodes;
 		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
 		if (!parsed.success) {
@@ -457,17 +409,12 @@ function CanvasInner({
 	const deployIsPending = deployDesign.isPending;
 	const mutateDeploy = deployDesign.mutate;
 	/**
-	 * Edit mode: persist the desired config to the live project, then provision the active
-	 * environment (config is environment-scoped; the server re-resolves the environment, so a stale
-	 * or absent id still lands on the project's default). Falls back to create when there's no
-	 * projectId. A refused deploy leaves the design saved and the baseline uncommitted: nothing
-	 * deployed, and the refusal's sentence says how to fix it (#5445).
+	 * Persist the desired config to the live project, then provision the active environment (config
+	 * is environment-scoped; the server re-resolves the environment, so a stale or absent id still
+	 * lands on the project's default). A refused deploy leaves the design saved and the baseline
+	 * uncommitted: nothing deployed, and the refusal's sentence says how to fix it (#5445).
 	 */
 	const handleDeploy = useCallback(() => {
-		if (!projectId) {
-			handleSave();
-			return;
-		}
 		if (deployIsPending) return;
 		const nodes = useCanvasStore.getState().nodes;
 		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
@@ -479,13 +426,13 @@ function CanvasInner({
 			return;
 		}
 		mutateDeploy({ projectId, environmentId: environmentId ?? null, design: parsed.data });
-	}, [projectId, environmentId, handleSave, deployIsPending, mutateDeploy]);
+	}, [projectId, environmentId, deployIsPending, mutateDeploy]);
 
 	const discardIsPending = discardStaged.isPending;
 	const mutateDiscard = discardStaged.mutate;
-	/** Edit mode: clear the active environment's staged changes (the Discard action) — once. */
+	/** Clear the active environment's staged changes (the Discard action) — once. */
 	const handleDiscardStaged = useCallback(() => {
-		if (!projectId || discardIsPending) return;
+		if (discardIsPending) return;
 		// The canvas store has already reverted; this clears the durable staged rows behind it.
 		mutateDiscard({ projectId, environmentId: environmentId ?? null });
 	}, [projectId, environmentId, discardIsPending, mutateDiscard]);
@@ -511,14 +458,16 @@ function CanvasInner({
 		const onKey = (e: KeyboardEvent) => {
 			const mod = e.metaKey || e.ctrlKey;
 			if (mod && e.key.toLowerCase() === "s") {
-				// Swallowed in BOTH modes so the browser's own Save-page dialog never lands on the
-				// canvas. Create flow: create the project. Edit mode: save the design without deploying.
+				// Swallowed so the browser's own Save-page dialog never lands on the canvas: it saves
+				// the design without deploying.
 				e.preventDefault();
-				if (projectId) handleSaveDesign();
-				else handleSave();
+				handleSaveDesign();
 				return;
 			}
 			if (mod && e.key.toLowerCase() === "z") {
+				// In a text field ⌘Z belongs to the field: it undoes the typing, natively, and the
+				// board's history is not touched. Asked before the board acts, not after.
+				if (isTyping(e.target)) return;
 				e.preventDefault();
 				if (e.shiftKey) redo();
 				else undo();
@@ -531,16 +480,11 @@ function CanvasInner({
 			}
 			if (mod && e.key.toLowerCase() === "i") {
 				e.preventDefault();
-				if (projectId) openAssistantExclusive();
+				openAssistantExclusive();
 				return;
 			}
 			const t = e.target instanceof HTMLElement ? e.target : null;
-			const typing =
-				!!t &&
-				(t.tagName === "INPUT" ||
-					t.tagName === "TEXTAREA" ||
-					t.isContentEditable);
-			if (typing) return;
+			if (isTyping(e.target)) return;
 			if (e.key === "Escape") {
 				// A dialog or menu owns its own Escape; the rail's card closes on the board's.
 				if (t?.closest('[role="dialog"],[role="menu"],[role="listbox"]')) return;
@@ -594,12 +538,10 @@ function CanvasInner({
 			window.removeEventListener("blur", onBlur);
 		};
 	}, [
-		handleSave,
 		handleSaveDesign,
 		selectedIds,
 		openInspectorExclusive,
 		openAssistantExclusive,
-		projectId,
 		undo,
 		redo,
 		duplicateNodes,
@@ -650,18 +592,18 @@ function CanvasInner({
 			<SourceReposCard />
 
 			{/* Top-left: the job running now, else the last one — opens the Activity card. */}
-			{projectId && environmentId && <ActivityStatusLine loadDestroyTree={loadDestroyTree} />}
+			{environmentId && <ActivityStatusLine loadDestroyTree={loadDestroyTree} />}
 
 			{/* Top-right: cost · run a job · add a service. (Ask AI lives in the app shell.) */}
 			<div className="absolute right-3 top-3 z-10 flex items-center gap-2">
 				{/* What this environment costs, from its last PLAN. The runner has always priced every
 				    plan with Infracost; nobody ever wrote the number down, so the product could not
 				    answer "what does production cost?". */}
-				{projectId && environmentId && <CostChip />}
+				{environmentId && <CostChip />}
 
 				{/* Every job type the platform can run — PLAN / AUDIT / DETECT_DRIFT / PROBE_CLUSTER —
 				    all of which existed server-side and none of which the board could ask for. */}
-				{projectId && environmentId && (
+				{environmentId && (
 					<RunMenu projectId={projectId} environmentId={environmentId} />
 				)}
 				{/* Adding components is meaningless while an IaC source governs the env (replace mode). */}
@@ -688,12 +630,11 @@ function CanvasInner({
 
 			{/* Bottom-center: staged changes → Deploy / Discard (Destroy now lives in Project settings) */}
 			<PendingChangesBar
-				onDeploy={projectId ? handleDeploy : handleSave}
+				onDeploy={handleDeploy}
 				deploying={deploying}
-				deployLabel={projectId ? "Deploy" : "Create project"}
-				onDiscard={projectId ? handleDiscardStaged : undefined}
+				onDiscard={handleDiscardStaged}
 				discarding={discardStaged.isPending}
-				onSave={projectId ? handleSaveDesign : undefined}
+				onSave={handleSaveDesign}
 				saving={saving}
 			/>
 
@@ -709,34 +650,28 @@ function CanvasInner({
 				onOpenChange={setPaletteOpen}
 				identities={cloudIdentities}
 				addonItems={addonsQuery.data?.items}
-				onConfigureAddon={projectId ? openConfigureAddon : undefined}
+				onConfigureAddon={openConfigureAddon}
 				dropPosition={dropPosition}
 			/>
 			<CanvasCommandPalette
 				open={cmdOpen}
 				onOpenChange={setCmdOpen}
-				onSave={projectId ? undefined : handleSave}
-				onToggleView={onToggleForm}
 				onFitView={() => fitView({ padding: 0.3 })}
 				fitViewDisabled={!hasDrawnNodes}
 				onAskAi={openAssistantExclusive}
 				onArrange={() => void arrangeBoard(fitView)}
 				onEnvSettings={iacGoverned ? undefined : () => openCard({ kind: "env-settings" })}
-				onActivity={
-					projectId && environmentId ? () => openCard({ kind: "activity" }) : undefined
-				}
+				onActivity={environmentId ? () => openCard({ kind: "activity" }) : undefined}
 				dropPosition={dropPosition}
-				onAttachChart={
-					byoHelmEnabled && projectId ? () => setByoDialogOpen(true) : undefined
-				}
+				onAttachChart={byoHelmEnabled ? () => setByoDialogOpen(true) : undefined}
 				onAttachIac={
-					byoIacEnabled && projectId && !iacGoverned
+					byoIacEnabled && !iacGoverned
 						? () => setIacDialogOpen(true)
 						: undefined
 				}
 				disableComponentAdd={iacGoverned}
 			/>
-			{projectId && byoHelmEnabled && (
+			{byoHelmEnabled && (
 				<ByoChartDialog
 					open={byoDialogOpen}
 					onOpenChange={setByoDialogOpen}
@@ -744,7 +679,7 @@ function CanvasInner({
 					environmentId={environmentId ?? null}
 				/>
 			)}
-			{projectId && byoIacEnabled && (
+			{byoIacEnabled && (
 				<ByoIacDialog
 					open={iacDialogOpen}
 					onOpenChange={setIacDialogOpen}
@@ -778,27 +713,24 @@ function CanvasInner({
 
 	// Chart + IaC nodes (rendered propless: chart nodes by React Flow, the IaC overlay by the board)
 	// reach the project/env (and the attached IaC source) via context.
-	const withByoContext = (content: React.ReactNode) =>
-		projectId ? (
-			<ByoChartCanvasProvider
+	const withByoContext = (content: React.ReactNode) => (
+		<ByoChartCanvasProvider
+			value={{
+				projectId,
+				environmentId: environmentId ?? null,
+			}}
+		>
+			<IacSourceCanvasProvider
 				value={{
 					projectId,
 					environmentId: environmentId ?? null,
+					source: iacSource,
 				}}
 			>
-				<IacSourceCanvasProvider
-					value={{
-						projectId,
-						environmentId: environmentId ?? null,
-						source: iacSource,
-					}}
-				>
-					{content}
-				</IacSourceCanvasProvider>
-			</ByoChartCanvasProvider>
-		) : (
-			content
-		);
+				{content}
+			</IacSourceCanvasProvider>
+		</ByoChartCanvasProvider>
+	);
 
 	// The board and the workspace rail, one flex row, on every route: the rail lives INSIDE the
 	// canvas so each card sits under the React Flow provider and the BYO providers above. The

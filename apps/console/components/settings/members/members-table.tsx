@@ -19,7 +19,7 @@ import {
   useState,
 } from "react";
 import { setMemberSuspended } from "@/app/server/actions/members";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { RegionError } from "@/components/errors/region-error";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
@@ -128,7 +128,7 @@ function rowMenuSubject(r: MemberRowView): string {
  * cancelling an invitation (2), suspending (3), reactivating (4), and the two bulk actions (5, 6) —
  * which is why the union below has six variants. Each is recorded in
  * `apps/console/destructive-actions.yaml` (`members.*`), and each now opens the console's ONE
- * confirmation, `ConfirmDialog`. Held as a single discriminated union rather than six booleans: the
+ * confirmation, `ConfirmAction`. Held as a single discriminated union rather than six booleans: the
  * dialog is one component, so its copy has to be derived from one value, and six independent flags
  * make "two dialogs open at once" representable.
  */
@@ -420,7 +420,7 @@ function ActivityCell({ row }: CellContext<MemberRowView, unknown>) {
 
 /**
  * One row's "Manage …" menu. Every item only RECORDS the action (`askFor`); the table's one
- * `ConfirmDialog` decides whether it happens. The owner's row has no menu.
+ * `ConfirmAction` decides whether it happens. The owner's row has no menu.
  */
 function ActionsCell({ row }: CellContext<MemberRowView, unknown>) {
   const { askFor, busy } = useMembersCells();
@@ -581,12 +581,12 @@ export function MembersTable() {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Nothing in this table mutates on a bare click any more; the click records what was asked for
-  // and the ConfirmDialog at the bottom of the render decides whether it happens.
+  // and the ConfirmAction at the bottom of the render decides whether it happens.
   const [pending, setPending] = useState<PendingMemberAction | null>(null);
   // The copy the confirmation is RENDERING, which outlives `pending` by exactly one close.
   //
   // The dialog is mounted for the life of the table and driven by `open` (the other six
-  // `ConfirmDialog` call sites in the console all do this; unmounting a base-ui `AlertDialog.Root`
+  // `ConfirmAction` call sites in the console all do this; unmounting a base-ui `AlertDialog.Root`
   // mid-close kills the exit transition and drops focus to `<body>` instead of returning it to the
   // row). That makes `pending === null` a state the dialog still RENDERS in for the length of the
   // close, so the question cannot be derived from `pending` alone without blanking out as it fades.
@@ -756,7 +756,10 @@ export function MembersTable() {
     });
   }, []);
 
-  /** Removes the selected rows: members leave the org, invitations are revoked; owners are skipped. */
+  /**
+   * Removes the selected rows: members leave the org, invitations are revoked; owners are skipped.
+   * Settles when the batch has.
+   */
   function bulkRemove() {
     const picked = filtered.filter((x) => selected.has(x.key));
     const steps: BulkStep[] = [];
@@ -775,10 +778,10 @@ export function MembersTable() {
         });
       }
     }
-    bulk.mutate({ steps, keys: steps.map((step) => step.key) });
+    return bulk.mutateAsync({ steps, keys: steps.map((step) => step.key) });
   }
 
-  /** Suspends every active, non-owner member in the selection. */
+  /** Suspends every active, non-owner member in the selection. Settles when the batch has. */
   function bulkSuspend() {
     const steps: BulkStep[] = filtered
       .filter((r) => selected.has(r.key))
@@ -787,7 +790,29 @@ export function MembersTable() {
         key: r.key,
         run: () => setMemberSuspended({ memberId: r.refId, suspended: true }),
       }));
-    bulk.mutate({ steps, keys: steps.map((step) => step.key) });
+    return bulk.mutateAsync({ steps, keys: steps.map((step) => step.key) });
+  }
+
+  /**
+   * Runs the action the open confirmation was asked for. The promise settles when the write has:
+   * the confirmation closes when it resolves and stays open when it rejects.
+   */
+  function runPending(): Promise<unknown> | undefined {
+    if (!pending) return undefined;
+    switch (pending.kind) {
+      case "remove":
+        return removal.mutateAsync({ memberId: pending.memberId });
+      case "cancel-invite":
+        return cancellation.mutateAsync({ invitationId: pending.invitationId });
+      case "suspend":
+        return suspension.mutateAsync({ memberId: pending.memberId, suspended: true });
+      case "reactivate":
+        return suspension.mutateAsync({ memberId: pending.memberId, suspended: false });
+      case "bulk-remove":
+        return bulkRemove();
+      case "bulk-suspend":
+        return bulkSuspend();
+    }
   }
 
   // Memoized on `canManage` alone, and every `cell` is a module-level component (see STABLE
@@ -966,7 +991,7 @@ export function MembersTable() {
       )}
 
       {/* The one confirmation every destructive control on this table passes through. It stays
-          MOUNTED and is driven by `open` — the shape the console's other six `ConfirmDialog` call
+          MOUNTED and is driven by `open` — the shape the console's other `ConfirmAction` call
           sites already use (environments-view, policies-panel, channels-panel, node-inspector,
           pending-changes-bar). The pending action is still the single source of open state, so the
           two cannot disagree; what conditional mounting cost was the close itself. `onOpenChange`
@@ -974,9 +999,9 @@ export function MembersTable() {
           base-ui's exit transition never ran, and focus had nothing to return to — the
           `DropdownMenuItem` that opened the dialog is gone by then, so the keyboard landed on
           `<body>` instead of the row. `copy` is what survives that close (see its declaration).
-          `ConfirmDialog` closes itself before calling `onConfirm`, so the handler below still reads
-          the action it was opened for. */}
-      <ConfirmDialog
+          `ConfirmAction` stays open while the write runs and closes itself once it has succeeded,
+          so `runPending` still reads the action the dialog was opened for. */}
+      <ConfirmAction
         open={pending !== null}
         onOpenChange={(next) => {
           if (!next) setPending(null);
@@ -984,29 +1009,8 @@ export function MembersTable() {
         title={copy.title}
         description={copy.description}
         confirmLabel={copy.confirmLabel}
-        onConfirm={() => {
-          if (!pending) return;
-          switch (pending.kind) {
-            case "remove":
-              removal.mutate({ memberId: pending.memberId });
-              break;
-            case "cancel-invite":
-              cancellation.mutate({ invitationId: pending.invitationId });
-              break;
-            case "suspend":
-              suspension.mutate({ memberId: pending.memberId, suspended: true });
-              break;
-            case "reactivate":
-              suspension.mutate({ memberId: pending.memberId, suspended: false });
-              break;
-            case "bulk-remove":
-              bulkRemove();
-              break;
-            case "bulk-suspend":
-              bulkSuspend();
-              break;
-          }
-        }}
+        severity={{ level: "confirm" }}
+        run={runPending}
       />
 
     </div>

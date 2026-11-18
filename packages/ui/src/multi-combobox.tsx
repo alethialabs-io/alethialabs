@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "./avatar";
-import { CountFigure } from "./count-pill";
+import { CountFigure, rowAccessibleName } from "./count-pill";
 import { cn } from "./utils";
 
 export interface ComboboxOption {
@@ -171,6 +171,9 @@ export function MultiCombobox({
                   <button
                     key={o.value}
                     type="button"
+                    // A toggle button's on/off state is `aria-pressed` (#6734); the check is drawing.
+                    aria-pressed={on}
+                    aria-label={o.hint ? rowAccessibleName(o.label, o.hint) : undefined}
                     // Keep focus in the input so multi-select stays typeable.
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => toggle(o.value)}

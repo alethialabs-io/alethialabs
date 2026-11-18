@@ -11,6 +11,7 @@ import { SectionHeading } from "@repo/ui/section-heading";
 import { Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { RegionError } from "@/components/errors/region-error";
+import { RegionRefusal } from "@/components/errors/region-refusal";
 import { isForbidden } from "@/components/overview/overview-reads";
 import { FleetPoolWizard } from "@/components/runners/fleet-pool-wizard";
 import { PoolCard, PoolCardSkeleton, PoolsEmpty } from "@/components/runners/pool-card";
@@ -72,7 +73,7 @@ export function PoolsSection() {
 
 			{isError && isForbidden(error) ? (
 				// An expected refusal, not a failure: no retry that would answer the same (RUBRIC B4).
-				<p className="text-xs text-muted-foreground">You don&rsquo;t have access to the warm pools.</p>
+				<RegionRefusal compact refusal="forbidden" subject="the warm pools" />
 			) : isError ? (
 				<RegionError
 					title="Couldn't load pools"

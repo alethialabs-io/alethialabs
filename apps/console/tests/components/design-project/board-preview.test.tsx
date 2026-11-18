@@ -196,7 +196,6 @@ describe("DesignProjectWorkbench — what the page sends while the board loads",
 					sourceProject={serverDesign()}
 					projectId="proj-1"
 					environmentId="env-1"
-					dockInShell
 				/>,
 				pageCache(LAST_DESTROY_FAILED),
 			),

@@ -140,7 +140,7 @@ func TestExecuteApply_AConcurrentEditNamesTheFieldsThatChanged(t *testing.T) {
 // TestComponentUpdateRefusal_EachConflictReadsAsItsOwnNextStep covers the remaining shapes: a deploy
 // running, a destroy queued, a run that finished before the server explained it, removed since the read, re-saved with no setting changed, and a plain error.
 func TestComponentUpdateRefusal_EachConflictReadsAsItsOwnNextStep(t *testing.T) {
-	comp := ComponentPlan{Kind: "databases", Name: "orders", read: map[string]any{"max_capacity": float64(4)}}
+	comp := ComponentPlan{Kind: "databases", Name: "orders", Read: map[string]any{"max_capacity": float64(4)}}
 	for name, tc := range map[string]struct {
 		err  error
 		want []string

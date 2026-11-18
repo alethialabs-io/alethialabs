@@ -7,6 +7,7 @@ import { serveTurn } from "@/lib/agent/turn-route";
 import { formatMentionsForPrompt } from "@/lib/ai/mentions";
 import { formatContextBlock, readAgentContext } from "@/lib/ai/project-knowledge";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
+import { cidrFloorsLabel, offeredProvisioningClouds } from "@/lib/ai/tools/compose";
 import { resolveAiTier } from "@/lib/billing/ai-plan";
 import {
 	getAdvisorModel,
@@ -84,7 +85,7 @@ export function systemPrompt(mode: AgentMode): string {
 		"  cache node types / regions for a provider; map a request like 'size X' onto a valid option.",
 		"- `cidr_for_hosts(hosts, base?, cloud?)` — the smallest CIDR that fits N hosts AND that the",
 		"  cloud's template can carve subnets out of. ALWAYS pass `cloud` once it is known: the floors",
-		"  differ (aws/azure /18, hetzner /22, alibaba /28, gcp none) and the apply gate rejects a",
+		`  differ (${cidrFloorsLabel(offeredProvisioningClouds())}) and the apply gate rejects a`,
 		"  network below its cloud's floor. Without `cloud` the answer is widened to a /18.",
 		"",
 		"You can ANALYZE A REPO and propose a whole stack from it:",

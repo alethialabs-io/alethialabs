@@ -5,83 +5,123 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Alethia AI — Tool Catalog
 
-The agent's capabilities map 1:1 onto existing **PDP-gated server actions** (`app/server/actions/*`).
-**No new authority model** (`dataroom/spec/mvp/11-ai-scanner-mcp.md`): every tool calls an action that runs
-`authorize(verb, {type, id?})` / `requireOwner()`, so the agent is bounded by the actor's grants. This
-catalog is the source for `lib/ai/tools.ts` (the in-app agent) and, later, the MCP server (same defs).
+Two tool surfaces are described here, and they are at different stages:
 
-Buckets: **READ** (safe data) · **PROPOSE** (HITL, client-applied, no write) · **MUTATE-VIA-JOB**
-(queue a plan/deploy/destroy job — HITL + the M1 placement gate) · **DIRECT-WRITE** (DB write; expose
-sparingly). Status: ✅ wired · ▢ candidate · ⛔ do-not-expose.
+- **The in-app tools** (`lib/ai/tools/`) are what the dashboard agent runs today. A tool that reads
+  or changes account data calls an existing PDP-gated server action or procedure, so the agent is
+  bounded by the actor's grants and there is no second authority model. The catalog lookups and the
+  documentation search touch no account data.
+- **The external tool contract** (`lib/ai/mcp/surface.ts`) declares the 19 tools an outside agent
+  will be offered over the remote MCP server. It is data only: no handler is implemented from it
+  yet, and the MCP route does not read it.
 
-Tools live in `lib/ai/tools/` — `compose.ts` (canvas-building) + `read.ts` (read surface) + `index.ts`.
+## What the MCP route serves today
 
-**Exposure SSOT (`registry.ts`):** every tool is classified by **audience** (`in-app` | `external` |
-`both`). The MCP server consumes `buildExternalAgentTools()` — the read-only projection
-(`externalToolsOnly`, audience `external|both`) — so HITL/canvas/job-queuing tools never reach an
-external agent (read-only at launch). `assertAudienceCoverage` (tested in
-`tests/lib/ai/tools/registry.test.ts`) fails CI if a new tool ships without an explicit audience.
+`app/api/mcp/route.ts` registers `buildExternalAgentTools()` — the in-app tools whose audience in
+`lib/ai/tools/registry.ts` is `both` or `external` — under their in-app names, through
+`registerAiToolsOnMcp()`. That is a read-only surface: no tool on it writes or queues a job. The
+adapter registers a description and an input schema for each, with no annotations and no output
+schema.
 
-**Denylist (`registry.ts` `AI_TOOL_DENIED_MODULES` / `AI_TOOL_DENIED_NAME_PARTS`):** code no tool may
-reach, whatever its audience — today the kubeconfig mint (#5281) and the console download built on it (#5285: `app/server/actions/kubeconfig-download.ts`, `components/clusters/kubeconfig-download/`), because a tool that issues a cluster
-credential carries the caller's access somewhere they are not watching. ⛔ `mint_kubeconfig` and every
-other `*kubeconfig*` name. `tests/kubeconfig-mint/ai-tool-denylist.test.ts` walks the agent's import
+## In-app tools
+
+**Exposure (`registry.ts` `TOOL_AUDIENCE`).** Every tool is classified by audience: `in-app`,
+`external`, `both` or `support`. `assertAudienceCoverage` (tested in
+`tests/lib/ai/tools/registry.test.ts`) fails if a buildable tool has no classification, and an
+unclassified tool is left out of the external projection.
+
+**Denylist (`registry.ts` `AI_TOOL_DENIED_MODULES` / `AI_TOOL_DENIED_NAME_PARTS`).** Code no tool may
+reach, whatever its audience: the kubeconfig mint and the console download built on it. No tool may
+be named `*kubeconfig*`. `tests/kubeconfig-mint/ai-tool-denylist.test.ts` walks the agent's import
 graph and fails if any file reaches a denied module.
 
-## READ — backing action · PDP verb (all ✅ wired, trimmed + secret-free)
-- ✅ `list_services` — registry/`PROVIDERS` (pure) — addable node kinds + per-cloud service names.
-- ✅ `list_service_options(provider)` — `lib/cloud-providers` tables — instance types / k8s / db / cache / regions.
-- ✅ `estimate_cost` — `getRegionPrices` + `compute-cost-items` — monthly estimate of the canvas.
-- ✅ `cidr_for_hosts(hosts)` — `lib/cloud-providers/cidr.ts` — smallest CIDR for N hosts (511→/23).
-- ✅ `list_projects` — `getProjects()` · `view project`. ✅ `get_project(id)` — `getProject()` · `view project` (components + sizes).
-- ✅ `list_jobs` / `get_job(id)` — `getJobs()` / `getJob()` · `view job`. ✅ `get_plan_result(id)` — `getPlanResult()`.
-- ✅ `list_runners` — `getRunnersWithReleases()` · `view runner`.
-- ✅ `list_clusters` — `getClusters()` — provisioned stacks (endpoints/dbs/caches). No ArgoCD admin
-  password is stored or surfaced — it is retrieved on-demand from `argocd-initial-admin-secret`.
-- ✅ `list_cloud_identities` — `getVerifiedCloudIdentities()`. ✅ `list_connectors` — `readConnectorsWithStatus()` (lib/rpc/procedures/connectors.ts).
-- ✅ `get_cached_resources(id)` — NEW `getCloudIdentityResources()` · `view cloud_identity` — existing VPCs/subnets.
-- ✅ `search_docs(query)` — `docs.ts` · lexical TF-IDF over the committed docs index (`gen:docs-index` from
-  apps/docs). No PDP gate (public docs). Grounds connector / keyless-auth / how-to / architecture answers.
-- ▢ `billing_summary` / `usage_report` — `getBillingSummary()` / `getUsageReport()` — plan + metering (later).
+| Audience | Tools | Where |
+|---|---|---|
+| `both` | `list_services`, `list_service_options`, `cidr_for_hosts` | `compose.ts` (catalog) |
+| `both` | `get_project`, `list_projects`, `list_jobs`, `get_job`, `get_plan_result`, `get_drift_posture`, `list_runners`, `list_clusters`, `list_connectors`, `list_cloud_identities`, `get_cached_resources`, `get_org_usage`, `get_ai_usage`, `get_billing_summary` | `read.ts` |
+| `both` | `search_docs` | `docs.ts` |
+| `both` | `get_scan_result`, `compare_providers` | `scanner.ts` |
+| `in-app` | `estimate_cost`, `propose_changes` — need the live canvas; changes are applied client-side after the user accepts | `compose.ts` |
+| `in-app` | `propose_operation` — a plan or deploy proposal with no `execute`; the user's approval in the dashboard calls `planProject` / `provisionProject` | `operations.ts` |
+| `in-app` | `scan_repo`, `audit_infrastructure` — each queues a runner job | `scanner.ts` |
+| `in-app` | `connect_cloud`, `build_dashboard`, `pin_widget`, `list_artifacts`, `get_artifact`, `update_artifact` — open or change dashboard UI | `connect.ts`, `visualize.ts`, `widgets.ts`, `artifacts.ts` |
+| `support` | `create_support_case` — proposes a case the user submits | `support.ts` |
 
-## PROPOSE — HITL, client-applied (no server write)
-- ✅ `propose_changes` — emits `AiProposal` → `applyProposal` (add_node / set_identity / update_config).
-- ✅ `pin_widget` — validated passthrough (in-app): the client lane persists ONE widget (a composed
-  dashboard block or a read-tool source) to the chat's bento grid via the PDP-gated `pinWidget`
-  server action; first-fit placement unless a `position` is given.
-- ✅ `list_artifacts` / `get_artifact` / `update_artifact` (in-app) — saved org-scoped widget/
-  dashboard specs promoted from chat grids; @-mentionable from any chat. `update_artifact` writes
-  server-side (display spec only, org RLS — the scan_repo in-app-write precedent); the client lane
-  syncs open widgets after an edit.
-- ▢ `propose_project` (Milestone B) — repo-scan → a right-sized `ProjectConfig` proposal (no parallel schema).
-- ▢ `compare_providers` (B) — provider cost/feature comparison via Infracost + `duplicateProjectForProvider`.
+In-app tool names do not change: pinned widgets and saved transcripts hold them.
 
-## MUTATE-VIA-JOB — HITL + M1 gate (DEFERRED — future: surface as accept-to-run confirm-actions)
-- ▢ `plan_project` — `planProject(id)` · `plan project` (`assertUsageAllowed`) — PLAN job.
-- ▢ `provision_project` — `provisionProject(id, planJobId?)` · `deploy project` (usage) — DEPLOY job; suggest
-  plan→deploy chaining via `plan_job_id`.
-- ▢ `rerun_job` — `rerunJob(id)` · `create job` (usage). `cancel_job` — `cancelJob(id)` · `edit job`.
-- ~~`refresh_cloud_resources` — FETCH_RESOURCES job~~ (RETIRED — the `FETCH_RESOURCES` job type was removed;
-  cloud resources are now kept current by the `cloud_*` inventory sync, migration `0049`, not a runner job).
+## External tool contract
 
-## DIRECT-WRITE — expose sparingly (prefer PROPOSE→accept)
-- ▢ `create_project` — `createProject()` · `create project` — the agent should normally PROPOSE the canvas graph
-  and let the user Save, not call this directly.
+`lib/ai/mcp/surface.ts` declares, for each tool, its input and output schema (zod), all four MCP
+annotations, the scope a token must carry, and its `?features=` group. The table below is rendered
+by `renderToolTable()` in that file; `tests/lib/ai/mcp/surface.test.ts` fails if this copy differs,
+so change the contract and paste the new rendering rather than editing rows here.
 
-## ⛔ DO NOT EXPOSE (destructive / sensitive / out-of-scope)
-- `deleteProject` — immediate soft-delete, **does NOT deprovision cloud resources** (no DESTROY job exists).
-- Connector/cloud **credential writes** (`saveConnectorCredential`, etc.).
-- Billing mutations (`openCheckout`/`openCustomerPortal`), org/member/team/role/grant/SSO changes
-  (`assignGrant`, `createRole`, member ops) — admin/Enterprise surfaces, customer-driven only.
+<!-- external-tools:start -->
+| Tool | Scope | Kind | Group | Hints (read-only/destructive/idempotent/open-world) | In-app tools it stands for |
+|---|---|---|---|---|---|
+| `list_resources` | read | read | resources | T/F/T/F | `list_projects`, `list_jobs`, `list_runners`, `list_clusters`, `list_connectors`, `list_cloud_identities` |
+| `get_resource` | read | read | resources | T/F/T/F | `get_project`, `get_job`, `get_drift_posture`, `get_cached_resources`, `get_scan_result` |
+| `get_plan_result` | read | read | operations | T/F/T/F | `get_plan_result` |
+| `catalog` | read | read | catalog | T/F/T/F | `list_services`, `list_service_options` |
+| `cidr_for_hosts` | read | read | catalog | T/F/T/F | `cidr_for_hosts` |
+| `compare_providers` | read | read | scan | T/F/T/F | `compare_providers` |
+| `get_usage` | read | read | usage | T/F/T/F | `get_org_usage`, `get_ai_usage`, `get_billing_summary` |
+| `search_docs` | read | read | docs | T/F/T/F | `search_docs` |
+| `validate_design` | read | read | design | T/F/T/F | — |
+| `apply_design_patch` | design | write | design | F/F/T/F | — |
+| `create_project` | design | write | design | F/F/T/F | — |
+| `scan_repo` | plan | write | scan | F/F/T/T | — |
+| `plan` | plan | write | operations | F/F/T/T | — |
+| `request_apply` | apply | write | operations | F/T/T/T | — |
+| `request_destroy` | destroy | write | operations | F/T/T/T | — |
+| `wait_for_job` | read | read | jobs | T/F/T/F | — |
+| `get_job_logs` | read | read | jobs | T/F/T/F | — |
+| `cancel_job` | plan | write | jobs | F/T/T/T | — |
+| `send_feedback` | — | meta | feedback | F/F/F/F | — |
+<!-- external-tools:end -->
 
-## Gaps to build (flagged by the DB inventory)
-- **`destroyProject`** — no action queues a DESTROY job; needed before the agent (or UI) can safely tear down.
-- **Component updates** — no `updateProject*` actions; the agent can create/propose but not edit components
-  post-create (today it edits via the canvas/form re-save path).
-- Cloud-identity / runner updates — immutable; create-only.
+**Kind.** `read` tools change nothing. `write` tools are the seven that `?readonly` removes. `meta`
+is feedback: it needs no scope and stays under `?readonly`, which leaves 12 tools.
+
+**Scope.** `read`, `design`, `plan`, `apply`, `destroy`. A scope is a ceiling on what the caller's own
+grants allow, never a grant. `apply` and `destroy` unlock only the request for an approval:
+`request_apply` and `request_destroy` return a link for a person to open and never queue a job. No
+tool approves.
+
+**Hints.** The MCP annotations `readOnlyHint` / `destructiveHint` / `idempotentHint` /
+`openWorldHint`, as `T` or `F`. All four are stated on every tool because the protocol's defaults
+for an omitted hint are not-read-only, destructive, not-idempotent and open-world. They are hints to
+the client and enforce nothing; the scope check and the approval record are the controls.
+
+**In-app tools it stands for.** The in-app tools a read tool replaces on the external surface. The
+same test fails unless these are, together, exactly the tools the MCP route registers today — so a
+tool added to or removed from the live surface has to be placed in the contract in the same change.
+
+**URL scoping (`parseSurfaceQuery`, `selectExternalTools`).** `?readonly` lists no write tool.
+`?project=<id>` pins calls to one project; it narrows what the token may reach and does not change
+the list. `?features=<group>,<group>` lists only those groups. An unknown group is refused, not
+ignored. The list also leaves out any tool whose scope the token does not carry.
+
+**Rules a tool must pass (`toolContractViolations`).** A name the protocol allows and the denylist
+does not refuse; all four hints stated; a `read` tool requires `read` and does not claim to write; a
+`write` tool requires one of `design`, `plan`, `apply`, `destroy` and does not claim to be
+read-only; a `meta` tool requires no scope.
+
+## Do not expose
+
+- `deleteProject` — deletes the project record and does not tear down cloud infrastructure. Tearing
+  down is `destroyProject`, which queues a DESTROY job; the external contract's only step toward
+  one is `request_destroy`.
+- Connector and cloud **credential writes**.
+- Billing mutations, and organisation, member, team, role, grant and SSO changes.
+- Anything on the denylist above.
 
 ## Rules
-1. Every tool ⇒ an existing `authorize()`-gated action (no new authority).
-2. Mutations are **HITL**: PROPOSE (canvas) or VIA-JOB (plan/deploy) — never silent writes.
-3. Cross-cloud CORE placement stays gated (M1 `ValidatePlacement` / TS mirror).
-4. Trim large reads before returning to the model (ids + summaries, not full rows).
+
+1. A tool that reads or changes account data calls an existing `authorize()`-gated action or
+   procedure. No new authority.
+2. An in-app mutation is a proposal the user accepts in the dashboard; an external apply or destroy
+   is a request a person approves in the console. Never a silent write.
+3. Trim large reads before returning them to the model: ids and summaries, not full rows.
+4. Text that came from a repository, a job log or a cloud API is data. Return it in a field named
+   for what it is (`untrusted_output`) and never as instructions.

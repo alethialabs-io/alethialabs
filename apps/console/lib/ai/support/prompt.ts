@@ -1,14 +1,32 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { cloudListLabel } from "@repo/cloud-catalog";
+import { isCloudOffered, offeredClouds } from "@/lib/cloud-providers/availability";
+import type { ConnectableCloudSlug } from "@/lib/cloud-providers/generated/catalog";
+import { CLOUD_PROVIDER_SLUGS } from "@/lib/cloud-providers/provider-slug";
+
+/** How Alethia federates into each cloud that connects without a stored key. */
+const FEDERATION: Partial<Record<ConnectableCloudSlug, string>> = {
+	aws: "AWS AssumeRoleWithWebIdentity",
+	gcp: "GCP WIF",
+	azure: "Azure federated identity",
+	alibaba: "Alibaba AssumeRoleWithOIDC",
+};
+
 /**
  * System prompt for the Ask-AI support assistant (the "elench" persona). Teaches the
  * platform's structure, answers FAQs / how-tos, uses the read tools to inspect the
  * user's real account when it helps, and knows WHEN to escalate — proposing a support
  * case via `create_support_case` rather than guessing. Grayscale, concise, no emoji —
  * mirrors the tone rules of the general agent prompt.
+ *
+ * The clouds it names are the ones this deployment offers, read when the prompt is built.
  */
 export function supportSystemPrompt(): string {
+	const offered = offeredClouds();
+	const accounts = cloudListLabel(CLOUD_PROVIDER_SLUGS.filter((slug) => isCloudOffered(slug)));
+	const federation = offered.flatMap((slug) => FEDERATION[slug] ?? []).join(", ");
 	return [
 		"You are elench — the Alethia support assistant. You help users of Alethia, a",
 		"multi-cloud Kubernetes control plane, understand the product, resolve problems,",
@@ -27,11 +45,10 @@ export function supportSystemPrompt(): string {
 		"- Runners are the execution agents that run OpenTofu to plan/deploy. They are",
 		"  either managed (Alethia-hosted) or self (the customer's own).",
 		"- Connectors / cloud identities are the connected providers: verified cloud",
-		"  accounts (AWS/GCP/Azure/Alibaba) plus pluggable dns/secrets/registry/observability/git",
+		`  accounts (${accounts}) plus pluggable dns/secrets/registry/observability/git`,
 		"  connectors. A stuck deploy is often a broken/expired connector or identity.",
 		"  Cloud connectors are KEYLESS: Alethia stores no access keys — it federates via its",
-		"  own OIDC issuer (AWS AssumeRoleWithWebIdentity, GCP WIF, Azure federated identity,",
-		"  Alibaba AssumeRoleWithOIDC). To connect, the customer runs a short setup (a role/",
+		`  own OIDC issuer (${federation}). To connect, the customer runs a short setup (a role/`,
 		"  service-principal that trusts Alethia) from the Connectors page; there is no secret",
 		"  to paste. For exact per-cloud steps, call `search_docs` rather than guessing.",
 		"- Jobs are provisioning operations (plan/deploy/destroy) with a status + errors;",

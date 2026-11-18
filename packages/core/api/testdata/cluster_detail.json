@@ -35,5 +35,11 @@
 		"command": "string",
 		"alternative": "string",
 		"note": "string"
+	},
+	"observation": {
+		"state": "missing",
+		"observed_at": "string",
+		"source": "drift",
+		"detail": "string"
 	}
 }

@@ -9,7 +9,7 @@
 // `attachIacSourceAction` to `useActionMutation`, which answers an `ActionResult`.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ByoIacDialog } from "@/components/design-project/byo/byo-iac-dialog";
@@ -157,5 +157,37 @@ describe("ByoIacDialog", () => {
 		const summary = review.parentElement!;
 		expect(summary.textContent).toMatch(/ref HEAD/i);
 		expect(summary.textContent).toMatch(/replace mode/i);
+	});
+	// #6728's pattern: Next and Attach share a slot, and Next awaits `trigger` before `setStep`. In a
+	// browser the step change lands before the click's activation, so a re-typed node would submit.
+	// jsdom activates before microtasks, so these pin what closes the race (see the support wizard's
+	// submit-only-on-contact test for the full mechanism).
+	it("Next into Review cancels its click and Attach is a new node — one click never attaches", async () => {
+		const user = userEvent.setup();
+		renderDialog();
+		await toPathStep(user);
+		await user.click(screen.getByRole("button", { name: /next/i })); // → Variables
+		const nextButton = screen.getByRole("button", { name: /next/i });
+
+		const proceeded = fireEvent.click(nextButton); // → Review
+
+		const attachButton = await screen.findByRole("button", { name: /attach source/i });
+		expect(proceeded).toBe(false);
+		expect(attachButton).not.toBe(nextButton);
+		expect(nextButton.isConnected).toBe(false);
+		expect(attachIacSource).not.toHaveBeenCalled();
+	});
+
+	it("Enter before Review (an implicit form submit) advances instead of attaching", async () => {
+		const user = userEvent.setup();
+		renderDialog();
+		await user.type(screen.getByLabelText("Module repository"), "https://github.com/acme/infra-tofu");
+		const form = screen.getByLabelText("Module repository").closest("form");
+		if (!form) throw new Error("the dialog renders no form");
+
+		fireEvent.submit(form);
+
+		expect(await screen.findByLabelText(/root-module path/i)).toBeInTheDocument();
+		expect(attachIacSource).not.toHaveBeenCalled();
 	});
 });

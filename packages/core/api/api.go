@@ -80,10 +80,10 @@ const maxAPIRedirects = 3
 // console keeps working.
 func refuseCrossOriginRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= maxAPIRedirects {
-		return fmt.Errorf("stopped after %d redirects", maxAPIRedirects)
+		return &redirectError{message: fmt.Sprintf("stopped after %d redirects", maxAPIRedirects)}
 	}
 	if origin, to := requestOrigin(via[0].URL), requestOrigin(req.URL); origin != to {
-		return fmt.Errorf("refusing redirect from the control plane %q to %q: the request carries credentials that must not leave that origin", origin, to)
+		return &redirectError{message: fmt.Sprintf("refusing redirect from the control plane %q to %q: the request carries credentials that must not leave that origin", origin, to)}
 	}
 	return nil
 }
@@ -274,9 +274,23 @@ type ClusterKubeconfig struct {
 // Kubeconfig is a pointer because a server older than #5250 does not send it; nil there means
 // "this server cannot say", not "this cloud has no command".
 type ClusterDetail struct {
-	Cluster    ClusterSummary     `json:"cluster"`
-	Gitops     *ClusterGitops     `json:"gitops"`
-	Kubeconfig *ClusterKubeconfig `json:"kubeconfig"`
+	Cluster     ClusterSummary      `json:"cluster"`
+	Gitops      *ClusterGitops      `json:"gitops"`
+	Kubeconfig  *ClusterKubeconfig  `json:"kubeconfig"`
+	Observation *ClusterObservation `json:"observation"`
+}
+
+// ClusterObservation is what the console has OBSERVED of the cluster's control plane since its
+// last deploy (#6736) — the same answer the console's cluster card shows. Cluster.Status is what
+// that deploy recorded and is never refreshed; this is what has been seen since. State is one of
+// "missing" (a drift scan or a probe found it deleted), "unreachable", "unverified" (nothing has
+// looked recently), "observed", "never_observed". Nil from a server older than #6736, or for a
+// cluster with no environment. Mirrors clusterObservation in cli-contract.ts.
+type ClusterObservation struct {
+	State      string  `json:"state"`
+	ObservedAt *string `json:"observed_at"`
+	Source     *string `json:"source"`
+	Detail     *string `json:"detail"`
 }
 
 type CloudIdentity struct {
@@ -354,7 +368,7 @@ type DestroyTreeWaiting struct {
 // boundary) uniform across the API. The scope is the `--org` override when one was named,
 // otherwise the CLI config's active organization — see resolveOrgScope in org_scope.go.
 func (c *Client) setAuthHeaders(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer "+c.authToken)
+	req.Header.Set("Authorization", "Bearer "+c.token())
 	if org := resolveOrgScope(); org != "" {
 		req.Header.Set("X-Alethia-Org", org)
 	}
@@ -384,10 +398,37 @@ func (c *Client) getProviderToken() string {
 type APIError struct {
 	StatusCode int
 	Message    string
-	// RetryAfter is the wait a 429 named in its Retry-After header, or zero when it named none. Only
-	// the verbs that read the header set it (kubeconfig_mint.go); it never changes Error().
+	// RetryAfter is the wait a 429 or a 503 named in its Retry-After header, or zero when it named
+	// none. The header is not read on any other status. It never changes Error().
 	RetryAfter time.Duration
+	// Code is the control plane's stable identifier for the failure ("not_found"), or empty when it
+	// sent none. A control plane older than the field never sends one, so a caller that classifies
+	// must fall back to StatusCode.
+	Code string
+	// Hint is the next step the control plane suggests, or empty.
+	Hint string
+	// DocsURL is the documentation page the control plane names for this failure, or empty.
+	DocsURL string
+	// RequestID identifies the failed request to the control plane: the X-Request-Id response header,
+	// or the body's request_id when the header is absent. Empty when neither was sent.
+	RequestID string
 }
+
+// TransportError is a request that got no answer: the dial, the TLS handshake, the write or the
+// read failed, or the round trip ran out of time. It is a type so a caller can tell "the control
+// plane could not be reached" from "the control plane said no" (an *APIError) with errors.As.
+type TransportError struct {
+	// Err is the failure the HTTP client reported.
+	Err error
+}
+
+// Error renders the failure with the prefix every verb helper has always used for it.
+func (e *TransportError) Error() string {
+	return fmt.Sprintf("failed to send request: %v", e.Unwrap())
+}
+
+// Unwrap returns the HTTP client's error, so errors.Is and errors.As still reach it.
+func (e *TransportError) Unwrap() error { return e.Err }
 
 // Error renders the failure. It NEVER renders empty: the control plane's own explanation when there
 // is one, and the bare status code when the body carried nothing usable. Returning a non-nil error
@@ -413,26 +454,53 @@ const errorSnippetRunes = 200
 // OAuth-shaped answer emits `error_description`, and only Alethia's own handlers emit `error` — and
 // falls back to a bounded, whitespace-collapsed snippet of the body when none of them yields text.
 // The status code is always carried, so 401, 403 and 500 stay distinguishable.
+//
+// `code`, `hint`, `docs_url` and `request_id` are read from the same object when it carries them,
+// and the request id from the X-Request-Id header in preference to the body. All four are
+// additive: an answer without them yields the same error it always did. The Retry-After header is
+// read on a 429 and a 503, the two answers that mean "later", for every verb.
 func responseError(resp *http.Response) *APIError {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
-	apiErr := &APIError{StatusCode: resp.StatusCode}
+	apiErr := &APIError{
+		StatusCode: resp.StatusCode,
+		RequestID:  strings.TrimSpace(resp.Header.Get("X-Request-Id")),
+	}
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+		apiErr.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+	}
 
 	var fields struct {
 		Error            string `json:"error"`
 		Message          string `json:"message"`
 		ErrorDescription string `json:"error_description"`
+		Code             string `json:"code"`
+		Hint             string `json:"hint"`
+		DocsURL          string `json:"docs_url"`
+		RequestID        string `json:"request_id"`
 	}
 	if err := json.Unmarshal(body, &fields); err == nil {
-		for _, candidate := range []string{fields.Error, fields.Message, fields.ErrorDescription} {
-			if text := strings.TrimSpace(candidate); text != "" {
-				apiErr.Message = text
-				return apiErr
-			}
+		apiErr.Code = strings.TrimSpace(fields.Code)
+		apiErr.Hint = strings.TrimSpace(fields.Hint)
+		apiErr.DocsURL = strings.TrimSpace(fields.DocsURL)
+		apiErr.RequestID = firstText(apiErr.RequestID, fields.RequestID)
+		if text := firstText(fields.Error, fields.Message, fields.ErrorDescription); text != "" {
+			apiErr.Message = text
+			return apiErr
 		}
 	}
 
 	apiErr.Message = bodySnippet(body)
 	return apiErr
+}
+
+// firstText returns the first candidate that is not blank, trimmed, or "" when all of them are.
+func firstText(candidates ...string) string {
+	for _, candidate := range candidates {
+		if text := strings.TrimSpace(candidate); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 // bodySnippet collapses every run of whitespace to a single space and truncates, so an HTML error
@@ -453,9 +521,9 @@ func (c *Client) doGet(endpoint string, result interface{}) error {
 	}
 	c.setAuthHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 
@@ -479,9 +547,9 @@ func (c *Client) doPost(endpoint string, payload interface{}, result interface{}
 	req.Header.Set("Content-Type", "application/json")
 	c.setAuthHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 
@@ -508,9 +576,9 @@ func (c *Client) doPut(endpoint string, payload interface{}, result interface{})
 	req.Header.Set("Content-Type", "application/json")
 	c.setAuthHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 
@@ -531,9 +599,9 @@ func (c *Client) doDelete(endpoint string) error {
 	}
 	c.setAuthHeaders(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 
@@ -559,9 +627,9 @@ func (c *Client) doDeleteWithBody(endpoint string, payload interface{}) error {
 	c.setAuthHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 
@@ -585,9 +653,9 @@ func (c *Client) GetRepositories(provider string) ([]Repository, error) {
 		req.Header.Set("X-Provider-Token", providerToken)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -985,7 +1053,7 @@ func (c *Client) UpdateBootstrapJobStatus(jobID, status, errorMessage string) er
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.setAuthHeaders(req)
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return err
 	}
@@ -1029,7 +1097,7 @@ func (c *Client) UnregisterCluster(id, name string) error {
 	}
 	req.URL.RawQuery = q.Encode()
 	c.setAuthHeaders(req)
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return err
 	}

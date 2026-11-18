@@ -7,8 +7,10 @@
 // User, Project, and an event-type sheet. Viewing is available on every plan; CSV export is
 // Enterprise-gated, and time windows older than the plan's retention prompt an upgrade.
 // Filtering + pagination are server-side (cursor by id): every filter change refetches page 1,
-// and "Load more" pages in older rows. Resource names are resolved from the projects store +
-// members for the humanizer; the Project filter is resolved to project ids server-side. When
+// and "Load more" pages in older rows. A row carries the resource's name as it was recorded with
+// the event (#6735); only a row without one (older rows, people) is named from the projects store +
+// members, which cannot name what has since been deleted. The Project filter is resolved to
+// project ids server-side. When
 // pinned to a `projectId` (project settings) the feed locks to that project and hides the facet.
 
 import { Boxes, Download, ListFilter, Users } from "lucide-react";
@@ -21,7 +23,12 @@ import {
 	getActivityExportCsv,
 } from "@/app/server/actions/activity";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import { filterStateFromUrl } from "@/lib/query/filter-url-codec";
+import {
+	parseRangeFilter,
+	rangeFilterLabel,
+	rangeFromPick,
+	rangeWindowValue,
+} from "@/lib/query/range-filter";
 import { readRefusalOf } from "@/lib/rpc/refusal";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
@@ -49,16 +56,17 @@ import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
 	type DateRange,
 	DEFAULT_PRESET,
-	formatRangeLabel,
 	presetRange,
 	RANGE_PRESETS,
 } from "@repo/ui/range";
 import { Skeleton } from "@repo/ui/skeleton";
 import {
 	type ActivityWindow,
+	activityFiltersFromUrl,
 	activityQueryFrom,
 	activityRange,
 	DEFAULT_ACTIVITY_FILTERS,
+	RETIRED_ACTIVITY_PARAMS,
 } from "./activity-filters";
 import { ActivityFeed } from "./activity-feed";
 import { ActivityNoAccess } from "./activity-no-access";
@@ -145,20 +153,24 @@ export function ActivityLog({
 	// the browser's first key IS the prefetched key. The store cannot be trusted for that render:
 	// it outlives a client-side navigation, and a range picked on an earlier visit used to override
 	// "Last 7 days" and swap the first paint's rows after hydration (B1). For the same reason the
-	// mount REPLACES the store with the link's filters rather than patching the ones it names —
-	// declared before `useFilterUrlSync`, so its store → URL write sees the replaced state.
+	// mount REPLACES the store with the link's filters rather than patching the ones it names.
+	//
+	// The replace is declared AFTER `useFilterUrlSync` (#6740). That hook's mount enters the page's
+	// scope, which drops any other scope's filters, and it decodes only the current params. The
+	// link's filters here also read an OLD `from`/`to` link as its window
+	// (`activityFiltersFromUrl`), so they must land last. The replace changes the filters, so the
+	// hook's store → URL write runs again on the next commit and writes the replaced state.
 	const searchParams = useSearchParams();
-	const [linkFilters] = useState(() =>
-		filterStateFromUrl(searchParams, DEFAULT_ACTIVITY_FILTERS),
-	);
+	const [linkFilters] = useState(() => activityFiltersFromUrl(searchParams));
+	const storeFilters = useActivityFilters((s) => s.filters);
+	const set = useActivityFilters((s) => s.set);
+	const reset = useActivityFilters((s) => s.reset);
+	const urlRead = useFilterUrlSync(useActivityFilters, DEFAULT_ACTIVITY_FILTERS, undefined, {
+		retiredParams: RETIRED_ACTIVITY_PARAMS,
+	});
 	useEffect(() => {
 		useActivityFilters.setState({ filters: linkFilters });
 	}, [linkFilters]);
-	const storeFilters = useActivityFilters((s) => s.filters);
-	const set = useActivityFilters((s) => s.set);
-	const patch = useActivityFilters((s) => s.patch);
-	const reset = useActivityFilters((s) => s.reset);
-	const urlRead = useFilterUrlSync(useActivityFilters, DEFAULT_ACTIVITY_FILTERS);
 	const filters = urlRead ? storeFilters : linkFilters;
 	const hydrated = useHydrated();
 	const debouncedSearch = useDebouncedValue(filters.search, SEARCH_DEBOUNCE, { urlRead });
@@ -175,7 +187,9 @@ export function ActivityLog({
 		() => activityRange(filters, defaultRange),
 		[filters, defaultRange],
 	);
-	const rangeLabel = filters.rangeLabel || DEFAULT_RANGE_LABEL;
+	// One choice, one label: the default preset's name, a picked preset's name, or "Custom range"
+	// for an explicit window, never a relative name over fixed bounds (#6740).
+	const rangeLabel = rangeFilterLabel(parseRangeFilter(filters.range), DEFAULT_RANGE_LABEL);
 
 	const [upgradeOpen, setUpgradeOpen] = useState(false);
 
@@ -255,20 +269,16 @@ export function ActivityLog({
 	 * retention is unknown, a range inside the community floor applies and an older one does
 	 * neither — it unlocks no paid history and offers no upgrade to an org that may have it. */
 	const applyRange = useCallback(
-		(next: DateRange, label: string) => {
+		(next: DateRange, label: string | null) => {
 			const days = retentionDays ?? COMMUNITY_ENTITLEMENTS.quotas.activityRetentionDays;
 			const minFrom = Date.now() - days * DAY - RETENTION_GRACE;
 			if (next.from.getTime() < minFrom) {
 				if (retentionDays !== null) setUpgradeOpen(true);
 				return;
 			}
-			patch({
-				from: next.from.toISOString(),
-				to: next.to.toISOString(),
-				rangeLabel: label,
-			});
+			set("range", label === null ? rangeWindowValue(next) : rangeFromPick(next, label));
 		},
-		[retentionDays, patch],
+		[retentionDays, set],
 	);
 
 	// The facet counts come from the server's facet passes (lib/queries/activity.ts), which see
@@ -413,7 +423,7 @@ export function ActivityLog({
 				/>
 				<DateRangeFilter
 					value={range}
-					onChange={(r) => applyRange(r, formatRangeLabel(r))}
+					onChange={(r) => applyRange(r, null)}
 				/>
 				<FacetFilter
 					label="User"

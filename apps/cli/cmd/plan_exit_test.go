@@ -144,14 +144,14 @@ func TestPlanExit_EveryKindOfWriteIsAChange(t *testing.T) {
 			Addons:     []AddonPlan{{ID: "loki", Action: ActionUnchanged}},
 		}}}
 	}
-	if p := unchanged(); p.hasChanges() {
+	if p := unchanged(); p.HasChanges() {
 		t.Error("a plan where everything matches reported a change")
 	}
 	// Unmanaged things are left alone, so they are not changes either.
 	p := unchanged()
 	p.Unmanaged = []string{"staging"}
 	p.Environments[0].UnmanagedAddons = []string{"reloader"}
-	if p.hasChanges() {
+	if p.HasChanges() {
 		t.Error("an unmanaged environment or add-on was counted as a change")
 	}
 	for name, mutate := range map[string]func(*ApplyPlan){
@@ -164,7 +164,7 @@ func TestPlanExit_EveryKindOfWriteIsAChange(t *testing.T) {
 	} {
 		p := unchanged()
 		mutate(p)
-		if !p.hasChanges() {
+		if !p.HasChanges() {
 			t.Errorf("%s is not counted as a change", name)
 		}
 		if got := planExitCode(p, true); got != exitPlanChanges {

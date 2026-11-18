@@ -30,6 +30,7 @@ function row(over: Partial<ActivityRow> = {}): ActivityRow {
 		action: "create",
 		resourceType: "project",
 		resourceId: "project-1",
+		resourceName: null,
 		decision: true,
 		reason: null,
 		ts: "2026-06-20T10:00:00.000Z",
@@ -68,6 +69,35 @@ describe("describeEvent — allowed actions", () => {
 			ctx,
 		);
 		expect(roleChange).toMatchObject({ lead: "had their role changed", target: null });
+	});
+});
+
+describe("describeEvent — recorded resource names (#6735)", () => {
+	it("names a DELETED project from the name recorded with the event", () => {
+		// The live lookup cannot see the project any more — it resolves nothing for this id.
+		const e = describeEvent(
+			row({ action: "destroy", resourceId: "project-gone", resourceName: "qa-proj" }),
+			ctx,
+		);
+		expect(e).toMatchObject({ lead: "deleted", target: "project qa-proj" });
+	});
+
+	it("prefers the recorded name over the live one (the name it had when it happened)", () => {
+		const e = describeEvent(row({ action: "edit", resourceName: "old-name" }), ctx);
+		expect(e.target).toBe("project old-name");
+	});
+
+	it("falls back to the live lookup for a row recorded before names were", () => {
+		const e = describeEvent(row({ action: "edit", resourceName: null }), ctx);
+		expect(e.target).toBe("project my-api");
+	});
+
+	it("says a card was added for a recorded card save (#6733)", () => {
+		const e = describeEvent(
+			row({ action: "add_payment_method", resourceType: "billing", resourceId: null }),
+			ctx,
+		);
+		expect(e).toMatchObject({ lead: "added", target: "a payment method" });
 	});
 });
 

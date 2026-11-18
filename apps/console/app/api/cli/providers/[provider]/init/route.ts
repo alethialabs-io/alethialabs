@@ -9,7 +9,10 @@ import {
 } from "@/lib/cli/providers";
 import { NextResponse } from "next/server";
 
-/** Gets or creates the CLI user's identity for a provider (AWS also returns external_id). */
+/**
+ * Gets or creates the CLI user's identity for a provider (AWS also returns external_id). A cloud
+ * this deployment does not offer is refused by `initIdentity`, answered with a 400.
+ */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ provider: string }> },

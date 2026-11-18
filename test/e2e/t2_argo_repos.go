@@ -282,6 +282,29 @@ func assertArgoAppManagesResources(ctx context.Context, kubeconfigPath, name str
 	return nil
 }
 
+// waitArgoAppManagesResources is assertArgoAppManagesResources, polled until deadline.
+//
+// For an Application whose repo may receive its manifests AFTER the Application was created: it
+// can read Healthy+Synced on the earlier, empty revision, so one read is a race, not a verdict. The
+// deadline is the caller's existing convergence window, so this adds no budget term. It always reads
+// at least once, and on expiry returns the last read's error, so an empty repo still fails.
+func waitArgoAppManagesResources(ctx context.Context, kubeconfigPath, name string, deadline time.Time) error {
+	for {
+		err := assertArgoAppManagesResources(ctx, kubeconfigPath, name)
+		if err == nil || !time.Now().Add(argoResourceCountPoll).Before(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(argoResourceCountPoll):
+		}
+	}
+}
+
+// argoResourceCountPoll is how often waitArgoAppManagesResources re-reads the Application.
+const argoResourceCountPoll = 15 * time.Second
+
 // argoAppResourceCount reads how many manifests an Application actually manages. Split out from the
 // >0 assertion above so a caller that must RECORD the count in a machine-readable verdict reads it
 // from the same place the floor is enforced, instead of keeping a second near-identical kubectl

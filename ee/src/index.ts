@@ -20,6 +20,11 @@ import { OpenFgaPdp } from "./openfga-pdp";
 import { newOrgSetupHooks } from "./new-org-setup-hooks";
 import { orgSlugHooks } from "./org-slug-hooks";
 import { resolveActiveScope } from "./scope";
+import {
+  type EnterpriseAuthPlugin,
+  SSO_PROVISIONED_ROLE,
+  ssoProvisioningPlugin,
+} from "./sso-provisioning";
 
 /** One OpenFGA client when configured (shared by the engine + the dual-write writer). */
 function buildFgaClient(core: CoreContext): OpenFgaClient | null {
@@ -63,6 +68,45 @@ function bodyOrgId(body: unknown): string | null {
   }
   return null;
 }
+
+/**
+ * One enterprise module's registration entry: what it adds to the instance when `register(core)`
+ * runs. Today that is Better Auth plugins (endpoints and before/after hooks), appended after
+ * `organization()` and `sso()` in the order of {@link ENTERPRISE_FEATURES}.
+ */
+export interface EnterpriseFeature {
+  /** The module's name; for the ones below it is also its directory under `ee/src/`. */
+  id: string;
+  /** The Better Auth plugins this module mounts, built from the injected core capabilities. */
+  authPlugins: (core: CoreContext) => EnterpriseAuthPlugin[];
+}
+
+/** The entry of a module that is planned and not built: it registers nothing. */
+function notBuilt(id: string): EnterpriseFeature {
+  return { id, authPlugins: () => [] };
+}
+
+/**
+ * Every enterprise module, in registration order. A module that is not built yet holds its place
+ * with a {@link notBuilt} entry. The unit that builds it replaces that one line with the entry its
+ * own directory exports and adds the import for it; `register` below does not change.
+ */
+export const ENTERPRISE_FEATURES: readonly EnterpriseFeature[] = [
+  // Access for a member who arrives through single sign-on (./sso-provisioning).
+  { id: "sso-provisioning", authPlugins: (core) => [ssoProvisioningPlugin(core)] },
+  // Enforced single sign-on — ee/src/enforced-sso/
+  notBuilt("enforced-sso"),
+  // Identity-provider group to role mapping — ee/src/group-mapping/
+  notBuilt("group-mapping"),
+  // SCIM provisioning — ee/src/scim/
+  notBuilt("scim"),
+  // Audit-log streaming — ee/src/audit-stream/
+  notBuilt("audit-stream"),
+  // Second factor and session policy — ee/src/session-policy/
+  notBuilt("session-policy"),
+  // Agent policy — ee/src/agent-policy/
+  notBuilt("agent-policy"),
+];
 
 export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
   core,
@@ -344,24 +388,32 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
       // Enterprise SSO (OIDC + SAML): Alethia as the Service Provider consuming
       // the customer's IdP (Okta / Entra ID / AWS IAM Identity Center / …).
       // Loaded after organization() so per-org providers (ssoProvider.organizationId)
-      // resolve. SSO users are provisioned into their org as least-privileged
-      // members. STANDUP: a JIT-provisioned user still gets NO PDP GRANT — see the
-      // defaultRole comment below; plus add a getRole mapping (IdP group claim →
-      // owner/admin/operator/viewer) and harden SAML (algorithms.onDeprecated:
-      // "reject", enable InResponseTo validation).
+      // resolve. A person signing in through their organization's IdP for the first
+      // time is added to that organization as a least-privileged member, and the
+      // `sso-provisioning` entry of ENTERPRISE_FEATURES — mounted after this plugin —
+      // gives that member their grant (./sso-provisioning).
       sso({
         organizationProvisioning: {
           // better-auth's org role (owner/admin/member) — least-privileged "member",
-          // which core's `toPdpRole` maps to Alethia's viewer bundle.
-          //
-          // THAT MAPPING DOES NOT REACH A JIT-PROVISIONED USER. `assignOrganization()`
-          // writes the member row with the generic adapter, not through the organization
-          // plugin's routes, so none of the `organizationHooks` above fire — no
-          // `ensureMemberGrant`, no grant row, no `syncOrgSeats`. The PDP authorizes from
-          // grants, so an employee signing in through the IdP for the first time still
-          // lands on `/{org}` denied. Fixing it needs a hook on the SSO path itself; the
-          // role map (#3730) covers the INVITED member, not this one.
-          defaultRole: "member",
+          // which core's `toPdpRole` maps to Alethia's viewer bundle. The SSO plugin
+          // writes the member row itself, outside the `organizationHooks` above; the
+          // grant, the seat reconciliation and the activity record for that row are
+          // ./sso-provisioning's, which grants this role and no other.
+          defaultRole: SSO_PROVISIONED_ROLE,
+        },
+        saml: {
+          // Every SAML response must answer an AuthnRequest this instance issued and
+          // still remembers: a response that names no request, an unknown one or an
+          // expired one is refused. That also refuses IdP-initiated sign-in — a person
+          // starts from Alethia's sign-in page, not from the IdP's app launcher. Both
+          // values are the installed plugin's defaults, stated so that the behaviour
+          // is this file's decision rather than a dependency's.
+          enableInResponseToValidation: true,
+          allowIdpInitiated: false,
+          // A response, or a provider configuration, that uses a deprecated algorithm
+          // (SHA-1 signatures or digests, RSA 1.5 key transport, 3DES) is refused
+          // rather than accepted with a warning.
+          algorithms: { onDeprecated: "reject" },
         },
         // Prove the customer controls the domain before we trust the IdP for it.
         // This gates TWO things in @better-auth/sso: (1) sign-in through a provider
@@ -396,6 +448,10 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
           ],
         },
       },
+
+      // The enterprise modules' own plugins, after organization() and sso() so their
+      // hooks see what those two wrote.
+      ...ENTERPRISE_FEATURES.flatMap((feature) => feature.authPlugins(core)),
     ],
 
     // Map a verified user to their active org — the personal org named explicitly, else a

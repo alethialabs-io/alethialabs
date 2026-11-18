@@ -420,13 +420,17 @@ func Quota(used, included float64) string {
 	return Minutes(used) + " / " + group(strconv.FormatFloat(allowance, 'f', 0, 64)) + " min"
 }
 
-// Duration renders an elapsed span: `47s`, `3m 20s`, `2h 5m`.
+// Duration renders an elapsed span: `47s`, `3m 20s`, `2h 5m`, `5d 3h`.
 //
 // It ROLLS INTO HOURS at sixty minutes and drops the seconds when it does. The console rendered a
 // two-hour provision as `120m 0s` and made the reader divide; a provision over an hour is ordinary
 // rather than an edge case, so the shape that read worst was the one covering the common path. At
 // an hour the seconds stop being information: nobody asking "how long did this take" is served by
 // `2h 5m 03s` over `2h 5m 41s`.
+//
+// It ROLLS INTO DAYS at twenty-four hours and drops the minutes, the same rule one unit up: a job
+// cancelled after 120 days in the queue read `2880h 19m` (#6732). Days are the last unit, because a
+// month has no fixed length.
 func Duration(d time.Duration) string {
 	if d <= 0 {
 		return "0s"
@@ -439,7 +443,11 @@ func Duration(d time.Duration) string {
 	if minutes < 60 {
 		return fmt.Sprintf("%dm %ds", minutes, seconds%60)
 	}
-	return fmt.Sprintf("%dh %dm", minutes/60, minutes%60)
+	hours := minutes / 60
+	if hours < 24 {
+		return fmt.Sprintf("%dh %dm", hours, minutes%60)
+	}
+	return fmt.Sprintf("%dd %dh", hours/24, hours%24)
 }
 
 // DateStyle selects how much of a timestamp to show.

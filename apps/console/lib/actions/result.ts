@@ -26,6 +26,12 @@ export type ActionError =
 	| { kind: "not-found"; message: string }
 	| { kind: "conflict"; message: string }
 	| { kind: "entitlement"; message: string; feature: string }
+	/**
+	 * The call never produced a server answer. `sent` says whether the request left the browser:
+	 * `false` means nothing was sent, so nothing changed; `true` means the outcome is unknown.
+	 * The server never returns this kind. Only the client raises it, in {@link toActionFailure}.
+	 */
+	| { kind: "network"; sent: boolean }
 	| { kind: "unexpected"; ref: string };
 
 /** The one shape every server action returns. */
@@ -75,6 +81,45 @@ export class ActionFailure extends Error {
 	}
 }
 
+/** Shown when the browser was offline before the call: no request was made. */
+export const NETWORK_OFFLINE_MESSAGE = "You appear to be offline. Nothing was changed.";
+
+/** Shown when a call that was sent got no server answer: the change may or may not have applied. */
+export const NETWORK_UNCONFIRMED_MESSAGE =
+	"We couldn't confirm that change. Check it before trying again.";
+
+/**
+ * True when `thrown` is Next's own control flow (a redirect, `notFound()`, an HTTP fallback) and
+ * not a failure. Next marks these with a `digest` that starts with a fixed prefix. This reads the
+ * digest and does not import `unstable_rethrow`, because this module is loaded by client code
+ * whose tests replace `next/navigation` with a partial mock.
+ */
+export function isFrameworkControlFlow(thrown: unknown): boolean {
+	if (typeof thrown !== "object" || thrown === null || !("digest" in thrown)) return false;
+	const digest = thrown.digest;
+	if (typeof digest !== "string") return false;
+	return (
+		digest.startsWith("NEXT_REDIRECT") ||
+		digest.startsWith("NEXT_HTTP_ERROR_FALLBACK") ||
+		digest === "NEXT_NOT_FOUND"
+	);
+}
+
+/**
+ * Turns anything `await action()` can throw into an `ActionFailure`, so the client has one type
+ * to route on. `sent` says whether the request left the browser.
+ *
+ * - An `ActionFailure` is returned as it is.
+ * - Next's control flow is rethrown, so an action that redirects still navigates.
+ * - Everything else is a call that got no server answer (the browser went offline, a proxy
+ *   answered instead of the app, the page is older than the deployment) and becomes `network`.
+ */
+export function toActionFailure(thrown: unknown, sent: boolean): ActionFailure {
+	if (thrown instanceof ActionFailure) return thrown;
+	if (isFrameworkControlFlow(thrown)) throw thrown;
+	return new ActionFailure({ kind: "network", sent });
+}
+
 /** A one-line human description of an action error, for logs and the fallback toast. */
 export function describeActionError(error: ActionError): string {
 	switch (error.kind) {
@@ -87,6 +132,8 @@ export function describeActionError(error: ActionError): string {
 		case "conflict":
 		case "entitlement":
 			return error.message;
+		case "network":
+			return error.sent ? NETWORK_UNCONFIRMED_MESSAGE : NETWORK_OFFLINE_MESSAGE;
 		case "unexpected":
 			return `Something went wrong on our side. Reference: ${error.ref}`;
 	}

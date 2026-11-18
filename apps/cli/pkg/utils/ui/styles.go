@@ -5,12 +5,15 @@ package ui
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/ui/theme"
 	"github.com/alethialabs-io/alethialabs/packages/core/format"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // Alethia Labs is a strictly grayscale brand: zero chroma, dark-first. Meaning
@@ -142,30 +145,85 @@ func Eyebrow(label string) string {
 }
 
 // --- Message Helpers ---
+//
+// Every message helper has a writer-taking form, and that form is the contract: a message is a
+// diagnostic or a result sentence, and only the caller knows which stream that makes it. The
+// command layer reaches them through cmd.Printer, which owns the two streams.
+//
+// The forms without a writer are the LEGACY spellings. They print on stdout, exactly as they always
+// did, and exist only because their callers are swept one command family at a time; a new call site
+// passes a writer.
 
-func Success(msg string) {
-	fmt.Printf("\n%s\n", SuccessStyle.Render(SymbolSuccess+" "+msg))
+// SuccessTo writes a success line to w: a blank line, then the tick and the message.
+func SuccessTo(w io.Writer, msg string) {
+	fmt.Fprintf(w, "\n%s\n", SuccessStyle.Render(SymbolSuccess+" "+msg))
 }
 
-func Error(msg string) {
-	fmt.Printf("\n%s\n", ErrorStyle.Render(SymbolError+" "+msg))
+// ErrorTo writes a failure line to w: a blank line, then the failed glyph and the message.
+func ErrorTo(w io.Writer, msg string) {
+	fmt.Fprintf(w, "\n%s\n", ErrorStyle.Render(SymbolError+" "+msg))
 }
 
-func Warning(msg string) {
-	fmt.Printf("\n%s\n", WarningStyle.Render(SymbolPoint+" "+msg))
+// WarningTo writes a warning line to w: a blank line, then the pointer glyph and the message.
+func WarningTo(w io.Writer, msg string) {
+	fmt.Fprintf(w, "\n%s\n", WarningStyle.Render(SymbolPoint+" "+msg))
 }
 
-func Info(msg string) {
-	fmt.Println(TextStyle.Render(msg))
+// InfoTo writes msg to w as one line of body text.
+func InfoTo(w io.Writer, msg string) {
+	fmt.Fprintln(w, TextStyle.Render(msg))
 }
 
-func Muted(msg string) {
-	fmt.Println(MutedStyle.Render(msg))
+// MutedTo writes msg to w as one line of muted text.
+func MutedTo(w io.Writer, msg string) {
+	fmt.Fprintln(w, MutedStyle.Render(msg))
 }
 
-func JobQueued(jobType, jobID string) {
-	fmt.Printf("\n%s\n", SuccessStyle.Render(fmt.Sprintf("%s Queued %s job (ID: %s)", SymbolSuccess, jobType, jobID)))
-	fmt.Printf("Monitor with: alethia jobs logs %s --follow\n", jobID)
+// JobQueuedTo writes the two lines that follow a queued job to w: what was queued and under which
+// id, then the command that follows it.
+func JobQueuedTo(w io.Writer, jobType, jobID string) {
+	fmt.Fprintf(w, "\n%s\n", SuccessStyle.Render(fmt.Sprintf("%s Queued %s job (ID: %s)", SymbolSuccess, jobType, jobID)))
+	fmt.Fprintf(w, "Monitor with: alethia jobs logs %s --follow\n", jobID)
+}
+
+// Success is the legacy spelling of SuccessTo on stdout.
+func Success(msg string) { SuccessTo(os.Stdout, msg) }
+
+// Error is the legacy spelling of ErrorTo on stdout.
+func Error(msg string) { ErrorTo(os.Stdout, msg) }
+
+// Warning is the legacy spelling of WarningTo on stdout.
+func Warning(msg string) { WarningTo(os.Stdout, msg) }
+
+// Info is the legacy spelling of InfoTo on stdout.
+func Info(msg string) { InfoTo(os.Stdout, msg) }
+
+// Muted is the legacy spelling of MutedTo on stdout.
+func Muted(msg string) { MutedTo(os.Stdout, msg) }
+
+// JobQueued is the legacy spelling of JobQueuedTo on stdout.
+func JobQueued(jobType, jobID string) { JobQueuedTo(os.Stdout, jobType, jobID) }
+
+// --- Colour ---
+
+// DisableColor turns styling off for the rest of the process: every style in this package then
+// renders its text unchanged, with no escape sequence around it.
+//
+// There is no matching "enable". Colour is on only where the terminal library detects support for
+// it, and that detection is left alone; this is the explicit off switch for the cases detection
+// cannot see — an agent reading the output, or a stream other than the one that was probed.
+func DisableColor() {
+	lipgloss.SetColorProfile(termenv.Ascii)
+}
+
+// ColorDisabledByEnv reports whether the environment asks for uncoloured output: a non-empty
+// NO_COLOR, or a TERM of "dumb". lookup is os.LookupEnv in production.
+func ColorDisabledByEnv(lookup func(string) (string, bool)) bool {
+	if v, ok := lookup("NO_COLOR"); ok && v != "" {
+		return true
+	}
+	term, _ := lookup("TERM")
+	return term == "dumb"
 }
 
 func FormatSuccess(msg string) string {

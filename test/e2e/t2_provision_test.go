@@ -598,7 +598,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			// wearing the same `signal: interrupt`. Both live in t2TeardownFailureLine, which is
 			// untagged and unit-tested, because this branch only executes on a paid cloud run.
 			// `dctx.Err()` is read AFTER the call returns, so it is the deadline's own verdict.
-			t.Logf("%s", t2TeardownFailureLine(provider, window, dctx.Err(), derr))
+			//
+			// IT FAILS THE LEG (#6970), on every cloud — this one call site serves all of them.
+			// The destroy is the product's, and a customer has no sweeper behind it: this line was
+			// a t.Logf, and seven nightly aws legs in a row went green over a destroy that left a
+			// load balancer, its subnets and a certificate behind. t.Errorf, never t.Fatal: the
+			// leg is marked failed and everything after it still runs, including the workflow's
+			// always() sweeper, which stays the guarantee that nothing is left billing.
+			t.Errorf("%s", t2TeardownFailureLine(provider, window, dctx.Err(), derr))
 		} else {
 			t.Log("teardown: cluster destroyed via RunDestroy")
 		}
@@ -850,13 +857,20 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		// chart never deployed, and the e2e proved a path a customer does not have. The chart must
 		// now converge unaided, which is what a customer actually gets.
 		t.Logf("A0.6: repo-apps (apps) + repo-byo (%s) derived + credentialed; converging (BYO auto-syncs, unaided)...", byoApp)
+		convergeDeadline := time.Now().Add(ArgoAssertTimeout())
 		if e := AssertArgoReposConverge(ctx, kc, assertedApps, nil, ArgoAssertTimeout()); e != nil {
 			t.Fatalf("A0.6 ArgoCD-with-repos convergence failed: %v", e)
 		}
 		// Not vacuous: both repo-sourced apps must MANAGE ≥1 resource — an empty repo/chart
 		// renders nothing yet reports Healthy+Synced, which would prove a credentialed clone but
 		// NOT that GitOps actually deployed a workload.
-		if e := assertArgoAppManagesResources(ctx, kc, "apps"); e != nil {
+		//
+		// `apps` is WAITED for, inside the convergence window it already has, not read once. Its
+		// repo can be scaffolded by the runner AFTER the Application was created (the keyless leg
+		// resets its repo to a README first), so the convergence above can pass on the README-only
+		// revision. A one-shot count then read zero on runs 43592824666 and 43722379866. The runner
+		// now asks ArgoCD to re-read the repo after its push; this wait is what proves it landed.
+		if e := waitArgoAppManagesResources(ctx, kc, "apps", convergeDeadline); e != nil {
 			t.Fatalf("A0.6 repo-apps workload: %v", e)
 		}
 		if e := assertArgoAppManagesResources(ctx, kc, byoApp); e != nil {

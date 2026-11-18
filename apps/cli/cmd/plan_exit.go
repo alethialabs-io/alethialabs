@@ -47,41 +47,16 @@ const (
 	exitPlanProblems = 3
 )
 
-// hasChanges reports whether apply would write anything: a project or environment to create, or a
-// component or add-on to create or update. Unmanaged environments and add-ons are left alone, so
-// they are not changes.
-func (p *ApplyPlan) hasChanges() bool {
-	if p.ProjectID == "" {
-		return true
-	}
-	for _, e := range p.Environments {
-		if e.Action != ActionUnchanged {
-			return true
-		}
-		for _, c := range e.Components {
-			if c.Action != ActionUnchanged {
-				return true
-			}
-		}
-		for _, a := range e.Addons {
-			if a.Action != ActionUnchanged {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // planExitCode is the code `plan` exits with for a plan it computed. Errors before the plan exists
 // exit 1 through fail and never reach this.
 func planExitCode(p *ApplyPlan, detailed bool) int {
-	refused := p.refusal() != nil
+	refused := p.Refusal() != nil
 	switch {
 	case refused && detailed:
 		return exitPlanProblems
 	case refused:
 		return exitPlanRefused
-	case detailed && p.hasChanges():
+	case detailed && p.HasChanges():
 		return exitPlanChanges
 	}
 	return 0
@@ -102,7 +77,7 @@ func reportRefusal(err error, format string) {
 // finishPlan ends `plan` once the plan has been printed: it reports any refusal and exits with the
 // code planExitCode chooses. A zero code returns normally.
 func finishPlan(p *ApplyPlan, detailed bool, format string) {
-	if err := p.refusal(); err != nil {
+	if err := p.Refusal(); err != nil {
 		reportRefusal(err, format)
 	}
 	if code := planExitCode(p, detailed); code != 0 {

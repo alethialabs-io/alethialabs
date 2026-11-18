@@ -310,11 +310,11 @@ The next deploy rewrites `.env` from the vault, so change the vault as well.
 
 ## Not done here
 
-- **Retiring `infra/email-ses`.** Its README still describes it as the self-hosters' reference,
-  which stays true. Its identities, sets and topics in the platform account, and the deactivated
-  `alethia-ses-sender` keys there, are the maintainer's to delete in a separate, reviewed PR.
-  Any edit under `infra/email-ses/**` reaching `main` triggers its apply job, which is why this PR
-  touches nothing there.
+- **Retiring `infra/email-ses`'s hosted resources.** Its CI is validate-only since 2026-11-15, so
+  an edit under `infra/email-ses/**` no longer applies anything. Its identities, sets and topics in
+  the platform account, the `alethia-ses-deployer` role and the inactive `alethia-ses-sender` keys
+  there are the maintainer's to delete by hand: `infra/email-ses/RETIRE.md`. The stack itself stays
+  as the self-hosters' reference.
 - **A custom MAIL FROM** (`bounce.alethialabs.io`) would align SPF as well as DKIM. It needs an MX
   record and an SPF TXT record at Cloudflare first, then an
   `aws_sesv2_email_identity_mail_from_attributes` resource here. DMARC already passes on DKIM.

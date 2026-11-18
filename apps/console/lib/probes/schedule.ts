@@ -38,12 +38,45 @@ export interface ProbeCandidate {
 	tier: ProbeTier;
 	/** When this env was last probed (null = never). */
 	lastCheckedAt: Date | null;
+	/** Whether the env is ACTIVE. Absent = ACTIVE (the only kind the sweep used to probe). */
+	active?: boolean;
+	/** Consecutive misses on its newest probes (failed jobs, or unreachable). Absent = 0. */
+	misses?: number;
+}
+
+/** The longest a non-ACTIVE env waits between probes, however many it has missed. */
+export const PROBE_BACKOFF_CAP_MS = 7 * 24 * 3_600_000;
+
+/**
+ * The interval before an env is probed again (#6736). An ACTIVE env keeps its tier cadence —
+ * an outage there must surface in minutes. A non-ACTIVE env (in flight, FAILED, a plan over a live
+ * cluster) is probed at the SAME tier cadence, never tighter, doubled for every consecutive miss
+ * and capped at {@link PROBE_BACKOFF_CAP_MS}: a cluster that is gone or a probe that cannot run is
+ * looked at less and less often instead of every interval for ever, which also bounds the runner
+ * minutes and the failed-job alerts it costs.
+ */
+export function probeCadenceMs(tier: ProbeTier, active: boolean, misses: number): number {
+	const base = PROBE_CADENCE_MS[tier];
+	if (active || misses <= 0) return base;
+	// 2^misses, computed without overflow: past ~20 doublings every tier is far beyond the cap.
+	const factor = 2 ** Math.min(misses, 20);
+	return Math.min(base * factor, PROBE_BACKOFF_CAP_MS);
+}
+
+/** Consecutive misses at the head of an env's probe history (newest first): stops at the first hit. */
+export function countLeadingMisses(newestFirst: readonly { hit: boolean }[]): number {
+	let n = 0;
+	for (const p of newestFirst) {
+		if (p.hit) break;
+		n += 1;
+	}
+	return n;
 }
 
 /**
- * Returns the candidates whose last probe is older than their tier's cadence (or that have
- * never been probed). Deterministic given `now`. Mirrors `selectDueForDrift` exactly but keys
- * off PROBE_CADENCE_MS.
+ * Returns the candidates whose last probe is older than their cadence (or that have never been
+ * probed). Deterministic given `now`. Mirrors `selectDueForDrift`, keyed off
+ * {@link probeCadenceMs} — the tier cadence, backed off for a non-ACTIVE env that keeps missing.
  */
 export function selectDueForProbe(
 	candidates: ProbeCandidate[],
@@ -51,7 +84,7 @@ export function selectDueForProbe(
 ): ProbeCandidate[] {
 	return candidates.filter((c) => {
 		if (c.lastCheckedAt === null) return true;
-		const cadence = PROBE_CADENCE_MS[c.tier];
+		const cadence = probeCadenceMs(c.tier, c.active ?? true, c.misses ?? 0);
 		return now.getTime() - c.lastCheckedAt.getTime() >= cadence;
 	});
 }

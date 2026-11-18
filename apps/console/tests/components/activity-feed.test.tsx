@@ -27,6 +27,7 @@ function row(over: Partial<ActivityRow> = {}): ActivityRow {
 		action: "manage_alerts",
 		resourceType: "alert",
 		resourceId: null,
+		resourceName: null,
 		decision: true,
 		reason: null,
 		ts: "2026-06-20T10:00:00.000Z",
@@ -53,6 +54,25 @@ describe("ActivityFeed", () => {
 			/>,
 		);
 		expect(screen.getByText("project my-api").tagName).toBe("STRONG");
+	});
+
+	it("renders the RECORDED name of a project that no longer exists (#6735)", () => {
+		// The live lookup (ctx) knows nothing about this id — the project is gone.
+		render(
+			<ActivityFeed
+				rows={[
+					row({
+						action: "destroy",
+						resourceType: "project",
+						resourceId: "project-deleted",
+						resourceName: "qa-20261116-proj",
+					}),
+				]}
+				ctx={ctx}
+			/>,
+		);
+		expect(screen.getByText("project qa-20261116-proj").tagName).toBe("STRONG");
+		expect(screen.queryByText("a project")).toBeNull();
 	});
 
 	it("flags denials with a badge and shows the reason", () => {

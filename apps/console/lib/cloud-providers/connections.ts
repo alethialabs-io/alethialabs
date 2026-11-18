@@ -9,6 +9,8 @@ import { persistableErrorText } from "@/lib/errors";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, projects } from "@/lib/db/schema";
 import { encryptSecret } from "@/lib/crypto/secrets";
+import { assertCloudOffered } from "@/lib/cloud-providers/availability";
+import type { ConnectableCloudSlug } from "@/lib/cloud-providers/generated/catalog";
 import { probeHealth, type HealthStatus } from "@/lib/cloud-providers/health";
 import { deriveOidcProviderArn } from "@/lib/cloud-providers/session/alibaba";
 import {
@@ -32,16 +34,16 @@ import { buildWifConfig, GCP_PROJECT_ID_REGEX } from "./gcp-wif";
  * by `orgId` explicitly so connections are org-scoped (shared across the org's
  * members, subject to role) without relying on RLS. A provider can hold more than
  * one account — each verified identity is a distinct account row.
+ *
+ * WHICH CLOUDS. A new connection is accepted only for a cloud this deployment offers
+ * (`assertCloudOffered`): `initIdentity` refuses to start one, and every `save*` refuses to
+ * complete one, so a pending row that predates a change of the offered set cannot be finished.
+ * Reading, re-verifying, renaming and disconnecting an account are not restricted, so an account
+ * on a cloud that is no longer offered can still be inspected and removed.
  */
 
-export type CloudProvider =
-	| "aws"
-	| "gcp"
-	| "azure"
-	| "alibaba"
-	| "digitalocean"
-	| "hetzner"
-	| "civo";
+/** Every cloud an account can exist for: the catalog's full list, offered or not. */
+export type CloudProvider = ConnectableCloudSlug;
 
 // NB: AWS and Alibaba are KEYLESS direct-OIDC now — AssumeRoleWithWebIdentity (AWS) and
 // AssumeRoleWithOIDC (Alibaba) take NO ExternalId, and the customer's trust policy pins the issuer
@@ -104,11 +106,15 @@ export type ConnectionStatus = {
  * connect — which is how one provider holds more than one account. New rows are
  * created `scope: 'org'` so every org member (subject to role) sees them. All
  * managed clouds are keyless (no ExternalId), so the pending row carries no secret.
+ *
+ * Throws `CloudNotOfferedError` for a cloud this deployment does not offer, before any read: an
+ * existing pending row for such a cloud is not handed back either.
  */
 export async function initIdentity(
 	scope: ConnScope,
 	provider: CloudProvider,
 ): Promise<InitResult> {
+	assertCloudOffered(provider);
 	const db = getServiceDb();
 	const [existing] = await db
 		.select()
@@ -372,6 +378,18 @@ async function loadIdentity(scope: ConnScope, identityId: string) {
 	return identity;
 }
 
+/**
+ * Loads the identity a connect form is about to write, and refuses it unless the cloud the stored
+ * row belongs to is offered. Each `save*` has already refused its own cloud by then; checking the
+ * row as well means a pending row on a cloud that is not offered cannot be completed through
+ * another cloud's form. Throws `CloudNotOfferedError`.
+ */
+async function loadIdentityToSave(scope: ConnScope, identityId: string) {
+	const identity = await loadIdentity(scope, identityId);
+	assertCloudOffered(identity.provider);
+	return identity;
+}
+
 // --- AWS ---
 
 // A role may live under an IAM PATH — `role/alethia-e2e/alethia-e2e-nightly` — and AWS returns the
@@ -402,9 +420,10 @@ export async function saveAwsIdentity(
 	identityId: string,
 	roleArn: string,
 ): Promise<ConnectionResult> {
+	assertCloudOffered("aws");
 	const { accountId } = parseAwsRoleArn(roleArn);
 
-	const identity = await loadIdentity(scope, identityId);
+	const identity = await loadIdentityToSave(scope, identityId);
 
 	await getServiceDb()
 		.update(cloudIdentities)
@@ -511,10 +530,11 @@ export async function saveGcpIdentity(
 	identityId: string,
 	wifConfigJson: string,
 ): Promise<ConnectionResult> {
+	assertCloudOffered("gcp");
 	const { parsed, projectNumber, serviceAccountEmail, projectId } =
 		parseWifConfig(wifConfigJson);
 
-	await loadIdentity(scope, identityId);
+	await loadIdentityToSave(scope, identityId);
 
 	await getServiceDb()
 		.update(cloudIdentities)
@@ -553,6 +573,7 @@ export async function saveGcpIdentityFromIds(
 	projectId: string,
 	projectNumber: string,
 ): Promise<ConnectionResult> {
+	assertCloudOffered("gcp");
 	const pid = projectId.trim();
 	const num = projectNumber.trim();
 	if (!GCP_PROJECT_ID_REGEX.test(pid)) {
@@ -579,6 +600,7 @@ export async function saveAzureIdentity(
 	clientId: string,
 	subscriptionId: string,
 ): Promise<ConnectionResult> {
+	assertCloudOffered("azure");
 	if (!GUID_REGEX.test(tenantId)) {
 		throw new Error("Invalid Tenant ID format. Expected a UUID.");
 	}
@@ -597,7 +619,7 @@ export async function saveAzureIdentity(
 	const conflict = azureIdConflict({ tenantId, clientId, subscriptionId });
 	if (conflict) throw new Error(conflict.message);
 
-	await loadIdentity(scope, identityId);
+	await loadIdentityToSave(scope, identityId);
 
 	await getServiceDb()
 		.update(cloudIdentities)
@@ -634,12 +656,13 @@ export async function saveAlibabaIdentity(
 	identityId: string,
 	roleArn: string,
 ): Promise<ConnectionResult> {
+	assertCloudOffered("alibaba");
 	const match = roleArn.match(ALIBABA_ARN_REGEX);
 	if (!match) {
 		throw new Error("Invalid format. Expected: acs:ram::5123456789012345:role/RoleName");
 	}
 	const accountId = match[1];
-	const identity = await loadIdentity(scope, identityId);
+	const identity = await loadIdentityToSave(scope, identityId);
 
 	// The OIDC provider ARN is derived from the account id + the fixed provider name the customer
 	// setup module creates (`infra/connector/alibaba`), so the connect form only needs the role ARN.
@@ -684,6 +707,7 @@ export async function saveTokenCloudIdentity(
 	s3AccessKey?: string,
 	s3SecretKey?: string,
 ): Promise<ConnectionResult> {
+	assertCloudOffered(provider);
 	if (!TOKEN_CLOUDS.has(provider)) {
 		throw new Error(`${provider} is not a token-authenticated cloud`);
 	}
@@ -691,7 +715,7 @@ export async function saveTokenCloudIdentity(
 	if (token.length < 16) {
 		throw new Error("Invalid API token format");
 	}
-	const identity = await loadIdentity(scope, identityId);
+	const identity = await loadIdentityToSave(scope, identityId);
 
 	const credentials: CloudCredentials = {
 		...identity.credentials,

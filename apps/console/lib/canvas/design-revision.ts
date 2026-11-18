@@ -10,9 +10,6 @@
 
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 
-/** The draft scope of the create flow (`~/new`), which has no project yet. */
-export const NEW_DRAFT_SCOPE = "new";
-
 /** True for a plain object (not null, not an array) — the shape whose keys get sorted. */
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -73,15 +70,10 @@ export function designRevision(formData: ProjectFormData): string {
 }
 
 /**
- * The persisted-draft scope a canvas belongs to: `"new"` for the create flow (no project yet),
- * otherwise `<projectId>:<environmentId>`, with `"default"` standing in for an environment the
- * page could not resolve. One sessionStorage slot per scope, so switching environments never
- * shows the previous one's unsaved edits.
+ * The persisted-draft scope a canvas belongs to: `<projectId>:<environmentId>`, with `"default"`
+ * standing in for an environment the page could not resolve. One sessionStorage slot per scope, so
+ * switching environments never shows the previous one's unsaved edits.
  */
-export function draftScope(
-	projectId: string | undefined,
-	environmentId: string | undefined,
-): string {
-	if (!projectId) return NEW_DRAFT_SCOPE;
+export function draftScope(projectId: string, environmentId: string | undefined): string {
 	return `${projectId}:${environmentId ?? "default"}`;
 }

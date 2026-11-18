@@ -100,6 +100,7 @@ const boardData = {
 	view: { query: {}, rows: [datadog], facets: { groups: [], health: [], vendors: [] }, total: 1 },
 	canManage: false,
 	platformConfigured: {},
+	offeredClouds: [],
 };
 
 const settled = { isPending: false, isError: false, isRefetching: false, data: undefined, error: null, refetch: vi.fn() };
@@ -145,6 +146,7 @@ describe("ConnectorsPage — the four renders of its read", () => {
 				view: { query: {}, rows: [datadog], facets: { groups: [], health: [], vendors: [] }, total: 1 },
 				canManage: false,
 				platformConfigured: {},
+				offeredClouds: [],
 			},
 		};
 		renderBoard();
@@ -164,6 +166,7 @@ describe("ConnectorsPage — the four renders of its read", () => {
 				view: { query: {}, rows: [datadog], facets: { groups: [], health: [], vendors: [] }, total: 1 },
 				canManage: false,
 				platformConfigured: {},
+				offeredClouds: [],
 			},
 		};
 		renderBoard();

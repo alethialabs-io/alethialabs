@@ -23,6 +23,11 @@ import { getServiceDb } from "@/lib/db";
 import { type Invoice, member, organization } from "@/lib/db/schema";
 import { type BillingPlan, type BillingStatus, type InvoiceStatus, invoiceStatus } from "@/lib/db/schema/enums";
 import { query } from "@/lib/rpc/base";
+import {
+	INVOICE_PAID_WITHIN,
+	type InvoiceListParams,
+	invoiceReaderFilters,
+} from "@/lib/rpc/inputs/invoices";
 
 // The billing domain's reads (#6127, ADR 0005 D1): the Billing settings page and its Invoices page.
 // The bodies MOVED here from `app/server/actions/billing.ts`; they are plain functions, so other
@@ -309,13 +314,7 @@ function toInvoiceInfo(row: Invoice): InvoiceInfo {
 	};
 }
 
-/** Optional filters for the invoices list (period range + status). */
-export interface InvoiceListParams {
-	status?: InvoiceStatus[];
-	paidFrom?: string;
-	paidTo?: string;
-	limit?: number;
-}
+export type { InvoiceListParams } from "@/lib/rpc/inputs/invoices";
 
 // NO hosted-billing guard on this read, and its absence is the fix for the HTTP 500 the UI
 // conformance audit recorded on `~/settings/billing/invoices` (#3731).
@@ -334,7 +333,7 @@ export async function listInvoices(
 	params: InvoiceListParams = {},
 ): Promise<InvoiceInfo[]> {
 	const actor = await authorizeRead("manage_billing", { type: "billing" });
-	const rows = await listOrgInvoices(actor.orgId, params);
+	const rows = await listOrgInvoices(actor.orgId, invoiceReaderFilters(params));
 	return rows.map(toInvoiceInfo);
 }
 
@@ -479,6 +478,7 @@ function readSalesOpen(): { open: boolean } {
 /** The invoices list's filters, as the page builds them (`normalizeInvoiceQuery`). */
 const invoicesInput = z.object({
 	status: z.array(z.enum(invoiceStatus.enumValues)).max(10).optional(),
+	paidWithin: z.enum(INVOICE_PAID_WITHIN).optional(),
 	paidFrom: z.iso.datetime().optional(),
 	paidTo: z.iso.datetime().optional(),
 	limit: z.number().int().min(1).max(500).optional(),

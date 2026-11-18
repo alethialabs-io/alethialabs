@@ -1447,6 +1447,35 @@ export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = {
 		}
 	};
 
+/** Whether the product offers a cloud: `available`, or `hidden` (code kept, not offered). */
+export type CloudAvailability = "available" | "hidden";
+
+/** Every connectable cloud, in catalog order. */
+export const CONNECTABLE_CLOUDS: readonly ConnectableCloudSlug[] = [
+		"aws",
+		"gcp",
+		"azure",
+		"alibaba",
+		"digitalocean",
+		"hetzner",
+		"civo"
+	];
+
+/**
+ * Availability per connectable cloud, as catalog.json sets it. This is the build-time value only.
+ * Server code asks `lib/cloud-providers/availability.ts`, which also applies the operator
+ * override; nothing should decide an offer by reading this map directly.
+ */
+export const CLOUD_AVAILABILITY: Record<ConnectableCloudSlug, CloudAvailability> = {
+		"aws": "available",
+		"gcp": "available",
+		"azure": "available",
+		"alibaba": "hidden",
+		"digitalocean": "hidden",
+		"hetzner": "available",
+		"civo": "hidden"
+	};
+
 export interface RegionMeta {
 	label: string;
 	group: string;

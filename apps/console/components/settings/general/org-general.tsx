@@ -93,6 +93,14 @@ const EDIT_REFUSED = "Only the organization's owner can change these settings";
 /** Why Delete is disabled for anyone but the owner (better-auth deletes the org for the owner only). */
 const DELETE_REFUSED = "Only the organization's owner can delete it";
 
+/**
+ * What the delete confirmation says before anything is sent: the rule the server applies
+ * (`deleteOrganization` refuses while an environment is live or in flight), then what the delete
+ * does and does not do.
+ */
+const DELETE_RULE =
+  "An organization with a live or in-flight environment cannot be deleted: destroy those environments first. Deleting removes the organization, its Projects, its members and its access grants, and destroys nothing in the cloud. This cannot be undone.";
+
 /** The form's fields — the keys a server field error may name. */
 const FORM_FIELDS: readonly FieldPath<OrgGeneralInput>[] = [
   "name",
@@ -493,8 +501,7 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Delete this organization?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      This permanently deletes the organization, its members, and its access
-                      grants. This cannot be undone.
+                      {DELETE_RULE}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>

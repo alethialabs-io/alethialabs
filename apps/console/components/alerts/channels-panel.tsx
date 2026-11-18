@@ -39,7 +39,7 @@ import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { ChannelSheet } from "@/components/alerts/channel-sheet";
 import { ChannelVerify } from "@/components/alerts/channel-verify";
 import { CHANNEL_TYPE_META } from "@/components/alerts/channel-meta";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { FieldHelp } from "@/components/alerts/field-help";
 import { RecipientsEditor } from "@/components/alerts/recipients-editor";
 import { useAlertChannelFilters } from "@/lib/stores/use-alerts-filters";
@@ -212,7 +212,7 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 				/>
 			)}
 
-			<ConfirmDialog
+			<ConfirmAction
 				open={deleteTarget !== null}
 				onOpenChange={(o) => !o && setDeleteTarget(null)}
 				title={`Delete channel "${deleteTarget?.name ?? ""}"?`}
@@ -227,10 +227,9 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 				}
 				confirmLabel="Delete channel"
 				pendingLabel="Deleting…"
-				pending={remove.isPending}
-				onConfirm={() => {
-					if (deleteTarget && !remove.isPending) remove.mutate({ id: deleteTarget.id });
-				}}
+				severity={{ level: "confirm" }}
+				mutation={remove}
+				variables={deleteTarget ? { id: deleteTarget.id } : null}
 			/>
 		</div>
 	);
@@ -645,15 +644,16 @@ function ChannelDetail({
 				</div>
 			)}
 
-			<ConfirmDialog
+			<ConfirmAction
 				open={disableConfirm}
 				onOpenChange={setDisableConfirm}
 				title="Disable this channel?"
 				description="Policies routing here stop delivering until you re-enable it. You can re-enable any time."
 				confirmLabel="Disable"
 				pendingLabel="Disabling…"
-				pending={togglePending}
-				onConfirm={() => applyEnabled(false)}
+				severity={{ level: "confirm" }}
+				mutation={toggle}
+				variables={{ id: channel.id, enabled: false }}
 			/>
 		</div>
 	);

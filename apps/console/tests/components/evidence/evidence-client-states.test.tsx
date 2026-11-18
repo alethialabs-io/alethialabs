@@ -139,7 +139,7 @@ describe("EvidenceClient — four renders, never confused", () => {
 		renderPage();
 		await settle();
 		// No retry for a refusal: it renders at once (well inside the 1s a retry would wait).
-		expect(await screen.findByText("You can't view evidence here", undefined, { timeout: 500 })).toBeInTheDocument();
+		expect(await screen.findByText("You don't have access to evidence", undefined, { timeout: 500 })).toBeInTheDocument();
 		expect(screen.queryByText("Couldn't load evidence")).toBeNull();
 		expect(screen.queryByText("No environments yet")).toBeNull();
 	});

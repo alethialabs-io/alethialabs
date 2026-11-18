@@ -14,6 +14,7 @@
 import Link from "next/link";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
+import { RegionRefusal } from "@/components/errors/region-refusal";
 import { EvIcon } from "./evidence-status";
 
 /** The card the posture table would have occupied — an empty state has to hold the same space. */
@@ -60,15 +61,10 @@ export function EvidenceNoMatch({ onClear }: { onClear: () => void }) {
 /**
  * The read was REFUSED (a typed FORBIDDEN from the read router) — not empty, and not a failure.
  * A refusal answers the same on a retry, so there is no retry to offer; the way forward is access.
+ * The console's one refused render, in the card the posture table would have occupied.
  */
 export function EvidenceForbidden() {
 	return (
-		<EmptyState
-			className={CARD}
-			data-state="forbidden"
-			icon={<EvIcon name="shield-alert" size={22} />}
-			title="You can't view evidence here"
-			description="Your role in this organization doesn't include its projects' evidence. Ask an owner or admin for access."
-		/>
+		<RegionRefusal refusal="forbidden" subject="evidence" className={CARD} />
 	);
 }

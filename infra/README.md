@@ -16,7 +16,7 @@ push to `main`). PR jobs run **no cloud/state credentials** (static checks only:
 
 | Stack | Purpose | Auth (CI) | State | Bootstrap |
 |---|---|---|---|---|
-| `email-ses/` | AWS SES transactional email (acct **270587882865**) | **GitHub OIDC** (`alethia-ses-deployer`) | `alethia-tofu-state-270587882865` · `ses/` | `email-ses/bootstrap/` — owns the account's OIDC provider + state bucket |
+| `email-ses/` | Self-host reference: AWS SES in the self-hoster's own account. **Not a deployment target of ours.** Its hosted resources in acct **270587882865** (where SES production access was refused) are retired by hand per [`email-ses/RETIRE.md`](email-ses/RETIRE.md) | **None** — CI is validate-only (no backend, no secrets, no role); a self-hoster applies it locally | the self-hoster's own (`backend.hcl`); hosted state was `alethia-tofu-state-270587882865` · `ses/` | `email-ses/bootstrap/` — in the hosted account it still owns the account's GitHub OIDC provider + the shared state bucket; **both stay** (never run an untargeted destroy there) |
 | `email-ses-account/` | Hosted transactional email: AWS SES in the dedicated `alethia-email` account (**604925221417**, which holds SES production access): config sets, events topic → `/api/webhooks/ses`, reputation alarms, VDM, the `alethia-ses-sender` user. **Applied by hand** (it creates IAM); CI validates only | none — the provider assumes `alethia-email-admin` from the maintainer's `alethia-sso` session | `alethia-tofu-state-270587882865` · `email-ses-account/` | `email-ses-account/bootstrap/` — the `alethia-email-admin` role, applied once with the organization's management-account credentials |
 | `connector-assets/` | Public S3 bucket serving cloud-connector setup artifacts (acct **270587882865**) | **GitHub OIDC** (`alethia-connector-assets-deployer`) | `…270587882865` · `connector-assets/` | `connector-assets/bootstrap/` — adopts the OIDC provider + state bucket |
 | `cp-hetzner` | The hosted control-plane box (prod) | **GitHub OIDC** (`alethia-cp-deployer`); Hetzner + Cloudflare tokens from AWS Secrets Manager | `…270587882865` · `hetzner/` | — |
@@ -66,7 +66,8 @@ Non-stack directories:
 ## Apply order
 
 1. **`email-ses/bootstrap/`** (admin, once) — creates the account's GitHub OIDC provider **and**
-   the shared state bucket `alethia-tofu-state-270587882865`.
+   the shared state bucket `alethia-tofu-state-270587882865`. It still owns both after the hosted
+   SES resources are retired (`email-ses/RETIRE.md`), so only targeted destroys run there.
 2. **`connector-assets/bootstrap/`** (admin, once) — adopts both; sets repo Actions var
    `CONNECTOR_ASSETS_DEPLOYER_ROLE_ARN`.
 3. Main stacks apply via CI on push (or locally as the deploy role / with static keys).
@@ -130,7 +131,8 @@ that stops describing anything fails too.
 
 ## Auth parity (known gap)
 
-`email-ses` + `connector-assets` use **GitHub OIDC** (no stored keys). The five `cp-*` stacks
+`connector-assets` uses **GitHub OIDC** (no stored keys); `email-ses` did until its apply job
+was removed on 2026-11-15. The five `cp-*` stacks
 and `status` still use **static cloud keys** in CI secrets. Full OIDC parity is deferred: it
 needs per-cloud federation (GCP Workload Identity Federation, Azure federated credentials,
 Alibaba `AssumeRoleWithOIDC` — the console already federates into all three keyless; Hetzner has

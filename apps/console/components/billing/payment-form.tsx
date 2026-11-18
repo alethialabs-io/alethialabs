@@ -22,8 +22,9 @@ import { Button } from "@repo/ui/button";
 
 interface PaymentFormProps {
 	mode: "payment" | "setup";
-	/** Called after the intent is confirmed (the parent closes / refetches). */
-	onSuccess: () => void;
+	/** Called after the intent is confirmed (the parent closes / refetches), with the confirmed
+	 *  intent's id when Stripe returned one. */
+	onSuccess: (intentId: string | null) => void;
 	onError?: (message: string) => void;
 	submitLabel?: string;
 	/** Fallback URL for payment methods that force a full redirect. */
@@ -73,28 +74,31 @@ export function PaymentForm({
 		if (mode === "payment") await saveBillingAddress();
 
 		const confirmParams = { return_url: returnUrl ?? window.location.href };
-		const result =
-			mode === "payment"
-				? await stripe.confirmPayment({
-						elements,
-						confirmParams,
-						redirect: "if_required",
-					})
-				: await stripe.confirmSetup({
-						elements,
-						confirmParams,
-						redirect: "if_required",
-					});
+		const outcome = mode === "payment" ? await confirmAsPayment(confirmParams) : await confirmAsSetup(confirmParams);
 
-		if (result.error) {
-			const message = result.error.message ?? "Something went wrong with payment.";
+		if (outcome.error) {
+			const message = outcome.error.message ?? "Something went wrong with payment.";
 			setError(message);
 			onError?.(message);
 			setSubmitting(false);
 			return;
 		}
 		// Confirmed (no redirect needed). Leave submitting on — the parent closes/refetches.
-		onSuccess();
+		onSuccess(outcome.intentId);
+	}
+
+	/** Confirms the PaymentIntent; the confirmed intent's id, or Stripe's error. */
+	async function confirmAsPayment(confirmParams: { return_url: string }) {
+		if (!stripe || !elements) return { error: null, intentId: null };
+		const result = await stripe.confirmPayment({ elements, confirmParams, redirect: "if_required" });
+		return { error: result.error ?? null, intentId: result.paymentIntent?.id ?? null };
+	}
+
+	/** Confirms the SetupIntent; the confirmed intent's id, or Stripe's error. */
+	async function confirmAsSetup(confirmParams: { return_url: string }) {
+		if (!stripe || !elements) return { error: null, intentId: null };
+		const result = await stripe.confirmSetup({ elements, confirmParams, redirect: "if_required" });
+		return { error: result.error ?? null, intentId: result.setupIntent?.id ?? null };
 	}
 
 	return (

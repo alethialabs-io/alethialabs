@@ -157,6 +157,24 @@ export async function authorizeRead(
 	action: Action,
 	resource: { type: Resource; id?: string },
 ): Promise<Actor> {
+	return authorizeDeferred(action, resource);
+}
+
+/**
+ * A WRITE's permission check whose allow is recorded by the caller, AFTER the write succeeded.
+ *
+ * The same decision as {@link authorizeRead} — a denial is recorded, emitted and thrown here — but
+ * the allow is left to the caller, who records it with `recordAllowed` (lib/authz/activity.ts) once
+ * the thing has actually happened. `authorize()` records the allow BEFORE the operation, which says
+ * "updated billing" for an add-card form that was opened and closed (#6733), records a project
+ * creation before the project has an id or a name, and keeps a deletion row for a delete that was
+ * then refused (#6735). A caller that forgets to record writes NO row, so use this only where the
+ * record call sits beside the write.
+ */
+export async function authorizeDeferred(
+	action: Action,
+	resource: { type: Resource; id?: string },
+): Promise<Actor> {
 	const actor = await currentActor();
 	const ref: ResourceRef = { type: resource.type, id: resource.id };
 	const decision = await getPdp().can(actor, action, ref);

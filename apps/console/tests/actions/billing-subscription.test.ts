@@ -16,8 +16,23 @@ vi.mock("@/lib/authz/guard", () => {
 	// allowed live refetch, #6127); the writes with `authorize`. One mock answers both, so every test below
 	// states one permission outcome for the read and the write alike.
 	const authorize = vi.fn();
-	return { currentActor: vi.fn(), authorize, authorizeRead: authorize, authorizeQuiet: authorize, authorizeInOrg: vi.fn() };
+	// `authorizeDeferred` answers what `authorize` answers, but is its own spy, so a test can tell an
+	// action that records its allow up front from one that records it after the fact (#6733).
+	const authorizeDeferred = vi.fn((...args: Parameters<typeof authorize>) => authorize(...args));
+	return { currentActor: vi.fn(), authorize, authorizeDeferred, authorizeRead: authorize, authorizeQuiet: authorize, authorizeInOrg: vi.fn() };
 });
+vi.mock("@/lib/authz/activity", () => ({ recordAllowed: vi.fn() }));
+// The exactly-once ledger a saved card's SetupIntent is claimed in (#6733): a stand-in that answers
+// "claimed" the first time an id is seen and "already there" every time after.
+const claimed = vi.hoisted(() => new Set<string>());
+vi.mock("@/lib/billing/webhook-events", () => ({
+	claimWebhookEvent: vi.fn(async (id: string) => {
+		if (claimed.has(id)) return { claimed: false, alreadyDone: true };
+		claimed.add(id);
+		return { claimed: true };
+	}),
+	markWebhookEventDone: vi.fn(async () => undefined),
+}));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/billing/invoices", () => ({
 	listOrgInvoices: vi.fn(),
@@ -254,6 +269,7 @@ import {
 	createCheckoutSession,
 	createCreditPackIntent,
 	createNewOrgSubscriptionIntent,
+	confirmCardSaved,
 	createSetupIntent,
 	createSubscriptionIntent,
 	detachPaymentMethod,
@@ -280,7 +296,8 @@ import {
 	listPaymentMethods,
 	listTransactions,
 } from "@/lib/rpc/procedures/billing";
-import { authorize, authorizeInOrg, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeDeferred, authorizeInOrg, currentActor } from "@/lib/authz/guard";
+import { recordAllowed } from "@/lib/authz/activity";
 import { getServiceDb } from "@/lib/db";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { listOrgInvoices } from "@/lib/billing/invoices";
@@ -384,7 +401,7 @@ function makeStripe() {
 		paymentIntents: { create: vi.fn(), retrieve: vi.fn() },
 		refunds: { create: vi.fn() },
 		invoicePayments: { list: vi.fn() },
-		setupIntents: { create: vi.fn() },
+		setupIntents: { create: vi.fn(), retrieve: vi.fn() },
 		paymentMethods: { list: vi.fn(), retrieve: vi.fn(), detach: vi.fn() },
 		invoices: {
 			list: vi.fn(),
@@ -2602,6 +2619,67 @@ describe("createSetupIntent", () => {
 	it("refuses the personal scope", async () => {
 		authz.mockResolvedValue({ orgId: "user-1", userId: "user-1" } as never);
 		await expect(createSetupIntent()).rejects.toThrow(/Create an organization/);
+	});
+});
+
+// ── the add-card form is not a billing change; the saved card is (#6733) ─────
+describe("add-card activity", () => {
+	beforeEach(() => claimed.clear());
+
+	it("opening the form records nothing: the SetupIntent is authorized WITHOUT an activity row", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		stripe.setupIntents.create.mockResolvedValue({ client_secret: "seti_cs" } as never);
+
+		await createSetupIntent();
+		// The deferred check — a deny is recorded by it, an allow is left to the save.
+		expect(vi.mocked(authorizeDeferred)).toHaveBeenCalledWith("manage_billing", { type: "billing" });
+		expect(vi.mocked(recordAllowed)).not.toHaveBeenCalled();
+	});
+
+	it("saving the card records exactly one 'added a payment method'", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		stripe.setupIntents.retrieve.mockResolvedValue({ customer: "cus_1", status: "succeeded" } as never);
+
+		expect(await confirmCardSaved("seti_1")).toEqual({ ok: true });
+		expect(stripe.setupIntents.retrieve).toHaveBeenCalledWith("seti_1");
+		expect(vi.mocked(recordAllowed)).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(recordAllowed)).toHaveBeenCalledWith(
+			expect.objectContaining({ orgId: "org-1" }),
+			"manage_billing",
+			{ type: "billing" },
+			{ recordAs: "add_payment_method" },
+		);
+	});
+
+	it("is idempotent per SetupIntent: the inline save and the redirect landing record ONE row", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		stripe.setupIntents.retrieve.mockResolvedValue({ customer: "cus_1", status: "succeeded" } as never);
+
+		expect(await confirmCardSaved("seti_1")).toEqual({ ok: true });
+		expect(await confirmCardSaved("seti_1")).toEqual({ ok: true });
+		expect(vi.mocked(recordAllowed)).toHaveBeenCalledTimes(1);
+		// A different card is its own save.
+		await confirmCardSaved("seti_2");
+		expect(vi.mocked(recordAllowed)).toHaveBeenCalledTimes(2);
+	});
+
+	it("records nothing for a SetupIntent that was never confirmed (the form closed)", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		stripe.setupIntents.retrieve.mockResolvedValue({
+			customer: "cus_1",
+			status: "requires_payment_method",
+		} as never);
+
+		await expect(confirmCardSaved("seti_1")).rejects.toThrow(/not been saved/);
+		expect(vi.mocked(recordAllowed)).not.toHaveBeenCalled();
+	});
+
+	it("records nothing for another org's SetupIntent", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		stripe.setupIntents.retrieve.mockResolvedValue({ customer: "cus_other", status: "succeeded" } as never);
+
+		await expect(confirmCardSaved("seti_1")).rejects.toThrow(/not found/);
+		expect(vi.mocked(recordAllowed)).not.toHaveBeenCalled();
 	});
 });
 

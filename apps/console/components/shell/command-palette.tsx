@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The global command palette behind the sidebar "Find…" box. Opens on click or the
-// ⌘K / F shortcut and searches navigable pages plus live resources (projects, jobs)
+// ⌘K shortcut and searches navigable pages plus live resources (projects, jobs)
 // pulled from the same stores the rest of the shell uses. Selecting an entry navigates
 // and closes. Mounted once by the AppShell.
 
 import { Box, ClipboardList, type LucideIcon } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import {
 	CommandDialog,
 	CommandEmpty,
@@ -27,6 +27,8 @@ import {
 	projectScope,
 } from "@/components/shell/nav-config";
 import { globalHref, projectHref, projectSettingsHref } from "@/lib/routing";
+import { SHORTCUT_PALETTE_TOGGLE } from "@/lib/shortcuts/registry";
+import { useShortcut } from "@/lib/shortcuts/use-shortcut";
 import { useCommandPalette } from "@/lib/stores/use-command-palette";
 import { useRecentJobsQuery } from "@/lib/query/use-jobs-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
@@ -45,18 +47,6 @@ interface PaletteEntry {
 	hint?: string;
 }
 
-/** True when a keystroke originates from a text-entry surface (so F passes through). */
-function isTypingTarget(t: EventTarget | null): boolean {
-	if (!(t instanceof HTMLElement)) return false;
-	const tag = t.tagName;
-	return (
-		tag === "INPUT" ||
-		tag === "TEXTAREA" ||
-		tag === "SELECT" ||
-		t.isContentEditable
-	);
-}
-
 /**
  * The global command palette. Reads nav + live resources, renders a searchable
  * dialog, and routes on select.
@@ -71,28 +61,8 @@ export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean 
 	const { data: projects = [] } = useProjectsQuery();
 	const { data: jobs = [] } = useRecentJobsQuery();
 
-	// ⌘K / Ctrl+K anywhere; bare F only when not typing into a field.
-	useEffect(() => {
-		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
-				e.preventDefault();
-				toggle();
-				return;
-			}
-			if (
-				e.key.toLowerCase() === "f" &&
-				!e.metaKey &&
-				!e.ctrlKey &&
-				!e.altKey &&
-				!isTypingTarget(e.target)
-			) {
-				e.preventDefault();
-				toggle();
-			}
-		};
-		document.addEventListener("keydown", onKeyDown);
-		return () => document.removeEventListener("keydown", onKeyDown);
-	}, [toggle]);
+	// ⌘K / Ctrl+K, from anywhere including a field; the chord is the registry's.
+	useShortcut(SHORTCUT_PALETTE_TOGGLE, toggle);
 
 	// Navigable pages: sidebar groups + drill sub-pages + settings sub-pages, deduped.
 	const pages = useMemo<PaletteEntry[]>(() => {

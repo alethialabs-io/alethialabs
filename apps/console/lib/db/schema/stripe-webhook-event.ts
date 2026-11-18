@@ -6,7 +6,9 @@
 // idempotent on organization_id, but Stripe retries/duplicates events, and sending an
 // email per delivery would double-mail the customer. The handler claims each event id
 // here (PK insert) before doing work: a second delivery of the same id sees a `done`
-// row and returns 200 without re-sending. Written only by app/api/webhooks/stripe.
+// row and returns 200 without re-sending. Written by app/api/webhooks/stripe, and by
+// billing.ts `confirmCardSaved`, which claims a SetupIntent id (`seti_…`, type
+// `setup_intent.recorded`) so a saved card is recorded in the Activity log exactly once.
 
 import { pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
@@ -19,7 +21,7 @@ export const stripeWebhookEventStatus = pgEnum("stripe_webhook_event_status", [
 ]);
 
 export const stripeWebhookEvent = pgTable("stripe_webhook_event", {
-	// Stripe's event id (evt_…) — PK makes the claim insert idempotent.
+	// Stripe's event id (evt_…), or a SetupIntent id (seti_…) — PK makes the claim insert idempotent.
 	eventId: text().primaryKey(),
 	// The event type (e.g. invoice.payment_succeeded), kept for audit/debugging.
 	type: text().notNull(),
