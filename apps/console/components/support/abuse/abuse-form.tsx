@@ -198,9 +198,11 @@ export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
 					<Input
 						id="abuse-subject"
 						placeholder="Short summary of the report"
+						aria-invalid={errors.subject ? true : undefined}
+						aria-describedby="abuse-subject-message"
 						{...register("subject")}
 					/>
-					<FieldMessage message={errors.subject?.message} />
+					<FieldMessage id="abuse-subject-message" message={errors.subject?.message} />
 				</div>
 
 				<div className={FIELD}>
@@ -209,9 +211,11 @@ export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
 						id="abuse-description"
 						className={DESCRIPTION_BOX}
 						placeholder="Describe the abuse, including any relevant details or evidence…"
+						aria-invalid={errors.description ? true : undefined}
+						aria-describedby="abuse-description-message"
 						{...register("description")}
 					/>
-					<FieldMessage message={errors.description?.message} />
+					<FieldMessage id="abuse-description-message" message={errors.description?.message} />
 				</div>
 			</section>
 
@@ -223,9 +227,12 @@ export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
 						type="email"
 						placeholder="you@company.com"
 						className={NARROW}
+						aria-invalid={errors.contact?.notifyEmail ? true : undefined}
+						aria-describedby="abuse-email-message"
 						{...register("contact.notifyEmail")}
 					/>
 					<FieldMessage
+						id="abuse-email-message"
 						message={errors.contact?.notifyEmail ? "Enter a valid email address." : undefined}
 					/>
 				</div>
