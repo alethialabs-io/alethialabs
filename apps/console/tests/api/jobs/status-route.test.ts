@@ -50,6 +50,15 @@ const maybeAutoHeal = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/lib/reconcile/auto-heal", () => ({
 	maybeAutoHeal: (...a: unknown[]) => maybeAutoHeal(...a),
 }));
+// #6736: the missing-cluster notifier is its own subject (tests/lib/clusters/missing.test.ts); here
+// only its seam — read the baseline before the scan lands, notify after it — is asserted.
+const BEFORE = { kind: "reported", observedAt: null, source: "deploy", fresh: true };
+const observationBeforeReading = vi.fn();
+const notifyIfClusterNewlyMissing = vi.fn();
+vi.mock("@/lib/clusters/missing", () => ({
+	observationBeforeReading: (...a: unknown[]) => observationBeforeReading(...a),
+	notifyIfClusterNewlyMissing: (...a: unknown[]) => notifyIfClusterNewlyMissing(...a),
+}));
 
 /**
  * Builds a drizzle-ish stub: `execute()` resolves the update_job_status RPC row, and the
@@ -115,6 +124,8 @@ function deployJob(
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	observationBeforeReading.mockResolvedValue(BEFORE);
+	notifyIfClusterNewlyMissing.mockResolvedValue(false);
 	verifyRunnerToken.mockResolvedValue({
 		runnerId: "11111111-1111-1111-1111-111111111111",
 		tokenHash: "h",
@@ -309,6 +320,27 @@ describe("PUT /api/jobs/[id]/status — #841 split drift", () => {
 		);
 		// infra drift → self-heal.
 		expect(maybeAutoHeal).toHaveBeenCalledWith("proj-1", "env-1");
+	});
+
+	it("reads the observation BEFORE recording the scan and asks the notifier AFTER it (#6736)", async () => {
+		mockDb(true, driftJob({ drift_posture: { in_sync: false, drifted: 1, details: [] } }));
+
+		const res = await put("job-1", { status: "SUCCESS" });
+		expect(res.status).toBe(200);
+
+		expect(observationBeforeReading).toHaveBeenCalledWith("org-1", "env-1");
+		expect(notifyIfClusterNewlyMissing).toHaveBeenCalledWith({
+			orgId: "org-1",
+			environmentId: "env-1",
+			before: BEFORE,
+			jobId: "job-1",
+			jobType: "DETECT_DRIFT",
+		});
+		const [baseline] = observationBeforeReading.mock.invocationCallOrder;
+		const [recorded] = recordDriftPosture.mock.invocationCallOrder;
+		const [notified] = notifyIfClusterNewlyMissing.mock.invocationCallOrder;
+		expect(baseline).toBeLessThan(recorded);
+		expect(recorded).toBeLessThan(notified);
 	});
 
 	it("self-heals on DELIVERY drift (ArgoCD OutOfSync) even when infra is in sync", async () => {

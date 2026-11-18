@@ -144,6 +144,7 @@ export const HIDDEN_VERBS = new Map([
 	["discardStagedDesignAction", "the board's Discard on the mutation contract (#6119): the action form of discardStagedChanges"],
 	["upsertAgentContext", "the knowledge-doc delete rewrites the whole context; the delete is an upsert of a shorter list"],
 	["togglePolicy", "disabling an alert policy silences a class of alerts across every channel routed to it — found by a human reading the surface, not by this table (#4492)"],
+	["markEnvironmentDestroyedAction", "records an environment and its cluster DESTROYED with no cloud call (#6736) — it takes them off every live surface, and the name says only that a status moved"],
 ]);
 
 /**

@@ -1115,6 +1115,15 @@ export const UNSEEDABLE: ReadonlyMap<string, string> = new Map([
 		"a payment method is a STRIPE object attached to a Stripe customer. There is no table to write, and the `stripe` capability " +
 			"the `audit-interaction` leg promises is an API key, not a seeded card.",
 	],
+	[
+		"missing-cluster",
+		"the control renders only on a cluster UNDER MANAGEMENT (a successful deploy's `last_deployed_at` and a non-DESTROYED " +
+			"`project_cluster` row) whose latest drift scan, taken after that deploy, reports its control-plane resource " +
+			"deleted (lib/clusters/observed-state.ts). The audit project has never deployed, so it owns no cluster to list; " +
+			"writing a deploy stamp, a cluster row and a drift row by hand would put a fake managed cluster on the Clusters " +
+			"page and in the Usage count of the org every other entry runs in. ⚠ The registry's `confirmed` rests on the " +
+			"component test (tests/components/clusters/missing-cluster-actions.test.tsx), not on a run this gate performs.",
+	],
 ]);
 
 // ── the arithmetic ──────────────────────────────────────────────────────────────────────────────

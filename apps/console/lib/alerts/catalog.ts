@@ -69,6 +69,9 @@ export const CATEGORIES: CatalogCategory[] = [
 			ev("destroy.completed", "system.project.destroyed", "Destroy completed", "warning", true),
 			ev("reap.gave_up", "system.project.reap_gave_up", "Auto-teardown gave up", "critical", true),
 			ev("drift.detected", "system.project.drift", "Drift detected", "warning"),
+			// A drift scan or probe newly found the cluster deleted outside Alethia (#6736). Raised
+			// once per finding (lib/clusters/missing.ts); nothing changes the environment's status.
+			ev("cluster.missing", "system.project.cluster_missing", "Cluster missing", "critical", true),
 			ev(
 				"cluster.unreachable",
 				"system.project.cluster_unreachable",

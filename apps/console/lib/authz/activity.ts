@@ -23,6 +23,7 @@ import {
 	type ResourceRef,
 } from "@/lib/authz/types";
 import { log } from "@/lib/observability/log";
+import { SYSTEM_ACTOR_ID } from "@/lib/authz/system-actor";
 
 // Successful reads are not recorded (they fire on every page load and would flood the
 // log); their DENIALS still are. Everything else is recorded on allow.
@@ -92,6 +93,32 @@ export function recordActivity(
 			reason: opts?.reason ?? null,
 		})
 		.catch((err) => log.error("[authz] activity write failed", { err }));
+}
+
+/**
+ * Records an event Alethia observed on its own, with nobody acting (#6736) — the actor is
+ * {@link SYSTEM_ACTOR_ID}. AWAITED, unlike {@link recordActivity}: a caller that dedupes on the row
+ * (lib/clusters/missing.ts) must know it was written before it notifies, or a re-posted reading
+ * could notify twice. Throws on a failed write; the caller decides what that means for it.
+ */
+export async function recordSystemActivity(
+	orgId: string,
+	action: string,
+	resource: { type: string; id: string },
+	opts: { reason: string; resourceName: string | null },
+): Promise<void> {
+	await getServiceDb()
+		.insert(authzActivityLog)
+		.values({
+			org_id: orgId,
+			actor_id: SYSTEM_ACTOR_ID,
+			action,
+			resource_type: resource.type,
+			resource_id: resource.id,
+			resource_name: opts.resourceName,
+			decision: true,
+			reason: opts.reason,
+		});
 }
 
 /**

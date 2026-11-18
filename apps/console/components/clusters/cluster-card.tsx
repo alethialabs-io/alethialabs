@@ -8,9 +8,13 @@ import {
 	CLUSTER_CARD_FRAME,
 	CLUSTER_COMPONENT_ROW,
 	CLUSTER_OBSERVED_BLOCK,
+	CLUSTER_RESOLVE_BLOCK,
+	offersMissingActions,
 	runInFlight,
 } from "@/components/clusters/cluster-card-shape";
 import { KubeconfigDownload } from "@/components/clusters/kubeconfig-download/kubeconfig-download";
+import { MissingClusterActions } from "@/components/clusters/missing-cluster-actions";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { RelativeStamp } from "@/components/environments/env-ui";
 import type { ControlPlaneObservation } from "@/lib/clusters/observed-state";
 import { getProvider } from "@/lib/cloud-providers";
@@ -304,6 +308,7 @@ function ObservationLine({ observed, envStatus }: { observed: Observed; envStatu
  * viewer may download a kubeconfig included, so it paints complete and asks nothing on mount.
  */
 export function ClusterCard({ data }: { data: ClusterListItem }) {
+	const orgSlug = useActiveOrgSlug();
 	const provider = data.cloud_identities?.provider ?? "aws";
 	const meta = getProvider(provider);
 	const cluster = data.project_cluster;
@@ -426,6 +431,19 @@ export function ClusterCard({ data }: { data: ClusterListItem }) {
 			</div>
 
 			<ObservationLine observed={observed} envStatus={data.status} />
+
+			{/* A cluster found deleted outside Alethia: nothing changes by itself — these are the ways
+			    out, each a click (#6736). */}
+			{offersMissingActions(data) && data.environment_id && (
+				<MissingClusterActions
+					className={CLUSTER_RESOLVE_BLOCK}
+					orgSlug={orgSlug}
+					projectSlug={data.project_slug}
+					projectId={data.id}
+					environmentId={data.environment_id}
+					environmentName={data.environment_stage}
+				/>
+			)}
 
 			{/* Cluster access. */}
 			{cluster.cluster_endpoint && (
