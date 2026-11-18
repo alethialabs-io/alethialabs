@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.10.1...runner-v0.11.0) (2026-11-18)
+
+
+### Features
+
+* **runner:** verify an apply against the reviewed plan's digest when the job carries one ([#6786](https://github.com/alethialabs-io/alethialabs/issues/6786)) ([2b155cc](https://github.com/alethialabs-io/alethialabs/commit/2b155ccc89b3edb1705458ff6c38bf87c8724eca))
+
 ## [0.10.1](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.10.0...runner-v0.10.1) (2026-11-14)
 
 
