@@ -1117,7 +1117,7 @@ func TestStoredCredential_NeverFormatsItsTokens(t *testing.T) {
 	}}
 	secrets := []string{"access-canary-aa11", keychainRefreshCanary, keychainProviderCanary}
 	for _, text := range []string{
-		fmt.Sprintf("%v", cred), fmt.Sprintf("%+v", cred), fmt.Sprintf("%#v", cred), fmt.Sprintf("%s", cred),
+		fmt.Sprintf("%v", cred), fmt.Sprintf("%+v", cred), fmt.Sprintf("%#v", cred), cred.String(), fmt.Sprint(cred),
 		fmt.Sprintf("%v", &cred), fmt.Sprintf("%+v", &cred),
 		fmt.Errorf("could not store %v", cred).Error(),
 		(&credentialSaveError{cause: errors.New("disk full")}).Error(),

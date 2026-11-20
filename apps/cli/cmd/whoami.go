@@ -141,6 +141,8 @@ func currentCredentialStatus() (credentialStatus, error) {
 		status.StoredIn = "the --token flag (not stored)"
 	case credentialFromEnv:
 		status.StoredIn = "the " + ServiceTokenEnv + " environment variable (not stored)"
+	case credentialFromKeychain, credentialFromFile:
+		// suppliedToken names only the two sources above.
 	default:
 		cred, from, err := loadStoredCredential()
 		if err != nil {
