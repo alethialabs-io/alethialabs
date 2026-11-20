@@ -10,6 +10,8 @@ import { Separator } from "@repo/ui/separator";
 import { cn } from "@repo/ui/utils";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { buildRenderNodes } from "@/lib/canvas/collections";
+import type { CloudProviderSlug } from "@/lib/cloud-providers";
+import { isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { applyLayout, layoutZoned } from "@/lib/canvas/layout";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
@@ -17,10 +19,10 @@ import { environmentStatusInput } from "@/lib/query/use-environment-status-query
 import { orpc } from "@/lib/rpc/client";
 import { PROJECT_NODE_ID } from "@/lib/stores/use-canvas-store";
 import { buildDefaultFormValues, type SourceProjectData } from "../source-project";
-import { BoardGuide } from "./board-guide";
 import { CanvasSkeleton } from "./canvas-skeleton";
 import { ActivityStatusLine } from "./cards/activity-status-line";
 import { CostChip } from "./cost-chip";
+import { BoardGuideView, type CloudChoices } from "./empty/board-guide-view";
 import { EnvironmentStatusScope } from "./environment-status-scope";
 import { formToGraph } from "./graph/form-to-graph";
 import { configName } from "./graph/node-config";
@@ -98,6 +100,23 @@ export function previewLayout(
 	return { cards, width: maxX - minX + CARD_W, height: maxY - minY + CARD_H };
 }
 
+/**
+ * The cloud of the account the project is bound to, or null when it has none — what the live board
+ * reads off the project root, so the picture's guide and the live guide offer the same template
+ * start.
+ */
+function previewProjectCloud(
+	sourceProject: SourceProjectData | undefined,
+	identities: CloudIdentityOption[],
+): CloudProviderSlug | null {
+	const identityId = buildDefaultFormValues(sourceProject).project.cloud_identity_id;
+	const provider = identityId ? identities.find((i) => i.id === identityId)?.provider : undefined;
+	return provider && isCloudProviderSlug(provider) ? provider : null;
+}
+
+/** The picture cannot ask the server which clouds are offered; the live board does. */
+const CLOUDS_ON_THEIR_WAY: CloudChoices = { status: "loading" };
+
 /** What the page already knows about the board — the props the workbench hands the canvas. */
 interface BoardPreviewData {
 	sourceProject?: SourceProjectData;
@@ -105,6 +124,8 @@ interface BoardPreviewData {
 	projectId?: string;
 	environmentId?: string;
 	byoHelmEnabled?: boolean;
+	/** Whether bring-your-own IaC is enabled (server flag): whether the guide offers that start. */
+	byoIacEnabled?: boolean;
 }
 
 const BoardPreviewContext = createContext<BoardPreviewData | null>(null);
@@ -156,7 +177,8 @@ function noop() {}
  * its way: anything waiting for the page to be ready waits for the live board.
  */
 function StaticBoard({ data, overlay }: { data: BoardPreviewData; overlay: boolean }) {
-	const { sourceProject, cloudIdentities, projectId, environmentId, byoHelmEnabled } = data;
+	const { sourceProject, cloudIdentities, projectId, environmentId, byoHelmEnabled, byoIacEnabled } =
+		data;
 	const env = useEnvironmentStatus();
 	const layout = useMemo(
 		() => previewLayout(sourceProject, cloudIdentities),
@@ -204,7 +226,22 @@ function StaticBoard({ data, overlay }: { data: BoardPreviewData; overlay: boole
 				</div>
 			)}
 
-			{blank && <BoardGuide onAdd={noop} />}
+			{blank && (
+				<div
+					data-slot="board-guide"
+					className="pointer-events-none absolute inset-0 flex items-center justify-center p-3"
+				>
+					<BoardGuideView
+						projectCloud={previewProjectCloud(sourceProject, cloudIdentities)}
+						cloudChoices={CLOUDS_ON_THEIR_WAY}
+						onTemplate={noop}
+						onAdd={noop}
+						onAttachChart={byoHelmEnabled ? noop : undefined}
+						onAttachIac={byoIacEnabled ? noop : undefined}
+						onOpenCluster={noop}
+					/>
+				</div>
+			)}
 
 			{projectId && environmentId && <ActivityStatusLine />}
 
