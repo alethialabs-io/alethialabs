@@ -747,7 +747,7 @@ func TestClusterFieldRows_Observation(t *testing.T) {
 	if rows[1][0] != "Observed" {
 		t.Fatalf("the Observed row must follow Status, got %q", rows[1][0])
 	}
-	want := "MISSING — found deleted outside Alethia by a drift scan at 2026-11-09T00:00:00.000Z — deleted: azurerm_resource_group.main. Redeploy the environment to recreate it, or tear it down."
+	want := "MISSING — found deleted outside Alethia by a drift scan at 2026-11-09T00:00:00.000Z — deleted: azurerm_resource_group.main. Redeploy the environment to recreate it, tear it down, or mark it destroyed in the console."
 	if rows[1][1] != want {
 		t.Fatalf("Observed = %q, want %q", rows[1][1], want)
 	}
