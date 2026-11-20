@@ -19,8 +19,8 @@
 // no single owner drifts by OMISSION — a word nobody can account for looks exactly like one
 // everybody agreed on.
 //
-// WHAT IS STILL WRONG, counted rather than hidden: StatusVocabularyGaps below holds 25 values
-// across 10 status-bearing enums that this vocabulary has no word for. Every one of them resolves
+// WHAT IS STILL WRONG, counted rather than hidden: StatusVocabularyGaps below holds 28 values
+// across 11 status-bearing enums that this vocabulary has no word for. Every one of them resolves
 // to StatusTierIdle — "present but not doing anything" — on BOTH surfaces, which for an approved
 // promotion or a blocked one is wrong in the same way on both. Fixing that is a vocabulary
 // decision, not a rendering one, and it does not belong to the generator.
@@ -137,7 +137,7 @@ var StatusVocabulary = []StatusWord{
 		Sources: []string{"promotion_status.SUCCEEDED"},
 		Note:    ""},
 	{Status: "approved", Tier: StatusTierActive, Provenance: StatusFromEnum,
-		Sources: []string{"approval_status.approved", "promotion_status.APPROVED"},
+		Sources: []string{"apply_approval_status.approved", "approval_status.approved", "promotion_status.APPROVED"},
 		Note:    "promotion_status.APPROVED and approval_status.approved. Read as ACTIVE rather than pending: on an approval slot the word is terminal and positive — that person decided, and decided yes — and on a promotion it means the gates are satisfied. `pending` would be defensible for the promotion (it is a cleared waypoint, the deploy has not run) and is plainly wrong for the slot; one word gets one tier, so it takes the reading that is never wrong. It drew ○, the idle glyph, until #4117."},
 	{Status: "ready", Tier: StatusTierActive, Provenance: StatusFromEnum,
 		Sources: []string{"kubeconfig_mint_status.ready"},
@@ -152,7 +152,7 @@ var StatusVocabulary = []StatusWord{
 		Sources: []string{"project_status.QUEUED", "provision_job_status.QUEUED"},
 		Note:    ""},
 	{Status: "pending", Tier: StatusTierPending, Provenance: StatusFromEnum,
-		Sources: []string{"alert_delivery_status.pending", "approval_status.pending", "cloud_identity_status.pending", "component_status.PENDING", "kubeconfig_mint_status.pending"},
+		Sources: []string{"alert_delivery_status.pending", "apply_approval_status.pending", "approval_status.pending", "cloud_identity_status.pending", "component_status.PENDING", "kubeconfig_mint_status.pending"},
 		Note:    "Go had no case for the literal word and defaulted it to ○. component_status.PENDING is the pending tier."},
 	{Status: "pending_plan", Tier: StatusTierPending, Provenance: StatusFromEnum,
 		Sources: []string{"promotion_status.PENDING_PLAN"},
@@ -209,7 +209,7 @@ var StatusVocabulary = []StatusWord{
 		Sources: []string{"NOTHING EMITS THIS. A past-tense alias of `failed`, kept because it is a word a hand-written wire status reaches for; it appears in packages/ui/tests/status-badge.test.tsx and nowhere else in the product. Delete it if a census ever proves it unreachable"},
 		Note:    ""},
 	{Status: "rejected", Tier: StatusTierFailed, Provenance: StatusFromEnum,
-		Sources: []string{"approval_status.rejected"},
+		Sources: []string{"apply_approval_status.rejected", "approval_status.rejected"},
 		Note:    "approval_status.rejected. The failed tier: a rejection is terminal and negative, and it is the reason a promotion is not moving. It drew ○ until #4117, identically to `approved` one row above it."},
 	{Status: "blocked", Tier: StatusTierFailed, Provenance: StatusFromEnum,
 		Sources: []string{"promotion_status.BLOCKED"},
@@ -287,7 +287,7 @@ type StatusGap struct {
 	Value string
 }
 
-// StatusVocabularyGaps is every such value, derived rather than declared: of the 75 pgEnums in the
+// StatusVocabularyGaps is every such value, derived rather than declared: of the 79 pgEnums in the
 // schema, an enum counts as status-bearing when at least one of ITS OWN values is a vocabulary
 // word. The rule needs no maintenance and cannot quietly stop covering an enum, and it is
 // deliberately a little over-inclusive — audit_action is here only because DESTROYED is both a
@@ -299,6 +299,9 @@ type StatusGap struct {
 var StatusVocabularyGaps = []StatusGap{
 	{Enum: "alert_delivery_status", Value: "sent"},
 	{Enum: "alert_delivery_status", Value: "dead"},
+	{Enum: "apply_approval_status", Value: "expired"},
+	{Enum: "apply_approval_status", Value: "superseded"},
+	{Enum: "apply_approval_status", Value: "consumed"},
 	{Enum: "audit_action", Value: "CREATED"},
 	{Enum: "audit_action", Value: "UPDATED"},
 	{Enum: "audit_action", Value: "DELETED"},

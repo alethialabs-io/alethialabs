@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { check, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { profiles } from "./accounts";
+import { agentScope } from "./enums";
 
 /**
  * Service-account tokens for driving `alethia` NON-INTERACTIVELY — a customer's CI, a cron, a
@@ -74,7 +76,34 @@ export const cliServiceTokens = pgTable("cli_service_tokens", {
 	/** Set on revoke. The row is KEPT, not deleted: a revoked token that vanishes takes its audit
 	 * trail with it, and "this token was revoked on the 3rd" is the fact an incident needs. */
 	revoked_at: timestamp({ withTimezone: true }),
-});
+	/**
+	 * The verbs this token may use (agent surface §4.4, AGT-S2). `apply` and `destroy` unlock only the
+	 * REQUEST for an approval. The default is every scope, which is what backfills the rows minted
+	 * before scopes existed: behaviour-preserving, because the approval rule applies either way.
+	 */
+	scopes: agentScope()
+		.array()
+		.notNull()
+		.default(sql`ARRAY['read', 'design', 'plan', 'apply', 'destroy']::agent_scope[]`),
+	/**
+	 * The projects this token may touch. NULL means every project in its org, present and future —
+	 * which is also what the rows minted before this column existed get. Never empty: a token
+	 * limited to no project is a revoked token, and `revoked_at` says that.
+	 */
+	project_ids: uuid().array(),
+	/**
+	 * The environments whose DEPLOY this token may queue without a person's approval (decision D2):
+	 * owner-only, set at mint, audited, never a `production` environment and never a DESTROY. The
+	 * production and destroy limits are the engine's (AGT-L1); the database cannot see an
+	 * environment's stage from here.
+	 */
+	auto_approve_environment_ids: uuid().array().notNull().default(sql`'{}'::uuid[]`),
+}, () => [
+	check(
+		"cli_service_tokens_project_ids_nonempty",
+		sql`project_ids IS NULL OR cardinality(project_ids) > 0`,
+	),
+]);
 
 export type CliServiceToken = typeof cliServiceTokens.$inferSelect;
 export type NewCliServiceToken = typeof cliServiceTokens.$inferInsert;
