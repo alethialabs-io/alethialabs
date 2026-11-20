@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -358,7 +359,9 @@ func TestFleetUpdateFlagNamesComesFromTheSpec(t *testing.T) {
 	// shape of a guard that reports green for a reason unrelated to its subject.
 	compared := 0
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		if f.Name == "yes" || f.Name == "help" || cmd.InheritedFlags().Lookup(f.Name) != nil {
+		// --dry-run is not pool config either: it is registered from the command registry when
+		// the command declares a dry-run level, and changes nothing about the pool.
+		if f.Name == "yes" || f.Name == "help" || f.Name == cmdmeta.DryRunFlag || cmd.InheritedFlags().Lookup(f.Name) != nil {
 			return
 		}
 		compared++

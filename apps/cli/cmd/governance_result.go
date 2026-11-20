@@ -90,7 +90,9 @@ func runListCommand[T any](cmd *cobra.Command, v listView[T], fetch func() ([]T,
 		return nil
 	}
 	if err := ui.ShowTable(v.Columns, v.Rows(items, ui.FormatTable), v.Title); err != nil {
-		return fmt.Errorf("show the %s table: %w", v.Title, err)
+		// The browsable table could not open — no controlling terminal, say. The list was
+		// fetched and is worth more than the reason the viewer failed, so it is printed plain.
+		return renderList(printer.Out, format, v, items)
 	}
 	return nil
 }

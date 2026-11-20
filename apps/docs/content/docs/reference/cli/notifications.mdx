@@ -85,7 +85,9 @@ alethia channels create "PD" --type pagerduty --routing-key R0UT1NGKEY
 | Recipients | Where an email channel delivers; repeat the flag, or separate them with commas | `--recipient` |
 | Webhook URL | Where a webhook or chat channel posts; the endpoint is called before the channel is saved | `--url` |
 | Signing secret | Optional shared secret the receiver checks the delivery signature against | `--signing-secret` |
+| Signing secret from stdin | Read the signing secret from stdin instead of a flag value, which lands in shell history | `--signing-secret-stdin` |
 | Routing key | The PagerDuty Events API integration key the incident is raised against | `--routing-key` |
+| Routing key from stdin | Read the routing key from stdin instead of a flag value, which lands in shell history | `--routing-key-stdin` |
 
 ## `alethia channels verify`
 

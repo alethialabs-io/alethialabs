@@ -45,11 +45,17 @@ func TestRunClassificationDimensions(t *testing.T) {
 
 func TestRunClassificationDimensionsEmpty(t *testing.T) {
 	var buf bytes.Buffer
+	// An empty list has no table: the empty state is said on stderr and stdout stays empty.
+	p, _, said := splitPrinter("table")
+	withPrinter(t, p)
 	if err := runClassificationDimensions(&fakeClient{}, &buf, "table"); err != nil {
 		t.Fatalf("empty: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No classification dimensions") {
-		t.Errorf("expected empty message, got: %s", buf.String())
+	if !strings.Contains(said.String(), "No classification dimensions") {
+		t.Errorf("expected the empty notice on stderr, got: %s", said.String())
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an empty list wrote on stdout: %q", buf.String())
 	}
 }
 
@@ -72,11 +78,17 @@ func TestRunClassificationShow(t *testing.T) {
 
 func TestRunClassificationShowEmpty(t *testing.T) {
 	var buf bytes.Buffer
+	// An empty list has no table: the empty state is said on stderr and stdout stays empty.
+	p, _, said := splitPrinter("table")
+	withPrinter(t, p)
 	if err := runClassificationShow(&fakeClient{}, &buf, "table", "member", "m1"); err != nil {
 		t.Fatalf("show empty: %v", err)
 	}
-	if !strings.Contains(buf.String(), "Not classified") {
-		t.Errorf("expected not-classified message:\n%s", buf.String())
+	if !strings.Contains(said.String(), "Not classified") {
+		t.Errorf("expected the empty notice on stderr, got: %s", said.String())
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an empty list wrote on stdout: %q", buf.String())
 	}
 }
 
@@ -90,7 +102,7 @@ func TestRunClassificationShowError(t *testing.T) {
 func TestRunClassificationAssign(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{classAssigns: sampleAssigns()}
-	if err := runClassificationAssign(f, &buf, "project_environment", "env1", "environment", "prod"); err != nil {
+	if err := runClassificationAssign(f, testPrinter(&buf, "table"), classificationChange{Kind: "project_environment", ID: "env1", Dimension: "environment", Value: "prod"}, false); err != nil {
 		t.Fatalf("assign: %v", err)
 	}
 	if f.assignedKind != "project_environment" || f.assignedID != "env1" ||
@@ -104,7 +116,7 @@ func TestRunClassificationAssign(t *testing.T) {
 
 func TestRunClassificationAssignError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runClassificationAssign(&fakeClient{err: errBoom}, &buf, "k", "i", "d", "v"); err == nil {
+	if err := runClassificationAssign(&fakeClient{err: errBoom}, testPrinter(&buf, "table"), classificationChange{Kind: "k", ID: "i", Dimension: "d", Value: "v"}, false); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -112,7 +124,7 @@ func TestRunClassificationAssignError(t *testing.T) {
 func TestRunClassificationUnassign(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runClassificationUnassign(f, &buf, "project_environment", "env1", "prod"); err != nil {
+	if err := runClassificationUnassign(f, testPrinter(&buf, "table"), classificationChange{Kind: "project_environment", ID: "env1", Value: "prod"}); err != nil {
 		t.Fatalf("unassign: %v", err)
 	}
 	if f.unassignedKind != "project_environment" || f.unassignedID != "env1" || f.unassignedValue != "prod" {
@@ -125,7 +137,7 @@ func TestRunClassificationUnassign(t *testing.T) {
 
 func TestRunClassificationUnassignError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runClassificationUnassign(&fakeClient{err: errBoom}, &buf, "k", "i", "v"); err == nil {
+	if err := runClassificationUnassign(&fakeClient{err: errBoom}, testPrinter(&buf, "table"), classificationChange{Kind: "k", ID: "i", Value: "v"}); err == nil {
 		t.Fatal("expected error")
 	}
 }
