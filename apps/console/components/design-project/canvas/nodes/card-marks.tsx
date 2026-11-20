@@ -112,7 +112,10 @@ export interface CardFacts {
 	problem?: string;
 	/** Anything else the card shows that has no other text ("2 drifted"). */
 	notes?: readonly string[];
-	/** The titles of the cards this one is connected to. */
+	/**
+	 * The titles of the cards this one is connected to. Left out for a card no connection can start
+	 * from or end at: saying "not connected" about a bucket would suggest it could be.
+	 */
 	connections?: readonly string[];
 }
 
@@ -127,13 +130,17 @@ function listInWords(items: readonly string[]): string {
  * The card's name is not repeated — the focused element already carries it.
  */
 export function describeCard(facts: CardFacts): string {
-	const connections = facts.connections ?? [];
+	const connections = facts.connections;
 	const sentences = [
 		`Status: ${facts.status}`,
 		facts.pending ?? "",
 		facts.problem ? `Problem: ${facts.problem.replace(/[.\s]+$/, "")}` : "",
 		...(facts.notes ?? []),
-		connections.length > 0 ? `Connected to ${listInWords(connections)}` : "Not connected",
+		connections === undefined
+			? ""
+			: connections.length > 0
+				? `Connected to ${listInWords(connections)}`
+				: "Not connected",
 	];
 	return `${sentences.filter(Boolean).join(". ")}.`;
 }

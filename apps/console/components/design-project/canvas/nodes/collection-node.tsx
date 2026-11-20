@@ -111,7 +111,7 @@ export function CollectionNode({
 					!problem && worst.message ? worst.message : "",
 					worst.drifted > 0 ? `${worst.drifted} drifted` : "",
 				],
-				connections: marks.connections.get(id),
+				connections: marks.connections.get(id) ?? (connectable ? [] : undefined),
 			}}
 		/>
 	);

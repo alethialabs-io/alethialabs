@@ -198,7 +198,11 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 					gitops ? `ArgoCD: ${gitops.label}` : "",
 					compatChip ? `Kubernetes compatibility: ${compatChip.label}` : "",
 				],
-				connections: marks.connections.get(id),
+				connections:
+					marks.connections.get(id) ??
+					(canStartConnection(node.data.kind) || canEndConnection(node.data.kind)
+						? []
+						: undefined),
 			}}
 		/>
 	);

@@ -45,7 +45,7 @@ import {
 	projectNode,
 	serviceNode,
 } from "@/tests/fixtures/canvas/nodes";
-import { awsDatabaseNode, awsProjectNode, secretNode } from "./fixtures";
+import { awsDatabaseNode, awsProjectNode, bucketNode, secretNode } from "./fixtures";
 
 const ORDERS = "database-orders";
 
@@ -190,6 +190,12 @@ describe("what a screen reader hears for a card", () => {
 		// Visible, not only present: "deployed" and "never deployed" are not the same silent dot.
 		const label = screen.getByText("Live");
 		expect(label.parentElement?.className ?? "").not.toContain(":hidden");
+	});
+
+	it("says nothing about connections for a card no connection can reach", () => {
+		renderCard([awsProjectNode(), bucketNode("assets")], "bucket-assets");
+
+		expect(descriptionOf("bucket-assets")).toBe("Status: Ready.");
 	});
 
 	it("describeCard puts the facts in one order and ends each as a sentence", () => {
