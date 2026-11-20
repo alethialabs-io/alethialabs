@@ -77,6 +77,7 @@ function keyboardFocusOnCard(): boolean {
  *     came from, when the focus was in the rail.
  *   - Opening from the keyboard (Enter on a focused card) moves the focus into the inspector, so
  *     its fields are one Tab away rather than after every card on the board.
+ *   - Going from one subject to another from inside the rail keeps the focus in the inspector.
  *
  * It is mounted INSIDE the canvas: every subject then sits under the React Flow provider, the BYO
  * providers and the add-ons query they need. Unmounting the canvas — leaving Architecture — closes
@@ -111,6 +112,14 @@ export function WorkspaceRail({
 		if (subject && !before) {
 			// Opened. From the keyboard, bring the focus along.
 			if (keyboardFocusOnCard()) region.current?.focus();
+			return;
+		}
+		if (subject && before && focusInside.current) {
+			// Swapped from inside the rail (a collection's row, a crumb back): the control that was
+			// pressed went away with the old content. Keep the focus in the inspector rather than
+			// letting it fall to the page.
+			const active = document.activeElement;
+			if (!(active instanceof HTMLElement) || active === document.body) region.current?.focus();
 			return;
 		}
 		if (!subject && before && focusInside.current) {

@@ -316,6 +316,32 @@ describe("WorkspaceRail — Escape, closing and the focus", () => {
 		expect(document.activeElement).toBe(outside);
 	});
 
+	it("going to another subject from inside the rail keeps the focus in the inspector", () => {
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		show({ kind: "node", id: "database-orders" });
+
+		// A row or a crumb inside the rail was pressed: it goes away with the old content.
+		act(() => screen.getByRole("button", { name: "A control" }).focus());
+		show({ kind: "node", id: "bucket-assets" });
+
+		expect(screen.getByText("node subject bucket-assets")).toBeInTheDocument();
+		expect(screen.getByRole("complementary", { name: "Inspector" })).toHaveFocus();
+	});
+
+	it("selecting another card on the board does not pull the focus into the rail", () => {
+		const card = boardCard("bucket-assets");
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		show({ kind: "node", id: "database-orders" });
+
+		act(() => screen.getByLabelText("A field").focus());
+		// The click lands on the other card, which takes the focus, and then the subject changes.
+		act(() => card.focus());
+		fireEvent.focusOut(screen.getByLabelText("A field"), { relatedTarget: card });
+		show({ kind: "node", id: "bucket-assets" });
+
+		expect(document.activeElement).toBe(card);
+	});
+
 	it("closing from outside the rail leaves the focus where it is", () => {
 		boardCard("database-orders");
 		const outside = document.createElement("button");
