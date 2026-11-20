@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/runners"
@@ -54,7 +55,8 @@ func resolveEnvironmentID(client envLister, projectID, envName string) (string, 
 	for i, e := range envs {
 		names[i] = e.Name
 	}
-	return "", fmt.Errorf("environment %q not found in project (have: %s)", envName, strings.Join(names, ", "))
+	return "", refusal(clierr.CodeNotFound, "alethia project env list --project "+shellQuote(projectID),
+		"environment %q not found in project (have: %s)", envName, strings.Join(names, ", "))
 }
 
 // runnerOperatorLabel renders a runner's operator/provisioning as a short label:
@@ -70,7 +72,7 @@ func runnerOperatorLabel(w api.Runner) string {
 }
 
 // selectProject runs the interactive project picker shared by the project
-// plan/apply/destroy commands. Projects are listed flat (top-level projects).
+// preview/deploy/destroy commands. Projects are listed flat (top-level projects).
 func selectProject(token string) (projectID string, err error) {
 	if err := requireInteractiveForm(); err != nil {
 		return "", err
@@ -94,7 +96,7 @@ func selectProject(token string) (projectID string, err error) {
 	}
 
 	if len(projectOptions) == 0 {
-		return "", fmt.Errorf("no projects found — create one through Alethia")
+		return "", errNoProjects()
 	}
 
 	err = runHuhForm(
@@ -116,6 +118,9 @@ var (
 	statusDraining = ui.WarningStyle.Render(ui.SymbolPending)
 )
 
+// selectRunner runs the interactive runner picker and returns the chosen runner's id, or the empty
+// id for "Any available". excludeID leaves one runner off the list, for a command that must not
+// assign a runner to its own teardown.
 func selectRunner(token string, excludeID string) (runnerID string, err error) {
 	if err := requireInteractiveForm(); err != nil {
 		return "", err
@@ -251,14 +256,15 @@ func pickCloudIdentity(
 	}
 
 	if len(identities) == 0 {
-		return "", fmt.Errorf("no cloud accounts linked — connect one through Alethia first")
+		return "", refusal(clierr.CodeNotFound, "alethia connector list",
+			"no cloud accounts linked — connect one first with %s", connectCommands())
 	}
 
 	if narrow != nil {
 		identities = narrow(identities)
 		if len(identities) == 0 {
-			return "", fmt.Errorf(
-				"none of your linked cloud accounts can host a deployed runner — deployed runners are %s only. Register a runner you run yourself instead (Console → Runners → Add runner → Register your own); it runs on any cloud",
+			return "", refusal(clierr.CodeConflict, "alethia runner register",
+				"none of your linked cloud accounts can host a deployed runner — deployed runners are %s only. Register a runner you run yourself instead (`alethia runner register`, or Console → Runners → Add runner → Register your own); it runs on any cloud",
 				runners.DeployProvidersLabel(),
 			)
 		}
