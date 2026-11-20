@@ -75,8 +75,7 @@ func fleetError(err error) error {
 	if e.Hint != "" {
 		return &e
 	}
-	switch e.Class {
-	case clierr.ClassNotFound, clierr.ClassForbidden:
+	if e.Class == clierr.ClassNotFound || e.Class == clierr.ClassForbidden {
 		e.Hint = "alethia runner list   (the fleet is managed by the platform operator; your own runners are here)"
 	}
 	return &e
