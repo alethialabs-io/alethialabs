@@ -18,13 +18,13 @@ import (
 // point of the picker arms below is that the flag was NOT supplied.
 func miscResetDeployFlags() {
 	deployCloudIdentityID, deployRunnerName, deployRegion, deployAssignedID = "", "", "", ""
-	deployRunnerWait = false
+	deployRunnerWait = waitFlags{}
 }
 
 // miscResetDestroyFlags does the same for `runner destroy`.
 func miscResetDestroyFlags() {
 	destroyRunnerID, destroyRunnerAssignedID = "", ""
-	destroyRunnerWait = false
+	destroyRunnerWait = waitFlags{}
 }
 
 // TestMisc_RunnerDeploy pins `runner deploy`: fully-flagged it creates the runner and
