@@ -75,11 +75,6 @@ export default async function SecurityPage() {
 					<strong>Azure</strong> — a client assertion into your own user-assigned
 					managed identity via a federated credential. No Alethia Entra app.
 				</li>
-				<li>
-					<strong>Alibaba Cloud</strong> — anonymous{" "}
-					<code>AssumeRoleWithOIDC</code>, with no AccessKey and no Alethia
-					Alibaba account.
-				</li>
 			</ul>
 			<p>
 				Each exchange returns a credential of roughly one hour, refreshed for the

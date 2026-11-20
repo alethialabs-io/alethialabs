@@ -74,8 +74,7 @@ PostgreSQL `claim_next_job()` with `FOR UPDATE SKIP LOCKED` prevents double-exec
 
 ### Mints credentials
 Keyless OIDC per job — AWS `AssumeRoleWithWebIdentity`, GCP Workload Identity Federation, Azure
-federated identity, Alibaba `AssumeRoleWithOIDC` — no stored cloud keys. Token clouds
-(DigitalOcean / Hetzner / Civo) use an API token, either stored encrypted or kept entirely in a
+federated identity — no stored cloud keys. Hetzner uses an API token, either stored encrypted or kept entirely in a
 self-operated runner. See [Cloud Credentials](/concepts/runner/cloud-credentials).
 
 ### Executes OpenTofu

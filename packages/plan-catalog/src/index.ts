@@ -11,6 +11,12 @@
 // `PlanId` is declared here (not imported from the console DB enum) so the package has no
 // app dependencies. It is kept structurally identical to the `billing_plan` pgEnum
 // (lib/db/schema/enums.ts) — the console's `BillingPlan` type is assignable to it.
+//
+// The one package dependency is @repo/cloud-catalog, itself dependency-free: the Hobby plan
+// names the clouds the product offers from it, so a cloud hidden in packages/core/catalog
+// drops out of the plan copy without an edit here.
+
+import { cloudListLabel } from "@repo/cloud-catalog";
 
 /** The billing plan tiers, matching the `billing_plan` pgEnum in the console schema. */
 export type PlanId = "community" | "team" | "enterprise";
@@ -115,7 +121,7 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 				label: "Platform",
 				items: [
 					"Unlimited personal Projects",
-					"Multi-cloud provisioning (AWS / GCP / Azure)",
+					`Multi-cloud provisioning (${cloudListLabel()})`,
 					"Pluggable integrations catalog",
 					"GitOps app delivery",
 				],

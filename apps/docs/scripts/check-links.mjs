@@ -14,6 +14,11 @@
  *   - Anchors are computed the way fumadocs' remark-heading does: github-slugger over the heading's
  *     plain text, with `-1`, `-2` suffixes for repeats. Headings inside code fences do not count.
  *   - Static files under public/ are accepted as link targets.
+ *   - A page whose frontmatter says `availability: hidden` is NOT a page: lib/source.ts drops it from
+ *     the site, so a link to it is broken, a redirect may take its URL, and its meta.json need not
+ *     list it. One exception, product → docs links: a product link to a hidden page is accepted,
+ *     because the product shows it only for the hidden cloud, under the self-hosted re-enable switch.
+ *     The hidden page's own links are still checked.
  *   - EXTERNAL URLs (http/https/mailto) are NOT checked. A network probe in a required check is a
  *     flake source; this guard answers "does the link point at something this site serves".
  *   - A link through one of next.config.mjs's redirects is reported as broken: a redirect keeps old
@@ -79,6 +84,12 @@ export function blankFences(src) {
 			return line;
 		})
 		.join("\n");
+}
+
+/** True when a page's YAML frontmatter sets `availability: hidden` (see source.config.ts). */
+export function isHidden(src) {
+	const m = src.match(/^---\n([\s\S]*?)\n---\n/);
+	return Boolean(m && /^availability:\s*["']?hidden["']?\s*$/m.test(m[1]));
 }
 
 /** Strips YAML frontmatter, keeping its line count. */
@@ -204,7 +215,7 @@ const PRODUCT_EXT = /\.(tsx?|mjs|js|go|mdx?|json|ya?ml)$/;
 const PRODUCT_SKIP = /(^|\/)(node_modules|\.next|\.turbo|dist|testdata|e2e|tests?|__tests__)(\/|$)|_test\.go$|\.test\.|\.spec\.|\.generated\.|CHANGELOG\.md$|^apps\/docs\//;
 
 /** Finds docs links in product code under `repoRoot` and checks each against the live routes. */
-export function checkProductLinks(repoRoot, pages, redirects) {
+export function checkProductLinks(repoRoot, pages, redirects, hidden = new Set()) {
 	const moved = new Map(redirects.map((r) => [r.source, r.destination]));
 	const findings = [];
 	let links = 0;
@@ -218,6 +229,7 @@ export function checkProductLinks(repoRoot, pages, redirects) {
 					links++;
 					const route = m[1] || "/";
 					const at = { file: `../../../${file}`, line: i + 1 };
+					if (hidden.has(route)) continue;
 					if (moved.has(route)) findings.push({ ...at, msg: `"/docs${route}" moved — link to "/docs${moved.get(route)}"` });
 					else if (!pages.has(route)) findings.push({ ...at, msg: `"/docs${route}" — no docs page at ${route}` });
 					else if (m[2] && !pages.get(route).has(m[2])) findings.push({ ...at, msg: `"/docs${route}#${m[2]}" — no heading with that anchor` });
@@ -246,10 +258,13 @@ export function check(contentDir, publicDir = path.join(DOCS_ROOT, "public"), re
 	const files = walk(contentDir);
 	const mdx = files.filter((f) => /\.mdx?$/.test(f));
 	const sources = new Map(mdx.map((f) => [f, fs.readFileSync(path.join(contentDir, f), "utf8")]));
-	const pages = new Map(mdx.map((f) => [routeOf(f), anchorsOf(sources.get(f))]));
+	const hiddenFiles = new Set(mdx.filter((f) => isHidden(sources.get(f))));
+	const hidden = new Set([...hiddenFiles].map(routeOf));
+	const pages = new Map(mdx.filter((f) => !hiddenFiles.has(f)).map((f) => [routeOf(f), anchorsOf(sources.get(f))]));
 	const publicFiles = new Set(fs.existsSync(publicDir) ? walk(publicDir).map((f) => `/${f}`) : []);
 
-	const findings = [...checkMeta(contentDir, files), ...checkRedirects(redirects, pages)];
+	const navFiles = files.filter((f) => !hiddenFiles.has(f));
+	const findings = [...checkMeta(contentDir, navFiles), ...checkRedirects(redirects, pages)];
 	let links = 0;
 	for (const f of mdx) {
 		const fromRoute = routeOf(f);
@@ -261,11 +276,11 @@ export function check(contentDir, publicDir = path.join(DOCS_ROOT, "public"), re
 	}
 	let productLinks = 0;
 	if (repoRoot) {
-		const product = checkProductLinks(repoRoot, pages, redirects);
+		const product = checkProductLinks(repoRoot, pages, redirects, hidden);
 		productLinks = product.productLinks;
 		findings.push(...product);
 	}
-	findings.stats = { pages: mdx.length, links, productLinks };
+	findings.stats = { pages: mdx.length, hidden: hidden.size, links, productLinks };
 	return findings;
 }
 
@@ -281,9 +296,13 @@ function selfTest() {
 		fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
 		fs.writeFileSync(path.join(repo, rel), body);
 	};
-	put("meta.json", JSON.stringify({ pages: ["index", "a", "ghost"] }));
+	put("meta.json", JSON.stringify({ pages: ["index", "a", "ghost", "index-links-hidden"] }));
 	put("index.mdx", "---\ntitle: x\n---\n\n## Step 1 — Create the `project`\n\n[ok](/a#second)\n[ok2](#step-1--create-the-project)\n");
 	put("a/meta.json", JSON.stringify({ pages: ["index"] }));
+	// A hidden page: unlisted in a/meta.json without a finding, its URL free for a redirect, a link
+	// to it broken, a product link to it accepted.
+	put("a/secret.mdx", "---\ntitle: s\navailability: hidden\n---\n\n[ok](/a)\n");
+	put("index-links-hidden.mdx", "[to-hidden](/a/secret)\n");
 	put("a/index.mdx", "## Second\n\n```md\n[in-fence](/nowhere)\n```\n\n`[in-code](/nowhere)`\n");
 	put("a/unlisted.mdx", [
 		"[missing](/nowhere)",
@@ -299,12 +318,14 @@ function selfTest() {
 		{ source: "/gone", destination: "/missing" }, // dead destination
 		{ source: "/hop", destination: "/old" }, // chain
 		{ source: "/moved-out", destination: "https://example.com/x.md" }, // external: fine
+		{ source: "/a/secret", destination: "/a" }, // takes a hidden page's URL: fine
 	];
 	putRepo("apps/web/page.tsx", [
 		'const ok = "/docs/a#second";',
 		'const gone = "/docs/nope";',
 		'const old = "https://alethialabs.io/docs/old";',
 		'const bad = "/docs/a#zzz";',
+		'const hiddenOk = "/docs/a/secret";',
 	].join("\n"));
 	putRepo("apps/web/page.test.tsx", 'const ignored = "/docs/nope";');
 	const got = check(tmp, path.join(tmp, "no-public"), redirects, repo);
@@ -325,6 +346,7 @@ function selfTest() {
 		/"\/docs\/nope" — no docs page/,
 		/"\/docs\/old" moved — link to "\/docs\/a"/,
 		/"\/docs\/a#zzz" — no heading/,
+		/"\/a\/secret" — no page at \/a\/secret/,
 	];
 	const missed = want.filter((re) => !got.some((f) => re.test(f.msg)));
 	const extra = got.length - want.length;
@@ -350,12 +372,12 @@ async function main() {
 	}
 	// The counts are part of the verdict: a parser that silently stopped matching links would
 	// otherwise print the same green line over zero links.
-	const { pages, links, productLinks } = findings.stats;
+	const { pages, hidden, links, productLinks } = findings.stats;
 	if (pages === 0 || links === 0 || productLinks === 0) {
 		console.error(`check-links: read ${pages} pages, ${links} links, ${productLinks} product links — nothing was checked, refusing to pass.`);
 		process.exit(1);
 	}
-	console.log(`check-links: ${links} links across ${pages} pages and ${productLinks} product → docs links — every one resolves; every page is in navigation.`);
+	console.log(`check-links: ${links} links across ${pages} pages (${hidden} hidden) and ${productLinks} product → docs links — every one resolves; every published page is in navigation.`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main();

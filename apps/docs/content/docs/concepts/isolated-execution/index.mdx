@@ -23,7 +23,7 @@ arbitrary. Isolated execution is the boundary that runs it **sealed off** from t
 
 Alethia runs two kinds of code, and treats them differently:
 
-- **Trusted templates** — Alethia's own project templates (EKS / GKE / AKS / ACK / Talos + supporting
+- **Trusted templates** — Alethia's own project templates (EKS / GKE / AKS / Talos + supporting
   services). Reviewed platform code, so it runs in-process on the runner. This is every managed provision
   today.
 - **Untrusted bring-your-own** — your OpenTofu/Terraform or Helm. Arbitrary code, so on the managed fleet it runs in a

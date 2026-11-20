@@ -25,8 +25,8 @@ Each cluster displays:
 There are two ways to get a kubeconfig:
 
 - **Through Alethia**, with no cloud login of your own: `alethia cluster kubeconfig` gets a
-  short-lived, read-only or admin kubeconfig that a runner mints for you. It works on all five
-  clouds, including Hetzner and Alibaba Cloud. See
+  short-lived, read-only or admin kubeconfig that a runner mints for you. It works on all four
+  clouds, including Hetzner. See
   [Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
 - **With your own cloud CLI**, under your own cloud login. The rest of this section is about this
   way.
@@ -36,7 +36,7 @@ the values the cluster's last successful deploy recorded — see
 [Accessing a cluster with kubectl](/reference/cli/clusters#accessing-a-cluster-with-kubectl). The
 command per cloud:
 
-<Tabs items={["AWS", "GCP", "Azure", "Alibaba Cloud", "Hetzner"]}>
+<Tabs items={["AWS", "GCP", "Azure", "Hetzner"]}>
   <Tab value="AWS">
     ```bash
     aws eks update-kubeconfig --name {cluster-name} --region {region}
@@ -53,11 +53,6 @@ command per cloud:
     ```bash
     az aks get-credentials --resource-group {resource-group} --name {cluster-name}
     ```
-  </Tab>
-  <Tab value="Alibaba Cloud">
-    Alethia does not record the ACK cluster ID yet. Find it in the ACK console, then call
-    `DescribeClusterUserKubeconfig` with the `aliyun` CLI. Its `config` field is the kubeconfig.
-    Or use [`alethia cluster kubeconfig`](/guides/get-a-kubeconfig), which needs no ACK cluster ID.
   </Tab>
   <Tab value="Hetzner">
     Hetzner has no cloud CLI command for a kubeconfig. Use

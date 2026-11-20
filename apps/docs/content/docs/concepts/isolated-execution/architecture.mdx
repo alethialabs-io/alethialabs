@@ -33,7 +33,7 @@ limits.
 The child gets **only** an allowlisted set of environment variables:
 
 - the cloud-auth vars the credential activators set — file paths and non-secret ids (`AWS_CONFIG_FILE` /
-  `AWS_PROFILE`, `GOOGLE_APPLICATION_CREDENTIALS`, `ARM_*` / `AZURE_*`, `ALIBABA_CLOUD_*`),
+  `AWS_PROFILE`, `GOOGLE_APPLICATION_CREDENTIALS`, `ARM_*` / `AZURE_*`),
 - the token-cloud tokens the provider needs (e.g. `HCLOUD_TOKEN`),
 - the state-proxy auth and the egress-proxy vars,
 - a minimal toolchain (`PATH`, locale).
