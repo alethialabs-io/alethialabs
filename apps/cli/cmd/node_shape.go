@@ -4,10 +4,10 @@
 package cmd
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -42,6 +42,12 @@ const (
 	nodeSizeDescription     = "Node size as vCPUxGiB, e.g. 4x16, mapped to the nearest machine type (not with --instance-type)"
 )
 
+// badNodeShape is a node-shape flag that cannot be read: a usage error, so nothing was sent and
+// the same command works once the flag is fixed.
+func badNodeShape(format string, args ...any) error {
+	return refusal(clierr.CodeInvalidFlag, "for example --node-size 4x16", format, args...)
+}
+
 // parseNodeSize reads `--node-size`: `<vCPU>x<GiB>`, e.g. `4x16` or `2x7.5`. An empty string is
 // "not given" and returns nil. Anything else that does not parse, or lies outside the bounds, is an
 // error naming the flag — never a silently dropped value.
@@ -52,18 +58,18 @@ func parseNodeSize(s string) (*types.NodeSize, error) {
 	}
 	vcpuText, memText, ok := strings.Cut(strings.ToLower(s), "x")
 	if !ok {
-		return nil, fmt.Errorf("--node-size %q: want vCPUxGiB, e.g. 4x16", s)
+		return nil, badNodeShape("--node-size %q: want vCPUxGiB, e.g. 4x16", s)
 	}
 	vcpu, errV := strconv.ParseFloat(strings.TrimSpace(vcpuText), 64)
 	mem, errM := strconv.ParseFloat(strings.TrimSpace(memText), 64)
 	if errV != nil || errM != nil {
-		return nil, fmt.Errorf("--node-size %q: want vCPUxGiB, e.g. 4x16", s)
+		return nil, badNodeShape("--node-size %q: want vCPUxGiB, e.g. 4x16", s)
 	}
 	if vcpu < nodeSizeMinVCPU || vcpu > nodeSizeMaxVCPU {
-		return nil, fmt.Errorf("--node-size %q: vCPU must be %d–%d", s, nodeSizeMinVCPU, nodeSizeMaxVCPU)
+		return nil, badNodeShape("--node-size %q: vCPU must be %d–%d", s, nodeSizeMinVCPU, nodeSizeMaxVCPU)
 	}
 	if mem < nodeSizeMinMemory || mem > nodeSizeMaxMemory {
-		return nil, fmt.Errorf("--node-size %q: memory must be %d–%d GiB", s, nodeSizeMinMemory, nodeSizeMaxMemory)
+		return nil, badNodeShape("--node-size %q: memory must be %d–%d GiB", s, nodeSizeMinMemory, nodeSizeMaxMemory)
 	}
 	return &types.NodeSize{VCPU: vcpu, MemoryGB: mem}, nil
 }
@@ -76,7 +82,7 @@ func nodeShapeFrom(instanceType, nodeSize string) (api.ProjectNodeShape, error) 
 		return api.ProjectNodeShape{}, err
 	}
 	if instanceType != "" && size != nil {
-		return api.ProjectNodeShape{}, fmt.Errorf("--instance-type and --node-size are mutually exclusive: pass one")
+		return api.ProjectNodeShape{}, badNodeShape("--instance-type and --node-size are mutually exclusive: pass one")
 	}
 	return api.ProjectNodeShape{InstanceType: instanceType, NodeSize: size}, nil
 }

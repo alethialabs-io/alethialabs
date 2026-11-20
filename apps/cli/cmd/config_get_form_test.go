@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"errors"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"io"
 	"os"
 	"strings"
@@ -273,8 +274,8 @@ func TestConfigGetForm_RunConfigGetStillRefusesWhatItCannotRead(t *testing.T) {
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if exited != 1 {
-		t.Errorf("a key runConfigGet cannot read exited %d — it must still be refused", exited)
+	if exited != clierr.ExitUsage {
+		t.Errorf("a key runConfigGet cannot read exited %d — it must still be refused as a usage error", exited)
 	}
 }
 

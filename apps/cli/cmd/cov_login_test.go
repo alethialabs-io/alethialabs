@@ -665,7 +665,8 @@ func TestAuth_LoginCmdRejectsBadWebOrigin(t *testing.T) {
 	authCovOrigin(t, "http://127.0.0.1:1")
 	authCovHeadless(t)
 
-	authCovWantExit(t, "login --web-origin ftp://nope", func() {
+	// A value that cannot be a control-plane URL is a usage error: nothing was sent.
+	authCovWantExitCode(t, "login --web-origin ftp://nope", clierr.ExitUsage, func() {
 		_ = authCovRunCLI(t, "login", "--web-origin", "ftp://nope")
 	})
 }

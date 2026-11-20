@@ -4,13 +4,12 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -21,15 +20,21 @@ import (
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Show or edit CLI configuration",
-	Long: `Show the resolved CLI configuration — the control-plane URL and its source
-(env / config / default), the active organization context, and the on-disk
-credentials and config file locations. Use 'config set'/'config get' to edit.`,
+	Long: `Show the configuration this CLI runs with: the control-plane URL and where it comes from
+(the environment, the config file or the default), the active organization, and where the
+credentials and the config file are on disk.
+
+Use it to check which control plane and which organization a command will act on. It reads
+local files only and sends nothing. "config get" prints one value for a script, and
+"config set" changes one.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		credsPath, _ := getCredentialsPath()
 		cfgPath, _ := types.CliConfigPath()
 		origin, source := types.ResolveWebOrigin()
+		p := printerFor(cmd)
 		if err := runConfigShow(
-			os.Stdout, outputFormat(cmd),
+			p.Out, p.Format,
 			origin, source, types.LoadCliConfig(), credsPath, cfgPath,
 		); err != nil {
 			fail(err)
@@ -40,12 +45,15 @@ credentials and config file locations. Use 'config set'/'config get' to edit.`,
 var configSetCmd = &cobra.Command{
 	Use:   "set [key] [value]",
 	Short: "Set a config value",
-	Long: `Persist a config value.
+	Long: `Write one config value to the CLI's config file.
 
-Run it with no arguments on a terminal to pick the key from a list and edit the
-current value in place. The arguments are the complete non-interactive contract:
-anything the form can ask, ` + "`set <key> <value>`" + ` can supply, so --no-input never
-needs a prompt.`,
+Use it to point the CLI at another control plane: "web-origin" is the one key it writes. The
+active organization is written by "alethia org switch", which also checks that you belong to it.
+
+Run it with no arguments on a terminal to pick the key from a list and edit the current value in
+place. The arguments are the complete non-interactive contract: anything the form can ask,
+` + "`set <key> <value>`" + ` can supply, so --no-input never needs a prompt. Setting a key to the
+value it already has changes nothing and says so.`,
 	Args: cobra.MaximumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		key, value := "", ""
@@ -58,9 +66,20 @@ needs a prompt.`,
 		key, value, err := promptConfigSet(key, value)
 		if err != nil {
 			fail(err)
+			return
 		}
-		if err := runConfigSet(os.Stdout, key, value); err != nil {
+		change, err := setConfigValue(key, value)
+		if err != nil {
 			fail(err)
+			return
+		}
+		p := printerFor(cmd)
+		if err := p.Result(change.mutation(), func(w io.Writer) { fmt.Fprintln(w, change.sentence()) }); err != nil {
+			fail(err)
+			return
+		}
+		if note := change.Shadowed; note != "" {
+			p.Warn(note)
 		}
 	},
 }
@@ -69,6 +88,10 @@ var configGetCmd = &cobra.Command{
 	Use:   "get [key]",
 	Short: "Get a config value",
 	Long: `Print one config value, or every one of them.
+
+Use it in a script to read the value the CLI is using: with a key, stdout is that value and
+nothing else. "web-origin" is the resolved control-plane URL, so it reflects the environment
+variable when one is set.
 
 The key is optional and its default is ALL of them, so a bare 'config get' answers
 rather than asks. A key this CLI does not have is refused with the keys it does
@@ -82,8 +105,10 @@ have — or, on a terminal, replaced by a picker rather than a retype.`,
 		key, err := resolveConfigGetKey(key)
 		if err != nil {
 			fail(err)
+			return
 		}
-		if err := runConfigGet(os.Stdout, outputFormat(cmd), key); err != nil {
+		p := printerFor(cmd)
+		if err := runConfigGet(p.Out, p.Format, key); err != nil {
 			fail(err)
 		}
 	},
@@ -92,76 +117,101 @@ have — or, on a terminal, replaced by a picker rather than a retype.`,
 var configClearContextCmd = &cobra.Command{
 	Use:   "clear-context",
 	Short: "Clear the active organization context",
+	Long: `Remove the active organization from the CLI's config file, so commands act in your
+personal scope until you choose an organization again.
+
+Use it to leave an organization without switching to another one. It changes only the local
+config file: nothing is sent, and no organization or membership is touched. Run
+"alethia org switch" to choose an organization again. Clearing a context that is already clear
+changes nothing and says so.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		cfg := types.LoadCliConfig()
-		cfg.ActiveOrgID, cfg.ActiveOrgName, cfg.ActiveOrgSlug = "", "", ""
-		if err := types.SaveCliConfig(cfg); err != nil {
-			failf("Failed to clear context: %v", err)
+		cleared, err := clearActiveOrg()
+		if err != nil {
+			fail(err)
+			return
 		}
-		ui.Success("Active organization context cleared.")
+		if err := printerFor(cmd).Result(cleared.mutation(), func(w io.Writer) {
+			fmt.Fprintln(w, cleared.sentence())
+		}); err != nil {
+			fail(err)
+		}
 	},
 }
 
-var configExportCmd = &cobra.Command{
-	Use:   "export [project]",
-	Short: "Export a project's configuration to stdout or a file",
-	Long: `Export a project's resolved configuration. By default the configuration
-content is written to stdout; pass --out to write it to a file, or -o json to get
-the export envelope (content + filename + format).
+// clearedContext is what `config clear-context` did: the organization that was active, if any.
+type clearedContext struct {
+	// ActiveOrgID and ActiveOrgName are the organization that was active before. Both are empty
+	// when none was.
+	ActiveOrgID   string `json:"previous_org_id"`
+	ActiveOrgName string `json:"previous_org_name"`
+}
 
---env exports that environment (by id, name or stage; an exact name wins over a
-stage); without it the server exports the project's default environment.`,
+// mutation is the clearing as the one result shape every mutating command returns.
+func (c clearedContext) mutation() MutationResult {
+	action := ResultUpdated
+	if c.ActiveOrgID == "" && c.ActiveOrgName == "" {
+		action = ResultUnchanged
+	}
+	return MutationResult{ID: "active-org", Kind: "config", Action: action, Object: c}
+}
+
+// sentence says what happened, for a person.
+func (c clearedContext) sentence() string {
+	if c.ActiveOrgID == "" && c.ActiveOrgName == "" {
+		return ui.MutedStyle.Render("No organization was active. Nothing changed.")
+	}
+	return ui.FormatSuccess("Active organization context cleared.")
+}
+
+// clearActiveOrg removes the active organization from the config file and reports which one it
+// was.
+func clearActiveOrg() (clearedContext, error) {
+	cfg := types.LoadCliConfig()
+	was := clearedContext{ActiveOrgID: cfg.ActiveOrgID, ActiveOrgName: cfg.ActiveOrgName}
+	cfg.ActiveOrgID, cfg.ActiveOrgName, cfg.ActiveOrgSlug = "", "", ""
+	if err := types.SaveCliConfig(cfg); err != nil {
+		return was, fmt.Errorf("failed to clear context: %w", err)
+	}
+	return was, nil
+}
+
+// configExportCmd is the old name of `alethia export --format console-json`, kept so a script
+// written against it still runs. It is hidden, says so once on stderr, and keeps the contract it
+// always had: --out replaces an existing file without being asked.
+var configExportCmd = &cobra.Command{
+	Use:    "export [project]",
+	Hidden: true,
+	Short:  "Deprecated: use `alethia export --format console-json`",
+	Long: `Deprecated: this is the old name of "alethia export --format console-json", which writes the
+same document.
+
+It exports one environment's design document as JSON: to stdout, to the file --out names, or
+with --output json as an object that also carries the file name and the format. --env chooses the
+environment (by id, name or stage; an exact name wins over a stage); without it the project's
+default environment is exported.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		renamedCommandNotice("config export", "export --format "+exportFormatConsoleJSON)
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
+			return
 		}
-		project := ""
-		if len(args) > 0 {
-			project = args[0]
-		} else {
-			project, err = selectProject(token)
-			if err != nil {
-				fail(err)
-			}
+		project, err := exportProject(token, args)
+		if err != nil {
+			fail(err)
+			return
 		}
 		contentFormat, _ := cmd.Flags().GetString("format")
 		outFile, _ := cmd.Flags().GetString("out")
 		env, _ := cmd.Flags().GetString("env")
-		if err := runConfigExport(
-			api.NewClient(token), os.Stdout, outputFormat(cmd), project, contentFormat, env, outFile,
-		); err != nil {
-			failf("Failed to export configuration: %v", err)
+		if err := runConsoleExport(api.NewClient(token), printerFor(cmd), consoleExport{
+			project: project, env: env, out: outFile, force: true, contentFormat: contentFormat,
+		}); err != nil {
+			fail(err)
 		}
 	},
-}
-
-// runConfigExport exports a project's configuration — env's, or the default environment's when env
-// is empty. It writes the raw content to a file (--out), emits the full export envelope as json
-// (-o json), or prints the raw content to out (the default).
-func runConfigExport(c apiClient, out io.Writer, displayFormat, projectName, contentFormat, env, outFile string) error {
-	export, err := c.ExportConfiguration(projectName, contentFormat, env)
-	if err != nil {
-		return err
-	}
-	if outFile != "" {
-		if err := os.WriteFile(outFile, []byte(export.Content), 0o644); err != nil {
-			return fmt.Errorf("failed to write %s: %w", outFile, err)
-		}
-		fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Wrote %s (%s)", outFile, export.Format)))
-		return nil
-	}
-	if displayFormat == ui.FormatJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(export)
-	}
-	fmt.Fprint(out, export.Content)
-	if !strings.HasSuffix(export.Content, "\n") {
-		fmt.Fprintln(out)
-	}
-	return nil
 }
 
 // configView is the json projection of the CLI config.
@@ -301,33 +351,89 @@ func configKeyList(settableOnly bool) string {
 	return strings.Join(names, ", ")
 }
 
-// runConfigSet validates and persists a single config key.
-func runConfigSet(out io.Writer, key, value string) error {
+// errUnknownConfigKey refuses a key this CLI does not have, naming the ones it does.
+func errUnknownConfigKey(key string) error {
+	return refusal(clierr.CodeInvalidUsage, "alethia config get",
+		"unknown config key %q (supported: %s)", key, configKeyList(false))
+}
+
+// errReadOnlyConfigKey refuses to write a key another command owns, and names that command.
+func errReadOnlyConfigKey(f *configField) error {
+	return refusal(clierr.CodeInvalidUsage, f.SetVia,
+		"config key %q is read-only — set it with `%s`", f.Key, f.SetVia)
+}
+
+// configChange is what `config set` did to one key.
+type configChange struct {
+	Key string `json:"key"`
+	// Value is the value now stored, normalized.
+	Value string `json:"value"`
+	// Previous is the value that was stored before. Empty when none was.
+	Previous string `json:"previous"`
+	// Shadowed says, when it is not empty, that the stored value is not the one commands use,
+	// and why.
+	Shadowed string `json:"shadowed,omitempty"`
+}
+
+// mutation is the change as the one result shape every mutating command returns.
+func (c configChange) mutation() MutationResult {
+	action := ResultUpdated
+	if c.Previous == c.Value {
+		action = ResultUnchanged
+	}
+	return MutationResult{ID: c.Key, Kind: "config", Action: action, Object: c}
+}
+
+// sentence says what happened, for a person.
+func (c configChange) sentence() string {
+	if c.Previous == c.Value {
+		return ui.MutedStyle.Render(c.Key + " is already " + c.Value + ". Nothing changed.")
+	}
+	return ui.FormatSuccess(c.Key + " set to " + c.Value)
+}
+
+// setConfigValue validates and persists a single config key, and returns what changed.
+func setConfigValue(key, value string) (configChange, error) {
 	f := lookupConfigField(key)
 	if f == nil {
-		return fmt.Errorf("unknown config key %q (supported: %s)", key, configKeyList(false))
+		return configChange{}, errUnknownConfigKey(key)
 	}
 	if !f.settable() {
-		return fmt.Errorf("config key %q is read-only — set it with `%s`", f.Key, f.SetVia)
+		return configChange{}, errReadOnlyConfigKey(f)
 	}
 	normalized, err := f.Normalize(value)
 	if err != nil {
-		return err
+		return configChange{}, err
 	}
 	cfg := types.LoadCliConfig()
+	change := configChange{Key: f.Key, Value: normalized, Previous: f.Read(cfg, cfg.WebOrigin)}
 	f.Apply(&cfg, normalized)
 	if err := types.SaveCliConfig(cfg); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
+		return change, fmt.Errorf("failed to save config: %w", err)
 	}
-	fmt.Fprintln(out, ui.FormatSuccess(f.Key+" set to "+normalized))
 	// The persisted value is not necessarily the EFFECTIVE one: $ALETHIA_WEB_ORIGIN
 	// outranks the config file, so without this line `config set web-origin` reports
 	// success and every subsequent command still talks to the environment's origin.
 	if resolved, source := types.ResolveWebOrigin(); f.Key == "web-origin" &&
 		source == types.WebOriginFromEnv && resolved != normalized {
-		fmt.Fprintln(out, ui.MutedStyle.Render(fmt.Sprintf(
-			"Note: $ALETHIA_WEB_ORIGIN is set to %s and outranks the config file, so commands still use it.",
-			resolved)))
+		change.Shadowed = fmt.Sprintf(
+			"$ALETHIA_WEB_ORIGIN is set to %s and outranks the config file, so commands still use it.",
+			resolved)
+	}
+	return change, nil
+}
+
+// runConfigSet validates and persists a single config key, and says what it did on out. It is
+// what the first-run commands call when they persist the control-plane URL as one of their steps;
+// `config set` itself reports through the Printer.
+func runConfigSet(out io.Writer, key, value string) error {
+	change, err := setConfigValue(key, value)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, ui.FormatSuccess(change.Key+" set to "+change.Value))
+	if change.Shadowed != "" {
+		fmt.Fprintln(out, ui.MutedStyle.Render("Note: "+change.Shadowed))
 	}
 	return nil
 }
@@ -366,7 +472,7 @@ func runConfigGet(out io.Writer, format, key string) error {
 
 	f := lookupConfigField(key)
 	if f == nil {
-		return fmt.Errorf("unknown config key %q (supported: %s)", key, configKeyList(false))
+		return errUnknownConfigKey(key)
 	}
 	v := f.Read(cfg, origin)
 	if format == "" || format == ui.FormatTable {
@@ -426,7 +532,7 @@ var resolveConfigGetKey = func(key string) (string, error) {
 		return key, nil
 	}
 	if !canPromptForm() {
-		return "", fmt.Errorf("unknown config key %q (supported: %s)", key, configKeyList(false))
+		return "", errUnknownConfigKey(key)
 	}
 
 	opts := configGetKeyOptions()
@@ -435,7 +541,8 @@ var resolveConfigGetKey = func(key string) (string, error) {
 		// true: an empty picker is a box nobody can answer, and the empty string it would
 		// return is what `config get` reads as "all of them" — so the miss would print a
 		// whole configuration and read as a success.
-		return "", fmt.Errorf("unknown config key %q, and this CLI has no config key to offer", key)
+		return "", refusal(clierr.CodeInvalidUsage, "",
+			"unknown config key %q, and this CLI has no config key to offer", key)
 	}
 	chosen := opts[0].Value
 	// The title is written here rather than resolved from authFields, because `alethia config
@@ -472,7 +579,8 @@ var promptConfigSet = func(key, value string) (string, string, error) {
 		return key, value, nil
 	}
 	if !canPromptForm() {
-		return "", "", fmt.Errorf(
+		return "", "", refusal(clierr.CodeInputRequired,
+			"alethia config set web-origin https://alethialabs.io",
 			"config set needs a key and a value when prompts are disabled: alethia config set <%s> <value>",
 			configKeyList(true))
 	}
@@ -489,7 +597,7 @@ var promptConfigSet = func(key, value string) (string, string, error) {
 			// Unreachable while any key is settable, and a real answer if that ever
 			// stops being true — an empty picker would otherwise render as a form with
 			// nothing in it.
-			return "", "", fmt.Errorf("no config key can be set from the CLI")
+			return "", "", refusal(clierr.CodeInvalidUsage, "", "no config key can be set from the CLI")
 		}
 		spec := mustAuthField("alethia config set", fieldKeyConfigKey)
 		key = opts[0].Value
@@ -506,10 +614,10 @@ var promptConfigSet = func(key, value string) (string, string, error) {
 
 	f := lookupConfigField(key)
 	if f == nil {
-		return "", "", fmt.Errorf("unknown config key %q (supported: %s)", key, configKeyList(false))
+		return "", "", errUnknownConfigKey(key)
 	}
 	if !f.settable() {
-		return "", "", fmt.Errorf("config key %q is read-only — set it with `%s`", f.Key, f.SetVia)
+		return "", "", errReadOnlyConfigKey(f)
 	}
 	if value == "" {
 		// Seeded with the STORED value so the form is an edit, not a re-type, and
@@ -563,7 +671,8 @@ func normalizeWebOrigin(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("invalid web-origin %q (want e.g. https://alethialabs.io)", raw)
+		return "", refusal(clierr.CodeValidationFailed, "alethia config set web-origin https://alethialabs.io",
+			"invalid web-origin %q (want e.g. https://alethialabs.io)", raw)
 	}
 	return strings.TrimRight(raw, "/"), nil
 }
@@ -580,7 +689,7 @@ func saveActiveOrg(o api.OrgSummary) error {
 
 func init() {
 	configExportCmd.Flags().String("format", "json", "Configuration content format")
-	configExportCmd.Flags().String("out", "", "Write the configuration to this file instead of stdout")
+	configExportCmd.Flags().String("out", "", "Write the configuration to this file instead of stdout, replacing it if it exists")
 	configExportCmd.Flags().String("env", "", "Environment to export, by id, name or stage — an exact name wins over a stage (default: the project's default environment)")
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configGetCmd)
