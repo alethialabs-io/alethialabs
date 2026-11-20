@@ -1942,6 +1942,85 @@ CREATE TRIGGER kubeconfig_mint_requests_bind_org
   BEFORE INSERT OR UPDATE OF org_id, cluster_id, job_id, actor_user_id, service_token_id ON public.kubeconfig_mint_requests
   FOR EACH ROW EXECUTE FUNCTION public.kubeconfig_mint_requests_bind_org();
 
+-- ── Agent surface (spec agent-surface.md §4, seam AGT-S2) ───────────────────────────────────────
+-- ORG-BOUNDED, the projects/jobs arm: apply_approvals, org_agent_policy and agent_tool_calls belong
+-- to an ORGANIZATION. An approval is decided by any member the PDP lets deploy or destroy on the
+-- project (lib/authz), not only by its requester, so the row is visible in the org it belongs to and
+-- in the caller's personal org (org_id = current_owner), exactly like jobs. Community: both arms name
+-- the same tenant. NULL GUCs deny. ENABLE first — without it the policy is inert. Not FORCEd, as no
+-- table here is.
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY['apply_approvals', 'org_agent_policy', 'agent_tool_calls']) LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
+    EXECUTE format(
+      'CREATE POLICY owner_all ON public.%I FOR ALL
+         USING (org_id = current_setting(''app.current_org'', true)::uuid
+                OR org_id = current_setting(''app.current_owner'', true)::uuid)
+         WITH CHECK (org_id = current_setting(''app.current_org'', true)::uuid
+                OR org_id = current_setting(''app.current_owner'', true)::uuid)', tbl);
+  END LOOP;
+END $$;
+
+-- agent_oauth_grants: USER **AND** ORG, the kubeconfig_mint_requests shape. A grant is one person's
+-- consent to one client; a teammate has no reason to read it and, through the app role, could
+-- otherwise widen or delete it. Resolving a token's grant on the MCP request path is expected to
+-- run on the service role (RLS-bypassing) and name the consent explicitly.
+DO $$
+BEGIN
+  ALTER TABLE public.agent_oauth_grants ENABLE ROW LEVEL SECURITY;
+  DROP POLICY IF EXISTS owner_only ON public.agent_oauth_grants;
+  CREATE POLICY owner_only ON public.agent_oauth_grants FOR ALL
+    USING (org_id = current_setting('app.current_org', true)::uuid
+           AND user_id = current_setting('app.current_owner', true)::uuid)
+    WITH CHECK (org_id = current_setting('app.current_org', true)::uuid
+           AND user_id = current_setting('app.current_owner', true)::uuid);
+END $$;
+
+-- An approval's org must BE its project's org, its environment must be that project's, and its plan
+-- job (and consumed job, once set) must be that project's and environment's. RLS above checks org_id
+-- against the caller's GUC, but nothing there ties project_id or plan_job_id to that org: a request
+-- path that resolved the plan wrongly could write an approval in the caller's own org naming another
+-- org's plan, and the digest binding is only as good as that link. So the database refuses it. A
+-- trigger is not RLS: it fires on the service role too. It runs with the caller's rights, so under
+-- the app role the lookups are themselves bounded by the projects/jobs policies — a row the caller
+-- cannot see is refused, which is the right answer.
+CREATE OR REPLACE FUNCTION public.apply_approvals_bind_target()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.projects p
+                 WHERE p.id = NEW.project_id AND p.org_id = NEW.org_id) THEN
+    RAISE EXCEPTION 'apply_approvals: project % is not in org %', NEW.project_id, NEW.org_id
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.project_environments e
+                 WHERE e.id = NEW.environment_id AND e.project_id = NEW.project_id) THEN
+    RAISE EXCEPTION 'apply_approvals: environment % is not in project %', NEW.environment_id, NEW.project_id
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.jobs j
+                 WHERE j.id = NEW.plan_job_id AND j.project_id = NEW.project_id
+                   AND j.environment_id = NEW.environment_id) THEN
+    RAISE EXCEPTION 'apply_approvals: plan job % is not in environment %', NEW.plan_job_id, NEW.environment_id
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF NEW.consumed_job_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.jobs j
+                 WHERE j.id = NEW.consumed_job_id AND j.project_id = NEW.project_id
+                   AND j.environment_id = NEW.environment_id) THEN
+    RAISE EXCEPTION 'apply_approvals: job % is not in environment %', NEW.consumed_job_id, NEW.environment_id
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS apply_approvals_bind_target ON public.apply_approvals;
+CREATE TRIGGER apply_approvals_bind_target
+  BEFORE INSERT OR UPDATE OF org_id, project_id, environment_id, plan_job_id, consumed_job_id ON public.apply_approvals
+  FOR EACH ROW EXECUTE FUNCTION public.apply_approvals_bind_target();
+
 -- Credential tables (scope-aware): a `personal` row is visible only to its author
 -- (user_id = current_owner); an `org` row is visible to the whole org
 -- (org_id = current_org). This is the coarse blast wall — the fine-grained role

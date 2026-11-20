@@ -27,6 +27,7 @@ import {
 	provisionJobStatus,
 	provisionJobType,
 } from "./enums";
+import { applyApprovals } from "./agent-surface";
 import { cloudIdentities } from "./identities";
 import { runners } from "./runners";
 import { projects } from "./projects";
@@ -91,6 +92,13 @@ export const jobs = pgTable(
 			onDelete: "set null",
 		}),
 		plan_job_id: uuid().references((): AnyPgColumn => jobs.id, {
+			onDelete: "set null",
+		}),
+		// The apply approval this DEPLOY or DESTROY consumed (agent surface §4.3, AGT-S2). NULL for a
+		// job that needed none: a plan, a console click, a named system path. At most one job per
+		// approval (`uq_jobs_approval_id`), so a consumed approval cannot queue a second job even if
+		// the engine's compare-and-set were skipped.
+		approval_id: uuid().references((): AnyPgColumn => applyApprovals.id, {
 			onDelete: "set null",
 		}),
 		claimed_at: timestamp({ withTimezone: true }),
@@ -189,6 +197,10 @@ export const jobs = pgTable(
 		uniqueIndex("uq_jobs_idempotency_key")
 			.on(t.org_id, t.project_id, t.user_id, t.idempotency_key)
 			.where(sql`idempotency_key IS NOT NULL`),
+		// One job per apply approval (AGT-S2): the database half of "one approval runs one plan once".
+		uniqueIndex("uq_jobs_approval_id")
+			.on(t.approval_id)
+			.where(sql`approval_id IS NOT NULL`),
 	],
 );
 
