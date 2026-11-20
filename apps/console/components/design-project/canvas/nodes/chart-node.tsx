@@ -20,9 +20,13 @@ import { orpc } from "@/lib/rpc/client";
 import { type CanvasNode, nodeOfKind } from "../graph/types";
 import type { VerifyReport } from "@/types/jsonb.types";
 import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
-import { nodeAccessibleName } from "./node-name";
+import { CardDescription, useBoardMarks } from "./card-marks";
 
-const HANDLE_CLASS = "!h-2 !w-2 !rounded-none !border !border-border !bg-background";
+/**
+ * A chart's handles anchor the edges to its described workloads and nothing else: no connection is
+ * drawn to or from a chart, so they are not drawn and take no pointer.
+ */
+const HANDLE_CLASS = "!h-2 !w-2 !border-0 !bg-transparent !opacity-0 !pointer-events-none";
 
 /** The chart's scan-status chip: label + tone + icon, derived from the persisted scan lifecycle +
  * the verify verdict (fail draws destructive ink; a clean chart stays calm). */
@@ -79,15 +83,16 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 		successMessage: (data) => `Chart "${data.id}" detached.`,
 	});
 	const detaching = detachChart.isPending || detachChart.isSuccess;
+	const marks = useBoardMarks();
 	if (!node) return null;
 	const c = node.data.config;
 	const st = STATUS_META[chartStatus(c.health, c.status)];
 	const chip = scanChip(c.scanStatus, c.scanReport);
 	const ChipIcon = chip.Icon;
-	// Same contract as every other card (`nodes/node-name.ts`): the board's cards are named regions,
-	// so the audit can score them and a journey can reach THIS chart rather than "the first
-	// `.react-flow__node-chart`". A chart's own name is its release id.
-	const accessibleName = nodeAccessibleName("Helm chart", c.id);
+	// Same contract as every other card (`nodes/node-name.ts`): the board's cards are named, so the
+	// audit can score them and a journey can reach THIS chart rather than "the first
+	// `.react-flow__node-chart`". A chart's own name is its release id; the name sits on the element
+	// a keyboard lands on, React Flow's wrapper (`boardCardName`), and this element stays unnamed.
 
 	// The detach is reached ONLY through the confirmation below — `detachByoChart` deletes the
 	// ArgoCD Application and the `project_addons` row, and a chart is attached by pasting a repo
@@ -97,8 +102,6 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 
 	return (
 		<div
-			role="group"
-			aria-label={accessibleName}
 			className={cn(
 				"min-w-[220px] cursor-pointer rounded-none border bg-card text-card-foreground transition-colors",
 				selected
@@ -106,9 +109,28 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 					: "border-border hover:border-border-strong",
 			)}
 		>
-			<Handle type="target" position={Position.Top} className={HANDLE_CLASS} />
+			<CardDescription
+				nodeId={id}
+				facts={{
+					// The words the card prints, in sentence case: the sync state and the scan verdict.
+					status: `${st.label.charAt(0)}${st.label.slice(1).toLowerCase()}`,
+					notes: [`Chart safety scan: ${chip.label}`],
+					connections: marks.connections.get(id),
+				}}
+			/>
+			<Handle
+				type="target"
+				position={Position.Top}
+				className={HANDLE_CLASS}
+				isConnectable={false}
+			/>
 			{/* Sources the described chart-workload children (W5 Path A). */}
-			<Handle type="source" position={Position.Bottom} className={HANDLE_CLASS} />
+			<Handle
+				type="source"
+				position={Position.Bottom}
+				className={HANDLE_CLASS}
+				isConnectable={false}
+			/>
 
 			<div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
 				<GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
