@@ -210,11 +210,22 @@ function BlockFixAction({
 					Show issues
 				</Button>
 			);
-		case "show-changes":
+		case "apply-operations":
 			return (
-				<Button type="button" size="sm" onClick={onShowChanges}>
-					Show changes
-				</Button>
+				<>
+					<Button type="button" size="sm" variant="ghost" onClick={onShowChanges}>
+						Show changes
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						aria-busy={review.operationsPending}
+						disabled={review.operationsPending}
+						onClick={review.applyOperations}
+					>
+						{review.operationsPending ? "Applying…" : "Apply now"}
+					</Button>
+				</>
 			);
 		case "retry-read":
 			return (

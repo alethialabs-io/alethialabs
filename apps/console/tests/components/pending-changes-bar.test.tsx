@@ -40,6 +40,10 @@ vi.mock("@/app/server/actions/canvas-writes", () => ({
 }));
 vi.mock("@/app/server/actions/jobs", () => ({ applyPlan: vi.fn() }));
 
+vi.mock("@/components/design-project/canvas/inspector-shell/apply-staged-operations", () => ({
+	useApplyStagedOperations: () => ({ submit: vi.fn(), isPending: false }),
+}));
+
 const { PendingChangesBar } = await import(
 	"@/components/design-project/canvas/pending-changes-bar"
 );

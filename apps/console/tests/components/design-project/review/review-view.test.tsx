@@ -32,6 +32,7 @@ import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-conte
 import { configName } from "@/components/design-project/canvas/graph/node-config";
 import { board } from "@/lib/canvas/store/board";
 import { diffNodes } from "@/lib/canvas/store/derive";
+import type { StagedOperation } from "@/lib/canvas/store/types";
 import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
 
 const h = vi.hoisted(() => {
@@ -43,6 +44,7 @@ const m = vi.hoisted(() => ({
 	save: vi.fn(),
 	plan: vi.fn(),
 	apply: vi.fn(),
+	applyOperations: vi.fn(),
 	/** What the validator answers. Replaced by a test that wants issues. */
 	parse: { result: { success: true, data: {} } as unknown },
 }));
@@ -61,11 +63,18 @@ vi.mock("@/app/server/actions/jobs", () => ({
 }));
 // The graph → form step and the schema are their own tests' subjects (and review-issues.test.ts
 // runs the real ones); here a design is valid unless a test says otherwise.
-vi.mock("@/lib/validations/project-form.schema", () => ({
+vi.mock("@/lib/validations/project-form.schema", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/validations/project-form.schema")>()),
 	projectFormSchema: { safeParse: () => m.parse.result },
 }));
 vi.mock("@/components/design-project/canvas/graph/graph-to-form", () => ({
 	graphToForm: () => ({}),
+}));
+
+// Running a staged operation is the inspector lane's (its own tests cover it); here it is a stub
+// whose submit is observed.
+vi.mock("@/components/design-project/canvas/inspector-shell/apply-staged-operations", () => ({
+	useApplyStagedOperations: () => ({ submit: m.applyOperations, isPending: false }),
 }));
 
 const { ReviewView } = await import("@/components/design-project/canvas/review/review-view");
@@ -177,6 +186,7 @@ beforeEach(() => {
 	m.save.mockReset();
 	m.plan.mockReset();
 	m.apply.mockReset();
+	m.applyOperations.mockReset();
 	m.parse.result = { success: true, data: {} };
 	answer = NO_PLAN;
 	planResult = {
@@ -508,6 +518,48 @@ describe("ReviewView: design changes", () => {
 		renderView();
 		await untilBlock("no-plan");
 		expect(screen.getByText(/Nothing is pending/)).toBeInTheDocument();
+	});
+});
+
+describe("ReviewView: staged operations", () => {
+	it("lists one, blocks Deploy with the reason, and Apply now runs it through the one hook", async () => {
+		const operation: StagedOperation = {
+			id: "addon:grafana",
+			target: "addon",
+			verb: "install",
+			targetId: "grafana",
+			summary: "Install Grafana 8.1.2",
+			input: {},
+		};
+		board.document.getState().recordReviewedPlan(PLAN);
+		board.document.getState().stageOperation(operation);
+		answer = serverPlan();
+		renderView();
+		await untilBlock("staged-operations");
+		expect(screen.getByRole("list", { name: "Pending design changes" })).toHaveTextContent(
+			"Install Grafana 8.1.2",
+		);
+		expect(deployButton()).toBeDisabled();
+
+		await userEvent.setup().click(screen.getByRole("button", { name: "Apply now" }));
+		expect(m.applyOperations).toHaveBeenCalledWith([operation]);
+	});
+
+	it("one row's Discard takes that operation off the changeset", async () => {
+		board.document.getState().stageOperation({
+			id: "addon:grafana",
+			target: "addon",
+			verb: "install",
+			targetId: "grafana",
+			summary: "Install Grafana 8.1.2",
+			input: {},
+		});
+		renderView();
+		await untilBlock("staged-operations");
+		await userEvent
+			.setup()
+			.click(screen.getByRole("button", { name: "Discard: Install Grafana 8.1.2" }));
+		expect(board.document.getState().operations).toEqual([]);
 	});
 });
 

@@ -302,7 +302,7 @@ describe("deployBlock: why Deploy is disabled", () => {
 			"view-job",
 		],
 		["the design has issues", { issues: 2 }, "issues", "show-issues"],
-		["an add-on change is staged", { pendingOperations: 1 }, "staged-operations", "show-changes"],
+		["an add-on change is staged", { pendingOperations: 1 }, "staged-operations", "apply-operations"],
 		["the plan read failed", { gate: NO_PLAN, phase: "unknown" }, "plan-unknown", "retry-read"],
 		[
 			"a current plan nobody confirmed here",

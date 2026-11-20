@@ -35,6 +35,7 @@ import { Separator } from "@repo/ui/separator";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { DiscardPrompt } from "@/components/confirm/use-unsaved-guard";
 import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
+import { useClaimStagedOperations } from "@/components/design-project/canvas/inspector-shell/staged-operations";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
 import {
@@ -102,6 +103,9 @@ export function PendingChangesBar({
 	const reviewOpen = useStore(board.view, (s) => s.review.open);
 	const [askingToDiscard, setAskingToDiscard] = useState(false);
 	const reviewButton = useRef<HTMLButtonElement>(null);
+	// Staged operations are counted here and listed, applied and discarded in the review view, so
+	// the rail does not draw a second control for them.
+	useClaimStagedOperations();
 
 	const issueCount = useMemo(() => reviewIssues(designNodes).length, [designNodes]);
 	const state = barState({
