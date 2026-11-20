@@ -6,11 +6,11 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/format"
@@ -21,8 +21,13 @@ var jobsGetSelector jobSelector
 
 var jobsGetCmd = &cobra.Command{
 	Use:   "get [job_id]",
-	Short: "Get details of a specific job",
+	Short: "Show one job: its type, status, timings, verdict and warnings",
 	Long: `Show one job: type, status, runner, timestamps, the verify verdict and the cost estimate.
+
+Use it to check how a plan, deploy or destroy ended without reading its whole log. A deploy that
+finished with warnings — a workload that was skipped, an add-on that did not sync — lists them
+after the card, on stderr; ` + "`-o json`" + ` carries the same sentences in a ` + "`warnings`" + ` array. Warnings
+do not change the exit status: a job that could be read exits 0.
 
 The id is optional. Without it, ` + "`--latest`" + ` takes the most recent matching job and a
 terminal gets a picker — so nothing has to be copied out of another command's output.`,
@@ -38,21 +43,122 @@ terminal gets a picker — so nothing has to be copied out of another command's 
 		if err != nil {
 			fail(err)
 		}
+		// Bound to the Printer once the format is known: --output is validated here, before the
+		// request, so a misspelled format costs no round trip.
+		p := printerFor(cmd)
 
-		var job *api.ProvisionJob
-
+		var view *jobView
 		runSpinner("Fetching job details...", func() {
-			job, err = apiClient.GetJob(ref.ID)
+			view, err = runJobGet(apiClient, ref.ID)
 		})
-
 		if err != nil {
-			failf("Failed to fetch job: %v", err)
+			fail(err)
 		}
-
-		if err := renderJob(os.Stdout, outputFormat(cmd), job); err != nil {
+		if err := view.print(p); err != nil {
 			fail(err)
 		}
 	},
+}
+
+// printerFor returns the invocation's Printer with the format this command resolved for itself.
+//
+// The root builds the Printer from the root flag; outputFormat is what additionally applies agent
+// mode's json default and validates the value, so a command reads its format through it and prints
+// through the copy this returns. A copy, because the process Printer is shared.
+func printerFor(cmd *cobra.Command) *Printer {
+	p := *printer
+	p.Format = outputFormat(cmd)
+	return &p
+}
+
+// jobGetter is the one call `jobs get` makes, so the command body runs against a fake.
+type jobGetter interface {
+	GetJob(jobID string) (*api.ProvisionJob, error)
+}
+
+// jobView is the result of `jobs get`: the job as the control plane returned it, plus the
+// warnings its deploy recorded.
+//
+// The job's fields are inlined, so every key `-o json` carried before is still at the top level;
+// `warnings` is the one addition, and it is always an array — empty, never absent — so a reader
+// can index it without first asking whether it is there.
+type jobView struct {
+	*api.ProvisionJob
+	Warnings []string `json:"warnings"`
+}
+
+// runJobGet fetches one job and returns it with its warnings.
+func runJobGet(client jobGetter, jobID string) (*jobView, error) {
+	job, err := client.GetJob(jobID)
+	if err != nil {
+		return nil, jobLookupError(err, jobID)
+	}
+	return &jobView{ProvisionJob: job, Warnings: jobWarnings(job)}, nil
+}
+
+// jobLookupError adds the next step to a failed read of one job.
+func jobLookupError(err error, jobID string) error {
+	e := *clierr.From(fmt.Errorf("failed to fetch job %s: %w", jobID, err))
+	if e.Class == clierr.ClassNotFound && e.Hint == "" {
+		e.Hint = "alethia jobs list"
+	}
+	return &e
+}
+
+// print writes the job on p.Out in p's format, and its warnings on p.Err.
+//
+// Under json the warnings are already in the document, so stderr is left alone. The card and the
+// csv rows have no cell for a sentence, so for those two the warnings follow on stderr, where a
+// person sees them and a parser of stdout never meets them.
+func (v *jobView) print(p *Printer) error {
+	if err := ui.RenderCard(p.Out, p.Format, "Job "+v.ID, jobFieldRows(v.ProvisionJob), v); err != nil {
+		return err
+	}
+	if p.Format != ui.FormatJSON {
+		writeJobWarnings(p, v.Warnings)
+	}
+	return nil
+}
+
+// jobWarnings returns the sentences a job's deploy recorded as warnings, in the order it wrote
+// them: execution_metadata.gitops_status.manifest_warnings, the same list the console's Deploy tab
+// shows. It is never nil, so it encodes as [] for a job with none — which is every job that is not
+// a deploy, and most that are.
+func jobWarnings(job *api.ProvisionJob) []string {
+	out := []string{}
+	if job == nil || job.ExecutionMetadata == nil {
+		return out
+	}
+	status, ok := (*job.ExecutionMetadata)["gitops_status"].(map[string]interface{})
+	if !ok {
+		return out
+	}
+	list, ok := status["manifest_warnings"].([]interface{})
+	if !ok {
+		return out
+	}
+	for _, item := range list {
+		if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// writeJobWarnings prints a deploy's warnings on p.Err: a count, then one line each. Nothing is
+// written when there are none. The job still succeeded, so this never changes an exit status.
+func writeJobWarnings(p *Printer, warnings []string) {
+	if len(warnings) == 0 {
+		return
+	}
+	noun := "warnings"
+	if len(warnings) == 1 {
+		noun = "warning"
+	}
+	p.Warn(fmt.Sprintf("The deploy finished with %d %s:", len(warnings), noun))
+	for _, w := range warnings {
+		fmt.Fprintf(p.Err, "  %s %s\n", ui.SymbolPoint, w)
+	}
 }
 
 // renderJob writes a single job to out: a bordered KV card for the table format,
@@ -61,7 +167,8 @@ terminal gets a picker — so nothing has to be copied out of another command's 
 // imported shared formatter package, and a parameter of that name would shadow it inside the
 // only functions that render a job.
 func renderJob(out io.Writer, outFormat string, job *api.ProvisionJob) error {
-	return ui.RenderCard(out, outFormat, "Job "+job.ID, jobFieldRows(job), job)
+	return (&jobView{ProvisionJob: job, Warnings: jobWarnings(job)}).print(
+		&Printer{Out: out, Err: io.Discard, Format: outFormat})
 }
 
 // jobStamp renders one of a job's absolute timestamps.

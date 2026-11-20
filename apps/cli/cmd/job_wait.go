@@ -106,6 +106,9 @@ func awaitJob(ctx context.Context, poller jobPoller, jobID string, opts waitOpti
 					if c := jobCostSummary(job.ExecutionMetadata); c != "" {
 						say("  Cost estimate: %s\n", c)
 					}
+					// A deploy can succeed and still have skipped something. jobWarnings (jobs_get.go)
+					// is the list `jobs get` prints, so a waited deploy and a later read agree.
+					writeJobWarnings(opts.Progress, jobWarnings(job))
 				}
 				return job, verdict
 			}

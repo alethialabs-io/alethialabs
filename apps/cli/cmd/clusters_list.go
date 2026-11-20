@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -19,8 +18,10 @@ var clusterListColumns = []string{"Project", "Cluster", "Version", "Status", "Ar
 
 var clusterListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all project clusters",
-	Long: `List every cluster across your projects, one row per project environment.
+	Short: "List the clusters of every project environment",
+	Long: `List every cluster across your projects, one row per project environment: its Kubernetes
+version, status, node sizing, region and estimated monthly cost. Use it to find the name
+` + "`alethia cluster get`" + ` and ` + "`alethia cluster kubeconfig`" + ` take.
 
 The command takes no input of its own: at a terminal it opens the navigable table, and in a pipe
 or with --no-input it prints the static one. Use ` + "`alethia cluster get`" + ` for a single cluster.`,
@@ -40,13 +41,13 @@ or with --no-input it prints the static one. Use ` + "`alethia cluster get`" + `
 		})
 
 		if err != nil {
-			failf("Failed to fetch clusters: %v", err)
+			fail(fmt.Errorf("failed to fetch clusters: %w", err))
 			return
 		}
 
 		if interactiveTable(cmd) {
 			if len(clusters) == 0 {
-				ui.Muted(clusterEmptyState)
+				ui.MutedTo(printer.Out, clusterEmptyState)
 				return
 			}
 			columns := make([]table.Column, len(clusterListColumns))
@@ -61,12 +62,13 @@ or with --no-input it prints the static one. Use ` + "`alethia cluster get`" + `
 			}
 			m := ui.NewTableModel(columns, rows, "clusters", "project", 0)
 			if _, err := tea.NewProgram(m).Run(); err != nil {
-				failf("Table error: %v", err)
+				fail(fmt.Errorf("table error: %w", err))
 			}
 			return
 		}
 
-		if err := renderClusters(os.Stdout, outputFormat(cmd), clusters); err != nil {
+		p := printerFor(cmd)
+		if err := renderClusters(p.Out, p.Format, clusters); err != nil {
 			fail(err)
 		}
 	},

@@ -4,12 +4,11 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/format"
@@ -60,7 +59,7 @@ cluster is an error, not an empty screen.`,
 			clusters, err = apiClient.GetClusters()
 		})
 		if err != nil {
-			failf("Failed to fetch clusters: %v", err)
+			fail(fmt.Errorf("failed to fetch clusters: %w", err))
 			return
 		}
 
@@ -81,7 +80,8 @@ cluster is an error, not an empty screen.`,
 			observation = detail.Observation
 		}
 
-		if err := renderCluster(os.Stdout, outputFormat(cmd), c, gitops, kubeconfig, observation); err != nil {
+		p := printerFor(cmd)
+		if err := renderCluster(p.Out, p.Format, c, gitops, kubeconfig, observation); err != nil {
 			fail(err)
 		}
 	},
@@ -91,7 +91,11 @@ cluster is an error, not an empty screen.`,
 //
 // It is a different statement from "your selector matched nothing", and it has a different next
 // step — provision a project environment, rather than re-type a name — so it is a different error.
-var errNoClusters = errors.New("no clusters found — create a project with a cluster through Alethia")
+var errNoClusters = func() *clierr.Error {
+	e := clierr.New(clierr.CodeNotFound, "no clusters found — create a project with a cluster through Alethia")
+	e.Hint = "alethia project list"
+	return e
+}()
 
 // clusterLabel is the one human name for a cluster: its project, and the environment when the
 // project has more than the default one.
@@ -179,7 +183,10 @@ func resolveCluster(clusters []api.ClusterSummary, query string) (*api.ClusterSu
 	matches := clusterMatches(clusters, query)
 	switch len(matches) {
 	case 0:
-		return nil, fmt.Errorf("no cluster matches %q — have: %s", query, clusterChoices(clusters))
+		none := clierr.New(clierr.CodeNotFound,
+			fmt.Sprintf("no cluster matches %q — have: %s", query, clusterChoices(clusters)))
+		none.Hint = "alethia cluster list"
+		return nil, none
 	case 1:
 		return &matches[0], nil
 	}
@@ -187,10 +194,12 @@ func resolveCluster(clusters []api.ClusterSummary, query string) (*api.ClusterSu
 	// Ambiguous. With prompting off the only safe answer is to refuse and name the candidates:
 	// picking one would be picking FOR the caller, which is the defect above wearing a new hat.
 	if !canPromptForm() {
-		return nil, fmt.Errorf(
+		// input_required, not a usage error: the command line is valid, and at a terminal the
+		// same line is answered by the picker below.
+		return nil, clierr.New(clierr.CodeInputRequired, fmt.Sprintf(
 			"%q matches %d clusters (%s) — re-run with one of the bracketed names or ids",
 			query, len(matches), clusterChoices(matches),
-		)
+		))
 	}
 	return pickCluster(matches, fmt.Sprintf("Which %q cluster?", query))
 }
@@ -208,7 +217,7 @@ func pickCluster(clusters []api.ClusterSummary, title string) (*api.ClusterSumma
 	// `alethia cluster get 2> err.log` from an interactive shell has a TTY stdin and no screen to
 	// draw on, so the frames land in the log and the command waits for a keystroke nobody sees.
 	if err := requireInteractiveForm(); err != nil {
-		return nil, err
+		return nil, errClusterSelectorRequired(clusters, err)
 	}
 
 	options := make([]huh.Option[int], len(clusters))
@@ -233,6 +242,18 @@ func pickCluster(clusters []api.ClusterSummary, title string) (*api.ClusterSumma
 		return nil, err
 	}
 	return &clusters[chosen], nil
+}
+
+// errClusterSelectorRequired is the refusal when the picker would have to be shown and cannot be.
+// It names what to pass instead and keeps the gate's own error as its cause, because "prompts are
+// disabled" and "the stream the prompt draws on is redirected" have different next steps.
+func errClusterSelectorRequired(clusters []api.ClusterSummary, cause error) error {
+	e := clierr.New(clierr.CodeInputRequired, fmt.Sprintf(
+		"which cluster? Pass a project name, cluster name or id — have: %s (%v)",
+		clusterChoices(clusters), cause))
+	e.Hint = "alethia cluster list"
+	e.Cause = cause
+	return e
 }
 
 // renderCluster writes a single cluster to out: a bordered KV card for table format,
