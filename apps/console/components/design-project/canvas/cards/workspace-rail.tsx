@@ -168,7 +168,7 @@ export function WorkspaceRail({
 					onKeyDown={onKeyDown}
 					onFocus={onFocus}
 					onBlur={onBlur}
-					className="flex h-full flex-col overflow-hidden rounded-none border-x border-b border-border bg-background outline-none"
+					className="flex h-full flex-col overflow-hidden rounded-none border-x border-b border-border bg-background focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring"
 					style={{ width: RAIL_W }}
 				>
 					{open && subject && (
