@@ -226,9 +226,7 @@ func printFleetSet(p *Printer, result MutationResult) error {
 //
 // The picker offers every cloud_provider value, and NOTHING is validated against that set. The
 // CLI does not know which clouds the fleet controller of the deployment it is talking to
-// supports, and this is the platform operator's surface: an operator may run a pool for a cloud
-// the hosted product does not offer. Refusing on a list kept here would refuse a cloud that
-// works.
+// supports, so refusing on a list kept here could refuse a cloud that works.
 //
 // So the closed set is used for the OFFER, where being complete is the whole point, and the
 // server keeps the refusal, which is the only place that knows.
