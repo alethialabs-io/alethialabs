@@ -917,3 +917,21 @@ func TestKeylessAppsRepoReset_AgainstALocalRemote(t *testing.T) {
 		t.Fatal("the reset must refuse a non-keyless repo")
 	}
 }
+
+// TestKeylessDebugContainerNameCannotCollideWithTheService pins the 2026-11-20 instrument failure:
+// the probe's ephemeral container was named "keyless-probe", the service's own container name, and
+// the API server rejected the duplicate. Every step's name must differ from the default service
+// name and from each other.
+func TestKeylessDebugContainerNameCannotCollideWithTheService(t *testing.T) {
+	seen := map[string]bool{}
+	for _, tag := range []string{"probe", "dwell"} {
+		name := keylessDebugContainerName(tag)
+		if name == "keyless-probe" || strings.HasPrefix(name, "keyless-") {
+			t.Fatalf("debug container %q can collide with the product's own container names", name)
+		}
+		if seen[name] {
+			t.Fatalf("debug container %q repeats; a pod's ephemeral containers must be distinct", name)
+		}
+		seen[name] = true
+	}
+}
