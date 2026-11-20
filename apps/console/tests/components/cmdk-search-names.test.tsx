@@ -34,7 +34,8 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
 	useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
-	usePathname: () => "/acme/shop",
+	// The Architecture view: the environment switcher is on that project view only (#6924).
+	usePathname: () => "/acme/shop/architecture",
 	useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock("@/components/environments/new-environment-dialog", () => ({

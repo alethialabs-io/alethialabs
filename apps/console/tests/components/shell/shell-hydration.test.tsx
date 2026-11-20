@@ -121,7 +121,7 @@ function Chrome(): ReactNode {
 			<ViewerProvider
 				viewer={{ id: "u1", name: "Ada", email: "ada@acme.test", image: null, createdAt: NOW }}
 			>
-				<AppSidebar isHosted selfRunners={false} />
+				<AppSidebar selfRunners={false} />
 				<Topbar onOpenSidebar={() => {}} />
 			</ViewerProvider>
 		</QueryClientProvider>

@@ -2,14 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Check, Plus } from "lucide-react";
+import { Check, Plus, RotateCw } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import type { SwitcherEnv } from "@/app/server/actions/resolve";
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
+import { ShortcutHint } from "@/components/shell/shortcut-hint";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
+import { readStatusOf } from "@/lib/query/read-status";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
+import { FILTER_DEPENDENT_PARAMS, hrefWithParamPatch } from "@/lib/query/view-url-params";
 import { orpc } from "@/lib/rpc/client";
 import { SHORTCUT_ENVIRONMENT_NEXT } from "@/lib/shortcuts/registry";
 import { useShortcut } from "@/lib/shortcuts/use-shortcut";
@@ -33,12 +36,49 @@ const envSearchText = (e: SwitcherEnv): string => e.name;
 /** A stable empty list, so effects keyed on `envs` do not re-run on every render before data. */
 const NO_ENVS: SwitcherEnv[] = [];
 
+/** The query parameter that names the active environment. */
+const ENVIRONMENT_PARAM = "environment_id";
+
+/**
+ * The project views that show ONE environment, by their path segment after the project. On these
+ * the switcher changes what the page shows. Every other project view — Environments, Jobs,
+ * Clusters, Usage, Settings — is about the whole project, and a switcher there changed the
+ * address and nothing on screen.
+ */
+const ENVIRONMENT_VIEWS: ReadonlySet<string> = new Set(["architecture"]);
+
+/** Whether `pathname` is a project view that shows one environment (`/{org}/{project}/architecture…`). */
+export function isEnvironmentView(pathname: string): boolean {
+	const segs = pathname.split("/").filter(Boolean);
+	return (
+		segs.length >= 3 &&
+		segs[0] !== "dashboard" &&
+		segs[1] !== "~" &&
+		ENVIRONMENT_VIEWS.has(segs[2])
+	);
+}
+
+/**
+ * The current view with `environmentId` as its active environment. Every other query parameter is
+ * kept, except the ones that name something inside the environment being left (a page number, a
+ * selection), which would point at nothing in the next one.
+ */
+export function environmentHref(pathname: string, search: string, environmentId: string): string {
+	const patch: Record<string, string | null> = { [ENVIRONMENT_PARAM]: environmentId };
+	for (const name of FILTER_DEPENDENT_PARAMS) patch[name] = null;
+	return hrefWithParamPatch(pathname, search, patch);
+}
+
 /**
  * Header environment switcher — the Vercel combobox after org + project. Lists the current
  * project's environments (name + a check on the active one), switches the active env via the
- * `?environment_id=` query param, and hosts the "New Environment" dialog. Only renders on a project
- * drilldown route (`/{org}/{project}`); hidden on `/dashboard/*`, the `~` org-global tree, and
- * the bare org overview.
+ * `?environment_id=` query param, and hosts the "New environment" dialog. It renders only on a
+ * project view that shows one environment ({@link isEnvironmentView}); it is absent from the
+ * project's other views, the `~` org-global tree and the bare org overview.
+ *
+ * While the environments are on the way it draws nothing, as before: the `[project]` layout
+ * prefetches them, so that is one frame after a failed prefetch. A read that FAILED used to draw
+ * nothing too, and the control simply vanished; it is now a retry in the switcher's place.
  */
 export function EnvSwitcher() {
 	const router = useRouter();
@@ -47,18 +87,14 @@ export function EnvSwitcher() {
 	const [open, setOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
 
-	// Parse `/{org}/{project}` — never the legacy /dashboard or `~` global tree. The active
-	// environment lives in the `?environment_id=` query param, so switching envs keeps the current
-	// project view (architecture / jobs / …) and just swaps the id.
-	const segs = pathname.split("/").filter(Boolean);
-	const isDrilldown =
-		segs[0] !== "dashboard" && segs[1] !== "~" && segs.length >= 2;
-	const [, project] = segs;
-	const envId = searchParams.get("environment_id") ?? undefined;
+	// The active environment lives in the `?environment_id=` query param, so switching envs keeps
+	// the current view and its other parameters and just swaps the id.
+	const onEnvironmentView = isEnvironmentView(pathname);
+	const [, project] = pathname.split("/").filter(Boolean);
+	const envId = searchParams.get(ENVIRONMENT_PARAM) ?? undefined;
 
-	/** The current view with a different active environment — preserves the path, swaps the id. */
-	const envUrl = (id: string) =>
-		`${pathname}?environment_id=${encodeURIComponent(id)}`;
+	/** The current view with a different active environment. */
+	const envUrl = (id: string) => environmentHref(pathname, searchParams.toString(), id);
 
 	/**
 	 * Re-scope an OPEN Elench project panel to the environment just picked. The assistant's
@@ -83,7 +119,7 @@ export function EnvSwitcher() {
 	// a slug the org's (layout-prefetched) project list contains: a 404 project route makes no
 	// request beyond its layout.
 	const { data: projects } = useProjectsQuery();
-	const knownProject = isDrilldown && !!projects?.some((p) => p.slug === project);
+	const knownProject = onEnvironmentView && !!projects?.some((p) => p.slug === project);
 	const envsQuery = useQuery({
 		...orpc.workspace.environments.queryOptions({ input: { project: project ?? "" } }),
 		enabled: knownProject,
@@ -107,13 +143,36 @@ export function EnvSwitcher() {
 	// says what it does here. With one environment there is nowhere to switch to, so the chord is
 	// left to the browser.
 	useShortcut(SHORTCUT_ENVIRONMENT_NEXT, switchToNextEnvironment, {
-		enabled: isDrilldown && envs.length >= 2,
+		enabled: onEnvironmentView && envs.length >= 2,
 	});
 
 	// Ranked by the shared ranker; the query starts empty each time the popover opens.
 	const envSearch = useCommandSearch(envs, envSearchText, { open });
 
-	if (!isDrilldown || envs.length === 0) return null;
+	if (!onEnvironmentView) return null;
+
+	// The list did not arrive and asking again may help: say so where the switcher would be.
+	if (knownProject && readStatusOf(envsQuery) === "error") {
+		return (
+			<>
+				<span className="text-border select-none" aria-hidden>
+					/
+				</span>
+				<Button
+					variant="ghost"
+					size="sm"
+					data-state="error"
+					onClick={() => void refetchEnvs()}
+					className="gap-2 px-2 text-muted-foreground"
+				>
+					<RotateCw className="h-3.5 w-3.5 shrink-0" />
+					Retry environments
+				</Button>
+			</>
+		);
+	}
+
+	if (envs.length === 0) return null;
 
 	const active =
 		envs.find((e) => e.id === envId) ??
@@ -192,9 +251,17 @@ export function EnvSwitcher() {
 								className="w-full justify-start gap-2 px-2 text-muted-foreground"
 							>
 								<Plus className="h-4 w-4 shrink-0" />
-								<span className="flex-1 text-left">New Environment</span>
+								<span className="flex-1 text-left">New environment</span>
 							</Button>
 						</div>
+						{/* The shortcut that steps through the list, shown while there is somewhere to
+						    step to. Read from the registry, so it is the chord the listener answers. */}
+						{envs.length >= 2 && (
+							<p className="flex items-center justify-between gap-2 border-t px-3 py-2 text-ui-sm text-muted-foreground">
+								Next environment
+								<ShortcutHint id={SHORTCUT_ENVIRONMENT_NEXT} />
+							</p>
+						)}
 					</Command>
 				</PopoverContent>
 			</Popover>
