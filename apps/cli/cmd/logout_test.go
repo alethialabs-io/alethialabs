@@ -48,8 +48,12 @@ func TestLogout_TheNextTokenRemintsAndFailsWithoutALogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logout: %v\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "Deleted the cached kubeconfig credentials") {
-		t.Errorf("logout does not say it cleared the cache: %q", stdout)
+	if !strings.Contains(stdout, "Successfully logged out") {
+		t.Errorf("stdout %q does not report the sign-out", stdout)
+	}
+	// What else was removed is said about the result, so it is on stderr.
+	if !strings.Contains(stderr, "Deleted the cached kubeconfig credentials") {
+		t.Errorf("logout does not say it cleared the cache: %q", stderr)
 	}
 	if _, err := os.Lstat(kubeCacheDir(t)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the cache directory survived logout: %v", err)
@@ -86,8 +90,8 @@ func TestLogout_ClearsTheCacheWhenNoSessionIsLeft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logout: %v\n%s", err, stderr)
 	}
-	if !strings.Contains(stdout, "not currently logged in") || !strings.Contains(stdout, "Deleted the cached") {
-		t.Errorf("stdout %q", stdout)
+	if !strings.Contains(stdout, "not currently logged in") || !strings.Contains(stderr, "Deleted the cached") {
+		t.Errorf("stdout %q, stderr %q", stdout, stderr)
 	}
 	if _, err := os.Lstat(kubeCacheDir(t)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the cache directory survived logout: %v", err)
@@ -115,7 +119,7 @@ func TestLogout_RefusesASymlinkedCacheDir(t *testing.T) {
 	if !errors.Is(err, errMiscExited) {
 		t.Fatalf("logout over a symlinked cache should fail, got %v", err)
 	}
-	if !strings.HasPrefix(stderr, "alethia logout: ") || !strings.Contains(stderr, "symlink") {
+	if !strings.Contains(stderr, "could not delete the cached kubeconfig credentials") || !strings.Contains(stderr, "symlink") {
 		t.Errorf("stderr %q does not explain the refusal", stderr)
 	}
 	if _, err := os.Stat(keep); err != nil {
@@ -146,7 +150,7 @@ func TestLogout_ReportsACacheItCannotDelete(t *testing.T) {
 	if strings.Contains(stdout, "Successfully logged out") {
 		t.Errorf("logout claimed success: %q", stdout)
 	}
-	for _, want := range []string{"alethia logout: could not delete the cached kubeconfig credentials", dir, "until they expire"} {
+	for _, want := range []string{"could not delete the cached kubeconfig credentials", dir, "until they expire"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr %q does not say %q", stderr, want)
 		}
