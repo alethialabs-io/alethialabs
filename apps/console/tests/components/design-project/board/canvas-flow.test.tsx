@@ -91,7 +91,7 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 								createElement(component, {
 									id: node.id,
 									data: node.data,
-									type: node.type,
+									type: node.type ?? "",
 									selected: node.selected ?? false,
 									dragging: false,
 									draggable: true,
