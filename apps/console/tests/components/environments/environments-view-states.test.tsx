@@ -62,6 +62,7 @@ import { ENVIRONMENT_COLUMN_COUNT } from "@/components/environments/environment-
 import { EnvironmentsView } from "@/components/environments/environments-view";
 import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { orpc } from "@/lib/rpc/client";
+import type { EnvironmentsOverview } from "@/lib/rpc/procedures/environments";
 import { useEnvironmentsFilters } from "@/lib/stores/use-environments-filters";
 
 const KEY = orpc.environments.overview.queryKey({ input: { project: "payments" } });
@@ -83,7 +84,7 @@ function renderView(seed: (qc: QueryClient) => void) {
 }
 
 /** Seeds the pristine read with `data`. */
-function seeded(data: unknown) {
+function seeded(data: EnvironmentsOverview) {
 	return (qc: QueryClient) => qc.setQueryData(KEY, data);
 }
 

@@ -113,6 +113,9 @@ export function EnvironmentsView({ org, project }: { org: string; project: strin
 	const overview = useQuery(
 		orpc.environments.overview.queryOptions({ input, placeholderData: keepPreviousData }),
 	);
+	// One array per input, so the rows that carry it are rebuilt when the read changes, not on
+	// every render.
+	const overviewKey = useMemo(() => orpc.environments.overview.queryKey({ input }), [input]);
 
 	if (overview.data === undefined) {
 		if (!overview.isError) return <EnvironmentsSkeleton />;
@@ -142,7 +145,7 @@ export function EnvironmentsView({ org, project }: { org: string; project: strin
 			org={org}
 			project={project}
 			data={overview.data}
-			overviewKey={orpc.environments.overview.queryKey({ input })}
+			overviewKey={overviewKey}
 			query={overview}
 			busy={!urlRead || overview.isPlaceholderData || filters.search !== debouncedSearch}
 			stale={overview.isPlaceholderData}
