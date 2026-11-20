@@ -287,7 +287,10 @@ func newKCEnv(t *testing.T) *kcEnv {
 func (e *kcEnv) run(args ...string) (stdout string, err error) {
 	e.t.Helper()
 	resetAllFlags()
-	out := stdoutCapture(e.t, func() {
+	// Both streams, because the command's status lines go to kubeStatusOut and a fatal error goes
+	// through fail, which writes to the process's stderr. A reader of e.stderr sees both, in order
+	// within each.
+	out, errOut := captureStreams(e.t, func() {
 		defer func() {
 			if r := recover(); r != nil {
 				if _, ok := r.(miscExit); !ok {
@@ -299,7 +302,11 @@ func (e *kcEnv) run(args ...string) (stdout string, err error) {
 		execRootArgs(args)
 		err = rootCmd.Execute()
 	})
-	return string(out), err
+	e.stderr.WriteString(errOut)
+	// Passed on as well, so a caller that captures the process's stderr around run — as the
+	// logout tests do — still receives it.
+	fmt.Fprint(os.Stderr, errOut)
+	return out, err
 }
 
 // cache opens the environment's kubecache.
@@ -780,7 +787,7 @@ func TestClusterKubeconfig_FlagRefusals(t *testing.T) {
 	cases := map[string][]string{
 		"--ttl must be whole seconds from 15m to 8h": {"--ttl", "5m"},
 		"--ttl must be whole seconds":                {"--ttl", "1500500ms"},
-		"takes a file path here":                     {"--output", "json"},
+		"has no table, json or csv form":             {"--output", "json"},
 		"--merge=false needs":                        {"--merge=false"},
 	}
 	for want, extra := range cases {

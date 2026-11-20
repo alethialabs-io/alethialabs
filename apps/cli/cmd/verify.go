@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/verify"
@@ -80,7 +81,8 @@ var verifyJobArgs = cobra.MaximumNArgs(1)
 func resolveVerifyJob(client jobLister, cmd *cobra.Command, args []string, sel jobSelector) (jobRef, error) {
 	if j, _ := cmd.Flags().GetString("job"); j != "" {
 		if len(args) > 0 && args[0] != "" && args[0] != j {
-			return jobRef{}, fmt.Errorf("the job id is given twice and the two disagree (%q as an argument, %q as --job) — pass it once", args[0], j)
+			return jobRef{}, clierr.New(clierr.CodeInvalidUsage,
+				fmt.Sprintf("the job id is given twice and the two disagree (%q as an argument, %q as --job) — pass it once", args[0], j))
 		}
 		args = []string{j}
 	}
@@ -89,7 +91,14 @@ func resolveVerifyJob(client jobLister, cmd *cobra.Command, args []string, sel j
 
 // errNoReceipt is returned when a job carries no evidence receipt at all. Its own error so the
 // caller can say WHY rather than reporting a verification failure for something never signed.
-var errNoReceipt = fmt.Errorf("this job carries no evidence receipt")
+//
+// It is not_found (exit 6): the job exists and the thing asked for does not. The hint is the
+// selection that reaches a job which does carry one.
+var errNoReceipt = func() *clierr.Error {
+	e := clierr.New(clierr.CodeNotFound, "this job carries no evidence receipt")
+	e.Hint = "alethia verify receipt --latest --status SUCCESS"
+	return e
+}()
 
 // unfinishedJobStatuses are the states a job passes through before it has an outcome.
 //
@@ -141,9 +150,14 @@ func noReceiptErr(job *api.ProvisionJob) error {
 	if !jobUnfinished(job) {
 		return errNoReceipt
 	}
-	return fmt.Errorf("%w: it is %s, and the receipt is written when the run completes — "+
+	// A conflict (exit 7), not a not-found: the same command succeeds once the job's state has
+	// changed, which is what that row of the exit table means.
+	e := clierr.New(clierr.CodeConflict, fmt.Sprintf("%s: it is %s, and the receipt is written when the run completes — "+
 		"wait for it, or add --status SUCCESS to take the newest job that has already finished",
-		errNoReceipt, job.Status)
+		errNoReceipt.Message, job.Status))
+	e.Hint = "alethia jobs logs " + job.ID + " --follow"
+	e.Cause = errNoReceipt
+	return e
 }
 
 // receiptFromJob extracts the typed SignedReceipt from a job's execution_metadata.
@@ -281,23 +295,23 @@ func decodePublicKey(b64 string) (ed25519.PublicKey, error) {
 // the filesystem happens to contain a matching name is not something a pipeline can rely on.
 func pinnedKey(keyB64, keyFile string) (ed25519.PublicKey, error) {
 	if keyB64 != "" && keyFile != "" {
-		return nil, fmt.Errorf("pass --key or --key-file, not both")
+		return nil, clierr.New(clierr.CodeInvalidFlag, "pass --key or --key-file, not both")
 	}
 	if keyB64 != "" {
 		pub, err := decodePublicKey(keyB64)
 		if err != nil {
-			return nil, fmt.Errorf("--key: %w", err)
+			return nil, clierr.Wrap(clierr.CodeInvalidFlag, fmt.Errorf("--key: %w", err))
 		}
 		return pub, nil
 	}
 	if keyFile != "" {
 		data, err := os.ReadFile(keyFile)
 		if err != nil {
-			return nil, fmt.Errorf("--key-file: %w", err)
+			return nil, clierr.Wrap(clierr.CodeInvalidFlag, fmt.Errorf("--key-file: %w", err))
 		}
 		pub, err := decodePublicKey(string(data))
 		if err != nil {
-			return nil, fmt.Errorf("--key-file: %w", err)
+			return nil, clierr.Wrap(clierr.CodeInvalidFlag, fmt.Errorf("--key-file: %w", err))
 		}
 		return pub, nil
 	}
