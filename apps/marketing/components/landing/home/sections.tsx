@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import Link from "next/link";
+import { AVAILABLE_CLOUDS, cloudListLabel } from "@repo/cloud-catalog";
 import {
 	Band,
 	LogoWall,
@@ -53,11 +54,13 @@ export function Hero() {
 			side={{
 				kind: "lines",
 				items: [
-					"Into your own cloud account — AWS, GCP, Azure, Hetzner, Alibaba.",
-					// Deliberately scoped. Hetzner (and DigitalOcean, Civo) are token
-					// clouds: the scoped token is encrypted at rest in our database unless
-					// you self-manage the runner. See docs/runner/cloud-credentials.
-					"Keyless on AWS, GCP, Azure and Alibaba — no access key on disk.",
+					// The offered clouds come from packages/core/catalog (availability), so a
+					// hidden cloud drops out of this line by itself.
+					`Into your own cloud account — ${cloudListLabel()}.`,
+					// Deliberately scoped. Hetzner is a token cloud: the scoped token is
+					// encrypted at rest in our database unless you self-manage the runner.
+					// See docs/runner/cloud-credentials.
+					"Keyless on AWS, GCP and Azure — no access key on disk.",
 					"Every apply seals a receipt you can verify offline.",
 				],
 			}}
@@ -69,7 +72,7 @@ export function Clouds() {
 	return (
 		<LogoWall
 			eyebrow="Provisions into"
-			providers={["aws", "gcp", "azure", "hetzner", "alibaba"]}
+			providers={[...AVAILABLE_CLOUDS]}
 		/>
 	);
 }

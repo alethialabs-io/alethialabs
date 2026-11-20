@@ -429,7 +429,7 @@ const FAQ: { q: string; a: string }[] = [
 	{ q: "Is the free tier really free?", a: "Yes. The core is open source under AGPL-3.0 — self-host it in your own cloud and pay nothing. It's a management layer over infrastructure you already own." },
 	{ q: "How does per-seat billing work?", a: "Team is billed per active member of your organization, monthly through Stripe. Add or remove seats as your team changes." },
 	{ q: "Can I self-host the paid features?", a: "Enterprise includes a self-managed license, so you can run the full governance feature set — SSO, custom roles, audit — in your own environment." },
-	{ q: "Do you store my cloud credentials?", a: "On AWS, GCP, Azure and Alibaba, no — the runner mints short-lived federated credentials per job and no access key is written to disk or held in our database. Hetzner, DigitalOcean and Civo have no federation, so a scoped API token is stored encrypted at rest and decrypted only for the job. Run a self-managed runner on those and the token never reaches us at all." },
+	{ q: "Do you store my cloud credentials?", a: "On AWS, GCP and Azure, no — the runner mints short-lived federated credentials per job and no access key is written to disk or held in our database. Hetzner has no federation, so a scoped API token is stored encrypted at rest and decrypted only for the job. Run a self-managed runner there and the token never reaches us at all." },
 ];
 
 /**

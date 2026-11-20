@@ -62,6 +62,16 @@ describe("PLAN_CATALOG invariants", () => {
 	});
 });
 
+describe("Hobby plan clouds", () => {
+	it("names the four offered clouds and no hidden one", () => {
+		// Written out, not rebuilt from @repo/cloud-catalog: the beta offers exactly these four
+		// (alibaba-switch spec), and a test that recomputed the label would pass on any list.
+		const platform = planMeta("community").included.find((group) => group.label === "Platform");
+		expect(platform?.items).toContain("Multi-cloud provisioning (AWS, GCP, Azure and Hetzner)");
+		expect(JSON.stringify(PLAN_CATALOG)).not.toMatch(/alibaba|digitalocean|civo/i);
+	});
+});
+
 describe("planUnitAmountCents", () => {
 	it("returns the per-currency amount in cents (default USD)", () => {
 		// `priceMonthly` is MINOR units since #4176 part (b), so this is a LOOKUP and the

@@ -10,6 +10,9 @@
     "check-types": "tsc --noEmit",
     "test": "vitest run --coverage"
   },
+  "dependencies": {
+    "@repo/cloud-catalog": "workspace:*"
+  },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",

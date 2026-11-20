@@ -100,7 +100,7 @@ Each cloud provider implements a `ProviderTfvars()` method that maps `ProjectCon
 
 The result is a `map[string]interface{}` written to `terraform.tfvars.json` via `OverrideTfvarsFromMap()`.
 
-**No templating engine touches the `.tf` files.** The OpenTofu templates at `infra/templates/project/{aws,gcp,azure,alibaba,hetzner}/` are plain HCL with `variable` declarations. Values are injected entirely through OpenTofu's native tfvars mechanism (`terraform.tfvars.json` — the filename `tofu` reads for back-compat).
+**No templating engine touches the `.tf` files.** The OpenTofu templates at `infra/templates/project/{aws,gcp,azure,hetzner}/` are plain HCL with `variable` declarations. Values are injected entirely through OpenTofu's native tfvars mechanism (`terraform.tfvars.json` — the filename `tofu` reads for back-compat).
 
 ## Stage 5: OpenTofu Execution
 

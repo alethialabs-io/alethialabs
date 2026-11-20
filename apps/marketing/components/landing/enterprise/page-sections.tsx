@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { AVAILABLE_CLOUDS } from "@repo/cloud-catalog";
 import {
 	Band,
 	Eyebrow,
@@ -149,7 +150,7 @@ function Clouds() {
 	return (
 		<LogoWall
 			eyebrow="Provisions into"
-			providers={["aws", "gcp", "azure", "hetzner", "alibaba"]}
+			providers={[...AVAILABLE_CLOUDS]}
 		/>
 	);
 }
@@ -287,7 +288,7 @@ function Deployment() {
 				<PointGrid
 					points={[
 						{
-							title: "Keyless on AWS, GCP, Azure and Alibaba",
+							title: "Keyless on AWS, GCP and Azure",
 							body: "The runner mints a short-lived assertion per job — cross-account IAM role, workload identity federation, or federated identity. No access key touches disk.",
 						},
 						{
@@ -295,7 +296,7 @@ function Deployment() {
 							// keys on disk or in our database", which is false for the
 							// token clouds. See docs/runner/cloud-credentials.
 							title: "Token clouds can stay yours",
-							body: "Hetzner, DigitalOcean and Civo have no federation, so a scoped token is stored encrypted at rest. Run a self-managed runner and it never reaches us at all.",
+							body: "Hetzner has no federation, so a scoped token is stored encrypted at rest. Run a self-managed runner and it never reaches us at all.",
 						},
 						{
 							// Was "run the entire control plane … air-gapped". The docs

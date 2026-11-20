@@ -24,13 +24,13 @@ The runner runs `tofu output -json` against a throwaway workspace whose config i
 (per-job `TF_HTTP_PASSWORD`). No module is cloned and no template is copied — outputs live in state,
 so no providers or resources are needed.
 
-Output values stay **in-process only**. The sensitive `kubeconfig` output (used by Hetzner and
-Alibaba) is never written to the workdir, logged, or persisted.
+Output values stay **in-process only**. The sensitive `kubeconfig` output (used by Hetzner) is
+never written to the workdir, logged, or persisted.
 
 ### Acquire the cluster kubeconfig
 The provider configures a private kubeconfig from the outputs:
 
-- **Hetzner / Alibaba** read the sensitive `kubeconfig` output from state.
+- **Hetzner** reads the sensitive `kubeconfig` output from state.
 - **AWS / GCP / Azure** synthesize an exec-plugin kubeconfig from the cluster name.
 
 ### Dial the API server
