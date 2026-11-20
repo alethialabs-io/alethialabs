@@ -4,8 +4,9 @@
 package cmd
 
 import (
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
 )
 
@@ -15,87 +16,84 @@ var (
 	projectPlanRunnerRef  string
 	projectPlanRunnerID   string
 	projectPlanEnv        string
-	projectPlanWait       bool
+	projectPlanWait       waitFlags
 )
 
-var projectPlanCmd = &cobra.Command{
-	Use:   "plan",
-	Short: "Queue a plan (dry-run) job for a project",
-	Long: `Plan runs a Terraform plan with cost analysis without applying changes.
+// projectPreviewLong is the help of `project preview`. The deprecated `project plan` shows it too.
+const projectPreviewLong = `Queue a PLAN job that works out what a deploy would change in one environment of a project, with a cost estimate, and changes nothing in your cloud account.
 
---runner takes a runner's NAME, so nothing has to be copied out of ` + "`alethia runner list`" + `.`,
+Use it before "alethia project deploy" to read the changes first. The job runs on a runner: add
+--wait to stay until it finishes and --timeout to bound that wait, then read the plan with
+"alethia jobs logs". "alethia project deploy --latest-plan" deploys exactly the plan you read.
+
+--project and --runner take a NAME, so nothing has to be copied out of another command's
+output. --dry-run checks every input and prints the request without sending it.
+
+This is not "alethia plan", which compares an alethia.yaml file with a project and queues nothing.`
+
+var projectPreviewCmd = &cobra.Command{
+	Use:   "preview",
+	Short: "Preview what a deploy would change",
+	Long:  projectPreviewLong,
+	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
+		if err := runProjectPreview(cmd); err != nil {
 			fail(err)
-		}
-
-		apiClient := api.NewClient(token)
-
-		projectPlanProjectID, err = projectIDForJob(apiClient, token, projectPlanProjectRef, projectPlanProjectID)
-		if err != nil {
-			fail(err)
-		}
-
-		projectPlanRunnerID, err = runnerIDFrom(
-			apiClient, projectPlanRunnerRef, projectPlanRunnerID, "--runner", "--runner-id")
-		if err != nil {
-			fail(err)
-		}
-
-		// The runner picker cannot be answered with prompting disabled, and the assignment is
-		// OPTIONAL — an empty id is the picker's own "Any available" default — so a scripted
-		// run simply leaves the job unassigned. Without this guard `--no-input` could not queue
-		// a PLAN at all without also naming a runner, which is a flag for a field the command
-		// does not require. `project destroy` already had it; these two did not.
-		if projectPlanRunnerID == "" && canPromptForm() {
-			projectPlanRunnerID, err = selectRunner(token, "")
-			if err != nil {
-				fail(err)
-			}
-		}
-
-		envID, err := resolveEnvironmentID(apiClient, projectPlanProjectID, projectPlanEnv)
-		if err != nil {
-			fail(err)
-		}
-
-		params := api.QueueJobParams{
-			JobType:         "PLAN",
-			ConfigurationID: projectPlanProjectID,
-			EnvironmentID:   envID,
-		}
-		if projectPlanRunnerID != "" {
-			params.AssignedRunnerID = projectPlanRunnerID
-		}
-
-		job, err := apiClient.QueueJobWithParams(params)
-		if err != nil {
-			failf("Error: %v", err)
-		}
-
-		if projectPlanWait {
-			ui.JobQueued("PLAN", job.ID)
-			if err := waitForJob(apiClient, job.ID); err != nil {
-				exitFunc(1)
-			}
-		} else {
-			ui.JobQueued("PLAN", job.ID)
 		}
 	},
 }
 
+// projectPlanCmd is the old name of `project preview`, kept so a script written against it still
+// runs. It is hidden and says so once on stderr.
+var projectPlanCmd = &cobra.Command{
+	Use:    "plan",
+	Hidden: true,
+	Short:  "Deprecated: use `alethia project preview`",
+	Long:   "Deprecated: this is the old name of `alethia project preview`, which does the same thing.\n\n" + projectPreviewLong,
+	Args:   cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		renamedCommandNotice("project plan", "project preview")
+		if err := runProjectPreview(cmd); err != nil {
+			fail(err)
+		}
+	},
+}
+
+// runProjectPreview resolves and queues one PLAN job.
+func runProjectPreview(cmd *cobra.Command) error {
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	client := api.NewClient(token)
+
+	params, err := resolveProjectJobParams(client, token, projectJobInputs{
+		JobType:    string(types.JobTypePlan),
+		ProjectRef: projectPlanProjectRef, ProjectID: projectPlanProjectID,
+		RunnerRef: projectPlanRunnerRef, RunnerID: projectPlanRunnerID,
+		Env: projectPlanEnv,
+	})
+	if err != nil {
+		return err
+	}
+	return finishProjectJob(cmd, client, projectJobRun{
+		Params: params, Wait: projectPlanWait, DryRun: cmdmeta.DryRunRequested(cmd),
+	})
+}
+
+// registerPreviewFlags registers the flags of `project preview` on cmd. The deprecated `project
+// plan` takes the same ones, bound to the same variables.
+func registerPreviewFlags(cmd *cobra.Command) {
+	jobProjectFlags(cmd, &projectPlanProjectRef, &projectPlanProjectID, "preview")
+	jobRunnerFlags(cmd, &projectPlanRunnerRef, &projectPlanRunnerID)
+	cmd.Flags().StringVar(&projectPlanEnv, "env", "", jobEnvFlagUsage)
+	addProjectWaitFlags(cmd, &projectPlanWait)
+	addDryRunFlag(cmd)
+}
+
 func init() {
+	projectCmd.AddCommand(projectPreviewCmd)
 	projectCmd.AddCommand(projectPlanCmd)
-	jobProjectFlags(projectPlanCmd, &projectPlanProjectRef, &projectPlanProjectID, "plan")
-	// TWO flags for one field, for the reason jobProjectFlags states about --project /
-	// --project-id: `--runner-id` is what scripts already pass and keeps working, `--runner` is
-	// the one a person uses and is the spelling `alethia apply --runner` already had. Passing
-	// both is refused rather than resolved by precedence — see runnerIDFrom.
-	projectPlanCmd.Flags().StringVar(&projectPlanRunnerRef, "runner", "",
-		"Runner to run this job on, by NAME or id (asked for on a terminal when omitted)")
-	projectPlanCmd.Flags().StringVar(&projectPlanRunnerID, "runner-id", "",
-		"Runner id to assign (prefer --runner, which also takes the name)")
-	projectPlanCmd.Flags().StringVar(&projectPlanEnv, "env", "", "Target environment name (default: the project's default environment)")
-	projectPlanCmd.Flags().BoolVarP(&projectPlanWait, "wait", "w", false, "Wait for job completion")
+	registerPreviewFlags(projectPreviewCmd)
+	registerPreviewFlags(projectPlanCmd)
 }

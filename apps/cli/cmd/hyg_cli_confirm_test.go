@@ -218,8 +218,9 @@ func TestHygCliConfirm_ADryRunPreflightIsNotAWrite(t *testing.T) {
 	s.forget()
 
 	if got := run("project", "design", "apply", "--project", "p1",
-		"-f", "testdata/design-document.json", "--no-input"); got != 1 {
-		t.Fatalf("exit code = %d, want 1 — the plan removes a component and no --yes was given", got)
+		"-f", "testdata/design-document.json", "--no-input"); got != clierr.ExitInputRequired {
+		t.Fatalf("exit code = %d, want %d — the plan removes a component and no --yes was given",
+			got, clierr.ExitInputRequired)
 	}
 
 	reqs := s.snapshotRequests()
@@ -546,14 +547,11 @@ func TestHygCliConfirm_NoInputWithoutYesIsFatal(t *testing.T) {
 	for _, tc := range hygCliConfirmDestructive {
 		t.Run(tc.name, func(t *testing.T) {
 			s.forget()
-			// Every command that refuses through confirmDestructive exits with the
-			// input-required code. `project design apply` refuses earlier, with its own
-			// sentence naming what the plan removes; that error carries no class yet, so
-			// it exits unclassified.
+			// Every one of them exits with the input-required code: a confirmation was
+			// needed and nobody could give it. `project design apply` refuses earlier than
+			// the rest, with its own sentence naming what the plan removes, and under the
+			// same code.
 			want := clierr.ExitInputRequired
-			if tc.name == "project_design_apply" {
-				want = clierr.ExitUnclassified
-			}
 			if got := run(append(append([]string{}, tc.args...), "--no-input")...); got != want {
 				t.Errorf("exit code = %d, want %d (a scripted destructive command must not exit 0)", got, want)
 			}
