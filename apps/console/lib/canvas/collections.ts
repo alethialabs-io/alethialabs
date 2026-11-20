@@ -135,3 +135,8 @@ export function buildRenderNodes(
 
 	return rendered;
 }
+
+/** True when a board node is a collection card rather than a node the store holds. */
+export function isCollectionCard(node: BoardNode): node is CollectionNode {
+	return "memberIds" in node.data;
+}
