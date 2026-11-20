@@ -53,3 +53,10 @@ export function stageLabel(stage: string): string {
 export function mayHoldResources(status: string): boolean {
 	return status === "FAILED";
 }
+
+/**
+ * The number of columns the Environments table has. Declared here, not with the columns, so the
+ * route's skeleton can draw the same count without importing the columns' controls; the columns'
+ * test holds the two to each other.
+ */
+export const ENVIRONMENT_COLUMN_COUNT = 8;

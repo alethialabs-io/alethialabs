@@ -12,6 +12,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { formatMonthlyRate } from "@repo/format";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -46,13 +47,6 @@ export interface EnvironmentRow {
 	/** The key of the read the page is showing, which an optimistic auto-heal change patches. */
 	overviewKey: QueryKey;
 }
-
-/** The number of columns the table has — the skeleton draws the same count. */
-export const ENVIRONMENT_COLUMN_COUNT = 8;
-
-/** Why the default environment has no delete. */
-export const DEFAULT_ENV_DELETE_REASON =
-	"The default environment can't be deleted: it is the project's anchor.";
 
 /** The gates a classification value tagged on this environment forces onto promotions into it. */
 function inheritedGates(assignments: AssignedValue[] | undefined): string[] {
@@ -151,6 +145,14 @@ export function buildEnvironmentColumns({
 								</Badge>
 							)}
 						</div>
+						{/* Shown only where a BYO chart makes the setting mean something (#6541); changing it is
+						    in the row's menu. */}
+						{env.byo_admission_has_charts && (
+							<span className="text-ui-xs text-text-tertiary" data-slot="byo-admission">
+								BYO admission: {env.byo_admission_enforce ? "Refuse" : "Report"}
+								{env.byo_admission_pending && " · Redeploy to apply"}
+							</span>
+						)}
 						<ClassificationControl
 							kind="project_environment"
 							id={env.id}
@@ -188,7 +190,7 @@ export function buildEnvironmentColumns({
 					return <span className="text-text-secondary">Cluster deleted outside Alethia</span>;
 				}
 				if (reconcile?.driftInSync === false) {
-					return <span className="text-text-secondary">Diverged from deployed state</span>;
+					return <span className="text-text-secondary">Diverged from provisioned state</span>;
 				}
 				// Never scanned is not "in sync": nothing has compared the cloud with the state.
 				if (reconcile?.driftInSync !== true) return <span className="text-text-tertiary">Not scanned</span>;
@@ -205,27 +207,42 @@ export function buildEnvironmentColumns({
 			header: "Gates into it",
 			enableSorting: false,
 			cell: ({ row }) => {
+				const { env } = row.original;
 				const own = enforcedGates(row.original.protection);
 				const inherited = inheritedGates(row.original.classAssignments);
-				if (own.length === 0 && inherited.length === 0) {
-					return <span className="text-text-tertiary">None — any editor can promote in</span>;
-				}
 				return (
-					<div className="flex max-w-xs flex-wrap gap-1">
-						{own.map((gate) => (
-							<span key={gate} className={GATE_CHIP}>
-								{gate}
-							</span>
-						))}
-						{inherited.map((gate) => (
-							<span
-								key={`inherited-${gate}`}
-								className={`${GATE_CHIP} border-dashed`}
-								title="Required by a classification on this environment"
+					<div className="flex max-w-xs flex-col items-start gap-1.5">
+						{own.length === 0 && inherited.length === 0 ? (
+							<span className="text-text-tertiary">None — any editor can promote in</span>
+						) : (
+							<div className="flex flex-wrap gap-1">
+								{own.map((gate) => (
+									<span key={gate} className={GATE_CHIP}>
+										{gate}
+									</span>
+								))}
+								{inherited.map((gate) => (
+									<span
+										key={`inherited-${gate}`}
+										className={`${GATE_CHIP} border-dashed`}
+										title="Required by a classification on this environment"
+									>
+										{gate}
+									</span>
+								))}
+							</div>
+						)}
+						<DisabledReason reason={manageDenied}>
+							<Button
+								variant="link"
+								size="xs"
+								className="h-auto p-0 text-ui-sm text-text-secondary"
+								aria-label={`Edit rules for ${env.name}`}
+								onClick={() => onEditRules(env)}
 							>
-								{gate}
-							</span>
-						))}
+								Edit rules
+							</Button>
+						</DisabledReason>
 					</div>
 				);
 			},
@@ -280,9 +297,6 @@ export function buildEnvironmentColumns({
 									Open in {ARCHITECTURE}
 								</DropdownMenuItem>
 								<DropdownMenuSeparator />
-								<DropdownMenuItem disabledReason={manageDenied} onClick={() => onEditRules(env)}>
-									Edit rules
-								</DropdownMenuItem>
 								{env.byo_admission_has_charts && (
 									<DropdownMenuItem disabledReason={manageDenied} onClick={() => onEditAdmission(env)}>
 										Change BYO admission
@@ -291,13 +305,17 @@ export function buildEnvironmentColumns({
 								<DropdownMenuItem disabledReason={manageDenied} onClick={() => onDuplicate(env)}>
 									Duplicate
 								</DropdownMenuItem>
-								<DropdownMenuItem
-									className="text-destructive focus:text-destructive"
-									disabledReason={manageDenied ?? (env.is_default ? DEFAULT_ENV_DELETE_REASON : null)}
-									onClick={() => onDelete(env)}
-								>
-									Delete
-								</DropdownMenuItem>
+								{/* The default environment is the project's anchor and has no delete: the item is
+								    absent for it, as it always was, not offered and refused. */}
+								{!env.is_default && (
+									<DropdownMenuItem
+										className="text-destructive focus:text-destructive"
+										disabledReason={manageDenied}
+										onClick={() => onDelete(env)}
+									>
+										Delete
+									</DropdownMenuItem>
+								)}
 							</DropdownMenuContent>
 						</DropdownMenu>
 					</div>

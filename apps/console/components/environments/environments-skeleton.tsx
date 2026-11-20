@@ -8,7 +8,7 @@
 import { PageToolbarSkeleton } from "@repo/ui/page-toolbar";
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";
-import { ENVIRONMENT_COLUMN_COUNT } from "./environment-columns";
+import { ENVIRONMENT_COLUMN_COUNT } from "./environment-status";
 import { EnvironmentsFilterBar } from "./environments-filter-bar";
 import { DEFAULT_ENVIRONMENT_FILTERS } from "./environments-query";
 
@@ -33,7 +33,7 @@ function ignore() {}
  */
 export function EnvironmentsSkeleton() {
 	return (
-		<SkeletonRoot className="space-y-8" data-slot="environments-skeleton">
+		<SkeletonRoot className="space-y-8" data-skeleton="environments" inert>
 			<PageToolbarSkeleton count actions={2} />
 			<section className="space-y-4">
 				<EnvironmentsFilterBar

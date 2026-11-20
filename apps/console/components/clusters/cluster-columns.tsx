@@ -10,10 +10,9 @@ import { ProviderIcon } from "@repo/ui/provider-icon";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Server } from "lucide-react";
 import Link from "next/link";
-import { cloudLabel } from "@/components/clusters/cluster-detail";
+import { cloudLabel, lastRunHref } from "@/components/clusters/cloud-label";
 import { type Posture, clusterPosture } from "@/components/clusters/cluster-posture";
 import { RelativeStamp } from "@/components/environments/env-ui";
-import { jobHref } from "@/components/jobs/columns";
 import { projectHref } from "@/lib/routing";
 import type { ClusterListItem } from "@/lib/rpc/procedures/clusters";
 
@@ -122,7 +121,7 @@ export function buildClusterColumns({
 						{lastRunFailed &&
 							(cluster.last_job_id ? (
 								<Link
-									href={jobHref(orgSlug, cluster.last_job_id)}
+									href={lastRunHref(orgSlug, cluster.last_job_id)}
 									className={`text-ui-xs text-text-secondary ${LINK}`}
 									onClick={(event) => event.stopPropagation()}
 								>

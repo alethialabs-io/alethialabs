@@ -8,6 +8,7 @@
 // The table row carries what an operator scans; this carries what they act on.
 
 import { ClassificationControl } from "@/components/classification/classification-control";
+import { cloudLabel, lastRunHref } from "@/components/clusters/cloud-label";
 import {
 	type Observed,
 	type Posture,
@@ -20,8 +21,6 @@ import {
 import { KubeconfigDownload } from "@/components/clusters/kubeconfig-download/kubeconfig-download";
 import { MissingClusterActions } from "@/components/clusters/missing-cluster-actions";
 import { RelativeStamp } from "@/components/environments/env-ui";
-import { jobHref } from "@/components/jobs/columns";
-import { getProvider } from "@/lib/cloud-providers";
 import { ARCHITECTURE } from "@/lib/copy/vocabulary";
 import { envHref, projectHref } from "@/lib/routing";
 import type { ClusterListItem } from "@/lib/rpc/procedures/clusters";
@@ -50,12 +49,6 @@ const BLOCK = "flex flex-col gap-2 border-t pt-4";
 /** A code row's box: an endpoint or a command, beside its copy button. */
 const CODE =
 	"min-w-0 flex-1 truncate rounded-sm border bg-surface-sunken px-2 py-1 font-mono text-ui-xs text-text-secondary";
-
-/** The cloud a cluster runs on, as the table and the drawer print it; null when it is not known. */
-export function cloudLabel(data: Pick<ClusterListItem, "cloud_identities">): string | null {
-	const provider = data.cloud_identities?.provider;
-	return provider ? getProvider(provider).shortName : null;
-}
 
 /** The cluster's one-line identity: cloud, region, Kubernetes version. */
 export function clusterMeta(cluster: ClusterListItem): string {
@@ -259,7 +252,7 @@ function ClusterLinks({ cluster, orgSlug }: { cluster: ClusterListItem; orgSlug:
 					variant="outline"
 					size="sm"
 					nativeButton={false}
-					render={<Link href={jobHref(orgSlug, cluster.last_job_id)} />}
+					render={<Link href={lastRunHref(orgSlug, cluster.last_job_id)} />}
 				>
 					View last run
 				</Button>

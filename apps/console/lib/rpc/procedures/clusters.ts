@@ -349,22 +349,29 @@ async function clusterChips(actor: Actor, clusters: ClusterData[]): Promise<Map<
  */
 async function lastRunJobs(actor: Actor, clusters: ClusterData[]): Promise<Map<string, string>> {
 	const envIds = [...new Set(clusters.map((c) => c.environment_id).filter((x): x is string => Boolean(x)))];
-	if (envIds.length === 0) return new Map();
-	const newest = sql<string | null>`(select ${jobs.id} from ${jobs} where ${jobs.environment_id} = ${projectEnvironments.id} and ${jobs.job_type} in ('PLAN', 'DEPLOY', 'DESTROY') order by ${jobs.created_at} desc limit 1)`;
-	let rows: { environment_id: string; job_id: string | null }[] = [];
+	const byEnv = new Map<string, string>();
+	if (envIds.length === 0) return byEnv;
 	try {
-		rows = await withActorScope(actor, async (tx) =>
+		// One row per environment: `distinct on` keeps the first of each, and the order makes that
+		// the newest.
+		const rows = await withActorScope(actor, async (tx) =>
 			tx
-				.select({ environment_id: projectEnvironments.id, job_id: newest })
-				.from(projectEnvironments)
-				.where(inArray(projectEnvironments.id, envIds)),
+				.selectDistinctOn([jobs.environment_id], { environment_id: jobs.environment_id, job_id: jobs.id })
+				.from(jobs)
+				.where(
+					and(
+						eq(jobs.org_id, actor.orgId),
+						inArray(jobs.environment_id, envIds),
+						inArray(jobs.job_type, ["PLAN", "DEPLOY", "DESTROY"]),
+					),
+				)
+				.orderBy(jobs.environment_id, desc(jobs.created_at)),
 		);
+		for (const row of rows) {
+			if (row.environment_id) byEnv.set(row.environment_id, row.job_id);
+		}
 	} catch {
 		// No link is the answer; the clusters themselves have been read.
-	}
-	const byEnv = new Map<string, string>();
-	for (const row of rows) {
-		if (row.job_id) byEnv.set(row.environment_id, row.job_id);
 	}
 	return byEnv;
 }

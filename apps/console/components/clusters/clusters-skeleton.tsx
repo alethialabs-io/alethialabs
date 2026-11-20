@@ -31,7 +31,7 @@ function ignore() {}
  */
 export function ClustersSkeleton({ showProject = true }: { showProject?: boolean }) {
 	return (
-		<SkeletonRoot className="space-y-6" data-slot="clusters-skeleton">
+		<SkeletonRoot className="space-y-6" data-skeleton="clusters" inert>
 			<PageToolbarSkeleton count />
 			<ClustersFilterBar
 				className="animate-pulse"

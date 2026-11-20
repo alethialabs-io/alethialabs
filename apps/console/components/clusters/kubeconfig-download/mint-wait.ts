@@ -26,6 +26,13 @@ export function mintWaitKey(clusterId: string): QueryKey {
 	return [...MINT_WAIT_KEY, clusterId];
 }
 
+/**
+ * The longest delay a timer takes (2^31 − 1 ms, about 24.8 days). A longer one overflows and fires
+ * AT ONCE, which would turn a far deadline into a busy loop; clamped, the wait ends early at worst
+ * and the flow simply reads the mint again.
+ */
+export const MAX_TIMER_MS = 2_147_483_647;
+
 /** The wait a download holds while the runner mints. */
 export interface MintWait {
 	/** Clears the "something changed" mark. Call before each read of the mint. */
@@ -37,6 +44,13 @@ export interface MintWait {
 	changed(deadline: number, signal: AbortSignal): Promise<void>;
 }
 
+/** The part of a document the wait listens to: whether the tab is being looked at. */
+export interface VisibilitySource {
+	readonly visibilityState: string;
+	addEventListener(type: "visibilitychange", listener: () => void): void;
+	removeEventListener(type: "visibilitychange", listener: () => void): void;
+}
+
 /** What {@link createMintWait} needs beyond the client; tests pin the clock and the timer. */
 export interface MintWaitOptions {
 	now?: () => number;
@@ -45,7 +59,7 @@ export interface MintWaitOptions {
 		clearTimeout(handle: ReturnType<typeof setTimeout>): void;
 	};
 	/** The document whose visibility ends a wait; absent outside a browser. */
-	visibility?: Pick<Document, "addEventListener" | "removeEventListener" | "visibilityState">;
+	visibility?: VisibilitySource;
 }
 
 /**
@@ -58,7 +72,8 @@ export function createMintWait(queryClient: QueryClient, key: QueryKey, options:
 		setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
 		clearTimeout: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle),
 	};
-	const visibility = options.visibility ?? (typeof document === "undefined" ? undefined : document);
+	const visibility: VisibilitySource | undefined =
+		options.visibility ?? (typeof document === "undefined" ? undefined : document);
 	const hash = hashKey(key);
 	let armed = 0;
 
@@ -89,7 +104,7 @@ export function createMintWait(queryClient: QueryClient, key: QueryKey, options:
 					if (event.type !== "updated" || event.action.type !== "invalidate") return;
 					if (hashKey(event.query.queryKey) === hash) finish();
 				});
-				const timer = timers.setTimeout(finish, Math.max(0, deadline - now()));
+				const timer = timers.setTimeout(finish, Math.min(Math.max(0, deadline - now()), MAX_TIMER_MS));
 				signal.addEventListener("abort", finish);
 				visibility?.addEventListener("visibilitychange", onVisible);
 			});

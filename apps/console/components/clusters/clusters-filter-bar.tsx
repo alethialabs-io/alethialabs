@@ -13,10 +13,10 @@ import { FilterChipGroup } from "@repo/ui/filter-chip";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { cn } from "@repo/ui/utils";
 import { Globe } from "lucide-react";
+import { providerName } from "@/components/clusters/cloud-label";
 import { CLUSTER_STATUS_KEYS, type ClusterStatusKey } from "@/components/clusters/cluster-posture";
 import { type ClusterPageFilters, DEFAULT_CLUSTER_FILTERS } from "@/components/clusters/clusters-query";
 import { CloudFilter } from "@/components/filters/cloud-filter";
-import { getProvider } from "@/lib/cloud-providers";
 import { CLOUD_ACCOUNT } from "@/lib/copy/vocabulary";
 import { type ClustersPage, UNKNOWN_CLOUD } from "@/lib/queries/clusters";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
@@ -50,7 +50,7 @@ function isStatusKey(value: string): value is ClusterStatusKey {
 
 /** The label of a cloud-facet value: the provider's short name, or the bucket for an unknown one. */
 function cloudOptionLabel(value: string): string {
-	return value === UNKNOWN_CLOUD ? `No ${CLOUD_ACCOUNT.one}` : getProvider(value).shortName;
+	return value === UNKNOWN_CLOUD ? `No ${CLOUD_ACCOUNT.one}` : providerName(value);
 }
 
 /**

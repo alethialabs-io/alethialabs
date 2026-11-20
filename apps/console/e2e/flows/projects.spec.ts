@@ -426,16 +426,16 @@ test.describe("Projects — Environments view", () => {
 	});
 
 	/**
-	 * The per-row delete control. `environment-card.tsx` gives it `title="Delete"` and nothing else,
-	 * so its accessible name carries no environment — every non-default row on the page offers an
-	 * identically-named button. That is a real testid gap (filed in the PR for #4269, not worked
-	 * around by editing app code from here); a seeded project has exactly ONE environment, so after
-	 * adding one there is exactly one deletable row and the name is unambiguous. Each test that uses
-	 * this asserts the count first, so a page that grows a second one fails by saying so rather than
-	 * by Playwright's strict-mode error.
+	 * Opens one environment's row menu (`Environment actions for <name>`, `environment-columns.tsx`)
+	 * and returns its Delete item. The menu names its environment, so there is no identically-named
+	 * control to pick between (the gap #4269 recorded against the old icon button). Duplicate is in
+	 * every row's menu, so it is waited on first: an absent Delete is then read from an OPEN menu,
+	 * not from one that never opened.
 	 */
-	function deleteControls(page: import("@playwright/test").Page) {
-		return page.getByRole("button", { name: "Delete", exact: true });
+	async function deleteItemOf(page: import("@playwright/test").Page, envName: string) {
+		await page.getByRole("button", { name: `Environment actions for ${envName}` }).click();
+		await expect(page.getByRole("menuitem", { name: "Duplicate" })).toBeVisible({ timeout: 10_000 });
+		return page.getByRole("menuitem", { name: "Delete", exact: true });
 	}
 
 	test("lists the default environment with a Default tag and no delete control", async ({
@@ -450,10 +450,10 @@ test.describe("Projects — Environments view", () => {
 			timeout: 15_000,
 		});
 		await expect(owner.page.getByText(/^default$/i).first()).toBeVisible();
-		// The default env is undeletable, and `environment-card.tsx` renders NO delete button for
-		// it. This assertion used to be `/delete production/i`, a name no control on this page has
-		// ever had — it could only ever be 0, so it passed whatever the page did.
-		await expect(deleteControls(owner.page)).toHaveCount(0);
+		// The default env is undeletable: its row menu has NO Delete item. This assertion used to be
+		// `/delete production/i`, a name no control on this page has ever had — it could only ever be
+		// 0, so it passed whatever the page did.
+		await expect(await deleteItemOf(owner.page, "production")).toHaveCount(0);
 	});
 
 	test("New Environment (empty) creates an environment that then lists", async ({ owner }) => {
@@ -505,13 +505,12 @@ test.describe("Projects — Environments view", () => {
 			timeout: 20_000,
 		});
 
-		// Exactly one deletable row: the one just added. Asserted before it is clicked, so an extra
-		// row states itself instead of surfacing as a strict-mode violation on the line below.
-		await expect(deleteControls(owner.page)).toHaveCount(1);
-		await deleteControls(owner.page).click();
-		// The confirm's TITLE names the environment — that is where the row's identity is, since the
-		// trigger's name is the bare word "Delete". Deleting an environment is confirmed by typing
-		// its name, and the button does nothing until it has been.
+		// The row just added is deletable: its menu has the Delete item the default's does not.
+		const deleteItem = await deleteItemOf(owner.page, envName);
+		await expect(deleteItem).toHaveCount(1);
+		await deleteItem.click();
+		// The confirm's TITLE names the environment too. Deleting an environment is confirmed by
+		// typing its name, and the button does nothing until it has been.
 		const confirm = owner.page.getByRole("alertdialog");
 		await expect(confirm.getByText(new RegExp(`delete ${envName}`, "i"))).toBeVisible();
 		const deleteButton = confirm.getByRole("button", { name: /delete environment/i });

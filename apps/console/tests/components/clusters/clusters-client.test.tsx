@@ -1,55 +1,123 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// #6122 (RUBRIC B3/B4): the clusters grid's five renders are five different things. Pending is the
-// skeleton, never the empty state; a refusal says the viewer lacks access and offers no retry; a
-// failure says it failed and offers one; no clusters is the empty state; a refresh that fails after
-// data arrived keeps the cards. The project drilldown shows only its project's clusters.
+// #6819 (RUBRIC B3/B4): the clusters list's renders are different things. Pending is the skeleton,
+// never the empty state; a refusal says the viewer lacks access and offers no retry; a failure says
+// it failed and offers one; no clusters in scope is the empty state with ITS next action; clusters
+// the filters exclude is "no match" with a way back; and clusters are a table, one row per cluster,
+// led by the environment. A refresh that fails after data arrived keeps the rows.
+//
+// And the list is on the filter standard: the read's input is the normalized query, a project is a
+// SCOPE in that input and never a filter, and the open row is in the URL.
 
 import { ORPCError } from "@orpc/client";
-import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ClusterListItem } from "@/lib/rpc/procedures/clusters";
+import type { FakeHandler } from "@/tests/helpers/fake-orpc";
+import { clusterItem } from "./fixtures";
 
-const h = vi.hoisted(() => {
-	const query: Record<string, unknown> = {};
-	return { query };
-});
-
-vi.mock("@/lib/query/use-clusters-query", () => ({ useClustersQuery: () => h.query }));
-vi.mock("@/lib/stores/use-workspace-store", () => ({ useActiveOrgSlug: () => "acme" }));
-vi.mock("@/components/clusters/cluster-card", () => ({
-	ClusterCard: ({ data }: { data: { project_cluster: { id: string } } }) => (
-		<div data-testid="cluster-card">{data.project_cluster.id}</div>
-	),
+const h = vi.hoisted(() => ({
+	query: {} as Record<string, unknown>,
+	inputs: [] as unknown[],
+	replace: vi.fn(),
+	search: new URLSearchParams(),
+	project: undefined as string | undefined,
+	handlers: {} as Record<string, FakeHandler>,
 }));
 
-import { ClustersClient } from "@/app/(private)/[org]/~/clusters/clusters-client";
+vi.mock("@/lib/query/use-clusters-page-query", () => ({
+	useClustersPageQuery: (input: unknown) => {
+		h.inputs.push(input);
+		return h.query;
+	},
+}));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc(h.handlers).orpc };
+});
+vi.mock("@/lib/stores/use-workspace-store", () => ({ useActiveOrgSlug: () => "acme" }));
+vi.mock("next/navigation", () => ({
+	useParams: () => ({ project: h.project }),
+	usePathname: () => (h.project ? `/acme/${h.project}/clusters` : "/acme/~/clusters"),
+	useRouter: () => ({ replace: h.replace, push: vi.fn(), refresh: vi.fn() }),
+	useSearchParams: () => h.search,
+}));
+vi.mock("@/app/server/actions/missing-cluster", () => ({ markEnvironmentDestroyedAction: vi.fn() }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/components/classification/classification-control", () => ({ ClassificationControl: () => null }));
+vi.mock("@/components/clusters/kubeconfig-download/kubeconfig-download", () => ({ KubeconfigDownload: () => null }));
 
-/** A list entry: project `projectId`'s cluster `clusterId`. */
-function cluster(clusterId: string, projectId: string) {
-	return { id: projectId, project_cluster: { id: clusterId } };
-}
+import { ClustersClient } from "@/app/(private)/[org]/~/clusters/clusters-client";
+import { useClustersFilters } from "@/lib/stores/use-clusters-filters";
 
 const refetch = vi.fn();
+const FACETS = {
+	clouds: [{ value: "aws", label: null, count: 3 }],
+	statuses: [
+		{ value: "failed", label: null, count: 1 },
+		{ value: "pending", label: null, count: 0 },
+		{ value: "active", label: null, count: 2 },
+		{ value: "idle", label: null, count: 0 },
+	],
+	regions: [{ value: "eu-central-1", label: null, count: 3 }],
+};
+
+/** The read's answer for `rows`, out of `total` clusters in scope. */
+function page(rows: ClusterListItem[], total = rows.length) {
+	return { rows, resultCount: rows.length, total, facets: FACETS };
+}
+
+/** A cluster `id` of environment `environment` in project `projectName`. */
+function cluster(id: string, environment: string, projectName = "shop", over: Partial<ClusterListItem> = {}) {
+	return clusterItem({ ...over, environment_stage: environment, project_name: projectName, project_cluster: { id } });
+}
+
+/** Renders the list (the drawer's mutations need a query client). */
+function renderList(projectId?: string) {
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	return render(
+		<QueryClientProvider client={client}>
+			<ClustersClient projectId={projectId} />
+		</QueryClientProvider>,
+	);
+}
+
+/** The environments the table's rows lead with, in order. */
+function rowEnvironments(): string[] {
+	return screen.getAllByRole("button", { name: /^Open .+ in .+$/ }).map((button) => button.textContent ?? "");
+}
 
 beforeEach(() => {
-	refetch.mockReset();
-	h.query = { data: undefined, isError: false, error: null, refetch };
+	vi.clearAllMocks();
+	h.inputs.length = 0;
+	h.search = new URLSearchParams();
+	h.project = undefined;
+	h.query = { data: undefined, isError: false, isLoading: true, isPlaceholderData: false, error: null, refetch };
+	act(() => useClustersFilters.getState().reset());
 });
 
-describe("ClustersClient", () => {
-	it("pending is the skeleton — not the empty state", () => {
-		const { container } = render(<ClustersClient />);
-		expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+describe("ClustersClient — pending, refused, failed and empty are distinct", () => {
+	it("pending is the skeleton, in the list's shape — not the empty state", () => {
+		const { container } = renderList();
+		const skeleton = container.querySelector('[data-skeleton="clusters"]');
+		expect(skeleton).toHaveAttribute("aria-busy", "true");
+		// The org list has a Project column; a project's own list does not.
+		expect(skeleton?.querySelectorAll("th")).toHaveLength(7);
 		expect(screen.queryByText(/No clusters/)).toBeNull();
-		// Nothing has answered, so there is no count: the card grid, not the empty state's frame (#6349).
-		expect(container.querySelectorAll('[data-slot="cluster-card-skeleton"]')).toHaveLength(2);
+	});
+
+	it("a project's skeleton has no Project column", () => {
+		h.project = "shop";
+		const { container } = renderList("p1");
+		expect(container.querySelectorAll('[data-skeleton="clusters"] th')).toHaveLength(6);
 	});
 
 	it("a refusal says the viewer lacks access, with nothing to retry", () => {
 		h.query = { ...h.query, isError: true, error: new ORPCError("FORBIDDEN", { defined: true, status: 403 }) };
-		render(<ClustersClient />);
+		renderList();
 		expect(screen.getByText("You don't have access to clusters")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
 		expect(screen.queryByText(/No clusters/)).toBeNull();
@@ -57,38 +125,147 @@ describe("ClustersClient", () => {
 
 	it("a failure is an error with a retry — not the empty state", async () => {
 		h.query = { ...h.query, isError: true, error: new Error("boom") };
-		render(<ClustersClient />);
+		renderList();
 		expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load clusters");
 		await userEvent.click(screen.getByRole("button", { name: /try again/i }));
 		expect(refetch).toHaveBeenCalledOnce();
 		expect(screen.queryByText(/No clusters/)).toBeNull();
 	});
 
-	it("no clusters is the empty state", () => {
-		h.query = { ...h.query, data: [] };
-		render(<ClustersClient />);
+	it("an organization with no clusters is told how one appears, and offered the action that names where it goes", () => {
+		h.query = { ...h.query, isLoading: false, data: page([]) };
+		renderList();
 		expect(screen.getByText("No clusters under management")).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Create a project" })).toHaveAttribute("href", "/acme/~/new");
 	});
 
-	it("renders one card per cluster — two environments of one project are two cards", () => {
-		h.query = { ...h.query, data: [cluster("c1", "p1"), cluster("c2", "p1"), cluster("c3", "p2")] };
-		render(<ClustersClient />);
-		expect(screen.getAllByTestId("cluster-card").map((el) => el.textContent)).toEqual(["c1", "c2", "c3"]);
-	});
-
-	it("keeps the cards when a refresh fails after data arrived", () => {
-		h.query = { ...h.query, data: [cluster("c1", "p1")], isError: true, error: new Error("boom") };
-		render(<ClustersClient />);
-		expect(screen.getAllByTestId("cluster-card")).toHaveLength(1);
-		expect(screen.queryByRole("alert")).toBeNull();
-	});
-
-	it("the project drilldown shows only its project's clusters, and its own empty state", () => {
-		h.query = { ...h.query, data: [cluster("c1", "p1"), cluster("c2", "p2")] };
-		const { unmount } = render(<ClustersClient projectId="p2" />);
-		expect(screen.getAllByTestId("cluster-card").map((el) => el.textContent)).toEqual(["c2"]);
-		unmount();
-		render(<ClustersClient projectId="p3" />);
+	it("a project with no clusters offers Open Architecture — its next step stays in the project", () => {
+		h.project = "shop";
+		h.query = { ...h.query, isLoading: false, data: page([]) };
+		renderList("p1");
 		expect(screen.getByText("This project has no clusters yet")).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Open Architecture" })).toHaveAttribute("href", "/acme/shop/architecture");
+		expect(screen.queryByRole("link", { name: /projects/i })).toBeNull();
+	});
+
+	it("clusters the filters exclude is `no match`, with a way back — never the onboarding state", async () => {
+		h.query = { ...h.query, isLoading: false, data: page([], 3) };
+		act(() => useClustersFilters.getState().set("statuses", ["failed"]));
+		renderList();
+		expect(screen.getByText("No clusters match these filters")).toBeInTheDocument();
+		expect(screen.queryByText("No clusters under management")).toBeNull();
+		await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+		expect(useClustersFilters.getState().filters.statuses).toEqual([]);
+	});
+});
+
+describe("ClustersClient — the table", () => {
+	const THREE = [cluster("c1", "production"), cluster("c2", "staging"), cluster("c3", "production", "search")];
+
+	it("is one row per cluster, led by the environment — two environments of one project are two rows", () => {
+		h.query = { ...h.query, isLoading: false, data: page(THREE) };
+		renderList();
+		expect(screen.getByRole("table")).toBeInTheDocument();
+		expect(rowEnvironments()).toEqual(["production", "staging", "production"]);
+		expect(screen.getByRole("button", { name: "Open staging in shop" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Open production in search" })).toBeInTheDocument();
+		expect(screen.getByRole("columnheader", { name: /project/i })).toBeInTheDocument();
+		expect(document.querySelector('[data-slot="page-toolbar"]')).toHaveTextContent("3");
+	});
+
+	it("links each row's project, on the organization's list", () => {
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production")]) };
+		renderList();
+		expect(screen.getByRole("link", { name: "shop" })).toHaveAttribute("href", "/acme/shop/architecture");
+	});
+
+	it("a failed last run is a link to that run", () => {
+		h.query = {
+			...h.query,
+			isLoading: false,
+			data: page([cluster("c1", "production", "shop", { status: "FAILED", last_job_id: "job-9" })]),
+		};
+		renderList();
+		expect(screen.getByRole("link", { name: "Last run failed" })).toHaveAttribute("href", "/acme/~/jobs/job-9");
+	});
+
+	it("keeps the rows when a refresh fails after data arrived, and says they may be out of date", () => {
+		h.query = { ...h.query, isLoading: false, data: page(THREE), isError: true, error: new Error("boom") };
+		renderList();
+		expect(rowEnvironments()).toHaveLength(3);
+		expect(screen.getByText(/Couldn't refresh/)).toBeInTheDocument();
+	});
+
+	it("dims the rows and reports busy while they are the previous query's", () => {
+		h.query = { ...h.query, isLoading: false, data: page(THREE), isPlaceholderData: true };
+		const { container } = renderList();
+		expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+		expect(container.querySelector(".opacity-60")).not.toBeNull();
+	});
+});
+
+describe("ClustersClient — the filter standard", () => {
+	it("the organization's pristine read has an empty input", () => {
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production")]) };
+		renderList();
+		expect(h.inputs.at(-1)).toEqual({});
+	});
+
+	it("a project is a SCOPE in the read's input — not a filter, and not a Project column", () => {
+		h.project = "shop";
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production")]) };
+		renderList("p2");
+		expect(h.inputs.at(-1)).toEqual({ projectId: "p2" });
+		expect(useClustersFilters.getState().filters).toEqual({ search: "", clouds: [], statuses: [], regions: [] });
+		expect(screen.queryByRole("columnheader", { name: /project/i })).toBeNull();
+		// Nothing about the project is written into the query string.
+		expect(h.replace).not.toHaveBeenCalled();
+	});
+
+	it("a selection becomes the read's input, sorted, beside the scope", () => {
+		h.project = "shop";
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production")]) };
+		renderList("p2");
+		act(() => useClustersFilters.getState().set("statuses", ["pending", "failed"]));
+		expect(h.inputs.at(-1)).toEqual({ projectId: "p2", statuses: ["failed", "pending"] });
+	});
+
+	it("a filter the link carries is read into the store, and so into the input", () => {
+		h.search = new URLSearchParams("clouds=aws");
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production")]) };
+		renderList();
+		expect(useClustersFilters.getState().filters.clouds).toEqual(["aws"]);
+		expect(h.inputs.at(-1)).toEqual({ clouds: ["aws"] });
+	});
+
+	it("offers the four statuses with their counts, from the read's facets", () => {
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production")]) };
+		renderList();
+		for (const label of ["Needs attention", "In progress", "Healthy", "Unverified"]) {
+			expect(screen.getByRole("button", { name: new RegExp(label) })).toBeInTheDocument();
+		}
+	});
+});
+
+describe("ClustersClient — the open row is in the URL", () => {
+	it("opening a row writes its cluster id into `?selected=`", async () => {
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production")]) };
+		renderList();
+		await userEvent.click(screen.getByRole("button", { name: "Open production in shop" }));
+		expect(h.replace).toHaveBeenCalledWith("/acme/~/clusters?selected=c1", { scroll: false });
+	});
+
+	it("a link that names a row opens its record", () => {
+		h.search = new URLSearchParams("selected=c2");
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production"), cluster("c2", "staging")]) };
+		renderList();
+		expect(screen.getByRole("dialog", { name: "staging · shop" })).toBeInTheDocument();
+	});
+
+	it("a link that names a row the list does not have opens nothing", () => {
+		h.search = new URLSearchParams("selected=gone");
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production")]) };
+		renderList();
+		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 });
