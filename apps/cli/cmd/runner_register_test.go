@@ -4,46 +4,90 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
+// regToken is the token the fake control plane hands out. It is distinctive so a search for it
+// in a stream cannot match anything else.
+const regToken = "tok-abc123"
+
 func TestRunRunnerRegister(t *testing.T) {
-	t.Run("prints the id and token as env assignments", func(t *testing.T) {
-		var buf bytes.Buffer
+	t.Run("stdout is the two assignments and nothing else", func(t *testing.T) {
+		p, out, errOut := splitPrinter(ui.FormatTable)
 		f := &fakeClient{}
-		if err := runRunnerRegister(f, &buf, "box-1", "ci-1"); err != nil {
+		if err := runRunnerRegister(f, p, "box-1", "ci-1"); err != nil {
 			t.Fatalf("runRunnerRegister: %v", err)
 		}
 		if f.regRunnerName != "box-1" || f.regRunnerIdentity != "ci-1" {
 			t.Errorf("args not forwarded: %q / %q", f.regRunnerName, f.regRunnerIdentity)
 		}
-		out := buf.String()
-		// Env-assignment form, because the next thing that happens to these is being pasted into an
-		// env file or a systemd unit.
-		for _, want := range []string{"ALETHIA_RUNNER_ID=run1", "ALETHIA_RUNNER_TOKEN=tok-abc123"} {
-			if !strings.Contains(out, want) {
-				t.Errorf("output missing %q:\n%s", want, out)
+		// Env-assignment form, and ONLY that: the output is redirected straight into an env file.
+		want := "ALETHIA_RUNNER_ID=run1\nALETHIA_RUNNER_TOKEN=" + regToken + "\n"
+		if out.String() != want {
+			t.Errorf("stdout = %q, want %q", out.String(), want)
+		}
+		said := errOut.String()
+		// The one-shot warning is load-bearing: only the hash is stored, so a discarded token is gone.
+		for _, need := range []string{"shown once", "ALETHIA_WEB_ORIGIN=", "ALETHIA_RUNNER_OPERATOR=self", "alethia runner list"} {
+			if !strings.Contains(said, need) {
+				t.Errorf("stderr missing %q:\n%s", need, said)
 			}
 		}
-		// The one-shot warning is load-bearing: only the hash is stored, so a discarded token is gone.
-		if !strings.Contains(out, "shown once") {
-			t.Errorf("output must warn the token is shown once:\n%s", out)
+		if strings.Contains(said, regToken) {
+			t.Errorf("the token is repeated on stderr:\n%s", said)
+		}
+	})
+
+	t.Run("json carries the id and the token as fields, the token once", func(t *testing.T) {
+		p, out, errOut := splitPrinter(ui.FormatJSON)
+		if err := runRunnerRegister(&fakeClient{}, p, "box-1", "ci-1"); err != nil {
+			t.Fatalf("runRunnerRegister: %v", err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+			t.Fatalf("stdout is not one json document: %v\n%s", err, out.String())
+		}
+		if doc["id"] != "run1" || doc["token"] != regToken || doc["cloud_identity_id"] != "ci-1" {
+			t.Errorf("document = %v", doc)
+		}
+		for _, key := range []string{"id", "name", "token", "web_origin"} {
+			if _, ok := doc[key]; !ok {
+				t.Errorf("document has no %q key: %v", key, doc)
+			}
+		}
+		if n := strings.Count(out.String(), regToken); n != 1 {
+			t.Errorf("the token appears %d times in the document, want 1:\n%s", n, out.String())
+		}
+		if errOut.Len() != 0 {
+			t.Errorf("stderr is not empty under json:\n%s", errOut.String())
+		}
+	})
+
+	t.Run("csv is one row", func(t *testing.T) {
+		p, out, _ := splitPrinter(ui.FormatCSV)
+		if err := runRunnerRegister(&fakeClient{}, p, "box-1", ""); err != nil {
+			t.Fatalf("runRunnerRegister: %v", err)
+		}
+		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+		if len(lines) != 2 || lines[0] != "id,name,token,web_origin" || !strings.Contains(lines[1], regToken) {
+			t.Errorf("csv = %q", out.String())
 		}
 	})
 
 	t.Run("an empty cloud identity is not sent", func(t *testing.T) {
-		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runRunnerRegister(f, &buf, "box-2", ""); err != nil {
+		if err := runRunnerRegister(f, testPrinter(io.Discard, ui.FormatTable), "box-2", ""); err != nil {
 			t.Fatalf("runRunnerRegister: %v", err)
 		}
 		if f.regRunnerIdentity != "" {
@@ -52,10 +96,13 @@ func TestRunRunnerRegister(t *testing.T) {
 	})
 
 	t.Run("requires a name", func(t *testing.T) {
-		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runRunnerRegister(f, &buf, "", ""); err == nil {
+		err := runRunnerRegister(f, testPrinter(io.Discard, ui.FormatTable), "", "")
+		if err == nil {
 			t.Fatal("a nameless runner must be refused locally")
+		}
+		if e := clierr.From(err); e.Class != clierr.ClassInputRequired || e.Hint == "" {
+			t.Errorf("class = %s, hint = %q; want input_required with a hint", e.Class, e.Hint)
 		}
 		if f.regRunnerName != "" {
 			t.Error("the client must not be called without a name")
@@ -63,23 +110,47 @@ func TestRunRunnerRegister(t *testing.T) {
 	})
 
 	t.Run("surfaces a server error", func(t *testing.T) {
-		var buf bytes.Buffer
-		if err := runRunnerRegister(&fakeClient{err: errBoom}, &buf, "box-3", ""); err == nil {
+		p, out, _ := splitPrinter(ui.FormatTable)
+		if err := runRunnerRegister(&fakeClient{err: errBoom}, p, "box-3", ""); err == nil {
 			t.Fatal("expected the server error to surface")
+		}
+		if out.Len() != 0 {
+			t.Errorf("a failed registration wrote to stdout: %q", out.String())
 		}
 	})
 
 	// A nil registration with no error would otherwise panic on reg.Runner — the shape a stubbed or
 	// half-implemented server can produce.
 	t.Run("a nil registration is an error, not a panic", func(t *testing.T) {
-		var buf bytes.Buffer
-		f := &fakeClient{registration: nil}
-		// Force the nil path: the fake substitutes a default when registration is nil, so use a
-		// client that returns (nil, nil) directly.
-		if err := runRunnerRegister(nilRegClient{}, &buf, "box-4", ""); err == nil {
+		if err := runRunnerRegister(nilRegClient{}, testPrinter(io.Discard, ui.FormatTable), "box-4", ""); err == nil {
 			t.Fatal("expected an error for a nil registration")
 		}
-		_ = f
+	})
+
+	t.Run("a dry run sends nothing and prints no token", func(t *testing.T) {
+		p, out, _ := splitPrinter(ui.FormatJSON)
+		if err := printRunnerRegisterDryRun(p, "box-5", "ci-1"); err != nil {
+			t.Fatalf("printRunnerRegisterDryRun: %v", err)
+		}
+		var doc struct {
+			Kind   string `json:"kind"`
+			Action string `json:"action"`
+			DryRun bool   `json:"dry_run"`
+			Object struct {
+				Request struct {
+					Name string `json:"name"`
+				} `json:"request"`
+			} `json:"object"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+			t.Fatalf("not json: %v\n%s", err, out.String())
+		}
+		if doc.Kind != "runner" || doc.Action != "created" || !doc.DryRun || doc.Object.Request.Name != "box-5" {
+			t.Errorf("document = %+v", doc)
+		}
+		if strings.Contains(out.String(), "token") {
+			t.Errorf("a dry run names a token:\n%s", out.String())
+		}
 	})
 }
 
