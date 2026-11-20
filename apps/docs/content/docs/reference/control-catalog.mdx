@@ -36,20 +36,6 @@ control records its `provider`, so a uniform posture UI can never imply coverage
 | `AZURE-FED-001` | Federated credentials bind a subject | an `azuread_application_federated_identity_credential` with an empty or wildcard `subject` |
 | `AZURE-LEASTPRIV-001` | No Owner/Contributor assignments | an `azurerm_role_assignment` of `Owner` (fail) — **warns** on `Contributor` — scope annotated |
 
-## Alibaba Cloud
-
-Alibaba has a real RAM/OIDC authority surface — **RRSA** (RAM Roles for Service Accounts) is its
-workload-identity mechanism, the analogue of AWS IRSA / GCP WIF — so its control set mirrors the AWS
-one. RAM trust and policy documents share AWS IAM's statement shape; the one Alibaba-specific
-difference is the trust action (`sts:AssumeRole`, not `sts:AssumeRoleWithWebIdentity`). On both
-clouds a wildcard action grant (`sts:*`, `*`) covers the assume call and keeps the role in scope.
-
-| ID | Title | Hard-fail on |
-|----|-------|--------------|
-| `ALI-KEYLESS-001` | No static RAM access keys | creating an `alicloud_ram_access_key` (use RRSA / AssumeRoleWithOIDC instead) |
-| `ALI-OIDC-001` | RRSA trust bound to a specific subject | an `alicloud_ram_role` whose Federated (RRSA) trust **lacks an `oidc:sub` condition**, or binds it only with a **`StringLike` wildcard** (any pod from the issuer can assume). Service-principal roles are out of scope; a computed trust doc → **not_evaluable**. |
-| `ALI-LEASTPRIV-001` | No over-broad RAM grants (named patterns) | an `alicloud_ram_policy` granting `Action:"*"` on `Resource:"*"` or using `Allow` + `NotAction`; or a **role/user/group** policy attachment of an admin-family System policy (`AdministratorAccess`, `AliyunRAMFullAccess` — control of RAM itself is admin one hop away). **Warns** on a service-level wildcard (`ecs:*`, …) with `Resource:"*"`. **Not-evaluable** when the policy body is computed, or for a non-admin System attachment (its body is never in the plan). |
-
 ## Hetzner
 
 Hetzner is **token-auth** — the API token is the ceiling, with no OIDC/federation/IAM surface to bind —
@@ -85,11 +71,11 @@ pass, and workload kinds without a decodable pod spec are simply not counted.
   guessing:
 
   - **Computed bodies** (`after_unknown`) — interpolated IAM/trust/bucket policies → `not_evaluable`.
-  - **Managed-policy bodies** — AWS-managed (non-admin) policies attached by ARN, and Alibaba's
-    non-admin System policies, have no body in the plan → coverage gap, not a pass.
+  - **Managed-policy bodies** — AWS-managed (non-admin) policies attached by ARN have no body in
+    the plan → coverage gap, not a pass.
   - **Cross-state / cross-module** — resources created in another state or module, permission
     boundaries, and SCPs are out of view.
-  - **AWS is deepest; Alibaba mirrors it.** GCP/Azure cover the static-credential, federation-binding,
+  - **AWS is deepest.** GCP/Azure cover the static-credential, federation-binding,
     and primitive-role cases; Hetzner is network **posture** (token-auth has no authority surface to
     audit); the per-cloud `provider` on each control + the report makes coverage explicit.
 </Callout>

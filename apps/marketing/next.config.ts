@@ -31,7 +31,7 @@ const nextConfig: NextConfig = {
 		"/**/*": ["../../node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/**"],
 	},
 	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
-	transpilePackages: ["@repo/ui", "@repo/brand", "@repo/plan-catalog", "@repo/email"],
+	transpilePackages: ["@repo/ui", "@repo/brand", "@repo/plan-catalog", "@repo/email", "@repo/cloud-catalog"],
 	// Marketing owns the bare root, so NO basePath. A custom asset prefix keeps its
 	// /_next/* assets off the console's root (the console owns the `/{org}` wildcard).
 	// Must match the assetPrefix in apps/console/marketing-zones.json and the Caddy

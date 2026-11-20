@@ -1,6 +1,6 @@
 ---
 title: Terraform (per-cloud)
-description: Provision a hardened control-plane VM on any of five clouds — closed-origin behind a Cloudflare Tunnel — with OpenTofu.
+description: Provision a hardened control-plane VM on any of four clouds — closed-origin behind a Cloudflare Tunnel — with OpenTofu.
 ---
 
 # Terraform modules
@@ -23,13 +23,12 @@ plan/apply CI loop.
 | AWS | `infra/cp-aws` | `t3.large` | ≈ $72 | SSM Session Manager | [AWS](/guides/self-hosting/terraform/aws) |
 | GCP | `infra/cp-gcp` | `e2-standard-2` | ≈ $57 | IAP tunnel | [GCP](/guides/self-hosting/terraform/gcp) |
 | Azure | `infra/cp-azure` | `Standard_D2s_v5` | ≈ $90 | `az vm run-command` + Serial Console | [Azure](/guides/self-hosting/terraform/azure) |
-| Alibaba | `infra/cp-alibaba` | `ecs.g7.large` | ≈ $75–95 | ECS Session Manager | [Alibaba](/guides/self-hosting/terraform/alibaba) |
 
 > **x86 boxes.** The published app-bundle images are `linux/amd64`, so every module provisions an x86
 > host (the per-cloud *runner* images are arm64, but they run on the managed fleet, not this box).
 
 > **Costs** are on-demand estimates at each module's default region. AWS/GCP/Azure are from
-> **Infracost**; Hetzner and Alibaba (which Infracost doesn't price) are **list prices**. See each
+> **Infracost**; Hetzner (which Infracost doesn't price) is a **list price**. See each
 > cloud's page for the breakdown; a monthly/subscription commitment is cheaper on most clouds.
 
 ## The model — closed origin, zero standing inbound

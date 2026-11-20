@@ -12,7 +12,7 @@ resources.
 <Callout type="info">
   Every cloud identity is **platform-managed**: the control plane (the hosted service, or your own console when
   self-hosted) mints the short-lived credentials on demand — it federates off the Alethia OIDC issuer, so it
-  holds no standing cloud credential (Alibaba is even account-free). There is no "bring the token to a
+  holds no standing cloud credential. There is no "bring the token to a
   self-hosted runner" path.
 </Callout>
 
@@ -52,8 +52,7 @@ The inventory is maintained server-side:
   the reliable backstop and is **on by default**.
 - **Event-driven updates (opt-in, near-real-time)** — a per-cloud forwarder can stream change events so
   the inventory reflects a new/deleted resource within seconds (**AWS** EventBridge → Lambda; **GCP**
-  Cloud Asset Inventory → Pub/Sub → Cloud Function; **Azure** Event Grid → Function App; **Alibaba**
-  ActionTrail → EventBridge → Function Compute). Each normalizes
+  Cloud Asset Inventory → Pub/Sub → Cloud Function; and **Azure** Event Grid → Function App). Each normalizes
   the change and `POST`s `{ kind, native_id, region, deleted }` to `/api/cloud-events/{provider}` — never
   credentials. The forwarders are **deployed separately** into your cloud; until then, the sweep provides
   minutes-level freshness.

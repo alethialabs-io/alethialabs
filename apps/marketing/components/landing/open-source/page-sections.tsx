@@ -69,7 +69,6 @@ const CLOUDS: { name: string; access: string; hardening: string }[] = [
 	{ name: "GCP", access: "IAP tunnel", hardening: "Shielded VM" },
 	{ name: "AWS", access: "SSM Session Manager", hardening: "IMDSv2 · encrypted EBS" },
 	{ name: "Azure", access: "az vm run-command", hardening: "Trusted Launch" },
-	{ name: "Alibaba", access: "Session Manager", hardening: "encrypted disk" },
 ];
 
 function Proof() {
@@ -80,7 +79,7 @@ function Proof() {
 				<div style={{ display: "grid", gridTemplateColumns: "1fr 1.15fr", gap: 56, alignItems: "start" }} className="ah-surface">
 					<div>
 						<h2 style={{ ...disp, fontSize: 34, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 14px", color: "var(--text-primary)" }}>
-							One control plane, five clouds, zero open ports.
+							One control plane, four clouds, zero open ports.
 						</h2>
 						<p style={{ fontSize: 15, color: "var(--text-tertiary)", lineHeight: 1.65, margin: "0 0 22px", maxWidth: 440 }}>
 							Each per-cloud stack fronts the box with a Cloudflare Tunnel — the origin dials out,

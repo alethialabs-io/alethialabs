@@ -10,7 +10,7 @@ import { OpenSourceSections } from "@/components/landing/open-source/page-sectio
 export const metadata: Metadata = {
 	title: "Open source · Alethia",
 	description:
-		"Alethia is open source under the GNU AGPL. Self-host the whole multi-cloud Kubernetes control plane — console, CLI, runners, provisioning — on your own infrastructure, closed-origin behind a Cloudflare Tunnel, on any of five clouds. AGPL core; one commercial boundary under ee/.",
+		"Alethia is open source under the GNU AGPL. Self-host the whole multi-cloud Kubernetes control plane — console, CLI, runners, provisioning — on your own infrastructure, closed-origin behind a Cloudflare Tunnel, on any of four clouds. AGPL core; one commercial boundary under ee/.",
 };
 
 /**

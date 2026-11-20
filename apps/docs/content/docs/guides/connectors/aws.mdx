@@ -7,7 +7,7 @@ description: Keyless, issuer-direct IAM role — an IAM OIDC provider trusting t
 
 Connecting AWS registers a **cloud identity** (`cloud_identities`) that is **keyless and issuer-direct**: your account registers an **IAM OIDC provider** that trusts
 Alethia's OIDC issuer, plus an IAM role Alethia assumes via **`AssumeRoleWithWebIdentity`** — no access keys, no
-external id, and no trust in an Alethia AWS account. This is the same model GCP, Azure, and Alibaba use. See
+external id, and no trust in an Alethia AWS account. This is the same model GCP and Azure use. See
 [Security Architecture](/concepts/security) for the full model.
 
 <Callout type="info">
