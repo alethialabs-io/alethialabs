@@ -24,7 +24,9 @@ const { push, syncEnvironment } = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
 	useRouter: () => ({ push, refresh: vi.fn(), replace: vi.fn() }),
-	usePathname: () => "/acme/shop",
+	// The Architecture view: the one project view that shows a single environment, and so the one
+	// the switcher and its shortcut are on (#6924).
+	usePathname: () => "/acme/shop/architecture",
 	useSearchParams: () => new URLSearchParams(),
 	useParams: () => ({ org: "acme", project: "shop" }),
 }));
@@ -102,7 +104,7 @@ describe("the environment switcher", () => {
 		const pageButton = screen.getByRole("button", { name: "a page button" });
 		expect(fireEvent.keyDown(pageButton, NEXT_ENV)).toBe(false);
 		expect(push).toHaveBeenCalledTimes(1);
-		expect(push).toHaveBeenCalledWith("/acme/shop?environment_id=env_2");
+		expect(push).toHaveBeenCalledWith("/acme/shop/architecture?environment_id=env_2");
 		expect(syncEnvironment).toHaveBeenCalledWith("proj_1", "env_2");
 	});
 

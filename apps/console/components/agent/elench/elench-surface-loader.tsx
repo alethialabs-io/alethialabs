@@ -225,8 +225,15 @@ class SurfaceBoundary extends Component<BoundaryProps, BoundaryState> {
  * the module loader again; and the surface itself renders inside its own boundary, so a throw in
  * it lands in that same place. None of the three reaches the route's error boundary. While the
  * assistant is closed, none of the three draws anything.
+ *
+ * `load` is the import. The shell passes nothing and gets the real one; a test passes its own, so
+ * each state is reached without depending on how a test runner caches a module that failed.
  */
-export function ElenchSurfaceLoader() {
+export function ElenchSurfaceLoader({
+	load: loadSurfaceModule = loadSurface,
+}: {
+	load?: () => Promise<ComponentType>;
+} = {}) {
 	const open = useElenchStore((s) => s.open);
 	const view = useElenchStore((s) => s.view);
 	const close = useElenchStore((s) => s.close);
@@ -240,7 +247,7 @@ export function ElenchSurfaceLoader() {
 	useEffect(() => {
 		if (!wanted) return;
 		let current = true;
-		loadSurface().then(
+		loadSurfaceModule().then(
 			(Surface) => {
 				if (current) setLoad({ Surface });
 			},
@@ -251,7 +258,7 @@ export function ElenchSurfaceLoader() {
 		return () => {
 			current = false;
 		};
-	}, [wanted, attempt]);
+	}, [wanted, attempt, loadSurfaceModule]);
 
 	if (!wanted) return null;
 

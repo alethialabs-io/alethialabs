@@ -432,15 +432,17 @@ test.describe("Navigation shell — env switcher", () => {
 		project = await seedProject(ownerId(owner), { name: `e2e-nav-env-${Date.now()}` });
 	});
 
+	// The switcher is on the Architecture view only (#6924): the one project view that shows a single
+	// environment. On Jobs it changed the address and nothing on the page.
 	test("renders on a project route with the default environment", async ({ owner }) => {
-		await owner.page.goto(`/${owner.orgSlug}/${project.slug}/jobs`);
+		await owner.page.goto(`/${owner.orgSlug}/${project.slug}/architecture`);
 		await expect(owner.page.getByRole("button", { name: /switch environment: production/i })).toBeVisible({
 			timeout: 20_000,
 		});
 	});
 
 	test("opening it lists environments and a New Environment action", async ({ owner }) => {
-		await owner.page.goto(`/${owner.orgSlug}/${project.slug}/jobs`);
+		await owner.page.goto(`/${owner.orgSlug}/${project.slug}/architecture`);
 		await owner.page.getByRole("button", { name: /switch environment: production/i }).click({ timeout: 20_000 });
 		await expect(owner.page.getByPlaceholder(/find environment/i)).toBeVisible();
 		await expect(owner.page.getByRole("option", { name: "production" })).toBeVisible();
@@ -452,7 +454,7 @@ test.describe("Navigation shell — env switcher", () => {
 	});
 
 	test("selecting an environment pins it via the ?environment_id query", async ({ owner }) => {
-		await owner.page.goto(`/${owner.orgSlug}/${project.slug}/jobs`);
+		await owner.page.goto(`/${owner.orgSlug}/${project.slug}/architecture`);
 		await owner.page.getByRole("button", { name: /switch environment: production/i }).click({ timeout: 20_000 });
 		await owner.page.getByRole("option", { name: "production" }).click();
 		await owner.page.waitForURL(/environment_id=/, { timeout: 15_000 });

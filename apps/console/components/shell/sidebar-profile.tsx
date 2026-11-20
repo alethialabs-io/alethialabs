@@ -18,6 +18,7 @@ import {
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InlineThemeSwitcher } from "@/components/theme-menu";
 import { authClient } from "@/lib/auth/client";
@@ -31,16 +32,6 @@ import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { displayName, userInitials } from "@/lib/user-display";
 import { signOutWarning, unsavedCount } from "@/components/agent/elench/draft-status/copy";
 import { useRegisteredDraftsStore } from "@/components/agent/elench/draft-status/registry";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@repo/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@repo/ui/avatar";
 import { Button } from "@repo/ui/button";
 import {
@@ -108,12 +99,12 @@ export function SidebarProfile() {
   const showUpgrade = isHosted && onPaidPlan === false;
 
   /**
-   * Signs out. While it runs the bar reads "Signing out…" and a second call does nothing. A
-   * sign-out that succeeds leaves the page, so the pending state is only ever lifted by a failure,
-   * which is reported and leaves the person signed in.
+   * Signs out, and answers whether it did. While it runs the bar reads "Signing out…" and a second
+   * call does nothing. A sign-out that succeeds leaves the page, so the pending state is only ever
+   * lifted by a failure, which is reported and leaves the person signed in.
    */
-  const handleSignOut = async () => {
-    if (signOutStarted.current) return;
+  const handleSignOut = async (): Promise<boolean> => {
+    if (signOutStarted.current) return false;
     signOutStarted.current = true;
     setMenuOpen(false);
     setSigningOut(true);
@@ -131,7 +122,9 @@ export function SidebarProfile() {
       signOutStarted.current = false;
       setSigningOut(false);
       toast.error(SIGN_OUT_FAILED);
+      return false;
     }
+    return true;
   };
 
   /**
@@ -359,33 +352,20 @@ export function SidebarProfile() {
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
       />
-      <AlertDialog
+      {/* The unsaved-messages confirm. It runs the sign-out itself: pending while the session is
+          being ended, and still open, to try again, when that failed. */}
+      <ConfirmAction
         open={unsavedOnSignOut !== null}
         onOpenChange={(open) => {
           if (!open) setUnsavedOnSignOut(null);
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{AUTH.signOut} with unsaved messages?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {signOutWarning(unsavedOnSignOut ?? 0)}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Stay signed in</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                setUnsavedOnSignOut(null);
-                void handleSignOut();
-              }}
-            >
-              {AUTH.signOut}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={`${AUTH.signOut} with unsaved messages?`}
+        description={signOutWarning(unsavedOnSignOut ?? 0)}
+        confirmLabel={AUTH.signOut}
+        pendingLabel={SIGNING_OUT}
+        severity={{ level: "confirm" }}
+        run={handleSignOut}
+      />
     </div>
   );
 }
