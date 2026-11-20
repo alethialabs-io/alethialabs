@@ -80,7 +80,7 @@ function designNode(kind: "database" | "bucket", name: string): CanvasNode {
 			cloud_identity_id: null,
 			provider: "aws",
 		},
-	} as CanvasNode;
+	} as unknown as CanvasNode;
 }
 
 /** A card the design does not own, as the canvas mirrors it into the store. */

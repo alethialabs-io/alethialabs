@@ -91,7 +91,7 @@ function designNode(kind: NodeKind, name: string): CanvasNode {
 			cloud_identity_id: null,
 			provider: "aws",
 		},
-	} as CanvasNode;
+	} as unknown as CanvasNode;
 }
 
 /** What the rail does for a design node: hand the subject the document's node, as it changes. */
