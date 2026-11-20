@@ -3,10 +3,10 @@
 
 // The sign-out sequence (#6924), with its effects recorded in the order they run.
 //
-// The sign-out handler used to ignore the auth client's answer (it answers a failure as
-// `{ error }`, it does not throw), then push the router to "/". A push keeps the tab's memory, and
-// that memory holds a query client per organization with the previous person's rows. And wizard
-// drafts, which live in the tab's storage, had a `clearAllWizardDrafts()` that nothing called.
+// Signing out is one sequence: the session is ended on the server; then, and only if that
+// worked, the sign-in form's memory of the account and the tab's wizard drafts are cleared; then
+// the page is left with a full document load. The auth client answers a failure as `{ error }`
+// rather than throwing, and both forms of failure leave the person signed in with nothing cleared.
 
 import { describe, expect, it } from "vitest";
 import { SIGNED_OUT_HREF, signOutOfConsole, type SignOutEffects } from "@/components/shell/sign-out";

@@ -11,11 +11,9 @@
 //      than throwing it, and a dropped connection throws; both are a sign-out that did not happen,
 //      and then nothing else here runs. The person is still signed in and is told so.
 //   2. What this browser remembers about the person is removed: the sign-in form's memory of the
-//      account, and every wizard draft, which is kept in the tab's storage and would otherwise be
-//      offered to whoever signs in next in this tab.
-//   3. The page is left with a full document load, not a router push. A push keeps this tab's
-//      memory, and that memory holds a query client per organization with the previous person's
-//      rows in it. A new document starts with none.
+//      account, and every wizard draft kept in the tab's storage.
+//   3. The page is left with a full document load, not a router push, so the next page starts
+//      with new query clients and new stores.
 
 /** What {@link signOutOfConsole} came to. */
 export type SignOutOutcome = "signed-out" | "failed";

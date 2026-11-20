@@ -3,13 +3,12 @@
 
 // The account menu (#6924): what signing out does, and what the menu shows by instance edition.
 //
-// SIGNING OUT. The handler awaited `authClient.signOut()`, ignored its answer and pushed the router
-// to "/". Three things were wrong with that. The auth client ANSWERS a failure as `{ error }`, so a
-// sign-out that did not happen was treated as one that did. A router push keeps the tab's memory,
-// which holds a query client per organization with the previous person's rows. And the wizard
-// drafts in the tab's storage were left for whoever signs in next: `clearAllWizardDrafts()` existed
-// and had no caller. The REAL `SidebarProfile` is rendered here over the real draft storage and the
-// real sign-in-memory store; the auth client, the toast and the document load are the stubs.
+// SIGNING OUT. The menu's Sign out ends the session, then clears the tab's wizard drafts
+// (`clearAllWizardDrafts()`) and the sign-in form's memory of the account, then leaves with a full
+// document load. While the session is being ended the bar says so; when it could not be ended the
+// person is told, stays signed in, and nothing is cleared. The REAL `SidebarProfile` is rendered
+// here over the real draft storage and the real sign-in-memory store; the auth client, the toast
+// and the document load are the stubs.
 //
 // BY EDITION. The menu printed "Platform Status — All systems normal." on every instance, during
 // an outage too, linking the hosted service's status page from self-managed consoles as well.
