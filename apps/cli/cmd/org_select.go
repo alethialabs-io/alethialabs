@@ -5,11 +5,11 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -39,9 +39,13 @@ import (
 // Summary is EMPTY when the id came from the command line, and set when the CLI chose. Callers use
 // that difference: a destructive command that resolved its own target must say what the target was,
 // because "Remove this member?" is not a question a reader can answer about an id they never saw.
+//
+// Name is what a person calls the entity — an email, a team name, a role name — when the CLI
+// looked it up, and empty when the id came from the command line and nothing was fetched.
 type orgRef struct {
 	ID      string
 	Summary string
+	Name    string
 }
 
 // announceResolvedChoice tells the reader which entity the CLI chose, on STDERR.
@@ -58,7 +62,7 @@ func announceResolvedChoice(summary, verb string) {
 	if summary == "" {
 		return
 	}
-	fmt.Fprintln(os.Stderr, ui.MutedStyle.Render(ui.SymbolPoint+" "+verb+" "+summary))
+	printer.Progress(verb + " " + summary)
 }
 
 // orgChoice is one option: the id the command needs, the label a person reads, and the keys a
@@ -71,6 +75,16 @@ type orgChoice struct {
 	ID    string
 	Label string
 	Keys  []string
+}
+
+// name returns the first key a person can call this choice by, or "" when it has none.
+func (c orgChoice) name() string {
+	for _, k := range c.Keys {
+		if k != "" {
+			return k
+		}
+	}
+	return ""
 }
 
 // matches reports whether v names this choice.
@@ -112,15 +126,21 @@ func (s orgPickSpec) refuse() error {
 	// the message, the table and the command's own Use are one string, checked by
 	// TestHygCliOrgForm_ScriptedRefusalNamesWhatToPass.
 	if s.Field.Selector == "" {
-		return fmt.Errorf(
+		return refusal(clierr.CodeInputRequired, s.ListCmd,
 			"no %s given, and interactive prompts are disabled (--no-input, or stdin is not a terminal): "+
 				"pass the %s id %s — `%s` lists them",
 			s.Noun, s.Noun, s.Field.Arg, s.ListCmd)
 	}
-	return fmt.Errorf(
+	return refusal(clierr.CodeInputRequired, s.ListCmd,
 		"no %s given, and interactive prompts are disabled (--no-input, or stdin is not a terminal): "+
 			"pass the %s id %s, or %s to name it — `%s` lists them",
 		s.Noun, s.Noun, s.Field.Arg, s.selectorFlag(), s.ListCmd)
+}
+
+// notFound is the refusal for a name that matches nothing, or for a list with nothing in it. The
+// hint is the command that shows what there is.
+func (s orgPickSpec) notFound(format string, args ...any) error {
+	return refusal(clierr.CodeNotFound, s.ListCmd, format, args...)
 }
 
 // orgFieldToken renders how a field is typed: `--role`, or the positional `[email]`.
@@ -137,12 +157,12 @@ func orgFieldToken(f orgField) string {
 // It NAMES what to pass, from the spec. "interactive input required but prompts are disabled" — the
 // package's generic answer — tells a scripted caller that they are stuck without telling them how
 // to become unstuck, and the flags it would have named are exactly the ones a reader cannot guess.
-func refuseNoForm(fields ...orgField) error {
+func refuseNoForm(fields ...orgField) *clierr.Error {
 	tokens := make([]string, len(fields))
 	for i, f := range fields {
 		tokens[i] = orgFieldToken(f)
 	}
-	return fmt.Errorf(
+	return refusal(clierr.CodeInputRequired, "",
 		"interactive prompts are unavailable (--no-input, or stdin is not a terminal, "+
 			"or the stream a prompt draws on is redirected): pass %s",
 		strings.Join(tokens, " and "))
@@ -158,7 +178,8 @@ func resolveOrgChoice(spec orgPickSpec, id, selector string, list func() ([]orgC
 	if id != "" && selector != "" {
 		// Silently preferring one would be the worse answer: `teams delete <id> --name other` would
 		// delete the team whose id was given while appearing to have named a different one.
-		return orgRef{}, fmt.Errorf("pass a %s id or %s, not both (%q and %q were given)",
+		return orgRef{}, refusal(clierr.CodeInvalidUsage, "",
+			"pass a %s id or %s, not both (%q and %q were given)",
 			spec.Noun, spec.selectorFlag(), id, selector)
 	}
 	if id != "" {
@@ -175,16 +196,16 @@ func resolveOrgChoice(spec orgPickSpec, id, selector string, list func() ([]orgC
 		return orgRef{}, err
 	}
 	if len(choices) == 0 {
-		return orgRef{}, fmt.Errorf("%s", spec.Empty)
+		return orgRef{}, spec.notFound("%s", spec.Empty)
 	}
 
 	if selector != "" {
 		for _, c := range choices {
 			if c.matches(selector) {
-				return orgRef{ID: c.ID, Summary: c.Label}, nil
+				return orgRef{ID: c.ID, Summary: c.Label, Name: c.name()}, nil
 			}
 		}
-		return orgRef{}, fmt.Errorf("no %s named %q (have: %s)", spec.Noun, selector, orgChoiceKeys(choices))
+		return orgRef{}, spec.notFound("no %s named %q (have: %s)", spec.Noun, selector, orgChoiceKeys(choices))
 	}
 	return pickOrgChoice(spec, choices)
 }
@@ -228,7 +249,27 @@ func pickOrgChoice(spec orgPickSpec, choices []orgChoice) (orgRef, error) {
 	); err != nil {
 		return orgRef{}, err
 	}
-	return orgRef{ID: choices[chosen].ID, Summary: choices[chosen].Label}, nil
+	return orgRef{ID: choices[chosen].ID, Summary: choices[chosen].Label, Name: choices[chosen].name()}, nil
+}
+
+// orgRefName returns what a person types to confirm removing ref: its name when the CLI already
+// holds it or the list carries it, and the id when neither does. A list that cannot be read is
+// not an error here — the id is still a true name for the thing, and the delete that follows
+// reports the failure if there is one.
+func orgRefName(ref orgRef, list func() ([]orgChoice, error)) string {
+	if ref.Name != "" {
+		return ref.Name
+	}
+	choices, err := list()
+	if err != nil {
+		return ref.ID
+	}
+	for _, c := range choices {
+		if c.ID == ref.ID && c.name() != "" {
+			return c.name()
+		}
+	}
+	return ref.ID
 }
 
 // ── the candidate lists ─────────────────────────────────────────────────────────────────────────
@@ -275,7 +316,7 @@ func memberChoices(c memberLister, orgID string) func() ([]orgChoice, error) {
 	return func() ([]orgChoice, error) {
 		members, err := c.ListMembers(orgID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list members: %w", err)
+			return nil, err
 		}
 		out := make([]orgChoice, len(members))
 		for i, m := range members {
@@ -299,7 +340,7 @@ func teamChoices(c teamLister, orgID string) func() ([]orgChoice, error) {
 	return func() ([]orgChoice, error) {
 		teams, err := c.ListTeams(orgID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list teams: %w", err)
+			return nil, err
 		}
 		out := make([]orgChoice, len(teams))
 		for i, t := range teams {
@@ -333,7 +374,7 @@ func deletableRoleChoices(c roleLister) func() ([]orgChoice, error) {
 	return func() ([]orgChoice, error) {
 		roles, err := c.ListRoles()
 		if err != nil {
-			return nil, fmt.Errorf("failed to list roles: %w", err)
+			return nil, err
 		}
 		var out []orgChoice
 		for _, r := range roles {
@@ -352,7 +393,7 @@ func bindableRoleChoices(c roleLister) func() ([]orgChoice, error) {
 	return func() ([]orgChoice, error) {
 		roles, err := c.ListRoles()
 		if err != nil {
-			return nil, fmt.Errorf("failed to list roles: %w", err)
+			return nil, err
 		}
 		out := make([]orgChoice, len(roles))
 		for i, r := range roles {
@@ -383,7 +424,7 @@ func grantChoices(c grantLister) func() ([]orgChoice, error) {
 	return func() ([]orgChoice, error) {
 		grants, err := c.ListGrants()
 		if err != nil {
-			return nil, fmt.Errorf("failed to list grants: %w", err)
+			return nil, err
 		}
 		out := make([]orgChoice, len(grants))
 		for i, g := range grants {
@@ -404,7 +445,7 @@ func ssoChoices(c ssoLister) func() ([]orgChoice, error) {
 	return func() ([]orgChoice, error) {
 		providers, err := c.ListSsoProviders()
 		if err != nil {
-			return nil, fmt.Errorf("failed to list SSO providers: %w", err)
+			return nil, err
 		}
 		out := make([]orgChoice, len(providers))
 		for i, p := range providers {
@@ -527,7 +568,7 @@ func grantPrincipalChoices(c interface {
 		}
 		members, err := c.ListMembers(orgID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list members: %w", err)
+			return nil, err
 		}
 		out := make([]orgChoice, len(members))
 		for i, m := range members {
@@ -591,7 +632,7 @@ func projectScopeChoices(c projectLister) func() ([]orgChoice, error) {
 	return func() ([]orgChoice, error) {
 		projects, err := c.GetConfigurations()
 		if err != nil {
-			return nil, fmt.Errorf("failed to list projects: %w", err)
+			return nil, err
 		}
 		out := make([]orgChoice, len(projects))
 		for i, p := range projects {
@@ -606,7 +647,7 @@ func runnerScopeChoices(c runnerLister) func() ([]orgChoice, error) {
 	return func() ([]orgChoice, error) {
 		runners, err := c.GetRunners()
 		if err != nil {
-			return nil, fmt.Errorf("failed to list runners: %w", err)
+			return nil, err
 		}
 		out := make([]orgChoice, len(runners))
 		for i, r := range runners {
@@ -621,7 +662,7 @@ func cloudIdentityScopeChoices(c cloudIdentityLister) func() ([]orgChoice, error
 	return func() ([]orgChoice, error) {
 		identities, err := c.GetCloudIdentities()
 		if err != nil {
-			return nil, fmt.Errorf("failed to list cloud accounts: %w", err)
+			return nil, err
 		}
 		out := make([]orgChoice, len(identities))
 		for i, id := range identities {
@@ -762,14 +803,14 @@ func resolveByNameOrID(spec orgPickSpec, v string, list func() ([]orgChoice, err
 		return orgRef{}, err
 	}
 	if len(choices) == 0 {
-		return orgRef{}, fmt.Errorf("%s", spec.Empty)
+		return orgRef{}, spec.notFound("%s", spec.Empty)
 	}
 	for _, c := range choices {
 		if c.matches(v) {
-			return orgRef{ID: c.ID, Summary: c.Label}, nil
+			return orgRef{ID: c.ID, Summary: c.Label, Name: c.name()}, nil
 		}
 	}
-	return orgRef{}, fmt.Errorf("no %s named %q (have: %s)", spec.Noun, v, orgChoiceKeys(choices))
+	return orgRef{}, spec.notFound("no %s named %q (have: %s)", spec.Noun, v, orgChoiceKeys(choices))
 }
 
 // ── the permission catalog, from the server ─────────────────────────────────────────────────────
@@ -786,8 +827,8 @@ func resolveByNameOrID(spec orgPickSpec, v string, list func() ([]orgChoice, err
 //
 // A multi-select with no options is a box nobody can answer, and "the catalog came back empty" is a
 // different problem from "you chose none" — so it is an error naming the flag, not a form.
-var errNoPermissionCatalog = fmt.Errorf(
-	"the control plane returned no permission keys, so there is nothing to choose from — " +
+var errNoPermissionCatalog = refusal(clierr.CodeConflict, "alethia roles create deployers --permission project:deploy",
+	"the control plane returned no permission keys, so there is nothing to choose from — "+
 		"pass --permission <resource:action> instead")
 
 func permissionCatalog(roles []api.Role) []string {
@@ -848,7 +889,7 @@ func promptMembersAdd(c roleLister, email, current string, offerOrgRoles bool) (
 	if offerOrgRoles {
 		roles, err := c.ListRoles()
 		if err != nil {
-			return "", "", fmt.Errorf("failed to list roles: %w", err)
+			return "", "", err
 		}
 		groups = append(groups, huh.NewGroup(
 			huh.NewSelect[string]().
@@ -949,7 +990,7 @@ func promptRolePermissions(c roleLister, current []string) ([]string, error) {
 	}
 	roles, err := c.ListRoles()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list roles: %w", err)
+		return nil, err
 	}
 	catalog := permissionCatalog(roles)
 	if len(catalog) == 0 {
@@ -1040,12 +1081,12 @@ func promptGrantsAdd(c grantsAddClient, orgID string, in grantsAddAnswers) (gran
 
 	roles, err := c.ListRoles()
 	if err != nil {
-		return in, fmt.Errorf("failed to list roles: %w", err)
+		return in, err
 	}
 	if bindRole {
 		in.Permission = ""
 		if len(roles) == 0 {
-			return in, fmt.Errorf("%s", grantRolePickSpec.Empty)
+			return in, grantRolePickSpec.notFound("%s", grantRolePickSpec.Empty)
 		}
 		choices := make([]orgChoice, len(roles))
 		for i, r := range roles {
@@ -1114,5 +1155,6 @@ func canonicalOneOf(flag, value string, allowed []string) (string, error) {
 			return a, nil
 		}
 	}
-	return "", fmt.Errorf("--%s %q is not one of: %s", flag, value, strings.Join(allowed, ", "))
+	return "", refusal(clierr.CodeInvalidFlag, "",
+		"--%s %q is not one of: %s", flag, value, strings.Join(allowed, ", "))
 }

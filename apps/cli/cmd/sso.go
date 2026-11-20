@@ -4,9 +4,7 @@
 package cmd
 
 import (
-	"fmt"
 	"io"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -24,32 +22,31 @@ plugin). Secrets and config are never shown.`,
 var ssoListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List configured SSO providers",
+	Long: `List the active organization's SSO identity providers: the protocol, the email
+domain each one serves, its issuer, and whether it is enabled.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
 		client := api.NewClient(token)
-		if interactiveTable(cmd) {
-			var providers []api.SsoProvider
-			runSpinner("Fetching SSO providers...", func() { providers, err = client.ListSsoProviders() })
-			if err != nil {
-				failf("Failed to list SSO providers: %v", err)
-			}
-			if len(providers) == 0 {
-				ui.Muted("No SSO providers configured.")
-				return
-			}
-			_ = ui.ShowTable(ssoListColumns, ssoRows(providers, ui.FormatTable), "SSO providers")
-			return
-		}
-		if err := runSsoList(client, os.Stdout, outputFormat(cmd)); err != nil {
-			failf("Failed to list SSO providers: %v", err)
+		if err := runListCommand(cmd, ssoListView, client.ListSsoProviders); err != nil {
+			fail(err)
 		}
 	},
 }
 
 var ssoListColumns = []string{"Provider", "Domain", "Issuer", "Enabled", "ID"}
+
+// ssoListView is how `sso list` is drawn.
+var ssoListView = listView[api.SsoProvider]{
+	Spinner: "Fetching SSO providers...",
+	Title:   "SSO providers",
+	Empty:   "No SSO providers configured. Register one in the console.",
+	Columns: ssoListColumns,
+	Rows:    ssoRows,
+}
 
 // ssoRows projects SSO providers into plain table rows.
 func ssoRows(providers []api.SsoProvider, outFmt string) [][]string {
@@ -64,16 +61,9 @@ func ssoRows(providers []api.SsoProvider, outFmt string) [][]string {
 func runSsoList(c apiClient, out io.Writer, format string) error {
 	providers, err := c.ListSsoProviders()
 	if err != nil {
-		return err
+		return governanceError(err)
 	}
-	if len(providers) == 0 && format == ui.FormatTable {
-		fmt.Fprintln(out, ui.MutedStyle.Render("No SSO providers configured."))
-		return nil
-	}
-	return ui.Render(out, format, ui.TableSpec{
-		Columns: ssoListColumns,
-		Rows:    ssoRows(providers, format),
-	}, providers)
+	return renderList(out, format, ssoListView, providers)
 }
 
 // ssoGetDomain is the --domain selector: name the provider by the email domain it serves instead of
@@ -83,32 +73,42 @@ var ssoGetDomain string
 var ssoGetCmd = &cobra.Command{
 	Use:   "get [id]",
 	Short: "Show a single SSO provider",
-	Long: `Show one configured SSO provider. Pass its id, or --domain to name it by the email domain
-it serves; with neither, pick from the org's providers.`,
+	Long: `Show one configured SSO provider. Name it with --domain, the email domain it
+serves, or pass its id; with neither on a terminal, pick from the organization's
+providers. Secrets and config are never shown.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		client := api.NewClient(token)
-		id := ""
-		if len(args) > 0 {
-			id = args[0]
-		}
-		ref, err := resolveOrgChoice(ssoPickSpec, id, ssoGetDomain, ssoChoices(client))
-		if err != nil {
-			fail(err)
-		}
-		var provider *api.SsoProvider
-		runSpinner("Fetching SSO provider...", func() { provider, err = client.GetSsoProvider(ref.ID) })
-		if err != nil {
-			failf("Failed to get SSO provider: %v", err)
-		}
-		if err := renderSsoProvider(os.Stdout, outputFormat(cmd), provider); err != nil {
-			fail(err)
+		if err := runSsoGetCmd(cmd, args); err != nil {
+			fail(governanceError(err))
 		}
 	},
+}
+
+// runSsoGetCmd is `sso get`: it resolves the provider and prints it.
+func runSsoGetCmd(cmd *cobra.Command, args []string) error {
+	format := outputFormat(cmd)
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	client := api.NewClient(token)
+	id := ""
+	if len(args) > 0 {
+		id = args[0]
+	}
+	ref, err := resolveOrgChoice(ssoPickSpec, id, ssoGetDomain, ssoChoices(client))
+	if err != nil {
+		return err
+	}
+	var provider *api.SsoProvider
+	runSpinner("Fetching SSO provider...", func() { provider, err = client.GetSsoProvider(ref.ID) })
+	if err != nil {
+		return notFoundHint(err, ssoPickSpec.ListCmd)
+	}
+	if provider == nil {
+		return errNoRecord("request")
+	}
+	return renderSsoProvider(printer.Out, format, provider)
 }
 
 // renderSsoProvider writes a single SSO provider as a KV card (table), the typed

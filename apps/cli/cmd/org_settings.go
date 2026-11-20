@@ -4,9 +4,7 @@
 package cmd
 
 import (
-	"fmt"
 	"io"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -16,13 +14,19 @@ import (
 var orgSettingsCmd = &cobra.Command{
 	Use:   "settings",
 	Short: "Show the active organization's general settings",
+	Long: `Show the active organization's name, slug, description, default region, default
+environment and Terraform version. Read-only: the settings are changed in the console.
+
+Under --output json the whole record is printed, or null on a deployment with no
+organizations.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		if err := runOrgSettings(api.NewClient(token), os.Stdout, outputFormat(cmd)); err != nil {
-			failf("Failed to get org settings: %v", err)
+		if err := runOrgSettings(api.NewClient(token), printer.Out, outputFormat(cmd)); err != nil {
+			fail(err)
 		}
 	},
 }
@@ -32,13 +36,14 @@ var orgSettingsCmd = &cobra.Command{
 func runOrgSettings(c apiClient, out io.Writer, format string) error {
 	s, err := c.GetOrgSettings()
 	if err != nil {
-		return err
+		return governanceError(err)
 	}
 	if format == ui.FormatJSON {
 		return ui.Render(out, format, ui.TableSpec{}, s)
 	}
 	if s == nil {
-		fmt.Fprintln(out, ui.MutedStyle.Render("Not in an organization (community mode)."))
+		// Nothing to print: the absence is said on stderr, and csv gets no rows.
+		printer.Note("Not in an organization (community mode).")
 		return nil
 	}
 	rows := [][]string{

@@ -6,10 +6,11 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
@@ -31,29 +32,29 @@ or id — omit either on a terminal and you are asked which.`,
 var alertsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List alert rules",
+	Long: `List the active organization's alert rules: the severity each one delivers at, how
+many event patterns fire it, how many channels it routes to, and whether it is enabled.
+Under --output json each rule lists its patterns and its channel ids.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
 		client := api.NewClient(token)
-		if interactiveTable(cmd) {
-			var rules []api.AlertRule
-			runSpinner("Fetching alert rules...", func() { rules, err = client.ListAlertRules() })
-			if err != nil {
-				failf("Failed to list alert rules: %v", err)
-			}
-			if len(rules) == 0 {
-				ui.Muted("No alert rules found.")
-				return
-			}
-			_ = ui.ShowTable(alertListColumns, alertRows(rules, ui.FormatTable), "alert rules")
-			return
-		}
-		if err := runAlertsList(client, os.Stdout, outputFormat(cmd)); err != nil {
-			failf("Failed to list alert rules: %v", err)
+		if err := runListCommand(cmd, alertListView, client.ListAlertRules); err != nil {
+			fail(err)
 		}
 	},
+}
+
+// alertListView is how `alerts list` is drawn.
+var alertListView = listView[api.AlertRule]{
+	Spinner: "Fetching alert rules...",
+	Title:   "alert rules",
+	Empty:   "No alert rules found. Create one with `alethia alerts create`.",
+	Columns: alertListColumns,
+	Rows:    alertRows,
 }
 
 var alertListColumns = []string{"Name", "Severity", "Events", "Channels", "Enabled", "ID"}
@@ -78,16 +79,9 @@ func alertRows(rules []api.AlertRule, outFmt string) [][]string {
 func runAlertsList(c apiClient, out io.Writer, format string) error {
 	rules, err := c.ListAlertRules()
 	if err != nil {
-		return err
+		return governanceError(err)
 	}
-	if len(rules) == 0 && format == ui.FormatTable {
-		fmt.Fprintln(out, ui.MutedStyle.Render("No alert rules found."))
-		return nil
-	}
-	return ui.Render(out, format, ui.TableSpec{
-		Columns: alertListColumns,
-		Rows:    alertRows(rules, format),
-	}, rules)
+	return renderList(out, format, alertListView, rules)
 }
 
 var (
@@ -104,22 +98,32 @@ channels. Repeat --event and --channel for multiple values.
 
 --channel takes a channel's NAME as readily as its id, so a rule can be created
 without first copying an id out of "alethia channels list". Omit any of the four
-values on a terminal and you are asked for it.`,
+values on a terminal and you are asked for it. --dry-run resolves the channels,
+prints the rule that would be created, and creates nothing.
+
+Alert rules require a Pro plan or higher.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		client := api.NewClient(token)
-		draft, err := resolveAlertDraft(client, cmd, args)
-		if err != nil {
-			fail(err)
-		}
-		if err := runAlertsCreate(client, os.Stdout, draft.Name, draft.Events, draft.ChannelIDs, draft.Severity); err != nil {
-			failf("Failed to create alert rule: %v", err)
+		if err := runAlertsCreateCmd(cmd, args); err != nil {
+			fail(governanceError(err))
 		}
 	},
+}
+
+// runAlertsCreateCmd is `alerts create`: it fills the rule from the flags and the form, and
+// creates it.
+func runAlertsCreateCmd(cmd *cobra.Command, args []string) error {
+	p := resultPrinter(cmd)
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	client := api.NewClient(token)
+	draft, err := resolveAlertDraft(client, cmd, args)
+	if err != nil {
+		return err
+	}
+	return runAlertsCreate(client, p, draft, cmdmeta.DryRunRequested(cmd))
 }
 
 // alertDraft is one answered `alerts create` form. ChannelIDs are already RESOLVED — the flag
@@ -140,13 +144,18 @@ type alertDraft struct {
 // MarkFlagRequired, which produced cobra's generic `required flag(s) "channel", "event" not set`
 // with no hint that a channel may be named rather than copied.
 var (
-	errAlertNameRequired  = fmt.Errorf("an alert rule name is required — pass it as the argument, or run on a terminal to be asked")
-	errAlertEventRequired = fmt.Errorf("at least one --event pattern is required (e.g. system.job.failed, authz.*.denied)")
+	errAlertNameRequired error = refusal(clierr.CodeInputRequired, alertsCreateExample,
+		"an alert rule name is required — pass it as the argument, or run on a terminal to be asked")
+	errAlertEventRequired error = refusal(clierr.CodeInputRequired, alertsCreateExample,
+		"at least one --event pattern is required (e.g. system.job.failed, authz.*.denied)")
 )
+
+// alertsCreateExample is the complete command line the missing-value refusals offer.
+const alertsCreateExample = `alethia alerts create "Job failures" --event system.job.failed --channel "Ops Slack"`
 
 // errAlertChannelRequired names the list command, because the person who has to supply a channel
 // is exactly the person who may not know what channels exist.
-var errAlertChannelRequired = fmt.Errorf(
+var errAlertChannelRequired error = refusal(clierr.CodeInputRequired, channelSelect.ListCmd,
 	"at least one --channel is required — pass a channel name or id (see `alethia channels list`)")
 
 // resolveAlertDraft fills a draft from the flags, then asks for whatever is still missing.
@@ -280,7 +289,7 @@ func askAlertDraft(draft alertDraft, refs []govRef) (alertDraft, error) {
 		if len(refs) == 0 {
 			// A multi-select with no options is a box the user has to escape out of, and the
 			// rule could not be created anyway: the server requires at least one channel.
-			return draft, fmt.Errorf(
+			return draft, refusal(clierr.CodeConflict, "alethia channels create",
 				"no notification channel exists to route this rule to — create one first with `alethia channels create`")
 		}
 		f := mustGovField("alethia alerts create", fieldKeyAlertChannel)
@@ -327,19 +336,37 @@ func askAlertDraft(draft alertDraft, refs []govRef) (alertDraft, error) {
 	return draft, nil
 }
 
+// alertRequest is the request `alerts create` sends, as a dry run reports it. The channels are the
+// ids the names resolved to.
+type alertRequest struct {
+	Name          string   `json:"name"`
+	EventPatterns []string `json:"event_patterns"`
+	ChannelIDs    []string `json:"channel_ids"`
+	Severity      string   `json:"severity"`
+}
+
 // runAlertsCreate creates an alert rule and confirms it.
-func runAlertsCreate(c apiClient, out io.Writer, name string, eventPatterns, channelIDs []string, severity string) error {
-	rule, err := c.CreateAlertRule(name, eventPatterns, channelIDs, severity)
+func runAlertsCreate(c apiClient, p *Printer, draft alertDraft, dryRun bool) error {
+	if dryRun {
+		return printDryRun(p, MutationResult{
+			ID: draft.Name, Kind: govKindAlertRule, Action: ResultCreated,
+			Object: plannedRequest{Request: alertRequest{
+				Name: draft.Name, EventPatterns: draft.Events, ChannelIDs: draft.ChannelIDs, Severity: draft.Severity,
+			}},
+		}, fmt.Sprintf("Would create alert rule %s (%s, %d event pattern(s), %d channel(s))",
+			draft.Name, draft.Severity, len(draft.Events), len(draft.ChannelIDs)))
+	}
+	rule, err := c.CreateAlertRule(draft.Name, draft.Events, draft.ChannelIDs, draft.Severity)
 	if err != nil {
 		return err
 	}
 	// A 200 whose body carries no rule object yields (nil, nil) — see runChannelsVerify for the
 	// reasoning. Reporting it beats dereferencing it.
 	if rule == nil {
-		return fmt.Errorf("the control plane accepted the rule but returned no record of it")
+		return errNoRecord("rule")
 	}
-	fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Created alert rule %s (%s)", rule.Name, rule.ID)))
-	return nil
+	return printChange(p, MutationResult{ID: rule.ID, Kind: govKindAlertRule, Action: ResultCreated, Object: rule},
+		fmt.Sprintf("Created alert rule %s (%s)", rule.Name, rule.ID))
 }
 
 // alertsDeleteYes is the --yes opt-in: skip the confirmation prompt (and make the
@@ -349,30 +376,41 @@ var alertsDeleteYes bool
 var alertsDeleteCmd = &cobra.Command{
 	Use:   "delete [rule]",
 	Short: "Delete an alert rule",
-	Long: `Delete an alert rule. Name it by its name or its id; omit it on a terminal and you are
-asked which. Scripted, pass the name or id together with --yes.`,
+	Long: `Delete an alert rule. Events that matched it are no longer routed anywhere by it.
+This cannot be undone; create the rule again to restore it.
+
+Name the rule by its name or its id; omit it on a terminal and you are asked which. The
+command asks before it deletes; with nobody to ask, pass --yes. --dry-run names the rule
+that would be deleted and deletes nothing.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		client := api.NewClient(token)
-		ref, err := resolveAlertRule(client, args)
-		if err != nil {
-			fail(err)
-		}
-		if !confirmDestructive(
-			alertsDeleteYes,
-			"Delete "+ref.Label+"?",
-			"Matching events will no longer be routed. This cannot be undone.",
-		) {
-			return
-		}
-		if err := runAlertsDelete(client, os.Stdout, ref.ID); err != nil {
-			failf("Failed to delete alert rule: %v", err)
+		if err := runAlertsDeleteCmd(cmd, args); err != nil {
+			fail(governanceError(err))
 		}
 	},
+}
+
+// runAlertsDeleteCmd is `alerts delete`: it resolves the rule, confirms, and deletes it.
+func runAlertsDeleteCmd(cmd *cobra.Command, args []string) error {
+	p := resultPrinter(cmd)
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	client := api.NewClient(token)
+	ref, err := resolveAlertRule(client, args)
+	if err != nil {
+		return err
+	}
+	if cmdmeta.DryRunRequested(cmd) {
+		return printDryRun(p, govRefRemoval(govKindAlertRule, ref), "Would delete alert rule "+ref.Name)
+	}
+	ok, err := confirmChange(alertsDeleteYes, "alethia alerts delete "+shellQuote(ref.ID),
+		"Delete "+ref.Label+"?", "Matching events will no longer be routed. This cannot be undone.")
+	if err != nil || !ok {
+		return err
+	}
+	return runAlertsDelete(client, p, ref)
 }
 
 // resolveAlertRule answers "which alert rule?" for `delete`. It lists first for the reason
@@ -385,13 +423,20 @@ func resolveAlertRule(c apiClient, args []string) (govRef, error) {
 	return resolveGovRef(alertRuleSelect, govRefsFromAlertRules(rules), args)
 }
 
-// runAlertsDelete deletes an alert rule and confirms it.
-func runAlertsDelete(c apiClient, out io.Writer, id string) error {
-	if err := c.DeleteAlertRule(id); err != nil {
-		return err
+// govRefRemoval is the result of deleting ref, a record of the given kind.
+func govRefRemoval(kind string, ref govRef) MutationResult {
+	return MutationResult{
+		ID: ref.ID, Kind: kind, Action: ResultDeleted,
+		Object: removedRecord{ID: ref.ID, Name: ref.Name},
 	}
-	fmt.Fprintln(out, ui.FormatSuccess("Alert rule deleted"))
-	return nil
+}
+
+// runAlertsDelete deletes an alert rule and confirms it.
+func runAlertsDelete(c apiClient, p *Printer, ref govRef) error {
+	if err := c.DeleteAlertRule(ref.ID); err != nil {
+		return notFoundHint(err, alertRuleSelect.ListCmd)
+	}
+	return printChange(p, govRefRemoval(govKindAlertRule, ref), "Deleted alert rule "+ref.Name)
 }
 
 func init() {
