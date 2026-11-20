@@ -13,7 +13,7 @@ import { ORPCError, createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { RouterClient } from "@orpc/server";
 import { describe, expect, it } from "vitest";
-import { isRefused, retryUnlessRefused } from "@/components/connectors/connectors-board";
+import { boardRefusalOf, isRefused, retryUnlessRefused } from "@/components/connectors/connectors-board";
 import type { AppRouter } from "@/lib/rpc/router";
 
 /** The error the browser client throws when the read route answers `status` with a plain JSON body. */
@@ -72,5 +72,23 @@ describe("retryUnlessRefused — no retry that cannot work", () => {
 		const error = await wireError(500, "Internal");
 		expect(retryUnlessRefused(0, error)).toBe(true);
 		expect(retryUnlessRefused(1, error)).toBe(false);
+	});
+});
+
+describe("boardRefusalOf — which refusal, so the page can say the right thing (#6816)", () => {
+	it("reads a plain 401 as a session that ended and a plain 403 as a role that does not include it", async () => {
+		expect(boardRefusalOf(await wireError(401, "Unauthorized"))).toBe("sign-in");
+		expect(boardRefusalOf(await wireError(403, "Forbidden"))).toBe("forbidden");
+	});
+
+	it("reads the typed refusals a procedure sends", () => {
+		expect(boardRefusalOf(new ORPCError("FORBIDDEN", { defined: true }))).toBe("forbidden");
+		expect(boardRefusalOf(new ORPCError("UNAUTHORIZED", { defined: true }))).toBe("sign-in");
+	});
+
+	it("is null for a failure, so it gets the region error and its retry", async () => {
+		expect(boardRefusalOf(await wireError(500, "Internal"))).toBeNull();
+		expect(boardRefusalOf(await wireError(404, "Not found"))).toBeNull();
+		expect(boardRefusalOf(new Error("boom"))).toBeNull();
 	});
 });

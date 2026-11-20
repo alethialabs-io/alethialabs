@@ -204,10 +204,14 @@ test.describe("Connectors — member permissions (read-only)", () => {
 			team.page.getByRole("button", { name: "Connect Datadog", exact: true }),
 		).toBeVisible();
 
+		// The member's control is DRAWN and cannot be used (#6816): disabled, with the reason as its
+		// description. It used to be absent, which told the member nothing about why. The comparison
+		// with the owner above is what makes this a permission denial and not a broken button.
 		await gotoConnectors(member.page, member.orgSlug);
-		await expect(
-			member.page.getByRole("button", { name: "Connect Datadog", exact: true }),
-		).toHaveCount(0);
+		const denied = member.page.getByRole("button", { name: "Connect Datadog", exact: true });
+		await expect(denied).toBeDisabled();
+		await expect(denied).toHaveAccessibleDescription(/doesn't allow this/);
+		await expect(member.page.locator('[data-slot="connectors-read-only"]')).toBeVisible();
 	});
 });
 
