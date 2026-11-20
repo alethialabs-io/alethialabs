@@ -49,7 +49,7 @@ func kubeconfigMergePath() (string, error) {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("locate your home directory for ~/.kube/config: %w (pass --output FILE)", err)
+		return "", fmt.Errorf("locate your home directory for ~/.kube/config: %w (pass --out FILE)", err)
 	}
 	return filepath.Join(home, ".kube", "config"), nil
 }
@@ -255,7 +255,7 @@ func resolveWriteTarget(path string) (string, error) {
 	return target, nil
 }
 
-// writeKubeconfigFile writes a standalone kubeconfig (--output FILE), creating its directory.
+// writeKubeconfigFile writes a standalone kubeconfig (--out FILE), creating its directory.
 func writeKubeconfigFile(path string, doc []byte) error {
 	target, err := resolveWriteTarget(path)
 	if err != nil {

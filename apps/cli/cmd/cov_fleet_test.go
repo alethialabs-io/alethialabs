@@ -998,11 +998,12 @@ func TestFleet_JobsLogsPrintsOneShotAndStops(t *testing.T) {
 }
 
 // TestFleet_JobsLogsReportsAFetchFailure pins that an unreadable log stream is fatal
-// rather than an empty, apparently-successful read.
+// rather than an empty, apparently-successful read, and that a server fault exits with the
+// unavailable code, so a script knows a retry can help.
 func TestFleet_JobsLogsReportsAFetchFailure(t *testing.T) {
 	_, run := fleetEnv(t, fleetOpts{broken: true})
-	if got := run("jobs", "logs", "j1"); got != 1 {
-		t.Errorf("exit code = %d, want 1", got)
+	if got := run("jobs", "logs", "j1"); got != clierr.ExitUnavailable {
+		t.Errorf("exit code = %d, want %d", got, clierr.ExitUnavailable)
 	}
 }
 
@@ -1042,7 +1043,7 @@ func TestFleet_JobsCancelStopsAJob(t *testing.T) {
 	}
 
 	_, broken := fleetEnv(t, fleetOpts{broken: true})
-	if got := broken("jobs", "cancel", "j1", "--yes"); got != 1 {
-		t.Errorf("broken: exit code = %d, want 1", got)
+	if got := broken("jobs", "cancel", "j1", "--yes"); got != clierr.ExitUnavailable {
+		t.Errorf("broken: exit code = %d, want %d", got, clierr.ExitUnavailable)
 	}
 }
