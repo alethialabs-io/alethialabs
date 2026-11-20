@@ -5,11 +5,11 @@ package cmd
 
 import (
 	"bytes"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/format"

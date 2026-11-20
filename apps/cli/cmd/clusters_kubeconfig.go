@@ -310,12 +310,10 @@ func writeMintedKubeconfig(output string, doc []byte, name string) (string, erro
 // reportKubeconfig tells the person what happened, on stderr.
 func reportKubeconfig(where, name string, spec kubeMintSpec, m *kubeMinted) {
 	out := kubeStatusOut
-	switch {
-	case where == "":
-		// The document is on stdout; anything more here would only be noise in a pipe's terminal.
-	default:
-		// Every write lands at 0600 (kubecache.WritePrivateFile), whatever the file's mode was
-		// before, so the line says so for both shapes.
+	// With no file the document is on stdout, and anything more here would only be noise in a
+	// pipe's terminal. Every write lands at 0600 (kubecache.WritePrivateFile), whatever the file's
+	// mode was before, so the line says so for both shapes.
+	if where != "" {
 		fmt.Fprintf(out, "Wrote context %s to %s (current context, mode 0600).\n", name, where)
 	}
 	if spec.Shape == types.KubeconfigMintShapeExec {
