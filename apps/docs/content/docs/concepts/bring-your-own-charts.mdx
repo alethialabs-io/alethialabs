@@ -274,9 +274,9 @@ whether the rules refuse or only report:
 
 <Callout type="warn">
   **On most clouds, a `warn` namespace has no pod-level enforcement.** "The cluster's own default"
-  is `privileged` on Amazon EKS, Google GKE Standard, Azure AKS and Alibaba ACK, and that level
+  is `privileged` on Amazon EKS, Google GKE Standard and Azure AKS, and that level
   refuses nothing. Only Talos clusters, which Alethia runs on Hetzner, enforce `baseline` in every
-  namespace by default. So a chart in a `warn` namespace on those four clouds runs with no Pod
+  namespace by default. So a chart in a `warn` namespace on those three clouds runs with no Pod
   Security refusal until its namespace is in `enforce`.
 </Callout>
 

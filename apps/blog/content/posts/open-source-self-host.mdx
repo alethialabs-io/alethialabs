@@ -1,10 +1,10 @@
 ---
-title: Run the whole control plane yourself — on any of five clouds
-description: Alethia is open source under the AGPL, and the entire control plane self-hosts closed-origin behind a Cloudflare Tunnel with zero standing inbound. Here's the model, and how to stand it up on Hetzner, AWS, GCP, Azure, or Alibaba.
+title: Run the whole control plane yourself — on any of four clouds
+description: Alethia is open source under the AGPL, and the entire control plane self-hosts closed-origin behind a Cloudflare Tunnel with zero standing inbound. Here's the model, and how to stand it up on Hetzner, AWS, GCP, or Azure.
 date: 2026-07-07
 author: Alethia Labs Engineering
 tags: [open-source, self-hosting, infrastructure, security]
-excerpt: Alethia is AGPL open source, and the whole control plane self-hosts on any of five clouds — closed-origin behind a Cloudflare Tunnel, no standing inbound. Here's the model and how to run it.
+excerpt: Alethia is AGPL open source, and the whole control plane self-hosts on any of four clouds — closed-origin behind a Cloudflare Tunnel, no standing inbound. Here's the model and how to run it.
 ---
 
 Alethia's whole premise is that **you own your infrastructure**. We host nothing that matters: your
@@ -15,7 +15,7 @@ multi-cloud provisioning — self-hosts on your own infrastructure.
 
 This post is about the part we're most proud of: **how** it self-hosts. Not a public box with a
 firewall you hope you configured right — a closed origin with **zero standing inbound**, on any of
-five clouds.
+four clouds.
 
 ## The model: the origin dials out
 
@@ -44,11 +44,10 @@ port** — the agent dials out, exactly like the tunnel does:
 | AWS | `t3.large` | **SSM Session Manager** (no ingress) | IMDSv2 · encrypted EBS |
 | GCP | `e2-standard-2` | **IAP** tunnel | Shielded VM |
 | Azure | `Standard_D2s_v5` | **`az vm run-command`** + Serial Console | Trusted Launch |
-| Alibaba | `ecs.g7.large` | **Session Manager** (Cloud Assistant) | encrypted disk |
 
-Four of the five have **no inbound rule at all**. Hetzner keeps a key-only SSH port (firewall
+Three of the four have **no inbound rule at all**. Hetzner keeps a key-only SSH port (firewall
 restricted) because it's the reference host the hosted service runs on; the rest reach the box
-through the cloud's own session broker — SSM, IAP, `run-command`, Cloud Assistant — which rides the
+through the cloud's own session broker — SSM, IAP, `run-command` — which rides the
 provider's control plane, not a port you expose.
 
 We picked each shape for that cloud rather than cloning one design everywhere: a Cloud NAT would be

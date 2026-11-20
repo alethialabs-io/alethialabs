@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 420" width="100%" role="img" aria-label="Security: the Alethia OIDC issuer mints short-lived assertions that all four managed clouds federate against; no static keys are stored">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 420" width="100%" role="img" aria-label="Security: the Alethia OIDC issuer mints short-lived assertions that all three managed clouds federate against; no static keys are stored">
   <style>
     .d-bg{fill:#fafafa}.d-surface{fill:#fff;stroke:#e4e4e7;stroke-width:1}.d-surface2{fill:#f4f4f5;stroke:#e4e4e7;stroke-width:1}.d-emph{fill:#18181b;stroke:#18181b}
     .d-title{fill:#18181b}.d-label{fill:#3f3f46}.d-sub{fill:#71717a}.d-emph-text{fill:#fff}
@@ -45,14 +45,9 @@
   <text class="d-label" x="332" y="252" font-size="12" font-weight="600">Azure</text>
   <text class="d-sub mono" x="516" y="252" text-anchor="end" font-size="9">Federated identity (Entra)</text>
 
-  <rect class="d-surface" x="312" y="280" width="220" height="46" rx="8"/>
-  <text class="d-label" x="332" y="308" font-size="12" font-weight="600">Alibaba</text>
-  <text class="d-sub mono" x="516" y="308" text-anchor="end" font-size="9">AssumeRoleWithOIDC</text>
-
   <line class="d-edge" x1="244" y1="180" x2="312" y2="135" marker-end="url(#ar)"/>
   <line class="d-edge" x1="244" y1="195" x2="312" y2="191" marker-end="url(#ar)"/>
   <line class="d-edge" x1="244" y1="210" x2="312" y2="247" marker-end="url(#ar)"/>
-  <line class="d-edge" x1="244" y1="225" x2="312" y2="303" marker-end="url(#ar)"/>
   <text class="d-sub mono" x="252" y="120" font-size="9">assertion</text>
 
   <!-- Short-lived creds -->

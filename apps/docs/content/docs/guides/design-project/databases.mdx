@@ -74,8 +74,8 @@ Once deployed, the database card in the [project detail](/guides/dashboard/proje
 instead of a stored password — nothing to rotate, no secret in the cluster. A service bound to an
 IAM-auth database picks this up automatically.
 
-It covers **PostgreSQL and MySQL on AWS, GCP and Azure**. Alibaba Cloud and Hetzner have no
-token-based database login, so a database on either stays on the password path even with the toggle
+It covers **PostgreSQL and MySQL on AWS, GCP and Azure**. Hetzner has no
+token-based database login, so a database there stays on the password path even with the toggle
 on. See [Keyless database auth](/guides/design-project/keyless-database-auth) for how it works per
 cloud and its current rollout status.
 </Callout>

@@ -5,10 +5,19 @@ import { docs } from 'fumadocs-mdx:collections/server';
 import { type InferPageType, loader } from 'fumadocs-core/source';
 import { lucideIconsPlugin } from 'fumadocs-core/source/lucide-icons';
 
-// See https://fumadocs.dev/docs/headless/source-api for more info
+const content = docs.toFumadocsSource();
+
+/** True unless the file is a page whose frontmatter says `availability: hidden` (see source.config.ts). */
+function isPublished(file: (typeof content.files)[number]): boolean {
+  return file.type !== 'page' || file.data.availability !== 'hidden';
+}
+
+// See https://fumadocs.dev/docs/headless/source-api for more info.
+// Hidden pages are dropped HERE, once: the page tree, search (app/api/search), llms-full.txt and the
+// Markdown route (app/llms.mdx) all read this loader, so none of them can still serve one.
 export const source = loader({
   baseUrl: '/',
-  source: docs.toFumadocsSource(),
+  source: { ...content, files: content.files.filter(isPublished) },
   plugins: [lucideIconsPlugin()],
 });
 

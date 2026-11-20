@@ -4,7 +4,8 @@
 /**
  * Every docs URL that moved in the Diátaxis restructure (#5240), old → new. Permanent (308): the
  * CLI binaries already shipped print some of these URLs, and the web links them from outside.
- * Removed pages point at their new home under docs/contributing/ in the repository.
+ * Removed pages point at their new home under docs/contributing/ in the repository. The entries for
+ * a hidden cloud's pages, at the end, are the one temporary group.
  *
  * scripts/check-links.mjs reads this list: every destination must be a live page (or an external
  * URL) and no source may also be a live page — a redirect that shadows a real page is a bug.
@@ -84,7 +85,7 @@ export const movedPages = [
 	{ source: "/console/classification", destination: "/guides/classification", permanent: true },
 	{ source: "/console/clusters", destination: "/guides/clusters", permanent: true },
 	{ source: "/console/connectors", destination: "/guides/connectors", permanent: true },
-	{ source: "/console/connectors/alibaba", destination: "/guides/connectors/alibaba", permanent: true },
+	{ source: "/console/connectors/alibaba", destination: "/guides/connectors", permanent: false },
 	{ source: "/console/connectors/aws", destination: "/guides/connectors/aws", permanent: true },
 	{ source: "/console/connectors/azure", destination: "/guides/connectors/azure", permanent: true },
 	{ source: "/console/connectors/chart-repositories", destination: "/guides/connectors/chart-repositories", permanent: true },
@@ -170,7 +171,7 @@ export const movedPages = [
 	{ source: "/self-hosting/one-click", destination: "/guides/self-hosting/one-click", permanent: true },
 	{ source: "/self-hosting/scaling-out", destination: "/guides/self-hosting/scaling-out", permanent: true },
 	{ source: "/self-hosting/terraform", destination: "/guides/self-hosting/terraform", permanent: true },
-	{ source: "/self-hosting/terraform/alibaba", destination: "/guides/self-hosting/terraform/alibaba", permanent: true },
+	{ source: "/self-hosting/terraform/alibaba", destination: "/guides/self-hosting/terraform", permanent: false },
 	{ source: "/self-hosting/terraform/aws", destination: "/guides/self-hosting/terraform/aws", permanent: true },
 	{ source: "/self-hosting/terraform/azure", destination: "/guides/self-hosting/terraform/azure", permanent: true },
 	{ source: "/self-hosting/terraform/gcp", destination: "/guides/self-hosting/terraform/gcp", permanent: true },
@@ -189,4 +190,12 @@ export const movedPages = [
 	{ source: "/tutorials/enterprise-demo-azure", destination: "/tutorials/online-boutique#step-1--connect-your-cloud-account", permanent: true },
 	{ source: "/tutorials/enterprise-demo-gcp", destination: "/tutorials/online-boutique#step-1--connect-your-cloud-account", permanent: true },
 	{ source: "/tutorials/enterprise-demo-hetzner", destination: "/tutorials/online-boutique#step-1--connect-your-cloud-account", permanent: true },
+	// A cloud the product hides (`availability: hidden` in packages/core/catalog/catalog.json). Its
+	// pages stay in content/ with `availability: hidden` frontmatter, so lib/source.ts drops them, and
+	// these send their URLs to the section index; the two older entries for the same pages, under
+	// /console/connectors and /self-hosting/terraform above, point there too. All four are temporary
+	// (307), not 308: re-enabling the cloud deletes these two and points the older two back at the
+	// pages, and a browser that cached a permanent redirect would keep skipping a page that came back.
+	{ source: "/guides/connectors/alibaba", destination: "/guides/connectors", permanent: false },
+	{ source: "/guides/self-hosting/terraform/alibaba", destination: "/guides/self-hosting/terraform", permanent: false },
 ];
