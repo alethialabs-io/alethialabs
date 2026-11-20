@@ -96,8 +96,6 @@ export interface InspectorFrameProps {
 	onClose: () => void;
 	className?: string;
 	bodyClassName?: string;
-	/** Pinned under the body. No subject of the inspector uses it; a host card may. */
-	footer?: ReactNode;
 	children: ReactNode;
 }
 
@@ -135,7 +133,6 @@ export function InspectorFrame({
 	onClose,
 	className,
 	bodyClassName,
-	footer,
 	children,
 }: InspectorFrameProps) {
 	const views = tabs ?? [];
@@ -258,12 +255,6 @@ export function InspectorFrame({
 					<div className={body}>{children}</div>
 				</>
 			)}
-
-			{footer ? (
-				<div className="flex shrink-0 items-center justify-between gap-2 border-t border-border px-4 py-3">
-					{footer}
-				</div>
-			) : null}
 		</div>
 	);
 }

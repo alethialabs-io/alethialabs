@@ -85,8 +85,9 @@ export interface ApplyStagedOperationsOptions {
  * routed to the caller, and the add-on and chart reads invalidated when it settles.
  *
  * Each operation is taken off the changeset as it succeeds, so a refusal part-way leaves exactly
- * the operations that did not run still staged. This is the ONE way a staged operation is run: the
- * changes bar calls it when a changeset is applied, and the rail's own strip calls it until then.
+ * the operations that did not run still staged. This is the ONE way a staged operation is run. The
+ * rail's own strip calls it today; the changes bar is to call it when it applies a changeset, and
+ * the strip stops drawing once the bar has claimed the operations.
  */
 export function useApplyStagedOperations(
 	options: ApplyStagedOperationsOptions = {},

@@ -11,9 +11,9 @@
 // "Enable add-on" / "Save changes" button that wrote to the server at once, beside node cards whose
 // edits went to a draft another bar saved — and a click on the empty board threw away whatever was
 // half-typed here. An edit now becomes a staged operation in the document when a field is left,
-// when a select or a switch changes, and when the card goes away; it is listed with the design
-// changes and runs `enableAddonAction` when the changeset is applied. The knobs mirror the server's
-// schema (re-validated there); the YAML is validated when the operation runs.
+// when a select or a switch changes, and when the card goes away; it sits beside the design
+// changes as one operation and runs `enableAddonAction` when it is applied. The knobs mirror the
+// server's schema (re-validated there); the YAML is validated when the operation runs.
 //
 // REMOVING an add-on is not staged. It is a confirmed, immediate action: the chart is uninstalled
 // on the next deploy and its configuration is not kept, so it asks first and says so.

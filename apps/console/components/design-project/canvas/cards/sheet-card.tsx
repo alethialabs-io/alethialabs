@@ -17,6 +17,9 @@ import { InspectorFrame, useInspectorEmbedded } from "../inspector-shell/inspect
  * — it is a section with a heading, because a second header and a second close control under the
  * first would be the two-layouts problem the one inspector exists to remove.
  *
+ * It has no footer. A card's footer was where its own Save lived, and nothing on the rail commits
+ * from the rail any more.
+ *
  * Lives in the console, not `packages/ui`, because it is bound to the rail and the canvas idioms.
  */
 export function SheetCard({
@@ -25,7 +28,6 @@ export function SheetCard({
 	icon,
 	description,
 	actions,
-	footer,
 	onClose,
 	className,
 	bodyClassName,
@@ -41,8 +43,6 @@ export function SheetCard({
 	description?: ReactNode;
 	/** The card's primary action, beside the close control. */
 	actions?: ReactNode;
-	/** Pinned to the bottom, outside the scrolling body. */
-	footer?: ReactNode;
 	onClose: () => void;
 	className?: string;
 	bodyClassName?: string;
@@ -54,11 +54,6 @@ export function SheetCard({
 			<section className={cn("space-y-3", className)}>
 				<SectionHeading level={3} title={title} description={description} actions={actions} />
 				<div className={bodyClassName}>{children}</div>
-				{footer ? (
-					<div className="flex items-center justify-between gap-2 border-t border-border pt-3">
-						{footer}
-					</div>
-				) : null}
 			</section>
 		);
 	}
@@ -69,7 +64,6 @@ export function SheetCard({
 			title={title}
 			summary={description}
 			action={actions}
-			footer={footer}
 			onClose={onClose}
 			className={className}
 			bodyClassName={bodyClassName}

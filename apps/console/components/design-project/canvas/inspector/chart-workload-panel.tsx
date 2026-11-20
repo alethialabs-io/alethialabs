@@ -15,8 +15,8 @@
 // The overlay is STAGED, not saved (#6834). This panel used to hold a `useState` draft and its own
 // Save button — the one config surface on the rail that did not go through the changes bar, and
 // one a click on the empty board discarded. An edit now becomes a staged operation in the document
-// when the field is left, when a row is added or removed, and when the panel goes away; the
-// operation runs `saveChartWorkloadOverlayAction` when the changeset is applied.
+// when the field is left, when a row is removed or a binding changes, and when the panel goes
+// away; the operation runs `saveChartWorkloadOverlayAction` when it is applied.
 
 import { Package, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useRef } from "react";

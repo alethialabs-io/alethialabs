@@ -57,7 +57,7 @@ export function subjectKey(subject: Subject): string {
 /**
  * Whether the rail has something to draw for a subject. One answer, read by the rail (its width)
  * and by the board (its seam), so the two cannot disagree: an add-on needs a project to read its
- * catalog from, and everything else can always be shown.
+ * catalog from, a selection of no cards is nothing to show, and everything else always can be.
  */
 export function inspectorOpen(subject: Subject | null, ctx: InspectorContext = {}): boolean {
 	if (subject === null) return false;

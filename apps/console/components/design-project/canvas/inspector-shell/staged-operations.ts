@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The out-of-band operations the inspector stages (#6834): what each one is called, what it
-// carries, and how it is run when the changeset is applied.
+// The out-of-band operations the inspector stages (#6834): what each one is called and what it
+// carries.
 //
 // An add-on's install form and a chart workload's overlay used to write to the server from their
 // own Save button, beside node forms that staged into a draft a different bar saved. They now add
@@ -14,8 +14,8 @@
 // never something no control on the page can apply.
 //
 // `StagedOperation.input` is `unknown` in the store on purpose: the store keeps it in the draft
-// and never reads it. It is read here, through a schema, at the moment it is run — a draft restored
-// from sessionStorage is data from outside the program.
+// and never reads it. It is read through the schemas below, by the form that reopens on it and at
+// the moment it is run — a draft restored from sessionStorage is data from outside the program.
 //
 // Secrets are the one thing an operation does not carry. The draft is written to sessionStorage,
 // so a secret typed into an add-on field is held in memory beside the operation (`rememberSecrets`)
