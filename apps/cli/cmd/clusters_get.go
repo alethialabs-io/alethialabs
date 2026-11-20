@@ -283,7 +283,7 @@ func observedRow(o *api.ClusterObservation) ([]string, bool) {
 	}
 	switch o.State {
 	case "missing":
-		return []string{"Observed", "MISSING — found deleted outside Alethia" + by + at + detail + ". Redeploy the environment to recreate it, or tear it down."}, true
+		return []string{"Observed", "MISSING — found deleted outside Alethia" + by + at + detail + ". Redeploy the environment to recreate it, tear it down, or mark it destroyed in the console."}, true
 	case "unreachable":
 		return []string{"Observed", "UNREACHABLE" + by + at + detail}, true
 	case "unverified":
