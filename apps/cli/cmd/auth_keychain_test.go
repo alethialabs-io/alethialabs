@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1528,8 +1529,9 @@ func TestTokenExpiry_ATokenThatDoesNotSay(t *testing.T) {
 	if _, ok := tokenExpiry("alt_not-a-jwt"); ok {
 		t.Error("an opaque token reported an expiry")
 	}
-	// header {"alg":"none"} and claims {"sub":"u1"}, unsigned.
-	if _, ok := tokenExpiry("eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1MSJ9."); ok {
+	// An unsigned token whose claims name a subject and no expiry.
+	part := func(v string) string { return base64.RawURLEncoding.EncodeToString([]byte(v)) }
+	if _, ok := tokenExpiry(part(`{"alg":"none"}`) + "." + part(`{"sub":"u1"}`) + "."); ok {
 		t.Error("a token with no exp claim reported an expiry")
 	}
 }
