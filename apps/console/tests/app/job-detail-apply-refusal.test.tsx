@@ -85,7 +85,7 @@ const PLAN = {
 function renderPage(job: typeof PLAN = PLAN) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 	client.setQueryData(orpc.jobs.detail.queryKey({ input: { id: JOB_ID } }), job as never);
-	client.setQueryData(orpc.jobs.logsHead.queryKey({ input: { id: JOB_ID } }), { lines: [], lastId: 0 });
+	client.setQueryData(orpc.jobs.logsHead.queryKey({ input: { id: JOB_ID } }), { lines: [], lastId: 0, final: true });
 	const invalidate = vi.spyOn(client, "invalidateQueries");
 	render(
 		<QueryClientProvider client={client}>

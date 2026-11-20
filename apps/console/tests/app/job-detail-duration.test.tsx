@@ -54,7 +54,7 @@ function job(fields: { status: string; started_at: string | null }) {
 function renderPage(row: ReturnType<typeof job>) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 	client.setQueryData(orpc.jobs.detail.queryKey({ input: { id: JOB_ID } }), row as never);
-	client.setQueryData(orpc.jobs.logsHead.queryKey({ input: { id: JOB_ID } }), { lines: [], lastId: 0 });
+	client.setQueryData(orpc.jobs.logsHead.queryKey({ input: { id: JOB_ID } }), { lines: [], lastId: 0, final: true });
 	render(
 		<QueryClientProvider client={client}>
 			<JobDetail jobId={JOB_ID} column="mx-auto max-w-4xl" />
