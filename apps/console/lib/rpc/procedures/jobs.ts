@@ -377,10 +377,8 @@ async function readJobControls(
 			: null;
 
 	const groups = [cancelChecks, rerunChecks, deployChecks];
-	const decisions = await getPdp().bulkCheck(
-		actor,
-		groups.flatMap((group) => group ?? []),
-	);
+	const checks = groups.flatMap((group) => group ?? []);
+	const decisions = checks.length === 0 ? [] : await getPdp().bulkCheck(actor, checks);
 	// The decisions come back in the order asked; each group takes as many as it asked.
 	let next = 0;
 	const [cancel, rerun, deploy] = groups.map((group) => {
