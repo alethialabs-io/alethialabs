@@ -673,10 +673,11 @@ test.describe("Onboarding — signing out", () => {
 		});
 
 		await page.getByRole("button", { name: /account menu/i }).click();
-		await page.getByRole("menuitem", { name: /log ?out/i }).click();
+		// The menu item reads "Sign out" (#6924: one verb, from `lib/copy/vocabulary.ts`).
+		await page.getByRole("menuitem", { name: /sign out/i }).click();
 
-		// Sign-out pushes the console root, which clears the stale cookie (/api/session/reset) and
-		// lands on /login rather than trapping the visitor.
+		// Sign-out loads the console root as a new document, which clears the stale cookie
+		// (/api/session/reset) and lands on /login rather than trapping the visitor.
 		await page.waitForURL(/\/login/, { timeout: 60_000 });
 		await expect(page.getByRole("heading", { name: /log in to alethia/i })).toBeVisible();
 

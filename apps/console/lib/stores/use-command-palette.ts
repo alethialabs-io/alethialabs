@@ -9,7 +9,7 @@ interface CommandPaletteStore {
 	open: boolean;
 	/** Opens or closes the palette. */
 	setOpen: (open: boolean) => void;
-	/** Flips the palette open/closed (the ⌘K / F shortcut). */
+	/** Flips the palette open/closed (the `palette.toggle` shortcut in `lib/shortcuts/registry.ts`). */
 	toggle: () => void;
 }
 
