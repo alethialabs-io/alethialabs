@@ -311,7 +311,10 @@ alethia project deploy --project boutique --env dev-1 --yes --output json
 
 Without `--wait` the command returns when the job is queued. With `--wait` it returns when the job
 finishes, and the exit code is the verdict: `0` for a job that succeeded, `13` for one that failed
-or was cancelled, and `12` when `--timeout` passed first. An error names the job, so
+or was cancelled, and `12` when `--timeout` passed first. A job that succeeded can still record
+warnings, for example an add-on that did not sync. With `--wait` they are printed on stderr, and
+each entry in `object.jobs` carries them as a `warnings` array. The array is empty when there are
+none, or when the command did not wait. An error names the job, so
 `alethia jobs logs` can pick it up.
 
 ### Confirming a deploy or a destroy

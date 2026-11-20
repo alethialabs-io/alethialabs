@@ -100,7 +100,7 @@ when nothing can ask (exit 9 without it).`,
 			}
 		}
 
-		if err := runDesignApply(client, printerInFormat(outputFormat(cmd)), params); err != nil {
+		if err := runDesignApply(client, printerFor(cmd), params); err != nil {
 			fail(fmt.Errorf("failed to apply the design: %w", err))
 		}
 	},

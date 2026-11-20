@@ -55,12 +55,13 @@ type famJobObject struct {
 		Name string `json:"name"`
 	} `json:"destroy_tree"`
 	Jobs []struct {
-		ID               string `json:"id"`
-		Type             string `json:"type"`
-		Status           string `json:"status"`
-		Environment      string `json:"environment"`
-		AwaitingApproval bool   `json:"awaiting_approval"`
-		ApprovalURL      string `json:"approval_url"`
+		ID               string   `json:"id"`
+		Type             string   `json:"type"`
+		Status           string   `json:"status"`
+		Environment      string   `json:"environment"`
+		AwaitingApproval bool     `json:"awaiting_approval"`
+		ApprovalURL      string   `json:"approval_url"`
+		Warnings         []string `json:"warnings"`
 	} `json:"jobs"`
 }
 
@@ -623,6 +624,36 @@ func TestProjFamily_WaitEndsWithTheJobsVerdict(t *testing.T) {
 				if !strings.Contains(stderr, want) {
 					t.Errorf("stderr is missing %q:\n%s", want, stderr)
 				}
+			}
+		})
+	}
+}
+
+// TestProjFamily_AWaitedJobCarriesItsWarnings pins the `warnings` array of a job entry: a waited
+// deploy or preview reports what the job recorded, on stderr for a person and in the result for a
+// program; a job that was not waited for, or recorded none, carries an empty array and never null.
+func TestProjFamily_AWaitedJobCarriesItsWarnings(t *testing.T) {
+	meta := map[string]any{"gitops_status": map[string]any{"manifest_warnings": []any{"add-on loki did not sync"}}}
+	for _, sub := range []string{"deploy", "preview"} {
+		t.Run(sub, func(t *testing.T) {
+			args := []string{"project", sub, "--project", "web", "--no-input"}
+			if sub == "deploy" {
+				args = append(args, "--yes")
+			}
+			h := projEnv(t, &projServer{jobStatuses: []string{"SUCCESS"}, jobMeta: meta})
+			r, stderr := famRunJSON(t, h, append(args, "--wait")...)
+			obj := famJobs(t, r)
+			if len(obj.Jobs) != 1 || len(obj.Jobs[0].Warnings) != 1 || obj.Jobs[0].Warnings[0] != "add-on loki did not sync" {
+				t.Errorf("a waited %s must carry the job's warnings: %+v", sub, obj.Jobs)
+			}
+			if !strings.Contains(stderr, "add-on loki did not sync") {
+				t.Errorf("the warning is also said on stderr:\n%s", stderr)
+			}
+
+			// Not waited for: the array is there and empty.
+			r, _ = famRunJSON(t, h, args...)
+			if !strings.Contains(string(r.Object), `"warnings": []`) && !strings.Contains(string(r.Object), `"warnings":[]`) {
+				t.Errorf("a job that was not waited for must carry an empty warnings array: %s", r.Object)
 			}
 		})
 	}

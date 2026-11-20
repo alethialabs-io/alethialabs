@@ -116,6 +116,10 @@ type projectJobEntry struct {
 	AwaitingApproval bool `json:"awaiting_approval"`
 	// ApprovalURL is the console page to approve it at, when one could be built.
 	ApprovalURL string `json:"approval_url,omitempty"`
+	// Warnings is what a deploy that finished recorded as warnings (jobWarnings, jobs_get.go): the
+	// same list `alethia jobs get` shows. It is always present, and empty for a job that was not
+	// waited for or recorded none.
+	Warnings []string `json:"warnings"`
 }
 
 // projectJobObject is the `object` of a job command's result.
@@ -194,6 +198,8 @@ func runProjectJob(ctx context.Context, p *Printer, c projectJobClient, run proj
 		}
 		obj.Jobs[i].Status = job.Status
 		obj.Jobs[i].AwaitingApproval = false
+		// awaitJob has already said them on stderr; the result carries them for a program.
+		obj.Jobs[i].Warnings = jobWarnings(job)
 	}
 	result.Object = obj
 	return result, nil
@@ -207,6 +213,7 @@ func queuedJobEntries(resp *api.QueueJobResponse, jobType string) []projectJobEn
 		for i, j := range resp.CascadeJobs {
 			entries[i] = projectJobEntry{
 				ID: j.JobID, Type: jobType, Status: string(types.JobStatusQueued), Environment: j.Name,
+				Warnings: []string{},
 			}
 		}
 		return entries
@@ -214,7 +221,7 @@ func queuedJobEntries(resp *api.QueueJobResponse, jobType string) []projectJobEn
 	if resp.Job == nil {
 		return []projectJobEntry{}
 	}
-	return []projectJobEntry{{ID: resp.Job.ID, Type: jobType, Status: resp.Job.Status}}
+	return []projectJobEntry{{ID: resp.Job.ID, Type: jobType, Status: resp.Job.Status, Warnings: []string{}}}
 }
 
 // awaitsApproval reports whether a job status means "a person has to approve this before it
@@ -320,20 +327,11 @@ func finishProjectJob(cmd *cobra.Command, c projectJobClient, run projectJobRun)
 	if err != nil {
 		return err
 	}
-	format := outputFormat(cmd)
-	return printerInFormat(format).Result(result, func(w io.Writer) {
+	return printerFor(cmd).Result(result, func(w io.Writer) {
 		if obj, ok := result.Object.(projectJobObject); ok {
 			renderProjectJobs(w, result, obj)
 		}
 	})
-}
-
-// printerInFormat returns the invocation's Printer with the format a command validated. The two differ
-// only when --output was invalid, which outputFormat has already refused.
-func printerInFormat(format string) *Printer {
-	p := *printer
-	p.Format = format
-	return &p
 }
 
 // addProjectWaitFlags registers --wait and --timeout on a job command, with the wording every
