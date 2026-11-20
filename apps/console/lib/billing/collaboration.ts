@@ -11,6 +11,7 @@
 // they are never gated here.
 
 import { isStripeConfigured } from "@/lib/billing/config";
+import type { Entitlements } from "@/lib/authz/types";
 import { getOrgBilling, resolveOrgEntitlements } from "@/lib/billing/queries";
 
 /**
@@ -26,11 +27,18 @@ export async function canOrgInvite(orgId: string): Promise<boolean> {
 }
 
 /**
- * Whether `orgId` may create teams — an Enterprise-tier capability. Resolved from the
- * org's billing-backed entitlements (`teams`), so an unsubscribed/community org is
- * denied. Injected into ee/ via `CoreContext.canOrgCreateTeams` and enforced in the
- * organization plugin's `beforeCreateTeam` hook (the UI shows the upsell separately).
+ * Whether `orgId` may create teams — an Enterprise-tier capability: true only when the
+ * organization's entitlements carry `teams`. `resolve` names where those entitlements come
+ * from. Its default is the organization's billing record, so an unsubscribed/community org is
+ * denied. The enterprise module passes its own resolver, which answers from the instance licence
+ * when one grants and from the same billing record otherwise, so an instance licensed as a
+ * whole is not asked for a billing row it never has. Injected into ee/ via
+ * `CoreContext.canOrgCreateTeams` and enforced in the organization plugin's `beforeCreateTeam`
+ * hook (the UI shows the upsell separately).
  */
-export async function canOrgCreateTeams(orgId: string): Promise<boolean> {
-	return (await resolveOrgEntitlements(orgId)).teams;
+export async function canOrgCreateTeams(
+	orgId: string,
+	resolve: (orgId: string) => Promise<Entitlements> = resolveOrgEntitlements,
+): Promise<boolean> {
+	return (await resolve(orgId)).teams === true;
 }
