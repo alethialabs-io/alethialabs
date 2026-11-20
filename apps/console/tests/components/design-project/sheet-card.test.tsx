@@ -9,6 +9,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SheetCard } from "@/components/design-project/canvas/cards/sheet-card";
+import { InspectorEmbed } from "@/components/design-project/canvas/inspector-shell/inspector-frame";
 
 describe("SheetCard", () => {
 	it("renders eyebrow, heading, description, body and footer with no overlay or dialog role", () => {
@@ -43,14 +44,17 @@ describe("SheetCard", () => {
 		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 
-	it("a header override replaces the standard header entirely", () => {
+	it("inside a frame that is already on screen it is a section: no second header, no second close", () => {
 		render(
-			<SheetCard title="ignored" onClose={vi.fn()} header={<div>custom header</div>}>
-				<p>body</p>
-			</SheetCard>,
+			<InspectorEmbed>
+				<SheetCard title="Activity" description="What has run here." onClose={vi.fn()}>
+					<p>body</p>
+				</SheetCard>
+			</InspectorEmbed>,
 		);
-		expect(screen.getByText("custom header")).toBeInTheDocument();
-		expect(screen.queryByRole("heading", { name: "ignored" })).not.toBeInTheDocument();
+		expect(screen.getByRole("heading", { level: 3, name: "Activity" })).toBeInTheDocument();
+		expect(screen.getByText("What has run here.")).toBeInTheDocument();
+		expect(screen.getByText("body")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
 	});
 });
