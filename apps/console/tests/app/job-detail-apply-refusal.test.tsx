@@ -34,7 +34,9 @@ vi.mock("next/navigation", () => ({
 vi.mock("sonner", () => ({
 	toast: { error: (...a: unknown[]) => toastError(...a), success: (...a: unknown[]) => toastSuccess(...a) },
 }));
-vi.mock("@/hooks/use-job-log-stream", () => ({ useJobLogStream: () => ({ logs: [] }) }));
+vi.mock("@/hooks/use-job-log-stream", () => ({
+	useJobLogStream: () => ({ logs: [], state: null, reconnect: () => {}, complete: true }),
+}));
 // The runner picker is its own component's subject: here it is one button that confirms with
 // "any runner", which is what the real popover reports.
 vi.mock("@/components/runners/runner-select-popover", () => ({
@@ -75,6 +77,8 @@ const PLAN = {
 	error_message: null,
 	config_snapshot: null,
 	execution_metadata: null,
+	approval: null,
+	can: { cancel: true, rerun: true, deploy: true },
 };
 
 /** Renders the page over a cache already holding what the server prefetched (a finished PLAN, unless given another job). */

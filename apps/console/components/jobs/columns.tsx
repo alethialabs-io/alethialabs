@@ -98,7 +98,7 @@ function getServerClockSnapshot(): null {
 }
 
 /** "Now" to the second in the browser, `null` on the server and through hydration. */
-function useSecondsClock(): number | null {
+export function useSecondsClock(): number | null {
   return useSyncExternalStore(subscribeClock, getClockSnapshot, getServerClockSnapshot);
 }
 
@@ -119,6 +119,62 @@ export function RelativeTime({ at }: { at: Date | string }) {
       <ClockSlot sizer={RELATIVE_SIZER}>{hydrated ? formatRelative(instant) : null}</ClockSlot>
     </time>
   );
+}
+
+/** The three instants a job's duration is read from, and the status that says whether it still runs. */
+export interface JobTimes {
+  status: string;
+  created_at: Date | string | null;
+  started_at: Date | string | null;
+  completed_at: Date | string | null;
+}
+
+/**
+ * What a job's duration IS, decided once for the list and the job's own page:
+ *
+ * - `live` — still queued or running: the time since it was created, read off the clock;
+ * - `ran` — finished after starting: created to completed;
+ * - `never-started` — finished without ever starting (cancelled or failed in the queue). It has no
+ *   run time: created to completed is all wait, and shown bare it made a plan cancelled after 120
+ *   days in the queue read as a 120-day run (#6732). `started_at` is stamped on the first PROCESSING;
+ * - `none` — nothing to state: no creation time, or a finished job with no completion time.
+ */
+export type JobDurationReading =
+  | { kind: "live"; since: Date | string }
+  | { kind: "ran"; ms: number }
+  | { kind: "never-started"; waitedMs: number }
+  | { kind: "none" };
+
+/** See {@link JobDurationReading}. */
+export function readJobDuration(job: JobTimes): JobDurationReading {
+  if (!job.created_at) return { kind: "none" };
+  if (job.completed_at) {
+    const ms = new Date(job.completed_at).getTime() - new Date(job.created_at).getTime();
+    return job.started_at ? { kind: "ran", ms } : { kind: "never-started", waitedMs: ms };
+  }
+  return RUNNING.has(job.status) ? { kind: "live", since: job.created_at } : { kind: "none" };
+}
+
+/**
+ * A job's duration, in the one wording both jobs surfaces use. The list has a narrow cell and
+ * says "Never started"; the job's own page has the room to add how long it waited.
+ */
+export function JobDuration({ job, detail = false }: { job: JobTimes; detail?: boolean }) {
+  const reading = readJobDuration(job);
+  switch (reading.kind) {
+    case "live":
+      return <LiveDuration createdAt={reading.since} />;
+    case "ran":
+      return <span className="text-xs tabular-nums text-muted-foreground">{formatDuration(reading.ms)}</span>;
+    case "never-started":
+      return (
+        <span className="text-xs text-muted-foreground">
+          {detail ? `Never started · waited ${formatDuration(reading.waitedMs)}` : "Never started"}
+        </span>
+      );
+    case "none":
+      return null;
+  }
 }
 
 /** Widest strings each clock cell prints, so the slot is that wide before the clock is read. */
@@ -369,22 +425,11 @@ export function buildJobColumns({
       header: "Status",
       enableSorting: true,
       cell: ({ row }) => {
-        const { status, created_at, completed_at, error_message } =
-          row.original;
-        const running = !completed_at && RUNNING.has(status);
+        const { status, error_message } = row.original;
         return (
           <div className="flex items-center gap-2">
             <JobStatus status={status} errorMessage={error_message} />
-            {created_at && running ? (
-              <LiveDuration createdAt={created_at} />
-            ) : created_at && completed_at ? (
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {formatDuration(
-                  new Date(completed_at).getTime() -
-                    new Date(created_at).getTime(),
-                )}
-              </span>
-            ) : null}
+            <JobDuration job={row.original} />
           </div>
         );
       },

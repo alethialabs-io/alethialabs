@@ -16,7 +16,7 @@ export default function JobNotFound() {
 		<ErrorState
 			code="404"
 			title="Job not found."
-			description="This job has been deleted, or it belongs to an organisation you are not a member of."
+			description="This job has been deleted, or it belongs to an organization you are not a member of."
 			actions={
 				<Button size="sm" nativeButton={false} render={<Link href="/" />}>
 					Go home

@@ -403,6 +403,10 @@ test.describe("Deploy jobs — the job detail page", () => {
 	// The QA env runs a live runner that claims real QUEUED DEPLOY jobs within seconds (they then
 	// fail preflight on a missing local tool), so a seeded QUEUED job will not persist. PROCESSING
 	// is the in-flight state the runner does NOT claim, which is what makes this deterministic.
+	//
+	// THE TITLE STILL SAYS "waiting-for-runner" AND THE BODY NO LONGER ASSERTS IT (#6818). The title
+	// is this test's key in `e2e/gate-baseline.json`, which another open unit holds, so it is left as
+	// it is: what the test measures is what the log pane says for an in-flight job with no output.
 	test("an in-flight job offers Cancel and the waiting-for-runner state", async ({ owner }) => {
 		const { id } = await seedJob(ownerId, {
 			jobType: "DEPLOY",
@@ -417,7 +421,11 @@ test.describe("Deploy jobs — the job detail page", () => {
 		await expect(owner.page.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled({
 			timeout: 25_000,
 		});
-		await expect(owner.page.getByText(/Waiting for runner to claim job/i)).toBeVisible();
+		// A PROCESSING job HAS a runner, so the log pane says it is running and has printed nothing
+		// yet. It used to say "Waiting for runner to claim job" for every in-flight status, which is
+		// what this line asserted until #6818 — the sentence was false for exactly this job.
+		await expect(owner.page.getByText("Running — no output yet")).toBeVisible();
+		await expect(owner.page.getByText(/waiting for a runner/i)).toHaveCount(0);
 		// An in-flight job has nothing to re-run.
 		await expect(owner.page.getByRole("button", { name: /re-?run/i })).toHaveCount(0);
 	});

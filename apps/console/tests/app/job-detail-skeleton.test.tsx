@@ -25,7 +25,9 @@ vi.mock("next/navigation", () => ({
 	useParams: () => ({ org: "acme", id: JOB_ID }),
 	useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));
-vi.mock("@/hooks/use-job-log-stream", () => ({ useJobLogStream: () => ({ logs: [] }) }));
+vi.mock("@/hooks/use-job-log-stream", () => ({
+	useJobLogStream: () => ({ logs: [], state: null, reconnect: () => {}, complete: true }),
+}));
 vi.mock("@/components/runners/runner-select-popover", () => ({ RunnerSelectPopover: () => null }));
 
 import { JOB_DETAIL_SECTIONS } from "@/app/(private)/[org]/~/jobs/[id]/detail-column";
@@ -52,6 +54,8 @@ const BARE_JOB = {
 	error_message: null,
 	config_snapshot: null,
 	execution_metadata: null,
+	approval: null,
+	can: { cancel: true, rerun: true, deploy: true },
 };
 
 /** Renders the page over a cache already holding what the server prefetched. */

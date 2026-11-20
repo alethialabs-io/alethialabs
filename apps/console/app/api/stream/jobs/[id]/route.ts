@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, asc, eq, gt } from "drizzle-orm";
+import { JOB_FINISHED_STATUSES, JOB_LOG_END_EVENT, JOB_LOG_SETTLE_MS } from "@/components/jobs/job-log-contract";
 import { getOwner } from "@/lib/auth/owner";
 import { getActiveScope } from "@/lib/auth/scope";
 import { authorizeUserId } from "@/lib/authz/guard";
@@ -21,9 +22,27 @@ type LogRow = {
 };
 
 /**
+ * The frame that says the log is complete (`JOB_LOG_END_EVENT`). The reader
+ * (`hooks/use-job-log-stream.ts`) stops on it and does not reconnect.
+ */
+const END_FRAME = `event: ${JOB_LOG_END_EVENT}\ndata: {}\n\n`;
+
+/**
  * SSE stream of a job's logs. Sends the backlog since the client's Last-Event-ID,
  * then streams new rows as the runner writes them (Postgres LISTEN/NOTIFY via the
  * RealtimeTransport).
+ *
+ * IT ENDS WHEN THE JOB HAS. A pass that finds the job finished sends what the log holds, waits
+ * out the rest of the settle window, reads once more, sends the `end` frame and closes. The wait
+ * is there because a runner reports the status BEFORE its loggers have shipped their last buffer
+ * (apps/runner/internal/agent/runner.go: the terminal post runs ahead of the deferred `Close()`
+ * of the stdout and system loggers), so a finished job can still gain lines for a moment. A line
+ * that arrives later than `JOB_LOG_SETTLE_MS` after the job finished is not in this stream; it is
+ * in the log the page reads on its next load.
+ *
+ * A job that finishes without writing another line raises no notify, so a stream already open
+ * does not hear of it here: the reader, which learns the status from the org's change stream,
+ * opens the stream again and this route answers that request with the rest and the `end` frame.
  */
 export async function GET(
 	req: Request,
@@ -107,6 +126,22 @@ export async function GET(
 					/* already closed */
 				}
 			};
+			/**
+			 * How long until this job's log is settled, in milliseconds: null while the job is still
+			 * running, zero once it is gone or finished longer ago than the settle window.
+			 */
+			const readSettleIn = async (): Promise<number | null> => {
+				const [row] = await db
+					.select({ status: jobs.status, completed_at: jobs.completed_at })
+					.from(jobs)
+					.where(eq(jobs.id, jobId))
+					.limit(1);
+				if (!row) return 0;
+				if (!JOB_FINISHED_STATUSES.has(row.status)) return null;
+				// A finished job with no completion time gets the whole window.
+				const since = row.completed_at ? Date.now() - row.completed_at.getTime() : 0;
+				return Math.max(0, JOB_LOG_SETTLE_MS - since);
+			};
 			const send = (rows: LogRow[]) => {
 				for (const r of rows) {
 					controller.enqueue(
@@ -129,7 +164,22 @@ export async function GET(
 				try {
 					do {
 						pending = false;
-						send(await fetchSince(lastId));
+						const settleIn = await readSettleIn();
+						const rows = await fetchSince(lastId);
+						if (closed) return;
+						send(rows);
+						if (settleIn !== null) {
+							// Finished: one wait, one last read, then the end. Not a poll.
+							if (settleIn > 0) {
+								await new Promise((resolve) => setTimeout(resolve, settleIn));
+								if (closed) return;
+								send(await fetchSince(lastId));
+							}
+							if (closed) return;
+							controller.enqueue(encoder.encode(END_FRAME));
+							stop();
+							return;
+						}
 					} while (pending && !closed);
 				} catch {
 					/* transient read error; next notify retries */
@@ -141,7 +191,8 @@ export async function GET(
 			await drain(); // backlog
 			// A client that left during the backlog read aborted before the listener below existed, and
 			// an abort listener never hears an abort that already happened. Stop here, before the
-			// subscription and the heartbeat exist; `closed` covers a `cancel()` that ran in the same gap.
+			// subscription and the heartbeat exist; `closed` covers a `cancel()` that ran in the same gap,
+			// and a finished job, whose stream the backlog pass has already ended.
 			if (signal.aborted || closed) {
 				stop();
 				return;

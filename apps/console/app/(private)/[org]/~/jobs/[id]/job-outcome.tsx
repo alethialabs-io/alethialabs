@@ -5,10 +5,10 @@
 import { Button } from "@repo/ui/button";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, TriangleAlert } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { DriftDetail, DriftPosture } from "@/types/jsonb.types";
-import { DRIFT_PREVIEW_COUNT, type JobResult, countNoun, readJobResult } from "./job-result";
+import { DRIFT_PREVIEW_COUNT, type JobResult, countNoun, readDeployWarnings, readJobResult } from "./job-result";
 
 /** The kind pill's word for each way a resource diverged (the Go `drift.Kind`). */
 const KIND_LABEL: Record<DriftDetail["kind"], string> = {
@@ -142,6 +142,75 @@ function PlanResult({ result }: { result: Extract<NonNullable<JobResult>, { kind
 				</p>
 			)}
 		</ResultFrame>
+	);
+}
+
+/** How many deploy warnings the block lists before the "Show all" disclosure. */
+const WARNING_PREVIEW_COUNT = 3;
+
+/**
+ * What a DEPLOY went on without, under its status line: the runner's manifest warnings, first
+ * {@link WARNING_PREVIEW_COUNT} then a disclosure for the rest. Renders nothing for a job with none.
+ *
+ * It is shown for a deploy in any status. On a successful one it is the difference between "the
+ * job ran" and "everything asked for is deployed"; on a failed one it is often the cause. Each
+ * warning is the runner's own sentence, rendered as text.
+ */
+export function DeployWarnings({ job }: { job: { job_type: string; execution_metadata: unknown } }) {
+	const [showAll, setShowAll] = useState(false);
+	const warnings = readDeployWarnings(job);
+	if (warnings.length === 0) return null;
+	const shown = showAll ? warnings : warnings.slice(0, WARNING_PREVIEW_COUNT);
+	const hidden = warnings.length - WARNING_PREVIEW_COUNT;
+
+	return (
+		<section
+			aria-label="Deploy warnings"
+			data-slot="job-deploy-warnings"
+			className="mt-3 rounded-md border border-border px-3 py-2.5"
+		>
+			<SectionHeading
+				level={2}
+				title={
+					<span className="flex items-center gap-2">
+						<TriangleAlert className="size-4 shrink-0 text-text-secondary" aria-hidden />
+						{countNoun(warnings.length, "deploy warning")}
+					</span>
+				}
+			/>
+			<p className="mt-1 text-ui-sm text-text-tertiary">
+				The runner went on without these while it generated the manifests. A deploy can succeed with part
+				of what was asked for missing, so check each one.
+			</p>
+			<ul
+				aria-label="Warnings"
+				className={cn(
+					"mt-2 divide-y divide-border/40 border-t border-border/40",
+					// Expanded, the list scrolls inside the header rather than pushing the log off screen.
+					showAll && "max-h-48 overflow-y-auto",
+				)}
+			>
+				{shown.map((warning, i) => (
+					<li key={`${i}-${warning}`} className="break-words py-1 text-ui-sm text-text-primary">
+						{warning}
+					</li>
+				))}
+			</ul>
+			{hidden > 0 && (
+				<div className="mt-1 flex items-center gap-2 text-ui-sm text-text-tertiary">
+					{!showAll && <span>… {hidden} more</span>}
+					<Button
+						variant="link"
+						size="sm"
+						className="h-auto px-0"
+						aria-expanded={showAll}
+						onClick={() => setShowAll((v) => !v)}
+					>
+						{showAll ? "Show fewer" : `Show all ${warnings.length}`}
+					</Button>
+				</div>
+			)}
+		</section>
 	);
 }
 
