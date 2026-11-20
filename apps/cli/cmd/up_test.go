@@ -4,7 +4,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -175,9 +174,8 @@ func TestUp_JSONOutputCarriesNoProse(t *testing.T) {
 		t.Error("up exited fatally")
 	}
 	out := read()
-	var got ApplyResult
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
-		t.Fatalf("up --output json is not the typed result: %v\n%s", err, out)
+	if got := applyResultOf(t, out); got.ProjectID == "" {
+		t.Errorf("up --output json is not the apply's result: %+v", got)
 	}
 	if strings.Contains(out, "Already signed in") || strings.Contains(out, "Reading") {
 		t.Errorf("progress prose leaked into the json stream:\n%s", out)
