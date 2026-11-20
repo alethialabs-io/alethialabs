@@ -20,7 +20,8 @@ import { scanIacSourceAction } from "@/app/server/actions/byo-iac";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
 import { useIacSourceCanvas } from "@/components/design-project/byo/iac-source-canvas-context";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { InspectorAction } from "../inspector-shell/inspector-frame";
+import { useCloseInspector } from "../inspector-shell/subject";
 import { SheetCard } from "./sheet-card";
 import { EvIcon, type IconKey, TONE_TEXT } from "@/components/evidence/evidence-status";
 import type { Tone } from "@/components/evidence/evidence-derive";
@@ -118,7 +119,7 @@ function InventoryList({
  * context (one source per environment, so it needs no id). Re-runs the scan through that context.
  */
 export function IacScanCard() {
-	const closeCard = useCanvasStore((s) => s.closeCard);
+	const closeCard = useCloseInspector();
 	const ctx = useIacSourceCanvas();
 	const source = ctx?.source ?? null;
 	// The rescan, on the mutation contract. No follow-up refetches: the scan's progress and its
@@ -215,6 +216,18 @@ export function IacScanBody({
 					/{path.replace(/^\/+/, "") || "(root)"} · {scanRef}
 				</span>
 			}
+			// The subject's one action, where every subject's is. Offered once there is a verdict to
+			// refresh; before that the body's own call to action is the only thing to do.
+			actions={
+				report && !(scanning || scanStatus === "scanning") ? (
+					<InspectorAction
+						label="Rescan"
+						variant="ghost"
+						icon={<RotateCw className="size-3" aria-hidden="true" />}
+						onClick={onRescan}
+					/>
+				) : undefined
+			}
 			onClose={onClose}
 		>
 			<div>
@@ -233,7 +246,7 @@ export function IacScanBody({
 						/>
 					) : report ? (
 						<div className="flex flex-col gap-4">
-							{/* Verdict + rescan */}
+							{/* Verdict */}
 							<div className="flex items-center gap-2.5">
 								<EvIcon
 									name={verdict.icon}
@@ -243,14 +256,6 @@ export function IacScanBody({
 								<span className={cn("text-ui-md font-medium", TONE_TEXT[verdict.tone])}>
 									{verdict.label}
 								</span>
-								<Button
-									variant="ghost"
-									size="sm"
-									className="ml-auto h-7 gap-1.5 px-2 text-ui-xs"
-									onClick={onRescan}
-								>
-									<RotateCw className="size-3" /> Rescan
-								</Button>
 							</div>
 
 							{/* validate status + severity summary */}

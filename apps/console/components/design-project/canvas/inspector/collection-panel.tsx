@@ -8,6 +8,9 @@ import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { useState } from "react";
+import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
+import { InspectorAction, InspectorFrame } from "../inspector-shell/inspector-frame";
+import { useCloseInspector } from "../inspector-shell/subject";
 import { NODE_REGISTRY } from "../graph/node-registry";
 import { configName } from "../graph/node-config";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
@@ -38,9 +41,9 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 	const env = useEnvironmentStatus();
 	const addNode = useCanvasStore((s) => s.addNode);
 	const updateNodeConfig = useCanvasStore((s) => s.updateNodeConfig);
-	const openCard = useCanvasStore((s) => s.openCard);
 	const removeNodes = useCanvasStore((s) => s.removeNodes);
-	const openInspector = useCanvasStore((s) => s.openInspector);
+	const board = useBoard();
+	const close = useCloseInspector();
 	const [filter, setFilter] = useState("");
 
 	const members = nodes.filter((n) => n.data.kind === kind);
@@ -58,44 +61,41 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 	const singular = def.collection?.singular ?? def.label.toLowerCase();
 	const Icon = def.icon;
 
-	return (
-		<div className="flex h-full flex-col">
-			<div className="flex items-start gap-3 border-b border-border p-4">
-				<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-none border text-muted-foreground">
-					<Icon className="h-4 w-4" />
-				</span>
-				<div className="min-w-0 flex-1 space-y-1">
-					<div className="flex flex-wrap items-center gap-2">
-						<span className="text-base font-semibold">{title}</span>
-						<span className="vx-eyebrow rounded-none border border-border px-1.5 py-0.5">
-							{members.length}
-						</span>
-					</div>
-					<p className="truncate text-xs text-muted-foreground">
-						{members.length} {members.length === 1 ? singular : `${singular}s`} in this
-						environment.
-					</p>
-				</div>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					className="h-7 w-7 shrink-0"
-					onClick={() => openInspector(null)}
-					aria-label="Close"
-				>
-					<X className="h-4 w-4" />
-				</Button>
-			</div>
+	/** Add a member, on the store this environment's secrets already read from. */
+	const addMember = () => {
+		const id = addNode(kind);
+		if (secretsStore?.provider) {
+			updateNodeConfig(id, {
+				provider: secretsStore.provider,
+				provider_config: secretsStore.providerConfig,
+			});
+		}
+	};
 
+	return (
+		<InspectorFrame
+			icon={<Icon className="h-4 w-4" />}
+			eyebrow="Collection"
+			title={title}
+			summary={`${members.length} ${members.length === 1 ? singular : `${singular}s`} in this environment.`}
+			action={
+				<InspectorAction
+					label="Add"
+					icon={<Plus className="h-3.5 w-3.5" aria-hidden="true" />}
+					onClick={addMember}
+				/>
+			}
+			onClose={close}
+			bodyClassName="p-0 pb-0 pt-0"
+		>
 			{secretsStore && members.length > 0 ? (
 				<button
 					type="button"
 					// A DETOUR: the store this vault reads through is an environment setting, so the
 					// control that changes it lives on another card — and one card on the rail means
 					// opening it replaces this one. `back: true` remembers where you were.
-					onClick={() => openCard({ kind: "env-settings" }, { back: true })}
-					className="flex items-center justify-between gap-2 border-b border-border px-4 py-2 text-left hover:bg-accent"
+					onClick={() => board.view.getState().openCard({ kind: "env-settings" }, { back: true })}
+					className="flex w-full items-center justify-between gap-2 border-b border-border px-4 py-2 text-left hover:bg-accent"
 				>
 					<span className="text-xs text-muted-foreground">
 						Store{" "}
@@ -116,31 +116,9 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 					placeholder={`Filter ${singular}s…`}
 					className="h-8 font-mono text-xs"
 				/>
-				<Button
-					type="button"
-					size="sm"
-					className="h-8 shrink-0 text-xs"
-					onClick={() => {
-						// Add through the normal path (which owns defaults, placement and positioning),
-						// then patch the store onto the new node — a new secret INHERITS the
-						// environment's. One that quietly defaulted to native would put the rows back
-						// into disagreement, and dominantProvider would fold it into the pluggable store
-						// anyway, so the row would describe something the deploy does not do.
-						const id = addNode(kind);
-						if (secretsStore?.provider) {
-							updateNodeConfig(id, {
-								provider: secretsStore.provider,
-								provider_config: secretsStore.providerConfig,
-							});
-						}
-					}}
-				>
-					<Plus className="mr-1 h-3.5 w-3.5" />
-					Add
-				</Button>
 			</div>
 
-			<div className="min-h-0 flex-1 overflow-y-auto">
+			<div>
 				{shown.length === 0 ? (
 					<EmptyState
 						className="px-4 py-8 md:px-4 md:py-8"
@@ -167,7 +145,7 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 								>
 									<button
 										type="button"
-										onClick={() => openInspector(node.id)}
+										onClick={() => board.view.getState().setSubject({ kind: "node", id: node.id })}
 										className="flex min-w-0 flex-1 items-center gap-2.5 py-2.5 pl-4 text-left"
 									>
 										<StatusBadge
@@ -205,6 +183,6 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 					</ul>
 				)}
 			</div>
-		</div>
+		</InspectorFrame>
 	);
 }
