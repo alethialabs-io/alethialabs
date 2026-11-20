@@ -28,6 +28,7 @@ import {
 } from "react";
 import { Button } from "@repo/ui/button";
 import { SectionHeading } from "@repo/ui/section-heading";
+import { forgetSecrets } from "@/components/design-project/canvas/inspector-shell/staged-operations";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
 import type { FieldChange } from "@/lib/canvas/store/types";
 import { planCountsSentence } from "./changeset-status";
@@ -199,7 +200,11 @@ export function ReviewView({ scope, onClose }: { scope: ReviewScope; onClose: ()
 
 	const revert = useCallback((change: FieldChange) => revertChange(board, change), [board]);
 	const unstage = useCallback(
-		(operationId: string) => board.document.getState().unstageOperation(operationId),
+		(operationId: string) => {
+			board.document.getState().unstageOperation(operationId);
+			// What was typed into the operation's secret fields goes with it.
+			forgetSecrets(operationId);
+		},
 		[board],
 	);
 
@@ -253,6 +258,7 @@ export function ReviewView({ scope, onClose }: { scope: ReviewScope; onClose: ()
 						saved={review.saved}
 						onRevert={revert}
 						onUnstage={unstage}
+						operationsRefusal={review.operationsRefusal}
 					/>
 				</Step>
 				<Step number={2} title="Plan">

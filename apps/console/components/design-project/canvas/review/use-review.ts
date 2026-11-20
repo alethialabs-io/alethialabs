@@ -33,6 +33,7 @@ import { graphToForm } from "@/components/design-project/canvas/graph/graph-to-f
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { track } from "@/lib/analytics/track";
 import type { ReviewPlan } from "@/lib/canvas/component-status";
+import { useApplyStagedOperations } from "@/components/design-project/canvas/inspector-shell/apply-staged-operations";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
 import {
@@ -86,6 +87,11 @@ export interface ReviewController {
 	changes: PendingChange[];
 	fieldChanges: FieldChange[];
 	operations: StagedOperation[];
+	/** Applies every staged operation now, through the one hook that runs them. */
+	applyOperations: () => void;
+	operationsPending: boolean;
+	/** The sentence a refused apply answered with; null when the last one was not refused. */
+	operationsRefusal: string | null;
 	/** The changes the last Run plan saved, still listed after they stop being pending. */
 	saved: PendingChange[];
 
@@ -324,6 +330,17 @@ export function useReview(scope: ReviewScope): ReviewController {
 		document.recordReviewedPlan(server.planJobId);
 	}, [board, server]);
 
+	const [operationsRefusal, setOperationsRefusal] = useState<string | null>(null);
+	const operationsApply = useApplyStagedOperations({
+		onRefusal: (error) => setOperationsRefusal(error.message),
+		onSuccess: () => setOperationsRefusal(null),
+	});
+	const submitOperations = operationsApply.submit;
+	const applyOperations = useCallback(() => {
+		setOperationsRefusal(null);
+		submitOperations(board.document.getState().operations);
+	}, [board, submitOperations]);
+
 	const clearDeployRefusal = useCallback(() => setDeployRefusal(null), []);
 	const retryRead = useCallback(() => void refetchPlan(), [refetchPlan]);
 
@@ -332,6 +349,9 @@ export function useReview(scope: ReviewScope): ReviewController {
 		changes,
 		fieldChanges,
 		operations,
+		applyOperations,
+		operationsPending: operationsApply.isPending,
+		operationsRefusal,
 		saved,
 		server,
 		phase,

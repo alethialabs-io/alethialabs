@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
 import { useIdentities } from "@/lib/canvas/store/canvas-store-provider";
@@ -67,6 +68,7 @@ export function ReviewChanges({
 	saved,
 	onRevert,
 	onUnstage,
+	operationsRefusal,
 }: {
 	fieldChanges: readonly FieldChange[];
 	operations: readonly StagedOperation[];
@@ -74,6 +76,8 @@ export function ReviewChanges({
 	saved: readonly PendingChange[];
 	onRevert: (change: FieldChange) => void;
 	onUnstage: (operationId: string) => void;
+	/** Why the last attempt to apply the staged operations was refused; null when it was not. */
+	operationsRefusal: string | null;
 }) {
 	const identities = useIdentities();
 	const groups = groupByCard(fieldChanges);
@@ -188,7 +192,7 @@ export function ReviewChanges({
 						<span className="min-w-0 flex-1 text-ui-md">
 							<span className="block truncate">{operation.summary}</span>
 							<span className="block text-ui-sm text-muted-foreground">
-								Applies directly to the cluster, outside the plan.
+								Applies directly to this environment, outside the plan.
 							</span>
 						</span>
 						<Button
@@ -203,6 +207,11 @@ export function ReviewChanges({
 					</li>
 				))}
 			</ul>
+			{operationsRefusal && (
+				<Alert variant="destructive">
+					<AlertDescription>The staged changes were not applied. {operationsRefusal}</AlertDescription>
+				</Alert>
+			)}
 			<SavedInReview saved={saved} />
 		</div>
 	);

@@ -263,7 +263,7 @@ export type BlockFix =
 	| "view-job"
 	| "show-issues"
 	| "retry-read"
-	| "show-changes"
+	| "apply-operations"
 	| null;
 
 /** Why Deploy is not available, in a sentence, with what fixes it. */
@@ -358,8 +358,8 @@ export function deployBlock(facts: DeployFacts): DeployBlock | null {
 	if (facts.pendingOperations > 0) {
 		return {
 			code: "staged-operations",
-			reason: `${countOf(facts.pendingOperations, "add-on change")} staged here cannot be applied from this view yet. Remove ${facts.pendingOperations === 1 ? "it" : "them"} from the list to deploy the design.`,
-			fix: "show-changes",
+			reason: `${countOf(facts.pendingOperations, "add-on change")} staged outside the design. Apply ${facts.pendingOperations === 1 ? "it" : "them"} (that writes to this environment now; the cluster changes on the next deploy) or discard ${facts.pendingOperations === 1 ? "it" : "them"} in step 1, then deploy.`,
+			fix: "apply-operations",
 			jobId: null,
 		};
 	}
