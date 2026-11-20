@@ -329,7 +329,7 @@ func reportCredentialWrite(write credentialWrite, previous credentialSource, sig
 		}
 	case signedIn || previous != credentialFromFile:
 		printer.Note(fmt.Sprintf(
-			"No system keychain is available here, so the credential is stored in the owner-only file %s.", write.Path))
+			"The system keychain could not be used here, so the credential is stored in the owner-only file %s.", write.Path))
 	}
 }
 

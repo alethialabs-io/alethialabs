@@ -384,7 +384,7 @@ func TestKeychain_LoginFallsBackToAnOwnerOnlyFile(t *testing.T) {
 		t.Errorf("configuration directory mode = %#o, want %#o", dir.Mode().Perm(), configDirMode)
 	}
 
-	notices := linesWith(stderr, "No system keychain is available")
+	notices := linesWith(stderr, "The system keychain could not be used here")
 	if len(notices) != 1 || !strings.Contains(notices[0], credsPath) {
 		t.Errorf("want one stderr line naming the fallback and the file, got %q", notices)
 	}
