@@ -7,8 +7,9 @@
 //
 // An add-on's install form and a chart workload's overlay used to write to the server from their
 // own Save button, beside node forms that staged into a draft a different bar saved. They now add
-// a `StagedOperation` to the document instead. Nothing here decides WHEN an operation runs: the
-// changes bar does, by calling `useApplyStagedOperations`. Until that bar claims the operations
+// a `StagedOperation` to the document instead. Nothing here decides WHEN an operation runs, and
+// nothing here runs one: that is `apply-staged-operations.ts`, kept apart so a form that only
+// stages does not import a server action. Until the changes bar claims the operations
 // (`useClaimStagedOperations`), the rail draws its own strip for them, so a staged operation is
 // never something no control on the page can apply.
 //
@@ -21,19 +22,8 @@
 // and joined to it when it runs. After a reload the operation is still staged and its secrets are
 // gone; running it is refused with a sentence that says to type them again.
 
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { z } from "zod";
-import { disableAddonAction, enableAddonAction } from "@/app/server/actions/addons";
-import { saveChartWorkloadOverlayAction } from "@/app/server/actions/byo-charts";
-import { ok, type ActionResult } from "@/lib/actions/result";
-import {
-	useActionMutation,
-	type ActionMutation,
-	type RefusalError,
-} from "@/lib/actions/use-action-mutation";
-import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
-import type { StagedOperation } from "@/lib/canvas/store/types";
-import { orpc } from "@/lib/rpc/client";
 import {
 	serviceBindingSchema,
 	serviceEnvSchema,
@@ -67,10 +57,6 @@ export const addonEnableInputSchema = addonTarget.extend({
 	secretPaths: z.array(z.string()),
 });
 export type AddonEnableInput = z.infer<typeof addonEnableInputSchema>;
-
-/** What a staged add-on removal carries. */
-export const addonRemoveInputSchema = addonTarget;
-export type AddonRemoveInput = z.infer<typeof addonRemoveInputSchema>;
 
 /** What a staged chart-workload overlay carries: only the parts that differ from what is saved. */
 export const workloadOverlayInputSchema = z.object({
@@ -121,102 +107,6 @@ export function withValueAt(
 	if (rest.length === 0) return { ...values, [head]: value };
 	const child = values[head];
 	return { ...values, [head]: withValueAt(isRecord(child) ? child : {}, rest.join("."), value) };
-}
-
-const UNREADABLE = "this staged change cannot be read. Discard it and make it again.";
-
-/** A refusal made here, before any server action is called. */
-function refuse(message: string): ActionResult<never> {
-	return { ok: false, error: { kind: "conflict", message } };
-}
-
-/**
- * Run one staged operation through the server action it was always run through. Answers that
- * action's result; an operation this file cannot read is refused rather than guessed at.
- */
-export async function runStagedOperation(
-	operation: StagedOperation,
-): Promise<ActionResult<{ targetId: string }>> {
-	if (operation.target === "addon" && operation.verb === "remove") {
-		const input = addonRemoveInputSchema.safeParse(operation.input);
-		if (!input.success) {
-			return refuse(`${operation.summary}: ${UNREADABLE}`);
-		}
-		const result = await disableAddonAction(input.data);
-		return result.ok ? ok({ targetId: operation.targetId }) : result;
-	}
-	if (operation.target === "addon") {
-		const input = addonEnableInputSchema.safeParse(operation.input);
-		if (!input.success) {
-			return refuse(`${operation.summary}: ${UNREADABLE}`);
-		}
-		const { secretPaths, ...rest } = input.data;
-		const secrets = recallSecrets(operation.id);
-		const missing = secretPaths.filter((path) => secrets[path] === undefined);
-		if (missing.length > 0) {
-			return refuse(
-				`${operation.summary}: type its secret values again. Secrets are not kept when the page reloads.`,
-			);
-		}
-		let values = rest.values;
-		for (const path of secretPaths) values = withValueAt(values, path, secrets[path]);
-		const result = await enableAddonAction({ ...rest, values });
-		return result.ok ? ok({ targetId: operation.targetId }) : result;
-	}
-	const input = workloadOverlayInputSchema.safeParse(operation.input);
-	if (!input.success) {
-		return refuse(`${operation.summary}: ${UNREADABLE}`);
-	}
-	const result = await saveChartWorkloadOverlayAction(input.data);
-	return result.ok ? ok({ targetId: operation.targetId }) : result;
-}
-
-/** Where the outcome of applying staged operations is said. */
-export interface ApplyStagedOperationsOptions {
-	/** A refusal to show inline, beside the control that was pressed. Without it, a toast says it. */
-	onRefusal?: (error: RefusalError) => void;
-	/** Runs after every operation in the call was applied. */
-	onSuccess?: (data: { applied: number }) => void;
-}
-
-/**
- * Apply staged operations, in order, on the mutation contract: pending while in flight, a refusal
- * routed to the caller, and the add-on and chart reads invalidated when it settles.
- *
- * Each operation is taken off the changeset as it succeeds, so a refusal part-way leaves exactly
- * the operations that did not run still staged. This is the ONE way a staged operation is run: the
- * changes bar calls it when a changeset is applied, and the rail's own strip calls it until then.
- */
-export function useApplyStagedOperations(
-	options: ApplyStagedOperationsOptions = {},
-): ActionMutation<{ applied: number }, StagedOperation[]> {
-	const board = useBoard();
-	const apply = useCallback(
-		async (operations: StagedOperation[]): Promise<ActionResult<{ applied: number }>> => {
-			let applied = 0;
-			for (const operation of operations) {
-				const result = await runStagedOperation(operation);
-				if (!result.ok) return result;
-				board.document.getState().unstageOperation(operation.id);
-				forgetSecrets(operation.id);
-				applied++;
-			}
-			return ok({ applied });
-		},
-		[board],
-	);
-	return useActionMutation(apply, {
-		invalidates: [
-			orpc.canvas.addons.key(),
-			orpc.canvas.byoCharts.key(),
-			orpc.canvas.chartWorkloads.key(),
-			orpc.canvas.environmentStatus.key(),
-		],
-		onRefusal: options.onRefusal,
-		onSuccess: options.onSuccess,
-		successMessage: (data) =>
-			data.applied === 1 ? "1 staged change applied." : `${data.applied} staged changes applied.`,
-	});
 }
 
 let claims = 0;
