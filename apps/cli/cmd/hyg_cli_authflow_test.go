@@ -88,29 +88,6 @@ func hygCliAuthflowServer(t *testing.T, h http.HandlerFunc) *httptest.Server {
 	return srv
 }
 
-// hygCliAuthflowCaptureStdout runs fn with os.Stdout redirected to a pipe and returns
-// everything it printed.
-func hygCliAuthflowCaptureStdout(t *testing.T, fn func()) string {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-	prev := os.Stdout
-	os.Stdout = w
-	done := make(chan string, 1)
-	go func() {
-		b, _ := io.ReadAll(r)
-		done <- string(b)
-	}()
-	fn()
-	os.Stdout = prev
-	_ = w.Close()
-	out := <-done
-	_ = r.Close()
-	return out
-}
-
 // --- #2017 · the credentials file must not be world-readable -----------------
 
 // TestHygCliAuthflowCredentialsAreOwnerOnly pins that both writers of
@@ -121,9 +98,11 @@ func hygCliAuthflowCaptureStdout(t *testing.T, fn func()) string {
 func TestHygCliAuthflowCredentialsAreOwnerOnly(t *testing.T) {
 	t.Run("saveTokens creates 0600", func(t *testing.T) {
 		credsPath := hygCliAuthflowHome(t)
-		saveTokens(&types.ExchangeResponse{
+		if _, err := storeCredential(storedCredential{ExchangeResponse: types.ExchangeResponse{
 			AccessToken: "eyJ-live-bearer", RefreshToken: "live-refresh", UserEmail: "x@y.com",
-		})
+		}}); err != nil {
+			t.Fatalf("storeCredential: %v", err)
+		}
 		if got := hygCliAuthflowMode(t, credsPath); got != credentialsFileMode {
 			t.Errorf("credentials.json mode = %#o, want %#o", got, credentialsFileMode)
 		}
@@ -144,7 +123,11 @@ func TestHygCliAuthflowCredentialsAreOwnerOnly(t *testing.T) {
 	// assert the precondition, then write through each path.
 	for name, write := range map[string]func(string){
 		"saveTokens": func(p string) {
-			saveTokens(&types.ExchangeResponse{AccessToken: "a", RefreshToken: "r"})
+			if _, err := storeCredential(storedCredential{ExchangeResponse: types.ExchangeResponse{
+				AccessToken: "a", RefreshToken: "r",
+			}}); err != nil {
+				t.Fatalf("storeCredential: %v", err)
+			}
 		},
 		"saveCredentials": func(p string) {
 			if err := saveCredentials(p, types.ExchangeResponse{AccessToken: "a"}); err != nil {
@@ -345,7 +328,8 @@ func TestHygCliAuthflowUserCodeShape(t *testing.T) {
 // TestHygCliAuthflowLoginPrintsAndSendsUserCode pins the CLI half of the takeover
 // fix: the device-login URL carries a user_code AND the terminal prints the same
 // code, so the browser has something to display and the user something to compare
-// it against. Before the fix the URL carried only a client-chosen device_code and
+// it against. The code is an instruction to the person, so it is printed on stderr
+// and stdout stays empty for the caller's own document. Before the fix the URL carried only a client-chosen device_code and
 // the page approved it on mount, with nothing for the user to check.
 func TestHygCliAuthflowLoginPrintsAndSendsUserCode(t *testing.T) {
 	hygCliAuthflowHome(t)
@@ -366,9 +350,12 @@ func TestHygCliAuthflowLoginPrintsAndSendsUserCode(t *testing.T) {
 	t.Cleanup(func() { openBrowser, loginProgramOptions = prevBrowser, prevOpts })
 
 	var flowErr error
-	printed := hygCliAuthflowCaptureStdout(t, func() { flowErr = performLoginFlow() })
+	document, printed := captureStreams(t, func() { flowErr = performLoginFlow() })
 	if flowErr != nil {
 		t.Fatalf("performLoginFlow: %v", flowErr)
+	}
+	if document != "" {
+		t.Errorf("the sign-in wrote on stdout, which belongs to the calling command: %q", document)
 	}
 
 	parsed, err := url.Parse(opened)
