@@ -69,7 +69,7 @@ const LINK = "underline underline-offset-2 hover:text-text-primary";
 
 /** The number of columns the table has for a route — the skeleton draws the same count. */
 export function clusterColumnCount(showProject: boolean): number {
-	return showProject ? 7 : 6;
+	return showProject ? 6 : 5;
 }
 
 /**
@@ -166,21 +166,20 @@ export function buildClusterColumns({
 						) : (
 							<Server className="size-4 text-text-tertiary" aria-hidden />
 						)}
-						<span>
-							{cloudLabel(cluster) ?? "Unknown"}
-							<span className="text-text-tertiary"> · {cluster.region}</span>
+						<span className="flex flex-col">
+							<span>
+								{cloudLabel(cluster) ?? "Unknown"}
+								<span className="text-text-tertiary"> · {cluster.region}</span>
+							</span>
+							{cluster.project_cluster.k8s_version && (
+								<span className="font-mono text-ui-2xs text-text-tertiary">
+									Kubernetes {cluster.project_cluster.k8s_version}
+								</span>
+							)}
 						</span>
 					</span>
 				);
 			},
-		},
-		{
-			id: "kubernetes",
-			header: "Kubernetes",
-			enableSorting: false,
-			cell: ({ row }) => (
-				<span className="font-mono text-ui-sm">{row.original.cluster.project_cluster.k8s_version ?? "—"}</span>
-			),
 		},
 		{
 			id: "components",

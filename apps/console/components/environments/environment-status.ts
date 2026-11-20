@@ -59,4 +59,4 @@ export function mayHoldResources(status: string): boolean {
  * route's skeleton can draw the same count without importing the columns' controls; the columns'
  * test holds the two to each other.
  */
-export const ENVIRONMENT_COLUMN_COUNT = 8;
+export const ENVIRONMENT_COLUMN_COUNT = 4;

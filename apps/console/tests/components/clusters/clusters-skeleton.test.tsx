@@ -30,13 +30,13 @@ describe("the clusters routes' loading.tsx", () => {
 	it("the org route draws the list with its Project column", () => {
 		const { container } = render(ClustersLoading());
 		expect(root(container).querySelectorAll("th")).toHaveLength(clusterColumnCount(true));
-		expect(clusterColumnCount(true)).toBe(7);
+		expect(clusterColumnCount(true)).toBe(6);
 	});
 
 	it("a project's route draws the list without it", () => {
 		const { container } = render(ProjectClustersLoading());
 		expect(root(container).querySelectorAll("th")).toHaveLength(clusterColumnCount(false));
-		expect(clusterColumnCount(false)).toBe(6);
+		expect(clusterColumnCount(false)).toBe(5);
 	});
 });
 

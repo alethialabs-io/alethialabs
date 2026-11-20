@@ -2,9 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The Environments table's columns: identity (name, default tag, what needs attention, its
-// classification), stage, lifecycle status, drift, the gates into the environment, auto-heal, when
-// it last changed, and the row's actions. Presentational — every write is the page's
+// The Environments table's columns: identity (name, default tag, what needs attention, stage, when
+// it last changed, its classification), lifecycle status with its drift, the gates into the
+// environment, and auto-heal. The row's menu sits beside the name, in the first cell: a table cell
+// does not wrap and the table clips what overflows it, so a menu in a last column could be pushed
+// out of reach. Presentational — every write is the page's
 // (`environments-view.tsx`), reached through the handlers.
 
 import type { QueryKey } from "@tanstack/react-query";
@@ -90,6 +92,60 @@ export interface EnvironmentColumnsOptions {
 	onDelete: (env: EnvRow) => void;
 }
 
+/** What a row's menu needs: the environment, where its board is, and the page's handlers. */
+interface RowMenuProps extends Pick<EnvironmentColumnsOptions, "org" | "project" | "manageDenied" | "onEditAdmission" | "onDuplicate" | "onDelete"> {
+	env: EnvRow;
+}
+
+/**
+ * The row's menu, named for its environment. It sits beside the environment's name, in the first
+ * cell, so it is on screen at every width: as a last column it was pushed past the table's clipped
+ * edge and could not be pressed.
+ */
+function RowMenu({ env, org, project, manageDenied, onEditAdmission, onDuplicate, onDelete }: RowMenuProps) {
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger
+				render={
+					<Button
+						variant="ghost"
+						size="icon"
+						className="size-7"
+						aria-label={`Environment actions for ${env.name}`}
+					>
+						<MoreHorizontal size={16} aria-hidden />
+					</Button>
+				}
+			/>
+			<DropdownMenuContent align="start" className="w-64">
+				<DropdownMenuItem render={<Link href={envHref(org, project, env.id)} />}>
+					Open in {ARCHITECTURE}
+				</DropdownMenuItem>
+				<DropdownMenuSeparator />
+				{env.byo_admission_has_charts && (
+					<DropdownMenuItem disabledReason={manageDenied} onClick={() => onEditAdmission(env)}>
+						Change BYO admission
+					</DropdownMenuItem>
+				)}
+				<DropdownMenuItem disabledReason={manageDenied} onClick={() => onDuplicate(env)}>
+					Duplicate
+				</DropdownMenuItem>
+				{/* The default environment is the project's anchor and has no delete: the item is
+				    absent for it, as it always was, not offered and refused. */}
+				{!env.is_default && (
+					<DropdownMenuItem
+						className="text-destructive focus:text-destructive"
+						disabledReason={manageDenied}
+						onClick={() => onDelete(env)}
+					>
+						Delete
+					</DropdownMenuItem>
+				)}
+			</DropdownMenuContent>
+		</DropdownMenu>
+	);
+}
+
 /**
  * The columns. A control the viewer may not use is rendered disabled WITH its reason
  * (`manageDenied`), never hidden: the auto-heal switch through `DisabledReason` (`AutoHealSwitch`),
@@ -114,7 +170,9 @@ export function buildEnvironmentColumns({
 				const clusterMissing = reconcile?.clusterMissing ?? null;
 				const drifted = reconcile?.driftInSync === false;
 				return (
-					<div className="flex min-w-0 flex-col gap-1.5">
+					// A table cell does not wrap; this one holds badges, so it is given a width to wrap in —
+					// eight unwrapped columns pushed the row's menu past the table's clipped edge.
+					<div className="flex min-w-0 max-w-sm flex-col gap-1.5 whitespace-normal">
 						<div className="flex flex-wrap items-center gap-2">
 							<Link
 								href={envHref(org, project, env.id)}
@@ -122,6 +180,15 @@ export function buildEnvironmentColumns({
 							>
 								{env.name}
 							</Link>
+							<RowMenu
+								env={env}
+								org={org}
+								project={project}
+								manageDenied={manageDenied}
+								onEditAdmission={onEditAdmission}
+								onDuplicate={onDuplicate}
+								onDelete={onDelete}
+							/>
 							{env.is_default && (
 								<span className="shrink-0 rounded-full border px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
 									Default
@@ -145,6 +212,9 @@ export function buildEnvironmentColumns({
 								</Badge>
 							)}
 						</div>
+						<span className="text-ui-xs text-text-tertiary">
+							{stageLabel(env.stage)} · Updated <RelativeStamp at={env.updated_at} />
+						</span>
 						{/* Shown only where a BYO chart makes the setting mean something (#6541); changing it is
 						    in the row's menu. */}
 						{env.byo_admission_has_charts && (
@@ -166,39 +236,31 @@ export function buildEnvironmentColumns({
 			},
 		},
 		{
-			id: "stage",
-			header: "Stage",
-			accessorFn: (row) => row.env.stage,
-			cell: ({ row }) => stageLabel(row.original.env.stage),
-		},
-		{
 			id: "status",
 			header: "Status",
 			accessorFn: (row) => envLifecycleBadge(row.env.status).label,
 			cell: ({ row }) => {
-				const lifecycle = envLifecycleBadge(row.original.env.status);
-				return <StatusBadge status={row.original.env.status} tier={lifecycle.tier} label={lifecycle.label} />;
-			},
-		},
-		{
-			id: "drift",
-			header: "Drift",
-			enableSorting: false,
-			cell: ({ row }) => {
-				const { reconcile } = row.original;
-				if (reconcile?.clusterMissing) {
-					return <span className="text-text-secondary">Cluster deleted outside Alethia</span>;
-				}
-				if (reconcile?.driftInSync === false) {
-					return <span className="text-text-secondary">Diverged from provisioned state</span>;
-				}
-				// Never scanned is not "in sync": nothing has compared the cloud with the state.
-				if (reconcile?.driftInSync !== true) return <span className="text-text-tertiary">Not scanned</span>;
+				const { env, reconcile } = row.original;
+				const lifecycle = envLifecycleBadge(env.status);
 				return (
-					<span className="inline-flex items-center gap-1.5">
-						<Check className="size-3" aria-hidden />
-						In sync
-					</span>
+					<div className="flex flex-col gap-1">
+						<StatusBadge status={env.status} tier={lifecycle.tier} label={lifecycle.label} />
+						<span className="text-ui-xs text-text-tertiary">
+							{reconcile?.clusterMissing ? (
+								"Cluster deleted outside Alethia"
+							) : reconcile?.driftInSync === false ? (
+								"Diverged from provisioned state"
+							) : reconcile?.driftInSync !== true ? (
+								// Never scanned is not "in sync": nothing has compared the cloud with the state.
+								"Not scanned for drift"
+							) : (
+								<span className="inline-flex items-center gap-1.5">
+									<Check className="size-3" aria-hidden />
+									In sync
+								</span>
+							)}
+						</span>
+					</div>
 				);
 			},
 		},
@@ -211,7 +273,7 @@ export function buildEnvironmentColumns({
 				const own = enforcedGates(row.original.protection);
 				const inherited = inheritedGates(row.original.classAssignments);
 				return (
-					<div className="flex max-w-xs flex-col items-start gap-1.5">
+					<div className="flex max-w-[15rem] flex-col items-start gap-1.5 whitespace-normal">
 						{own.length === 0 && inherited.length === 0 ? (
 							<span className="text-text-tertiary">None — any editor can promote in</span>
 						) : (
@@ -262,63 +324,6 @@ export function buildEnvironmentColumns({
 						overviewKey={overviewKey}
 						deniedReason={manageDenied}
 					/>
-				);
-			},
-		},
-		{
-			id: "updated",
-			header: "Updated",
-			accessorFn: (row) => row.env.updated_at,
-			cell: ({ row }) => <RelativeStamp at={row.original.env.updated_at} />,
-		},
-		{
-			id: "actions",
-			header: () => <span className="sr-only">Actions</span>,
-			enableSorting: false,
-			cell: ({ row }) => {
-				const { env } = row.original;
-				return (
-					<div className="text-right">
-						<DropdownMenu>
-							<DropdownMenuTrigger
-								render={
-									<Button
-										variant="ghost"
-										size="icon"
-										className="size-7"
-										aria-label={`Environment actions for ${env.name}`}
-									>
-										<MoreHorizontal size={16} aria-hidden />
-									</Button>
-								}
-							/>
-							<DropdownMenuContent align="end" className="w-64">
-								<DropdownMenuItem render={<Link href={envHref(org, project, env.id)} />}>
-									Open in {ARCHITECTURE}
-								</DropdownMenuItem>
-								<DropdownMenuSeparator />
-								{env.byo_admission_has_charts && (
-									<DropdownMenuItem disabledReason={manageDenied} onClick={() => onEditAdmission(env)}>
-										Change BYO admission
-									</DropdownMenuItem>
-								)}
-								<DropdownMenuItem disabledReason={manageDenied} onClick={() => onDuplicate(env)}>
-									Duplicate
-								</DropdownMenuItem>
-								{/* The default environment is the project's anchor and has no delete: the item is
-								    absent for it, as it always was, not offered and refused. */}
-								{!env.is_default && (
-									<DropdownMenuItem
-										className="text-destructive focus:text-destructive"
-										disabledReason={manageDenied}
-										onClick={() => onDelete(env)}
-									>
-										Delete
-									</DropdownMenuItem>
-								)}
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</div>
 				);
 			},
 		},

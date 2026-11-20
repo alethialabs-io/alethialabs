@@ -105,14 +105,14 @@ describe("ClustersClient — pending, refused, failed and empty are distinct", (
 		const skeleton = container.querySelector('[data-skeleton="clusters"]');
 		expect(skeleton).toHaveAttribute("aria-busy", "true");
 		// The org list has a Project column; a project's own list does not.
-		expect(skeleton?.querySelectorAll("th")).toHaveLength(7);
+		expect(skeleton?.querySelectorAll("th")).toHaveLength(6);
 		expect(screen.queryByText(/No clusters/)).toBeNull();
 	});
 
 	it("a project's skeleton has no Project column", () => {
 		h.project = "shop";
 		const { container } = renderList("p1");
-		expect(container.querySelectorAll('[data-skeleton="clusters"] th')).toHaveLength(6);
+		expect(container.querySelectorAll('[data-skeleton="clusters"] th')).toHaveLength(5);
 	});
 
 	it("a refusal says the viewer lacks access, with nothing to retry", () => {
