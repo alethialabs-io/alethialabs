@@ -16,16 +16,16 @@ import {
   Settings,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { env } from "next-runtime-env";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { toast } from "sonner";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InlineThemeSwitcher } from "@/components/theme-menu";
 import { authClient } from "@/lib/auth/client";
 import { useViewer } from "@/components/providers/viewer-provider";
+import { AUTH } from "@/lib/copy/vocabulary";
 import { useAuthPrefsStore } from "@/lib/stores/use-auth-prefs-store";
-import { legalUrl } from "@/lib/legal";
 import { globalHref } from "@/lib/routing";
+import { clearAllWizardDrafts } from "@/lib/wizard/draft";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { displayName, userInitials } from "@/lib/user-display";
@@ -53,24 +53,39 @@ import {
 } from "@repo/ui/dropdown-menu";
 import { AccountSettingsDialog } from "./account-settings-dialog";
 import { FeedbackDialog } from "./feedback-dialog";
+import { hardNavigate } from "./hard-navigate";
+import { instanceLinks } from "./instance-links";
 import { NotificationsPopover } from "./notifications-popover";
+import { isHostedService } from "./shell-edition";
+import { useShellEdition } from "./shell-edition-provider";
+import { signOutOfConsole } from "./sign-out";
 import { useConsent } from "@repo/privacy/consent-provider";
 
-/** Default issue tracker for self-hosted "Report an issue"; override per deployment. */
-const DEFAULT_ISSUES_URL =
-  "https://github.com/alethialabs-io/alethia/issues/new";
+/** What the profile bar says in place of the person's name while a sign-out is under way. */
+const SIGNING_OUT = "Signing out…";
+
+/** What the person is told when the session could not be ended. */
+const SIGN_OUT_FAILED = "Couldn't sign you out. You are still signed in. Try again.";
 
 /**
  * The pinned bottom bar of the sidebar: avatar + username, a three-dot button that opens
  * the account menu, and the notifications bell. The popover carries the account header
  * (with a gear → settings), the menu list (Feedback, an inline theme toggle, the
- * help/docs links, Sign out), an optional "Upgrade to Pro" CTA, and a platform-status
- * widget. Feedback is hosted-only (a dialog that emails us); self-managed builds link to
- * GitHub issues instead. Sign out asks first while Elench holds messages the server has not
- * saved (ADR 0001 D25): signing out clears them from this tab.
+ * help/docs links, Sign out), an optional "Upgrade to Pro" CTA, and a link to the status page.
+ *
+ * What differs by edition is read from the instance edition the shell was given
+ * (`useShellEdition`), and from nowhere else: the in-app feedback dialog and the upgrade CTA are
+ * the hosted service's, and every outbound link is `instanceLinks`' answer for this instance, so
+ * a self-managed console links to its operator's pages or to none.
+ *
+ * Sign out asks first while Elench holds messages the server has not saved (ADR 0001 D25):
+ * signing out clears them from this tab. What it then does, and in what order, is
+ * `signOutOfConsole` (`./sign-out.ts`).
  */
-export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
-  const router = useRouter();
+export function SidebarProfile() {
+  const edition = useShellEdition();
+  const isHosted = isHostedService(edition);
+  const links = instanceLinks(edition);
   const orgSlug = useActiveOrgSlug();
   const { openUpgrade } = useUpgradeSheet();
   const { openPreferences } = useConsent();
@@ -81,6 +96,10 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
   const drafts = useRegisteredDraftsStore();
   // The count the sign-out confirm names; null while it is closed.
   const [unsavedOnSignOut, setUnsavedOnSignOut] = useState<number | null>(null);
+  // A sign-out is under way: the bar says so and the menu cannot start a second one. The ref is
+  // what refuses the second call; the state is what draws it.
+  const [signingOut, setSigningOut] = useState(false);
+  const signOutStarted = useRef(false);
 
   // "organizations" is the paid-plan floor; show the upgrade CTA only to free orgs on
   // the hosted control plane (self-hosters have no Stripe). Only on a KNOWN `false`: `null` is the
@@ -88,32 +107,46 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
   const onPaidPlan = useEntitlement("organizations");
   const showUpgrade = isHosted && onPaidPlan === false;
 
-  /** Signs out and returns to the marketing root. */
-  const handleLogout = async () => {
-    await authClient.signOut();
-    // Signing out is the one moment the person at the keyboard has said they are done
-    // with this machine, so the sign-in form's memory of them goes too — the "Last used"
-    // mark and the pre-filled address. Leaving them would show the next person which
-    // provider this account uses and what its address is.
-    useAuthPrefsStore.getState().forget();
-    router.push("/");
+  /**
+   * Signs out. While it runs the bar reads "Signing out…" and a second call does nothing. A
+   * sign-out that succeeds leaves the page, so the pending state is only ever lifted by a failure,
+   * which is reported and leaves the person signed in.
+   */
+  const handleSignOut = async () => {
+    if (signOutStarted.current) return;
+    signOutStarted.current = true;
+    setMenuOpen(false);
+    setSigningOut(true);
+    const outcome = await signOutOfConsole({
+      endSession: () => authClient.signOut(),
+      // Signing out is the one moment the person at the keyboard has said they are done
+      // with this machine, so the sign-in form's memory of them goes too — the "Last used"
+      // mark and the pre-filled address. Leaving them would show the next person which
+      // provider this account uses and what its address is.
+      forgetAccount: () => useAuthPrefsStore.getState().forget(),
+      clearWizardDrafts: clearAllWizardDrafts,
+      leave: hardNavigate,
+    });
+    if (outcome === "failed") {
+      signOutStarted.current = false;
+      setSigningOut(false);
+      toast.error(SIGN_OUT_FAILED);
+    }
   };
 
   /**
-   * The menu's Log Out: signs out at once, unless Elench holds unsaved, held or sending messages,
+   * The menu's Sign out: signs out at once, unless Elench holds unsaved, held or sending messages,
    * which a sign-out loses (D25); then it asks first, naming how many.
    */
-  const requestLogout = () => {
+  const requestSignOut = () => {
     const count = drafts === null ? 0 : unsavedCount(drafts.view.getState());
     if (count === 0) {
-      void handleLogout();
+      void handleSignOut();
       return;
     }
     setMenuOpen(false);
     setUnsavedOnSignOut(count);
   };
-
-  const issuesUrl = env("NEXT_PUBLIC_FEEDBACK_REPO_URL") || DEFAULT_ISSUES_URL;
 
   return (
     <div className="flex h-14 shrink-0 items-center gap-1.5 border-t px-2.5">
@@ -124,8 +157,13 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
             {userInitials(user)}
           </AvatarFallback>
         </Avatar>
-        <span className="min-w-0 flex-1 truncate text-ui-md font-medium text-foreground">
-          {displayName(user)}
+        {/* A live region, so a sign-out under way is announced; the name it replaces is not. */}
+        <span
+          aria-live="polite"
+          data-state={signingOut ? "signing-out" : undefined}
+          className="min-w-0 flex-1 truncate text-ui-md font-medium text-foreground"
+        >
+          {signingOut ? SIGNING_OUT : displayName(user)}
         </span>
       </div>
 
@@ -135,6 +173,7 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
             <button
               type="button"
               aria-label="Account menu"
+              disabled={signingOut}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
             >
               <MoreHorizontal className="h-4 w-4" />
@@ -168,7 +207,7 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
 
-          {isHosted ? (
+          {links.report.kind === "feedback" ? (
             <DropdownMenuItem
               onSelect={(e) => {
                 // Keep the dialog open after the menu dismisses (avoids a focus race).
@@ -184,7 +223,7 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
             <DropdownMenuItem
               render={
                 <a
-                  href={issuesUrl}
+                  href={links.report.href}
                   target="_blank"
                   rel="noreferrer"
                   className="cursor-pointer"
@@ -198,21 +237,20 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
 
           <InlineThemeSwitcher />
 
+          {links.home !== null && (
+            <DropdownMenuItem
+              render={
+                <a href={links.home} className="cursor-pointer">
+                  Home page
+                  <Home className="ml-auto h-4 w-4 text-muted-foreground" />
+                </a>
+              }
+            />
+          )}
           <DropdownMenuItem
             render={
               <a
-                href={isHosted ? "/home" : legalUrl("/")}
-                className="cursor-pointer"
-              >
-                Home Page
-                <Home className="ml-auto h-4 w-4 text-muted-foreground" />
-              </a>
-            }
-          />
-          <DropdownMenuItem
-            render={
-              <a
-                href="https://github.com/alethialabs-io/alethialabs/releases"
+                href={links.releaseNotes}
                 target="_blank"
                 rel="noreferrer"
                 className="cursor-pointer"
@@ -251,7 +289,7 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
           <DropdownMenuItem
             render={
               <a
-                href={legalUrl("/legal/source")}
+                href={links.source}
                 target="_blank"
                 rel="noreferrer"
                 className="cursor-pointer"
@@ -264,10 +302,11 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
 
           <DropdownMenuSeparator />
           <DropdownMenuItem
-            onClick={requestLogout}
+            onClick={requestSignOut}
+            disabled={signingOut}
             className="cursor-pointer text-destructive focus:text-destructive"
           >
-            Log Out
+            {AUTH.signOut}
             <LogOut className="ml-auto h-4 w-4" />
           </DropdownMenuItem>
 
@@ -288,23 +327,26 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
             </>
           )}
 
-          <DropdownMenuSeparator />
-          <a
-            href="https://status.alethialabs.io"
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-2 px-2 py-1.5"
-          >
-            <span className="min-w-0 flex-1">
-              <span className="block text-ui-2xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
-                Platform Status
-              </span>
-              <span className="block text-ui-md text-foreground">
-                All systems normal.
-              </span>
-            </span>
-            <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-foreground" />
-          </a>
+          {/* A link to the status page, and no sentence about the status: this menu cannot know
+              it, and it used to say "All systems normal." during an outage too. */}
+          {links.status !== null && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                render={
+                  <a
+                    href={links.status}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="cursor-pointer"
+                  >
+                    Status
+                    <ArrowUpRight className="ml-auto h-3.5 w-3.5 text-muted-foreground" />
+                  </a>
+                }
+              />
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -325,7 +367,7 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Sign out with unsaved messages?</AlertDialogTitle>
+            <AlertDialogTitle>{AUTH.signOut} with unsaved messages?</AlertDialogTitle>
             <AlertDialogDescription>
               {signOutWarning(unsavedOnSignOut ?? 0)}
             </AlertDialogDescription>
@@ -336,10 +378,10 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
               variant="destructive"
               onClick={() => {
                 setUnsavedOnSignOut(null);
-                void handleLogout();
+                void handleSignOut();
               }}
             >
-              Sign out
+              {AUTH.signOut}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

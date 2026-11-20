@@ -135,7 +135,7 @@ export function AppShell({
 				<ElenchSurfaceLoader />
 			</ElenchDraftsRoot>
 
-			{/* Global command palette (the sidebar "Find…" box + ⌘K / F). */}
+			{/* Global command palette: the sidebar "Find…" box and the registry's palette shortcut. */}
 			<CommandPalette selfRunners={selfRunners} />
 
 			{/* Single job-lifecycle toast driver (loading → success/failed in place). */}
