@@ -903,6 +903,17 @@ func keylessProbeSQL(engine, table, canary string) string {
 		table, table, canary, table)
 }
 
+// keylessDebugContainerPrefix names the ephemeral containers the probe injects. It must not be a
+// prefix the PRODUCT renders: the 2026-11-20 aws keyless run (44749574208) named its debug
+// container "keyless-probe", the same name as the service's own container, and the API server
+// rejected it as a duplicate — the product was wired and working, the instrument failed.
+const keylessDebugContainerPrefix = "alethia-e2e-debug-"
+
+// keylessDebugContainerName is the ephemeral container name for one probe step (`tag`).
+func keylessDebugContainerName(tag string) string {
+	return keylessDebugContainerPrefix + tag
+}
+
 // keylessClientArgv builds the client invocation for the ephemeral probe container. No password is
 // passed and none is available: the proxy on 127.0.0.1 accepts the local connection and authenticates
 // upstream itself, which is the property under test.
