@@ -62,7 +62,7 @@ import { PendingChangesBar } from "./pending-changes-bar";
 import { buildShortcuts } from "./shortcuts";
 import { graphToForm } from "./graph/graph-to-form";
 import { NodePalette } from "./node-palette";
-import { BoardGuide, useDesignIsEmpty } from "./board-guide";
+import { BoardGuide } from "./board-guide";
 import { BoardPreview } from "./board-preview";
 import { EnvironmentStatusNotice } from "./environment-status-notice";
 import { EnvironmentStatusScope } from "./environment-status-scope";
@@ -173,7 +173,6 @@ function CanvasInner({
 	// Whether the store holds THIS environment's design yet. Until it does, the board shows the
 	// skeleton over itself rather than an empty canvas (F009).
 	const seeded = seed?.scope === draftScope(projectId, environmentId);
-	const designEmpty = useDesignIsEmpty();
 	// The environment's server truth (read once by `EnvironmentStatusScope`, above) — it also carries
 	// the BYO IaC module and the architecture derived from it.
 	const envStatus = useEnvironmentStatus();
@@ -562,10 +561,20 @@ function CanvasInner({
 				/>
 			</div>
 
-			{/* A board with nothing designed on it says what to do next (F037), instead of an empty
-			    dotted plane. Not while an IaC module governs the env: there is nothing to add. */}
-			{seeded && designEmpty && !iacGoverned && (
-				<BoardGuide onAdd={() => setPaletteOpen(true)} />
+			{/* How a board starts (#6836): a `?seed=` from the create screen is applied once, and a board
+			    with nothing drawn on it says what it is and offers the ways to start, instead of an
+			    empty dotted plane. It decides for itself when the guide shows. */}
+			{seeded && (
+				<BoardGuide
+					projectId={projectId}
+					environmentId={environmentId}
+					byoHelmEnabled={byoHelmEnabled}
+					byoDescribeEnabled={byoDescribeEnabled}
+					governed={iacGoverned}
+					onAdd={() => setPaletteOpen(true)}
+					onAttachChart={byoHelmEnabled ? () => setByoDialogOpen(true) : undefined}
+					onAttachIac={byoIacEnabled ? () => setIacDialogOpen(true) : undefined}
+				/>
 			)}
 
 			{/* The environment-status read failed with nothing to show: say so, rather than let every
