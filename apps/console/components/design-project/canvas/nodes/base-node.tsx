@@ -36,7 +36,7 @@ import { addonCompat } from "@/lib/compat";
  * 28px while the drawn nub stays small.
  */
 const HANDLE_CLASS =
-	"!h-2 !w-2 !rounded-none !border !border-border-strong !bg-background after:absolute after:-inset-2.5 after:content-[''] hover:!border-foreground hover:!bg-foreground";
+	"!h-2 !w-2 !cursor-crosshair !rounded-none !border !border-border-strong !bg-background after:absolute after:-inset-2.5 after:content-[''] hover:!border-foreground hover:!bg-foreground";
 
 /**
  * A handle no connection can start from or end at. It stays in the DOM because the edges the board
@@ -127,9 +127,7 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	// A source handle draws only where a connection can start (a service) and a target handle only
 	// where one can end (the kinds a service binds to). The registry still says which handles a
 	// card HAS — derived edges anchor on them — and this says which of them a person can use.
-	const sourceClass = canStartConnection(node.data.kind)
-		? cn(HANDLE_CLASS, "!cursor-crosshair")
-		: INERT_HANDLE_CLASS;
+	const sourceClass = canStartConnection(node.data.kind) ? HANDLE_CLASS : INERT_HANDLE_CLASS;
 	const targetClass = canEndConnection(node.data.kind) ? HANDLE_CLASS : INERT_HANDLE_CLASS;
 	// ArgoCD health overlay (#574) — a chip only when NOT plainly healthy, same calm-canvas
 	// rule as drift. Card/dense tiers only (the glyph tier stays an icon and a pulse).

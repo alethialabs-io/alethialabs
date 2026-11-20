@@ -176,6 +176,21 @@ const CONNECTION_LINE_STYLE = {
 /** How long a refusal stays next to the card it is about. */
 const NOTICE_MS = 6000;
 
+/**
+ * The card a connection is being dragged from, and which end of the connection it is. A drag can
+ * start at either handle: from a service's, the service is the source; from a database's, the
+ * database is the target and whatever it is released on is the source.
+ */
+interface ConnectionStart {
+	id: string;
+	end: "source" | "target";
+}
+
+/** The source and target of a connection from `start` to the card `otherId`. */
+function endsOf(start: ConnectionStart, otherId: string | null): [string | null, string | null] {
+	return start.end === "source" ? [start.id, otherId] : [otherId, start.id];
+}
+
 /** What the board says next to a card after a connection was refused. */
 interface BoardNotice {
 	nodeId: string;
@@ -325,7 +340,7 @@ export function CanvasFlow({
 	const [selectedCollections, setSelectedCollections] = useState<NodeKind[]>([]);
 	/** The card or connection that holds the keyboard focus: `node:<id>`, `edge:<id>` or null. */
 	const [focused, setFocused] = useState<string | null>(null);
-	const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
+	const [connectingFrom, setConnectingFrom] = useState<ConnectionStart | null>(null);
 	const [hoveredId, setHoveredId] = useState<string | null>(null);
 	const [notice, setNotice] = useState<BoardNotice | null>(null);
 	const [announcement, setAnnouncement] = useState({ text: "", serial: 0 });
@@ -333,8 +348,8 @@ export function CanvasFlow({
 
 	const flow = useRef<ReactFlowInstance<BoardNode, BoardEdge> | null>(null);
 	const wrapper = useRef<HTMLDivElement>(null);
-	/** The service a connection is being dragged from. A ref as well: the release reads it. */
-	const connecting = useRef<string | null>(null);
+	/** The card a connection is being dragged from. A ref as well: the release reads it. */
+	const connecting = useRef<ConnectionStart | null>(null);
 	/** True once `onConnect` has dealt with a connection, so `onConnectEnd` does not do it again. */
 	const connectionHandled = useRef(false);
 	/** True while an arrow key is held on the board. */
@@ -762,12 +777,15 @@ export function CanvasFlow({
 	// What the card under a dragged connection would answer, shown while it is still being dragged.
 	const hint = useMemo(
 		() =>
-			connectingFrom && hoveredId && hoveredId !== connectingFrom
-				? evaluateConnection(design, connectingFrom, hoveredId)
+			connectingFrom && hoveredId && hoveredId !== connectingFrom.id
+				? evaluateConnection(design, ...endsOf(connectingFrom, hoveredId))
 				: null,
 		[connectingFrom, hoveredId, design],
 	);
-	const hintSource = connectingFrom ? design.find((n) => n.id === connectingFrom) : undefined;
+	const hintSource =
+		hint && hint.outcome !== "refused"
+			? design.find((n) => n.id === hint.sourceId)
+			: undefined;
 
 	return (
 		<BoardMarksContext.Provider value={marks}>
@@ -819,9 +837,12 @@ export function CanvasFlow({
 						).outcome !== "refused"
 					}
 					onConnectStart={(_, params) => {
-						connecting.current = params.nodeId;
+						const start: ConnectionStart | null = params.nodeId
+							? { id: params.nodeId, end: params.handleType === "target" ? "target" : "source" }
+							: null;
+						connecting.current = start;
 						connectionHandled.current = false;
-						setConnectingFrom(params.nodeId);
+						setConnectingFrom(start);
 						setNotice(null);
 					}}
 					onConnect={(connection) => {
@@ -842,7 +863,7 @@ export function CanvasFlow({
 						);
 					}}
 					onConnectEnd={(event, state) => {
-						const sourceId = connecting.current;
+						const start = connecting.current;
 						connecting.current = null;
 						setConnectingFrom(null);
 						setHoveredId(null);
@@ -850,29 +871,38 @@ export function CanvasFlow({
 							connectionHandled.current = false;
 							return;
 						}
-						if (!sourceId) return;
+						if (!start) return;
 						const under = elementUnder(event);
 						const point = releasePoint(event);
 						// Released on a card — anywhere on it, not only on its handle — or close enough to
 						// a handle for React Flow to have picked the card out.
-						const targetId =
+						const otherId =
 							under?.closest(".react-flow__node")?.getAttribute("data-id") ??
 							state.toNode?.id ??
 							null;
-						if (targetId) {
-							if (targetId === sourceId) return;
+						if (otherId) {
+							if (otherId === start.id) return;
 							resolveConnection(
-								evaluateConnection(useCanvasStore.getState().nodes, sourceId, targetId),
-								{ point, fallbackNodeId: targetId },
+								evaluateConnection(
+									useCanvasStore.getState().nodes,
+									...endsOf(start, otherId),
+								),
+								{ point, fallbackNodeId: otherId },
 							);
 							return;
 						}
 						// Released on empty board: offer what the service could connect to, and place a
 						// new card where the pointer let go. Released anywhere else, it is a cancel.
 						if (!under?.closest(".react-flow__pane")) return;
+						if (start.end === "target") {
+							// Dragged from the card a connection ENDS at: there is no service to offer
+							// targets for, so say where the other end has to be.
+							refuse(start.id, "Release on a service to connect it to this card.");
+							return;
+						}
 						const at = flow.current?.screenToFlowPosition(point) ?? { x: 0, y: 0 };
 						openConnectMenu({
-							sourceId,
+							sourceId: start.id,
 							point,
 							// The pointer is where the new card's target handle goes: top centre.
 							position: { x: at.x - 124, y: at.y },

@@ -27,7 +27,7 @@ import {
 
 /** The nub a connection can end at; its `after` box is the real, larger pointer target. */
 const HANDLE_CLASS =
-	"!h-2 !w-2 !rounded-none !border !border-border-strong !bg-background after:absolute after:-inset-2.5 after:content-[''] hover:!border-foreground hover:!bg-foreground";
+	"!h-2 !w-2 !cursor-crosshair !rounded-none !border !border-border-strong !bg-background after:absolute after:-inset-2.5 after:content-[''] hover:!border-foreground hover:!bg-foreground";
 
 /** A handle kept only as an anchor for derived edges: not drawn, and it takes no pointer. */
 const INERT_HANDLE_CLASS = "!h-2 !w-2 !border-0 !bg-transparent !opacity-0 !pointer-events-none";

@@ -207,11 +207,14 @@ type ConnectEnd = NonNullable<FlowProps["onConnectEnd"]>;
 /** React Flow's final connection state for a release that ended near no handle. */
 const NEAR_NOTHING = { toNode: null } as unknown as Parameters<ConnectEnd>[1];
 
-/** Drag a connection from `sourceId` and release it over `element`. */
-function dragFrom(sourceId: string, element: Element) {
+/**
+ * Drag a connection from the card `startId` and release it over `element`. `handle` is the handle
+ * the drag started at: a service's source handle, or the target handle of what it binds to.
+ */
+function dragFrom(startId: string, element: Element, handle: "source" | "target" = "source") {
 	const startEvent = new MouseEvent("mousedown");
 	act(() => {
-		props().onConnectStart?.(startEvent, { nodeId: sourceId, handleId: null, handleType: "source" });
+		props().onConnectStart?.(startEvent, { nodeId: startId, handleId: null, handleType: handle });
 	});
 	const event = releaseOver(element);
 	act(() => {
@@ -363,6 +366,25 @@ describe("making a connection", () => {
 		dragFrom(API, stop(ORDERS));
 
 		expect(bound()).toEqual(["database:orders"]);
+	});
+
+	it("a line dragged the other way, from the database to the service, is the same connection", () => {
+		renderBoard();
+
+		dragFrom(ORDERS, stop(API), "target");
+
+		expect(bound()).toEqual(["database:orders"]);
+	});
+
+	it("a line dragged from a database and released on empty board says where it has to end", () => {
+		renderBoard();
+		const steps = undoSteps();
+
+		dragFrom(ORDERS, screen.getByTestId("pane"), "target");
+
+		expect(undoSteps()).toBe(steps);
+		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+		expect(announced()).toBe("Release on a service to connect it to this card.");
 	});
 
 	it("releasing on the service it started from does nothing", () => {
