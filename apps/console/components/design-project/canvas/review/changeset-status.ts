@@ -427,7 +427,7 @@ export function deployBlock(facts: DeployFacts): DeployBlock | null {
 	if (!facts.gate.allowed) {
 		return {
 			code: "not-reviewed",
-			reason: "This plan was not run from this review. Check the changes it lists, then choose Use this plan.",
+			reason: "This plan is current for the saved design, but it has not been confirmed in this session. Check what it lists, then choose Use this plan.",
 			fix: "use-plan",
 			jobId: null,
 		};
