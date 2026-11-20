@@ -11,11 +11,12 @@ import { classifyOrgScopeFailure } from "@/lib/auth/org-scope-failure";
 import { getOwner } from "@/lib/auth/owner";
 import { signInHref } from "@/lib/auth/sign-in-href";
 import { ORG_PATH_HEADER } from "@/lib/authz/org-path";
-import { deploymentMode } from "@/lib/billing/config";
+import { getInstanceEdition } from "@/lib/edition/instance-edition";
 import { getQueryClient } from "@/lib/query/client";
 import { orgHasSelfRunners } from "@/lib/queries/runner-capabilities";
 import { serverOrpc } from "@/lib/rpc/server";
 import { AppShell } from "@/components/shell/app-shell";
+import { shellEditionOf } from "@/components/shell/shell-edition";
 import { UpgradeSheetProvider } from "@/components/org/upgrade-sheet-provider";
 
 /**
@@ -83,9 +84,10 @@ export default async function OrgLayout({
 		if (classifyOrgScopeFailure(e) === "sign-in") redirect(await signInForThisAddress());
 		notFound();
 	}
-	// Feedback is a hosted-only feature (it emails Alethia Labs); the shell hides it
-	// off the hosted control plane. Resolved server-side and passed to the client shell.
-	const isHosted = deploymentMode() === "hosted";
+	// What the shell shows or hides by edition (the hosted service's feedback dialog and upgrade
+	// offer, a self-managed instance's own links) it decides from the instance edition contract,
+	// read here once and handed down. The reader never throws.
+	const edition = shellEditionOf(await getInstanceEdition());
 	// Runners is a self-operator surface only — gate the nav item on whether this org runs
 	// its own runners (managed warm pools are internal/support-admin). Resolved server-side.
 	//
@@ -114,7 +116,7 @@ export default async function OrgLayout({
 	return (
 		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isShellRead })}>
 			<UpgradeSheetProvider>
-				<AppShell isHosted={isHosted} selfRunners={selfRunners} pageOrgId={pageOrgId}>
+				<AppShell edition={edition} selfRunners={selfRunners} pageOrgId={pageOrgId}>
 					{children}
 				</AppShell>
 			</UpgradeSheetProvider>

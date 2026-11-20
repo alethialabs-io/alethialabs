@@ -10,6 +10,7 @@ import type React from "react";
 import { usePathname } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@repo/ui/sheet";
+import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
@@ -18,25 +19,49 @@ import { ElenchDraftsRoot } from "@/components/agent/elench/elench-drafts-root";
 import { ElenchSurfaceLoader } from "@/components/agent/elench/elench-surface-loader";
 import { AnalyticsIdentity } from "@/components/analytics/analytics-identity";
 import { SetupGuideCard } from "@/components/onboarding/setup-guide";
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { AppSidebar } from "./app-sidebar";
 import { CommandPalette } from "./command-palette";
 import { CONTENT_FRAME } from "./content-frame";
+import { CRUMB_STRIP_VARS, MAIN_COLUMN_VARS, MAIN_UNDER_CRUMB_STRIP } from "./crumb-strip";
 import { JobToaster } from "./job-toaster";
 import { RealtimeMount } from "./realtime-mount";
+import type { ShellEdition } from "./shell-edition";
+import { ShellEditionProvider } from "./shell-edition-provider";
 import { SidebarRail } from "./sidebar-rail";
 import { SupportToaster } from "./support-toaster";
 import { Topbar } from "./topbar";
 
-/** The authenticated dashboard chrome: sidebar + topbar + scrolling content canvas. */
-export function AppShell({
-	children,
-	isHosted = false,
-	selfRunners = false,
-	pageOrgId = null,
-}: {
+/**
+ * What the main column shows while a page below it suspends with no `loading.tsx` of its own: a
+ * toolbar line and a block of rows, in the page gutter. A page's own skeleton is its own shape;
+ * this one only has to hold the column still and say, to anything not looking at the pixels, that
+ * the region is pending. It used to be a spinner in the middle of an empty column.
+ */
+function MainPending() {
+	return (
+		<SkeletonRoot className="p-4 sm:p-6 lg:p-8 xl:p-10">
+			<div className={CONTENT_FRAME}>
+				<Skeleton className="h-8 w-56" />
+				<div className="mt-6 space-y-3">
+					<Skeleton className="h-10 w-full" />
+					<Skeleton className="h-10 w-full" />
+					<Skeleton className="h-10 w-full" />
+				</div>
+				<span className="sr-only">Loading</span>
+			</div>
+		</SkeletonRoot>
+	);
+}
+
+/** What the `[org]` layout hands the shell. */
+interface AppShellProps {
 	children: React.ReactNode;
-	/** Hosted control plane → enables the in-app feedback widget in the sidebar. */
-	isHosted?: boolean;
+	/**
+	 * The instance edition, as the `[org]` layout read it from `getInstanceEdition()`. Everything
+	 * in the shell that differs by edition reads it through `useShellEdition`.
+	 */
+	edition: ShellEdition;
 	/** Org runs its own runners → surfaces the gated Runners nav item. */
 	selfRunners?: boolean;
 	/**
@@ -44,7 +69,26 @@ export function AppShell({
 	 * transport reads it at request time as the turn's `orgId`.
 	 */
 	pageOrgId?: string | null;
-}) {
+}
+
+/**
+ * The authenticated dashboard chrome: sidebar + topbar + scrolling content canvas, with the
+ * instance edition provided to everything in it.
+ */
+export function AppShell({ edition, ...frame }: AppShellProps) {
+	return (
+		<ShellEditionProvider edition={edition}>
+			<ShellFrame {...frame} />
+		</ShellEditionProvider>
+	);
+}
+
+/** The chrome itself. Split from `AppShell` so that it renders inside the edition provider. */
+function ShellFrame({
+	children,
+	selfRunners = false,
+	pageOrgId = null,
+}: Omit<AppShellProps, "edition">) {
 	const [mobileOpen, setMobileOpen] = useState(false);
 
 	// Inside a project the sidebar can collapse to a 56px icon rail (the Architecture canvas wants the
@@ -72,7 +116,7 @@ export function AppShell({
 	}, [pageOrgId]);
 
 	return (
-		<div className="flex h-dvh w-full overflow-hidden bg-background">
+		<div className={cn("flex h-dvh w-full overflow-hidden bg-background", CRUMB_STRIP_VARS)}>
 			{/* Desktop sidebar — collapses to a 56px icon rail on the project canvas. */}
 			<aside
 				className={cn(
@@ -83,7 +127,7 @@ export function AppShell({
 				{collapsed ? (
 					<SidebarRail selfRunners={selfRunners} />
 				) : (
-					<AppSidebar isHosted={isHosted} selfRunners={selfRunners} />
+					<AppSidebar selfRunners={selfRunners} />
 				)}
 			</aside>
 
@@ -100,21 +144,17 @@ export function AppShell({
 					}}
 				>
 					<SheetTitle className="sr-only">Navigation</SheetTitle>
-					<AppSidebar isHosted={isHosted} selfRunners={selfRunners} />
+					<AppSidebar selfRunners={selfRunners} />
 				</SheetContent>
 			</Sheet>
 
 			{/* Main column */}
-			<div className="flex min-w-0 flex-1 flex-col">
+			<div className={cn("flex min-w-0 flex-1 flex-col", MAIN_COLUMN_VARS)}>
 				<Topbar onOpenSidebar={() => setMobileOpen(true)} />
-				<main className="flex-1 overflow-y-auto">
-					<Suspense
-						fallback={
-							<div className="flex min-h-[50vh] items-center justify-center">
-								<div className="h-6 w-6 animate-spin rounded-full border-2 border-foreground border-t-transparent" />
-							</div>
-						}
-					>
+				{/* Below `md` the breadcrumb is a strip under the topbar, and `<main>` starts under it
+				    (`./crumb-strip.ts`). */}
+				<main className={cn("flex-1 overflow-y-auto", MAIN_UNDER_CRUMB_STRIP)}>
+					<Suspense fallback={<MainPending />}>
 						<div className="p-4 sm:p-6 lg:p-8 xl:p-10">
 							{isProjectWorkspace ? (
 								children

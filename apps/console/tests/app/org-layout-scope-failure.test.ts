@@ -22,7 +22,20 @@ vi.mock("@/lib/auth/owner", () => ({ getOwner: vi.fn() }));
 vi.mock("@/lib/authz/guard", () => ({
 	currentActor: vi.fn(async () => ({ userId: "user-1", orgId: "user-1" })),
 }));
-vi.mock("@/lib/billing/config", () => ({ deploymentMode: () => "self-hosted" }));
+// The instance edition the layout hands the shell (#6924): a community build its operator runs.
+// The real reader loads the enterprise registration, which is not what is under test here.
+vi.mock("@/lib/edition/instance-edition", () => ({
+	getInstanceEdition: vi.fn(async () => ({
+		deployment: "self-managed",
+		edition: "community",
+		offering: "self-hosted",
+		license: { state: "none", subject: null, tier: null, expiresAt: null, graceEndsAt: null },
+		capabilitySource: "community",
+		capabilities: [],
+		features: [],
+		diagnostic: "ok",
+	})),
+}));
 vi.mock("@/lib/queries/runner-capabilities", () => ({
 	orgHasSelfRunners: vi.fn(async () => false),
 }));
@@ -96,6 +109,25 @@ describe("[org]/layout — what a resolveOrgScope failure renders", () => {
 		// HydrationBoundary (the shell's prefetch, #6114) → UpgradeSheetProvider → AppShell.
 		const shell: unknown = tree.props.children.props.children;
 		expect(shell).toMatchObject({ props: { pageOrgId: "user-1" } });
+	});
+
+	it("hands the shell the instance edition's deployment, build and offering, and nothing of the licence", async () => {
+		vi.mocked(resolveOrgScope).mockResolvedValue({ orgId: "org-1", isPersonal: false });
+		const tree = await OrgLayout({ children: null, params: Promise.resolve({ org: "acme" }) });
+		const shell: unknown = tree.props.children.props.children;
+		expect(shell).toMatchObject({
+			props: {
+				edition: { deployment: "self-managed", edition: "community", offering: "self-hosted" },
+			},
+		});
+		// The slice is exactly those three: the licence's subject and dates stay on the server.
+		const props: unknown =
+			typeof shell === "object" && shell !== null && "props" in shell ? shell.props : null;
+		const edition: unknown =
+			typeof props === "object" && props !== null && "edition" in props ? props.edition : null;
+		expect(Object.keys(typeof edition === "object" && edition !== null ? edition : {}).sort()).toEqual(
+			["deployment", "edition", "offering"],
+		);
 	});
 
 	// ── The two failures that are TRUE statements about the org → the org 404 ────────────────
