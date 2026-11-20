@@ -79,6 +79,7 @@ function deploy(over: Partial<DeployFacts> = {}): DeployFacts {
 		pendingOperations: 0,
 		issues: 0,
 		phase: "current",
+		answerIsFresh: true,
 		planJobId: PLAN_ID,
 		...over,
 	};
@@ -314,6 +315,12 @@ describe("deployBlock: why Deploy is disabled", () => {
 		expect(block?.code).toBe(code);
 		expect(block?.fix).toBe(fix);
 		expect(block?.reason.length).toBeGreaterThan(20);
+	});
+
+	it("refuses while the server's answer is older than the last save, even with an open gate", () => {
+		const block = deployBlock(deploy({ answerIsFresh: false }));
+		expect(block?.code).toBe("plan-loading");
+		expect(block?.fix).toBeNull();
 	});
 
 	it("says the two 'design changed' cases in the words the person will look for", () => {

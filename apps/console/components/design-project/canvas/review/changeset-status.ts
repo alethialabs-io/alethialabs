@@ -304,6 +304,12 @@ export interface DeployFacts {
 	/** Validation issues in the draft. */
 	issues: number;
 	phase: PlanPhase;
+	/**
+	 * False while the server's answer is older than the saved design on the board: a save has been
+	 * committed and the plan has not been read again since. An answer from before a save cannot
+	 * say whether the plan is still the one to deploy.
+	 */
+	answerIsFresh: boolean;
 	/** The latest plan job's id; null when there is none. */
 	planJobId: string | null;
 }
@@ -354,6 +360,14 @@ export function deployBlock(facts: DeployFacts): DeployBlock | null {
 			code: "staged-operations",
 			reason: `${countOf(facts.pendingOperations, "add-on change")} staged here cannot be applied from this view yet. Remove ${facts.pendingOperations === 1 ? "it" : "them"} from the list to deploy the design.`,
 			fix: "show-changes",
+			jobId: null,
+		};
+	}
+	if (!facts.answerIsFresh) {
+		return {
+			code: "plan-loading",
+			reason: "The design was just saved. Checking whether the plan is still the one to deploy.",
+			fix: null,
 			jobId: null,
 		};
 	}

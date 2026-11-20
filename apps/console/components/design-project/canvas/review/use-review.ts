@@ -20,9 +20,14 @@
 // neither the board's record nor the server's answer is enough on its own. `deployBlock` then adds
 // the reasons the gate does not know (the cloud is not offered, a job is in flight), and can only
 // refuse.
+//
+// AFTER ANY SAVE the plan is read again before it can be deployed. The board's saved baseline is
+// replaced on every committed save (this view's Run plan, the host's own save, a moved server
+// design). Until a read that started after that change has answered, the server's answer counts as
+// not current, whatever it said before.
 
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { graphToForm } from "@/components/design-project/canvas/graph/graph-to-form";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
@@ -204,8 +209,24 @@ export function useReview(scope: ReviewScope): ReviewController {
 	}, [settled, planJobId, phase, resultQuery.isPending, resultQuery.isError, resultQuery.data]);
 	const planError = phase === "failed" ? firstLine(resultQuery.data?.error_message) : null;
 
+	// The saved design the server's answer is known to be no older than.
+	const baseline = useStore(board.document, (s) => s.baseline);
+	const [answeredFor, setAnsweredFor] = useState(baseline);
+	const refetchPlan = planQuery.refetch;
+	useEffect(() => {
+		if (answeredFor === baseline) return;
+		let superseded = false;
+		void refetchPlan().then(() => {
+			if (!superseded) setAnsweredFor(baseline);
+		});
+		return () => {
+			superseded = true;
+		};
+	}, [answeredFor, baseline, refetchPlan]);
+	const answerIsFresh = answeredFor === baseline;
+
 	const reviewedPlan = useStore(board.document, (s) => s.reviewedPlan);
-	const review = usePlanReview(serverCurrentFor(server, reviewedPlan));
+	const review = usePlanReview(answerIsFresh && serverCurrentFor(server, reviewedPlan));
 	const saved = useStore(board.view, (s) => s.review.saved);
 
 	const [planRefusal, setPlanRefusal] = useState<string | null>(null);
@@ -265,6 +286,7 @@ export function useReview(scope: ReviewScope): ReviewController {
 		pendingOperations: operations.length,
 		issues: issues.length,
 		phase,
+		answerIsFresh,
 		planJobId,
 	});
 
@@ -303,7 +325,6 @@ export function useReview(scope: ReviewScope): ReviewController {
 	}, [board, server]);
 
 	const clearDeployRefusal = useCallback(() => setDeployRefusal(null), []);
-	const refetchPlan = planQuery.refetch;
 	const retryRead = useCallback(() => void refetchPlan(), [refetchPlan]);
 
 	return {
