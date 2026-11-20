@@ -677,3 +677,52 @@ export type LegalAcceptanceContext =
 export type CommerceOrderState = (typeof commerceOrderState.enumValues)[number];
 // SupportCase* / SupportAuthorType / SupportAbuseCategory unions come via the
 // `export * from "@repo/support/enums"` re-export above.
+
+// ── Agent surface (beta wave, spec agent-surface.md §4, seam AGT-S2) ─────────────────────────────
+
+/**
+ * The five credential kinds an actor can act through (spec §4.1). `session` — a person in a console
+ * browser — is the ONLY interactive human kind, and the only one that may decide an approval. The
+ * values are `CREDENTIAL_KINDS` in lib/authz/types.ts, held equal by tests/db/agent-surface-enums.test.ts.
+ */
+export const actorCredential = pgEnum("actor_credential", [
+	"session",
+	"cli_session",
+	"agent_oauth",
+	"agent_in_app",
+	"service_token",
+]);
+
+/**
+ * The verbs a non-interactive credential can be scoped to (spec §4.4). `apply` and `destroy` unlock
+ * only the REQUEST for an approval, never the job itself. The values are `AGENT_SCOPES` in
+ * lib/approvals/types.ts, held equal by tests/db/agent-surface-enums.test.ts.
+ */
+export const agentScope = pgEnum("agent_scope", [
+	"read",
+	"design",
+	"plan",
+	"apply",
+	"destroy",
+]);
+
+/** What an apply approval authorizes: a DEPLOY or a DESTROY job (spec §4.3). `APPLY_OPERATIONS`. */
+export const approvalOperation = pgEnum("approval_operation", [
+	"deploy",
+	"destroy",
+]);
+
+/**
+ * The life of an apply approval (spec §4.3). `expired` counts as rejected; `superseded` is set when
+ * a newer plan, a design revision or moved state voids it; `consumed` is the single use.
+ * `APPROVAL_STATUSES` in lib/approvals/types.ts.
+ */
+export const applyApprovalStatus = pgEnum("apply_approval_status", [
+	"pending",
+	"approved",
+	"rejected",
+	"expired",
+	"superseded",
+	"consumed",
+]);
+
