@@ -11,6 +11,7 @@
 import { ORPCError } from "@orpc/client";
 import type { QueryKey } from "@tanstack/react-query";
 import { orpc } from "@/lib/rpc/client";
+import { type ReadRefusal, readRefusalOf } from "@/lib/rpc/refusal";
 
 /**
  * Every query key that shows what a connector write changes: the board itself, and the setup
@@ -46,4 +47,19 @@ export function isRefused(error: unknown): boolean {
 	if (!(error instanceof ORPCError)) return false;
 	if (error.defined) return error.code === "FORBIDDEN" || error.code === "UNAUTHORIZED";
 	return REFUSAL_STATUSES.has(error.status);
+}
+
+/**
+ * WHICH refusal the board's read got, or `null` for a real failure: the typed refusal a procedure
+ * sent (`readRefusalOf`), or the route's own plain answer read by its status — 401 is a session
+ * that has ended, 403 is a viewer the organization does not let read this.
+ *
+ * The two are different things to tell a person. One is fixed by signing in, and the shell's
+ * session-ended dialog offers that; the other is fixed by an owner, and no sign-in changes it.
+ */
+export function boardRefusalOf(error: unknown): ReadRefusal | null {
+	const typed = readRefusalOf(error);
+	if (typed) return typed;
+	if (!isRefused(error) || !(error instanceof ORPCError)) return null;
+	return error.status === 401 ? "sign-in" : "forbidden";
 }
