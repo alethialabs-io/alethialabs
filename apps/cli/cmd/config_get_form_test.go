@@ -5,12 +5,12 @@ package cmd
 
 import (
 	"errors"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"io"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 )
