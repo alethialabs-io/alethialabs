@@ -59,7 +59,7 @@ export function ariaKeyShortcut(chord: ShortcutChord, isMac: boolean): string {
  * marked `@container`; every tool hidden this way is also a row of the toolbar's own menu and of
  * the command palette, so nothing becomes unreachable.
  */
-export const SECONDARY_TOOL = "hidden @xl:inline-flex";
+export const SECONDARY_TOOL = "hidden @[46rem]:inline-flex";
 
 interface ToolButtonProps {
 	/** What the tool does: its accessible name and its tooltip. */
@@ -146,7 +146,10 @@ export function ToolSeparator({ secondary = false }: { secondary?: boolean }) {
 	return (
 		<span
 			aria-hidden
-			className={cn("mx-1 h-5 w-px shrink-0 bg-border", secondary ? "hidden @xl:block" : "block")}
+			className={cn(
+				"mx-1 h-5 w-px shrink-0 bg-border",
+				secondary ? "hidden @[46rem]:block" : "block",
+			)}
 		/>
 	);
 }

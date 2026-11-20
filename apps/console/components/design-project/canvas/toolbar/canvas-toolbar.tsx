@@ -4,7 +4,11 @@
 
 // The board's toolbar (#6832): ONE row of tools, top-centre, in the manner of Excalidraw.
 //
-//   [ Select | Hand ]  [ + Add | Connect ]  [ Undo | Redo ]  [ Tidy | Fit ]  [ Run ▾ ]  [ Sources ]  [ ⌘K | ? | ⋯ ]
+//   [ prod · EKS 1.31 ]  [ Select | Hand ]  [ + Add | Connect ]  [ Undo | Redo ]  [ Tidy | Fit ]  [ Run ▾ | Sources ]  [ ⌘K | ? | ⋯ ]
+//
+// It starts with the environment, because the first thing to know about a board is what it is a
+// board OF: one environment, which is one Kubernetes cluster. The chip names it and opens its
+// settings, where the cluster is sized.
 //
 // Before it the board's controls sat in five places — a status line top-left, a cost chip, a Run
 // menu, an Add button and a ⋯ menu top-right, zoom with undo and redo bottom-left, a source-repos
@@ -18,9 +22,11 @@
 // and — when it cannot be used — a reason in place of the tooltip. A tool is never removed because
 // it is unavailable: it stays where it is, disabled, and says why.
 //
-// On a narrow board (the inspector or the review view is open on a laptop) the row drops four
-// tools — Connect, Tidy, Fit and the shortcut sheet — rather than wrap or run under the panel
-// beside it. Each of the four is also a key, a row of the ⋯ menu or a row of the command palette.
+// On a narrow board (the inspector or the review view is open on a laptop) the row gets shorter
+// rather than wrap or run under the panel beside it: first it drops four tools — Connect, Tidy,
+// Fit and the shortcut sheet — and then the environment chip. Each of the four is also a key, a
+// row of the ⋯ menu or a row of the command palette, and the environment's settings are a row of
+// the ⋯ menu.
 
 import {
 	Cable,
@@ -38,6 +44,9 @@ import {
 } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useStore } from "zustand";
+import { Button } from "@repo/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
+import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
 import {
 	nodeIndex,
@@ -46,9 +55,13 @@ import {
 	useDesignNodes,
 	useSelection,
 } from "@/lib/canvas/store/use-board";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { getProvider } from "@/lib/cloud-providers";
+import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
 import { CanvasMoreMenu } from "../canvas-more-menu";
 import { RunMenu } from "../run-menu";
+import { useClusterK8sVersion } from "../use-cluster-k8s-version";
 import { useHasDrawnNodes } from "../use-has-drawn-nodes";
 import {
 	SHORTCUT_CANVAS_ADD,
@@ -140,6 +153,60 @@ function moveAlongToolbar(event: KeyboardEvent<HTMLDivElement>): void {
 	tools[next]?.focus();
 }
 
+/**
+ * The environment this board designs: its name, and the cluster it is — the cloud's own name for a
+ * managed cluster and the Kubernetes version it will deploy, when the design says. Pressing it
+ * opens the environment on the rail: its settings, or, where a bring-your-own IaC module governs
+ * the environment and owns those settings, where the module came from.
+ *
+ * Nothing here names a cloud: the cluster's name is the catalog's, for the project's cloud.
+ */
+function EnvironmentChip({ governed }: { governed: boolean }) {
+	const board = useBoard();
+	const env = useEnvironmentStatus();
+	const k8s = useClusterK8sVersion();
+	const provider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
+	const name = env.environment?.name ?? null;
+	const called = name ? `Environment ${name}` : "Environment";
+	const service = provider ? getProvider(provider).clusterService : null;
+	const cluster = [service && service !== "—" ? service : null, k8s.version ?? null]
+		.filter((part): part is string => part !== null)
+		.join(" ");
+
+	return (
+		<>
+			<Tooltip>
+				<TooltipTrigger
+					render={
+						<Button
+							type="button"
+							data-tool=""
+							variant="ghost"
+							size="sm"
+							className="hidden h-8 max-w-40 rounded-none px-2 text-xs @[37rem]:inline-flex"
+							aria-label={cluster ? `${called}, ${cluster}` : called}
+							onClick={() =>
+								board.view
+									.getState()
+									.setSubject({ kind: "environment" }, governed ? "sources" : undefined)
+							}
+						>
+							<span className="truncate font-medium">{name ?? "Environment"}</span>
+							{cluster && (
+								<span className="shrink-0 font-mono text-ui-xs text-muted-foreground">{cluster}</span>
+							)}
+						</Button>
+					}
+				/>
+				<TooltipContent side="bottom">
+					{governed ? "This environment's sources" : "Environment settings"}
+				</TooltipContent>
+			</Tooltip>
+			<span aria-hidden className="mx-1 hidden h-5 w-px shrink-0 bg-border @[37rem]:block" />
+		</>
+	);
+}
+
 /** The board's toolbar. See the file header for what is on it and why. */
 export function CanvasToolbar({
 	projectId,
@@ -188,8 +255,10 @@ export function CanvasToolbar({
 			aria-orientation="horizontal"
 			data-slot="canvas-toolbar"
 			onKeyDown={moveAlongToolbar}
-			className="pointer-events-auto flex max-w-full items-center border border-border bg-card p-1 shadow-sm"
+			className="pointer-events-auto flex max-w-full items-center overflow-x-auto border border-border bg-card p-1 shadow-sm"
 		>
+			<EnvironmentChip governed={governed} />
+
 			<ToolButton
 				label="Select"
 				shortcutId={SHORTCUT_CANVAS_SELECT}

@@ -104,9 +104,10 @@ beforeEach(() => {
 });
 
 describe("what is on the toolbar", () => {
-	it("holds the tools in one row, in order: tools, add and connect, history, layout, run, the rest", () => {
+	it("holds the tools in one row, in order: the environment, tools, add and connect, history, layout, run, the rest", () => {
 		renderToolbar();
 		expect(toolNames()).toEqual([
+			"Environment",
 			"Select",
 			"Hand tool (pan)",
 			"Add",
@@ -161,6 +162,24 @@ describe("what is on the toolbar", () => {
 			"Fit view": "Shift+1",
 			"Keyboard shortcuts": "?",
 		});
+	});
+});
+
+describe("the environment chip", () => {
+	it("opens the environment on the rail: its settings, or its sources under a governing module", async () => {
+		const user = userEvent.setup();
+		const live = renderToolbar();
+		await user.click(tool("Environment"));
+		expect(board.view.getState().subject).toEqual({ kind: "environment" });
+		expect(board.view.getState().tab).toBeNull();
+		expect(useCanvasStore.getState().card).toEqual({ kind: "env-settings" });
+		live.unmount();
+
+		board.view.getState().setSubject(null);
+		renderToolbar({ governed: true });
+		await user.click(tool("Environment"));
+		expect(board.view.getState().subject).toEqual({ kind: "environment" });
+		expect(board.view.getState().tab).toBe("sources");
 	});
 });
 
@@ -265,11 +284,11 @@ describe("the toolbar by keyboard", () => {
 		await user.keyboard("{End}");
 		expect(tool("More")).toHaveFocus();
 		await user.keyboard("{ArrowRight}");
-		expect(tool("Select")).toHaveFocus();
+		expect(tool("Environment")).toHaveFocus();
 		await user.keyboard("{ArrowLeft}");
 		expect(tool("More")).toHaveFocus();
 		await user.keyboard("{Home}");
-		expect(tool("Select")).toHaveFocus();
+		expect(tool("Environment")).toHaveFocus();
 	});
 
 	it("leaves a key pressed outside the row alone", async () => {
