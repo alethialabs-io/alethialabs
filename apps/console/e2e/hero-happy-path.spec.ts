@@ -12,11 +12,13 @@
 //   • The project is created via the "Create empty project" path (name only — no cloud identity),
 //     so we reach the design canvas without connecting a real account.
 //
-// THE HONEST BOUNDARY (read before extending): we assert we reach the Deploy / pending-changes
-// state and that the Deploy CTA is present — we do NOT click Deploy. Clicking it queues real
-// provisioning (applyStagedChanges → provisionProject), which requires a *verified* cloud identity
-// and would then stand up real infrastructure. A truthful browser test stops here; it does not fake
-// a QUEUED job or a live cluster. To extend to an actual "DEPLOY job is QUEUED" assertion, seed a
+// THE HONEST BOUNDARY (read before extending): we assert we reach the pending-changes state, open
+// the review-and-deploy view from it, and find Deploy there — present, and DISABLED with its reason,
+// because this project has no cloud account and so no plan. Deploy is not on the bar (#6833): it is
+// offered only in the review view, for a plan that was reviewed. We press neither Run plan nor
+// Deploy: a plan queues a real job and a deploy would stand up real infrastructure, and both need
+// a *verified* cloud identity. A truthful browser test stops here; it does not fake a QUEUED job
+// or a live cluster. To extend to an actual "DEPLOY job is QUEUED" assertion, seed a
 // verified cloud_identity for the org (a mocked/seeded connector) and select it in create-project —
 // see e2e/README.md. The clusters surface below correctly shows its empty state ("appears after you
 // deploy"), which is exactly the truth for this hermetic run.
@@ -81,11 +83,19 @@ test.describe("Hero happy-path", () => {
 		await search.fill("bucket");
 		await page.getByRole("option", { name: /bucket/i }).first().click();
 
-		// 7. The Deploy / pending-changes state — the canvas diff surfaces the staged change with a
-		//    Deploy CTA. THIS IS THE HONEST BOUNDARY: we assert Deploy is offered but never click it
-		//    (clicking would queue real provisioning against a cloud we haven't verified).
+		// 7. The pending-changes state, and the way from it to a deploy. The bar surfaces the staged
+		//    change and offers Review plan; the review view is where Deploy is. THIS IS THE HONEST
+		//    BOUNDARY: Deploy is there and disabled, with the reason on screen (the design has issues
+		//    — no cloud account — so there is no plan to deploy), and nothing here is pressed that
+		//    could queue a job.
 		await expect(page.getByText("Pending changes").first()).toBeVisible();
-		await expect(page.getByRole("button", { name: /^deploy$/i })).toBeVisible();
+		const bar = page.getByTestId("pending-changes-bar");
+		await expect(bar.getByRole("button", { name: /^deploy$/i })).toHaveCount(0);
+		await bar.getByRole("button", { name: "Review plan", exact: true }).click();
+		const review = page.getByTestId("review-view");
+		await expect(review).toBeVisible();
+		await expect(review.getByRole("button", { name: /^deploy$/i })).toBeDisabled();
+		await expect(review.getByTestId("deploy-reason")).toHaveAttribute("data-block", "issues");
 
 		// 8. Land on the evidence surface — the org's "keep proving it" roll-up. Creating a
 		//    project ALWAYS seeds its environment matrix (four rows from
