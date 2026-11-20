@@ -137,7 +137,7 @@ export function barState(facts: BarFacts): BarState {
 			label: "Pending changes",
 			detail: summarizeChanges(facts.changes, facts.operations),
 			tier: "pending",
-			jobId: facts.activeJob?.id ?? null,
+			jobId: null,
 			reviewIsPrimary: true,
 		};
 	}

@@ -106,6 +106,8 @@ export interface ReviewController {
 	deployBlocked: DeployBlock | null;
 	deployPending: boolean;
 	deployRefusal: string | null;
+	/** Forgets the last refusal: called when the person starts another attempt. */
+	clearDeployRefusal: () => void;
 	/** The verb on the commit button: the sink's. */
 	deployLabel: string;
 	/** The commit to run for the reviewed plan; null while Deploy is blocked. */
@@ -300,6 +302,7 @@ export function useReview(scope: ReviewScope): ReviewController {
 		document.recordReviewedPlan(server.planJobId);
 	}, [board, server]);
 
+	const clearDeployRefusal = useCallback(() => setDeployRefusal(null), []);
 	const refetchPlan = planQuery.refetch;
 	const retryRead = useCallback(() => void refetchPlan(), [refetchPlan]);
 
@@ -322,6 +325,7 @@ export function useReview(scope: ReviewScope): ReviewController {
 		deployBlocked,
 		deployPending: commit.isPending,
 		deployRefusal,
+		clearDeployRefusal,
 		deployLabel: sink.primaryLabel,
 		commitInput,
 		commit,
