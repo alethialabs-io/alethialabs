@@ -115,6 +115,11 @@ func destroyRunnerJob(ctx context.Context, p *Printer, c runnerDestroyClient, to
 		return result, false, refusal(clierr.CodeInvalidUsage, "alethia runner list",
 			"--assigned-runner names the runner being destroyed; pick another executor, or omit it to let the control plane choose")
 	}
+	// With nobody to ask and no --yes the command line cannot go ahead whatever the control
+	// plane holds, so that refusal comes first: it is the one a script fixes by editing itself.
+	if !dryRun && !destroyRunnerYes && !canPromptForm() {
+		return result, false, errConfirmRequiresYes
+	}
 	if err := runnerJobExecutor(c, list, "tear this runner down", assignedID, runnerID); err != nil {
 		return result, false, err
 	}

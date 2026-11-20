@@ -270,12 +270,18 @@ type runnerRegisterRequest struct {
 	CloudIdentityID string `json:"cloud_identity_id,omitempty"`
 }
 
+// runnerRegisterDryRun is the `object` of a registration's dry run: the request under `request`,
+// where every command's dry run puts it.
+type runnerRegisterDryRun struct {
+	Request runnerRegisterRequest `json:"request"`
+}
+
 // printRunnerRegisterDryRun reports the registration that would be made. Nothing is sent, so no
 // runner and no token exist.
 func printRunnerRegisterDryRun(p *Printer, name, cloudIdentityID string) error {
 	result := MutationResult{
 		Kind: "runner", Action: ResultCreated, DryRun: true,
-		Object: runnerRegisterRequest{Name: name, CloudIdentityID: cloudIdentityID},
+		Object: runnerRegisterDryRun{Request: runnerRegisterRequest{Name: name, CloudIdentityID: cloudIdentityID}},
 	}
 	return p.Result(result, func(w io.Writer) {
 		fmt.Fprintln(w, ui.MutedStyle.Render(fmt.Sprintf(

@@ -137,13 +137,15 @@ func TestRunRunnerRegister(t *testing.T) {
 			Action string `json:"action"`
 			DryRun bool   `json:"dry_run"`
 			Object struct {
-				Name string `json:"name"`
+				Request struct {
+					Name string `json:"name"`
+				} `json:"request"`
 			} `json:"object"`
 		}
 		if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
 			t.Fatalf("not json: %v\n%s", err, out.String())
 		}
-		if doc.Kind != "runner" || doc.Action != "created" || !doc.DryRun || doc.Object.Name != "box-5" {
+		if doc.Kind != "runner" || doc.Action != "created" || !doc.DryRun || doc.Object.Request.Name != "box-5" {
 			t.Errorf("document = %+v", doc)
 		}
 		if strings.Contains(out.String(), "token") {

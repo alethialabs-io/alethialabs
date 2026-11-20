@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
@@ -160,8 +159,7 @@ pin clears the channel).
 Omit the provider on a terminal and you are asked which cloud to configure.
 
 --enabled=false pauses a pool: the controller stops provisioning for it and drains its runners.
-That is confirmed first; with nobody to ask, pass --yes. --dry-run prints the update that would
-be sent and sends nothing.
+That is confirmed first; with nobody to ask, pass --yes.
 
 This is the platform operator's command. It answers only on a self-managed control plane, to an
 organization owner or admin.`,
@@ -190,12 +188,6 @@ func runFleetSetCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	p := printerFor(cmd)
-	if cmdmeta.DryRunRequested(cmd) {
-		return printFleetSet(p, MutationResult{
-			ID: provider, Kind: fleetPoolKind, Action: ResultUpdated, DryRun: true,
-			Object: fleetSetRequest{Provider: provider, Update: fleetUpdateDocument(update)},
-		})
-	}
 	// Disabling a pool drains its runners (a capacity reduction) — confirm first. The
 	// provider is named, because "this pool" is not something a reader can check against
 	// what they meant, and with the picker the CLI may have chosen it.
@@ -218,45 +210,9 @@ func runFleetSetCmd(cmd *cobra.Command, args []string) error {
 // fleetPoolKind is the `kind` of a fleet set result.
 const fleetPoolKind = "fleet_pool"
 
-// fleetSetRequest is the `object` of a dry run: the cloud and the update that would be sent.
-type fleetSetRequest struct {
-	Provider string         `json:"provider"`
-	Update   map[string]any `json:"update"`
-}
-
-// fleetUpdateDocument is the update as the request body carries it: only the fields that were
-// passed, under the keys PUT /api/cli/fleet/:provider reads.
-func fleetUpdateDocument(u api.FleetPoolUpdate) map[string]any {
-	doc := map[string]any{}
-	if u.WarmMin != nil {
-		doc["warm_min"] = *u.WarmMin
-	}
-	if u.Max != nil {
-		doc["max"] = *u.Max
-	}
-	if u.SlotsPerRunner != nil {
-		doc["slots_per_runner"] = *u.SlotsPerRunner
-	}
-	if u.Enabled != nil {
-		doc["enabled"] = *u.Enabled
-	}
-	if u.Channel != nil {
-		doc["channel"] = *u.Channel
-	}
-	if u.Version != nil {
-		doc["version"] = *u.Version
-	}
-	return doc
-}
-
 // printFleetSet prints a fleet set result in p's format.
 func printFleetSet(p *Printer, result MutationResult) error {
 	return p.Result(result, func(w io.Writer) {
-		if result.DryRun {
-			fmt.Fprintln(w, ui.MutedStyle.Render(fmt.Sprintf(
-				"Would update the %s pool. Nothing was sent.", result.ID)))
-			return
-		}
 		if pool, ok := result.Object.(*api.FleetPool); ok {
 			fmt.Fprintln(w, ui.FormatSuccess(fmt.Sprintf(
 				"Updated %s pool (warm %d, max %d, %s)",
@@ -268,23 +224,27 @@ func printFleetSet(p *Printer, result MutationResult) error {
 
 // resolveFleetProvider answers "which cloud?" from the positional argument or a picker.
 //
-// The picker offers the clouds this build offers (EnabledCloudProviders), the same set every
-// other cloud list in the CLI is built from. A provider given as the argument is NOT checked
-// against that set: the CLI does not know which clouds the fleet controller of the deployment it
-// is talking to supports, so the control plane keeps the refusal — it is the only place that
-// knows.
+// The picker offers every cloud_provider value, and NOTHING is validated against that set. The
+// CLI does not know which clouds the fleet controller of the deployment it is talking to
+// supports, and this is the platform operator's surface: an operator may run a pool for a cloud
+// the hosted product does not offer. Refusing on a list kept here would refuse a cloud that
+// works.
+//
+// So the closed set is used for the OFFER, where being complete is the whole point, and the
+// server keeps the refusal, which is the only place that knows.
 func resolveFleetProvider(args []string) (string, error) {
 	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
 		return strings.ToLower(strings.TrimSpace(args[0])), nil
 	}
-	names := fleetProviderNames()
 	if err := requireInteractiveForm(); err != nil {
 		e := refusal(clierr.CodeInputRequired, "alethia fleet list",
-			"no provider given: pass one of %s as the argument (%v)", strings.Join(names, ", "), err)
+			"no provider given: pass one of %s as the argument (%v)",
+			strings.Join(cloudProviderNames(), ", "), err)
 		e.Cause = err
 		return "", e
 	}
 	f := mustGovField("alethia fleet set", fieldKeyFleetProvider)
+	names := cloudProviderNames()
 	options := make([]huh.Option[string], len(names))
 	for i, name := range names {
 		options[i] = huh.NewOption(name, name)
@@ -297,16 +257,6 @@ func resolveFleetProvider(args []string) (string, error) {
 		return "", err
 	}
 	return chosen, nil
-}
-
-// fleetProviderNames is the slug of every cloud this build offers, in the catalog's order.
-func fleetProviderNames() []string {
-	clouds := EnabledCloudProviders()
-	out := make([]string, len(clouds))
-	for i, c := range clouds {
-		out[i] = string(c)
-	}
-	return out
 }
 
 // fleetUpdateFlagNames renders the update flags for the "nothing to update" refusal.
@@ -392,8 +342,6 @@ func init() {
 	fleetSetCmd.Flags().BoolVar(&fleetEnabled, "enabled", false, mustGovField("alethia fleet set", fieldKeyFleetEnabled).Description)
 	fleetSetCmd.Flags().StringVar(&fleetChannel, "channel", "", mustGovField("alethia fleet set", fieldKeyFleetChannel).Description)
 	fleetSetCmd.Flags().StringVar(&fleetVersion, "version", "", mustGovField("alethia fleet set", fieldKeyFleetVersion).Description)
-
-	addDryRunFlag(fleetSetCmd)
 
 	fleetCmd.AddCommand(fleetListCmd)
 	fleetCmd.AddCommand(fleetSetCmd)

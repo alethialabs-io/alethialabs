@@ -402,6 +402,13 @@ func hygCliConfirmEnv(t *testing.T) (*hygCliConfirmServer, func(args ...string) 
 			_ = enc.Encode(map[string]interface{}{"channels": []map[string]interface{}{
 				{"id": "ch1", "name": "ops", "type": "slack", "is_verified": true, "enabled": true},
 			}})
+		// `runner destroy` queues a job another runner has to run, and refuses when nothing
+		// can. An enabled pool is what lets it reach its confirmation gate and, with --yes, the
+		// control plane.
+		case p == "/api/cli/fleet" && r.Method == http.MethodGet:
+			_ = enc.Encode(map[string]interface{}{"pools": []map[string]interface{}{
+				{"provider": "aws", "warm_min": 1, "max": 4, "slots_per_runner": 1, "enabled": true},
+			}})
 		case strings.HasPrefix(p, "/api/cli/fleet/"):
 			_ = enc.Encode(map[string]interface{}{"pool": map[string]interface{}{
 				"provider": strings.TrimPrefix(p, "/api/cli/fleet/"),

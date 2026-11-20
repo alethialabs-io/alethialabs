@@ -44,7 +44,7 @@ var metaRunners = []cmdmeta.Meta{
 		Path: "alethia runner register", Mutates: true, DryRun: cmdmeta.DryRunClient, Output: cmdmeta.OutputSecret,
 		Examples: []cmdmeta.Example{
 			{Cmd: "alethia runner register my-box-1", Note: "Register a runner you run yourself; its id and token are printed once"},
-			{Cmd: "alethia runner register my-box-1 --no-input > runner.env", Note: "Write the two KEY=value lines straight into an env file"},
+			{Cmd: "alethia runner register my-box-1 --no-input", Note: "From a script: stdout is the two KEY=value lines and nothing else, ready to redirect into an env file"},
 			{Cmd: "alethia runner register my-box-1 --cloud-account prod-account --output json", Note: "Record the account it works in, and read the id and token as fields"},
 		},
 	},
@@ -77,11 +77,11 @@ var metaRunners = []cmdmeta.Meta{
 	// Sets the pool to the values given, so a second run changes nothing further. Pausing a pool
 	// (--enabled=false) drains its runners and is confirmed, but removes no record.
 	{
-		Path: "alethia fleet set", Mutates: true, Idempotent: true, DryRun: cmdmeta.DryRunClient, Output: cmdmeta.OutputTable,
+		Path: "alethia fleet set", Mutates: true, Idempotent: true, Output: cmdmeta.OutputTable,
 		Examples: []cmdmeta.Example{
 			{Cmd: "alethia fleet set aws --warm-min 2 --max 6", Note: "Keep two AWS runners warm and allow up to six"},
 			{Cmd: "alethia fleet set hetzner --enabled=false --yes", Note: "Pause the Hetzner pool from a script"},
-			{Cmd: "alethia fleet set gcp --version 1.4.0 --dry-run --output json", Note: "Print the update that would be sent, and send nothing"},
+			{Cmd: "alethia fleet set gcp --version 1.4.0 --output json", Note: "Pin the GCP pool to one runner version and read the pool back as json"},
 		},
 	},
 }

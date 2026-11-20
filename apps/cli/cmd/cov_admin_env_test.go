@@ -190,9 +190,12 @@ func miscAlwaysConfirm(t *testing.T, answer bool) {
 	// A destructive command consults noInputMode before it prompts, so the stubbed
 	// answer is only reachable with the terminal seams on.
 	miscTTY(t)
-	prev := confirm
+	prev, prevTyped := confirm, confirmTypedName
 	confirm = func(string, string) bool { return answer }
-	t.Cleanup(func() { confirm = prev })
+	// A runner is destroyed or removed by typing its name, which is a second seam: no stub of
+	// runHuhForm can type it.
+	confirmTypedName = func(string, string, string) bool { return answer }
+	t.Cleanup(func() { confirm, confirmTypedName = prev, prevTyped })
 }
 
 // miscStubForm makes every huh form return immediately without touching a terminal, so a
