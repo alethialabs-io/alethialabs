@@ -14,11 +14,12 @@
 
 import { Boxes } from "lucide-react";
 import { formatMonthlyRate } from "@repo/format";
-import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { NODE_STATUS_META, nodeStatusKey, useNodeStatus } from "@/lib/canvas/node-status";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { InspectorFrame } from "../inspector-shell/inspector-frame";
+import { useCloseInspector } from "../inspector-shell/subject";
 import { NODE_REGISTRY } from "../graph/node-registry";
 import { type CanvasNode, nodeOfKind } from "../graph/types";
 
@@ -37,6 +38,7 @@ export function ExternalPanel({ nodeId }: { nodeId: string }) {
 	const node = nodeOfKind(raw, "external");
 	const env = useEnvironmentStatus();
 	const status = useNodeStatus(nodeId);
+	const close = useCloseInspector();
 
 	if (!node) return null;
 	const config = node.data.config;
@@ -51,26 +53,16 @@ export function ExternalPanel({ nodeId }: { nodeId: string }) {
 	const drifted = new Set((server?.drift ?? []).map((d) => d.address));
 
 	return (
-		<div className="flex h-full flex-col">
-			<div className="flex items-start gap-3 border-b border-border p-4">
-				<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-none border border-dashed text-muted-foreground">
-					<Icon className="h-4 w-4" />
-				</span>
-				<div className="min-w-0 flex-1 space-y-1">
-					<div className="truncate text-sm font-medium">
-						{def?.label ?? "Other resources"}
-					</div>
-					<div className="truncate font-mono text-xs text-muted-foreground">
-						{config.module || "root module"}
-					</div>
-					<StatusBadge
-						status={meta.label}
-						tier={meta.vx}
-						title={status.message ?? meta.label}
-					/>
-				</div>
-			</div>
-
+		<InspectorFrame
+			icon={<Icon className="h-4 w-4" />}
+			external
+			eyebrow="External"
+			title={def?.label ?? "Other resources"}
+			summary={<span className="font-mono">{config.module || "root module"}</span>}
+			status={{ label: meta.label, tier: meta.vx, message: status.message }}
+			onClose={close}
+			bodyClassName="p-0"
+		>
 			<div className="border-b border-border px-4 py-3 text-xs text-muted-foreground">
 				{/* The honesty line. A plan's addresses are exact and count/for_each-expanded; the static
 				    scan's are only DECLARED, so a `count = 3` block is one row here and three in reality.
@@ -87,7 +79,7 @@ export function ExternalPanel({ nodeId }: { nodeId: string }) {
 				)}
 			</div>
 
-			<div className="min-h-0 flex-1 overflow-y-auto">
+			<div>
 				<ul className="divide-y divide-border">
 					{config.members.map((m) => {
 						const cost = costByAddress[m.address];
@@ -120,6 +112,6 @@ export function ExternalPanel({ nodeId }: { nodeId: string }) {
 					})}
 				</ul>
 			</div>
-		</div>
+		</InspectorFrame>
 	);
 }

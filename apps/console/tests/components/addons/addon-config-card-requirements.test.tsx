@@ -9,12 +9,10 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 
-const { enableMut, disableMut } = vi.hoisted(() => ({
-	enableMut: { mutateAsync: vi.fn(), isPending: false },
+const { disableMut } = vi.hoisted(() => ({
 	disableMut: { mutateAsync: vi.fn(), isPending: false },
 }));
 vi.mock("@/lib/query/use-addons-query", () => ({
-	useEnableAddon: () => enableMut,
 	useDisableAddon: () => disableMut,
 	useRequestGitopsBump: () => ({ mutate: () => {}, isPending: false }),
 	useAddonsQuery: vi.fn(),

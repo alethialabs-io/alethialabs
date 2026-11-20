@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// #6537: the configure card tells a pinned or GitOps-mode install that the catalogue has moved on,
+// #6537: the add-on subject tells a pinned or GitOps-mode install that the catalogue has moved on,
 // prominently when the catalogue's version is a security release. It offers a one-click pin update
-// and never changes the pin unless that button is pressed.
+// and never changes the pin unless that button is pressed. The update is staged like every other
+// edit of the add-on (#6834).
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -13,18 +14,18 @@ import type {
 	AddonMarketItem,
 } from "@/app/server/actions/addons";
 
-const { enableMut, disableMut } = vi.hoisted(() => ({
-	enableMut: { mutateAsync: vi.fn(), isPending: false },
+const { disableMut } = vi.hoisted(() => ({
 	disableMut: { mutateAsync: vi.fn(), isPending: false },
 }));
 vi.mock("@/lib/query/use-addons-query", () => ({
-	useEnableAddon: () => enableMut,
 	useDisableAddon: () => disableMut,
 	useRequestGitopsBump: () => ({ mutate: () => {}, isPending: false }),
 	useAddonsQuery: vi.fn(),
 }));
 
 import { AddonConfigForm } from "@/components/addons/addon-config-card";
+import { board } from "@/lib/canvas/store/board";
+import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 const SECURITY = {
 	summary: "Includes the fixes for CVE-2025-1974.",
@@ -75,15 +76,17 @@ function renderForm(item: AddonMarketItem) {
 	);
 }
 
-/** The `version` the last enable mutation was called with. */
-function sentVersion(): unknown {
-	const call = enableMut.mutateAsync.mock.calls.at(-1)?.[0];
-	return call && typeof call === "object" && "version" in call ? call.version : "<absent>";
+/** The operations staged in the document. */
+const staged = () => board.document.getState().operations;
+
+/** The `version` the staged operation carries. */
+function stagedVersion(): unknown {
+	const input = staged().at(-1)?.input;
+	return input && typeof input === "object" && "version" in input ? input.version : "<absent>";
 }
 
 beforeEach(() => {
-	enableMut.mutateAsync.mockReset();
-	enableMut.mutateAsync.mockResolvedValue({ ok: true });
+	useCanvasStore.getState().reset();
 });
 
 describe("AddonConfigForm — the catalogue's update offer", () => {
@@ -108,20 +111,24 @@ describe("AddonConfigForm — the catalogue's update offer", () => {
 		expect(screen.queryByRole("link", { name: /read the advisory/i })).toBeNull();
 	});
 
-	it("one click updates the pin to the catalogue's version — and nothing is sent before it", async () => {
+	it("one click stages the pin at the catalogue's version — and nothing is staged before it", async () => {
 		const user = userEvent.setup();
 		renderForm({ ...ITEM, install: PINNED });
-		expect(enableMut.mutateAsync).not.toHaveBeenCalled();
+		expect(staged()).toEqual([]);
 		await user.click(screen.getByRole("button", { name: "Update pin to 4.15.1" }));
-		expect(enableMut.mutateAsync).toHaveBeenCalledTimes(1);
-		expect(sentVersion()).toBe("4.15.1");
+		expect(staged()).toHaveLength(1);
+		expect(stagedVersion()).toBe("4.15.1");
+		expect(screen.getByLabelText("Chart version")).toHaveValue("4.15.1");
 	});
 
-	it("saving without pressing it keeps the pin — the update is offered, never forced", async () => {
+	it("another edit keeps the pin — the update is offered, never forced", async () => {
 		const user = userEvent.setup();
 		renderForm({ ...ITEM, install: PINNED });
-		await user.click(screen.getByRole("button", { name: /save changes/i }));
-		expect(sentVersion()).toBe("4.11.2");
+		await user.click(screen.getByRole("button", { name: /raw helm values/i }));
+		await user.type(screen.getByLabelText("Raw Helm values (YAML)"), "replicaCount: 2");
+		await user.tab();
+		expect(staged()).toHaveLength(1);
+		expect(stagedVersion()).toBe("4.11.2");
 	});
 
 	it("tells a GitOps install which file to change, and offers no pin button", () => {
