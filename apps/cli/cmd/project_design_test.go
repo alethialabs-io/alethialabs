@@ -73,7 +73,7 @@ func TestRunDesignApply(t *testing.T) {
 	t.Run("applied", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runDesignApply(f, &buf, api.ApplyDesignParams{Project: "shop", Env: "dev", Document: doc}); err != nil {
+		if err := runDesignApply(f, testPrinter(&buf, "table"), api.ApplyDesignParams{Project: "shop", Env: "dev", Document: doc}); err != nil {
 			t.Fatalf("runDesignApply: %v", err)
 		}
 		if f.appliedDesign.Project != "shop" || string(f.appliedDesign.Document) != string(doc) {
@@ -87,7 +87,7 @@ func TestRunDesignApply(t *testing.T) {
 	t.Run("staged", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runDesignApply(f, &buf, api.ApplyDesignParams{Project: "shop", Document: doc, Stage: true}); err != nil {
+		if err := runDesignApply(f, testPrinter(&buf, "table"), api.ApplyDesignParams{Project: "shop", Document: doc, Stage: true}); err != nil {
 			t.Fatalf("runDesignApply: %v", err)
 		}
 		if !strings.Contains(buf.String(), "Staged the design") {
@@ -107,7 +107,7 @@ func TestRunDesignApply(t *testing.T) {
 				{Kind: "network", Name: nil, Action: "CREATE"},
 			},
 		}}
-		if err := runDesignApply(f, &buf, api.ApplyDesignParams{Project: "shop", Document: doc, DryRun: true}); err != nil {
+		if err := runDesignApply(f, testPrinter(&buf, "table"), api.ApplyDesignParams{Project: "shop", Document: doc, DryRun: true}); err != nil {
 			t.Fatalf("runDesignApply: %v", err)
 		}
 		out := buf.String()
@@ -121,7 +121,7 @@ func TestRunDesignApply(t *testing.T) {
 	t.Run("dry run with no changes says so", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{designResult: &api.DesignApplyResult{OK: true, Mode: "dry-run"}}
-		if err := runDesignApply(f, &buf, api.ApplyDesignParams{Document: doc, DryRun: true}); err != nil {
+		if err := runDesignApply(f, testPrinter(&buf, "table"), api.ApplyDesignParams{Document: doc, DryRun: true}); err != nil {
 			t.Fatalf("runDesignApply: %v", err)
 		}
 		if !strings.Contains(buf.String(), "already matches") {
@@ -132,7 +132,7 @@ func TestRunDesignApply(t *testing.T) {
 	t.Run("refuses an empty document", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runDesignApply(f, &buf, api.ApplyDesignParams{Project: "shop"}); err == nil {
+		if err := runDesignApply(f, testPrinter(&buf, "table"), api.ApplyDesignParams{Project: "shop"}); err == nil {
 			t.Fatal("expected a local refusal")
 		}
 		if f.appliedDesign.Project != "" {
@@ -142,7 +142,7 @@ func TestRunDesignApply(t *testing.T) {
 
 	t.Run("surfaces a server error", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := runDesignApply(&fakeClient{err: errBoom}, &buf,
+		if err := runDesignApply(&fakeClient{err: errBoom}, testPrinter(&buf, "table"),
 			api.ApplyDesignParams{Document: doc}); err == nil {
 			t.Fatal("expected the server error to surface")
 		}
@@ -151,7 +151,7 @@ func TestRunDesignApply(t *testing.T) {
 	// A nil result with no error would otherwise panic on res.Mode.
 	t.Run("a nil result is an error, not a panic", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := runDesignApply(nilDesignClient{}, &buf, api.ApplyDesignParams{Document: doc}); err == nil {
+		if err := runDesignApply(nilDesignClient{}, testPrinter(&buf, "table"), api.ApplyDesignParams{Document: doc}); err == nil {
 			t.Fatal("expected an error for a nil result")
 		}
 	})

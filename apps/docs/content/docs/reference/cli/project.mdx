@@ -1,6 +1,6 @@
 ---
 title: Project Commands
-description: Create, inspect, author and provision projects from the CLI.
+description: Create, inspect, design, deploy and destroy projects from the CLI.
 ---
 
 # Project Commands
@@ -13,6 +13,49 @@ All authoring commands operate on the **active organization** (set via `alethia 
 the organization named by the global `--org <id>` for a single invocation — which is refused with
 `403` if you are not a member of it. Every command accepts the global
 `-o, --output <table|json|csv>` flag.
+
+## What every command on this page writes
+
+**The result is on stdout and everything else is on stderr.** A table, a card or a JSON document is
+the result. A progress line, a queued-job notice, a warning and an error are not, so
+`alethia project list --output json` can be piped into a parser in every case.
+
+**A command that changes something returns one result.** With `--output json` it has the same keys
+on every command:
+
+```json
+{
+  "id": "4f3c2b1a-9d6e-4a3b-8c17-5e2f1a9b7c04",
+  "kind": "project",
+  "action": "queued",
+  "job": { "id": "0b7e6c55-2f0a-4d0e-9a3b-6c1d2e3f4a5b", "type": "DEPLOY" },
+  "dry_run": false,
+  "object": {}
+}
+```
+
+`action` is `created`, `updated`, `deleted`, `queued` or `unchanged`. `job` is `null` when the
+command queued nothing. `object` is the record, or what the command did in detail.
+
+**`--dry-run` sends nothing.** `create`, `preview`, `deploy`, `destroy`, `env add`,
+`component add` and `component remove` take it. The command resolves and checks every input,
+prints the same result with `"dry_run": true` and the request under `object.request`, and makes
+no change. It never asks for a confirmation, because there is nothing to confirm.
+
+**A refusal exits with the code of its kind.** stdout stays empty. stderr carries one sentence that
+says what happened and, where there is one, a `hint` line with the next command to run. With
+`--output json` the error is one `alethia.error/v1` object on stderr.
+
+| Exit | Meaning on this page |
+|------|----------------------|
+| `6` | The project, environment, component or cloud account that you named does not exist |
+| `7` | The control plane refused the change in its current state, for example a destroy that needs `--cascade` |
+| `8` | A flag or a value is not valid |
+| `9` | A confirmation or a value is needed and nothing can ask for it: pass `--yes`, or the flag that the message names |
+| `12` | `--wait` reached its `--timeout`. The job is still running |
+| `13` | The job finished and failed, or was cancelled |
+
+The codes mean the same on every command of the CLI. `1` is a failure that has no code of its own.
 
 ## Two rules that hold for every command on this page
 
@@ -46,6 +89,9 @@ alethia project list
 alethia project list --output json
 ```
 
+An organization with no projects prints nothing on stdout. A note on stderr names the two commands
+that make one: `alethia up` and `alethia project create`.
+
 On a terminal this is the shared navigable table (sort, filter, quit); piped or with
 `--output json|csv` it is a plain projection.
 
@@ -75,14 +121,16 @@ Print a project's full configuration.
 
 ```bash
 alethia project get boutique
+alethia project get --project boutique --output json
 alethia project get boutique --open
 alethia project get                      # asks which project
 ```
 
 | Argument / Flag | Required | Description |
 |------|----------|-------------|
-| `[project_name]` | No | Project name (positional). Omit it on a terminal to pick from a list. |
-| `--open` | No | Open the project in the web console. (Long-only — `-o` is the global `--output` flag.) |
+| `[name]` | No | Project name (positional). Omit it on a terminal to pick from a list. |
+| `--project` | No | The same project name, as a flag. Pass the argument or the flag, not both. |
+| `--open` | No | Also open the project in the web console. (Long-only — `-o` is the global `--output` flag.) |
 
 <Callout type="info">
   `get` looks a project up by **name**, so the picker returns a name and refuses one that two
@@ -97,8 +145,11 @@ Shows the full project configuration including:
 - Component summary (network, cluster, databases, caches, etc.)
 - Cloud identity reference
 
-When run interactively without `--open`, the CLI offers to open the project in the browser after
-printing it.
+The command prints the project and asks nothing afterwards. `--open` is the only thing that opens
+a browser, and a browser that does not start is reported on stderr without failing the command.
+
+A name that matches no project exits `6`, and the hint is `alethia project list`. With no name and
+no terminal to ask on, the command exits `9`.
 
 ## `alethia project create`
 
@@ -136,6 +187,7 @@ the tree passes `--no-manifest`.
 | `--node-size` | No | Node size as vCPU and GiB, for example `4x16`. It is mapped to the nearest machine type of the project's cloud when the cluster deploys. Not with `--instance-type`. |
 | `--file` | No | `alethia.yaml` to take the values and the environment matrix from. The file in the current directory is read when present, and the command says so. |
 | `--no-manifest` | No | Read no manifest, not even the one in this directory. Refused together with `--file`. |
+| `--dry-run` | No | Check every input and print the request. Nothing is created. |
 
 Every value resolves in one order — the flag, then `ALETHIA_REGION` and the other environment
 variables, then the manifest, then the form, then the default — so a checked-in file supplies what
@@ -144,9 +196,8 @@ the command line leaves out, and a flag overrides the file for one run.
 ### Node shape
 
 Without `--instance-type` or `--node-size`, the project's cluster gets the catalog's default machine
-type for its cloud: `t3.large` on AWS, `e2-standard-2` on Google Cloud, `Standard_D2s_v5` on Azure,
-`cpx22` on Hetzner and `ecs.g6.large` on Alibaba Cloud. Pass one of the two flags to choose the node
-yourself:
+type for its cloud: `t3.large` on AWS, `e2-standard-2` on Google Cloud, `Standard_D2s_v5` on Azure
+and `cpx22` on Hetzner. Pass one of the two flags to choose the node yourself:
 
 ```bash
 alethia project create boutique --region eu-west-1 --cloud-account prod-account --instance-type t3.xlarge
@@ -159,10 +210,18 @@ placed on. The two flags are mutually exclusive, and a create where no environme
 refuses them. To change the shape later, set the cluster's `instance_types` with
 `alethia project component add --kind cluster`, which updates the existing cluster.
 
-The created project prints as a card (or the typed object with `--output json`), followed —
-when anything was asked for — by the `alethia project create` line that would produce the same
-project without the questions. That line names every flag that shaped it, `--stage`,
-`--placement-mode` and `--iac-version` included, so it can be committed as-is.
+The created project prints as a card. With `--output json` it is one result whose `id` is the
+project's id and whose `object` is the project. When anything was asked for, the
+`alethia project create` line that would produce the same project without the questions follows on
+stderr. That line names every flag that shaped it, `--stage`, `--placement-mode` and
+`--iac-version` included, so it can be committed as-is.
+
+### Clouds
+
+A project's cloud is the cloud of the account that you link with `--cloud-account`. This release
+offers AWS, Google Cloud, Azure and Hetzner. The control plane refuses a project on any other cloud
+with one sentence, for example `Alibaba Cloud is not available in this release.` The command prints
+that sentence and exits `8`. Link an account on an offered cloud and run the command again.
 
 ### The environment matrix
 
@@ -201,30 +260,38 @@ than coming back as a `400`. The file's full reference, components included, is 
   two-tier demo is four clusters with placement and eight without it.
 </Callout>
 
-## `alethia project plan` · `apply` · `destroy`
+## `alethia project preview` · `deploy` · `destroy`
 
 Queue a `PLAN`, `DEPLOY` or `DESTROY` job for one environment of a project.
 
+- `preview` works out what a deploy would change, with a cost estimate. It changes nothing in your
+  cloud account.
+- `deploy` creates or updates the environment's cloud resources.
+- `destroy` tears them down. This cannot be undone.
+
 ```bash
-alethia project plan --project boutique --env dev-1 --runner eu-box --wait
-alethia project apply --project boutique --env dev-1 --latest-plan --wait
-alethia project destroy --project boutique --yes
+alethia project preview --project boutique --env dev-1 --runner eu-box --wait
+alethia project deploy --project boutique --env dev-1 --latest-plan --wait
+alethia project destroy --project boutique --env dev-1
 ```
 
 Omit `--project` on a terminal and you are asked which project; omit the runner and you are
-asked which one (or "Any available"). `destroy` takes the runner by id only, for now.
+asked which one (or "Any available"). With no terminal, a job with no runner named goes to any
+available runner.
 
-| Flag | plan | apply | destroy | Description |
-|------|------|-------|---------|-------------|
+| Flag | preview | deploy | destroy | Description |
+|------|---------|--------|---------|-------------|
 | `--project` | ✓ | ✓ | ✓ | Project by **name** or id. Asked for on a terminal when omitted. |
 | `--project-id` | ✓ | ✓ | ✓ | Project id. Prefer `--project`, which also takes the name. |
 | `--env` | ✓ | ✓ | ✓ | Target environment name (default: the project's default environment) |
-| `--runner` | ✓ | ✓ | | Runner by **name** or id. Asked for on a terminal when omitted. |
+| `--runner` | ✓ | ✓ | ✓ | Runner by **name** or id. Asked for on a terminal when omitted. |
 | `--runner-id` | ✓ | ✓ | ✓ | Runner id. Prefer `--runner`, which also takes the name. |
-| `--plan-job-id` | | ✓ | | Apply a specific `PLAN` job, by id |
-| `--latest-plan` | | ✓ | | Apply the project's most recent `PLAN` job |
-| `-w`, `--wait` | ✓ | ✓ | ✓ | Wait for job completion |
-| `-y`, `--yes` | | | ✓ | Skip the confirmation prompt (required with `--no-input`) |
+| `--plan-job-id` | | ✓ | | Deploy a specific `PLAN` job, by id |
+| `--latest-plan` | | ✓ | | Deploy the project's most recent `PLAN` job |
+| `-w`, `--wait` | ✓ | ✓ | ✓ | Wait for the job to finish |
+| `--timeout` | ✓ | ✓ | ✓ | With `--wait`, stop waiting after this long, for example `30m`. The job keeps running and the command exits `12`. |
+| `--dry-run` | ✓ | ✓ | ✓ | Check every input and print the request. Nothing is queued. |
+| `-y`, `--yes` | | ✓ | ✓ | Skip the confirmation (required with `--no-input`) |
 | `--cascade` | | | ✓ | Also destroy the environments placed on this environment's cluster, first. Prints them and confirms |
 
 `--project` and `--project-id` name the same thing, so passing **both** is refused rather than
@@ -233,21 +300,73 @@ the command queues a `DESTROY`, and picking one of two plausible projects is not
 CLI should make for you. `--runner` and `--runner-id` are the same pair, refused the same way, and
 a runner name shared by two runners is refused naming both ids.
 
-`destroy` is destructive: on a terminal it confirms, and with `--no-input` it requires `--yes`
-rather than silently doing nothing.
+### The result and the job
+
+Each command prints the job it queued. With `--output json` the result's `job` is the job, and
+`object.jobs` lists every job with its `status`:
+
+```bash
+alethia project deploy --project boutique --env dev-1 --yes --output json
+```
+
+Without `--wait` the command returns when the job is queued. With `--wait` it returns when the job
+finishes, and the exit code is the verdict: `0` for a job that succeeded, `13` for one that failed
+or was cancelled, and `12` when `--timeout` passed first. A job that succeeded can still record
+warnings, for example an add-on that did not sync. With `--wait` they are printed on stderr, and
+each entry in `object.jobs` carries them as a `warnings` array. The array is empty when there are
+none, or when the command did not wait. An error names the job, so
+`alethia jobs logs` can pick it up.
+
+### Confirming a deploy or a destroy
+
+`deploy` asks before it queues anything. The question names the project, the environment and the
+plan. `destroy` asks you to **type the project's name**, because a destroy cannot be undone and a
+name has to be read before it is typed. Anything else that you type destroys nothing.
+
+With `--no-input`, in a pipe, or when an agent runs the command, nothing can ask. Both commands
+then require `--yes`, and without it they exit `9` and queue nothing.
 
 Destroying a `dedicated` environment while `namespace` or `vcluster` environments are still placed
 on its cluster is refused, naming them. Destroy them first, or pass `--cascade` — see
-[`alethia project destroy`](/reference/cli/plan-and-apply#alethia-project-destroy).
+[`alethia project destroy`](/reference/cli/plan-and-apply#alethia-project-destroy). To read what a
+cascade takes with it without destroying anything, add `--dry-run`:
 
-### Applying the plan you just reviewed
+```bash
+alethia project destroy --project boutique --env prod --cascade --dry-run
+```
 
-`--latest-plan` resolves the project's own most recent `PLAN` job, so a review-then-apply pass
+### A job that waits for approval
+
+Your organization can require a person to approve a deploy or a destroy before it runs. Such a job
+is not about to run: it waits. The command says so in place of the queued-job notice, and gives
+the console page where a person approves it:
+
+```
+DEPLOY job 0b7e6c55-2f0a-4d0e-9a3b-6c1d2e3f4a5b is waiting for a person to approve it. It does not
+start until someone approves it at https://console.example.com/acme/~/jobs/0b7e6c55-2f0a-4d0e-9a3b-6c1d2e3f4a5b.
+```
+
+With `--output json` the job's entry in `object.jobs` has `"awaiting_approval": true` and the page
+as `approval_url`. With `--wait` the command keeps waiting while the job waits, so set `--timeout`.
+
+### The old names: `project plan` and `project apply`
+
+`alethia project preview` was `alethia project plan`, and `alethia project deploy` was
+`alethia project apply`. The names changed because `alethia plan` and `alethia apply` are different
+commands: they read an `alethia.yaml` file.
+
+The old names still run. They are not listed in `--help`, and each prints one line on stderr that
+names the new command. `project apply` queues without a confirmation, as it always did, so a script
+that calls it keeps working. Move a script to `project deploy --yes`.
+
+### Deploying the plan you just reviewed
+
+`--latest-plan` resolves the project's own most recent `PLAN` job, so a review-then-deploy pass
 never moves a uuid between two commands:
 
 ```bash
-alethia project plan --project boutique --env prod --wait
-alethia project apply --project boutique --env prod --latest-plan --wait
+alethia project preview --project boutique --env prod --wait
+alethia project deploy --project boutique --env prod --latest-plan --wait
 ```
 
 It prints which job it chose before it queues anything. Three things it deliberately does **not**
@@ -261,6 +380,9 @@ do:
 - It takes the most recent `PLAN` **whatever its status**, and refuses when that is not `SUCCESS`,
   naming the job and its status. Skipping past a plan that is still running would apply an older
   one you never asked for.
+
+When there is no `PLAN` job to take, the command exits `6` and the hint is
+`alethia project preview --wait`.
 
 `--plan-job-id` is still there for a plan you already hold the id of.
 
@@ -327,6 +449,9 @@ This apply would DELETE 1 component(s) in dev:
 If that check cannot be read at all, the apply is **refused** rather than run blind — `--yes`
 applies without it.
 
+An apply whose plan removes a component, with no `--yes` and nothing to ask, exits `9` and writes
+nothing.
+
 <Callout type="warn">
   `--yes` on a `design apply` is not a blanket "this command is destructive" switch. It opts *that
   invocation* into removing components. Leaving it on a pipeline permanently means every later
@@ -335,7 +460,9 @@ applies without it.
 </Callout>
 
 The rows are printed for a real apply as well as for `--dry-run`, so what actually went is visible
-next to what was predicted.
+next to what was predicted. With `--output json` the result's `object` carries the `mode`
+(`applied`, `dry-run` or `staged`) and the `changes`. The change edits the design. It reaches your
+cloud account on the next `alethia project deploy`.
 
 `--dry-run` and `--stage` are mutually exclusive — one writes nothing, the other writes to the review
 tray — so passing both is refused rather than silently resolved to one.
@@ -381,6 +508,7 @@ alethia project env add prod --project shop --stage production --placement-mode 
 | `--fabric` | No | Fabric to place onto, by name (default: the one the project's default environment is on) |
 | `--region` | No | Region (inherits the project's when omitted) |
 | `--lifecycle` | No | `persistent` (default) or `ephemeral` |
+| `--dry-run` | No | `env add` only: check the input and print the request. Nothing is added. |
 
 An **added** environment defaults to `namespace` placement on the Fabric the project's default
 environment already uses — the cheap rung, and the one that makes a second tier free. `--fabric`
@@ -391,7 +519,9 @@ placement and namespace. `--region`, `--fabric` and `--lifecycle` stay flag-only
 never ask for something a script cannot say.
 
 The success line names the placement you got, so a `dedicated` you did not intend is visible
-immediately rather than on the next apply.
+immediately rather than on the next deploy. With `--output json` the result's `object` is the
+environment. Adding an environment creates its record only. Deploy it with
+`alethia project deploy --env`.
 
 ## `alethia project component`
 
@@ -411,7 +541,8 @@ alethia project component kinds
 # List a project's components (optionally filter by --kind and/or --env)
 alethia project component list --project boutique --kind databases
 
-# Add one by answering questions — kind, name, environment, then field by field
+# Add one by answering questions — kind, name, environment, then field by field,
+# with the kind's own fields to pick from
 alethia project component add --project boutique
 
 # Or say it outright. Multi kind → --name required
@@ -442,6 +573,11 @@ alethia project component remove --project boutique --kind network
 | `--env` | No | Environment id, name or stage. Asked for as a picker on `add`; whichever form you pass is what the picker starts on. |
 | `--set` | No | `key=value` field assignment, repeatable. Asked for, one field at a time, on `add`. |
 | `-y`, `--yes` | No | `remove` only: skip the confirmation prompt (required with `--no-input`) |
+| `--dry-run` | No | `add` and `remove`: check the input and print the request. Nothing is changed. |
+
+`add` and `remove` change the project's design. The change reaches your cloud account on the next
+`alethia project deploy`. With `--output json`, `add` returns the component as the result's
+`object`, and `remove` returns the request it sent.
 
 ### Components belong to an environment
 
@@ -474,7 +610,7 @@ What `--env` defaults to differs by verb, deliberately:
   `remove` deletes from **one** environment — the one you named, or the default. It never touches a
   sibling environment's copy. The confirmation names both the component and the tier
   (`Deletes the databases main configuration in staging`), and so does the success line
-  (`Component removed in staging`).
+  (`Removed databases main in staging`).
 </Callout>
 
 ### The `--set` field setter
@@ -507,7 +643,6 @@ pool setting:
 | AWS | The managed node group runs on Spot. |
 | GCP | The node pool runs on Spot VMs. A deploy refuses `spot` on an Autopilot cluster, which has no node pool. |
 | Azure | A separate Spot worker pool is added, and it scales from zero. The system pool stays on-demand, because AKS can't run it on Spot. Only pods that tolerate the Spot taint run on the Spot pool. |
-| Alibaba Cloud | The worker node pool runs on Spot at the market price. If the cluster sets `ack_spot_price_limit`, the pool uses those price limits. |
 | Hetzner | Not available. Hetzner Cloud has no Spot servers, so a deploy refuses `spot`. |
 
 ```bash
