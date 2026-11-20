@@ -25,11 +25,11 @@
 // would have broken it silently — on real infrastructure, on someone else's account. Two things
 // enforce it now, and `e2e/helpers/deploy-guard.ts` states exactly what each one can prove:
 //
-//   · `deployControl()` hands back a locator whose click / press / tap THROW. On this fixture that
-//     is the layer that matters: `handleDeploy` parses `graphToForm` through `projectFormSchema`
-//     FIRST, this project has no cloud identity, the parse fails, and the handler returns having
-//     issued ZERO requests — so a network-only guard is vacuous against the very click it is
-//     named after.
+//   · `deployControl()` hands back a locator whose click / press / tap THROW. Deploy is in the
+//     review view, not on the bar (#6833), and on this fixture it is DISABLED: this project has no
+//     cloud identity, so the design has issues and no plan can be run for it. A disabled button
+//     issues no request, so a network-only guard is vacuous against the very click it is named
+//     after — which is why the control itself is wrapped.
 //   · the `afterEach` below fails any test whose page put the board's DESIGN on the wire. It keys
 //     on the payload rather than on "a POST happened", because a Next server action's name is
 //     nowhere in its request and the Activity card on this route reads through one.
@@ -82,8 +82,15 @@ test.describe("Architecture canvas", () => {
 	const card = (page: Page, name: string | RegExp) =>
 		board(page).getByRole("group", { name });
 
-	/** The staged-changes bar — Deploy, Save and Discard all live on it. */
+	/**
+	 * The changeset bar while changes are pending — Discard, Save and Review plan live on it. It has
+	 * no Deploy. (On a clean board the same bar is `changeset-bar`, which is why a discarded or saved
+	 * draft has no element by this id.)
+	 */
 	const pendingBar = (page: Page) => page.getByTestId("pending-changes-bar");
+
+	/** The review-and-deploy view, opened from the bar's Review plan. The only place Deploy is. */
+	const reviewView = (page: Page) => page.getByTestId("review-view");
 
 	/**
 	 * The Deploy button, wrapped so that activating it throws.
@@ -94,7 +101,7 @@ test.describe("Architecture canvas", () => {
 	 */
 	const deployControl = (page: Page): Locator =>
 		neverActivated(
-			pendingBar(page).getByRole("button", { name: "Deploy", exact: true }),
+			reviewView(page).getByRole("button", { name: "Deploy", exact: true }),
 			"Deploy",
 		);
 
@@ -446,19 +453,28 @@ test.describe("Architecture canvas", () => {
 	// Each of these is one thing a person actually does on this board, driven end to end. They share
 	// the fixture above — one fresh project per test — so none of them can see another's nodes.
 
-	test("the Deploy control is present, is named Deploy, and this spec CANNOT press it", async ({
+	test("Deploy is not on the bar: it is in the review view, disabled with its reason, and this spec CANNOT press it", async ({
 		page,
 	}) => {
-		// Staging one change is what renders the bar Deploy lives on.
+		// Staging one change is what puts the bar in its pending state.
 		await addService(page, "Bucket");
 		await expect(pendingBar(page)).toBeVisible();
 
+		// The bar does not deploy. Its one way forward is the review.
+		await expect(pendingBar(page).getByRole("button", { name: "Deploy", exact: true })).toHaveCount(0);
+		await pendingBar(page).getByRole("button", { name: "Review plan", exact: true }).click();
+		await expect(reviewView(page)).toBeVisible();
+
 		// The boundary exists and is reachable — that is the half worth asserting. A Deploy button
 		// that had quietly stopped rendering would make every "never clicked" claim in this file
-		// true and worthless.
-		const raw = pendingBar(page).getByRole("button", { name: "Deploy", exact: true });
+		// true and worthless. Here it is present and DISABLED, and the view says why: this project
+		// has no cloud account, so the design has issues, and there is no reviewed plan to deploy.
+		const raw = reviewView(page).getByRole("button", { name: "Deploy", exact: true });
 		await expect(raw).toBeVisible();
-		await expect(raw).toBeEnabled();
+		await expect(raw).toBeDisabled();
+		const reason = reviewView(page).getByTestId("deploy-reason");
+		await expect(reason).toHaveAttribute("data-block", "issues");
+		await expect(reason).toContainText(/issue/);
 
 		// …and the guarded handle this file uses everywhere refuses to fire. This is the POSITIVE
 		// CONTROL: it proves, inside the real run, that the guard is wired rather than merely
