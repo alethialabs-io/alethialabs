@@ -4,11 +4,14 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -123,12 +126,16 @@ func defaultProjectCreatePrompt(f spec.Field, token string) (string, error) {
 var projectCreateCmd = &cobra.Command{
 	Use:   "create [name]",
 	Short: "Create a new project",
-	Long: `Create a new project (an infrastructure app) in the active organization.
+	Long: `Create a new project in the active organization: its record, its region and cloud account, and its environments. Nothing is built in your cloud account until you deploy.
 
-Pass --region and --cloud-account, or omit them on a terminal to be asked. The environment
-matrix — every environment and how it is placed — comes from alethia.yaml when there is one
-(--file, or the file in the current directory); omit it on a terminal and each environment is
-asked for in turn, then printed back as the alethia.yaml that would produce the same project.
+Use it to start a project you will design step by step. Pass --region and --cloud-account, or
+omit them on a terminal to be asked. The environment matrix — every environment and how it is
+placed — comes from alethia.yaml when there is one (--file, or the file in the current
+directory); omit it on a terminal and each environment is asked for in turn, then printed back
+as the alethia.yaml that would produce the same project. --dry-run checks every input and prints
+the request without sending it.
+
+The cloud is the cloud of the account you link. A cloud this release does not offer is refused.
 
 To create the project AND deploy it from the file in one step, use "alethia apply".`,
 	Args: cobra.MaximumNArgs(1),
@@ -155,9 +162,8 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 		// that changes what gets created without appearing on screen is indistinguishable from the
 		// command ignoring the arguments it was given. `apply` prints the same line for the same
 		// reason. Human output only — prose in a `--output json` stream corrupts the document.
-		if flagPath, _ := b.String("file"); flagPath == "" && manifestPath != "" && outputFormat(cmd) == ui.FormatTable {
-			fmt.Fprintf(os.Stdout, "%s Reading %s from this directory (--no-manifest ignores it)\n",
-				ui.MutedStyle.Render(ui.SymbolPoint), manifestPath)
+		if flagPath, _ := b.String("file"); flagPath == "" && manifestPath != "" {
+			announceDiscoveredManifest(printer, outputFormat(cmd), manifestPath)
 		}
 
 		// The form is a source like any other, and the kit asks it only for what the flags, the
@@ -194,7 +200,8 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 			fail(err)
 		}
 		if shape.InstanceType != "" && accountRef == "" {
-			fail(fmt.Errorf("--instance-type names one cloud's machine type, so it needs --cloud-account; use --node-size for a cloud-indifferent size"))
+			fail(refusal(clierr.CodeInvalidUsage, "alethia connector list",
+				"--instance-type names one cloud's machine type, so it needs --cloud-account; use --node-size for a cloud-indifferent size"))
 		}
 
 		identity, err := resolveCloudIdentityID(client, accountRef)
@@ -249,15 +256,30 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 				params.Placement = environments[0].PlacementMode
 			}
 		}
-		if err := runProjectCreate(client, os.Stdout, outputFormat(cmd), params); err != nil {
-			failf("Failed to create project: %v", err)
+		outFmt := outputFormat(cmd)
+		if err := runProjectCreate(client, printerFor(cmd), params, cmdmeta.DryRunRequested(cmd)); err != nil {
+			fail(err)
 		}
 		if matrixAsked {
-			printManifestReplay(os.Stdout, outputFormat(cmd), params, accountRef)
+			printManifestReplay(printer.Err, outFmt, params, accountRef)
 			return
 		}
-		printReplay(os.Stdout, outputFormat(cmd), asked, createReplayArgs(params, accountRef, fileRef)...)
+		printReplay(printer.Err, outFmt, asked, createReplayArgs(params, accountRef, fileRef)...)
 	},
+}
+
+// announceDiscoveredManifest says that a manifest nobody named was read.
+//
+// In the table format the line is written with the project card, on stdout, where it has always
+// been. In json and csv, stdout is a document a program parses, so the line goes to stderr: it
+// used to be dropped there, which left a scripted run with no sign that a file had shaped it.
+func announceDiscoveredManifest(p *Printer, format, path string) {
+	line := fmt.Sprintf("Reading %s from this directory (--no-manifest ignores it)", path)
+	if format != ui.FormatTable {
+		p.Progress(line)
+		return
+	}
+	fmt.Fprintln(p.Out, ui.MutedStyle.Render(ui.SymbolPoint+" "+line))
 }
 
 // manifestForCreate finds the manifest `project create` reads: --file when passed (and then it
@@ -282,7 +304,8 @@ func manifestForCreate(b *spec.Binder) (*manifest.Manifest, string, error) {
 		// environments, or fail naming a file the caller never mentioned, and before this flag
 		// there was no way to say "read none".
 		if explicit {
-			return nil, "", fmt.Errorf("--file names a manifest and --no-manifest says to read none: pass one")
+			return nil, "", refusal(clierr.CodeInvalidUsage, "",
+				"--file names a manifest and --no-manifest says to read none: pass one")
 		}
 		return nil, "", nil
 	}
@@ -295,7 +318,7 @@ func manifestForCreate(b *spec.Binder) (*manifest.Manifest, string, error) {
 	}
 	m, err := manifest.Load(path)
 	if err != nil {
-		return nil, "", err
+		return nil, "", clierr.Wrap(clierr.CodeValidationFailed, err)
 	}
 	m.Normalize()
 	// RequireDedicated: `project create` is the front door that brings a project's first Fabric
@@ -309,9 +332,10 @@ func manifestForCreate(b *spec.Binder) (*manifest.Manifest, string, error) {
 			// A file nobody asked for, refused. Saying so is the difference between "your command
 			// is wrong" and "the directory you ran in holds a broken file" — a scripted caller
 			// that never passed `--file` would otherwise read this as a defect in its invocation.
-			return nil, "", fmt.Errorf("%s in this directory was read because no --file was given, and it cannot be used: %w", path, err)
+			return nil, "", clierr.Wrap(clierr.CodeValidationFailed,
+				fmt.Errorf("%s in this directory was read because no --file was given, and it cannot be used: %w", path, err))
 		}
-		return nil, "", err
+		return nil, "", clierr.Wrap(clierr.CodeValidationFailed, err)
 	}
 	return m, path, nil
 }
@@ -428,7 +452,7 @@ func promptEnvMatrix(declineNote string) ([]api.EnvironmentSpec, error) {
 		// against the same normalisation the server's uniqueness applies.
 		key := names.NormalizeEnvironmentName(a.Name)
 		if seen[key] {
-			return nil, fmt.Errorf("the matrix lists %q twice", a.Name)
+			return nil, refusal(clierr.CodeValidationFailed, "", "the matrix lists %q twice", a.Name)
 		}
 		seen[key] = true
 		specs = append(specs, envSpecFrom(a, len(specs) == 0))
@@ -457,7 +481,7 @@ func promptProjectName() (string, error) {
 		return "", err
 	}
 	if name == "" {
-		return "", fmt.Errorf("a project name is required")
+		return "", refusal(clierr.CodeValidationFailed, "", "a project name is required")
 	}
 	return name, nil
 }
@@ -474,13 +498,72 @@ func promptRegion() (string, error) {
 	return askLine("Region", "The cloud region to provision into (e.g. eu-west-1)")
 }
 
-// runProjectCreate creates the project and renders it as a card (non-interactive path).
-func runProjectCreate(c apiClient, out io.Writer, format string, params api.CreateProjectParams) error {
+// projectCreateRequest is what `project create` sends, as the dry run reports it. The keys are the
+// ones POST /api/cli/projects reads.
+type projectCreateRequest struct {
+	ProjectName     string                `json:"project_name"`
+	Region          string                `json:"region"`
+	CloudIdentityID string                `json:"cloud_identity_id,omitempty"`
+	Stage           string                `json:"stage,omitempty"`
+	IacVersion      string                `json:"iac_version,omitempty"`
+	PlacementMode   string                `json:"placement_mode,omitempty"`
+	Environments    []api.EnvironmentSpec `json:"environments,omitempty"`
+	api.ProjectNodeShape
+}
+
+// runProjectCreate creates the project and reports it: the project's card for a person, one
+// result for a program. On a dry run nothing is sent and the result carries the request.
+func runProjectCreate(c apiClient, p *Printer, params api.CreateProjectParams, dryRun bool) error {
+	if dryRun {
+		request := projectCreateRequest{
+			ProjectName: params.ProjectName, Region: params.Region,
+			CloudIdentityID: params.CloudIdentityID, Stage: params.Stage,
+			IacVersion: params.IacVersion, PlacementMode: params.Placement,
+			Environments: params.Environments, ProjectNodeShape: params.NodeShape,
+		}
+		return p.Result(MutationResult{
+			ID: params.ProjectName, Kind: "project", Action: ResultCreated, DryRun: true,
+			Object: map[string]projectCreateRequest{"request": request},
+		}, func(w io.Writer) {
+			fmt.Fprintln(w, ui.MutedStyle.Render(fmt.Sprintf(
+				"Would create project %s in %s. Nothing was sent.", params.ProjectName, params.Region)))
+		})
+	}
 	project, err := c.CreateProject(params)
 	if err != nil {
-		return err
+		return projectCreateError(err)
 	}
-	return renderProjectCard(out, format, project)
+	return p.Result(MutationResult{ID: project.ID, Kind: "project", Action: ResultCreated, Object: project},
+		func(w io.Writer) { _ = renderProjectCard(w, ui.FormatTable, project) })
+}
+
+// cloudNotOfferedSentence is how the control plane's refusal of a cloud it does not offer ends:
+// "<Cloud> is not available in this release." (CloudNotOfferedError in
+// apps/console/lib/cloud-providers/availability.ts).
+const cloudNotOfferedSentence = "is not available in this release."
+
+// projectCreateError classifies a failed create.
+//
+// One refusal is recognised by its sentence: a project on a cloud this release does not offer.
+// The control plane says so in one sentence, and that sentence is what the person is shown — not
+// wrapped, and not followed by a status. It is recognised by the sentence rather than by the
+// status because the route has answered it with more than one: a server fault today, a client
+// error once the route maps it. Either way it is a refusal of the input, so it exits as one, and
+// the hint names the clouds that are offered.
+//
+// Anything else keeps the class the control plane's answer gave it.
+func projectCreateError(err error) error {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && strings.HasSuffix(strings.TrimSpace(apiErr.Message), cloudNotOfferedSentence) {
+		e := refusal(clierr.CodeValidationFailed,
+			"this release offers "+enabledCloudList()+": link an account on one of them and pass it with --cloud-account",
+			"%s", strings.TrimSpace(apiErr.Message))
+		e.HTTPStatus = apiErr.StatusCode
+		e.RequestID = apiErr.RequestID
+		e.Cause = err
+		return e
+	}
+	return fmt.Errorf("failed to create project: %w", err)
 }
 
 // renderProjectCard renders a single project as a Field/Value card (table/csv) or the typed
@@ -508,5 +591,6 @@ func init() {
 	// held, in a different file, with nothing comparing them. Generating them makes "anything a form
 	// can ask, a flag can set" true by construction rather than by assertion.
 	projectCreateBinder = spec.RegisterFlags(projectCreateCmd, projectCreateSpec)
+	addDryRunFlag(projectCreateCmd)
 	projectCmd.AddCommand(projectCreateCmd)
 }
