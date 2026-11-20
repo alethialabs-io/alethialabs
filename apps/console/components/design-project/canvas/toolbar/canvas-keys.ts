@@ -12,11 +12,10 @@
 // What the registry enforces for every row here: a bare key never fires while the focus is in a
 // field, and nothing fires from inside a dialog or a menu unless the row says so.
 //
-// Three ids are shared with the board's own file (`nodes/board-shortcuts.ts`, #6835), on purpose:
-// Enter, Delete and Backspace act on what is selected, whether that is a card (answered in
-// `design-project-canvas.tsx`) or a connection (answered in `canvas-flow.tsx`). The registry
-// refuses two rows for one chord in one scope, and registering an id again replaces its row, so
-// both files name the SAME id for the same chord. A different id here would stop the page loading.
+// The keys that act on what is focused or selected ON the board — Enter, Delete, Backspace, `C` —
+// are the board's own rows (`../nodes/board-shortcuts.ts`, #6835). They are not registered again
+// here: the registry refuses two rows for one chord in one scope. The host answers the board's
+// Delete and Backspace rows for a selection of cards, the board answers them for a connection.
 
 import { registerShortcuts, type ShortcutBinding } from "@/lib/shortcuts/registry";
 
@@ -34,12 +33,6 @@ export const SHORTCUT_CANVAS_UNDO = "canvas.undo";
 export const SHORTCUT_CANVAS_REDO = "canvas.redo";
 /** Duplicate the selected cards. */
 export const SHORTCUT_CANVAS_DUPLICATE = "canvas.duplicate";
-/** Open the inspector on the selection. Shared id, see the header. */
-export const SHORTCUT_CANVAS_OPEN = "canvas.board.open";
-/** Remove the selection (Delete). Shared id, see the header. */
-export const SHORTCUT_CANVAS_REMOVE = "canvas.board.remove";
-/** Remove the selection (Backspace). Shared id, see the header. */
-export const SHORTCUT_CANVAS_REMOVE_BACKSPACE = "canvas.board.remove.backspace";
 /** Close the inspector. */
 export const SHORTCUT_CANVAS_CLOSE = "canvas.close";
 /** Save the design without deploying it. */
@@ -52,11 +45,6 @@ export const SHORTCUT_CANVAS_FIT = "canvas.fit";
 export const SHORTCUT_CANVAS_TIDY = "canvas.tidy";
 /** Open the list of keyboard shortcuts. */
 export const SHORTCUT_CANVAS_SHORTCUTS = "canvas.shortcuts";
-/**
- * Connect the selected service. Registered and answered by the board (`nodes/board-shortcuts.ts`,
- * #6835), not here; the toolbar only reads the row, when it exists, to show its key.
- */
-export const SHORTCUT_CANVAS_CONNECT = "canvas.board.connect";
 
 /** The rows this file registers, in the order the shortcut sheet lists them. */
 export const CANVAS_KEYS: readonly ShortcutBinding[] = [
@@ -89,41 +77,28 @@ export const CANVAS_KEYS: readonly ShortcutBinding[] = [
 		label: "Hand tool (pan)",
 	},
 	// Undo and redo share one label so the sheet lists them as one row with both chords.
+	// Both fire with the focus in a menu or a dialog: "Remove" in a card's context menu leaves the
+	// focus on the menu while it closes, and the undo that follows it must still be the board's.
+	// Neither fires in a field, where the chord is the field's own.
 	{
 		id: SHORTCUT_CANVAS_UNDO,
 		chord: { key: "z", mod: true, shift: false },
 		scope: "canvas",
 		label: "Undo / Redo",
+		allowInDialog: true,
 	},
 	{
 		id: SHORTCUT_CANVAS_REDO,
 		chord: { key: "z", mod: true, shift: true },
 		scope: "canvas",
 		label: "Undo / Redo",
+		allowInDialog: true,
 	},
 	{
 		id: SHORTCUT_CANVAS_DUPLICATE,
 		chord: { key: "d", mod: true, shift: false },
 		scope: "canvas",
 		label: "Duplicate selection",
-	},
-	{
-		id: SHORTCUT_CANVAS_OPEN,
-		chord: { key: "enter", shift: false },
-		scope: "canvas",
-		label: "Open the selection in the inspector",
-	},
-	{
-		id: SHORTCUT_CANVAS_REMOVE,
-		chord: { key: "delete", shift: false },
-		scope: "canvas",
-		label: "Remove the selection",
-	},
-	{
-		id: SHORTCUT_CANVAS_REMOVE_BACKSPACE,
-		chord: { key: "backspace", shift: false },
-		scope: "canvas",
-		label: "Remove the selection",
 	},
 	{
 		id: SHORTCUT_CANVAS_CLOSE,

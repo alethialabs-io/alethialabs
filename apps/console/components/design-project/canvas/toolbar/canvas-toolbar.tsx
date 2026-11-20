@@ -4,7 +4,7 @@
 
 // The board's toolbar (#6832): ONE row of tools, top-centre, in the manner of Excalidraw.
 //
-//   [ prod · EKS 1.31 ]  [ Select | Hand ]  [ + Add | Connect ]  [ Undo | Redo ]  [ Tidy | Fit ]  [ Run ▾ | Sources ]  [ ⌘K | ? | ⋯ ]
+//   [ prod EKS 1.31 ]  [ Select | Hand ]  [ + Add | Connect ]  [ Undo | Redo ]  [ Tidy | Fit ]  [ Run ▾ | Sources ]  [ ⌘K | ? | ⋯ ]
 //
 // It starts with the environment, because the first thing to know about a board is what it is a
 // board OF: one environment, which is one Kubernetes cluster. The chip names it and opens its
@@ -58,14 +58,13 @@ import {
 import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
 import { getProvider } from "@/lib/cloud-providers";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
 import { CanvasMoreMenu } from "../canvas-more-menu";
+import { SHORTCUT_BOARD_CONNECT } from "../nodes/board-shortcuts";
 import { RunMenu } from "../run-menu";
 import { useClusterK8sVersion } from "../use-cluster-k8s-version";
 import { useHasDrawnNodes } from "../use-has-drawn-nodes";
 import {
 	SHORTCUT_CANVAS_ADD,
-	SHORTCUT_CANVAS_CONNECT,
 	SHORTCUT_CANVAS_FIT,
 	SHORTCUT_CANVAS_HAND,
 	SHORTCUT_CANVAS_PALETTE,
@@ -106,9 +105,7 @@ export interface CanvasToolbarProps {
 	/** Lay the cards out again. */
 	onTidy: () => void;
 	onFitView: () => void;
-	/** Whether this environment has sources to show (scanned repositories, an IaC module). With
-	 * none, the Sources tool is not drawn: there is nothing it could open. */
-	hasSources: boolean;
+	/** Whether the inspector is showing the environment's Sources, and how to open or close it. */
 	sourcesOpen: boolean;
 	onToggleSources: () => void;
 }
@@ -230,7 +227,6 @@ export function CanvasToolbar({
 	onRedo,
 	onTidy,
 	onFitView,
-	hasSources,
 	sourcesOpen,
 	onToggleSources,
 }: CanvasToolbarProps) {
@@ -246,13 +242,11 @@ export function CanvasToolbar({
 	const service = selected?.data.kind === "service" ? selected : null;
 
 	/**
-	 * Open the selected service's connections, where a connection is added and what it injects is
-	 * chosen. The inspector that has a Connections tab reads the tab asked for here; the one before
-	 * it lists a service's bindings under Settings, so that tab is recorded for the kind as well.
+	 * Open the selected service's Connections in the inspector, where a connection is added and
+	 * what it injects is chosen. Drawing one on the board, and the `C` key's menu, are the board's.
 	 */
 	const connect = () => {
 		if (!service) return;
-		useInspectorPrefsStore.getState().setTab("service", "settings");
 		board.view.getState().setSubject({ kind: "node", id: service.id }, "connections");
 	};
 
@@ -300,7 +294,7 @@ export function CanvasToolbar({
 			<ToolButton
 				secondary
 				label="Connect the selected service"
-				shortcutId={SHORTCUT_CANVAS_CONNECT}
+				shortcutId={SHORTCUT_BOARD_CONNECT}
 				disabledReason={governed ? GOVERNED_REASON : service ? null : CONNECT_NEEDS_SERVICE}
 				onClick={connect}
 				className="ml-0.5"
@@ -359,15 +353,10 @@ export function CanvasToolbar({
 				</ToolButton>
 			)}
 
-			{hasSources && (
-				<ToolButton
-					label="Sources"
-					expanded={sourcesOpen}
-					onClick={onToggleSources}
-				>
-					<GitBranch className="h-3.5 w-3.5" />
-				</ToolButton>
-			)}
+			{/* Where the design came from: scanned repositories, the IaC module, attached charts. */}
+			<ToolButton label="Sources" expanded={sourcesOpen} onClick={onToggleSources}>
+				<GitBranch className="h-3.5 w-3.5" />
+			</ToolButton>
 
 			<ToolSeparator />
 

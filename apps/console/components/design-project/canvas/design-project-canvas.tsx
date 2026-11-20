@@ -27,7 +27,6 @@ import { useAddonsQuery } from "@/lib/query/use-addons-query";
 import { arrangeBoard } from "@/lib/canvas/arrange";
 import { draftScope } from "@/lib/canvas/design-revision";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
-import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
 import { useSubject } from "@/lib/canvas/store/use-board";
 import { environmentStatusInput } from "@/lib/query/use-environment-status-query";
 import { DESTROY_HOLD_KEY } from "@/lib/query/topics";
@@ -37,7 +36,6 @@ import { useShortcut } from "@/lib/shortcuts/use-shortcut";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
-import type { SourceRepoRow } from "../source-repos-card";
 import type { DestroyOptions } from "./cards/destroy-tree-view";
 import { CanvasCommandPalette } from "./canvas-command-palette";
 import { useHasDrawnNodes } from "./use-has-drawn-nodes";
@@ -58,17 +56,18 @@ import { BoardPreview } from "./board-preview";
 import { EnvironmentStatusNotice } from "./environment-status-notice";
 import { EnvironmentStatusScope } from "./environment-status-scope";
 import {
+	SHORTCUT_BOARD_REMOVE,
+	SHORTCUT_BOARD_REMOVE_BACKSPACE,
+} from "./nodes/board-shortcuts";
+import {
 	SHORTCUT_CANVAS_ADD,
 	SHORTCUT_CANVAS_ASSISTANT,
 	SHORTCUT_CANVAS_CLOSE,
 	SHORTCUT_CANVAS_DUPLICATE,
 	SHORTCUT_CANVAS_FIT,
 	SHORTCUT_CANVAS_HAND,
-	SHORTCUT_CANVAS_OPEN,
 	SHORTCUT_CANVAS_PALETTE,
 	SHORTCUT_CANVAS_REDO,
-	SHORTCUT_CANVAS_REMOVE,
-	SHORTCUT_CANVAS_REMOVE_BACKSPACE,
 	SHORTCUT_CANVAS_SAVE,
 	SHORTCUT_CANVAS_SELECT,
 	SHORTCUT_CANVAS_SHORTCUTS,
@@ -79,7 +78,6 @@ import { CanvasToolbar } from "./toolbar/canvas-toolbar";
 import { freeSpot } from "./toolbar/place-new";
 import { savedRevision } from "./toolbar/saved-revision";
 import { ShortcutSheet } from "./toolbar/shortcut-sheet";
-import { SourcesPanel } from "./toolbar/sources-panel";
 
 interface DesignProjectCanvasProps {
 	cloudIdentities: CloudIdentityOption[];
@@ -106,9 +104,6 @@ interface ScreenPoint {
 	x: number;
 	y: number;
 }
-
-/** No scanned repositories. One array, so a project with none hands the store the same answer. */
-const NO_SOURCE_REPOS: readonly SourceRepoRow[] = [];
 
 /** The canvas editor surface (inside its own ReactFlowProvider and environment-status read). */
 export function DesignProjectCanvas(props: DesignProjectCanvasProps) {
@@ -146,9 +141,8 @@ function CanvasInner({
 	// menu); null for the toolbar's Add and the `A` key, which add in the middle of the view.
 	const [addAt, setAddAt] = useState<ScreenPoint | null>(null);
 	const [cmdOpen, setCmdOpen] = useState(false);
-	const [sourcesOpen, setSourcesOpen] = useState(false);
-	// Whether the keyboard focus is on one of the board's cards (see the Enter key, below).
-	const [cardFocused, setCardFocused] = useState(false);
+	// The element under the toolbar where the empty state draws its one sentence about a seed.
+	const [noticeRegion, setNoticeRegion] = useState<HTMLDivElement | null>(null);
 	// Traversal mode (Excalidraw/Miro): the sticky hand tool (the toolbar's Select / Hand pair, `V`
 	// and `H`). It is view state, so it lives in the board's view store; the board itself still
 	// reads it from CanvasInteractionContext. Holding Space to pan is React Flow's own
@@ -186,7 +180,6 @@ function CanvasInner({
 	const openPanel = useElenchStore((s) => s.openPanel);
 	const [shortcutsOpen, setShortcutsOpen] = useState(false);
 	const selectedIds = useCanvasStore((s) => s.selectedIds);
-	const openInspector = useCanvasStore((s) => s.openInspector);
 	const undo = useCanvasStore((s) => s.undo);
 	const redo = useCanvasStore((s) => s.redo);
 	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
@@ -196,12 +189,6 @@ function CanvasInner({
 	const setAddonNodes = useCanvasStore((s) => s.setAddonNodes);
 	const setIacNodes = useCanvasStore((s) => s.setIacNodes);
 	const setIacOutputs = useCanvasStore((s) => s.setIacOutputs);
-	// The scanned repositories this project was inferred from. They ride on the project root.
-	const sourceRepos = useCanvasStore((s): readonly SourceRepoRow[] => {
-		const project = s.nodes.find((n) => n.id === PROJECT_NODE_ID);
-		const repos = project?.data.kind === "project" ? project.data.config.source_repos : undefined;
-		return Array.isArray(repos) ? repos : NO_SOURCE_REPOS;
-	});
 	// The seed the store holds. Out-of-band layers (charts, add-ons, IaC cards) are re-applied
 	// whenever it changes: a scope switch RESETS the store, and these reads are prefetched, so their
 	// data can land before the seed does — without this they would be applied and then wiped.
@@ -423,14 +410,6 @@ function CanvasInner({
 		openPanel({ kind: "project", projectId, environmentId: environmentId ?? null });
 	}, [openPanel, projectId, environmentId]);
 
-	/** Open a node's inspector (the assistant is a separate overlay now). */
-	const openInspectorExclusive = useCallback(
-		(id: string) => {
-			openInspector(id);
-		},
-		[openInspector],
-	);
-
 	const saveIsPending = saveDesign.isPending;
 	const mutateSave = saveDesign.mutate;
 	/**
@@ -558,36 +537,23 @@ function CanvasInner({
 	// Through the store, not React Flow's `deleteKeyCode`: respects `deletable: false` and commits
 	// an undo step, like every other delete path.
 	const removeSelected = useCallback(() => removeNodes(selectedIds), [removeNodes, selectedIds]);
-	useShortcut(SHORTCUT_CANVAS_REMOVE, removeSelected, { enabled: selectedIds.length > 0 });
-	useShortcut(SHORTCUT_CANVAS_REMOVE_BACKSPACE, removeSelected, {
+	// Delete and Backspace are the board's rows (`nodes/board-shortcuts.ts`): the board answers them
+	// for a selected connection, this answers them for selected cards.
+	useShortcut(SHORTCUT_BOARD_REMOVE, removeSelected, { enabled: selectedIds.length > 0 });
+	useShortcut(SHORTCUT_BOARD_REMOVE_BACKSPACE, removeSelected, {
 		enabled: selectedIds.length > 0,
 	});
-	// Enter opens the inspector on the selection — only while the focus is on a card. Anywhere else
-	// Enter is how a keyboard presses the button it is on, and taking it would leave the toolbar
-	// unusable by keyboard for as long as a card stayed selected.
-	useShortcut(
-		SHORTCUT_CANVAS_OPEN,
-		() => {
-			const first = selectedIds[0];
-			if (first) openInspectorExclusive(first);
-		},
-		{ enabled: cardFocused && selectedIds.length > 0 },
-	);
-	// Escape closes what is open beside the board: the sources panel first, then the rail's card. A
-	// dialog or a menu owns its own Escape (the registry does not fire inside one), and so does an
-	// open list of options.
+	// Escape closes the inspector. A dialog or a menu owns its own Escape (the registry does not
+	// fire inside one), and so does an open list of options. The rail closes itself as well when
+	// the focus is inside it; this is the same answer from anywhere else on the board.
 	useShortcut(
 		SHORTCUT_CANVAS_CLOSE,
 		(event) => {
 			const target = event.target instanceof Element ? event.target : null;
 			if (target?.closest('[role="listbox"]')) return;
-			if (sourcesOpen) {
-				setSourcesOpen(false);
-				return;
-			}
 			closeCard();
 		},
-		{ enabled: sourcesOpen || card !== null },
+		{ enabled: card !== null },
 	);
 
 	// The review view docks on the board's right edge while no card is open on the rail
@@ -596,22 +562,24 @@ function CanvasInner({
 	const reviewOpen = useStore(board.view, (s) => s.review.open);
 	const subject = useSubject();
 	const reviewDocked = reviewOpen && subject === null;
-	// What the toolbar's Sources tool has to show: scanned repositories, or the module that governs
-	// the environment. With neither, the tool is not drawn.
-	const governingSource = iacGoverned ? iacSource : null;
-	const hasSources = sourceRepos.length > 0 || governingSource !== null;
+	const tab = useStore(board.view, (s) => s.tab);
+	const sourcesOpen = subject?.kind === "environment" && tab === "sources";
+	/** Open the environment's Sources on the rail, or close it when that is what is showing. */
+	const toggleSources = () =>
+		board.view.getState().setSubject(sourcesOpen ? null : { kind: "environment" }, "sources");
 
 	// ── The board's regions ──────────────────────────────────────────────────────────────────────
 	//
-	//   top-centre     the toolbar, and under it whatever it opens in place (the status notice, the
-	//                  sources panel)
+	//   top-centre     the toolbar, and under it what has to be said in place (the status notice,
+	//                  the empty state's sentence about a seed)
 	//   bottom-left    how the board is looked at: zoom and fit
 	//   bottom-centre  the changes bar
 	//   right          the inspector, a flex sibling of the board, so it never covers a card
 	//
 	// Nothing else is drawn over the board. The activity line (top-left), the cost chip, Run, Add
-	// and ⋯ (top-right), the source-repos card (bottom-left, over the zoom controls) and the IaC
-	// provenance card (bottom-right, over the minimap) each moved into one of the regions above.
+	// and ⋯ (top-right) moved into the toolbar; the source-repos card (bottom-left, over the zoom
+	// controls) and the IaC provenance card (bottom-right, over the minimap) are the inspector's
+	// Sources view, which the toolbar's Sources tool opens.
 	const boardContent = (
 		<CanvasInteractionContext.Provider value={interaction}>
 			{/* Keyed by the active environment so switching envs (the picker, or its key) remounts it
@@ -634,9 +602,10 @@ function CanvasInner({
 					byoHelmEnabled={byoHelmEnabled}
 					byoDescribeEnabled={byoDescribeEnabled}
 					governed={iacGoverned}
-					onAdd={() => setPaletteOpen(true)}
+					onAdd={() => openAdd()}
 					onAttachChart={byoHelmEnabled ? () => setByoDialogOpen(true) : undefined}
 					onAttachIac={byoIacEnabled ? () => setIacDialogOpen(true) : undefined}
+					noticeRegion={noticeRegion}
 				/>
 			)}
 
@@ -664,26 +633,16 @@ function CanvasInner({
 						onRedo={redo}
 						onTidy={tidyBoard}
 						onFitView={fitBoard}
-						hasSources={hasSources}
 						sourcesOpen={sourcesOpen}
-						onToggleSources={() => setSourcesOpen((open) => !open)}
+						onToggleSources={toggleSources}
 					/>
 
 					{/* The environment-status read failed with nothing to show: say so, rather than let
 					    every node quietly read as its design state. */}
 					<EnvironmentStatusNotice />
 
-					{/* Where the design came from: the scanned repositories, and the BYO IaC module's
-					    PROVENANCE — repo · ref · the commit the scan pinned · the scan verdict, with
-					    detach/rescan. It is not part of the architecture; the module's resources are real
-					    cards on the board. */}
-					{sourcesOpen && hasSources && (
-						<SourcesPanel
-							repos={sourceRepos}
-							iacSource={governingSource}
-							onClose={() => setSourcesOpen(false)}
-						/>
-					)}
+					{/* The empty state's one sentence about a seed (`board-guide.tsx`) is drawn here. */}
+					<div ref={setNoticeRegion} className="flex max-w-full justify-center empty:hidden" />
 				</div>
 			</div>
 
@@ -796,13 +755,6 @@ function CanvasInner({
 					"relative min-h-[480px] min-w-0 flex-1",
 					isRailOpen(card, { projectId, environmentId }) && "border-r border-border",
 				)}
-				onFocusCapture={(event) =>
-					setCardFocused(
-						event.target instanceof Element &&
-							event.target.closest(".react-flow__node") !== null,
-					)
-				}
-				onBlurCapture={() => setCardFocused(false)}
 			>
 				{boardContent}
 			</div>

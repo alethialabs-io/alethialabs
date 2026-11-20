@@ -8,22 +8,48 @@ import { SectionHeading } from "@repo/ui/section-heading";
 import { IacNode } from "@/components/design-project/byo/iac-node";
 import { useIacSourceCanvas } from "@/components/design-project/byo/iac-source-canvas-context";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { SourceReposCard, type SourceRepoRow } from "../../source-repos-card";
 import { IacScanCard } from "../cards/iac-scan-card";
 import { InspectorEmbed } from "./inspector-frame";
 
+/** No scanned repositories. One array, so a project with none reads the same answer each time. */
+const NO_REPOS: readonly SourceRepoRow[] = [];
+
 /**
- * The environment's Sources view: the infrastructure module that governs it, with its safety
- * scan, and the charts attached to it. Each chart row opens that chart.
+ * The environment's Sources view: the repositories that were scanned to infer the design, the
+ * infrastructure module that governs it, with its safety scan, and the charts attached to it. Each
+ * chart row opens that chart.
+ *
+ * The scanned repositories ride on the project root. They were a card pinned to the board's
+ * bottom-left corner, over the zoom controls (#6832); they are listed here, and only when there
+ * are any.
  */
 export function EnvironmentSources() {
 	const board = useBoard();
 	const iac = useIacSourceCanvas();
 	const nodes = useCanvasStore((s) => s.nodes);
 	const charts = useMemo(() => nodes.filter((n) => n.data.kind === "chart"), [nodes]);
+	const repos = useMemo<readonly SourceRepoRow[]>(() => {
+		const project = nodes.find((n) => n.id === PROJECT_NODE_ID);
+		const scanned = project?.data.kind === "project" ? project.data.config.source_repos : undefined;
+		return Array.isArray(scanned) ? scanned : NO_REPOS;
+	}, [nodes]);
 
 	return (
 		<div className="space-y-6">
+			{repos.length > 0 && (
+				<section className="space-y-3">
+					<SectionHeading
+						level={3}
+						title="Scanned repositories"
+						count={repos.length}
+						description="The repositories this design was inferred from, and the services found in each."
+					/>
+					<SourceReposCard repos={repos} />
+				</section>
+			)}
 			<section className="space-y-3">
 				<SectionHeading
 					level={3}

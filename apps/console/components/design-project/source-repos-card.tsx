@@ -18,10 +18,11 @@ export interface SourceRepoRow {
  * The source repositories (1:N) that were scanned to infer this project and, for a monorepo, the
  * services found in each.
  *
- * It is a list, drawn in the flow of whatever holds it: the board's toolbar opens it from its
- * Sources tool. It used to be a collapsible card pinned to the board's bottom-left corner, which is
- * where the zoom controls are, so the two were drawn on top of each other on every project that
- * had a scanned repository (#6832). Renders nothing for a project with none.
+ * It is a list, drawn in the flow of whatever holds it: the inspector's Sources view, which the
+ * board's toolbar opens from its Sources tool. It used to be a collapsible card pinned to the
+ * board's bottom-left corner, which is where the zoom controls are, so the two were drawn on top of
+ * each other on every project that had a scanned repository (#6832). Renders nothing for a project
+ * with none.
  */
 export function SourceReposCard({ repos }: { repos: readonly SourceRepoRow[] }) {
 	if (repos.length === 0) return null;

@@ -12,10 +12,11 @@
 import { describe, expect, it } from "vitest";
 import { buildShortcuts, shortcutRows } from "@/components/design-project/canvas/shortcuts";
 import {
-	CANVAS_KEYS,
-	SHORTCUT_CANVAS_REMOVE,
-	SHORTCUT_CANVAS_REMOVE_BACKSPACE,
-} from "@/components/design-project/canvas/toolbar/canvas-keys";
+	SHORTCUT_BOARD_OPEN,
+	SHORTCUT_BOARD_REMOVE,
+	SHORTCUT_BOARD_REMOVE_BACKSPACE,
+} from "@/components/design-project/canvas/nodes/board-shortcuts";
+import { CANVAS_KEYS } from "@/components/design-project/canvas/toolbar/canvas-keys";
 import {
 	formatChord,
 	getShortcut,
@@ -64,10 +65,10 @@ describe("the board's shortcut sheet", () => {
 	it("shows undo and redo as one line, and Delete with Backspace as one line", () => {
 		expect(row("Undo / Redo")?.keys).toBe("⌘Z / ⇧⌘Z");
 		expect(row("Undo / Redo", false)?.keys).toBe("Ctrl+Z / Ctrl+Shift+Z");
-		expect(getShortcut(SHORTCUT_CANVAS_REMOVE).label).toBe(
-			getShortcut(SHORTCUT_CANVAS_REMOVE_BACKSPACE).label,
+		expect(getShortcut(SHORTCUT_BOARD_REMOVE).label).toBe(
+			getShortcut(SHORTCUT_BOARD_REMOVE_BACKSPACE).label,
 		);
-		expect(row(getShortcut(SHORTCUT_CANVAS_REMOVE).label)?.keys).toBe("Del / Backspace");
+		expect(row(getShortcut(SHORTCUT_BOARD_REMOVE).label)?.keys).toBe("Del / Backspace");
 	});
 
 	it("keeps the rows the board's browser test finds by name, and promises no project save", () => {
@@ -109,6 +110,15 @@ describe("shortcutRows", () => {
 });
 
 describe("the board's key table", () => {
+	it("registers no second row on a chord the board itself registers", () => {
+		// Enter, Delete and Backspace are the board's rows; the host answers two of them and adds none.
+		const boardIds = [SHORTCUT_BOARD_OPEN, SHORTCUT_BOARD_REMOVE, SHORTCUT_BOARD_REMOVE_BACKSPACE];
+		const boardKeys = boardIds.map((id) => getShortcut(id).chord.key);
+		expect(CANVAS_KEYS.filter((binding) => boardKeys.includes(binding.chord.key))).toEqual([]);
+		// One name for what Delete does, whichever of the two answers it.
+		expect(getShortcut(SHORTCUT_BOARD_REMOVE).label).toBe("Remove the selection");
+	});
+
 	it("registers every row in the canvas scope", () => {
 		expect(CANVAS_KEYS.filter((binding) => binding.scope !== "canvas")).toEqual([]);
 		const unregistered = CANVAS_KEYS.filter((binding) => getShortcut(binding.id) !== binding);

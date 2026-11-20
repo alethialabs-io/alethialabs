@@ -76,7 +76,6 @@ function renderToolbar(overrides: Partial<CanvasToolbarProps> = {}) {
 			addOpen={false}
 			paletteOpen={false}
 			shortcutsOpen={false}
-			hasSources={false}
 			sourcesOpen={false}
 			{...spies}
 			{...overrides}
@@ -117,33 +116,23 @@ describe("what is on the toolbar", () => {
 			"Tidy layout",
 			"Fit view",
 			"Run",
+			"Sources",
 			"Command palette",
 			"Keyboard shortcuts",
 			"More",
 		]);
 	});
 
-	it("draws the Sources tool only on an environment that has sources, and says whether it is open", async () => {
+	it("the Sources tool says whether the environment's sources are showing, and toggles them", async () => {
 		const user = userEvent.setup();
-		const { spies, rerender } = renderToolbar();
-		expect(toolNames()).not.toContain("Sources");
-
-		rerender(
-			<CanvasToolbar
-				projectId="proj-1"
-				environmentId="env-1"
-				governed={false}
-				addOpen={false}
-				paletteOpen={false}
-				shortcutsOpen={false}
-				hasSources
-				sourcesOpen
-				{...spies}
-			/>,
-		);
-		expect(tool("Sources")).toHaveAttribute("aria-expanded", "true");
+		const closed = renderToolbar();
+		expect(tool("Sources")).toHaveAttribute("aria-expanded", "false");
 		await user.click(tool("Sources"));
-		expect(spies.onToggleSources).toHaveBeenCalledTimes(1);
+		expect(closed.spies.onToggleSources).toHaveBeenCalledTimes(1);
+		closed.unmount();
+
+		renderToolbar({ sourcesOpen: true });
+		expect(tool("Sources")).toHaveAttribute("aria-expanded", "true");
 	});
 
 	it("names the key of each tool that has one, from the registry", () => {
@@ -311,7 +300,6 @@ describe("the toolbar by keyboard", () => {
 					addOpen={false}
 					paletteOpen={false}
 					shortcutsOpen={false}
-					hasSources={false}
 					sourcesOpen={false}
 					{...handlers()}
 				/>
