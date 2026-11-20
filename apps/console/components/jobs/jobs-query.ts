@@ -3,16 +3,30 @@
 
 // The jobs page's filter model (#578 — the console filter standard). Pure + client-safe
 // (no React, no DB): the store shape, defaults, and the normalizer whose output IS the
-// TanStack key. The date range deliberately lives OUTSIDE the store: quick-range presets
-// are now-relative, so sessionStorage-persisting a resolved range would silently pin
-// "last 12 months" to a stale window across visits — the page keeps it as local state
-// (the activity feed's precedent) and feeds the resolved ISO bounds into the normalizer.
+// TanStack key.
+//
+// THE DATE RANGE IS ONE FILTER VALUE (`range`, lib/query/range-filter.ts), so it travels in the
+// link with every other filter (`?range=30d`) and "Reset" clears it with them. It used to be
+// component state beside the store: a filtered link opened on the default window whatever its
+// sender had picked, and the bar's reset and the empty state's reset disagreed about it. A preset
+// is stored as its id and resolved by the READ, so a link to "last 30 days" stays relative.
 
-import type { JobsQuery } from "@/lib/rpc/procedures/jobs";
+import { parseRangeFilter } from "@/lib/query/range-filter";
+import { JOBS_DEFAULT_PRESET, type JobsRange, jobsPageInputFrom } from "@/lib/rpc/inputs/jobs";
+import type { JobsPageRead } from "@/lib/rpc/procedures/jobs";
+import { type DateRange, presetRange } from "@repo/ui/range";
+
+/** How many rows the list reads at first, and how many more each "Show more" asks for. */
+export const JOBS_PAGE_SIZE = 50;
+
+/** The largest window one read returns. Past it the list says to narrow the filters. */
+export const JOBS_PAGE_MAX = 500;
 
 /** The store-held filter selections (a type alias — the factory's Record constraint). */
 export type JobsFilters = {
 	search: string;
+	/** The time window: "" (the default window), a preset id, or `<from>/<to>`. */
+	range: string;
 	authors: string[];
 	envs: string[];
 	projects: string[];
@@ -23,6 +37,7 @@ export type JobsFilters = {
 /** The default (empty) selections — the store's initial state and the Reset target. */
 export const DEFAULT_JOBS_FILTERS: JobsFilters = {
 	search: "",
+	range: "",
 	authors: [],
 	envs: [],
 	projects: [],
@@ -30,28 +45,55 @@ export const DEFAULT_JOBS_FILTERS: JobsFilters = {
 	types: [],
 };
 
+/** What the read is asked for a `range` filter value: the preset to resolve, or explicit bounds. */
+export function jobsRangeOf(range: string): JobsRange {
+	const choice = parseRangeFilter(range);
+	if (choice.kind === "preset") return { preset: choice.preset };
+	if (choice.kind === "window") return { from: choice.from, to: choice.to };
+	return { preset: JOBS_DEFAULT_PRESET };
+}
+
 /**
- * Builds the stable server query from the selections + the page's resolved date range.
- * Arrays sorted, empties dropped — equal filters produce identical objects, so the
- * TanStack key never fragments. A pinned `projectId` (a project's jobs tab) overrides
- * the Project facet, keeping scoping server-side.
+ * The window the range pickers show for a `range` filter value. `now` is the instant a preset is
+ * shown against; pass one resolved once (at mount), or the pickers' value moves on every render.
+ */
+export function jobsRangeWindow(range: string, now: Date): DateRange {
+	const choice = parseRangeFilter(range);
+	if (choice.kind === "window") return { from: new Date(choice.from), to: new Date(choice.to) };
+	return presetRange(choice.kind === "preset" ? choice.preset : JOBS_DEFAULT_PRESET, now);
+}
+
+/**
+ * Builds the stable read input from the selections. Arrays sorted, empties dropped — equal
+ * filters produce identical objects, so the TanStack key never fragments, and the route's server
+ * component and the browser build the SAME key from the same link.
+ *
+ * `projectId` is the SCOPE of a project's jobs list, not a filter (lib/query/README.md, "Scope is
+ * a predicate, never a filter"): it travels as its own field, the read applies it to the facet
+ * counts as well as the rows, and the Project facet's selection is dropped — on a project's list
+ * that facet is not offered. `limit` is the row window; the default size is the absent field.
  */
 export function normalizeJobsQuery(
 	filters: JobsFilters,
-	range: { from: string; to: string },
 	projectId?: string,
-): JobsQuery {
+	limit: number = JOBS_PAGE_SIZE,
+): JobsPageRead {
 	const sorted = (xs: string[]) => (xs.length ? [...xs].sort() : undefined);
-	const projects = projectId ? [projectId] : sorted(filters.projects);
 	const search = filters.search.trim();
+	const input = jobsPageInputFrom(
+		{
+			...(search ? { search } : {}),
+			authors: sorted(filters.authors),
+			envs: sorted(filters.envs),
+			projects: projectId ? undefined : sorted(filters.projects),
+			statuses: sorted(filters.statuses),
+			types: sorted(filters.types),
+		},
+		jobsRangeOf(filters.range),
+	);
 	return {
-		from: range.from,
-		to: range.to,
-		...(search ? { search } : {}),
-		...(sorted(filters.authors) ? { authors: sorted(filters.authors) } : {}),
-		...(sorted(filters.envs) ? { envs: sorted(filters.envs) } : {}),
-		...(projects ? { projects } : {}),
-		...(sorted(filters.statuses) ? { statuses: sorted(filters.statuses) } : {}),
-		...(sorted(filters.types) ? { types: sorted(filters.types) } : {}),
+		...input,
+		...(projectId ? { projectId } : {}),
+		...(limit !== JOBS_PAGE_SIZE ? { limit: Math.min(limit, JOBS_PAGE_MAX) } : {}),
 	};
 }
