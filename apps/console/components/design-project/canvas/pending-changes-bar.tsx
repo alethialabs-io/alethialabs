@@ -6,7 +6,7 @@
 //
 // It answers one question at a glance — where does this design stand between "edited" and
 // "running" — and offers one way forward: Review plan, which opens the review-and-deploy view.
-// It never deploys and never saves. Those happen in the view, in order, behind a plan.
+// It never deploys: that happens in the view, in order, behind a plan.
 //
 //   edits pending           Pending changes [3] · 1 added · 2 edited    Discard | Review plan
 //   never deployed          Not deployed yet                                      Review plan
@@ -20,6 +20,11 @@
 // mount point of its own in the board's host. It gives way to the inspector: while a card is open
 // on the rail the view is hidden, and it comes back when the card closes. That is what makes an
 // issue's "Go to" a detour rather than a dead end.
+//
+// SAVE. Run plan, in the view, is what saves a design on its way to a deploy. While the board's
+// host still offers a save that neither plans nor deploys (`onSave`), the bar keeps it as a quiet
+// third action beside Discard, because a design on a project with no cloud account yet has no
+// other way to be kept. When the host stops passing `onSave`, the button is gone.
 
 import { AlertTriangle } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -67,7 +72,10 @@ interface PendingChangesBarProps {
 	onDeploy?: () => void;
 	/** No longer used: the bar has no deploy button to label. */
 	deployLabel?: string;
-	/** No longer used. The bar does not save: Run plan, in the review view, saves the design. */
+	/**
+	 * Saves the design without planning or deploying it. Offered as a quiet action while there are
+	 * pending changes; absent, the bar has no Save and Run plan is the only thing that saves.
+	 */
 	onSave?: () => void;
 }
 
@@ -80,6 +88,7 @@ export function PendingChangesBar({
 	environmentId: givenEnvironmentId,
 	onDiscard,
 	discarding,
+	onSave,
 	saving,
 	deploying,
 }: PendingChangesBarProps) {
@@ -152,7 +161,13 @@ export function PendingChangesBar({
 					data-state={state.kind}
 					className="pointer-events-auto absolute bottom-4 left-1/2 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-1 rounded-none border border-border bg-card/95 p-1 shadow-[0_2px_10px_rgba(0,0,0,0.10)] backdrop-blur"
 				>
-					<div className="flex min-w-0 items-center gap-2 px-2.5 py-1.5 text-sm">
+					{/* The state is the live region itself: a change of state is announced once, in the
+					    words that are on screen, with no hidden copy to read a second time. */}
+					<div
+						role="status"
+						aria-live="polite"
+						className="flex min-w-0 items-center gap-2 px-2.5 py-1.5 text-sm"
+					>
 						<StatusBadge
 							status={state.kind}
 							tier={state.tier}
@@ -172,11 +187,6 @@ export function PendingChangesBar({
 							</span>
 						)}
 					</div>
-					<span role="status" aria-live="polite" className="sr-only">
-						{state.kind === "pending"
-							? `${countOf(pendingCount, "pending change")}: ${state.detail ?? ""}`
-							: state.label}
-					</span>
 
 					<Separator orientation="vertical" className="h-5" />
 
@@ -206,6 +216,21 @@ export function PendingChangesBar({
 							onClick={() => setAskingToDiscard(true)}
 						>
 							Discard
+						</Button>
+					)}
+
+					{state.kind === "pending" && onSave && (
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							className="h-8 text-xs"
+							title="Save the design without planning or deploying it"
+							aria-busy={Boolean(saving)}
+							disabled={busy}
+							onClick={onSave}
+						>
+							{saving ? "Saving…" : "Save"}
 						</Button>
 					)}
 

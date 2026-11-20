@@ -25,7 +25,6 @@ import {
 	type KeyboardEvent,
 	type ReactNode,
 	type Ref,
-	type RefObject,
 } from "react";
 import { Button } from "@repo/ui/button";
 import { SectionHeading } from "@repo/ui/section-heading";
@@ -38,6 +37,14 @@ import { ReviewDeployStep } from "./review-deploy";
 import type { ReviewIssue } from "./review-issues";
 import { ReviewPlanStep } from "./review-plan";
 import { useReview, type ReviewController, type ReviewScope } from "./use-review";
+
+/** Scrolls a section into view and moves focus to it. */
+function reveal(section: HTMLElement | null): void {
+	if (!section) return;
+	// Not every environment implements it (a test's DOM does not); focus alone still lands.
+	if (typeof section.scrollIntoView === "function") section.scrollIntoView({ block: "start" });
+	section.focus();
+}
 
 /** What a screen reader is told when the review's state moves. */
 function announcement(review: ReviewController): string {
@@ -65,17 +72,17 @@ function Step({
 	title,
 	count,
 	children,
-	sectionRef,
+	ref,
 }: {
 	number: number;
 	title: string;
 	count?: number;
 	children: ReactNode;
-	sectionRef?: Ref<HTMLElement>;
+	ref?: Ref<HTMLElement>;
 }) {
 	return (
 		<section
-			ref={sectionRef}
+			ref={ref}
 			tabIndex={-1}
 			aria-label={`Step ${number}: ${title}`}
 			className="space-y-3 outline-none"
@@ -101,15 +108,15 @@ function Step({
 function Issues({
 	issues,
 	onGoTo,
-	sectionRef,
+	ref,
 }: {
 	issues: readonly ReviewIssue[];
 	onGoTo: (issue: ReviewIssue) => void;
-	sectionRef: Ref<HTMLElement>;
+	ref: Ref<HTMLElement>;
 }) {
 	return (
 		<section
-			ref={sectionRef}
+			ref={ref}
 			tabIndex={-1}
 			aria-label="Issues to fix before planning"
 			className="space-y-3 outline-none"
@@ -196,13 +203,6 @@ export function ReviewView({ scope, onClose }: { scope: ReviewScope; onClose: ()
 		[board],
 	);
 
-	/** Scrolls a section into view and moves focus to it. */
-	const show = (section: RefObject<HTMLElement | null>) => {
-		// Not every environment implements it (a test's DOM does not); focus alone still lands.
-		section.current?.scrollIntoView?.({ block: "start" });
-		section.current?.focus();
-	};
-
 	const pending = review.changes.length + review.operations.length;
 
 	return (
@@ -239,13 +239,13 @@ export function ReviewView({ scope, onClose }: { scope: ReviewScope; onClose: ()
 
 			<div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-4">
 				{review.issues.length > 0 && (
-					<Issues issues={review.issues} onGoTo={goTo} sectionRef={issuesRef} />
+					<Issues issues={review.issues} onGoTo={goTo} ref={issuesRef} />
 				)}
 				<Step
 					number={1}
 					title="Design changes"
 					count={pending > 0 ? pending : undefined}
-					sectionRef={changesRef}
+					ref={changesRef}
 				>
 					<ReviewChanges
 						fieldChanges={review.fieldChanges}
@@ -265,8 +265,8 @@ export function ReviewView({ scope, onClose }: { scope: ReviewScope; onClose: ()
 					<ReviewDeployStep
 						review={review}
 						environmentName={scope.environmentName}
-						onShowIssues={() => show(issuesRef)}
-						onShowChanges={() => show(changesRef)}
+						onShowIssues={() => reveal(issuesRef.current)}
+						onShowChanges={() => reveal(changesRef.current)}
 					/>
 				</Step>
 			</div>
