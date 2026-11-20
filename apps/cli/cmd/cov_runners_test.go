@@ -1195,8 +1195,15 @@ func TestRunnerField_AFailedResolutionStopsTheCommand(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s.forget()
-			if got := run(tc.args...); got != 1 {
-				t.Fatalf("exit code = %d, want 1; requests = %v", got, s.seen())
+			// A cloud account that matches nothing is a not-found refusal, which `runner register`
+			// shares with `project create` through one resolver. The other three refusals carry
+			// no class yet.
+			want := 1
+			if tc.name == "register, unknown cloud account" {
+				want = clierr.ExitNotFound
+			}
+			if got := run(tc.args...); got != want {
+				t.Fatalf("exit code = %d, want %d; requests = %v", got, want, s.seen())
 			}
 			if s.saw(tc.method, tc.path) {
 				t.Errorf("a failed resolution still reached %s %s", tc.method, tc.path)

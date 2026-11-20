@@ -489,37 +489,37 @@ func TestList_UnauthenticatedListIsFatal(t *testing.T) {
 	}
 }
 
-// TestList_ProjectGetDeclinesBrowserPromptOnTTY pins that `project get` only offers
-// the "Open in Browser?" prompt on an interactive terminal, and that a prompt which
-// cannot be answered (no TTY behind the seam) leaves the browser unopened.
-func TestList_ProjectGetDeclinesBrowserPromptOnTTY(t *testing.T) {
+// TestList_ProjectGetNeverOpensABrowserUnasked pins that `project get` opens nothing on its own.
+// It used to end by asking "Open in Browser?" on every terminal run; reading a project is not a
+// question, so the browser is opened by --open and by nothing else.
+func TestList_ProjectGetNeverOpensABrowserUnasked(t *testing.T) {
 	run := covListEnv(t, covListPopulated)
 	opened := false
 	oldOpen := openBrowser
 	openBrowser = func(string) error { opened = true; return nil }
 	t.Cleanup(func() { openBrowser = oldOpen })
+	// A confirmation that would say yes, so a prompt that came back would be caught here.
+	oldConfirm := confirm
+	confirm = func(string, string) bool { return true }
+	t.Cleanup(func() { confirm = oldConfirm })
 
 	run("project", "get", "web")
 
 	if opened {
-		t.Error("browser opened even though the confirm prompt was never answered")
+		t.Error("project get opened a browser without --open")
 	}
 }
 
-// TestList_ProjectGetOpensBrowserWhenConfirmed pins the confirmed arm: answering the
-// interactive prompt yes opens the dashboard URL.
-func TestList_ProjectGetOpensBrowserWhenConfirmed(t *testing.T) {
+// TestList_ProjectGetOpensTheProjectPage pins --open: it opens the project's own console page.
+func TestList_ProjectGetOpensTheProjectPage(t *testing.T) {
 	run := covListEnv(t, covListPopulated)
-	oldConfirm := confirm
-	confirm = func(string, string) bool { return true }
-	t.Cleanup(func() { confirm = oldConfirm })
 
 	var got string
 	oldOpen := openBrowser
 	openBrowser = func(url string) error { got = url; return nil }
 	t.Cleanup(func() { openBrowser = oldOpen })
 
-	run("project", "get", "web")
+	run("project", "get", "web", "--open")
 
 	// The project's own page. `/dashboard` was the legacy catch-all this command used to open
 	// after printing the project — see packages/core/routing.
