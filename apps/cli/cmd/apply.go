@@ -63,7 +63,7 @@ var applySpec = spec.Spec{
 			Description: "The alethia.yaml to apply (default: ./alethia.yaml)",
 			Flag:        "file", Shorthand: "f", Default: manifest.FileName, Page: docsPlanApplyPage},
 		{Command: "alethia apply", Key: "runner", Title: "Runner",
-			Description: "Runner to deploy with, by NAME or id. Omitted: the only online runner, or asked on a terminal",
+			Description: "Runner to deploy with, by NAME or id. Omitted: the only online runner that takes this cloud's jobs, or asked on a terminal",
 			Flag:        "runner", Selector: "name", Page: docsPlanApplyPage},
 		{Command: "alethia apply", Key: "env", Title: "Environments",
 			Description: "Only deploy these environments (repeatable; default: every environment in the file)",
@@ -137,8 +137,9 @@ The plan is written to stdout and progress to stderr. With --output json, stdout
 object that names every job; a deploy that is held for an approval says so, with the console
 page where a person approves it.
 
-Exit codes: 0 done, 2 the file cannot be applied as written (the same code "alethia plan"
-gives it), 12 the wait timed out, 13 a deploy failed. Every other code is in the CLI's exit table.`,
+Exit codes: 0 done, 1 the file does not exist or is not valid, 2 the file cannot be applied as
+written (the same code "alethia plan" gives it), 9 nobody could confirm and --yes was not
+passed, 12 the wait timed out, 13 a deploy failed. Every other code is in the CLI's exit table.`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, _ []string) {
 		token, err := getAuthToken()
@@ -152,6 +153,10 @@ gives it), 12 the wait timed out, 13 a deploy failed. Every other code is in the
 		only, _ := applyBinder.Strings("env")
 		yes, _ := applyBinder.Bool("yes")
 		noWait, _ := applyBinder.Bool("no-wait")
+		// --wait=false is --no-wait under the name every other long-running command uses.
+		if wait, _ := cmd.Flags().GetBool(applyFlagWait); !wait {
+			noWait = true
+		}
 		timeout, err := applyTimeout(values.Get(applyKeyTimeout), noWait)
 		if err != nil {
 			fail(err)
@@ -167,6 +172,11 @@ gives it), 12 the wait timed out, 13 a deploy failed. Every other code is in the
 		})
 	},
 }
+
+// applyFlagWait is the flag every long-running command has. `apply` waits by default, so here it
+// is on unless it is turned off; it exists so `--wait` means the same thing on every command that
+// queues a job, and a caller who passes it by habit is not refused.
+const applyFlagWait = "wait"
 
 // applyTimeout reads the --timeout value: a duration, where empty and 0 both mean "no deadline".
 // A deadline on a run that does not wait is refused, because it would be ignored without a word.
@@ -274,9 +284,9 @@ A plan never contains a removal. Whatever is on the server and not in the file i
 unmanaged and left as it is.
 
 Exit codes: 0 when apply would accept the file, 2 when the plan has problems that apply would
-refuse. With --detailed-exitcode: 0 no changes, 2 changes, 3 problems. Any other code is an
-error from the CLI's exit table, for example 6 when the file does not exist and 8 when it is not
-valid.
+refuse. With --detailed-exitcode: 0 no changes, 2 changes, 3 problems. 1 is an error in the file
+itself: it does not exist, or it is not valid. Any other code is an error from the CLI's exit
+table, for example 4 when you are not signed in and 11 when the control plane cannot be reached.
 
 The per-environment OpenTofu plan runs inside a deploy. Use "alethia project preview" to queue
 one on its own.`,
@@ -1035,6 +1045,8 @@ func findEnv(m *manifest.Manifest, name string) (manifest.Environment, error) {
 
 func init() {
 	applyBinder = spec.RegisterFlags(applyCmd, applySpec)
+	applyCmd.Flags().Bool(applyFlagWait, true,
+		"Wait for the deploys to finish. This is the default; --wait=false is the same as --no-wait")
 	planBinder = spec.RegisterFlags(planCmd, planSpec)
 	rootCmd.AddCommand(applyCmd)
 	rootCmd.AddCommand(planCmd)

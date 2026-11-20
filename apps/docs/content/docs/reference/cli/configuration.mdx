@@ -64,8 +64,22 @@ credentials    /Users/you/Library/Application Support/alethia/credentials.json
 config         /Users/you/Library/Application Support/alethia/config.json
 ```
 
-`alethia config clear-context` clears the active organization context. `alethia config -o json`
-emits the same values as a JSON object.
+`alethia config -o json` emits the same values as a JSON object. The command reads local files
+only: it sends nothing.
+
+## `alethia config clear-context`
+
+Remove the active organization from the config file. After it, commands act in your personal
+scope until you choose an organization again with `alethia org switch`.
+
+```bash
+alethia config clear-context
+```
+
+It changes only the local config file. No organization and no membership is touched. When no
+organization was active, it changes nothing and says so. With `-o json` it prints the result
+object every command that changes something prints: `action` is `updated` or `unchanged`, and
+`object` names the organization that was active.
 
 ## Config keys
 
@@ -110,13 +124,44 @@ never refused a moment later. It shows what is stored rather than what is in eff
 is what the write replaces: if `ALETHIA_WEB_ORIGIN` is set, the form says so and still seeds the
 file's value, so pressing Enter cannot overwrite it with the environment's.
 
-With `--no-input` both arguments are required; the command fails rather than guessing.
+With `--no-input` both arguments are required. Without them the command exits `9` and names the
+form that works; it does not guess. A key the CLI does not have, a key another command owns and a
+value that is not a URL each exit `8`, before anything is written.
+
+Setting a key to the value it already has changes nothing and says so. With `-o json`,
+`config set` prints the result object every command that changes something prints:
+
+```json
+{
+  "id": "web-origin",
+  "kind": "config",
+  "action": "updated",
+  "job": null,
+  "dry_run": false,
+  "object": {
+    "key": "web-origin",
+    "value": "https://alethia.internal.example.com",
+    "previous": "https://alethialabs.io"
+  }
+}
+```
+
+`action` is `unchanged` when the stored value was already this one.
 
 <Callout type="info">
 `ALETHIA_WEB_ORIGIN` **outranks** the config file. If it is set to a different URL,
 `alethia config set web-origin` says so after saving, because otherwise the write appears to succeed
-and every subsequent command keeps talking to the environment's origin.
+and every subsequent command keeps talking to the environment's origin. The warning is on stderr,
+and in the `-o json` result it is the `shadowed` field.
 </Callout>
+
+## `alethia config get`
+
+```bash
+alethia config get web-origin     # one value
+alethia config get                # every key
+alethia config get -o json
+```
 
 `alethia config get` prints the bare value in the default table format — so
 `$(alethia config get web-origin)` works — and key/value pairs under `-o json` or `-o csv`.
@@ -124,47 +169,6 @@ and every subsequent command keeps talking to the environment's origin.
 An unset key, such as `active-org` before you have picked an organization, prints as `—` in the
 table and as an empty string under `-o json` and `-o csv`. The dash is for a person reading a
 column; a script tests the machine formats for emptiness.
-
-## `alethia config export`
-
-Export an environment's **design document** — the same nested shape the console design form holds,
-and the one [`alethia project design apply`](/reference/cli/project) accepts. By default the content is
-written to stdout; pass `--out` to write it to a file, or `-o json` to get the export envelope
-(content + filename + format).
-
-```bash
-# Print the design document to stdout
-alethia config export my-project
-
-# Round-trip it: export, edit, apply
-alethia config export my-project --out my-project.json
-alethia project design apply -p my-project -f my-project.json --dry-run
-alethia project design apply -p my-project -f my-project.json
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--format` | `json` | The content format. `json` is the only supported value. |
-| `--out` | _(stdout)_ | Write the content to this file instead of stdout. |
-| `--env` | _(the default environment)_ | The environment to export, by name, stage or id. |
-
-```bash
-# Export the staging environment's design document, not the default environment's
-alethia config export my-project --env staging --out staging.json
-```
-
-Without `--env` the server exports the project's default environment. An environment the project
-does not have is refused with `Environment "qa" not found (status 404)`.
-
-The project name is optional — omit it in an interactive terminal to pick one from a list. Backing
-call: `GET /cli/configurations/by-project-name/<name>/export`, with `&env=` when you pass `--env`.
-
-<Callout type="warn">
-  **Before 0.5.x this command did not work at all.** The route it calls did not exist, so every
-  invocation 404'd, and its default `--format legacy-yaml` named a format nothing in the product has
-  ever produced. If you pinned `--format legacy-yaml`, drop it or pass `json`; the server now refuses
-  that value by name rather than returning JSON labelled as YAML.
-</Callout>
 
 ## `alethia export`
 
@@ -184,10 +188,36 @@ alethia plan                                    # nothing to change
 | `--all` | off | Export every environment. The default environment is written first. |
 | `--out` | _(stdout)_ | Write the file here instead of stdout. |
 | `--force` | off | Replace `--out` if the file already exists. Without it, an existing file is refused. |
+| `--format` | `yaml` | The document to write. `yaml` is `alethia.yaml`. `console-json` is the console's design document; see [The console's design document](#the-consoles-design-document). |
 
 A project with more than one environment needs `--env` or `--all`. On a terminal, `export` asks
-which one. With `--no-input`, it fails and names both flags and every environment. The project name
-is optional on a terminal, where you pick it from a list.
+which one. With `--no-input`, it exits `9` and names both flags and every environment. The project
+name is optional on a terminal, where you pick it from a list; with `--no-input` it is required.
+
+The file is the command's output, on stdout or in the file `--out` names. Everything else is on
+stderr: the line that says which file was written, and the list of what was left out. `export`
+writes a document, so `-o json` does not change it.
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | The file was written. |
+| `6` | The project, or the environment `--env` names, does not exist. The error lists the ones that do. |
+| `7` | `--out` names a file that exists and `--force` was not passed, or it names a symbolic link. |
+| `8` | The flags cannot be combined, or `--format` is not a format. |
+| `9` | A value is missing and nothing can ask for it. |
+
+### The schema line
+
+The first line of the file is a comment that names the file's JSON Schema:
+
+```yaml
+# yaml-language-server: $schema=https://alethialabs.io/docs/schemas/alethia-yaml/v1.json
+```
+
+An editor with a YAML language server reads it and then checks and completes the file as you type:
+the keys, the stages and the placements. Add the same line to a file you wrote by hand. The schema
+describes the keys of the file. It leaves the fields of a component open, because they differ by
+kind and by cloud; `alethia plan` checks those against the control plane.
 
 The file holds the project's cloud account (by its label), the region, the OpenTofu version, and
 for each environment its stage, placement, namespace, components and add-ons. Each component
@@ -195,6 +225,33 @@ carries the settable fields described below. Each add-on carries its version pin
 and its non-secret settings. The output is the same on
 every run: environments, components and add-ons are in a fixed order, so a re-export shows only
 what changed.
+
+### The console's design document
+
+`--format console-json` writes a different document: the design document of **one** environment, as
+JSON. It is the nested shape the console's design form holds, and the one
+[`alethia project design apply`](/reference/cli/project) accepts.
+
+```bash
+# Print the default environment's design document
+alethia export my-project --format console-json
+
+# Round-trip it: export, edit, apply
+alethia export my-project --env staging --format console-json --out staging.json
+alethia project design apply -p my-project -e staging -f staging.json --dry-run
+alethia project design apply -p my-project -e staging -f staging.json
+```
+
+It takes `--env` (by name, stage or id) and not `--all`. Without `--env` the server exports the
+project's default environment. With `-o json` the document is wrapped in an object that also
+carries its file name and its format.
+
+<Callout type="info">
+  `alethia config export` is the old name of this command. It still runs, prints one line on stderr
+  that names the new command, and will be removed in a later release. One difference remains: the
+  old name replaces an existing `--out` file without being asked, as it always did, and
+  `alethia export` needs `--force`.
+</Callout>
 
 ### What is written, and what is left out
 

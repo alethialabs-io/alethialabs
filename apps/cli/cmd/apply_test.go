@@ -73,6 +73,11 @@ func applyWriteManifest(t *testing.T, body string) string {
 func applyResetFlags() {
 	applyBinder.Reset()
 	planBinder.Reset()
+	// --wait is registered beside the spec's flags, so the binder does not reset it.
+	if f := applyCmd.Flags().Lookup(applyFlagWait); f != nil {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	}
 }
 
 func applyEnv(t *testing.T, s *projServer) projHarness {
