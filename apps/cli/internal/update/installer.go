@@ -104,11 +104,38 @@ type updater struct {
 	stderr      io.Writer
 }
 
-// Apply installs release when it is newer than current using the detected install channel.
-func Apply(ctx context.Context, current string, release Release, stdout, stderr io.Writer) error {
-	u, err := newUpdater(stdout, stderr)
+// Outcome is what an update did.
+type Outcome struct {
+	// From is the version that was running, and To the release the control plane publishes.
+	From string `json:"from"`
+	To   string `json:"to"`
+	// Method is the install channel the update went through, or "" when nothing was installed.
+	Method string `json:"method"`
+	// Updated reports that To was installed and the binary now reports it.
+	Updated bool `json:"updated"`
+	// Deferred reports that the replacement is staged and finishes when this process exits.
+	Deferred bool `json:"deferred"`
+	// UpdateAvailable reports that To is newer than From.
+	UpdateAvailable bool `json:"update_available"`
+}
+
+// compare reports what an update from current to release would be, without installing anything.
+func compare(current string, release Release) (Outcome, error) {
+	out := Outcome{From: strings.TrimPrefix(current, "v"), To: strings.TrimPrefix(release.Version, "v")}
+	if !stableVersion.MatchString(release.Version) {
+		return out, fmt.Errorf("control plane returned invalid CLI version %q", release.Version)
+	}
+	out.UpdateAvailable = IsNewer(release.Version, current)
+	return out, nil
+}
+
+// Apply installs release when it is newer than current using the detected install channel, and
+// reports what it did. Everything it says while working, and everything the package manager it
+// runs prints, goes to progress.
+func Apply(ctx context.Context, current string, release Release, progress io.Writer) (Outcome, error) {
+	u, err := newUpdater(progress, progress)
 	if err != nil {
-		return err
+		return Outcome{}, err
 	}
 	return u.apply(ctx, current, release)
 }
@@ -138,47 +165,45 @@ func newUpdater(stdout, stderr io.Writer) (*updater, error) {
 }
 
 // apply validates the target release and dispatches to its installation method.
-func (u *updater) apply(ctx context.Context, current string, release Release) error {
-	if !stableVersion.MatchString(release.Version) {
-		return fmt.Errorf("control plane returned invalid CLI version %q", release.Version)
-	}
-	if !IsNewer(release.Version, current) {
-		_, err := fmt.Fprintf(u.stdout, "alethia v%s is already up to date.\n", strings.TrimPrefix(current, "v"))
-		return err
+func (u *updater) apply(ctx context.Context, current string, release Release) (Outcome, error) {
+	out, err := compare(current, release)
+	if err != nil || !out.UpdateAvailable {
+		return out, err
 	}
 
 	method := u.detectInstallMethod(ctx)
+	out.Method = string(method)
 	_, _ = fmt.Fprintf(u.stdout, "Updating alethia %s → %s (%s)…\n", current, release.Version, method)
 	switch method {
 	case installHomebrew:
 		if err := u.run(ctx, "brew", "update"); err != nil {
-			return fmt.Errorf("brew update: %w", err)
+			return out, fmt.Errorf("brew update: %w", err)
 		}
 		if err := u.run(ctx, "brew", "upgrade", "alethialabs-io/tap/alethia"); err != nil {
-			return fmt.Errorf("brew upgrade alethia: %w", err)
+			return out, fmt.Errorf("brew upgrade alethia: %w", err)
 		}
 	case installScoop:
 		if err := u.run(ctx, "scoop", "update", "alethia"); err != nil {
-			return fmt.Errorf("scoop update alethia: %w", err)
+			return out, fmt.Errorf("scoop update alethia: %w", err)
 		}
 	case installDeb, installRPM, installAPK, installDocker:
-		return u.manualInstruction(method, release.Version)
+		return out, u.manualInstruction(method, release.Version)
 	case installStandalone:
 		deferred, err := u.replaceStandalone(ctx, release.Version)
 		if err != nil {
-			return err
+			return out, err
 		}
 		if deferred {
-			_, err = fmt.Fprintf(u.stdout, "alethia v%s will finish installing when this process exits.\n", strings.TrimPrefix(release.Version, "v"))
-			return err
+			out.Deferred = true
+			return out, nil
 		}
 	}
 
 	if err := u.verifyVersion(ctx, release.Version); err != nil {
-		return err
+		return out, err
 	}
-	_, err := fmt.Fprintf(u.stdout, "Updated alethia to v%s.\n", strings.TrimPrefix(release.Version, "v"))
-	return err
+	out.Updated = true
+	return out, nil
 }
 
 // run executes a package-manager command with the current terminal attached.
@@ -334,7 +359,9 @@ func (u *updater) fetch(ctx context.Context, url string) ([]byte, error) {
 
 // verifyVersion confirms the installed command now reports the canonical version.
 func (u *updater) verifyVersion(ctx context.Context, expected string) error {
-	out, err := u.runner.Output(ctx, u.executable, "version")
+	// The table form is asked for by name: the new binary answers in json when it finds itself
+	// inside an agent harness, and the line this reads is the table's.
+	out, err := u.runner.Output(ctx, u.executable, "version", "--output", "table")
 	if err != nil {
 		return fmt.Errorf("verify updated alethia: %w", err)
 	}

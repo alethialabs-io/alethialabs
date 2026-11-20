@@ -6,13 +6,19 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"slices"
 	"strings"
+	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/spec"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/runners"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
 )
 
@@ -26,13 +32,18 @@ import (
 //	2. a login               — a live credential? skip
 //	3. a cloud account       — one connected? skip; otherwise STOP and name the command, because
 //	                           attaching one is a per-cloud keyless flow, not a question
-//	4. alethia.yaml          — a file in this directory? skip; otherwise author one
-//	5. apply                 — the plan, the confirmation, the deploys
+//	4. a runner              — something that will claim the deploy? say what; otherwise STOP and
+//	                           name the command, because a deploy nothing claims waits for ever
+//	5. alethia.yaml          — a file in this directory? skip; otherwise author one
+//	6. apply                 — the plan, the confirmation, the deploys
 //
-// Step 3 is the only one that can stop the run, and that is deliberate. The other four either have
-// an answer or can ask for one; a connector is `alethia connector aws|gcp|azure|alibaba|hetzner`,
-// five different keyless flows with their own arguments, and re-implementing the choice inside `up`
-// would be a sixth surface that drifts from the five.
+// Steps 3 and 4 are the two that can stop the run, and that is deliberate. The others either have
+// an answer or can ask for one. A connector is `alethia connector <cloud>`, one keyless flow per
+// cloud with its own arguments, and re-implementing the choice inside `up` would be one more
+// surface that drifts from them. A runner is a process somebody has to start.
+//
+// Everything `up` says about its own progress goes to stderr. Stdout carries what `apply` prints:
+// the plan and the result.
 
 // upSpec is what `up` takes. It is `apply`'s spec plus the manifest-authoring fields `init` takes,
 // because `up` is the two commands composed and must be scriptable as either.
@@ -76,15 +87,30 @@ var upBinder *spec.Binder
 
 var upCmd = &cobra.Command{
 	Use:   "up",
-	Short: "From nothing to a running project: log in, author alethia.yaml, and apply it",
-	Long: `The whole first run, in one command, resuming wherever the last one stopped.
+	Short: "From nothing to a running project: sign in, write alethia.yaml, and deploy it",
+	Long: `The whole first run in one command. Use it in a new directory to go from nothing to a
+running cluster, and run it again whenever a run stopped: it resumes where the last one ended.
 
-Each step is skipped when it is already done: the control-plane URL and the login if this
-machine has them, the manifest if this directory has one. What "up" cannot do for you is
-attach a cloud account — that is a per-cloud keyless flow — so it stops and names the
-command when there is none.
+It works through six steps and skips each one that is already done:
 
-With alethia.yaml already present and an account connected, "alethia up" is "alethia apply".`,
+  1. the control-plane URL    asked for once, then kept
+  2. the sign-in              a browser approval of a device code
+  3. a cloud account          checked, never created here
+  4. a runner                 checked, never created here
+  5. alethia.yaml             written when this directory has none
+  6. apply                    the plan, one confirmation, one deploy per environment
+
+Steps 3 and 4 are the two that can stop the run. Connecting a cloud account is a separate flow
+for each cloud, and a runner is a process that has to be started, so "up" stops and prints the
+command to run. Run that command, then run "alethia up" again.
+
+Progress is written to stderr. Stdout carries the plan and the result, so "--output json" is one
+document. While it waits for a deploy it says so when the deploy is held for an approval in the
+console, and when no runner has claimed it yet; in both cases the job keeps its place if you stop
+waiting. A deploy that fails exits 13 and names the job; "alethia jobs logs" shows why.
+
+With alethia.yaml present, an account connected and a runner available, "alethia up" is
+"alethia apply".`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, _ []string) {
 		values, err := spec.Resolve(upBinder, spec.Sources{Env: os.LookupEnv})
@@ -92,48 +118,108 @@ With alethia.yaml already present and an account connected, "alethia up" is "ale
 			fail(err)
 		}
 		format := outputFormat(cmd)
+		p := printer
 
 		// 1 and 2. A live credential is the whole of "is this machine set up": `getAuthToken`
 		// reads the persisted one, refreshes it, or takes ALETHIA_TOKEN. Only when there is none
 		// does the origin get asked for, because asking a logged-in person which control plane
 		// they meant is a question with an answer already on disk.
-		token, err := ensureLoggedIn(os.Stdout, format)
+		token, err := ensureLoggedIn(p)
 		if err != nil {
 			fail(err)
 		}
 		client := api.NewClient(token)
 
-		// 3. The one step that can stop the run.
-		if err := ensureCloudAccount(client, os.Stdout, format, values.Get("account")); err != nil {
+		// 3. The first step that can stop the run.
+		identities, err := ensureCloudAccount(client, p, values.Get("account"))
+		if err != nil {
 			fail(err)
 		}
 
-		// 4. The file, authored when this directory has none.
+		// 4. The second. It runs BEFORE the manifest is authored whenever the cloud the deploy
+		// goes to is already known, because a refusal is worth having before five questions
+		// rather than after them. When the account is still an open question it runs after the
+		// file has answered it.
 		path := values.Get("file")
-		if !manifest.Exists(path) {
-			if err := authorManifest(client, token, os.Stdout, format, path, values); err != nil {
+		runnerRef := values.Get("runner")
+		account, known := upTargetAccount(identities, path, values.Get("account"))
+		if known {
+			if runnerRef, err = ensureRunner(client, p, runnerRef, account); err != nil {
 				fail(err)
 			}
+		}
+
+		// 5. The file, authored when this directory has none.
+		if !manifest.Exists(path) {
+			if _, err := authorManifest(client, token, path, values); err != nil {
+				fail(err)
+			}
+			firstRunStep(p, "Wrote "+path)
 		} else if err := refuseAuthoringFlags(cmd, path); err != nil {
 			fail(err)
 		}
+		if !known {
+			account, _ = upTargetAccount(identities, path, "")
+			if runnerRef, err = ensureRunner(client, p, runnerRef, account); err != nil {
+				fail(err)
+			}
+		}
 
-		// 5. Everything `alethia apply` does, through the same code — a second implementation of
+		// 6. Everything `alethia apply` does, through the same code — a second implementation of
 		// the plan, the confirmation and the deploy ordering is exactly what this epic exists to
 		// stop having.
 		yes, _ := upBinder.Bool("yes")
 		noWait, _ := upBinder.Bool("no-wait")
+		var applyWith applyClient = client
+		if !noWait {
+			applyWith = newDeployWatcher(client, p)
+		}
 		// No project name is passed: `runApply`'s closing line reads it from the manifest it just
 		// applied, which is the project that actually came up. `values.Get("project")` is the
 		// FLAG, and when the directory already held a manifest the two disagree.
-		runApply(cmd, client, token, applyOptions{
+		runApply(cmd, applyWith, token, applyOptions{
 			file:   path,
-			runner: values.Get("runner"),
+			runner: runnerRef,
 			yes:    yes,
 			noWait: noWait,
 			format: format,
 		})
 	},
+}
+
+// firstRunStep reports one finished step of the golden path on p's Err stream: a tick and the
+// sentence for a person, the bare sentence for an agent.
+func firstRunStep(p *Printer, msg string) {
+	if p.Mode.Agent {
+		fmt.Fprintln(p.Err, msg)
+		return
+	}
+	fmt.Fprintf(p.Err, "%s %s\n", ui.SymbolSuccess, msg)
+}
+
+// firstRunEmit writes a command's result through the running Printer, and takes the fatal path
+// when the result has no form in the format that was asked for.
+func firstRunEmit(v any, human func(io.Writer)) {
+	if err := printer.Result(v, human); err != nil {
+		fail(err)
+	}
+}
+
+// firstRunErr gives err the class of code and the next step hint, unless err already carries a
+// class or a hint of its own: an error the control plane classified keeps what it said.
+func firstRunErr(code string, err error, hint string) error {
+	e := clierr.From(err)
+	if e.Class == clierr.ClassUnclassified {
+		e = clierr.Wrap(code, err)
+	} else {
+		// From may hand back a shared sentinel; the hint is set on a copy.
+		shared := *e
+		e = &shared
+	}
+	if e.Hint == "" {
+		e.Hint = hint
+	}
+	return e
 }
 
 // authoringFlags are the `up` flags that only ever reach `authorManifest`. Each is read solely to
@@ -163,46 +249,47 @@ func refuseAuthoringFlags(cmd *cobra.Command, path string) error {
 		return nil
 	}
 	list := strings.Join(given, ", ")
-	return fmt.Errorf(
+	e := clierr.New(clierr.CodeInvalidUsage, fmt.Sprintf(
 		"%s already exists, so %s would be ignored: those flags only ever author a new manifest, and "+
-			"this run applies the one on disk.\n"+
-			"Drop them and let the file speak, or point --file at a path that does not exist yet",
-		path, list)
+			"this run applies the one on disk", path, list))
+	e.Hint = "drop them and let the file speak, or point --file at a path that does not exist yet"
+	return e
 }
 
 // ensureLoggedIn returns a usable token, running the first-run setup when there is none.
 //
-// It reports what it SKIPPED as well as what it did. "Already logged in" is the difference between
+// It reports what it SKIPPED as well as what it did. "Already signed in" is the difference between
 // a command that looks like it did nothing and one a person can trust to be resumable.
-func ensureLoggedIn(out io.Writer, format string) (string, error) {
+func ensureLoggedIn(p *Printer) (string, error) {
 	if token, err := getAuthTokenInternal(false); err == nil && token != "" {
-		say(out, format, fmt.Sprintf("%s Already signed in to %s", ui.SymbolSuccess, WebOrigin()))
+		firstRunStep(p, "Already signed in to "+WebOrigin())
 		return token, nil
 	}
-	// A machine-readable run cannot carry the first-run setup. `promptWebOrigin`, `runConfigSet`
-	// and `performLoginFlow` all write prose to stdout unconditionally — the device-code box is
-	// the point of the flow, so it cannot be silenced — and that prose would land ahead of the
-	// ApplyResult document and break the caller's parse.
+	// A machine-readable run cannot carry the first-run setup. `performLoginFlow` writes the
+	// device code to stdout — it is the point of the flow, so it cannot be silenced — and that
+	// prose would land ahead of the result document and break the caller's parse.
 	//
 	// Checked BEFORE the terminal test because it does not depend on one: `up --output json` with
 	// no credential cannot succeed on a terminal either, and this message names both remedies, so
 	// nothing is lost by answering the output question first.
-	if format != ui.FormatTable {
-		return "", fmt.Errorf(
+	if p.Format != ui.FormatTable {
+		e := clierr.New(clierr.CodeAuthRequired, fmt.Sprintf(
 			"not signed in, and --output %s cannot run the first-run sign-in: it prints a device code "+
-				"that would corrupt the document.\nRun `alethia login` once, then re-run this command "+
-				"(or set %s to a service token)", format, ServiceTokenEnv)
+				"that would corrupt the document", p.Format))
+		e.Hint = "alethia login   (or set " + ServiceTokenEnv + " to a service token)"
+		return "", e
 	}
 	if !canPromptForm() {
-		return "", fmt.Errorf(
-			"not signed in, and interactive prompts are unavailable (--no-input, or stdin is not a terminal): "+
-				"set %s to a service token, or run `alethia login` on a terminal first", ServiceTokenEnv)
+		e := clierr.New(clierr.CodeAuthRequired,
+			"not signed in, and interactive prompts are unavailable (--no-input, or stdin is not a terminal)")
+		e.Hint = "set " + ServiceTokenEnv + " to a service token, or run `alethia login` on a terminal first"
+		return "", e
 	}
 	origin, err := promptWebOrigin("")
 	if err != nil {
 		return "", err
 	}
-	if err := runConfigSet(out, "web-origin", origin); err != nil {
+	if err := runConfigSet(p.Err, "web-origin", origin); err != nil {
 		return "", err
 	}
 	if err := performLoginFlow(); err != nil {
@@ -211,77 +298,368 @@ func ensureLoggedIn(out io.Writer, format string) (string, error) {
 	return getAuthToken()
 }
 
-// ensureCloudAccount refuses, with the command to run, when the organization has no connector.
+// connectorCommands returns `alethia connector <cloud>` for every cloud this build offers, in the
+// catalog's order. It is derived, never typed: a cloud the catalog hides is not named here.
+func connectorCommands() []string {
+	var out []string
+	for _, provider := range EnabledCloudProviders() {
+		out = append(out, "alethia connector "+string(provider))
+	}
+	return out
+}
+
+// ensureCloudAccount returns the organization's connected cloud accounts, and refuses, with the
+// command to run, when there is none.
 //
-// It does not offer to attach one. `connector aws|gcp|azure|alibaba|hetzner` are five different
-// keyless flows with five different arguments — cliDemoConnectorFlags in the e2e harness is the
-// measurement of how different — so a sixth surface inside `up` would be one more thing to keep in
-// step with them, and it would drift the way every other "one product, two implementations" pair in
-// this epic drifted.
-func ensureCloudAccount(c cloudIdentityLister, out io.Writer, format, wanted string) error {
+// It does not offer to attach one. `alethia connector <cloud>` is one keyless flow per cloud, each
+// with its own arguments — cliDemoConnectorFlags in the e2e harness is the measurement of how
+// different — so one more surface inside `up` would be one more thing to keep in step with them,
+// and it would drift the way every other "one product, two implementations" pair in this epic
+// drifted.
+func ensureCloudAccount(c cloudIdentityLister, p *Printer, wanted string) ([]api.CloudIdentity, error) {
 	identities, err := c.GetCloudIdentities()
 	if err != nil {
-		return fmt.Errorf("list cloud accounts: %w", err)
+		return nil, fmt.Errorf("list cloud accounts: %w", err)
 	}
 	if len(identities) == 0 {
-		return fmt.Errorf(
-			"no cloud account is connected — attach one first:\n" +
-				"  alethia connector hetzner      # an API token, cheapest to try\n" +
-				"  alethia connector aws          # keyless, one CloudFormation stack\n" +
-				"  alethia connector gcp          # keyless, the Cloud Shell installer\n" +
-				"  alethia connector azure        # keyless, a federated identity\n" +
-				"  alethia connector alibaba      # keyless, RAM federation")
+		commands := connectorCommands()
+		e := clierr.New(clierr.CodeConflict,
+			"no cloud account is connected, and a project needs one to deploy into. Connect one with: "+
+				strings.Join(commands, " · "))
+		if len(commands) > 0 {
+			e.Hint = commands[0] + "   then run this command again"
+		}
+		return nil, e
 	}
 	if wanted != "" {
 		// Resolved HERE rather than at apply time, because the refusal is worth having before a
 		// form asks for a project name: an unknown label is a typo, and finding out after five
 		// questions is worse than finding out before them.
-		if _, err := matchCloudIdentity(identities, wanted); err != nil {
-			return err
+		account, err := matchCloudIdentity(identities, wanted)
+		if err != nil {
+			return nil, firstRunErr(clierr.CodeNotFound, err, "alethia provider status")
 		}
-		say(out, format, fmt.Sprintf("%s Cloud account %s", ui.SymbolSuccess, wanted))
-		return nil
+		firstRunStep(p, fmt.Sprintf("Cloud account %s (%s)", account.Label, account.Provider))
+		return identities, nil
 	}
-	say(out, format, fmt.Sprintf("%s %s connected", ui.SymbolSuccess, plural(len(identities), "cloud account")))
-	return nil
+	firstRunStep(p, plural(len(identities), "cloud account")+" connected")
+	return identities, nil
 }
 
-// authorManifest writes the alethia.yaml `up` is about to apply.
+// upTargetAccount returns the cloud account this run deploys into, and whether that is decided
+// yet. An existing manifest decides it; without one, the --cloud-account value does, and so does
+// an organization with exactly one account, which is the account authorManifest takes without
+// asking. A reference that matches nothing is "not decided": the step that owns the reference
+// reports it.
+func upTargetAccount(identities []api.CloudIdentity, path, flagValue string) (api.CloudIdentity, bool) {
+	ref := flagValue
+	if manifest.Exists(path) {
+		m, err := manifest.Load(path)
+		if err != nil {
+			// The apply reads the file again and reports why it cannot be read.
+			return api.CloudIdentity{}, false
+		}
+		ref = m.Cloud.Account
+	}
+	if ref != "" {
+		account, err := matchCloudIdentity(identities, ref)
+		return account, err == nil
+	}
+	if len(identities) == 1 {
+		return identities[0], true
+	}
+	return api.CloudIdentity{}, false
+}
+
+// ── the runner step ───────────────────────────────────────────────────────────────────────
+
+// runnerStatusOnline is the status of a runner that is connected and claiming jobs.
+const runnerStatusOnline = "ONLINE"
+
+// runnerSource is what ensureRunner reads: the runners this caller can see, and the managed
+// fleet's pools where the control plane shows them.
+type runnerSource interface {
+	GetRunners() ([]api.Runner, error)
+	ListFleetPools() ([]api.FleetPool, error)
+}
+
+// runnerList answers GetRunners from a list already fetched, so resolveRunnerRef can name a
+// runner without a second request.
+type runnerList []api.Runner
+
+// GetRunners returns the list.
+func (l runnerList) GetRunners() ([]api.Runner, error) { return l, nil }
+
+// runnerServes reports whether a runner takes jobs for a cloud. A runner that lists no cloud takes
+// every one, and an unknown cloud is served by any runner.
+func runnerServes(r api.Runner, cloud string) bool {
+	return cloud == "" || len(r.SupportedProviders) == 0 || slices.Contains(r.SupportedProviders, cloud)
+}
+
+// runnerOwner says whose runner r is, for the line that names it.
+func runnerOwner(r api.Runner) string {
+	if r.Operator == "managed" {
+		return "managed"
+	}
+	return "yours"
+}
+
+// hostedControlPlane reports whether origin is the hosted Alethia control plane: its host, or a
+// host under it.
+//
+// This is how the CLI tells the two deployments apart, and the reason it has to: the hosted
+// control plane runs a managed fleet that claims any organization's unassigned deploy, and does
+// not list that fleet to its tenants. An empty runner list there is the ordinary case. Everywhere
+// else the list is the whole truth, because a self-hosted control plane lists its managed runners
+// too.
+func hostedControlPlane(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	hosted := strings.TrimPrefix(types.DefaultWebOrigin, "https://")
+	host := strings.ToLower(u.Hostname())
+	return host == hosted || strings.HasSuffix(host, "."+hosted)
+}
+
+// fleetWillStartARunner reports whether the control plane shows an enabled managed pool. Such a
+// pool starts a runner when a job is queued, so an empty runner list is not a dead end. A caller
+// who may not read the pools gets false: nothing can be promised from a refusal.
+func fleetWillStartARunner(c runnerSource) bool {
+	pools, err := c.ListFleetPools()
+	if err != nil {
+		return false
+	}
+	for _, pool := range pools {
+		if pool.Enabled && pool.Max > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureRunner says what will claim this run's deploys, or refuses with the command that makes
+// something able to. It returns the runner reference the apply should use: the one named, the
+// only runner that can take the job, or "" to leave the job for whichever claims it.
+//
+// The rule, in order:
+//
+//   - a runner named with --runner must exist, be online, and serve the account's cloud;
+//   - otherwise the online runners that serve the cloud are counted. One is named. Several are
+//     counted, and the apply asks which on a terminal;
+//   - with none, the managed fleet takes the deploy where there is one: on the hosted control
+//     plane, or where an enabled pool is shown;
+//   - with none of those, nothing would ever claim the deploy, and the run stops here, before a
+//     project is created and a job is queued that would wait for ever.
+func ensureRunner(c runnerSource, p *Printer, ref string, account api.CloudIdentity) (string, error) {
+	list, err := c.GetRunners()
+	if err != nil {
+		return "", fmt.Errorf("list runners: %w", err)
+	}
+	cloud := account.Provider
+
+	if ref != "" {
+		id, err := resolveRunnerRef(runnerList(list), "--runner", ref)
+		if err != nil {
+			return "", firstRunErr(clierr.CodeNotFound, err, "alethia runner list")
+		}
+		named := list[slices.IndexFunc(list, func(r api.Runner) bool { return r.ID == id })]
+		if named.Status != runnerStatusOnline {
+			e := clierr.New(clierr.CodeConflict, fmt.Sprintf(
+				"runner %q is %s, so it cannot take this deploy", named.Name, named.Status))
+			e.Hint = "alethia runner list   then start it, or name another with --runner"
+			return "", e
+		}
+		if !runnerServes(named, cloud) {
+			e := clierr.New(clierr.CodeConflict, fmt.Sprintf(
+				"runner %q does not take %s jobs (it takes %s)",
+				named.Name, cloud, strings.Join(named.SupportedProviders, ", ")))
+			e.Hint = "alethia runner list   then name one that does with --runner"
+			return "", e
+		}
+		firstRunStep(p, fmt.Sprintf("Runner %s (%s) takes the deploy", named.Name, runnerOwner(named)))
+		return id, nil
+	}
+
+	var usable []api.Runner
+	for _, r := range list {
+		if r.Status == runnerStatusOnline && runnerServes(r, cloud) {
+			usable = append(usable, r)
+		}
+	}
+	switch {
+	case len(usable) == 1:
+		firstRunStep(p, fmt.Sprintf("Runner %s (%s) takes the deploy", usable[0].Name, runnerOwner(usable[0])))
+		return usable[0].ID, nil
+	case len(usable) > 1:
+		firstRunStep(p, fmt.Sprintf("%d runners are online and can take the deploy", len(usable)))
+		return "", nil
+	case hostedControlPlane(WebOrigin()):
+		firstRunStep(p, "The Alethia managed fleet takes the deploy (no runner of your own is needed)")
+		return "", nil
+	case fleetWillStartARunner(c):
+		firstRunStep(p, "The managed fleet takes the deploy, and starts a runner for it when it is queued")
+		return "", nil
+	}
+	return "", noRunnerRefusal(list, account)
+}
+
+// noRunnerRefusal is the answer when nothing would claim the deploy: what was looked for, what
+// is there instead, and the one command that fixes it for this account's cloud.
+func noRunnerRefusal(list []api.Runner, account api.CloudIdentity) error {
+	what := "no runner is online"
+	if account.Provider != "" {
+		what = "no online runner takes " + account.Provider + " jobs"
+	}
+	var there []string
+	anyOnline := false
+	for _, r := range list {
+		there = append(there, fmt.Sprintf("%s is %s", r.Name, r.Status))
+		anyOnline = anyOnline || r.Status == runnerStatusOnline
+	}
+	state := "it has no runner at all"
+	if len(there) > 0 {
+		state = strings.Join(there, ", ")
+	}
+	e := clierr.New(clierr.CodeConflict, fmt.Sprintf(
+		"nothing would claim this deploy: %s on %s (%s), and it has no managed fleet. "+
+			"Nothing was created and no job was queued", what, WebOrigin(), state))
+	e.Hint = runnerCommandFor(account, anyOnline) + "   then run this command again"
+	return e
+}
+
+// runnerCommandFor returns the command that adds a runner able to take account's jobs.
+//
+// `runner deploy` builds one inside the account, and is offered only where it can work: the cloud
+// has a runner template, and a runner is already online to run the build, because building a
+// runner is itself a job. Everywhere else the answer is `runner register`, which provisions
+// nothing and works on every cloud.
+func runnerCommandFor(account api.CloudIdentity, anyOnline bool) string {
+	if anyOnline && account.Label != "" && runners.IsDeployProvider(account.Provider) {
+		return fmt.Sprintf("alethia runner deploy --cloud-account %q", account.Label)
+	}
+	name := "first-runner"
+	if account.Provider != "" {
+		name = account.Provider + "-runner"
+	}
+	return "alethia runner register " + name
+}
+
+// ── the wait ──────────────────────────────────────────────────────────────────────────────
+
+// jobStatusAwaitingApproval is the status of a job that is held until a person approves it in
+// the console. No control plane sends it yet: an apply under a device sign-in gains a browser
+// approval with the approval policy, and the unit that lands it owns the final name. It is
+// written here so the wait already has something true to say when it arrives.
+const jobStatusAwaitingApproval = "AWAITING_APPROVAL"
+
+// queuedNoticeAfter is how long a deploy may sit unclaimed before the wait says so. It is a
+// variable so a test can shorten it.
+var queuedNoticeAfter = 2 * time.Minute
+
+// deployWatcher is the client `up` hands to the apply when it waits: the same client, with every
+// job poll also read for the two states in which a deploy is WAITING ON SOMEBODY rather than
+// running. The wait loop itself treats any status it does not end on as "keep polling", which is
+// right, and says only the status's name, which for these two is not enough:
+//
+//   - held for an approval: the person has to act, in the console, and the wait resumes on its
+//     own once they have;
+//   - queued and unclaimed for longer than queuedNoticeAfter: no runner has taken the job, and
+//     the line names what to look at. The job keeps its place either way.
+//
+// Each is said once per job, on stderr, in every output format.
+type deployWatcher struct {
+	applyClient
+	p     *Printer
+	now   func() time.Time
+	since map[string]time.Time
+	said  map[string]bool
+}
+
+// newDeployWatcher wraps c so its job polls are narrated on p.
+func newDeployWatcher(c applyClient, p *Printer) *deployWatcher {
+	return &deployWatcher{
+		applyClient: c, p: p, now: time.Now,
+		since: map[string]time.Time{}, said: map[string]bool{},
+	}
+}
+
+// GetJob polls the job through the wrapped client and narrates a waiting state it is in.
+func (w *deployWatcher) GetJob(jobID string) (*api.ProvisionJob, error) {
+	job, err := w.applyClient.GetJob(jobID)
+	if err != nil || job == nil {
+		return job, err
+	}
+	switch job.Status {
+	case jobStatusAwaitingApproval:
+		w.once(jobID+"/approval", fmt.Sprintf(
+			"Job %s is waiting for approval. Approve it in the console at %s; this command "+
+				"continues by itself once it is approved, and the job is not lost if you stop waiting.",
+			jobID, WebOrigin()))
+	case string(types.JobStatusQueued):
+		first, seen := w.since[jobID]
+		if !seen {
+			w.since[jobID] = w.now()
+			break
+		}
+		if w.now().Sub(first) >= queuedNoticeAfter {
+			w.once(jobID+"/queued", fmt.Sprintf(
+				"Job %s has been queued for %s and no runner has claimed it yet. `alethia runner list` "+
+					"shows what is online. The job keeps its place: stop waiting with Ctrl+C and follow "+
+					"it later with `alethia jobs logs %s --follow`.",
+				jobID, queuedNoticeAfter, jobID))
+		}
+	}
+	return job, nil
+}
+
+// once writes msg as one progress line the first time key is seen.
+func (w *deployWatcher) once(key, msg string) {
+	if w.said[key] {
+		return
+	}
+	w.said[key] = true
+	w.p.Progress(msg)
+}
+
+// ── the manifest ──────────────────────────────────────────────────────────────────────────
+
+// authorManifest writes the alethia.yaml `up` is about to apply, and returns what it wrote.
 //
 // The values come through the SAME resolver every other command uses — flag, environment, manifest
 // (there is none yet), form, default — so `up --no-input --project x --region y --cloud-account z`
 // authors a file without a terminal, which is the contract that makes this scriptable at all.
 //
 // addons are written into the first environment; `init --addon` passes them and `up` passes none.
+// It prints nothing: `up` reports the file as a step and `init` reports it as its result.
 func authorManifest(
 	c applyClient,
 	token string,
-	out io.Writer,
-	format, path string,
+	path string,
 	values spec.Values,
 	addons ...manifest.Addon,
-) error {
+) (*manifest.Manifest, error) {
 	name, region, account := values.Get("project"), values.Get("region"), values.Get("account")
 	// The node shape is checked FIRST, before any question: a malformed or doubled shape is a
 	// mistake in the command line, and finding out after five answers is worse than before them.
 	shape, err := nodeShapeFrom(values.Get(fieldKeyInstanceType), values.Get(fieldKeyNodeSize))
 	if err != nil {
-		return err
+		return nil, firstRunErr(clierr.CodeInvalidFlag, err, "")
 	}
 	if canPromptForm() {
 		if name == "" {
 			if name, err = promptProjectName(); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		if region == "" {
 			if region, err = promptRegion(); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		if account == "" {
 			if account, err = promptCloudAccountLabel(c, token); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
@@ -294,7 +672,11 @@ func authorManifest(
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("%s does not exist and cannot be written without %v (or a terminal to ask on)", path, missing)
+		e := clierr.New(clierr.CodeInputRequired, fmt.Sprintf(
+			"%s does not exist and cannot be written without %s, and there is no terminal to ask on",
+			path, strings.Join(missing, ", ")))
+		e.Hint = "pass " + strings.Join(missing, ", ") + ", or run this command on a terminal"
+		return nil, e
 	}
 
 	// The matrix is the one thing a flag cannot say — it is a list of records. On a terminal it is
@@ -310,7 +692,7 @@ func authorManifest(
 			"Otherwise the file declares one %s environment, and `alethia project env add` is how a second arrives",
 			values.Get("stage")))
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if len(asked) > 0 {
 			environments = asked
@@ -325,10 +707,9 @@ func authorManifest(
 		m.Environments[0].Addons = addons
 	}
 	if err := manifest.Write(path, m, false); err != nil {
-		return err
+		return nil, err
 	}
-	say(out, format, fmt.Sprintf("%s Wrote %s", ui.SymbolSuccess, path))
-	return nil
+	return m, nil
 }
 
 // promptCloudAccountLabel asks which connected account to use and returns its LABEL, so what lands
@@ -353,14 +734,6 @@ func promptCloudAccountLabel(c applyClient, token string) (string, error) {
 		}
 	}
 	return id, nil
-}
-
-// say writes a progress line on the human output only — prose in a `--output json` stream corrupts
-// the document the caller is piping into jq.
-func say(out io.Writer, format, line string) {
-	if format == ui.FormatTable {
-		fmt.Fprintln(out, line)
-	}
 }
 
 func init() {
