@@ -111,6 +111,58 @@ alethia init --no-input --web-origin https://alethia.internal.example.com
 directly) when you run a **self-hosted** console or a **local dev** stack.
 </Callout>
 
+## Output and exit codes
+
+`init` writes its result on stdout and everything else on stderr: the steps it skipped, the
+saved URL, and the next command. The result for a person is one line:
+
+```
+✓ Wrote alethia.yaml
+```
+
+With `--output json` the result is one document. It has the same shape as the result of every
+other command that changes something:
+
+```bash
+alethia init --no-input --output json --project boutique --region nbg1 --cloud-account prod-account
+```
+
+```json
+{
+  "id": "alethia.yaml",
+  "kind": "manifest",
+  "action": "created",
+  "job": null,
+  "dry_run": false,
+  "object": {
+    "web_origin": "https://alethialabs.io",
+    "manifest": "alethia.yaml",
+    "project": "boutique",
+    "region": "nbg1",
+    "cloud_account": "prod-account",
+    "environments": ["development"],
+    "addons": []
+  }
+}
+```
+
+`action` is `created` when `init` wrote the manifest and `unchanged` when the file was already
+there. With `--skip-manifest`, `kind` is `cli_config`, `id` is the control-plane URL, and
+`action` is `updated`.
+
+The sign-in prints a device code on stdout. For that reason `--output json` does not run the
+sign-in. Sign in first with `alethia login`, or set `ALETHIA_TOKEN`.
+
+When `init` stops, it writes the reason and the next step on stderr, and nothing on stdout:
+
+| Exit | When | Next step |
+| --- | --- | --- |
+| `4` | `--output json` on a machine that is not signed in, or a sign-in that did not complete | Run `alethia login` |
+| `6` | `--cloud-account` names an account that the organization does not have | Use a label that the message lists |
+| `7` | No cloud account is connected | Run the `alethia connector` command that the message names, then run `init` again |
+| `8` | `--web-origin` is not a URL, or an `--addon` value is malformed or not in the catalog | Correct the flag |
+| `9` | There is no terminal, and `--project`, `--region` or `--cloud-account` is missing | Pass the flags that the message names |
+
 ## How the control-plane URL resolves
 
 The CLI resolves the origin in this precedence — highest first:
