@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -20,47 +19,57 @@ import (
 
 var projectListColumns = []string{"Project", "Env", "Status", "Provider", "Region", "Cost", "Updated"}
 
+// noProjectsNote is what an empty project list says: there is nothing here, and these are the two
+// ways to make one.
+const noProjectsNote = "No projects yet. Create one with `alethia up` (from nothing to a running project) or `alethia project create`."
+
 var listProjectsCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all projects",
+	Short: "List the projects in the active organization",
+	Long: `List every project in the active organization, with its stage, status, cloud, region and estimated monthly cost.
+
+Use it to find a project's name before another command, or to see what exists. On a terminal the
+list is a table you can move through; with --output json or csv, or when piped, it is the plain
+records.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-
-		var configs []types.ConfigurationSummary
-
-		runSpinner("Fetching projects...", func() {
-			configs, err = api.NewClient(token).GetConfigurations()
-		})
-
-		if err != nil {
-			failf("Failed to fetch projects: %v", err)
-		}
-
-		if interactiveTable(cmd) {
-			if len(configs) == 0 {
-				ui.Muted("No projects found. Create one with `alethia project create`.")
-				return
-			}
-			// ui.ShowTable, like every other list in the CLI. This was the last list command
-			// building its own bubbletea program: seven hardcoded column widths, its own
-			// tea.NewProgram call, and a sort column named "project" where the header says
-			// "Project" — so the one table a user is most likely to see first was the one
-			// that did not size its columns to its contents. The shared entry point measures
-			// them, truncates at the shared MaxColWidth, and sorts by the first column's real
-			// title.
-			if err := ui.ShowTable(projectListColumns, projectRows(configs, ui.FormatTable), "projects"); err != nil {
-				failf("Table error: %v", err)
-			}
-			return
-		}
-
-		if err := renderProjects(os.Stdout, outputFormat(cmd), configs); err != nil {
+		if err := runProjectList(cmd); err != nil {
 			fail(err)
 		}
 	},
+}
+
+// runProjectList fetches the projects and shows them: the interactive table on a terminal, the
+// rendered records otherwise.
+func runProjectList(cmd *cobra.Command) error {
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+
+	var configs []types.ConfigurationSummary
+	runSpinner("Fetching projects...", func() {
+		configs, err = api.NewClient(token).GetConfigurations()
+	})
+	if err != nil {
+		return fmt.Errorf("failed to fetch projects: %w", err)
+	}
+
+	if interactiveTable(cmd) && len(configs) > 0 {
+		// ui.ShowTable, like every other list in the CLI: it measures the columns to their
+		// contents, truncates at the shared MaxColWidth, and sorts by the first column's title.
+		err := ui.ShowTable(projectListColumns, projectRows(configs, ui.FormatTable), "projects")
+		if err != nil {
+			err = fmt.Errorf("show the project table: %w", err)
+		}
+		return err
+	}
+	format := outputFormat(cmd)
+	// An empty list has no result to put on stdout: the empty state is said on stderr.
+	if len(configs) == 0 && emptyListNote(printer, format, noProjectsNote) {
+		return nil
+	}
+	return renderProjects(printer.Out, format, configs)
 }
 
 // projectRows projects each configuration summary into a plain table row.
@@ -121,16 +130,28 @@ func projectRows(configs []types.ConfigurationSummary, outFmt string) [][]string
 	return rows
 }
 
-// renderProjects writes the project list to out in the requested format.
+// renderProjects writes the project list to out in the requested format. Handed an empty list in
+// the table format it writes the empty state itself, for a caller that has one writer; the command
+// says it on stderr before it gets here.
 func renderProjects(out io.Writer, format string, configs []types.ConfigurationSummary) error {
 	if len(configs) == 0 && format == ui.FormatTable {
-		fmt.Fprintln(out, ui.MutedStyle.Render("No projects found. Create one through Alethia."))
+		fmt.Fprintln(out, ui.MutedStyle.Render(noProjectsNote))
 		return nil
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: projectListColumns,
 		Rows:    projectRows(configs, format),
 	}, configs)
+}
+
+// emptyListNote writes the empty state of a list on stderr, for the table format only: json and
+// csv say "nothing" with an empty document, and a sentence in one would break its parser.
+func emptyListNote(p *Printer, format, note string) bool {
+	if format != ui.FormatTable {
+		return false
+	}
+	p.Note(note)
+	return true
 }
 
 func init() {

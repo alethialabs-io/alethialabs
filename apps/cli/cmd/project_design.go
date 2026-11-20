@@ -5,11 +5,13 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/spf13/cobra"
@@ -27,7 +29,7 @@ var (
 var projectDesignCmd = &cobra.Command{
 	Use:   "design",
 	Short: "Apply a whole environment design document",
-	Long: `The declarative counterpart to "project component add".
+	Long: `Work with an environment's design as one document: the declarative counterpart to "project component add".
 
 The imperative commands are what you narrate one step at a time; a design document is what a
 repository commits and CI replays. Both write the same tables.
@@ -43,11 +45,17 @@ plan REMOVES a component confirms first, and needs --yes under --no-input.`,
 var projectDesignApplyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply a design document to an environment",
-	Long: `Apply a design document to one environment.
+	Long: `Make one environment's components match a design document: components the document adds are created, changed ones are updated, and ones it no longer lists are removed.
 
-The gate is on the PLAN, not the invocation: an apply that only adds or updates runs
-unprompted — a design document is what a repository commits and CI replays — while one whose
-plan removes a component confirms first, and requires --yes with prompting disabled.`,
+Use it when the design lives in a file, for example one a repository commits and CI replays.
+--dry-run prints the changes and writes nothing; --stage puts the change in the review tray
+instead of applying it. The change edits the design; it reaches your cloud account on the next
+"alethia project deploy".
+
+The confirmation depends on the PLAN, not the invocation: an apply that only adds or updates
+runs unprompted, while one whose plan removes a component confirms first, and requires --yes
+when nothing can ask (exit 9 without it).`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -69,7 +77,8 @@ plan removes a component confirms first, and requires --yes with prompting disab
 			fail(err)
 		}
 		if designApplyDryRun && designApplyStage {
-			failf("--dry-run and --stage are mutually exclusive: one writes nothing, the other writes to the review tray")
+			fail(refusal(clierr.CodeInvalidUsage, "",
+				"--dry-run and --stage are mutually exclusive: one writes nothing, the other writes to the review tray"))
 		}
 		params := api.ApplyDesignParams{
 			Project: project, Env: env, Document: doc,
@@ -82,7 +91,7 @@ plan removes a component confirms first, and requires --yes with prompting disab
 		// confirmation in front of either would be asking about something that has not
 		// happened yet and is not about to.
 		if !designApplyDryRun && !designApplyStage {
-			gate, err := designApplyGate(client, os.Stdout, params, designApplyYes)
+			gate, err := designApplyGate(client, printer.Err, params, designApplyYes)
 			if err != nil {
 				fail(err)
 			}
@@ -91,8 +100,8 @@ plan removes a component confirms first, and requires --yes with prompting disab
 			}
 		}
 
-		if err := runDesignApply(client, os.Stdout, params); err != nil {
-			failf("Failed to apply the design: %v", err)
+		if err := runDesignApply(client, printerFor(outputFormat(cmd)), params); err != nil {
+			fail(fmt.Errorf("failed to apply the design: %w", err))
 		}
 	},
 }
@@ -133,7 +142,8 @@ const (
 )
 
 // designApplyGate decides whether a real apply may proceed, by asking the server what the
-// apply would do and gating on the DELETE subset of the answer.
+// apply would do and gating on the DELETE subset of the answer. What it says about the plan is
+// written to out, which the command points at stderr: it is said about the run, not its result.
 //
 // FAILS CLOSED when the preflight cannot be read. A preflight that errors leaves us unable to
 // say the apply is non-destructive, and the safe reading of "unknown" for an irreversible
@@ -171,7 +181,7 @@ func designApplyGate(c apiClient, out io.Writer, p api.ApplyDesignParams, yes bo
 		return designApplyDeclined, errDesignApplyWouldDelete(deletes)
 	}
 	if !confirmDestructive(yes, "Apply a design that REMOVES components?",
-		describeDeletions(deletes)+" Other environments keep theirs; the cloud resources go on the next plan + apply.") {
+		describeDeletions(deletes)+" Other environments keep theirs; the cloud resources go on the next deploy.") {
 		return designApplyDeclined, nil
 	}
 	return designApplyProceed, nil
@@ -223,14 +233,16 @@ func describeDeletions(deletes []api.DesignChange) string {
 	return "Removes " + strings.Join(names, ", ") + " from this environment."
 }
 
-// errDesignApplyWouldDelete is the scripted refusal.
+// errDesignApplyWouldDelete is the scripted refusal. It is a confirmation that nobody could give,
+// so it exits with the input-required code like every other unconfirmed destructive command.
 //
 // It names --yes AND why the flag is required for THIS apply, because those are two different
 // facts and a pipeline author needs the second one. Reading only "this command is destructive,
 // pass --yes" leads to adding the flag permanently, which converts every future replay of that
 // pipeline into one that may remove components — the opposite of what the ruling is for.
 func errDesignApplyWouldDelete(deletes []api.DesignChange) error {
-	return fmt.Errorf(
+	return refusal(clierr.CodeConfirmationRequired,
+		"re-run with --dry-run to read the plan, then pass --yes if the removals are intended",
 		"this apply would DELETE %d component(s) and interactive prompts are disabled "+
 			"(--no-input, or stdin is not a terminal): pass --yes to confirm.\n"+
 			"  --yes is required because THIS PLAN removes components, not because `design apply` "+
@@ -240,8 +252,12 @@ func errDesignApplyWouldDelete(deletes []api.DesignChange) error {
 		len(deletes))
 }
 
-// errDesignPreflightUnreadable is the fail-closed refusal.
+// errDesignPreflightUnreadable is the fail-closed refusal. It keeps the class of whatever stopped
+// the check, so an unreachable control plane still exits as unavailable.
 func errDesignPreflightUnreadable(cause error) error {
+	if cause == nil {
+		cause = errors.New("the server returned no plan")
+	}
 	return fmt.Errorf(
 		"could not check what this apply would change, so it is refused rather than run blind: %w.\n"+
 			"  An apply can remove components, and this command only prompts when the plan says it "+
@@ -268,7 +284,8 @@ func promptDesignFile() (string, error) {
 // schema, and a second opinion here could disagree with the one that decides.
 func readDesignDocument(path string, stdin io.Reader) (json.RawMessage, error) {
 	if path == "" {
-		return nil, fmt.Errorf("-f is required (a path, or - for stdin)")
+		return nil, refusal(clierr.CodeInputRequired, "alethia config export",
+			"-f is required (a path, or - for stdin)")
 	}
 	var raw []byte
 	var err error
@@ -278,42 +295,71 @@ func readDesignDocument(path string, stdin io.Reader) (json.RawMessage, error) {
 		raw, err = os.ReadFile(path)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read the design document: %w", err)
+		return nil, clierr.Wrap(clierr.CodeInvalidFlag, fmt.Errorf("read the design document: %w", err))
 	}
 	if !json.Valid(raw) {
-		return nil, fmt.Errorf("%s is not valid JSON — `alethia config export` emits the shape this expects", path)
+		return nil, refusal(clierr.CodeValidationFailed, "alethia config export",
+			"%s is not valid JSON — `alethia config export` emits the shape this expects", path)
 	}
 	return json.RawMessage(raw), nil
 }
 
-// runDesignApply applies the document and reports what happened. On a dry run it prints the plan, which
-// is the whole point of the mode: nothing was written, so the rows ARE the output.
-func runDesignApply(c apiClient, out io.Writer, p api.ApplyDesignParams) error {
-	if len(p.Document) == 0 {
-		return fmt.Errorf("the design document is empty")
+// runDesignApply applies the document and reports what happened, as one result: the project, what
+// was done to its design, and the changes. On a dry run nothing was written, so the changes ARE
+// the output.
+func runDesignApply(c apiClient, p *Printer, params api.ApplyDesignParams) error {
+	if len(params.Document) == 0 {
+		return refusal(clierr.CodeValidationFailed, "", "the design document is empty")
 	}
-	res, err := c.ApplyDesign(p)
+	res, err := c.ApplyDesign(params)
 	if err != nil {
 		return err
 	}
 	if res == nil {
-		return fmt.Errorf("the server returned no result")
+		return refusal(clierr.CodeInternal, "", "the server returned no result")
 	}
+	result := MutationResult{
+		ID: params.Project, Kind: "design", Action: designAction(res), DryRun: res.Mode == designModeDryRun,
+		Object: res,
+	}
+	return p.Result(result, func(w io.Writer) { renderDesignResult(w, res, params.Env) })
+}
 
+// The modes a design apply reports. They are the route's own words.
+const (
+	designModeDryRun = "dry-run"
+	designModeStaged = "staged"
+)
+
+// designAction is what a design apply did to the design: nothing when there was nothing to
+// change, queued for review when it was staged, updated otherwise. A dry run reports what the
+// apply would do.
+func designAction(res *api.DesignApplyResult) ResultAction {
+	switch {
+	case res.Mode == designModeStaged:
+		return ResultQueued
+	case len(res.Changes) == 0:
+		return ResultUnchanged
+	}
+	return ResultUpdated
+}
+
+// renderDesignResult writes a design apply's result for a person.
+func renderDesignResult(out io.Writer, res *api.DesignApplyResult, env string) {
 	switch res.Mode {
-	case "dry-run":
+	case designModeDryRun:
 		if len(res.Changes) == 0 {
 			fmt.Fprintln(out, ui.FormatSuccess("No changes — the environment already matches this document"))
-			return nil
+			return
 		}
-		fmt.Fprintf(out, "%d change(s) would be made%s:\n", len(res.Changes), envSuffix(p.Env))
+		fmt.Fprintf(out, "%d change(s) would be made%s:\n", len(res.Changes), envSuffix(env))
 		printDesignChanges(out, res.Changes)
 		fmt.Fprintln(out, ui.MutedStyle.Render("Nothing was written. Re-run without --dry-run to apply."))
-	case "staged":
-		fmt.Fprintln(out, ui.FormatSuccess("Staged the design"+envSuffix(p.Env)))
-		fmt.Fprintln(out, ui.MutedStyle.Render("Review and apply it from the staged-changes tray."))
+	case designModeStaged:
+		fmt.Fprintln(out, ui.FormatSuccess("Staged the design"+envSuffix(env)))
+		fmt.Fprintln(out, ui.MutedStyle.Render("Review and apply it from the staged-changes tray in the console."))
 	default:
-		fmt.Fprintln(out, ui.FormatSuccess("Applied the design"+envSuffix(p.Env)))
+		fmt.Fprintln(out, ui.FormatSuccess("Applied the design"+envSuffix(env)))
 		// The changes it MADE, not only the ones a dry run would have made.
 		//
 		// An apply is the one mode that can DELETE a component — a kind the document omits is
@@ -325,9 +371,8 @@ func runDesignApply(c apiClient, out io.Writer, p api.ApplyDesignParams) error {
 		// what neither can close on its own. A deletion that appears here and not in the gate's
 		// list is the drift that window allows, and it is only visible because both are printed.
 		printDesignChanges(out, res.Changes)
-		fmt.Fprintln(out, ui.MutedStyle.Render("It reaches the cloud on the next plan + apply."))
+		fmt.Fprintln(out, ui.MutedStyle.Render("It reaches the cloud on the next `alethia project deploy`."))
 	}
-	return nil
 }
 
 // printDesignChanges writes one row per component change, in the order the server reported.
@@ -343,12 +388,12 @@ func printDesignChanges(out io.Writer, changes []api.DesignChange) {
 
 func init() {
 	projectDesignApplyCmd.Flags().StringVarP(&designApplyFile, "file", "f", "", "Design document path, or - for stdin (asked for on a terminal when omitted)")
-	projectDesignApplyCmd.Flags().BoolVar(&designApplyDryRun, "dry-run", false, "Print the changes that would be made and write nothing")
+	projectDesignApplyCmd.Flags().BoolVar(&designApplyDryRun, "dry-run", false, "Print the changes that would be made and write nothing (the control plane checks the document)")
 	projectDesignApplyCmd.Flags().BoolVar(&designApplyStage, "stage", false, "Stage the change for review instead of applying it")
 	// The standard opt-in spelling, so this reads like every other command that can destroy —
 	// even though, unlike them, it is consulted only when the PLAN removes something.
 	addYesFlag(projectDesignApplyCmd, &designApplyYes)
-	projectDesignCmd.PersistentFlags().StringP("project", "p", "", "Project name or id")
+	projectDesignCmd.PersistentFlags().StringP("project", "p", "", "Project name or id (asked for on a terminal when omitted)")
 	projectDesignCmd.PersistentFlags().StringP("env", "e", "", "Environment id, name or stage — an exact name wins over a stage (default: the project's default environment)")
 	projectDesignCmd.AddCommand(projectDesignApplyCmd)
 	projectCmd.AddCommand(projectDesignCmd)

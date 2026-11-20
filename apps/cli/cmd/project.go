@@ -4,11 +4,13 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -42,10 +44,13 @@ import (
 
 var projectCmd = &cobra.Command{
 	Use:   "project",
-	Short: "Manage projects (infrastructure configurations)",
-	Long: `Projects are infrastructure configurations.
+	Short: "Create, inspect, deploy and destroy projects",
+	Long: `A project is one application's infrastructure: its environments, the components each
+environment is built from, and the jobs that build them in your cloud account.
 
-Use the subcommands to list, view, plan, apply, or destroy project infrastructure.
+Use this group to work on one project at a time: create it, add environments and components,
+preview and deploy the changes, read it back, and destroy it. To create and deploy a whole
+project from an alethia.yaml file in one step, use "alethia apply" instead.
 
 Every reference takes a NAME: --project accepts a project's name or its id, and
 --cloud-account accepts a cloud account's label or its id. Omit one on a terminal and
@@ -110,7 +115,8 @@ func validateOneOf(flag, value string, allowed []string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("invalid %s %q (want %s)", flag, value, oneOf(allowed))
+	return clierr.New(clierr.CodeInvalidFlag,
+		fmt.Sprintf("invalid %s %q (want %s)", flag, value, oneOf(allowed)))
 }
 
 // projectLister is the slice of the API client the project resolver needs, kept narrow so
@@ -160,9 +166,10 @@ func resolveProjectID(c projectLister, ref string) (string, error) {
 	case 1:
 		return matches[0].ID, nil
 	case 0:
-		return "", fmt.Errorf("project %q not found (have: %s)", ref, knownProjectNames(configs))
+		return "", refusal(clierr.CodeNotFound, "alethia project list",
+			"project %q not found (have: %s)", ref, knownProjectNames(configs))
 	default:
-		return "", fmt.Errorf(
+		return "", refusal(clierr.CodeValidationFailed, "alethia project list --output json",
 			"project name %q is ambiguous — %d projects share it (%s). Pass the id with --project instead",
 			ref, len(matches), joinIDs(matches))
 	}
@@ -193,11 +200,13 @@ func resolveProjectName(c projectLister, ref string) (string, error) {
 			continue
 		}
 		if cfg.ProjectName == "" {
-			return "", fmt.Errorf("project %q has no name to build a console link from", ref)
+			return "", refusal(clierr.CodeConflict, "",
+				"project %q has no name to build a console link from", ref)
 		}
 		return cfg.ProjectName, nil
 	}
-	return "", fmt.Errorf("project id %q not found (have: %s)", ref, knownProjectNames(configs))
+	return "", refusal(clierr.CodeNotFound, "alethia project list",
+		"project id %q not found (have: %s)", ref, knownProjectNames(configs))
 }
 
 // knownProjectNames renders the project names a resolution failure should offer, sorted and
@@ -213,7 +222,7 @@ func knownProjectNames(configs []types.ConfigurationSummary) string {
 		names = append(names, c.ProjectName)
 	}
 	if len(names) == 0 {
-		return "none — create one with `alethia project create`"
+		return "none — create one with `alethia up` or `alethia project create`"
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
@@ -284,14 +293,15 @@ func matchCloudIdentity(identities []api.CloudIdentity, ref string) (api.CloudId
 	case 1:
 		return matches[0], nil
 	case 0:
-		return api.CloudIdentity{}, fmt.Errorf("cloud account %q not found (have: %s)", ref, knownIdentityLabels(identities))
+		return api.CloudIdentity{}, refusal(clierr.CodeNotFound, "alethia connector list",
+			"cloud account %q not found (have: %s)", ref, knownIdentityLabels(identities))
 	default:
 		ids := make([]string, len(matches))
 		for i, m := range matches {
 			ids[i] = m.ID
 		}
 		sort.Strings(ids)
-		return api.CloudIdentity{}, fmt.Errorf(
+		return api.CloudIdentity{}, refusal(clierr.CodeValidationFailed, "alethia connector list --output json",
 			"cloud account label %q is ambiguous — %d accounts share it (%s). Pass the id instead",
 			ref, len(matches), strings.Join(ids, ", "))
 	}
@@ -300,7 +310,7 @@ func matchCloudIdentity(identities []api.CloudIdentity, ref string) (api.CloudId
 // knownIdentityLabels renders the cloud-account labels a resolution failure should offer.
 func knownIdentityLabels(identities []api.CloudIdentity) string {
 	if len(identities) == 0 {
-		return "none — link one with `alethia connector add`"
+		return "none — connect one first with " + connectCommands()
 	}
 	labels := make([]string, 0, len(identities))
 	for _, id := range identities {
@@ -352,7 +362,7 @@ func projectsForPicker(token string) ([]types.ConfigurationSummary, error) {
 		return nil, fmt.Errorf("failed to fetch projects: %w", err)
 	}
 	if len(configs) == 0 {
-		return nil, fmt.Errorf("no projects found — create one with `alethia project create`")
+		return nil, errNoProjects()
 	}
 	return configs, nil
 }
@@ -408,7 +418,8 @@ func promptProjectNameRef(token string) (string, error) {
 		}
 	}
 	if name == "" {
-		return "", fmt.Errorf("that project has no name, and this command looks a project up by name")
+		return "", refusal(clierr.CodeConflict, "",
+			"that project has no name, and this command looks a project up by name")
 	}
 	shared := 0
 	for _, c := range configs {
@@ -417,7 +428,7 @@ func promptProjectNameRef(token string) (string, error) {
 		}
 	}
 	if shared > 1 {
-		return "", fmt.Errorf(
+		return "", refusal(clierr.CodeConflict, "alethia project list --output json",
 			"%d projects are named %q and this command looks a project up by name, which would read whichever is older — rename one to tell them apart",
 			shared, name)
 	}
@@ -464,7 +475,8 @@ func promptProjectRef(token string) (string, error) {
 		// case: a listed project with neither a name nor an id resolves to no reference at
 		// all, and sending an empty --project asks the server to resolve nothing, which it
 		// reports as a confusing 404 against the whole project.
-		return "", fmt.Errorf("that project has neither a name nor an id to select it by")
+		return "", refusal(clierr.CodeConflict, "",
+			"that project has neither a name nor an id to select it by")
 	}
 	return ref, nil
 }
@@ -492,7 +504,8 @@ func jobProjectFlags(cmd *cobra.Command, ref, id *string, verb string) {
 // one would make the wrong belief survive until it had torn down the other project.
 func projectIDForJob(c projectLister, token, ref, id string) (string, error) {
 	if ref != "" && id != "" {
-		return "", fmt.Errorf("--project and --project-id both name the project: pass one (--project takes the name or the id)")
+		return "", refusal(clierr.CodeInvalidUsage, "",
+			"--project and --project-id both name the project: pass one (--project takes the name or the id)")
 	}
 	if ref != "" {
 		return resolveProjectID(c, ref)
@@ -500,7 +513,91 @@ func projectIDForJob(c projectLister, token, ref, id string) (string, error) {
 	if id != "" {
 		return id, nil
 	}
-	return selectProject(token)
+	id, err := selectProject(token)
+	return id, flagRequired(err, "--project", "alethia project list")
+}
+
+// ── refusals ────────────────────────────────────────────────────────────────────────────
+//
+// Every failure in this group leaves through fail, and fail reads a class off the error. A
+// refusal the CLI itself decides — a name that matches nothing, a flag nobody passed, a
+// confirmation nobody can give — is built here, so it carries the class that owns its exit code
+// and the next step as a hint. An error the control plane returned keeps the class it arrived
+// with: wrap it with %w and never flatten it to a string.
+
+// refusal builds a classified refusal with its next step. hint may be empty.
+func refusal(code, hint, format string, args ...any) *clierr.Error {
+	e := clierr.New(code, fmt.Sprintf(format, args...))
+	e.Hint = hint
+	return e
+}
+
+// flagRequired turns "nothing can ask for this" into the refusal that names the flag which answers
+// it. Any other error — a failed fetch, a dismissed form — is returned as it is.
+//
+// A picker that cannot open is not a failure of the picker: the caller left out a value and there
+// is nobody to ask. That is the input-required row of the exit table (9) — the same invocation on
+// a terminal would have asked — and the message names what to pass.
+func flagRequired(err error, flag, hint string) error {
+	if !errors.Is(err, errNoInput) && !errors.Is(err, errNoTTY) {
+		return err
+	}
+	e := refusal(clierr.CodeInputRequired, hint,
+		"%s is required here: nothing can ask for it (--no-input, stdin is not a terminal, or stderr is redirected)", flag)
+	e.Cause = err
+	return e
+}
+
+// errNoProjects is the refusal for an organization with no project to pick from. It names both
+// ways to make one.
+func errNoProjects() error {
+	return refusal(clierr.CodeNotFound, "alethia up",
+		"no projects found — create one with `alethia up` (from nothing to a running project) or `alethia project create`")
+}
+
+// connectCommands renders the command that connects a cloud account, once per offered cloud:
+// `alethia connector aws|gcp|azure|hetzner`. The list is the catalog's offered set, so a cloud
+// that is not offered is never suggested.
+func connectCommands() string {
+	clouds := EnabledCloudProviders()
+	slugs := make([]string, len(clouds))
+	for i, c := range clouds {
+		slugs[i] = string(c)
+	}
+	return "`alethia connector " + oneOf(slugs) + "`"
+}
+
+// ── confirmations ───────────────────────────────────────────────────────────────────────
+
+// confirmTypedName asks the person to type name back and reports whether they did. It is the
+// confirmation for the one thing in this group that cannot be undone: a yes/no can be answered
+// by habit, and a name has to be read first.
+//
+// It is a variable for the reason confirm is one: no stub of runHuhForm can supply an answer, so
+// without the seam the confirmed arm of `project destroy` is unreachable in a test.
+var confirmTypedName = func(title, description, name string) bool {
+	typed, err := askLine(title, description+"\nType "+name+" to confirm.")
+	if err != nil || typed != name {
+		printer.Note("Cancelled: the name was not typed, so nothing was destroyed.")
+		return false
+	}
+	return true
+}
+
+// confirmDestructiveByName reports whether a destructive action may proceed. yes is the command's
+// --yes flag. Without it, and with nobody to ask, the answer is the standard refusal; on a
+// terminal the person types the name of the thing that is about to go.
+//
+// name is a function because finding the name can cost a request, and it is only worth making
+// when somebody is about to type it.
+func confirmDestructiveByName(yes bool, title, description string, name func() string) (bool, error) {
+	if yes {
+		return true, nil
+	}
+	if !canPromptForm() {
+		return false, errConfirmRequiresYes
+	}
+	return confirmTypedName(title, description, name()), nil
 }
 
 // ── the question seams ──────────────────────────────────────────────────────────────────
