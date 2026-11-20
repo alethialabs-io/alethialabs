@@ -4,6 +4,7 @@
 import "server-only";
 
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { z } from "zod";
 import { getPdp } from "@/lib/authz";
 import type { Actor, BulkCheck, Decision } from "@/lib/authz/types";
 import { cliViewableProjectIds } from "@/lib/cli/project-access";
@@ -22,6 +23,7 @@ import {
 import { withActorScope } from "@/lib/db";
 import {
 	cloudIdentities,
+	jobs,
 	projectCaches,
 	projectCluster,
 	projectDatabases,
@@ -31,6 +33,7 @@ import {
 	projects,
 } from "@/lib/db/schema";
 import { type AssignedValue, assignmentsForKind } from "@/lib/queries/classification";
+import { type ClustersPage, clustersPage } from "@/lib/queries/clusters";
 import { managedClusterEnvJoin, managedClusterPredicate } from "@/lib/queries/usage-counts";
 import { query } from "@/lib/rpc/base";
 
@@ -106,6 +109,9 @@ export interface ClusterListItem extends ClusterData {
 	kubeconfig_download_note: string | null;
 	/** The classification chips on this cluster (empty without `org:view`). */
 	classification: AssignedValue[];
+	/** The id of the newest plan, deploy or destroy job of the owning environment that the viewer
+	 *  may see, or null — what "Last run failed" links to. */
+	last_job_id: string | null;
 }
 
 /**
@@ -337,15 +343,43 @@ async function clusterChips(actor: Actor, clusters: ClusterData[]): Promise<Map<
 }
 
 /**
+ * The newest plan, deploy or destroy job of each cluster's environment, keyed by environment id, in
+ * one read on the RLS-enforced app role: a job the viewer may not see is not linked. A failed read
+ * is no link for any cluster, never a failed page.
+ */
+async function lastRunJobs(actor: Actor, clusters: ClusterData[]): Promise<Map<string, string>> {
+	const envIds = [...new Set(clusters.map((c) => c.environment_id).filter((x): x is string => Boolean(x)))];
+	if (envIds.length === 0) return new Map();
+	const newest = sql<string | null>`(select ${jobs.id} from ${jobs} where ${jobs.environment_id} = ${projectEnvironments.id} and ${jobs.job_type} in ('PLAN', 'DEPLOY', 'DESTROY') order by ${jobs.created_at} desc limit 1)`;
+	let rows: { environment_id: string; job_id: string | null }[] = [];
+	try {
+		rows = await withActorScope(actor, async (tx) =>
+			tx
+				.select({ environment_id: projectEnvironments.id, job_id: newest })
+				.from(projectEnvironments)
+				.where(inArray(projectEnvironments.id, envIds)),
+		);
+	} catch {
+		// No link is the answer; the clusters themselves have been read.
+	}
+	const byEnv = new Map<string, string>();
+	for (const row of rows) {
+		if (row.job_id) byEnv.set(row.environment_id, row.job_id);
+	}
+	return byEnv;
+}
+
+/**
  * The Clusters page's read: every cluster under management, plus — so a card paints complete with no
  * request of its own (RUBRIC B1) — whether the viewer may download its kubeconfig and its
  * classification chips.
  */
 export async function readClusterList(actor: Actor): Promise<ClusterListItem[]> {
 	const clusters = await readClusters(actor);
-	const [downloadable, chips] = await Promise.all([
+	const [downloadable, chips, lastJobs] = await Promise.all([
 		downloadableClusters(actor, clusters),
 		clusterChips(actor, clusters),
+		lastRunJobs(actor, clusters),
 	]);
 	return clusters.map((c) => {
 		const permitted = downloadable.has(c.project_cluster.id);
@@ -361,15 +395,52 @@ export async function readClusterList(actor: Actor): Promise<ClusterListItem[]> 
 			kubeconfig_download_note:
 				permitted && refused && !missing ? KUBECONFIG_MINT_UNPROVISIONED_REASON : null,
 			classification: chips.get(c.project_cluster.id) ?? [],
+			last_job_id: c.environment_id ? (lastJobs.get(c.environment_id) ?? null) : null,
 		};
 	});
 }
 
+const values = z.array(z.string().min(1).max(200)).max(200).optional();
+
 /**
- * The clusters domain's reads (ADR 0005 D1, #6122). `list` serves `/~/clusters` and the project
- * drilldown's Clusters page (one org-wide key; the drilldown filters it to its project), resolved for
- * the actor the entry point bound from the request's ADDRESS — never the session's org.
+ * One page of the clusters list: the route's scope and the bar's filters. Normalized (trimmed,
+ * sorted, empty → absent) by the caller, so equal views are one query key.
+ */
+export const clustersPageInput = z.object({
+	/** The project a project route lists; absent on the org route. A SCOPE, never a filter. */
+	projectId: z.uuid().optional(),
+	search: z.string().max(200).optional(),
+	clouds: values,
+	statuses: values,
+	regions: values,
+});
+
+/** The validated shape of {@link clustersPageInput}. */
+export type ClustersPageInput = z.infer<typeof clustersPageInput>;
+
+/**
+ * The clusters list for `input`: the composed universe of {@link readClusterList}, resolved by
+ * `clustersPage` (lib/queries/clusters.ts) — the scope on the rows and the facets, the filters on
+ * the rows only. A project id of another organization, or of a project the viewer may not see,
+ * matches no row of the universe and so lists nothing.
+ */
+export async function readClustersPage(
+	actor: Actor,
+	input: ClustersPageInput = {},
+): Promise<ClustersPage<ClusterListItem>> {
+	const { projectId, ...filters } = input;
+	return clustersPage(await readClusterList(actor), filters, { projectId });
+}
+
+/**
+ * The clusters domain's reads (ADR 0005 D1, #6122), resolved for the actor the entry point bound
+ * from the request's ADDRESS — never the session's org. `page` serves `/~/clusters` and a project's
+ * Clusters page: the filter standard's server half, scoped by the route. `list` is the whole
+ * universe in one answer; no console page reads it since both routes moved to `page`.
  */
 export const clustersRouter = {
 	list: query.handler(({ context }) => readClusterList(context.actor)),
+	page: query
+		.input(clustersPageInput)
+		.handler(({ context, input }) => readClustersPage(context.actor, input)),
 };
