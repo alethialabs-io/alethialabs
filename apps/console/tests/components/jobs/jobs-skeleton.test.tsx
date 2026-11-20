@@ -47,7 +47,7 @@ const JOB = {
 
 beforeEach(() => {
 	page.current = {
-		data: { rows: [JOB], total: 1, facets: EMPTY_FACETS },
+		data: { rows: [JOB], matched: 1, total: 1, facets: EMPTY_FACETS },
 		error: null,
 		isError: false,
 		isPending: false,

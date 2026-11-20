@@ -25,7 +25,9 @@ vi.mock("next/navigation", () => ({
 	useParams: () => ({ org: "acme", id: JOB_ID }),
 	useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));
-vi.mock("@/hooks/use-job-log-stream", () => ({ useJobLogStream: () => ({ logs: [] }) }));
+vi.mock("@/hooks/use-job-log-stream", () => ({
+	useJobLogStream: () => ({ logs: [], state: null, reconnect: () => {}, complete: true }),
+}));
 vi.mock("@/components/runners/runner-select-popover", () => ({ RunnerSelectPopover: () => null }));
 
 import { JOB_DETAIL_SECTIONS } from "@/app/(private)/[org]/~/jobs/[id]/detail-column";
@@ -52,13 +54,15 @@ const BARE_JOB = {
 	error_message: null,
 	config_snapshot: null,
 	execution_metadata: null,
+	approval: null,
+	can: { cancel: true, rerun: true, deploy: true },
 };
 
 /** Renders the page over a cache already holding what the server prefetched. */
 function renderPage(job: Record<string, unknown>) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 	client.setQueryData(orpc.jobs.detail.queryKey({ input: { id: JOB_ID } }), job as never);
-	client.setQueryData(orpc.jobs.logsHead.queryKey({ input: { id: JOB_ID } }), { lines: [], lastId: 0 });
+	client.setQueryData(orpc.jobs.logsHead.queryKey({ input: { id: JOB_ID } }), { lines: [], lastId: 0, final: true });
 	return render(
 		<QueryClientProvider client={client}>
 			<JobDetail jobId={JOB_ID} column="mx-auto max-w-4xl" />

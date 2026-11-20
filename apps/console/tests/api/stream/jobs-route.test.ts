@@ -30,20 +30,38 @@ vi.mock("@/lib/realtime", () => ({
 import { getServiceDb } from "@/lib/db";
 
 /**
- * A drizzle-ish chain: the job lookup ends in `.limit()` → `jobRows`; the log backlog fetch ends
- * in `.orderBy()` → `[]`. Both are thenable so `await` resolves them.
+ * A drizzle-ish chain: every job lookup (the tenant guard's, then the stream's own status reads)
+ * ends in `.limit()` → `jobRows`; each log fetch ends in `.orderBy()` → the next of `logFetches`,
+ * and `[]` once they are spent. Both are thenable so `await` resolves them.
  */
-function mockDb(jobRows: unknown[]) {
+function mockDb(jobRows: unknown[], logFetches: unknown[][] = []) {
 	const db: Record<string, unknown> = {};
 	Object.assign(db, {
 		select: () => db,
 		from: () => db,
 		where: () => db,
 		limit: () => Promise.resolve(jobRows),
-		orderBy: () => Promise.resolve([]),
+		orderBy: () => Promise.resolve(logFetches.shift() ?? []),
 	});
 	vi.mocked(getServiceDb).mockReturnValue(db as never);
 }
+
+/** Opens the stream and reads its body to the end; resolves only if the route ends the stream itself. */
+async function streamToEnd(jobId: string): Promise<string> {
+	const { GET } = await import("@/app/api/stream/jobs/[id]/route");
+	const res = await GET(new Request(`https://console.local/api/stream/jobs/${jobId}`), {
+		params: Promise.resolve({ id: jobId }),
+	});
+	return res.text();
+}
+
+/** One log row as the stream reads it. */
+const logRow = (id: number) => ({
+	id,
+	log_chunk: `line ${id}`,
+	stream_type: "STDOUT",
+	created_at: new Date("2026-10-20T10:00:00.000Z"),
+});
 
 async function stream(jobId: string) {
 	const { GET } = await import("@/app/api/stream/jobs/[id]/route");
@@ -143,5 +161,90 @@ describe("GET /api/stream/jobs/[id] — job visibility follows project visibilit
 		mockDb([{ org_id: "org-other", project_id: "proj-x" }]);
 		expect((await stream("job-1")).status).toBe(404);
 		expect(isJobVisible).not.toHaveBeenCalled();
+	});
+});
+
+// #6818 (D-15): a finished job's stream is its remaining lines and then an end, not a connection
+// held open for ever. The reader stops on the `end` event and does not reconnect.
+describe("GET /api/stream/jobs/[id] — the stream ends when the job has", () => {
+	/** A job that finished long before the settle window: nothing can still be on its way. */
+	const FINISHED = { org_id: "org-1", status: "SUCCESS", completed_at: new Date("2026-01-01T00:00:00.000Z") };
+
+	it("sends a finished job's lines, then the end event, and closes", async () => {
+		mockDb([FINISHED], [[logRow(1), logRow(2)]]);
+		const body = await streamToEnd("job-1");
+		expect(body).toBe(
+			[
+				`id: 1\ndata: ${JSON.stringify(logRow(1))}\n\n`,
+				`id: 2\ndata: ${JSON.stringify(logRow(2))}\n\n`,
+				"event: end\ndata: {}\n\n",
+			].join(""),
+		);
+	});
+
+	it("the end event carries no id, so a reader's resume point stays on the last line", async () => {
+		mockDb([FINISHED], [[logRow(7)]]);
+		const body = await streamToEnd("job-1");
+		const endFrame = body.slice(body.indexOf("event: end"));
+		expect(endFrame).not.toContain("id:");
+	});
+
+	it("a finished job with no lines left is the end event alone", async () => {
+		mockDb([{ ...FINISHED, status: "CANCELLED" }]);
+		expect(await streamToEnd("job-1")).toBe("event: end\ndata: {}\n\n");
+	});
+
+	it("a job that has only just finished is read once more after the settle window, then ended", async () => {
+		const { GET } = await import("@/app/api/stream/jobs/[id]/route");
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+		try {
+			// Finished one second ago: its runner may still be shipping its last buffer. The wait
+			// is the settle window (five seconds) less the second already gone.
+			mockDb(
+				[{ org_id: "org-1", status: "FAILED", completed_at: new Date(Date.now() - 1_000) }],
+				[[logRow(1)], [logRow(2)]],
+			);
+			const res = await GET(new Request("https://console.local/api/stream/jobs/job-1"), {
+				params: Promise.resolve({ id: "job-1" }),
+			});
+			const reading = res.text();
+			let settled = false;
+			void reading.then(() => {
+				settled = true;
+			});
+			// Let the first pass run up to its wait.
+			for (let i = 0; i < 50 && vi.getTimerCount() === 0; i += 1) await vi.advanceTimersByTimeAsync(0);
+			expect(vi.getTimerCount()).toBe(1);
+
+			await vi.advanceTimersByTimeAsync(3_000);
+			expect(settled).toBe(false);
+			await vi.advanceTimersByTimeAsync(1_000);
+			// The line that arrived during the wait is in the stream, before the end.
+			expect(await reading).toBe(
+				[
+					`id: 1\ndata: ${JSON.stringify(logRow(1))}\n\n`,
+					`id: 2\ndata: ${JSON.stringify(logRow(2))}\n\n`,
+					"event: end\ndata: {}\n\n",
+				].join(""),
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("a running job's stream stays open: its backlog is sent and no end event follows", async () => {
+		mockDb([{ org_id: "org-1", status: "PROCESSING", completed_at: null }], [[logRow(1)]]);
+		const { GET } = await import("@/app/api/stream/jobs/[id]/route");
+		const ctrl = new AbortController();
+		const res = await GET(new Request("https://console.local/api/stream/jobs/job-1", { signal: ctrl.signal }), {
+			params: Promise.resolve({ id: "job-1" }),
+		});
+		const reader = res.body?.getReader();
+		const first = await reader?.read();
+		expect(new TextDecoder().decode(first?.value)).toBe(`id: 1\ndata: ${JSON.stringify(logRow(1))}\n\n`);
+		// Tear it down; the route closes the body for a client that has gone.
+		ctrl.abort();
+		const rest = await reader?.read();
+		expect(rest?.done).toBe(true);
 	});
 });

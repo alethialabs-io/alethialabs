@@ -176,6 +176,30 @@ export function readJobResult(job: { job_type: string; status: string; execution
 	return null;
 }
 
+// A DEPLOY's WARNINGS (`execution_metadata.gitops_status.manifest_warnings`): what the runner could
+// not do while it generated the manifests and went on without — a service it skipped, a binding
+// whose endpoint did not resolve, a credential it could not satisfy. The deploy can still succeed,
+// which is exactly why they have to be on the job: `SUCCESS` says the job ran, not that everything
+// asked for was deployed. Names only, no secret values (the Go `ManifestWarnings`).
+//
+// Only the two keys read here are validated; the rest of `gitops_status` is the Deploy tab's
+// (lib/gitops/deploy-status.ts). A payload that is not a list of strings reads as no warnings:
+// there is no sentence to show, and the raw metadata is one disclosure below on the same page.
+const deployWarningsSchema = z.object({
+	gitops_status: z.object({ manifest_warnings: z.array(z.string()).optional() }).optional(),
+});
+
+/**
+ * The warnings a DEPLOY job recorded, in the runner's order, blank entries dropped. Read for a
+ * deploy in ANY status — a failed deploy's warnings are often the reason. Empty for every other job.
+ */
+export function readDeployWarnings(job: { job_type: string; execution_metadata: unknown }): string[] {
+	if (job.job_type !== "DEPLOY") return [];
+	const parsed = deployWarningsSchema.safeParse(job.execution_metadata);
+	if (!parsed.success) return [];
+	return (parsed.data.gitops_status?.manifest_warnings ?? []).filter((warning) => warning.trim() !== "");
+}
+
 /** "1 resource" / "21 resources" — a count with its noun agreed. */
 export function countNoun(n: number, singular: string, plural = `${singular}s`): string {
 	return `${n} ${n === 1 ? singular : plural}`;

@@ -7,6 +7,7 @@ import { JOB_TYPES } from "@/lib/jobs/format";
 import type { JobsFacetOption } from "@/lib/rpc/procedures/jobs";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import type { useJobsFilters } from "@/lib/stores/use-jobs-filters";
+import { parseRangeFilter, rangeFilterLabel, rangeFromPick, rangeWindowValue } from "@/lib/query/range-filter";
 import { JOBS_DEFAULT_PRESET } from "@/lib/rpc/inputs/jobs";
 import { lookup } from "@/lib/typed-object";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
@@ -17,8 +18,8 @@ import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import { type DateRange, RANGE_PRESETS } from "@repo/ui/range";
 import { Activity, Boxes, Layers, Users, Wrench } from "lucide-react";
 
-/** The quick-range label the list opens on, and returns to on "Clear filters": the default preset's. */
-export const JOBS_DEFAULT_RANGE_LABEL =
+/** The quick-range label the list opens on, and returns to on a reset: the default preset's. */
+const JOBS_DEFAULT_RANGE_LABEL =
 	RANGE_PRESETS.find((p) => p.id === JOBS_DEFAULT_PRESET)?.label ?? "Last 12 months";
 
 const STATUS_LABELS = new Map(
@@ -65,12 +66,12 @@ interface JobsFilterBarProps {
 	onFilter: JobsFilterStore["set"];
 	/** Reset every store filter (the store's `reset`). */
 	onReset: JobsFilterStore["reset"];
+	/**
+	 * The window the two range controls show: `filters.range` resolved to dates by the caller, once,
+	 * so a preset's window does not move on every render (`jobsRangeWindow`). What a pick WRITES is
+	 * the `range` filter value — a preset's id, or an explicit window — through `onFilter`.
+	 */
 	range: DateRange;
-	rangeLabel: string;
-	/** A preset or typed range picked from the quick-range control, with its label. */
-	onQuickRange: (range: DateRange, label: string) => void;
-	/** A range picked from the calendar. */
-	onDateRange: (range: DateRange) => void;
 	/** Author options, already resolved against the org's members. */
 	authorOptions: ComboboxOption[];
 	authorsLoading: boolean;
@@ -81,7 +82,8 @@ interface JobsFilterBarProps {
 
 /**
  * The jobs list's filter bar — search, quick range, date range, then a combobox per facet: authors,
- * environments, projects (org list only), statuses, types.
+ * environments, projects (org list only), statuses, types. The range is one of the store's filters
+ * like the rest, so the bar's "Reset · N" counts it and clears it.
  *
  * ONE COMPONENT, TWO RENDERERS: `JobsClient` renders it live, and `JobsListSkeleton` renders it
  * inert with the defaults while the route prefetches (#6350). The bar WRAPS, and where it wraps is
@@ -97,9 +99,6 @@ export function JobsFilterBar({
 	onFilter,
 	onReset,
 	range,
-	rangeLabel,
-	onQuickRange,
-	onDateRange,
 	authorOptions,
 	authorsLoading,
 	facets,
@@ -123,8 +122,14 @@ export function JobsFilterBar({
 				ariaLabel="Search jobs"
 				className="w-[220px] max-w-[340px] flex-1"
 			/>
-			<QuickRangeFilter label={rangeLabel} value={range} onChange={onQuickRange} />
-			<DateRangeFilter value={range} onChange={onDateRange} />
+			{/* One choice, one label: a preset's name, or "Custom range" over explicit bounds — never a
+			    relative name over fixed dates. A preset is stored as its id, so its link stays relative. */}
+			<QuickRangeFilter
+				label={rangeFilterLabel(parseRangeFilter(filters.range), JOBS_DEFAULT_RANGE_LABEL)}
+				value={range}
+				onChange={(picked, label) => onFilter("range", rangeFromPick(picked, label))}
+			/>
+			<DateRangeFilter value={range} onChange={(picked) => onFilter("range", rangeWindowValue(picked))} />
 			<MultiCombobox
 				placeholder="All authors"
 				icon={Users}

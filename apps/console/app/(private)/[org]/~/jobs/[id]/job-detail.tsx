@@ -4,8 +4,10 @@
 
 import { applyPlan, cancelJob, rerunJob } from "@/app/server/actions/jobs";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
+import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { RegionError } from "@/components/errors/region-error";
-import { ClockSlot, JOB_TYPES, LiveDuration, RelativeTime } from "@/components/jobs/columns";
+import { RegionRefusal } from "@/components/errors/region-refusal";
+import { ClockSlot, JOB_TYPES, JobDuration, RelativeTime } from "@/components/jobs/columns";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 // `FactList`/`Fact` are the console's ONE label-and-value list. They live under `settings/usage`
 // because that is where they were first needed, and this page is their second consumer — which is
@@ -16,45 +18,39 @@ import { Fact, FactList } from "@/components/settings/usage/usage-primitives";
 import { useHydrated } from "@repo/ui/use-hydrated";
 import { useJobLogStream } from "@/hooks/use-job-log-stream";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { JOB_ACTION } from "@/lib/copy/vocabulary";
 import { type RerunRoute, rerunRouteOf } from "@/lib/jobs/operation";
 import { qk } from "@/lib/query/keys";
 import { orpc } from "@/lib/rpc/client";
 import type { JobDetail as JobDetailRow } from "@/lib/rpc/procedures/jobs";
-import { isDefinedError } from "@orpc/client";
-import { formatDate, formatDuration } from "@repo/format";
+import { readRefusalOf } from "@/lib/rpc/refusal";
+import { formatDate } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import {
 	Collapsible,
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from "@repo/ui/collapsible";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
 import { PageToolbar } from "@repo/ui/page-toolbar";
-import { ScrollArea } from "@repo/ui/scroll-area";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { StatusBadge } from "@repo/ui/status-badge";
+import { TooltipProvider } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
 import { type QueryKey, useQuery } from "@tanstack/react-query";
-import {
-	Ban,
-	ChevronRight,
-	Loader2,
-	Lock,
-	RefreshCw,
-	Rocket,
-	SearchX,
-	Terminal,
-	XCircle,
-} from "lucide-react";
+import { Ban, ChevronRight, Loader2, RefreshCw, Rocket, SearchX, XCircle } from "lucide-react";
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import JobDetailLoading from "./loading";
 import { JOB_DETAIL_SECTIONS, JOB_VIEWPORT_HEIGHT } from "./detail-column";
-import { JobOutcome } from "./job-outcome";
+import { JobApprovalNotice } from "./job-approval";
+import { JobLog } from "./job-log";
+import { DeployWarnings, JobOutcome } from "./job-outcome";
 
 /**
  * One collapsible block of the job's detail column — a real heading over a disclosure.
@@ -178,9 +174,14 @@ function rerunDescription(
  *
  * FIRST PAINT CARRIES THE JOB AND THE HEAD OF ITS LOG: `page.tsx` prefetches `jobs.detail` and
  * `jobs.logsHead` on the server, so nothing here fetches on mount. The status stays current through
- * the org's change stream — a `jobs` hint invalidates every `jobs.*` read (`TOPIC_KEYS`,
- * lib/query/topics.ts), no poll here — and the log through its SSE stream, which resumes after the
- * head's last line.
+ * the org's change stream — a `jobs` hint invalidates `jobs.detail` (`TOPIC_KEYS`,
+ * lib/query/topics.ts), no poll here — and the log through its own event stream
+ * (`useJobLogStream`), which resumes after the head's last line while the job runs and is not
+ * opened at all for a job whose log is already complete.
+ *
+ * EVERY CONTROL ANSWERS FOR ITSELF. The job read carries what this reader may do (`job.can`,
+ * decided by the question each write asks), so Cancel, Deploy and Re-run are disabled with the
+ * reason for a reader who may not use them — never enabled and then refused.
  */
 export function JobDetail({
 	jobId,
@@ -192,14 +193,17 @@ export function JobDetail({
 }) {
 	const { org } = useParams<{ org: string }>();
 	const router = useRouter();
-	const hydrated = useHydrated();
 
 	const detail = useQuery(orpc.jobs.detail.queryOptions({ input: { id: jobId } }));
 	const head = useQuery(orpc.jobs.logsHead.queryOptions({ input: { id: jobId } }));
 	const job = detail.data ?? null;
 	const jobState = job?.status ?? null;
 	const jobError = job?.error_message ?? null;
-	const { logs } = useJobLogStream(jobId, head.data, !head.isPending);
+	const isActive = jobState === "QUEUED" || jobState === "CLAIMED" || jobState === "PROCESSING";
+	const isTerminal = jobState === "SUCCESS" || jobState === "FAILED" || jobState === "CANCELLED";
+	// A finished job whose head is its whole log gets no stream; one that finishes while this page
+	// is open is asked once for the rest (hooks/use-job-log-stream.ts).
+	const log = useJobLogStream(jobId, head.data, !head.isPending, { finished: isTerminal });
 	// Cancelling is not undoable — `cancelJob` writes CANCELLED and signals the runner to abort the
 	// in-flight tofu run — so the click opens a confirmation rather than reaching the action.
 	// Registry: `jobs.cancel` in apps/console/destructive-actions.yaml.
@@ -229,19 +233,6 @@ export function JobDetail({
 	// One guard for the three: while any of them is in flight, none can be pressed again.
 	const actionLoading = rerun.isPending || cancel.isPending || apply.isPending;
 
-	const bottomRef = useRef<HTMLDivElement>(null);
-
-	const scrollToBottom = useCallback(() => {
-		setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
-	}, []);
-
-	// Auto-scroll as streamed logs (from useJobLogStream) arrive.
-	useEffect(() => {
-		if (logs.length > 0) scrollToBottom();
-	}, [logs.length, scrollToBottom]);
-
-	const isActive = jobState === "QUEUED" || jobState === "CLAIMED" || jobState === "PROCESSING";
-	const isTerminal = jobState === "SUCCESS" || jobState === "FAILED" || jobState === "CANCELLED";
 	// A QUEUED job has no runner and no run in flight: `cancelJob` only signals a runner when
 	// `job.runner_id && (status === CLAIMED || PROCESSING)` (app/server/actions/jobs.ts). Told
 	// unconditionally that "its runner is signalled to abort the run in flight" and "anything
@@ -268,23 +259,10 @@ export function JobDetail({
 	if (detail.isPending) return <JobDetailLoading />;
 
 	if (detail.isError) {
-		// A refusal is not a failure, and neither is "nothing here" (RUBRIC B4).
-		if (isDefinedError(detail.error) && detail.error.code === "FORBIDDEN") {
-			return (
-				<EmptyState
-					className="min-h-[50dvh]"
-					icon={<Lock />}
-					level={2}
-					title="You can't view this job"
-					description="Your role in this organization does not include viewing jobs."
-					action={
-						<Button variant="outline" size="sm" nativeButton={false} render={<Link href={`/${org}/~/jobs`} />}>
-							Back to jobs
-						</Button>
-					}
-				/>
-			);
-		}
+		// A refusal is not a failure, and neither is "nothing here" (RUBRIC B4): the same question
+		// gets the same answer, so there is no retry on it.
+		const refusal = readRefusalOf(detail.error);
+		if (refusal) return <RegionRefusal className="min-h-[50dvh]" refusal={refusal} subject="this job" />;
 		return (
 			<RegionError
 				className="min-h-[50dvh]"
@@ -309,7 +287,7 @@ export function JobDetail({
 				icon={<SearchX />}
 				level={2}
 				title="Job not found."
-				description="This job has been deleted, or it belongs to an organisation you are not a member of."
+				description="This job has been deleted, or it belongs to an organization you are not a member of."
 				action={
 					// `render` + `nativeButton={false}`, not `asChild`: `@repo/ui/button` is base-ui,
 					// which has no `asChild` prop at all — it would not compile.
@@ -366,28 +344,10 @@ export function JobDetail({
 										</span>
 									)}
 									<StatusBadge status={jobState ?? job.status} />
-									{/* A finished job's duration is fixed; a running one reads the clock, so it
-									    waits for hydration in a reserved slot (React #418, columns.tsx). */}
-									{/* A job that finished without ever starting (cancelled or failed in the
-									    queue) has no run time: `completed_at - created_at` is all wait. Showing
-									    that bare made a Plan cancelled after 120 days in the queue read as a
-									    120-day run (#6732). `started_at` is stamped on the first PROCESSING. */}
-									{job.created_at && job.completed_at && !job.started_at ? (
-										<span>
-											Never started · waited{" "}
-											{formatDuration(
-												new Date(job.completed_at).getTime() - new Date(job.created_at).getTime(),
-											)}
-										</span>
-									) : job.created_at && job.completed_at ? (
-										<span>
-											{formatDuration(
-												new Date(job.completed_at).getTime() - new Date(job.created_at).getTime(),
-											)}
-										</span>
-									) : job.created_at ? (
-										<LiveDuration createdAt={job.created_at} />
-									) : null}
+									{/* The one duration wording the list uses too (`JobDuration`): a finished
+									    job's is fixed, a running one's reads the clock after hydration, and a
+									    job that never started says so and how long it waited (#6732). */}
+									<JobDuration job={job} detail />
 									<span className="font-mono">{job.id.slice(0, 8)}</span>
 									{job.runner_id && (
 										<span>
@@ -402,52 +362,67 @@ export function JobDetail({
 								</span>
 							}
 							actions={
-								<>
+								// A control this reader may not use is DISABLED WITH ITS REASON (hover or
+								// focus), never hidden and never left to fail (components/errors/manage-gate.ts).
+								<TooltipProvider delayDuration={300}>
 									{isActive && (
-										<Button
-											variant="outline"
-											size="sm"
-											className="h-8 text-destructive hover:text-destructive"
-											onClick={() => setConfirmCancel(true)}
-											disabled={actionLoading}
-										>
-											{actionLoading ? (
-												<Loader2 className="mr-1.5 size-3.5 animate-spin" />
-											) : (
-												<Ban className="mr-1.5 size-3.5" />
-											)}
-											Cancel
-										</Button>
+										<DisabledReason reason={job.can.cancel ? null : MANAGE_DENIED_REASON}>
+											<Button
+												variant="outline"
+												size="sm"
+												className="h-8 text-destructive hover:text-destructive"
+												onClick={() => setConfirmCancel(true)}
+												disabled={actionLoading}
+											>
+												{actionLoading ? (
+													<Loader2 className="mr-1.5 size-3.5 animate-spin" />
+												) : (
+													<Ban className="mr-1.5 size-3.5" />
+												)}
+												Cancel
+											</Button>
+										</DisabledReason>
 									)}
-									{isPlanSuccess && job.project_id && (
-										<RunnerSelectPopover
-											trigger={
-												<Button size="sm" className="h-8" disabled={actionLoading}>
+									{isPlanSuccess &&
+										job.project_id &&
+										(job.can.deploy ? (
+											<RunnerSelectPopover
+												trigger={
+													<Button size="sm" className="h-8" disabled={actionLoading}>
+														<Rocket className="mr-1.5 size-3.5" />
+														{JOB_ACTION.deploy}
+													</Button>
+												}
+												onConfirm={(runnerId) => apply.submit({ planJobId: job.id, runnerId })}
+												disabled={actionLoading}
+											/>
+										) : (
+											<DisabledReason reason={MANAGE_DENIED_REASON}>
+												<Button size="sm" className="h-8">
 													<Rocket className="mr-1.5 size-3.5" />
-													Apply
+													{JOB_ACTION.deploy}
 												</Button>
-											}
-											onConfirm={(runnerId) => apply.mutate({ planJobId: job.id, runnerId })}
-											disabled={actionLoading}
-										/>
-									)}
+											</DisabledReason>
+										))}
 									{isTerminal && rerunnable && (
-										<Button
-											variant="outline"
-											size="sm"
-											className="h-8"
-											onClick={() => setConfirmRerun(true)}
-											disabled={actionLoading}
-										>
-											{actionLoading ? (
-												<Loader2 className="mr-1.5 size-3.5 animate-spin" />
-											) : (
-												<RefreshCw className="mr-1.5 size-3.5" />
-											)}
-											Re-run
-										</Button>
+										<DisabledReason reason={job.can.rerun ? null : MANAGE_DENIED_REASON}>
+											<Button
+												variant="outline"
+												size="sm"
+												className="h-8"
+												onClick={() => setConfirmRerun(true)}
+												disabled={actionLoading}
+											>
+												{actionLoading ? (
+													<Loader2 className="mr-1.5 size-3.5 animate-spin" />
+												) : (
+													<RefreshCw className="mr-1.5 size-3.5" />
+												)}
+												Re-run
+											</Button>
+										</DisabledReason>
 									)}
-								</>
+								</TooltipProvider>
 							}
 						/>
 					</div>
@@ -462,6 +437,10 @@ export function JobDetail({
 							job={{ job_type: job.job_type, status: jobState, execution_metadata: job.execution_metadata }}
 						/>
 					)}
+					{/* A plan somebody has asked to deploy or destroy from: the request waits on a
+					    PERSON, for up to an hour, with no job to show for it. Said here so the wait
+					    does not read as something stuck. */}
+					{job.approval && <JobApprovalNotice approval={job.approval} org={org} />}
 					{(jobState === "FAILED" || jobState === "CANCELLED") && (
 						<div
 							className={cn(
@@ -486,63 +465,22 @@ export function JobDetail({
 							)}
 						</div>
 					)}
+					{/* What a deploy went on without. In any status: on a success it is the gap
+					    between "the job ran" and "everything is deployed", on a failure often the cause. */}
+					<DeployWarnings job={{ job_type: job.job_type, execution_metadata: job.execution_metadata }} />
 				</div>
 			</header>
 
 			{/* The log — the ONE region that does not obey the detail column. See detail-column.ts. */}
-			<div className="flex-1 overflow-hidden bg-muted/20 font-mono text-xs">
-				<ScrollArea className="h-full w-full p-6">
-					{logs.length === 0 && isActive ? (
-						<EmptyState
-							className="min-h-[40dvh] font-sans"
-							icon={<Loader2 className="animate-spin" />}
-							title="Waiting for runner to claim job"
-							description="The runner polls every 10 seconds. Logs will appear here automatically."
-						/>
-					) : logs.length === 0 ? (
-						<EmptyState
-							className="min-h-[40dvh] font-sans"
-							icon={<Terminal />}
-							title="No logs recorded for this job."
-						/>
-					) : (
-						<div className="pb-10">
-							{logs.map((log, i) => (
-								<div
-									key={`${log.id}-${i}`}
-									className="group flex gap-4 rounded px-2 py-0.5 transition-colors hover:bg-muted/40"
-								>
-									<span className="w-8 shrink-0 select-none text-right text-text-tertiary">
-										{i + 1}
-									</span>
-									<span className="w-[85px] shrink-0 select-none text-text-tertiary">
-										{/* The browser's timezone, so after hydration only; the span holds the width. */}
-										{hydrated ? formatDate(log.created_at, "time") : null}
-									</span>
-									<span
-										className={cn(
-											"break-all leading-relaxed",
-											log.stream_type === "STDERR" || log.stream_type === "stderr"
-												? "text-destructive"
-												: "text-muted-foreground",
-										)}
-									>
-										{log.log_chunk}
-									</span>
-								</div>
-							))}
-							<div ref={bottomRef} />
-							{isActive && (
-								<div className="mt-2 flex gap-4 px-2">
-									<span className="w-8" />
-									<span className="w-[85px]" />
-									<span className="block h-4 w-2 animate-pulse bg-muted-foreground/30" />
-								</div>
-							)}
-						</div>
-					)}
-				</ScrollArea>
-			</div>
+			<JobLog
+				logs={log.logs}
+				status={jobState ?? job.status}
+				active={isActive}
+				createdAt={job.created_at}
+				org={org}
+				stream={log.state}
+				onReconnect={log.reconnect}
+			/>
 
 			{/* The job's facts and its frozen payloads — back inside the detail column. */}
 			<div className="max-h-[40dvh] shrink-0 overflow-y-auto border-t border-border/40 px-6">
