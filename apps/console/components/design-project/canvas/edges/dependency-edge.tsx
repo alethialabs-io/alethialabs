@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { BaseEdge, getSmoothStepPath, type EdgeProps } from "@xyflow/react";
+import type { BoardEdge } from "./board-edges";
+import { EdgeSelectionLabel } from "./edge-selection-label";
 
 /** Solid hairline dependency edge (network→cluster, cluster→resource). */
 export function DependencyEdge({
@@ -13,8 +15,11 @@ export function DependencyEdge({
 	sourcePosition,
 	targetPosition,
 	markerEnd,
-}: EdgeProps) {
-	const [path] = getSmoothStepPath({
+	id,
+	selected,
+	data,
+}: EdgeProps<BoardEdge>) {
+	const [path, labelX, labelY] = getSmoothStepPath({
 		sourceX,
 		sourceY,
 		sourcePosition,
@@ -23,10 +28,17 @@ export function DependencyEdge({
 		targetPosition,
 	});
 	return (
-		<BaseEdge
-			path={path}
-			markerEnd={markerEnd}
-			style={{ stroke: "var(--border, #d4d4d4)", strokeWidth: 1.5 }}
-		/>
+		<>
+			<BaseEdge
+				path={path}
+				markerEnd={markerEnd}
+				interactionWidth={24}
+				style={{
+					stroke: selected ? "var(--foreground, #111)" : "var(--border, #d4d4d4)",
+					strokeWidth: selected ? 2.5 : 1.5,
+				}}
+			/>
+			{selected && <EdgeSelectionLabel edgeId={id} x={labelX} y={labelY} data={data} />}
+		</>
 	);
 }
