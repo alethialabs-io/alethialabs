@@ -215,7 +215,8 @@ The first line of the file is a comment that names the file's JSON Schema:
 ```
 
 An editor with a YAML language server reads it and then checks and completes the file as you type:
-the keys, the stages and the placements. Add the same line to a file you wrote by hand. The schema
+the keys, the stages and the placements. `alethia init` and `alethia up` write the same line into
+the file they author. Add it to a file you wrote by hand. The schema
 describes the keys of the file. It leaves the fields of a component open, because they differ by
 kind and by cloud; `alethia plan` checks those against the control plane.
 

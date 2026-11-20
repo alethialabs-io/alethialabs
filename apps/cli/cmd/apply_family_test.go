@@ -802,6 +802,31 @@ func TestExportFamily_TheManifestThroughTheCommand(t *testing.T) {
 	}
 }
 
+// A file `init` authors opens with the same line an exported one does, and `plan` reads it.
+func TestInitFamily_TheAuthoredFileNamesItsSchema(t *testing.T) {
+	s := &projServer{}
+	h := upEnv(t, s)
+	dir := chdirTo(t)
+	if h.run("init", "--web-origin", WebOrigin(), "--project", "boutique",
+		"--region", "eu-west-1", "--cloud-account", "prod-account", "--no-input") {
+		t.Fatal("init exited fatally")
+	}
+	path := filepath.Join(dir, manifest.FileName)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(raw), manifestSchemaComment+"\nproject: boutique\n") {
+		t.Errorf("line 1 of the authored file is not the schema comment:\n%s", raw)
+	}
+	if manifest.SchemaComment != manifestSchemaComment {
+		t.Errorf("init and export name different schemas: %q and %q", manifest.SchemaComment, manifestSchemaComment)
+	}
+	if code, _, stderr := projExitCode(t, h, "plan", "--file", path, "--no-input"); code != 0 {
+		t.Errorf("plan refuses the file init wrote: exit %d\n%s", code, stderr)
+	}
+}
+
 // A document written to a stream that fails is reported, not swallowed.
 func TestRunConsoleExport_AFailedWriteIsReported(t *testing.T) {
 	var asked []string
