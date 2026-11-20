@@ -504,6 +504,18 @@ describe("AddonConfigCard", () => {
 		expect(screen.getByRole("button", { name: "Add to changes" })).toBeInTheDocument();
 	});
 
+	it("while the catalog is being read, draws the frame and a skeleton of the form — not a spinner", () => {
+		vi.mocked(useAddonsQuery).mockReturnValue({
+			data: undefined,
+			isPending: true,
+		} as unknown as ReturnType<typeof useAddonsQuery>);
+		render(<AddonConfigCard itemId={BASE_ITEM.id} projectId="p1" environmentId="e1" />);
+		const skeleton = document.querySelector("[data-slot=skeleton-root]");
+		expect(skeleton).toHaveAttribute("aria-busy", "true");
+		expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+		expect(screen.queryByText(/not in the catalog/i)).not.toBeInTheDocument();
+	});
+
 	it("says so when the id names nothing in the catalog", () => {
 		catalog([]);
 		render(<AddonConfigCard itemId="gone" projectId="p1" environmentId="e1" />);

@@ -42,11 +42,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@repo/ui/select";
+import { Skeleton } from "@repo/ui/skeleton";
 import type { StatusTier } from "@repo/ui/status-badge";
 import { Switch } from "@repo/ui/switch";
 import { Textarea } from "@repo/ui/textarea";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import {
   InspectorAction,
   InspectorFrame,
@@ -327,16 +329,28 @@ export function AddonConfigCard({
   if (holding && live && frozenHere === null) setFrozen(live);
   const item = holding ? (frozenHere ?? live) : live;
 
+  if (!item && addons.isPending) {
+    // The catalog is still being read: the frame is already the subject's, and the body is the
+    // shape of the form that is coming.
+    return (
+      <InspectorFrame eyebrow="Add-on" title="Add-on" onClose={close}>
+        <SkeletonRoot className="space-y-4" aria-label="Loading the add-on">
+          {[0, 1, 2, 3].map((row) => (
+            <div key={row} className="space-y-2">
+              <Skeleton className="h-3 w-24 rounded-none" />
+              <Skeleton className="h-9 w-full rounded-none" />
+            </div>
+          ))}
+        </SkeletonRoot>
+      </InspectorFrame>
+    );
+  }
   if (!item) {
     return (
       <InspectorFrame eyebrow="Add-on" title="Add-on" onClose={close}>
         <EmptyState
-          title={addons.isPending ? "Loading the catalog…" : "This add-on is not in the catalog"}
-          description={
-            addons.isPending
-              ? undefined
-              : "It may have been removed from the marketplace. Pick one from the Add menu."
-          }
+          title="This add-on is not in the catalog"
+          description="It may have been removed from the marketplace. Pick one from the Add menu."
         />
       </InspectorFrame>
     );
