@@ -198,7 +198,7 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 					!problem && resolved.message ? resolved.message : "",
 					drifted > 0 ? `${drifted} drifted` : "",
 					gitops ? `ArgoCD: ${gitops.label}` : "",
-					compatChip ? compatChip.note : "",
+					compatChip ? `Kubernetes compatibility: ${compatChip.label}` : "",
 				],
 				connections: marks.connections.get(id),
 			}}

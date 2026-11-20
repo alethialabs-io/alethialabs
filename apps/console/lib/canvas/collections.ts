@@ -100,10 +100,15 @@ export type CollectionPositions = Partial<Record<NodeKind, XYPosition>>;
  *
  * Members are removed from the render list entirely. They stay in the store, which is what keeps the
  * whole persistence + diff + status machinery untouched.
+ *
+ * `selectedKinds` are the collection cards the board holds as selected. Selecting a vault must NOT
+ * select its members: the selection is what Delete removes, and one key press would then remove
+ * every secret in it.
  */
 export function buildRenderNodes(
 	nodes: CanvasNode[],
 	positions: CollectionPositions,
+	selectedKinds: readonly NodeKind[] = [],
 ): BoardNode[] {
 	const rendered: BoardNode[] = [];
 	const members = new Map<NodeKind, CanvasNode[]>();
@@ -128,7 +133,9 @@ export function buildRenderNodes(
 			// Collections are never keyboard-deletable: one Backspace must not silently destroy 40
 			// secrets. Removal is per-resource, from the panel.
 			deletable: false,
-			selected: list.some((n) => n.selected),
+			// A collection card is selected in its own right (`selectedKinds` — the board's, because the
+			// card has no store row to hold a flag) or because one of its members is.
+			selected: selectedKinds.includes(kind) || list.some((n) => n.selected),
 			data: { kind, memberIds: list.map((n) => n.id) },
 		});
 	}

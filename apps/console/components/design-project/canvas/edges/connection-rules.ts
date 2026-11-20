@@ -19,7 +19,11 @@ import type {
 	NodeConfigMap,
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
-import { isCollectionKind, kindFromCollectionId } from "@/lib/canvas/collections";
+import {
+	cardIdentity,
+	nodeAccessibleName,
+} from "@/components/design-project/canvas/nodes/node-name";
+import { kindFromCollectionId } from "@/lib/canvas/collections";
 import { isEnumMember } from "@/lib/coerce";
 import { serviceBindingSchema } from "@/lib/validations/project-form.schema";
 
@@ -59,11 +63,14 @@ function bindableKindsInWords(): string {
 	return `${words.slice(0, -1).join(", ")} or ${words[words.length - 1]}`;
 }
 
-/** A node as a person reads it on its card: "Database orders", or the kind alone when unnamed. */
+/**
+ * A node as a person reads it on its card: "Database orders", or the kind alone when unnamed. The
+ * same words the card carries as its accessible name, so a sentence about a card names it the way
+ * the card names itself.
+ */
 export function nodeTitle(node: CanvasNode): string {
-	const label = NODE_REGISTRY[node.data.kind].label;
-	const name = configName(node.data);
-	return name ? `${label} ${name}` : label;
+	const { eyebrow, title } = cardIdentity(node.data);
+	return nodeAccessibleName(eyebrow, title);
 }
 
 /** The bindings a service node holds; empty for any other node. */
@@ -186,11 +193,7 @@ export function evaluateConnection(
  */
 export function connectableTargets(nodes: CanvasNode[], sourceId: string): CanvasNode[] {
 	if (sourceRefusal(nodes.find((n) => n.id === sourceId))) return [];
-	return nodes.filter(
-		(n) =>
-			!isCollectionKind(n.data.kind) &&
-			evaluateConnection(nodes, sourceId, n.id).outcome === "bind",
-	);
+	return nodes.filter((n) => evaluateConnection(nodes, sourceId, n.id).outcome === "bind");
 }
 
 /** True when a card of `kind` can start a connection: the only cards that draw a source handle. */

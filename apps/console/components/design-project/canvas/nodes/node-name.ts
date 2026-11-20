@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { BoardNode } from "@/lib/canvas/collections";
+import { isCollectionCard, type BoardNode } from "@/lib/canvas/collections";
 import { configName } from "../graph/node-config";
 import { NODE_REGISTRY } from "../graph/node-registry";
 import type { CanvasNodeData } from "../graph/types";
@@ -77,7 +77,7 @@ export function cardIdentity(data: CanvasNodeData): CardIdentity {
  * tells one board's vault from another's, so it is the plural title and the count.
  */
 export function boardCardName(node: BoardNode): string {
-	if (node.type === "collection") {
+	if (isCollectionCard(node)) {
 		const def = NODE_REGISTRY[node.data.kind];
 		return nodeAccessibleName(
 			def.collection?.title ?? def.label,
