@@ -12,6 +12,7 @@ import { createRequire } from "node:module";
 import { requireFromWorkingDirectory } from "@/lib/enterprise-require";
 import {
   parseAlethiaEdition,
+  type EnterpriseEditionReporter,
   type EnterpriseEntrypoint,
   type EnterprisePackage,
 } from "@alethia/enterprise-api";
@@ -80,7 +81,9 @@ export interface CoreContext {
   /**
    * The Enterprise gate for team creation: whether an org may create teams. Injected so
    * the organization plugin's beforeCreateTeam hook can block team creation on a
-   * non-Enterprise org without ee/ importing core billing.
+   * non-Enterprise org without ee/ importing core billing. The hook passes the module's own
+   * entitlement resolver as the second argument, so the gate reads the instance licence when
+   * one grants and the org's billing record otherwise.
    */
   canOrgCreateTeams: typeof canOrgCreateTeams;
   /**
@@ -200,7 +203,13 @@ export interface CoreContext {
   };
 }
 
-export interface EnterpriseModule {
+/**
+ * What the enterprise package registers. It extends the edition reporter, so the module may carry
+ * the optional `instanceEdition()` member: its report of the instance licence, the capabilities
+ * that licence grants and its own modules, which `lib/edition/instance-edition.ts` reads and
+ * validates. A module without the member reports nothing.
+ */
+export interface EnterpriseModule extends EnterpriseEditionReporter {
   /** Engine override (e.g. OpenFgaPdp). Community uses the default PostgresRbacPDP. */
   pdp?: Pdp;
   /** OpenFGA dual-write writer. Community = absent → the seam's no-op. */
