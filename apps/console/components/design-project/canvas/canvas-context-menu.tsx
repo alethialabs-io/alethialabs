@@ -28,6 +28,7 @@ import { kindFromCollectionId } from "@/lib/canvas/collections";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { CanvasNode, NodeKind } from "./graph/types";
 import { NODE_REGISTRY } from "./graph/node-registry";
+import { GOVERNED_ROW_REASON } from "./toolbar/reasons";
 import { NOTHING_TO_FIT, useHasDrawnNodes } from "./use-has-drawn-nodes";
 
 /**
@@ -173,8 +174,9 @@ export interface CanvasContextMenuProps {
 	onClose: () => void;
 	/** A BYO-IaC source governs this environment (replace mode): the design is inert, so no add. */
 	iacGoverned: boolean;
-	/** Open the Add palette. Owned by the canvas, which also owns the palette's open state. */
-	onAddService: () => void;
+	/** Open the add picker for a node that lands where the menu was opened (viewport CSS pixels).
+	 * Owned by the canvas, which also owns the picker's open state. */
+	onAddService: (point: ContextMenuPoint) => void;
 }
 
 /**
@@ -238,14 +240,19 @@ export function CanvasContextMenu({
 
 				{target?.kind === "pane" && (
 					<>
-						<ContextMenuItem disabled={iacGoverned} onSelect={onAddService}>
+						<ContextMenuItem
+							disabledReason={iacGoverned ? GOVERNED_ROW_REASON : null}
+							onSelect={() => {
+								if (state) onAddService(state.point);
+							}}
+						>
 							<Plus className="mr-2 h-4 w-4 text-muted-foreground" />
 							Add service…
 						</ContextMenuItem>
 						<ContextMenuSeparator />
 						<ContextMenuItem onSelect={() => void arrangeBoard(fitView)}>
 							<LayoutGrid className="mr-2 h-4 w-4 text-muted-foreground" />
-							Auto-arrange
+							Tidy layout
 						</ContextMenuItem>
 						<ContextMenuItem onSelect={() => repairOverlaps()}>
 							<Shuffle className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -325,7 +332,13 @@ function NodeItems({
 			<ContextMenuSeparator />
 			<ContextMenuItem
 				variant="destructive"
-				disabled={!canRemove}
+				disabledReason={
+					canRemove
+						? null
+						: node
+							? "Not part of the design. It is removed from its own card."
+							: "Open the list to remove its members one at a time."
+				}
 				onSelect={() => removeNodes([nodeId])}
 			>
 				<Trash2 className="mr-2 h-4 w-4" />
@@ -361,7 +374,9 @@ function SelectionItems({
 		<>
 			<ContextMenuLabel>{ids.length} selected</ContextMenuLabel>
 			<ContextMenuItem
-				disabled={!canDuplicate}
+				disabledReason={
+					canDuplicate ? null : "Each selected card is the only one of its kind."
+				}
 				onSelect={() => duplicateNodes(ids)}
 			>
 				<Copy className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -370,7 +385,9 @@ function SelectionItems({
 			<ContextMenuSeparator />
 			<ContextMenuItem
 				variant="destructive"
-				disabled={!canRemove}
+				disabledReason={
+					canRemove ? null : "None of the selected cards is part of the design."
+				}
 				onSelect={() => removeNodes(ids)}
 			>
 				<Trash2 className="mr-2 h-4 w-4" />

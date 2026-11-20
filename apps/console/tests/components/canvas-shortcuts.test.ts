@@ -1,37 +1,124 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The shortcuts dialog must not advertise a save gesture on a live project.
+// The board's shortcut sheet is READ from the shortcut registry (#6832).
 //
-// Regression guard: ⌘S used to run the CREATE handler in both modes, so pressing it while editing
-// an existing project forked it into a duplicate and navigated away. The gesture now exists only in
-// the create flow, and the hint list has to say the same thing — an advertised shortcut that does
-// nothing is the bug in its quieter form.
+// It used to be a list typed beside the handlers, and it drifted: it went on advertising Shift+Tab
+// for the environment switch after that key had been given back to the browser, and it advertised
+// no save key on a board whose Save button's tooltip named one. A list generated from the rows the
+// dispatcher matches cannot name a key the board does not bind — so what is asserted here is the
+// correspondence, plus the rows the release gate's browser test looks for by name.
 
 import { describe, expect, it } from "vitest";
-import { buildShortcuts } from "@/components/design-project/canvas/shortcuts";
+import { buildShortcuts, shortcutRows } from "@/components/design-project/canvas/shortcuts";
+import {
+	CANVAS_KEYS,
+	SHORTCUT_CANVAS_REMOVE,
+	SHORTCUT_CANVAS_REMOVE_BACKSPACE,
+} from "@/components/design-project/canvas/toolbar/canvas-keys";
+import {
+	formatChord,
+	getShortcut,
+	listShortcuts,
+	registerShortcuts,
+	SHORTCUT_ENVIRONMENT_NEXT,
+} from "@/lib/shortcuts/registry";
 
-const labels = (isMac: boolean, canSave: boolean) =>
-	buildShortcuts(isMac, canSave).map((s) => s.label);
+/** The sheet's row for a label, or undefined. */
+function row(label: string, isMac = true) {
+	return buildShortcuts(isMac).find((r) => r.label === label);
+}
 
-describe("buildShortcuts", () => {
-	it("advertises Save project only in the create flow", () => {
-		for (const isMac of [true, false]) {
-			expect(labels(isMac, true)).toContain("Save project");
-			expect(labels(isMac, false)).not.toContain("Save project");
+describe("the board's shortcut sheet", () => {
+	it("lists every key registered in the canvas scope, with the chord the dispatcher matches", () => {
+		const sheet = buildShortcuts(true);
+		const missing = listShortcuts("canvas").filter((binding) => {
+			const line = sheet.find((r) => r.label === binding.label);
+			return !line || !line.keys.split(" / ").includes(formatChord(binding.chord, true));
+		});
+		expect(missing.map((binding) => binding.id)).toEqual([]);
+	});
+
+	it("lists a key another file registers in the canvas scope, without being told about it", () => {
+		registerShortcuts([
+			{
+				id: "canvas.test.only",
+				chord: { key: "j", shift: false },
+				scope: "canvas",
+				label: "A key registered by a test",
+			},
+		]);
+		expect(row("A key registered by a test")?.keys).toBe("J");
+	});
+
+	it("names the environment switch by the key that switches it, not Shift+Tab", () => {
+		const next = getShortcut(SHORTCUT_ENVIRONMENT_NEXT);
+		expect(row(next.label)?.keys).toBe("⌥E");
+		expect(row(next.label, false)?.keys).toBe("Alt+E");
+		const tabbed = [...buildShortcuts(true), ...buildShortcuts(false)].filter((r) =>
+			/tab|⇥/i.test(r.keys),
+		);
+		expect(tabbed).toEqual([]);
+	});
+
+	it("shows undo and redo as one line, and Delete with Backspace as one line", () => {
+		expect(row("Undo / Redo")?.keys).toBe("⌘Z / ⇧⌘Z");
+		expect(row("Undo / Redo", false)?.keys).toBe("Ctrl+Z / Ctrl+Shift+Z");
+		expect(getShortcut(SHORTCUT_CANVAS_REMOVE).label).toBe(
+			getShortcut(SHORTCUT_CANVAS_REMOVE_BACKSPACE).label,
+		);
+		expect(row(getShortcut(SHORTCUT_CANVAS_REMOVE).label)?.keys).toBe("Del / Backspace");
+	});
+
+	it("keeps the rows the board's browser test finds by name, and promises no project save", () => {
+		const labels = buildShortcuts(true).map((r) => r.label);
+		for (const label of ["Command palette", "Add component", "Duplicate selection", "Undo / Redo"]) {
+			expect(labels).toContain(label);
 		}
+		expect(labels).not.toContain("Save project");
 	});
 
-	it("drops only that row — every other shortcut survives", () => {
-		const create = labels(true, true);
-		const edit = labels(true, false);
-		expect(create.filter((l) => l !== "Save project")).toEqual(edit);
+	it("uses the platform's modifier glyphs", () => {
+		expect(row("Command palette")?.keys).toBe("⌘K");
+		expect(row("Command palette", false)?.keys).toBe("Ctrl+K");
+		expect(row("Fit view")?.keys).toBe("⇧1");
 	});
 
-	it("uses the platform's modifier glyph for the save row", () => {
-		const mac = buildShortcuts(true, true).find((s) => s.label === "Save project");
-		const other = buildShortcuts(false, true).find((s) => s.label === "Save project");
-		expect(mac?.keys).toBe("⌘S");
-		expect(other?.keys).toBe("Ctrl+S");
+	it("says how to pan, which is React Flow's gesture and not a registry row", () => {
+		expect(row("Pan the canvas")?.keys).toBe("Space-drag");
+		expect(listShortcuts("canvas").some((binding) => binding.chord.key === " ")).toBe(false);
+	});
+});
+
+describe("shortcutRows", () => {
+	it("joins the chords of rows that share a label, once each, in the order given", () => {
+		const rows = shortcutRows(
+			[
+				{ id: "a", chord: { key: "delete" }, scope: "canvas", label: "Remove" },
+				{ id: "b", chord: { key: "x" }, scope: "canvas", label: "Cut" },
+				{ id: "c", chord: { key: "backspace" }, scope: "canvas", label: "Remove" },
+				{ id: "d", chord: { key: "delete" }, scope: "canvas", label: "Remove" },
+			],
+			true,
+		);
+		expect(rows).toEqual([
+			{ label: "Remove", keys: "Del / Backspace" },
+			{ label: "Cut", keys: "X" },
+		]);
+	});
+});
+
+describe("the board's key table", () => {
+	it("registers every row in the canvas scope", () => {
+		expect(CANVAS_KEYS.filter((binding) => binding.scope !== "canvas")).toEqual([]);
+		const unregistered = CANVAS_KEYS.filter((binding) => getShortcut(binding.id) !== binding);
+		expect(unregistered.map((binding) => binding.id)).toEqual([]);
+	});
+
+	it("lets nothing but the palette and the save chord fire while typing in a field", () => {
+		const inFields = CANVAS_KEYS.filter((binding) => binding.allowInInput === true).map(
+			(binding) => binding.label,
+		);
+		expect(inFields).toEqual(["Command palette", "Save the design"]);
 	});
 });

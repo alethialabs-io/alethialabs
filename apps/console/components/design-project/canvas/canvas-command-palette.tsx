@@ -18,11 +18,9 @@ import {
 	getProvider,
 	type CloudProviderMeta,
 } from "@/lib/cloud-providers";
+import { addCatalogue, catalogueKinds } from "@/lib/canvas/store/add-catalogue";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
-import {
-	addableKindsFor,
-	NODE_REGISTRY,
-} from "./graph/node-registry";
+import { NODE_REGISTRY } from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";
 import { configName } from "./graph/node-config";
 import { NOTHING_TO_FIT } from "./use-has-drawn-nodes";
@@ -76,7 +74,7 @@ function keywordsFor(kind: NodeKind): string[] {
 }
 
 /** The palette's groups, in the order they list for an empty search. */
-type PaletteGroup = "Sources" | "Core services" | "Periphery" | "Jump to" | "Actions";
+type PaletteGroup = "Sources" | "Add" | "Jump to" | "Actions" | "Layers";
 
 /** One palette row: what it shows, what it runs, and the ONE string its search matches. */
 interface PaletteCommand {
@@ -121,15 +119,28 @@ interface CanvasCommandPaletteProps {
 	/** Opens the "bring your own IaC" flow. Omitted when the feature is off / no project / a source
 	 * already governs the env. */
 	onAttachIac?: () => void;
-	/** When an IaC source governs the env (replace mode), component-add is meaningless — hide the
-	 * Core/Periphery service groups. */
+	/** When an IaC source governs the env (replace mode), component-add is meaningless — the
+	 * catalogue is empty and the "Add" group is not listed. */
 	disableComponentAdd?: boolean;
+	/** Open the shortcut sheet. */
+	onShowShortcuts?: () => void;
 	/** W5 click-to-place — where a newly-added node lands (viewport centre). Supplied by the canvas
 	 * (which owns the React Flow context); omitted (e.g. a unit test) → the store's cascade fallback. */
 	dropPosition?: () => { x: number; y: number };
 }
 
-/** ⌘K command menu: search services by name, jump to nodes, run actions. */
+/**
+ * ⌘K command menu: add a service, jump to a card, tidy, fit, undo, switch a layer, open the
+ * environment's settings or activity, ask the assistant. Running a job is the toolbar's Run menu:
+ * its four jobs queue real work, and they stay behind the one control that holds their
+ * double-submit guard.
+ *
+ * Its "Add" rows are the design kinds of `addCatalogue(provider, flags, governed)`
+ * (`lib/canvas/store/add-catalogue.ts`), the same call the add picker makes, so the two cannot
+ * list different kinds. A singleton that is already placed is selected, not added again. There is
+ * no list of clouds here: a cloud's own service name (`RDS`, `Cloud SQL`) is read from the catalog
+ * for the project's cloud, and the search keywords are every cloud's names for the kind.
+ */
 export function CanvasCommandPalette({
 	open,
 	onOpenChange,
@@ -144,6 +155,7 @@ export function CanvasCommandPalette({
 	onAttachChart,
 	onAttachIac,
 	disableComponentAdd,
+	onShowShortcuts,
 	dropPosition,
 }: CanvasCommandPaletteProps) {
 	const addNode = useCanvasStore((s) => s.addNode);
@@ -154,9 +166,11 @@ export function CanvasCommandPalette({
 	const showConnections = useCanvasStore((s) => s.showConnections);
 	const toggleConnections = useCanvasStore((s) => s.toggleConnections);
 	const nodes = useCanvasStore((s) => s.nodes);
-	const coreProvider =
-		useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID)) ?? "aws";
-	const meta = getProvider(coreProvider);
+	const hiddenKinds = useCanvasStore((s) => s.hiddenKinds);
+	const toggleKindVisibility = useCanvasStore((s) => s.toggleKindVisibility);
+	// Null until the project has a cloud: every kind is offered, and no service name is shown.
+	const coreProvider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
+	const meta = coreProvider ? getProvider(coreProvider) : null;
 
 	const run = (fn: () => void) => {
 		fn();
@@ -168,7 +182,7 @@ export function CanvasCommandPalette({
 		const def = NODE_REGISTRY[kind];
 		const Icon = def.icon;
 		const field = SERVICE_FIELD[kind];
-		const serviceName = field ? meta[field] : null;
+		const serviceName = field && meta ? meta[field] : null;
 		return {
 			id: `add-${kind}`,
 			group,
@@ -203,7 +217,14 @@ export function CanvasCommandPalette({
 		content: label,
 	});
 
-	const addableKinds = addableKindsFor(coreProvider);
+	// The kinds this board can take: the one catalogue, asked as the add picker asks it.
+	const addableKinds = catalogueKinds(
+		addCatalogue(
+			coreProvider,
+			{ byoHelm: onAttachChart !== undefined, byoIac: onAttachIac !== undefined },
+			Boolean(disableComponentAdd),
+		),
+	);
 	const placedNodes = nodes.filter((n) => n.id !== PROJECT_NODE_ID);
 
 	const commands: PaletteCommand[] = [];
@@ -249,16 +270,7 @@ export function CanvasCommandPalette({
 			),
 		});
 	}
-	if (!disableComponentAdd) {
-		for (const kind of addableKinds) {
-			const classification = NODE_REGISTRY[kind].classification;
-			if (classification === "core") commands.push(serviceCommand(kind, "Core services"));
-		}
-		for (const kind of addableKinds) {
-			const classification = NODE_REGISTRY[kind].classification;
-			if (classification === "periphery") commands.push(serviceCommand(kind, "Periphery"));
-		}
-	}
+	for (const kind of addableKinds) commands.push(serviceCommand(kind, "Add"));
 	for (const n of placedNodes) {
 		const def = NODE_REGISTRY[n.data.kind];
 		const Icon = def.icon;
@@ -287,7 +299,7 @@ export function CanvasCommandPalette({
 	if (onActivity) commands.push(action("activity", "Activity", onActivity));
 	commands.push(
 		action("fit-view", "Fit view", onFitView, fitViewDisabled ? NOTHING_TO_FIT : null),
-		action("auto-arrange", "Auto-arrange", onArrange),
+		action("auto-arrange", "Tidy layout", onArrange),
 		action("repair-overlaps", "Repair overlaps", repairOverlaps),
 		action(
 			"toggle-connections",
@@ -297,7 +309,20 @@ export function CanvasCommandPalette({
 		action("undo", "Undo", undo),
 		action("redo", "Redo", redo),
 	);
+	if (onShowShortcuts) commands.push(action("shortcuts", "Keyboard shortcuts", onShowShortcuts));
 	if (onToggleView) commands.push(action("toggle-form", "Switch to form", onToggleView));
+	// One row per kind this board can hold, to draw or stop drawing its cards.
+	for (const kind of addableKinds) {
+		const hidden = hiddenKinds.includes(kind);
+		const label = `${hidden ? "Show" : "Hide"} ${NODE_REGISTRY[kind].label} cards`;
+		commands.push({
+			id: `layer-${kind}`,
+			group: "Layers",
+			searchText: `${label} layer layers visibility layer-${kind}`,
+			run: () => toggleKindVisibility(kind),
+			content: label,
+		});
+	}
 
 	// Ranked by the shared ranker over each row's label + keywords; the best match's group leads.
 	const { search, onSearchChange, results } = useCommandSearch(

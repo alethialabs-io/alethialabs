@@ -2,33 +2,34 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useReactFlow } from "@xyflow/react";
-import { Maximize, Redo2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import { useReactFlow, useStore } from "@xyflow/react";
+import { Maximize, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
-import { Separator } from "@repo/ui/separator";
 import { cn } from "@repo/ui/utils";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { NOTHING_TO_FIT, useHasDrawnNodes } from "./use-has-drawn-nodes";
 
+/** Why the zoom level cannot be pressed at 100%: it is the way back to 100%. */
+const AT_DEFAULT_ZOOM = "The board is at 100%";
+
 /**
- * A square ghost icon button sized for the controls bar. `active` marks a toggled-on tool;
- * `disabledReason` is shown in place of the label's tooltip while the button is disabled, so it says
- * WHY — through `DisabledReason`, because a disabled button's own `title` is never shown.
+ * A square ghost icon button sized for the zoom controls. `disabledReason` is shown in place of the
+ * label's tooltip while the button is disabled, so it says WHY — through `DisabledReason`, because
+ * a disabled button's own `title` is never shown.
  */
 function CtrlButton({
   label,
   onClick,
   disabled,
   disabledReason,
-  active,
+  className,
   children,
 }: {
   label: string;
   onClick: () => void;
   disabled?: boolean;
   disabledReason?: string;
-  active?: boolean;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -37,11 +38,7 @@ function CtrlButton({
         type="button"
         variant="ghost"
         size="icon"
-        className={cn(
-          "h-8 w-8 rounded-none",
-          active && "bg-muted text-foreground",
-        )}
-        aria-pressed={active}
+        className={cn("h-8 w-8 rounded-none", className)}
         onClick={onClick}
         disabled={disabled}
         aria-label={label}
@@ -54,43 +51,54 @@ function CtrlButton({
 }
 
 /**
- * Bottom-left canvas controls: zoom out / in, fit, undo / redo — the five a board needs within
- * reach. The settings popover, the layers popover, the hand tool and a second auto-arrange button
- * used to sit here too; they live in the toolbar's ⋯ menu (View submenu) now, so a first visit
- * meets five controls rather than ten. Must render inside a ReactFlowProvider.
+ * Bottom-left of the board: zoom out, the zoom level, zoom in, fit. How the board is LOOKED at,
+ * and nothing else.
+ *
+ * Undo and redo used to sit here too. They are edits, not ways of looking, and they are tools of
+ * the top-centre toolbar now (#6832) — this corner once held ten controls and, on a project with a
+ * scanned repository, a second card drawn over them. The zoom level is a button: it reads the
+ * level and pressing it goes back to 100%; at 100% it is off. Must render inside a ReactFlowProvider.
  */
 export function CanvasControls() {
-  const { zoomIn, zoomOut, fitView } = useReactFlow();
-  const undo = useCanvasStore((s) => s.undo);
-  const redo = useCanvasStore((s) => s.redo);
-  const canUndo = useCanvasStore((s) => s.past.length > 0);
-  const canRedo = useCanvasStore((s) => s.future.length > 0);
+  const { zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
+  const zoom = useStore((s) => s.transform[2]);
   const canFit = useHasDrawnNodes();
+  const percent = `${Math.round(zoom * 100)}%`;
+  const atDefault = Math.round(zoom * 100) === 100;
 
   return (
-    <div className="absolute bottom-3 left-3 z-10 flex items-center border border-border bg-background/90 backdrop-blur">
-      <CtrlButton label="Zoom out" onClick={() => zoomOut()}>
+    <div
+      role="group"
+      aria-label="Zoom"
+      className="absolute bottom-3 left-3 z-[var(--z-raised)] flex items-center border border-border bg-card"
+    >
+      <CtrlButton label="Zoom out" onClick={() => void zoomOut()}>
         <ZoomOut className="h-3.5 w-3.5" />
       </CtrlButton>
-      <CtrlButton label="Zoom in" onClick={() => zoomIn()}>
+      {/* The level is a readout that is also the way back to 100%. At 100% there is nowhere to go
+          back to, so it is off and says so, rather than being a button that does nothing. */}
+      <DisabledReason reason={atDefault ? AT_DEFAULT_ZOOM : null}>
+        <Button
+          type="button"
+          variant="ghost"
+          className="h-8 min-w-12 rounded-none px-1.5 font-mono text-ui-xs tabular-nums disabled:opacity-100"
+          aria-label={atDefault ? `Zoom ${percent}` : `Zoom ${percent}. Reset to 100%`}
+          title={atDefault ? undefined : "Reset zoom to 100%"}
+          onClick={() => void zoomTo(1)}
+        >
+          {percent}
+        </Button>
+      </DisabledReason>
+      <CtrlButton label="Zoom in" onClick={() => void zoomIn()}>
         <ZoomIn className="h-3.5 w-3.5" />
       </CtrlButton>
       <CtrlButton
         label="Fit view"
-        onClick={() => fitView({ padding: 0.3 })}
+        onClick={() => void fitView({ padding: 0.3 })}
         disabled={!canFit}
         disabledReason={NOTHING_TO_FIT}
       >
         <Maximize className="h-3.5 w-3.5" />
-      </CtrlButton>
-
-      <Separator orientation="vertical" className="h-5" />
-
-      <CtrlButton label="Undo" onClick={undo} disabled={!canUndo}>
-        <Undo2 className="h-3.5 w-3.5" />
-      </CtrlButton>
-      <CtrlButton label="Redo" onClick={redo} disabled={!canRedo}>
-        <Redo2 className="h-3.5 w-3.5" />
       </CtrlButton>
     </div>
   );
