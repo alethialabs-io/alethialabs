@@ -13,16 +13,15 @@ The platform's security model is built on one principle: **never store static cl
 
 Traditional infrastructure tools require users to provide long-lived access keys (AWS Access Key ID, GCP service account JSON, Azure client secret). These keys are stored in configuration files, environment variables, or vault systems — creating a persistent attack surface.
 
-Console takes a different approach. The platform never stores cloud credentials. Instead, the control plane is **its own OIDC identity provider** (see [the Alethia OIDC issuer](#the-alethia-oidc-issuer-workload-identity) below): it mints short-lived, audience-scoped assertions that each cloud federates against. **All four managed clouds are keyless** — no access key, service-account JSON, or client secret anywhere:
+Console takes a different approach. The platform never stores cloud credentials. Instead, the control plane is **its own OIDC identity provider** (see [the Alethia OIDC issuer](#the-alethia-oidc-issuer-workload-identity) below): it mints short-lived, audience-scoped assertions that each cloud federates against. **All three managed clouds are keyless** — no access key, service-account JSON, or client secret anywhere:
 
 | Provider | Mechanism | Session |
 |----------|-----------|---------|
 | AWS | `AssumeRoleWithWebIdentity` directly into the customer role (IAM OIDC provider — no platform account, no ExternalId) | ~1 hour, auto-refreshed |
 | GCP | Workload Identity Federation (OIDC token exchange) | ~1 hour, auto-refreshed |
 | Azure | Client assertion into the customer's user-assigned managed identity (federated credential — no platform Entra app) | ~1 hour, auto-refreshed |
-| Alibaba | `AssumeRoleWithOIDC` (anonymous — no AccessKey, no Alethia Alibaba account) | ~1 hour, auto-refreshed |
 
-The only long-lived secret is the issuer's **signing key** (`ALETHIA_OIDC_SIGNING_KEY`), held on the control plane and never shared — clouds verify assertions against the published JWKS. If the user wants to revoke access, they delete the IAM role / WIF config / managed identity / RAM role in their cloud account. There is nothing to leak from the Console side.
+The only long-lived secret is the issuer's **signing key** (`ALETHIA_OIDC_SIGNING_KEY`), held on the control plane and never shared — clouds verify assertions against the published JWKS. If the user wants to revoke access, they delete the IAM role / WIF config / managed identity in their cloud account. There is nothing to leak from the Console side.
 
 ## The Alethia OIDC issuer (workload identity)
 
@@ -32,7 +31,7 @@ the trust root every managed cloud federates against:
 
 - **Mint.** `mintWorkloadToken({ audience })` signs a short-lived (≤10 min) RS256 assertion with a fixed
   subject (`alethia-connector`) and the cloud's expected **audience** (`sts.amazonaws.com`,
-  `alethia-gcp-wif`, `api://AzureADTokenExchange`, `sts.aliyuncs.com` — one per cloud, from
+  `alethia-gcp-wif`, `api://AzureADTokenExchange` — one per cloud, from
   `packages/workload-identity`). The audience scopes the token so it can't be replayed at a
   different cloud.
 - **Publish.** The public half is served as a JWKS at `${APP_URL}/api/oidc/jwks` (plus an OIDC discovery
@@ -45,9 +44,9 @@ that the provider re-reads, so a `tofu apply` longer than the ~1 hour session ke
 per-cloud runner mechanics are in [Cloud credentials](/concepts/runner/cloud-credentials). Key material is
 rotatable with zero downtime — see [Key rotation](#key-rotation).
 
-**This one model powers all four managed clouds.** The sections below are per-cloud deep dives — they differ
+**This one model powers all three managed clouds.** The sections below are per-cloud deep dives — they differ
 only in the federation primitive each cloud exposes (AWS `AssumeRoleWithWebIdentity`, GCP Workload Identity
-Federation, Azure federated identity, Alibaba `AssumeRoleWithOIDC`) and in what the customer creates to trust
+Federation, Azure federated identity) and in what the customer creates to trust
 the issuer. Each ends with a **Permissions scope** — exactly what Alethia provisions in that cloud, and how
 tightly the role is (being) scoped.
 
@@ -209,49 +208,9 @@ external-dns identity and **nothing else** (no path to Owner). See the
 [Azure connector guide](/guides/connectors/azure).
 </Callout>
 
-## Alibaba: RAM Role via OIDC (account-free)
-
-Alibaba is keyless **and account-free** — Alethia holds no Alibaba account and no AccessKey. The customer
-applies an OpenTofu module that creates a **RAM OIDC provider** (fixed name `alethia`) trusting the Alethia
-issuer plus a **RAM role**, then pastes the role ARN (Alethia derives the provider ARN from it).
-
-### Runtime Flow
-
-<Mermaid chart={`
-sequenceDiagram
-  participant R as Console / Runner
-  participant STS as Alibaba STS
-  R->>STS: AssumeRoleWithOIDC(RoleArn, OIDCProviderArn, minted token) — anonymous, no AccessKey
-  STS-->>R: Temporary STS credentials (~1h)
-  Note over R: tofu runs; the runner re-mints into the token file so long applies refresh
-`} />
-
-`AssumeRoleWithOIDC` is an anonymous STS action — the OIDC token itself authenticates the call, so there is
-no AccessKey and no request signature. On the runner, the `alicloud` provider performs the exchange itself
-from `ALIBABA_CLOUD_OIDC_TOKEN_FILE` (re-read on refresh). Revocation is instant by deleting the RAM role.
-
-### Permissions scope
-
-**Exactly what Alethia provisions in Alibaba Cloud:** ACK (managed cluster + node pool), VPC (vSwitches, NAT,
-SNAT), EIP, RDS, Container Registry EE, KVStore (Redis), AliDNS, KMS, Message Service (MNS), OSS, and
-Tablestore (OTS). Not a WAF: Alibaba's WAF 3.0 instance is an account-level purchase, so Alethia does not
-buy one on your behalf and the role is granted no `yundun-waf` actions.
-
-<Callout type="info">
-**Least-privilege by enumerated custom policy — never account admin.** The Alibaba RAM role attaches **4
-enumerated custom policies** (replacing the per-service `*FullAccess` System policies): `ComputeCluster`
-(ACK + its transitive node-pool ECS + API-server/Service SLB), `Network` (VPC/vSwitch/NAT/SNAT + EIP),
-`Data` (RDS/KVStore/OSS/Tablestore/KMS), and `EdgeReg` (Container Registry/AliDNS/MNS). Each lists the
-**specific create/read/modify/delete/tag actions** the templates issue (reads stay `Describe*`/`Get*`/`List*`
-so a provider bump doesn't break a real apply) — never `service:*`, `AliyunRAMFullAccess`, or an admin
-policy. The service-linked roles ACK/NAT need are covered by a **narrow custom policy granting only
-`ram:CreateServiceLinkedRole`** (service-linked roles are cloud-managed with fixed permissions, so this
-can't escalate). See the [Alibaba connector guide](/guides/connectors/alibaba).
-</Callout>
-
 ## Key rotation
 
-The issuer's signing key is the trust root for all four clouds, so it rotates with **zero downtime** via an
+The issuer's signing key is the trust root for all three federated clouds, so it rotates with **zero downtime** via an
 overlap: the JWKS publishes the outgoing and the new key at once, and each assertion's `kid` header selects
 the right one. New assertions are signed by the new key while in-flight ones still verify; the old key is
 retired once every cloud's cached JWKS has refreshed. The operator steps are in the
@@ -263,7 +222,7 @@ Keyless auth controls *who* can touch a cloud; **execution isolation** controls 
 itself* can do. In **managed** mode Alethia runs the provisioning fleet, so the trust question is: whose code
 runs on it?
 
-- **Trusted templates** — Alethia's own project templates (EKS/GKE/AKS/ACK/Talos + supporting services) run
+- **Trusted templates** — Alethia's own project templates (EKS/GKE/AKS/Talos + supporting services) run
   in-process on the runner. They are reviewed platform code, so this is safe.
 - **Untrusted bring-your-own** — customer OpenTofu / Helm (a provider, an `external` data source, a chart
   hook) is arbitrary code. It runs inside a **per-job container sandbox**: a fresh container per job with its

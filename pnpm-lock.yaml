@@ -692,6 +692,9 @@ importers:
       '@repo/brand':
         specifier: workspace:*
         version: link:../../packages/brand
+      '@repo/cloud-catalog':
+        specifier: workspace:*
+        version: link:../../packages/cloud-catalog
       '@repo/email':
         specifier: workspace:*
         version: link:../../packages/email
@@ -1031,6 +1034,10 @@ importers:
         version: 4.1.12(@opentelemetry/api@1.9.1)(@types/node@25.0.8)(@vitest/coverage-v8@4.1.12)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@7.3.6(@types/node@25.0.8)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
 
   packages/plan-catalog:
+    dependencies:
+      '@repo/cloud-catalog':
+        specifier: workspace:*
+        version: link:../cloud-catalog
     devDependencies:
       '@repo/eslint-config':
         specifier: workspace:*

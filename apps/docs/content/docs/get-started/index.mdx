@@ -10,7 +10,7 @@ To do the same from a terminal, see [The CLI](/get-started/the-cli).
 
 ## Prerequisites
 
-- An account on one of the supported clouds: AWS, GCP, Azure, Hetzner, or Alibaba Cloud.
+- An account on one of the supported clouds: AWS, GCP, Azure, or Hetzner.
   You need permission to create roles or API tokens in that account.
 - A GitHub, GitLab, or Bitbucket account.
 
@@ -31,7 +31,7 @@ The console then opens your organization's **Overview**.
 2. On your cloud's card, select **Connect**. A setup sheet opens.
 3. Follow the steps for your cloud:
 
-<Tabs items={["AWS", "GCP", "Azure", "Hetzner", "Alibaba"]}>
+<Tabs items={["AWS", "GCP", "Azure", "Hetzner"]}>
   <Tab value="AWS">
     1. Select **Open CloudShell**. AWS CloudShell opens in your browser.
     2. Copy the setup command from the sheet and run it in CloudShell. The command creates an IAM role that trusts Alethia. No access keys are created.
@@ -55,12 +55,6 @@ The console then opens your organization's **Overview**.
     2. In your Hetzner Cloud project, go to **Security → API Tokens → Generate API token**. Give the token **Read & Write** permission.
     3. Paste the token into **API Token**.
     4. Select **Connect**. Alethia verifies the token and stores it encrypted.
-  </Tab>
-  <Tab value="Alibaba">
-    1. Select **Open Cloud Shell**. The Alibaba Cloud Shell opens in your browser.
-    2. Copy the setup command and run it. The command creates a RAM OIDC provider and a role that trusts Alethia.
-    3. Paste the `role_arn` that the command prints into **RAM Role ARN**.
-    4. Select **Connect**.
   </Tab>
 </Tabs>
 
@@ -115,7 +109,7 @@ Select **Deploy** on that bar to deploy your changes.
 The card shows the cluster endpoint, the ArgoCD URL, and a command that gets the ArgoCD
 admin password. For AWS clusters, the card also shows the `aws eks update-kubeconfig` command.
 For GCP and Azure, use the command in [Clusters](/guides/clusters#kubeconfig-commands).
-To get a short-lived kubeconfig without a cloud login of your own, on any of the five clouds, see
+To get a short-lived kubeconfig without a cloud login of your own, on any of the four clouds, see
 [Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
 
 </Steps>
