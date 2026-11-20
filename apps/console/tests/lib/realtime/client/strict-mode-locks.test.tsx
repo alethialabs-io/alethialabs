@@ -33,7 +33,12 @@ vi.mock("@/lib/rpc/client", () => ({
 			project: { key: () => ["jobs-orpc", "project"] },
 		},
 		// The overview's reads ride the jobs, usage and alerts topics (#6118).
-		overview: { usage: { key: () => ["overview-usage-orpc"] }, alerts: { key: () => ["overview-alerts-orpc"] } },
+		overview: {
+			usage: { key: () => ["overview-usage-orpc"] },
+			alerts: { key: () => ["overview-alerts-orpc"] },
+			// The project grid rides the projects, environments, jobs, addons and connectors topics (#6817).
+			projects: { key: () => ["overview-projects-orpc"] },
+		},
 		// The board's reads (#6119), which the jobs, environments and addons topics also invalidate.
 		canvas: Object.fromEntries(
 			["environmentStatus", "environmentJobs", "chartWorkloads", "iacSource", "addons", "byoCharts"].map(

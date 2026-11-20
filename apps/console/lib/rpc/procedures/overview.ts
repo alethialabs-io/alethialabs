@@ -4,22 +4,32 @@
 import "server-only";
 
 import { count, desc, eq } from "drizzle-orm";
+import { z } from "zod";
 import type { DeliveryDTO } from "@/app/server/actions/alerts";
 import {
 	getAiUsageSummary,
 	getCollaborationAccess,
 	getOrgUsage,
 } from "@/app/server/actions/billing";
+import {
+	type ProjectListItem,
+	type ProjectListResult,
+	getProjects,
+	queryProjects,
+} from "@/app/server/actions/projects";
+import { getPdp } from "@/lib/authz";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorize } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
 import { isStripeConfigured } from "@/lib/billing/config";
 import { getOrgBilling } from "@/lib/billing/queries";
+import { offeredClouds } from "@/lib/cloud-providers/availability";
 import { getServiceDb } from "@/lib/db";
 import { alertDeliveries, member } from "@/lib/db/schema";
 import type { BillingPlan } from "@/lib/db/schema/enums";
 import { toDeliveryDTO } from "@/lib/queries/alerts-lists";
 import { query } from "@/lib/rpc/base";
+import { readConnectedCloudProviders } from "@/lib/rpc/procedures/connectors";
 
 /** How many deliveries the overview's Alerts card lists. */
 export const OVERVIEW_ALERT_ROWS = 4;
@@ -151,12 +161,87 @@ export async function readOverviewAlerts(): Promise<OverviewAlerts> {
 }
 
 /**
+ * The grid's search, filter and sort, as the address carries them. Every field is always present,
+ * so the page's prefetch and the browser's read build one key from one address.
+ */
+const projectsInput = z.object({
+	q: z.string().max(200),
+	clouds: z.array(z.string().min(1).max(64)).max(32),
+	repos: z.array(z.string().min(1).max(2048)).max(64),
+	sort: z.enum(["activity", "name"]),
+});
+
+/** {@link readOverviewProjects}'s input. */
+export type OverviewProjectsInput = z.infer<typeof projectsInput>;
+
+/** Everything the overview's project grid shows, in one read. */
+export interface OverviewProjects {
+	/** The projects matching the search and filters, in the asked order. */
+	projects: ProjectListItem[];
+	/** Every cloud and repository in the org with its count over the UNFILTERED list. */
+	facets: ProjectListResult["facets"];
+	/**
+	 * How many projects the organization has, whatever the search and filters, or `null` when a
+	 * filtered read could not count them. The Usage card prints it; it does not decide what the
+	 * grid renders.
+	 */
+	total: number | null;
+	/**
+	 * The cloud slugs with a connected account, or `null` when that could not be read. It decides a
+	 * logo's colour and the empty state's first step, so its failure must not fail the grid.
+	 */
+	connectedProviders: string[] | null;
+	/** The cloud slugs this deployment offers, in catalog order. */
+	offeredClouds: string[];
+	/** Whether the viewer may create a project in this organization. */
+	canCreate: boolean;
+}
+
+/**
+ * The overview grid's read: the projects as searched, filtered and sorted, the facet universe, and
+ * what the grid needs about the viewer and the deployment to render each project truthfully.
+ *
+ * `queryProjects` is the projects domain's reader, called IN-PROCESS as the other overview reads
+ * call theirs; it authorizes `view` on projects, so a viewer without it is refused (`FORBIDDEN` on
+ * the wire) and the grid renders that as its own state. The create decision is asked with `can()`,
+ * which records nothing: this read is refetched on every live hint.
+ *
+ * Two parts are allowed to fail without failing the grid, because neither is the grid: the
+ * connected clouds, and the organization's total under a filter (unfiltered, the rows ARE the
+ * total and nothing more is read).
+ */
+export async function readOverviewProjects(actor: Actor, input: OverviewProjectsInput): Promise<OverviewProjects> {
+	const filtered = input.q.trim() !== "" || input.clouds.length > 0 || input.repos.length > 0;
+	const [list, everyProject, connectedProviders, create] = await Promise.all([
+		queryProjects(input),
+		filtered
+			? getProjects()
+					.then((rows) => rows.length)
+					.catch(() => null)
+			: null,
+		readConnectedCloudProviders().catch(() => null),
+		getPdp().can(actor, "create", { type: "project" }),
+	]);
+	return {
+		projects: list.projects,
+		facets: list.facets,
+		total: filtered ? everyProject : list.projects.length,
+		connectedProviders,
+		offeredClouds: [...offeredClouds()],
+		canCreate: create.allowed,
+	};
+}
+
+/**
  * The overview domain's reads (ADR 0005 D1, #6118). The page prefetches each through
- * `serverOrpc()` and each card reads its own, so one failing read takes down one card (RUBRIC B5).
- * There is no recent-jobs read here: the Recent-jobs card reads the shell's job feed
+ * `serverOrpc()` and each region reads its own, so one failing read takes down one region
+ * (RUBRIC B5). There is no recent-jobs read here: the Recent-jobs card reads the shell's job feed
  * (`workspace.recentJobs`, #6114), which the `[org]` layout already prefetches.
  */
 export const overviewRouter = {
 	usage: query.handler(({ context }) => readOverviewUsage(context.actor)),
 	alerts: query.handler(() => readOverviewAlerts()),
+	projects: query
+		.input(projectsInput)
+		.handler(({ context, input }) => readOverviewProjects(context.actor, input)),
 };

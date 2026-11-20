@@ -7,7 +7,6 @@
 // card/table view toggle and a Create menu. All state is owned by the page (URL search params) —
 // the console filter standard's blessed URL→RSC variant — so this component only emits `onChange`.
 
-import { lookup } from "@/lib/typed-object";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -34,22 +33,26 @@ import { FilterBar } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { Input } from "@repo/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
-import { ProviderIcon, PROVIDER_LABELS } from "@repo/ui/provider-icon";
+import { ProviderIcon } from "@repo/ui/provider-icon";
 import { Separator } from "@repo/ui/separator";
 import { cn } from "@repo/ui/utils";
 import { ViewToggle } from "@repo/ui/view-toggle";
 import type { ProjectListResult } from "@/app/server/actions/projects";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
+import type { OverviewState } from "@/components/overview/overview-state";
+import { providerLabel } from "@/components/overview/project-cloud";
 import { overviewUsageQuery } from "@/components/overview/usage-card";
 import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
+import { CLOUD_ACCOUNT, ORGANIZATION, PROJECT, sentenceStart } from "@/lib/copy/vocabulary";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { globalHref } from "@/lib/routing";
-import type { OverviewState } from "@/app/(private)/[org]/overview-client";
 
-/** Human label for a cloud provider slug (shared vocabulary, uppercase fallback). */
-function providerLabel(p: string): string {
-  return lookup(PROVIDER_LABELS, p) ?? p.toUpperCase();
-}
+/** The reason on "Organization member" while the plan read that decides it has not answered. */
+export const INVITE_PENDING_REASON = "Checking your plan.";
+
+/** The reason on "Organization member" when that read failed: the Usage card on this page retries it. */
+export const INVITE_UNKNOWN_REASON =
+  "Couldn't check your plan. Try again from the Usage card on this page.";
 
 /** The filter dims Reset clears (view + sort are not filters, so they don't count). */
 const FILTER_DEFAULTS = {
@@ -62,11 +65,15 @@ export function OverviewToolbar({
   orgSlug,
   state,
   facets,
+  createProjectReason,
   onChange,
 }: {
   orgSlug: string;
   state: OverviewState;
+  /** The facet universe from the grid's read; empty until it has answered. */
   facets: ProjectListResult["facets"];
+  /** Why the viewer cannot create a project right now, or `null` when they can. */
+  createProjectReason: string | null;
   onChange: (next: Partial<OverviewState>) => void;
 }) {
   // Local, immediate draft for the search box; the URL (server query) updates on a debounce.
@@ -92,7 +99,7 @@ export function OverviewToolbar({
             value={state.view}
             onChange={(view) => onChange({ view })}
           />
-          <CreateMenu orgSlug={orgSlug} />
+          <CreateMenu orgSlug={orgSlug} createProjectReason={createProjectReason} />
         </div>
       }
     >
@@ -160,7 +167,7 @@ function FilterMenu({
             className="relative"
             aria-label="Filter and sort"
           >
-            <Filter className="size-4" />
+            <Filter aria-hidden className="size-4" />
             {badge > 0 && (
               <span className="absolute -right-1.5 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full border-2 border-background bg-foreground px-1 font-mono text-ui-3xs font-semibold text-background">
                 {badge}
@@ -439,21 +446,38 @@ function FacetOption({
   );
 }
 
-/** "Create" menu — three plain actions: Project, Cloud, Org member. */
-function CreateMenu({ orgSlug }: { orgSlug: string }) {
+/**
+ * "Create" menu: a project, a cloud account, an organization member.
+ *
+ * Each entry that the viewer cannot use right now is disabled WITH its reason, and none opens a
+ * surface chosen from an answer the console does not have yet. The member entry is decided by the
+ * plan (`canInvite`, on the overview's usage read): while that read is pending or has failed the
+ * entry says so, and only a read that answered "no" opens the upgrade dialog.
+ */
+function CreateMenu({
+  orgSlug,
+  createProjectReason,
+}: {
+  orgSlug: string;
+  createProjectReason: string | null;
+}) {
   const router = useRouter();
-  // Invite is gated (card-backed/paid org): open the invite dialog when allowed, else the
-  // upsell — mirroring the members table. Dialogs render outside the menu so they survive it
-  // closing.
+  // Dialogs render outside the menu so they survive it closing.
   const [inviteOpen, setInviteOpen] = useState(false);
   const [upsellOpen, setUpsellOpen] = useState(false);
-  // The invite gate rides on the overview's usage read (prefetched by the page, #6118) — the same
-  // cache entry the Usage card reads, so it costs no request of its own. Until it answers, or if it
-  // failed, the item opens the upsell, as it did before.
-  const { data: canInvite = false } = useQuery({
+  // The invite gate rides on the overview's usage read (prefetched by the page, #6118): the same
+  // cache entry the Usage card reads, so it costs no request of its own.
+  const usage = useQuery({
     ...overviewUsageQuery(),
-    select: (usage) => usage.canInvite,
+    select: (answer) => answer.canInvite,
   });
+  const canInvite = usage.data;
+  const inviteReason =
+    canInvite !== undefined
+      ? null
+      : usage.isError
+        ? INVITE_UNKNOWN_REASON
+        : INVITE_PENDING_REASON;
 
   return (
     <>
@@ -461,38 +485,40 @@ function CreateMenu({ orgSlug }: { orgSlug: string }) {
         <DropdownMenuTrigger
           render={
             <Button size="default" className="gap-1.5">
-              <Plus className="h-4 w-4" />
+              <Plus aria-hidden className="h-4 w-4" />
               Create
             </Button>
           }
         />
-        <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuContent align="end" className="w-56">
           <DropdownMenuLabel className="font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">
             Create
           </DropdownMenuLabel>
           <DropdownMenuItem
+            disabledReason={createProjectReason}
             onSelect={() => router.push(globalHref(orgSlug, "new"))}
           >
-            Project
+            {sentenceStart(PROJECT.one)}
           </DropdownMenuItem>
           <DropdownMenuItem
             onSelect={() =>
               router.push(`${globalHref(orgSlug, "connectors")}?type=cloud`)
             }
           >
-            Cloud
+            {sentenceStart(CLOUD_ACCOUNT.one)}
           </DropdownMenuItem>
           <DropdownMenuItem
+            disabledReason={inviteReason}
             onSelect={() =>
               canInvite ? setInviteOpen(true) : setUpsellOpen(true)
             }
           >
-            Org member
+            {sentenceStart(ORGANIZATION.one)} member
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* Controlled, trigger-less — opened from the "Org member" item above. */}
+      {/* Controlled, trigger-less — opened from the member item above. */}
       <InviteMemberDialog open={inviteOpen} onOpenChange={setInviteOpen} />
       <UpgradeDialog
         feature="invite"

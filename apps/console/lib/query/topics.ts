@@ -107,6 +107,9 @@ export const TOPIC_KEYS = {
 		// Evidence (#6126): a PLAN/DEPLOY's verdict and signed receipt, and a recorded waiver, are
 		// jobs columns (execution_metadata, verify_override).
 		orpc.evidence.key(),
+		// The overview's project grid (#6817): a deploy that ends moves a card's "Deployed" time,
+		// which is not a column the `environments` trigger fires on.
+		orpc.overview.projects.key(),
 	],
 	// The env switcher's list (#6114); an environment's status and its components' lifecycles (the
 	// board's node states), its described chart workloads and its BYO IaC source (#6119). The
@@ -124,6 +127,9 @@ export const TOPIC_KEYS = {
 		[...DESTROY_HOLD_KEY],
 		orpc.clusters.key(),
 		orpc.evidence.key(),
+		// The overview's project grid (#6817): a card's status is its default environment's, and its
+		// environment count moves when one is added or deleted.
+		orpc.overview.projects.key(),
 	],
 	// A project's name/slug/region changed, or one was created or deleted (#6128): the shell's list
 	// (switcher, breadcrumbs, palette), the setup guide, usage, and the project's Settings → General.
@@ -139,6 +145,8 @@ export const TOPIC_KEYS = {
 		orpc.projects.nameAvailability.key(),
 		orpc.projects.duplicateTargets.key(),
 		orpc.evidence.key(),
+		// The overview's project grid (#6817): a project created, duplicated, renamed or deleted.
+		orpc.overview.projects.key(),
 	],
 	// The Usage counts (#6127) and the clusters grid (#6122) both read the clusters under management;
 	// the agent grid's clusters widget re-runs its source on the same hint (#6207).
@@ -168,6 +176,8 @@ export const TOPIC_KEYS = {
 		orpc.canvas.addons.key(),
 		orpc.canvas.byoCharts.key(),
 		orpc.canvas.environmentStatus.key(),
+		// The overview's project grid counts each project's add-ons (#6817).
+		orpc.overview.projects.key(),
 	],
 	// The Alerts hub's reads — settings, policies, channels, the delivery ledger — and the overview's
 	// Alerts card (#6118, #6125). Hints come from the alert tables' triggers (programmables.sql) and
@@ -214,7 +224,13 @@ export const TOPIC_KEYS = {
 	access: (): QueryKey[] => [orpc.members.key(), orpc.sso.key()],
 	// A cloud account or an api_key credential changed — a sweep moved its health, another member
 	// connected or removed one (#6124). The board, and the setup guide's "connect a cloud" step.
-	connectors: (): QueryKey[] => [orpc.connectors.key(), orpc.workspace.setupGuide.key()],
+	// The overview's project grid (#6817): which clouds have a connected account decides a logo's
+	// colour and whether an empty organization is told to connect one first.
+	connectors: (): QueryKey[] => [
+		orpc.connectors.key(),
+		orpc.workspace.setupGuide.key(),
+		orpc.overview.projects.key(),
+	],
 	// A dimension, a value or an assignment changed (#6129): the settings page's taxonomy, its usage
 	// counts and breakdowns, and every picker's and list's chips — all `classification.*` reads.
 	classification: (): QueryKey[] => [orpc.classification.key()],

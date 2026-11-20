@@ -4,7 +4,8 @@
 
 // Overview project row — the table-view counterpart to `ProjectCard`. One project per row:
 // provider glyph + name, cloud, region, status, environment count, add-ons, estimated cost,
-// last-deploy time, and the shared actions menu.
+// last-deploy time, and the shared actions menu. The columns are `PROJECT_TABLE_COLUMNS`
+// (projects-skeleton.tsx), in that order.
 
 import { Box } from "lucide-react";
 import Link from "next/link";
@@ -13,19 +14,10 @@ import { ProviderIcon } from "@repo/ui/provider-icon";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { TableCell, TableRow } from "@repo/ui/table";
 import type { ProjectListItem } from "@/app/server/actions/projects";
+import { ClockSlot } from "@/components/overview/clock-slot";
 import { ProjectActionsMenu } from "@/components/overview/project-actions-menu";
+import { providerLabel } from "@/components/overview/project-cloud";
 import { orgHref, projectHref } from "@/lib/routing";
-
-/** Human label for a cloud provider slug (falls back to uppercase). */
-const PROVIDER_LABEL: Record<string, string> = {
-	aws: "AWS",
-	gcp: "GCP",
-	azure: "Azure",
-	alibaba: "Alibaba",
-	digitalocean: "DigitalOcean",
-	hetzner: "Hetzner",
-	civo: "Civo",
-};
 
 /** A single project as a table row. */
 export function ProjectRow({
@@ -33,27 +25,32 @@ export function ProjectRow({
 	orgSlug,
 	isFavorite,
 	onToggleFavorite,
-	connectedProviders,
+	providerConnected,
+	cloudUnavailable,
 }: {
 	project: ProjectListItem;
 	orgSlug: string;
 	isFavorite: boolean;
-	onToggleFavorite: () => void;
-	/** Cloud provider slugs with a live connection — the logo is full color when connected. */
-	connectedProviders: string[];
+	/** Stars or unstars the project. Absent while nobody is signed in to star it for. */
+	onToggleFavorite?: () => void;
+	/** The project's cloud has a connected account: its mark is drawn in colour. */
+	providerConnected: boolean;
+	/** Why this project cannot be planned or deployed here (`cloudNotOfferedReason`), or `null`. */
+	cloudUnavailable: string | null;
 }) {
 	const href = project.slug
 		? projectHref(orgSlug, project.slug)
 		: orgHref(orgSlug);
 	const provider = project.cloud_provider;
-	const providerConnected = provider
-		? connectedProviders.includes(provider)
-		: false;
+	const deployedAt = project.last_deployed_at;
 
 	return (
 		<TableRow className="group/row">
 			<TableCell>
-				<Link href={href} className="flex items-center gap-2.5">
+				<Link
+					href={href}
+					className="flex items-center gap-2.5 rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+				>
 					{provider ? (
 						<ProviderIcon
 							provider={provider}
@@ -62,7 +59,7 @@ export function ProjectRow({
 							className="shrink-0"
 						/>
 					) : (
-						<Box className="size-4 shrink-0 text-muted-foreground" />
+						<Box aria-hidden className="size-4 shrink-0 text-muted-foreground" />
 					)}
 					<span className="truncate font-display text-ui-md font-medium text-foreground group-hover/row:underline">
 						{project.project_name}
@@ -70,7 +67,12 @@ export function ProjectRow({
 				</Link>
 			</TableCell>
 			<TableCell className="text-muted-foreground">
-				{provider ? (PROVIDER_LABEL[provider] ?? provider.toUpperCase()) : "—"}
+				{provider ? providerLabel(provider) : "—"}
+				{cloudUnavailable ? (
+					<span data-slot="cloud-unavailable" className="block max-w-56 whitespace-normal text-ui-2xs">
+						{cloudUnavailable}
+					</span>
+				) : null}
 			</TableCell>
 			<TableCell className="font-mono text-ui-xs text-muted-foreground">
 				{project.region || "—"}
@@ -90,9 +92,15 @@ export function ProjectRow({
 					: "—"}
 			</TableCell>
 			<TableCell className="text-right font-mono text-ui-xs text-muted-foreground">
-				{project.last_deployed_at
-					? formatRelative(project.last_deployed_at)
-					: "Never"}
+				{deployedAt ? (
+					<ClockSlot
+						sizer="less than a minute ago"
+						className="justify-items-end"
+						render={() => formatRelative(deployedAt)}
+					/>
+				) : (
+					"Never"
+				)}
 			</TableCell>
 			<TableCell className="text-right">
 				<ProjectActionsMenu
@@ -100,7 +108,7 @@ export function ProjectRow({
 					orgSlug={orgSlug}
 					isFavorite={isFavorite}
 					onToggleFavorite={onToggleFavorite}
-					triggerClassName="ml-auto opacity-0 focus-visible:opacity-100 data-[state=open]:opacity-100 group-hover/row:opacity-100"
+					triggerClassName="ml-auto opacity-0 focus-visible:opacity-100 data-[popup-open]:opacity-100 group-hover/row:opacity-100 [@media(hover:none)]:opacity-100"
 				/>
 			</TableCell>
 		</TableRow>
