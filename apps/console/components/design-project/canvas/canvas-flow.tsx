@@ -534,7 +534,7 @@ export function CanvasFlow({
 				return;
 			}
 			setNotice(null);
-			setMenu({
+			const next: ConnectMenuState = {
 				point: options.point,
 				sourceId: options.sourceId,
 				sourceName,
@@ -542,7 +542,11 @@ export function CanvasFlow({
 				kinds,
 				position: options.position,
 				fromKeyboard: options.fromKeyboard,
-			});
+			};
+			// Opened on the next task, not now. A connection ends on a mouse release, and the browser
+			// follows a release with a click on whatever is under it: a menu opened during the release
+			// would take that click as a press outside itself and close again.
+			window.setTimeout(() => setMenu(next), 0);
 		},
 		[iacGoverned, refuse],
 	);
