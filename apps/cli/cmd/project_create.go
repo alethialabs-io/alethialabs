@@ -257,7 +257,7 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 			}
 		}
 		outFmt := outputFormat(cmd)
-		if err := runProjectCreate(client, printerFor(outFmt), params, cmdmeta.DryRunRequested(cmd)); err != nil {
+		if err := runProjectCreate(client, printerInFormat(outFmt), params, cmdmeta.DryRunRequested(cmd)); err != nil {
 			fail(err)
 		}
 		if matrixAsked {

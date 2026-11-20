@@ -401,7 +401,7 @@ var projectEnvAddCmd = &cobra.Command{
 		}
 
 		outFmt := outputFormat(cmd)
-		if err := runProjectEnvAdd(api.NewClient(token), printerFor(outFmt), api.AddEnvironmentParams{
+		if err := runProjectEnvAdd(api.NewClient(token), printerInFormat(outFmt), api.AddEnvironmentParams{
 			Project:   project,
 			Name:      answers.Name,
 			Stage:     answers.Stage,

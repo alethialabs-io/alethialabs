@@ -321,16 +321,16 @@ func finishProjectJob(cmd *cobra.Command, c projectJobClient, run projectJobRun)
 		return err
 	}
 	format := outputFormat(cmd)
-	return printerFor(format).Result(result, func(w io.Writer) {
+	return printerInFormat(format).Result(result, func(w io.Writer) {
 		if obj, ok := result.Object.(projectJobObject); ok {
 			renderProjectJobs(w, result, obj)
 		}
 	})
 }
 
-// printerFor returns the invocation's Printer with the format a command validated. The two differ
+// printerInFormat returns the invocation's Printer with the format a command validated. The two differ
 // only when --output was invalid, which outputFormat has already refused.
-func printerFor(format string) *Printer {
+func printerInFormat(format string) *Printer {
 	p := *printer
 	p.Format = format
 	return &p

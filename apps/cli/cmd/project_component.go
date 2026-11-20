@@ -357,7 +357,7 @@ A cluster takes node_size OR instance_types: setting one clears the other.`,
 		}
 		outFmt := outputFormat(cmd)
 		request := componentRequest{Project: project, Kind: kind, Name: name, Env: env, Fields: fields}
-		if err := runComponentAdd(client, printerFor(outFmt), request, cmdmeta.DryRunRequested(cmd)); err != nil {
+		if err := runComponentAdd(client, printerInFormat(outFmt), request, cmdmeta.DryRunRequested(cmd)); err != nil {
 			fail(fmt.Errorf("failed to add component: %w", err))
 		}
 		printReplay(printer.Err, outFmt, asked, componentAddReplayArgs(project, componentAddSpec{
@@ -843,7 +843,7 @@ without sending it.`,
 			return
 		}
 		request := componentRequest{Project: project, Kind: kind, Name: name, Env: env}
-		if err := runComponentRemove(client, v, printerFor(outputFormat(cmd)), request, dryRun); err != nil {
+		if err := runComponentRemove(client, v, printerInFormat(outputFormat(cmd)), request, dryRun); err != nil {
 			fail(fmt.Errorf("failed to remove component: %w", err))
 		}
 	},
