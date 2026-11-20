@@ -334,7 +334,7 @@ func keylessDebugExec(ctx context.Context, kc string, p keylessDBParams, pod, ta
 	args := []string{
 		"--kubeconfig", kc, "debug", "pod/" + pod, "-n", p.cfg.namespace,
 		"--image=" + p.cfg.clientImage,
-		"--container=keyless-" + tag,
+		"--container=" + keylessDebugContainerName(tag),
 		"--quiet", "--attach", "--stdin=false", "--tty=false",
 		"--",
 	}
