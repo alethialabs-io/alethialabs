@@ -7,7 +7,11 @@
 // from core (`@/...`) are used (erased at compile time) — runtime data access goes
 // through `core.db`, so this package never imports core runtime internals.
 
-import type { EnterpriseEntrypoint } from "@alethia/enterprise-api";
+import type {
+  EnterpriseEditionReport,
+  EnterpriseEntrypoint,
+  LicenseState,
+} from "@alethia/enterprise-api";
 import { sso } from "@better-auth/sso";
 import { OpenFgaClient } from "@openfga/sdk";
 import { APIError, createAuthMiddleware } from "better-auth/api";
@@ -15,7 +19,7 @@ import { organization } from "better-auth/plugins/organization";
 import type { Entitlements, ResolvedScope } from "@/lib/authz/types";
 import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
 import { FgaTupleSync } from "./fga-tuple-sync";
-import { resolveInstanceLicense } from "./license";
+import { type InstanceLicense, resolveInstanceLicense } from "./license";
 import { OpenFgaPdp } from "./openfga-pdp";
 import { newOrgSetupHooks } from "./new-org-setup-hooks";
 import { orgSlugHooks } from "./org-slug-hooks";
@@ -60,6 +64,72 @@ const ALL_ENTITLEMENTS: Entitlements = {
   // own tier ladder (console lib/billing/ai-plan.ts, resolved per-org via resolveAiTier).
 };
 
+/**
+ * The entitlements the instance licence grants to every organization at `now`, or null when it
+ * grants none. It grants only when the licence was verified, its claims were read, and its end —
+ * if it has one — has not passed. Every other state is null, so the caller falls back to what the
+ * organization's own plan gives it.
+ */
+export function licensedEntitlements(instance: InstanceLicense, now: Date): Entitlements | null {
+  if (!instance.active || instance.license === undefined) return null;
+  const { expiresAt } = instance.license;
+  if (expiresAt !== null && !(expiresAt * 1000 > now.getTime())) return null;
+  return instance.license.entitlements ?? ALL_ENTITLEMENTS;
+}
+
+/** The names of the capability switches that are on in a set of entitlements. Quotas are not switches. */
+function capabilityNames(entitlements: Entitlements): string[] {
+  const entries: [string, unknown][] = Object.entries(entitlements);
+  return entries.filter(([, value]) => value === true).map(([name]) => name);
+}
+
+/** An instant in Unix seconds as an ISO 8601 string, or null when there is none. */
+function isoInstant(seconds: number | null | undefined): string | null {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return null;
+  return new Date(seconds * 1000).toISOString();
+}
+
+/**
+ * The report this package makes about the instance it is loaded into: the state of the instance
+ * licence at `now`, the capabilities that licence grants, and every module of
+ * {@link ENTERPRISE_FEATURES} with whether it is built.
+ *
+ * The state is `active` exactly when {@link licensedEntitlements} grants, and the capability list
+ * is empty in every other state — the report and the entitlement resolver decide from the same
+ * function, so they cannot disagree. A verified licence whose end has passed is `expired`. A
+ * licence that is installed and was not verified is `invalid`; no installed licence is `none`.
+ *
+ * @param instance the resolved instance licence
+ * @param features the module registry to report
+ * @param now the instant the licence's end is compared against
+ * @param licenseInstalled whether the operator installed a licence at all
+ */
+export function editionReport(
+  instance: InstanceLicense,
+  features: readonly EnterpriseFeature[],
+  now: Date,
+  licenseInstalled: boolean,
+): EnterpriseEditionReport {
+  const granted = licensedEntitlements(instance, now);
+  let state: LicenseState = "none";
+  if (granted !== null) state = "active";
+  else if (instance.active && instance.license !== undefined) state = "expired";
+  else if (licenseInstalled) state = "invalid";
+  // The claims of a licence are named only when it was verified; an unverified one names nothing.
+  const license = instance.active ? instance.license : undefined;
+  return {
+    license: {
+      state,
+      subject: license?.subject ?? null,
+      tier: license?.tier ?? null,
+      expiresAt: isoInstant(license?.expiresAt),
+      graceEndsAt: null,
+    },
+    capabilities: granted === null ? [] : capabilityNames(granted),
+    features: features.map(({ id, built }) => ({ id, built })),
+  };
+}
+
 /** Reads a string `organizationId` off an unknown request body, else null. */
 function bodyOrgId(body: unknown): string | null {
   if (typeof body === "object" && body !== null && "organizationId" in body) {
@@ -77,13 +147,15 @@ function bodyOrgId(body: unknown): string | null {
 export interface EnterpriseFeature {
   /** The module's name; for the ones below it is also its directory under `ee/src/`. */
   id: string;
+  /** Whether the module is built. A planned module holds its place with `built: false`. */
+  built: boolean;
   /** The Better Auth plugins this module mounts, built from the injected core capabilities. */
   authPlugins: (core: CoreContext) => EnterpriseAuthPlugin[];
 }
 
 /** The entry of a module that is planned and not built: it registers nothing. */
 function notBuilt(id: string): EnterpriseFeature {
-  return { id, authPlugins: () => [] };
+  return { id, built: false, authPlugins: () => [] };
 }
 
 /**
@@ -93,7 +165,11 @@ function notBuilt(id: string): EnterpriseFeature {
  */
 export const ENTERPRISE_FEATURES: readonly EnterpriseFeature[] = [
   // Access for a member who arrives through single sign-on (./sso-provisioning).
-  { id: "sso-provisioning", authPlugins: (core) => [ssoProvisioningPlugin(core)] },
+  {
+    id: "sso-provisioning",
+    built: true,
+    authPlugins: (core) => [ssoProvisioningPlugin(core)],
+  },
   // Enforced single sign-on — ee/src/enforced-sso/
   notBuilt("enforced-sso"),
   // Identity-provider group to role mapping — ee/src/group-mapping/
@@ -115,6 +191,19 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
   const slugHooks = orgSlugHooks(core.reservedOrgSlugRefusal, core.orgSlugShapeRefusal);
   const setupHooks = newOrgSetupHooks(core.newOrgSetup);
   const tupleSync = fgaClient ? new FgaTupleSync(core, fgaClient) : undefined;
+
+  // Per-org entitlement resolution, and the answer both entitlement gates in this file read (team
+  // creation and single sign-on registration; the invitation gate asks core a billing question
+  // and is not one of them). An instance licence that grants (see licensedEntitlements) unlocks
+  // its entitlements for every organization
+  // — an explicit entitlements claim in the licence narrows it, else the full set; otherwise the
+  // org's plan + subscription status (from its billing record, via core) decides — so an
+  // unsubscribed org falls back to the community baseline and the org-creation gate bites. The
+  // licence is a signed JWT verified offline (see ./license).
+  const resolveEntitlements = async (orgId: string): Promise<Entitlements> => {
+    const granted = licensedEntitlements(await resolveInstanceLicense(), new Date());
+    return granted ?? core.resolveOrgEntitlements(orgId);
+  };
 
   // Resolve + log the instance license once at boot (fire-and-forget — never blocks or crashes
   // register). Active ⇒ every org is enterprise; inactive ⇒ per-org billing decides, and the reason
@@ -249,8 +338,10 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
           },
           // Teams are an Enterprise capability. Block creation server-side so the
           // gate holds regardless of the client (the UI shows the upsell separately).
+          // Decided from the same entitlements the organization's scope carries: the
+          // instance licence when it grants, else the organization's plan.
           beforeCreateTeam: async ({ team }) => {
-            if (!(await core.canOrgCreateTeams(team.organizationId))) {
+            if (!(await core.canOrgCreateTeams(team.organizationId, resolveEntitlements))) {
               throw new APIError("FORBIDDEN", {
                 message: "Teams require an Enterprise plan.",
               });
@@ -426,9 +517,10 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
       }),
 
       // Entitlement gate for SSO registration. The @better-auth/sso plugin enforces
-      // org membership/admin but NOT the plan — so without this a non-Enterprise org
-      // admin could register a provider via direct POST. Block /sso/register unless
-      // the target org holds the `sso` entitlement (the UI shows the upsell instead).
+      // org membership/admin but NOT the entitlement, so this refuses /sso/register
+      // unless the target org holds `sso` (the UI shows the upsell instead). Decided
+      // from the same entitlements the organization's scope carries: the instance
+      // licence when it grants, else the organization's plan.
       {
         id: "alethia-sso-entitlement-guard",
         hooks: {
@@ -438,7 +530,7 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
                 context.path === "/sso/register",
               handler: createAuthMiddleware(async (ctx) => {
                 const orgId = bodyOrgId(ctx.body);
-                if (!orgId || !(await core.resolveOrgEntitlements(orgId)).sso) {
+                if (!orgId || (await resolveEntitlements(orgId)).sso !== true) {
                   throw new APIError("FORBIDDEN", {
                     message: "Single Sign-On requires an Enterprise plan.",
                   });
@@ -464,18 +556,18 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
     resolveScope: (userId: string, activeOrgId?: string): Promise<ResolvedScope> =>
       resolveActiveScope(core.db, userId, activeOrgId),
 
-    // Per-org entitlement resolution. A validly-licensed instance unlocks everything
-    // (an explicit entitlements claim in the license narrows it, else the full set);
-    // otherwise the org's plan + subscription status (from its billing record, via
-    // core) decides — so an unsubscribed org falls back to the community baseline and
-    // the org-creation gate bites. The license is a signed JWT verified offline (see
-    // ./license), replacing the old ALETHIA_LICENSE_ACTIVE env placeholder.
-    resolveEntitlements: async (orgId: string): Promise<Entitlements> => {
-      const instance = await resolveInstanceLicense();
-      if (instance.active)
-        return instance.license?.entitlements ?? ALL_ENTITLEMENTS;
-      return core.resolveOrgEntitlements(orgId);
-    },
+    // Per-org entitlement resolution — the resolver the gates above read.
+    resolveEntitlements,
+
+    // The instance edition report: the licence state, the capabilities it grants and the
+    // module registry, read by the console's one edition reader.
+    instanceEdition: async (): Promise<EnterpriseEditionReport> =>
+      editionReport(
+        await resolveInstanceLicense(),
+        ENTERPRISE_FEATURES,
+        new Date(),
+        (process.env.ALETHIA_LICENSE_KEY ?? "") !== "",
+      ),
 
     // OpenFGA engine + dual-write, both only when OpenFGA is configured; otherwise
     // undefined ⇒ the community PostgresRbacPDP + no-op seam stay in place.
