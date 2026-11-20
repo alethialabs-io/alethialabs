@@ -13,8 +13,8 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
-// TestSaveTokensWritesCredentials covers the device-flow writer: it creates the
-// config directory and persists the exchange response as the credentials file
+// TestSaveTokensWritesCredentials covers the device-flow writer on a host with no system keychain:
+// it creates the config directory and persists the exchange response as the credentials file
 // getCredentialsPath resolves.
 func TestSaveTokensWritesCredentials(t *testing.T) {
 	dir := t.TempDir()
@@ -25,12 +25,14 @@ func TestSaveTokensWritesCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getCredentialsPath: %v", err)
 	}
-	// Deliberately do NOT pre-create the parent: saveTokens must create it.
-	saveTokens(&types.ExchangeResponse{
+	// Deliberately do NOT pre-create the parent: the writer must create it.
+	if _, err := storeCredential(storedCredential{ExchangeResponse: types.ExchangeResponse{
 		AccessToken:  "access-1",
 		RefreshToken: "refresh-1",
 		UserEmail:    "x@y.com",
-	})
+	}}); err != nil {
+		t.Fatalf("storeCredential: %v", err)
+	}
 
 	data, err := os.ReadFile(credsPath)
 	if err != nil {
