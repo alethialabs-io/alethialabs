@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -153,14 +154,18 @@ func authCovJSON(w http.ResponseWriter, status int, v any) {
 // terminal and never open a real browser.
 func authCovHeadless(t *testing.T, opts ...tea.ProgramOption) {
 	t.Helper()
-	prevOpts, prevBrowser := loginProgramOptions, openBrowser
+	prevOpts, prevBrowser, prevPrinter := loginProgramOptions, openBrowser, printer
 	loginProgramOptions = append([]tea.ProgramOption{
 		tea.WithInput(nil),
 		tea.WithOutput(io.Discard),
 		tea.WithoutSignalHandler(),
 	}, opts...)
 	openBrowser = func(string) error { return nil }
-	t.Cleanup(func() { loginProgramOptions, openBrowser = prevOpts, prevBrowser })
+	// The spinner's program runs only for a person at a terminal. A test that calls the flow
+	// directly inherits whatever mode the last command-level test resolved, so say which one this
+	// is; a test that goes through the command tree resolves its own.
+	printer = newPrinter(ui.FormatTable, Mode{Color: true})
+	t.Cleanup(func() { loginProgramOptions, openBrowser, printer = prevOpts, prevBrowser, prevPrinter })
 }
 
 // authCovExchange is a handler that answers the device-code exchange with a
@@ -188,9 +193,9 @@ func authCovRunCLI(t *testing.T, args ...string) error {
 
 // --- login.go · the Bubble Tea model -----------------------------------------
 
-// TestAuth_ModelInitAndView pins the device-login model's three rendered states:
-// the spinner while waiting, the welcome line once authenticated, and the error
-// line when the exchange failed.
+// TestAuth_ModelInitAndView pins what the device-login model draws: the spinner while waiting, and
+// nothing once the wait has ended either way. The outcome is the command's to report — the result
+// on stdout, a failure through the fatal path — so the spinner must not print a second copy of it.
 func TestAuth_ModelInitAndView(t *testing.T) {
 	m := initialModel()
 	if !m.loading || m.done {
@@ -204,13 +209,13 @@ func TestAuth_ModelInitAndView(t *testing.T) {
 	}
 
 	done := model{done: true, userEmail: "ada@x.com"}
-	if got := done.View(); !strings.Contains(got, "ada@x.com") {
-		t.Errorf("done view should welcome the user, got %q", got)
+	if got := done.View(); got != "" {
+		t.Errorf("a finished sign-in is reported by the command, not the spinner; got %q", got)
 	}
 
 	failed := model{err: errors.New("boom")}
-	if got := failed.View(); !strings.Contains(got, "boom") {
-		t.Errorf("error view should show the error, got %q", got)
+	if got := failed.View(); got != "" {
+		t.Errorf("a failed sign-in is reported by the fatal path, not the spinner; got %q", got)
 	}
 
 	if got := (model{}).View(); got != "" {
@@ -219,8 +224,8 @@ func TestAuth_ModelInitAndView(t *testing.T) {
 }
 
 // TestAuth_ModelUpdateSuccessPersists pins that the success message ends the
-// program AND writes the credentials file — the only place the device flow
-// persists a token.
+// program and hands the control plane's answer to the flow that stores it. The
+// model itself writes nothing: storing is one place, after the program has ended.
 func TestAuth_ModelUpdateSuccessPersists(t *testing.T) {
 	credsPath := isolatedHome(t)
 
@@ -238,16 +243,11 @@ func TestAuth_ModelUpdateSuccessPersists(t *testing.T) {
 		t.Error("success should quit the program")
 	}
 
-	data, err := os.ReadFile(credsPath)
-	if err != nil {
-		t.Fatalf("credentials should have been written: %v", err)
+	if m.response == nil || m.response.AccessToken != "a1" {
+		t.Errorf("the model did not keep the answer for the flow to store (kept one: %v)", m.response != nil)
 	}
-	var got types.ExchangeResponse
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if got.AccessToken != "a1" {
-		t.Errorf("stored token = %q, want a1", got.AccessToken)
+	if _, err := os.Stat(credsPath); !os.IsNotExist(err) {
+		t.Errorf("the spinner must not write the credential itself, stat err = %v", err)
 	}
 }
 
@@ -372,19 +372,24 @@ func TestAuth_PollForTokenTransportError(t *testing.T) {
 	}
 }
 
-// --- login.go · saveTokens fatal arms ----------------------------------------
+// --- auth_utils.go · storeCredential failing arms ------------------------------
 
-// TestAuth_SaveTokensFatalArms pins that saveTokens takes the fatal path — not a
-// silent no-op — when the credentials path cannot be resolved, its directory
-// cannot be created, or the file cannot be opened.
+// TestAuth_SaveTokensFatalArms pins that storing a credential on a host with no system keychain
+// reports a failure — not a silent no-op — when the credentials path cannot be resolved, its
+// directory cannot be created, or the file cannot be written.
 func TestAuth_SaveTokensFatalArms(t *testing.T) {
-	authCovTrapExit(t)
-	tokens := &types.ExchangeResponse{AccessToken: "a"}
+	tokens := storedCredential{ExchangeResponse: types.ExchangeResponse{AccessToken: "a"}}
+	wantFailure := func(t *testing.T, what string) {
+		t.Helper()
+		if _, err := storeCredential(tokens); err == nil {
+			t.Errorf("%s: storeCredential reported success", what)
+		}
+	}
 
 	t.Run("unresolvable path", func(t *testing.T) {
 		t.Setenv("HOME", "")
 		t.Setenv("XDG_CONFIG_HOME", "")
-		authCovWantExit(t, "saveTokens without a home", func() { saveTokens(tokens) })
+		wantFailure(t, "without a home")
 	})
 
 	t.Run("directory blocked by a file", func(t *testing.T) {
@@ -403,7 +408,7 @@ func TestAuth_SaveTokensFatalArms(t *testing.T) {
 		if err := os.WriteFile(parent, []byte("not a directory"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		authCovWantExit(t, "saveTokens over a file", func() { saveTokens(tokens) })
+		wantFailure(t, "over a file")
 	})
 
 	t.Run("credentials path is a directory", func(t *testing.T) {
@@ -411,7 +416,7 @@ func TestAuth_SaveTokensFatalArms(t *testing.T) {
 		if err := os.MkdirAll(credsPath, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		authCovWantExit(t, "saveTokens onto a directory", func() { saveTokens(tokens) })
+		wantFailure(t, "onto a directory")
 	})
 }
 
@@ -536,13 +541,13 @@ func TestAuth_ResolveLoginReturnsFreshToken(t *testing.T) {
 	}
 }
 
-// TestAuth_ResolveLoginCredentialsUnusableAfterFlow pins the two ways a flow can
-// "succeed" without leaving a usable credentials file: the file is absent (the
-// user cancelled or the exchange was denied) or it is unparseable. Both must be
-// reported, never returned as an empty token.
+// TestAuth_ResolveLoginCredentialsUnusableAfterFlow pins that a refused sign-in is
+// reported as the refusal, whatever the credentials file held before it: absent
+// or unparseable. It is never returned as an empty token, and never as a failure
+// to read a file the refused flow was not going to write.
 func TestAuth_ResolveLoginCredentialsUnusableAfterFlow(t *testing.T) {
 	// The exchange refuses, so the program ends on an authErrorMsg and nothing is
-	// written — performLoginFlow still returns nil.
+	// written — and performLoginFlow returns that refusal.
 	deny := func(w http.ResponseWriter, r *http.Request) {
 		authCovJSON(w, http.StatusForbidden, map[string]string{"error": "access_denied"})
 	}
@@ -558,8 +563,11 @@ func TestAuth_ResolveLoginCredentialsUnusableAfterFlow(t *testing.T) {
 		t.Cleanup(func() { authRequiredPrompt = prev })
 
 		_, err := resolveLogin(credsPath, true)
-		if err == nil || !strings.Contains(err.Error(), "reading credentials file after login") {
-			t.Fatalf("err = %v, want a read failure", err)
+		if err == nil || !strings.Contains(err.Error(), "access_denied") {
+			t.Fatalf("err = %v, want the refusal", err)
+		}
+		if _, statErr := os.Stat(credsPath); !os.IsNotExist(statErr) {
+			t.Errorf("a refused sign-in must write nothing, stat err = %v", statErr)
 		}
 	})
 
@@ -577,8 +585,8 @@ func TestAuth_ResolveLoginCredentialsUnusableAfterFlow(t *testing.T) {
 		t.Cleanup(func() { authRequiredPrompt = prev })
 
 		_, err := resolveLogin(credsPath, true)
-		if err == nil || !strings.Contains(err.Error(), "parsing credentials file after login") {
-			t.Fatalf("err = %v, want a parse failure", err)
+		if err == nil || !strings.Contains(err.Error(), "access_denied") {
+			t.Fatalf("err = %v, want the refusal", err)
 		}
 	})
 }
@@ -669,6 +677,9 @@ func TestAuth_LoginCmdFailedFlowIsFatal(t *testing.T) {
 	savePreferences(cliPreferences{HideLoginWarning: true})
 	authCovTrapExit(t)
 	authCovServer(t, authCovExchange("ada@x.com"))
+	// The spinner's program runs only for a person at a terminal; without one the flow waits with
+	// a plain progress line and there is no program to kill.
+	authCovTTY(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -926,7 +937,8 @@ func TestAuth_GetAuthTokenRefreshRejected(t *testing.T) {
 
 // TestAuth_GetAuthTokenRefreshUnsavable pins that a refreshed token which cannot
 // be persisted is an error — returning it while the file still holds the expired
-// one would make the next invocation silently re-refresh.
+// one would make the next invocation silently re-refresh. The suite has no system
+// keychain, so the file is the only place the renewed credential can go.
 func TestAuth_GetAuthTokenRefreshUnsavable(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root ignores the read-only mode bit this test relies on")
@@ -942,11 +954,12 @@ func TestAuth_GetAuthTokenRefreshUnsavable(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Readable but not writable: the refresh succeeds, the save cannot.
-	if err := os.Chmod(credsPath, 0o400); err != nil {
+	// The directory is readable but not writable: the refresh succeeds, the save cannot. (The
+	// file is replaced by a rename, so it is the directory's mode that decides.)
+	if err := os.Chmod(filepath.Dir(credsPath), 0o500); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(credsPath, 0o600) })
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(credsPath), 0o700) })
 
 	_, err := getAuthTokenInternal(false)
 	if err == nil || !strings.Contains(err.Error(), "failed to save new credentials") {
