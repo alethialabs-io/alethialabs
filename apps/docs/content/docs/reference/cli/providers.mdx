@@ -32,11 +32,14 @@ alethia provider status
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `[provider]` | No | `aws`, `gcp`, `azure`, `alibaba`, or `hetzner`. Omit for a picker over the accounts you have connected. |
+| `[provider]` | No | `aws`, `gcp`, `azure`, or `hetzner`. Omit for a picker over the accounts you have connected. |
 
 Renders a field/value card: **status** (`connected` | `disconnected`), the **identity** id, and the
 provider-specific identity fields that are set (AWS account id / role arn, GCP project id / service
 account, Azure tenant / client / subscription). Add `-o json` for the raw `ProviderStatus`.
+
+An argument that is not a cloud is refused with exit `8` before any request, and the refusal
+lists the clouds you can name.
 
 Backing call: `GET /cli/providers/<provider>/status`.
 
@@ -54,7 +57,7 @@ alethia provider verify
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `[provider]` | No | `aws`, `gcp`, `azure`, `alibaba`, or `hetzner`. Omit for a picker over the accounts you have connected. |
+| `[provider]` | No | `aws`, `gcp`, `azure`, or `hetzner`. Omit for a picker over the accounts you have connected. |
 
 The picker lists the accounts you have actually connected, not every provider Alethia
 supports: these commands read and re-probe an existing connection, so offering one with no
@@ -63,15 +66,39 @@ picker, so the argument is required and the refusal names the valid providers.
 
 The command resolves the connected identity via `status`, then re-verifies it and renders the
 verdict: **identity**, **status**, **verified**, and — when degraded — the **missing permissions**.
-It exits non-zero when there is no connected identity to verify or the probe reports the identity is
-not connected, so it is safe to use in a script or CI gate.
 
 ```
-Field     Value
 identity  id-1
 status    connected
 verified  true
 ```
+
+The probe's outcome is recorded on the connection, so with `-o json` the command returns the
+result every command that changes something returns:
+
+```json
+{
+  "id": "id-1",
+  "kind": "cloud_identity",
+  "action": "updated",
+  "job": null,
+  "dry_run": false,
+  "object": {
+    "provider": "aws",
+    "status": "connected",
+    "verified": true,
+    "missing_permissions": []
+  }
+}
+```
+
+The exit code makes the command safe to use in a script or a CI gate:
+
+| Exit | Meaning |
+|------|---------|
+| `0` | The probe passed. A `degraded` connection also exits `0` and lists what is missing. |
+| `6` | Nothing is connected on that cloud, so there is nothing to verify. |
+| `13` | The probe ran and failed. The error carries the status and the reason, and nothing is written on stdout. |
 
 Backing call: `POST /cli/providers/<provider>/verify` with `{ identity_id }`.
 

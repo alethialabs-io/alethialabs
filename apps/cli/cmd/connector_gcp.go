@@ -13,8 +13,6 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/cloudshell"
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/connector"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
-	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
@@ -25,122 +23,138 @@ var (
 	connectorGcpManual    bool
 )
 
+// gcpConnector is the GCP entry of the parent command's help.
+var gcpConnector = registerConnector(connectorInfo{
+	Slug:    "gcp",
+	Keyless: "GCP Workload Identity Federation",
+})
+
 var connectorGcpCmd = &cobra.Command{
 	Use:   "gcp",
 	Short: "Connect a Google Cloud project",
-	Long: `Connect a GCP project using Workload Identity Federation.
+	Long: `Connect a Google Cloud project with Workload Identity Federation. Run it once per
+project, before the first deploy into that project.
 
 The installer runs inside your Google Cloud Shell (authenticated as you), creates
 a provisioner service account and a workload identity pool that trusts Alethia,
 and returns a credential config — no service account keys are ever created.
 
-Requires a local, authenticated gcloud. Use --manual to instead run the
+The default needs a local, authenticated gcloud. Use --manual to instead run the
 installer in the browser Cloud Shell and paste the result, or --wif-config to submit
 a credential config you already have — the flag form of that same paste, so the
 command works under --no-input with no gcloud on the machine.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := refuseMultipleModes(
-			modeFlag{"--wif-config", strings.TrimSpace(connectorGcpWifConfig) != ""},
-			modeFlag{"--manual", connectorGcpManual},
-		); err != nil {
+		if err := runConnect(cmd, gcpConnectFlow(os.Stdin)); err != nil {
 			fail(err)
 		}
-
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		apiClient := api.NewClient(token)
-		steps := []string{"Project", "Cloud Shell setup", "Connection test"}
-
-		ui.PrintStepper(steps, 0)
-		if connectorGcpProject == "" {
-			if err := requireInteractiveForm(); err != nil {
-				failf("no project given: pass --project (%v)", err)
-			}
-			if err := runHuhForm(huh.NewGroup(
-				huh.NewInput().
-					Title("GCP Project ID").
-					Description("The project Alethia should provision into").
-					Value(&connectorGcpProject),
-			)); err != nil {
-				fail(err)
-			}
-		}
-		connectorGcpProject = strings.TrimSpace(connectorGcpProject)
-		if connectorGcpProject == "" {
-			failf("A project ID is required")
-		}
-
-		initResp, err := initProviderIdentity(apiClient, "gcp")
-		if err != nil {
-			fail(err)
-		}
-
-		ui.PrintStepper(steps, 1)
-		var wifJSON string
-		switch {
-		case connectorGcpWifConfig != "":
-			// The flag half of the manual flow: the pool and provisioner already exist, so
-			// there is nothing to install and nothing to paste.
-			wifJSON, err = readWifConfig(connectorGcpWifConfig, os.Stdin)
-		case connectorGcpManual:
-			wifJSON, err = gcpManualFlow(connectorGcpProject)
-		default:
-			wifJSON, err = gcpCloudShellFlow(connectorGcpProject)
-		}
-		if err != nil {
-			fail(err)
-		}
-
-		var wif interface{}
-		if err := json.Unmarshal([]byte(wifJSON), &wif); err != nil {
-			failf("%s", "Captured WIF config is not valid JSON: "+err.Error())
-		}
-
-		ui.PrintStepper(steps, 2)
-		if err := finalizeConnection(apiClient, "gcp", initResp.IdentityID,
-			map[string]interface{}{"wif_config": wif}); err != nil {
-			fail(err)
-		}
-
-		ui.Success(fmt.Sprintf("GCP project %q connected", connectorGcpProject))
 	},
 }
 
-// gcpCloudShellFlow runs the installer in the user's Google Cloud Shell.
-func gcpCloudShellFlow(projectID string) (string, error) {
-	if err := cloudshell.EnsureGcloud(); err != nil {
-		switch {
-		case errors.Is(err, cloudshell.ErrGcloudNotFound):
-			ui.Error("gcloud CLI not found on PATH")
-			ui.Muted("Install it: https://cloud.google.com/sdk/docs/install")
-		case errors.Is(err, cloudshell.ErrGcloudNotAuthed):
-			ui.Error("gcloud is not authenticated")
-			ui.Muted("Run this, then retry:\n\n  gcloud auth login")
-		}
-		ui.Muted("Or re-run with --manual to set it up in the browser Cloud Shell.")
-		return "", err
+// gcpConnectFlow is the GCP half of the connection pipeline, for the flags this invocation gave.
+// stdin is where `--wif-config -` reads from.
+func gcpConnectFlow(stdin io.Reader) connectFlow {
+	mode := "local"
+	switch {
+	case connectorGcpWifConfig != "":
+		mode = "wif-config"
+	case connectorGcpManual:
+		mode = "manual"
 	}
 
-	ui.Info("Running installer via gcloud Cloud Shell (the first run can take a minute)...")
-	return cloudshell.RunGcpSetupInCloudShell(connector.GcpSetupScript, projectID)
+	return connectFlow{
+		Provider: gcpConnector.Slug,
+		Mode:     mode,
+		Steps:    []string{"Project", "Cloud Shell setup", "Connection test"},
+		Check: func() error {
+			if err := refuseMultipleModes(
+				modeFlag{"--wif-config", strings.TrimSpace(connectorGcpWifConfig) != ""},
+				modeFlag{"--manual", connectorGcpManual},
+			); err != nil {
+				return err
+			}
+			if strings.TrimSpace(connectorGcpProject) == "" {
+				if err := requireInteractiveForm(); err != nil {
+					return inputRequiredError(err, "no project given: pass --project")
+				}
+			}
+			switch mode {
+			case "manual":
+				return requirePromptFor("--manual", "the WIF config", "--wif-config <path|->")
+			case "local":
+				return requireGcloud()
+			}
+			return nil
+		},
+		Prepare: func(_ *Printer) error {
+			if connectorGcpProject == "" {
+				if err := runHuhForm(huh.NewGroup(
+					huh.NewInput().
+						Title("GCP Project ID").
+						Description("The project Alethia should provision into").
+						Value(&connectorGcpProject),
+				)); err != nil {
+					return formError(err)
+				}
+			}
+			connectorGcpProject = strings.TrimSpace(connectorGcpProject)
+			if connectorGcpProject == "" {
+				return invalidInputError("a project ID is required")
+			}
+			return nil
+		},
+		Capture: func(p *Printer, _ string) (map[string]interface{}, error) {
+			var wifJSON string
+			var err error
+			switch mode {
+			case "wif-config":
+				// The flag half of the manual flow: the pool and provisioner already exist, so
+				// there is nothing to install and nothing to paste.
+				wifJSON, err = readWifConfig(connectorGcpWifConfig, stdin)
+			case "manual":
+				wifJSON, err = gcpManualFlow(p, connectorGcpProject)
+			default:
+				p.Progress("Running installer via gcloud Cloud Shell (the first run can take a minute)...")
+				wifJSON, err = cloudshell.RunGcpSetupInCloudShell(connector.GcpSetupScript, connectorGcpProject)
+			}
+			if err != nil {
+				return nil, err
+			}
+
+			var wif interface{}
+			if err := json.Unmarshal([]byte(wifJSON), &wif); err != nil {
+				return nil, invalidInputError("the WIF config is not valid JSON: %v", err)
+			}
+			return map[string]interface{}{"wif_config": wif}, nil
+		},
+		Connected: func() string { return fmt.Sprintf("GCP project %q connected", connectorGcpProject) },
+	}
+}
+
+// requireGcloud refuses the default setup on a machine with no usable gcloud, telling a missing
+// CLI apart from one that is not signed in.
+func requireGcloud() error {
+	err := cloudshell.EnsureGcloud()
+	const otherwise = "Or re-run with --manual to set it up in the browser Cloud Shell."
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, cloudshell.ErrGcloudNotAuthed):
+		return missingToolError(err, "Run `gcloud auth login`, then retry. "+otherwise)
+	}
+	return missingToolError(err, "Install it from https://cloud.google.com/sdk/docs/install. "+otherwise)
 }
 
 // gcpManualFlow guides the user through running the installer in the browser
 // Cloud Shell and pasting the resulting WIF config.
-func gcpManualFlow(projectID string) (string, error) {
-	ui.Info("Manual setup:")
-	fmt.Printf("  1. Open Cloud Shell: %s\n", ui.LinkStyle.Render(gcpCloudShellURL))
-	fmt.Printf(
+func gcpManualFlow(p *Printer, projectID string) (string, error) {
+	p.Progress("Manual setup:")
+	fmt.Fprintf(p.Err, "  1. Open Cloud Shell: %s\n", gcpCloudShellURL)
+	fmt.Fprintf(p.Err,
 		"  2. Run:\n\n     curl -sO %s/alethia-gcp-setup.sh && bash alethia-gcp-setup.sh %s\n\n",
 		connectorBaseURL, projectID,
 	)
-	fmt.Println("  3. Paste the config it prints (between START CONFIG and END CONFIG) below.")
-
-	if err := requireInteractiveForm(); err != nil {
-		return "", fmt.Errorf("no WIF config given: pass --wif-config <path|-> (%w)", err)
-	}
+	fmt.Fprintln(p.Err, "  3. Paste the config it prints (between START CONFIG and END CONFIG) below.")
 
 	var wifJSON string
 	if err := runHuhForm(huh.NewGroup(
@@ -148,10 +162,10 @@ func gcpManualFlow(projectID string) (string, error) {
 			Title("WIF credential config JSON").
 			Value(&wifJSON),
 	)); err != nil {
-		return "", err
+		return "", formError(err)
 	}
 	if strings.TrimSpace(wifJSON) == "" {
-		return "", fmt.Errorf("no WIF config provided")
+		return "", invalidInputError("no WIF config provided")
 	}
 	return wifJSON, nil
 }
@@ -167,19 +181,19 @@ func readWifConfig(ref string, stdin io.Reader) (string, error) {
 	if ref == "-" {
 		raw, err := io.ReadAll(stdin)
 		if err != nil {
-			return "", fmt.Errorf("read WIF config from stdin: %w", err)
+			return "", invalidInputError("read WIF config from stdin: %v", err)
 		}
 		if strings.TrimSpace(string(raw)) == "" {
-			return "", fmt.Errorf("no WIF config on stdin")
+			return "", invalidInputError("no WIF config on stdin")
 		}
 		return string(raw), nil
 	}
 	raw, err := os.ReadFile(ref)
 	if err != nil {
-		return "", fmt.Errorf("read WIF config %q: %w", ref, err)
+		return "", invalidInputError("read WIF config %q: %v", ref, err)
 	}
 	if strings.TrimSpace(string(raw)) == "" {
-		return "", fmt.Errorf("WIF config %q is empty", ref)
+		return "", invalidInputError("WIF config %q is empty", ref)
 	}
 	return string(raw), nil
 }

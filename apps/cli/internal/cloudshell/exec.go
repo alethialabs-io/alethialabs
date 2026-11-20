@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package cloudshell drives the cloud providers' own tooling on the user's
-// behalf: Google Cloud Shell for GCP (remote), and the locally installed
-// aws/az CLIs for AWS/Azure. It runs the embedded connector installers and
-// captures the credentials they emit.
+// behalf: Google Cloud Shell for GCP (remote), and the locally installed CLI
+// of every other cloud that has one. It runs the embedded connector installers
+// and captures the credentials they emit.
 package cloudshell
 
 import (
@@ -30,8 +30,11 @@ var (
 	ErrAliyunNotFound = errors.New("aliyun CLI not found on PATH")
 )
 
-// runStreaming runs a command, mirroring its combined output to stdout while
+// runStreaming runs a command, mirroring its combined output to stderr while
 // capturing it, and returns everything it printed.
+//
+// Stderr and not stdout: what a setup tool prints is progress, and the calling command's stdout is
+// its result. Mirrored to stdout, an installer's log became part of `connector … --output json`.
 func runStreaming(name string, args ...string) (string, error) {
 	return runStreamingEnv(nil, name, args...)
 }
@@ -44,7 +47,7 @@ func runStreamingEnv(extraEnv []string, name string, args ...string) (string, er
 		cmd.Env = append(os.Environ(), extraEnv...)
 	}
 	var buf bytes.Buffer
-	mw := io.MultiWriter(os.Stdout, &buf)
+	mw := io.MultiWriter(os.Stderr, &buf)
 	cmd.Stdout = mw
 	cmd.Stderr = mw
 	cmd.Stdin = os.Stdin

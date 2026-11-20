@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -435,8 +437,9 @@ func TestConn_FinalizeVerdicts(t *testing.T) {
 			if exited != tc.wantExit {
 				t.Fatalf("exited = %v (code %d), want %v", exited, code, tc.wantExit)
 			}
-			if exited && code != 1 {
-				t.Errorf("exit code = %d, want 1", code)
+			// A probe the control plane ran and failed is the operation-failed class.
+			if exited && code != clierr.ExitOperationFailed {
+				t.Errorf("exit code = %d, want %d", code, clierr.ExitOperationFailed)
 			}
 		})
 	}
@@ -446,6 +449,8 @@ func TestConn_FinalizeVerdicts(t *testing.T) {
 // every provider — none of them reports success on a submission that never
 // landed.
 func TestConn_FinalizeTransportError(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	for _, provider := range []string{"aws", "gcp", "azure", "alibaba"} {
 		t.Run(provider, func(t *testing.T) {
 			run := connEnv(t, connFakeAPI{connectStatus: http.StatusInternalServerError})
@@ -471,6 +476,8 @@ func TestConn_FinalizeTransportError(t *testing.T) {
 // TestConn_InitIdentityFailureIsFatal pins that a failing /init aborts before
 // any cloud CLI is touched.
 func TestConn_InitIdentityFailureIsFatal(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	for _, provider := range []string{"aws", "gcp", "azure", "alibaba"} {
 		t.Run(provider, func(t *testing.T) {
 			run := connEnv(t, connFakeAPI{initStatus: http.StatusBadGateway})
@@ -496,7 +503,12 @@ func TestConn_InitIdentityFailureIsFatal(t *testing.T) {
 // TestConn_AuthRequiredIsFatal pins that every connector command exits when
 // there are no usable credentials and the user declines to log in.
 func TestConn_AuthRequiredIsFatal(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	run := connEnv(t, connFakeAPI{})
+	// The cloud CLIs are present, so the missing credential is what stops each command and not a
+	// missing tool, which is checked first.
+	connAllCloudCLIs(t)
 	credsPath, err := getCredentialsPath()
 	if err != nil {
 		t.Fatalf("creds path: %v", err)
@@ -588,8 +600,8 @@ func TestConn_AwsMissingCliIsFatal(t *testing.T) {
 			if err != nil {
 				t.Fatalf("execute: %v", err)
 			}
-			if !exited || code != 1 {
-				t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+			if !exited || code != clierr.ExitConflict {
+				t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitConflict)
 			}
 		})
 	}
@@ -605,8 +617,8 @@ func TestConn_AwsManualFlowRequiresRoleArn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitUsage {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitUsage)
 	}
 }
 
@@ -687,8 +699,8 @@ func TestConn_GcpBlankProjectIsFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitUsage {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitUsage)
 	}
 }
 
@@ -715,8 +727,8 @@ func TestConn_GcpMissingGcloudIsFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitConflict {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitConflict)
 	}
 }
 
@@ -729,8 +741,8 @@ func TestConn_GcpUnauthenticatedGcloudIsFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitConflict {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitConflict)
 	}
 }
 
@@ -743,8 +755,8 @@ func TestConn_GcpNonJsonWifConfigIsFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitUsage {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitUsage)
 	}
 }
 
@@ -758,8 +770,8 @@ func TestConn_GcpManualFlowRequiresWifConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitUsage {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitUsage)
 	}
 }
 
@@ -838,8 +850,8 @@ func TestConn_AzureBlankSubscriptionIsFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitUsage {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitUsage)
 	}
 }
 
@@ -866,8 +878,8 @@ func TestConn_AzureMissingCliIsFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitConflict {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitConflict)
 	}
 }
 
@@ -881,8 +893,8 @@ func TestConn_AzureManualFlowRequiresAllIds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitUsage {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitUsage)
 	}
 }
 
@@ -927,6 +939,8 @@ func TestConn_AzureManualFlowSubmitsPastedIds(t *testing.T) {
 // TestConn_AlibabaLocalFlowConnects pins the default path: the setup script runs
 // under the local aliyun CLI and the RAM role ARN it prints is submitted.
 func TestConn_AlibabaLocalFlowConnects(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	run := connEnv(t, connFakeAPI{})
 	connAllCloudCLIs(t)
 	exited, code, err := connInvoke(t, run, "connector", "alibaba")
@@ -940,20 +954,24 @@ func TestConn_AlibabaLocalFlowConnects(t *testing.T) {
 
 // TestConn_AlibabaMissingCliIsFatal pins the "aliyun not on PATH" arm.
 func TestConn_AlibabaMissingCliIsFatal(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	run := connEnv(t, connFakeAPI{})
 	connNoCloudCLIs(t)
 	exited, code, err := connInvoke(t, run, "connector", "alibaba")
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitConflict {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitConflict)
 	}
 }
 
 // TestConn_AlibabaManualFlowRequiresRoleArn pins --manual: a blank paste is
 // rejected rather than submitted as an empty ARN.
 func TestConn_AlibabaManualFlowRequiresRoleArn(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	run := connEnv(t, connFakeAPI{})
 	connAllCloudCLIs(t)
 	connStubForm(t, nil)
@@ -961,14 +979,16 @@ func TestConn_AlibabaManualFlowRequiresRoleArn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitUsage {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitUsage)
 	}
 }
 
 // TestConn_AlibabaManualFlowAbortedPromptIsFatal pins that aborting the manual
 // prompt is fatal.
 func TestConn_AlibabaManualFlowAbortedPromptIsFatal(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	run := connEnv(t, connFakeAPI{})
 	connAllCloudCLIs(t)
 	connStubForm(t, errors.New("prompt aborted"))
@@ -985,6 +1005,8 @@ func TestConn_AlibabaManualFlowAbortedPromptIsFatal(t *testing.T) {
 // path: the pasted RAM role ARN is trimmed and submitted without a local aliyun
 // CLI.
 func TestConn_AlibabaManualFlowSubmitsPastedRoleArn(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	run := connEnv(t, connFakeAPI{})
 	connNoCloudCLIs(t) // --manual must not need a local aliyun
 	connStubFormTyping(t, "  acs:ram::123456789012:role/AlethiaProvisioner  ")
@@ -1001,6 +1023,8 @@ func TestConn_AlibabaManualFlowSubmitsPastedRoleArn(t *testing.T) {
 // module is written to the chosen directory before the user is asked for the
 // role_arn output.
 func TestConn_AlibabaTerraformFlowWritesModule(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	run := connEnv(t, connFakeAPI{})
 	connAllCloudCLIs(t)
 	connStubForm(t, nil)
@@ -1010,8 +1034,8 @@ func TestConn_AlibabaTerraformFlowWritesModule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1) after the blank paste", exited, code)
+	if !exited || code != clierr.ExitUsage {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d) after the blank paste", exited, code, clierr.ExitUsage)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "main.tf")); statErr != nil {
 		t.Fatalf("main.tf was not written: %v", statErr)
@@ -1021,6 +1045,8 @@ func TestConn_AlibabaTerraformFlowWritesModule(t *testing.T) {
 // TestConn_AlibabaTerraformFlowDefaultsDirAndRegion pins that omitting --dir and
 // --region writes ./alethia-alibaba-connector and prints the default region.
 func TestConn_AlibabaTerraformFlowDefaultsDirAndRegion(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	run := connEnv(t, connFakeAPI{})
 	connAllCloudCLIs(t)
 	connStubForm(t, nil)
@@ -1029,8 +1055,8 @@ func TestConn_AlibabaTerraformFlowDefaultsDirAndRegion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1) after the blank paste", exited, code)
+	if !exited || code != clierr.ExitUsage {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d) after the blank paste", exited, code, clierr.ExitUsage)
 	}
 	if _, statErr := os.Stat(filepath.Join("alethia-alibaba-connector", "main.tf")); statErr != nil {
 		t.Fatalf("default module dir was not written: %v", statErr)
@@ -1040,8 +1066,12 @@ func TestConn_AlibabaTerraformFlowDefaultsDirAndRegion(t *testing.T) {
 // TestConn_AlibabaTerraformFlowUnwritableDirIsFatal pins that a --dir that
 // cannot be created aborts with a clear error instead of prompting anyway.
 func TestConn_AlibabaTerraformFlowUnwritableDirIsFatal(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	run := connEnv(t, connFakeAPI{})
 	connAllCloudCLIs(t)
+	// The module is written before the paste is asked for, and the paste needs a terminal.
+	hygCliConfirmInteractive(t)
 	blocker := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
 		t.Fatalf("write blocker: %v", err)
@@ -1058,8 +1088,12 @@ func TestConn_AlibabaTerraformFlowUnwritableDirIsFatal(t *testing.T) {
 // TestConn_AlibabaTerraformFlowUnwritableModuleIsFatal pins the second write
 // guard: the directory exists but main.tf cannot be created.
 func TestConn_AlibabaTerraformFlowUnwritableModuleIsFatal(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	run := connEnv(t, connFakeAPI{})
 	connAllCloudCLIs(t)
+	// The module is written before the paste is asked for, and the paste needs a terminal.
+	hygCliConfirmInteractive(t)
 	dir := filepath.Join(t.TempDir(), "module-out")
 	if err := os.MkdirAll(filepath.Join(dir, "main.tf"), 0o755); err != nil {
 		t.Fatalf("mkdir main.tf/: %v", err)
@@ -1098,8 +1132,8 @@ func TestConn_RemoveUnknownProviderIsFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !exited || code != 1 {
-		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	if !exited || code != clierr.ExitNotFound {
+		t.Fatalf("exited=%v code=%d, want a fatal exit(%d)", exited, code, clierr.ExitNotFound)
 	}
 }
 
@@ -1457,6 +1491,8 @@ var connCompleteCases = []struct {
 // TestConnField_CompleteFlagsNeverPrompt drives each complete invocation with prompting
 // ENABLED and asserts nothing was asked and the command succeeded.
 func TestConnField_CompleteFlagsNeverPrompt(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	for _, tc := range connCompleteCases {
 		t.Run(tc.name, func(t *testing.T) {
 			hygCliConfirmResetFlags()
@@ -1512,6 +1548,8 @@ var connRefusalCases = []struct {
 
 // TestConnField_MissingFieldRefusalNamesTheFlag pins the other half of the contract.
 func TestConnField_MissingFieldRefusalNamesTheFlag(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	for _, tc := range connRefusalCases {
 		t.Run(tc.name, func(t *testing.T) {
 			hygCliConfirmResetFlags()
@@ -1741,7 +1779,13 @@ func connDocsSections(body string) map[string]string {
 }
 
 // TestConnField_DocsTableMatchesTheRegisteredFlags compares both directions.
+//
+// It reads the tree as the release ships it: the registry applied, so the flags it registers are
+// held to the same rule, and nothing re-enabled, so a command for a cloud that is not offered is
+// not expected to have a section. The docs do not name such a cloud.
 func TestConnField_DocsTableMatchesTheRegisteredFlags(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "")
 	byName := map[string]*cobra.Command{
 		"connector": connectorCmd, "cloud": cloudCmd, "provider": providerCmd,
 	}
@@ -1772,6 +1816,9 @@ func TestConnField_DocsTableMatchesTheRegisteredFlags(t *testing.T) {
 		registered := map[string]bool{}
 		var walk func(c *cobra.Command)
 		walk = func(c *cobra.Command) {
+			if c.Hidden {
+				return
+			}
 			subs := c.Commands()
 			if len(subs) == 0 {
 				section, documented := sections[c.CommandPath()]
@@ -1901,8 +1948,10 @@ func TestConnField_ProviderRefEdges(t *testing.T) {
 		noInput    bool
 		identities []api.CloudIdentity
 		listErr    error
-		wantIn     []string
-		wantNotIn  []string
+		// reEnabled is the operator's override for this case: the hidden clouds it re-enables.
+		reEnabled string
+		wantIn    []string
+		wantNotIn []string
 	}{
 		{
 			name: "unconnected provider", ref: "azure", noInput: true,
@@ -1923,15 +1972,26 @@ func TestConnField_ProviderRefEdges(t *testing.T) {
 			// A cloud the `cloud_provider` enum carries but the CLI has no connector leaf for.
 			// The remediation must not name `alethia connector civo`, which exits with cobra's
 			// `unknown command "civo"` — a suggestion that cannot be followed is worse than none.
-			name: "provider with no connector leaf", ref: "civo", noInput: true,
+			//
+			// The cloud is one the catalog hides, so the arm is reached only when an operator
+			// re-enabled it.
+			name: "provider with no connector leaf", ref: "civo", noInput: true, reEnabled: "civo",
 			identities: []api.CloudIdentity{{ID: "ci-aws", Provider: "aws"}},
 			wantIn:     []string{"no connected civo account", "cannot connect one", "hetzner"},
 			wantNotIn:  []string{"alethia connector civo"},
 		},
 		{
+			// The same cloud as the catalog ships it: not offered, so the answer is the one
+			// refusal and nothing about connectors at all.
+			name: "a cloud that is not offered", ref: "civo", noInput: true,
+			identities: []api.CloudIdentity{{ID: "ci-aws", Provider: "aws"}},
+			wantIn:     []string{"is not available in this release."},
+			wantNotIn:  []string{"alethia connector", "cannot connect one"},
+		},
+		{
 			name: "nothing connected", ref: "aws", noInput: true,
 			identities: []api.CloudIdentity{},
-			wantIn:     []string{"no cloud accounts connected"},
+			wantIn:     []string{"no connected aws account", "alethia connector aws"},
 		},
 		{
 			name: "no argument under --no-input", ref: "", noInput: true,
@@ -1947,19 +2007,22 @@ func TestConnField_ProviderRefEdges(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			hygCliConfirmSetNoInput(t, tc.noInput)
+			t.Setenv(catalog.HiddenCloudsEnv, tc.reEnabled)
 			lister := &connFakeLister{identities: tc.identities, err: tc.listErr}
 			_, err := resolveCloudIdentityRef(lister, tc.ref)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
+			// What the person reads is the message and the hint under it.
+			said := err.Error() + "\n" + clierr.From(err).Hint
 			for _, want := range tc.wantIn {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("message %q should mention %q", err, want)
+				if !strings.Contains(said, want) {
+					t.Errorf("message %q should mention %q", said, want)
 				}
 			}
 			for _, unwanted := range tc.wantNotIn {
-				if strings.Contains(err.Error(), unwanted) {
-					t.Errorf("message %q names %q, which is not a command that exists", err, unwanted)
+				if strings.Contains(said, unwanted) {
+					t.Errorf("message %q names %q, which is not a command that exists", said, unwanted)
 				}
 			}
 		})
@@ -1984,8 +2047,9 @@ func TestConnField_ProviderRefPickerReturnsTheChosenProvider(t *testing.T) {
 }
 
 // TestConnField_ProviderSlugSetComesFromTheGeneratedEnum pins that the "is this a provider
-// or an id" question is answered by types.AllCloudProviders — the generated mirror of the
-// Postgres enum — and not by a list typed into this package.
+// or an id" question recognises every cloud_provider value — the generated mirror of the
+// Postgres enum — offered or not, and not a list typed into this package. The resolver asks the
+// catalog, which lists the same clouds; this is the test that would notice if it stopped.
 func TestConnField_ProviderSlugSetComesFromTheGeneratedEnum(t *testing.T) {
 	for _, p := range types.AllCloudProviders {
 		if !isCloudProviderSlug(string(p)) {
@@ -2006,6 +2070,8 @@ func TestConnField_ProviderSlugSetComesFromTheGeneratedEnum(t *testing.T) {
 // were both written before Alibaba and Hetzner existed and never revisited, so the CLI told
 // a Hetzner user it could not connect their cloud.
 func TestConnField_ProviderNamesAreDerivedFromTheSubcommands(t *testing.T) {
+	// With every hidden cloud that has a connector re-enabled, the list is the registered set.
+	t.Setenv(catalog.HiddenCloudsEnv, "alibaba")
 	got := connectorProviderNames()
 	want := map[string]bool{}
 	for _, c := range connectorCmd.Commands() {
@@ -2027,6 +2093,15 @@ func TestConnField_ProviderNamesAreDerivedFromTheSubcommands(t *testing.T) {
 		if !strings.Contains(hint, name) {
 			t.Errorf("the empty state does not name %q: %q", name, hint)
 		}
+	}
+
+	// As the catalog ships, it is the offered clouds in the catalog's order, and nothing else.
+	t.Setenv(catalog.HiddenCloudsEnv, "")
+	if got := connectorProviderNames(); !slices.Equal(got, []string{"aws", "gcp", "azure", "hetzner"}) {
+		t.Errorf("connectorProviderNames() = %v with nothing re-enabled", got)
+	}
+	if hint := connectorEmptyStateHint(); strings.Contains(hint, "alibaba") {
+		t.Errorf("the empty state names a cloud that is not offered: %q", hint)
 	}
 }
 
@@ -2256,6 +2331,8 @@ func TestConnField_HetznerS3OfferAcceptedThenLeftBlankIsNeither(t *testing.T) {
 // connected: the user asked for a module on disk and got a connection. The refusal must name
 // both flags, and must land before /init so no pending identity is left behind.
 func TestConnField_ConflictingSetupModesAreRefused(t *testing.T) {
+	cloudsRestoreHelp(t)
+	cloudsOffer(t, "alibaba")
 	for _, tc := range []struct {
 		name      string
 		args      []string
