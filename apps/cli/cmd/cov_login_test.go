@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -45,6 +46,13 @@ func authCovTrapExit(t *testing.T) {
 // the trap turns into an authCovExit panic. Any other panic is re-raised.
 func authCovWantExit(t *testing.T, what string, fn func()) {
 	t.Helper()
+	authCovWantExitCode(t, what, 1, fn)
+}
+
+// authCovWantExitCode is authCovWantExit for a fatal path that leaves with a classified exit
+// code rather than the unclassified 1.
+func authCovWantExitCode(t *testing.T, what string, want int, fn func()) {
+	t.Helper()
 	exited := false
 	func() {
 		defer func() {
@@ -54,8 +62,8 @@ func authCovWantExit(t *testing.T, what string, fn func()) {
 			}
 			if e, ok := r.(authCovExit); ok {
 				exited = true
-				if e.code != 1 {
-					t.Errorf("%s: exit code = %d, want 1", what, e.code)
+				if e.code != want {
+					t.Errorf("%s: exit code = %d, want %d", what, e.code, want)
 				}
 				return
 			}
@@ -824,7 +832,8 @@ func TestAuth_InitCmdFatalArms(t *testing.T) {
 		authCovOrigin(t, "not-a-url")
 		authCovTTY(t)
 		authCovForm(t, nil)
-		authCovWantExit(t, "init with an unusable origin", func() {
+		// The origin was read and is not a URL: a validation refusal, exit 8.
+		authCovWantExitCode(t, "init with an unusable origin", clierr.ExitUsage, func() {
 			_ = authCovRunCLI(t, "init")
 		})
 	})
@@ -1226,7 +1235,8 @@ func TestAuth_InitCmdFatalWhenLoginFails(t *testing.T) {
 	authCovKilledProgram(t)
 	authCovTrapExit(t)
 
-	authCovWantExit(t, "init whose login flow fails", func() {
+	// A sign-in that did not complete leaves the machine unauthenticated: exit 4.
+	authCovWantExitCode(t, "init whose login flow fails", clierr.ExitAuth, func() {
 		_ = authCovRunCLI(t, "init")
 	})
 	if got := types.LoadCliConfig().WebOrigin; got != srv.URL {
