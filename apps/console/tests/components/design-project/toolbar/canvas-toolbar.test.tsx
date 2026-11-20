@@ -8,7 +8,7 @@
 // The Run menu and the ⋯ menu are their own files with their own tests; here each is a button, so
 // the row's order and its arrow keys include them without queueing a job or opening a menu.
 
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -222,8 +222,10 @@ describe("a tool that cannot be used stays on the toolbar and says why", () => {
 		expect(tool("Undo")).toHaveAccessibleDescription(NOTHING_TO_UNDO);
 		expect(tool("Redo")).toHaveAccessibleDescription(NOTHING_TO_REDO);
 
-		useCanvasStore.getState().addNode("bucket");
-		expect(await screen.findByRole("button", { name: "Undo" })).toBeEnabled();
+		act(() => {
+			useCanvasStore.getState().addNode("bucket");
+		});
+		expect(tool("Undo")).toBeEnabled();
 		await user.click(tool("Undo"));
 		expect(spies.onUndo).toHaveBeenCalledTimes(1);
 	});
@@ -251,14 +253,19 @@ describe("a tool that cannot be used stays on the toolbar and says why", () => {
 		expect(tool("Connect the selected service")).toHaveAccessibleDescription(CONNECT_NEEDS_SERVICE);
 
 		// A bucket is selected: still not a service.
-		useCanvasStore.getState().addNode("bucket");
+		act(() => {
+			useCanvasStore.getState().addNode("bucket");
+		});
 		expect(tool("Connect the selected service")).toBeDisabled();
 
 		// Adding a card selects it.
-		const service = useCanvasStore.getState().addNode("service");
-		const connect = await screen.findByRole("button", { name: "Connect the selected service" });
+		let service = "";
+		act(() => {
+			service = useCanvasStore.getState().addNode("service");
+		});
+		const connect = tool("Connect the selected service");
 		expect(connect).toBeEnabled();
-		board.view.getState().setSubject(null);
+		act(() => board.view.getState().setSubject(null));
 
 		await user.click(connect);
 		expect(board.view.getState().subject).toEqual({ kind: "node", id: service });
@@ -279,7 +286,8 @@ describe("the toolbar by keyboard", () => {
 		// Connect is off (nothing is selected): the focus lands on what holds its reason.
 		await user.keyboard("{ArrowRight}");
 		expect(document.activeElement).toContainElement(tool("Connect the selected service"));
-		expect(document.activeElement).toHaveAttribute("data-slot", "disabled-reason");
+		expect(document.activeElement).toHaveAttribute("tabindex", "0");
+		expect(document.activeElement).not.toBe(tool("Connect the selected service"));
 
 		await user.keyboard("{End}");
 		expect(tool("More")).toHaveFocus();

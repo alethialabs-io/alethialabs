@@ -113,8 +113,18 @@ export interface CanvasToolbarProps {
 	onToggleSources: () => void;
 }
 
-/** What a toolbar's arrow keys move between: its tools, and the wrappers of its disabled ones. */
-const TOOL_SELECTOR = '[data-tool]:not(:disabled), [data-slot="disabled-reason"]';
+/**
+ * What the toolbar's arrow keys move between, in the order drawn: each tool, or — for a tool that
+ * is off — the focusable element `DisabledReason` wraps it in, which is the one that says why.
+ */
+function stopsOf(toolbar: HTMLElement): HTMLElement[] {
+	const stops: HTMLElement[] = [];
+	for (const tool of Array.from(toolbar.querySelectorAll<HTMLElement>("[data-tool]"))) {
+		const stop = tool.matches(":disabled") ? tool.parentElement : tool;
+		if (stop && isDrawn(stop)) stops.push(stop);
+	}
+	return stops;
+}
 
 /** True when an element is drawn. An engine with no `checkVisibility` is taken to draw everything. */
 function isDrawn(el: HTMLElement): boolean {
@@ -131,9 +141,7 @@ function moveAlongToolbar(event: KeyboardEvent<HTMLDivElement>): void {
 	// A menu opened from the toolbar is drawn elsewhere but is this element's React child: its
 	// arrow keys are its own.
 	if (!(target instanceof HTMLElement) || !currentTarget.contains(target)) return;
-	const tools = Array.from(currentTarget.querySelectorAll<HTMLElement>(TOOL_SELECTOR)).filter(
-		isDrawn,
-	);
+	const tools = stopsOf(currentTarget);
 	if (tools.length === 0) return;
 	const at = tools.findIndex((tool) => tool === target || tool.contains(target));
 	const last = tools.length - 1;
