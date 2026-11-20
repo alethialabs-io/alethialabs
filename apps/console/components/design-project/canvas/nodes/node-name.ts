@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { isCollectionCard, type BoardNode } from "@/lib/canvas/collections";
+import { configName } from "../graph/node-config";
+import { NODE_REGISTRY } from "../graph/node-registry";
+import type { CanvasNodeData } from "../graph/types";
+
 /**
  * The accessible name a canvas card carries — `"<kind> <name>"`.
  *
@@ -34,4 +39,56 @@ export function nodeAccessibleName(kind: string, name: string): string {
 	const n = name.trim();
 	if (!n || n === k) return k;
 	return `${k} ${n}`;
+}
+
+/** The two words a card shows about itself: its kind line and its title. */
+export interface CardIdentity {
+	/** The kind as the card's eyebrow prints it. */
+	eyebrow: string;
+	/** The card's title: the resource's name, or its kind when it has none. */
+	title: string;
+}
+
+/**
+ * A design or out-of-band card's eyebrow and title, as the card prints them.
+ *
+ * An EXTERNAL card is one kind's worth of a bring-your-own IaC module, so it reads through the kind
+ * its resources map to and is titled by the Terraform module they live in. A chart is titled by
+ * its release id under the words "Helm chart". Every other card is its registry eyebrow and its
+ * own name, falling back to the kind's label while it has none.
+ */
+export function cardIdentity(data: CanvasNodeData): CardIdentity {
+	const def = NODE_REGISTRY[data.kind];
+	if (data.kind === "external") {
+		const mapped = data.config.mappedKind ? NODE_REGISTRY[data.config.mappedKind] : null;
+		return {
+			eyebrow: mapped?.eyebrow ?? def.eyebrow,
+			title: data.config.module || "root module",
+		};
+	}
+	if (data.kind === "chart") return { eyebrow: "Helm chart", title: data.config.id };
+	return { eyebrow: def.eyebrow, title: configName(data) || def.label };
+}
+
+/**
+ * The accessible name of any card the board draws — the name its focusable element carries.
+ *
+ * A collapsed collection has no name of its own: it stands for N resources, and the count is what
+ * tells one board's vault from another's, so it is the plural title and the count.
+ */
+export function boardCardName(node: BoardNode): string {
+	if (isCollectionCard(node)) {
+		const def = NODE_REGISTRY[node.data.kind];
+		return nodeAccessibleName(
+			def.collection?.title ?? def.label,
+			String(node.data.memberIds.length),
+		);
+	}
+	const { eyebrow, title } = cardIdentity(node.data);
+	return nodeAccessibleName(eyebrow, title);
+}
+
+/** The id of the element that holds a card's spoken description (status, marks, connections). */
+export function cardDescriptionId(nodeId: string): string {
+	return `board-card-description-${nodeId.replace(/[^A-Za-z0-9_-]/g, "_")}`;
 }
