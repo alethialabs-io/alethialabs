@@ -5,6 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useStore } from "zustand";
 import type { TemplateId } from "@/components/create-project/templates";
 import type { CanvasNode, NodeKind } from "@/components/design-project/canvas/graph/types";
@@ -88,6 +89,11 @@ interface BoardGuideProps {
 	onAttachChart?: () => void;
 	/** Open the attach flow for the user's own IaC module; absent when the instance has it off. */
 	onAttachIac?: () => void;
+	/**
+	 * Where the seed's sentence is drawn: the element the board's host keeps under its toolbar.
+	 * Absent (or not mounted yet), the sentence places itself.
+	 */
+	noticeRegion?: HTMLElement | null;
 }
 
 /**
@@ -118,6 +124,7 @@ export function BoardGuide({
 	onAdd,
 	onAttachChart,
 	onAttachIac,
+	noticeRegion,
 }: BoardGuideProps) {
 	const board = useBoard();
 	const identities = useIdentities();
@@ -260,7 +267,15 @@ export function BoardGuide({
 
 	return (
 		<>
-			{sentence !== null && <SeedNotice sentence={sentence} onDismiss={removeSeedParam} />}
+			{sentence !== null &&
+				(noticeRegion ? (
+					createPortal(
+						<SeedNotice inRegion sentence={sentence} onDismiss={removeSeedParam} />,
+						noticeRegion,
+					)
+				) : (
+					<SeedNotice sentence={sentence} onDismiss={removeSeedParam} />
+				))}
 			{showGuide && (
 				<div
 					data-slot="board-guide"

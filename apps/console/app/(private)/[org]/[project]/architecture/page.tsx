@@ -2,40 +2,53 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { readConnectorsWithStatus } from "@/lib/rpc/procedures/connectors";
 import { getProjectAsFormData } from "@/app/server/actions/projects";
-import {
-	resolveActiveEnvironmentId,
-	resolveProjectId,
-} from "@/app/server/actions/resolve";
+import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { DesignProjectWorkbench } from "@/components/design-project/design-project-workbench";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import { isByoDescribeEnabled } from "@/lib/addons/describe-flag";
+import { resolveProjectOr404 } from "@/lib/projects/resolve-project-or-404";
 import { getQueryClient } from "@/lib/query/client";
 import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
-/** Per-project tab title from the URL slug (kept cheap — no extra project fetch). */
-export async function generateMetadata({
-	params,
-}: {
-	params: Promise<{ org: string; project: string }>;
-}) {
-	const { project } = await params;
-	return pageMetadata({
-		title: project,
-		description: "Design this project's multi-cloud infrastructure.",
-	});
+/**
+ * The tab reads "Architecture", as its sibling tabs read "Environments" and "Jobs". It used to be
+ * the project's URL slug, which is an address and not a name.
+ */
+export const metadata = pageMetadata({
+	title: "Architecture",
+	description: "Design this project's multi-cloud infrastructure.",
+});
+
+/** The page's query string without `environment_id`, starting with `?`, or empty. */
+function withoutEnvironment(sp: Record<string, string | string[] | undefined>): string {
+	const query = new URLSearchParams();
+	for (const [key, value] of Object.entries(sp)) {
+		if (key === "environment_id" || value === undefined) continue;
+		for (const item of Array.isArray(value) ? value : [value]) query.append(key, item);
+	}
+	const text = query.toString();
+	return text ? `?${text}` : "";
 }
 
 /**
  * `/{org}/{project}/architecture` — the project's Architecture view: the full-bleed design canvas.
- * The active environment (`?environment_id=`) scopes which env's design loads; an absent or
- * unresolvable id falls back to the project's default environment. This is the project's default
- * view (the bare `/{org}/{project}` redirects here).
+ * The active environment (`?environment_id=`) scopes which env's design loads; with none, the
+ * project's default environment does. This is the project's default view (the bare
+ * `/{org}/{project}` redirects here).
+ *
+ * WHAT A FAILED LOOKUP IS ANSWERED WITH. A slug that names no project is the project 404; a lost
+ * session goes to sign-in; any other failure of that lookup is rethrown to the segment's error
+ * boundary, which offers a retry (`resolveProjectOr404`) — it used to be reported as "Project not
+ * found". An `environment_id` that names no environment of this project REDIRECTS to the same page
+ * without it: the board used to load the default environment while the address and the environment
+ * switcher still named the other one, so what was on screen and what the page said it was
+ * disagreed. A failed environment lookup is rethrown too, where it used to be read as "no id".
  *
  * THE FIRST PAINT IS THE BOARD (#6119, F009). Everything the board draws is read here, on the server,
  * before the page renders: the design (a prop), and — in-process through the read router, under the
@@ -54,23 +67,21 @@ export default async function ProjectArchitecturePage({
 	searchParams,
 }: {
 	params: Promise<{ org: string; project: string }>;
-	searchParams: Promise<{ environment_id?: string | string[] }>;
+	searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-	const { project } = await params;
+	const { org, project } = await params;
 	const sp = await searchParams;
 	const envIdParam =
 		typeof sp.environment_id === "string" ? sp.environment_id : undefined;
-	let projectId: string;
-	try {
-		projectId = await resolveProjectId(project);
-	} catch {
-		notFound();
-	}
+	const projectId = (await resolveProjectOr404(project)) ?? notFound();
 
-	const environmentId = await resolveActiveEnvironmentId(
-		projectId,
-		envIdParam,
-	).catch(() => null);
+	// Not caught: a lookup that fails is not an answer about which environment this is.
+	const environmentId = await resolveActiveEnvironmentId(projectId, envIdParam);
+	// The address named an environment and the lookup answered with another: that id is stale (a
+	// deleted environment, an old link). Go to the address that is true, keeping the rest of it.
+	if (sp.environment_id !== undefined && environmentId !== envIdParam) {
+		redirect(`/${org}/${project}/architecture${withoutEnvironment(sp)}`);
+	}
 
 	const byoHelmEnabled = isByoHelmEnabled();
 	const byoDescribeEnabled = isByoDescribeEnabled();
@@ -109,7 +120,7 @@ export default async function ProjectArchitecturePage({
 					connectors={connectors}
 					sourceProject={sourceProject}
 					projectId={projectId}
-					environmentId={environmentId ?? undefined}
+					environmentId={environmentId}
 					byoHelmEnabled={byoHelmEnabled}
 					byoDescribeEnabled={byoDescribeEnabled}
 					byoIacEnabled={byoIacEnabled}
