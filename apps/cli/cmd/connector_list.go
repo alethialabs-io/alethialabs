@@ -5,8 +5,6 @@ package cmd
 
 import (
 	"fmt"
-	"io"
-	"os"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -21,55 +19,54 @@ var connectorListColumns = []string{"Provider", "Account", "Connected"}
 var connectorListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List connected cloud accounts",
+	Long: `List the cloud accounts connected to the active organization: the cloud, the
+account's label and when it was connected.
+
+Use it to see what a project can deploy into, or to read a connection's id with
+--output json. On a terminal the table can be sorted and navigated.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
+		p := resultPrinter(cmd)
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		apiClient := api.NewClient(token)
-
-		var identities []api.CloudIdentity
-		runSpinner("Fetching cloud connections...", func() {
-			identities, err = apiClient.GetCloudIdentities()
-		})
+		identities, err := listCloudIdentities(api.NewClient(token))
 		if err != nil {
 			fail(err)
 		}
 
-		if interactiveTable(cmd) {
-			if len(identities) == 0 {
-				ui.Muted(connectorEmptyStateHint())
-				return
-			}
-			columns := []table.Column{
-				{Title: "Provider", Width: 10},
-				{Title: "Account", Width: 42},
-				{Title: "Connected", Width: 18},
-			}
-			plain := cloudIdentityRows(identities, ui.FormatTable)
-			rows := make([]table.Row, len(plain))
-			for i, r := range plain {
-				rows[i] = table.Row(r)
-			}
-			m := ui.NewTableModel(columns, rows, "connections", "provider", 0)
-			if _, err := tea.NewProgram(m).Run(); err != nil {
-				failf("Table error: %v", err)
+		if interactiveTable(cmd) && len(identities) > 0 {
+			if err := showCloudIdentities(identities); err != nil {
+				fail(fmt.Errorf("could not draw the table: %w", err))
 			}
 			return
 		}
-
-		if err := renderCloudIdentities(os.Stdout, outputFormat(cmd), identities); err != nil {
+		if err := renderCloudIdentities(p, identities); err != nil {
 			fail(err)
 		}
 	},
 }
 
-// connectorEmptyStateHint is the one empty-state sentence both renderings show.
-//
-// It was typed out twice and named "gcp|aws|azure" — a hand-written list of the providers,
-// written before Alibaba and Hetzner existed and never revisited, so the empty state told a
-// Hetzner user the CLI could not connect their cloud. The list now comes from the registered
-// subcommands, which is the same place `alethia connector --help` reads it from.
+// showCloudIdentities draws the navigable table of connected accounts on a terminal.
+func showCloudIdentities(identities []api.CloudIdentity) error {
+	columns := []table.Column{
+		{Title: "Provider", Width: 10},
+		{Title: "Account", Width: 42},
+		{Title: "Connected", Width: 18},
+	}
+	plain := cloudIdentityRows(identities, ui.FormatTable)
+	rows := make([]table.Row, len(plain))
+	for i, r := range plain {
+		rows[i] = table.Row(r)
+	}
+	m := ui.NewTableModel(columns, rows, "connections", "provider", 0)
+	_, err := tea.NewProgram(m).Run()
+	return err
+}
+
+// connectorEmptyStateHint is the one empty-state sentence a person reads. The clouds it names are
+// the ones `alethia connector` offers, so it cannot name a command the help does not list.
 func connectorEmptyStateHint() string {
 	return "No cloud accounts connected. Connect one with `alethia connector " +
 		strings.Join(connectorProviderNames(), "|") + "`."
@@ -94,15 +91,22 @@ func cloudIdentityRows(identities []api.CloudIdentity, outFmt string) [][]string
 	return rows
 }
 
-// renderCloudIdentities writes connected cloud accounts to out in the requested format.
-func renderCloudIdentities(out io.Writer, outFmt string, identities []api.CloudIdentity) error {
-	if len(identities) == 0 && outFmt == ui.FormatTable {
-		fmt.Fprintln(out, ui.MutedStyle.Render(connectorEmptyStateHint()))
+// renderCloudIdentities writes the connected cloud accounts on the Printer's stdout in its format.
+//
+// With nothing connected, a person is told how to connect an account, on stderr: stdout stays
+// empty, so a pipeline reading the table sees no rows and no sentence. json and csv always carry
+// the document, which for no accounts is an empty list and a header row.
+func renderCloudIdentities(p *Printer, identities []api.CloudIdentity) error {
+	if identities == nil {
+		identities = []api.CloudIdentity{}
+	}
+	if len(identities) == 0 && (p.Format == "" || p.Format == ui.FormatTable) {
+		p.Note(connectorEmptyStateHint())
 		return nil
 	}
-	return ui.Render(out, outFmt, ui.TableSpec{
+	return p.Table(ui.TableSpec{
 		Columns: connectorListColumns,
-		Rows:    cloudIdentityRows(identities, outFmt),
+		Rows:    cloudIdentityRows(identities, p.Format),
 	}, identities)
 }
 

@@ -796,9 +796,9 @@ func TestRenderClusters(t *testing.T) {
 }
 
 func TestRenderCloudIdentities(t *testing.T) {
-	var buf bytes.Buffer
+	p, buf, _ := cloudsTestPrinter("table")
 	ids := []api.CloudIdentity{{Provider: "aws", Label: "prod-account", CreatedAt: ""}}
-	if err := renderCloudIdentities(&buf, "table", ids); err != nil {
+	if err := renderCloudIdentities(p, ids); err != nil {
 		t.Fatalf("renderCloudIdentities: %v", err)
 	}
 	if !strings.Contains(buf.String(), "AWS") || !strings.Contains(buf.String(), "prod-account") {
