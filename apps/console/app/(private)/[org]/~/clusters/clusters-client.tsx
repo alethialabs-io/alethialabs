@@ -16,8 +16,13 @@ import { cn } from "@repo/ui/utils";
 import { SearchX, Server } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef } from "react";
-import { buildClusterColumns, type ClusterRow, clusterRows } from "@/components/clusters/cluster-columns";
+import { useMemo } from "react";
+import {
+	buildClusterColumns,
+	ClusterOpenContext,
+	type ClusterRow,
+	clusterRows,
+} from "@/components/clusters/cluster-columns";
 import { ClusterDetailSheet } from "@/components/clusters/cluster-detail";
 import { ClustersFilterBar } from "@/components/clusters/clusters-filter-bar";
 import { DEFAULT_CLUSTER_FILTERS, normalizeClustersQuery } from "@/components/clusters/clusters-query";
@@ -85,21 +90,9 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 		router.replace(hrefWithParamPatch(pathname, searchParams.toString(), patch), { scroll: false });
 	};
 	const open = (row: ClusterRow) => patchUrl(selectionPatch(row.id));
-	// The columns are built once per route, so a cell keeps its identity (and its focus) while the
-	// URL changes under it; the handler they call is whichever `open` the latest render made.
-	const latestOpen = useRef(open);
-	useEffect(() => {
-		latestOpen.current = open;
-	});
-	const columns = useMemo(
-		() =>
-			buildClusterColumns({
-				showProject: !projectId,
-				orgSlug,
-				onOpen: (row) => latestOpen.current(row),
-			}),
-		[projectId, orgSlug],
-	);
+	// Built once per route: the handler a cell calls reaches it through `ClusterOpenContext`, so the
+	// columns do not change with the URL and a cell keeps its identity (and its focus).
+	const columns = useMemo(() => buildClusterColumns({ showProject: !projectId, orgSlug }), [projectId, orgSlug]);
 
 	if (page.data === undefined) {
 		const refusal = page.isError ? readRefusalOf(page.error) : null;
@@ -180,16 +173,18 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 				/>
 			) : (
 				<div className={cn("transition-opacity", page.isPlaceholderData && "opacity-60")}>
-					<DataTable
-						columns={columns}
-						data={rows}
-						query={page}
-						onRowClick={open}
-						selectedRowId={selected?.id}
-						pageSize={CLUSTERS_PAGE_SIZE}
-						pageIndex={pageFromUrl(searchParams) - 1}
-						onPageIndexChange={(index) => patchUrl(pagePatch(index + 1))}
-					/>
+					<ClusterOpenContext.Provider value={open}>
+						<DataTable
+							columns={columns}
+							data={rows}
+							query={page}
+							onRowClick={open}
+							selectedRowId={selected?.id}
+							pageSize={CLUSTERS_PAGE_SIZE}
+							pageIndex={pageFromUrl(searchParams) - 1}
+							onPageIndexChange={(index) => patchUrl(pagePatch(index + 1))}
+						/>
+					</ClusterOpenContext.Provider>
 				</div>
 			)}
 			<ClusterDetailSheet

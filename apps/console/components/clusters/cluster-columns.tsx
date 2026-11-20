@@ -10,6 +10,7 @@ import { ProviderIcon } from "@repo/ui/provider-icon";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Server } from "lucide-react";
 import Link from "next/link";
+import { createContext, useContext } from "react";
 import { cloudLabel, lastRunHref } from "@/components/clusters/cloud-label";
 import { type Posture, clusterPosture } from "@/components/clusters/cluster-posture";
 import { RelativeStamp } from "@/components/environments/env-ui";
@@ -33,6 +34,36 @@ export function clusterRows(clusters: readonly ClusterListItem[]): ClusterRow[] 
 	}));
 }
 
+/**
+ * What opens a row's record. The page provides it; the environment cell reads it. A context rather
+ * than a column option, so the columns do not depend on a handler that changes with the URL: they
+ * are built once per route and a cell keeps its identity (and its focus) while the page re-renders.
+ */
+export const ClusterOpenContext = createContext<(row: ClusterRow) => void>(() => {});
+
+/**
+ * The row's real control: a button named for its environment and project that opens the record, so
+ * the record is reachable by Tab and named for assistive tech, not only by a click on the row.
+ */
+function OpenClusterButton({ row }: { row: ClusterRow }) {
+	const open = useContext(ClusterOpenContext);
+	const { cluster } = row;
+	return (
+		<button
+			type="button"
+			className="w-fit max-w-full truncate text-left font-mono text-ui-md font-medium text-text-primary hover:underline"
+			aria-label={`Open ${cluster.environment_stage} in ${cluster.project_name}`}
+			onClick={(event) => {
+				// The row is clickable too; this click is the button's alone.
+				event.stopPropagation();
+				open(row);
+			}}
+		>
+			{cluster.environment_stage}
+		</button>
+	);
+}
+
 /** A link inside a clickable row: the click is the link's, not the row's. */
 const LINK = "underline underline-offset-2 hover:text-text-primary";
 
@@ -43,17 +74,14 @@ export function clusterColumnCount(showProject: boolean): number {
 
 /**
  * The columns. `showProject` is false on a project's own Clusters page, whose rows are all one
- * project's. `onOpen` opens a row's drawer; the environment cell is the row's real control, so the
- * drawer is reachable by Tab and named for assistive tech, not only by a click on the row.
+ * project's. The environment cell opens the row's record through {@link ClusterOpenContext}.
  */
 export function buildClusterColumns({
 	showProject,
 	orgSlug,
-	onOpen,
 }: {
 	showProject: boolean;
 	orgSlug: string;
-	onOpen: (row: ClusterRow) => void;
 }): ColumnDef<ClusterRow>[] {
 	const columns: ColumnDef<ClusterRow>[] = [
 		{
@@ -64,17 +92,7 @@ export function buildClusterColumns({
 				const { cluster } = row.original;
 				return (
 					<div className="flex min-w-0 flex-col">
-						<button
-							type="button"
-							className="w-fit max-w-full truncate text-left font-mono text-ui-md font-medium text-text-primary hover:underline"
-							aria-label={`Open ${cluster.environment_stage} in ${cluster.project_name}`}
-							onClick={(event) => {
-								event.stopPropagation();
-								onOpen(row.original);
-							}}
-						>
-							{cluster.environment_stage}
-						</button>
+						<OpenClusterButton row={row.original} />
 						{cluster.project_cluster.cluster_name && (
 							<span className="truncate font-mono text-ui-2xs text-text-tertiary">
 								{cluster.project_cluster.cluster_name}

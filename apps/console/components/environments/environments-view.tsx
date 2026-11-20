@@ -33,7 +33,7 @@ import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
 import { ArrowUpFromLine, Layers, Plus, SearchX, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { deleteEnvironment } from "@/app/server/actions/projects";
 import {
 	approvePromotion,
@@ -263,34 +263,24 @@ function EnvironmentsBody({
 	}, [envs, reconcile, page.rowIds, protectionByEnv, classMap, projectId, overviewKey]);
 
 	// The columns are built once per project and permission, so a cell keeps its identity (an open
-	// row menu, a switch in flight) while the read refreshes under it; the handlers they call are
-	// whichever the latest render made.
-	const handlers = {
-		onEditRules: (env: EnvRow) => setProtectFor(env),
-		onEditAdmission: (env: EnvRow) => setAdmissionFor(env),
-		onDuplicate: (env: EnvRow) => {
-			setDuplicateFrom(env);
-			setCreateOpen(true);
-		},
-		onDelete: (env: EnvRow) => {
-			setDeleteRefusal(null);
-			setPendingDelete(env);
-		},
-	};
-	const latest = useRef(handlers);
-	useEffect(() => {
-		latest.current = handlers;
-	});
+	// row menu, a switch in flight) while the read refreshes under it. Every handler only sets state,
+	// and a state setter never changes, so the columns depend on nothing a render replaces.
 	const columns = useMemo(
 		() =>
 			buildEnvironmentColumns({
 				org,
 				project,
 				manageDenied,
-				onEditRules: (env) => latest.current.onEditRules(env),
-				onEditAdmission: (env) => latest.current.onEditAdmission(env),
-				onDuplicate: (env) => latest.current.onDuplicate(env),
-				onDelete: (env) => latest.current.onDelete(env),
+				onEditRules: (env) => setProtectFor(env),
+				onEditAdmission: (env) => setAdmissionFor(env),
+				onDuplicate: (env) => {
+					setDuplicateFrom(env);
+					setCreateOpen(true);
+				},
+				onDelete: (env) => {
+					setDeleteRefusal(null);
+					setPendingDelete(env);
+				},
 			}),
 		[org, project, manageDenied],
 	);
