@@ -70,7 +70,14 @@ func jobsCmdResetFlags() {
 			if !f.Changed {
 				return
 			}
-			_ = f.Value.Set(f.DefValue)
+			// A list flag is emptied, not Set: Set APPENDS to a slice value, so setting it to its
+			// printed default would leave the literal text "[]" behind as an element, and the next
+			// command to read that flag would be handed a value nobody typed.
+			if list, ok := f.Value.(pflag.SliceValue); ok {
+				_ = list.Replace(nil)
+			} else {
+				_ = f.Value.Set(f.DefValue)
+			}
 			f.Changed = false
 		})
 		for _, sub := range c.Commands() {
@@ -147,10 +154,12 @@ func jobsCmdEnv(t *testing.T) (*jobsCmdServer, func(args ...string) int) {
 	t.Setenv("ALETHIA_WEB_ORIGIN", srv.URL)
 	t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
 
-	prevExit := exitFunc
+	// errorFormat is restored with the exit hook: a run under `-o json` records json for the fatal
+	// path, and left behind it would turn a later test's human error into an envelope.
+	prevExit, prevFormat := exitFunc, errorFormat
 	exitFunc = func(code int) { panic(jobsCmdExit{code: code}) }
 	t.Cleanup(func() {
-		exitFunc = prevExit
+		exitFunc, errorFormat = prevExit, prevFormat
 		jobsCmdResetFlags()
 	})
 
