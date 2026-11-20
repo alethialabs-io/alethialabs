@@ -9,8 +9,6 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/cloudshell"
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/connector"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
-	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
@@ -22,10 +20,17 @@ var (
 	connectorAzureManual       bool
 )
 
+// azureConnector is the Azure entry of the parent command's help.
+var azureConnector = registerConnector(connectorInfo{
+	Slug:    "azure",
+	Keyless: "an Azure federated identity",
+})
+
 var connectorAzureCmd = &cobra.Command{
 	Use:   "azure",
 	Short: "Connect an Azure subscription",
-	Long: `Connect an Azure subscription using federated identity.
+	Long: `Connect an Azure subscription with a federated identity. Run it once per
+subscription, before the first deploy into that subscription.
 
 The setup creates a user-assigned managed identity in your subscription (a plain ARM
 resource — no App Registration, no client secret) with a federated credential trusting
@@ -37,106 +42,118 @@ Azure Cloud Shell and paste back the tenant, client, and subscription IDs, or pa
 --tenant-id and --client-id for a managed identity you already created — the flag
 form of that same paste, so the command works under --no-input with no az CLI on the
 machine.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := refuseMultipleModes(
-			modeFlag{"--tenant-id/--client-id", strings.TrimSpace(connectorAzureTenantID) != "" ||
-				strings.TrimSpace(connectorAzureClientID) != ""},
-			modeFlag{"--manual", connectorAzureManual},
-		); err != nil {
+		if err := runConnect(cmd, azureConnectFlow()); err != nil {
 			fail(err)
 		}
-
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		apiClient := api.NewClient(token)
-		steps := []string{"Subscription", "Create managed identity", "Connection test"}
-
-		ui.PrintStepper(steps, 0)
-		if connectorAzureSubscription == "" {
-			if err := requireInteractiveForm(); err != nil {
-				failf("no subscription given: pass --subscription (%v)", err)
-			}
-			if err := runHuhForm(huh.NewGroup(
-				huh.NewInput().
-					Title("Azure Subscription ID").
-					Description("The subscription Alethia should provision into").
-					Value(&connectorAzureSubscription),
-			)); err != nil {
-				fail(err)
-			}
-		}
-		connectorAzureSubscription = strings.TrimSpace(connectorAzureSubscription)
-		if connectorAzureSubscription == "" {
-			failf("A subscription ID is required")
-		}
-
-		initResp, err := initProviderIdentity(apiClient, "azure")
-		if err != nil {
-			fail(err)
-		}
-
-		ui.PrintStepper(steps, 1)
-		var ids *cloudshell.AzureIDs
-		switch {
-		case connectorAzureTenantID != "" || connectorAzureClientID != "":
-			// The flag half of the manual flow: the managed identity already exists, so there
-			// is nothing to create and nothing to paste. Both ids are required together — a
-			// half-given pair is a mistake, not a partial instruction.
-			ids, err = azureFlagIDs(connectorAzureTenantID, connectorAzureClientID, connectorAzureSubscription)
-		case connectorAzureManual:
-			ids, err = azureManualFlow(connectorAzureSubscription)
-		default:
-			ids, err = azureLocalFlow(connectorAzureSubscription)
-		}
-		if err != nil {
-			fail(err)
-		}
-
-		ui.PrintStepper(steps, 2)
-		creds := map[string]interface{}{
-			"tenant_id":       ids.TenantID,
-			"client_id":       ids.ClientID,
-			"subscription_id": ids.SubscriptionID,
-		}
-		if err := finalizeConnection(apiClient, "azure", initResp.IdentityID, creds); err != nil {
-			fail(err)
-		}
-
-		ui.Success(fmt.Sprintf("Azure subscription %q connected", ids.SubscriptionID))
 	},
 }
 
-// azureLocalFlow runs the setup script with the local az CLI. The script creates the
-// managed identity in the subscription and prints its client id (captured from output).
-func azureLocalFlow(subscriptionID string) (*cloudshell.AzureIDs, error) {
-	if err := cloudshell.EnsureAz(); err != nil {
-		ui.Error("az CLI not found on PATH")
-		ui.Muted("Install it: https://learn.microsoft.com/cli/azure/install-azure-cli")
-		ui.Muted("Or re-run with --manual to set it up in Azure Cloud Shell.")
-		return nil, err
+// azureConnectFlow is the Azure half of the connection pipeline, for the flags this invocation
+// gave.
+func azureConnectFlow() connectFlow {
+	flagIDs := strings.TrimSpace(connectorAzureTenantID) != "" || strings.TrimSpace(connectorAzureClientID) != ""
+	mode := "local"
+	switch {
+	case flagIDs:
+		mode = "identity-ids"
+	case connectorAzureManual:
+		mode = "manual"
 	}
 
-	ui.Info("Running setup via the local az CLI...")
-	return cloudshell.RunAzureSetup(connector.AzureSetupScript, subscriptionID)
+	var ids *cloudshell.AzureIDs
+	return connectFlow{
+		Provider: azureConnector.Slug,
+		Mode:     mode,
+		Steps:    []string{"Subscription", "Create managed identity", "Connection test"},
+		Check: func() error {
+			if err := refuseMultipleModes(
+				modeFlag{"--tenant-id/--client-id", flagIDs},
+				modeFlag{"--manual", connectorAzureManual},
+			); err != nil {
+				return err
+			}
+			subscription := strings.TrimSpace(connectorAzureSubscription)
+			if subscription == "" {
+				if err := requireInteractiveForm(); err != nil {
+					return inputRequiredError(err, "no subscription given: pass --subscription")
+				}
+			}
+			switch mode {
+			case "identity-ids":
+				// Both ids are required together — a half-given pair is a mistake, not a partial
+				// instruction. A subscription that is still to be asked for is checked once it is
+				// known.
+				if subscription != "" {
+					_, err := azureFlagIDs(connectorAzureTenantID, connectorAzureClientID, subscription)
+					return err
+				}
+			case "manual":
+				return requirePromptFor("--manual", "the identity ids", "--tenant-id and --client-id")
+			case "local":
+				if err := cloudshell.EnsureAz(); err != nil {
+					return missingToolError(err,
+						"Install it from https://learn.microsoft.com/cli/azure/install-azure-cli. "+
+							"Or re-run with --manual to set it up in Azure Cloud Shell.")
+				}
+			}
+			return nil
+		},
+		Prepare: func(_ *Printer) error {
+			if connectorAzureSubscription == "" {
+				if err := runHuhForm(huh.NewGroup(
+					huh.NewInput().
+						Title("Azure Subscription ID").
+						Description("The subscription Alethia should provision into").
+						Value(&connectorAzureSubscription),
+				)); err != nil {
+					return formError(err)
+				}
+			}
+			connectorAzureSubscription = strings.TrimSpace(connectorAzureSubscription)
+			if connectorAzureSubscription == "" {
+				return invalidInputError("a subscription ID is required")
+			}
+			return nil
+		},
+		Capture: func(p *Printer, _ string) (map[string]interface{}, error) {
+			var err error
+			switch mode {
+			case "identity-ids":
+				// The flag half of the manual flow: the managed identity already exists, so there
+				// is nothing to create and nothing to paste.
+				ids, err = azureFlagIDs(connectorAzureTenantID, connectorAzureClientID, connectorAzureSubscription)
+			case "manual":
+				ids, err = azureManualFlow(p, connectorAzureSubscription)
+			default:
+				p.Progress("Running setup via the local az CLI...")
+				ids, err = cloudshell.RunAzureSetup(connector.AzureSetupScript, connectorAzureSubscription)
+			}
+			if err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{
+				"tenant_id":       ids.TenantID,
+				"client_id":       ids.ClientID,
+				"subscription_id": ids.SubscriptionID,
+			}, nil
+		},
+		Connected: func() string { return fmt.Sprintf("Azure subscription %q connected", ids.SubscriptionID) },
+	}
 }
 
 // azureManualFlow guides the user through Azure Cloud Shell and prompts for the
 // resulting tenant/client/subscription IDs. The client id is the managed identity the
 // script creates in the subscription (printed in its output), not a platform app.
-func azureManualFlow(subscriptionID string) (*cloudshell.AzureIDs, error) {
-	ui.Info("Manual setup:")
-	fmt.Printf("  Open Azure Cloud Shell (%s) and run:\n\n", ui.LinkStyle.Render(azureCloudShellURL))
-	fmt.Printf(
+func azureManualFlow(p *Printer, subscriptionID string) (*cloudshell.AzureIDs, error) {
+	p.Progress("Manual setup:")
+	fmt.Fprintf(p.Err, "  Open Azure Cloud Shell (%s) and run:\n\n", azureCloudShellURL)
+	fmt.Fprintf(p.Err,
 		"     curl -sO %s/alethia-azure-setup.sh && bash alethia-azure-setup.sh %s\n\n",
 		connectorBaseURL, subscriptionID,
 	)
-	fmt.Println("  Then paste the values it prints below.")
-
-	if err := requireInteractiveForm(); err != nil {
-		return nil, fmt.Errorf("no identity ids given: pass --tenant-id and --client-id (%w)", err)
-	}
+	fmt.Fprintln(p.Err, "  Then paste the values it prints below.")
 
 	ids := &cloudshell.AzureIDs{SubscriptionID: subscriptionID}
 	if err := runHuhForm(huh.NewGroup(
@@ -144,14 +161,14 @@ func azureManualFlow(subscriptionID string) (*cloudshell.AzureIDs, error) {
 		huh.NewInput().Title("Client ID").Description("The managed identity's application id").Value(&ids.ClientID),
 		huh.NewInput().Title("Subscription ID").Value(&ids.SubscriptionID),
 	)); err != nil {
-		return nil, err
+		return nil, formError(err)
 	}
 
 	ids.TenantID = strings.TrimSpace(ids.TenantID)
 	ids.ClientID = strings.TrimSpace(ids.ClientID)
 	ids.SubscriptionID = strings.TrimSpace(ids.SubscriptionID)
 	if ids.TenantID == "" || ids.ClientID == "" || ids.SubscriptionID == "" {
-		return nil, fmt.Errorf("tenant, client, and subscription IDs are all required")
+		return nil, invalidInputError("tenant, client, and subscription IDs are all required")
 	}
 	return ids, nil
 }
@@ -177,7 +194,9 @@ func azureFlagIDs(tenantID, clientID, subscriptionID string) (*cloudshell.AzureI
 		missing = append(missing, "--subscription")
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("missing %s — the tenant, client and subscription ids are required together", strings.Join(missing, " and "))
+		return nil, invalidInputError(
+			"missing %s — the tenant, client and subscription ids are required together",
+			strings.Join(missing, " and "))
 	}
 	return ids, nil
 }

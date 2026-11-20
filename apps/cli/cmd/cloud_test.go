@@ -4,7 +4,6 @@
 package cmd
 
 import (
-	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -21,8 +20,8 @@ func TestRunCloudInventory(t *testing.T) {
 		Subnets:  []api.CloudSubnet{{NativeID: "subnet-1", Region: strptr("eu-west-1"), AvailabilityZone: strptr("eu-west-1a"), CidrBlock: &subCidr, IsPublic: true}},
 		Regions:  []string{"eu-west-1", "us-east-1"},
 	}}
-	var buf bytes.Buffer
-	if err := runCloudInventory(c, &buf, "table", "id-1"); err != nil {
+	p, buf, _ := cloudsTestPrinter("table")
+	if err := runCloudInventory(c, p, "id-1"); err != nil {
 		t.Fatalf("runCloudInventory: %v", err)
 	}
 	out := buf.String()
@@ -35,8 +34,8 @@ func TestRunCloudInventory(t *testing.T) {
 
 func TestRunCloudInventoryJSON(t *testing.T) {
 	c := &fakeClient{cloudInv: &api.CloudInventory{Networks: []api.CloudNetwork{{NativeID: "vpc-1", Provider: "aws"}}, Regions: []string{}}}
-	var buf bytes.Buffer
-	if err := runCloudInventory(c, &buf, "json", "id-1"); err != nil {
+	p, buf, _ := cloudsTestPrinter("json")
+	if err := runCloudInventory(c, p, "id-1"); err != nil {
 		t.Fatalf("runCloudInventory json: %v", err)
 	}
 	if !strings.Contains(buf.String(), `"native_id": "vpc-1"`) {
@@ -46,18 +45,23 @@ func TestRunCloudInventoryJSON(t *testing.T) {
 
 func TestRunCloudInventoryEmpty(t *testing.T) {
 	c := &fakeClient{cloudInv: &api.CloudInventory{}}
-	var buf bytes.Buffer
-	if err := runCloudInventory(c, &buf, "table", "id-1"); err != nil {
+	p, buf, errBuf := cloudsTestPrinter("table")
+	if err := runCloudInventory(c, p, "id-1"); err != nil {
 		t.Fatalf("runCloudInventory empty: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No cloud inventory discovered") {
-		t.Errorf("expected empty notice, got: %q", buf.String())
+	// The notice is said about the result, so it is on stderr and stdout stays empty.
+	if !strings.Contains(errBuf.String(), "No cloud inventory discovered") {
+		t.Errorf("expected the empty notice on stderr, got: %q", errBuf.String())
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an empty inventory wrote on stdout: %q", buf.String())
 	}
 }
 
 func TestRunCloudInventoryError(t *testing.T) {
 	c := &fakeClient{err: errors.New("boom")}
-	if err := runCloudInventory(c, &bytes.Buffer{}, "table", "id-1"); err == nil {
+	p, _, _ := cloudsTestPrinter("table")
+	if err := runCloudInventory(c, p, "id-1"); err == nil {
 		t.Error("expected error to propagate")
 	}
 }

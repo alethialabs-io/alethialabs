@@ -16,13 +16,16 @@ import (
 
 func TestRenderEmptyTables(t *testing.T) {
 	cases := map[string]func(*bytes.Buffer) error{
-		"clusters":   func(b *bytes.Buffer) error { return renderClusters(b, "table", nil) },
-		"runners":    func(b *bytes.Buffer) error { return renderRunners(b, "table", nil) },
-		"jobs":       func(b *bytes.Buffer) error { return renderJobs(b, "table", nil) },
-		"identities": func(b *bytes.Buffer) error { return renderCloudIdentities(b, "table", nil) },
-		"orgList":    func(b *bytes.Buffer) error { return runOrgList(&fakeClient{}, b, "table") },
-		"members":    func(b *bytes.Buffer) error { return runMembersList(&fakeClient{}, b, "table", "o1") },
-		"teams":      func(b *bytes.Buffer) error { return runTeamsList(&fakeClient{}, b, "table", "o1") },
+		"clusters": func(b *bytes.Buffer) error { return renderClusters(b, "table", nil) },
+		"runners":  func(b *bytes.Buffer) error { return renderRunners(b, "table", nil) },
+		"jobs":     func(b *bytes.Buffer) error { return renderJobs(b, "table", nil) },
+		// The empty-state notice of this one is said on stderr, so both streams are the buffer.
+		"identities": func(b *bytes.Buffer) error {
+			return renderCloudIdentities(&Printer{Out: b, Err: b, Format: "table"}, nil)
+		},
+		"orgList": func(b *bytes.Buffer) error { return runOrgList(&fakeClient{}, b, "table") },
+		"members": func(b *bytes.Buffer) error { return runMembersList(&fakeClient{}, b, "table", "o1") },
+		"teams":   func(b *bytes.Buffer) error { return runTeamsList(&fakeClient{}, b, "table", "o1") },
 	}
 	for name, fn := range cases {
 		t.Run(name, func(t *testing.T) {
