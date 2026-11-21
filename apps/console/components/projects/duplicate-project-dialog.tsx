@@ -254,8 +254,6 @@ function OpenDuplicateProjectDialog({
 	// Read during render so react-hook-form's proxy actually subscribes this component to them —
 	// `form.formState.x` inside a callback alone does not.
 	const { dirtyFields } = form.formState;
-	// The mutation's own pending flag covers the whole round trip.
-	const isSubmitting = duplicate.isPending;
 	const [cloudIdentityId, region] = useWatch({ control: form.control, name: WATCHED });
 
 	/** Resets every field to its initial state (on close + after a successful duplicate). */
@@ -287,6 +285,8 @@ function OpenDuplicateProjectDialog({
 		// No success toast: the dialog itself turns into the "Project duplicated" result.
 		onSuccess: (duplicated) => setResult(duplicated),
 	});
+	// The mutation's own pending flag covers the whole round trip.
+	const isSubmitting = duplicate.isPending;
 
 	const targetIdentity = identities.find((i) => i.id === cloudIdentityId);
 	const targetProvider =
