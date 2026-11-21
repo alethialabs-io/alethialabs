@@ -21,7 +21,9 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import type { GettingStartedState } from "@/app/server/actions/onboarding";
-import { globalHref, orgHref } from "@/lib/routing";
+import { CLOUD_ACCOUNT, JOB_ACTION, PROJECT } from "@/lib/copy/vocabulary";
+import { useProjectsQuery } from "@/lib/query/use-projects-query";
+import { globalHref, projectHref } from "@/lib/routing";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import {
 	useSetupGuideQuery,
@@ -44,34 +46,48 @@ interface Step {
  * Builds the ordered checklist for an org from its real onboarding state. Pure and
  * shared by the topbar button (counts) and the card (render) so they never disagree —
  * including the Pro-gated "Invite your team" step. Returns [] until state has loaded.
+ *
+ * `firstProjectSlug` is where the deploy step leads: the Architecture page of the organization's
+ * first project, which is where a plan and a deploy are started. With no project yet (`null`) there
+ * is nothing to deploy, so the step leads to creating one. It never leads to the overview, which
+ * is usually the page the guide is open on and has no way to deploy anything.
+ *
+ * No step names a cloud: which clouds a deployment offers is the server's answer
+ * (`lib/cloud-providers/availability.ts`), and the Connectors page the first step links to lists
+ * them.
  */
-function getSetupSteps(
+export function getSetupSteps(
 	orgSlug: string,
 	state: GettingStartedState | null,
+	firstProjectSlug: string | null,
 ): Step[] {
 	if (!state) return [];
+	const plan = JOB_ACTION.plan.toLowerCase();
+	const deploy = JOB_ACTION.deploy.toLowerCase();
 	return [
 		{
 			key: "cloud",
-			title: "Connect a cloud",
-			desc: "Link AWS, GCP, Azure, Alibaba Cloud, or Hetzner.",
-			href: globalHref(orgSlug, "connectors"),
+			title: `Connect a ${CLOUD_ACCOUNT.one}`,
+			desc: `Link the ${CLOUD_ACCOUNT.one} your ${PROJECT.many} deploy to.`,
+			href: `${globalHref(orgSlug, "connectors")}?type=cloud`,
 			done: state.hasCloud,
 			icon: <Cloud className="size-4" />,
 		},
 		{
 			key: "project",
-			title: "Design your first Project",
-			desc: "Compose infrastructure visually, then plan & apply.",
+			title: `Create your first ${PROJECT.one}`,
+			desc: "Lay out its infrastructure on the Architecture page.",
 			href: globalHref(orgSlug, "new"),
 			done: state.hasProject,
 			icon: <FileCode2 className="size-4" />,
 		},
 		{
 			key: "provision",
-			title: "Provision your first environment",
-			desc: "Run a plan & apply to bring your infrastructure live.",
-			href: orgHref(orgSlug),
+			title: `${JOB_ACTION.deploy} your first environment`,
+			desc: firstProjectSlug
+				? `Open the ${PROJECT.one}, then ${plan} and ${deploy} it.`
+				: `Create a ${PROJECT.one} first, then ${plan} and ${deploy} it.`,
+			href: firstProjectSlug ? projectHref(orgSlug, firstProjectSlug) : globalHref(orgSlug, "new"),
 			done: state.hasProvisioned,
 			icon: <Server className="size-4" />,
 		},
@@ -91,6 +107,18 @@ function getSetupSteps(
 }
 
 /**
+ * The slug of the organization's first project — the one created first — or `null` when it has
+ * none, or the shell's project list has not answered. The list is the shell's own read
+ * (`workspace.projects`, newest first), which the `[org]` layout prefetches and the `projects` topic
+ * keeps current, so this costs no request and the step's link follows a project created elsewhere.
+ */
+function useFirstProjectSlug(): string | null {
+	const projects = useProjectsQuery().data;
+	if (!projects || projects.length === 0) return null;
+	return projects[projects.length - 1]?.slug ?? null;
+}
+
+/**
  * Topbar entry for the setup guide: a circular progress ring + label. Reads the progress the
  * `[org]` layout prefetched (#6114), and renders nothing until it is there or once every step is
  * done. Clicking it toggles the bottom-right card.
@@ -99,8 +127,9 @@ export function SetupGuideButton() {
 	const orgSlug = useActiveOrgSlug();
 	const { data: state = null } = useSetupGuideQuery();
 	const toggle = useSetupGuideStore((s) => s.toggle);
+	const firstProjectSlug = useFirstProjectSlug();
 
-	const steps = getSetupSteps(orgSlug, state);
+	const steps = getSetupSteps(orgSlug, state, firstProjectSlug);
 	const total = steps.length;
 	const doneCount = steps.filter((s) => s.done).length;
 	if (!state || total === 0 || doneCount === total) return null;
@@ -129,8 +158,9 @@ export function SetupGuideCard() {
 	const { data: state = null } = useSetupGuideQuery();
 	const open = useSetupGuideStore((s) => s.open);
 	const setOpen = useSetupGuideStore((s) => s.setOpen);
+	const firstProjectSlug = useFirstProjectSlug();
 
-	const steps = getSetupSteps(orgSlug, state);
+	const steps = getSetupSteps(orgSlug, state, firstProjectSlug);
 	const total = steps.length;
 	const doneCount = steps.filter((s) => s.done).length;
 	if (!open || total === 0 || doneCount === total) return null;
@@ -140,7 +170,7 @@ export function SetupGuideCard() {
 		// is exactly where the bare `z-40` sat: above any in-page sticky action bar this card can
 		// float over, and below the header, every overlay and the toasts that report on it.
 		<div className="fixed right-4 bottom-4 z-[var(--z-sticky-bar)] max-w-[calc(100vw-2rem)]">
-			<section className="w-[360px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+			<section aria-label="Setup guide" className="w-[360px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
 				<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
 					<div>
 						<p className="vx-eyebrow">Get started</p>
@@ -152,7 +182,7 @@ export function SetupGuideCard() {
 					</div>
 					<button
 						type="button"
-						aria-label="Minimize"
+						aria-label="Minimize the setup guide"
 						onClick={() => setOpen(false)}
 						className="rounded-sm p-1.5 text-text-tertiary transition-colors hover:bg-surface-muted hover:text-text-primary"
 					>
@@ -166,7 +196,7 @@ export function SetupGuideCard() {
 							<Link
 								href={s.href}
 								className={cn(
-									"group flex items-center gap-3.5 px-5 py-3.5 transition-colors",
+									"group flex items-center gap-3.5 px-5 py-3.5 outline-none transition-colors focus-visible:bg-surface-muted focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50",
 									s.done ? "opacity-60" : "hover:bg-surface-muted",
 								)}
 							>
@@ -192,6 +222,7 @@ export function SetupGuideCard() {
 										)}
 									>
 										{s.title}
+										{s.done ? <span className="sr-only"> (done)</span> : null}
 									</div>
 									<div className="truncate text-ui-sm text-text-tertiary">
 										{s.desc}
@@ -207,10 +238,10 @@ export function SetupGuideCard() {
 
 				<div className="flex items-center gap-4 border-t border-border px-5 py-3">
 					<Link
-						href="/docs"
+						href="/docs/get-started/install-the-cli"
 						className="inline-flex items-center gap-1.5 font-mono text-ui-xs text-text-tertiary transition-colors hover:text-text-primary"
 					>
-						<Terminal className="size-3.5" />
+						<Terminal aria-hidden className="size-3.5" />
 						Install the alethia CLI
 					</Link>
 					<Link

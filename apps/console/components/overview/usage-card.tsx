@@ -94,7 +94,7 @@ export function usagePeriodCaption(periodStart: string): string {
 /** The gauges and counts the card renders, derived from the overview's usage read. */
 function usageRows(
 	data: OverviewUsage,
-	projectCount: number,
+	projectCount: number | null | undefined,
 ): { gauges: GaugeRow[]; counts: CountRow[] } {
 	const gauges: GaugeRow[] = [
 		{
@@ -146,8 +146,12 @@ function usageRows(
 			clockSizer: "resets Wed 10:59 AM",
 		});
 	}
+	// The project count is the grid's read, not this card's: while that read has not answered, or
+	// could not count, the card prints no number for it and never a wrong one.
 	const counts: CountRow[] = [
-		{ label: "Projects", value: projectCount, tip: "Infrastructure configurations in this organization." },
+		...(typeof projectCount === "number"
+			? [{ label: "Projects", value: projectCount, tip: "Projects in this organization." }]
+			: []),
 		{ label: "Seats", value: data.memberCount, tip: "Members occupying a seat in this organization." },
 	];
 	return { gauges, counts };
@@ -214,8 +218,11 @@ export function UsageCardSkeleton() {
 	);
 }
 
-/** Usage card. `projectCount` is the org's project total the page resolved on the server. */
-export function UsageCard({ orgSlug, projectCount }: { orgSlug: string; projectCount: number }) {
+/**
+ * Usage card. `projectCount` is the organization's project total from the grid's read
+ * (`overview.projects`); absent or `null` while that is not known.
+ */
+export function UsageCard({ orgSlug, projectCount }: { orgSlug: string; projectCount?: number | null }) {
 	const usage = useQuery(overviewUsageQuery());
 
 	if (usage.data === undefined) {

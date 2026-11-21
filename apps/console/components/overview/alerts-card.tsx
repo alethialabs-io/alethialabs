@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Overview Alerts card — the org's most recent alert deliveries. Deliveries carry a delivery status
-// (sent/failed/…), not a per-event severity, so the dot + right-hand pill read off the delivery
-// status (grayscale, via StatusBadge tiers).
+// (sent/failed/…), not a per-event severity, so each row's badge reads off the delivery status
+// (grayscale, via StatusBadge tiers). Each row links to the Alerts page.
 //
 // #6118: the read is the `overview.alerts` GET procedure, prefetched by the page on the server.
 // Pending, forbidden, plan-gated, empty, failed and answered are six distinct renders — a failure
@@ -27,7 +27,7 @@ import { orpc } from "@/lib/rpc/client";
 import { ClockSlot } from "./clock-slot";
 import { isForbidden, retryUnlessRefused } from "./overview-reads";
 
-/** Delivery status → grayscale tier for the left-hand dot. */
+/** Delivery status → grayscale tier for the row's status badge. */
 const DELIVERY_TIER: Record<string, StatusTier> = {
 	failed: "failed",
 	retrying: "pending",
@@ -61,12 +61,11 @@ function AlertsFrame({ orgSlug, caption, children }: { orgSlug?: string; caption
 function DeliverySkeleton() {
 	return (
 		<div className="flex items-start gap-3 border-b border-border/60 px-4 py-3 last:border-b-0">
-			<Skeleton className="mt-1 size-2 shrink-0 rounded-full" />
 			<div className="flex min-w-0 flex-1 flex-col gap-1.5">
 				<Skeleton className="h-3.5 w-40" />
 				<Skeleton className="h-2.5 w-28" />
 			</div>
-			<Skeleton className="h-4 w-12 rounded-full" />
+			<Skeleton className="h-5 w-14 rounded-full" />
 		</div>
 	);
 }
@@ -164,16 +163,13 @@ export function AlertsCard({ orgSlug }: { orgSlug: string }) {
 				<EmptyState className={CARD_EMPTY} title="No recent alerts." />
 			) : (
 				deliveries.map((d) => (
-					<div
+					// A link to the Alerts page, where the delivery ledger says what was sent and why one
+					// failed: a row that reports "failed" must lead somewhere.
+					<Link
 						key={d.id}
-						className="flex items-start gap-3 border-b border-border/60 px-4 py-3 transition-colors last:border-b-0 hover:bg-muted/40"
+						href={globalHref(orgSlug, "alerts")}
+						className="flex items-start gap-3 border-b border-border/60 px-4 py-3 outline-none transition-colors last:rounded-b-lg last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50"
 					>
-						<StatusBadge
-							status={d.status}
-							tier={DELIVERY_TIER[d.status] ?? "idle"}
-							showLabel={false}
-							className="mt-1"
-						/>
 						<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 							<span className="truncate text-ui-md text-foreground">{d.title}</span>
 							<span className="truncate font-mono text-ui-2xs text-muted-foreground">
@@ -181,10 +177,10 @@ export function AlertsCard({ orgSlug }: { orgSlug: string }) {
 								<ClockSlot sizer="less than a minute ago" render={() => formatRelative(d.created_at)} />
 							</span>
 						</div>
-						<span className="shrink-0 rounded-full border px-2 py-0.5 font-mono text-ui-3xs uppercase tracking-wide text-muted-foreground">
-							{d.status}
-						</span>
-					</div>
+						{/* One status, said once, through the shared badge. A delivery's status is not in the
+						    shared map, so its tier is named here. */}
+						<StatusBadge status={d.status} tier={DELIVERY_TIER[d.status] ?? "idle"} className="shrink-0" />
+					</Link>
 				))
 			)}
 		</AlertsFrame>

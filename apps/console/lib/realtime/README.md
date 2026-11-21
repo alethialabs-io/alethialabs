@@ -109,7 +109,6 @@ row leaves this table in the PR that closes it.
 | Surface | Today | Rule | Owner |
 |---|---|---|---|
 | Job log (`hooks/use-job-log-stream.ts`) | reads with `EventSource`; a failed stream is not shown, and a finished job still opens one | 2 | #6818 |
-| Project grid on the overview (`app/(private)/[org]/overview-client.tsx`) | server props; no topic reaches it | 1 | #6817 |
 | Paid-setup settling state (`components/org/pending-paid-setup.ts`) | a 3-second interval | 4 | #7004 |
 | "Being answered" wait (`components/agent/elench/elench-conversation.tsx`) | an interval over `getThread` | 4 | #7005 |
 | Elench drafts list (`lib/stores/elench-drafts/store.ts`) | a 60-second interval while the surface is open | 4 | #7006 |
