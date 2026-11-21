@@ -14,7 +14,7 @@ function RowBody({ entry }: { entry: NewsEntry }) {
 			<span className="font-mono text-ui-xs uppercase tracking-[0.12em] text-text-secondary col-start-1 md:col-start-2 md:row-start-1">
 				{KIND_LABELS[entry.kind]}
 			</span>
-			<span className="font-grotesk text-ui-xl font-semibold tracking-[-0.015em] text-text-primary group-hover:underline group-hover:underline-offset-4 col-start-1 md:col-start-3 md:row-start-1">
+			<span className="min-w-0 font-grotesk text-ui-xl font-semibold tracking-[-0.015em] text-text-primary [overflow-wrap:anywhere] group-hover:underline group-hover:underline-offset-4 col-start-1 md:col-start-3 md:row-start-1">
 				{entry.title}
 			</span>
 			<span

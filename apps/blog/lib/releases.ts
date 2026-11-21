@@ -74,6 +74,9 @@ export function releaseSummary(body: string): string {
 		.replace(/[*_`]/g, "")
 		.replace(/\s+/g, " ")
 		.trim();
+	// Early releases list bare commit hashes ("7ed185b0e026…") — meaningless to a reader, and an
+	// unbreakable 40-character string. Treat a summary that is only a hash as no summary.
+	if (/^[0-9a-f]{7,40}\b/.test(text) && text.replace(/[0-9a-f]{7,40}/g, "").trim().length < 3) return "";
 	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
