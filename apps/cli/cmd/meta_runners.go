@@ -77,8 +77,9 @@ var metaRunners = []cmdmeta.Meta{
 	// Sets the pool to the values given, so a second run changes nothing further. Pausing a pool
 	// (--enabled=false) drains its runners and is confirmed, but removes no record.
 	{
-		Path: "alethia fleet set", Mutates: true, Idempotent: true, Output: cmdmeta.OutputTable,
+		Path: "alethia fleet set", Mutates: true, Idempotent: true, DryRun: cmdmeta.DryRunClient, Output: cmdmeta.OutputTable,
 		Examples: []cmdmeta.Example{
+			{Cmd: "alethia fleet set aws --max 3 --dry-run", Note: "Show the update that would be sent, and send nothing"},
 			{Cmd: "alethia fleet set aws --warm-min 2 --max 6", Note: "Keep two AWS runners warm and allow up to six"},
 			{Cmd: "alethia fleet set hetzner --enabled=false --yes", Note: "Pause the Hetzner pool from a script"},
 			{Cmd: "alethia fleet set gcp --version 1.4.0 --output json", Note: "Pin the GCP pool to one runner version and read the pool back as json"},
