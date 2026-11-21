@@ -355,6 +355,7 @@ test.describe("Architecture canvas", () => {
 		await expect(
 			rail(page).getByRole("heading", { name: "Environment settings" }),
 		).toBeVisible();
+		await openGroup(page, "Node sizing");
 		await expect(rail(page).getByText("vCPU per node")).toBeVisible();
 		await expect(rail(page).getByText(/Memory per node/)).toBeVisible();
 		await expect(page.locator("[data-slot=sheet-overlay]")).toHaveCount(0);
