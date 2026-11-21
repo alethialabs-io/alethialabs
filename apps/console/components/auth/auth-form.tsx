@@ -33,8 +33,13 @@ import { ArrowRight, KeyRound, Loader2, Lock } from "lucide-react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
 import { env } from "next-runtime-env";
 import { useHydrated } from "@repo/ui/use-hydrated";
+import { isOrgSlug } from "@repo/org-slug";
+import { hardNavigate } from "@/components/shell/hard-navigate";
 
 type AuthProvider = "github" | "gitlab" | "bitbucket" | "google";
 type Step = "providers" | "email" | "code" | "no-account";
@@ -101,6 +106,81 @@ function digitsOnly(pasted: string): string {
 
 /** Shown when the sign-in code email could not be sent (or the request failed outright). */
 const SEND_FAILED_MESSAGE = "We couldn’t send the code — try again.";
+
+/** Shown when the auth server is rate-limiting this browser. */
+const RATE_LIMITED_MESSAGE = "Too many attempts — wait a minute, then try again.";
+
+/**
+ * What the form says when a code is refused, keyed by the email-OTP plugin's error code. Each says
+ * what to do next: a wrong code can be corrected, but an expired or exhausted one is gone, and
+ * retyping it can never work — those point at Resend. `clear` empties the field only where the
+ * code in it is dead; a mistyped digit is easier to fix in place.
+ */
+const VERIFY_FAILURES: Record<string, { message: string; clear: boolean }> = {
+	INVALID_OTP: { message: "That code didn’t work — try again.", clear: false },
+	OTP_EXPIRED: {
+		message: "That code has expired. Use Resend code to get a new one.",
+		clear: true,
+	},
+	TOO_MANY_ATTEMPTS: {
+		message: "Too many wrong tries — that code no longer works. Use Resend code to get a new one.",
+		clear: true,
+	},
+};
+
+/** The refusal for any other code the verify call answers with: never the server's own text. */
+const VERIFY_FAILED = { message: "That code didn’t work — try again.", clear: false };
+
+/** The email step's one field. `type="email"` and `required` stay on the input as well. */
+const emailSchema = z.object({
+	email: z.string().trim().email("Enter a valid email address."),
+});
+type EmailValues = z.infer<typeof emailSchema>;
+
+/** The code step's one field: exactly six digits. */
+const codeSchema = z.object({ code: z.string().regex(/^\d{6}$/) });
+type CodeValues = z.infer<typeof codeSchema>;
+
+/**
+ * The organization name as typed into the SSO entry. A pasted sign-in URL
+ * (`https://…/sso/acme`) is reduced to its last segment, because that URL is what the SSO
+ * settings page hands out and what people will have to hand.
+ */
+export function ssoSlugFrom(raw: string): string {
+	const trimmed = raw.trim().toLowerCase();
+	const marker = trimmed.lastIndexOf("/sso/");
+	const tail = marker >= 0 ? trimmed.slice(marker + "/sso/".length) : trimmed;
+	return tail.split(/[/?#]/)[0] ?? "";
+}
+
+/** The SSO entry's one field: something that reduces to a well-formed organization slug. */
+const ssoSchema = z.object({
+	slug: z
+		.string()
+		.refine((raw) => ssoSlugFrom(raw).length > 0, "Enter your organization’s name in Alethia.")
+		.refine(
+			(raw) => isOrgSlug(ssoSlugFrom(raw)),
+			"Use the name from your organization’s sign-in link — lowercase letters, numbers and hyphens.",
+		),
+});
+type SsoValues = z.infer<typeof ssoSchema>;
+
+/** The banner for a provider hand-off that never left the page, naming the provider by its label. */
+function oauthFailedMessage(provider: AuthProvider): string {
+	return `We couldn’t start sign-in with ${lookup(PROVIDER_LABELS, provider)} — try again.`;
+}
+
+/**
+ * Where a NEW account goes after its first sign-in. Every new account passes through
+ * `/onboarding` carrying `next`, by email and by provider alike — except an invitation: an invitee
+ * is joining an organization that already exists, so they go straight to the invitation, and
+ * accepting it is what completes their setup.
+ */
+export function newAccountDestination(next: string | null): string {
+	if (next === null) return "/onboarding";
+	if (next === "/invites/accept" || next.startsWith("/invites/accept?")) return next;
+	return `/onboarding?next=${encodeURIComponent(next)}`;
+}
 
 /** Allowlisted banner copy keyed by `?error=` / `?message=`. Arbitrary querystring
  *  text is never rendered (anti-phishing) — unknown codes show no banner. */
@@ -291,8 +371,7 @@ function ProviderButton({
 				<ProviderIcon provider={provider} size={17} decorative mono={false} />
 			)}
 			{lookup(PROVIDER_LABELS, provider)}
-			{/* The pill is aria-hidden and the BUTTON names itself instead — the same
-			    shape the SSO button uses for its "Soon". Letting the pill text join the
+			{/* The pill is aria-hidden and the BUTTON names itself instead. Letting the pill text join the
 			    name by itself was the first attempt and it announced "GitHubLast used":
 			    the accessible name concatenates descendant text and knows nothing about
 			    `ml-1`, and a JSX {" "} between them does not survive the render (checked
@@ -357,23 +436,47 @@ export function AuthForm({ mode }: AuthFormProps) {
 	const [step, setStep] = useState<Step>(prefillEmail ? "email" : "providers");
 	const [isLoading, setIsLoading] = useState(hintedProvider !== null);
 	const [loadingProvider, setLoadingProvider] = useState<string | null>(hintedProvider);
-	const [email, setEmail] = useState(prefillEmail);
+
+	// The two golden-path fields are react-hook-form + zod (A-18): the address on the email step
+	// and the six digits on the code step. `email` / `code` below are their watched values, for
+	// the copy and the disabled states that read them.
+	const emailForm = useForm<EmailValues>({
+		resolver: zodResolver(emailSchema),
+		defaultValues: { email: prefillEmail },
+	});
+	const email = useWatch({ control: emailForm.control, name: "email" });
+	const codeForm = useForm<CodeValues>({
+		resolver: zodResolver(codeSchema),
+		defaultValues: { code: "" },
+	});
+	const code = useWatch({ control: codeForm.control, name: "code" });
+	/** Replaces the code field's value (a paste, a reset). */
+	const setCode = (value: string) => codeForm.setValue("code", value);
+
 	// Pre-fill the remembered address once, after mount, and only when the field is
 	// still empty — a `?email=` param, or anything already typed, wins.
 	//
 	// The VALUE only. `step` is initialised from `prefillEmail`, and feeding remembered
 	// state into that would move a returning user off the provider tiles and onto the
 	// email form a beat after the page settled, which is a worse experience than the one
-	// this is meant to improve.
-	//
-	// Seeded during the first render past hydration (React's "adjust state while rendering" form,
-	// guarded so it runs once), not in an effect, so the field never paints empty and then fills.
-	const [emailSeeded, setEmailSeeded] = useState(false);
-	if (mounted && !emailSeeded) {
-		setEmailSeeded(true);
-		if (!prefillEmail && rememberedEmail) setEmail((current) => current || rememberedEmail);
-	}
-	const [code, setCode] = useState("");
+	// this is meant to improve. The field is not on screen until the email step opens (a
+	// prefilled address opens on it, and then this never writes), so the write is not seen.
+	const emailSeeded = useRef(false);
+	useEffect(() => {
+		if (!mounted || emailSeeded.current) return;
+		emailSeeded.current = true;
+		if (!prefillEmail && rememberedEmail && !emailForm.getValues("email")) {
+			emailForm.setValue("email", rememberedEmail);
+		}
+	}, [mounted, prefillEmail, rememberedEmail, emailForm]);
+
+	// SSO entry (A-13): a slug field revealed under the provider tiles, which hands off to the
+	// SP-initiated route `/sso/<slug>` — the same address the SSO settings page gives out.
+	const [ssoOpen, setSsoOpen] = useState(false);
+	const ssoForm = useForm<SsoValues>({
+		resolver: zodResolver(ssoSchema),
+		defaultValues: { slug: "" },
+	});
 	const [error, setError] = useState<string | null>(() => {
 		// An auto-started provider clears any banner, as a click on its tile does.
 		if (hintedProvider !== null) return null;
@@ -433,7 +536,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 	const successDestination = isOAuthResume
 		? resumeUrl
 		: mode === "signup"
-			? (next ?? "/onboarding")
+			? newAccountDestination(next)
 			: (next ?? "/dashboard");
 
 	/**
@@ -448,11 +551,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 		// First-time OAuth users land in onboarding (carrying `next`); existing users
 		// resume `next`/dashboard. Provider failures bounce back with ?error=oauth.
 		const callbackURL = successDestination;
-		const newUserCallbackURL = isOAuthResume
-			? resumeUrl
-			: next
-				? `/onboarding?next=${encodeURIComponent(next)}`
-				: "/onboarding";
+		const newUserCallbackURL = isOAuthResume ? resumeUrl : newAccountDestination(next);
 		const errorCallbackURL = `${mode === "signup" ? "/signup" : "/login"}?error=oauth`;
 		// 1.7 promoted the generic providers (gitlab, bitbucket) to first-class social
 		// providers and deleted `signIn.oauth2`, so the github/google split is gone —
@@ -476,9 +575,11 @@ export function AuthForm({ mode }: AuthFormProps) {
 		});
 
 		if (error) {
-			// The hand-off never happened — don't leave "Last used" on a tile that failed.
+			// The hand-off never happened — don't leave "Last used" on a tile that failed. The
+			// copy is the form's own, naming the provider by its label: the auth server's message
+			// is not written for this screen, and the raw id ("github") is not a name.
 			forget();
-			setError(error.message ?? `Failed to sign in with ${provider}`);
+			setError(oauthFailedMessage(provider));
 			setIsLoading(false);
 			setLoadingProvider(null);
 			return;
@@ -494,7 +595,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 		// the hand-off never happened either. Without this the tile keeps its "Last used"
 		// mark and the form goes on recommending the provider that most recently failed.
 		forget();
-		setError(`Could not start ${provider} sign-in. Please try again.`);
+		setError(oauthFailedMessage(provider));
 		setIsLoading(false);
 		setLoadingProvider(null);
 	};
@@ -518,35 +619,40 @@ export function AuthForm({ mode }: AuthFormProps) {
 	}, []);
 
 	/**
-	 * Asks the server to email a sign-in code. Throws when it was not sent, so neither
-	 * caller advances to (or resets) the code step on a send that never happened. A
-	 * provider failure answers SIGN_IN_CODE_SEND_FAILED (lib/auth/index.ts), and the
-	 * message is fixed here rather than read off the response.
+	 * Asks the server to email a sign-in code. Answers the sentence to show when it was not sent,
+	 * or null when it was — so neither caller advances to (or resets) the code step on a send that
+	 * never happened. Every sentence is the form's own: a provider failure answers
+	 * SIGN_IN_CODE_SEND_FAILED (lib/auth/index.ts), a refused challenge or sign-up has shared copy,
+	 * and anything else — including a call that throws — is the generic "couldn't send". The auth
+	 * server's `message` is never shown.
 	 */
-	const sendCode = async () => {
+	const sendCode = async (): Promise<string | null> => {
 		const type: "sign-in" = "sign-in";
-		const body = { email, type };
+		const body = { email: emailForm.getValues("email").trim(), type };
 		// With the challenge on, the token rides in the header Better Auth's captcha plugin reads,
 		// and is spent whatever the answer — the next send needs a new one.
 		const token = challengeToken;
 		if (challengeSiteKey !== null) nextChallengeRound();
-		const { error } = token
-			? await authClient.emailOtp.sendVerificationOtp(body, {
-					headers: { "x-captcha-response": token },
-				})
-			: await authClient.emailOtp.sendVerificationOtp(body);
-		if (!error) return;
-		if (error.code === "SIGN_IN_CODE_SEND_FAILED") {
-			throw new Error(SEND_FAILED_MESSAGE);
+		try {
+			const { error } = token
+				? await authClient.emailOtp.sendVerificationOtp(body, {
+						headers: { "x-captcha-response": token },
+					})
+				: await authClient.emailOtp.sendVerificationOtp(body);
+			if (!error) return null;
+			if (error.code && CHALLENGE_REFUSAL_CODES.includes(error.code)) {
+				return CHALLENGE_REFUSED_MESSAGE;
+			}
+			if (isSignupRefusalCode(error.code)) return SIGNUP_REFUSAL_MESSAGES[error.code];
+			if (error.status === 429) return RATE_LIMITED_MESSAGE;
+			return SEND_FAILED_MESSAGE;
+		} catch {
+			return SEND_FAILED_MESSAGE;
 		}
-		if (error.code && CHALLENGE_REFUSAL_CODES.includes(error.code)) {
-			throw new Error(CHALLENGE_REFUSED_MESSAGE);
-		}
-		throw new Error(error.message ?? SEND_FAILED_MESSAGE);
 	};
 
-	const handleSendCode = async (e: React.FormEvent) => {
-		e.preventDefault();
+	/** The email step's submit, after its schema passed: the account check, then the send. */
+	const handleSendCode = async (values: EmailValues) => {
 		if (challengePending) return;
 		setIsLoading(true);
 		setLoadingProvider("email");
@@ -555,19 +661,30 @@ export function AuthForm({ mode }: AuthFormProps) {
 		try {
 			// Gate the login flow: an unknown email is emailed a "sign up" message
 			// instead of silently creating an account. Signup always proceeds.
-			const { outcome } = await requestEmailCode({ email, mode });
+			//
+			// A server action that THROWS reaches the browser as the framework's masked
+			// production sentence, so a throw here is "couldn't send", never its message.
+			let outcome: "send-otp" | "no-account";
+			try {
+				({ outcome } = await requestEmailCode({ email: values.email, mode }));
+			} catch {
+				setError(SEND_FAILED_MESSAGE);
+				return;
+			}
 			if (outcome === "no-account") {
 				setStep("no-account");
 				return;
 			}
-			await sendCode();
+			const failure = await sendCode();
+			if (failure) {
+				setError(failure);
+				return;
+			}
 			track("signup_email_requested", { mode });
 			setCode("");
 			setStep("code");
 			setResendCount(0);
 			armCooldown(0);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to send code");
 		} finally {
 			setIsLoading(false);
 			setLoadingProvider(null);
@@ -575,21 +692,33 @@ export function AuthForm({ mode }: AuthFormProps) {
 	};
 
 	const handleVerify = async (value: string) => {
-		if (value.length < 6 || isLoading) return;
+		if (!codeSchema.safeParse({ code: value }).success || isLoading) return;
 		setIsLoading(true);
 		setLoadingProvider("verify");
 		setError(null);
 
-		const { error } = await authClient.signIn.emailOtp({ email, otp: value });
+		// A call that throws (the connection dropped) is a failed verify like any other, with no
+		// code to branch on — it must not leave the form stuck on "Verifying…".
+		let error: { code?: string; status?: number } | null;
+		try {
+			({ error } = await authClient.signIn.emailOtp({
+				email: emailForm.getValues("email").trim(),
+				otp: value,
+			}));
+		} catch {
+			error = { status: 0 };
+		}
 		if (error) {
 			// A refused NEW account (lib/auth/signup-guard) is not a wrong code: say why, from the
-			// shared copy. Anything else is still "that code didn't work".
-			setError(
-				isSignupRefusalCode(error.code)
-					? SIGNUP_REFUSAL_MESSAGES[error.code]
-					: "That code didn’t work — try again.",
-			);
-			setCode("");
+			// shared copy. An expired or exhausted code points at Resend, because retyping it can
+			// never work; anything else is still "that code didn't work".
+			const failure: { message: string; clear: boolean } = isSignupRefusalCode(error.code)
+				? { message: SIGNUP_REFUSAL_MESSAGES[error.code], clear: true }
+				: error.status === 429
+					? { message: RATE_LIMITED_MESSAGE, clear: false }
+					: (lookup(VERIFY_FAILURES, error.code ?? "") ?? VERIFY_FAILED);
+			setError(failure.message);
+			if (failure.clear) setCode("");
 			setIsLoading(false);
 			setLoadingProvider(null);
 			return;
@@ -635,13 +764,15 @@ export function AuthForm({ mode }: AuthFormProps) {
 		setLoadingProvider("resend");
 		setError(null);
 		try {
-			await sendCode();
+			const failure = await sendCode();
+			if (failure) {
+				setError(failure);
+				return;
+			}
 			setCode("");
 			const next = resendCount + 1;
 			setResendCount(next);
 			armCooldown(next);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to resend code");
 		} finally {
 			setIsLoading(false);
 			setLoadingProvider(null);
@@ -655,9 +786,24 @@ export function AuthForm({ mode }: AuthFormProps) {
 		setError(null);
 	};
 
-	// `role="alert"`: on a failed verification the text swaps in place and the OTP
-	// field clears underneath it. A sighted user sees both; without a live region a
-	// screen-reader user got neither.
+	const emailError = emailForm.formState.errors.email?.message;
+	const ssoError = ssoForm.formState.errors.slug?.message;
+
+	/** The SSO entry's submit: hands off to the organization's SP-initiated sign-in route. */
+	const handleSsoContinue = (values: SsoValues) => {
+		setIsLoading(true);
+		setLoadingProvider("sso");
+		setError(null);
+		const slug = ssoSlugFrom(values.slug);
+		const query = next ? `?next=${encodeURIComponent(next)}` : "";
+		// A full document load: `/sso/<slug>` is a route handler that redirects to the identity
+		// provider, which a client-side push cannot follow.
+		hardNavigate(`/sso/${encodeURIComponent(slug)}${query}`);
+	};
+
+	// `role="alert"`: on a failed verification the text swaps in place (and, for a dead
+	// code, the OTP field clears underneath it). A sighted user sees both; without a live
+	// region a screen-reader user got neither.
 	const errorBanner = error ? (
 		<div
 			role="alert"
@@ -696,32 +842,39 @@ export function AuthForm({ mode }: AuthFormProps) {
 					    InputOTP renders a hidden field plus the slots, so there is no single
 					    node of its own to point at. */}
 					<div ref={otpRef}>
-					<InputOTP
-						maxLength={6}
-						value={code}
-						onChange={setCode}
-						onComplete={handleVerify}
-						pattern={REGEXP_ONLY_DIGITS}
-						// Strip spaces/labels so pasting the grouped code from the email
-						// ("418 902") or "code: 418902" fills all six boxes.
-						pasteTransformer={digitsOnly}
-						disabled={isLoading}
-						// Never let session replay capture the login code (OTP digits render as text, not
-						// a masked <input>, so maskAllInputs alone wouldn't hide them).
-						data-ph-mask
-						containerClassName="w-full"
-						autoFocus
-					>
-						<InputOTPGroup className="grid w-full grid-cols-6 gap-[9px]">
-							{[0, 1, 2, 3, 4, 5].map((i) => (
-								<InputOTPSlot
-									key={i}
-									index={i}
-									className="h-14 w-full border-border-strong bg-surface-sunken font-mono text-[22px] font-medium"
-								/>
-							))}
-						</InputOTPGroup>
-					</InputOTP>
+						<Controller
+							control={codeForm.control}
+							name="code"
+							render={({ field }) => (
+								<InputOTP
+									maxLength={6}
+									value={field.value}
+									onChange={field.onChange}
+									onComplete={handleVerify}
+									pattern={REGEXP_ONLY_DIGITS}
+									// Strip spaces/labels so pasting the grouped code from the email
+									// ("418 902") or "code: 418902" fills all six boxes.
+									pasteTransformer={digitsOnly}
+									disabled={isLoading}
+									aria-label="6-digit sign-in code"
+									// Never let session replay capture the login code (OTP digits render as text, not
+									// a masked <input>, so maskAllInputs alone wouldn't hide them).
+									data-ph-mask
+									containerClassName="w-full"
+									autoFocus
+								>
+									<InputOTPGroup className="grid w-full grid-cols-6 gap-[9px]">
+										{[0, 1, 2, 3, 4, 5].map((i) => (
+											<InputOTPSlot
+												key={i}
+												index={i}
+												className="h-14 w-full border-border-strong bg-surface-sunken font-mono text-[22px] font-medium"
+											/>
+										))}
+									</InputOTPGroup>
+								</InputOTP>
+							)}
+						/>
 					</div>
 
 					<PrimaryButton
@@ -819,7 +972,10 @@ export function AuthForm({ mode }: AuthFormProps) {
 					</h1>
 				</div>
 
-				<form onSubmit={handleSendCode} className="flex flex-col gap-[9px]">
+				<form
+					onSubmit={emailForm.handleSubmit(handleSendCode)}
+					className="flex flex-col gap-[9px]"
+				>
 					{errorBanner}
 
 					<div className="flex flex-col gap-2">
@@ -838,14 +994,23 @@ export function AuthForm({ mode }: AuthFormProps) {
 								id="email"
 								type="email"
 								placeholder="name@company.com"
-								value={email}
-								onChange={(e) => setEmail(e.target.value)}
+								autoComplete="email"
+								{...emailForm.register("email")}
 								required
-								disabled={isLoading}
+								// Read-only rather than disabled while sending: a disabled field
+								// drops focus, and the value is react-hook-form's either way.
+								readOnly={isLoading}
+								aria-invalid={emailError ? true : undefined}
+								aria-describedby={emailError ? "email-error" : undefined}
 								autoFocus
 								className="h-[46px] w-full border-border-strong bg-surface-sunken text-sm"
 							/>
 						</div>
+						{emailError ? (
+							<p id="email-error" className="text-ui-sm text-destructive">
+								{emailError}
+							</p>
+						) : null}
 					</div>
 
 					{challenge}
@@ -944,12 +1109,11 @@ export function AuthForm({ mode }: AuthFormProps) {
 					) : null}
 				</Button>
 
-				{/* SSO — not wired yet; visible but disabled (coming soon). An e2e spec
-				    asserts it is present AND disabled, so neither may change here. What
-				    could change is where it sits: it used to be the first full-width
-				    control under the provider grid, so a third of the visible options
-				    were dead before the visitor read a word. It now follows the live
-				    ones. The spec selects by accessible name, so the move is free.
+				{/* SSO (A-13). It was a disabled "Soon" tile while SP-initiated sign-in already
+				    shipped at /sso/<slug>; it now opens a field for the organization's name and
+				    hands off to that route, whose refusals come back as `?sso_error=` and render in
+				    the banner above. It follows the live providers rather than leading them: most
+				    people arriving here sign in with one of those.
 
 				    The raw <button>s elsewhere in this file are inline TEXT affordances
 				    — "← Other sign-in options", "Resend", the back-links. They are
@@ -958,17 +1122,71 @@ export function AuthForm({ mode }: AuthFormProps) {
 				<Button
 					type="button"
 					variant="outline"
-					disabled
-					title="SSO is coming soon"
-					aria-label="Continue with SSO (coming soon)"
-					className="h-[46px] w-full cursor-not-allowed gap-[9px] border-border-strong text-ui-md opacity-55"
+					onClick={() => {
+						setSsoOpen((open) => !open);
+						setError(null);
+					}}
+					disabled={isLoading}
+					aria-expanded={ssoOpen}
+					aria-controls="sso-entry"
+					className="h-[46px] w-full gap-[9px] border-border-strong text-ui-md hover:border-ring hover:bg-surface-muted"
 				>
 					<Lock className="size-4 opacity-80" />
 					Continue with SSO
-					<span className="vx-badge-mono ml-1 border border-border-strong px-1.5 py-px">
-						Soon
-					</span>
 				</Button>
+
+				{ssoOpen ? (
+					<form
+						id="sso-entry"
+						onSubmit={ssoForm.handleSubmit(handleSsoContinue)}
+						className="flex flex-col gap-2 pt-1"
+						noValidate
+					>
+						<label
+							htmlFor="sso-slug"
+							className="font-mono text-ui-2xs uppercase tracking-[0.14em] text-text-tertiary"
+						>
+							Organization
+						</label>
+						<div className="flex gap-[9px]">
+							<div className="vx-clamp vx-clamp--tight vx-clamp--field flex-1">
+								<Input
+									id="sso-slug"
+									placeholder="acme"
+									autoComplete="organization"
+									autoCapitalize="none"
+									spellCheck={false}
+									{...ssoForm.register("slug")}
+									readOnly={isLoading}
+									aria-invalid={ssoError ? true : undefined}
+									aria-describedby={ssoError ? "sso-slug-error" : "sso-slug-help"}
+									autoFocus
+									className="h-[46px] w-full border-border-strong bg-surface-sunken text-sm"
+								/>
+							</div>
+							<Button
+								type="submit"
+								disabled={isLoading}
+								className="h-[46px] px-4 text-sm"
+							>
+								{loadingProvider === "sso" ? (
+									<Loader2 className="size-4 animate-spin" aria-hidden="true" />
+								) : null}
+								Continue
+							</Button>
+						</div>
+						{ssoError ? (
+							<p id="sso-slug-error" className="text-ui-sm text-destructive">
+								{ssoError}
+							</p>
+						) : (
+							<p id="sso-slug-help" className="text-ui-sm text-text-tertiary">
+								The name in your organization’s sign-in link — /sso/<span className="font-mono">name</span>.
+								You can paste the whole link.
+							</p>
+						)}
+					</form>
+				) : null}
 
 			</div>
 		</AuthCard>
