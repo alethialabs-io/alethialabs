@@ -54,8 +54,12 @@ describe("the submit wizard's controls (F043)", () => {
 		const { container } = await renderWizard();
 		expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
 		const row = container.querySelector('[data-slot="wizard-footer"]');
-		// Two children either way: the Back slot (empty on step 1) and the primary action.
-		expect(row?.children).toHaveLength(2);
+		// Two laid-out children either way: the Back slot (empty on step 1) and the primary action.
+		// (A disabled primary also carries its reason in a `hidden` span, which takes no space.)
+		const laidOut = Array.from(row?.children ?? []).filter((child) => !child.hasAttribute("hidden"));
+		expect(laidOut).toHaveLength(2);
+		expect(laidOut[0]?.getAttribute("data-slot")).toBe("wizard-footer-back");
+		expect(laidOut[0]?.children).toHaveLength(0);
 		expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 
 		fireEvent.click(screen.getByText("Technical"));
