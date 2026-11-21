@@ -67,7 +67,9 @@ export function SubresourceField({
 								</Button>
 							</div>
 
-							<div className="grid grid-cols-2 gap-2">
+							{/* One column: a row lives inside the 392px rail, where two-up gave each control
+							    ~140px and cut its value off. */}
+							<div className="grid gap-2">
 								{spec.fields
 									.filter((f) => !f.visibleWhen || f.visibleWhen(row, { ...ctx, config: row }))
 									.map((field) => (
@@ -116,10 +118,8 @@ function RowField({
 	const options =
 		typeof field.options === "function" ? field.options(rowCtx) : field.options;
 
-	const full = field.full || field.type === "text";
-
 	return (
-		<div className={cn("space-y-1", full && "col-span-2")}>
+		<div className="space-y-1">
 			<Label htmlFor={fieldId} className="vx-eyebrow text-ui-3xs">
 				{field.label}
 			</Label>
