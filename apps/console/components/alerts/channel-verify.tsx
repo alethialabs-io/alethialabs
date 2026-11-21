@@ -20,6 +20,7 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { alertsKeys } from "@/lib/query/use-alerts-query";
 import { formatDate } from "@repo/format";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import { cn } from "@repo/ui/utils";
 
 /** The widest "Last verified" timestamp `formatDate(…, "datetime")` prints in the console's locale. */
@@ -38,7 +39,8 @@ interface ChannelVerifyProps {
 	channelId: string;
 	isVerified: boolean;
 	lastVerifiedAt: string | null;
-	canManage: boolean;
+	/** Why the viewer cannot verify this channel (`manageReason`), or null when they can. */
+	reason: string | null;
 }
 
 /** Verify / re-verify a channel with a cooldown and inline result. */
@@ -46,7 +48,7 @@ export function ChannelVerify({
 	channelId,
 	isVerified,
 	lastVerifiedAt,
-	canManage,
+	reason,
 }: ChannelVerifyProps) {
 	const [result, setResult] = useState<VerifyChannelOutcome | null>(null);
 	const [attempts, setAttempts] = useState(0);
@@ -103,7 +105,8 @@ export function ChannelVerify({
 						)}
 					</div>
 				</div>
-				{canManage && (
+				{/* Shown to every viewer; one who may not verify is told why on the button. */}
+				<DisabledReason reason={reason} className="shrink-0">
 					<Button
 						variant="outline"
 						size="sm"
@@ -114,7 +117,7 @@ export function ChannelVerify({
 						{busy && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
 						{label}
 					</Button>
-				)}
+				</DisabledReason>
 			</div>
 
 			{result && (
