@@ -1119,6 +1119,12 @@
    logo jumping between two states. */
 @media (prefers-reduced-motion: reduce) {
   .ah-mark { --mark-dur: 450ms; }
+  /* The apps' global reduced-motion reset (`* { transition-duration: 0.01ms !important }`
+     in apps/marketing/app/globals.css and its twins) would otherwise zero this fold and
+     make the logo jump. A class selector with !important outranks that `*` rule. */
+  .ah-mark__word,
+  .ah-mark__word > span,
+  .ah-mark__dot { transition-duration: var(--mark-dur) !important; }
   .ah-mark[data-compact] .ah-mark__alethia > span,
   .ah-mark[data-compact] .ah-mark__labs > span { transform: none; }
   .ah-mark[data-compact] .ah-mark__word { filter: none; }
