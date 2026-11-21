@@ -89,6 +89,32 @@ export function getAuthRateLimit(): NonNullable<BetterAuthOptions["rateLimit"]> 
 	};
 }
 
+/** The sign-up challenge's provider configuration (Cloudflare Turnstile). */
+export interface SignupChallengeConfig {
+	provider: "cloudflare-turnstile";
+	/** Server-side verification secret. Never sent to the browser, never logged. */
+	secretKey: string;
+	/** The public widget key the sign-in form renders with. */
+	siteKey: string;
+}
+
+/**
+ * The challenge required before a sign-in code is emailed (REL-L10, #6911), or null when it is
+ * off. It is ON only when BOTH `TURNSTILE_SECRET_KEY` and `NEXT_PUBLIC_TURNSTILE_SITE_KEY` are set:
+ * the server cannot verify without the secret, and the form cannot produce a token without the site
+ * key — enforcing with only one of the two would refuse every sign-in code, existing accounts
+ * included. A self-host without a Turnstile account therefore keeps working with the challenge off;
+ * the rate limit above and the per-network sign-up ceiling still apply.
+ *
+ * Read on every call, not cached; it is two env reads.
+ */
+export function getSignupChallengeConfig(): SignupChallengeConfig | null {
+	const secretKey = env("TURNSTILE_SECRET_KEY")?.trim();
+	const siteKey = env("NEXT_PUBLIC_TURNSTILE_SITE_KEY")?.trim();
+	if (!secretKey || !siteKey) return null;
+	return { provider: "cloudflare-turnstile", secretKey, siteKey };
+}
+
 /**
  * Base URL of the GitLab instance used for OAuth + the v4 API. Defaults to the
  * public gitlab.com; set GITLAB_BASE_URL to point at a self-hosted GitLab.
