@@ -263,7 +263,7 @@ describe("editing a pool", () => {
 	it("names the pool in the URL and saves through the update action", async () => {
 		renderWizard({ pool: POOL });
 		await waitFor(() => expect(testParam(POOL_PARAM)).toBe(POOL.id));
-		expect(await screen.findByText("Edit pool")).toBeInTheDocument();
+		await waitFor(() => expect(screen.getByText("Edit pool")).toBeInTheDocument());
 
 		await toCapacity();
 		fireEvent.click(await enabledButton("Next"));
@@ -284,13 +284,17 @@ describe("editing a pool", () => {
 	it("a reload finds the edited pool from the URL when the parent no longer holds it", async () => {
 		fleet.configs = [POOL];
 		const first = renderWizard({ pool: POOL });
-		await screen.findByText("Edit pool");
+		await waitFor(() => expect(testParam(POOL_PARAM)).toBe(POOL.id));
+		await enabledButton("Next");
 		first.unmount();
 
 		renderWizard({ open: false, pool: null });
 
-		expect(await screen.findByText("Edit pool")).toBeInTheDocument();
-		fireEvent.click(await enabledButton("Next"));
+		// The skeleton and the answered sheet both say "Edit pool"; wait for the answered one (its
+		// Next button) and re-query, so a title node replaced between the two is never asserted on.
+		const next = await enabledButton("Next");
+		expect(screen.getByText("Edit pool")).toBeInTheDocument();
+		fireEvent.click(next);
 		expect(await screen.findByLabelText(/^Locations/)).toHaveValue("fsn1, nbg1");
 	});
 });
