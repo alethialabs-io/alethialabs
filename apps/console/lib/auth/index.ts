@@ -17,6 +17,7 @@ import type {
 import { getAuthConfig, getAuthRateLimit, getGitlabBaseUrl } from "@/lib/config/auth";
 import { getAuthPlugins } from "@/lib/auth/plugins";
 import { mcpResourceFromBaseUrl } from "@/lib/auth/mcp-resource";
+import { MCP_PROVIDER_SCOPES } from "@/lib/auth/mcp-scopes";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { provisionPrimaryOrg } from "@/lib/auth/onboarding";
 import { assertNewAccountAllowed, signupChallengePlugins } from "@/lib/auth/signup-guard";
@@ -240,6 +241,10 @@ if (resource !== null) {
 			// clients that omit it are issued a code directly (documented MVP posture).
 			consentPage: "/auth/oauth/consent",
 			resource,
+			// The agent scopes (read, design, plan, apply, destroy) beside the OpenID Connect ones.
+			// An access token's `scope` claim is read into the caller's ceiling by
+			// lib/auth/mcp-scopes.ts; a token with no agent scope, or an undeclared one, is refused.
+			scopes: MCP_PROVIDER_SCOPES,
 		}),
 		// Client ID Metadata Documents. 1.7 stopped allowing unauthenticated Dynamic
 		// Client Registration, which is how the connectors used to register themselves —

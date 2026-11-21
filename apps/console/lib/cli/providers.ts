@@ -11,6 +11,7 @@ import {
 	assertMintingProfileStillMember,
 	type CliCredential,
 	ensureCliOrgAccess,
+	withServiceTokenCeiling,
 } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import { CloudNotOfferedError } from "@/lib/cloud-providers/availability";
@@ -270,9 +271,18 @@ export async function resolveCliProvider(
 			if (pinnedScope.orgId !== caller.pinnedOrg) {
 				return { userId: null, scope: null, provider: null, errorResponse: forbidden() };
 			}
+			// The token's scopes and project list ride on the actor, through the guard's own builder, so
+			// `enforceProviderPermission` and every action below are held to them exactly as a route
+			// behind `authorizeCli` is. A payload whose limit cannot be read is refused.
+			const limited = payload
+				? withServiceTokenCeiling(actorWithCredential(pinnedScope, "service_token"), payload)
+				: null;
+			if (!limited) {
+				return { userId: null, scope: null, provider: null, errorResponse: forbidden() };
+			}
 			return {
 				userId,
-				scope: actorWithCredential(pinnedScope, "service_token"),
+				scope: limited,
 				provider,
 				errorResponse: null,
 			};

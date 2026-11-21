@@ -149,7 +149,7 @@ function verdict(req: Request): Awaited<ReturnType<typeof verifyCliToken>> {
 		bearer === SESSION
 			? { sub: USER }
 			: bearer === SERVICE
-				? { sub: USER, service_token_org_id: ORG, service_token_id: TOKEN_ID }
+				? { sub: USER, service_token_org_id: ORG, service_token_id: TOKEN_ID, service_token_scopes: ["read", "design", "plan", "apply", "destroy"], service_token_project_ids: null }
 				: bearer === NO_SUB
 					? {}
 					: null;
