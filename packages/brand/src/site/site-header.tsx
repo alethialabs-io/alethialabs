@@ -4,7 +4,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import type { CSSProperties, FocusEvent, KeyboardEvent, ReactNode } from "react";
+import type { CSSProperties, FocusEvent, KeyboardEvent } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ArrowUpRight, Menu } from "lucide-react";
@@ -12,8 +12,6 @@ import { Button } from "@repo/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@repo/ui/sheet";
 import { AlethiaLockup } from "../lockup";
 import { Icon, Wrap } from "./primitives";
-
-const GITHUB_URL = "https://github.com/alethialabs-io/alethialabs";
 
 interface MenuLink {
   name: string;
@@ -26,34 +24,28 @@ interface MenuLink {
  * sheet both render from these lists, so the two can never disagree about what
  * the site has in it.
  *
- * There is no Product menu any more. It held three doc links (Console, CLI,
- * Elench) that the Docs landing and the home page already carry, and a menu
- * that only re-links the next click is a detour, not navigation.
+ * Left: four plain links. Right: Company ▾, Contact, and the CTA. There is no
+ * Resources menu any more — the blog becomes News, and the changelog will merge
+ * into it, so a menu holding them would re-link what the left row already says.
  */
-const LEFT_LINKS: MenuLink[] = [{ name: "Docs", href: "/docs" }];
-
-const RESOURCE_MENU: MenuLink[] = [
-  { name: "Blog", href: "/blog" },
-  { name: "Changelog", href: `${GITHUB_URL}/releases`, external: true },
-  { name: "Open source", href: "/open-source" },
-];
-
-const LEFT_TRAILING_LINKS: MenuLink[] = [
-  { name: "Pricing", href: "/pricing" },
+const LEFT_LINKS: MenuLink[] = [
+  // `/blog` until the section is renamed to `/news`.
+  { name: "News", href: "/blog" },
+  // Docs is its own surface, so it opens in a new tab like any off-site link.
+  { name: "Docs", href: "/docs", external: true },
   { name: "Enterprise", href: "/enterprise" },
+  { name: "Pricing", href: "/pricing" },
 ];
 
 const COMPANY_MENU: MenuLink[] = [
   { name: "About", href: "/about" },
   { name: "Services", href: "/services" },
+  { name: "Open source", href: "/open-source" },
   { name: "Security", href: "/security" },
   { name: "Legal", href: "/legal" },
 ];
 
 const CONTACT_LINK: MenuLink = { name: "Contact", href: "/contact" };
-
-/** The order the mobile sheet lists top-level links in, before its two groups. */
-const MOBILE_TOP_LINKS: MenuLink[] = [...LEFT_LINKS, ...LEFT_TRAILING_LINKS];
 
 const NAV_LINK_STYLE: CSSProperties = {
   padding: "7px 12px",
@@ -231,21 +223,29 @@ function NavMenu({
 
 /** A top-level nav link. `aria-current="page"` is the accessible signal that this
  * is the page you are on, and the clamp reads the same attribute — so the visual
- * held state and the announced one can never disagree. */
-function NavLink({ href, children }: { href: string; children: ReactNode }) {
+ * held state and the announced one can never disagree. An external link opens in
+ * a new tab, carries the arrow mark, and is never marked current. */
+function NavLink({ item }: { item: MenuLink }) {
   const pathname = usePathname();
-  const current = pathname === href || pathname.startsWith(`${href}/`);
+  const current =
+    !item.external && (pathname === item.href || pathname.startsWith(`${item.href}/`));
   return (
     <Link
-      href={href}
+      href={item.href}
+      target={item.external ? "_blank" : undefined}
+      rel={item.external ? "noreferrer" : undefined}
       aria-current={current ? "page" : undefined}
       className="vx-clamp vx-clamp--tight"
       style={{
         ...NAV_LINK_STYLE,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
         color: current ? "var(--text-primary)" : NAV_LINK_STYLE.color,
       }}
     >
-      {children}
+      {item.name}
+      {item.external && <ExternalMark />}
     </Link>
   );
 }
@@ -323,7 +323,7 @@ function SheetLink({ item, onNavigate }: { item: MenuLink; onNavigate: () => voi
 /**
  * Public site header: a three-column grid with the lockup centred.
  *
- * Desktop (≥ 900px): Docs · Resources ▾ · Pricing · Enterprise on the left,
+ * Desktop (≥ 900px): News · Docs · Enterprise · Pricing on the left,
  * Company ▾ · Contact · the CTA on the right. Below 900px: the menu button on the
  * left, the lockup in the centre, and the CTA on the right — always visible, so
  * the one thing the header asks you to do never hides behind the menu.
@@ -384,11 +384,7 @@ export function Header({ homeHref = "/" }: { homeHref?: "/" | "/home" }) {
             <SheetContent side="left" className="w-72 overflow-y-auto">
               <SheetTitle className="sr-only">Site menu</SheetTitle>
               <nav aria-label="Site" className="mt-8 flex flex-col gap-1">
-                {MOBILE_TOP_LINKS.map((it) => (
-                  <SheetLink key={it.name} item={it} onNavigate={closeSheet} />
-                ))}
-                <p className="vx-eyebrow px-3 pb-1 pt-3">Resources</p>
-                {RESOURCE_MENU.map((it) => (
+                {LEFT_LINKS.map((it) => (
                   <SheetLink key={it.name} item={it} onNavigate={closeSheet} />
                 ))}
                 <p className="vx-eyebrow px-3 pb-1 pt-3">Company</p>
@@ -413,21 +409,7 @@ export function Header({ homeHref = "/" }: { homeHref?: "/" | "/home" }) {
             style={{ display: "flex", alignItems: "center", gap: 2 }}
           >
             {LEFT_LINKS.map((it) => (
-              <NavLink key={it.name} href={it.href}>
-                {it.name}
-              </NavLink>
-            ))}
-            <NavMenu
-              label="Resources"
-              id="resources"
-              open={open}
-              setOpen={setOpen}
-              items={RESOURCE_MENU}
-            />
-            {LEFT_TRAILING_LINKS.map((it) => (
-              <NavLink key={it.name} href={it.href}>
-                {it.name}
-              </NavLink>
+              <NavLink key={it.name} item={it} />
             ))}
           </nav>
         </div>
@@ -469,7 +451,7 @@ export function Header({ homeHref = "/" }: { homeHref?: "/" | "/home" }) {
               align="right"
               items={COMPANY_MENU}
             />
-            <NavLink href={CONTACT_LINK.href}>{CONTACT_LINK.name}</NavLink>
+            <NavLink item={CONTACT_LINK} />
           </nav>
           <Link href={cta.href} style={{ flexShrink: 0 }}>
             <Button size="sm">
