@@ -39,8 +39,13 @@ import { AlethiaMark } from "../lockup";
 
 /* ---------- shared inline-style tokens (mirror the design's helpers) ---------- */
 export const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
-/** Display face for headlines and plan names: Space Grotesk (tokens.css: "--font-display" is Geist). */
-export const disp: CSSProperties = { fontFamily: "var(--font-grotesk)" };
+/**
+ * Display face for headlines and plan names: Space Grotesk. It reads next/font's own
+ * `--font-space-grotesk` because the theme names (`--font-grotesk`, `--font-display`) live in
+ * an `@theme inline` block, which compiles them into utilities and emits no runtime variable —
+ * an inline `var(--font-grotesk)` resolves to nothing and silently falls back to Geist.
+ */
+export const disp: CSSProperties = { fontFamily: "var(--font-space-grotesk), var(--font-sans)" };
 export const eyebrow: CSSProperties = {
 	fontFamily: "var(--font-mono)",
 	fontSize: 11,
