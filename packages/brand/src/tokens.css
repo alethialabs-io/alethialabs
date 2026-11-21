@@ -1003,7 +1003,11 @@
   .ah-h1 { font-size: 46px !important; }
   .vx-rail { display: none; }
 }
+/* JobsTable's column template. Six columns on a wide screen; on a phone Runner and
+   Created are dropped (their cells carry .ah-hide-sm) so the rest stay readable. */
+.ah-jobs-grid { grid-template-columns: 1.3fr 1.05fr 1.25fr 1fr 0.9fr 0.85fr; }
 @media (max-width: 620px) {
+  .ah-jobs-grid { grid-template-columns: 1fr 1.1fr 1.3fr 0.8fr; }
   .ah-hide-sm { display: none !important; }
   .ah-h1 { font-size: 36px !important; }
 }

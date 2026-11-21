@@ -39,7 +39,8 @@ import { AlethiaMark } from "../lockup";
 
 /* ---------- shared inline-style tokens (mirror the design's helpers) ---------- */
 export const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
-export const disp: CSSProperties = { fontFamily: "var(--font-display)" };
+/** Display face for headlines and plan names: Space Grotesk (tokens.css: "--font-display" is Geist). */
+export const disp: CSSProperties = { fontFamily: "var(--font-grotesk)" };
 export const eyebrow: CSSProperties = {
 	fontFamily: "var(--font-mono)",
 	fontSize: 11,
@@ -220,25 +221,27 @@ export const JOBS: JobRow[] = [
 
 /** Provisioning-jobs table — Type / Status / Project / Runner / Created / Duration. */
 export function JobsTable({ rows, compact }: { rows: JobRow[]; compact?: boolean }) {
+	// Runner and Created are the two columns a phone can lose; `.ah-jobs-grid` (tokens.css)
+	// drops them from the template below 620px, and `ah-hide-sm` drops their cells.
 	const cols = ["Type", "Status", "Project", "Runner", "Created", "Duration"];
-	const grid = "1.3fr 1.05fr 1.25fr 1fr 0.9fr 0.85fr";
+	const narrowHidden = new Set(["Runner", "Created"]);
 	return (
 		<div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "var(--surface)" }}>
-			<div style={{ display: "grid", gridTemplateColumns: grid, padding: "9px 16px", borderBottom: "1px solid var(--border)", background: "var(--surface-muted)" }}>
+			<div className="ah-jobs-grid" style={{ display: "grid", padding: "9px 16px", borderBottom: "1px solid var(--border)", background: "var(--surface-muted)" }}>
 				{cols.map((c) => (
-					<span key={c} style={{ ...eyebrow, fontSize: 9 }}>{c}</span>
+					<span key={c} className={narrowHidden.has(c) ? "ah-hide-sm" : undefined} style={{ ...eyebrow, fontSize: 9 }}>{c}</span>
 				))}
 			</div>
 			{rows.map((r, i) => (
-				<div key={i} style={{ display: "grid", gridTemplateColumns: grid, alignItems: "center", padding: compact ? "10px 16px" : "12px 16px", borderBottom: i < rows.length - 1 ? "1px solid var(--border-faint)" : "none" }}>
+				<div key={i} className="ah-jobs-grid" style={{ display: "grid", alignItems: "center", padding: compact ? "10px 16px" : "12px 16px", borderBottom: i < rows.length - 1 ? "1px solid var(--border-faint)" : "none" }}>
 					<span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text-primary)" }}>{r.type}</span>
 					<span><StatusBadge status={r.status} /></span>
 					<span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "var(--text-secondary)", ...mono }}>
 						{r.provider ? <Prov id={r.provider} size={13} /> : <span style={{ width: 13 }} />}
 						{r.project}
 					</span>
-					<span style={{ fontSize: 11.5, color: "var(--text-secondary)", ...mono }}>{r.runner}</span>
-					<span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>{r.created}</span>
+					<span className="ah-hide-sm" style={{ fontSize: 11.5, color: "var(--text-secondary)", ...mono }}>{r.runner}</span>
+					<span className="ah-hide-sm" style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>{r.created}</span>
 					<span style={{ fontSize: 11.5, color: "var(--text-tertiary)", ...mono }}>{r.duration}</span>
 				</div>
 			))}
