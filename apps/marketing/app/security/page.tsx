@@ -4,84 +4,44 @@
 import { CURRENT_LEGAL_OPERATOR } from "@repo/legal/entity";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { mono, Wrap } from "@repo/brand/site-primitives";
 import { SiteShell } from "@repo/brand/site-shell";
-import { PageCTA, PageHero, Section } from "@repo/brand/site-sections";
+import { Block, Card, Cell, EditorialStatement, RowHead, TableBox } from "@/components/landing/editorial";
 
 export const metadata: Metadata = {
 	title: "Security",
 	description:
-		"How Alethia is built: no stored cloud keys on AWS, GCP or Azure, short-lived federated identity, sealed per-job execution, and signed evidence you can verify offline.",
+		"The credentials Alethia deliberately never holds: exactly what is stored for AWS, Google Cloud, Azure and Hetzner, how Alethia gets in, and how you revoke it. No certification is claimed; vulnerabilities go to security@alethialabs.io.",
 };
 
-/** One architectural claim: what it is, in two sentences, and where the detail lives. */
-interface Claim {
-	title: string;
-	body: string;
-	href: string;
+/**
+ * Read by `scripts/check-legal-set.mjs` as this page's displayed date — it matches the first
+ * "Last updated", a middle dot, then a long date closed by a double quote — so it stays one string
+ * literal in that exact shape, and no other text in this file may spell that prefix.
+ */
+const LAST_UPDATED = "Last updated · November 21, 2026";
+
+/** One cloud's row in the ledger. `holdsNothing` marks the clouds where nothing is stored. */
+interface LedgerRow {
+	cloud: string;
+	access: string;
+	stored: string;
+	holdsNothing: boolean;
+	revoke: string;
 }
 
 /**
- * The six claims. Each is architectural and checkable against the AGPL source,
- * and each links to the docs page that carries the detail the old ten-section
- * prose version spelled out inline.
- *
- * Card 1 states the Hetzner exception in the same terms as the pricing FAQ —
- * the two pages used to be the only places that disagreed about it. Card 3 no
- * longer names a RAM role: Alibaba is hidden from the cloud catalog. Card 5 says
- * "one policy engine" rather than "relationship-based": the community engine is
- * the Postgres RBAC one and OpenFGA is an optional Enterprise engine.
+ * The ledger, cloud by cloud. Hetzner is the one exception: it has no federation, so its scoped
+ * API token is encrypted at rest and decrypted only for the job — and a self-managed runner keeps
+ * it from reaching us at all. Same terms as the pricing FAQ, which used to be the only other page
+ * that stated it, and disagreed.
  */
-const CLAIMS: Claim[] = [
-	{
-		title: "No cloud keys on AWS, GCP or Azure",
-		body: "Each job gets a per-job, audience-scoped federated credential of about an hour, refreshed for the job. Hetzner has no federation, so its scoped API token is encrypted at rest and decrypted only for the job — a self-managed runner keeps it from reaching us at all.",
-		href: "/docs/concepts/runner/cloud-credentials",
-	},
-	{
-		title: "One secret we do hold",
-		body: "The OIDC issuer's signing key. Its private half never leaves the control plane, the public JWKS is published, and the key rotates without downtime.",
-		href: "/docs/reference/standards/workload-identity",
-	},
-	{
-		title: "Revocation is yours",
-		body: "The trust lives in your account, and so does the off switch. Delete the IAM role, the workload-identity binding or the federated credential and our access ends.",
-		href: "/docs/guides/connectors",
-	},
-	{
-		title: "Your code runs sealed",
-		body: "On the managed fleet, bring-your-own OpenTofu and Helm run in a per-job sandbox. No shared secrets, no instance metadata, default-deny egress.",
-		href: "/docs/concepts/isolated-execution",
-	},
-	{
-		title: "Tenant isolation",
-		body: "Postgres row-level security keeps each organization's rows apart, beneath the application. Every permission check goes through one policy engine.",
-		href: "/docs/concepts/security",
-	},
-	{
-		title: "Evidence, not assurances",
-		body: "A fail-closed gate sits between plan and apply and seals an ed25519 receipt bound to the plan hash. It reports what it could not evaluate; it is not a compliance claim.",
-		href: "/docs/concepts/elench/receipts",
-	},
+const LEDGER: LedgerRow[] = [
+	{ cloud: "AWS", access: "Short-lived role assumed per job (OIDC)", stored: "Nothing", holdsNothing: true, revoke: "Delete the IAM role" },
+	{ cloud: "Google Cloud", access: "Workload Identity Federation per job", stored: "Nothing", holdsNothing: true, revoke: "Remove the binding" },
+	{ cloud: "Azure", access: "Federated credential on your managed identity", stored: "Nothing", holdsNothing: true, revoke: "Delete the federated credential" },
+	{ cloud: "Hetzner", access: "A scoped API token (no federation exists)", stored: "Encrypted at rest; never with a self-managed runner", holdsNothing: false, revoke: "Revoke the token" },
 ];
-
-/** One claim card: title, two sentences, a docs link. */
-function ClaimCard({ claim }: { claim: Claim }) {
-	return (
-		<div
-			className="flex flex-col p-6"
-			style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)" }}
-		>
-			<p className="m-0 mb-2 font-grotesk text-ui-lg font-semibold text-text-primary">{claim.title}</p>
-			<p className="m-0 text-ui-md leading-[1.6] text-text-secondary">{claim.body}</p>
-			<Link
-				href={claim.href}
-				className="vx-clamp vx-clamp--tight mt-auto self-start pt-5 text-ui-md text-text-primary no-underline transition-colors hover:text-text-secondary"
-			>
-				Details →
-			</Link>
-		</div>
-	);
-}
 
 /** The related documents, in the order a security review reads them. */
 const RELATED: { label: string; href: string }[] = [
@@ -94,94 +54,79 @@ const RELATED: { label: string; href: string }[] = [
 ];
 
 /**
- * The public security page.
+ * The public security page: one statement, then a single table of what Alethia holds and does
+ * not hold, cloud by cloud, then what we do hold, certifications and disclosure.
  *
- * Deliberately makes no certification claim, because none is held. Every
- * statement here is architectural and checkable — the control plane is AGPL, so
- * a reader can go and confirm any of it rather than take our word for it.
- *
- * It was ten numbered prose sections; it is now six claim cards, a
- * certifications block, a disclosure block and the related documents, with the
- * long-form detail one link away in the docs.
+ * Deliberately makes no certification claim, because none is held. Every statement is
+ * architectural and checkable against the AGPL source.
  */
-export default async function SecurityPage() {
+export default function SecurityPage() {
 	return (
 		<SiteShell>
-			<PageHero
-				kicker="alethia · security"
-				status="keyless on AWS, GCP, Azure"
-				headline={{ lead: "The credentials we", muted: "deliberately never hold." }}
-				lede="Alethia provisions into your cloud account with short-lived federated identity, so there is no access key to leak."
-				ctas={[
-					{ label: "Read the architecture", href: "/docs/reference/standards/workload-identity", icon: "arrow" },
-					{ label: "Report a vulnerability", href: "mailto:security@alethialabs.io", variant: "outline", icon: "shield", iconBefore: true },
-				]}
-				footnote="Last updated · November 21, 2026"
-				paddingBottom={24}
+			<EditorialStatement
+				lead="The credentials we deliberately never hold."
+				rest="Here is exactly what Alethia stores for each cloud, and what it does not."
 			/>
 
-			<Section bordered={false}>
-				<div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-					{CLAIMS.map((claim) => (
-						<ClaimCard key={claim.title} claim={claim} />
+			<Block label="What Alethia stores, cloud by cloud">
+				<TableBox
+					caption="What Alethia stores for each cloud, how it gets in, and how you revoke it"
+					columns={["Cloud", "How Alethia gets in", "Stored by Alethia", "How you revoke it"]}
+					minWidth={640}
+				>
+					{LEDGER.map((row) => (
+						<tr key={row.cloud}>
+							<RowHead>{row.cloud}</RowHead>
+							<Cell>{row.access}</Cell>
+							<Cell tone={row.holdsNothing ? "strong" : undefined}>{row.stored}</Cell>
+							<Cell>{row.revoke}</Cell>
+						</tr>
 					))}
+				</TableBox>
+				<div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
+					<Card label="What we do hold">
+						One signing key for our identity provider. The private half never leaves the control
+						plane; the public keys are published.
+					</Card>
+					<Card label="Certifications">
+						No SOC 2 or ISO 27001 today, and we will not imply otherwise. The code is open for you
+						to check instead.
+					</Card>
+					<Card label="Report a vulnerability">
+						<a href="mailto:security@alethialabs.io" className="text-text-primary" style={mono}>
+							security@alethialabs.io
+						</a>{" "}
+						— acknowledged within five business days.
+					</Card>
 				</div>
-			</Section>
+			</Block>
 
-			<Section>
-				<div className="grid grid-cols-1 gap-12 md:grid-cols-2">
-					<div>
-						<p className="vx-eyebrow mb-4">Certifications</p>
-						<p className="m-0 max-w-[48ch] text-ui-md leading-[1.6] text-text-secondary">
-							<strong className="text-text-primary">
-								Alethia holds no SOC 2, ISO 27001, or equivalent certification today, and we will
-								not imply otherwise.
-							</strong>{" "}
-							What we offer instead is verifiability: every claim above can be read in the AGPL
-							source.
+			<section aria-label="Related documents" className="pb-20 max-[640px]:pb-14">
+				<Wrap>
+					<div className="grid gap-4 pt-6" style={{ borderTop: "1px solid var(--border)" }}>
+						<p className="m-0 text-ui-sm text-text-tertiary" style={mono}>
+							{LAST_UPDATED}
+						</p>
+						<ul className="m-0 flex list-none flex-wrap gap-x-6 gap-y-2 p-0">
+							{RELATED.map((doc) => (
+								<li key={doc.href}>
+									<Link href={doc.href} className="text-ui-sm text-text-secondary no-underline hover:text-text-primary">
+										{doc.label}
+									</Link>
+								</li>
+							))}
+						</ul>
+						<p className="m-0 max-w-[64ch] text-ui-sm leading-[1.6] text-text-tertiary">
+							This page describes the Service as operated by {CURRENT_LEGAL_OPERATOR}. It is a
+							description of architecture, not a warranty; the binding commitments are in the{" "}
+							<Link href="/terms" className="text-text-secondary">
+								Terms
+							</Link>{" "}
+							and the DPA.
 						</p>
 					</div>
-					<div>
-						<p className="vx-eyebrow mb-4">Report a vulnerability</p>
-						<p className="m-0 max-w-[48ch] text-ui-md leading-[1.6] text-text-secondary">
-							Email <a href="mailto:security@alethialabs.io" className="text-text-primary">security@alethialabs.io</a>,
-							not a public issue, with the affected version, reproduction steps and a way to reach
-							you. We aim to acknowledge within five business days. No bounty is promised unless
-							agreed in writing first.
-						</p>
-					</div>
-				</div>
-			</Section>
-
-			<Section>
-				<p className="vx-eyebrow mb-4">Related</p>
-				<ul className="m-0 flex list-none flex-wrap gap-x-8 gap-y-3 p-0">
-					{RELATED.map((doc) => (
-						<li key={doc.href}>
-							<Link
-								href={doc.href}
-								className="vx-clamp vx-clamp--tight text-ui-md text-text-secondary no-underline transition-colors hover:text-text-primary"
-							>
-								{doc.label}
-							</Link>
-						</li>
-					))}
-				</ul>
-				<p className="m-0 mt-10 max-w-[64ch] text-ui-sm leading-[1.6] text-text-tertiary">
-					This page describes the Service as operated by {CURRENT_LEGAL_OPERATOR}. It is a
-					description of architecture, not a warranty; the binding commitments are in the{" "}
-					<Link href="/terms" className="text-text-secondary">Terms</Link> and the DPA.
-				</p>
-			</Section>
-
-			<PageCTA
-				headline="Verify it yourself."
-				lede="The control plane is open source. Read the federation code, run it in your own account, and check the receipt offline."
-				ctas={[
-					{ label: "Read the docs", href: "/docs", icon: "arrow" },
-					{ label: "Self-host it", href: "/open-source", variant: "outline" },
-				]}
-			/>
+				</Wrap>
+			</section>
 		</SiteShell>
 	);
 }
