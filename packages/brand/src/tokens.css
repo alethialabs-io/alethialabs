@@ -989,8 +989,8 @@
 }
 
 /* ── Shared-header responsive collapse ───────────────────────────────────────
-   These three classes are applied by `packages/brand/src/site/site-header.tsx`
-   and `page-sections.tsx`, but their media queries lived only in
+   These classes are applied by `packages/brand/src/site/site-header.tsx`,
+   `page-sections.tsx` and marketing pages, but their media queries lived only in
    `apps/marketing/app/globals.css`. `apps/blog` renders the same SiteShell and
    had no such rule, so on a phone the blog showed the desktop nav AND the
    hamburger AND the GitHub link AND "Get a demo" AND "Login", and the row
@@ -1000,11 +1000,22 @@
    The `!important` is load-bearing — it was there in the app stylesheet, and
    tokens.css is imported first, so dropping it would flip the cascade. */
 @media (max-width: 900px) {
-  .ah-navmenu { display: none !important; }
   .ah-h1 { font-size: 46px !important; }
   .vx-rail { display: none; }
 }
 @media (max-width: 620px) {
   .ah-hide-sm { display: none !important; }
   .ah-h1 { font-size: 36px !important; }
+}
+
+/* The header's desktop/mobile switch: one pair, one breakpoint, both halves here.
+   It replaced `.ah-navmenu` (hidden at max-width: 900px, above) paired with a
+   Tailwind `max-[900px]:inline-flex` on the menu button — which Tailwind emits as
+   `width < 900px`. At exactly 900px the first had hidden the nav and the second
+   had not yet shown the button, so the header had no navigation at all. Desktop
+   is >= 900px; `899.98px` is the fractional-pixel-safe "below 900". */
+.ah-nav-mobile { display: none !important; }
+@media (max-width: 899.98px) {
+  .ah-nav-desktop { display: none !important; }
+  .ah-nav-mobile { display: inline-flex !important; }
 }
