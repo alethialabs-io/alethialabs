@@ -23,6 +23,16 @@ async function invalidates(topic: Topic, key: QueryKey): Promise<boolean> {
 const usageKey: unknown[] = [...orpc.overview.usage.queryKey()];
 const alertsKey: unknown[] = [...orpc.overview.alerts.queryKey()];
 const recentJobsKey: unknown[] = [...orpc.workspace.recentJobs.queryKey()];
+// The grid's read for two different addresses: a hint must reach every one of them.
+const gridKey: unknown[] = [
+	...orpc.overview.projects.queryKey({ input: { q: "", clouds: [], repos: [], sort: "activity" } }),
+];
+const filteredGridKey: unknown[] = [
+	...orpc.overview.projects.queryKey({ input: { q: "shop", clouds: ["aws"], repos: [], sort: "name" } }),
+];
+
+/** The topics whose hints change something the project grid shows. */
+const GRID_TOPICS: Topic[] = ["projects", "environments", "jobs", "addons", "connectors"];
 
 describe("the overview's cards in TOPIC_KEYS", () => {
 	it("Recent jobs refetches on a job change", async () => {
@@ -32,6 +42,20 @@ describe("the overview's cards in TOPIC_KEYS", () => {
 	it("Usage refetches on a job change (runner minutes, jobs in flight) and on a usage hint", async () => {
 		expect(await invalidates("jobs", usageKey)).toBe(true);
 		expect(await invalidates("usage", usageKey)).toBe(true);
+	});
+
+	it("#6817: the project grid refetches when a project, an environment, a job, an add-on or a cloud account changes", async () => {
+		const stale: string[] = [];
+		for (const topic of GRID_TOPICS) {
+			if (!(await invalidates(topic, gridKey))) stale.push(`${topic}: pristine`);
+			if (!(await invalidates(topic, filteredGridKey))) stale.push(`${topic}: filtered`);
+		}
+		expect(stale).toEqual([]);
+	});
+
+	it("#6817: ...and not on a hint that changes nothing the grid shows", async () => {
+		expect(await invalidates("alerts", gridKey)).toBe(false);
+		expect(await invalidates("support", gridKey)).toBe(false);
 	});
 
 	it("Alerts refetches on an alerts hint — and not on a job change", async () => {

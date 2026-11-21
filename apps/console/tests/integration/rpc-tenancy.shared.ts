@@ -479,6 +479,12 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: undefined,
 		markers: (out, s) => ({ x: hasItem(out, "deliveries", s.deliveryX), y: hasItem(out, "deliveries", s.deliveryY) }),
 	},
+	// #6817. The project grid's rows are the ADDRESSED org's projects, for the pristine address.
+	"overview.projects": {
+		kind: "org-scoped",
+		input: { q: "", clouds: [], repos: [], sort: "activity" },
+		markers: (out, s) => ({ x: hasItem(out, "projects", s.projectX), y: hasItem(out, "projects", s.projectY) }),
+	},
 	// The Alerts hub's reads (#6125). Each list's PRISTINE page is the org's whole list, so the marker
 	// is that org's seeded row; the settings read's condition options list the ADDRESSED org's projects.
 	"alerts.settings": {
