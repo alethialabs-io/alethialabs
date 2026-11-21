@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Nightly off-box backup (REL-L7, #6908). Installed by docs/ops/restore-runbook.md, "Install the
+# backup job". The scripts live in the deployed checkout, so a deploy updates them.
+[Unit]
+Description=Alethia off-box backup (Postgres dump, SeaweedFS buckets, erasure tombstones)
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/alethia/backup.env
+ExecStart=/opt/alethia/deploy/prod/backup/backup.sh run
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=3h
