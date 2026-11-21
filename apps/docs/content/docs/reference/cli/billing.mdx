@@ -70,6 +70,13 @@ Use `-o json` or `-o csv` when a script needs the raw counters. Only the card is
 person: `runner_minutes` is a plain integer of minutes in the JSON, and the CSV `Runner minutes`
 row carries that same integer rather than `2h 15m`.
 
+### Output and exit codes
+
+The card is the only thing `billing` and `usage` write on stdout, and they write nothing there when
+they fail. A failure exits with the code of its kind and says on stderr what happened: `4` when you
+are not signed in, `5` when you are not permitted to read the organization's billing, and `11` when
+the control plane cannot be reached.
+
 ## `alethia fleet`
 
 The **managed fleet** is the platform's pool of warm provisioning runners — one pool per cloud — that

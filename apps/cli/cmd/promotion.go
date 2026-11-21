@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -28,12 +27,23 @@ asked which of the project's promotions to open.`,
 var promotionListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List a project's promotions",
+	Args:  cobra.NoArgs,
+	Long: `Lists a project's promotions, newest first: each one's id, source and target environment,
+status and when it was started. --env narrows the list to promotions into one environment.
+
+Use it to find a promotion that is waiting for approval. It only reads; promotions are started
+and approved in the console. "alethia promotion get" shows one with its approval slots.
+
+Name the project with --project; omit it on a terminal and you are asked which. With nobody to
+ask, it is required (exit 9). --output json prints the promotions as an array, and --output csv
+the wire values.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		project, err := projectFromFlag(cmd, token)
+		p := printerFor(cmd)
+		project, err := projectOrAsk(cmd, token)
 		if err != nil {
 			fail(err)
 		}
@@ -45,17 +55,17 @@ var promotionListCmd = &cobra.Command{
 				promos, err = client.GetProjectPromotions(project, env)
 			})
 			if err != nil {
-				failf("Failed to list promotions: %v", err)
+				fail(fmt.Errorf("list promotions: %w", err))
 			}
 			if len(promos) == 0 {
-				ui.Muted("No promotions yet.")
+				fmt.Fprintln(p.Out, ui.MutedStyle.Render("No promotions yet."))
 				return
 			}
 			_ = ui.ShowTable(promotionColumns, promotionListRows(promos, ui.FormatTable), "promotions")
 			return
 		}
-		if err := runPromotionList(client, os.Stdout, outputFormat(cmd), project, env); err != nil {
-			failf("Failed to list promotions: %v", err)
+		if err := runPromotionList(client, p.Out, p.Format, project, env); err != nil {
+			fail(fmt.Errorf("list promotions: %w", err))
 		}
 	},
 }
@@ -105,15 +115,22 @@ func runPromotionList(c apiClient, out io.Writer, format, project, env string) e
 var promotionGetCmd = &cobra.Command{
 	Use:   "get [promotion]",
 	Short: "Show a promotion's status and approval slots",
-	Long: `Show one promotion in detail. Name it by its id or an unambiguous id prefix; omit it on
-a terminal and you are asked which of the project's promotions to open.`,
+	Long: `Shows one promotion in detail: its source and target, status, approval tally, who started it
+and when, any error, and each approval slot with who decided it and when.
+
+Use it to see who a promotion is waiting on. Name it by its id or an unambiguous id prefix; omit
+it on a terminal and you are offered the project's promotions (the ones "alethia promotion list"
+prints, narrowed by --env the same way). With nobody to ask, the id is required (exit 9).
+
+--output json prints the whole promotion, approvals included.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		project, err := projectFromFlag(cmd, token)
+		p := printerFor(cmd)
+		project, err := projectOrAsk(cmd, token)
 		if err != nil {
 			fail(err)
 		}
@@ -121,10 +138,10 @@ a terminal and you are asked which of the project's promotions to open.`,
 		env, _ := cmd.Flags().GetString("env")
 		ref, err := resolvePromotion(client, project, env, args)
 		if err != nil {
-			fail(err)
+			fail(flagRequired(err, "the promotion id (the argument)", "alethia promotion list"))
 		}
-		if err := runPromotionGet(client, os.Stdout, outputFormat(cmd), project, ref.ID); err != nil {
-			failf("Failed to get promotion: %v", err)
+		if err := runPromotionGet(client, p.Out, p.Format, project, ref.ID); err != nil {
+			fail(byoNotFoundHint(fmt.Errorf("read promotion %s: %w", ref.ID, err), "alethia promotion list"))
 		}
 	},
 }

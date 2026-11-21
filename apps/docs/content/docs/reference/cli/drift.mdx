@@ -52,6 +52,21 @@ Add `-o json` for the full posture object (`evaluated`, `in_sync`, `drifted`, `s
 `environment`, `details[]`); `-o csv` emits the drifted-resource rows. Backing call:
 `GET /cli/projects/PROJECT/drift`.
 
+## Output and exit codes
+
+The result is the only thing the command writes on stdout, and it writes nothing there when it
+fails. A failure exits with the code of its kind, and stderr says what happened and what to run
+next:
+
+| Exit | Meaning on this page |
+|------|----------------------|
+| `4` | You are not signed in, or the session has expired |
+| `5` | You are not permitted to read this project |
+| `6` | The project or environment that you named does not exist |
+| `9` | `--project` was left out and nothing can ask for it (`--no-input`, a pipe, or `-o json`) |
+
+The codes mean the same on every command of the CLI.
+
 ## See also
 
 - [Verify Commands](/reference/cli/verify) — the signed evidence receipt behind a deploy.

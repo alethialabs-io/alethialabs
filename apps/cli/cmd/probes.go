@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -25,14 +24,23 @@ per environment.`,
 var probesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List a project's latest per-environment cluster probes",
-	Long: `List the latest cluster-alive probe for each of a project's environments. Name the
-project with --project; omit it on a terminal and you are asked which.`,
+	Args:  cobra.NoArgs,
+	Long: `Lists the latest cluster-alive probe for each of a project's environments: whether its
+cluster's API server answered, what it said, and when it was probed.
+
+Use it to check that a project's clusters are still up. An environment that was never probed
+shows "never probed".
+
+Name the project with --project; omit it on a terminal and you are asked which. With nobody to
+ask, it is required (exit 9). --output json prints the probes as an array, and --output csv the
+wire values.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		project, err := projectFromFlag(cmd, token)
+		p := printerFor(cmd)
+		project, err := projectOrAsk(cmd, token)
 		if err != nil {
 			fail(err)
 		}
@@ -43,17 +51,17 @@ project with --project; omit it on a terminal and you are asked which.`,
 				probes, err = client.GetProjectProbes(project)
 			})
 			if err != nil {
-				failf("Failed to list probes: %v", err)
+				fail(fmt.Errorf("list probes: %w", err))
 			}
 			if len(probes) == 0 {
-				ui.Muted("No environments found.")
+				fmt.Fprintln(p.Out, ui.MutedStyle.Render("No environments found."))
 				return
 			}
 			_ = ui.ShowTable(probeColumns, probeRows(probes, ui.FormatTable), "probes")
 			return
 		}
-		if err := runProbesList(client, os.Stdout, outputFormat(cmd), project); err != nil {
-			failf("Failed to list probes: %v", err)
+		if err := runProbesList(client, p.Out, p.Format, project); err != nil {
+			fail(fmt.Errorf("list probes: %w", err))
 		}
 	},
 }
