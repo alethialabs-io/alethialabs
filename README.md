@@ -164,7 +164,7 @@ Run the whole platform (console · docs · Postgres · object storage · runner)
 docker-compose bundle on any cloud VM:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh \
+curl -fsSL https://get.alethialabs.io/self-host \
   | DOMAIN=alethia.example.com ACME_EMAIL=you@example.com sh
 ```
 

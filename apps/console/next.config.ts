@@ -146,14 +146,21 @@ const nextConfig: NextConfig = {
 		"@opentelemetry/exporter-logs-otlp-http",
 	],
 	async rewrites() {
-		// Serve the CLI install script at the root of get.alethialabs.io
-		// (`curl -fsSL https://get.alethialabs.io | sh`). install.ps1 is reached
-		// directly at /install.ps1. Both files live in public/.
+		// get.alethialabs.io: the CLI install script at the root (`curl -fsSL https://get.alethialabs.io | sh`),
+		// install.ps1 directly at /install.ps1 (both in public/), and the self-host installer at /self-host.
 		const getHost = [
 			{
 				source: "/",
 				has: [{ type: "host" as const, value: "get.alethialabs.io" }],
 				destination: "/install.sh",
+			},
+			// The self-host installer, short: `curl -fsSL https://get.alethialabs.io/self-host | sh`.
+			// Proxied from the repository rather than copied into public/, so deploy/install.sh
+			// stays the only copy — a second copy here would drift from the one the docs describe.
+			{
+				source: "/self-host",
+				has: [{ type: "host" as const, value: "get.alethialabs.io" }],
+				destination: "https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh",
 			},
 		];
 		const docsUrl = process.env.DOCS_URL;
