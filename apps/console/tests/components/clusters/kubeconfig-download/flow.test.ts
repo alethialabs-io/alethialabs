@@ -16,7 +16,6 @@ import type {
 import {
 	type DownloadDeps,
 	type DownloadOutcome,
-	POLL_INTERVAL_MS,
 	outcomeMessage,
 	runKubeconfigDownload,
 } from "@/components/clusters/kubeconfig-download/flow";
@@ -83,18 +82,21 @@ function deps(polls: KubeconfigDownloadPoll[], over: Partial<DownloadDeps> = {})
 		if (!next) throw new Error("poll called more times than scripted");
 		return next;
 	});
-	const sleep = vi.fn(async () => {});
+	// The wait resolves at once: a test scripts the reads, and each wait is "something changed".
+	const waitForChange = vi.fn(async (_deadline: number) => {});
+	const beforeRead = vi.fn();
 	const d: DownloadDeps = {
 		clusterId: V.cluster_id,
 		fileName: FILE,
 		request,
 		poll,
 		save,
-		sleep,
+		beforeRead,
+		waitForChange,
 		generateKey: vectorKey,
 		...over,
 	};
-	return { d, save, request, poll, sleep };
+	return { d, save, request, poll, waitForChange, beforeRead };
 }
 
 let consoleSpies: ReturnType<typeof vi.spyOn>[] = [];
@@ -115,7 +117,7 @@ afterEach(() => {
 
 describe("runKubeconfigDownload", () => {
 	it("pending → ready: opens the Go-sealed blob locally and saves the kubeconfig inside it", async () => {
-		const { d, save, request, poll, sleep } = deps([PENDING, PENDING, READY()]);
+		const { d, save, request, poll, waitForChange, beforeRead } = deps([PENDING, PENDING, READY()]);
 		const out = await runKubeconfigDownload(d);
 		expect(out).toEqual({
 			kind: "saved",
@@ -130,8 +132,18 @@ describe("runKubeconfigDownload", () => {
 			clientPublicKey: V.recipient_pk_b64url,
 		});
 		expect(poll).toHaveBeenCalledTimes(3);
-		expect(sleep).toHaveBeenCalledTimes(2);
-		expect(sleep).toHaveBeenCalledWith(POLL_INTERVAL_MS);
+		// It waits for a CHANGE between reads — bounded by the request's window, never a fixed delay —
+		// and marks the wait before each read, so a change during a read is not missed.
+		expect(waitForChange).toHaveBeenCalledTimes(2);
+		expect(waitForChange).toHaveBeenCalledWith(Date.parse(QUEUED.pollExpiresAt));
+		expect(beforeRead).toHaveBeenCalledTimes(3);
+	});
+
+	it("says when the request's window closes, once the request is queued", async () => {
+		const onQueued = vi.fn();
+		const { d } = deps([READY()], { onQueued });
+		await runKubeconfigDownload(d);
+		expect(onQueued).toHaveBeenCalledExactlyOnceWith(QUEUED.pollExpiresAt);
 	});
 
 	it("reports the private endpoint as soon as a poll knows it, and on the outcome", async () => {
@@ -160,7 +172,7 @@ describe("runKubeconfigDownload", () => {
 		expect(save).not.toHaveBeenCalled();
 	});
 
-	it("expired (the poll window closed on the client's clock): stops rather than polling forever", async () => {
+	it("expired (the request's window closed on the client's clock): stops rather than waiting forever", async () => {
 		const { d, poll } = deps([PENDING, PENDING, PENDING], {
 			request: async () => ({ ...QUEUED, pollExpiresAt: "2026-01-01T00:00:10.000Z" }),
 			now: (() => {
@@ -203,10 +215,32 @@ describe("runKubeconfigDownload", () => {
 		const ctl = new AbortController();
 		const { d, poll } = deps([PENDING, PENDING], {
 			signal: ctl.signal,
-			sleep: async () => ctl.abort(),
+			waitForChange: async () => ctl.abort(),
 		});
 		expect(await runKubeconfigDownload(d)).toEqual({ kind: "cancelled" });
 		expect(poll).toHaveBeenCalledTimes(1);
+	});
+
+	it("a cancel while a read is out drops what it answered: a ready kubeconfig is not saved", async () => {
+		const ctl = new AbortController();
+		const { d, save } = deps([], {
+			signal: ctl.signal,
+			poll: async () => {
+				ctl.abort();
+				return READY();
+			},
+		});
+		expect(await runKubeconfigDownload(d)).toEqual({ kind: "cancelled" });
+		expect(save).not.toHaveBeenCalled();
+	});
+
+	it("a window it cannot read is treated as closed: one read, then expired — never an unbounded wait", async () => {
+		const { d, poll, waitForChange } = deps([PENDING, PENDING], {
+			request: async () => ({ ...QUEUED, pollExpiresAt: "not a date" }),
+		});
+		expect(await runKubeconfigDownload(d)).toEqual({ kind: "expired", privateEndpoint: false });
+		expect(poll).toHaveBeenCalledTimes(1);
+		expect(waitForChange).not.toHaveBeenCalled();
 	});
 });
 
@@ -221,7 +255,7 @@ describe("outcomeMessage", () => {
 		[{ kind: "refused", status: 403 }, /read-only access/],
 		[{ kind: "unsupported" }, /alethia cluster kubeconfig/],
 		[{ kind: "insecure-context" }, /needs HTTPS.*alethia cluster kubeconfig/],
-		[{ kind: "expired", privateEndpoint: false }, /did not finish/],
+		[{ kind: "expired", privateEndpoint: false }, /No runner finished.*runner is online/],
 	] satisfies [Exclude<DownloadOutcome, { kind: "saved" } | { kind: "cancelled" }>, RegExp][])(
 		"%o → %s",
 		(outcome, re) => {

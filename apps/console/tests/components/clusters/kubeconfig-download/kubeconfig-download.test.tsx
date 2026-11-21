@@ -7,7 +7,8 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -24,6 +25,7 @@ const V: {
 	),
 ).alethia_mint;
 
+vi.mock("@/lib/stores/use-workspace-store", () => ({ useActiveOrgSlug: () => "acme" }));
 vi.mock("@/app/server/actions/kubeconfig-download", () => ({
 	requestKubeconfigDownload: vi.fn(),
 	pollKubeconfigDownload: vi.fn(),
@@ -56,18 +58,27 @@ import {
 } from "@/app/server/actions/kubeconfig-download";
 import { KubeconfigDownload } from "@/components/clusters/kubeconfig-download/kubeconfig-download";
 
-/** Renders the control as the cluster card does, with the read's answer for `allowed`. */
+/** The org's query client — the one its change stream invalidates. One per test. */
+let client: QueryClient;
+
+/** Renders the control as the cluster record does, with the read's answer for `allowed`. */
 function render(allowed = true) {
 	return rtlRender(
-		<KubeconfigDownload clusterId={V.cluster_id} projectName="Shop" environment="dev" allowed={allowed} />,
+		<QueryClientProvider client={client}>
+			<KubeconfigDownload clusterId={V.cluster_id} projectName="Shop" environment="dev" allowed={allowed} />
+		</QueryClientProvider>,
 	);
 }
+
+const PENDING = { ok: true, poll: { status: "pending", private_endpoint: null, expires_at: "2099-01-01T00:00:00.000Z" } } as const;
+const QUEUED = { ok: true, mintId: V.mint_id, pollExpiresAt: "2099-01-01T00:00:00.000Z" } as const;
 
 const BUTTON = /download kubeconfig \(1h, read-only\)/i;
 
 describe("KubeconfigDownload", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	});
 
 	it("renders nothing for someone without cluster:access_readonly", () => {
@@ -139,5 +150,55 @@ describe("KubeconfigDownload", () => {
 		await userEvent.click(await screen.findByRole("button", { name: BUTTON }));
 		expect(await screen.findByRole("alert")).toHaveTextContent(/Too many kubeconfig requests/);
 		expect(pollKubeconfigDownload).not.toHaveBeenCalled();
+	});
+
+	it("while the runner mints: says so, says when the request expires, and offers Cancel", async () => {
+		vi.mocked(requestKubeconfigDownload).mockResolvedValue(QUEUED);
+		vi.mocked(pollKubeconfigDownload).mockResolvedValue(PENDING);
+		render();
+		await userEvent.click(await screen.findByRole("button", { name: BUTTON }));
+
+		const status = await screen.findByText(/A runner is minting it\./);
+		expect(status).toHaveTextContent(/The request expires/);
+		expect(screen.getByRole("button", { name: BUTTON })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+	});
+
+	it("waits on the jobs topic, not on a timer: it reads the mint again only when a job has moved", async () => {
+		vi.mocked(requestKubeconfigDownload).mockResolvedValue(QUEUED);
+		vi.mocked(pollKubeconfigDownload).mockResolvedValue(PENDING);
+		render();
+		await userEvent.click(await screen.findByRole("button", { name: BUTTON }));
+		await screen.findByText(/A runner is minting it\./);
+		await waitFor(() => expect(pollKubeconfigDownload).toHaveBeenCalledTimes(1));
+
+		// Time alone changes nothing: far longer than the old two-second loop's interval would need.
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 150));
+		});
+		expect(pollKubeconfigDownload).toHaveBeenCalledTimes(1);
+
+		// What the change stream does on a `jobs` hint: invalidate the topic's keys.
+		await act(async () => {
+			await client.invalidateQueries({ queryKey: ["jobs"] });
+		});
+		await waitFor(() => expect(pollKubeconfigDownload).toHaveBeenCalledTimes(2));
+	});
+
+	it("Cancel stops the wait, returns the control, and nothing more is read", async () => {
+		vi.mocked(requestKubeconfigDownload).mockResolvedValue(QUEUED);
+		vi.mocked(pollKubeconfigDownload).mockResolvedValue(PENDING);
+		render();
+		await userEvent.click(await screen.findByRole("button", { name: BUTTON }));
+		await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+
+		await waitFor(() => expect(screen.getByRole("button", { name: BUTTON })).toBeEnabled());
+		expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+		expect(screen.queryByRole("alert")).toBeNull();
+		const reads = vi.mocked(pollKubeconfigDownload).mock.calls.length;
+		await act(async () => {
+			await client.invalidateQueries({ queryKey: ["jobs"] });
+		});
+		expect(pollKubeconfigDownload).toHaveBeenCalledTimes(reads);
 	});
 });

@@ -33,7 +33,7 @@ vi.mock("@/lib/rpc/server", () => ({
 			},
 		},
 		clusters: {
-			list: { queryOptions: () => ({ queryKey: [["clusters", "list"]], queryFn: async () => [] }) },
+			page: { queryOptions: () => ({ queryKey: [["clusters", "page"]], queryFn: async () => null }) },
 		},
 	}),
 }));
@@ -78,6 +78,8 @@ const REAL_FAILURES: [string, unknown][] = [
 ];
 
 const params = Promise.resolve({ org: "acme", project: "payments" });
+/** A pristine link: the route reads its filters from the query string (#6819). */
+const searchParams = Promise.resolve({});
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -156,23 +158,23 @@ describe("classifyProjectResolveFailure", () => {
 describe("a [project] page — what a failed resolution renders", () => {
 	it("renders when the slug resolves", async () => {
 		vi.mocked(resolveProjectId).mockResolvedValue("proj-1");
-		await expect(thrownBy(() => ProjectClustersPage({ params }))).resolves.toBeNull();
+		await expect(thrownBy(() => ProjectClustersPage({ params, searchParams }))).resolves.toBeNull();
 	});
 
 	it("an unknown slug is the project 404, thrown by the page inside its own boundary", async () => {
 		vi.mocked(resolveProjectId).mockImplementation(async () => notFound());
-		expect(digestOf(await thrownBy(() => ProjectClustersPage({ params })))).toBe(NOT_FOUND);
+		expect(digestOf(await thrownBy(() => ProjectClustersPage({ params, searchParams })))).toBe(NOT_FOUND);
 	});
 
 	it("a lost session is sign-in, not 'Project not found'", async () => {
 		vi.mocked(resolveProjectId).mockRejectedValue(new UnauthorizedError());
-		const digest = digestOf(await thrownBy(() => ProjectClustersPage({ params }))) ?? "";
+		const digest = digestOf(await thrownBy(() => ProjectClustersPage({ params, searchParams }))) ?? "";
 		expect(digest.startsWith("NEXT_REDIRECT;")).toBe(true);
 	});
 
 	it.each(REAL_FAILURES)("%s reaches the error boundary, not 'Project not found'", async (_, failure) => {
 		vi.mocked(resolveProjectId).mockRejectedValue(failure);
-		expect(await thrownBy(() => ProjectClustersPage({ params }))).toBe(failure);
+		expect(await thrownBy(() => ProjectClustersPage({ params, searchParams }))).toBe(failure);
 	});
 });
 

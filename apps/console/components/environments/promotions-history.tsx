@@ -2,21 +2,25 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Recent promotions — a compact history row per promotion (source → target, when, status). The
-// in-flight one is flagged Active with a View into the detail overlay.
+// The project's promotions, newest first, as a table: source → target, status, when it started and,
+// for one that stopped, why. The in-flight one has a View into the detail overlay. Every promotion
+// the read returned is reachable — the table pages — where this used to show the newest eight and
+// say nothing about the rest.
 
+import type { ColumnDef } from "@tanstack/react-table";
 import { Button } from "@repo/ui/button";
-import { SectionHeading } from "@repo/ui/section-heading";
+import { StatusBadge } from "@repo/ui/status-badge";
+import { useMemo } from "react";
+import { DataTable } from "@/components/data-table";
 import type { PromotionRowView } from "@/lib/rpc/procedures/environments";
-import { promoStatus, RelativeStamp, StatusDot } from "./env-ui";
+import { promoStatus, RelativeStamp } from "./env-ui";
 
-const IN_FLIGHT = new Set([
-	"PENDING_PLAN",
-	"PENDING_APPROVAL",
-	"APPROVED",
-	"DEPLOYING",
-]);
+const IN_FLIGHT = new Set(["PENDING_PLAN", "PENDING_APPROVAL", "APPROVED", "DEPLOYING"]);
 
+/** Promotions per page. */
+export const PROMOTIONS_PAGE_SIZE = 8;
+
+/** The promotions table. `envName` resolves an environment id to its name. */
 export function PromotionsHistory({
 	promotions,
 	envName,
@@ -26,51 +30,60 @@ export function PromotionsHistory({
 	envName: (id: string) => string;
 	onView: (id: string) => void;
 }) {
-	return (
-		<section>
-			<SectionHeading className="mb-3" level={2} title="Promotions" />
-			<div className="overflow-hidden rounded-lg border bg-surface shadow-sm">
-				{promotions.slice(0, 8).map((p) => {
-					const status = promoStatus(p.status);
-					const active = IN_FLIGHT.has(p.status);
-					return (
-						<div
-							key={p.id}
-							className="flex items-center gap-3 border-t border-border-faint px-4 py-3 first:border-t-0"
-						>
-							<StatusDot tier={status.tier} className="shrink-0" />
-							<div className="min-w-0 flex-1">
-								<div className="flex items-center gap-2.5">
-									<span className="font-mono text-ui-md text-text-primary">
-										{envName(p.source_environment_id)} → {envName(p.target_environment_id)}
-									</span>
-									<span className="text-ui-xs text-text-tertiary">
-										<RelativeStamp at={p.created_at} />
-									</span>
-									{active && (
-										<span className="rounded-full border px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
-											Active
-										</span>
-									)}
-								</div>
-								{p.error_message && (
-									<div className="mt-0.5 font-mono text-ui-xs text-text-tertiary">
-										{p.error_message}
-									</div>
-								)}
-							</div>
-							<span className="shrink-0 rounded-full border px-2 py-px font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
-								{status.label}
-							</span>
-							{active && (
-								<Button variant="ghost" size="sm" onClick={() => onView(p.id)}>
-									View
-								</Button>
-							)}
+	const columns = useMemo<ColumnDef<PromotionRowView>[]>(
+		() => [
+			{
+				id: "promotion",
+				header: "Promotion",
+				enableSorting: false,
+				cell: ({ row }) => (
+					<span className="font-mono text-ui-md text-text-primary">
+						{envName(row.original.source_environment_id)} <span aria-hidden>→</span>
+						<span className="sr-only"> to </span> {envName(row.original.target_environment_id)}
+					</span>
+				),
+			},
+			{
+				id: "status",
+				header: "Status",
+				enableSorting: false,
+				cell: ({ row }) => {
+					const status = promoStatus(row.original.status);
+					return <StatusBadge status={row.original.status} tier={status.tier} label={status.label} />;
+				},
+			},
+			{
+				id: "started",
+				header: "Started",
+				enableSorting: false,
+				cell: ({ row }) => <RelativeStamp at={row.original.created_at} />,
+			},
+			{
+				id: "reason",
+				header: "Reason",
+				enableSorting: false,
+				cell: ({ row }) =>
+					row.original.error_message ? (
+						<span className="whitespace-normal text-ui-sm text-text-secondary">{row.original.error_message}</span>
+					) : (
+						<span className="text-text-tertiary">—</span>
+					),
+			},
+			{
+				id: "actions",
+				header: () => <span className="sr-only">Actions</span>,
+				enableSorting: false,
+				cell: ({ row }) =>
+					IN_FLIGHT.has(row.original.status) ? (
+						<div className="text-right">
+							<Button variant="ghost" size="sm" onClick={() => onView(row.original.id)}>
+								View
+							</Button>
 						</div>
-					);
-				})}
-			</div>
-		</section>
+					) : null,
+			},
+		],
+		[envName, onView],
 	);
+	return <DataTable columns={columns} data={promotions} pageSize={PROMOTIONS_PAGE_SIZE} />;
 }

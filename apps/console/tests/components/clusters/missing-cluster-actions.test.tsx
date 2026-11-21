@@ -2,20 +2,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // #6736: a cluster found deleted outside Alethia offers three ways out — Redeploy, Tear down, Mark as
-// destroyed — on the cluster card AND on the environment card, and ONLY for a missing cluster. Nothing
-// changes until a person clicks: the mark asks first, says plainly that no cloud resources are touched,
-// and sends nothing when cancelled.
+// destroyed — in the cluster's record, and ONLY for a missing cluster. Nothing changes until a person
+// clicks: the mark asks first, says plainly that no cloud resources are touched, and sends nothing
+// when cancelled. (The Environments page offers the same three in its notice; that is asserted in
+// tests/components/environments/environments-view-notices.test.tsx.)
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { EnvReconcileState } from "@/app/server/actions/reconcile";
-import type { ControlPlaneObservation } from "@/lib/clusters/observed-state";
 import type { ClusterListItem } from "@/lib/rpc/procedures/clusters";
-import type { EnvRow } from "@/lib/rpc/procedures/environments";
 import type { FakeHandler } from "@/tests/helpers/fake-orpc";
+import { ENV, MISSING, PROJECT, REPORTED, UNREACHABLE, clusterItem } from "./fixtures";
 
 const h = vi.hoisted(() => ({
 	handlers: {} as Record<string, FakeHandler>,
@@ -30,107 +28,20 @@ vi.mock("@/app/server/actions/missing-cluster", () => ({
 	markEnvironmentDestroyedAction: h.markEnvironmentDestroyedAction,
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
-vi.mock("@/lib/stores/use-workspace-store", () => ({ useActiveOrgSlug: () => "acme" }));
 vi.mock("@/components/classification/classification-control", () => ({ ClassificationControl: () => null }));
 vi.mock("@/components/clusters/kubeconfig-download/kubeconfig-download", () => ({ KubeconfigDownload: () => null }));
 
-import { ClusterCard } from "@/components/clusters/cluster-card";
-import { clusterCardShape } from "@/components/clusters/cluster-card-shape";
+import { ClusterDetailSheet } from "@/components/clusters/cluster-detail";
+import { clusterPosture } from "@/components/clusters/cluster-posture";
 import { MARK_DESTROYED_DESCRIPTION } from "@/components/clusters/missing-cluster-actions";
-import { EnvironmentCard } from "@/components/environments/environment-card";
 
-const PROJECT = "11111111-1111-4111-8111-111111111111";
-const ENV = "22222222-2222-4222-8222-222222222222";
-const SCANNED = "2026-11-09T00:00:00.000Z";
-
-const MISSING: ControlPlaneObservation = { kind: "missing", source: "drift", observedAt: SCANNED, deleted: ["aws_eks_cluster.main"] };
-const REPORTED: ControlPlaneObservation = { kind: "reported", observedAt: SCANNED, source: "probe", fresh: true };
-const UNREACHABLE: ControlPlaneObservation = { kind: "unreachable", observedAt: SCANNED, message: "timeout" };
-
-/** A cluster list entry whose control plane is observed as `observation`, its environment `status`. */
-function cluster(observation: ControlPlaneObservation, status = "ACTIVE"): ClusterListItem {
-	return {
-		id: PROJECT,
-		project_name: "shop",
-		project_slug: "shop",
-		region: "eu-central-1",
-		environment_id: ENV,
-		environment_stage: "production",
-		status,
-		status_since: "2026-11-01T00:00:00.000Z",
-		cloud_identities: { provider: "aws" },
-		project_cluster: {
-			id: "cluster-1",
-			cluster_name: "shop-prod",
-			cluster_endpoint: null,
-			cluster_arn: null,
-			cluster_version: null,
-			k8s_version: null,
-			argocd_url: null,
-			status: "ACTIVE",
-			observation,
-			kubeconfig: { command: null, alternative: null, note: null },
-		},
-		project_databases: [],
-		project_caches: [],
-		project_dns: null,
-		apps_destination_repo: null,
-		can_download_kubeconfig: false,
-		kubeconfig_download_note: null,
-		classification: [],
-	};
-}
-
-const ENV_ROW: EnvRow = {
-	id: ENV,
-	name: "production",
-	stage: "production",
-	is_default: true,
-	status: "ACTIVE",
-	updated_at: "2026-11-01T00:00:00.000Z",
-	byo_admission_enforce: false,
-	byo_admission_has_charts: false,
-	byo_admission_pending: false,
-};
-
-/** The environment's reconcile state, with `clusterMissing` as given. */
-function reconcile(clusterMissing: EnvReconcileState["clusterMissing"]): EnvReconcileState {
-	return {
-		environmentId: ENV,
-		autoHeal: false,
-		driftInSync: false,
-		deliveryInSync: null,
-		deployPending: false,
-		clusterMissing,
-		lastDeployedAt: "2026-07-16T12:00:00.000Z",
-		probe: { reachable: null, message: null, probedAt: null },
-	};
-}
-
-/** Renders `node` under a fresh query client (the mark's mutation needs one). */
-function withClient(node: ReactNode) {
+/** Opens the record of `cluster` under a fresh query client (the mark's mutation needs one). */
+function openRecord(cluster: ClusterListItem) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-	return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
-}
-
-/** Renders the environment card for `env` with `missing` as its cluster finding. */
-function environmentCard(missing: EnvReconcileState["clusterMissing"], env: EnvRow = ENV_ROW) {
-	return withClient(
-		<EnvironmentCard
-			env={env}
-			org="acme"
-			project="shop"
-			projectId={PROJECT}
-			reconcile={reconcile(missing)}
-			protection={undefined}
-			classAssignments={[]}
-			canEdit
-			onEditRules={vi.fn()}
-			onToggleHeal={vi.fn()}
-			onEditAdmission={vi.fn()}
-			onDuplicate={vi.fn()}
-			onDelete={vi.fn()}
-		/>,
+	return render(
+		<QueryClientProvider client={client}>
+			<ClusterDetailSheet cluster={cluster} posture={clusterPosture(cluster)} orgSlug="acme" onClose={vi.fn()} />
+		</QueryClientProvider>,
 	);
 }
 
@@ -145,14 +56,14 @@ function offered() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	h.handlers["clusters.list"] = async () => [];
+	h.handlers["clusters.page"] = async () => ({ rows: [], resultCount: 0, total: 0, facets: { clouds: [], statuses: [], regions: [] } });
 	h.handlers["environments.overview"] = async () => null;
 	h.handlers["workspace.environments"] = async () => [];
 });
 
-describe("the cluster card", () => {
+describe("the cluster record", () => {
 	it("offers all three for a missing cluster; both links open the environment on the board", () => {
-		withClient(<ClusterCard data={cluster(MISSING)} />);
+		openRecord(clusterItem({ project_cluster: { observation: MISSING } }));
 		const { redeploy, tearDown, mark } = offered();
 		expect(mark).not.toBeNull();
 		const board = `/acme/shop/architecture?environment_id=${ENV}`;
@@ -164,33 +75,12 @@ describe("the cluster card", () => {
 		["reported", REPORTED],
 		["unreachable", UNREACHABLE],
 	])("offers none of them for a %s cluster", (_, observation) => {
-		withClient(<ClusterCard data={cluster(observation)} />);
+		openRecord(clusterItem({ project_cluster: { observation } }));
 		expect(offered()).toEqual({ redeploy: null, tearDown: null, mark: null });
 	});
 
 	it("offers none while a run is in flight on the environment — the run writes its own outcome", () => {
-		withClient(<ClusterCard data={cluster(MISSING, "PROVISIONING")} />);
-		expect(offered()).toEqual({ redeploy: null, tearDown: null, mark: null });
-	});
-
-	it("its skeleton shape agrees: the actions block is drawn exactly when the card renders it", () => {
-		expect(clusterCardShape(cluster(MISSING)).resolve).toBe(true);
-		expect(clusterCardShape(cluster(REPORTED)).resolve).toBe(false);
-		expect(clusterCardShape(cluster(MISSING, "PROVISIONING")).resolve).toBe(false);
-	});
-});
-
-describe("the environment card", () => {
-	it("offers all three when its reconcile state reports the cluster missing", () => {
-		environmentCard({ observedAt: SCANNED, source: "drift", deleted: ["aws_eks_cluster.main"] });
-		const { redeploy, tearDown, mark } = offered();
-		expect(redeploy).not.toBeNull();
-		expect(tearDown).not.toBeNull();
-		expect(mark).not.toBeNull();
-	});
-
-	it("offers none when the cluster is not missing", () => {
-		environmentCard(null);
+		openRecord(clusterItem({ status: "PROVISIONING", project_cluster: { observation: MISSING } }));
 		expect(offered()).toEqual({ redeploy: null, tearDown: null, mark: null });
 	});
 });
@@ -198,7 +88,7 @@ describe("the environment card", () => {
 describe("Mark as destroyed", () => {
 	it("asks first, says no cloud resources are touched, and sends nothing on Cancel", async () => {
 		const user = userEvent.setup();
-		withClient(<ClusterCard data={cluster(MISSING)} />);
+		openRecord(clusterItem({ project_cluster: { observation: MISSING } }));
 
 		await user.click(screen.getByRole("button", { name: "Mark as destroyed" }));
 		const dialog = await screen.findByRole("alertdialog");
@@ -213,7 +103,7 @@ describe("Mark as destroyed", () => {
 	it("on confirm, sends the project and the environment", async () => {
 		h.markEnvironmentDestroyedAction.mockResolvedValue({ ok: true, data: { environmentId: ENV } });
 		const user = userEvent.setup();
-		withClient(<ClusterCard data={cluster(MISSING)} />);
+		openRecord(clusterItem({ project_cluster: { observation: MISSING } }));
 
 		await user.click(screen.getByRole("button", { name: "Mark as destroyed" }));
 		const dialog = await screen.findByRole("alertdialog");
