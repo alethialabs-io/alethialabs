@@ -101,10 +101,17 @@ export function parseReleases(json: unknown, limit: number): ReleaseItem[] {
 }
 
 /**
+ * How many releases News shows (the page and changelog.xml). Five, by the maintainer's ruling of
+ * 2026-11-21: release notes are written for engineers, so until a person curates them (#7156's
+ * pipeline) the public page carries only the newest few. Raise it once entries are curated.
+ */
+export const RELEASES_SHOWN = 5;
+
+/**
  * The latest `limit` releases from GitHub, newest first, or [] when GitHub cannot be reached or
  * answers with anything but a release list. One page of the API (at most 100 entries) is read.
  */
-export async function getReleases(limit = 30): Promise<ReleaseItem[]> {
+export async function getReleases(limit = RELEASES_SHOWN): Promise<ReleaseItem[]> {
 	try {
 		const res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=${Math.min(100, limit * 2)}`, {
 			headers: { Accept: "application/vnd.github+json", "User-Agent": "alethia-labs-site" },
