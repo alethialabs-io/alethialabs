@@ -17,9 +17,8 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Bell } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef } from "react";
 import { useForm, useWatch } from "react-hook-form";
-import { z } from "zod";
 import { createPolicy } from "@/app/server/actions/alerts";
 import type { AlertsHub } from "@/components/alerts/alerts-hub";
 import { ChannelRouting } from "@/components/alerts/channel-routing";
@@ -27,11 +26,21 @@ import { DiscardPrompt, useUnsavedGuard } from "@/components/confirm/use-unsaved
 import { EventMatrix } from "@/components/alerts/event-matrix";
 import { FieldHelp } from "@/components/alerts/field-help";
 import { PolicyConditions } from "@/components/alerts/policy-conditions";
-import { isSeverity, toMinSeverity } from "@/components/alerts/policy-shared";
+import {
+	NEW_POLICY_FORM,
+	normalizeBindings,
+	POLICY_EDIT as EDIT,
+	POLICY_SERVER_FIELDS,
+	type PolicyFormValues,
+	policyFormSchema,
+	toggleEventIn,
+	toPolicyInput,
+} from "@/components/alerts/policy-form";
+import { toMinSeverity } from "@/components/alerts/policy-shared";
+import { FormRootError } from "@/components/forms/form-root-error";
 import { ThrottleField } from "@/components/alerts/throttle-field";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { alertsKeys } from "@/lib/query/use-alerts-query";
-import type { PolicyInput } from "@/lib/validations/alerts";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
@@ -46,59 +55,6 @@ import {
 } from "@repo/ui/sheet";
 import { Switch } from "@repo/ui/switch";
 import { Textarea } from "@repo/ui/textarea";
-
-const wizardSchema = z.object({
-	name: z.string().min(1, "Name your policy").max(120),
-	description: z.string().max(500),
-	enabled: z.boolean(),
-	event_patterns: z.array(z.string()).min(1, "Pick at least one event."),
-	channels: z
-		.array(z.object({ id: z.string(), min_severity: z.string().optional() }))
-		.min(1, "Bind at least one channel."),
-	min_severity: z.string(),
-	project_ids: z.array(z.string()),
-	job_types: z.array(z.string()),
-	resource_types: z.array(z.string()),
-	actions: z.array(z.string()),
-	throttle_seconds: z.number(),
-});
-type WizardValues = z.infer<typeof wizardSchema>;
-
-const DEFAULTS: WizardValues = {
-	name: "",
-	description: "",
-	enabled: true,
-	event_patterns: [],
-	channels: [],
-	min_severity: "any",
-	project_ids: [],
-	job_types: [],
-	resource_types: [],
-	actions: [],
-	throttle_seconds: 300,
-};
-
-/** Marks a programmatic write as an edit, and re-validates the field it wrote. */
-const EDIT = { shouldDirty: true, shouldValidate: true } as const;
-
-/** The sheet's field a server validation path is about (`match.project_ids` → `project_ids`), or null. */
-function policyFieldOf(path: string): keyof WizardValues | null {
-	const [head, sub] = path.split(".");
-	switch (head) {
-		case "name":
-		case "description":
-		case "event_patterns":
-		case "channels":
-		case "throttle_seconds":
-			return head;
-		case "match":
-			if (sub === "min_severity") return "min_severity";
-			if (sub === "project_ids" || sub === "job_types" || sub === "resource_types" || sub === "actions") return sub;
-			return null;
-		default:
-			return null;
-	}
-}
 
 interface PolicySheetProps {
 	open: boolean;
@@ -128,17 +84,15 @@ export function PolicySheet({
 	onGoChannels,
 }: PolicySheetProps) {
 	const { categories, channels, advancedAlerting, conditionOptions } = hub;
-	// A server validation message that names no field on this sheet — shown under the form, never lost.
-	const [formError, setFormError] = useState<string | null>(null);
 	const wasOpen = useRef(false);
 	// The switch's name is the visible row title, by reference — `role="switch"` takes its name
 	// from the author only, so the text beside it names nothing unless it is pointed at (#4352).
 	const enableLabelId = useId();
 	const enableDescId = useId();
 
-	const form = useForm<WizardValues>({
-		resolver: zodResolver(wizardSchema),
-		defaultValues: DEFAULTS,
+	const form = useForm<PolicyFormValues>({
+		resolver: zodResolver(policyFormSchema),
+		defaultValues: NEW_POLICY_FORM,
 		mode: "onChange",
 	});
 	const [
@@ -154,23 +108,17 @@ export function PolicySheet({
 	] = useWatch({ control: form.control, name: WATCHED });
 
 	useEffect(() => {
-		if (open && !wasOpen.current) form.reset(DEFAULTS);
+		if (open && !wasOpen.current) form.reset(NEW_POLICY_FORM);
 		wasOpen.current = open;
 	}, [open, form]);
 
 	const mutation = useActionMutation(createPolicy, {
 		invalidates: alertsKeys(),
 		successMessage: "Policy created",
-		onSuccess: () => onOpenChange(false),
-		onValidationError: (fields) => {
-			for (const [path, messages] of Object.entries(fields)) {
-				const message = messages?.[0];
-				if (!message) continue;
-				const field = policyFieldOf(path);
-				if (field) form.setError(field, { message });
-				else setFormError(message);
-			}
-		},
+		closes: onOpenChange,
+		// The server's validation lands on the field it names; anything else in the root error
+		// under the form, never lost.
+		form: { instance: form, fields: POLICY_SERVER_FIELDS },
 	});
 	const saving = mutation.isPending;
 	const unsaved = useUnsavedGuard(form);
@@ -182,37 +130,7 @@ export function PolicySheet({
 		unsaved.guard(() => onOpenChange(false));
 	};
 
-	const onSubmit = form.handleSubmit((values) => {
-		if (saving) return;
-		setFormError(null);
-		const input: PolicyInput = {
-			name: values.name.trim(),
-			description: values.description.trim() || undefined,
-			event_patterns: values.event_patterns,
-			channels: values.channels.map((b) => ({
-				id: b.id,
-				min_severity:
-					b.min_severity && isSeverity(b.min_severity) ? b.min_severity : undefined,
-			})),
-			match: {
-				...(isSeverity(values.min_severity)
-					? { min_severity: values.min_severity }
-					: {}),
-				...(values.project_ids.length ? { project_ids: values.project_ids } : {}),
-				...(values.job_types.length ? { job_types: values.job_types } : {}),
-				...(values.resource_types.length
-					? { resource_types: values.resource_types }
-					: {}),
-				...(values.actions.length ? { actions: values.actions } : {}),
-			},
-			severity: "warning",
-			throttle_seconds: values.throttle_seconds,
-			escalate: false,
-			recipient: undefined,
-			enabled: values.enabled,
-		};
-		mutation.mutate(input);
-	});
+	const onSubmit = form.handleSubmit((values) => mutation.submit(toPolicyInput(values)));
 
 	const errors = form.formState.errors;
 
@@ -298,16 +216,13 @@ export function PolicySheet({
 						<EventMatrix
 							categories={categories}
 							selected={eventPatterns}
-							onToggle={(key) => {
-								const cur = form.getValues("event_patterns");
+							onToggle={(key) =>
 								form.setValue(
 									"event_patterns",
-									cur.includes(key)
-										? cur.filter((x) => x !== key)
-										: [...cur, key],
+									toggleEventIn(form.getValues("event_patterns"), key),
 									EDIT,
-								);
-							}}
+								)
+							}
 							advancedAlerting={advancedAlerting}
 							editable
 						/>
@@ -335,7 +250,7 @@ export function PolicySheet({
 							channels={channels}
 							value={boundChannels}
 							onChange={(next) =>
-								form.setValue("channels", next, EDIT)
+								form.setValue("channels", normalizeBindings(next), EDIT)
 							}
 							editable
 							onGoChannels={onGoChannels}
@@ -391,11 +306,7 @@ export function PolicySheet({
 					</section>
 				</div>
 
-				{formError && (
-					<p role="alert" className="border-t border-border/60 px-4 pt-3 text-destructive text-xs">
-						{formError}
-					</p>
-				)}
+				<FormRootError form={form} className="mx-4 mt-3 w-auto" />
 				<SheetFooter className="flex-row items-center justify-between border-t border-border/60 p-4">
 					<Button
 						variant="ghost"
