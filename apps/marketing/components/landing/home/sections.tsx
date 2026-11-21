@@ -3,6 +3,7 @@
 
 import Link from "next/link";
 import { AVAILABLE_CLOUDS, cloudListLabel } from "@repo/cloud-catalog";
+import { Badge } from "@repo/ui/badge";
 import {
 	Band,
 	LogoWall,
@@ -169,16 +170,27 @@ export function Close() {
 	);
 }
 
-/** The thin line above the fold. Home only — /pricing and /enterprise do not carry it. */
+/**
+ * The thin line above the fold, and the page's Beta label. Home only — /pricing
+ * and /enterprise do not carry it.
+ *
+ * It says two things a visitor should know before they sign up: the product is in
+ * beta, with no uptime SLA, and which clouds it runs on. The cloud names come from
+ * `@repo/cloud-catalog`, so a cloud that is hidden drops out of this line by itself.
+ * It names no launch date, because the date can still move (decision M15, 2026-11-17).
+ */
 export function Announce() {
 	return (
 		<div className="py-2.5 text-center" style={{ borderBottom: "1px solid var(--border-faint)" }}>
 			<Link
-				href="/docs/concepts/elench/receipts"
-				className="vx-clamp vx-clamp--tight inline-flex items-center gap-2 text-[11px] text-text-tertiary no-underline transition-colors hover:text-text-secondary"
+				href="/docs/get-started"
+				className="vx-clamp vx-clamp--tight inline-flex flex-wrap items-center justify-center gap-2 text-[11px] text-text-tertiary no-underline transition-colors hover:text-text-secondary"
 			>
-				Receipts verify offline, without us
-				<span className="text-text-disabled">Read the spec ›</span>
+				<Badge variant="outline" className="vx-badge-mono px-1.5 py-px">
+					Beta
+				</Badge>
+				{`On ${cloudListLabel()}. No uptime SLA during the beta.`}
+				<span className="text-text-disabled">Get started ›</span>
 			</Link>
 		</div>
 	);

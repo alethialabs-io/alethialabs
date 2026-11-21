@@ -1,0 +1,63 @@
+---
+title: Design a project, read the plan, then apply it
+description: In Alethia nothing reaches your cloud account until you have read a plan and approved it. This post walks through the console workflow, from the canvas to a running cluster.
+date: 2027-01-26
+author: Alethia Labs
+tags: [launch, beta, console, product]
+excerpt: Nothing reaches your cloud account until you read a plan and approve it. A walk through the console, from the canvas to a running cluster.
+draft: true
+---
+
+This is the second post in our launch week. Yesterday's post gave the overview. Today covers the
+workflow that every change goes through: **design, plan, review, apply**.
+
+## Design on the canvas
+
+A project starts on the canvas in the console. You add components and set their options: a cluster
+with its node sizes, a Postgres database, a cache, a bucket. Each of the four clouds supports every
+component kind on the canvas.
+
+A project has one or more environments, such as `production` and `staging`. An environment can own a
+cluster, or it can share the cluster of another environment in its own namespace. A shared placement
+costs less, because it adds no new cluster.
+
+## Plan
+
+Click **Plan** and pick a runner. The runner runs `tofu plan` against the project as it is now. It
+then checks the plan against a set of controls, and uploads the result. No resource is created at
+this step.
+
+## Review
+
+The plan tab shows what the change will do:
+
+- how many resources it creates, updates and destroys
+- each resource, grouped by type, with its action
+- the result of each control, as pass, fail or not evaluable
+- an estimated monthly cost, when the plan can be priced
+
+Read it before you go further. A plan that destroys something you did not expect is the moment to
+stop.
+
+## Apply
+
+Click **Apply** to deploy. The runner runs the controls again before it applies. If a control fails
+hard, the apply stops. After the apply, the runner installs ArgoCD on the cluster and reports the
+cluster, database and cache endpoints back to the console. The environment then shows as active.
+
+To remove an environment, run a destroy job from the same page.
+
+## What we have tested
+
+On each of the four clouds we have applied a project that uses every component kind that a real apply
+can create, and checked that each one lands in the OpenTofu state or runs in the cluster. We keep the record of each of
+those runs in the open repository, under
+[`demos/proofs/`](https://github.com/alethialabs-io/alethialabs/tree/dev/demos/proofs).
+
+## Read more
+
+- [Plan and apply in the console](/docs/guides/jobs/plan-and-apply)
+- [Design a project](/docs/guides/design-project)
+- [Runners](/docs/concepts/runner)
+
+Tomorrow: the same workflow from your terminal.
