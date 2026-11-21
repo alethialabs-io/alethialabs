@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -506,6 +507,120 @@ func TestFleet_SetReportsAServerRefusal(t *testing.T) {
 	// A server fault is the unavailable row, exit 11.
 	if got := run("fleet", "set", "aws", "--max", "6"); got != 11 {
 		t.Errorf("exit code = %d, want 11", got)
+	}
+}
+
+// fleetSetRun drives `fleet set` with the registry applied (it registers --dry-run, as main does)
+// and returns the exit code and both streams.
+func fleetSetRun(t *testing.T, opts fleetOpts, args ...string) (*fleetServer, int, string, string) {
+	t.Helper()
+	applyCommandMeta()
+	s, run := fleetEnv(t, opts)
+	var code int
+	stdout, stderr := captureStreams(t, func() { code = run(append([]string{"fleet", "set"}, args...)...) })
+	return s, code, stdout, stderr
+}
+
+// TestFleet_SetReturnsTheMutationResult pins the JSON shape of `fleet set`: one MutationResult on
+// stdout whose object is the pool as the control plane now holds it.
+func TestFleet_SetReturnsTheMutationResult(t *testing.T) {
+	s, code, stdout, stderr := fleetSetRun(t, fleetOpts{}, "aws", "--max", "6", "--output", "json", "--no-input")
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, stderr)
+	}
+	if !s.saw("PUT", "/api/cli/fleet/aws") {
+		t.Fatalf("no pool update was sent; requests = %v", s.requests)
+	}
+	r := govFamDecode(t, stdout)
+	if r.ID != "aws" || r.Kind != fleetPoolKind || r.Action != string(ResultUpdated) || r.DryRun {
+		t.Errorf("result = %+v", r)
+	}
+	var pool struct {
+		Provider string `json:"provider"`
+		Max      int    `json:"max"`
+	}
+	if err := json.Unmarshal(r.Object, &pool); err != nil || pool.Provider != "aws" || pool.Max != 6 {
+		t.Errorf("object = %s (%v)", r.Object, err)
+	}
+}
+
+// TestFleet_SetDryRunSendsNothing pins --dry-run: no request reaches the pool, the result says it
+// is a dry run and carries the request that would have been sent, and a person is told nothing
+// was sent. A dry-run pause asks no confirmation, because it changes nothing.
+func TestFleet_SetDryRunSendsNothing(t *testing.T) {
+	t.Run("json", func(t *testing.T) {
+		s, code, stdout, stderr := fleetSetRun(t, fleetOpts{}, "aws",
+			"--max", "6", "--enabled=false", "--dry-run", "--output", "json", "--no-input")
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, stderr)
+		}
+		if s.saw("PUT", "/api/cli/fleet/aws") {
+			t.Fatal("a dry run sent the update")
+		}
+		r := govFamDecode(t, stdout)
+		if !r.DryRun || r.ID != "aws" || r.Kind != fleetPoolKind || r.Action != string(ResultUpdated) {
+			t.Errorf("result = %+v", r)
+		}
+		var planned struct {
+			Request map[string]any `json:"request"`
+		}
+		if err := json.Unmarshal(r.Object, &planned); err != nil {
+			t.Fatalf("object = %s (%v)", r.Object, err)
+		}
+		want := map[string]any{"provider": "aws", "max": float64(6), "enabled": false}
+		if len(planned.Request) != len(want) {
+			t.Errorf("request = %v, want %v", planned.Request, want)
+		}
+		for k, v := range want {
+			if planned.Request[k] != v {
+				t.Errorf("request[%q] = %v, want %v", k, planned.Request[k], v)
+			}
+		}
+	})
+	t.Run("table", func(t *testing.T) {
+		s, code, stdout, stderr := fleetSetRun(t, fleetOpts{}, "aws", "--warm-min", "2", "--dry-run", "--output", "table")
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, stderr)
+		}
+		if s.saw("PUT", "/api/cli/fleet/aws") {
+			t.Fatal("a dry run sent the update")
+		}
+		if !strings.Contains(stdout, "Would set the aws pool to warm-min 2") || !strings.Contains(stdout, "Nothing was sent.") {
+			t.Errorf("the dry run does not say what it would send:\n%s", stdout)
+		}
+	})
+}
+
+// TestFleet_SetRefusalsExitWithTheirClass pins each refusal's exit code and stream: nothing on
+// stdout, the reason and a next step on stderr, and no request sent.
+func TestFleet_SetRefusalsExitWithTheirClass(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		exit int
+		say  string
+	}{
+		{"no provider and nobody to ask", []string{"--max", "3", "--no-input"}, clierr.ExitInputRequired, "no provider given"},
+		{"a pause with nobody to confirm it", []string{"aws", "--enabled=false", "--no-input"}, clierr.ExitInputRequired, "--yes"},
+		{"nothing to update", []string{"aws", "--no-input"}, clierr.ExitUsage, "--warm-min"},
+	} {
+		for _, format := range []string{ui.FormatTable, ui.FormatJSON} {
+			t.Run(tc.name+"/"+format, func(t *testing.T) {
+				s, code, stdout, stderr := fleetSetRun(t, fleetOpts{}, append(tc.args, "--output", format)...)
+				if code != tc.exit {
+					t.Errorf("exit code = %d, want %d\n%s", code, tc.exit, stderr)
+				}
+				if stdout != "" {
+					t.Errorf("a refusal wrote on stdout:\n%s", stdout)
+				}
+				if !strings.Contains(stderr, tc.say) {
+					t.Errorf("stderr does not say %q:\n%s", tc.say, stderr)
+				}
+				if s.saw("PUT", "/api/cli/fleet/aws") {
+					t.Error("a refused set still sent the update")
+				}
+			})
+		}
 	}
 }
 
