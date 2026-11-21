@@ -197,4 +197,9 @@ function FlagComponent({ country, countryName }: RPNInput.FlagProps) {
   );
 }
 
-export { PhoneInput };
+/** Whether `code` is an ISO alpha-2 country the phone field supports — narrows it for `defaultCountry`. */
+function isPhoneCountry(code: string): code is RPNInput.Country {
+  return RPNInput.isSupportedCountry(code);
+}
+
+export { PhoneInput, isPhoneCountry };

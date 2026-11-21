@@ -18,6 +18,19 @@ export const SALES_MAIL = "sales@alethialabs.io";
 /** Default country selection (ISO 3166-1 alpha-2) — matches the phone default. */
 export const DEFAULT_COUNTRY = "BG";
 
+/**
+ * The country the form should open on: the visitor's own, from Cloudflare's
+ * `cf-ipcountry` header, when it is a real ISO 3166-1 alpha-2 code. Cloudflare sends
+ * `XX` (unknown) and `T1` (Tor), and a request that skipped the edge sends nothing,
+ * so anything else falls back to {@link DEFAULT_COUNTRY}.
+ */
+export function visitorCountry(header: string | null): string {
+	if (!header) return DEFAULT_COUNTRY;
+	const code = header.trim().toUpperCase();
+	if (!/^[A-Z]{2}$/.test(code) || code === "XX" || code === "T1") return DEFAULT_COUNTRY;
+	return code;
+}
+
 /** Company-size buckets. */
 export const SIZES = [
 	"1–10",

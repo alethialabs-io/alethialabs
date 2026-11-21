@@ -19,7 +19,7 @@ import {
 	SelectValue,
 } from "@repo/ui/select";
 import { CountrySelect } from "@repo/ui/country-select";
-import { PhoneInput } from "@repo/ui/phone-input";
+import { isPhoneCountry, PhoneInput } from "@repo/ui/phone-input";
 import { submitContactLead } from "@/app/server/actions/contact";
 import { disp, Icon, mono } from "@repo/brand/site-primitives";
 import {
@@ -102,6 +102,8 @@ export interface ContactFormProps {
 	 * already about one topic (the enterprise trial) does not, and posts its preset.
 	 */
 	showTopic?: boolean;
+	/** The ISO alpha-2 country the country and phone fields open on. Defaults to {@link DEFAULT_COUNTRY}. */
+	defaultCountry?: string;
 }
 
 /** The topic a legacy `type` preset names: the old "sales" page was the demo request. */
@@ -117,7 +119,9 @@ function topicFromType(type: "sales" | "enterprise" | undefined): ContactTopic |
  * and swaps to a success card on success. The topic decides which of the
  * company-size and product-interest fields are asked, and what the button says.
  */
-export function ContactForm({ topic, type, submitLabel, showTopic = false }: ContactFormProps) {
+export function ContactForm({ topic, type, submitLabel, showTopic = false, defaultCountry }: ContactFormProps) {
+	// The visitor's country when the phone field supports it, else the schema default.
+	const openingCountry = defaultCountry && isPhoneCountry(defaultCountry) ? defaultCountry : DEFAULT_COUNTRY;
 	const [sent, setSent] = useState(false);
 	const [pending, startTransition] = useTransition();
 	const initialTopic = topic ?? topicFromType(type) ?? DEFAULT_CONTACT_TOPIC;
@@ -129,7 +133,7 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false }: Con
 			topic: initialTopic,
 			email: "",
 			name: "",
-			country: DEFAULT_COUNTRY,
+			country: openingCountry,
 			phone: "",
 			website: "",
 			companySize: undefined,
@@ -401,7 +405,7 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false }: Con
 										value={field.value}
 										onChange={field.onChange}
 										onBlur={field.onBlur}
-										defaultCountry={DEFAULT_COUNTRY}
+										defaultCountry={openingCountry}
 										autoComplete="tel"
 										placeholder="Enter phone number"
 									/>

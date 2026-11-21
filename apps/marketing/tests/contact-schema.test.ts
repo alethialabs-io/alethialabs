@@ -3,6 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
+	DEFAULT_COUNTRY,
+	visitorCountry,
 	contactLeadSchema,
 	parseContactTopic,
 	type ContactLeadInput,
@@ -68,5 +70,18 @@ describe("contactLeadSchema topic rules", () => {
 	it("refuses an unknown topic", () => {
 		const result = contactLeadSchema.safeParse({ ...lead({}), topic: "sales" });
 		expect(result.success).toBe(false);
+	});
+});
+
+describe("visitorCountry", () => {
+	it("uses a real ISO alpha-2 code from cf-ipcountry, upper-cased", () => {
+		expect(visitorCountry("de")).toBe("DE");
+		expect(visitorCountry(" IT ")).toBe("IT");
+	});
+
+	it("falls back to the default for missing, unknown, Tor and malformed values", () => {
+		for (const header of [null, "", "XX", "T1", "DEU", "1A", "d"]) {
+			expect(visitorCountry(header)).toBe(DEFAULT_COUNTRY);
+		}
 	});
 });

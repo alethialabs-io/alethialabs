@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { SiteShell } from "@repo/brand/site-shell";
 import { disp, eyebrow, mono, Wrap } from "@repo/brand/site-primitives";
-import { SALES_MAIL, type ContactTopic } from "@/lib/validations/contact.schema";
+import { SALES_MAIL, visitorCountry, type ContactTopic } from "@/lib/validations/contact.schema";
 import { ContactForm } from "./contact-form";
 
 /**
@@ -89,7 +90,7 @@ function LeftRail() {
  * and `/contact/enterprise` deep links. The form is keyed on it so a client-side
  * navigation between two presets re-seeds the form instead of keeping the old one.
  */
-export function ContactSection({ topic }: { topic: ContactTopic }) {
+export function ContactSection({ topic, country }: { topic: ContactTopic; country?: string }) {
 	return (
 		<section style={{ position: "relative", overflow: "hidden", borderBottom: "1px solid var(--border)" }}>
 			<div className="ah-grid-bg" />
@@ -97,7 +98,7 @@ export function ContactSection({ topic }: { topic: ContactTopic }) {
 				<div className="grid grid-cols-1 gap-10 lg:grid-cols-[0.92fr_1fr] lg:gap-16 lg:items-start">
 					<LeftRail />
 					<div className="min-w-0 lg:sticky lg:top-[86px]">
-						<ContactForm key={topic} topic={topic} showTopic />
+						<ContactForm key={topic} topic={topic} defaultCountry={country} showTopic />
 					</div>
 				</div>
 			</Wrap>
@@ -119,9 +120,11 @@ export const CONTACT_METADATA: Metadata = {
  * differ only in the topic they preset.
  */
 export async function ContactPage({ topic }: { topic: ContactTopic }) {
+	// Open the country field on the visitor's own country rather than on Bulgaria for everyone.
+	const country = visitorCountry((await headers()).get("cf-ipcountry"));
 	return (
 		<SiteShell>
-			<ContactSection topic={topic} />
+			<ContactSection topic={topic} country={country} />
 		</SiteShell>
 	);
 }
