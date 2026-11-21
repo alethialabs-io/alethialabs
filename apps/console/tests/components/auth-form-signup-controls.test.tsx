@@ -35,8 +35,12 @@ import {
 	SIGNUP_DISPOSABLE_EMAIL,
 	SIGNUP_NETWORK_LIMIT,
 	SIGNUP_REFUSAL_MESSAGES,
+	type SignupRefusalCode,
 } from "@/lib/auth/signup-guard/codes";
 import { useAuthPrefsStore } from "@/lib/stores/use-auth-prefs-store";
+
+/** Both refusal codes — each behaviour is shown on two fixture values. */
+const REFUSALS: SignupRefusalCode[] = [SIGNUP_DISPOSABLE_EMAIL, SIGNUP_NETWORK_LIMIT];
 
 beforeEach(() => {
 	document.elementFromPoint = () => null;
@@ -58,7 +62,7 @@ async function enterCode(): Promise<void> {
 }
 
 describe("AuthForm — a refused new account (REL-L10)", () => {
-	it.each([SIGNUP_DISPOSABLE_EMAIL, SIGNUP_NETWORK_LIMIT])("says why on the code step (%s)", async (code) => {
+	it.each(REFUSALS)("says why on the code step (%s)", async (code) => {
 		h.signInEmailOtp.mockResolvedValue({
 			data: null,
 			error: { status: 403, statusText: "", code, message: "server text" },
@@ -83,7 +87,7 @@ describe("AuthForm — a refused new account (REL-L10)", () => {
 		expect((await screen.findByRole("alert")).textContent).toBe("That code didn’t work — try again.");
 	});
 
-	it.each([SIGNUP_DISPOSABLE_EMAIL, SIGNUP_NETWORK_LIMIT])(
+	it.each(REFUSALS)(
 		"says why after an OAuth sign-up comes back refused (%s)",
 		(code) => {
 			// Better Auth appends its own `error` after the form's `?error=oauth`.
