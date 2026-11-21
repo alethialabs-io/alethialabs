@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The "Last used" mark on the sign-in tiles, asserted through the accessible name rather
+// The "Last used" lead on the sign-in step, asserted through the accessible name rather
 // than the pixels.
 //
 // This exists because looking at it in a browser was not enough twice over. The mark's
@@ -49,19 +49,22 @@ describe("AuthForm — the last-used mark", () => {
 		expect(screen.queryByText("Last used")).toBeNull();
 	});
 
-	it("names the remembered provider '<Provider> (last used)', not 'GitHubLast used'", () => {
+	it("names the remembered provider 'Continue with <Provider> (last used)', not 'GitHubLast used'", () => {
 		useAuthPrefsStore.setState({ lastMethod: "github", lastEmail: null });
 		render(<AuthForm mode="login" />);
 
-		// The exact string is the point: an accessible name assembled from the pill's
+		// The exact string is the point: an accessible name assembled from the badge's
 		// own text ran the two words together, which is what this asserts against.
-		const github = screen.getByRole("button", { name: "GitHub (last used)" });
+		const github = screen.getByRole("button", { name: "Continue with GitHub (last used)" });
 		expect(github).toBeTruthy();
 
-		// The visible pill must not ALSO reach the name, or it comes back doubled.
-		const pill = github.querySelector(".vx-badge-mono");
-		expect(pill?.textContent).toBe("Last used");
-		expect(pill?.getAttribute("aria-hidden")).toBe("true");
+		// The visible badge must not ALSO reach the name, or it comes back doubled.
+		const badge = github.querySelector(".vx-badge-mono");
+		expect(badge?.textContent).toBe("Last used");
+		expect(badge?.getAttribute("aria-hidden")).toBe("true");
+		// Out of the label's flow: positioned on the button's edge, so it cannot push the
+		// label past the border the way the inline pill did on the three-up row.
+		expect(badge?.className).toContain("absolute");
 	});
 
 	// This one found a real defect rather than confirming one: GitLab and Bitbucket render
@@ -83,29 +86,46 @@ describe("AuthForm — the last-used mark", () => {
 		render(<AuthForm mode="login" />);
 
 		// The e2e fixtures select this control by /continue with email/i and require it to
-		// resolve to exactly one node on this step — so the mark must not fork it in two.
+		// resolve to exactly one node on this step — so leading with it must not fork it in two.
 		const matches = screen.getAllByRole("button", { name: /continue with email/i });
 		expect(matches).toHaveLength(1);
+		expect(matches[0]?.getAttribute("aria-label")).toBe("Continue with email (last used)");
 		expect(matches[0]?.querySelector(".vx-badge-mono")?.getAttribute("aria-hidden")).toBe(
 			"true",
 		);
+		// Every provider still renders, under its plain name.
+		for (const name of ["GitHub", "Google", "GitLab", "Bitbucket"]) {
+			expect(screen.getByRole("button", { name })).toBeTruthy();
+		}
 	});
 
-	it("keeps the tiles in their fixed order when one is marked", () => {
+	it("leads with the remembered provider and keeps the other three in their order", () => {
 		useAuthPrefsStore.setState({ lastMethod: "bitbucket", lastEmail: null });
 		render(<AuthForm mode="login" />);
 
-		// Not reordering is a deliberate choice: the mark can only be read after mount, so
-		// promoting the remembered tile would move the buttons under a returning user's
-		// cursor. If someone later adds that, this test is the thing that should object.
+		// The remembered method is the first control on the step, then the rest in the
+		// form's fixed order. The pure arrangement is pinned in sign-in-methods.test.ts;
+		// this checks the form actually renders it.
 		const names = screen
 			.getAllByRole("button")
 			.map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "")
 			.filter((n) => /github|google|gitlab|bitbucket/i.test(n));
 
-		expect(names[0]).toMatch(/github/i);
-		expect(names[1]).toMatch(/google/i);
-		expect(names[2]).toMatch(/gitlab/i);
-		expect(names[3]).toMatch(/bitbucket \(last used\)/i);
+		expect(names).toHaveLength(4);
+		expect(names[0]).toBe("Continue with Bitbucket (last used)");
+		expect(names[1]).toMatch(/^github$/i);
+		expect(names[2]).toMatch(/^google$/i);
+		expect(names[3]).toMatch(/^gitlab$/i);
+	});
+
+	it("keeps today's order when nothing is remembered", () => {
+		render(<AuthForm mode="login" />);
+
+		const names = screen
+			.getAllByRole("button")
+			.map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "")
+			.filter((n) => /github|google|gitlab|bitbucket/i.test(n));
+
+		expect(names).toEqual(["GitHub", "Google", "GitLab", "Bitbucket"]);
 	});
 });
