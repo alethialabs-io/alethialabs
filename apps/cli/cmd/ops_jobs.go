@@ -25,7 +25,11 @@ var opsInspectJobCmd = &cobra.Command{
 var opsRetryJobCmd = &cobra.Command{
 	Use:   "retry-job [job-id]",
 	Short: "Re-enqueue a fresh job from a stuck/failed one (blast: low)",
-	Args:  cobra.MaximumNArgs(1),
+	Long: "Queue a fresh job from a stuck or failed one, so the work runs again and the poison counter\n" +
+		"resets. Use it when a job died with its runner and will not be picked up again.\n\n" +
+		"The new job's id is the result's job. Pass --wait to follow it to the end: the command\n" +
+		"then exits 13 when the job fails, and 12 when --timeout passes first.",
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		reason := opsReason(cmd)
 		jobID := opsResolveJobID(cmd, args)
@@ -40,7 +44,10 @@ var opsRetryJobCmd = &cobra.Command{
 var opsCancelJobCmd = &cobra.Command{
 	Use:   "cancel-job [job-id]",
 	Short: "Cancel a job and signal its runner to stop mid-flight (blast: low)",
-	Args:  cobra.MaximumNArgs(1),
+	Long: "Cancel a job in any organization and signal its runner to stop mid-flight. Work already\n" +
+		"applied is not rolled back. Use it when `alethia jobs cancel` cannot reach the job: it is\n" +
+		"in another organization, or its runner no longer answers.",
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		reason := opsReason(cmd)
 		jobID := opsResolveJobID(cmd, args)
