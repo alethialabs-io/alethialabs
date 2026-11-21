@@ -50,6 +50,7 @@
 
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { resolveOwner } from "./audit/context";
+import { requireAxe, scanA11y } from "./helpers/a11y";
 import {
 	breachMessage,
 	neverActivated,
@@ -139,10 +140,11 @@ test.describe("Architecture canvas", () => {
 			.fill(`canvas-e2e-${testInfo.workerIndex}-${Date.now()}`);
 		await page.getByRole("button", { name: /create project/i }).click();
 
-		// The canvas is ready once its toolbar is painted. (The Add button is always present on an
-		// editable, non-IaC-governed board; the old "Project settings" cog this used to key on was
-		// removed in #554. The toolbar is now `[cost, when priced] [Run ▾] [Add] [⋯]` — Add is the
-		// one control that is there on a fresh, unpriced environment, so it stays the ready signal.)
+		// The canvas is ready once its toolbar is painted. The toolbar is one row, top-centre (#6832):
+		// `[environment] [Select | Hand] [Add | Connect] [Undo | Redo] [Tidy | Fit] [Run | Sources]
+		// [⌘K | ? | More]`. Add is on every editable, non-IaC-governed board, fresh or not, so it is
+		// the ready signal. (The guide on an empty board has its own "Add a component", which the
+		// exact name does not match.)
 		await expect(
 			page.getByRole("button", { name: "Add", exact: true }).first(),
 		).toBeVisible({ timeout: 60_000 });
@@ -207,6 +209,82 @@ test.describe("Architecture canvas", () => {
 	async function moreMenu(page: Page, item: string | RegExp) {
 		await page.getByRole("button", { name: "More", exact: true }).click();
 		await page.getByRole("menuitem", { name: item }).click();
+	}
+
+	/** Close the inspector, so the board has its full width and no field holds the focus. */
+	async function closeInspector(page: Page) {
+		await rail(page).getByRole("button", { name: "Close" }).click();
+		await expect(rail(page)).toHaveAttribute("data-open", "false");
+	}
+
+	/** A connection drawn on the board, by the name it carries: "Connection from <card> to <card>". */
+	const connection = (page: Page, name: RegExp) => board(page).getByRole("group", { name });
+
+	/**
+	 * Give a card or a connection the focus the way the keyboard does.
+	 *
+	 * The board makes a keyboard focus stop the selection (so arrows move it and Delete removes it)
+	 * but leaves a focus that came from a press alone. It tells the two apart by the last input on
+	 * the board, or by `:focus-visible`. A bare `locator.focus()` after a pointer gesture reads as a
+	 * press, so a key is pressed on the board first: Shift, which nothing on the board binds.
+	 */
+	async function keyboardFocus(page: Page, target: Locator) {
+		await target.focus();
+		await page.keyboard.press("Shift");
+		await target.blur();
+		await target.focus();
+	}
+
+	/**
+	 * The centre of an element, once a pointer there would actually hit it (it, or something inside
+	 * it) rather than whatever is drawn over it. The box is re-read on every try, so a layout that is
+	 * still settling is waited out rather than measured mid-move.
+	 */
+	async function hittableCentre(target: Locator): Promise<{ x: number; y: number }> {
+		let centre = { x: 0, y: 0 };
+		await expect
+			.poll(async () => {
+				const box = await target.boundingBox();
+				if (!box) return false;
+				centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+				return target.evaluate((el, p) => {
+					const top = document.elementFromPoint(p.x, p.y);
+					return top !== null && (top === el || el.contains(top));
+				}, centre);
+			})
+			.toBe(true);
+		return centre;
+	}
+
+	/**
+	 * Drag a connection from a service card's bottom handle and release it over another card.
+	 *
+	 * Both ends are hit-tested first. A press on a covered handle moves whatever covers it, and the
+	 * journey would then fail on a missing line, far from the cause.
+	 */
+	async function dragConnection(page: Page, from: Locator, to: Locator) {
+		const handle = from.locator(".react-flow__handle-bottom");
+		await expect(handle).toBeInViewport();
+		await expect(to).toBeInViewport();
+		const press = await hittableCentre(handle);
+		const release = await hittableCentre(to);
+		await page.mouse.move(press.x, press.y);
+		await page.mouse.down();
+		await page.mouse.move(release.x, release.y, { steps: 15 });
+		await page.mouse.up();
+	}
+
+	/** The guide an empty board shows in place of cards. */
+	const guide = (page: Page) => page.locator("[data-slot=board-guide]");
+
+	/** Open this test's board again with `?seed=<wire>` in its URL. */
+	async function openWithSeed(page: Page, wire: string) {
+		const url = new URL(page.url());
+		url.searchParams.set("seed", wire);
+		await page.goto(url.toString());
+		await expect(
+			page.getByRole("button", { name: "Add", exact: true }).first(),
+		).toBeVisible({ timeout: 60_000 });
 	}
 
 	test("a service card shows the facts that matter for THAT service", async ({
@@ -426,14 +504,12 @@ test.describe("Architecture canvas", () => {
 		await expect(page.locator("[data-slot=sheet-overlay]")).toHaveCount(0);
 	});
 
-	// ⚠ RED UNTIL #4255 LANDS, and deliberately left un-annotated so it reads as the gap it is.
-	// `design-project-workbench.tsx` still calls `setGraph` on every mount when a `sourceProject`
-	// is present, which replaces the graph and closes the card — so a reload discards the draft.
-	// #4255 keys that effect on the design REVISION and routes it through the store's `reseed`
-	// (same scope + same revision → no-op), which is what makes this pass. Note the rail itself is
-	// legitimately closed after a reload: `card` is view state and is deliberately NOT persisted
-	// ("a card is a view, not a draft"), so what survives a full reload is the EDIT; the open card
-	// surviving an identical-content RE-RENDER is #4255's `workbench-seed.test.tsx`.
+	// The workbench seeds the board once per design REVISION (#4255), and a seed for the same scope
+	// and the same revision leaves the draft alone, which is what lets the edit below survive. The
+	// rail is legitimately closed after a reload: what the inspector follows is view state and is
+	// deliberately NOT persisted ("a card is a view, not a draft"), so what survives a full reload is
+	// the EDIT; the open inspector surviving an identical-content RE-RENDER is pinned by
+	// `workbench-seed.test.tsx`.
 	test("an edit typed into a card survives a reload — the draft is the autosave", async ({
 		page,
 	}) => {
@@ -551,9 +627,12 @@ test.describe("Architecture canvas", () => {
 		await addService(page, "Bucket");
 		await expect(card(page, /^Bucket/)).toHaveCount(1);
 
-		// The undo handler runs BEFORE the "is the user typing" check on purpose — the add leaves the
-		// caret in the card's name field, and an undo that only works when nothing is focused is an
-		// undo nobody can reach right after the action they want to undo.
+		// ⌘Z is the board's undo only while the focus is NOT in a field: in a field the chord is the
+		// field's own (`canvas.undo` in `toolbar/canvas-keys.ts` does not set `allowInInput`). So the
+		// press below reaches the board only because an add leaves the focus outside the card's name
+		// field. That precondition is asserted rather than assumed: if an add ever starts putting the
+		// caret in the name field, this fails here, naming the cause, and not on the count below.
+		await expect(rail(page).getByPlaceholder("name", { exact: true })).not.toBeFocused();
 		await page.keyboard.press("ControlOrMeta+z");
 		await expect(card(page, /^Bucket/)).toHaveCount(0);
 
@@ -710,5 +789,212 @@ test.describe("Architecture canvas", () => {
 
 		await page.keyboard.press("Escape");
 		await expect(sheet).toHaveCount(0);
+	});
+
+	// ── the empty board and the seed link (#6836) ────────────────────────────────────────────────
+	//
+	// Every journey above adds a card first, so until these the guide and the `?seed=` path were
+	// covered by component tests only. The fixture's blank project is exactly an empty board.
+
+	test("an empty board shows the guide, its Add a component opens the picker, and the first card replaces it", async ({
+		page,
+	}) => {
+		await expect(guide(page).getByText("Nothing designed yet")).toBeVisible();
+		await expect(cards(page)).toHaveCount(0);
+
+		await guide(page).getByRole("button", { name: "Add a component" }).click();
+		const search = page.getByPlaceholder(/search services/i);
+		await expect(search).toBeVisible();
+		await search.fill("Bucket");
+		await page.getByRole("option", { name: /bucket/i }).first().click();
+		await expect(search).toBeHidden();
+
+		await expect(card(page, /^Bucket/)).toHaveCount(1);
+		// The guide is for a board with nothing on it; it does not linger under the first card.
+		await expect(guide(page)).toHaveCount(0);
+	});
+
+	test("a ?seed= template link sizes the cluster once, says so, and leaves the URL", async ({
+		page,
+	}) => {
+		await openWithSeed(page, "v1.template.standard.aws");
+
+		// Dealt with, the param is removed, so a reload or a shared copy of the address cannot apply
+		// it a second time.
+		await expect(page).not.toHaveURL(/[?&]seed=/, { timeout: 30_000 });
+		// A template sizes the cluster and draws no card, so the guide stays — and says what it did.
+		await expect(
+			guide(page).getByText(/The cluster is sized from the Standard template for /),
+		).toBeVisible();
+		await expect(page.locator("[data-slot=board-seed-notice]")).toHaveCount(0);
+	});
+
+	test("a ?seed= link that cannot be read says so in one sentence, and Dismiss removes it", async ({
+		page,
+	}) => {
+		await openWithSeed(page, "v1.nonsense");
+
+		const notice = page.locator("[data-slot=board-seed-notice]");
+		await expect(notice).toContainText("This link's starting point could not be read");
+		// The board works underneath the refusal: the guide is still there to start from.
+		await expect(guide(page).getByText("Nothing designed yet")).toBeVisible();
+
+		await notice.getByRole("button", { name: "Dismiss" }).click();
+		await expect(notice).toHaveCount(0);
+		await expect(page).not.toHaveURL(/[?&]seed=/);
+	});
+
+	// ── connections and the board's own keys (#6835) ─────────────────────────────────────────────
+
+	test("dragging from a service's handle to a queue draws the connection and opens its Connections", async ({
+		page,
+	}) => {
+		await addService(page, "Service");
+		await addService(page, "Queue");
+		await closeInspector(page);
+		await moreMenu(page, "Fit view");
+
+		// Two adds in a row land side by side, not one over the other (#7132 found the second card
+		// covering the first card's handle). Nothing is rearranged before the drag: a freshly added
+		// card has to be connectable where it landed.
+		const service = await card(page, /^Service/).boundingBox();
+		const queue = await card(page, /^Queue/).boundingBox();
+		if (!service || !queue) throw new Error("both cards are drawn");
+		const overlap =
+			service.x < queue.x + queue.width &&
+			queue.x < service.x + service.width &&
+			service.y < queue.y + queue.height &&
+			queue.y < service.y + service.height;
+		expect(overlap).toBe(false);
+
+		await dragConnection(page, card(page, /^Service/), card(page, /^Queue/));
+
+		await expect(connection(page, /^Connection from Service .* to Queue/)).toHaveCount(1);
+		// What a connection injects is the next choice, and it is made where the line now lives.
+		await expect(rail(page)).toHaveAttribute("data-open", "true");
+		await expect(rail(page).getByRole("tab", { name: "Connections" })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
+	});
+
+	test("a refused connection draws nothing and says why, beside the card", async ({ page }) => {
+		await addService(page, "Service");
+		await addService(page, "Bucket");
+		await closeInspector(page);
+		await moreMenu(page, "Fit view");
+
+		await dragConnection(page, card(page, /^Service/), card(page, /^Bucket/));
+
+		// A service connects to a database, cache, queue or secret; a bucket is none of those.
+		const note = page.getByTestId("connection-note");
+		await expect(note).toHaveAttribute("data-refused", "true");
+		await expect(note).toContainText("Bucket cannot be a connection target");
+		await expect(connection(page, /^Connection from/)).toHaveCount(0);
+	});
+
+	test("C connects the selected service from a menu; a selected line is removed by Delete or its button, and ⌘Z restores it", async ({
+		page,
+	}) => {
+		await addService(page, "Service");
+		await addService(page, "Queue");
+		await closeInspector(page);
+
+		// No pointer at all: focus the service from the keyboard and press C.
+		await keyboardFocus(page, card(page, /^Service/));
+		await page.keyboard.press("c");
+		const menu = page.getByRole("menu");
+		await expect(menu.getByText("Connect service to")).toBeVisible();
+		await menu.getByRole("menuitem", { name: /^Queue/ }).click();
+
+		const line = connection(page, /^Connection from Service .* to Queue/);
+		await expect(line).toHaveCount(1);
+
+		// A line reached from the keyboard is the selection, so Delete removes it with no second step.
+		await keyboardFocus(page, line);
+		await expect(board(page).getByRole("button", { name: "Remove connection" })).toBeVisible();
+		await page.keyboard.press("Delete");
+		await expect(line).toHaveCount(0);
+
+		// The removal edits the service's bindings as ONE undo step.
+		await page.keyboard.press("ControlOrMeta+z");
+		await expect(line).toHaveCount(1);
+
+		// The selected line's own button does the same. It is pressed with the pointer, so the board
+		// gets its full width back first: connecting opened the inspector, which narrows the board.
+		await closeInspector(page);
+		await moreMenu(page, "Fit view");
+		await keyboardFocus(page, line);
+		await board(page).getByRole("button", { name: "Remove connection" }).click();
+		await expect(line).toHaveCount(0);
+	});
+
+	test("Enter opens the focused card in the inspector, and Delete removes it (⌘Z puts it back)", async ({
+		page,
+	}) => {
+		await addService(page, "Bucket");
+		await closeInspector(page);
+		const bucket = card(page, /^Bucket/);
+
+		await keyboardFocus(page, bucket);
+		await page.keyboard.press("Enter");
+		await expect(rail(page)).toHaveAttribute("data-open", "true");
+		await expect(rail(page).getByPlaceholder("name", { exact: true })).toBeVisible();
+
+		await keyboardFocus(page, bucket);
+		await page.keyboard.press("Delete");
+		await expect(bucket).toHaveCount(0);
+
+		await page.keyboard.press("ControlOrMeta+z");
+		await expect(bucket).toHaveCount(1);
+	});
+
+	test("an arrow key held on a card moves it, and one ⌘Z undoes the whole hold", async ({
+		page,
+	}) => {
+		await addService(page, "Bucket");
+		await closeInspector(page);
+		const bucket = card(page, /^Bucket/);
+		/** Where React Flow has drawn the card: its wrapper's transform. */
+		const placed = () =>
+			bucket.evaluate((el) => (el instanceof HTMLElement ? el.style.transform : ""));
+		const before = await placed();
+		expect(before).not.toBe("");
+
+		await keyboardFocus(page, bucket);
+		// Each further `down` without an `up` is a key REPEAT, which is what holding a key sends.
+		for (let i = 0; i < 6; i++) await page.keyboard.down("ArrowRight");
+		await page.keyboard.up("ArrowRight");
+		await expect.poll(placed).not.toBe(before);
+
+		// One step back is the whole hold — six repeats are not six steps — and it is the move that
+		// is undone, not the add before it.
+		await page.keyboard.press("ControlOrMeta+z");
+		await expect.poll(placed).toBe(before);
+		await expect(bucket).toHaveCount(1);
+	});
+
+	// ── accessibility ─────────────────────────────────────────────────────────────────────────────
+
+	test("the shell has no serious or critical axe violations: empty, designed with the inspector open, and in review", async ({
+		page,
+	}) => {
+		// Without the scanner, every scan below returns [] and would pass on its absence.
+		await requireAxe();
+		// The page's main region: the board, its toolbar, the inspector, the bar and the review view.
+		const scope = { include: "main" };
+
+		expect(await scanA11y(page, scope)).toEqual([]);
+
+		await addService(page, "Service");
+		await addService(page, "Queue");
+		await expect(rail(page)).toHaveAttribute("data-open", "true");
+		expect(await scanA11y(page, scope)).toEqual([]);
+
+		// The review view gives way to the inspector, so the inspector is closed to show it.
+		await closeInspector(page);
+		await pendingBar(page).getByRole("button", { name: "Review plan", exact: true }).click();
+		await expect(reviewView(page)).toBeVisible();
+		expect(await scanA11y(page, scope)).toEqual([]);
 	});
 });
