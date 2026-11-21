@@ -14,30 +14,57 @@ import { createAccessControl } from "better-auth/plugins/access";
 export const ORG_ROLES = ["owner", "admin", "operator", "viewer"] as const;
 export type OrgRole = (typeof ORG_ROLES)[number];
 
-// Org-management actions the plugin gates (distinct from PDP resource actions).
+// Org-management actions the plugin gates (distinct from PDP resource actions). `team` is what the
+// plugin's team endpoints ask (create / rename / delete a team); adding people to a team is
+// `member: ["update"]`.
 const statement = {
 	organization: ["update", "delete"],
 	member: ["create", "update", "delete"],
 	invitation: ["create", "cancel"],
+	team: ["create", "update", "delete"],
 } as const;
+
+/** An action on a team, as the organization plugin's access control names it. */
+export type TeamAction = (typeof statement.team)[number];
 
 export const orgAc = createAccessControl(statement);
 
-// owner = full org control; admin = manage members/invitations; operator + viewer
+// owner = full org control; admin = manage members/invitations and teams; operator + viewer
 // hold no org-management rights (their power is PDP resource access via grants).
+//
+// Teams: owners and admins may create, rename and delete them; operators and viewers may not
+// (maintainer ruling on #7050, 2026-11-21). The console's Teams page and the CLI team routes both
+// read this table, so this is the one place that rule is written.
 export const orgRoles = {
 	owner: orgAc.newRole({
 		organization: ["update", "delete"],
 		member: ["create", "update", "delete"],
 		invitation: ["create", "cancel"],
+		team: ["create", "update", "delete"],
 	}),
 	admin: orgAc.newRole({
 		member: ["create", "update", "delete"],
 		invitation: ["create", "cancel"],
+		team: ["create", "update", "delete"],
 	}),
 	operator: orgAc.newRole({}),
 	viewer: orgAc.newRole({}),
 };
+
+/**
+ * Whether a stored membership role (`member.role`) may perform `action` on teams, decided the way
+ * the organization plugin decides it for its own team endpoints: the stored value is split on
+ * commas, and the permission is held when ANY listed role that {@link orgRoles} defines authorizes
+ * it. A name the table does not define (Better Auth's `member`, a typo) holds nothing. The parts are
+ * NOT trimmed, because the plugin does not trim them either; a route that asked a looser question
+ * than the plugin would admit a caller the console refuses.
+ */
+export function membershipMayManageTeams(storedRole: string, action: TeamAction): boolean {
+	return storedRole.split(",").some((part) => {
+		const role = toOrgRole(part);
+		return role !== null && orgRoles[role].authorize({ team: [action] }).success;
+	});
+}
 
 /** Narrows a free-form string to an OrgRole (no unsafe cast). */
 export function toOrgRole(value: string): OrgRole | null {

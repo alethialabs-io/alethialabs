@@ -44,6 +44,13 @@ const { CALLER, ORG_B, held, db } = vi.hoisted(() => ({
 	},
 }));
 
+// The team routes also read the organization's teams entitlement (#7050); here it is granted, so the
+// team writes below answer for the guard and the caller's role alone (teams-entitlement.test.ts
+// covers the entitlement).
+vi.mock("@/lib/enterprise", () => ({
+	getEnterprise: () => ({ resolveEntitlements: async () => ({ teams: true }) }),
+}));
+
 vi.mock("@/lib/db", () => ({
 	getServiceDb: () => ({
 		select: () => ({ from: () => ({ where: () => ({ limit: db.limit }) }) }),
@@ -168,6 +175,8 @@ describe("an admin of org B", () => {
 	});
 
 	it("creates and deletes a team in org B (the control)", async () => {
+		// The caller's member row in org B is an admin's, which may manage teams (#7050).
+		db.limit.mockResolvedValue([{ id: TEAM_ID, userId: CALLER, role: "admin" }]);
 		expect((await teamsPost(req({ name: "t" }), orgParams)).status).toBe(201);
 		expect(
 			(await teamDelete(req(), { params: Promise.resolve({ id: ORG_B, teamId: TEAM_ID }) }))
