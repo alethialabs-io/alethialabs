@@ -2,13 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
-import { Form, FormControl, FormField, FormItem, FormMessage } from "@repo/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@repo/ui/form";
 import { Input } from "@repo/ui/input";
 import { Textarea } from "@repo/ui/textarea";
 import {
@@ -29,6 +29,7 @@ import {
 	DEFAULT_CONTACT_TOPIC,
 	DEFAULT_COUNTRY,
 	INTERESTS,
+	normalizeWebsite,
 	SALES_MAIL,
 	SIZES,
 	topicAsksInterest,
@@ -53,8 +54,8 @@ const MESSAGE_PLACEHOLDERS: Record<ContactTopic, string> = {
 	other: "What can we help with?",
 };
 
-/** Field label, with an optional "optional" tag mirroring the design. */
-function FieldLabel({
+/** The words of a field label plus its "optional" tag, shared by {@link FieldLabel} and the topic legend. */
+function LabelText({
 	children,
 	optional,
 }: {
@@ -83,6 +84,34 @@ function FieldLabel({
 		</span>
 	);
 }
+
+/**
+ * A field's label as a real `<label for>` pointing at its control. It used to be a `<span>`, so
+ * every field's accessible name came from its placeholder (or, for the country and select fields,
+ * from nothing), and clicking a label did not focus its field.
+ */
+function FieldLabel({ children, optional }: { children: React.ReactNode; optional?: boolean }) {
+	return (
+		<FormLabel className="block font-normal">
+			<LabelText optional={optional}>{children}</LabelText>
+		</FormLabel>
+	);
+}
+
+/** The fields the server can name in an error, in on-screen order. */
+const FIELD_ORDER = [
+	"topic",
+	"email",
+	"name",
+	"company",
+	"country",
+	"phone",
+	"website",
+	"companySize",
+	"interest",
+	"message",
+	"consent",
+] as const;
 
 /** Props for {@link ContactForm}. Every field is optional; the bare form opens on a product demo. */
 export interface ContactFormProps {
@@ -123,18 +152,25 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 	// The visitor's country when the phone field supports it, else the schema default.
 	const openingCountry = defaultCountry && isPhoneCountry(defaultCountry) ? defaultCountry : DEFAULT_COUNTRY;
 	const [sent, setSent] = useState(false);
+	const [formError, setFormError] = useState<string | null>(null);
 	const [pending, startTransition] = useTransition();
+	const formRef = useRef<HTMLFormElement>(null);
+	const thanksRef = useRef<HTMLHeadingElement>(null);
 	const initialTopic = topic ?? topicFromType(type) ?? DEFAULT_CONTACT_TOPIC;
 
 	const form = useForm<ContactLeadInput>({
 		resolver: zodResolver(contactLeadSchema),
-		mode: "onChange",
+		// Judge a field when the visitor leaves it, then live while they fix it — not from the first
+		// keystroke, which flagged "Enter a valid company email." before anyone had finished typing.
+		mode: "onTouched",
+		reValidateMode: "onChange",
 		defaultValues: {
 			topic: initialTopic,
 			email: "",
 			name: "",
 			country: openingCountry,
 			phone: "",
+			company: "",
 			website: "",
 			companySize: undefined,
 			interest: undefined,
@@ -147,6 +183,7 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 	const currentTopic = useWatch({ control: form.control, name: "topic" });
 	const asksSize = topicAsksSize(currentTopic);
 	const asksInterest = topicAsksInterest(currentTopic);
+	const showDetailRow = asksSize || asksInterest;
 
 	/**
 	 * Submit via the server action; show success card or toast the error. A field
@@ -156,28 +193,57 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 	function onSubmit(values: ContactLeadInput) {
 		const lead: ContactLeadInput = {
 			...values,
+			website: values.website ? normalizeWebsite(values.website) : undefined,
 			companySize: topicAsksSize(values.topic) ? values.companySize : undefined,
 			interest: topicAsksInterest(values.topic) ? values.interest : undefined,
 		};
+		setFormError(null);
 		startTransition(async () => {
 			try {
-				await submitContactLead(lead);
-				setSent(true);
-			} catch (err) {
-				toast.error(
-					err instanceof Error
-						? err.message
-						: "Something went wrong — please try again.",
-				);
+				const result = await submitContactLead(lead);
+				if (result.ok) {
+					setSent(true);
+					return;
+				}
+				for (const name of FIELD_ORDER) {
+					const message = result.fieldErrors?.[name];
+					if (message) form.setError(name, { message });
+				}
+				setFormError(result.error);
+				focusFirstInvalid();
+			} catch {
+				// A network drop or a deploy mid-submit: nothing the server said, so say what to do.
+				toast.error(`We could not reach the server. Check your connection, or email ${SALES_MAIL}.`);
 			}
 		});
 	}
+
+	/**
+	 * Moves focus to the first field showing an error, after React has painted the error state.
+	 * react-hook-form can only focus fields it holds a ref for, and the country, phone, select and
+	 * consent controls are not plain inputs — so a failed submit used to leave focus on the button.
+	 */
+	function focusFirstInvalid() {
+		requestAnimationFrame(() => {
+			const target = formRef.current?.querySelector<HTMLElement>(
+				'[aria-invalid="true"], [data-error="true"]',
+			);
+			target?.focus();
+		});
+	}
+
+	// The thank-you card replaces the form, so move focus to it and let a screen reader announce it.
+	useEffect(() => {
+		if (sent) thanksRef.current?.focus();
+	}, [sent]);
 
 	const firstName = form.getValues("name").trim().split(" ")[0];
 
 	if (sent) {
 		return (
 			<div
+				role="status"
+				aria-live="polite"
 				style={{
 					border: "1px solid var(--border)",
 					borderRadius: "var(--radius-xl)",
@@ -206,7 +272,10 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 					<Icon k="check" size={24} sw={2.2} />
 				</span>
 				<h3
+					ref={thanksRef}
+					tabIndex={-1}
 					style={{
+						outline: "none",
 						...disp,
 						fontSize: 24,
 						fontWeight: 600,
@@ -251,7 +320,9 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 	return (
 		<Form {...form}>
 			<form
-				onSubmit={form.handleSubmit(onSubmit)}
+				ref={formRef}
+				noValidate
+				onSubmit={form.handleSubmit(onSubmit, focusFirstInvalid)}
 				style={{
 					border: "1px solid var(--border)",
 					borderRadius: "var(--radius-xl)",
@@ -301,7 +372,7 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 									    four options, which is past what that control is for. */}
 									<fieldset style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
 										<legend style={{ padding: 0, marginBottom: 8 }}>
-											<FieldLabel>What is this about?</FieldLabel>
+											<LabelText>What is this about?</LabelText>
 										</legend>
 										<div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
 											{CONTACT_TOPICS.map((option) => {
@@ -378,6 +449,25 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 
 					<FormField
 						control={form.control}
+						name="company"
+						render={({ field }) => (
+							<FormItem>
+								<FieldLabel optional>Company</FieldLabel>
+								<FormControl>
+									<Input
+										type="text"
+										placeholder="Acme"
+										autoComplete="organization"
+										{...field}
+									/>
+								</FormControl>
+								<FormMessage className="text-[11px]" />
+							</FormItem>
+						)}
+					/>
+
+					<FormField
+						control={form.control}
 						name="country"
 						render={({ field, fieldState }) => (
 							<FormItem>
@@ -423,8 +513,12 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 								<FieldLabel optional>Company website</FieldLabel>
 								<FormControl>
 									<Input
-										type="url"
-										placeholder="https://company.com"
+										type="text"
+										inputMode="url"
+										autoComplete="url"
+										autoCapitalize="none"
+										spellCheck={false}
+										placeholder="acme.com"
 										style={mono}
 										{...field}
 									/>
@@ -434,9 +528,24 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 						)}
 					/>
 
-					{asksSize || asksInterest ? (
-						<div className={asksSize && asksInterest ? "grid grid-cols-1 gap-4 sm:grid-cols-2" : "grid grid-cols-1 gap-4"}>
-							{asksSize ? (
+					{/* The size/interest row folds instead of popping in and out, so switching topic does
+					    not make the sticky form jump under the cursor. "Something else" keeps the row
+					    mounted but inert and folded; the schema only requires what the topic asks. */}
+					<div
+						inert={!showDetailRow}
+						aria-hidden={!showDetailRow}
+						style={{
+							display: "grid",
+							gridTemplateRows: showDetailRow ? "1fr" : "0fr",
+							marginTop: showDetailRow ? 0 : -16,
+							transition: "grid-template-rows 220ms ease, margin-top 220ms ease",
+						}}
+					>
+						<div
+							style={{ minHeight: 0, overflow: showDetailRow ? "visible" : "hidden" }}
+							className={asksInterest ? "grid grid-cols-1 gap-4 sm:grid-cols-2" : "grid grid-cols-1 gap-4"}
+						>
+							{asksSize || !asksInterest ? (
 								<FormField
 									control={form.control}
 									name="companySize"
@@ -446,7 +555,7 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 											<Select value={field.value} onValueChange={field.onChange}>
 												<FormControl>
 													<SelectTrigger className="w-full">
-														<SelectValue placeholder="Select a value" />
+														<SelectValue placeholder="Choose a size" />
 													</SelectTrigger>
 												</FormControl>
 												<SelectContent>
@@ -472,7 +581,7 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 											<Select value={field.value} onValueChange={field.onChange}>
 												<FormControl>
 													<SelectTrigger className="w-full">
-														<SelectValue placeholder="Select a value" />
+														<SelectValue placeholder="Choose one" />
 													</SelectTrigger>
 												</FormControl>
 												<SelectContent>
@@ -489,14 +598,14 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 								/>
 							) : null}
 						</div>
-					) : null}
+					</div>
 
 					<FormField
 						control={form.control}
 						name="message"
 						render={({ field }) => (
 							<FormItem>
-								<FieldLabel>How can we help?</FieldLabel>
+								<FieldLabel optional>How can we help?</FieldLabel>
 								<FormControl>
 									<Textarea
 										rows={6}
@@ -516,14 +625,16 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 						name="consent"
 						render={({ field }) => (
 							<FormItem>
-								<label style={{ display: "flex", gap: 11, alignItems: "flex-start", cursor: "pointer", paddingTop: 2 }}>
-									<input
-										type="checkbox"
-										checked={field.value}
-										onChange={(e) => field.onChange(e.target.checked)}
-										onBlur={field.onBlur}
-										style={{ marginTop: 2, accentColor: "var(--text-primary)", width: 15, height: 15, flexShrink: 0 }}
-									/>
+								<label style={{ display: "flex", gap: 12, alignItems: "flex-start", cursor: "pointer", padding: "4px 0" }}>
+									<FormControl>
+										<input
+											type="checkbox"
+											checked={field.value}
+											onChange={(e) => field.onChange(e.target.checked)}
+											onBlur={field.onBlur}
+											style={{ marginTop: 1, accentColor: "var(--text-primary)", width: 18, height: 18, flexShrink: 0 }}
+										/>
+									</FormControl>
 									{/*
 									  * RESPONSE-ONLY (#2371). This used to read "I agree to receive
 									  * communications … I can withdraw consent at any time via the
@@ -553,6 +664,24 @@ export function ContactForm({ topic, type, submitLabel, showTopic = false, defau
 							</FormItem>
 						)}
 					/>
+
+					{formError ? (
+						<p
+							role="alert"
+							style={{
+								margin: 0,
+								padding: "10px 12px",
+								border: "1px solid var(--border-strong)",
+								borderRadius: "var(--radius-md)",
+								background: "var(--surface-muted)",
+								fontSize: 13,
+								lineHeight: 1.5,
+								color: "var(--text-primary)",
+							}}
+						>
+							{formError}
+						</p>
+					) : null}
 
 					<Button
 						type="submit"

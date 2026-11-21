@@ -23,9 +23,9 @@ export function contactLeadSubject(topic: ContactTopic, name: string, company?: 
 }
 
 /**
- * The company a lead names, for the subject line: the website's host without
- * `www.`, or nothing when there is no usable website. The form has no company
- * field, and a company email domain is not reliably the company.
+ * The company a lead's website names, for the subject line when the optional Company field was
+ * left empty: the host without `www.`, or nothing when there is no usable website. A company email
+ * domain is not reliably the company, so it is never used.
  */
 export function leadCompany(website?: string): string | undefined {
 	if (!website) return undefined;
@@ -43,6 +43,7 @@ export interface ContactLeadEmailProps {
 	phone?: string;
 	/** ISO 3166-1 alpha-2 company country code (e.g. "US"). */
 	country?: string;
+	company?: string;
 	website?: string;
 	companySize?: string;
 	interest?: string;
@@ -98,6 +99,7 @@ export function ContactLeadEmail({
 	email = "jordan@acme.com",
 	phone,
 	country,
+	company,
 	website,
 	companySize = "51–200",
 	interest = "Enterprise governance",
@@ -152,6 +154,7 @@ export function ContactLeadEmail({
 				<DetailRow label="Email" value={email} />
 				<DetailRow label="Country" value={countryName(country)} />
 				<DetailRow label="Phone" value={phone} />
+				<DetailRow label="Company" value={company} />
 				<DetailRow label="Website" value={website} />
 				<DetailRow label="Company size" value={companySize} />
 				<DetailRow label="Interest" value={interest} />
@@ -167,6 +170,7 @@ ContactLeadEmail.PreviewProps = {
 	email: "jordan@acme.com",
 	phone: "+15550142000",
 	country: "US",
+	company: "Acme",
 	website: "https://acme.com",
 	companySize: "201–500",
 	interest: "Enterprise governance",

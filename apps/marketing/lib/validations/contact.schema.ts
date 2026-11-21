@@ -105,6 +105,27 @@ export function parseContactTopic(
 }
 
 /**
+ * A website as a visitor types it (`acme.com`, `www.acme.com/eu`, `https://acme.com`) as an
+ * absolute `https://` URL, or `undefined` when it is not a plausible public web address. The form
+ * used to demand the scheme and refused `acme.com` with "Enter a valid URL (https://…)" — the most
+ * common way anyone writes their company's address.
+ */
+export function normalizeWebsite(value: string): string | undefined {
+	const trimmed = value.trim();
+	if (!trimmed) return undefined;
+	const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+	try {
+		const url = new URL(withScheme);
+		if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+		// A host with no dot (`localhost`, `acme`) is not a company website.
+		if (!url.hostname.includes(".")) return undefined;
+		return url.toString();
+	} catch {
+		return undefined;
+	}
+}
+
+/**
  * Validated shape of a contact-lead submission. `honeypot` is a hidden field
  * left empty by humans; the server action treats a filled value as a bot and
  * silently no-ops rather than surfacing a validation error.
@@ -125,10 +146,14 @@ export const contactLeadSchema = z
 			.string()
 			.refine((v) => !v || isValidPhoneNumber(v), "Enter a valid phone number.")
 			.optional(),
+		// Typed as people type it — `acme.com` is fine; the scheme is added on submit.
 		website: z
-			.url("Enter a valid URL (https://…).")
-			.or(z.literal(""))
+			.string()
+			.trim()
+			.max(300)
+			.refine((v) => !v || normalizeWebsite(v) !== undefined, "Enter a web address, like acme.com.")
 			.optional(),
+		company: z.string().trim().max(200).optional(),
 		companySize: z.enum(SIZES).optional(),
 		interest: z.enum(INTERESTS).optional(),
 		message: z.string().trim().max(5000).optional(),

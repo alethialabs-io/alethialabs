@@ -6,6 +6,7 @@ import {
 	DEFAULT_COUNTRY,
 	visitorCountry,
 	contactLeadSchema,
+	normalizeWebsite,
 	parseContactTopic,
 	type ContactLeadInput,
 } from "../lib/validations/contact.schema";
@@ -83,5 +84,35 @@ describe("visitorCountry", () => {
 		for (const header of [null, "", "XX", "T1", "DEU", "1A", "d"]) {
 			expect(visitorCountry(header)).toBe(DEFAULT_COUNTRY);
 		}
+	});
+});
+
+describe("normalizeWebsite", () => {
+	it("adds https to an address typed without a scheme", () => {
+		expect(normalizeWebsite("acme.com")).toBe("https://acme.com/");
+		expect(normalizeWebsite("  www.acme.com/eu ")).toBe("https://www.acme.com/eu");
+	});
+
+	it("keeps an address that already has http or https", () => {
+		expect(normalizeWebsite("http://acme.com")).toBe("http://acme.com/");
+		expect(normalizeWebsite("https://acme.com/x")).toBe("https://acme.com/x");
+	});
+
+	it("refuses what is not a public web address", () => {
+		expect(normalizeWebsite("")).toBeUndefined();
+		expect(normalizeWebsite("acme")).toBeUndefined();
+		expect(normalizeWebsite("ftp://acme.com")).toBeUndefined();
+		expect(normalizeWebsite("javascript:alert(1)")).toBeUndefined();
+	});
+});
+
+describe("contactLeadSchema website", () => {
+	it("accepts an address without a scheme, and an empty one", () => {
+		expect(failedPaths(lead({ website: "acme.com" }))).toEqual([]);
+		expect(failedPaths(lead({ website: "" }))).toEqual([]);
+	});
+
+	it("names the website field when the address is not usable", () => {
+		expect(failedPaths(lead({ website: "not a site" }))).toEqual(["website"]);
 	});
 });
