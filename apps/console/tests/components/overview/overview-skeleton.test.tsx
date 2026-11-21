@@ -94,13 +94,13 @@ describe("OverviewSkeleton — the cards column", () => {
 	it("draws the plan gate's shape, not delivery rows, when the plan has no alerting (F021)", () => {
 		const { container } = renderSkeleton({ alerting: false });
 		expect(inCard(container, "Alerts", '[data-slot="skeleton"].size-10')).toBe(1);
-		expect(inCard(container, "Alerts", '[data-slot="skeleton"].size-2')).toBe(0);
+		expect(inCard(container, "Alerts", '[data-slot="skeleton"].w-14')).toBe(0);
 	});
 
 	it("draws delivery rows when the plan has alerting, or when the entitlements are not cached", () => {
 		for (const alerting of [true, undefined]) {
 			const { container, unmount } = renderSkeleton({ alerting });
-			expect(inCard(container, "Alerts", '[data-slot="skeleton"].size-2')).toBe(2);
+			expect(inCard(container, "Alerts", '[data-slot="skeleton"].w-14')).toBe(2);
 			expect(inCard(container, "Alerts", '[data-slot="skeleton"].size-10')).toBe(0);
 			unmount();
 		}

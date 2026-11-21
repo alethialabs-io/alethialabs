@@ -187,28 +187,36 @@ export function RecentJobsCard({ orgSlug, prefetched = false }: { orgSlug: strin
 			{recent.length === 0 ? (
 				<EmptyState className={CARD_EMPTY} title="No jobs yet." />
 			) : (
-				recent.map((job) => <RecentJobRow key={job.id} job={job} />)
+				recent.map((job) => <RecentJobRow key={job.id} job={job} orgSlug={orgSlug} />)
 			)}
 		</RecentJobsFrame>
 	);
 }
 
-/** One job: provider mark, project, type, status and timing. */
-function RecentJobRow({ job }: { job: RecentJob }) {
+/**
+ * One job: provider mark, project, type, status and timing. The row is a link to the job's page:
+ * a row that reports "failed" must lead to the log that says why.
+ */
+function RecentJobRow({ job, orgSlug }: { job: RecentJob; orgSlug: string }) {
 	const action = JOB_TYPES[job.job_type]?.label ?? job.job_type;
 	const createdAt = job.created_at;
 	return (
-		<div className="flex items-center gap-3 border-b border-border/60 px-4 py-3 transition-colors last:border-b-0 hover:bg-muted/40">
+		<Link
+			href={globalHref(orgSlug, `jobs/${job.id}`)}
+			className="flex items-center gap-3 border-b border-border/60 px-4 py-3 outline-none transition-colors last:rounded-b-lg last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50"
+		>
 			<span className="grid size-7 shrink-0 place-items-center rounded-sm border bg-muted/40">
 				{job.cloud_provider ? (
 					<ProviderIcon provider={job.cloud_provider} size={14} />
 				) : (
-					<span className="font-mono text-ui-2xs text-muted-foreground">·</span>
+					<span aria-hidden className="font-mono text-ui-2xs text-muted-foreground">
+						·
+					</span>
 				)}
 			</span>
 			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 				<span className="truncate text-ui-md font-medium text-foreground">{job.project_name ?? "—"}</span>
-				<span className="font-mono text-ui-2xs text-muted-foreground">{action} · OpenTofu</span>
+				<span className="font-mono text-ui-2xs text-muted-foreground">{action}</span>
 			</div>
 			<div className="flex shrink-0 flex-col items-end gap-1">
 				<StatusBadge status={job.status} />
@@ -218,6 +226,6 @@ function RecentJobRow({ job }: { job: RecentJob }) {
 					render={() => `${jobDuration(job)}${createdAt ? ` · ${formatRelative(createdAt)}` : ""}`}
 				/>
 			</div>
-		</div>
+		</Link>
 	);
 }

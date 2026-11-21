@@ -18,19 +18,24 @@ describe("the overview page's dehydrate filter", () => {
 		// Plain arrays: the cache cares about the key's VALUE, not the typed payload.
 		const usage: unknown[] = [...orpc.overview.usage.queryKey()];
 		const alerts: unknown[] = [...orpc.overview.alerts.queryKey()];
+		// The project grid's read, for the address's search and filters (#6817).
+		const grid: unknown[] = [
+			...orpc.overview.projects.queryKey({ input: { q: "", clouds: [], repos: [], sort: "activity" } }),
+		];
 		const recentJobs: unknown[] = [...orpc.workspace.recentJobs.queryKey()];
 		const projects: unknown[] = [...orpc.workspace.projects.queryKey()];
 		const context: unknown[] = [...orpc.workspace.context.queryKey()];
 		client.setQueryData(usage, { plan: "team" });
 		client.setQueryData(alerts, { alerting: true, deliveries: [] });
+		client.setQueryData(grid, { projects: [] });
 		client.setQueryData(recentJobs, []);
 		client.setQueryData(projects, []);
 		client.setQueryData(context, {});
 
 		const keys = dehydrate(client, { shouldDehydrateQuery: isOverviewPageRead }).queries.map((q) => q.queryKey);
 
-		expect(keys).toHaveLength(3);
-		expect(keys).toEqual(expect.arrayContaining([usage, alerts, recentJobs]));
+		expect(keys).toHaveLength(4);
+		expect(keys).toEqual(expect.arrayContaining([usage, alerts, grid, recentJobs]));
 	});
 
 	it("does not hand down a read that has not settled — the job feed included", () => {
