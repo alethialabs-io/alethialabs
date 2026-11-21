@@ -90,6 +90,9 @@ export const TOPIC_KEYS = {
 		orpc.overview.usage.key(),
 		orpc.canvas.environmentStatus.key(),
 		orpc.canvas.environmentJobs.key(),
+		// The board's review view (#6833): whether the latest plan is the one to deploy moves when a
+		// plan starts or ends and when a build, deploy or destroy is queued after it.
+		orpc.canvas.reviewPlan.key(),
 		[...DESTROY_HOLD_KEY],
 		orpc.usage.org.key(),
 		orpc.usage.project.key(),
@@ -119,6 +122,9 @@ export const TOPIC_KEYS = {
 		orpc.environments.key(),
 		orpc.workspace.environments.key(),
 		orpc.canvas.environmentStatus.key(),
+		// The review view's plan read (#6833): an environment whose design or status moved may no
+		// longer have a current plan.
+		orpc.canvas.reviewPlan.key(),
 		orpc.canvas.chartWorkloads.key(),
 		orpc.canvas.iacSource.key(),
 		[...DESTROY_HOLD_KEY],
