@@ -34,7 +34,7 @@ import {
 	InputOTPGroup,
 	InputOTPSlot,
 } from "@repo/ui/input-otp";
-import { ArrowRight, KeyRound, Loader2, Lock } from "lucide-react";
+import { ArrowRight, KeyRound, Loader2 } from "lucide-react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -417,8 +417,9 @@ function LeadMethodButton({
 			type="button"
 			onClick={() => onSelect(method)}
 			disabled={isLoading}
+			variant="outline"
 			aria-label={`Continue with ${name} (last used)`}
-			className="h-[46px] w-full min-w-0 gap-[9px] text-ui-md"
+			className="relative h-[46px] w-full min-w-0 gap-[9px] border-ring bg-surface-muted text-ui-md hover:bg-surface-muted"
 		>
 			{spinning ? (
 				<Loader2 className="size-[17px] animate-spin" />
@@ -1124,6 +1125,9 @@ export function AuthForm({ mode }: AuthFormProps) {
 				{errorBanner}
 
 				{layout.lead !== null ? (
+					// The "Last used" badge straddles the lead's top border; mt-2 keeps it off
+					// whatever sits above (the heading block or an error banner).
+					<div className="mt-2">
 					<LeadMethodButton
 						method={layout.lead}
 						isLoading={isLoading}
@@ -1133,6 +1137,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 							else void handleOAuthLogin(method);
 						}}
 					/>
+					</div>
 				) : null}
 
 				{layout.lead === "email" ? orDivider : null}

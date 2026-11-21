@@ -469,8 +469,13 @@ in CSS would be exactly the recolouring this ruling withdraws.
   not GitHub's supplied file. It renders in the page's foreground, which is
   black or white and within GitHub's permitted list. Whether it should also be
   replaced by the supplied file was not part of this ruling.
-- The Google "G" on the sign-in screen is drawn in `currentColor` rather than
-  in Google's four colours. Google is not one of the nine.
+- ~~The Google "G" on the sign-in screen is drawn in `currentColor` rather than
+  in Google's four colours.~~ **Decided 2026-11-21 (maintainer):** sign-in
+  surfaces render third-party identity-provider marks in their owners' colours,
+  as the connectors do. `ProviderIcon` draws Google's four-colour "G" when
+  `mono={false}`, which every sign-in call site passes; Google's sign-in
+  branding guidelines ask for the standard colour mark on such a control. The
+  `currentColor` glyph remains for grayscale contexts (`mono` default).
 - The marketing site's `Prov` primitive (`packages/brand/src/site/primitives.tsx`)
   applies `grayscale` to the `aws`, `gcp` and `azure` marks. That is outside the
   console, and those marks are the open hyperscaler question.
