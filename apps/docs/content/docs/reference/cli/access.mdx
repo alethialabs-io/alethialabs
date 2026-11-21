@@ -32,6 +32,12 @@ takes `--domain`, `grants add` takes an email or a role name wherever it takes a
 `grants remove` offers a picker — so `--no-input` always has a flag to reach for.
 </Callout>
 
+Every command that changes something prints one sentence, or one result under `-o json`, and takes
+`--dry-run`; a failure exits with the code of its class. Both are described once, under
+[What a command prints and how it fails](/reference/cli/organizations#what-a-command-prints-and-how-it-fails).
+A plan that does not include roles or grants is refused with exit code `10`, in the control plane's
+own sentence, and the hint names `alethia billing`.
+
 ## `alethia roles list`
 
 Lists the active organization's roles — the four built-in templates (flagged) followed by any
@@ -61,7 +67,8 @@ alethia roles create
 | Permissions | The resource:action keys the role carries, offered from the server's own catalog | `--permission` | — |
 
 A role with no permissions is accepted, so `--no-input` without `--permission` is not an error — it
-creates a role that grants nothing yet.
+creates a role that grants nothing yet. `--dry-run` prints the role that would be created and
+creates nothing.
 
 ## `alethia roles delete`
 
@@ -79,11 +86,13 @@ alethia roles delete
 | ----- | ---------- | ---------------- | ---------- |
 | Role | Which custom role to delete; built-in templates cannot be deleted | `[role_id]` | `--name` |
 
-The four built-in templates cannot be deleted. They are not offered in the picker and naming one
-with `--name` is refused, because the control plane's delete filters them out and still answers
-`ok` — so asking for one used to print `Role deleted` having changed nothing.
+The four built-in templates cannot be deleted. They are not offered in the picker, and naming one
+is refused whether you name it with `--name` or by its id: the control plane's delete skips a
+built-in role and still answers `ok`, so sending it would report a deletion that did not happen.
 
-Destructive, so it confirms; `--yes` skips the prompt and is required with `--no-input`.
+Destructive, so it confirms: you type the role's name. `--yes` skips the prompt and is required
+with `--no-input`; without it the command exits `9` and deletes nothing. `--dry-run` names the role
+that would be deleted and deletes nothing.
 
 ## `alethia grants list`
 
@@ -101,7 +110,8 @@ permission (`--permission`), at a resource scope. Omit `--resource` for an **org
 
 `--principal` takes an **email** (or a team name) as readily as an id, and `--role` takes a **role
 name**; anything that is not already a uuid is looked up against the active org. With no
-`--principal` on a terminal, the whole grant is asked for, one question at a time.
+`--principal` on a terminal, the whole grant is asked for, one question at a time. `--dry-run`
+resolves every name to its id, prints the grant that would be written, and writes nothing.
 
 ```bash
 alethia grants add --principal ada@example.com --role deployers
@@ -184,8 +194,10 @@ alethia grants remove
 | ----- | ---------- | ---------------- | ---------- |
 | Grant | Which grant to revoke; pick it from the org's grants rather than copying an id | `[grant_id]` | — |
 
-Destructive, so it confirms; `--yes` skips the prompt and is required with `--no-input`. When the
-CLI picks the grant for you, it prints which one on stderr before it asks.
+Destructive, so it confirms; `--yes` skips the prompt and is required with `--no-input` — without
+it the command exits `9` and revokes nothing. When the CLI picks the grant for you, it prints which
+one on stderr before it asks. `--dry-run` names the grant that would be revoked and revokes
+nothing.
 
 ## `alethia sso list`
 
