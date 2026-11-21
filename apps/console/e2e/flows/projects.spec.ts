@@ -126,9 +126,11 @@ test.describe("Projects — the create front door (/~/new)", () => {
 		await expect(owner.page.getByText(/no git accounts linked/i)).toBeVisible({
 			timeout: 30_000,
 		});
+		// "Connect", not "Link" (#6816): the selector and the connectors board start the same OAuth
+		// link and now share one verb (`GIT_CONNECT_VERB`, components/connectors/connectors-link-error.ts).
 		for (const provider of ["GitHub", "GitLab", "Bitbucket"]) {
 			await expect(
-				owner.page.getByRole("button", { name: `Link ${provider}` }),
+				owner.page.getByRole("button", { name: `Connect ${provider}` }),
 			).toBeVisible({ timeout: 30_000 });
 		}
 	});

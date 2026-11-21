@@ -39,11 +39,16 @@ test.describe.configure({ timeout: 120_000 });
 
 /**
  * Navigates to the org connectors board (optionally with filter params already in the URL) and
- * waits for the filter bar's search box, which is the board's first interactive element.
+ * waits for the filter bar's search box, which is the board's first interactive element — until it
+ * is ENABLED, not only visible. The bar sits in a fieldset disabled until React has hydrated, so
+ * "enabled" is the page saying its handlers are attached; a Manage clicked in the server HTML before
+ * that is a click nothing hears, and the sheet never opens.
  */
 async function gotoConnectors(page: Page, orgSlug: string, query = ""): Promise<void> {
 	await page.goto(`/${orgSlug}/~/connectors${query}`, { waitUntil: "commit" });
-	await expect(page.getByRole("textbox", { name: "Search connectors", exact: true })).toBeVisible({ timeout: 60_000 });
+	const box = page.getByRole("textbox", { name: "Search connectors", exact: true });
+	await expect(box).toBeVisible({ timeout: 60_000 });
+	await expect(box).toBeEnabled({ timeout: 30_000 });
 }
 
 /**

@@ -463,10 +463,10 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 									target="_blank"
 									rel="noopener noreferrer"
 									title="What are connectors?"
+									aria-label="What are connectors?"
 									className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground transition-colors hover:text-foreground"
 								>
 									<BookOpen className="size-4" aria-hidden />
-									<span className="sr-only">What are connectors?</span>
 								</a>
 							</>
 						}
@@ -529,12 +529,14 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 										target="_blank"
 										rel="noopener noreferrer"
 										title={`Learn about ${group.label.toLowerCase()} connectors`}
+										// The name is an attribute, not an `sr-only` span: that span is
+										// absolutely positioned, the shell's <main> is not a positioned
+										// ancestor, so a span this far down the board escaped main's
+										// clip and made the document itself scroll (audit R3).
+										aria-label={`Learn about ${group.label.toLowerCase()} connectors`}
 										className="text-text-tertiary transition-colors hover:text-foreground"
 									>
 										<BookOpen className="size-3.5" aria-hidden />
-										<span className="sr-only">
-											{`Learn about ${group.label.toLowerCase()} connectors`}
-										</span>
 									</a>
 									<span className="hidden max-w-[52ch] text-xs text-muted-foreground md:inline">
 										{group.description}
