@@ -2,92 +2,110 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import Link from "next/link";
 import { Controller, useFormContext } from "react-hook-form";
-import { supportCaseType } from "@/lib/db/schema/enums";
-import { RadioCard, RadioCardSkeleton } from "@/components/support/radio-card";
+import { RadioCardSkeleton } from "@/components/support/radio-card";
+import { ChoiceCards } from "@/components/support/submit/choice-cards";
 import {
-	SUPPORT_CASE_TYPE_LABELS,
-	type SubmitCaseInput,
-} from "@/lib/validations/support";
-import { SectionHeading } from "@repo/ui/section-heading";
+	type SubmitCaseWizardValues,
+	WIZARD_CASE_TYPES,
+	type WizardCaseType,
+} from "@/components/support/submit/submit-case.wizard";
 import { FieldMessage } from "@/components/support/field-message";
+import { SUPPORT_CASE_TYPE_LABELS } from "@/lib/validations/support";
 
-/** One-line description per case type, shown under each radio card. */
-const TYPE_DESCRIPTIONS: Record<string, string> = {
+/** One-line description per case type, shown under each card. */
+const TYPE_DESCRIPTIONS: Record<WizardCaseType, string> = {
 	technical: "Something in the platform isn't working as expected.",
 	billing: "Invoices, plans, seats, or payment questions.",
 	account: "Access, login, org, or membership issues.",
 	general: "Anything else — questions or guidance.",
-	abuse: "Report phishing, malware, spam, or policy violations.",
 };
+
+/** The cards, in the order they are shown. */
+const TYPE_OPTIONS = WIZARD_CASE_TYPES.map((value) => ({
+	value,
+	label: SUPPORT_CASE_TYPE_LABELS[value],
+	description: TYPE_DESCRIPTIONS[value],
+}));
 
 /** The step's frame and the cards' grid — shared with {@link StepTypeSkeleton} (#6354). */
 const STEP = "space-y-4";
 const GRID = "grid gap-2 sm:grid-cols-2";
+const ABUSE_LINE = "text-sm text-muted-foreground";
 
-/** The step's heading. Static copy, so the skeleton draws the real one rather than a guess at it. */
-function StepTypeHeading() {
-	return (
-		<SectionHeading
-			level={2}
-			title="What kind of case is this?"
-			description="This helps us route your case to the right team."
-		/>
-	);
+/** The question under which abuse is reported: its own form, not a case type here (G-14). */
+const ABUSE_PROMPT = "Reporting phishing, malware, spam, or a policy violation?";
+
+interface StepTypeProps {
+	/** Where the dedicated abuse-report form lives. */
+	abuseHref: string;
 }
 
-/** Step 1 — pick the case type (radio cards driven by SUPPORT_CASE_TYPE_LABELS). */
-export function StepType() {
+/**
+ * Step 1 — pick the case type. Abuse is not one of the cards: it has a dedicated form that asks
+ * what an abuse report needs, so the step links there instead (G-14).
+ */
+export function StepType({ abuseHref }: StepTypeProps) {
 	const {
 		control,
 		formState: { errors },
-	} = useFormContext<SubmitCaseInput>();
+	} = useFormContext<SubmitCaseWizardValues>();
 
 	return (
 		<div className={STEP}>
-			<StepTypeHeading />
 			<Controller
 				control={control}
 				name="type"
 				render={({ field }) => (
-					<div className={GRID}>
-						{supportCaseType.enumValues.map((value) => (
-							<RadioCard
-								key={value}
-								selected={field.value === value}
-								onSelect={() => field.onChange(value)}
-								label={SUPPORT_CASE_TYPE_LABELS[value]}
-								description={TYPE_DESCRIPTIONS[value]}
-							/>
-						))}
-					</div>
+					<ChoiceCards
+						label="Case type"
+						name="support-type"
+						options={TYPE_OPTIONS}
+						value={WIZARD_CASE_TYPES.find((value) => value === field.value)}
+						onChange={field.onChange}
+						inputRef={field.ref}
+						invalid={errors.type !== undefined}
+						describedBy="support-type-message"
+						className={GRID}
+					/>
 				)}
 			/>
-			<FieldMessage message={errors.type ? "Select a case type to continue." : undefined} />
+			<FieldMessage
+				id="support-type-message"
+				message={errors.type ? "Select a case type to continue." : undefined}
+			/>
+			<p className={ABUSE_LINE}>
+				{ABUSE_PROMPT}{" "}
+				<Link
+					href={abuseHref}
+					className="rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				>
+					Report abuse
+				</Link>
+			</p>
 		</div>
 	);
 }
 
 /**
  * Step 1's loading form — what the new-case route paints before its form arrives (#6354, B2). The
- * same heading, the same grid with one {@link RadioCardSkeleton} per case type carrying that type's
- * own copy (so the cards wrap, and the rows stand, exactly as the real ones do — two columns from
- * `sm`), and the reserved validation line.
+ * same grid with one {@link RadioCardSkeleton} per case type carrying that type's own copy (so the
+ * cards wrap, and the rows stand, exactly as the real ones do — two columns from `sm`), the reserved
+ * validation line and the abuse line.
  */
 export function StepTypeSkeleton() {
 	return (
 		<div className={STEP}>
-			<StepTypeHeading />
 			<div className={GRID}>
-				{supportCaseType.enumValues.map((value) => (
-					<RadioCardSkeleton
-						key={value}
-						label={SUPPORT_CASE_TYPE_LABELS[value]}
-						description={TYPE_DESCRIPTIONS[value]}
-					/>
+				{TYPE_OPTIONS.map((option) => (
+					<RadioCardSkeleton key={option.value} label={option.label} description={option.description} />
 				))}
 			</div>
 			<FieldMessage />
+			<p aria-hidden className={ABUSE_LINE}>
+				{ABUSE_PROMPT} <span className="text-foreground underline underline-offset-4">Report abuse</span>
+			</p>
 		</div>
 	);
 }
