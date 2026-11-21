@@ -22,10 +22,16 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@xyflow/react")>();
 	return {
 		...actual,
-		useReactFlow: () => ({ fitView: flow.fitView, zoomIn: vi.fn(), zoomOut: vi.fn() }),
-		// The selector is the product's own; only the lookup it reads is the test's.
-		useStore: <T,>(selector: (s: { nodeLookup: Map<string, unknown> }) => T): T =>
-			selector({ nodeLookup: new Map(Array.from({ length: flow.drawn }, (_, i) => [`n${i}`, {}])) }),
+		useReactFlow: () => ({ fitView: flow.fitView, zoomIn: vi.fn(), zoomOut: vi.fn(), zoomTo: vi.fn() }),
+		// The selectors are the product's own; only the lookup and the viewport they read are the
+		// test's (the zoom controls print the zoom level, the third member of `transform`).
+		useStore: <T,>(
+			selector: (s: { nodeLookup: Map<string, unknown>; transform: [number, number, number] }) => T,
+		): T =>
+			selector({
+				nodeLookup: new Map(Array.from({ length: flow.drawn }, (_, i) => [`n${i}`, {}])),
+				transform: [0, 0, 1],
+			}),
 	};
 });
 

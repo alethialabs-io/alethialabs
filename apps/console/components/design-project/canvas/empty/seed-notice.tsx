@@ -10,12 +10,28 @@ import { Button } from "@repo/ui/button";
  * that its content is still on the way. Top-centre, under the toolbar, above the cards; it never
  * covers the board's controls and never blocks the board. Announced politely — the board is usable
  * whether or not it is read — and dismissed with its own button.
+ *
+ * `inRegion` is how the board's host places it (#6832): drawn in the flow of the toolbar's region,
+ * under the toolbar, it cannot land on whatever else opens there. Without it the notice places
+ * itself at a fixed offset from the top of the nearest positioned ancestor.
  */
-export function SeedNotice({ sentence, onDismiss }: { sentence: string; onDismiss: () => void }) {
+export function SeedNotice({
+	sentence,
+	onDismiss,
+	inRegion = false,
+}: {
+	sentence: string;
+	onDismiss: () => void;
+	inRegion?: boolean;
+}) {
 	return (
 		<div
 			data-slot="board-seed-notice"
-			className="pointer-events-none absolute inset-x-0 top-14 z-[var(--z-raised)] flex justify-center px-3"
+			className={
+				inRegion
+					? "pointer-events-none flex max-w-full justify-center"
+					: "pointer-events-none absolute inset-x-0 top-14 z-[var(--z-raised)] flex justify-center px-3"
+			}
 		>
 			<div
 				role="status"

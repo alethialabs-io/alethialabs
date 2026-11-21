@@ -16,9 +16,9 @@ import { registerShortcuts } from "@/lib/shortcuts/registry";
 
 /** Open the inspector on the focused card, or on the service a focused connection starts from. */
 export const SHORTCUT_BOARD_OPEN = "canvas.board.open";
-/** Remove the selected connection (Delete). */
+/** Remove what is selected: a connection (answered by the board) or cards (answered by its host). */
 export const SHORTCUT_BOARD_REMOVE = "canvas.board.remove";
-/** Remove the selected connection (Backspace): the same action on the key a laptop has. */
+/** The same removal on Backspace, the key a laptop has. */
 export const SHORTCUT_BOARD_REMOVE_BACKSPACE = "canvas.board.remove.backspace";
 /** Connect the selected service to another card, from a menu. */
 export const SHORTCUT_BOARD_CONNECT = "canvas.board.connect";
@@ -34,13 +34,13 @@ registerShortcuts([
 		id: SHORTCUT_BOARD_REMOVE,
 		chord: { key: "delete", shift: false },
 		scope: "canvas",
-		label: "Remove the selected connection",
+		label: "Remove the selection",
 	},
 	{
 		id: SHORTCUT_BOARD_REMOVE_BACKSPACE,
 		chord: { key: "backspace", shift: false },
 		scope: "canvas",
-		label: "Remove the selected connection",
+		label: "Remove the selection",
 	},
 	{
 		id: SHORTCUT_BOARD_CONNECT,

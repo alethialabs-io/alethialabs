@@ -5,7 +5,6 @@
 import { useReactFlow } from "@xyflow/react";
 import {
 	Activity,
-	Hand,
 	Keyboard,
 	LayoutGrid,
 	Maximize,
@@ -13,7 +12,7 @@ import {
 	Settings2,
 	Shuffle,
 } from "lucide-react";
-import { useContext } from "react";
+import { formatMonthlyRate } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import {
 	DropdownMenu,
@@ -25,21 +24,24 @@ import {
 	DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
 import { arrangeBoard } from "@/lib/canvas/arrange";
+import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { CanvasInteractionContext } from "./canvas-flow";
 import { addableKindsFor, NODE_REGISTRY } from "./graph/node-registry";
 import { NOTHING_TO_FIT, useHasDrawnNodes } from "./use-has-drawn-nodes";
 
 /**
- * The board's ⋯ menu — everything that is not Run or Add, in one place.
+ * The toolbar's ⋯ menu: what belongs to the environment and to how the board is drawn, and is not
+ * a tool.
  *
- * The toolbar used to carry four top-right controls and the bottom-left bar ten more (a settings
- * popover holding a switch and two actions, an auto-arrange button that duplicated one of them,
- * the hand tool, four view controls, undo/redo, and a layers popover). The maintainer's words:
- * "way too much, ease the user in". The top row keeps the two verbs a first visit needs — Run
- * and Add — and this menu holds the rest, in three labelled groups rather than a submenu: the two
- * cards, the view toggles and tidy actions, and the layer switches. Zoom, fit and undo/redo stay
- * on the bottom-left bar, which is now five controls rather than ten.
+ * It is the last item of the board's top-centre toolbar (#6832). The tools themselves — select and
+ * hand, add, connect, undo and redo, tidy and fit, run, the command palette, the shortcut sheet —
+ * are buttons there; this menu holds the rest in three labelled groups: the environment (what it
+ * costs, its settings, its activity), the view (connections, tidy actions) and the layer switches.
+ * Tidy, fit and the shortcut sheet are rows here as well as tools, because a narrow toolbar hides
+ * those three buttons and they must stay reachable without a keyboard.
+ *
+ * The environment's monthly cost is a line here. It was a chip floating in the board's top-right
+ * corner; a never-priced environment shows no line at all, as the chip showed nothing.
  *
  * Flat on purpose. A submenu costs a hover-then-click for items that are one click of chrome, and
  * `DropdownMenuSub*` is exercised nowhere else in the console — an unexercised primitive is not
@@ -62,7 +64,7 @@ export function CanvasMoreMenu({
 	const hiddenKinds = useCanvasStore((s) => s.hiddenKinds);
 	const toggleKindVisibility = useCanvasStore((s) => s.toggleKindVisibility);
 	const coreProvider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
-	const { handTool, setHandTool } = useContext(CanvasInteractionContext);
+	const env = useEnvironmentStatus();
 
 	return (
 		<DropdownMenu>
@@ -70,9 +72,10 @@ export function CanvasMoreMenu({
 				render={
 					<Button
 						type="button"
-						variant="outline"
+						data-tool=""
+						variant="ghost"
 						size="icon"
-						className="h-8 w-8"
+						className="h-8 w-8 rounded-none"
 						aria-label="More"
 						title="More"
 					>
@@ -81,6 +84,15 @@ export function CanvasMoreMenu({
 				}
 			/>
 			<DropdownMenuContent align="end" className="w-60">
+				<DropdownMenuLabel className="vx-eyebrow">Environment</DropdownMenuLabel>
+				{env.monthlyCost != null && (
+					<DropdownMenuLabel className="flex items-center justify-between gap-2 py-1 font-normal">
+						<span className="text-ui-sm text-muted-foreground">Cost, from the last plan</span>
+						{/* `exact` because the cards on the same board are the parts of this number, and a
+						    total that rounds differently from its parts cannot be checked. */}
+						<span className="font-mono text-xs">{formatMonthlyRate(env.monthlyCost, "exact")}</span>
+					</DropdownMenuLabel>
+				)}
 				{!iacGoverned && (
 					<DropdownMenuItem onSelect={() => openCard({ kind: "env-settings" })}>
 						<Settings2 className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -100,14 +112,9 @@ export function CanvasMoreMenu({
 				>
 					Show connections
 				</DropdownMenuCheckboxItem>
-				<DropdownMenuCheckboxItem checked={handTool} onCheckedChange={setHandTool}>
-					<Hand className="mr-2 h-4 w-4 text-muted-foreground" />
-					Hand tool
-					<span className="ml-auto font-mono text-ui-3xs text-muted-foreground">H</span>
-				</DropdownMenuCheckboxItem>
 				<DropdownMenuItem onSelect={() => void arrangeBoard(fitView)}>
 					<LayoutGrid className="mr-2 h-4 w-4 text-muted-foreground" />
-					Auto-arrange
+					Tidy layout
 				</DropdownMenuItem>
 				<DropdownMenuItem onSelect={() => repairOverlaps()}>
 					<Shuffle className="mr-2 h-4 w-4 text-muted-foreground" />

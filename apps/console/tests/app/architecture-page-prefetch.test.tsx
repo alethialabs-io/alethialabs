@@ -17,6 +17,7 @@ interface World {
 	calls: FakeCall[];
 	client: QueryClient | null;
 	flags: { helm: boolean; describe: boolean; iac: boolean };
+	/** The environment the lookup answers with, whatever id it was asked for; null makes it throw. */
 	environmentId: string | null;
 }
 
@@ -78,12 +79,30 @@ function clientKey(procedure: string, environmentId: string | undefined): unknow
 	return queryKey({ input: environmentStatusInput("proj-1", environmentId) });
 }
 
-/** Renders the page (an async server component) for `?environment_id=`. */
-async function renderPage(environmentIdParam?: string) {
+/** Renders the page (an async server component) for `?environment_id=`, with any other params. */
+async function renderPage(environmentIdParam?: string, others: Record<string, string> = {}) {
 	await ProjectArchitecturePage({
 		params: Promise.resolve({ org: "acme", project: "shop" }),
-		searchParams: Promise.resolve(environmentIdParam ? { environment_id: environmentIdParam } : {}),
+		searchParams: Promise.resolve(
+			environmentIdParam ? { environment_id: environmentIdParam, ...others } : others,
+		),
 	});
+}
+
+/** What a server component threw, or null when it rendered. */
+async function thrownBy(run: () => Promise<void>): Promise<unknown> {
+	try {
+		await run();
+		return null;
+	} catch (e) {
+		return e;
+	}
+}
+
+/** The `digest` Next puts on what `redirect()` throws, or an empty string. */
+function digestOf(thrown: unknown): string {
+	if (typeof thrown !== "object" || thrown === null || !("digest" in thrown)) return "";
+	return typeof thrown.digest === "string" ? thrown.digest : "";
 }
 
 /** The keys the page left in its server query client, as JSON for comparison. */
@@ -110,11 +129,10 @@ describe("the Architecture page prefetch", () => {
 		);
 	});
 
-	it("keys an unresolvable environment as the client does — null, not undefined", async () => {
-		h.environmentId = null;
-		await renderPage("garbage");
+	it("keys the default environment by its id when the address names none", async () => {
+		await renderPage();
 		expect(prefetched()).toEqual(
-			[clientKey("addons", undefined), clientKey("environmentStatus", undefined)].map((k) => JSON.stringify(k)).sort(),
+			[clientKey("addons", "env-1"), clientKey("environmentStatus", "env-1")].map((k) => JSON.stringify(k)).sort(),
 		);
 	});
 
@@ -126,5 +144,28 @@ describe("the Architecture page prefetch", () => {
 				.map((p) => JSON.stringify(clientKey(p, "env-1")))
 				.sort(),
 		);
+	});
+});
+
+// The board used to load the project's default environment whenever the lookup did not return the
+// environment the address named — a stale id, or a lookup that failed — while the address and the
+// environment switcher went on naming the other one (#6832).
+describe("the Architecture page and the environment the address names", () => {
+	it("redirects a stale environment id to the page without it, keeping the rest of the address", async () => {
+		// The lookup answers with the default: `env-gone` names no environment of this project.
+		const thrown = await thrownBy(() => renderPage("env-gone", { card: "activity" }));
+		expect(digestOf(thrown)).toContain("NEXT_REDIRECT");
+		expect(digestOf(thrown)).toContain("/acme/shop/architecture?card=activity");
+		expect(digestOf(thrown)).not.toContain("environment_id");
+		// Nothing was read for an environment the page is about to leave.
+		expect(prefetched()).toEqual([]);
+	});
+
+	it("rethrows a failed environment lookup instead of falling back to another environment", async () => {
+		h.environmentId = null;
+		const thrown = await thrownBy(() => renderPage("env-1"));
+		expect(thrown).toBeInstanceOf(Error);
+		expect(digestOf(thrown)).toBe("");
+		expect(prefetched()).toEqual([]);
 	});
 });
