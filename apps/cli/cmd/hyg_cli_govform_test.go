@@ -315,7 +315,9 @@ func TestHygCliGovForm_ClosedSetsComeFromTheSchema(t *testing.T) {
 	}{
 		{"channel types", channelTypeNames(), stringsOf(types.AllAlertChannelTypes)},
 		{"severities", alertSeverityNames(), stringsOf(types.AllAlertSeveritys)},
-		{"providers", cloudProviderNames(), stringsOf(types.AllCloudProviders)},
+		// The providers are the OFFERED clouds, not the whole enum: a picker that listed every
+		// cloud_provider value offered clouds the product does not.
+		{"providers", cloudProviderNames(), stringsOf(EnabledCloudProviders())},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

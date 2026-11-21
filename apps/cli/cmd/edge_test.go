@@ -22,12 +22,12 @@ func TestRunFunctionsPropagateErrors(t *testing.T) {
 		func() error { return runWhoami(f, &b, "table") },
 		func() error { return runOrgList(f, &b, "table") },
 		func() error { return runMembersList(f, &b, "table", "o1") },
-		func() error { return runMembersAdd(f, &b, "o1", "x@y.com", "member") },
-		func() error { return runMembersRemove(f, &b, "o1", "m1") },
+		func() error { return runMembersAdd(f, testPrinter(&b, "table"), "o1", "x@y.com", "member", false) },
+		func() error { return runMembersRemove(f, testPrinter(&b, "table"), "o1", orgRef{ID: "m1"}) },
 		func() error { return runTeamsList(f, &b, "table", "o1") },
-		func() error { return runTeamsCreate(f, &b, "o1", "x") },
-		func() error { return runTeamsDelete(f, &b, "o1", "t1") },
-		func() error { return runOrgSwitch(f, &b, "x") },
+		func() error { return runTeamsCreate(f, testPrinter(&b, "table"), "o1", "x", false) },
+		func() error { return runTeamsDelete(f, testPrinter(&b, "table"), "o1", orgRef{ID: "t1"}) },
+		func() error { return runOrgSwitch(f, testPrinter(&b, "table"), "x") },
 	}
 	for i, fn := range checks {
 		if err := fn(); err == nil {
@@ -43,7 +43,7 @@ func TestRunOrgSwitchNoInputGuard(t *testing.T) {
 	defer func() { noInputMode = prev }()
 
 	var b bytes.Buffer
-	if err := runOrgSwitch(&fakeClient{orgs: sampleOrgs()}, &b, ""); err == nil {
+	if err := runOrgSwitch(&fakeClient{orgs: sampleOrgs()}, testPrinter(&b, "table"), ""); err == nil {
 		t.Error("expected errNoInput when switching with no target and --no-input")
 	}
 }

@@ -26,6 +26,33 @@ Nothing on this page asks you to copy an id out of a previous command. `members 
 `--no-input` always has a flag to reach for, and a terminal never needs one.
 </Callout>
 
+## What a command prints and how it fails
+
+A command that lists prints one table, or one array under `-o json`. An empty list prints `[]`
+under `-o json` and says so on stderr otherwise.
+
+A command that changes something prints one sentence, or one result under `-o json`:
+
+```json
+{
+  "id": "t2",
+  "kind": "team",
+  "action": "created",
+  "job": null,
+  "dry_run": false,
+  "object": { "id": "t2", "name": "platform", "member_count": 0 }
+}
+```
+
+`action` is `created`, `updated`, `deleted` or `unchanged`. `--dry-run` checks the input, sends
+nothing, and prints the same result with `dry_run: true` and the request under `object.request`.
+
+Stdout carries the result and nothing else. Notes, the resolved target and every error go to
+stderr. A failure exits with the code of its class: `5` when you are not permitted, `6` when the thing named does
+not exist, `8` for input that cannot be right, `9` when a value or a confirmation is needed and
+nothing can ask for it, `10` when the plan does not include the feature. The message is the
+control plane's own sentence.
+
 ## `alethia org list`
 
 List the organizations you belong to. The active org is marked in the `Active` column.
@@ -59,7 +86,10 @@ alethia org switch
 | Organization | The organization to make active; its id, slug, or name | `[org]` | — |
 
 The selection is persisted locally and sent as `X-Alethia-Org` on subsequent commands. Clear it with
-[`alethia config clear-context`](/reference/cli/configuration#alethia-config).
+[`alethia config clear-context`](/reference/cli/configuration#alethia-config). Nothing changes on
+the control plane. Switching to the organization that is already active reports `unchanged`. With
+no argument and nothing to ask, the command exits `9`; an organization that matches nothing exits
+`6`.
 
 ## `alethia org settings`
 
@@ -71,9 +101,9 @@ alethia org settings -o json
 ```
 
 Renders a field/value card: **name**, **slug**, **description**, **region** (the org's default
-provisioning region), **default env**, and **`terraform`** (the default OpenTofu version). Prints
-`Not in an organization (community mode).` when the caller has no real org (personal scope). Backing
-call: `GET /cli/org-settings`.
+provisioning region), **default env**, and **`terraform`** (the default OpenTofu version). When the
+caller has no real org (personal scope) it prints `null` under `-o json`, and otherwise says
+`Not in an organization (community mode).` on stderr. Backing call: `GET /cli/org-settings`.
 
 ## `alethia members list`
 
@@ -106,6 +136,10 @@ alethia members add
 `--role` defaults to `member`. A scripted `alethia members add ada@example.com --no-input` keeps
 that default; on a terminal the form asks, because the default is rarely what the inviter meant.
 
+`alethia members invite` is the same command under the name of what it does. The result's `kind` is
+`invitation`: the person becomes a member when they accept. `--dry-run` checks the address and
+sends no invitation.
+
 ## `alethia members remove`
 
 Remove a member. Name them by email, or pick from the org's members; the member id still works if
@@ -122,9 +156,10 @@ alethia members remove
 | ----- | ---------- | ---------------- | ---------- |
 | Member | Who to remove; name them by email rather than copying a member id | `[member_id]` | `--email` |
 
-This is destructive, so it confirms first. `--yes` (or `-y`) skips the prompt and is **required**
-with `--no-input` — a scripted removal without it exits non-zero rather than silently doing nothing.
-When the CLI picks the member for you, it prints which one on stderr before it asks.
+This is destructive, so it confirms first: you type the member's email. `--yes` (or `-y`) skips
+the prompt and is **required** with `--no-input` — a scripted removal without it exits `9` and
+removes nobody. When the CLI picks the member for you, it prints which one on stderr before it
+asks. `--dry-run` names the member that would be removed and removes nobody.
 
 ## `alethia teams list`
 
@@ -138,6 +173,8 @@ alethia teams list --org org_456
 ## `alethia teams create`
 
 Create a team. Pass the name to run without a terminal; with no name, the form asks for one.
+`--dry-run` checks the input and creates nothing. If the control plane refuses, its sentence is
+printed as it sent it.
 
 ```bash
 alethia teams create platform
@@ -165,8 +202,10 @@ alethia teams delete
 | ----- | ---------- | ---------------- | ---------- |
 | Team | Which team to delete; name it rather than copying a team id | `[team_id]` | `--name` |
 
-Members keep their org membership but lose the grants the team carried. Destructive, so it confirms;
-`--yes` skips the prompt and is required with `--no-input`.
+Members keep their org membership but lose the grants the team carried. Destructive, so it
+confirms: you type the team's name. `--yes` skips the prompt and is required with `--no-input`;
+without it the command exits `9` and deletes nothing. `--dry-run` names the team that would be
+deleted and deletes nothing.
 
 ## Flags
 
@@ -177,3 +216,4 @@ Members keep their org membership but lose the grants the team carried. Destruct
 | `--email <email>` | `members remove` | Name the member by address instead of a member id. |
 | `--name <name>` | `teams delete` | Name the team instead of a team id. |
 | `-y, --yes` | `members remove`, `teams delete` | Skip the confirmation prompt. Required with `--no-input`. |
+| `--dry-run` | `members add`, `members remove`, `teams create`, `teams delete` | Check the input and print what would be sent, without sending it. |

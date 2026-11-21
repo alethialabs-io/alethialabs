@@ -8,10 +8,13 @@ import "github.com/spf13/cobra"
 var orgCmd = &cobra.Command{
 	Use:     "org",
 	Aliases: []string{"orgs", "organization", "organizations"},
-	Short:   "Manage organizations",
-	Long: `List the organizations you belong to and switch the active organization
-context. The active org is sent with every request so the control plane scopes
-your access — members, teams, projects, runners, and jobs all resolve within it.`,
+	Short:   "List your organizations and choose the active one",
+	Long: `List the organizations you belong to, read the active one's settings, and switch
+the active organization.
+
+The active organization is sent with every request, so members, teams, projects, runners
+and jobs all resolve inside it. Pass --org to any command to act in another organization
+for that one invocation without switching.`,
 }
 
 func init() {
