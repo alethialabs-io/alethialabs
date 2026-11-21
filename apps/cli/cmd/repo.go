@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 	"slices"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -19,20 +18,29 @@ var repoCmd = &cobra.Command{
 	Use:     "repo",
 	Aliases: []string{"repos", "repositories"},
 	Short:   "Browse the git repositories Alethia can see",
-	Long: `List the repositories reachable through a connected git provider
-(GitHub, GitLab, or Bitbucket). These are the repos you can point a project at
-when authoring its infrastructure.`,
+	Long: `Lists the repositories reachable through a connected git provider (GitHub, GitLab or
+Bitbucket): the ones a BYO chart or IaC source can be attached from.`,
 }
 
 var repoListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List repositories for a connected git provider",
+	Args:  cobra.NoArgs,
+	Long: `Lists the repositories Alethia can reach through one connected git provider: each one's name,
+visibility, default branch and URL.
+
+Use it to check that a repository is reachable before attaching it with "alethia chart attach" or
+"alethia iac attach" — whose own forms offer the same list, so nothing has to be copied from here.
+--provider picks the provider (github when omitted); on a terminal without it you are asked which.
+
+--output json prints the repositories as an array, and --output csv the wire values.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		provider, _ := cmd.Flags().GetString("provider")
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
+		p := printerFor(cmd)
 		client := api.NewClient(token)
 		if provider, err = promptRepoProvider(cmd, provider); err != nil {
 			fail(err)
@@ -43,17 +51,17 @@ var repoListCmd = &cobra.Command{
 				repos, err = client.GetRepositories(provider)
 			})
 			if err != nil {
-				failf("Failed to list repositories: %v", err)
+				fail(fmt.Errorf("list %s repositories: %w", provider, err))
 			}
 			if len(repos) == 0 {
-				ui.Muted(fmt.Sprintf("No %s repositories found.", provider))
+				fmt.Fprintln(p.Out, ui.MutedStyle.Render(fmt.Sprintf("No %s repositories found.", provider)))
 				return
 			}
 			_ = ui.ShowTable(repoColumns, repoRows(repos, ui.FormatTable), "repositories")
 			return
 		}
-		if err := runRepoList(client, os.Stdout, outputFormat(cmd), provider); err != nil {
-			failf("Failed to list repositories: %v", err)
+		if err := runRepoList(client, p.Out, p.Format, provider); err != nil {
+			fail(fmt.Errorf("list %s repositories: %w", provider, err))
 		}
 	},
 }

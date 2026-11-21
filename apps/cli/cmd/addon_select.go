@@ -4,11 +4,10 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
-	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -79,10 +78,12 @@ type addonPickPrompt struct {
 //
 // Failing here rather than after the fetch is deliberate: the answer does not depend on what the
 // control plane holds, so asking it would only slow the error down.
-var errAddonIDRequired = errors.New(
-	"no add-on id given, and there is nowhere to ask (--no-input, or stdin/stdout is not a " +
-		"terminal): pass the add-on's catalog id as the first argument",
-)
+//
+// It is input_required (exit 9): the same invocation on a terminal would have offered the installed
+// add-ons.
+var errAddonIDRequired = refusal(clierr.CodeInputRequired, "alethia addon list",
+	"no add-on id given, and there is nowhere to ask (--no-input, or stdin/stdout is not a "+
+		"terminal): pass the add-on's catalog id as the first argument")
 
 // resolveAddonID answers "which add-on" from the positional argument or the picker.
 //
@@ -104,7 +105,7 @@ func resolveAddonID(c addonLister, args []string, project, env string, p addonPi
 		installed = view.Addons
 	}
 	if len(installed) == 0 {
-		return addonRef{}, errors.New(p.Empty)
+		return addonRef{}, refusal(clierr.CodeNotFound, "alethia addon list", "%s", p.Empty)
 	}
 	return pickAddon(installed, p)
 }
@@ -163,7 +164,7 @@ func announceResolvedAddon(ref addonRef, verb string) {
 	if ref.Summary == "" {
 		return
 	}
-	fmt.Fprintln(os.Stderr, ui.MutedStyle.Render(ui.SymbolPoint+" "+verb+" "+ref.Summary))
+	ui.MutedTo(printer.Err, ui.SymbolPoint+" "+verb+" "+ref.Summary)
 }
 
 // addonModeValues is every addon_mode, from the generated enum mirror.
@@ -203,6 +204,6 @@ func canonicalAddonMode(mode string) (string, error) {
 			return m, nil
 		}
 	}
-	return "", fmt.Errorf("--mode %q is not a delivery mode (want one of: %s)",
+	return "", refusal(clierr.CodeInvalidFlag, "", "--mode %q is not a delivery mode (want one of: %s)",
 		mode, strings.Join(allowed, ", "))
 }

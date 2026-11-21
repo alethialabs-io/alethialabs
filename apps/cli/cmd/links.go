@@ -6,6 +6,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/routing"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -63,11 +64,13 @@ func resolveOrgSlug(c orgSlugFetcher) (string, error) {
 			// Scoped elsewhere by --org or a service token, and that scope resolved to no
 			// organization. Refused rather than guessed: falling back to the config here would
 			// build the link into the very tenant the override said not to use.
-			return "", fmt.Errorf("the organization this command is scoped to has no slug to build a console link from — check the organization named by --org or by the service token")
+			return "", refusal(clierr.CodeConflict, "alethia whoami",
+				"the organization this command is scoped to has no slug to build a console link from — check the organization named by --org or by the service token")
 		}
 		// The personal scope has no organization, so it has no `/[org]` segment and no console
 		// page under one. Naming `org switch` is the action, not a description of the problem.
-		return "", fmt.Errorf("no active organization to build a console link for — run `alethia org switch` to choose one")
+		return "", refusal(clierr.CodeConflict, "alethia org switch",
+			"no active organization to build a console link for — run `alethia org switch` to choose one")
 	}
 	return who.ActiveOrg.Slug, nil
 }
