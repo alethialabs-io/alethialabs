@@ -5,7 +5,7 @@
 // Versions panel — each render pending, empty and error as three different things, and a failure in
 // one does not take down the others. The query hooks are stubbed; the components are real.
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type QueryState = { data?: unknown; isPending: boolean; isError: boolean; refetch: () => void };
@@ -29,7 +29,7 @@ vi.mock("@/lib/query/use-fleet-query", () => ({
 	useFleetQuery: () => ({ refetch: vi.fn(), ...h.fleet }),
 	useFleetEconomicsQuery: () => ({ data: null }),
 	useSetPoolEnabled: () => ({ mutate: vi.fn(), isPending: false }),
-	useDeletePool: () => ({ mutate: vi.fn(), isPending: false }),
+	useDeletePool: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("@/lib/query/use-runners-query", () => ({
 	useRunnersQuery: () => ({ refetch: vi.fn(), ...h.list }),
@@ -47,6 +47,8 @@ vi.mock("@/components/runners/runner-card", () => ({
 }));
 
 import { RunnersClient } from "@/app/(private)/[org]/~/runners/runners-client";
+import { DEFAULT_RUNNER_FILTERS } from "@/components/runners/runners-query";
+import { useRunnerFilters } from "@/lib/stores/use-runner-filters";
 
 const EMPTY_FACETS = { clouds: [], regions: [], versions: [] };
 
@@ -65,7 +67,10 @@ function settle(): void {
 	} satisfies Partial<QueryState>;
 }
 
-beforeEach(settle);
+beforeEach(() => {
+	settle();
+	useRunnerFilters.setState({ filters: DEFAULT_RUNNER_FILTERS });
+});
 
 describe("the runner grid", () => {
 	it("pending is the card skeleton — never the empty state", () => {
@@ -90,6 +95,24 @@ describe("the runner grid", () => {
 		settle();
 		render(<RunnersClient hosted />);
 		expect(screen.getByText("card edge")).toBeTruthy();
+	});
+});
+
+describe("the grid's filtered-empty state (R6 C-14)", () => {
+	it("runners that exist but are all filtered out say so, and Clear filters resets the bar", () => {
+		useRunnerFilters.setState({ filters: { ...DEFAULT_RUNNER_FILTERS, statuses: ["DRAINING"] } });
+		h.page = { isPending: false, isError: false, data: { rows: [], resultCount: 0, total: 3, facets: EMPTY_FACETS } };
+		render(<RunnersClient hosted />);
+		expect(screen.getByText("No runners match your filters.")).toBeTruthy();
+		expect(screen.queryByText("No runners yet")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+		expect(useRunnerFilters.getState().filters).toEqual(DEFAULT_RUNNER_FILTERS);
+	});
+
+	it("the first-run state offers no Clear filters — there is nothing to clear", () => {
+		h.page = { isPending: false, isError: false, data: { rows: [], resultCount: 0, total: 0, facets: EMPTY_FACETS } };
+		render(<RunnersClient hosted />);
+		expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
 	});
 });
 
@@ -124,6 +147,22 @@ describe("the Pools column (self-managed only)", () => {
 		render(<RunnersClient hosted={false} />);
 		expect(screen.getByText("No runner pools configured")).toBeTruthy();
 	});
+
+	it("the empty state's action is the Add pool button, once on screen, for a viewer who manages pools (R6 C-17)", () => {
+		h.fleet = { isPending: false, isError: false, data: { pools: [], configs: [], canManageFleet: true } };
+		render(<RunnersClient hosted={false} />);
+		const buttons = screen.getAllByRole("button", { name: /Add pool/ });
+		expect(buttons).toHaveLength(1);
+		expect(buttons[0].hasAttribute("disabled")).toBe(false);
+	});
+
+	it("a viewer who cannot manage pools sees Add pool disabled, with the reason", () => {
+		render(<RunnersClient hosted={false} />);
+		const button = screen.getByRole("button", { name: /Add pool/ });
+		expect(button.hasAttribute("disabled")).toBe(true);
+		expect(button.getAttribute("aria-describedby")).toBeTruthy();
+		expect(document.body.textContent).toContain("Ask an owner or admin");
+	});
 });
 
 describe("the Versions panel", () => {
@@ -153,6 +192,13 @@ describe("a refusal is not a failure (RUBRIC B4)", () => {
 		expect(screen.getByText("You don't have access to runners")).toBeTruthy();
 		expect(screen.queryByText("Couldn't load runners")).toBeNull();
 		expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+	});
+
+	it("a forbidden grid replaces the column: no result count over rows the viewer cannot read (R6 C-15)", async () => {
+		h.page = { isPending: false, isError: true, data: undefined, error: await forbidden() };
+		const { container } = render(<RunnersClient hosted />);
+		expect(container.querySelectorAll('[data-slot="count-pill"]')).toHaveLength(0);
+		expect(screen.getByRole("heading", { name: "Runners" })).toBeTruthy();
 	});
 
 	it("forbidden versions and pools say so too", async () => {

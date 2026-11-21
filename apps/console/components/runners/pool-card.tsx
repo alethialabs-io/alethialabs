@@ -6,16 +6,6 @@ import { lookup } from "@/lib/typed-object";
 import type { FleetPoolView, PoolEconomics } from "@/lib/rpc/procedures/runners";
 import { formatMinutes, formatMoney } from "@repo/format";
 import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
-import {
-	AlertDialog,
-	AlertDialogAction,
-	AlertDialogCancel,
-	AlertDialogContent,
-	AlertDialogDescription,
-	AlertDialogFooter,
-	AlertDialogHeader,
-	AlertDialogTitle,
-} from "@repo/ui/alert-dialog";
 import { Card } from "@repo/ui/card";
 import { EmptyState } from "@repo/ui/empty";
 import {
@@ -28,14 +18,16 @@ import {
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 import { MoreVertical, Pause, Pencil, Play, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 
 /** Management callbacks; when `canManage` and these are provided the card shows its menu. */
 export interface PoolCardActions {
 	canManage?: boolean;
 	onEdit?: () => void;
 	onToggle?: () => void;
-	onDelete?: () => void;
+	/** Deletes the pool once confirmed; a promise that rejects keeps the confirmation open. */
+	onDelete?: () => unknown;
 }
 
 const MONO_LABEL = "font-mono text-ui-3xs uppercase tracking-[0.12em] text-muted-foreground";
@@ -163,28 +155,16 @@ export function PoolCard({ pool, economics, canManage, onEdit, onToggle, onDelet
 			</div>
 
 			{onDelete && (
-				<AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-					<AlertDialogContent>
-						<AlertDialogHeader>
-							<AlertDialogTitle>Delete the {label} pool?</AlertDialogTitle>
-							<AlertDialogDescription>
-								The controller will drain and reap this pool&rsquo;s runners on the next tick. This cannot be undone.
-							</AlertDialogDescription>
-						</AlertDialogHeader>
-						<AlertDialogFooter>
-							<AlertDialogCancel>Cancel</AlertDialogCancel>
-							<AlertDialogAction
-								variant="destructive"
-								onClick={() => {
-									setConfirmDelete(false);
-									onDelete();
-								}}
-							>
-								Delete
-							</AlertDialogAction>
-						</AlertDialogFooter>
-					</AlertDialogContent>
-				</AlertDialog>
+				<ConfirmAction
+					open={confirmDelete}
+					onOpenChange={setConfirmDelete}
+					title={`Delete the ${label} pool?`}
+					description="The controller drains and removes this pool's runners on its next pass. This cannot be undone."
+					confirmLabel="Delete"
+					pendingLabel="Deleting…"
+					severity={{ level: "confirm" }}
+					run={onDelete}
+				/>
 			)}
 
 			{/* body */}
@@ -296,8 +276,11 @@ export function PoolCardSkeleton() {
 	);
 }
 
-/** Empty state shown in the pools sidebar when no warm pools are configured. */
-export function PoolsEmpty() {
+/**
+ * Empty state shown in the pools sidebar when no warm pools are configured. `action` is the page's
+ * own "Add pool" control (disabled, with its reason, for a viewer who cannot manage pools).
+ */
+export function PoolsEmpty({ action }: { action?: ReactNode }) {
 	return (
 		<EmptyState
 			className="border border-border bg-card"
@@ -306,8 +289,8 @@ export function PoolsEmpty() {
 			// take an entry out of the document outline.
 			level={3}
 			title="No runner pools configured"
-			description="Once a target cloud is connected, the controller provisions a warm pool of runners here and keeps it sized to demand."
-			action={<span className={MONO_LABEL}>Connect a cloud in Settings to begin</span>}
+			description="A pool keeps a number of managed runners warm in one cloud, sized to demand. Add one to have the controller provision runners for you."
+			action={action}
 		/>
 	);
 }
