@@ -126,7 +126,15 @@ alethia fleet set gcp --version v1.4.0
 
 # Pause a pool (drains its runners — prompts for confirmation)
 alethia fleet set azure --enabled=false
+
+# Show the request a change would send, and send nothing
+alethia fleet set aws --max 3 --dry-run
 ```
+
+`--dry-run` prints the request that `fleet set` would send and sends nothing: the provider, plus
+only the fields you passed. A person reads it as one sentence, for example
+`Would set the aws pool to max 3`, and `-o json` prints the request itself. A dry run asks for no
+confirmation, not even for `--enabled=false`, because nothing changes.
 
 {/* fieldspec: alethia fleet set */}
 
