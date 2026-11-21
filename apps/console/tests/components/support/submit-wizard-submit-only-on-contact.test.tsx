@@ -12,6 +12,7 @@
 // these tests pin the two things that close it instead, each of which fails on the old code:
 //   · the click on Continue is cancelled (`fireEvent.click` returns false), so no activation runs;
 //   · the Submit button is a NEW node, not the clicked Continue re-typed.
+// Both are now the shared `WizardFooter`'s guarantee (`@repo/ui/wizard`), not handlers in the form.
 // Enter in the Subject field is the browser's implicit submission (the step has one text input and no
 // submit button), modelled here as a submit event on the form.
 
@@ -26,6 +27,10 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/app/server/actions/support", () => ({ submitCase }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
+vi.mock("@/lib/wizard/location", async () => {
+	const harness = await import("@/tests/components/support/submit-wizard-harness");
+	return { useWizardEnvironment: harness.useTestWizardEnvironment };
+});
 // The Area step is a Radix Select, which jsdom cannot open; its choice is not under test here.
 vi.mock("@/components/support/submit/steps/step-category", () => ({
 	StepCategory: function StepCategoryStub() {
@@ -39,13 +44,9 @@ vi.mock("@/components/support/submit/steps/step-category", () => ({
 }));
 
 import { SubmitCaseForm } from "@/components/support/submit/submit-case-form";
+import { resetTestPage } from "@/tests/components/support/submit-wizard-harness";
 
-beforeEach(() => {
-	submitCase.mockReset();
-	submitCase.mockResolvedValue({ ok: true, data: { id: "case-1", caseNumber: 1 } });
-});
-
-/** Renders the wizard with a pre-filled notification email. */
+/** Renders the new-case wizard for org `acme`, with a pre-filled notification email. */
 function renderWizard() {
 	return render(
 		<QueryClientProvider client={new QueryClient()}>
@@ -54,8 +55,17 @@ function renderWizard() {
 	);
 }
 
+beforeEach(() => {
+	resetTestPage();
+	submitCase.mockReset();
+	submitCase.mockResolvedValue({ ok: true, data: { id: "case-1", caseNumber: 1 } });
+});
+
 /** Answers steps 1–3 (type, area, the defaulted severity) and lands on Details. */
 async function toDetails() {
+	// Wait for the first step itself: until the draft is read the page shows its skeleton, whose
+	// placeholder cards carry the same words and would take the click.
+	await screen.findByRole("radiogroup", { name: "Case type" });
 	fireEvent.click(screen.getByText("Technical"));
 	fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 	fireEvent.click(await screen.findByRole("button", { name: "Pick Clusters" }));

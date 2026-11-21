@@ -21,7 +21,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render } from "@testing-library/react";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CaseListItem as CaseListItemData, CaseWithThread } from "@/lib/queries/support";
 
 vi.mock("next/navigation", () => ({
@@ -44,6 +44,11 @@ vi.mock("@/components/classification/classification-control", () => ({ Classific
 // The case route's loading form reads the case's shape on the server (`case-shape.test.ts`).
 const { readCaseShape } = vi.hoisted(() => ({ readCaseShape: vi.fn() }));
 vi.mock("@/components/support/cases/read-case-shape", () => ({ readCaseShape }));
+// The new-case wizard's URL and viewer (`submit-wizard-harness.tsx`).
+vi.mock("@/lib/wizard/location", async () => {
+	const harness = await import("@/tests/components/support/submit-wizard-harness");
+	return { useWizardEnvironment: harness.useTestWizardEnvironment };
+});
 vi.mock("@/components/support/use-submit-case", () => ({
 	useSubmitCase: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -67,6 +72,7 @@ import { CASE_ROW, CASE_ROWS } from "@/components/support/cases/case-list-item";
 import { CaseListSkeletonRows } from "@/components/support/cases/case-list-skeleton";
 import { SubmitCaseForm, SubmitCaseFormSkeleton } from "@/components/support/submit/submit-case-form";
 import { orpc } from "@/lib/rpc/client";
+import { resetTestPage } from "@/tests/components/support/submit-wizard-harness";
 
 /** Renders under a fresh QueryClient, optionally seeded. */
 function renderWithClient(ui: ReactElement, seed?: (qc: QueryClient) => void) {
@@ -155,48 +161,65 @@ describe("~/support/abuse: the skeleton is the form's layout (#6354, B2)", () =>
 });
 
 describe("~/support/submit: the skeleton is the wizard's first step (#6354, B2)", () => {
-	const real = () =>
-		renderWithClient(<SubmitCaseForm orgSlug="acme" defaultEmail="a@example.test" />).container.firstElementChild;
+	beforeEach(() => {
+		resetTestPage();
+	});
+
+	/** The wizard's frame, once it has read its draft and drawn its first step. */
+	const real = async () => {
+		const view = renderWithClient(<SubmitCaseForm orgSlug="acme" defaultEmail="a@example.test" />);
+		await view.findByRole("radiogroup", { name: "Case type" });
+		return view.container.firstElementChild;
+	};
 	const skeleton = () => render(<SubmitCaseFormSkeleton />).container.firstElementChild;
 
-	it("has the wizard's frame and the same stepper", () => {
-		const form = real();
+	it("has the wizard's frame and the same stepper", async () => {
+		const form = await real();
 		const sk = skeleton();
 		expect(classes(sk)).toEqual(classes(form));
 		expect(sk?.querySelector("nav")?.outerHTML).toBe(form?.querySelector("nav")?.outerHTML);
 	});
 
-	it("draws step 1's heading and one card per case type, in the same grid with the same copy", () => {
-		const form = real();
+	it("draws step 1's heading and one card per case type, in the same grid with the same copy", async () => {
+		const form = await real();
 		const sk = skeleton();
 		expect(sk?.querySelector("h2")?.textContent).toBe(form?.querySelector("h2")?.textContent);
 
-		const cards = Array.from(form?.querySelectorAll("button[aria-pressed]") ?? []);
+		const cards = Array.from(form?.querySelectorAll('[data-slot="choice-card"]') ?? []);
 		const placeholders = Array.from(sk?.querySelectorAll('[data-slot="radio-card-skeleton"]') ?? []);
-		expect(cards).toHaveLength(5);
+		expect(cards).toHaveLength(4);
 		expect(placeholders).toHaveLength(cards.length);
 		// Two columns from `sm`, as the page draws them — the audit read two columns over none.
 		expect(classes(placeholders[0].parentElement)).toEqual(classes(cards[0].parentElement));
 		expect(classes(placeholders[0].parentElement)).toContain("sm:grid-cols-2");
+		const copyMismatches: number[] = [];
+		const missingTokens: string[] = [];
 		placeholders.forEach((p, i) => {
-			expect(p.textContent, `card ${i}'s copy`).toBe(cards[i].textContent);
+			if (p.textContent !== cards[i].textContent) copyMismatches.push(i);
 			// The card's box: every layout token of the placeholder is the card's.
 			for (const token of classes(p).filter((t) => t !== "border-border")) {
-				expect(classes(cards[i]), `card ${i} carries ${token}`).toContain(token);
+				if (!classes(cards[i]).includes(token)) missingTokens.push(`card ${i}: ${token}`);
 			}
 		});
+		expect(copyMismatches).toEqual([]);
+		expect(missingTokens).toEqual([]);
+		// The line under the cards that links to the abuse form, with the same words.
+		expect(sk?.querySelector('[data-slot="radio-card-skeleton"]')?.parentElement?.parentElement?.lastElementChild?.textContent).toBe(
+			form?.querySelector('[role="radiogroup"]')?.parentElement?.lastElementChild?.textContent,
+		);
 	});
 
-	it("ends in the button row, with the empty Back slot and a Continue-sized placeholder", () => {
-		const form = real();
+	it("ends in the button row, with a Continue-sized placeholder where the primary action stands", async () => {
+		const form = await real();
 		const sk = skeleton();
-		const row = Array.from(form?.querySelectorAll("button") ?? []).find((b) => b.textContent === "Continue")?.parentElement;
+		const row = form?.querySelector('[data-slot="wizard-footer"]')?.parentElement;
 		const skRow = sk?.lastElementChild?.lastElementChild;
 		expect(classes(skRow)).toEqual(classes(row));
-		expect(kids(skRow)).toHaveLength(kids(row).length);
-		expect(classes(kids(skRow)[1])).toContain("h-9");
+		expect(classes(kids(skRow)[0])).toContain("justify-end");
+		expect(classes(kids(kids(skRow)[0])[0])).toContain("h-9");
 	});
 });
+
 
 describe("~/support/my-cases: the answered list is a list, in the skeleton's frame (#6354, B2)", () => {
 	const item = (id: string, case_number: number, subject: string): CaseListItemData => ({
