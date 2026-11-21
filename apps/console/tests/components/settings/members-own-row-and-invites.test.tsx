@@ -132,7 +132,7 @@ describe("the viewer's own row (R6 E-10)", () => {
 describe("a pending invitation (R6 E-13)", () => {
 	it("says when it was sent", () => {
 		render(tree(new QueryClient()));
-		expect(screen.getByText(/^invited 2 days ago$/)).toBeInTheDocument();
+		expect(screen.getByText("invited by Ada Lovelace · 2 days ago")).toBeInTheDocument();
 	});
 
 	it("can be sent again, at its role", async () => {

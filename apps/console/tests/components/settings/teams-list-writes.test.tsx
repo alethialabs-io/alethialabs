@@ -94,15 +94,19 @@ describe("the role gate (R6 E-08)", () => {
 		expect(description(create)).toContain(TEAM_WRITE_DENIED);
 	});
 
-	it("disables Rename and Delete in the row menu, saying why, and leaves the roster readable", async () => {
+	it("disables Rename in the row menu, saying why, and leaves the roster readable", async () => {
 		const user = userEvent.setup();
 		render(tree(NONE));
 		await user.click(await screen.findByRole("button", { name: "Manage team Networking" }));
 		const rename = await screen.findByRole("menuitem", { name: /Rename team/ });
-		const remove = screen.getByRole("menuitem", { name: /Delete team/ });
 		expect(rename).toHaveAttribute("aria-disabled", "true");
-		expect(remove).toHaveAttribute("aria-disabled", "true");
 		expect(rename).toHaveTextContent(TEAM_WRITE_DENIED);
+		// Delete stays reachable on the plan alone until #7050 names the roles (see teams-list.tsx):
+		// its confirmation is a measured registry entry, and the server's refusal shows in it.
+		expect(screen.getByRole("menuitem", { name: "Delete team" })).not.toHaveAttribute(
+			"aria-disabled",
+			"true",
+		);
 		expect(screen.getByRole("menuitem", { name: "Manage members" })).not.toHaveAttribute(
 			"aria-disabled",
 			"true",

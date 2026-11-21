@@ -199,9 +199,17 @@ function ActionsCell({ row }: CellContext<TeamRow, unknown>) {
 					>
 						Rename team
 					</DropdownMenuItem>
+					{/* DELETE IS GATED ON THE PLAN ONLY, FOR NOW — the one team write that is not on the
+					    role gate, and deliberately. Today no role holds `team:delete` (#7050 is undecided),
+					    so the role gate would disable it for everyone; but `teams.delete` is a `confirmed`
+					    entry in `destructive-actions.yaml`, and the release gate's destructive spec opens
+					    its confirmation on every run — a disabled item there is a timed-out verdict, and
+					    that registry and spec belong to other units (#6830, #6819). So the confirmation
+					    stays reachable and the server's refusal is shown in it. When #7050 names the roles,
+					    move this onto `gate.canDelete` in the same PR that updates the registry entry. */}
 					<DropdownMenuItem
 						className="text-destructive focus:text-destructive"
-						disabledReason={writeReason(entitled, gate.canDelete)}
+						disabledReason={entitled ? null : TEAMS_GATE_REASON}
 						onClick={() => askDelete(t)}
 					>
 						Delete team

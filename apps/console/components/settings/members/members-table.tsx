@@ -751,13 +751,16 @@ export function MembersTable() {
       kind: "invite",
       refId: i.id,
       name: i.email,
-      meta: `invited by ${i.inviterName}`,
+      // WHEN it was sent, against the payload's `asOf` like every other relative time here (#5377).
+      // It rides in the member cell's second line, which WRAPS, and not in "Last active", which is
+      // `whitespace-nowrap`: "invited less than a minute ago" there widened that column until the
+      // row's last column — the "Manage …" trigger — was pushed past the table's clip edge.
+      meta: `invited by ${i.inviterName} · ${formatRelative(i.createdAt, asOf ? new Date(asOf) : undefined)}`,
       avatar: userInitials({ email: i.email }),
       role: i.role,
       teams: [],
       status: "pending",
-      // WHEN it was sent, against the payload's `asOf` like every other relative time here (#5377).
-      activity: `invited ${formatRelative(i.createdAt, asOf ? new Date(asOf) : undefined)}`,
+      activity: "— invited",
       isYou: false,
     }));
     return [...memberRows, ...inviteRows];
