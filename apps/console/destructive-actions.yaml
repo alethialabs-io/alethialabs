@@ -1009,28 +1009,21 @@ controls:
   - id: account.delete
     route: /[org]
     surface: apps/console/components/shell/account-settings-dialog.tsx
-    # OPENS AN ERASURE REQUEST; it deletes nothing (#4273, ruled 2026-09-18). The click reaches
-    # `requestMyErasure` (app/server/actions/privacy/self-serve.ts), which opens a privacy case about
-    # the signed-in user with identity recorded as session-verified, and emails it to the privacy
-    # inbox in the same transaction; a deployment with no inbox (self-managed, no PRIVACY_EMAIL)
-    # opens no case (#4875). A person fulfils it. The id
-    # keeps its name because the census and the gate ledger key on it, not because the control
-    # deletes.
-    #
-    # THE EXECUTOR LANDED (#4854) AND THIS ROW DID NOT MOVE, which is the answer and not an
-    # oversight. `fulfilErasure` really does delete and overwrite rows now — but it is gated on
-    # standing over the CASE, and the subject is deliberately NOT one of the grounds: an erasure
-    # needs a second party, so the person whose account it is cannot fulfil their own request.
-    # This control still only OPENS a request. If a self-service erasure is ever built it is a
-    # different mutation with its own row here, its own typed confirmation and its own e2e.
-    mutation: requestMyErasure
+    # SCHEDULES THE ACCOUNT'S DELETION, 14 days out (the maintainer's decision: account deletion is
+    # an automatic erasure after a grace period). The click first asks `myDeletionBlockers` and, when
+    # nothing blocks it, opens a TYPED confirmation (the account's address); confirming reaches
+    # `scheduleMyAccountDeletion` (app/server/actions/privacy/self-serve.ts →
+    # lib/privacy/self-deletion.ts), which opens an erasure case with `scheduledFor`, emails a cancel
+    # link and revokes every session. The privacy sweep runs the erasure when the grace period ends;
+    # signing in again or the emailed link withdraws it first.
+    mutation: scheduleMyAccountDeletion
     reach: [{ menu: "Account menu" }, { open: "Account settings" }]
-    control: { role: button, name: "Request deletion" }
+    control: { role: button, name: "Delete account" }
     confirm: confirm-dialog
-    confirm_action: "Open erasure request"
-    dialog_title: "Request deletion of your account?"
+    confirm_action: "Schedule deletion"
+    dialog_title: "Delete your account?"
     fixture: none
     persona: owner
     status: confirmed
     prod-qa: skip
-    reason: confirming opens a real erasure request about the QA account on alethialabs.io and emails it to the privacy inbox, where a person then acts on it; the production pass is reversible-only and nothing it can do withdraws that request, so this control is never opened there
+    reason: confirming schedules the real deletion of the QA account on alethialabs.io and signs it out everywhere; the production pass is reversible-only, so this control is never opened there

@@ -98,3 +98,48 @@ export function setOrgPlan(input: {
 }): Promise<{ ok: true }> {
 	return post("/set-plan", input);
 }
+
+/** What the console answered for one staff privacy decision. */
+export interface StaffPrivacyResult {
+	ok: boolean;
+	message: string;
+	reference?: string;
+}
+
+/** Reads a staff privacy result off an unknown response body, or throws on a shape it does not know. */
+function readPrivacyResult(body: unknown): StaffPrivacyResult {
+	if (
+		typeof body === "object" &&
+		body !== null &&
+		"ok" in body &&
+		typeof body.ok === "boolean" &&
+		"message" in body &&
+		typeof body.message === "string"
+	) {
+		const reference = "reference" in body && typeof body.reference === "string" ? body.reference : undefined;
+		return { ok: body.ok, message: body.message, reference };
+	}
+	throw new Error("The console answered the privacy action with an unexpected body.");
+}
+
+/**
+ * One staff privacy-queue decision, carried out by the console (`/api/internal/platform/privacy`)
+ * so it runs the same steps a console decision does and lands in the case's own ledger.
+ */
+export async function privacyAction(
+	input:
+		| { action: "verify" | "fulfil"; reference: string; staffUserId: string }
+		| { action: "extend" | "hold" | "refuse"; reference: string; reason: string; staffUserId: string }
+		| { action: "open"; kind: string; email: string; staffUserId: string },
+): Promise<StaffPrivacyResult> {
+	const res = await fetch(`${consoleOrigin()}/api/internal/platform/privacy`, {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+			authorization: `Bearer ${provisionSecret()}`,
+		},
+		body: JSON.stringify(input),
+		cache: "no-store",
+	});
+	return readPrivacyResult(await readResponse("/privacy", res));
+}

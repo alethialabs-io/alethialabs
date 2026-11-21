@@ -388,6 +388,19 @@ export const auth = betterAuth({
 				},
 			},
 		},
+		session: {
+			create: {
+				// Signing in cancels a scheduled self-serve account deletion (lib/privacy/self-deletion.ts):
+				// scheduling revoked every session, so a new one is the person coming back. Best-effort —
+				// a failure must not refuse the sign-in — and loud, because the deletion then still runs.
+				after: async (s) => {
+					const { cancelScheduledErasure } = await import("@/lib/privacy/self-deletion");
+					await cancelScheduledErasure({ userId: s.userId }, "sign_in", new Date()).catch((e) =>
+						log.error("[privacy] cancelling a scheduled deletion on sign-in failed", { err: e }),
+					);
+				},
+			},
+		},
 	},
 	plugins,
 });

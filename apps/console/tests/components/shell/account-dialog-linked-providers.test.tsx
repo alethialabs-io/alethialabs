@@ -19,7 +19,12 @@ vi.mock("@/lib/auth/client", () => ({
 	authClient: { listAccounts, updateUser: vi.fn() },
 	liveSession: { subscribe: () => () => {}, get: () => ({ data: null, isPending: true, error: null }), onPossibleChange: () => () => {} },
 }));
-vi.mock("@/app/server/actions/privacy/self-serve", () => ({ requestMyErasure: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn(), push: vi.fn() }) }));
+vi.mock("@/app/server/actions/privacy/self-serve", () => ({
+	myDeletionBlockers: vi.fn(),
+	scheduleMyAccountDeletion: vi.fn(),
+	requestMyDataExport: vi.fn(),
+}));
 
 import { ViewerProvider } from "@/components/providers/viewer-provider";
 import { AccountSettingsDialog } from "@/components/shell/account-settings-dialog";

@@ -40,6 +40,13 @@ vi.mock("@/lib/authz/guard", () => ({
 }));
 /** The MCP / API-token path's actor, when one is in scope. `undefined` is a browser session. */
 let injected: { userId: string; orgId: string } | undefined;
+/**
+ * The half outside Postgres (OpenFGA, Stripe) runs only after the transaction commits, and only for
+ * an erasure that happened. It has its own suite (tests/privacy/erasure-outside.test.ts); here it is
+ * a spy, so the transaction assertions below stay about the transaction.
+ */
+const { eraseOutsidePostgres } = vi.hoisted(() => ({ eraseOutsidePostgres: vi.fn(async () => undefined) }));
+vi.mock("@/lib/privacy/erasure-outside", () => ({ eraseOutsidePostgres }));
 vi.mock("@/lib/authz/actor-context", () => ({
 	getInjectedActor: () => injected,
 }));
@@ -264,6 +271,7 @@ beforeEach(() => {
 	authorize.mockReset();
 	authorizeInOrg.mockReset();
 	currentActor.mockReset();
+	eraseOutsidePostgres.mockClear();
 	// The default caller: an admin of the TENANT the case was raised in, whose own session points
 	// somewhere else entirely. Standing comes from the case's organization, never from that.
 	currentActor.mockResolvedValue({ userId: ADMIN, orgId: ADMIN });
@@ -484,6 +492,11 @@ describe("erasing, once the org is clear", () => {
 		// The only bare read is `caseByReference`, before the transaction opens.
 		expect(calls.filter((c) => c.bare).map((c) => c.table)).toEqual([privacyCase]);
 	});
+
+	it("tells OpenFGA and Stripe only after an erasure that happened, as the deciding admin", async () => {
+		await fulfilErasure("DSR-ABCD1234", NOW);
+		expect(eraseOutsidePostgres).toHaveBeenCalledWith("case-1", SUBJECT, ADMIN);
+	});
 });
 
 describe("what it will not do", () => {
@@ -499,6 +512,7 @@ describe("what it will not do", () => {
 		expect(of("insert", privacyErasureTombstone)).toHaveLength(1);
 		expect(of("update", privacyCase)[0]?.set).toMatchObject({ state: "in_review" });
 		expect(events()[0]?.kind).toBe("legal_hold_applied");
+		expect(eraseOutsidePostgres).not.toHaveBeenCalled();
 		// A hold is checked BEFORE the residency, so a held case is not also asked to tear down
 		// its infrastructure first.
 		expect(calls.some((c) => c.table === projects)).toBe(false);

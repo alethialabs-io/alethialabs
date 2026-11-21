@@ -4,13 +4,17 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { Calendar, Mail, Shield, User } from "lucide-react";
+import { Calendar, Download, Mail, Shield, User } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
-import { PRIVACY_RESPONSE_DAYS } from "@/app/server/actions/privacy/response-period";
-import { requestMyErasure } from "@/app/server/actions/privacy/self-serve";
+import {
+	myDeletionBlockers,
+	requestMyDataExport,
+	scheduleMyAccountDeletion,
+} from "@/app/server/actions/privacy/self-serve";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { authClient } from "@/lib/auth/client";
 import { useViewer } from "@/components/providers/viewer-provider";
@@ -72,16 +76,17 @@ interface AccountSettingsDialogProps {
 /**
  * The account/profile settings dialog opened from the sidebar account menu's gear. Shows
  * the user's account overview (avatar, name, email, linked auth providers, member-since),
- * lets them edit their display name (persisted via Better Auth `updateUser`), and exposes
- * the account danger zone, whose "Request deletion" button opens an erasure privacy case
- * about the signed-in user (`requestMyErasure`) behind a confirmation — a request a person
- * fulfils, not a deletion (#4273).
+ * lets them edit their display name (persisted via Better Auth `updateUser`), emails them a
+ * download of their data (`requestMyDataExport`), and exposes the account danger zone, whose
+ * "Delete account" button schedules the account's deletion 14 days out behind a typed
+ * confirmation (`scheduleMyAccountDeletion`, lib/privacy/self-deletion.ts).
  */
 export function AccountSettingsDialog({
 	open,
 	onOpenChange,
 }: AccountSettingsDialogProps) {
 	const { viewer: user } = useViewer();
+	const router = useRouter();
 	// Fetched once, and only when the dialog is first OPENED (#6114, F003): the dialog is mounted up
 	// to three times by the shell, and each copy used to fetch on mount — three requests on every
 	// page load for badges nobody had opened. The linked providers do not change while a page is
@@ -94,7 +99,9 @@ export function AccountSettingsDialog({
 		gcTime: Number.POSITIVE_INFINITY,
 	});
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const [requesting, setRequesting] = useState(false);
+	const [checking, setChecking] = useState(false);
+	const [exporting, setExporting] = useState(false);
+	const [blockers, setBlockers] = useState<string[]>([]);
 
 	const {
 		register,
@@ -123,35 +130,67 @@ export function AccountSettingsDialog({
 	});
 
 	/**
-	 * Opens the erasure request for the signed-in user and says what happened — a request with a
-	 * reference that was sent to the privacy inbox, never a deletion. A second press while one is
-	 * open gets the existing reference back. A deployment with no privacy contact opens nothing, and
-	 * the toast says so rather than implying anyone was told. Answers `false` only when the request
-	 * could not be made at all, which keeps the confirmation open to try again.
+	 * Asks what would stop the deletion BEFORE the confirmation opens, so a person with a live
+	 * environment or a team to hand over is told that instead of being asked to type their address.
+	 * The settings dialog closes first: the destructive-action spec finds the confirmation as the
+	 * FIRST dialog on the page.
 	 */
-	const onRequestErasure = async (): Promise<boolean> => {
-		setRequesting(true);
+	const onDeleteClicked = async () => {
+		setChecking(true);
 		try {
-			const result = await requestMyErasure();
-			if (result.outcome === "already_open") {
-				toast.info(
-					`You already have an open erasure request (${result.reference}). Nothing has been deleted yet.`,
-				);
-			} else if (result.outcome === "opened") {
-				toast.success(
-					`Erasure request ${result.reference} opened. Nothing has been deleted yet — the request was sent to the privacy team.`,
-				);
-			} else {
-				toast.error(
-					"No request was opened: this deployment has no privacy contact configured. Ask your administrator to erase your account.",
-				);
+			const found = await myDeletionBlockers();
+			setBlockers(found.map((b) => b.message));
+			if (found.length === 0) {
+				onOpenChange(false);
+				setConfirmOpen(true);
 			}
+		} catch {
+			toast.error("Couldn't check whether your account can be deleted. Please try again.");
+		} finally {
+			setChecking(false);
+		}
+	};
+
+	/**
+	 * Schedules the deletion. On success every session of the account has been revoked, so the
+	 * browser goes to the sign-in page, which is also where the person cancels. Answers `false`
+	 * when nothing was scheduled, which keeps the confirmation open.
+	 */
+	const onConfirmDeletion = async (): Promise<boolean> => {
+		try {
+			const result = await scheduleMyAccountDeletion();
+			if (result.outcome === "blocked") {
+				setBlockers(result.blockers.map((b) => b.message));
+				toast.error("Your account can't be deleted yet. Open Account settings to see why.");
+				return true;
+			}
+			toast.success(
+				`Your account will be deleted on ${formatDate(result.scheduledFor)}. Sign in before then to cancel.`,
+			);
+			router.replace("/login");
 			return true;
 		} catch {
-			toast.error("Couldn't open the erasure request. Please try again.");
+			toast.error("Couldn't schedule the deletion. Please try again.");
 			return false;
+		}
+	};
+
+	/** Emails the person a link to a JSON export of their data. */
+	const onExport = async () => {
+		setExporting(true);
+		try {
+			const result = await requestMyDataExport();
+			if (result.outcome === "rate_limited") {
+				toast.error("You have asked for several exports today. Try again tomorrow.");
+			} else {
+				toast.success(
+					`Your data export is ready. We emailed ${user?.email ?? "you"} a download link that works until ${formatDate(result.expiresAt, "datetime")}.`,
+				);
+			}
+		} catch {
+			toast.error("Couldn't prepare your data export. Please try again.");
 		} finally {
-			setRequesting(false);
+			setExporting(false);
 		}
 	};
 
@@ -274,56 +313,78 @@ export function AccountSettingsDialog({
 
 					<div className="h-px bg-border" />
 
-					{/* Danger zone — REQUESTS deletion; it deletes nothing (#4273).
+					{/* Your data — the access and portability rights, answered at once (lib/privacy/export.ts). */}
+					<SectionHeading
+						title="Your data"
+						level={4}
+						description="Download a copy of the personal data your account holds, as a JSON file with a signed manifest. We email you a link that works for 72 hours, only while you are signed in."
+						actions={
+							<Button
+								variant="outline"
+								size="sm"
+								className="h-9 shrink-0 text-xs font-medium"
+								disabled={exporting}
+								onClick={() => void onExport()}
+							>
+								<Download className="h-3.5 w-3.5" />
+								{exporting ? "Preparing…" : "Download my data"}
+							</Button>
+						}
+					/>
 
-					    The maintainer's ruling (2026-09-18, revised on #4273): this button opens an ERASURE
-					    PRIVACY CASE about the signed-in user, with identity recorded as verified by the session,
-					    and a person fulfils it. The case is emailed to the privacy inbox as it is opened, or it
-					    is not opened at all (#4875) — which is what lets the copy say it was "sent to the
-					    privacy team". It does not call `fulfilErasure` — which since #4854 DOES erase rows, and
-					    which REFUSES THE SUBJECT: fulfilment is gated on standing over the case and being its
-					    subject is not one of the grounds, because an erasure needs a second party. So the copy
-					    and the gate say the same thing — a request is opened, a person reviews it, and nothing
-					    is deleted at that moment. A self-service erasure would be a different mutation with its
-					    own row in `destructive-actions.yaml`, its own confirmation and its own
-					    `e2e/account-settings.spec.ts` coverage.
+					<div className="h-px bg-border" />
 
-					    The settings dialog CLOSES before the confirmation opens, rather than stacking the
-					    confirmation on top of it: `e2e/audit/destructive.spec.ts` finds the confirmation as the
-					    FIRST dialog on the page, and a settings dialog still open underneath would be found
-					    first. */}
+					{/* Danger zone — SCHEDULES the deletion; it runs by itself 14 days later unless the
+					    person signs in again or uses the emailed cancel link (the maintainer's decision;
+					    lib/privacy/self-deletion.ts). A typed confirmation, because what follows the grace
+					    period cannot be undone. */}
 					<div className="rounded-md border border-destructive/20 bg-destructive/5 p-4">
 						<SectionHeading
 							title="Delete account"
 							level={4}
-							description={`Ask for your account and the personal data tied to it to be erased. Pressing the button opens an erasure request and sends it to the privacy team — nothing is deleted at that moment. A response is due within ${PRIVACY_RESPONSE_DAYS} days of the request.`}
+							description="Delete your account and the personal data tied to it. The deletion runs 14 days after you confirm; you are signed out, and signing in again before then, or the link we email you, cancels it."
 							actions={
 								<Button
 									variant="destructive"
 									size="sm"
 									className="h-9 shrink-0 text-xs font-medium"
-									disabled={requesting}
-									onClick={() => {
-										onOpenChange(false);
-										setConfirmOpen(true);
-									}}
+									disabled={checking}
+									onClick={() => void onDeleteClicked()}
 								>
-									{requesting ? "Opening request…" : "Request deletion"}
+									{checking ? "Checking…" : "Delete account"}
 								</Button>
 							}
 						/>
+						{blockers.length > 0 ? (
+							<div role="alert" className="mt-3 space-y-2 text-xs text-destructive">
+								<p className="font-medium">Your account can&apos;t be deleted yet:</p>
+								<ul className="list-disc space-y-1 pl-4">
+									{blockers.map((b) => (
+										<li key={b}>{b}</li>
+									))}
+								</ul>
+							</div>
+						) : null}
 					</div>
 				</DialogContent>
 			</Dialog>
 			<ConfirmAction
 				open={confirmOpen}
 				onOpenChange={setConfirmOpen}
-				title="Request deletion of your account?"
-				description={`This opens an erasure request for ${user?.email ?? "your account"} and sends it to the privacy team. Nothing is deleted now, and your account keeps working while the request is handled.`}
-				confirmLabel="Open erasure request"
-				pendingLabel="Opening…"
-				severity={{ level: "confirm" }}
-				run={onRequestErasure}
+				title="Delete your account?"
+				description={`Your account will be deleted in 14 days. You will be signed out now; signing in again before then, or the link we email to ${user?.email ?? "your address"}, cancels the deletion.`}
+				confirmLabel="Schedule deletion"
+				pendingLabel="Scheduling…"
+				severity={{
+					level: "destroy",
+					subject: user?.email ?? "",
+					consequences: [
+						"Your profile, sign-in methods, sessions, AI conversations and access grants are deleted.",
+						"Support threads keep the other party's messages; yours are removed. Audit entries are kept without your name.",
+						"Invoices, orders and the terms you accepted are kept for as long as the law requires.",
+					],
+				}}
+				run={onConfirmDeletion}
 			/>
 		</>
 	);

@@ -20,6 +20,8 @@ import {
 	member,
 	organization,
 	organizationBilling,
+	privacyCase,
+	privacyCaseEvent,
 	user,
 } from "./db-schema";
 
@@ -30,6 +32,8 @@ const schema = {
 	member,
 	organization,
 	organizationBilling,
+	privacyCase,
+	privacyCaseEvent,
 	user,
 };
 

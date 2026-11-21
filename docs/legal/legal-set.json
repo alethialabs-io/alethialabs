@@ -24,7 +24,7 @@
 			"sealed": true,
 			"version": "2026-08-12",
 			"displayedDate": "2026-08-12",
-			"contentHash": "ce8bc10300de7ed09712681012120d6db120b9ea62faf61bf4f25ce52cb0d93e",
+			"contentHash": "160563723bab9afd7b0505042b0f7f73a204d298b0659045daa6f43c80a5136a",
 			"owner": "LEG-L1"
 		},
 		{
@@ -35,8 +35,8 @@
 			"source": "apps/marketing/app/privacy/requests/page.tsx",
 			"status": "current",
 			"sealed": false,
-			"version": "2026-07-29",
-			"displayedDate": "2026-07-29",
+			"version": "2026-11-21",
+			"displayedDate": "2026-11-21",
 			"contentHash": null,
 			"owner": "LEG-L1"
 		},
@@ -674,6 +674,32 @@
 			"verifiedOn": "2026-11-17"
 		},
 		{
+			"id": "privacy.retention.support-correspondence",
+			"document": "privacy",
+			"kind": "retention",
+			"status": "tied",
+			"quote": "Support and contractual correspondence: up to 3 years after the matter closes",
+			"evidence": [
+				{
+					"path": "apps/console/lib/retention/registry.ts",
+					"pattern": "supportCorrespondence: 3 \\* 365,",
+					"shows": "The published window for support correspondence is three years."
+				},
+				{
+					"path": "apps/console/lib/retention/support-correspondence.ts",
+					"pattern": "eq\\(supportCases\\.status, \"closed\"\\),\\s*lt\\(supportCases\\.closed_at, supportCorrespondenceCutoff\\(now\\)\\)",
+					"shows": "The task deletes support cases closed before the cutoff the window sets."
+				},
+				{
+					"path": "apps/console/lib/reconcile/loop.ts",
+					"pattern": "runTask\\(\"gc-support-correspondence\", \\(\\) => gcSupportCorrespondence\\(db, now\\)\\)",
+					"shows": "The reconcile loop runs that task."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-21"
+		},
+		{
 			"id": "cookies.consent-cookie.lifetime",
 			"document": "cookies",
 			"kind": "device-storage",
@@ -1012,42 +1038,21 @@
 			"foundOn": "2026-11-17"
 		},
 		{
-			"id": "privacy-requests.replay-consent",
-			"document": "privacy-requests",
-			"quote": "can change analytics and replay consent immediately",
-			"says": "The page says a visitor can change a replay consent.",
-			"actually": "There is no replay consent. The consent record holds one choice, analytics; the Cookie Notice says there is no replay choice to make.",
-			"evidence": [
-				{
-					"path": "packages/privacy/src/consent.ts",
-					"pattern": "consentPreferencesSchema = z\\.object\\(\\{\\s*analytics: z\\.boolean\\(\\),\\s*\\}\\);",
-					"shows": "The consent record has exactly one field."
-				},
-				{
-					"path": "apps/marketing/app/cookies/page.tsx",
-					"pattern": "no replay choice to make",
-					"shows": "The Cookie Notice says the opposite of this page."
-				}
-			],
-			"owner": "LEG-L1",
-			"foundOn": "2026-11-17"
-		},
-		{
 			"id": "data-act.console-export",
 			"document": "data-act",
 			"quote": "You can export all of it in a machine-readable archive from the console, at any time and without asking us.",
 			"says": "The page says the console offers a self-service export of everything Alethia holds, with a manifest.",
-			"actually": "The console has no export. The manifest format exists (apps/console/lib/privacy/manifest.ts) and the privacy case table has columns for an export, but on 2026-11-17 nothing under apps/console imported the manifest module except its own test, and no server action or route builds an archive. Board unit LEG-L3 builds the export; until it lands the sentence is not true. The page's 30-day transition and retrieval windows were also searched for in apps/console/lib/privacy and apps/console/app/server/actions/privacy and nothing there enforces them; the rest of the tree was not searched for those.",
+			"actually": "The console now exports the ACCOUNT's own data, with a signed manifest (apps/console/lib/privacy/export.ts, 'Download my data' in Account settings). It does not export 'all of it': organization data — projects, environments, state — is not in that archive, and no other console route builds an organization export. The page's 30-day transition and retrieval windows were searched for in apps/console/lib/privacy and apps/console/app/server/actions/privacy and nothing there enforces them; the rest of the tree was not searched for those.",
 			"evidence": [
 				{
-					"path": "apps/console/app/server/actions/privacy/self-serve.ts",
-					"absent": "privacy/manifest",
-					"shows": "The self-service privacy actions open an erasure case and do not build an export."
+					"path": "apps/console/lib/privacy/export.ts",
+					"absent": "projectEnvironments",
+					"shows": "The export reads no environment rows."
 				},
 				{
-					"path": "apps/console/app/server/actions/privacy/cases.ts",
-					"absent": "privacy/manifest",
-					"shows": "The case actions do not build an export either."
+					"path": "apps/console/lib/privacy/export.ts",
+					"pattern": "belongs to the organization, whose admins export it; it is not here",
+					"shows": "The export module states that organization data is not in it."
 				}
 			],
 			"owner": "LEG-L1",

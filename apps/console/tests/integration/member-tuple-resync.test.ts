@@ -59,6 +59,12 @@ function recordingSync(): { sync: TupleSync; calls: string[] } {
 		async resyncRole() {
 			calls.push("resyncRole");
 		},
+		async removeUserTuples() {
+			calls.push("removeUserTuples");
+		},
+		async removeOrgTuples() {
+			calls.push("removeOrgTuples");
+		},
 		async backfill() {
 			calls.push("backfill");
 		},
