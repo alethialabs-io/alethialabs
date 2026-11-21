@@ -19,6 +19,7 @@ import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { RegionError } from "@/components/errors/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { useViewer } from "@/components/providers/viewer-provider";
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { useRealtimeConnection } from "@/hooks/use-realtime";
 import { CLOUD_ACCOUNT, PROJECT, sentenceStart } from "@/lib/copy/vocabulary";
 import { globalHref } from "@/lib/routing";
@@ -86,9 +87,9 @@ export function ProjectsGrid({
 			);
 		}
 		return (
-			<div aria-busy="true" data-slot="projects-pending">
+			<SkeletonRoot>
 				<ProjectsSkeleton count={undefined} view={state.view} />
-			</div>
+			</SkeletonRoot>
 		);
 	}
 

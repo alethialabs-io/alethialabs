@@ -5,7 +5,7 @@
 // Cross-cloud "Quick Duplicate" dialog. Copies a project's design onto another cloud, translating
 // every provider-specific value (region, instance types, DB engines, cache nodes, …) via
 // `convertProjectConfig` server-side and surfacing the conversion notes. The new project is created
-// in DRAFT so nothing is provisioned until the user reviews it in the canvas ("duplicate & edit").
+// in DRAFT so nothing is deployed until the user reviews it on its Architecture page.
 //
 // THE NAME IS A FIELD, not a derivation the user only finds out about afterwards (#4162). It is
 // pre-filled with what the server would have derived — `${source} (${target})`, de-duplicated — so
@@ -25,6 +25,7 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { getProvider, isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
@@ -32,7 +33,9 @@ import { z } from "zod";
 import { tryDuplicateProjectForProvider } from "@/app/server/actions/projects";
 import type { ActionResult } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import { refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
+import { RegionRefusal } from "@/components/errors/region-refusal";
+import { FormRootError } from "@/components/forms/form-root-error";
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import type { ConversionWarning } from "@/lib/cloud-providers";
 import { groupRegions, REGION_LABELS } from "@/lib/cloud-providers";
 import {
@@ -40,10 +43,12 @@ import {
 	type CloudProviderSlug,
 	PROVIDERS,
 } from "@/lib/cloud-providers/generated/catalog";
+import { ARCHITECTURE, CLOUD_ACCOUNT, CONNECTOR } from "@/lib/copy/vocabulary";
 import { errorDigest } from "@/lib/errors";
-import { projectHref } from "@/lib/routing";
+import { globalHref, projectHref } from "@/lib/routing";
 import { orpc } from "@/lib/rpc/client";
 import type { DuplicateCategory } from "@/lib/rpc/procedures/projects";
+import { readRefusalOf, retryUnlessRefused } from "@/lib/rpc/refusal";
 import { canSlugify } from "@/lib/utils/slugify";
 import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
 import { Button } from "@repo/ui/button";
@@ -66,6 +71,7 @@ import {
 import { Input } from "@repo/ui/input";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { ScrollArea } from "@repo/ui/scroll-area";
+import { Skeleton } from "@repo/ui/skeleton";
 import {
 	Select,
 	SelectContent,
@@ -111,6 +117,12 @@ type DuplicateFormValues = z.infer<typeof duplicateFormSchema>;
 
 /** The empty form every open starts from. */
 const BLANK_DUPLICATE: DuplicateFormValues = { projectName: "", cloudIdentityId: "", region: "" };
+
+/**
+ * The fields a server message can be shown beside. A message for any other key is shown above the
+ * buttons (`FormRootError`), so nothing the server says is dropped.
+ */
+const SERVER_FIELDS = ["projectName"] as const;
 
 /** The fields the dialog renders from. */
 const WATCHED = ["cloudIdentityId", "region"] as const;
@@ -183,8 +195,8 @@ async function duplicateAction({
 
 /**
  * Dialog for duplicating a project onto a different cloud provider. `sourceProjectId` /
- * `sourceProjectName` identify the project being copied; `orgSlug` is used to navigate into the new
- * project's canvas on success.
+ * `sourceProjectName` identify the project being copied; `orgSlug` is used to navigate to the new
+ * project's Architecture page on success.
  */
 export function DuplicateProjectDialog(props: DuplicateProjectDialogProps) {
 	// Mounted only while open: the dialog's read (and its query client) belongs to the open dialog,
@@ -223,7 +235,7 @@ function OpenDuplicateProjectDialog({
 		// the second time: no retry for it, and its own sentence below — not "try again".
 		retry: retryUnlessRefused,
 	});
-	const targetsRefusal = targets.isError ? refusalOf(targets.error) : null;
+	const targetsRefusal = targets.isError ? readRefusalOf(targets.error) : null;
 	const sourceProvider = targets.data?.provider ?? null;
 	const categories: DuplicateCategory[] = targets.data?.categories ?? [];
 	const identities = targets.data?.identities ?? [];
@@ -241,7 +253,9 @@ function OpenDuplicateProjectDialog({
 	});
 	// Read during render so react-hook-form's proxy actually subscribes this component to them —
 	// `form.formState.x` inside a callback alone does not.
-	const { dirtyFields, isSubmitting } = form.formState;
+	const { dirtyFields } = form.formState;
+	// The mutation's own pending flag covers the whole round trip.
+	const isSubmitting = duplicate.isPending;
 	const [cloudIdentityId, region] = useWatch({ control: form.control, name: WATCHED });
 
 	/** Resets every field to its initial state (on close + after a successful duplicate). */
@@ -258,19 +272,18 @@ function OpenDuplicateProjectDialog({
 
 	// A clone is a new project: every read of the org's projects moves with it — the shell's list
 	// (switcher, breadcrumbs, palette; F036), the setup guide, the usage counts, and the reads that
-	// answer against the org's project names.
+	// answer against the org's project names — and the overview's grid, so the copy is there when
+	// the dialog closes whether or not the change stream is up.
 	const duplicate = useActionMutation(duplicateAction, {
 		invalidates: [
+			orpc.overview.projects.key(),
 			orpc.workspace.projects.key(),
 			orpc.workspace.setupGuide.key(),
 			orpc.usage.resources.key(),
 			orpc.projects.nameAvailability.key(),
 			orpc.projects.duplicateTargets.key(),
 		],
-		onValidationError: (fields) => {
-			const message = fields.projectName?.[0];
-			if (message) form.setError("projectName", { type: "server", message });
-		},
+		form: { instance: form, fields: SERVER_FIELDS },
 		// No success toast: the dialog itself turns into the "Project duplicated" result.
 		onSuccess: (duplicated) => setResult(duplicated),
 	});
@@ -307,15 +320,14 @@ function OpenDuplicateProjectDialog({
 	}
 
 	/** Submits the duplication request and shows the conversion result, or the server's refusal. */
-	async function onSubmit(values: DuplicateFormValues) {
-		if (duplicate.isPending) return;
-		// `mutateAsync` inside `handleSubmit` keeps `isSubmitting` true for the whole round trip; a
-		// failure is routed by the mutation itself (the field, or one toast), so it is not rethrown.
-		await duplicate.mutateAsync({ sourceProjectId, values }).catch(() => undefined);
+	function onSubmit(values: DuplicateFormValues) {
+		// `submit` ignores a second call made before the first has settled; a failure is routed by
+		// the mutation itself (the field, the form's root error, or one toast).
+		duplicate.submit({ sourceProjectId, values });
 	}
 
-	/** Opens the new project's canvas so the user can review before the first deploy. */
-	function openInCanvas() {
+	/** Opens the new project's Architecture page so the user can review before the first deploy. */
+	function openArchitecture() {
 		if (!result) return;
 		onOpenChange(false);
 		router.push(projectHref(orgSlug, result.newProjectSlug));
@@ -335,7 +347,7 @@ function OpenDuplicateProjectDialog({
 							</span>{" "}
 							was copied to{" "}
 							{targetProvider ? getProvider(targetProvider).shortName : "the target cloud"}
-							{" "}as a draft. Review it in the canvas before you deploy.
+							{" "}as a draft. Review it on its {ARCHITECTURE} page before you deploy.
 						</DialogDescription>
 					</DialogHeader>
 
@@ -379,7 +391,7 @@ function OpenDuplicateProjectDialog({
 						<Button variant="outline" onClick={() => onOpenChange(false)}>
 							Close
 						</Button>
-						<Button onClick={openInCanvas}>Open in canvas</Button>
+						<Button onClick={openArchitecture}>Open {ARCHITECTURE}</Button>
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
@@ -413,16 +425,10 @@ function OpenDuplicateProjectDialog({
 							render={({ field }) => (
 								<FormItem>
 									<FormLabel className="text-xs font-medium">
-										Target cloud account
+										Target {CLOUD_ACCOUNT.one}
 									</FormLabel>
 									{targetsRefusal ? (
-										<p role="alert" className="text-sm text-muted-foreground">
-											{targetsRefusal === "forbidden"
-												? "You don’t have permission to duplicate this project."
-												: targetsRefusal === "not-found"
-													? "This project no longer exists, or isn’t in this organization."
-													: "Duplicating this project isn’t included in your plan."}
-										</p>
+										<RegionRefusal compact refusal={targetsRefusal} subject="this project" />
 									) : targets.isError ? (
 										<p role="alert" className="text-sm text-muted-foreground">
 											Couldn’t load this project’s details.{" "}
@@ -435,14 +441,20 @@ function OpenDuplicateProjectDialog({
 											</button>
 										</p>
 									) : loadingContext ? (
-										<div className="flex items-center gap-2 text-sm text-muted-foreground">
-											<Loader2 className="h-4 w-4 animate-spin" />
-											Loading accounts…
-										</div>
+										// The select's own height, so the dialog does not move when the accounts arrive.
+										<SkeletonRoot>
+											<Skeleton className="h-9 w-full" />
+										</SkeletonRoot>
 									) : noTargets ? (
 										<p className="text-sm text-muted-foreground">
-											No other-cloud accounts connected. Add one in Integrations to
-											duplicate across clouds.
+											No {CLOUD_ACCOUNT.one} on another cloud is connected.{" "}
+											<Link
+												href={`${globalHref(orgSlug, "connectors")}?type=cloud`}
+												className="underline underline-offset-2 hover:text-foreground"
+											>
+												Connect one in {CONNECTOR.page}
+											</Link>{" "}
+											to duplicate across clouds.
 										</p>
 									) : (
 										<Select
@@ -451,7 +463,7 @@ function OpenDuplicateProjectDialog({
 										>
 											<FormControl>
 												<SelectTrigger className="h-9 text-sm">
-													<SelectValue placeholder="Select cloud account" />
+													<SelectValue placeholder={`Select a ${CLOUD_ACCOUNT.one}`} />
 												</SelectTrigger>
 											</FormControl>
 											<SelectContent>
@@ -581,6 +593,8 @@ function OpenDuplicateProjectDialog({
 								</ul>
 							</div>
 						)}
+
+						<FormRootError form={form} />
 
 						<DialogFooter>
 							<Button

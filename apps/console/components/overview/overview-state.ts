@@ -27,7 +27,7 @@ export interface OverviewSearchParams {
 }
 
 /** The input of the grid's read (`overview.projects`): the state without the view. */
-export interface OverviewProjectsQueryInput {
+interface OverviewProjectsQueryInput {
 	q: string;
 	clouds: string[];
 	repos: string[];

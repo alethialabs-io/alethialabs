@@ -9,13 +9,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { ViewMode } from "@repo/ui/view-toggle";
 
 /** The most project placeholders drawn: past the second row of cards they are below the fold. */
-export const MAX_PROJECT_PLACEHOLDERS = 6;
+const MAX_PROJECT_PLACEHOLDERS = 6;
 
 /** Placeholders drawn when the number of projects is not known. */
-export const UNKNOWN_PROJECT_PLACEHOLDERS = 2;
+const UNKNOWN_PROJECT_PLACEHOLDERS = 2;
 
 /** The table view's column headings, in order. The last column holds the actions menu. */
-export const PROJECT_TABLE_COLUMNS = [
+const PROJECT_TABLE_COLUMNS = [
 	"Project",
 	"Cloud",
 	"Region",

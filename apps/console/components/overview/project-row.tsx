@@ -4,8 +4,8 @@
 
 // Overview project row — the table-view counterpart to `ProjectCard`. One project per row:
 // provider glyph + name, cloud, region, status, environment count, add-ons, estimated cost,
-// last-deploy time, and the shared actions menu. The columns are `PROJECT_TABLE_COLUMNS`
-// (projects-skeleton.tsx), in that order.
+// last-deploy time, and the shared actions menu. The cells follow the header's order
+// (`ProjectTableHeader`, projects-skeleton.tsx).
 
 import { Box } from "lucide-react";
 import Link from "next/link";

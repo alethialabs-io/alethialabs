@@ -52,7 +52,7 @@ export const INVITE_PENDING_REASON = "Checking your plan.";
 
 /** The reason on "Organization member" when that read failed: the Usage card on this page retries it. */
 export const INVITE_UNKNOWN_REASON =
-  "Couldn't check your plan. Try again from the Usage card on this page.";
+  "Couldn't check your plan. Retry the Usage card.";
 
 /** The filter dims Reset clears (view + sort are not filters, so they don't count). */
 const FILTER_DEFAULTS = {
@@ -490,7 +490,7 @@ function CreateMenu({
             </Button>
           }
         />
-        <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuContent align="end" className="w-64">
           <DropdownMenuLabel className="font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">
             Create
           </DropdownMenuLabel>

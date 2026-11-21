@@ -12,7 +12,6 @@ import {
 	getOrgUsage,
 } from "@/app/server/actions/billing";
 import {
-	type ProjectListItem,
 	type ProjectListResult,
 	getProjects,
 	queryProjects,
@@ -172,14 +171,14 @@ const projectsInput = z.object({
 });
 
 /** {@link readOverviewProjects}'s input. */
-export type OverviewProjectsInput = z.infer<typeof projectsInput>;
+type OverviewProjectsInput = z.infer<typeof projectsInput>;
 
-/** Everything the overview's project grid shows, in one read. */
-export interface OverviewProjects {
-	/** The projects matching the search and filters, in the asked order. */
-	projects: ProjectListItem[];
-	/** Every cloud and repository in the org with its count over the UNFILTERED list. */
-	facets: ProjectListResult["facets"];
+/**
+ * Everything the overview's project grid shows, in one read: the projects domain's list as it
+ * answers it — the matching rows, and every cloud and repository in the org with its count over the
+ * UNFILTERED list — plus what the grid needs about the viewer and the deployment.
+ */
+export interface OverviewProjects extends ProjectListResult {
 	/**
 	 * How many projects the organization has, whatever the search and filters, or `null` when a
 	 * filtered read could not count them. The Usage card prints it; it does not decide what the
@@ -222,9 +221,10 @@ export async function readOverviewProjects(actor: Actor, input: OverviewProjects
 		readConnectedCloudProviders().catch(() => null),
 		getPdp().can(actor, "create", { type: "project" }),
 	]);
+	// The list is passed through whole. This read computes no facet of its own: the facet pass is
+	// `queryProjects`'s, and that is the name the filter standard's ledger carries it under.
 	return {
-		projects: list.projects,
-		facets: list.facets,
+		...list,
 		total: filtered ? everyProject : list.projects.length,
 		connectedProviders,
 		offeredClouds: [...offeredClouds()],
