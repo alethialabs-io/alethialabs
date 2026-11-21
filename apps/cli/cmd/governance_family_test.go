@@ -765,6 +765,7 @@ func TestGovFamily_TheTokenIsWrittenInOnePlace(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			run := govFamEnv(t, &govFamServer{})
 			t.Setenv(api.DebugEnv, "api")
+			modeEnv(t, map[string]string{api.DebugEnv: "api"})
 			code, stdout, stderr := govFamRun(t, run, "token", "create", "--name", "ci", "--no-input", "--output", format)
 			if code != 0 {
 				t.Fatalf("exit code = %d\n%s", code, stderr)
@@ -792,6 +793,7 @@ func TestGovFamily_ARefusedTokenPrintsNoCredential(t *testing.T) {
 	s := &govFamServer{refuse: map[string]govFamRefusal{"POST /api/cli/tokens": {http.StatusForbidden, "service tokens cannot mint tokens"}}}
 	run := govFamEnv(t, s)
 	t.Setenv(api.DebugEnv, "api")
+	modeEnv(t, map[string]string{api.DebugEnv: "api"})
 	code, stdout, stderr := govFamRun(t, run, "token", "create", "--name", "ci", "--no-input")
 	if code != clierr.ExitForbidden || stdout != "" {
 		t.Errorf("exit %d, stdout %q", code, stdout)
@@ -818,6 +820,7 @@ func TestGovFamily_AChannelSecretIsReadFromStdin(t *testing.T) {
 				s := &govFamServer{}
 				run := govFamEnv(t, s)
 				t.Setenv(api.DebugEnv, "api")
+				modeEnv(t, map[string]string{api.DebugEnv: "api"})
 				govFamStdin(t, govFamSecret+"\n")
 				code, stdout, stderr := govFamRun(t, run, append(append([]string{}, tc.args...), "--no-input", "--output", format)...)
 				if code != 0 {
