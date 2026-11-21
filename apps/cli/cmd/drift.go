@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -24,6 +23,17 @@ state. Show the latest posture for a project (optionally one environment).`,
 var driftShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show the latest drift posture for a project",
+	Args:  cobra.NoArgs,
+	Long: `Shows what the latest drift scan found: whether the project is in sync, when it was scanned,
+and each managed resource that has diverged from what Alethia provisioned, with how it changed.
+
+Use it after a change made outside Alethia, or before an apply that should change nothing.
+"not evaluated" means no drift scan has run yet. Pass --env for one environment; without it the
+posture covers every environment in the project.
+
+Name the project with --project; omit it on a terminal and you are asked which. With nobody to
+ask, it is required (exit 9). --output json prints the whole posture, and --output csv the drifted
+resources.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -31,14 +41,14 @@ var driftShowCmd = &cobra.Command{
 		}
 		// Format first, then the picker — the order `cost show` states beside the same pair: a
 		// picker opened for `-o json` writes its frames into the document the caller is piping.
-		outFmt := outputFormat(cmd)
+		p := printerFor(cmd)
 		project, err := byoProject(cmd, token, interactiveTable(cmd))
 		if err != nil {
 			fail(err)
 		}
 		env, _ := cmd.Flags().GetString("env")
-		if err := runDriftShow(api.NewClient(token), os.Stdout, outFmt, project, env); err != nil {
-			failf("Failed to get drift: %v", err)
+		if err := runDriftShow(api.NewClient(token), p.Out, p.Format, project, env); err != nil {
+			fail(fmt.Errorf("read drift: %w", err))
 		}
 	},
 }

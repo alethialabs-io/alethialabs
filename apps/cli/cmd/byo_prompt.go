@@ -6,6 +6,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -158,7 +159,13 @@ func byoProject(cmd *cobra.Command, token string, mayPick bool) (string, error) 
 	if !mayPick {
 		return currentProject(cmd)
 	}
-	return promptProjectRef(token)
+	ref, err := promptProjectRef(token)
+	if err != nil {
+		// A picker that could not open (stderr redirected, prompting off) is the same refusal an
+		// omitted --project gets with nobody to ask: input required, naming the flag.
+		return "", flagRequired(err, "--project", "alethia project list")
+	}
+	return ref, nil
 }
 
 // chartLister is the slice of the API client the attached-chart picker needs.
@@ -178,7 +185,8 @@ func promptChartID(list chartLister, f byoField, env string) (string, error) {
 		return "", err
 	}
 	if view == nil || len(view.Charts) == 0 {
-		return "", fmt.Errorf("no BYO charts are attached%s — attach one with `alethia chart attach`", envSuffix(env))
+		return "", refusal(clierr.CodeNotFound, "alethia chart attach",
+			"no BYO charts are attached%s, so there is nothing to choose from", envSuffix(env))
 	}
 	options := make([]huh.Option[string], 0, len(view.Charts))
 	for _, c := range view.Charts {
@@ -190,14 +198,15 @@ func promptChartID(list chartLister, f byoField, env string) (string, error) {
 	if len(options) == 0 {
 		// Every attached chart came back without an id. Nothing here can be selected, and sending
 		// an empty id would ask the server to detach a chart the caller never named.
-		return "", fmt.Errorf("the attached charts%s have no ids to select them by", envSuffix(env))
+		return "", refusal(clierr.CodeNotFound, "alethia chart list",
+			"the attached charts%s have no ids to select them by", envSuffix(env))
 	}
 	chosen, err := askChoice(f.Title, f.Description, options)
 	if err != nil {
 		return "", err
 	}
 	if chosen == "" {
-		return "", fmt.Errorf("no chart was selected")
+		return "", refusal(clierr.CodeInputRequired, "alethia chart list", "no chart was selected")
 	}
 	return chosen, nil
 }

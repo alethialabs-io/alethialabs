@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -18,94 +17,104 @@ var activityLimit int
 
 var activityCmd = &cobra.Command{
 	Use:   "activity",
-	Short: "Show the organization's delivery/activity log",
-	Long: `Read the active organization's activity log — every recorded action and
-denial, newest first — including alert deliveries. Use -n/--limit to cap the
-number of rows.`,
+	Short: "Show the organization's activity log",
+	Args:  cobra.NoArgs,
+	Long: `Reads the active organization's activity log, newest first: every recorded action and every
+denial, with who did it, what it touched and — for a denial — why. Alert deliveries are in it too.
+
+Use it to answer "who changed this?" or "why was I refused?". It prints at once; -n/--limit sets
+how many entries are read (50 when omitted). On a terminal, when the page came back full, you are
+offered more rows after the table.
+
+--output json prints the entries as an array, and --output csv the wire values, with the resource
+type and its id in two columns.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
+		if err := runActivityCmd(cmd); err != nil {
 			fail(err)
-		}
-		client := api.NewClient(token)
-		limit, err := promptActivityRows(cmd, activityLimit)
-		if err != nil {
-			fail(err)
-		}
-		if interactiveTable(cmd) {
-			var entries []api.ActivityEntry
-			runSpinner("Fetching activity...", func() { entries, err = client.ListActivity(limit) })
-			if err != nil {
-				failf("Failed to read activity: %v", err)
-			}
-			if len(entries) == 0 {
-				ui.Muted("No activity found.")
-				return
-			}
-			_ = ui.ShowTable(activityColumns, activityRows(entries, ui.FormatTable), "activity")
-			return
-		}
-		if err := runActivity(client, os.Stdout, outputFormat(cmd), limit); err != nil {
-			failf("Failed to read activity: %v", err)
 		}
 	},
 }
 
-// activityRowLadder is what the row-count question offers when nobody passes `-n`.
+// runActivityCmd is `activity` from the command line to the printed log. It asks nothing before
+// printing: the limit has a default, and a question in front of the answer was a step between the
+// person and what they came for.
+func runActivityCmd(cmd *cobra.Command) error {
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	p := printerFor(cmd)
+	client := api.NewClient(token)
+	if !interactiveTable(cmd) {
+		if err := runActivity(client, p.Out, p.Format, activityLimit); err != nil {
+			return fmt.Errorf("read activity: %w", err)
+		}
+		return nil
+	}
+	limit := activityLimit
+	for {
+		var entries []api.ActivityEntry
+		runSpinner("Fetching activity...", func() { entries, err = client.ListActivity(limit) })
+		if err != nil {
+			return fmt.Errorf("read activity: %w", err)
+		}
+		if len(entries) == 0 {
+			fmt.Fprintln(p.Out, ui.MutedStyle.Render("No activity found."))
+			return nil
+		}
+		_ = ui.ShowTable(activityColumns, activityRows(entries, ui.FormatTable), "activity")
+		next, err := offerMoreActivity(limit, len(entries))
+		if err != nil || next == 0 {
+			return err
+		}
+		limit = next
+	}
+}
+
+// activityRowLadder is what the "more rows?" question offers after a full page.
 //
 // A ladder rather than a typed number, because every answer to "how many rows" is a round one and a
 // select cannot be answered with a value the route refuses. It is deliberately NOT a validation
 // set: `-n 137` still reaches the server, which is the only side that knows what it will serve.
 var activityRowLadder = []int{25, 50, 100, 200, 500}
 
-// promptActivityRows asks how many entries to read back.
+// offerMoreActivity asks, AFTER the table, whether to read more rows, and returns the new limit — or
+// 0 when the person is done, the page was not full (there is nothing more to read), or nobody can be
+// asked.
 //
-// The limit HAS a default, so this reads canPromptForm rather than requireInteractiveForm — the
-// rule output.go states for every defaulted field: a scripted caller is never REFUSED for omitting
-// `-n`, because the flag contract is complete without it, and a person at a terminal is still
-// asked, because a default is rarely what they meant. `alethia activity --no-input` therefore reads
-// exactly the rows it read before this form existed.
-//
-// The flag's own value is what seeds the select, so the cursor opens on the answer `-n` would have
-// given and a bare Enter changes nothing. It is INSERTED into the ladder when the ladder does not
-// already carry it, because a picker that cannot offer the current value turns Enter into a silent
-// change of it — which is the one thing a seeded form must never do.
-func promptActivityRows(cmd *cobra.Command, limit int) (int, error) {
-	if cmd.Flags().Changed("limit") || !canPromptForm() {
-		return limit, nil
+// After and never before: the question used to stand between the person and the log, asking how
+// many rows they wanted before they had seen one. A page that came back short is the whole log, so
+// no question is put at all.
+func offerMoreActivity(limit, got int) (int, error) {
+	if got < limit || !canPromptForm() {
+		return 0, nil
 	}
 	f := mustGovField("alethia activity", fieldKeyGovLimit)
-	options := make([]huh.Option[int], 0, len(activityRowLadder)+1)
-	for _, n := range activityRowsOffered(limit) {
-		options = append(options, huh.NewOption(fmt.Sprintf("%d rows", n), n))
+	options := []huh.Option[int]{huh.NewOption("Done", 0)}
+	for _, n := range activityRowsAbove(limit) {
+		options = append(options, huh.NewOption(fmt.Sprintf("Show %d rows", n), n))
 	}
-	chosen := limit
+	if len(options) == 1 {
+		return 0, nil
+	}
+	chosen := 0
 	if err := runHuhForm(huh.NewGroup(
-		huh.NewSelect[int]().Title(f.Title).Description(f.Description).Options(options...).Value(&chosen),
+		huh.NewSelect[int]().Title("More activity?").Description(f.Description).Options(options...).Value(&chosen),
 	)); err != nil {
-		return limit, err
+		return 0, err
 	}
 	return chosen, nil
 }
 
-// activityRowsOffered is the ladder with the current value merged in, ascending.
-func activityRowsOffered(limit int) []int {
-	offered := make([]int, 0, len(activityRowLadder)+1)
-	inserted := false
+// activityRowsAbove is the ladder's rungs larger than the current limit, ascending.
+func activityRowsAbove(limit int) []int {
+	above := make([]int, 0, len(activityRowLadder))
 	for _, n := range activityRowLadder {
-		if !inserted && limit < n {
-			offered = append(offered, limit)
-			inserted = true
+		if n > limit {
+			above = append(above, n)
 		}
-		if n == limit {
-			inserted = true
-		}
-		offered = append(offered, n)
 	}
-	if !inserted {
-		offered = append(offered, limit)
-	}
-	return offered
+	return above
 }
 
 var activityColumns = []string{"Time", "Actor", "Action", "Resource", "Decision", "Reason"}
