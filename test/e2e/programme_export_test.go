@@ -109,6 +109,12 @@ type programmeExport struct {
 	// could not tell a retired cloud from a typo, and both would have to be an integrity failure.
 	// No kind carries a cell for a retired cloud: Kinds is the scored grid.
 	RetiredClouds []string `json:"retired_clouds"`
+	// OfferedClouds is every cloud the catalog offers: the ones it marks `available`, in catalog
+	// order, including any that can be connected but not provisioned. It is the Go half of beta
+	// predicate B1 (docs/beta/README.md), which the rollup compares with the TypeScript catalog and
+	// with the four clouds the beta is defined on. It equals Catalog.OfferedProviders() with the
+	// operator setting unset; the setting is ignored here for the reason exitCriteriaClouds gives.
+	OfferedClouds []string `json:"offered_clouds"`
 	// Kinds is the max-config surface (the 11 provisionable kinds — the PROOF grid).
 	Kinds []programmeKind `json:"kinds"`
 	// CLISteps is the CLI-only demo bar's table.
@@ -172,6 +178,7 @@ func buildProgrammeExport(t *testing.T) programmeExport {
 			"Consumed by scripts/programme-rollup.mjs to render PROGRAMME.md's generated half.",
 		Clouds:        DemoClouds,
 		RetiredClouds: RetiredClouds,
+		OfferedClouds: offeredClouds(catalog.MustLoad()),
 		Kinds:         kinds,
 		CLISteps:      steps,
 	}
@@ -338,6 +345,51 @@ func TestExitCriteriaCloudsPartitionTheCatalog(t *testing.T) {
 				t.Errorf("kind %q exports a cell for retired cloud %q", k.Kind, cloud)
 			}
 		}
+	}
+}
+
+// offeredClouds lists the clouds the catalog itself offers, in catalog order: every connectable
+// cloud it marks `available`. It never reads the operator setting, so the committed mirror does not
+// depend on the environment of whoever regenerated it.
+func offeredClouds(c *catalog.Catalog) []string {
+	out := []string{}
+	for _, p := range c.Live.Providers {
+		if availability, _ := c.Availability(p.Slug); availability == catalog.AvailabilityAvailable {
+			out = append(out, p.Slug)
+		}
+	}
+	return out
+}
+
+// TestOfferedCloudsAreTheCatalogsOfferedSet holds the exported B1 set to the instrument
+// docs/beta/README.md names, Catalog.OfferedProviders(), with the operator setting unset; and shows
+// that the setting cannot widen the export.
+func TestOfferedCloudsAreTheCatalogsOfferedSet(t *testing.T) {
+	c := catalog.MustLoad()
+	t.Setenv(catalog.HiddenCloudsEnv, "")
+	if got, want := offeredClouds(c), c.OfferedProviders(); !slices.Equal(got, want) {
+		t.Errorf("offeredClouds = %v, Catalog.OfferedProviders() = %v — the B1 mirror and the instrument disagree", got, want)
+	}
+	if len(offeredClouds(c)) == 0 {
+		t.Fatal("the catalog offers no cloud — B1 would compare nothing")
+	}
+
+	synthetic := &catalog.Catalog{
+		Live: catalog.Live{Providers: catalog.ConnectableProviders{
+			{Slug: "north", Availability: catalog.AvailabilityAvailable},
+			{Slug: "south", Availability: catalog.AvailabilityHidden},
+			{Slug: "connect-only", Availability: catalog.AvailabilityAvailable},
+		}},
+	}
+	if got := offeredClouds(synthetic); !slices.Equal(got, []string{"north", "connect-only"}) {
+		t.Errorf("offeredClouds(synthetic) = %v, want [north connect-only]: a connect-only available cloud is offered, a hidden one is not", got)
+	}
+	t.Setenv(catalog.HiddenCloudsEnv, "south")
+	if !synthetic.Offered("south") {
+		t.Fatal("the setting did not re-enable the synthetic cloud, so the assertion below would prove nothing")
+	}
+	if got := offeredClouds(synthetic); slices.Contains(got, "south") {
+		t.Errorf("with %s=south: offeredClouds = %v — the setting must not change the committed B1 set", catalog.HiddenCloudsEnv, got)
 	}
 }
 

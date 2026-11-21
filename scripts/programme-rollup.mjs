@@ -71,6 +71,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { validateReaperResult } from "./e2e/reaper-result.mjs";
 
 const SNAPSHOT = "docs/testing/programme-snapshot.json";
@@ -1044,7 +1045,7 @@ export function deriveReaperObservation(observation, snapshotAt) {
 	return { state: "clean", why: `${run} ${incident}`, observation, integrityFailure: null };
 }
 
-export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot, ledgerBaseline = {}, assertRequirements = {} }) {
+export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot, ledgerBaseline = {}, assertRequirements = {}, beta = null }) {
 	const failures = [];
 	const notes = [];
 	/** Cells whose composite credit was refused for want of a MEASUREMENT, not for a verdict. */
@@ -1867,6 +1868,12 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	}
 	const reaperClean = reaper.filter((result) => result.state === "clean").length;
 
+	// The beta predicates B1–B9 (docs/beta/README.md). Evaluated only when their inputs were read —
+	// `readInputs` always reads them, so the real run always renders the section; a fixture that
+	// passes none is testing something else. Their integrity failures join this file's own.
+	const betaView = beta === null ? null : deriveBeta({ ...beta, spine, reaper, at: board.derivedAt });
+	if (betaView !== null) failures.push(...betaView.failures);
+
 	// Snapshot freshness. A broken cron produces NO signal, so staleness has to be an error eventually
 	// rather than a note nobody reads — but it warns first, because a quiet week should not red the repo
 	// on a Monday morning.
@@ -1986,7 +1993,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	// Surviving claims are counted for the scored clouds only. A retired cloud's claim is history.
 	const survivingClaims = [...claims.entries()].filter(([key, c]) => c !== null && !retiredClouds.includes(key.split("/")[0])).length;
 
-	return { rows, claims, survivingClaims, retiredClouds, retiredRows, retiredSteps, retiredReds, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, supersededReds, compositeReds, unmappedReds, costCells, gateReality, cloudGates, reaper, reaperClean, unreachedComposites };
+	return { rows, claims, survivingClaims, retiredClouds, retiredRows, retiredSteps, retiredReds, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, supersededReds, compositeReds, unmappedReds, costCells, gateReality, cloudGates, reaper, reaperClean, unreachedComposites, beta: betaView };
 }
 
 // ───────────────────────────── rendering ─────────────────────────────
@@ -1994,6 +2001,9 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 /** @param {ReturnType<typeof derive>} v */
 export function render(v) {
 	const L = [];
+	// The beta definition comes first: it is the question the programme now answers. The proof grid
+	// below it is one of its inputs (B3's CLI half, B4), not a second definition.
+	if (v.beta) L.push(renderBeta(v.beta));
 	// Cells a dimension can never run on (its `clouds`) are not proof cells: counting them would make
 	// a cloud look behind on work that is refused on it by design.
 	const total = v.clouds.length * DIMENSIONS.length - v.tally.ceiling;
@@ -2348,7 +2358,7 @@ export function render(v) {
 	L.push("");
 	L.push("Every number above is derived from these, and from nothing else:");
 	L.push("");
-	for (const f of [SPINE, LEDGER, WORKFLOW, RESOLVER, UNSUPPORTED_KINDS, `${PROOFS_DIR}/<cloud>/<stamp>/`, SNAPSHOT]) L.push(`- \`${f}\``);
+	for (const f of [SPINE, LEDGER, WORKFLOW, RESOLVER, UNSUPPORTED_KINDS, `${PROOFS_DIR}/<cloud>/<stamp>/`, SNAPSHOT, ...(v.beta ? [BETA_SCHEMA, TS_CATALOG, PAID_MARKETS_SOURCE, LAUNCH_SOURCE, LEGAL_SET, `${EVIDENCE_DIRS[0].dir}/`, "docs/beta/evidence/<record kind>/"] : [])]) L.push(`- \`${f}\``);
 	L.push("");
 	L.push(
 		v.board.present
@@ -2462,6 +2472,569 @@ export function statusClaimsIn(text, { prose = true } = {}) {
 	return out;
 }
 
+// ───────────────────────────── beta predicates B1–B9 ─────────────────────────────
+//
+// "Beta reached" is nine predicates, defined in docs/beta/README.md (REL-S1, #6773). This block
+// EVALUATES them against the tree and the committed snapshot; it does not define them. Where the
+// definition and this file disagree, the definition wins and this file is the defect.
+//
+// Three rules carry over from the rest of this file, and each one decides a case below:
+//
+//   · Nothing is assumed from silence. A missing record, an instrument that does not exist yet, and
+//     a fact the tree cannot carry are all `unmeasured`, which is NOT met. A predicate is met only
+//     when every part of it is.
+//   · No clock. The instant every age is measured back from is the snapshot's own `derived_at`,
+//     printed verbatim. With no snapshot, every windowed check is `unmeasured`, never guessed.
+//   · Read the source, do not copy it. The four beta clouds come from the evidence schema's cloud
+//     enum (the README says that enum IS B1's set); the step, event and edition vocabularies come
+//     from the same schema; the record directories are pinned to the README's table by
+//     `--self-test`, as are the predicate titles.
+
+const BETA_README = "docs/beta/README.md";
+const BETA_SCHEMA = "docs/beta/evidence-schema.json";
+// The TypeScript half of B1, generated from the same catalog the Go mirror reads.
+const TS_CATALOG = "packages/cloud-catalog/src/generated.ts";
+// B5: `paidLaunchState().paid.status` is `open` exactly when at least one cell is in PAID_MARKETS
+// (launch.ts: "`open` — at least one cell is open", decided "by the cell list alone"). Node cannot
+// import the TypeScript, so the declaration is read; a declaration this reader cannot find is an
+// integrity failure, never a closed market.
+const PAID_MARKETS_SOURCE = "packages/legal/src/commerce.ts";
+const LAUNCH_SOURCE = "packages/legal/src/launch.ts";
+const LEGAL_SET = "docs/legal/legal-set.json";
+const PROOF_INTEGRITY = "demos/proofs/check-proof-integrity.sh";
+
+/** The nine predicates, in order. `--self-test` pins each title and per-cloud flag to the README's table. */
+export const BETA_PREDICATES = [
+	{ id: "B1", title: "Exactly four clouds are offered", perCloud: false },
+	{ id: "B2", title: "Golden path observed on production", perCloud: true },
+	{ id: "B3", title: "Same path from the CLI and through an outside agent", perCloud: true },
+	{ id: "B4", title: "A full-bar real-apply proof", perCloud: true },
+	{ id: "B5", title: "Paid plans are open, with live evidence", perCloud: false },
+	{ id: "B6", title: "Legal set published at sealed versions, including beta terms", perCloud: false },
+	{ id: "B7", title: "Operations: backup, restore drill, public hosts", perCloud: false },
+	{ id: "B8", title: "Editions meet their own predicates", perCloud: false },
+	{ id: "B9", title: "Nothing left standing; nightly green", perCloud: true },
+];
+
+/**
+ * Where each kind of evidence record lives. `--self-test` pins this list to the README's
+ * "Where records live" table in both directions. A directory that does not exist yet holds no record.
+ */
+export const EVIDENCE_DIRS = [
+	{ dir: "apps/console/docs/qa/prod-runs", predicate: "B2", aspect: null },
+	{ dir: "docs/beta/evidence/managed-runner", predicate: "B2", aspect: "managed-runner" },
+	{ dir: "docs/beta/evidence/b3", predicate: "B3", aspect: null },
+	{ dir: "docs/beta/evidence/b5", predicate: "B5", aspect: null },
+	{ dir: "docs/beta/evidence/b7", predicate: "B7", aspect: null },
+	{ dir: "docs/beta/evidence/b8", predicate: "B8", aspect: null },
+];
+
+/** Age limits, in days, measured back from the snapshot instant (docs/beta/README.md). */
+export const BETA_WINDOW_DAYS = { B2: 31, B4: 31, B7_DRILL: 45 };
+
+/** Unquote and type one YAML scalar of the small subset evidence records use. */
+function frontMatterScalar(raw) {
+	const v = raw.trim();
+	if (/^"(?:[^"\\]|\\.)*"$/.test(v)) return JSON.parse(v);
+	if (/^'(?:[^']|'')*'$/.test(v)) return v.slice(1, -1).replace(/''/g, "'");
+	const bare = v.replace(/\s+#.*$/, "");
+	if (bare === "true") return true;
+	if (bare === "false") return false;
+	if (bare === "null" || bare === "~") return null;
+	if (/^-?\d+$/.test(bare)) return Number(bare);
+	return bare;
+}
+
+/**
+ * Read the YAML front matter of an evidence record, in the subset the README's example uses:
+ * `key: scalar`, `key: [a, b]`, and `key:` followed by `  - item` lines. A leading HTML comment
+ * (the SPDX header every Markdown file carries) may precede the opening `---`.
+ *
+ * `found: false` means the file has no front matter at all: in the B2 directory that is a QA run
+ * report written before the record format existed, and it is not a record. Anything this reader
+ * does not understand is an `error`, never a skipped line: a field silently dropped could be the one
+ * that decides the verdict.
+ *
+ * @param {string} text
+ * @returns {{found: false} | {found: true, error: string} | {found: true, data: Record<string, unknown>}}
+ */
+export function parseFrontMatter(text) {
+	let rest = text.replace(/^﻿/, "");
+	for (;;) {
+		const trimmed = rest.replace(/^\s+/, "");
+		if (!trimmed.startsWith("<!--")) {
+			rest = trimmed;
+			break;
+		}
+		const end = trimmed.indexOf("-->");
+		if (end === -1) return { found: false };
+		rest = trimmed.slice(end + 3);
+	}
+	if (!/^---\r?\n/.test(rest)) return { found: false };
+	const body = rest.replace(/^---\r?\n/, "");
+	const close = body.search(/^---[ \t]*$/m);
+	if (close === -1) return { found: true, error: "the front matter is not closed by a `---` line" };
+	/** @type {Record<string, unknown>} */
+	const data = {};
+	let listKey = null;
+	const openLists = new Set();
+	for (const [i, raw] of body.slice(0, close).split(/\r?\n/).entries()) {
+		if (/^\s*(#.*)?$/.test(raw)) continue;
+		const item = raw.match(/^\s+-\s+(.*)$/);
+		if (item !== null) {
+			if (listKey === null) return { found: true, error: `front matter line ${i + 1}: a list item outside a list` };
+			/** @type {unknown[]} */ (data[listKey]).push(frontMatterScalar(item[1]));
+			openLists.delete(listKey);
+			continue;
+		}
+		const kv = raw.match(/^([A-Za-z][A-Za-z0-9_]*):(?:\s+(.*))?$/);
+		if (kv === null) return { found: true, error: `front matter line ${i + 1}: not a \`key: value\` line this reader understands` };
+		const [, key, value = ""] = kv;
+		if (Object.hasOwn(data, key)) return { found: true, error: `front matter line ${i + 1}: \`${key}\` is set twice` };
+		listKey = null;
+		if (value.trim() === "") {
+			data[key] = [];
+			listKey = key;
+			openLists.add(key);
+		} else if (value.trim().startsWith("[")) {
+			const flow = value.trim();
+			if (!flow.endsWith("]")) return { found: true, error: `front matter line ${i + 1}: a flow list that does not close on its line` };
+			const inner = flow.slice(1, -1).trim();
+			data[key] = inner === "" ? [] : inner.split(",").map(frontMatterScalar);
+		} else {
+			data[key] = frontMatterScalar(value);
+		}
+	}
+	// `key:` with nothing under it is YAML null, not an empty list.
+	for (const key of openLists) data[key] = null;
+	return { found: true, data };
+}
+
+const SCHEMA_ANNOTATIONS = new Set(["$schema", "$comment", "title", "description", "format"]);
+
+/**
+ * Validate a value against a JSON Schema, in the keyword subset docs/beta/evidence-schema.json uses.
+ *
+ * A keyword this function does not implement THROWS rather than being skipped. The schema is the
+ * definition, and a validator that ignored a constraint added to it later would accept records the
+ * definition refuses, with nothing to say so.
+ *
+ * @param {unknown} value
+ * @param {Record<string, any>} schema
+ * @param {string} [at]
+ * @returns {string[]} what is wrong, empty when the value is valid
+ */
+export function validateAgainstSchema(value, schema, at = "") {
+	const errors = [];
+	const where = at === "" ? "the record" : `\`${at}\``;
+	const kind = (v) => (Array.isArray(v) ? "array" : v === null ? "null" : Number.isInteger(v) ? "integer" : typeof v);
+	for (const [keyword, arg] of Object.entries(schema)) {
+		if (SCHEMA_ANNOTATIONS.has(keyword)) continue;
+		switch (keyword) {
+			case "type": {
+				const k = kind(value);
+				if (!(k === arg || (arg === "number" && k === "integer"))) errors.push(`${where} must be ${arg}, got ${k}`);
+				break;
+			}
+			case "enum":
+				if (!arg.some((e) => e === value)) errors.push(`${where} must be one of ${arg.join(", ")}, got ${JSON.stringify(value)}`);
+				break;
+			case "const":
+				if (value !== arg) errors.push(`${where} must be ${JSON.stringify(arg)}, got ${JSON.stringify(value)}`);
+				break;
+			case "pattern":
+				if (typeof value === "string" && !new RegExp(arg).test(value)) errors.push(`${where} does not match ${arg}`);
+				break;
+			case "minLength":
+				if (typeof value === "string" && value.length < arg) errors.push(`${where} is shorter than ${arg}`);
+				break;
+			case "minimum":
+				if (typeof value === "number" && value < arg) errors.push(`${where} is below ${arg}`);
+				break;
+			case "minItems":
+				if (Array.isArray(value) && value.length < arg) errors.push(`${where} has fewer than ${arg} item(s)`);
+				break;
+			case "uniqueItems":
+				if (arg && Array.isArray(value) && new Set(value.map((v) => JSON.stringify(v))).size !== value.length) errors.push(`${where} repeats an item`);
+				break;
+			case "items":
+				if (Array.isArray(value)) value.forEach((v, i) => errors.push(...validateAgainstSchema(v, arg, `${at}[${i}]`)));
+				break;
+			case "contains":
+				if (Array.isArray(value) && !value.some((v) => validateAgainstSchema(v, arg, at).length === 0)) {
+					errors.push(`${where} must contain ${JSON.stringify(arg.const ?? arg)}`);
+				}
+				break;
+			case "required":
+				if (kind(value) === "object") for (const r of arg) if (!Object.hasOwn(value, r)) errors.push(`${at === "" ? "" : `${at}.`}\`${r}\` is required`);
+				break;
+			case "properties":
+				if (kind(value) === "object") {
+					for (const [p, sub] of Object.entries(arg)) if (Object.hasOwn(value, p)) errors.push(...validateAgainstSchema(value[p], sub, at === "" ? p : `${at}.${p}`));
+				}
+				break;
+			case "additionalProperties":
+				if (arg === false && kind(value) === "object") {
+					for (const p of Object.keys(value)) if (!Object.hasOwn(schema.properties ?? {}, p)) errors.push(`\`${p}\` is not a field of the record`);
+				} else if (arg !== false) {
+					throw new Error(`validateAgainstSchema: additionalProperties other than false is not implemented`);
+				}
+				break;
+			case "allOf":
+				for (const sub of arg) errors.push(...validateAgainstSchema(value, sub, at));
+				break;
+			case "anyOf":
+				if (!arg.some((sub) => validateAgainstSchema(value, sub, at).length === 0)) errors.push(`${where} matches none of the allowed shapes`);
+				break;
+			case "not":
+				if (validateAgainstSchema(value, arg, at).length === 0) errors.push(`${where} matches a shape the schema forbids`);
+				break;
+			case "if":
+				if (validateAgainstSchema(value, arg, at).length === 0) {
+					if (schema.then) errors.push(...validateAgainstSchema(value, schema.then, at));
+				} else if (schema.else) {
+					errors.push(...validateAgainstSchema(value, schema.else, at));
+				}
+				break;
+			case "then":
+			case "else":
+				break;
+			default:
+				throw new Error(`validateAgainstSchema: the schema uses \`${keyword}\`, which this validator does not implement — implement it rather than let it pass unchecked`);
+		}
+	}
+	return errors;
+}
+
+/** `20260930T061330Z` (a bundle's `captured_at`) or an RFC 3339 string → epoch ms, or null. */
+function instantMs(value) {
+	if (typeof value !== "string") return null;
+	const compact = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+	const iso = compact === null ? value : `${compact[1]}-${compact[2]}-${compact[3]}T${compact[4]}:${compact[5]}:${compact[6]}Z`;
+	const ms = Date.parse(iso);
+	return Number.isNaN(ms) ? null : ms;
+}
+
+/** The string list a `readonly X[] = [...]` declaration names, or null when the declaration is absent. */
+function tsStringArray(text, name) {
+	const m = text.match(new RegExp(`export const ${name}\\s*(?::[^=]*)?=\\s*\\[([^\\]]*)\\]`));
+	if (m === null) return null;
+	return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+}
+
+/** One check's result. `unmeasured` is NOT met: nothing is assumed from silence. */
+const met = (why) => ({ state: "met", why });
+const unmet = (why) => ({ state: "unmet", why });
+const unmeasured = (why) => ({ state: "unmeasured", why });
+
+/** Fold parts into one state: any unmet is unmet; else any unmeasured is unmeasured; else met. */
+function foldStates(parts) {
+	if (parts.some((p) => p.state === "unmet")) return "unmet";
+	if (parts.some((p) => p.state === "unmeasured")) return "unmeasured";
+	return parts.length > 0 ? "met" : "unmeasured";
+}
+
+/**
+ * Evaluate B1–B9. Pure: every input is passed in, so `--self-test` drives it with fixtures.
+ *
+ * @param {{
+ *   spine: {clouds: string[], offered_clouds?: string[]},
+ *   schema: Record<string, any> | null,
+ *   tsCatalogText: string | null,
+ *   records: {file: string, text: string}[],
+ *   bundles: {dir: string, cloud: string, summary: Record<string, any> | null, integrity: number | null}[],
+ *   paidMarketsText: string | null,
+ *   launchText: string | null,
+ *   legalSet: Record<string, any> | null,
+ *   reaper: {cloud: string, state: string, why: string, observation: Record<string, any> | null}[],
+ *   at: string | null,
+ * }} input
+ */
+export function deriveBeta({ spine, schema, tsCatalogText, records, bundles, paidMarketsText, launchText, legalSet, reaper, at }) {
+	const failures = [];
+	const clouds = spine.clouds;
+	const atMs = at === null ? null : instantMs(at);
+	const ageDays = (ms) => (atMs === null || ms === null ? null : (atMs - ms) / 86_400_000);
+	const enumOf = (prop) => schema?.properties?.[prop]?.enum ?? schema?.properties?.[prop]?.items?.enum ?? null;
+	if (schema === null) failures.push(`${BETA_SCHEMA}: missing or unreadable — the beta predicates cannot be evaluated against their definition`);
+
+	// ── evidence records: parse, validate against the schema, file by directory ──
+	/** @type {(Record<string, any> & {file: string})[]} */
+	const valid = [];
+	for (const { file, text } of records) {
+		const home = EVIDENCE_DIRS.find((d) => file.startsWith(`${d.dir}/`));
+		const fm = parseFrontMatter(text);
+		if (!fm.found) {
+			// The B2 directory also holds QA run reports that predate the record format; a file there
+			// without front matter is a report, not a record. Every other directory holds only records.
+			if (home?.dir !== "apps/console/docs/qa/prod-runs") failures.push(`${file}: an evidence directory holds a file with no front matter — it is not a record (${BETA_README})`);
+			continue;
+		}
+		if ("error" in fm) {
+			failures.push(`${file}: ${fm.error}`);
+			continue;
+		}
+		const errors = schema === null ? [] : validateAgainstSchema(fm.data, schema);
+		if (errors.length > 0) {
+			failures.push(`${file}: does not validate against ${BETA_SCHEMA}: ${errors.join("; ")}`);
+			continue;
+		}
+		const aspect = typeof fm.data.aspect === "string" ? fm.data.aspect : null;
+		if (home === undefined || home.predicate !== fm.data.predicate || (home.predicate === "B2" && home.aspect !== aspect)) {
+			failures.push(`${file}: a ${fm.data.predicate}${aspect ? ` (${aspect})` : ""} record filed outside its directory — ${BETA_README} says where each record lives`);
+			continue;
+		}
+		valid.push({ ...fm.data, file });
+	}
+	/** The newest valid record matching `where`, by `date`. */
+	const newest = (where) => valid.filter(where).sort((a, b) => (instantMs(b.date) ?? 0) - (instantMs(a.date) ?? 0) || a.file.localeCompare(b.file))[0] ?? null;
+	const recordRef = (r) => `\`${r.file}\` (${r.date})`;
+	const atRef = at ?? "(no snapshot)";
+
+	/** @type {Record<string, {state: string, parts: {label: string, state: string, why: string}[], cells?: Record<string, {state: string, why: string}>}>} */
+	const out = {};
+	const part = (label, r) => ({ label, ...r });
+
+	// ── B1: the offered set, Go and TypeScript, against the schema's four ──
+	{
+		const expected = (enumOf("cloud") ?? []).filter((c) => c !== "all");
+		const go = Array.isArray(spine.offered_clouds) ? spine.offered_clouds : null;
+		const ts = tsCatalogText === null ? null : tsStringArray(tsCatalogText, "AVAILABLE_CLOUDS");
+		if (go === null) failures.push(`${SPINE}: carries no \`offered_clouds\` — regenerate the mirror (TestProgrammeExport); B1 cannot read the Go offered set`);
+		if (tsCatalogText !== null && ts === null) failures.push(`${TS_CATALOG}: no \`AVAILABLE_CLOUDS\` declaration — B1 cannot read the TypeScript offered set`);
+		const same = (a, b) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
+		const show = (l) => `{${[...l].sort().join(", ")}}`;
+		let r;
+		if (expected.length === 0) r = unmeasured(`${BETA_SCHEMA} names no cloud`);
+		else if (go === null || ts === null) r = unmeasured(`the ${go === null ? "Go" : "TypeScript"} offered set could not be read`);
+		else if (!same(go, ts)) r = unmet(`Go offers ${show(go)} and TypeScript offers ${show(ts)} — the two halves of the catalog disagree`);
+		else if (!same(go, expected)) r = unmet(`the catalog offers ${show(go)}; the beta is defined on ${show(expected)}`);
+		else r = met(`Go (\`Catalog.OfferedProviders\`, via the mirror) and TypeScript (\`AVAILABLE_CLOUDS\`) both offer exactly ${show(expected)}`);
+		out.B1 = { state: r.state, parts: [part("offered set", r)] };
+	}
+
+	// ── bundles: what B3's CLI half and B4 read ──
+	const bundleFor = (cloud, dimension) => {
+		const candidates = bundles.filter((b) => b.cloud === cloud && b.summary?.dimension === dimension && b.summary?.outcome === "success");
+		const sorted = candidates.sort((a, b) => (instantMs(b.summary.captured_at) ?? 0) - (instantMs(a.summary.captured_at) ?? 0) || b.dir.localeCompare(a.dir));
+		return { accepted: sorted.filter((b) => b.integrity === 0), refused: sorted.filter((b) => b.integrity !== 0) };
+	};
+
+	// ── B2: golden path on production, per cloud ──
+	{
+		const perCloud = {};
+		for (const cloud of clouds) {
+			const r0 = newest((r) => r.predicate === "B2" && r.cloud === cloud && r.aspect === undefined);
+			let r;
+			if (r0 === null) r = unmet("no B2 record");
+			else if (r0.verdict !== "pass") r = unmet(`newest record ${recordRef(r0)} says \`${r0.verdict}\``);
+			else if (atMs === null) r = unmeasured(`${recordRef(r0)} passed, but there is no snapshot instant to measure the ${BETA_WINDOW_DAYS.B2}-day window from`);
+			else if (ageDays(instantMs(r0.date)) > BETA_WINDOW_DAYS.B2) r = unmet(`newest pass ${recordRef(r0)} is more than ${BETA_WINDOW_DAYS.B2} days before ${atRef}`);
+			// The README requires `buildSha` to be on `main`. That is a question about git history, which
+			// this file never asks: the answer would depend on how much history the checkout fetched,
+			// so CI and a laptop would render different bytes. Until the snapshot carries it, a pass
+			// inside the window is reported as exactly that, and is not met.
+			else r = unmeasured(`${recordRef(r0)} passed inside the window; whether \`${String(r0.buildSha).slice(0, 12)}\` is on \`main\` is not checked — the snapshot carries no \`main\` history`);
+			perCloud[cloud] = r;
+		}
+		const parts = clouds.map((c) => part(c, perCloud[c]));
+		out.B2 = { state: foldStates(parts), parts, cells: perCloud };
+	}
+
+	// ── B3: the CLI half (proof bundle) and the agent half (record), per cloud ──
+	{
+		const perCloud = {};
+		const parts = [];
+		for (const cloud of clouds) {
+			const { accepted, refused } = bundleFor(cloud, "cli-demo");
+			const cli = accepted.length > 0
+				? met(`\`${accepted[0].dir}\``)
+				: refused.length > 0
+					? (refused[0].integrity === null ? unmeasured(`\`${refused[0].dir}\`: \`${PROOF_INTEGRITY}\` could not run`) : unmet(`\`${refused[0].dir}\` is refused by \`${PROOF_INTEGRITY}\``))
+					: unmet("no successful `cli-demo` bundle");
+			const a = newest((r) => r.predicate === "B3" && r.path === "agent" && r.cloud === cloud);
+			const agent = a === null
+				? unmet("no agent-path record")
+				: a.verdict !== "pass"
+					? unmet(`newest record ${recordRef(a)} says \`${a.verdict}\``)
+					// Decision M35: real on hetzner, a stub elsewhere, and stated next to the verdict. The
+					// schema already refuses a hetzner pass on a stub.
+					: met(`${recordRef(a)} · substrate \`${a.substrate}\` · approved by ${a.approvedBy}`);
+			const state = foldStates([cli, agent]);
+			perCloud[cloud] = { state, why: `CLI: ${cli.why} · agent: ${agent.why}` };
+			parts.push(part(`${cloud} CLI`, cli), part(`${cloud} agent`, agent));
+		}
+		out.B3 = { state: foldStates(parts), parts, cells: perCloud };
+	}
+
+	// ── B4: a full-bar bundle per cloud, inside the window ──
+	{
+		const perCloud = {};
+		for (const cloud of clouds) {
+			const { accepted, refused } = bundleFor(cloud, "full");
+			let r;
+			if (accepted.length === 0) {
+				r = refused.length > 0 ? unmet(`\`${refused[0].dir}\` is refused by \`${PROOF_INTEGRITY}\``) : unmet("no successful bundle with `dimension: full`");
+			} else if (atMs === null) {
+				r = unmeasured(`\`${accepted[0].dir}\`, but there is no snapshot instant to measure the ${BETA_WINDOW_DAYS.B4}-day window from`);
+			} else if (ageDays(instantMs(accepted[0].summary.captured_at)) > BETA_WINDOW_DAYS.B4) {
+				r = unmet(`newest full bar \`${accepted[0].dir}\` is more than ${BETA_WINDOW_DAYS.B4} days before ${atRef}`);
+			} else {
+				r = met(`\`${accepted[0].dir}\``);
+			}
+			perCloud[cloud] = r;
+		}
+		const parts = clouds.map((c) => part(c, perCloud[c]));
+		out.B4 = { state: foldStates(parts), parts, cells: perCloud };
+	}
+
+	// ── B5: paid open, and a live billing record with every event ──
+	{
+		let paid;
+		const decl = paidMarketsText?.match(/export const PAID_MARKETS\s*:[^=]*=\s*\[([\s\S]*?)\];/) ?? null;
+		if (paidMarketsText === null || decl === null) {
+			failures.push(`${PAID_MARKETS_SOURCE}: no \`export const PAID_MARKETS … = [ … ];\` declaration this reader can find — B5 cannot tell whether paid is open`);
+			paid = unmeasured("the paid-market cell list could not be read");
+		} else {
+			const cells = (decl[1].match(/\bcountry\s*:/g) ?? []).length;
+			const announced = launchText?.match(/export const PAID_LAUNCH_ANNOUNCED_FOR\s*:[^=]*=\s*("([^"]*)"|null)/) ?? null;
+			const when = announced === null ? "unread" : announced[2] ?? "no date";
+			// Decision M15: `announced` no longer passes. Only an open cell does.
+			paid = cells > 0
+				? met(`${cells} cell(s) open in \`PAID_MARKETS\`, so \`paidLaunchState()\` is \`open\``)
+				: unmet(`\`PAID_MARKETS\` is empty, so \`paidLaunchState()\` is not \`open\` (announced for: ${when}); decision M15 counts \`announced\` as not met`);
+		}
+		const need = enumOf("events") ?? [];
+		const rec = newest((r) => r.predicate === "B5");
+		const live = rec === null
+			? unmet("no B5 live-billing record")
+			: rec.verdict !== "pass"
+				? unmet(`newest record ${recordRef(rec)} says \`${rec.verdict}\``)
+				: met(`${recordRef(rec)} observed ${need.join(", ")}`);
+		const parts = [part("paid state", paid), part("live evidence", live)];
+		out.B5 = { state: foldStates(parts), parts };
+	}
+
+	// ── B6: the legal register ──
+	{
+		const docs = Array.isArray(legalSet?.documents) ? legalSet.documents : null;
+		let sealed;
+		if (docs === null) {
+			failures.push(`${LEGAL_SET}: missing or has no \`documents\` list — B6 cannot read the register`);
+			sealed = unmeasured("the register could not be read");
+		} else {
+			const terms = docs.find((d) => d?.id === "terms");
+			sealed = terms === undefined
+				? unmet("the register lists no `terms` document")
+				: terms.sealed === true && typeof terms.contentHash === "string"
+					? met(`\`terms\` is sealed at ${terms.version}; the hashes themselves are held by \`pnpm check:legal-hashes\` and \`pnpm check:legal-set\` in CI`)
+					: unmet(`\`terms\` at ${terms.version} is not sealed with a content hash`);
+		}
+		// The README: "the terms entry is at a version sealed with the beta and no-SLA wording. Writing
+		// that text is board unit LEG-L2. Until LEG-L2 merges, B6 is false." Nothing in the register
+		// records which version carries that wording, so this half cannot be read from the tree.
+		const wording = unmeasured("nothing in the register records which `terms` version carries the beta and no-SLA wording (LEG-L2 writes it)");
+		const parts = [part("sealed register", sealed), part("beta terms", wording)];
+		out.B6 = { state: foldStates(parts), parts };
+	}
+
+	// ── B7: backup, drill, public hosts ──
+	{
+		const backup = unmeasured("no instrument reads the off-box backup listing yet (REL-L7 builds the job)");
+		const d = newest((r) => r.predicate === "B7" && r.check === "restore-drill");
+		const drill = d === null
+			? unmet("no restore-drill record")
+			: d.verdict !== "pass"
+				? unmet(`newest record ${recordRef(d)} says \`${d.verdict}\``)
+				: atMs === null
+					? unmeasured(`${recordRef(d)} passed, but there is no snapshot instant to measure the ${BETA_WINDOW_DAYS.B7_DRILL}-day window from`)
+					: ageDays(instantMs(d.date)) > BETA_WINDOW_DAYS.B7_DRILL
+						? unmet(`newest pass ${recordRef(d)} is more than ${BETA_WINDOW_DAYS.B7_DRILL} days before ${atRef}`)
+						: met(`${recordRef(d)} · ${d.durationSeconds}s · tombstones replayed`);
+		const hosts = unmeasured("the post-deploy smoke result is not in the snapshot, and the installer and status hosts are not in the smoke yet (REL-L8)");
+		const parts = [part("off-box backup", backup), part("restore drill", drill), part("public hosts", hosts)];
+		out.B7 = { state: foldStates(parts), parts };
+	}
+
+	// ── B8: one record per edition ──
+	{
+		const editions = enumOf("edition") ?? [];
+		const parts = editions.map((edition) => {
+			const r = newest((x) => x.predicate === "B8" && x.edition === edition);
+			return part(edition, r === null ? unmet("no B8 record") : r.verdict !== "pass" ? unmet(`newest record ${recordRef(r)} says \`${r.verdict}\``) : met(recordRef(r)));
+		});
+		out.B8 = { state: foldStates(parts), parts };
+	}
+
+	// ── B9: the scheduled reaper per cloud, and the scheduled nightly ──
+	{
+		const perCloud = {};
+		const parts = [];
+		for (const cloud of clouds) {
+			const result = reaper.find((x) => x.cloud === cloud);
+			let r;
+			if (result === undefined || result.observation === null) r = unmeasured("no orphan-reaper result in the snapshot");
+			else if (result.state === "clean" && result.observation.event_name !== "schedule") r = unmet(`${result.why} — but a manual dispatch does not count`);
+			else if (result.state === "clean") r = met(result.why);
+			else if (result.state === "standing") r = unmet(result.why);
+			else r = unmeasured(result.why);
+			perCloud[cloud] = r;
+			parts.push(part(`${cloud} reaper`, r));
+		}
+		// The README: 6 of the last 7 scheduled runs green on every cloud. The snapshot records which
+		// gates a nightly reached, not each scheduled run's per-cloud verdict, so this is not read.
+		const nightly = unmeasured("the snapshot does not record the scheduled nightly's per-cloud verdicts, so 6 green of the last 7 cannot be counted");
+		parts.push(part("nightly 6 of 7", nightly));
+		for (const cloud of clouds) {
+			perCloud[cloud] = { state: foldStates([perCloud[cloud], nightly]), why: `reaper: ${perCloud[cloud].why} · nightly: ${nightly.why}` };
+		}
+		out.B9 = { state: foldStates(parts), parts, cells: perCloud };
+	}
+
+	const predicates = BETA_PREDICATES.map((p) => ({ ...p, ...out[p.id] }));
+	const count = (s) => predicates.filter((p) => p.state === s).length;
+	return { at, clouds, predicates, met: count("met"), unmet: count("unmet"), unmeasured: count("unmeasured"), recordCount: valid.length, failures };
+}
+
+const BETA_GLYPH = { met: "✅ met", unmet: "❌ not met", unmeasured: "? not measured" };
+
+/** Render the B1–B9 section of the generated half. */
+export function renderBeta(b) {
+	const L = [];
+	L.push("## Beta predicates — B1 to B9");
+	L.push("");
+	L.push(
+		`**${b.met} of ${b.predicates.length} beta predicates are met.** ${b.unmet} not met · ${b.unmeasured} not measured. ` +
+			`Evaluated on this tree at the snapshot instant **${b.at ?? "(no snapshot — every age limit is unmeasured)"}**, over the ${b.clouds.length} scored clouds: ${b.clouds.map((c) => `\`${c}\``).join(", ")}.`,
+	);
+	L.push("");
+	L.push(
+		`The predicates are defined in \`${BETA_README}\`; this section only evaluates them. \`not measured\` is not met: ` +
+			"it means the instrument does not exist yet, or reads something the tree and the snapshot do not carry. " +
+			`Evidence records read: **${b.recordCount}**.`,
+	);
+	L.push("");
+	L.push("| # | predicate | state |");
+	L.push("|---|---|:---:|");
+	for (const p of b.predicates) L.push(`| ${p.id} | ${p.title} | ${BETA_GLYPH[p.state]} |`);
+	L.push("");
+	const perCloud = b.predicates.filter((p) => p.perCloud);
+	L.push(`| cloud | ${perCloud.map((p) => p.id).join(" | ")} |`);
+	L.push(`|---|${perCloud.map(() => ":---:").join("|")}|`);
+	for (const cloud of b.clouds) L.push(`| **${cloud}** | ${perCloud.map((p) => BETA_GLYPH[p.cells[cloud].state]).join(" | ")} |`);
+	L.push("");
+	L.push("<details><summary>Why, per predicate</summary>");
+	L.push("");
+	for (const p of b.predicates) {
+		L.push(`- **${p.id}** ${BETA_GLYPH[p.state]}`);
+		for (const x of p.parts) L.push(`  - ${x.label}: ${BETA_GLYPH[x.state]} — ${x.why}`);
+	}
+	L.push("");
+	L.push("</details>");
+	L.push("");
+	return L.join("\n");
+}
+
 // ───────────────────────────── inputs ─────────────────────────────
 
 /** Count the sections of one exclusions YAML, without pretending to parse YAML. */
@@ -2528,6 +3101,68 @@ function countGateBaseline(file = GATE_BASELINE) {
 	return counts;
 }
 
+/**
+ * Read what the beta predicates evaluate. Only the files are read here; every judgement is made in
+ * `deriveBeta`. An absent optional file is `null`, which `deriveBeta` turns into an integrity
+ * failure or an `unmeasured` part — never a pass.
+ */
+function readBetaInputs() {
+	const maybe = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null);
+	const json = (f) => {
+		const text = maybe(f);
+		if (text === null) return null;
+		try {
+			return JSON.parse(text);
+		} catch (e) {
+			console.error(`::error::programme-rollup: ${f} is present but unparseable (${e.message}).`);
+			process.exit(3);
+		}
+	};
+	const records = [];
+	for (const { dir } of EVIDENCE_DIRS) {
+		if (!fs.existsSync(dir)) continue;
+		for (const name of fs.readdirSync(dir).sort()) {
+			if (!name.endsWith(".md") || name === "README.md") continue;
+			const file = `${dir}/${name}`;
+			records.push({ file, text: fs.readFileSync(file, "utf8") });
+		}
+	}
+	// Every bundle's summary is read; the integrity script runs only on the ones a beta predicate
+	// could credit (a successful `cli-demo` or `full` bundle), because only those can promote one.
+	// `integrity: null` means the script could not run at all, which deriveBeta never credits.
+	const bundles = [];
+	for (const cloud of fs.readdirSync(PROOFS_DIR).sort()) {
+		const cloudDir = `${PROOFS_DIR}/${cloud}`;
+		if (!fs.statSync(cloudDir).isDirectory()) continue;
+		for (const stamp of fs.readdirSync(cloudDir).sort()) {
+			const dir = `${cloudDir}/${stamp}`;
+			const summaryFile = `${dir}/provision-summary.json`;
+			if (!fs.existsSync(summaryFile)) continue;
+			let summary = null;
+			try {
+				summary = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
+			} catch {
+				summary = null;
+			}
+			let integrity = null;
+			if (summary !== null && (summary.dimension === "cli-demo" || summary.dimension === "full") && summary.outcome === "success") {
+				const run = spawnSync("bash", [PROOF_INTEGRITY, dir, "--dimension", summary.dimension], { stdio: "ignore" });
+				integrity = typeof run.status === "number" ? run.status : null;
+			}
+			bundles.push({ dir, cloud, summary, integrity });
+		}
+	}
+	return {
+		schema: json(BETA_SCHEMA),
+		tsCatalogText: maybe(TS_CATALOG),
+		records,
+		bundles,
+		paidMarketsText: maybe(PAID_MARKETS_SOURCE),
+		launchText: maybe(LAUNCH_SOURCE),
+		legalSet: json(LEGAL_SET),
+	};
+}
+
 function readInputs() {
 	const need = (f) => {
 		if (!fs.existsSync(f)) {
@@ -2565,6 +3200,7 @@ function readInputs() {
 				return null;
 			}
 		},
+		beta: readBetaInputs(),
 		exclusionCounts: Object.fromEntries(
 			[
 				["infra/offer-exclusions.yaml", countExclusions("infra/offer-exclusions.yaml")],
@@ -4164,6 +4800,137 @@ function runSelfTest() {
 	ok("bundleKind: bare cloud/stamp is a path", bundleKind("hetzner/20260805T064043Z") === "path");
 	ok("bundleKind: nightly run tag", bundleKind("nightly-29895597616") === "run-tag");
 	ok("bundleKind: empty", bundleKind("") === "none");
+
+	// ── the beta predicates B1–B9 ──
+	{
+		const readme = fs.readFileSync(BETA_README, "utf8");
+		const schema = JSON.parse(fs.readFileSync(BETA_SCHEMA, "utf8"));
+		// The titles and the per-cloud flags are copies of the README's table; pin them, both directions.
+		const rows = [...readme.matchAll(/^\| (B\d) \| ([^|]+?) \| [^|]+ \| (yes|no) \|$/gm)].map((m) => ({ id: m[1], title: m[2], perCloud: m[3] === "yes" }));
+		ok("beta: the README's predicate table is found (nine rows)", rows.length === 9, JSON.stringify(rows.map((r) => r.id)));
+		ok("beta: every predicate title and per-cloud flag matches the README", JSON.stringify(rows) === JSON.stringify(BETA_PREDICATES), JSON.stringify({ readme: rows, here: BETA_PREDICATES }));
+		// The record directories are a copy of the README's "Where records live" table.
+		const recordsTable = readme.slice(readme.indexOf("## Where records live"), readme.indexOf("## What this file does not do"));
+		const readmeDirs = [...recordsTable.matchAll(/^\| [^|]+ \| `([^`]+)\/` \|/gm)].map((m) => m[1]);
+		ok("beta: the README's records table is found", readmeDirs.length >= 6, JSON.stringify(readmeDirs));
+		ok("beta: every record directory here is in the README, and every one there is here", JSON.stringify([...readmeDirs].sort()) === JSON.stringify(EVIDENCE_DIRS.map((d) => d.dir).sort()), JSON.stringify({ readmeDirs, here: EVIDENCE_DIRS.map((d) => d.dir) }));
+		for (const [key, days] of [["B2", 31], ["B4", 31], ["B7_DRILL", 45]]) ok(`beta: window ${key} is the README's ${days} days`, BETA_WINDOW_DAYS[key] === days && readme.includes(`no more than ${days} days before *T*`));
+
+		// The README's own example record parses and validates against the real schema.
+		const example = readme.match(/```markdown\n([\s\S]*?)```/)?.[1] ?? "";
+		const ex = parseFrontMatter(example);
+		ok("beta: the README example has front matter", ex.found && "data" in ex, JSON.stringify(ex));
+		ok("beta: ...and it validates against the schema", "data" in ex && validateAgainstSchema(ex.data, schema).length === 0, "data" in ex ? validateAgainstSchema(ex.data, schema).join("; ") : "");
+		const spdx = `<!--\nSPDX-FileCopyrightText: x\n-->\n\n${example}`;
+		ok("beta: an SPDX comment before the front matter is allowed", "data" in parseFrontMatter(spdx));
+		ok("beta: a file with no front matter is not a record", parseFrontMatter("<!-- x -->\n# A QA report\n").found === false);
+		ok("beta: a line the reader does not understand is an error, never skipped", "error" in parseFrontMatter("---\npredicate: B2\n  nested: {a: 1}\n---\n"));
+		ok("beta: a key set twice is an error", "error" in parseFrontMatter("---\nverdict: pass\nverdict: fail\n---\n"));
+		const digitsSha = parseFrontMatter(example.replace(/buildSha: "([0-9a-f]+)"/, `buildSha: ${"1".repeat(40)}`));
+		ok("beta: an unquoted all-digit SHA reads as a number and fails the schema", "data" in digitsSha && validateAgainstSchema(digitsSha.data, schema).some((e) => /buildSha/.test(e)));
+		let threw = false;
+		try {
+			validateAgainstSchema(1, { multipleOf: 2 });
+		} catch {
+			threw = true;
+		}
+		ok("beta: a schema keyword the validator does not implement throws, rather than passing unchecked", threw);
+		ok("beta: the real schema uses only implemented keywords", (() => {
+			try {
+				validateAgainstSchema({}, schema);
+				return true;
+			} catch {
+				return false;
+			}
+		})());
+
+		// deriveBeta on fixtures. The fixture clouds are NOT today's four, so no rule is tested only
+		// against the names that happen to be real.
+		const fx = (over = {}) => {
+			// The real schema with its four slugs swapped for the fixture's two, everywhere they appear,
+			// so every conditional rule still runs.
+			const swapped = JSON.stringify(schema).replaceAll('["aws","gcp","azure","hetzner"', '["north","south"');
+			const fixtureSchema = JSON.parse(swapped);
+			if (swapped === JSON.stringify(schema)) throw new Error("self-test: the schema no longer lists the four slugs as one array — the fixture swap matched nothing");
+			return {
+				spine: { clouds: ["north", "south"], offered_clouds: ["north", "south"] },
+				schema: fixtureSchema,
+				tsCatalogText: 'export const AVAILABLE_CLOUDS: readonly CloudSlug[] = [\n\t"north",\n\t"south"\n];',
+				records: [],
+				bundles: [],
+				paidMarketsText: "export const PAID_MARKETS: readonly PaidMarketCell[] = [];",
+				launchText: "export const PAID_LAUNCH_ANNOUNCED_FOR: string | null = null;",
+				legalSet: { documents: [{ id: "terms", sealed: true, version: "2026-08-24", contentHash: "ab" }] },
+				reaper: [],
+				at: "2026-12-20T00:00:00Z",
+				...over,
+			};
+		};
+		const rec = (fields) => `<!-- spdx -->\n---\n${Object.entries({ schemaVersion: 1, buildSha: `"${"a".repeat(40)}"`, instrument: "manual", evidence: "[x]", ...fields }).map(([k, v]) => `${k}: ${v}`).join("\n")}\n---\n# body\n`;
+		const pick = (b, id) => b.predicates.find((p) => p.id === id);
+
+		const clean = deriveBeta(fx());
+		ok("beta fixture: B1 met when Go, TypeScript and the schema agree", pick(clean, "B1").state === "met", pick(clean, "B1").parts[0].why);
+		ok("beta fixture: nine predicates, and nothing met from silence beyond B1", clean.predicates.length === 9 && clean.met === 1, JSON.stringify(clean.predicates.map((p) => [p.id, p.state])));
+		const tsDiffers = deriveBeta(fx({ tsCatalogText: 'export const AVAILABLE_CLOUDS: readonly CloudSlug[] = ["north"];' }));
+		ok("beta fixture: B1 not met when the TypeScript catalog disagrees with Go", pick(tsDiffers, "B1").state === "unmet");
+		const fifth = deriveBeta(fx({ spine: { clouds: ["north", "south"], offered_clouds: ["north", "south", "east"] }, tsCatalogText: 'export const AVAILABLE_CLOUDS = ["north","south","east"];' }));
+		ok("beta fixture: B1 not met on a fifth offered cloud", pick(fifth, "B1").state === "unmet", pick(fifth, "B1").parts[0].why);
+		const noMirror = deriveBeta(fx({ spine: { clouds: ["north", "south"] } }));
+		ok("beta fixture: a mirror without offered_clouds is an integrity failure and B1 is unmeasured", noMirror.failures.some((f) => /offered_clouds/.test(f)) && pick(noMirror, "B1").state === "unmeasured");
+
+		const b2 = (date, verdict = "pass") => ({ file: `apps/console/docs/qa/prod-runs/${date.slice(0, 10)}-north.md`, text: rec({ predicate: "B2", cloud: "north", date: `"${date}"`, verdict, freshAccount: "true", steps: "[sign-up, connect, design, deploy, running-cluster, destroy]" }) });
+		const inWindow = deriveBeta(fx({ records: [b2("2026-12-14T10:00:00Z")] }));
+		ok("beta fixture: a B2 pass inside the window is read", inWindow.recordCount === 1 && inWindow.failures.length === 0, inWindow.failures.join("; "));
+		ok("beta fixture: ...and is NOT met, because on-main is not checked", pick(inWindow, "B2").cells.north.state === "unmeasured", pick(inWindow, "B2").cells.north.why);
+		const tooOld = deriveBeta(fx({ records: [b2("2026-11-01T10:00:00Z")] }));
+		ok("beta fixture: a B2 pass older than 31 days is not met", pick(tooOld, "B2").cells.north.state === "unmet", pick(tooOld, "B2").cells.north.why);
+		const newerFail = deriveBeta(fx({ records: [b2("2026-12-14T10:00:00Z"), b2("2026-12-15T10:00:00Z", "fail")] }));
+		ok("beta fixture: the newest record decides, so a later fail beats an earlier pass", pick(newerFail, "B2").cells.north.state === "unmet", pick(newerFail, "B2").cells.north.why);
+		const noSnapshot = deriveBeta(fx({ records: [b2("2026-12-14T10:00:00Z")], at: null }));
+		ok("beta fixture: with no snapshot instant, a windowed check is unmeasured, never guessed", pick(noSnapshot, "B2").cells.north.state === "unmeasured" && /no snapshot instant/.test(pick(noSnapshot, "B2").cells.north.why));
+		const misfiled = deriveBeta(fx({ records: [{ ...b2("2026-12-14T10:00:00Z"), file: "docs/beta/evidence/b5/2026-12-14-live-billing.md" }] }));
+		ok("beta fixture: a record outside its directory is an integrity failure", misfiled.failures.some((f) => /outside its directory/.test(f)) && misfiled.recordCount === 0);
+		const invalid = deriveBeta(fx({ records: [{ file: "docs/beta/evidence/b8/2026-12-14-hosted.md", text: rec({ predicate: "B8", cloud: "all", date: '"2026-12-14T10:00:00Z"', verdict: "pass" }) }] }));
+		ok("beta fixture: a record the schema refuses (B8 with no edition) is an integrity failure", invalid.failures.some((f) => /edition/.test(f)), invalid.failures.join("; "));
+		const stray = deriveBeta(fx({ records: [{ file: "docs/beta/evidence/b7/notes.md", text: "# notes\n" }] }));
+		ok("beta fixture: a file with no front matter in a records-only directory is an integrity failure", stray.failures.some((f) => /no front matter/.test(f)));
+
+		const bundle = (cloud, dimension, captured, integrity = 0) => ({ dir: `demos/proofs/${cloud}/${captured}`, cloud, summary: { dimension, outcome: "success", captured_at: captured }, integrity });
+		const agent = (cloud, substrate) => ({ file: `docs/beta/evidence/b3/2026-12-14-${cloud}-agent.md`, text: rec({ predicate: "B3", cloud, path: "agent", substrate, approvedBy: "maintainer", date: '"2026-12-14T10:00:00Z"', verdict: "pass" }) });
+		const b3 = deriveBeta(fx({ bundles: [bundle("north", "cli-demo", "20260930T061330Z"), bundle("south", "cli-demo", "20260930T061330Z", 1)], records: [agent("north", "stub"), agent("south", "real")] }));
+		ok("beta fixture: B3 met on a cloud with an accepted cli-demo bundle and an agent pass", pick(b3, "B3").cells.north.state === "met", pick(b3, "B3").cells.north.why);
+		ok("beta fixture: ...and the substrate is printed next to the verdict", /substrate `stub`/.test(pick(b3, "B3").cells.north.why));
+		ok("beta fixture: a cli-demo bundle the integrity script refuses does not count", pick(b3, "B3").cells.south.state === "unmet" && /refused/.test(pick(b3, "B3").cells.south.why));
+		const realSchemaStub = validateAgainstSchema(parseFrontMatter(agent("hetzner", "stub").text).data, schema);
+		ok("beta: the real schema refuses a hetzner agent pass on a stub (decision M35)", realSchemaStub.length > 0);
+
+		const b4 = deriveBeta(fx({ bundles: [bundle("north", "full", "20261210T000000Z"), bundle("south", "full", "20261001T000000Z"), bundle("south", "floor", "20261215T000000Z")] }));
+		ok("beta fixture: B4 met by a full bundle inside 31 days", pick(b4, "B4").cells.north.state === "met");
+		ok("beta fixture: B4 not met by a full bundle older than 31 days, nor by a floor bundle", pick(b4, "B4").cells.south.state === "unmet", pick(b4, "B4").cells.south.why);
+		const b4unrun = deriveBeta(fx({ bundles: [bundle("north", "full", "20261210T000000Z", null)] }));
+		ok("beta fixture: a bundle whose integrity script could not run is never credited", pick(b4unrun, "B4").cells.north.state !== "met");
+
+		const opened = deriveBeta(fx({ paidMarketsText: 'export const PAID_MARKETS: readonly PaidMarketCell[] = [\n\t{ country: "BG", capacity: "business", evidence: "x" },\n];' }));
+		ok("beta fixture: an open PAID_MARKETS cell makes the paid part met", pick(opened, "B5").parts[0].state === "met");
+		ok("beta fixture: ...but B5 still needs the live-billing record", pick(opened, "B5").state === "unmet");
+		ok("beta fixture: an empty PAID_MARKETS is not met (announced does not pass, decision M15)", pick(clean, "B5").parts[0].state === "unmet");
+		const noDecl = deriveBeta(fx({ paidMarketsText: "export const SOMETHING_ELSE = [];" }));
+		ok("beta fixture: a PAID_MARKETS declaration that cannot be found is an integrity failure", noDecl.failures.some((f) => /PAID_MARKETS/.test(f)));
+
+		const reaperObs = (event_name) => [{ cloud: "north", state: "clean", why: "run 1 verified clean", observation: { event_name } }, { cloud: "south", state: "standing", why: "residual", observation: { event_name: "schedule" } }];
+		const sched = deriveBeta(fx({ reaper: reaperObs("schedule") }));
+		ok("beta fixture: a scheduled clean reaper run meets the reaper half", pick(sched, "B9").parts.find((p) => p.label === "north reaper").state === "met");
+		ok("beta fixture: ...but B9 stays unmeasured while the nightly half is unread", pick(sched, "B9").cells.north.state === "unmeasured");
+		ok("beta fixture: a standing reaper result is not met", pick(sched, "B9").cells.south.state === "unmet");
+		const manual = deriveBeta(fx({ reaper: reaperObs("workflow_dispatch") }));
+		ok("beta fixture: a clean manual reaper dispatch does not count", pick(manual, "B9").parts.find((p) => p.label === "north reaper").state === "unmet");
+
+		const rendered = renderBeta(sched);
+		ok("beta: the rendered section lists nine predicates and one row per scored cloud", (rendered.match(/^\| B\d \|/gm) ?? []).length === 9 && /\| \*\*north\*\* \|/.test(rendered) && /\| \*\*south\*\* \|/.test(rendered));
+		ok("beta: the rendered section prints the snapshot instant verbatim", rendered.includes("2026-12-20T00:00:00Z"));
+		ok("beta: rendering is byte-identical across calls", renderBeta(deriveBeta(fx({ reaper: reaperObs("schedule") }))) === rendered);
+	}
 
 	if (fails > 0) {
 		console.error(`\nself-test: ${fails} check(s) FAILED`);
