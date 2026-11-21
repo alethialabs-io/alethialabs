@@ -41,10 +41,6 @@ const OWED_ASYNC: Record<string, string> = {
 	"app/(private)/[org]/[project]/settings/access/loading.tsx": "#6824",
 	"app/(private)/[org]/[project]/settings/preview/loading.tsx": "#6824",
 	"app/(private)/[org]/~/new/loading.tsx": "#6843",
-	"app/(private)/[org]/~/settings/access/loading.tsx": "#6823",
-	"app/(private)/[org]/~/settings/members/loading.tsx": "#6823",
-	"app/(private)/[org]/~/settings/sso/loading.tsx": "#6823",
-	"app/(private)/[org]/~/settings/teams/loading.tsx": "#6823",
 	"app/(private)/[org]/~/support/cases/[id]/loading.tsx": "#6826",
 };
 

@@ -356,7 +356,14 @@ function KvRow({ label, value }: { label: string; value: string }) {
  * One provider's detail: the connection test, domain verification and the SP details. Each action
  * is a `useActionMutation` — pending while in flight, and every control disabled while any of them
  * runs (the double-submit guard). Verifying changes the provider, so it invalidates the SSO reads;
- * the test and the token mint change nothing the page shows.
+ * the test and the record read change nothing the page shows.
+ *
+ * SHOWING THE DNS RECORD DOES NOT REPLACE IT (R6 E-19). `requestSsoDomainVerification` calls
+ * `@better-auth/sso`'s `/sso/request-domain-verification`, which answers with the provider's ACTIVE
+ * token when one exists and mints a new one only when there is none or it has expired (seven days
+ * after it was issued). So asking again — after a reload, from another admin's browser — returns the
+ * record already published, and the button says "Show DNS record" every time rather than offering a
+ * "Re-issue" that would read as invalidating it.
  */
 function ProviderDetail({
 	provider: p,
@@ -479,7 +486,8 @@ function ProviderDetail({
 						</p>
 						<p className="mt-1 text-ui-sm text-text-secondary">
 							Sign-in through this provider stays disabled until you prove you control
-							the domain. Add this DNS TXT record, then verify.
+							the domain. Publish this DNS TXT record, then verify. Showing it again
+							returns the same record while it is valid.
 						</p>
 					</div>
 					{dns && (
@@ -495,7 +503,7 @@ function ProviderDetail({
 							disabled={!canManage || busy}
 							onClick={() => minting.mutate({ id: p.id })}
 						>
-							{minting.isPending ? "Issuing…" : dns ? "Re-issue record" : "Show DNS record"}
+							{minting.isPending ? "Loading…" : "Show DNS record"}
 						</Button>
 						<Button
 							size="sm"

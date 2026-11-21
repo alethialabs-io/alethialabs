@@ -9,7 +9,7 @@
 // pages in older rows.
 
 import { Loader2, ScrollText } from "lucide-react";
-import { useMemo } from "react";
+import { type ReactNode, useMemo } from "react";
 import type { ActivityRow } from "@/app/server/actions/activity";
 import { useHydrated } from "@repo/ui/use-hydrated";
 import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
@@ -41,12 +41,19 @@ function byMonth(rows: ActivityRow[], timeZone?: string): { month: string; rows:
 /** The widest relative time a row prints, so its slot has that width before the clock is read. */
 const RELATIVE_SIZER = "about 11 months ago";
 
+/**
+ * The month-grouped feed. With no rows it renders `empty` — the caller knows WHY there are none (a
+ * new organization, a quiet window, a filter that matches nothing) and this component does not — or
+ * the filtered sentence when the caller gives no reason.
+ */
 export function ActivityFeed({
 	rows,
 	ctx,
 	onLoadMore,
 	hasMore = false,
 	loadingMore = false,
+	empty,
+	tail,
 }: {
 	rows: ActivityRow[];
 	ctx: ActivityContext;
@@ -56,6 +63,13 @@ export function ActivityFeed({
 	hasMore?: boolean;
 	/** Whether the next page is in flight (button spinner + disabled). */
 	loadingMore?: boolean;
+	/** What to render when there are no rows (R6 E-27). */
+	empty?: ReactNode;
+	/**
+	 * Rendered under the rows in place of "Load more": the caller's notice that the next page failed
+	 * to load, with its retry (R6 E-26). The loaded rows stay where they are.
+	 */
+	tail?: ReactNode;
 }) {
 	const hydrated = useHydrated();
 	const groups = useMemo(() => byMonth(rows, hydrated ? undefined : "UTC"), [rows, hydrated]);
@@ -69,6 +83,7 @@ export function ActivityFeed({
 	});
 
 	if (rows.length === 0) {
+		if (empty !== undefined) return <>{empty}</>;
 		return (
 			// The copy is unchanged on purpose. `components/alerts/activity-panel.tsx` says the
 			// same sentence for the same condition and `docs/qa/flow-catalog.md` pins it as a QA
@@ -160,7 +175,8 @@ export function ActivityFeed({
 				</section>
 			))}
 
-			{hasMore && onLoadMore && (
+			{tail}
+			{!tail && hasMore && onLoadMore && (
 				<div className="flex justify-center pt-1">
 					{/* Invisible tail sentinel that drives the auto-load-on-scroll. */}
 					<div ref={sentinelRef} aria-hidden className="h-px w-px" />
