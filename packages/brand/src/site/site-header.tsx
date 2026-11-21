@@ -125,10 +125,22 @@ function NavMenu({
   const active = open === id;
   const panelId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
+  // Set by Escape just before it hands focus back to the trigger. Without it, that
+  // focus move bubbles to the wrapper's onFocus and reopens the menu Escape closed.
+  const skipNextFocusOpen = useRef(false);
 
   /** Closes the menu once focus moves to something outside it. */
   const onBlur = (e: FocusEvent<HTMLDivElement>) => {
     if (!e.currentTarget.contains(e.relatedTarget)) setOpen(null);
+  };
+
+  /** Opens the menu when focus enters it, except for the focus Escape returns. */
+  const onFocus = () => {
+    if (skipNextFocusOpen.current) {
+      skipNextFocusOpen.current = false;
+      return;
+    }
+    setOpen(id);
   };
 
   /** Escape closes the menu and returns focus to its trigger. */
@@ -136,14 +148,17 @@ function NavMenu({
     if (e.key !== "Escape" || !active) return;
     e.stopPropagation();
     setOpen(null);
-    triggerRef.current?.focus();
+    if (triggerRef.current && document.activeElement !== triggerRef.current) {
+      skipNextFocusOpen.current = true;
+      triggerRef.current.focus();
+    }
   };
 
   return (
     <div
       onMouseEnter={() => setOpen(id)}
       onMouseLeave={() => setOpen(null)}
-      onFocus={() => setOpen(id)}
+      onFocus={onFocus}
       onBlur={onBlur}
       onKeyDown={onKeyDown}
       style={{ position: "relative" }}
