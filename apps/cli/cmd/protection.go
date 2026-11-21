@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -25,14 +24,23 @@ window, or a cost-delta ceiling. List the rules configured per environment.`,
 var protectionListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List a project's per-environment protection rules",
-	Long: `List the protection rules configured for each of a project's environments. Name the
-project with --project; omit it on a terminal and you are asked which.`,
+	Args:  cobra.NoArgs,
+	Long: `Lists the protection rules configured for each of a project's environments: whether a
+promotion into it needs the previous stage deployed and in sync, a passing verify report or a
+human approval, how many approvers, the soak window in minutes, and the cost-delta ceiling.
+
+Use it to see why a promotion is waiting. It only reads; rules are set in the console.
+
+Name the project with --project; omit it on a terminal and you are asked which. With nobody to
+ask, it is required (exit 9). --output json prints the rules as an array, and --output csv the
+wire values.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		project, err := projectFromFlag(cmd, token)
+		p := printerFor(cmd)
+		project, err := projectOrAsk(cmd, token)
 		if err != nil {
 			fail(err)
 		}
@@ -43,17 +51,17 @@ project with --project; omit it on a terminal and you are asked which.`,
 				rules, err = client.GetProjectProtection(project)
 			})
 			if err != nil {
-				failf("Failed to list protection rules: %v", err)
+				fail(fmt.Errorf("list protection rules: %w", err))
 			}
 			if len(rules) == 0 {
-				ui.Muted("No protection rules configured.")
+				fmt.Fprintln(p.Out, ui.MutedStyle.Render("No protection rules configured."))
 				return
 			}
 			_ = ui.ShowTable(protectionColumns, protectionRows(rules, ui.FormatTable), "protection rules")
 			return
 		}
-		if err := runProtectionList(client, os.Stdout, outputFormat(cmd), project); err != nil {
-			failf("Failed to list protection rules: %v", err)
+		if err := runProtectionList(client, p.Out, p.Format, project); err != nil {
+			fail(fmt.Errorf("list protection rules: %w", err))
 		}
 	},
 }
