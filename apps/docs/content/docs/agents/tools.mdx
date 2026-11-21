@@ -1,0 +1,81 @@
+---
+title: MCP tool reference
+description: Every tool the Alethia MCP server offers today — 20 read tools, their arguments, and what each returns. None of them writes.
+---
+
+{/* Source of truth: apps/console/lib/ai/tools/registry.ts (TOOL_AUDIENCE "both" or "external") and the
+    tool definitions in apps/console/lib/ai/tools/{compose,read,docs,scanner}.ts. The MCP route registers
+    exactly that set (buildExternalAgentTools). Change this page when that set changes. */}
+
+# MCP tool reference
+
+The MCP server at `<console origin>/api/mcp` offers the 20 tools below. They have the same names and
+arguments as the tools of Elench, the console's own assistant.
+
+Every tool:
+
+- **reads only.** None of them creates, changes or deletes anything, and none starts a job.
+- **acts as you.** Each call checks your role in the organization, the same check the console makes.
+  A tool refuses what you cannot see.
+- **returns JSON as text.** A refusal or a failure comes back as a tool error with a message.
+- **leaves secrets out.** No result carries a password, a token or a cloud credential.
+
+## Projects and jobs
+
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `list_projects` | none | Your projects, with cloud, region and status. |
+| `get_project` | `projectId` | One project's configuration: its components and their sizes. |
+| `list_jobs` | `limit` (up to 50), `environmentId` (optional) | Recent jobs (plan, deploy, destroy and others) with their status. |
+| `get_job` | `jobId` | One job's status and error. |
+| `get_plan_result` | `jobId` | A plan or deploy job's status, error, and the names of its outputs. |
+| `get_drift_posture` | `projectId`, `environmentId` (optional) | Whether the live infrastructure matches what was provisioned, and which resources drifted. |
+
+## Runtime
+
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `list_clusters` | none | Provisioned clusters with their endpoints, databases and caches. |
+| `list_runners` | none | Your runners, with status and version. |
+| `list_connectors` | none | The connectors (DNS, secrets, registry, observability, git, cloud) and which ones you have connected. |
+| `list_cloud_identities` | none | Your verified cloud accounts: id, name, display id and provider. |
+| `get_cached_resources` | `cloudIdentityId` | A cloud account's existing networks, subnets and regions, from the asset inventory. |
+
+## Catalog
+
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `list_services` | none | The services a design can contain, with each cloud's service name and how it is deployed there. |
+| `list_service_options` | `provider` | Valid values for one cloud: instance types, Kubernetes versions, database engines, cache node types, regions and more. |
+| `cidr_for_hosts` | `hosts`, `base` (optional), `cloud` (optional) | The smallest network CIDR block that fits the hosts and that the cloud's template accepts. Without `cloud`, the answer is a `/18` or larger, which every cloud accepts. |
+
+## Repository scans
+
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `get_scan_result` | `jobId` | A repository scan's status and, when it is ready, the stack it inferred. |
+| `compare_providers` | `jobId` | The scanned stack's estimated monthly cost on AWS, GCP and Azure, cheapest first. |
+
+A scan starts from the console or from Elench. No MCP tool starts one.
+
+## Usage and billing
+
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `get_org_usage` | none | Managed-runner minutes this period against the plan's allowance, overage, running jobs and the concurrency limit. |
+| `get_ai_usage` | none | The organization's AI tier, credits used in the current session and week against its limits, and any purchased balance. |
+| `get_billing_summary` | none | The plan, its status, seats against members, the per-seat amount and the end of the current period. The amount is in minor units, with its currency code. |
+
+## Docs
+
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `search_docs` | `query`, `topK` (1 to 8, default 4) | The most relevant passages of these docs, each with its URL. |
+
+## Not on the server
+
+These need a person in the console, or the CLI:
+
+- Plan, apply and destroy. Use `alethia plan` and `alethia apply`, or the console.
+- Starting a repository scan or an audit of existing infrastructure.
+- Changing a design, connecting a cloud, and anything that opens part of the console.

@@ -41,13 +41,16 @@ const config = {
 	reactStrictMode: true,
 	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
 	transpilePackages: ["@repo/brand"],
+	// Every page is also served as Markdown, at its URL plus `.md` (the form agents and llms.txt use)
+	// or `.mdx`. Both reach app/llms.mdx, which answers from the same loader as the HTML page, so a
+	// hidden page has no Markdown URL either. The first match wins, so the `index` forms come first:
+	// the loader knows a folder's index page by the folder's slug, not by a trailing `index`.
 	async rewrites() {
-		return [
-			{
-				source: "/:path*.mdx",
-				destination: "/llms.mdx/:path*",
-			},
-		];
+		return ["md", "mdx"].flatMap((ext) => [
+			{ source: `/index.${ext}`, destination: "/llms.mdx" },
+			{ source: `/:path*/index.${ext}`, destination: "/llms.mdx/:path*" },
+			{ source: `/:path*.${ext}`, destination: "/llms.mdx/:path*" },
+		]);
 	},
 	async redirects() {
 		return [

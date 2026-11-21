@@ -1,0 +1,56 @@
+---
+title: Claude Code
+description: Add the Alethia MCP server to Claude Code, sign in, and let Claude Code run the alethia CLI in agent mode.
+---
+
+# Claude Code
+
+Claude Code can reach Alethia two ways: the MCP server, to read, and the `alethia` CLI, to act.
+
+## Before you start
+
+- Your console origin: the address you sign in to Alethia at. `alethia auth status` prints it as
+  `web origin`. The MCP endpoint is that origin plus `/api/mcp`.
+- The `alethia` CLI, if you want Claude Code to act. See [Install the CLI](/get-started/install-the-cli).
+
+## Add the MCP server
+
+<Steps>
+
+### Add the server
+
+Run this in your terminal, with your own origin:
+
+```bash
+claude mcp add --transport http alethia https://<your-console-origin>/api/mcp
+```
+
+Add `--scope project` to share the server with everyone who works in the repository, through
+`.mcp.json`. Leave it out to keep the server to yourself.
+
+### Sign in
+
+Start Claude Code and run `/mcp`. Choose `alethia` and authenticate. Your browser opens the Alethia
+sign-in page. Sign in, and approve access if the page asks.
+
+### Check the tools
+
+Ask Claude Code to list your Alethia projects. It calls `list_projects`. The
+[tool reference](/agents/tools) lists every tool.
+
+</Steps>
+
+<Callout type="info">
+  The server speaks only the current generation of the MCP protocol and expects a Client ID Metadata
+  Document from the client. If the connection fails, see
+  [Connect a client](/guides/assistant/mcp#connect-a-client).
+</Callout>
+
+## Let Claude Code use the CLI
+
+Claude Code sets `CLAUDECODE` in the shells it starts. The CLI reads it and switches to agent mode:
+no prompts, no colour, and JSON output. You do not need to configure anything.
+
+Claude Code runs the CLI with your stored sign-in, so it can do what you can do. Claude Code asks you
+before it runs a shell command, unless you have allowed that command. Do not allow
+`alethia apply` or `alethia project destroy` without review. See [the CLI for agents](/agents/cli).

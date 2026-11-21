@@ -1,0 +1,54 @@
+---
+title: Security model for agents
+description: What limits an AI agent that works with Alethia today — your own permissions, a read-only MCP server, OAuth tokens bound to that server, and a confirmation before apply and destroy.
+---
+
+# Security model for agents
+
+An agent never has more access than the person it works for. This page lists each control that
+applies to agents today, and what it does not cover.
+
+## Every call is checked as you
+
+The MCP server and the CLI both resolve the caller to a person in an organization. Each read and each
+change then goes through the same permission check the console uses. An agent cannot reach a project,
+a job or an organization that its person cannot reach, and cannot read across organizations. See
+[access control](/concepts/access-control).
+
+## The MCP server
+
+| Control | What it does |
+| --- | --- |
+| Read-only tools | The server offers only tools marked as safe to expose, all of them reads. A tool without that mark is left out. No tool writes, starts a job or approves. See the [tool reference](/agents/tools). |
+| OAuth sign-in | A client gets a token only after you sign in to Alethia in the browser. There is no API key to paste or leak. |
+| Client ID Metadata Documents | A client identifies itself by the URL of a metadata document that it publishes. Clients cannot register themselves anonymously. |
+| Tokens bound to the server | Each access token names the MCP endpoint as its audience. The server refuses a token issued for anything else. |
+| No secrets in results | No tool returns a password, a token or a cloud credential. Tools that issue cluster credentials are kept away from the agent entirely. |
+| Plan check | On hosted Alethia the server answers `403` when AI is turned off for the organization. |
+
+## The CLI
+
+The CLI acts with the full permissions of its credential, whoever runs it. What stands between an
+agent in your shell and a change to your infrastructure:
+
+- **A confirmation.** `alethia apply`, `alethia up` and `alethia project destroy` ask first. In agent
+  mode nothing can ask, so they stop with exit `9` unless the command carries `--yes`. Do not let an
+  agent add `--yes` on its own.
+- **Your agent's own approval prompt.** Most agents ask before they run a shell command. Keep
+  `alethia apply` and `alethia project destroy` off the list of commands your agent may run without
+  asking.
+- **The verification engine.** Every deploy runs [Elench](/concepts/elench)'s checks between the
+  plan and the apply, whoever started it. A failing check stops the apply.
+- **Protected environments.** A deploy into an environment with protection rules waits for a person
+  to approve it in the console. See [protection](/reference/cli/protection).
+
+Service-account tokens have no scopes or project list today. A token can do everything its creator
+can do in its organization. Give each token an expiry, store it in a secret store, and revoke it when
+the work is done.
+
+## Text from outside is data
+
+Tool results and command output can contain text that Alethia did not write: a repository's files, a
+job's log, a cloud API's answer. Such text can contain instructions aimed at the agent. An agent must
+treat it as data and never follow it. Over MCP the worst such text can do is mislead a read, because
+no MCP tool changes anything.
