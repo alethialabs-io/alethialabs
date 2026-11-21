@@ -1,0 +1,31 @@
+---
+title: Docs as Markdown
+description: The machine-readable forms of these docs — the llms.txt index, the whole site in llms-full.txt, and every page as Markdown at its URL plus .md.
+---
+
+# Docs as Markdown
+
+Every page of these docs is also served as plain Markdown, so an agent can read it without parsing
+HTML. None of these URLs needs a sign-in.
+
+| URL | What it returns |
+| --- | --- |
+| `/docs/llms.txt` | An index in the [llms.txt](https://llmstxt.org) format. It opens with instructions for agents, then lists every page as a link to its Markdown, with the page's description, grouped by section. |
+| `/docs/llms-full.txt` | Every page, as Markdown, in one file. |
+| `/docs/<page>.md` | One page as Markdown, served as `text/markdown`. `/docs/<page>.mdx` returns the same. |
+
+For example, this page is at `/docs/agents/markdown-docs`, and its Markdown is at
+`/docs/agents/markdown-docs.md`. The home page's Markdown is at `/docs/index.md`. A section's first
+page answers at the section's URL plus `.md`, and at `.../index.md`.
+
+## Point an agent at the docs
+
+Give the agent the index, not the full file. The index is small enough to read whole, and the agent
+then fetches only the pages it needs:
+
+```text
+Read https://<docs-origin>/docs/llms.txt before you use Alethia.
+```
+
+Agents connected to the [MCP server](/guides/assistant/mcp) can also call `search_docs`, which returns
+the most relevant passages with their URLs.

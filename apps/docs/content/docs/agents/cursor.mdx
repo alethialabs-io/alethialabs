@@ -1,0 +1,57 @@
+---
+title: Cursor
+description: Add the Alethia MCP server to Cursor through mcp.json, sign in, and let Cursor's agent run the alethia CLI in agent mode.
+---
+
+# Cursor
+
+Cursor's agent can read Alethia through the MCP server and act through the `alethia` CLI.
+
+## Before you start
+
+- Your console origin: the address you sign in to Alethia at. `alethia auth status` prints it as
+  `web origin`. The MCP endpoint is that origin plus `/api/mcp`.
+
+## Add the MCP server
+
+<Steps>
+
+### Edit mcp.json
+
+Add Alethia to `.cursor/mcp.json` in your project, or to `~/.cursor/mcp.json` to use it in every
+project:
+
+```json
+{
+  "mcpServers": {
+    "alethia": {
+      "url": "https://<your-console-origin>/api/mcp"
+    }
+  }
+}
+```
+
+### Sign in
+
+Open Cursor's MCP settings. Alethia shows that it needs authentication. Choose to log in, then sign
+in to Alethia in the browser that opens, and approve access if the page asks.
+
+### Check the tools
+
+Ask the agent to list your Alethia projects. The [tool reference](/agents/tools) lists every tool.
+
+</Steps>
+
+<Callout type="info">
+  The server speaks only the current generation of the MCP protocol and expects a Client ID Metadata
+  Document from the client. If the connection fails, see
+  [Connect a client](/guides/assistant/mcp#connect-a-client).
+</Callout>
+
+## Let Cursor use the CLI
+
+The CLI switches to agent mode when `CURSOR_AGENT` is set in its environment: no prompts, no colour,
+and JSON output. If the agent's terminal does not set it, add `ALETHIA_AGENT=yes` to the environment
+or `--agent yes` to the command. The agent runs the CLI with your stored sign-in. Do not
+let it run `alethia apply` or `alethia project destroy` without your review. See
+[the CLI for agents](/agents/cli).

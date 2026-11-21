@@ -1,0 +1,59 @@
+---
+title: VS Code
+description: Add the Alethia MCP server to VS Code for GitHub Copilot's agent mode through mcp.json, and sign in.
+---
+
+# VS Code
+
+In VS Code, GitHub Copilot's agent mode can read Alethia through the MCP server.
+
+## Before you start
+
+- Your console origin: the address you sign in to Alethia at. `alethia auth status` prints it as
+  `web origin`. The MCP endpoint is that origin plus `/api/mcp`.
+
+## Add the MCP server
+
+<Steps>
+
+### Edit mcp.json
+
+Add Alethia to `.vscode/mcp.json` in your workspace:
+
+```json
+{
+  "servers": {
+    "alethia": {
+      "type": "http",
+      "url": "https://<your-console-origin>/api/mcp"
+    }
+  }
+}
+```
+
+To use it in every workspace, run **MCP: Add Server** from the Command Palette and choose the global
+target.
+
+### Start the server and sign in
+
+Choose **Start** above the server entry in `mcp.json`. VS Code asks to sign in. Sign in to Alethia in
+the browser that opens, and approve access if the page asks.
+
+### Check the tools
+
+Open the chat in agent mode and select the tools button. The Alethia tools are listed under
+`alethia`. The [tool reference](/agents/tools) describes each one.
+
+</Steps>
+
+<Callout type="info">
+  The server speaks only the current generation of the MCP protocol and expects a Client ID Metadata
+  Document from the client. If the connection fails, see
+  [Connect a client](/guides/assistant/mcp#connect-a-client).
+</Callout>
+
+## Let the agent use the CLI
+
+When the agent runs `alethia` in a terminal, set `ALETHIA_AGENT=yes` in that terminal's environment,
+or add `--agent yes` to the command, so the CLI never prompts and prints JSON. See
+[the CLI for agents](/agents/cli).
