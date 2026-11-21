@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Hourly export of the erasure tombstones alone (REL-L7, #6908). A restore of last night's dump
+# cannot contain an erasure performed this afternoon; this copy is what lets the restore replay it.
+[Unit]
+Description=Alethia off-box export of erasure tombstones
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/alethia/backup.env
+ExecStart=/opt/alethia/deploy/prod/backup/backup.sh tombstones
+Nice=10
+TimeoutStartSec=45min
