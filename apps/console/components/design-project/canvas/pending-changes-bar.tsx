@@ -16,15 +16,19 @@
 //   the last deploy failed  Deploy failed                              View log | Review plan
 //   issues in the draft     the "2 issues" button, in any of the states above
 //
-// The review view is mounted from here, docked on the board's right edge, so that it needs no
-// mount point of its own in the board's host. It gives way to the inspector: while a card is open
-// on the rail the view is hidden, and it comes back when the card closes. That is what makes an
-// issue's "Go to" a detour rather than a dead end.
+// The board's host draws this in its bottom-centre region. The review view is mounted from here,
+// docked on the board's right edge, and the host's toolbar region gives the same `min(560px,100%)`
+// back while it is open. The view gives way to the inspector: while a card is open on the rail the
+// view is hidden, and it comes back when the card closes. That is what makes an issue's "Go to" a
+// detour rather than a dead end.
 //
-// SAVE. Run plan, in the view, is what saves a design on its way to a deploy. While the board's
-// host still offers a save that neither plans nor deploys (`onSave`), the bar keeps it as a quiet
-// third action beside Discard, because a design on a project with no cloud account yet has no
-// other way to be kept. When the host stops passing `onSave`, the button is gone.
+// ⌘S opens the review (the `canvas.review-plan` row in `toolbar/canvas-keys.ts`). It is the chord
+// people press when they are done with an edit, and the way forward from an edit is a plan.
+//
+// SAVE. Run plan, in the view, is what saves a design on its way to a deploy. The host's save
+// (`onSave`) neither plans nor deploys; the bar keeps it as a quiet third action beside Discard,
+// because a design on a project with no cloud account yet has no other way to be kept: Run plan
+// would save and then be refused. It cannot reach a deploy.
 
 import { AlertTriangle } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -50,8 +54,8 @@ import { barState, countOf } from "./review/changeset-status";
 import { JobLink } from "./review/job-link";
 import { reviewIssues } from "./review/review-issues";
 import { ReviewView } from "./review/review-view";
-import { SHORTCUT_REVIEW_PLAN } from "./review/shortcut";
 import type { ReviewScope } from "./review/use-review";
+import { SHORTCUT_CANVAS_REVIEW_PLAN } from "./toolbar/canvas-keys";
 
 interface PendingChangesBarProps {
 	/** The project the board edits. Read from the board's own context when it is not passed. */
@@ -62,17 +66,8 @@ interface PendingChangesBarProps {
 	onDiscard?: () => void;
 	/** A discard is in flight: the bar's actions wait for it. */
 	discarding?: boolean;
-	/** A save started elsewhere on the board is in flight: the bar's actions wait for it. */
+	/** The host's save is in flight: the bar's actions wait for it. */
 	saving?: boolean;
-	/** A deploy started elsewhere on the board is in flight: the bar's actions wait for it. */
-	deploying?: boolean;
-	/**
-	 * No longer used. The bar does not deploy: a deploy is offered only in the review view, for a
-	 * plan that was reviewed. Accepted so the board's host compiles until it stops passing it.
-	 */
-	onDeploy?: () => void;
-	/** No longer used: the bar has no deploy button to label. */
-	deployLabel?: string;
 	/**
 	 * Saves the design without planning or deploying it. Offered as a quiet action while there are
 	 * pending changes; absent, the bar has no Save and Run plan is the only thing that saves.
@@ -91,7 +86,6 @@ export function PendingChangesBar({
 	discarding,
 	onSave,
 	saving,
-	deploying,
 }: PendingChangesBarProps) {
 	const board = useBoard();
 	const env = useEnvironmentStatus();
@@ -116,7 +110,7 @@ export function PendingChangesBar({
 		recentJobs: env.recentJobs,
 	});
 	const pendingCount = changes.length + operations.length;
-	const busy = Boolean(discarding || saving || deploying);
+	const busy = Boolean(discarding || saving);
 
 	const projectId = givenProjectId ?? host?.projectId ?? null;
 	const environmentId = givenEnvironmentId ?? env.environment?.id ?? host?.environmentId ?? null;
@@ -145,7 +139,11 @@ export function PendingChangesBar({
 		else openReview();
 	}, [reviewVisible, closeReview, openReview]);
 
-	useShortcut(SHORTCUT_REVIEW_PLAN, openReview, { enabled: scope !== null });
+	// Always taken, so the browser's "save this page" never opens over the board; with no project
+	// there is nothing to review and the press does nothing.
+	useShortcut(SHORTCUT_CANVAS_REVIEW_PLAN, () => {
+		if (scope !== null) openReview();
+	});
 
 	/** Puts the board back to the saved design, then clears what the server had staged. */
 	const discardAll = () => {

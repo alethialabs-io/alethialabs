@@ -3,12 +3,13 @@
 
 // The changeset bar (#6833). It is on the board in every state, it says where the design stands,
 // and its one way forward is Review plan. It has no Deploy: a deploy is offered only in the review
-// view, behind a plan. Save is offered only while the board's host still has a save of its own.
+// view, behind a plan. Save is offered only when the board's host passes a save of its own, and ⌘S
+// opens the review.
 //
 // One test per state of the bar, then the things a person does with it: discard (asked first),
 // open and close the review, reach everything from the keyboard.
 
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
@@ -47,6 +48,7 @@ vi.mock("@/components/design-project/canvas/inspector-shell/apply-staged-operati
 const { PendingChangesBar } = await import(
 	"@/components/design-project/canvas/pending-changes-bar"
 );
+const { applyPlan } = await import("@/app/server/actions/jobs");
 
 const PROJECT = "5f0c1f3a-2b1e-4c6d-9a8b-7c6d5e4f3a2b";
 const ENVIRONMENT = "6a1d2e4b-3c2f-4d7e-8b9c-8d7e6f5a4b3c";
@@ -187,21 +189,42 @@ describe("PendingChangesBar: what it does not do", () => {
 		expect(within(bar()).queryByRole("button", { name: /^Deploy$/ })).toBeNull();
 	});
 
-	it("never calls a deploy handler a host may still pass, whatever is pressed", async () => {
+	it("binds nothing on the bar to a deploy: ⌘S opens the review, not a deploy", async () => {
 		stageOneChange();
-		const onDeploy = vi.fn();
+		renderBar();
+		fireEvent.keyDown(document.body, { key: "s", metaKey: true });
+		expect(await screen.findByRole("region", { name: "Review and deploy" })).toBeInTheDocument();
+		expect(applyPlan).not.toHaveBeenCalled();
+	});
+});
+
+describe("PendingChangesBar: ⌘S", () => {
+	it("opens the review, and keeps the browser's own save dialog away", async () => {
+		renderBar();
+		// `fireEvent` answers false when the press was taken (`preventDefault`).
+		expect(fireEvent.keyDown(document.body, { key: "s", metaKey: true })).toBe(false);
+		expect(await screen.findByRole("region", { name: "Review and deploy" })).toBeInTheDocument();
+	});
+
+	it("is taken from inside a field too, where the browser would otherwise save the page", async () => {
+		renderBar();
+		const field = document.createElement("input");
+		document.body.append(field);
+		field.focus();
+		expect(fireEvent.keyDown(field, { key: "s", ctrlKey: true })).toBe(false);
+		expect(await screen.findByRole("region", { name: "Review and deploy" })).toBeInTheDocument();
+		field.remove();
+	});
+
+	it("does nothing, but is still taken, on a board with no project", () => {
 		const Wrapper = queryWrapper();
 		render(
 			<Wrapper>
-				<PendingChangesBar projectId={PROJECT} onDeploy={onDeploy} />
+				<PendingChangesBar />
 			</Wrapper>,
 		);
-		const user = userEvent.setup();
-		for (const button of within(bar()).getAllByRole("button")) {
-			if (button.textContent === "Discard") continue;
-			await user.click(button);
-		}
-		expect(onDeploy).not.toHaveBeenCalled();
+		expect(fireEvent.keyDown(document.body, { key: "s", metaKey: true })).toBe(false);
+		expect(screen.queryByRole("region", { name: "Review and deploy" })).toBeNull();
 	});
 });
 
