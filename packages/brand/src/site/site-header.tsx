@@ -29,8 +29,7 @@ interface MenuLink {
  * into it, so a menu holding them would re-link what the left row already says.
  */
 const LEFT_LINKS: MenuLink[] = [
-  // `/blog` until the section is renamed to `/news`.
-  { name: "News", href: "/blog" },
+  { name: "News", href: "/news" },
   // Docs is its own surface, so it opens in a new tab like any off-site link.
   { name: "Docs", href: "/docs", external: true },
   { name: "Enterprise", href: "/enterprise" },

@@ -52,8 +52,7 @@ const COLUMNS: FooterColumn[] = [
 	{
 		title: "News & updates",
 		links: [
-			// `/blog` until the section is renamed to `/news`.
-			{ label: "News", href: "/blog" },
+			{ label: "News", href: "/news" },
 			{ label: "Changelog", href: `${GITHUB_URL}/releases`, external: true },
 			{ label: "GitHub", href: GITHUB_URL, external: true },
 		],
