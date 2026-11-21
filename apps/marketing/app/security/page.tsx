@@ -5,199 +5,174 @@ import { CURRENT_LEGAL_OPERATOR } from "@repo/legal/entity";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteShell } from "@repo/brand/site-shell";
-import { PageCTA, PageHero } from "@repo/brand/site-sections";
-import { Wrap } from "@repo/brand/site-primitives";
+import { PageCTA, PageHero, Section } from "@repo/brand/site-sections";
 
 export const metadata: Metadata = {
 	title: "Security",
 	description:
-		"How Alethia is built: zero stored cloud credentials, short-lived federated identity, sealed per-job execution, and signed evidence you can verify offline.",
+		"How Alethia is built: no stored cloud keys on AWS, GCP or Azure, short-lived federated identity, sealed per-job execution, and signed evidence you can verify offline.",
 };
+
+/** One architectural claim: what it is, in two sentences, and where the detail lives. */
+interface Claim {
+	title: string;
+	body: string;
+	href: string;
+}
+
+/**
+ * The six claims. Each is architectural and checkable against the AGPL source,
+ * and each links to the docs page that carries the detail the old ten-section
+ * prose version spelled out inline.
+ *
+ * Card 1 states the Hetzner exception in the same terms as the pricing FAQ —
+ * the two pages used to be the only places that disagreed about it. Card 3 no
+ * longer names a RAM role: Alibaba is hidden from the cloud catalog. Card 5 says
+ * "one policy engine" rather than "relationship-based": the community engine is
+ * the Postgres RBAC one and OpenFGA is an optional Enterprise engine.
+ */
+const CLAIMS: Claim[] = [
+	{
+		title: "No cloud keys on AWS, GCP or Azure",
+		body: "Each job gets a per-job, audience-scoped federated credential of about an hour, refreshed for the job. Hetzner has no federation, so its scoped API token is encrypted at rest and decrypted only for the job — a self-managed runner keeps it from reaching us at all.",
+		href: "/docs/concepts/runner/cloud-credentials",
+	},
+	{
+		title: "One secret we do hold",
+		body: "The OIDC issuer's signing key. Its private half never leaves the control plane, the public JWKS is published, and the key rotates without downtime.",
+		href: "/docs/reference/standards/workload-identity",
+	},
+	{
+		title: "Revocation is yours",
+		body: "The trust lives in your account, and so does the off switch. Delete the IAM role, the workload-identity binding or the federated credential and our access ends.",
+		href: "/docs/guides/connectors",
+	},
+	{
+		title: "Your code runs sealed",
+		body: "On the managed fleet, bring-your-own OpenTofu and Helm run in a per-job sandbox. No shared secrets, no instance metadata, default-deny egress.",
+		href: "/docs/concepts/isolated-execution",
+	},
+	{
+		title: "Tenant isolation",
+		body: "Postgres row-level security keeps each organization's rows apart, beneath the application. Every permission check goes through one policy engine.",
+		href: "/docs/concepts/security",
+	},
+	{
+		title: "Evidence, not assurances",
+		body: "A fail-closed gate sits between plan and apply and seals an ed25519 receipt bound to the plan hash. It reports what it could not evaluate; it is not a compliance claim.",
+		href: "/docs/concepts/elench/receipts",
+	},
+];
+
+/** One claim card: title, two sentences, a docs link. */
+function ClaimCard({ claim }: { claim: Claim }) {
+	return (
+		<div
+			className="flex flex-col p-6"
+			style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)" }}
+		>
+			<p className="m-0 mb-2 font-grotesk text-ui-lg font-semibold text-text-primary">{claim.title}</p>
+			<p className="m-0 text-ui-md leading-[1.6] text-text-secondary">{claim.body}</p>
+			<Link
+				href={claim.href}
+				className="vx-clamp vx-clamp--tight mt-auto self-start pt-5 text-ui-md text-text-primary no-underline transition-colors hover:text-text-secondary"
+			>
+				Details →
+			</Link>
+		</div>
+	);
+}
+
+/** The related documents, in the order a security review reads them. */
+const RELATED: { label: string; href: string }[] = [
+	{ label: "Data Processing Addendum", href: "/legal/dpa" },
+	{ label: "Subprocessors", href: "/legal/subprocessors" },
+	{ label: "Privacy Policy", href: "/privacy" },
+	{ label: "Cookie Notice", href: "/cookies" },
+	{ label: "Acceptable Use Policy", href: "/acceptable-use" },
+	{ label: "Self-hosting", href: "/open-source" },
+];
 
 /**
  * The public security page.
  *
  * Deliberately makes no certification claim, because none is held. Every
  * statement here is architectural and checkable — the control plane is AGPL, so
- * a reader can go and confirm any of it rather than take our word for it. That
- * is the honest version of a trust page for a product whose entire argument is
- * "don't trust us, verify."
+ * a reader can go and confirm any of it rather than take our word for it.
  *
- * It used to render through `LegalShell` — a trust page wearing legal-document
- * chrome, with no nav and no way back into the site. It is a marketing surface and
- * now wears the same composition as /pricing and /enterprise. Every one of the ten
- * sections below is unchanged; only the frame around them moved.
+ * It was ten numbered prose sections; it is now six claim cards, a
+ * certifications block, a disclosure block and the related documents, with the
+ * long-form detail one link away in the docs.
  */
 export default async function SecurityPage() {
 	return (
 		<SiteShell>
 			<PageHero
 				kicker="alethia · security"
-				status="no keys held"
+				status="keyless on AWS, GCP, Azure"
 				headline={{ lead: "The credentials we", muted: "deliberately never hold." }}
-				lede="Alethia provisions into your cloud account using short-lived federated identity. There is no access key to leak, because there is no access key. Every claim on this page is architectural and checkable against an AGPL codebase."
+				lede="Alethia provisions into your cloud account with short-lived federated identity, so there is no access key to leak."
 				ctas={[
 					{ label: "Read the architecture", href: "/docs/reference/standards/workload-identity", icon: "arrow" },
 					{ label: "Report a vulnerability", href: "mailto:security@alethialabs.io", variant: "outline", icon: "shield", iconBefore: true },
 				]}
-				footnote="Last updated · August 5, 2026"
+				footnote="Last updated · November 21, 2026"
 				paddingBottom={24}
 			/>
 
-			<section style={{ padding: "8px 0 96px" }}>
-				<Wrap>
-					<div className="vx-prose mx-auto max-w-2xl">
-			<p>
-				Alethia provisions infrastructure into <strong>your</strong> cloud account.
-				That makes the most valuable thing we could lose the one thing we
-				deliberately never hold: your cloud credentials. This page describes how
-				that works, what we do hold, and what to do if you find a problem.
-			</p>
+			<Section bordered={false}>
+				<div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+					{CLAIMS.map((claim) => (
+						<ClaimCard key={claim.title} claim={claim} />
+					))}
+				</div>
+			</Section>
 
-			<h2>1. We store no cloud credentials</h2>
-			<p>
-				There is no access key, service-account JSON, or client secret anywhere in
-				the platform. The control plane is its own OIDC identity provider: it mints
-				a short-lived, audience-scoped assertion per operation, and your cloud
-				federates against it directly.
-			</p>
-			<ul>
-				<li>
-					<strong>AWS</strong> — <code>AssumeRoleWithWebIdentity</code> straight
-					into your role, against an IAM OIDC provider you create. No Alethia AWS
-					account is involved and there is no ExternalId to leak.
-				</li>
-				<li>
-					<strong>Google Cloud</strong> — Workload Identity Federation token
-					exchange.
-				</li>
-				<li>
-					<strong>Azure</strong> — a client assertion into your own user-assigned
-					managed identity via a federated credential. No Alethia Entra app.
-				</li>
-			</ul>
-			<p>
-				Each exchange returns a credential of roughly one hour, refreshed for the
-				life of a job. The assertion itself is scoped by audience, so a token minted
-				for one cloud cannot be replayed at another.
-			</p>
-
-			<h2>2. What we do hold</h2>
-			<p>
-				One long-lived secret: the signing key of the OIDC issuer. Its private half
-				never leaves the control plane, and clouds verify assertions against the
-				public JWKS we publish. It is rotatable with zero downtime. Everything else
-				an operation needs is derived at run time and expires.
-			</p>
-
-			<h2>3. Revocation is yours, not ours</h2>
-			<p>
-				Because the trust lives in your account, so does the off switch. Delete the
-				IAM role, the workload-identity binding, the federated credential, or the
-				RAM role, and our access ends immediately — no ticket, no waiting on us to
-				delete anything. There is nothing on our side that could be stolen and
-				replayed afterwards.
-			</p>
-
-			<h2>4. Your own code runs sealed</h2>
-			<p>
-				When you bring your own OpenTofu, Terraform providers, or Helm charts, that
-				code is arbitrary and we treat it that way. On the managed fleet each job
-				runs in a per-job sandbox with no shared secrets, no access to the cloud
-				instance metadata service, and default-deny egress restricted to an
-				allowlist. Your provisioning code cannot reach the platform&rsquo;s secrets or
-				the open internet.
-			</p>
-
-			<h2>5. Tenant isolation</h2>
-			<p>
-				Tenant data is separated in the database by row-level security, so isolation
-				is enforced by the database rather than by application code remembering to
-				filter. Authorization is relationship-based (ReBAC) and evaluated by a
-				dedicated policy engine, so a permission decision is a lookup rather than a
-				scattered set of conditionals.
-			</p>
-
-			<h2>6. Evidence, not assurances</h2>
-			<p>
-				Every apply passes a deterministic, fail-closed gate between plan and apply,
-				and seals an evidence receipt. The receipt is bound to the hash of the exact
-				plan that ran and to the version of the control catalog that judged it, and
-				it is signed with ed25519 — so anyone holding the public key can verify it
-				offline, later, without trusting our console. A verdict is reproducible given
-				the same plan.
-			</p>
-			<p>
-				We are precise about the limits of this: a receipt is evidence that named,
-				versioned controls passed on a specific plan. It is not a claim of
-				compliance, and the gate reports what it could not evaluate rather than
-				passing it silently.
-			</p>
-
-			<h2>7. Certifications</h2>
-			<p>
-				<strong>
-					Alethia holds no SOC 2, ISO 27001, or equivalent certification today, and
-					we will not imply otherwise.
-				</strong>{" "}
-				We are an early company and an audit is not yet in scope. What we offer
-				instead is verifiability: the control plane is open source under AGPL-3.0,
-				so every claim on this page can be read in the source rather than accepted on
-				trust. If your procurement process requires a certified vendor, we would
-				rather tell you now.
-			</p>
-
-			<h2>8. Self-hosting</h2>
-			<p>
-				If your requirements do not permit a third-party control plane at all, run
-				ours. The whole platform is self-hostable — see{" "}
-				<Link href="/open-source">Open source</Link> — which makes data residency and
-				vendor risk questions yours to answer directly.
-			</p>
-
-			<h2>9. Reporting a vulnerability</h2>
-			<p>
-				Please do not open a public issue or discussion. Email{" "}
-				<a href="mailto:security@alethialabs.io">security@alethialabs.io</a> with the
-				affected component and version or commit, reproduction steps and proof of
-				impact, any known exploitation or disclosure, and a safe way to reach you.
-			</p>
-			<p>
-				We aim to acknowledge receipt within five business days. No bounty or payment
-				is promised unless agreed in writing before work is performed. Security fixes
-				target the current hosted release and the current stable CLI and runner
-				releases; self-hosted operators are responsible for applying published
-				updates.
-			</p>
-
-			<h2>10. Related documents</h2>
-			<ul>
-				<li>
-					<Link href="/legal/dpa">Data Processing Agreement</Link> — the terms under
-					which we process personal data on your behalf.
-				</li>
-				<li>
-					<Link href="/legal/subprocessors">Subprocessors</Link> — every third party
-					that may process customer data.
-				</li>
-				<li>
-					<Link href="/privacy">Privacy Policy</Link> and{" "}
-					<Link href="/cookies">Cookie Notice</Link>.
-				</li>
-				<li>
-					<Link href="/acceptable-use">Acceptable Use Policy</Link> — what the
-					Service may not be used for.
-				</li>
-			</ul>
-			<p>
-				This page describes the Service as operated by{" "}
-				<strong>{CURRENT_LEGAL_OPERATOR}</strong>. It is a description of
-				architecture, not a warranty; the binding commitments are in the{" "}
-				<Link href="/terms">Terms</Link> and the DPA.
-			</p>
+			<Section>
+				<div className="grid grid-cols-1 gap-12 md:grid-cols-2">
+					<div>
+						<p className="vx-eyebrow mb-4">Certifications</p>
+						<p className="m-0 max-w-[48ch] text-ui-md leading-[1.6] text-text-secondary">
+							<strong className="text-text-primary">
+								Alethia holds no SOC 2, ISO 27001, or equivalent certification today, and we will
+								not imply otherwise.
+							</strong>{" "}
+							What we offer instead is verifiability: every claim above can be read in the AGPL
+							source.
+						</p>
 					</div>
-				</Wrap>
-			</section>
+					<div>
+						<p className="vx-eyebrow mb-4">Report a vulnerability</p>
+						<p className="m-0 max-w-[48ch] text-ui-md leading-[1.6] text-text-secondary">
+							Email <a href="mailto:security@alethialabs.io" className="text-text-primary">security@alethialabs.io</a>,
+							not a public issue, with the affected version, reproduction steps and a way to reach
+							you. We aim to acknowledge within five business days. No bounty is promised unless
+							agreed in writing first.
+						</p>
+					</div>
+				</div>
+			</Section>
+
+			<Section>
+				<p className="vx-eyebrow mb-4">Related</p>
+				<ul className="m-0 flex list-none flex-wrap gap-x-8 gap-y-3 p-0">
+					{RELATED.map((doc) => (
+						<li key={doc.href}>
+							<Link
+								href={doc.href}
+								className="vx-clamp vx-clamp--tight text-ui-md text-text-secondary no-underline transition-colors hover:text-text-primary"
+							>
+								{doc.label}
+							</Link>
+						</li>
+					))}
+				</ul>
+				<p className="m-0 mt-10 max-w-[64ch] text-ui-sm leading-[1.6] text-text-tertiary">
+					This page describes the Service as operated by {CURRENT_LEGAL_OPERATOR}. It is a
+					description of architecture, not a warranty; the binding commitments are in the{" "}
+					<Link href="/terms" className="text-text-secondary">Terms</Link> and the DPA.
+				</p>
+			</Section>
 
 			<PageCTA
 				headline="Verify it yourself."
