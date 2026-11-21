@@ -32,7 +32,7 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
   `ALETHIA_ALLOW_MAIN_COMMIT`, `ALETHIA_ALLOW_FOREIGN_WT`, `ALETHIA_LOCAL_DEV`.
 
 **Spend and deletion — the two things that stay the maintainer's.** Everything else is delegated.
-*Spend* is metered by `.claude/hooks/guard-spend.sh` against **EUR 30 per rolling 7 days**, shared
+*Spend* is metered by `.claude/hooks/guard-spend.sh` against **EUR 80 per rolling 7 days**, shared
 by every instance, in the ledger `~/.alethia/spend-ledger.jsonl` (`pnpm spend:status` prints the
 window). Each priced action (a box bring-up, an e2e dispatch or rerun, a disposable hcloud create)
 is charged before it runs — even if it then never runs — and a ledger that cannot be read or
@@ -350,7 +350,7 @@ command-text parser, `.claude/hooks/lib/cmdline.sh`:
 | `.claude/hooks/guard-compose.sh` | PreToolUse · Bash | Blocks a raw `docker compose` bring-up |
 | `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base and head: `dev` may merge; a green `dev → staging` / `staging → main` promotion, or a green release-please PR into `main` whose author and files are release-please's, may merge with `--merge`; anything else into `staging`/`main`, and `--admin`, may not |
 | `.claude/hooks/guard-iac.sh` | PreToolUse · Bash | Refuses `tofu`/`terraform` apply, destroy and `plan -destroy` — including the flag-first forms a permission rule cannot match |
-| `.claude/hooks/guard-spend.sh` | PreToolUse · Bash | Prices each spend action into `~/.alethia/spend-ledger.jsonl` and refuses one that crosses EUR 30 per rolling 7 days; refuses production dispatches and non-disposable cloud writes outright |
+| `.claude/hooks/guard-spend.sh` | PreToolUse · Bash | Prices each spend action into `~/.alethia/spend-ledger.jsonl` and refuses one that crosses EUR 80 per rolling 7 days; refuses production dispatches and non-disposable cloud writes outright |
 | `.claude/hooks/guard-destroy.sh` | PreToolUse · Bash | Refuses irreversible deletion; snapshots local git destruction to `refs/safety/` first, then allows it |
 | `.claude/hooks/check-migration-chain.sh` | PostToolUse · edits | Reports a forked drizzle snapshot chain at edit time, not at commit time |
 | `.claude/hooks/session-runtime.sh` | SessionStart | Runtime banner, and warns when the harness you are running is stale |
