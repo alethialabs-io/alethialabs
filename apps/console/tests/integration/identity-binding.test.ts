@@ -150,7 +150,13 @@ function actAs(credential: "session" | "service_token", orgId = TEAM) {
 	vi.mocked(verifyCliToken).mockResolvedValue({
 		payload:
 			credential === "service_token"
-				? { sub: MINTER, service_token_org_id: orgId, service_token_id: "tok-idb" }
+				? {
+						sub: MINTER,
+						service_token_org_id: orgId,
+						service_token_id: "tok-idb",
+						service_token_scopes: ["read", "design", "plan", "apply", "destroy"],
+						service_token_project_ids: null,
+					}
 				: { sub: MINTER },
 		error: null,
 	});

@@ -309,6 +309,18 @@ describe("provider-absent branch (re-imported with empty providers)", () => {
 		const mcpPlugin = o.plugins.find((p: any) => p.id === "mcp");
 		expect(mcpPlugin).toBeDefined();
 		expect(mcpPlugin.resource).toBe("https://app.test/api/mcp");
+		// The provider declares the five agent scopes beside the OpenID Connect ones (AGT-L3).
+		expect(mcpPlugin.scopes).toEqual([
+			"openid",
+			"profile",
+			"email",
+			"offline_access",
+			"read",
+			"design",
+			"plan",
+			"apply",
+			"destroy",
+		]);
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		expect(o.plugins.some((p: any) => p.id === "cimd")).toBe(true);
 		// jwt() is what signs those tokens; without it the provider throws on the token endpoint.

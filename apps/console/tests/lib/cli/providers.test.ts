@@ -28,14 +28,26 @@ vi.mock("@/lib/auth/scope", () => ({
 // put to that check before it is honoured, with the right arguments, and that a denial is
 // propagated rather than swallowed. Stubbing it is therefore the point, not a shortcut —
 // re-implementing the query here would verify a copy.
-vi.mock("@/lib/authz/guard", () => ({
-	ensureCliOrgAccess: vi.fn(async () => null),
-	// #4298 split the one function in two, because its two callers ask different questions. The
-	// service-token branch here asks "is the MINTER still a member", which is the new name; the
-	// header branch still asks the credential-aware question. Both are stubbed for the same reason
-	// the comment above gives — re-implementing the membership query here would verify a copy.
-	assertMintingProfileStillMember: vi.fn(async () => null),
-}));
+vi.mock("@/lib/authz/guard", async () => {
+	const { ceilingFrom } = await vi.importActual<typeof import("@/lib/authz/scope-ceiling")>(
+		"@/lib/authz/scope-ceiling",
+	);
+	return {
+		ensureCliOrgAccess: vi.fn(async () => null),
+		// #4298 split the one function in two, because its two callers ask different questions. The
+		// service-token branch here asks "is the MINTER still a member", which is the new name; the
+		// header branch still asks the credential-aware question. Both are stubbed for the same reason
+		// the comment above gives — re-implementing the membership query here would verify a copy.
+		assertMintingProfileStillMember: vi.fn(async () => null),
+		// The guard's ceiling builder, as the guard writes it: the payload's scopes and project list,
+		// read by the real parser, ride on the actor; a payload whose limit cannot be read is refused.
+		withServiceTokenCeiling: (actor: Actor, payload: CliTokenPayload): Actor | null => {
+			const ceiling = ceilingFrom(payload.service_token_scopes, payload.service_token_project_ids);
+			return ceiling ? { ...actor, ceiling } : null;
+		},
+	};
+});
+
 
 // Hoisted so the factory below can close over it without a TDZ error, and so the test body
 // keeps a stable handle on the exact `enforce` the code under test calls.
@@ -55,7 +67,7 @@ import {
 	assertMintingProfileStillMember,
 	ensureCliOrgAccess,
 } from "@/lib/authz/guard";
-import { ForbiddenError } from "@/lib/authz/types";
+import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import { POST as connectRoute } from "@/app/api/cli/providers/[provider]/connect/route";
 import { POST as initRoute } from "@/app/api/cli/providers/[provider]/init/route";
 import { type CliTokenPayload, verifyCliToken } from "@/lib/cli/auth";
@@ -281,7 +293,12 @@ describe("resolveCliProvider — organization scoping", () => {
 	// profile that minted it was removed from the org (#4041).
 	it("pins a service token to its own organization, AFTER re-checking the minter's membership", async () => {
 		mockedVerify.mockResolvedValue({
-			payload: { sub: "user-123", service_token_org_id: "org-svc" },
+			payload: {
+				sub: "user-123",
+				service_token_org_id: "org-svc",
+				service_token_scopes: ["read", "design", "plan", "apply", "destroy"],
+				service_token_project_ids: null,
+			},
 			error: null,
 		});
 
@@ -307,7 +324,12 @@ describe("resolveCliProvider — organization scoping", () => {
 
 	it("lets the service token's pin win over a header, never the other way round", async () => {
 		mockedVerify.mockResolvedValue({
-			payload: { sub: "user-123", service_token_org_id: "org-svc" },
+			payload: {
+				sub: "user-123",
+				service_token_org_id: "org-svc",
+				service_token_scopes: ["read", "design", "plan", "apply", "destroy"],
+				service_token_project_ids: null,
+			},
 			error: null,
 		});
 
@@ -333,7 +355,12 @@ describe("resolveCliProvider — organization scoping", () => {
 	// this exists to prevent, not a refusal.
 	it("refuses a service token whose minter is no longer a member of the pinned org", async () => {
 		mockedVerify.mockResolvedValue({
-			payload: { sub: "user-123", service_token_org_id: "org-svc" },
+			payload: {
+				sub: "user-123",
+				service_token_org_id: "org-svc",
+				service_token_scopes: ["read", "design", "plan", "apply", "destroy"],
+				service_token_project_ids: null,
+			},
 			error: null,
 		});
 		mockedMinterCheck.mockResolvedValue(
@@ -364,7 +391,12 @@ describe("resolveCliProvider — organization scoping", () => {
 	// would authorize in that org, where they hold full rights. The landing is checked, not trusted.
 	it("refuses a service token whose pinned scope resolved to a different org", async () => {
 		mockedVerify.mockResolvedValue({
-			payload: { sub: "user-123", service_token_org_id: "org-svc" },
+			payload: {
+				sub: "user-123",
+				service_token_org_id: "org-svc",
+				service_token_scopes: ["read", "design", "plan", "apply", "destroy"],
+				service_token_project_ids: null,
+			},
 			error: null,
 		});
 		// Once per resolution (the default scope, then the pin), so nothing carries into later tests.
@@ -633,5 +665,43 @@ describe("the routes that write a connection answer the library's refusal", () =
 		);
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({ error: "Alibaba Cloud is not available in this release." });
+	});
+});
+
+describe("a service token's scope ceiling rides on the provider actor (AGT-L3)", () => {
+	it("carries the token's scopes and project list on the resolved actor", async () => {
+		mockedVerify.mockResolvedValue({
+			payload: {
+				sub: "user-123",
+				service_token_org_id: "org-svc",
+				service_token_scopes: ["read"],
+				service_token_project_ids: null,
+			},
+			error: null,
+		});
+		const result = await resolveCliProvider(req(), Promise.resolve({ provider: "aws" }));
+		expect(result.scope?.ceiling).toEqual({ scopes: ["read"], projectIds: null });
+	});
+
+	it("refuses a service token whose payload carries no readable scopes", async () => {
+		const shapes: CliTokenPayload[] = [
+			{ sub: "user-123", service_token_org_id: "org-svc", service_token_project_ids: null },
+			{ sub: "user-123", service_token_org_id: "org-svc", service_token_scopes: [], service_token_project_ids: null },
+			{ sub: "user-123", service_token_org_id: "org-svc", service_token_scopes: ["admin"], service_token_project_ids: null },
+			{ sub: "user-123", service_token_org_id: "org-svc", service_token_scopes: ["read"] },
+		];
+		const served: number[] = [];
+		for (const [i, payload] of shapes.entries()) {
+			mockedVerify.mockResolvedValue({ payload, error: null });
+			const result = await resolveCliProvider(req(), Promise.resolve({ provider: "aws" }));
+			if (result.errorResponse?.status !== 403 || result.scope !== null) served.push(i);
+		}
+		expect(served).toEqual([]);
+	});
+
+	it("a session carries no ceiling", async () => {
+		mockedVerify.mockResolvedValue({ payload: { sub: "user-123" }, error: null });
+		const result = await resolveCliProvider(req(), Promise.resolve({ provider: "aws" }));
+		expect(result.scope?.ceiling).toBeUndefined();
 	});
 });

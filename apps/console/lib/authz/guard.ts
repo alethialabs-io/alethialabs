@@ -11,6 +11,7 @@ import { getInjectedActor } from "@/lib/authz/actor-context";
 import { actorWithCredential } from "@/lib/authz/actor-credential";
 import { urlScopedOrgId } from "@/lib/authz/org-scope";
 import type { Action, Resource } from "@/lib/authz/registry";
+import { ceilingDecision, ceilingFrom } from "@/lib/authz/scope-ceiling";
 import {
 	type Actor,
 	type ActorCredential,
@@ -18,7 +19,7 @@ import {
 	type ResolvedScope,
 	type ResourceRef,
 } from "@/lib/authz/types";
-import { verifyCliToken } from "@/lib/cli/auth";
+import { type CliTokenPayload, verifyCliToken } from "@/lib/cli/auth";
 import { getServiceDb } from "@/lib/db";
 import { member } from "@/lib/db/schema";
 
@@ -187,8 +188,54 @@ export async function authorizeDeferred(
 	return actor;
 }
 
+/** 403, in the shape every CLI refusal here answers with. */
 function forbidden(): Response {
 	return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
+}
+
+/**
+ * 403 for a request the credential's scope ceiling refused (RFC 6750 §3.1 `insufficient_scope`).
+ * The body names the reason the ceiling gave (`insufficient_scope` or `project_not_permitted`), so
+ * a pipeline can tell "this token cannot do that" from "this person cannot".
+ */
+function insufficientScope(reason: string | undefined): Response {
+	return new Response(
+		JSON.stringify({
+			error: "insufficient_scope",
+			reason: reason ?? "insufficient_scope",
+			message: "This token's scopes or project list do not cover this request.",
+		}),
+		{
+			status: 403,
+			headers: {
+				"content-type": "application/json",
+				"WWW-Authenticate": 'Bearer error="insufficient_scope"',
+			},
+		},
+	);
+}
+
+/**
+ * `actor` with the scope ceiling a service-token payload carries, or `null` when the payload's
+ * scopes or project list cannot be read — absent, empty, or holding an unknown scope. A `null` is a
+ * refusal: a service token is never served without its limit.
+ *
+ * The builders that turn a service token into an actor call this: {@link authorizeCli} and
+ * `resolveCliProvider` (lib/cli/providers.ts).
+ */
+export function withServiceTokenCeiling(actor: Actor, payload: CliTokenPayload): Actor | null {
+	const ceiling = ceilingFrom(payload.service_token_scopes, payload.service_token_project_ids);
+	return ceiling ? { ...actor, ceiling } : null;
+}
+
+/**
+ * The response for a refused CLI decision: {@link insufficientScope} when the actor's ceiling is
+ * what refused it, else the plain 403.
+ */
+async function cliRefusal(actor: Actor, action: Action, ref: ResourceRef): Promise<Response> {
+	if (!actor.ceiling) return forbidden();
+	const limit = await ceilingDecision(actor, action, ref);
+	return limit.allowed ? forbidden() : insufficientScope(limit.reason);
 }
 
 /**
@@ -678,10 +725,15 @@ async function authorizeCliWith(
 		// resolves to anything other than the pinned org is refused, never substituted.
 		// Bound to the credential on the actor itself, so a server action this route reaches through
 		// `runWithActor` can tell that `userId` is the minter (see `personalIdentityAuthor`).
-		const serviceActor = await resolveNamedOrgScope(userId, serviceOrg, "service_token");
+		const pinnedActor = await resolveNamedOrgScope(userId, serviceOrg, "service_token");
+		if (!pinnedActor) return { error: forbidden() };
+		// The token's scopes and project list ride on the actor, so this decision and every one a
+		// server action reached through `runWithActor` asks are held to them (lib/authz/scope-ceiling.ts).
+		const serviceActor = withServiceTokenCeiling(pinnedActor, payload);
 		if (!serviceActor) return { error: forbidden() };
-		if (!(await decide(serviceActor, action, { type: resource.type, id: resource.id }))) {
-			return { error: forbidden() };
+		const ref: ResourceRef = { type: resource.type, id: resource.id };
+		if (!(await decide(serviceActor, action, ref))) {
+			return { error: await cliRefusal(serviceActor, action, ref) };
 		}
 		return {
 			actor: serviceActor,

@@ -7,7 +7,24 @@
 // changes. Resource/Action are exhaustive unions (registry.ts) so a new capability
 // is a single typed edit.
 
+import type { AgentScope } from "@/lib/approvals/types";
 import type { Action, Resource } from "./registry";
+
+/**
+ * What a non-interactive credential is limited to, on top of its user's own grants (agent surface
+ * §4.4): the verbs it may use and the projects it may touch. A ceiling, never a grant — a decision
+ * under it is the PDP's answer AND this limit's, so the credential never exceeds its user.
+ *
+ * - `scopes` — never empty. A credential whose scopes cannot be read carries no actor at all.
+ * - `projectIds` — `null` means every project in the actor's org; otherwise never empty.
+ *
+ * Applied by the PDP that `getPdp` returns (lib/authz/scope-ceiling.ts), so every route and tool
+ * that asks the PDP inherits it.
+ */
+export interface ScopeCeiling {
+	readonly scopes: readonly AgentScope[];
+	readonly projectIds: readonly string[] | null;
+}
 
 /**
  * The five kinds of credential an actor can be built from. See {@link Actor.credential}.
@@ -80,6 +97,12 @@ export interface Actor {
 	 * Read it through the helpers in lib/authz/actor-credential.ts, not directly.
 	 */
 	credential: CredentialKind;
+	/**
+	 * The scope and project limit of the credential this actor was built from, when it has one. Set
+	 * by the builders that verify a limited credential (`authorizeCli` and `resolveCliProvider` for
+	 * a service token); absent means the actor's own grants are the whole answer.
+	 */
+	ceiling?: ScopeCeiling;
 }
 
 /**

@@ -823,6 +823,8 @@ describe("authorizeCli with a service-account token", () => {
 				type: "access",
 				service_token_org_id: "org-A",
 				service_token_id: "tok-1",
+				service_token_scopes: ["read", "design", "plan", "apply", "destroy"],
+				service_token_project_ids: null,
 			},
 			error: undefined,
 		} as never);
@@ -842,7 +844,11 @@ describe("authorizeCli with a service-account token", () => {
 		expect(result).toEqual({
 			// Marked on the actor itself, so a server action reached through runWithActor can tell
 			// the minter is not the caller (lib/authz/actor-credential.ts).
-			actor: { ...SERVICE_ACTOR, credential: "service_token" },
+			actor: {
+				...SERVICE_ACTOR,
+				credential: "service_token",
+				ceiling: { scopes: ["read", "design", "plan", "apply", "destroy"], projectIds: null },
+			},
 			credential: "service_token",
 			serviceTokenId: "tok-1",
 			orgScope: [SERVICE_ACTOR.orgId],
@@ -858,7 +864,11 @@ describe("authorizeCli with a service-account token", () => {
 		expect(result).toEqual({
 			// Marked on the actor itself, so a server action reached through runWithActor can tell
 			// the minter is not the caller (lib/authz/actor-credential.ts).
-			actor: { ...SERVICE_ACTOR, credential: "service_token" },
+			actor: {
+				...SERVICE_ACTOR,
+				credential: "service_token",
+				ceiling: { scopes: ["read", "design", "plan", "apply", "destroy"], projectIds: null },
+			},
 			credential: "service_token",
 			serviceTokenId: "tok-1",
 			orgScope: [SERVICE_ACTOR.orgId],

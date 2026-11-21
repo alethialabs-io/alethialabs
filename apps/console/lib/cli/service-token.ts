@@ -3,6 +3,14 @@
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, or, gt } from "drizzle-orm";
+import type { AgentScope } from "@/lib/approvals/types";
+import {
+	isUnrestricted,
+	parseProjectIds,
+	parseScopes,
+	UNRESTRICTED_CEILING,
+} from "@/lib/authz/scope-ceiling";
+import type { ScopeCeiling } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { cliServiceTokens } from "@/lib/db/schema";
 
@@ -44,18 +52,44 @@ export interface MintedServiceToken {
 }
 
 /**
+ * Thrown by {@link mintServiceToken} for a limit narrower than every scope over every project.
+ *
+ * Not every route that queues a plan, a deploy or a destroy reads a token's limit yet
+ * (`POST /api/jobs` builds its own actor), so a narrower token is not issued until all of them do.
+ * The refusal lives here, in the one function that writes a token row, so no caller can issue one.
+ */
+export class NarrowServiceTokenError extends Error {
+	/** The machine-readable reason a client can branch on. */
+	readonly code = "narrow_tokens_unavailable";
+
+	/** Builds the refusal; its message is shown to the caller. */
+	constructor() {
+		super(
+			"Tokens limited to fewer scopes or to named projects are not available yet. Omit scopes and project_ids to mint a token with every scope over every project.",
+		);
+		this.name = "NarrowServiceTokenError";
+	}
+}
+
+/**
  * Mint a service token for an organization. Returns the plaintext exactly once; the caller must show
  * it to the user in that response and never persist it.
+ *
+ * The token carries every scope over every project. A `ceiling` narrower than that throws
+ * {@link NarrowServiceTokenError} and writes nothing.
  */
 export async function mintServiceToken(params: {
 	organizationId: string;
 	name: string;
 	createdBy: string | null;
 	expiresAt?: Date | null;
+	ceiling?: ScopeCeiling;
 }): Promise<MintedServiceToken> {
+	const ceiling = params.ceiling ?? UNRESTRICTED_CEILING;
+	if (!isUnrestricted(ceiling)) throw new NarrowServiceTokenError();
+	const db = getServiceDb();
 	const random = randomBytes(TOKEN_BYTES).toString("base64url");
 	const token = SERVICE_TOKEN_PREFIX + random;
-	const db = getServiceDb();
 	const [row] = await db
 		.insert(cliServiceTokens)
 		.values({
@@ -65,6 +99,8 @@ export async function mintServiceToken(params: {
 			token_prefix: SERVICE_TOKEN_PREFIX + random.slice(0, DISPLAY_CHARS),
 			created_by: params.createdBy,
 			expires_at: params.expiresAt ?? null,
+			scopes: [...ceiling.scopes],
+			project_ids: ceiling.projectIds === null ? null : [...ceiling.projectIds],
 		})
 		.returning({ id: cliServiceTokens.id, token_prefix: cliServiceTokens.token_prefix });
 	return { id: row.id, token, token_prefix: row.token_prefix };
@@ -93,6 +129,10 @@ export interface ServiceTokenIdentity {
 	 * deleted — fails closed.
 	 */
 	createdBy: string | null;
+	/** The verbs the token may use. Never empty: a row whose scopes cannot be read resolves to null. */
+	scopes: readonly AgentScope[];
+	/** The projects the token may touch; `null` is every project in its org. Never empty. */
+	projectIds: readonly string[] | null;
 }
 
 /**
@@ -119,6 +159,8 @@ export async function resolveServiceToken(bearer: string): Promise<ServiceTokenI
 			name: cliServiceTokens.name,
 			created_by: cliServiceTokens.created_by,
 			token_hash: cliServiceTokens.token_hash,
+			scopes: cliServiceTokens.scopes,
+			project_ids: cliServiceTokens.project_ids,
 		})
 		.from(cliServiceTokens)
 		.where(
@@ -138,6 +180,12 @@ export async function resolveServiceToken(bearer: string): Promise<ServiceTokenI
 	const b = Buffer.from(hashToken(bearer), "utf8");
 	if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
 
+	// The token's limit is read, not assumed: a row whose scopes or project list are not a valid
+	// limit resolves to nothing, like a revoked one, rather than to a token with no limit.
+	const scopes = parseScopes(row.scopes);
+	const projectIds = parseProjectIds(row.project_ids);
+	if (!scopes || !projectIds.ok) return null;
+
 	// Best-effort, and deliberately NOT awaited into the request's critical path: a token that works
 	// must not stop working because a bookkeeping write was slow. A dropped stamp costs a slightly
 	// stale `last_used_at`; a failed request costs a customer's pipeline.
@@ -152,6 +200,8 @@ export async function resolveServiceToken(bearer: string): Promise<ServiceTokenI
 		organizationId: row.organization_id,
 		name: row.name,
 		createdBy: row.created_by,
+		scopes,
+		projectIds: projectIds.projectIds,
 	};
 }
 
