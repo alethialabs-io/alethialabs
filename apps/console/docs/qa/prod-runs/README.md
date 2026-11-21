@@ -21,6 +21,9 @@ Newest first. Each entry is `<file> — <build id> — <PASS/FAIL/NOT MEASURED c
 - [`2026-11-16-1521.md`](2026-11-16-1521.md) — `703d40d9` — gap-filling pass on the same build: filter surfaces 9 PASS / 6 NOT MEASURED (plan-gated) · per-control activation sampled on 4 routes · 0 rows created
 - [`2026-11-16-1417.md`](2026-11-16-1417.md) — `703d40d9` — routes 40 PASS (overflow and per-control NOT MEASURED) · journeys 6 PASS / 2 FAIL / 4 NOT MEASURED · destructive 7 PASS / 42 NOT MEASURED — the first run (#4287)
 
+A **golden-path** run (`golden-path <cloud> --allow-jobs`) is indexed the same way, as
+`<file> — <build id> — B2 <cloud> <pass/fail/not-measured> — <steps completed>/6`.
+
 The skill is `disable-model-invocation: true`, so a run happens when the maintainer names it, never
 because a session decided a QA pass was due.
 
@@ -53,6 +56,57 @@ but a hash — this repository is public and those two strings are exactly what 
 want (`.claude/skills/console-prod-qa/allowlist.yaml` holds the digests). And screenshots: they
 stay in the scratchpad, because a directory of PNGs is neither reviewable nor diffable and would
 grow the repo every run.
+
+## B2 evidence records — the golden-path runs
+
+This directory holds two kinds of file, and the first line after the SPDX comment tells them apart.
+
+- **A sweep report** (`full`, `routes`, `journeys`, `destructive`) has **no front matter**. It is
+  prose plus verdicts, with the headings above, and nothing reads it as evidence for a beta predicate.
+- **A golden-path record** (`golden-path <cloud> --allow-jobs`, SKILL.md §7) **starts with YAML front
+  matter** and is the evidence for predicate **B2** of `docs/beta/README.md` on one cloud.
+  `scripts/programme-rollup.mjs` reads every such file here, validates it against
+  `docs/beta/evidence-schema.json`, and evaluates B2 from the newest record per cloud.
+
+One golden-path run is **one cloud, one fresh account, one file**, named after the run id's minute
+like every other run here. Four clouds are four runs and four files. The front matter is written by
+`.claude/skills/console-prod-qa/b2-record.mjs write` and never by hand: the rollup's reader takes a
+narrow YAML subset, and a record it cannot read is an integrity failure on whichever PR next touches
+the programme, not on the PR that added the record. A record looks like this:
+
+```markdown
+<!--
+SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
+---
+schemaVersion: 1
+predicate: B2
+cloud: hetzner
+date: "2026-12-14T10:32:00Z"
+buildSha: "703d40d946914ab0dafdb4ed643a2c2437fa7def"
+verdict: pass
+instrument: .claude/skills/console-prod-qa/SKILL.md
+observer: maintainer
+freshAccount: true
+steps: [sign-up, connect, design, deploy, running-cluster, destroy]
+evidence:
+  - apps/console/docs/qa/prod-runs/2026-12-14-1032.md
+---
+
+# B2 golden path — hetzner — qa-20261214-1032
+```
+
+The values are illustrative; they do not describe a real run. On top of the schema, the writer holds
+the record to the skill's own rules: `date` is the run id's minute and the file name is the same
+minute; `steps` are the completed steps in golden-path order, with no gap; `evidence` names the record
+itself; and the file contains no email address. `node .claude/skills/console-prod-qa/b2-record.mjs
+check` runs those rules over every record here, and `--self-test` proves the records it writes are
+ones the rollup's own `deriveBeta` accepts.
+
+**A record is never edited to change its verdict.** A new observation is a new file, and the newest by
+`date` decides. A `fail` stays in the tree after a later `pass`: it is the history of what broke.
 
 ## What a report is not evidence of
 
