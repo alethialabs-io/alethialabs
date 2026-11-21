@@ -10,7 +10,7 @@ import { usePathname } from "next/navigation";
 import { ArrowUpRight, Menu } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@repo/ui/sheet";
-import { AlethiaLockup } from "../lockup";
+import { AnimatedMark } from "./animated-mark";
 import { Icon, Wrap } from "./primitives";
 
 interface MenuLink {
@@ -419,15 +419,13 @@ export function Header({ homeHref = "/" }: { homeHref?: "/" | "/home" }) {
           aria-label="Alethia Labs home"
           style={{ textDecoration: "none", color: "inherit", display: "flex" }}
         >
-          {/* Two sizes because the phone row is tight: at 375px the 24px lockup
-              (~132px) leaves each side column less than the CTA needs. 20 is the
-              lockup's documented floor with a tag (see lockup.tsx). */}
-          <span className="ah-nav-desktop">
-            <AlethiaLockup size={24} />
-          </span>
-          <span className="ah-nav-mobile">
-            <AlethiaLockup size={20} />
-          </span>
+          {/* The animated mark folds to [ · ] on scroll. It sits in the grid's `auto`
+              column between two `minmax(0, 1fr)` sides; the sides always split the
+              leftover space equally and pin their content to the outer edges, so
+              when the mark narrows the navs do not move — the centre column just
+              gives the space back to both sides. On a phone it is size 20 (the
+              lockup's floor with a tag), set by a media query in tokens.css. */}
+          <AnimatedMark />
         </Link>
 
         <div

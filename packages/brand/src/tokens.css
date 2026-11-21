@@ -1023,3 +1023,95 @@
   .ah-nav-desktop { display: none !important; }
   .ah-nav-mobile { display: inline-flex !important; }
 }
+
+/* ============================================================
+   AnimatedMark (site/animated-mark.tsx) — the header logo.
+   Expanded: [ Alethia · LABS ]. Compact ([data-compact], set past 24px of scroll):
+   [ · ]. Each word is an overflow-hidden box whose max-width folds from its
+   measured width (--w, written once by the component) to 0 while its letters
+   slide into the dot, fade and blur. Pure CSS transitions; nothing per frame.
+
+   Geometry is the canonical mark's (viewBox 0 0 32 32: stroke 2.4, dot r 2.9),
+   scaled by --mark-s, the same `size` AlethiaLockup takes: 24 on desktop, 20 on a
+   phone. Each bracket is cropped to a 7.5 x 23 unit box, so in the compact state
+   the 0.6-unit dot margins put the dot exactly where the mark draws it.
+   ============================================================ */
+.ah-mark {
+  --mark-s: 24px;
+  --mark-dur: 650ms;
+  --mark-ease: cubic-bezier(.65, 0, .35, 1);
+  display: inline-flex;
+  align-items: center;
+  height: var(--mark-s);
+  color: currentColor;
+  white-space: nowrap;
+}
+@media (max-width: 899.98px) {
+  .ah-mark { --mark-s: 20px; }
+}
+.ah-mark__br {
+  display: block;
+  flex: none;
+  width: calc(var(--mark-s) * 7.5 / 32);
+  height: calc(var(--mark-s) * 23 / 32);
+}
+.ah-mark__word {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  line-height: 1;
+  max-width: var(--w, 120px);
+  transition:
+    max-width var(--mark-dur) var(--mark-ease),
+    opacity calc(var(--mark-dur) * .6) var(--mark-ease),
+    filter var(--mark-dur) var(--mark-ease),
+    margin var(--mark-dur) var(--mark-ease);
+}
+.ah-mark__word > span {
+  display: inline-block;
+  transition: transform var(--mark-dur) var(--mark-ease);
+}
+/* The lockup's wordmark: Space Grotesk 600 at 0.625 x size. */
+.ah-mark__alethia {
+  font-family: var(--font-grotesk), var(--font-geist-sans), system-ui, sans-serif;
+  font-weight: 600;
+  font-size: calc(var(--mark-s) * .625);
+  letter-spacing: -0.02em;
+  margin-left: calc(var(--mark-s) * .3);
+}
+/* The lockup's tag: Geist Mono at 0.3125 x size, tracked 0.26em, in currentColor at
+   the canonical asset's 0.55 — a colour, not `opacity`, because opacity is what the
+   fold animates. */
+.ah-mark__labs {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-weight: 500;
+  font-size: calc(var(--mark-s) * .3125);
+  letter-spacing: .26em;
+  color: color-mix(in oklch, currentColor 55%, transparent);
+  margin-right: calc(var(--mark-s) * .2);
+  padding-top: 1px;
+}
+.ah-mark__dot {
+  flex: none;
+  width: calc(var(--mark-s) * 5.8 / 32);
+  height: calc(var(--mark-s) * 5.8 / 32);
+  border-radius: 50%;
+  background: currentColor;
+  margin: 0 calc(var(--mark-s) * .3);
+  transition:
+    margin var(--mark-dur) var(--mark-ease),
+    transform var(--mark-dur) var(--mark-ease);
+}
+.ah-mark[data-compact] .ah-mark__word { max-width: 0; opacity: 0; filter: blur(3px); margin: 0; }
+.ah-mark[data-compact] .ah-mark__alethia > span { transform: translateX(40%); }
+.ah-mark[data-compact] .ah-mark__labs > span { transform: translateX(-40%); }
+.ah-mark[data-compact] .ah-mark__dot { margin: 0 calc(var(--mark-s) * .6 / 32); transform: scale(1.2); }
+@media (prefers-reduced-motion: reduce) {
+  .ah-mark__word,
+  .ah-mark__word > span,
+  .ah-mark__dot,
+  .ah-mark__br { transition: opacity 220ms linear; }
+  .ah-mark[data-compact] .ah-mark__alethia > span,
+  .ah-mark[data-compact] .ah-mark__labs > span { transform: none; }
+  .ah-mark[data-compact] .ah-mark__word { filter: none; }
+}
