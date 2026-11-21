@@ -39,11 +39,16 @@ test.describe.configure({ timeout: 120_000 });
 
 /**
  * Navigates to the org connectors board (optionally with filter params already in the URL) and
- * waits for the filter bar's search box, which is the board's first interactive element.
+ * waits for the filter bar's search box, which is the board's first interactive element — until it
+ * is ENABLED, not only visible. The bar sits in a fieldset disabled until React has hydrated, so
+ * "enabled" is the page saying its handlers are attached; a Manage clicked in the server HTML before
+ * that is a click nothing hears, and the sheet never opens.
  */
 async function gotoConnectors(page: Page, orgSlug: string, query = ""): Promise<void> {
 	await page.goto(`/${orgSlug}/~/connectors${query}`, { waitUntil: "commit" });
-	await expect(page.getByRole("textbox", { name: "Search connectors", exact: true })).toBeVisible({ timeout: 60_000 });
+	const box = page.getByRole("textbox", { name: "Search connectors", exact: true });
+	await expect(box).toBeVisible({ timeout: 60_000 });
+	await expect(box).toBeEnabled({ timeout: 30_000 });
 }
 
 /**
@@ -349,7 +354,8 @@ test.describe("Connectors — a connected cloud and its manage sheet (seeded)", 
 		await expect(sheet.locator('[data-slot="sheet-title"]')).toContainText(
 			"Amazon Web Services",
 		);
-		await expect(sheet.getByRole("heading", { name: "Accounts", exact: true })).toBeVisible();
+		// "Cloud accounts": the console's label for a connected account (`lib/copy/vocabulary.ts`).
+		await expect(sheet.getByRole("heading", { name: "Cloud accounts", exact: true })).toBeVisible();
 		await expect(sheet.getByText(name, { exact: true })).toBeVisible();
 		await expect(sheet.getByText("Org-wide")).toBeVisible();
 	});
@@ -401,8 +407,11 @@ test.describe("Connectors — a connected cloud and its manage sheet (seeded)", 
 		await sheet.getByRole("button", { name: `Disconnect ${name}`, exact: true }).click();
 		const confirm = owner.page.getByRole("alertdialog");
 		await expect(confirm.getByText("Disconnect Amazon Web Services?")).toBeVisible();
+		// The dialog says what stops working. Which projects use the account, and whether its name
+		// must be typed, depends on this shared org's projects, so neither is asserted here; the
+		// component tests pin both (`tests/components/connectors-page-board.test.tsx`).
 		await expect(
-			confirm.getByText(/won't be able to provision new infrastructure/i),
+			confirm.getByText(/no longer be able to plan, deploy or destroy/i),
 		).toBeVisible();
 		// Cancel — the seeded account survives, and so does every sibling spec's.
 		await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
