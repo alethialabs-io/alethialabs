@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { SITE_URL } from "@/lib/site";
+import { SITE_URL } from "../site";
 
 /**
  * The two feeds the home page reads: the latest GitHub releases (the changelog) and the latest
