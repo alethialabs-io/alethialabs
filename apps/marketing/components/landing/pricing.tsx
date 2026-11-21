@@ -286,7 +286,10 @@ function MatrixCell({ value, head }: { value: MatrixValue; head: boolean }) {
 		return <span style={{ display: "block", textAlign: "center", color: "var(--text-disabled)", fontSize: 14 }}>—</span>;
 	}
 	return (
-		<span style={{ display: "block", textAlign: "center", ...mono, fontSize: 11.5, color: head ? "var(--text-primary)" : "var(--text-secondary)" }}>
+		<span
+			className="text-[10.5px] md:text-[11.5px]"
+			style={{ display: "block", textAlign: "center", ...mono, color: head ? "var(--text-primary)" : "var(--text-secondary)" }}
+		>
 			{value}
 		</span>
 	);
@@ -335,26 +338,40 @@ function Matrix({ teamPriceLabel, query, onQuery }: { teamPriceLabel: string; qu
 						{matchCount} {matchCount === 1 ? "feature matches" : "features match"}
 					</p>
 				</div>
-				<div className="overflow-hidden rounded-lg border border-border bg-surface">
-					{/* `scroll`: the table is 720px wide and the default wrapper CLIPS, which
-					    cut the Enterprise column off on a phone. No sticky header, so the
-					    scroll container traps nothing. */}
-					<Table scroll className="min-w-[720px]">
+				{/* `overflow-clip`, not `overflow-hidden`: both round the corners, but
+				    `hidden` makes this box a scroll container, which would trap the
+				    sticky header below. `clip` does not, so the header sticks to the page. */}
+				<div className="overflow-clip rounded-lg border border-border bg-surface">
+					{/* No `scroll` and no min-width — that pair was the cause of both
+					    scrollbars. `scroll` made the wrapper `overflow-x: auto`, which per spec
+					    forces `overflow-y: auto` too, and every row's clamp marks are a box
+					    `--cl-gap` outside the row, resting at `--cl-reach` scale — so the
+					    wrapper overflowed on both axes and scrolled both ways even on a wide
+					    screen. The default wrapper clips instead and scrolls nothing.
+					    It fits a 375px phone without scrolling: below `md` the cells lose most
+					    of their padding and the values drop a size, and the feature column
+					    wraps — anywhere, as a last resort — so the three plan columns always
+					    get their full width and none of them is clipped. */}
+					<Table>
 						<caption className="sr-only">
 							Alethia plan comparison — features by plan
 						</caption>
-						<TableHeader>
+						{/* Sticky against the page, below the site header: the header is the
+						    frame inset, a 1px top pad, a 62px row and a 1px rule. */}
+						<TableHeader className="sticky top-[calc(var(--frame-inset)+64px)] z-[var(--z-sticky-head)]">
 							<TableRow className="border-border bg-surface-muted hover:bg-surface-muted">
-								<TableHead scope="col" className="px-[18px] py-4">
+								<TableHead scope="col" className="px-2 py-4 md:px-[18px]">
 									<span style={{ ...eyebrow, fontSize: 9 }}>Plan</span>
 								</TableHead>
 								{PLAN_CATALOG.map((p, i) => (
 									<TableHead
 										key={p.id}
 										scope="col"
-										className={cn("border-l border-border-faint px-3 py-3.5 text-center", colClass(i))}
+										className={cn("border-l border-border-faint px-1.5 py-3.5 text-center whitespace-normal md:px-3", colClass(i))}
 									>
-										<span style={{ ...disp, fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>{p.name}</span>
+										<span className="text-[13px] md:text-[14px]" style={{ ...disp, fontWeight: 600, color: "var(--text-primary)" }}>
+											{p.name}
+										</span>
 										<span style={{ ...mono, fontSize: 10, color: "var(--text-tertiary)", display: "block", marginTop: 3 }}>
 											{priceFor(p.id, p.priceLabel)}
 										</span>
@@ -365,7 +382,7 @@ function Matrix({ teamPriceLabel, query, onQuery }: { teamPriceLabel: string; qu
 						{groups.map((group) => (
 							<TableBody key={group.label}>
 								<TableRow className="border-border-faint bg-surface-sunken hover:bg-surface-sunken">
-									<TableHead scope="colgroup" className="px-[18px] py-2.5">
+									<TableHead scope="colgroup" className="px-2 py-2.5 whitespace-normal md:px-[18px]">
 										<span style={{ ...eyebrow, fontSize: 9 }}>{group.label}</span>
 									</TableHead>
 									{/* Spacer cells, not a colspan: the popular column's tint has to
@@ -376,11 +393,14 @@ function Matrix({ teamPriceLabel, query, onQuery }: { teamPriceLabel: string; qu
 								</TableRow>
 								{group.rows.map((row) => (
 									<TableRow key={row[0]} className="border-border-faint">
-										<TableHead scope="row" className="px-[18px] py-[11px] text-[12.5px] font-normal text-text-secondary">
+										<TableHead
+											scope="row"
+											className="px-2 py-[11px] text-[12px] font-normal whitespace-normal text-text-secondary max-md:[overflow-wrap:anywhere] md:px-[18px] md:text-[12.5px]"
+										>
 											{row[0]}
 										</TableHead>
 										{[1, 2, 3].map((c) => (
-											<TableCell key={c} className={cn("border-l border-border-faint px-3 py-[11px]", colClass(c - 1))}>
+											<TableCell key={c} className={cn("border-l border-border-faint px-1.5 py-[11px] whitespace-normal md:px-3", colClass(c - 1))}>
 												<MatrixCell value={row[c as 1 | 2 | 3]} head={c - 1 === POP_COL} />
 											</TableCell>
 										))}
