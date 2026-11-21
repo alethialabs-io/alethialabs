@@ -43,7 +43,7 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
-import { Sheet, SheetContent } from "@repo/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@repo/ui/sheet";
 import { Skeleton } from "@repo/ui/skeleton";
 import { Switch } from "@repo/ui/switch";
 
@@ -185,15 +185,16 @@ export function ProtectionRulesDialog({
 					{/* header */}
 					<div className="flex items-start justify-between gap-3 border-b px-[22px] py-5">
 						<div>
-							<div className="font-mono text-ui-2xs uppercase tracking-[0.16em] text-text-tertiary">
-								Protection rules
-							</div>
-							<div className="mt-1.5 font-mono text-ui-xl text-text-primary">
-								{envName}
-							</div>
-							<p className="mt-2 max-w-[40ch] text-ui-sm text-text-tertiary">
+							{/* The sheet's accessible name: "Protection rules <environment>". */}
+							<SheetTitle className="flex flex-col gap-1.5 font-normal">
+								<span className="font-mono text-ui-2xs uppercase tracking-[0.16em] text-text-tertiary">
+									Protection rules
+								</span>
+								<span className="font-mono text-ui-xl text-text-primary">{envName}</span>
+							</SheetTitle>
+							<SheetDescription className="mt-2 max-w-[40ch] text-ui-sm text-text-tertiary">
 								Gates a promotion must clear before it deploys into this environment.
-							</p>
+							</SheetDescription>
 						</div>
 						<button
 							type="button"

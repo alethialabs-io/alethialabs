@@ -108,7 +108,7 @@ describe("[project]/settings/general — the Classification field is in the firs
 
 describe("[project]/environments — every card's Classification control is in the first paint", () => {
 	it("hands down the edit decision, the taxonomy and the batched chips in the view's order", async () => {
-		const keys = handedDown(stateOf(await EnvironmentsRoute({ params })));
+		const keys = handedDown(stateOf(await EnvironmentsRoute({ params, searchParams: Promise.resolve({}) })));
 		expect(keys).toStrictEqual({
 			"environments.overview": { project: "payments" },
 			"classification.canEdit": undefined,
@@ -117,11 +117,19 @@ describe("[project]/environments — every card's Classification control is in t
 		});
 	});
 
+	it("a link that carries filters hands down BOTH reads: the pristine one and the link's (#6819)", async () => {
+		const searchParams = Promise.resolve({ stages: "production,staging", search: " qa " });
+		await EnvironmentsRoute({ params, searchParams });
+		const asked = h.calls.filter((c) => c.path === "environments.overview").map((c) => c.input);
+		expect(asked).toContainEqual({ project: "payments" });
+		expect(asked).toContainEqual({ project: "payments", search: "qa", stages: ["production", "staging"] });
+	});
+
 	it("a failed overview prefetches no classification — the view renders its own error first", async () => {
 		h.handlers["environments.overview"] = async () => {
 			throw new Error("boom");
 		};
-		const keys = handedDown(stateOf(await EnvironmentsRoute({ params })));
+		const keys = handedDown(stateOf(await EnvironmentsRoute({ params, searchParams: Promise.resolve({}) })));
 		expect(Object.keys(keys).filter((k) => k.startsWith("classification."))).toEqual([]);
 	});
 });

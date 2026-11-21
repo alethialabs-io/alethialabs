@@ -277,11 +277,12 @@ const UNREACHED: ReadonlyMap<string, string> = new Map([
 
 	[
 		"env.delete",
-		'the entry declares {menu: "Environment actions"} and {role: menuitem, name: "Delete"}. ' +
-			"`components/environments/` renders no menu and no menuitem; the control is a bare icon " +
-			'`<Button title="Delete">` (`environment-card.tsx:253-264`), so its role is `button`. The second ' +
-			"environment is seeded and `!env.is_default` is the only condition on it — the entry's reach and role are " +
-			"what cannot resolve.",
+		'the entry declares {menu: "Environment actions"} and {role: menuitem, name: "Delete"}. Since #6819 every ' +
+			"row of the environments table has a menu named `Environment actions for <environment>` " +
+			"(`environment-columns.tsx`), and the item renders on `!env.is_default`. The reach names no row, so it " +
+			"opens the FIRST menu — the default environment's, the first row — which has no Delete; the seeded " +
+			"`audit-staging` row's menu, which has one, is never opened. The entry's reach is what cannot narrow: it " +
+			'needs the row, `{menu: "Environment actions for audit-staging"}`.',
 	],
 	[
 		"roles.delete",

@@ -1,29 +1,50 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// #6335 (RUBRIC B2): the Environments skeleton draws the page a project has until it gets a second
-// environment: one card and the dashed "Only one environment" note. It drew two cards. On the
-// one-environment project every project starts as, the second card stood where the note and the
-// consistency matrix land, 165px off (score 0.027 against the 0.02 budget).
+// #6819 (RUBRIC B2): the Environments skeleton is the page's own shape — the toolbar with its two
+// actions, the list's real filter bar, and the table with its real column count and ONE row, the
+// page every project has until it gets a second environment. Synchronous, pending to assistive
+// tech, and not operable.
 
 import { render } from "@testing-library/react";
+import { isValidElement } from "react";
 import { describe, expect, it } from "vitest";
+import EnvironmentsLoading from "@/app/(private)/[org]/[project]/environments/loading";
+import { ENVIRONMENT_COLUMN_COUNT } from "@/components/environments/environment-status";
 import { EnvironmentsSkeleton } from "@/components/environments/environments-skeleton";
 
-describe("EnvironmentsSkeleton — the one-environment page", () => {
-	it("draws ONE environment card, then the single-environment note", () => {
-		const { container } = render(<EnvironmentsSkeleton />);
-		const cards = container.querySelectorAll('[data-slot="environment-card-skeleton"]');
-		expect(cards).toHaveLength(1);
-		const note = container.querySelector('[data-slot="single-environment-note-skeleton"]');
-		expect(note).not.toBeNull();
-		// The note follows the card, as the page puts it under the list.
-		expect(cards[0].compareDocumentPosition(note as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+/** The skeleton's root in `container`. */
+function root(container: HTMLElement): Element {
+	const el = container.querySelector('[data-skeleton="environments"]');
+	if (!el) throw new Error("the environments skeleton did not render");
+	return el;
+}
+
+describe("EnvironmentsSkeleton", () => {
+	it("the route's loading.tsx is synchronous and renders it", () => {
+		const element = EnvironmentsLoading();
+		expect(isValidElement(element)).toBe(true);
+		const { container } = render(element);
+		expect(root(container)).toBeTruthy();
 	});
 
-	it("reserves the card's Classify button at its real height (a `size=\"sm\"` button, 32px)", () => {
+	it("says the region is pending, and cannot be operated", () => {
 		const { container } = render(<EnvironmentsSkeleton />);
-		const card = container.querySelector('[data-slot="environment-card-skeleton"]');
-		expect(card?.querySelector('[data-slot="skeleton"].h-8.w-24')).not.toBeNull();
+		expect(root(container)).toHaveAttribute("aria-busy", "true");
+		expect(root(container)).toHaveAttribute("inert");
+	});
+
+	it("draws the toolbar, the list's own filter bar, and the table with one row", () => {
+		const { container } = render(<EnvironmentsSkeleton />);
+		const el = root(container);
+		expect(el.querySelector('[data-slot="page-toolbar-skeleton"]')).not.toBeNull();
+		expect(el.querySelector('input[aria-label="Search environments"]')).toHaveValue("");
+		expect(el.querySelectorAll("th")).toHaveLength(ENVIRONMENT_COLUMN_COUNT);
+		expect(el.querySelectorAll('[data-slot="data-table-skeleton-row"]')).toHaveLength(1);
+	});
+
+	it("is never a spinner", () => {
+		const { container } = render(<EnvironmentsSkeleton />);
+		expect(container.querySelector(".animate-spin")).toBeNull();
 	});
 });
