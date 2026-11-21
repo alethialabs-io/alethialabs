@@ -4,16 +4,14 @@
 import { AVAILABLE_CLOUDS } from "@repo/cloud-catalog";
 import {
 	Band,
-	Eyebrow,
 	LogoWall,
+	PageClose,
 	PageOpen,
 	Plate,
 	PointGrid,
-	Section,
 } from "@repo/brand/site-sections";
 import { mono } from "@repo/brand/site-primitives";
 import { StatusBadge } from "@repo/ui/status-badge";
-import { ContactForm } from "@/components/contact/contact-form";
 
 /**
  * The enterprise page.
@@ -25,6 +23,11 @@ import { ContactForm } from "@/components/contact/contact-form";
  * restated the five sections beneath it, and a plan card that duplicated
  * /pricing's Enterprise tier with a different and partly wrong feature list.
  *
+ * It is now five sections: hero, clouds, the grants band, one grid of four
+ * points, close. The Identity / Roles / Audit / Deployment bands were sixteen
+ * points restating the docs; the inline trial form is gone because every
+ * "talk to us" path on the site is the one /contact form.
+ *
  * ── The `Reveal` contract, which fails silently ──────────────────────────────
  * `app/enterprise/page.tsx` wraps this in `<Reveal>`, which does
  * `querySelectorAll(":scope > section")` and `.slice(1)`. So this component MUST
@@ -34,7 +37,8 @@ import { ContactForm } from "@/components/contact/contact-form";
  * above renders `<section>` as its outermost element.
  */
 
-const SALES = "/contact/sales";
+/** The one contact form, with the enterprise topic preset. */
+const CONTACT = "/contact?topic=enterprise";
 
 /* ============ Grants — the one visual on the page ============ */
 
@@ -129,6 +133,7 @@ function GrantsTable() {
 
 /* ============ Sections ============ */
 
+/** The opening: the headline, one sentence, and the two actions. */
 function Hero() {
 	return (
 		<PageOpen
@@ -136,16 +141,17 @@ function Hero() {
 			ctaSide="right"
 			side={{
 				kind: "lede",
-				text: "Single sign-on, custom roles over OpenFGA, granular IAM, and an audit trail you can export. Access maps to who needs it, and every decision is written down.",
+				text: "SSO, custom roles and an exportable audit trail across every cloud you run.",
 			}}
 			ctas={[
-				{ label: "Talk to sales", href: SALES },
-				{ label: "Request a trial", href: "#trial", variant: "outline" },
+				{ label: "Contact", href: CONTACT },
+				{ label: "Read the docs", href: "/docs/guides/access/organizations", variant: "outline" },
 			]}
 		/>
 	);
 }
 
+/** The clouds Alethia provisions into, from the cloud catalog. */
 function Clouds() {
 	return (
 		<LogoWall
@@ -155,6 +161,7 @@ function Clouds() {
 	);
 }
 
+/** The one proof band: example grants, with a deny that outranks an allow. */
 function Organizations() {
 	return (
 		<Band
@@ -162,7 +169,10 @@ function Organizations() {
 			lines={["One org, many teams.", "Grants target groups."]}
 			visual={
 				<Plate label="alethialabs.io/access">
-					<GrantsTable />
+					{/* The table is wider than a phone; it scrolls inside the plate. */}
+					<div className="overflow-x-auto">
+						<GrantsTable />
+					</div>
 				</Plate>
 			}
 			rail={{
@@ -182,181 +192,53 @@ function Organizations() {
 	);
 }
 
-function Identity() {
-	return (
-		<Band
-			eyebrow="Identity"
-			lines={["Bring your identity provider.", "Enforce it org-wide."]}
-			visual={
-				<PointGrid
-					points={[
-						{
-							title: "OIDC and SAML 2.0",
-							body: "Wire your provider once, for the whole organization. Standards-based, so there is no per-IdP integration to wait on.",
-						},
-						{
-							title: "Enforced, not optional",
-							body: "Turn it on and password sign-in is disabled org-wide. Every member arrives through your directory.",
-						},
-						{
-							// Was "SCIM keeps membership in sync automatically". SCIM is not
-							// built — docs/standards/scim-saml.mdx says so in an error
-							// callout, and there is no /scim/v2 endpoint. This is what
-							// actually happens.
-							title: "Just-in-time membership",
-							body: "A member is created on their first successful sign-in through SSO. Removal is an admin action today, not a directory push.",
-						},
-						{
-							title: "Least privilege on arrival",
-							body: "First-login role is viewer. Grants raise it deliberately, per team or per project.",
-						},
-					]}
-				/>
-			}
-		/>
-	);
-}
-
-function Roles() {
-	return (
-		<Band
-			eyebrow="Roles"
-			lines={["Four roles out of the box.", "Define your own."]}
-			visual={
-				<PointGrid
-					points={[
-						{
-							title: "owner, admin, operator, viewer",
-							body: "Four built-in roles that cover most teams without any configuration at all.",
-						},
-						{
-							title: "Custom roles",
-							body: "Compose allow and deny down to a single capability, on a single project.",
-						},
-						{
-							title: "Deny wins",
-							body: "A deny anywhere in the graph beats every allow above it. Exclusions stay measurable.",
-						},
-						{
-							title: "OpenFGA over Postgres RBAC",
-							body: "Relationship checks, not a role string on a row — so a grant can target a team and every member inherits it.",
-						},
-					]}
-				/>
-			}
-		/>
-	);
-}
-
-function Audit() {
-	return (
-		<Band
-			eyebrow="Audit"
-			lines={["Every authorization decision,", "written down."]}
-			visual={
-				<PointGrid
-					points={[
-						{
-							title: "Who, what, which resource",
-							body: "And whether it was allowed or denied — for every check, not a sample.",
-						},
-						{
-							title: "The grant that decided it",
-							body: "Not just the verdict. The record names the grant the decision resolved through.",
-						},
-						{
-							title: "Append-only",
-							body: "The record is not editable after the fact, by anyone, including us.",
-						},
-						{
-							title: "Exportable",
-							body: "Filter it, export it, and take it to your own SIEM.",
-						},
-					]}
-				/>
-			}
-		/>
-	);
-}
-
-function Deployment() {
-	return (
-		<Band
-			eyebrow="Deployment"
-			lines={["Run it where", "your data lives."]}
-			visual={
-				<PointGrid
-					points={[
-						{
-							title: "Keyless on AWS, GCP and Azure",
-							body: "The runner mints a short-lived assertion per job — cross-account IAM role, workload identity federation, or federated identity. No access key touches disk.",
-						},
-						{
-							// The page used to generalise this to "every cloud … no access
-							// keys on disk or in our database", which is false for the
-							// token clouds. See docs/runner/cloud-credentials.
-							title: "Token clouds can stay yours",
-							body: "Hetzner has no federation, so a scoped token is stored encrypted at rest. Run a self-managed runner and it never reaches us at all.",
-						},
-						{
-							// Was "run the entire control plane … air-gapped". The docs
-							// support air-gapped for the RUNNER; there is no air-gapped
-							// control-plane guide.
-							title: "Hosted or self-managed",
-							body: "Run the control plane inside your own perimeter, single-tenant. Runners can sit on-premises or air-gapped.",
-						},
-						{
-							title: "AGPL core",
-							body: "The complete single-tenant product is open source. Governance is the commercial ee/ tier.",
-						},
-					]}
-				/>
-			}
-			rail={{
-				proof: {
-					lead: "Your cloud account, your state",
-					rest: " — Alethia provisions into infrastructure you already own and can walk away with.",
-				},
-				label: "Security",
-				links: [
-					{ label: "How credentials work", href: "/docs/concepts/runner/cloud-credentials" },
-					{ label: "Self-hosted runners", href: "/docs/guides/runners/self-operated" },
-					{ label: "SSO and SAML", href: "/docs/reference/standards/scim-saml" },
-					{ label: "Open core, honestly", href: "/open-source" },
-				],
-			}}
-		/>
-	);
-}
-
 /**
- * The trial form.
- *
- * `<ContactForm>` and not `<ContactSection>`: the latter renders its own `<h1>`
- * plus a pitch rail and is a page hero, so dropping it here would ship a second
- * `<h1>` on a page that already has one. The form itself renders no heading at
- * all, so it sits under this `<h2>` cleanly. It posts the same
- * `type: "enterprise"` lead through the same server action as
- * `/contact/enterprise`, which stays as its own route.
+ * Four points, one sentence each. Every claim here is narrower than the bands it
+ * replaced, on purpose:
+ * - SSO says what is registered, not that it is enforced — nothing in the
+ *   console turns password sign-in off for an org today.
+ * - The audit point says what `lib/authz/activity.ts` records: every denial and
+ *   every non-read action. Successful reads are skipped, so "every check" was
+ *   false, and the row carries a reason code, not the grant that decided it.
  */
-function Trial() {
+function Governance() {
 	return (
-		<Section id="trial">
-			<Eyebrow>Enterprise trial</Eyebrow>
-			<h2
-				className="font-grotesk text-display-sm font-bold tracking-[-0.025em] text-text-primary"
-				style={{ margin: 0, maxWidth: "18ch", lineHeight: 1.02 }}
-			>
-				Tell us how your org is shaped.
-			</h2>
-			<p className="mt-5 max-w-[46ch] text-[13px] leading-[1.6] text-text-secondary">
-				Your identity provider, your teams, and where your data has to live. We map it to
-				Alethia and stand it up with you.
-			</p>
-			<div className="mt-12 max-w-[560px]">
-				<ContactForm type="enterprise" submitLabel="Request your trial" />
-			</div>
-		</Section>
+		<Band
+			eyebrow="Governance"
+			lines={["Identity, roles, audit,", "and where it runs."]}
+			visual={
+				<PointGrid
+					points={[
+						{
+							title: "Your identity provider",
+							body: "OIDC or SAML 2.0, registered once for the organization.",
+						},
+						{
+							title: "Custom roles, deny wins",
+							body: "Allow or deny down to one capability on one project; a deny outranks every allow.",
+						},
+						{
+							title: "Every change on the record",
+							body: "Who did what to which resource, and every denied attempt — exportable as CSV for your SIEM.",
+						},
+						{
+							title: "Hosted or self-managed",
+							body: "A single-tenant control plane inside your perimeter, keyless on AWS, GCP and Azure.",
+						},
+					]}
+				/>
+			}
+		/>
+	);
+}
+
+/** The closing line and the one action. */
+function Close() {
+	return (
+		<PageClose
+			line="Bring your identity provider. We'll map the rest."
+			ctas={[{ label: "Contact", href: CONTACT }]}
+		/>
 	);
 }
 
@@ -367,11 +249,8 @@ export function EnterpriseSections() {
 			<Hero />
 			<Clouds />
 			<Organizations />
-			<Identity />
-			<Roles />
-			<Audit />
-			<Deployment />
-			<Trial />
+			<Governance />
+			<Close />
 		</>
 	);
 }

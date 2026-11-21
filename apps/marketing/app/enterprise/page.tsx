@@ -9,12 +9,12 @@ import { EnterpriseSections } from "@/components/landing/enterprise/page-section
 export const metadata: Metadata = {
 	title: "Enterprise",
 	description:
-		"Govern multi-cloud infrastructure for the whole organization — single sign-on, custom roles over OpenFGA, granular IAM, a complete audit trail, and self-managed deployment. Access maps to who needs it, and every decision is on the record.",
+		"Govern multi-cloud infrastructure for the whole organization — single sign-on over OIDC or SAML, custom roles where deny wins, an exportable audit trail, and hosted or self-managed deployment.",
 };
 
 /**
- * Public enterprise-governance page: organizations, identity, roles, audit,
- * deployment, and the trial form.
+ * Public enterprise-governance page: hero, clouds, organizations, one grid of
+ * governance points, close.
  *
  * `Reveal` selects `:scope > section` and skips the first, so
  * `EnterpriseSections` must return a flat fragment of `<section>` elements with
