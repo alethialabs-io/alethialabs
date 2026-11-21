@@ -18,7 +18,7 @@ import { RegionRefusal } from "@/components/errors/region-refusal";
 import { isForbidden } from "@/components/overview/overview-reads";
 import { ClockSlot } from "@/components/overview/clock-slot";
 import { ReleaseNotesPopover } from "@/components/runners/release-notes-popover";
-import { useRunnersQuery, useUpdateAllOutdated } from "@/lib/query/use-runners-query";
+import { type RunnerRef, useRunnersQuery, useUpdateAllOutdated } from "@/lib/query/use-runners-query";
 import { formatRelative } from "@repo/format";
 import { ArrowUpCircle, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -61,7 +61,7 @@ export function VersionsPanel() {
 	// deploy config). UPDATE re-mints a fresh token, so no stored token is needed. The rest need a
 	// manual re-deploy.
 	const { outdated, updatable } = useMemo(() => {
-		if (!latestRelease || !runners) return { outdated: 0, updatable: Array<{ id: string; name: string }>() };
+		if (!latestRelease || !runners) return { outdated: 0, updatable: Array<RunnerRef>() };
 		const out = runners.filter((r) => r.version && r.version !== latestRelease.version);
 		const upd = out.filter((r) => r.in_place);
 		return { outdated: out.length, updatable: upd.map((r) => ({ id: r.id, name: r.name })) };
@@ -69,17 +69,15 @@ export function VersionsPanel() {
 
 	// "Update all" queues one job per runner, so it is confirmed first, naming the runners it will
 	// touch. The confirmation runs the batch itself and closes only once it has been sent; the
-	// outcome (all queued, or how many did not) is one toast.
+	// outcome (all queued, or which runners were not) is one toast.
 	const confirmable = {
 		isPending: updateAll.isPending,
-		mutate: (ids: string[], options?: { onSuccess?: () => void; onSettled?: () => void }) => {
-			updateAll.mutate(ids, {
+		mutate: (batch: RunnerRef[], options?: { onSuccess?: () => void; onSettled?: () => void }) => {
+			updateAll.mutate(batch, {
 				onSuccess: ({ queued, failed }) => {
-					if (failed === 0) toast.success(`${queued} update${queued !== 1 ? "s" : ""} queued`);
-					else
-						toast.warning(
-							`${queued} of ${ids.length} updates queued. ${failed} could not be queued; the runners still behind keep the update badge on their cards, where each can be updated on its own.`,
-						);
+					if (failed.length === 0)
+						toast.success(`${queued.length} update${queued.length !== 1 ? "s" : ""} queued`);
+					else toast.warning(updateAllPartialMessage(queued.length, failed.map((r) => r.name)));
 					options?.onSuccess?.();
 				},
 				onSettled: options?.onSettled,
@@ -217,7 +215,7 @@ export function VersionsPanel() {
 					pendingLabel="Queueing updates…"
 					severity={{ level: "confirm" }}
 					mutation={confirmable}
-					variables={confirmOpen ? updatable.map((r) => r.id) : null}
+					variables={confirmOpen ? updatable : null}
 				/>
 			)}
 		</section>
@@ -232,10 +230,23 @@ const NAMED_IN_CONFIRM = 8;
  * Names up to {@link NAMED_IN_CONFIRM} runners, then counts the rest.
  */
 export function updateAllDescription(names: readonly string[], version: string): string {
+	return `This queues an update job for each of: ${nameList(names)}. Each runner moves to v${version} when its update job runs.`;
+}
+
+/** Up to {@link NAMED_IN_CONFIRM} runner names, comma-separated, then "and N more". */
+function nameList(names: readonly string[]): string {
 	const shown = names.slice(0, NAMED_IN_CONFIRM).join(", ");
 	const rest = names.length - NAMED_IN_CONFIRM;
-	const list = rest > 0 ? `${shown} and ${rest} more` : shown;
-	return `This queues an update job for each of: ${list}. Each runner moves to v${version} when its update job runs.`;
+	return rest > 0 ? `${shown} and ${rest} more` : shown;
+}
+
+/**
+ * The partial-failure toast of "Update all": how many of how many were queued, the runners whose
+ * update was NOT queued by name (up to {@link NAMED_IN_CONFIRM}, then a count), and what to do.
+ */
+export function updateAllPartialMessage(queuedCount: number, failedNames: readonly string[]): string {
+	const total = queuedCount + failedNames.length;
+	return `${queuedCount} of ${total} updates queued. Not queued: ${nameList(failedNames)}. Each keeps its update badge on its card, where it can be updated on its own.`;
 }
 
 /** The panel's pending render: its header, the latest-release block and a changelog of rows. */
