@@ -69,6 +69,10 @@ const OTHER_RUNTIME_SOURCE: Record<string, OtherSource> = {
 		kind: "code-default",
 		why: "unset ⇒ components/shell/instance-links.ts falls back to the public issues URL",
 	},
+	NEXT_PUBLIC_TURNSTILE_SITE_KEY: {
+		kind: "code-default",
+		why: "unset ⇒ the sign-up challenge is off (lib/config/auth.ts getSignupChallengeConfig needs it and TURNSTILE_SECRET_KEY)",
+	},
 	NEXT_PUBLIC_UMAMI_HOST: {
 		kind: "code-default",
 		why: "unset ⇒ Umami is off (deploy/analytics/README.md: the Umami stack was removed)",
