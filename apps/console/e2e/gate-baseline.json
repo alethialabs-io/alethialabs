@@ -462,7 +462,7 @@
 				"Onboarding — public auth pages › signup page renders the create-account hero": "passed",
 				"Onboarding — public auth pages › login page renders the returning-user hero": "passed",
 				"Onboarding — public auth pages › signup offers OAuth providers (GitHub, Google)": "passed",
-				"Onboarding — public auth pages › SSO option is present but disabled (coming soon)": "passed",
+				"Onboarding — public auth pages › SSO entry takes an organization and hands off to its sign-in route": "passed",
 				"Onboarding — public auth pages › signup email step reveals the work-email field": "passed",
 				"Onboarding — public auth pages › login email step reveals the sign-in email field": "passed",
 				"Onboarding — public auth pages › email step can navigate back to the provider list": "passed",

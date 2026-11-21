@@ -12,6 +12,7 @@ import { and, eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { safeNext } from "@/lib/auth/safe-next";
 import { getServiceDb } from "@/lib/db";
 import { organization, ssoProvider } from "@/lib/db/schema";
 
@@ -62,7 +63,8 @@ export async function GET(
 		: providers[0];
 	if (!chosen) return toLogin(req, "no_provider");
 
-	const callbackURL = req.nextUrl.searchParams.get("next") ?? "/dashboard";
+	// The sign-in form passes its own `next` through; only a same-origin path is carried on.
+	const callbackURL = safeNext(req.nextUrl.searchParams.get("next")) ?? "/dashboard";
 
 	// Dispatch through auth.handler: the sso() plugin is loaded via the ee/ seam, so `auth.api`
 	// can't statically type its endpoints and the open-core guard forbids importing @alethia/ee.

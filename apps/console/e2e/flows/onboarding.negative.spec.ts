@@ -184,29 +184,18 @@ test.describe("Onboarding negatives — invitation accept", () => {
 		const token = await pendingInvitationId(orgId, invitee);
 		expect(token, `no pending invitation row for ${invitee} after a ${invited.status}`).toBeTruthy();
 
-		// ownerHobby is a real, signed-in account — and NOT the invitee. The screen renders (the
-		// token exists), so the refusal has to come from the accept itself.
+		// ownerHobby is a real, signed-in account — and NOT the invitee. The page READS the invitation
+		// before offering anything (A-20), and the server answers that it is addressed to somebody
+		// else — so the screen says so and offers switching account, and never an Accept that could
+		// only be refused.
 		await owner.page.goto(`/invites/accept?token=${token}`);
-		await owner.page.getByRole("button", { name: /accept invitation/i }).click();
-
-		// The inline error is what the accept UNIQUELY produces here — an absence assertion would
-		// be equally true of a button that never fired. Located as the live region, NOT by matching
-		// the word "invitation": this card's heading, body and buttons are all full of that word,
-		// so a text match would be true of a page where nothing happened.
-		//
-		// `p[role="alert"]`, not `getByRole("alert")`: Next mounts its own route announcer as an
-		// always-present, always-empty `<div role="alert" aria-live="assertive">`, so the role on
-		// its own resolves to two elements and the assertion dies in strict mode before it can say
-		// anything about the refusal (measured on run 34469855618).
-		const refusal = owner.page.locator('p[role="alert"]');
-		await expect(refusal).toBeVisible({ timeout: 20_000 });
-		// Non-empty, so an empty live region can never stand in for a message. The exact WORDING is
-		// deliberately not pinned: it is Better Auth's own copy for an address mismatch ("You are
-		// not the recipient of the invitation"), falling back to this page's "Couldn't accept this
-		// invitation." — pinning a dependency's string would make a library bump a red gate, and
-		// what matters here is that a refusal was shown at all.
-		await expect(refusal).toHaveText(/\S/);
-		// A successful accept pushes /dashboard, so staying put is the second half of the same fact.
+		await expect(
+			owner.page.getByRole("heading", { name: /this invitation is for another account/i }),
+		).toBeVisible({ timeout: 20_000 });
+		await expect(owner.page.getByRole("button", { name: /sign out and switch account/i })).toBeVisible();
+		// The absence is the second half of the same fact, asserted only after the heading proved
+		// the read answered — before it, an absent button would be equally true of a page still loading.
+		await expect(owner.page.getByRole("button", { name: /accept invitation/i })).toHaveCount(0);
 		await expect(owner.page).toHaveURL(/\/invites\/accept/);
 
 		// And the invitation is untouched: still pending, so the real invitee can still use it.
@@ -225,7 +214,8 @@ test.describe("Onboarding negatives — the CLI hand-off", () => {
 		// XXXX-XXXX user_code), so the page must never put an unreadable string in front of the
 		// operator as "the code to compare".
 		await owner.page.goto("/cli/login?device_code=not-a-uuid&user_code=nope");
-		await expect(owner.page.getByText(/authentication failed/i)).toBeVisible({ timeout: 20_000 });
+		// Titled by what failed — the LINK — not by a sign-in that was never attempted (A-27).
+		await expect(owner.page.getByText(/this sign-in link can.t be used/i)).toBeVisible({ timeout: 20_000 });
 		await expect(
 			owner.page.getByText(/not a valid CLI login request/i),
 		).toBeVisible();
@@ -236,7 +226,8 @@ test.describe("Onboarding negatives — the CLI hand-off", () => {
 
 	test("a CLI login link with no codes at all errors the same way", async ({ owner }) => {
 		await owner.page.goto("/cli/login");
-		await expect(owner.page.getByText(/authentication failed/i)).toBeVisible({ timeout: 20_000 });
+		// Titled by what failed — the LINK — not by a sign-in that was never attempted (A-27).
+		await expect(owner.page.getByText(/this sign-in link can.t be used/i)).toBeVisible({ timeout: 20_000 });
 		await expect(owner.page.getByRole("button", { name: /^approve$/i })).toHaveCount(0);
 	});
 });
