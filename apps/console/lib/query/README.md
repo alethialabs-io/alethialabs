@@ -105,10 +105,12 @@ provider/identity/pricing selections, workspace/org context. Anything that is a
 *navigation-prefetched server-data list* belongs in a query hook. After the migration:
 
 - Keep (pure UI / session): `use-alerts-section`, `use-artifact-store`,
-  `use-command-palette`, `use-canvas-store`, `use-workspace-store`,
-  `use-setup-guide-store`.
+  `use-command-palette`, `use-workspace-store`, `use-setup-guide-store`.
+- The design canvas is `lib/canvas/store/` (#6764, #7129): a document store and a view store per
+  board, one board per project:environment. It holds no server data: the cards the design does
+  not own are built from their queries (`use-board-sources.ts`) and read through context.
 - Keep (design-surface state in `components/design-project/`, driven by in-canvas user
-  actions rather than navigation — same category as `use-canvas-store`):
+  actions rather than navigation — same category as the canvas store):
   `use-cloud-provider-store` (selected provider/identity + its cached resources).
   (`use-pricing-store` was on this list and is gone — #2873 found nothing imported it.)
 - Slimmed to UI state: `use-jobs-store` (filters/pagination), `use-projects-store`

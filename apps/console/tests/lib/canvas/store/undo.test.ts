@@ -12,21 +12,32 @@
 // the setup alone, so a case that fails is the undo and not the steps before it.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
+import { board as theBoard } from "@/lib/canvas/store/board";
+import { addonNodes } from "@/lib/canvas/store/out-of-band";
 import { databaseNode, projectNode } from "@/tests/fixtures/canvas/nodes";
 
 const SCOPE = "proj-1:env-a";
 const DATABASE = "database-orders";
 const ADDON = "addon-grafana";
 
-/** The live store. */
+/** The cards the design does not own, as their query last returned them. */
+let others: CanvasNode[] = [];
+
+/** The board's commands, with the cards beside the design bound in. */
 function board() {
-	return useCanvasStore.getState();
+	return {
+		nodes: () => theBoard.nodes(others),
+		addNode: (kind: Parameters<typeof theBoard.addNode>[0]) => theBoard.addNode(kind),
+		removeNodes: (ids: string[]) => theBoard.removeNodes(ids, others),
+		undo: () => theBoard.undo(others),
+		redo: () => theBoard.redo(others),
+	};
 }
 
 /** Seed the board with a saved design: the project root and one database on port 5432. */
 function seedBoard() {
-	board().reseed(
+	theBoard.reseed(
 		{ nodes: [projectNode(), databaseNode("orders")] },
 		{ scope: SCOPE, revision: "rev-1" },
 	);
@@ -34,55 +45,59 @@ function seedBoard() {
 
 /** Every node id on the board. */
 function ids(): string[] {
-	return board().nodes.map((n) => n.id);
+	return board().nodes().map((n) => n.id);
 }
 
 /** How many nodes of `kind` are on the board. */
 function countOf(kind: string): number {
-	return board().nodes.filter((n) => n.data.kind === kind).length;
+	return board().nodes().filter((n) => n.data.kind === kind).length;
 }
 
 /** The seeded database's port, or null when the database is not on the board. */
 function databasePort(): number | null {
-	const node = board().nodes.find((n) => n.id === DATABASE);
+	const node = board().nodes().find((n) => n.id === DATABASE);
 	if (!node || node.data.kind !== "database") return null;
 	return node.data.config.port ?? null;
 }
 
 /** Where the seeded database sits, or null when it is not on the board. */
 function databasePosition(): { x: number; y: number } | null {
-	const node = board().nodes.find((n) => n.id === DATABASE);
+	const node = board().nodes().find((n) => n.id === DATABASE);
 	return node ? { x: node.position.x, y: node.position.y } : null;
 }
 
 /** Edit one field of the seeded database, the way the inspector commits it. */
 function editDatabasePort() {
-	board().updateNodeConfig(DATABASE, { port: 6543 });
+	theBoard.document.getState().updateNodeConfig(DATABASE, { port: 6543 });
 }
 
 /** Drag the seeded database 200px right and 80px down, the way React Flow reports a finished drag. */
 function dragDatabase(from: { x: number; y: number }) {
-	board().onNodesChange([
-		{
-			id: DATABASE,
-			type: "position",
-			position: { x: from.x + 200, y: from.y + 80 },
-			dragging: false,
-		},
-	]);
+	theBoard.onNodesChange(
+		[
+			{
+				id: DATABASE,
+				type: "position",
+				position: { x: from.x + 200, y: from.y + 80 },
+				dragging: false,
+			},
+		],
+		others,
+	);
 }
 
 /** Add a card to the design, then let an installed add-on arrive from the server. */
 function addSecretThenLoadAddon() {
 	board().addNode("secret");
-	board().setAddonNodes([
+	others = addonNodes([
 		{ id: "grafana", name: "Grafana", version: "8.1.2", namespace: "monitoring" },
 	]);
 }
 
 beforeEach(() => {
 	sessionStorage.clear();
-	board().reset();
+	others = [];
+	theBoard.reset();
 	seedBoard();
 });
 

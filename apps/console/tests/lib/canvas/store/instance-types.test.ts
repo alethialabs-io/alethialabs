@@ -7,7 +7,9 @@
 // (convert.ts's convertInstanceTypes), and RETURNS the notice when it had to fall back to a default.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { boardNodes, seedBoard } from "@/tests/fixtures/canvas/board";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import type { NodeSize } from "@/types/jsonb.types";
@@ -54,31 +56,25 @@ function clusterNode(
 
 /** Replace the store's graph with `nodes`, as a seeded workbench would. */
 function seed(nodes: CanvasNode[]) {
-	useCanvasStore.setState({
-		nodes,
-		baseline: structuredClone(nodes),
-		past: [],
-		future: [],
-		dirty: false,
-	});
+	seedBoard(nodes);
 }
 
 /** The cluster's sizing as the store currently holds it. */
 function clusterSizing() {
-	const node = useCanvasStore.getState().nodes.find((n) => n.id === CLUSTER_ID);
+	const node = boardNodes().find((n) => n.id === CLUSTER_ID);
 	return node?.data.kind === "cluster"
 		? { instance_types: node.data.config.instance_types, node_size: node.data.config.node_size }
 		: undefined;
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("a cluster moved to another cloud keeps a machine that cloud has (#5269)", () => {
 	it("maps a pinned type through the catalog's equivalence, with no notice", () => {
 		seed([projectNode("aws"), clusterNode("aws", { instance_types: ["t3.large"] })]);
-		const notices = useCanvasStore.getState().setNodeIdentity(CLUSTER_ID, "ci-gcp", "gcp");
+		const notices = board.document.getState().setNodeIdentity(CLUSTER_ID, "ci-gcp", "gcp");
 		expect(clusterSizing()?.instance_types).toEqual(["e2-standard-2"]);
 		expect(notices).toEqual([]);
 	});
@@ -86,7 +82,7 @@ describe("a cluster moved to another cloud keeps a machine that cloud has (#5269
 	it("falls back to the target's default and SAYS so when there is no equivalent", () => {
 		// m6i.large is a real AWS type the seed data pins, and the catalog maps nothing for it.
 		seed([projectNode("aws"), clusterNode("aws", { instance_types: ["m6i.large"] })]);
-		const notices = useCanvasStore.getState().setNodeIdentity(CLUSTER_ID, "ci-azure", "azure");
+		const notices = board.document.getState().setNodeIdentity(CLUSTER_ID, "ci-azure", "azure");
 		expect(clusterSizing()?.instance_types).toEqual(["Standard_D2s_v5"]);
 		expect(notices).toHaveLength(1);
 		expect(notices[0]?.message).toMatch(/m6i\.large.*Standard_D2s_v5/);
@@ -94,7 +90,7 @@ describe("a cluster moved to another cloud keeps a machine that cloud has (#5269
 
 	it("moves an INHERITING cluster when the project root changes cloud", () => {
 		seed([projectNode("aws"), clusterNode(null, { instance_types: ["t3.xlarge"] })]);
-		useCanvasStore.getState().setNodeIdentity(PROJECT_NODE_ID, "ci-gcp", "gcp");
+		board.document.getState().setNodeIdentity(PROJECT_NODE_ID, "ci-gcp", "gcp");
 		expect(clusterSizing()?.instance_types).toEqual(["e2-standard-4"]);
 	});
 
@@ -103,14 +99,14 @@ describe("a cluster moved to another cloud keeps a machine that cloud has (#5269
 			projectNode("aws"),
 			clusterNode("aws", { instance_types: [], node_size: { vcpu: 4, memory_gb: 16 } }),
 		]);
-		const notices = useCanvasStore.getState().setNodeIdentity(CLUSTER_ID, "ci-gcp", "gcp");
+		const notices = board.document.getState().setNodeIdentity(CLUSTER_ID, "ci-gcp", "gcp");
 		expect(clusterSizing()).toEqual({ instance_types: [], node_size: { vcpu: 4, memory_gb: 16 } });
 		expect(notices).toEqual([]);
 	});
 
 	it("changes nothing when the identity moves within the same cloud", () => {
 		seed([projectNode("aws"), clusterNode("aws", { instance_types: ["m6i.large"] })]);
-		const notices = useCanvasStore.getState().setNodeIdentity(CLUSTER_ID, "ci-aws-2", "aws");
+		const notices = board.document.getState().setNodeIdentity(CLUSTER_ID, "ci-aws-2", "aws");
 		expect(clusterSizing()?.instance_types).toEqual(["m6i.large"]);
 		expect(notices).toEqual([]);
 	});
