@@ -34,14 +34,13 @@ const REAL_PROVIDERS = [
 describe("the list", () => {
 	it("has no duplicates, and every entry is a bare lower-case domain", () => {
 		expect(new Set(DISPOSABLE_EMAIL_DOMAINS).size).toBe(DISPOSABLE_EMAIL_DOMAINS.length);
-		for (const d of DISPOSABLE_EMAIL_DOMAINS) {
-			expect(d, d).toMatch(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/);
-		}
+		const malformed = DISPOSABLE_EMAIL_DOMAINS.filter((d) => !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d));
+		expect(malformed).toEqual([]);
 	});
 
 	it("never lists a real mail provider", () => {
 		expect(DISPOSABLE_EMAIL_DOMAINS.filter((d) => REAL_PROVIDERS.includes(d))).toEqual([]);
-		for (const d of REAL_PROVIDERS) expect(isDisposableEmail(`someone@${d}`), d).toBe(false);
+		expect(REAL_PROVIDERS.filter((d) => isDisposableEmail(`someone@${d}`))).toEqual([]);
 	});
 });
 
