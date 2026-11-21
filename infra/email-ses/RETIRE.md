@@ -15,8 +15,8 @@ Nothing here runs by itself. `.github/workflows/infra-email-ses.yml` is validate
 runbook was added, so a merge to `main` applies nothing. Every command below is run by hand, from a
 checkout of `main`, with an administrator `alethia-sso` session for 270587882865.
 
-Hosted sending is not affected by any step. The console sends through Resend or through the
-`alethia-email` account, and its SES webhook accepts only the topic ARNs in
+Hosted sending is not affected by any step. The console sends through the `alethia-email`
+account (or an SMTP relay, its rollback), and its SES webhook accepts only the topic ARNs in
 `ALETHIA_SES_EVENTS_TOPIC_ARNS` (by default the `alethia-email` account's `alethia-ses-events`).
 
 ## What the state holds (inventory, 2026-11-15)

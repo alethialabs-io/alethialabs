@@ -46,22 +46,14 @@ S3/R2 instead, point `ALETHIA_DATABASE_URL` / `ALETHIA_STORAGE_*` at them and se
 | `ALETHIA_STORAGE_ENDPOINT` | S3 endpoint (bundled SeaweedFS by default) |
 | `ALETHIA_STORAGE_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | must match `deploy/seaweedfs/s3.json` for the bundle |
 
-## Email (Resend / SMTP / SES)
+## Email (SMTP / SES)
 
 Transactional email is pluggable. The transport is chosen by `EMAIL_PROVIDER` when
-set (`resend` | `smtp` | `ses`), else auto-detected from whichever provider's
-credentials are present, in precedence order **Resend → SMTP → SES**. With none
+set (`smtp` | `ses`), else auto-detected from whichever provider's
+credentials are present, in precedence order **SMTP → SES**. With none
 configured, sign-in/account emails are logged to the console instead of sent (a
 fresh install works with zero email setup). From-addresses must be verified sending
 identities/domains for the chosen provider.
-
-**Resend (recommended)** — react-email templates render natively, HTTP API (no SMTP
-ports to open), and domain verification is self-serve. Get an API key at resend.com,
-verify your sending domain, then:
-
-| Key | Notes |
-|---|---|
-| `RESEND_API_KEY` | Resend API key. Selects Resend (unless `EMAIL_PROVIDER` overrides). |
 
 **Generic SMTP** — bring any provider (Postmark, Mailgun, SES-SMTP, a local Mailpit):
 
@@ -86,7 +78,7 @@ to mail arbitrary recipients):
 
 | Key | Notes |
 |---|---|
-| `EMAIL_PROVIDER` | Optional. Pins the transport (`resend` \| `smtp` \| `ses`); omit to auto-detect. |
+| `EMAIL_PROVIDER` | Optional. Pins the transport (`smtp` \| `ses`); omit to auto-detect. Any other value, including the removed `resend`, is refused. |
 | `AUTH_EMAIL_FROM` | Auth/security from address, e.g. `Alethia <no-reply@auth.yourdomain>` (quote it). |
 | `EMAIL_FROM` | Product/general from address; falls back to `AUTH_EMAIL_FROM`. |
 
