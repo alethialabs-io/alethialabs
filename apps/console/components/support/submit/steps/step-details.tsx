@@ -4,12 +4,17 @@
 
 import { useFormContext } from "react-hook-form";
 import { AttachmentPicker } from "@/components/support/attachment-picker";
-import type { SubmitCaseInput } from "@/lib/validations/support";
+import type { SubmitCaseWizardValues } from "@/components/support/submit/submit-case.wizard";
+import { FieldMessage } from "@/components/support/field-message";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
-import { SectionHeading } from "@repo/ui/section-heading";
 import { Textarea } from "@repo/ui/textarea";
-import { FieldMessage } from "@/components/support/field-message";
+
+/**
+ * What the attachments field says about the draft. A file cannot be kept across a reload — the
+ * draft holds only what can be written down — so the person is told before it matters.
+ */
+export const ATTACHMENTS_NOT_KEPT = "Files are not kept in your draft: re-attach them after a reload.";
 
 interface StepDetailsProps {
 	/** Selected attachment files (owned by the parent form). */
@@ -25,16 +30,10 @@ export function StepDetails({ files, onFilesChange, onFileReject }: StepDetailsP
 	const {
 		register,
 		formState: { errors },
-	} = useFormContext<SubmitCaseInput>();
+	} = useFormContext<SubmitCaseWizardValues>();
 
 	return (
 		<div className="space-y-5">
-			<SectionHeading
-				level={2}
-				title="Tell us what's happening"
-				description="A clear subject and detailed description help us resolve this faster."
-			/>
-
 			<div className="space-y-2">
 				<Label htmlFor="support-subject">Subject</Label>
 				<Input
@@ -70,6 +69,9 @@ export function StepDetails({ files, onFilesChange, onFileReject }: StepDetailsP
 					onChange={onFilesChange}
 					onReject={onFileReject}
 				/>
+				<p data-slot="attachments-not-kept" className="text-xs text-muted-foreground">
+					{ATTACHMENTS_NOT_KEPT}
+				</p>
 			</div>
 		</div>
 	);
