@@ -2,22 +2,35 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import type {
+	CloudAccount,
 	CloudAccountStatus,
 	ConnectorWithConnection,
 } from "@/app/server/actions/connectors";
+import { renameCloudAccount } from "@/app/server/actions/identities";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { ConnectorIcon, isThirdPartyMark } from "@/components/connectors/connector-icon";
+import { connectorKeys } from "@/components/connectors/connectors-board";
 import {
 	connectorState,
+	notOfferedSentence,
 	type ConnectorHealth,
 } from "@/components/connectors/connectors-query";
+import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
+import { FormRootError } from "@/components/forms/form-root-error";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { CLOUD_ACCOUNT, sentenceStart } from "@/lib/copy/vocabulary";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import { DetailSheet } from "@repo/ui/detail-sheet";
+import { DisabledReason } from "@repo/ui/disabled-reason";
+import { Form, FormControl, FormField, FormItem, FormMessage } from "@repo/ui/form";
 import { Input } from "@repo/ui/input";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Separator } from "@repo/ui/separator";
@@ -63,25 +76,135 @@ const HEALTH_TIER: Record<ConnectorHealth, StatusTier> = {
 	coming_soon: "disabled",
 };
 
+/**
+ * A cloud account's name, as the rename form accepts it. The same two limits the server applies
+ * (`renameCloudAccount`), so an empty or over-long name is answered under the field before any
+ * request is made. An empty name used to make Save do nothing, with no message.
+ */
+const renameSchema = z.object({
+	name: z
+		.string()
+		.trim()
+		.min(1, "Name cannot be empty.")
+		.max(120, "Keep the name under 120 characters."),
+});
+
+type RenameValues = z.infer<typeof renameSchema>;
+
+/**
+ * The inline form that renames one cloud account: a field, Save and Cancel. Save is pending while
+ * the rename runs and cannot be pressed twice; a refusal about the name lands under the field and
+ * any other in the form's own error line, and the form stays open with what was typed. It closes
+ * itself (`onDone`) once the rename has succeeded, or at once when the name was not changed.
+ */
+function AccountRenameForm({ account, onDone }: { account: CloudAccount; onDone: () => void }) {
+	const form = useForm<RenameValues>({
+		resolver: zodResolver(renameSchema),
+		defaultValues: { name: account.name },
+	});
+	const rename = useActionMutation(renameCloudAccount, {
+		invalidates: connectorKeys(),
+		form: { instance: form, fields: ["name"] },
+		successMessage: `${sentenceStart(CLOUD_ACCOUNT.one)} renamed.`,
+		onSuccess: onDone,
+	});
+
+	/** Sends the new name, or just closes the form when it is the name the account already has. */
+	const submit = form.handleSubmit((values) => {
+		if (values.name === account.name) {
+			onDone();
+			return;
+		}
+		rename.submit({ identityId: account.identityId, name: values.name });
+	});
+
+	return (
+		<Form {...form}>
+			<form onSubmit={submit} noValidate className="min-w-0 flex-1 space-y-1.5">
+				<FormField
+					control={form.control}
+					name="name"
+					render={({ field }) => (
+						<FormItem className="space-y-1.5">
+							<div className="flex items-center gap-2">
+								{/* Named, all three: the row's only text input and its two icon-only
+								    buttons. Exactly one account can be editing, so these names are unique
+								    on the page without carrying the account in them. */}
+								<FormControl>
+									<Input
+										{...field}
+										className="h-7 text-xs"
+										aria-label="Account name"
+										autoComplete="off"
+										autoFocus
+										disabled={rename.isPending}
+										onKeyDown={(event) => {
+											if (event.key === "Escape") onDone();
+										}}
+									/>
+								</FormControl>
+								<Button
+									type="submit"
+									size="sm"
+									variant="ghost"
+									className="size-7 shrink-0 p-0"
+									title="Save name"
+									aria-label="Save name"
+									aria-busy={rename.isPending}
+									disabled={rename.isPending}
+								>
+									{rename.isPending ? (
+										<Loader2 className="size-3.5 animate-spin" aria-hidden />
+									) : (
+										<Check className="size-3.5" aria-hidden />
+									)}
+								</Button>
+								<Button
+									type="button"
+									size="sm"
+									variant="ghost"
+									className="size-7 shrink-0 p-0"
+									title="Cancel rename"
+									aria-label="Cancel rename"
+									disabled={rename.isPending}
+									onClick={onDone}
+								>
+									<X className="size-3.5" aria-hidden />
+								</Button>
+							</div>
+							<FormMessage className="text-ui-2xs" />
+						</FormItem>
+					)}
+				/>
+				<FormRootError form={form} />
+			</form>
+		</Form>
+	);
+}
+
 interface ConnectorDetailSheetProps {
 	integration: ConnectorWithConnection | null;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	/** Whether the viewer may add, re-verify, rename or remove connections. */
 	canManage: boolean;
 	/** False when this instance lacks the platform creds/OAuth app this connector's flow needs. */
 	platformConfigured?: boolean;
+	/**
+	 * False for a cloud that takes no new connection on this deployment (`acceptsNewConnections`).
+	 * Its accounts keep Re-verify, Rename and Disconnect; "Add another account" is not offered, and
+	 * one sentence says why. Defaults to true.
+	 */
+	offered?: boolean;
 	isConnecting?: boolean;
 	/** Connect, or (for a connected cloud) add another account. */
 	onConnect: () => void;
-	/** Disconnect a non-cloud connector (git token / api_key credential). */
+	/** Disconnect a non-cloud connector (git link / api_key credential). */
 	onDisconnectConnector: () => void;
 	/** Disconnect a specific cloud account by identity id. */
 	onDisconnectAccount: (identityId: string) => void;
-	/** Re-run verification for a specific cloud account against its stored credentials. */
+	/** Re-run verification for a specific cloud account against its stored configuration. */
 	onReverifyAccount: (identityId: string) => Promise<void>;
-	/** Rename a cloud account. */
-	/** Resolves when the rename landed; rejects (already reported) when it did not. */
-	onRenameAccount: (identityId: string, name: string) => Promise<void>;
 }
 
 /**
@@ -89,9 +212,13 @@ interface ConnectorDetailSheetProps {
  * description + status badge, an independently scrolling body, a pinned footer action).
  *
  * For clouds it lists every CONFIGURED account — including one that failed to verify, which is
- * the only place it can be re-verified or removed — each renamable / disconnectable, and offers
- * "Add another account"; for git / api_key connectors the footer offers connect or disconnect.
- * Mutating affordances are hidden unless `canManage`.
+ * the only place it can be re-verified or removed — each with Re-verify, Rename and Disconnect, and
+ * offers "Add another account"; for git / api_key connectors the footer offers connect or
+ * disconnect.
+ *
+ * A viewer who may not manage connections reads the same sheet. Every control that would change
+ * something is drawn disabled with the reason (`DisabledReason`), and one line at the top says the
+ * sheet is read-only for them, so the row of disabled controls is not the only signal.
  */
 export function ConnectorDetailSheet({
 	integration,
@@ -99,17 +226,15 @@ export function ConnectorDetailSheet({
 	onOpenChange,
 	canManage,
 	platformConfigured = true,
+	offered = true,
 	isConnecting,
 	onConnect,
 	onDisconnectConnector,
 	onDisconnectAccount,
 	onReverifyAccount,
-	onRenameAccount,
 }: ConnectorDetailSheetProps) {
 	const [reverifyingId, setReverifyingId] = useState<string | null>(null);
 	const [editingId, setEditingId] = useState<string | null>(null);
-	const [draft, setDraft] = useState("");
-	const [savingId, setSavingId] = useState<string | null>(null);
 
 	// One batched query hydrates every connected account's classification chips.
 	const accountIds = (integration?.accounts ?? []).map((a) => a.identityId);
@@ -128,25 +253,7 @@ export function ConnectorDetailSheet({
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
 	const accounts = integration.accounts ?? [];
-
-	const startRename = (id: string, current: string) => {
-		setEditingId(id);
-		setDraft(current);
-	};
-
-	const commitRename = async (id: string) => {
-		const name = draft.trim();
-		if (!name) return;
-		setSavingId(id);
-		try {
-			await onRenameAccount(id, name);
-			setEditingId(null);
-		} catch {
-			// The rename was refused or failed and already said so; keep the name being edited.
-		} finally {
-			setSavingId(null);
-		}
-	};
+	const denied = canManage ? null : MANAGE_DENIED_REASON;
 
 	const logo = isGit ? (
 		<GitProviderIcon provider={integration.slug} size={20} mono={false} />
@@ -161,42 +268,50 @@ export function ConnectorDetailSheet({
 	);
 
 	// The pinned action. A cloud with accounts adds another (per-account disconnect lives on the
-	// row); everything else connects or disconnects wholesale.
+	// row) — unless the cloud takes no new connection, when there is no pinned action at all;
+	// everything else connects or disconnects wholesale.
 	let footer: React.ReactNode = null;
-	if (canManage && !isComingSoon) {
+	if (!isComingSoon) {
 		if (isCloud && accounts.length > 0) {
-			footer = (
-				<Button
-					variant="outline"
-					className="w-full border-border/50 text-xs"
-					disabled={isConnecting}
-					onClick={onConnect}
-				>
-					{isConnecting ? (
-						<Loader2 className="mr-1.5 size-3.5 animate-spin" />
-					) : (
-						<Plus className="mr-1.5 size-3.5" />
-					)}
-					Add another account
-				</Button>
-			);
+			footer = offered ? (
+				<DisabledReason reason={denied} className="flex w-full">
+					<Button
+						variant="outline"
+						className="w-full border-border/50 text-xs"
+						disabled={isConnecting}
+						onClick={onConnect}
+					>
+						{isConnecting ? (
+							<Loader2 className="mr-1.5 size-3.5 animate-spin" aria-hidden />
+						) : (
+							<Plus className="mr-1.5 size-3.5" aria-hidden />
+						)}
+						Add another account
+					</Button>
+				</DisabledReason>
+			) : null;
 		} else if (!isConnected) {
-			footer = (
-				<Button className="w-full" disabled={isConnecting} onClick={onConnect}>
-					{isConnecting && <Loader2 className="mr-2 size-4 animate-spin" />}
-					Connect {integration.name}
-				</Button>
-			);
+			footer =
+				offered && state.health !== "unavailable" ? (
+					<DisabledReason reason={denied} className="flex w-full">
+						<Button className="w-full" disabled={isConnecting} onClick={onConnect}>
+							{isConnecting && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />}
+							Connect {integration.name}
+						</Button>
+					</DisabledReason>
+				) : null;
 		} else if (!isCloud) {
 			footer = (
-				<Button
-					variant="outline"
-					className="w-full border-border/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
-					onClick={onDisconnectConnector}
-				>
-					<Unlink className="mr-2 size-4" />
-					Disconnect {integration.name}
-				</Button>
+				<DisabledReason reason={denied} className="flex w-full">
+					<Button
+						variant="outline"
+						className="w-full border-border/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
+						onClick={onDisconnectConnector}
+					>
+						<Unlink className="mr-2 size-4" aria-hidden />
+						Disconnect {integration.name}
+					</Button>
+				</DisabledReason>
 			);
 		}
 	}
@@ -225,6 +340,28 @@ export function ConnectorDetailSheet({
 			footer={footer}
 		>
 			<div className="space-y-6">
+				{/* Why this cloud's card looks different from its neighbours: it takes no new
+				    connection. Said once, in words, above the accounts it is about. */}
+				{!offered && (
+					<p
+						role="note"
+						data-slot="connector-not-offered"
+						className="rounded-md border px-3 py-2 text-ui-sm leading-relaxed text-text-secondary"
+					>
+						{notOfferedSentence(integration.name)}
+					</p>
+				)}
+
+				{!canManage && (
+					<p
+						role="note"
+						data-slot="connector-read-only"
+						className="rounded-md border px-3 py-2 text-ui-sm leading-relaxed text-text-secondary"
+					>
+						You can see this connection but not change it. {MANAGE_DENIED_REASON}
+					</p>
+				)}
+
 				{isConnected && integration.scope === "org" && (
 					<Badge
 						variant="outline"
@@ -243,7 +380,7 @@ export function ConnectorDetailSheet({
 				    be re-verified or removed, and while it was hidden a broken connection was stuck. */}
 				{isCloud && accounts.length > 0 && (
 					<div className="space-y-3">
-						<SectionHeading level={3} title="Accounts" />
+						<SectionHeading level={3} title={sentenceStart(CLOUD_ACCOUNT.many)} />
 						<div className="space-y-2">
 							{accounts.map((acc) => (
 								<div
@@ -251,49 +388,7 @@ export function ConnectorDetailSheet({
 									className="flex items-center gap-2 rounded-lg border border-border/50 px-3 py-2"
 								>
 									{editingId === acc.identityId ? (
-										<>
-											{/* Named, all three: the row's only text input and its two icon-only
-											    buttons had no accessible name at all, so the whole rename
-											    interaction was reachable only by DOM position. Exactly one account
-											    can be editing (`editingId`), so these names are unique on the page
-											    without carrying the account in them. */}
-											<Input
-												value={draft}
-												onChange={(e) => setDraft(e.target.value)}
-												className="h-7 text-xs"
-												aria-label="Account name"
-												autoFocus
-												onKeyDown={(e) => {
-													if (e.key === "Enter") commitRename(acc.identityId);
-													if (e.key === "Escape") setEditingId(null);
-												}}
-											/>
-											<Button
-												size="sm"
-												variant="ghost"
-												className="size-7 p-0"
-												title="Save name"
-												aria-label="Save name"
-												disabled={savingId === acc.identityId}
-												onClick={() => commitRename(acc.identityId)}
-											>
-												{savingId === acc.identityId ? (
-													<Loader2 className="size-3.5 animate-spin" />
-												) : (
-													<Check className="size-3.5" />
-												)}
-											</Button>
-											<Button
-												size="sm"
-												variant="ghost"
-												className="size-7 p-0"
-												title="Cancel rename"
-												aria-label="Cancel rename"
-												onClick={() => setEditingId(null)}
-											>
-												<X className="size-3.5" />
-											</Button>
-										</>
+										<AccountRenameForm account={acc} onDone={() => setEditingId(null)} />
 									) : (
 										<>
 											<div className="min-w-0 flex-1">
@@ -342,62 +437,69 @@ export function ConnectorDetailSheet({
 													label={acc.name}
 												/>
 											</div>
-											{canManage && (
-												<>
-													{/* Each account's three icon buttons name THAT ACCOUNT. A cloud can hold
-													    several, and a `title` of "Rename" repeated down the list says which
-													    verb but never which row — the same defect the board's Connect buttons
-													    had, one level down. The verb stays the first word, so the tooltip
-													    still reads as an action. */}
-													{(acc.status === "failed" ||
-														acc.status === "degraded") && (
-														<Button
-															size="sm"
-															variant="ghost"
-															className="size-7 p-0 text-muted-foreground"
-															title={`Re-verify ${acc.name} with the stored credentials`}
-															aria-label={`Re-verify ${acc.name}`}
-															disabled={reverifyingId === acc.identityId}
-															onClick={async () => {
-																setReverifyingId(acc.identityId);
-																try {
-																	await onReverifyAccount(acc.identityId);
-																} finally {
-																	setReverifyingId(null);
-																}
-															}}
-														>
-															{reverifyingId === acc.identityId ? (
-																<Loader2 className="size-3.5 animate-spin" />
-															) : (
-																<RefreshCw className="size-3.5" />
-															)}
-														</Button>
-													)}
-													<Button
-														size="sm"
-														variant="ghost"
-														className="size-7 p-0 text-muted-foreground"
-														title={`Rename ${acc.name}`}
-														aria-label={`Rename ${acc.name}`}
-														onClick={() =>
-															startRename(acc.identityId, acc.name)
+											{/* Each account's three icon buttons name THAT ACCOUNT. A cloud can hold
+											    several, and a `title` of "Rename" repeated down the list says which
+											    verb but never which row. The verb stays the first word, so the
+											    tooltip still reads as an action.
+
+											    All three are drawn for every viewer. One who may not manage
+											    connections gets them disabled with the reason; they are not removed,
+											    because a row with no controls reads as a row nothing can be done to.
+
+											    Re-verify is offered whatever the account's status: a role that was
+											    changed in the cloud is checked from here, not only one that already
+											    failed. */}
+											<DisabledReason reason={denied}>
+												<Button
+													size="sm"
+													variant="ghost"
+													className="size-7 p-0 text-muted-foreground"
+													title={`Re-verify ${acc.name} with the stored configuration`}
+													aria-label={`Re-verify ${acc.name}`}
+													aria-busy={reverifyingId === acc.identityId}
+													disabled={
+														reverifyingId === acc.identityId || acc.status === "testing"
+													}
+													onClick={async () => {
+														setReverifyingId(acc.identityId);
+														try {
+															await onReverifyAccount(acc.identityId);
+														} finally {
+															setReverifyingId(null);
 														}
-													>
-														<Pencil className="size-3.5" />
-													</Button>
-													<Button
-														size="sm"
-														variant="ghost"
-														className="size-7 p-0 text-destructive hover:text-destructive"
-														title={`Disconnect ${acc.name}`}
-														aria-label={`Disconnect ${acc.name}`}
-														onClick={() => onDisconnectAccount(acc.identityId)}
-													>
-														<Unlink className="size-3.5" />
-													</Button>
-												</>
-											)}
+													}}
+												>
+													{reverifyingId === acc.identityId ? (
+														<Loader2 className="size-3.5 animate-spin" aria-hidden />
+													) : (
+														<RefreshCw className="size-3.5" aria-hidden />
+													)}
+												</Button>
+											</DisabledReason>
+											<DisabledReason reason={denied}>
+												<Button
+													size="sm"
+													variant="ghost"
+													className="size-7 p-0 text-muted-foreground"
+													title={`Rename ${acc.name}`}
+													aria-label={`Rename ${acc.name}`}
+													onClick={() => setEditingId(acc.identityId)}
+												>
+													<Pencil className="size-3.5" aria-hidden />
+												</Button>
+											</DisabledReason>
+											<DisabledReason reason={denied}>
+												<Button
+													size="sm"
+													variant="ghost"
+													className="size-7 p-0 text-destructive hover:text-destructive"
+													title={`Disconnect ${acc.name}`}
+													aria-label={`Disconnect ${acc.name}`}
+													onClick={() => onDisconnectAccount(acc.identityId)}
+												>
+													<Unlink className="size-3.5" aria-hidden />
+												</Button>
+											</DisabledReason>
 										</>
 									)}
 								</div>

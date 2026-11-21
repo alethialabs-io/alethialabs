@@ -18,11 +18,15 @@ test.describe.configure({ timeout: 120_000 });
 /**
  * Navigates to the connectors board and waits for the filter bar's search box — asked for BY ROLE:
  * `getByLabel` also matches the hidden streamed copy of the bar a full-page load can leave in the
- * DOM, and `fill()` on that copy applies no search (#5777, #5800).
+ * DOM, and `fill()` on that copy applies no search (#5777, #5800). It waits until the box is
+ * ENABLED: the bar's fieldset is disabled until React has hydrated, and a control clicked before
+ * that is a click nothing hears.
  */
 async function gotoConnectors(page: Page, orgSlug: string): Promise<void> {
 	await page.goto(`/${orgSlug}/~/connectors`, { waitUntil: "commit" });
-	await expect(page.getByRole("textbox", { name: "Search connectors", exact: true })).toBeVisible({ timeout: 60_000 });
+	const box = page.getByRole("textbox", { name: "Search connectors", exact: true });
+	await expect(box).toBeVisible({ timeout: 60_000 });
+	await expect(box).toBeEnabled({ timeout: 30_000 });
 }
 
 /**
@@ -204,10 +208,14 @@ test.describe("Connectors — member permissions (read-only)", () => {
 			team.page.getByRole("button", { name: "Connect Datadog", exact: true }),
 		).toBeVisible();
 
+		// The member's control is DRAWN and cannot be used (#6816): disabled, with the reason as its
+		// description. It used to be absent, which told the member nothing about why. The comparison
+		// with the owner above is what makes this a permission denial and not a broken button.
 		await gotoConnectors(member.page, member.orgSlug);
-		await expect(
-			member.page.getByRole("button", { name: "Connect Datadog", exact: true }),
-		).toHaveCount(0);
+		const denied = member.page.getByRole("button", { name: "Connect Datadog", exact: true });
+		await expect(denied).toBeDisabled();
+		await expect(denied).toHaveAccessibleDescription(/doesn't allow this/);
+		await expect(member.page.locator('[data-slot="connectors-read-only"]')).toBeVisible();
 	});
 });
 
