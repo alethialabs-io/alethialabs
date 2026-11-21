@@ -42,16 +42,18 @@ const COLUMNS: FooterColumn[] = [
 	{
 		title: "Product",
 		links: [
-			{ label: "Docs", href: "/docs" },
+			// Docs is its own surface, so it opens in a new tab as the header's link does.
+			{ label: "Docs", href: "/docs", external: true },
 			{ label: "Pricing", href: "/pricing" },
 			{ label: "Enterprise", href: "/enterprise" },
 			{ label: "Open source", href: "/open-source" },
 		],
 	},
 	{
-		title: "Resources",
+		title: "News & updates",
 		links: [
-			{ label: "Blog", href: "/blog" },
+			// `/blog` until the section is renamed to `/news`.
+			{ label: "News", href: "/blog" },
 			{ label: "Changelog", href: `${GITHUB_URL}/releases`, external: true },
 			{ label: "GitHub", href: GITHUB_URL, external: true },
 		],
@@ -163,7 +165,7 @@ export function SiteFooter() {
 
 				<div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<p style={{ ...eyebrow, ...mono, fontSize: 10, margin: 0 }}>
-						© 2026 {LEGAL_ENTITY.tradingName} · AGPL-3.0 open core
+						© 2026 {LEGAL_ENTITY.tradingName}
 					</p>
 					<PrivacySettingsButton
 						className="vx-clamp vx-clamp--tight"
