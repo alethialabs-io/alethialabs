@@ -6,7 +6,7 @@ import { useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useSupportCasesQuery } from "@/lib/query/use-support-cases-query";
-import { formatCaseNumber } from "@/components/support/cases/case-list-item";
+import { formatCaseNumber } from "@/components/support/cases/case-query";
 import type { CaseListItem } from "@/lib/queries/support";
 
 /**
