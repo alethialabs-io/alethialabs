@@ -4,7 +4,7 @@
 import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { PrivacySettingsButton } from "@repo/privacy/privacy-settings-button";
 import { ArrowUpRight } from "lucide-react";
-import Link from "next/link";
+import { SiteLink } from "./site-link";
 import type { CSSProperties } from "react";
 
 import { AlethiaLockup } from "../lockup";
@@ -100,9 +100,9 @@ function FooterAnchor({ label, href, external }: FooterLink) {
 		);
 	}
 	return (
-		<Link href={href} className={LINK_CLASS} style={LINK}>
+		<SiteLink href={href} className={LINK_CLASS} style={LINK}>
 			{label}
-		</Link>
+		</SiteLink>
 	);
 }
 
@@ -120,13 +120,13 @@ export function SiteFooter() {
 			<Wrap>
 				<div className="flex flex-col gap-10 md:flex-row md:justify-between">
 					<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-						<Link
+						<SiteLink
 							href="/"
 							aria-label={`${LEGAL_ENTITY.tradingName} home`}
 							style={{ textDecoration: "none", color: "inherit", alignSelf: "flex-start" }}
 						>
 							<AlethiaLockup size={24} />
-						</Link>
+						</SiteLink>
 						<p style={{ margin: 0, fontSize: 13, color: "var(--text-tertiary)" }}>
 							Infrastructure, cross-examined.
 						</p>

@@ -5,7 +5,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties, FocusEvent, KeyboardEvent } from "react";
-import Link from "next/link";
+import { SiteLink } from "./site-link";
 import { usePathname } from "next/navigation";
 import { ArrowUpRight, Menu } from "lucide-react";
 import { Button } from "@repo/ui/button";
@@ -67,7 +67,7 @@ function ExternalMark() {
 /** One text-only row inside a dropdown: the name, and an arrow if it leaves the site. */
 function MenuRow({ name, href, external }: MenuLink) {
   return (
-    <Link
+    <SiteLink
       href={href}
       target={external ? "_blank" : undefined}
       rel={external ? "noreferrer" : undefined}
@@ -86,7 +86,7 @@ function MenuRow({ name, href, external }: MenuLink) {
     >
       {name}
       {external && <ExternalMark />}
-    </Link>
+    </SiteLink>
   );
 }
 
@@ -229,7 +229,7 @@ function NavLink({ item }: { item: MenuLink }) {
   const current =
     !item.external && (pathname === item.href || pathname.startsWith(`${item.href}/`));
   return (
-    <Link
+    <SiteLink
       href={item.href}
       target={item.external ? "_blank" : undefined}
       rel={item.external ? "noreferrer" : undefined}
@@ -245,7 +245,7 @@ function NavLink({ item }: { item: MenuLink }) {
     >
       {item.name}
       {item.external && <ExternalMark />}
-    </Link>
+    </SiteLink>
   );
 }
 
@@ -306,7 +306,7 @@ const SHEET_LINK_CLASS =
 /** A link row in the mobile sheet; closes the sheet when followed. */
 function SheetLink({ item, onNavigate }: { item: MenuLink; onNavigate: () => void }) {
   return (
-    <Link
+    <SiteLink
       href={item.href}
       target={item.external ? "_blank" : undefined}
       rel={item.external ? "noreferrer" : undefined}
@@ -315,7 +315,7 @@ function SheetLink({ item, onNavigate }: { item: MenuLink; onNavigate: () => voi
     >
       {item.name}
       {item.external && <ExternalMark />}
-    </Link>
+    </SiteLink>
   );
 }
 
@@ -393,11 +393,11 @@ export function Header({ homeHref = "/" }: { homeHref?: "/" | "/home" }) {
                 <div className="mt-3 border-t border-border-faint pt-3">
                   <SheetLink item={CONTACT_LINK} onNavigate={closeSheet} />
                 </div>
-                <Link href={cta.href} onClick={closeSheet} className="mt-3">
+                <SiteLink href={cta.href} onClick={closeSheet} className="mt-3">
                   <Button size="sm" className="w-full">
                     {cta.label}
                   </Button>
-                </Link>
+                </SiteLink>
               </nav>
             </SheetContent>
           </Sheet>
@@ -413,7 +413,7 @@ export function Header({ homeHref = "/" }: { homeHref?: "/" | "/home" }) {
           </nav>
         </div>
 
-        <Link
+        <SiteLink
           href={homeHref}
           aria-label="Alethia Labs home"
           style={{ textDecoration: "none", color: "inherit", display: "flex" }}
@@ -425,7 +425,7 @@ export function Header({ homeHref = "/" }: { homeHref?: "/" | "/home" }) {
               gives the space back to both sides. On a phone it is size 20 (the
               lockup's floor with a tag), set by a media query in tokens.css. */}
           <AnimatedMark />
-        </Link>
+        </SiteLink>
 
         <div
           style={{
@@ -450,14 +450,14 @@ export function Header({ homeHref = "/" }: { homeHref?: "/" | "/home" }) {
             />
             <NavLink item={CONTACT_LINK} />
           </nav>
-          <Link href={cta.href} style={{ flexShrink: 0 }}>
+          <SiteLink href={cta.href} style={{ flexShrink: 0 }}>
             <Button size="sm">
               {cta.label}
               <span className="ah-nav-desktop">
                 <Icon k="arrow" size={14} />
               </span>
             </Button>
-          </Link>
+          </SiteLink>
         </div>
       </Wrap>
     </header>
