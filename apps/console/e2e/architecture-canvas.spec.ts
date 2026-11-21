@@ -235,17 +235,56 @@ test.describe("Architecture canvas", () => {
 		await target.focus();
 	}
 
-	/** Drag a connection from a service card's bottom handle and release it over another card. */
+	/**
+	 * Lay the cards out so none covers another, then fit them in view.
+	 *
+	 * A card added from the picker can land partly on top of the one added before it. The first
+	 * card's bottom handle is then under the second, so a press there grabs and moves the second
+	 * card instead of starting a connection, and a connection's Remove button can sit under a card.
+	 * The first run of these journeys did exactly that (#7132). Tidy layout is the board's own
+	 * answer to it.
+	 */
+	async function separateCards(page: Page) {
+		await moreMenu(page, "Tidy layout");
+		await moreMenu(page, "Fit view");
+	}
+
+	/**
+	 * The centre of an element, once a pointer there would actually hit it (it, or something inside
+	 * it) rather than whatever is drawn over it. The box is re-read on every try, so a layout that is
+	 * still settling is waited out rather than measured mid-move.
+	 */
+	async function hittableCentre(target: Locator): Promise<{ x: number; y: number }> {
+		let centre = { x: 0, y: 0 };
+		await expect
+			.poll(async () => {
+				const box = await target.boundingBox();
+				if (!box) return false;
+				centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+				return target.evaluate((el, p) => {
+					const top = document.elementFromPoint(p.x, p.y);
+					return top !== null && (top === el || el.contains(top));
+				}, centre);
+			})
+			.toBe(true);
+		return centre;
+	}
+
+	/**
+	 * Drag a connection from a service card's bottom handle and release it over another card.
+	 *
+	 * Both ends are hit-tested first. A press on a covered handle moves whatever covers it, and the
+	 * journey would then fail on a missing line, far from the cause.
+	 */
 	async function dragConnection(page: Page, from: Locator, to: Locator) {
 		const handle = from.locator(".react-flow__handle-bottom");
 		await expect(handle).toBeInViewport();
 		await expect(to).toBeInViewport();
-		const start = await handle.boundingBox();
-		const end = await to.boundingBox();
-		if (!start || !end) throw new Error("the handle or the target card has no box to drag between");
-		await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+		const press = await hittableCentre(handle);
+		const release = await hittableCentre(to);
+		await page.mouse.move(press.x, press.y);
 		await page.mouse.down();
-		await page.mouse.move(end.x + end.width / 2, end.y + end.height / 2, { steps: 15 });
+		await page.mouse.move(release.x, release.y, { steps: 15 });
 		await page.mouse.up();
 	}
 
@@ -827,7 +866,7 @@ test.describe("Architecture canvas", () => {
 		await addService(page, "Service");
 		await addService(page, "Queue");
 		await closeInspector(page);
-		await moreMenu(page, "Fit view");
+		await separateCards(page);
 
 		await dragConnection(page, card(page, /^Service/), card(page, /^Queue/));
 
@@ -844,7 +883,7 @@ test.describe("Architecture canvas", () => {
 		await addService(page, "Service");
 		await addService(page, "Bucket");
 		await closeInspector(page);
-		await moreMenu(page, "Fit view");
+		await separateCards(page);
 
 		await dragConnection(page, card(page, /^Service/), card(page, /^Bucket/));
 
@@ -861,6 +900,8 @@ test.describe("Architecture canvas", () => {
 		await addService(page, "Service");
 		await addService(page, "Queue");
 		await closeInspector(page);
+		// The line's Remove button is drawn at its midpoint, which a covering card would hide.
+		await separateCards(page);
 
 		// No pointer at all: focus the service from the keyboard and press C.
 		await keyboardFocus(page, card(page, /^Service/));
@@ -882,7 +923,10 @@ test.describe("Architecture canvas", () => {
 		await page.keyboard.press("ControlOrMeta+z");
 		await expect(line).toHaveCount(1);
 
-		// The selected line's own button does the same.
+		// The selected line's own button does the same. It is pressed with the pointer, so the board
+		// gets its full width back first: connecting opened the inspector, which narrows the board.
+		await closeInspector(page);
+		await moreMenu(page, "Fit view");
 		await keyboardFocus(page, line);
 		await board(page).getByRole("button", { name: "Remove connection" }).click();
 		await expect(line).toHaveCount(0);
