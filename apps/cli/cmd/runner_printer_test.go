@@ -737,6 +737,7 @@ func TestRunnerRegister_TheTokenIsWrittenInOnePlace(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			_, run := runnerEnv(t)
 			t.Setenv(api.DebugEnv, "api")
+			modeEnv(t, map[string]string{api.DebugEnv: "api"})
 			var code int
 			stdout, stderr := captureStreams(t, func() {
 				code = run("runner", "register", "box-1", "--cloud-account", "prod-account",
