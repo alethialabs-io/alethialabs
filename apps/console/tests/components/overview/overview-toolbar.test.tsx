@@ -107,7 +107,7 @@ describe("OverviewToolbar — Create menu, the member entry", () => {
 describe("OverviewToolbar — Create menu, the project and cloud account entries", () => {
 	it("a viewer who may create a project is taken to the create flow", async () => {
 		const user = await openCreateMenu(null);
-		await user.click(screen.getByRole("menuitem", { name: "Project", exact: true }));
+		await user.click(screen.getByRole("menuitem", { name: "Project" }));
 		expect(h.push).toHaveBeenCalledWith("/acme/~/new");
 	});
 
