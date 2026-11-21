@@ -144,6 +144,21 @@ describe("ChatError", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("shows the server's own sentence when free AI is paused platform-wide", async () => {
+		mockTier("ai_free");
+		const sentence = "Free AI is paused for today. It resumes at 00:00 UTC.";
+		render(
+			<ChatError
+				error={
+					new Error(
+						JSON.stringify({ error: sentence, reason: "paused", resetAt: null, upgradable: true }),
+					)
+				}
+			/>,
+		);
+		expect(await screen.findByText(sentence)).toBeInTheDocument();
+	});
+
 	it("shows an Upgrade AI plan CTA when the reason is not_enabled (subscribe)", () => {
 		render(
 			<ChatError
