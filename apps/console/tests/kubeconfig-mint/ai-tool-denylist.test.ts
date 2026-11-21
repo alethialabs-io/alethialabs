@@ -149,8 +149,8 @@ describe("AI tool-scope denylist — the import graph", () => {
 		expect(hits.some((chain) => chain.at(-1)?.startsWith("lib/kubeconfig-mint/"))).toBe(true);
 	});
 
-	it("the walker finds the console download from the cluster card (#5285)", () => {
-		const { hits } = walk(["components/clusters/cluster-card.tsx"]);
+	it("the walker finds the console download from the cluster record (#5285)", () => {
+		const { hits } = walk(["components/clusters/cluster-detail.tsx"]);
 		expect(
 			hits.some((chain) => chain.at(-1)?.startsWith("components/clusters/kubeconfig-download/")),
 		).toBe(true);

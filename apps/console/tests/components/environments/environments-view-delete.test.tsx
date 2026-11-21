@@ -27,14 +27,23 @@ vi.mock("@/lib/rpc/client", async () => {
 	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
 	return { orpc: fakeOrpc(h.handlers).orpc };
 });
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => {
+	const search = new URLSearchParams();
+	return {
+		useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+		usePathname: () => "/acme/payments/environments",
+		useSearchParams: () => search,
+	};
+});
 vi.mock("sonner", () => ({ toast: h.toast }));
 vi.mock("@/app/server/actions/projects", () => ({
 	addEnvironment: vi.fn(),
 	deleteEnvironment: h.deleteEnvironment,
 	duplicateEnvironment: vi.fn(),
 	setAutoHeal: vi.fn(),
+	setByoAdmissionEnforce: vi.fn(),
 }));
+vi.mock("@/app/server/actions/missing-cluster", () => ({ markEnvironmentDestroyedAction: vi.fn() }));
 vi.mock("@/app/server/actions/promotions", () => ({
 	approvePromotion: vi.fn(),
 	cancelPromotion: vi.fn(),
@@ -53,36 +62,25 @@ vi.mock("@/components/classification/classification-control", () => ({
 import { EnvironmentsView } from "@/components/environments/environments-view";
 import { orpc } from "@/lib/rpc/client";
 import type { EnvironmentsOverview } from "@/lib/rpc/procedures/environments";
+import { DEV, PROJECT_ID, envRow, overviewOf } from "./fixtures";
 
 const KEY = orpc.environments.overview.queryKey({ input: { project: "payments" } });
-const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 
 /** The server's sentence for a live or in-flight environment (lib/db/live-env-statuses.ts). */
 const LIVE_REFUSAL = "Destroy this environment before deleting it.";
 
 /** A default environment (no delete control) and one non-default environment, `production`. */
-const OVERVIEW: EnvironmentsOverview = {
-	projectId: PROJECT_ID,
-	envs: [
-		{ id: "env-dev", name: "development", stage: "development", is_default: true, status: "ACTIVE", updated_at: "2026-10-01T00:00:00.000Z", byo_admission_enforce: false, byo_admission_has_charts: false, byo_admission_pending: false },
-		{ id: "env-prod", name: "production", stage: "production", is_default: false, status: "ACTIVE", updated_at: "2026-10-02T00:00:00.000Z", byo_admission_enforce: false, byo_admission_has_charts: false, byo_admission_pending: false },
-	],
-	consistency: { envs: [], rows: [] },
-	reconcile: [],
-	promotions: [],
-	activePromotion: null,
-	protectionByEnv: {},
-};
+const OVERVIEW: EnvironmentsOverview = overviewOf();
 
-/** Renders the page over a cache that already holds the overview, as the route's prefetch leaves it. */
-function renderView() {
+/** Renders the page over a cache that already holds `overview`, as the route's prefetch leaves it. */
+function renderView(overview: EnvironmentsOverview = OVERVIEW) {
 	const client = new QueryClient({
 		defaultOptions: {
 			queries: { retry: false, staleTime: Infinity },
 			mutations: { retry: false },
 		},
 	});
-	client.setQueryData(KEY, OVERVIEW);
+	client.setQueryData(KEY, overview);
 	return render(
 		<QueryClientProvider client={client}>
 			<EnvironmentsView org="acme" project="payments" />
@@ -90,15 +88,16 @@ function renderView() {
 	);
 }
 
-/** Opens the delete confirmation for `production` and returns the dialog. */
-async function openDelete(user: ReturnType<typeof userEvent.setup>) {
-	await user.click(screen.getByTitle("Delete"));
+/** Opens the delete confirmation for `name` through its row's menu and returns the dialog. */
+async function openDelete(user: ReturnType<typeof userEvent.setup>, name = "production") {
+	await user.click(screen.getByRole("button", { name: `Environment actions for ${name}` }));
+	await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
 	return screen.findByRole("alertdialog");
 }
 
 /** Types the environment's name and presses the primary button. */
-async function confirmDelete(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement) {
-	await user.type(within(dialog).getByRole("textbox"), "production");
+async function confirmDelete(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement, name = "production") {
+	await user.type(within(dialog).getByRole("textbox"), name);
 	await user.click(within(dialog).getByRole("button", { name: "Delete environment" }));
 }
 
@@ -119,6 +118,33 @@ describe("EnvironmentsView — deleting an environment (#6800)", () => {
 		);
 		expect(dialog).toHaveTextContent("destroys nothing in the cloud");
 		expect(dialog).not.toHaveTextContent("Provisioned infrastructure is not destroyed");
+		expect(h.deleteEnvironment).not.toHaveBeenCalled();
+	});
+
+	it("is a typed confirmation: the primary button waits for the environment's name, and lists what goes", async () => {
+		const user = userEvent.setup();
+		renderView();
+		const dialog = await openDelete(user);
+
+		const primary = within(dialog).getByRole("button", { name: "Delete environment" });
+		expect(primary).toBeDisabled();
+		expect(dialog).toHaveTextContent("The environment record");
+		expect(dialog).toHaveTextContent("Its staged configuration");
+		await user.type(within(dialog).getByRole("textbox"), "productio");
+		expect(primary).toBeDisabled();
+		await user.type(within(dialog).getByRole("textbox"), "n");
+		expect(primary).toBeEnabled();
+		expect(h.deleteEnvironment).not.toHaveBeenCalled();
+	});
+
+	it("for a FAILED environment it says cloud resources may be left, and to destroy first", async () => {
+		const user = userEvent.setup();
+		renderView(overviewOf({ envs: [DEV, envRow({ id: "env-qa", name: "qa", status: "FAILED" })] }));
+		const dialog = await openDelete(user, "qa");
+
+		expect(dialog).toHaveTextContent("last run failed, so it may still have cloud resources");
+		expect(dialog).toHaveTextContent("destroys nothing in the cloud");
+		expect(dialog).toHaveTextContent("Destroy the environment first to remove it.");
 		expect(h.deleteEnvironment).not.toHaveBeenCalled();
 	});
 

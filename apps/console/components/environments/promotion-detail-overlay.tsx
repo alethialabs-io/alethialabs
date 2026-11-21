@@ -5,7 +5,7 @@
 // The promotion detail overlay — a right sheet with the full pipeline, per-gate results (with their
 // detail), the approval slots, and the promotable diff. Read-only over a hydrated PromotionDetail.
 
-import { Sheet, SheetContent } from "@repo/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@repo/ui/sheet";
 import { cn } from "@repo/ui/utils";
 import { MinusCircle, Pencil, PlusCircle, X, type LucideIcon } from "lucide-react";
 import type { PromotionDetail } from "@/lib/rpc/procedures/environments";
@@ -43,14 +43,18 @@ export function PromotionDetailOverlay({
 						<div className="sticky top-0 z-10 border-b bg-surface-raised px-5 pb-4 pt-[18px]">
 							<div className="flex items-start justify-between gap-3">
 								<div>
-									<div className="mb-1.5 font-mono text-ui-3xs uppercase tracking-[0.16em] text-text-tertiary">
-										Promotion
-									</div>
 									<div className="flex items-center gap-2">
-										<span className="font-mono text-ui-lg text-text-primary">
-											{detail.sourceName} → {detail.targetName}
-										</span>
-										<StatusDot {...promoStatus(detail.status)} className="text-ui-xs" />
+										{/* The sheet's accessible name: "Promotion <source> to <target>". */}
+										<SheetTitle className="flex flex-col gap-1.5 font-normal">
+											<span className="font-mono text-ui-3xs uppercase tracking-[0.16em] text-text-tertiary">
+												Promotion
+											</span>
+											<span className="font-mono text-ui-lg text-text-primary">
+												{detail.sourceName} <span aria-hidden>→</span>
+												<span className="sr-only"> to </span> {detail.targetName}
+											</span>
+										</SheetTitle>
+										<StatusDot {...promoStatus(detail.status)} className="self-end text-ui-xs" />
 									</div>
 									{detail.initiator && (
 										<div className="mt-1 font-mono text-ui-xs text-text-tertiary">
