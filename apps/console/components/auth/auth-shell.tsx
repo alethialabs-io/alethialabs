@@ -10,15 +10,73 @@
 "use client";
 
 import type React from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { AlethiaLockup } from "@repo/brand/lockup";
 import { Chrome } from "@repo/brand/site-chrome";
 import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { PrivacySettingsButton } from "@repo/privacy/privacy-settings-button";
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
+import { useViewer } from "@/components/providers/viewer-provider";
+import { hardNavigate } from "@/components/shell/hard-navigate";
+import { signOutOfConsole } from "@/components/shell/sign-out";
+import { authClient } from "@/lib/auth/client";
+import { AUTH } from "@/lib/copy/vocabulary";
 import { legalUrl, statusUrl } from "@/lib/legal";
+import { useAuthPrefsStore } from "@/lib/stores/use-auth-prefs-store";
+import { clearAllWizardDrafts } from "@/lib/wizard/draft";
+
+/** Said when the session could not be ended: nothing in this browser was changed. */
+export const AUTH_SHELL_SIGN_OUT_FAILED = "Couldn't sign you out. You are still signed in. Try again.";
+
+/**
+ * "Signed in as … · Sign out" for the screens a person reaches AFTER signing in that sit outside
+ * the console shell: accepting terms, onboarding, an invitation, the CLI hand-off, the trial
+ * refusal. Without it those screens named nobody, and the only way out was a logo that led to `/`,
+ * which sent a signed-in person straight back to the same screen.
+ *
+ * Renders nothing while nobody is signed in (or it is not known yet), so the pre-auth screens and
+ * the first paint of an unseeded page carry no placeholder identity. Signing out runs the same
+ * sequence as the console's own menu (`components/shell/sign-out.ts`): end the session, forget
+ * what the browser remembers, leave with a full document load.
+ */
+function SignedInAs() {
+  const { viewer } = useViewer();
+  const [signingOut, setSigningOut] = useState(false);
+  if (!viewer) return null;
+
+  /** Ends the session; on failure stays put and says so. Guarded against a second press. */
+  const signOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    const outcome = await signOutOfConsole({
+      endSession: () => authClient.signOut(),
+      forgetAccount: () => useAuthPrefsStore.getState().forget(),
+      clearWizardDrafts: clearAllWizardDrafts,
+      leave: hardNavigate,
+    });
+    if (outcome === "failed") {
+      setSigningOut(false);
+      toast.error(AUTH_SHELL_SIGN_OUT_FAILED);
+    }
+  };
+
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <span className="min-w-0 truncate text-ui-md text-text-tertiary" data-ph-mask>
+        <span className="hidden sm:inline">Signed in as </span>
+        <span className="text-text-primary">{viewer.email}</span>
+      </span>
+      <Button variant="outline" size="sm" onClick={signOut} disabled={signingOut}>
+        {signingOut ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+        {AUTH.signOut}
+      </Button>
+    </div>
+  );
+}
 
 /** Width of the centered card; widens for the onboarding plan step. "fluid"
  *  hands width control to the child (the wizard animates it per step). */
@@ -93,7 +151,7 @@ export function AuthShell({
       <div className="ah-grid-bg" aria-hidden="true" />
 
       {/* top bar */}
-      <header className="relative z-30 flex items-center justify-between px-8 py-6">
+      <header className="relative z-30 flex items-center justify-between gap-4 px-8 py-6">
         <Link
           href="/"
           aria-label="Alethia Labs — home"
@@ -125,7 +183,11 @@ export function AuthShell({
               <ArrowRight className="size-3.5 opacity-70" />
             </Button>
           </div>
-        ) : null}
+        ) : (
+          // No switch means a screen past sign-in (the two front doors are the only callers that
+          // pass one), so it says who is signed in and offers the way out.
+          <SignedInAs />
+        )}
       </header>
 
       {/* center stage */}

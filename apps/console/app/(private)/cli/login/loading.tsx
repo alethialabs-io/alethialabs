@@ -10,22 +10,12 @@
 "use client";
 
 import { Skeleton } from "@repo/ui/skeleton";
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 
-/**
- * The card's body while the approval UI resolves — everything below the heading.
- *
- * `page.tsx` renders this as its Suspense fallback. `useSearchParams` forces a client bailout,
- * and the picture it falls back to must be the same one the route skeleton draws, or the reader
- * watches the card change shape twice on the way to a single screen. Exported rather than
- * duplicated, so the two cannot drift apart.
- *
- * It is the BODY and not the whole card because the heading is not suspended: `page.tsx` renders
- * it above the boundary, so a fallback that redrew it would stack a skeleton heading under a real
- * one.
- */
-export function CliLoginBodySkeleton() {
+/** The body's shape with no root of its own, so the route skeleton and the fallback each own one. */
+function CliLoginBodyShape() {
 	return (
-		<div className="flex flex-col gap-6">
+		<>
 			{/* the prompt above the code */}
 			<div className="flex flex-col items-center gap-2">
 				<Skeleton className="h-4 w-60" />
@@ -51,7 +41,27 @@ export function CliLoginBodySkeleton() {
 			</div>
 
 			<Skeleton className="mx-auto h-3 w-64" />
-		</div>
+		</>
+	);
+}
+
+/**
+ * The card's body while the approval UI resolves — everything below the heading.
+ *
+ * `page.tsx` renders this as its Suspense fallback. `useSearchParams` forces a client bailout,
+ * and the picture it falls back to must be the same one the route skeleton draws, or the reader
+ * watches the card change shape twice on the way to a single screen. Exported rather than
+ * duplicated, so the two cannot drift apart.
+ *
+ * It is the BODY and not the whole card because the heading is not suspended: `page.tsx` renders
+ * it above the boundary, so a fallback that redrew it would stack a skeleton heading under a real
+ * one.
+ */
+export function CliLoginBodySkeleton() {
+	return (
+		<SkeletonRoot className="flex flex-col gap-6">
+			<CliLoginBodyShape />
+		</SkeletonRoot>
 	);
 }
 
@@ -66,13 +76,15 @@ export function CliLoginBodySkeleton() {
  */
 export default function CliLoginLoading() {
 	return (
-		<>
+		<SkeletonRoot>
 			{/* eyebrow + heading */}
 			<div className="mb-6 flex flex-col items-center gap-2.5">
 				<Skeleton className="h-2.5 w-32" />
 				<Skeleton className="h-6 w-48" />
 			</div>
-			<CliLoginBodySkeleton />
-		</>
+			<div className="flex flex-col gap-6">
+				<CliLoginBodyShape />
+			</div>
+		</SkeletonRoot>
 	);
 }
