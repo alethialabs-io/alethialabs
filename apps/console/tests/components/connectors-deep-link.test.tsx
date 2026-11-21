@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
 	board: {} as Record<string, unknown>,
 	params: "",
 	replace: vi.fn(),
+	info: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -36,10 +37,14 @@ vi.mock("@/app/server/actions/identities", () => ({
 	startCloudConnect: vi.fn(),
 }));
 vi.mock("@/lib/auth/client", () => ({ authClient: {} }));
+vi.mock("sonner", () => ({
+	toast: { info: h.info, error: vi.fn(), success: vi.fn(), warning: vi.fn() },
+}));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn(), captureException: vi.fn() }));
 vi.mock("@/lib/query/use-connectors-query", () => ({ useConnectorsQuery: () => h.board }));
 
 import { ConnectorsPage } from "@/components/connectors/connectors-page";
+import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 
 /** One api-key connector from the catalog, in a given status. */
 function datadog(status: ConnectorWithConnection["status"]): ConnectorWithConnection {
@@ -95,6 +100,7 @@ function renderBoard() {
 beforeEach(() => {
 	h.params = "connect=datadog";
 	h.replace.mockReset();
+	h.info.mockReset();
 });
 
 describe("ConnectorsPage — the ?connect= deep link", () => {
@@ -117,11 +123,32 @@ describe("ConnectorsPage — the ?connect= deep link", () => {
 		expect(h.replace).toHaveBeenCalledTimes(1);
 	});
 
-	it("waits for a viewer who may connect", () => {
+	it("opens nothing for a viewer who may not connect, clears the param and says why", () => {
 		settle(datadog("active"), false);
 		renderBoard();
 
+		// The sheet's title is the only "Connect Datadog" text: the card's own button reads "Connect".
 		expect(screen.queryByText("Connect Datadog")).toBeNull();
-		expect(h.replace).not.toHaveBeenCalled();
+		expect(h.replace).toHaveBeenCalledWith("/acme/~/connectors", { scroll: false });
+		expect(h.info).toHaveBeenCalledWith(MANAGE_DENIED_REASON);
+	});
+
+	it("says a link names nothing when its connector is not on the board", () => {
+		h.params = "connect=nope";
+		settle(datadog("active"), true);
+		renderBoard();
+
+		expect(h.replace).toHaveBeenCalledWith("/acme/~/connectors", { scroll: false });
+		expect(h.info).toHaveBeenCalledWith("This link names a connector that is not available here.");
+	});
+
+	it("removes only its own param, keeping the filters and the layout the link carried", () => {
+		h.params = "groups=observability&connect=datadog&view=table";
+		settle(datadog("active"), true);
+		renderBoard();
+
+		expect(h.replace).toHaveBeenCalledWith("/acme/~/connectors?groups=observability&view=table", {
+			scroll: false,
+		});
 	});
 });

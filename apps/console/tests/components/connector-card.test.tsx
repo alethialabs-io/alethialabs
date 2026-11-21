@@ -11,6 +11,8 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { ConnectorCard } from "@/components/connectors/connector-card";
+import { NOT_OFFERED_SHORT } from "@/components/connectors/connectors-query";
+import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { unnamedControls } from "../support/accessible-names";
 
 /** Builds a non-git (observability) connector fixture so the logo routes through ConnectorIcon. */
@@ -177,6 +179,104 @@ describe("ConnectorCard", () => {
 		expect(
 			screen.queryByRole("button", { name: /connect|re-verify/i }),
 		).not.toBeInTheDocument();
+	});
+});
+
+// ── What the card offers by permission and by availability (#6816) ─────────────────────────────
+describe("ConnectorCard — a viewer who may not manage connections", () => {
+	it("draws Connect disabled with the reason instead of removing it", async () => {
+		const user = userEvent.setup();
+		const onConnect = vi.fn();
+		render(
+			<ConnectorCard
+				integration={connector()}
+				canManage={false}
+				onConnect={onConnect}
+				onManage={() => {}}
+			/>,
+		);
+		const connect = screen.getByRole("button", { name: "Connect Datadog" });
+		expect(connect).toBeDisabled();
+		expect(connect).toHaveAccessibleDescription(MANAGE_DENIED_REASON);
+		await user.click(connect);
+		expect(onConnect).not.toHaveBeenCalled();
+	});
+
+	it("still opens Manage on a connected connector: the sheet is also where it is read", async () => {
+		const user = userEvent.setup();
+		const onManage = vi.fn();
+		render(
+			<ConnectorCard
+				integration={connector({ connected: true })}
+				canManage={false}
+				onConnect={() => {}}
+				onManage={onManage}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: "Manage Datadog" }));
+		expect(onManage).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps Manage beside a disabled Re-verify on a cloud whose only account failed", () => {
+		render(
+			<ConnectorCard
+				integration={connector({
+					category: "cloud",
+					slug: "aws",
+					name: "AWS",
+					cloud_health: "failed",
+					accounts: [{ identityId: "id-1", name: "Prod", status: "failed" }],
+				})}
+				canManage={false}
+				onConnect={() => {}}
+				onManage={() => {}}
+				onReverify={() => {}}
+			/>,
+		);
+		expect(screen.getByRole("button", { name: "Manage AWS" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Re-verify AWS" })).toBeDisabled();
+	});
+});
+
+describe("ConnectorCard — a cloud that takes no new connection", () => {
+	/** A cloud card with one account in `status`, on a deployment that does not offer the cloud. */
+	function notOffered(status: "connected" | "failed") {
+		return render(
+			<ConnectorCard
+				integration={connector({
+					category: "cloud",
+					slug: "farcloud",
+					name: "Far Cloud",
+					description: "Provision into Far Cloud.",
+					connected: status === "connected",
+					cloud_health: status === "failed" ? "failed" : undefined,
+					accounts: [{ identityId: "id-1", name: "Old", status }],
+				})}
+				canManage
+				// The server answers `false` for a cloud this deployment does not offer.
+				platformConfigured={false}
+				offered={false}
+				onConnect={() => {}}
+				onManage={() => {}}
+				onReverify={() => {}}
+			/>,
+		);
+	}
+
+	it("offers Manage and no Connect, and says why in place of the description", () => {
+		notOffered("connected");
+		expect(screen.getByRole("button", { name: "Manage Far Cloud" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Connect Far Cloud" })).not.toBeInTheDocument();
+		expect(screen.getByText(NOT_OFFERED_SHORT)).toBeInTheDocument();
+		expect(screen.queryByText("Provision into Far Cloud.")).not.toBeInTheDocument();
+	});
+
+	it("keeps Manage and Re-verify when its only account failed — not an Unavailable pill with no way in", () => {
+		notOffered("failed");
+		expect(screen.getByRole("button", { name: "Manage Far Cloud" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Re-verify Far Cloud" })).toBeEnabled();
+		expect(screen.queryByText("Unavailable")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Connect Far Cloud" })).not.toBeInTheDocument();
 	});
 });
 
