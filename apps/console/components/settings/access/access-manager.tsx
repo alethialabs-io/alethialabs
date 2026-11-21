@@ -10,9 +10,12 @@
 // grant. The page header lives in the settings shell; without the Enterprise `customRoles`
 // entitlement the surface stays visible and shows the upsell.
 
+import { zodResolver } from "@hookform/resolvers/zod";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Info, Layers, MoreHorizontal, Plus, Shield, ShieldAlert } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import {
   type AccessGrantRow,
   assignGrant,
@@ -20,6 +23,8 @@ import {
   revokeGrant,
 } from "@/app/server/actions/grants";
 import { RegionError } from "@/components/errors/region-error";
+import { manageReason } from "@/components/errors/manage-gate";
+import { FormRootError } from "@/components/forms/form-root-error";
 import { isForbiddenRead } from "@/components/settings/members/people-reads";
 import { PeopleListSkeleton } from "@/components/settings/members/people-skeleton";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
@@ -53,6 +58,7 @@ import {
   AlertDialogTitle,
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -67,6 +73,7 @@ import { formatRelative } from "@repo/format";
 import { MultiCombobox } from "@repo/ui/multi-combobox";
 import { PageToolbar } from "@repo/ui/page-toolbar";
 import { StatusBadge } from "@repo/ui/status-badge";
+import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 import { userInitials } from "@/lib/user-display";
 import {
@@ -106,12 +113,22 @@ export function AccessManager({
   projectId,
   customRoles = false,
   forbidden: forbiddenAtRender = false,
+  canManage,
 }: {
   projectId?: string;
   customRoles?: boolean;
   /** The route's prefetch was refused (`member:view`): the no-access render from the first paint. */
   forbidden?: boolean;
+  /**
+   * Whether this viewer may add and revoke grants, decided by the ROUTE with the question the writes
+   * ask (`member:manage_members`, R6 E-08). `false` disables Add grant and Revoke WITH the reason.
+   * Left out, the route has not decided it, and the controls stay live for the write itself to
+   * rule on — the project route (CON-L11's scope) does not pass it yet.
+   */
+  canManage?: boolean;
 } = {}) {
+  /** Why the viewer cannot add or revoke a grant, or null when they can (or the route did not say). */
+  const writeReason = canManage === undefined ? null : manageReason({ canManage });
   const storeEntitled = useEntitlement("customRoles");
   const entitled = customRoles || storeEntitled === true;
 
@@ -300,7 +317,7 @@ export function AccessManager({
                     variant="ghost"
                     size="icon"
                     className="size-7"
-                    aria-label="Manage grant"
+                    aria-label={`Manage grant for ${row.original.principalLabel}`}
                     aria-busy={revokingId === row.original.id || undefined}
                     disabled={revokingId === row.original.id}
                   >
@@ -308,9 +325,10 @@ export function AccessManager({
                   </Button>
                 }
               />
-              <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuItem
                   className="text-destructive focus:text-destructive"
+                  disabledReason={writeReason}
                   onClick={() => setDeleting(row.original)}
                 >
                   Revoke access
@@ -321,7 +339,7 @@ export function AccessManager({
         ),
       },
     ],
-    [resourceLabel, revokingId, asOf],
+    [resourceLabel, revokingId, asOf, writeReason],
   );
 
   return (
@@ -370,10 +388,16 @@ export function AccessManager({
             description="Who is granted what, and where it applies."
             count={grantsQuery.data?.resultCount ?? 0}
             actions={
-              <Button size="sm" onClick={() => setCreating((v) => !v)}>
-                <Plus size={13} />
-                Add grant
-              </Button>
+              <DisabledReason reason={writeReason}>
+                <Button
+                  size="sm"
+                  aria-expanded={creating}
+                  onClick={() => setCreating((v) => !v)}
+                >
+                  <Plus size={13} />
+                  Add grant
+                </Button>
+              </DisabledReason>
             }
           />
 
@@ -432,16 +456,29 @@ export function AccessManager({
             <FilterBarReset count={activeFilters} onReset={reset} />
           </FilterBar>
 
-          {/* inline grant builder */}
-          {creating && options && (
-            <GrantBuilder
-              options={options}
-              resourceLabel={resourceLabel}
-              projectId={projectId}
-              onCancel={() => setCreating(false)}
-              onGranted={() => setCreating(false)}
-            />
-          )}
+          {/* inline grant builder. It renders whenever it is open: before the options have loaded it
+              is their skeleton, and a failed options read is an error with a retry inside the
+              builder — never an "Add grant" that silently does nothing (R6 E-16). */}
+          {creating &&
+            (options ? (
+              <GrantBuilder
+                options={options}
+                resourceLabel={resourceLabel}
+                projectId={projectId}
+                onCancel={() => setCreating(false)}
+                onGranted={() => setCreating(false)}
+              />
+            ) : optionsQuery.isError ? (
+              <div className="mb-4">
+                <RegionError
+                  title="Couldn't load what can be granted"
+                  description="The members, roles and resources a grant can name didn't load, so a grant can't be built yet. No access was changed."
+                  onRetry={() => void optionsQuery.refetch()}
+                />
+              </div>
+            ) : (
+              <GrantBuilderSkeleton />
+            ))}
 
           {filtered.length === 0 ? (
             <EmptyState
@@ -454,11 +491,16 @@ export function AccessManager({
                   : "No grant matches these filters."
               }
               action={
-                total === 0 ? undefined : (
+                total > 0 ? (
                   <Button variant="outline" size="sm" onClick={reset}>
                     Clear filters
                   </Button>
-                )
+                ) : writeReason === null && !creating ? (
+                  <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
+                    <Plus size={13} />
+                    Add grant
+                  </Button>
+                ) : undefined
               }
             />
           ) : (
@@ -506,8 +548,59 @@ export function AccessManager({
   );
 }
 
-/** The inline grant builder — principal · effect · role/permission · scope + live preview. When
- * `projectId` is set the scope is fixed to that project (the picker is hidden). */
+/** The grant builder's form: what is granted, to whom, where. */
+const grantFormSchema = z
+  .object({
+    principalId: z.string(),
+    effect: z.enum(["allow", "deny"]),
+    mode: z.enum(["role", "permission"]),
+    roleId: z.string(),
+    permissionKey: z.string(),
+    scopeType: z.string(),
+    resourceId: z.string(),
+  })
+  // Every "pick one" rule is a refinement, not a field constraint: a refinement runs only once the
+  // object's own shape parses, so a field-level `min(1)` failing first would hide the others and
+  // the form would reveal its missing choices one press at a time.
+  .superRefine((v, ctx) => {
+    if (v.principalId === "") {
+      ctx.addIssue({ code: "custom", path: ["principalId"], message: "Pick a member or team." });
+    }
+    if (v.mode === "role" && v.roleId === "") {
+      ctx.addIssue({ code: "custom", path: ["roleId"], message: "Pick a role." });
+    }
+    if (v.mode === "permission" && v.permissionKey === "") {
+      ctx.addIssue({ code: "custom", path: ["permissionKey"], message: "Pick a permission." });
+    }
+    if (v.scopeType !== "org" && v.resourceId === "") {
+      ctx.addIssue({ code: "custom", path: ["resourceId"], message: "Pick what this grant applies to." });
+    }
+  });
+type GrantForm = z.infer<typeof grantFormSchema>;
+
+/** The builder fields a server field error may name. */
+const GRANT_FIELDS = ["principalId", "roleId", "permissionKey", "resourceId"] as const;
+
+/** A field's inline error, referenced by its control's `aria-describedby`. */
+function GrantFieldError({ id, message }: { id: string; message: string | undefined }) {
+  if (!message) return null;
+  return (
+    <p id={id} role="alert" className="mt-1.5 text-ui-xs text-destructive">
+      {message}
+    </p>
+  );
+}
+
+/**
+ * The inline grant builder — principal · effect · role/permission · scope + live preview. When
+ * `projectId` is set the scope is fixed to that project (the picker is hidden).
+ *
+ * A react-hook-form form over a zod schema (R6 E-16): every field has a visible label its control is
+ * named by, a missing choice is said under that field when Add grant is pressed (rather than a button
+ * that stays disabled without saying why), and the write goes through the mutation contract —
+ * pending (no second grant while one is in flight), field refusals under their field, any other
+ * refusal (a grant above your own access, a principal who is not an active member) in the form.
+ */
 function GrantBuilder({
   options,
   resourceLabel,
@@ -521,16 +614,36 @@ function GrantBuilder({
   onCancel: () => void;
   onGranted: () => void;
 }) {
-  const [principalId, setPrincipalId] = useState("");
-  const [effect, setEffect] = useState<"allow" | "deny">("allow");
-  const [mode, setMode] = useState<"role" | "permission">("role");
-  const [roleId, setRoleId] = useState("");
-  const [permissionKey, setPermissionKey] = useState("");
-  const [scopeType, setScopeType] = useState(projectId ? "project" : "org");
-  const [resourceId, setResourceId] = useState(projectId ?? "");
+  const ids = {
+    principal: useId(),
+    principalError: useId(),
+    grant: useId(),
+    whatError: useId(),
+    scope: useId(),
+    resourceError: useId(),
+    effect: useId(),
+  };
+  const form = useForm<GrantForm>({
+    resolver: zodResolver(grantFormSchema),
+    defaultValues: {
+      principalId: "",
+      effect: "allow",
+      mode: "role",
+      roleId: "",
+      permissionKey: "",
+      scopeType: projectId ? "project" : "org",
+      resourceId: projectId ?? "",
+    },
+  });
+  const { errors } = form.formState;
+  const values = useWatch({ control: form.control });
+
   const grant = useActionMutation(assignGrant, {
     invalidates: GRANT_READS,
     successMessage: "Access granted",
+    form: { instance: form, fields: GRANT_FIELDS },
+    onRefusal: (error) =>
+      form.setError("root.server", { type: "server", message: error.message }),
     onSuccess: () => onGranted(),
   });
 
@@ -542,155 +655,215 @@ function GrantBuilder({
     value: p.key,
     label: p.key,
   }));
-  const resourceOpts = (lookup(options.resources, scopeType) ?? []).map(
-    (r) => ({
-      value: r.id,
-      label: r.label,
-    }),
-  );
+  const scopeType = values.scopeType ?? "org";
+  const mode = values.mode ?? "role";
+  const effect = values.effect ?? "allow";
+  const resourceOpts = (lookup(options.resources, scopeType) ?? []).map((r) => ({
+    value: r.id,
+    label: r.label,
+  }));
 
-  const what = mode === "role" ? roleId : permissionKey;
-  const valid = Boolean(
-    principalId && what && (scopeType === "org" || resourceId),
-  );
-
+  // The preview reads the CURRENT choices and appears once they name a complete grant.
   const preview = useMemo(() => {
-    if (!valid) return null;
-    const pName =
-      options.principals.find((p) => p.id === principalId)?.label ?? "—";
+    const parsed = grantFormSchema.safeParse(values);
+    if (!parsed.success) return null;
+    const v = parsed.data;
+    const pName = options.principals.find((p) => p.id === v.principalId)?.label ?? "—";
     const wName =
-      mode === "role"
-        ? (options.roles.find((r) => r.id === roleId)?.name ?? "—")
-        : permissionKey;
+      v.mode === "role"
+        ? (options.roles.find((r) => r.id === v.roleId)?.name ?? "—")
+        : v.permissionKey;
     const sName =
-      scopeType === "org"
-        ? "the organization"
-        : resourceLabel(scopeType, resourceId);
-    return { pName, wName, sName, reach: reachLabel(scopeType) };
-  }, [
-    valid,
-    options,
-    principalId,
-    mode,
-    roleId,
-    permissionKey,
-    scopeType,
-    resourceId,
-    resourceLabel,
-  ]);
+      v.scopeType === "org" ? "the organization" : resourceLabel(v.scopeType, v.resourceId);
+    return { pName, wName, sName, reach: reachLabel(v.scopeType) };
+  }, [values, options, resourceLabel]);
 
-  function submit() {
-    if (!valid || grant.isPending) return;
-    const principal = options.principals.find((p) => p.id === principalId);
-    grant.mutate({
+  const submit = form.handleSubmit((v) => {
+    const principal = options.principals.find((p) => p.id === v.principalId);
+    grant.submit({
       principalType: principal?.type ?? "user",
-      principalId,
-      effect,
-      roleId: mode === "role" ? roleId : null,
-      permissionKey: mode === "permission" ? permissionKey : null,
-      resourceType: scopeType === "org" ? "org" : scopeType,
-      resourceId: scopeType === "org" ? null : resourceId,
+      principalId: v.principalId,
+      effect: v.effect,
+      roleId: v.mode === "role" ? v.roleId : null,
+      permissionKey: v.mode === "permission" ? v.permissionKey : null,
+      resourceType: v.scopeType === "org" ? "org" : v.scopeType,
+      resourceId: v.scopeType === "org" ? null : v.resourceId,
     });
-  }
+  });
+
+  const whatError = mode === "role" ? errors.roleId?.message : errors.permissionKey?.message;
 
   return (
-    <div className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm">
+    <form
+      noValidate
+      aria-label="New grant"
+      onSubmit={(e) => void submit(e)}
+      className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm"
+    >
       <p className="text-ui-md font-medium text-text-primary">New grant</p>
       <p className="mb-3 text-ui-xs text-text-tertiary">
-        Bind a principal to a role or permission on a scope. Inheritance is
+        Bind a member or team to a role or permission on a scope. Inheritance is
         computed from the scope you pick.
       </p>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div>
-          <div className="mb-1.5 text-ui-xs text-text-tertiary">
-            Principal
+      <fieldset disabled={grant.isPending} className="m-0 min-w-0 border-0 p-0">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <div id={ids.principal} className="mb-1.5 text-ui-xs text-text-tertiary">
+              Member or team
+            </div>
+            <Controller
+              control={form.control}
+              name="principalId"
+              render={({ field }) => (
+                <Combobox
+                  options={principalOpts}
+                  value={field.value}
+                  onChange={field.onChange}
+                  placeholder="Select a member or team…"
+                  labelledBy={ids.principal}
+                  describedBy={errors.principalId ? ids.principalError : undefined}
+                  invalid={Boolean(errors.principalId)}
+                />
+              )}
+            />
+            <GrantFieldError id={ids.principalError} message={errors.principalId?.message} />
           </div>
-          <Combobox
-            options={principalOpts}
-            value={principalId}
-            onChange={setPrincipalId}
-            placeholder="Select a member or team…"
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span id={ids.grant} className="text-ui-xs text-text-tertiary">
+                Grant
+              </span>
+              <Controller
+                control={form.control}
+                name="mode"
+                render={({ field }) => (
+                  <Toggle
+                    label="Grant a role or a single permission"
+                    value={field.value}
+                    onChange={field.onChange}
+                    options={[
+                      { value: "role", label: "Role" },
+                      { value: "permission", label: "Permission" },
+                    ]}
+                  />
+                )}
+              />
+            </div>
+            {mode === "role" ? (
+              <Controller
+                control={form.control}
+                name="roleId"
+                render={({ field }) => (
+                  <SettingsSelect
+                    aria-label="Role"
+                    value={field.value}
+                    onChange={field.onChange}
+                    options={[
+                      { value: "", label: "Select a role…" },
+                      ...options.roles.map((r) => ({
+                        value: r.id,
+                        label: r.builtin ? `${roleDisplayName(r.name, true)} (built-in)` : r.name,
+                      })),
+                    ]}
+                  />
+                )}
+              />
+            ) : (
+              <Controller
+                control={form.control}
+                name="permissionKey"
+                render={({ field }) => (
+                  <Combobox
+                    options={permissionOpts}
+                    value={field.value}
+                    onChange={field.onChange}
+                    placeholder="Select a permission…"
+                    labelledBy={ids.grant}
+                    describedBy={errors.permissionKey ? ids.whatError : undefined}
+                    invalid={Boolean(errors.permissionKey)}
+                  />
+                )}
+              />
+            )}
+            <GrantFieldError id={ids.whatError} message={whatError} />
+          </div>
+          <div>
+            <div id={ids.scope} className="mb-1.5 text-ui-xs text-text-tertiary">
+              Scope
+            </div>
+            {projectId ? (
+              // Fixed to this project — the list is already project-scoped.
+              <div
+                aria-labelledby={ids.scope}
+                className="flex h-9 items-center rounded-md border border-border bg-surface-sunken px-3 text-ui-sm text-text-secondary"
+              >
+                {resourceLabel("project", projectId)}
+              </div>
+            ) : (
+              <>
+                <Controller
+                  control={form.control}
+                  name="scopeType"
+                  render={({ field }) => (
+                    <SettingsSelect
+                      aria-label="Scope"
+                      value={field.value}
+                      onChange={(v) => {
+                        field.onChange(v);
+                        form.setValue("resourceId", "");
+                        form.clearErrors("resourceId");
+                      }}
+                      options={SCOPE_OPTIONS}
+                    />
+                  )}
+                />
+                {scopeType !== "org" && (
+                  <div className="mt-2">
+                    <Controller
+                      control={form.control}
+                      name="resourceId"
+                      render={({ field }) => (
+                        <Combobox
+                          options={resourceOpts}
+                          value={field.value}
+                          onChange={field.onChange}
+                          placeholder="Select a resource…"
+                          labelledBy={ids.scope}
+                          describedBy={errors.resourceId ? ids.resourceError : undefined}
+                          invalid={Boolean(errors.resourceId)}
+                        />
+                      )}
+                    />
+                  </div>
+                )}
+                <GrantFieldError id={ids.resourceError} message={errors.resourceId?.message} />
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center gap-2">
+          <span id={ids.effect} className="text-ui-xs text-text-tertiary">
+            Effect
+          </span>
+          <Controller
+            control={form.control}
+            name="effect"
+            render={({ field }) => (
+              <Toggle
+                label="Effect"
+                value={field.value}
+                onChange={field.onChange}
+                options={[
+                  { value: "allow", label: "Allow" },
+                  { value: "deny", label: "Deny" },
+                ]}
+              />
+            )}
           />
         </div>
-        <div>
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-ui-xs text-text-tertiary">Grant</span>
-            <Toggle
-              value={mode}
-              onChange={setMode}
-              options={[
-                { value: "role", label: "Role" },
-                { value: "permission", label: "Permission" },
-              ]}
-            />
-          </div>
-          {mode === "role" ? (
-            <SettingsSelect
-              aria-label="Role"
-              value={roleId}
-              onChange={setRoleId}
-              options={[
-                { value: "", label: "Select a role…" },
-                ...options.roles.map((r) => ({
-                  value: r.id,
-                  label: r.builtin ? `${roleDisplayName(r.name, true)} (built-in)` : r.name,
-                })),
-              ]}
-            />
-          ) : (
-            <Combobox
-              options={permissionOpts}
-              value={permissionKey}
-              onChange={setPermissionKey}
-              placeholder="Select a permission…"
-            />
-          )}
-        </div>
-        <div>
-          <div className="mb-1.5 text-ui-xs text-text-tertiary">Scope</div>
-          {projectId ? (
-            // Fixed to this project — the list is already project-scoped.
-            <div className="flex h-9 items-center rounded-md border border-border bg-surface-sunken px-3 text-ui-sm text-text-secondary">
-              {resourceLabel("project", projectId)}
-            </div>
-          ) : (
-            <>
-              <SettingsSelect
-                aria-label="Scope"
-                value={scopeType}
-                onChange={(v) => {
-                  setScopeType(v);
-                  setResourceId("");
-                }}
-                options={SCOPE_OPTIONS}
-              />
-              {scopeType !== "org" && (
-                <div className="mt-2">
-                  <Combobox
-                    options={resourceOpts}
-                    value={resourceId}
-                    onChange={setResourceId}
-                    placeholder="Select a resource…"
-                  />
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="mt-3 flex items-center gap-2">
-        <span className="text-ui-xs text-text-tertiary">Effect</span>
-        <Toggle
-          value={effect}
-          onChange={setEffect}
-          options={[
-            { value: "allow", label: "Allow" },
-            { value: "deny", label: "Deny" },
-          ]}
-        />
-      </div>
+      </fieldset>
 
       {preview && (
         <div className="mt-3 flex items-start gap-2 rounded-md border border-border bg-surface-sunken px-3 py-2.5">
@@ -705,41 +878,71 @@ function GrantBuilder({
         </div>
       )}
 
+      <FormRootError form={form} className="mt-3" />
+
       <div className="mt-3 flex items-center justify-end gap-2">
-        <Button variant="ghost" size="sm" onClick={onCancel}>
+        <Button type="button" variant="ghost" size="sm" disabled={grant.isPending} onClick={onCancel}>
           Cancel
         </Button>
-        <Button
-          size="sm"
-          disabled={!valid || grant.isPending}
-          onClick={submit}
-        >
+        <Button type="submit" size="sm" disabled={grant.isPending} aria-busy={grant.isPending}>
           {grant.isPending ? "Adding…" : "Add grant"}
         </Button>
+      </div>
+    </form>
+  );
+}
+
+/** The grant builder before its options have loaded: its box, three fields and its buttons. */
+function GrantBuilderSkeleton() {
+  return (
+    <div aria-busy className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm">
+      <div aria-hidden>
+        <Skeleton className="mb-2 h-4 w-24" />
+        <Skeleton className="mb-3 h-3 w-2/3" />
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i}>
+              <Skeleton className="mb-1.5 h-3 w-16" />
+              <Skeleton className="h-9 w-full rounded-md" />
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex justify-end gap-2">
+          <Skeleton className="h-8 w-16 rounded-md" />
+          <Skeleton className="h-8 w-24 rounded-md" />
+        </div>
       </div>
     </div>
   );
 }
 
-/** A small two-option segmented toggle. */
+/** A small two-option segmented toggle; each option reports whether it is the chosen one. */
 function Toggle<T extends string>({
+  label,
   value,
   onChange,
   options,
 }: {
+  /** What the choice is, for assistive tech: the group's name. */
+  label: string;
   value: T;
   onChange: (value: T) => void;
   options: { value: T; label: string }[];
 }) {
   return (
-    <div className="inline-flex gap-0.5 rounded-sm border border-border-strong bg-surface-sunken p-[2px]">
+    <div
+      role="group"
+      aria-label={label}
+      className="inline-flex gap-0.5 rounded-sm border border-border-strong bg-surface-sunken p-[2px]"
+    >
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
+          aria-pressed={o.value === value}
           onClick={() => onChange(o.value)}
           className={cn(
-            "rounded-[3px] px-2 py-0.5 text-ui-xs font-medium transition-colors",
+            "rounded-[3px] px-2 py-0.5 text-ui-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring",
             o.value === value
               ? "bg-surface text-text-primary shadow-sm"
               : "text-text-tertiary hover:text-text-secondary",

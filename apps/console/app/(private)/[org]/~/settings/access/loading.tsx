@@ -1,25 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import {
-	PeopleListSkeleton,
-	PeopleUpsellSkeleton,
-} from "@/components/settings/members/people-skeleton";
-import { getEntitlements } from "@/lib/authz/entitlements";
-import { currentActor } from "@/lib/authz/guard";
+import { AccessRouteSkeleton } from "@/components/settings/members/people-route-skeletons";
 
 /**
- * Instant skeleton for the settings/access route. With the `customRoles` entitlement it is the
- * page's own shape — the inheritance note, the toolbar (count, one line, Add grant), the filter bar
- * (search, Scope, Roles, Effect) and the table (Principal, Role, Scope, Effective reach, Granted,
- * the row menu). Without it the body is the inheritance note and the upsell (F021). The
- * entitlement is the one the page resolves, from the request-cached actor.
+ * Instant skeleton for the settings/access route: the inheritance note and the list's own shape, or
+ * the note and the upsell without the plan (F021). Synchronous (CON-M4): the gate comes from the
+ * workspace store, not from awaiting the actor — see `people-route-skeletons`.
  */
-export default async function AccessLoading() {
-	const { customRoles } = getEntitlements(await currentActor());
-	return customRoles ? (
-		<PeopleListSkeleton lead facets={3} columns={6} />
-	) : (
-		<PeopleUpsellSkeleton lead toolbar={false} />
-	);
+export default function AccessLoading() {
+	return <AccessRouteSkeleton />;
 }

@@ -11,7 +11,7 @@
 //   flat 260px box against the panel's ~319px.
 // - The project route had no skeleton of its own and fell back to the project settings' generic one.
 
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { isValidElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -24,7 +24,10 @@ vi.mock("@/components/org/upgrade-sheet-provider", () => ({ useUpgradeSheet: () 
 import OrgAccessLoading from "@/app/(private)/[org]/~/settings/access/loading";
 import ProjectAccessLoading from "@/app/(private)/[org]/[project]/settings/access/loading";
 import { PeopleListSkeleton, PeopleUpsellSkeleton } from "@/components/settings/members/people-skeleton";
+import { AccessRouteSkeleton } from "@/components/settings/members/people-route-skeletons";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
+import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
+import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 
 /** The props a route skeleton rendered its people skeleton with. */
 function propsOf(node: ReactNode): Record<string, unknown> {
@@ -38,19 +41,41 @@ function classes(el: Element | null | undefined): string[] {
 }
 
 describe("the Access routes' skeletons (#6320, B2)", () => {
-	it.each([
-		["org", OrgAccessLoading, 3],
-		["project", ProjectAccessLoading, 2],
-	] as const)("%s: the list's shape with the entitlement, the note and the upsell without it", async (_scope, Loading, facets) => {
+	it("project: the list's shape with the entitlement, the note and the upsell without it", async () => {
 		h.customRoles = true;
-		const entitled = await Loading();
+		const entitled = await ProjectAccessLoading();
 		expect(isValidElement(entitled) && entitled.type === PeopleListSkeleton).toBe(true);
-		expect(propsOf(entitled)).toMatchObject({ lead: true, facets, columns: 6 });
+		expect(propsOf(entitled)).toMatchObject({ lead: true, facets: 2, columns: 6 });
 
 		h.customRoles = false;
-		const gated = await Loading();
+		const gated = await ProjectAccessLoading();
 		expect(isValidElement(gated) && gated.type === PeopleUpsellSkeleton).toBe(true);
 		expect(propsOf(gated)).toMatchObject({ lead: true, toolbar: false });
+	});
+
+	// The org route's loading state is SYNCHRONOUS (CON-M4): it renders `AccessRouteSkeleton`, which
+	// keys on the workspace store's plan and draws the entitled shape while that is not yet known.
+	it("org: a synchronous loading state that draws the store's answer", () => {
+		const node = OrgAccessLoading();
+		expect(isValidElement(node) && node.type === AccessRouteSkeleton).toBe(true);
+
+		const shape = (customRoles: boolean | null) => {
+			act(() =>
+				useWorkspaceStore.setState({
+					entitlements: customRoles === null ? null : { ...COMMUNITY_ENTITLEMENTS, customRoles },
+				}),
+			);
+			const { container, unmount } = render(<AccessRouteSkeleton />);
+			const table = container.querySelector("table, [data-slot='data-table-skeleton']") !== null;
+			const upsell = container.querySelector(".border-dashed") !== null;
+			unmount();
+			return { table, upsell };
+		};
+		expect(shape(false).upsell).toBe(true);
+		const entitled = shape(true);
+		expect(entitled.upsell).toBe(false);
+		expect(entitled.table).toBe(true);
+		expect(shape(null).upsell).toBe(false);
 	});
 
 	it("draws the lead as the note's box around one line, not a 74px block", () => {

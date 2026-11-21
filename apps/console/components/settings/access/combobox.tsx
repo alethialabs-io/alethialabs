@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Check, ChevronsUpDown } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button } from "@repo/ui/button";
 import {
   Command,
@@ -32,13 +32,26 @@ export function Combobox({
   onChange,
   placeholder = "Select…",
   empty = "No results.",
+  labelledBy,
+  describedBy,
+  invalid = false,
 }: {
   options: ComboOption[];
   value?: string;
   onChange: (value: string) => void;
   placeholder?: string;
   empty?: string;
+  /**
+   * The id of a visible label for this field. The control's name is then that label followed by
+   * what it shows ("Principal Alice Smith"), so the visible text stays inside the name (WCAG 2.5.3).
+   */
+  labelledBy?: string;
+  /** The id of the field's error message, when it has one. */
+  describedBy?: string;
+  /** The field failed validation. */
+  invalid?: boolean;
 }) {
+  const valueId = useId();
   const [open, setOpen] = useState(false);
   // Ranked by the shared ranker; the query starts empty each time the popover opens.
   const optionSearch = useCommandSearch(options, optionSearchText, { open });
@@ -65,10 +78,16 @@ export function Combobox({
           <Button
             type="button"
             variant="outline"
-            aria-label={selected ? `${purpose}: ${selected.label}` : undefined}
+            aria-label={
+              labelledBy ? undefined : selected ? `${purpose}: ${selected.label}` : undefined
+            }
+            aria-labelledby={labelledBy ? `${labelledBy} ${valueId}` : undefined}
+            aria-describedby={describedBy}
+            aria-invalid={invalid || undefined}
             className="w-full justify-between font-normal"
           >
             <span
+              id={valueId}
               className={cn("truncate", !selected && "text-muted-foreground")}
             >
               {selected?.label ?? placeholder}

@@ -13,10 +13,9 @@
 // project ids server-side. When
 // pinned to a `projectId` (project settings) the feed locks to that project and hides the facet.
 
-import { Boxes, Download, ListFilter, Users } from "lucide-react";
+import { Boxes, Download, ListFilter, ScrollText, Users } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
 import {
 	type ActivityPage,
 	type ActivityRow,
@@ -47,11 +46,13 @@ import {
 } from "@/lib/stores/use-workspace-store";
 import { Button } from "@repo/ui/button";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
+import { DisabledReason } from "@repo/ui/disabled-reason";
+import { EmptyState } from "@repo/ui/empty";
 import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { GroupedFilterSheet } from "@repo/ui/grouped-filter-sheet";
-import { SectionHeading } from "@repo/ui/section-heading";
+import { PageToolbar } from "@repo/ui/page-toolbar";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
 	type DateRange,
@@ -59,7 +60,6 @@ import {
 	presetRange,
 	RANGE_PRESETS,
 } from "@repo/ui/range";
-import { Skeleton } from "@repo/ui/skeleton";
 import {
 	type ActivityWindow,
 	activityFiltersFromUrl,
@@ -70,6 +70,7 @@ import {
 } from "./activity-filters";
 import { ActivityFeed } from "./activity-feed";
 import { ActivityNoAccess } from "./activity-no-access";
+import { ActivityRowsSkeleton } from "./activity-skeleton";
 import { type ActivityContext, EVENT_GROUPS } from "./humanize-event";
 
 const DAY = 86_400_000;
@@ -255,14 +256,14 @@ export function ActivityLog({
 	// which took two such reads for the list's answer (#5471).
 	const busy = !urlRead || activity.isPending || stale || filters.search !== debouncedSearch;
 
-	/** Fetch the next page (older rows); TanStack appends it to `pages`. */
-	const onLoadMore = useCallback(async () => {
+	/**
+	 * Fetch the next page (older rows); TanStack appends it to `pages`. It does not throw: a failure
+	 * lands on the query as `isFetchNextPageError`, which the feed renders under the rows it already
+	 * has (R6 E-26) — the old `catch` here never ran.
+	 */
+	const onLoadMore = useCallback(() => {
 		if (nextCursor == null || loadingMore) return;
-		try {
-			await activity.fetchNextPage();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Failed to load more activity");
-		}
+		void activity.fetchNextPage();
 	}, [activity, nextCursor, loadingMore]);
 
 	/** Apply a picked range, or prompt upgrade when it predates the plan's retention. While the
@@ -332,6 +333,19 @@ export function ActivityLog({
 		}));
 	}, [facets]);
 	const activeFilters = countActiveFilters(filters, DEFAULT_ACTIVITY_FILTERS);
+	/** The filters other than the time window: what makes an empty feed "nothing matches". */
+	const narrowingFilters = countActiveFilters(
+		{ ...filters, range: DEFAULT_ACTIVITY_FILTERS.range },
+		DEFAULT_ACTIVITY_FILTERS,
+	);
+	/**
+	 * Every event in this scope, whatever the filters and the window, or null while unknown. The
+	 * facet passes see the scope and nothing else (the time window included), so their decision
+	 * counts add up to the whole log — which is what tells a new organization from a quiet week.
+	 */
+	const scopeTotal = facets
+		? facets.decisions.reduce((sum, option) => sum + option.count, 0)
+		: null;
 
 	// The export through the mutation contract: pending disables the button (no second export while
 	// one runs), a plan refusal opens the upgrade sheet, a permission refusal is one toast with the
@@ -363,53 +377,55 @@ export function ActivityLog({
 
 	return (
 		<div aria-busy={busy}>
-			{projectId && (
-				<p className="mb-3 text-ui-md text-text-tertiary">
-					Activity in{" "}
-					<span className="font-medium text-text-secondary">
-						{projectName ?? "this project"}
-					</span>
-					.
-				</p>
-			)}
-			{/* The result count lives beside the heading, never as prose in the bar. This feed is
-			    cursor-paginated, so it counts the rows LOADED so far — "42" here means 42 on
-			    screen, and "Load more" moves it.
-
-			    `SectionHeading`'s `count` renders through the same `CountPill` this used to mount by
-			    hand, which is the whole reason the pair belongs to the primitive: the standard
-			    says where a result count goes, and a local heading + pill is a second answer to a
-			    question already settled. */}
-			<SectionHeading
-				className="mb-3"
-				title="Activity"
+			{/* The page opens with its toolbar, not a heading that repeats the breadcrumb (R6 E-28):
+			    the count of rows LOADED so far — this feed is cursor-paginated, so "42" means 42 on
+			    screen and "Load more" moves it — one line saying what the feed is, and Export.
+			    Export dumps the WHOLE org log, so it only belongs on the org-scoped feed; when the plan
+			    or the role does not allow it, it is disabled WITH the reason (R6 E-09), which a
+			    disabled button's `title` never showed anyone. */}
+			<PageToolbar
+				className="mb-4"
 				count={loading ? null : rows.length}
-			/>
-
-			<FilterBar
-				end={
-					// `end` is the primitive's slot for a page-level action; export dumps the
-					// WHOLE org log, so it only belongs on the org-scoped feed.
+				description={
+					projectId ? (
+						<>
+							Activity in{" "}
+							<span className="font-medium text-text-secondary">
+								{projectName ?? "this project"}
+							</span>
+							.
+						</>
+					) : (
+						"Every recorded action and access decision in this organization."
+					)
+				}
+				actions={
 					!projectId && exportEntitled !== null ? (
-						<Button
-							variant="outline"
-							size="sm"
-							disabled={!canExport || exporting}
-							title={
+						<DisabledReason
+							reason={
 								exportEntitled === false
-									? "Activity export requires the Enterprise plan"
+									? "Activity export requires the Enterprise plan."
 									: !exportPermitted
-										? "Your role does not include exporting the Activity log"
-										: undefined
+										? "Your role does not include exporting the Activity log."
+										: null
 							}
-							onClick={() => exportCsv.mutate({})}
 						>
-							<Download size={13} />
-							Export CSV
-						</Button>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={!canExport || exporting}
+								aria-busy={exporting || undefined}
+								onClick={() => exportCsv.submit({})}
+							>
+								<Download size={13} />
+								{exporting ? "Exporting…" : "Export CSV"}
+							</Button>
+						</DisabledReason>
 					) : undefined
 				}
-			>
+			/>
+
+			<FilterBar>
 				<FilterSearch
 					value={filters.search}
 					onChange={(v) => set("search", v)}
@@ -458,27 +474,59 @@ export function ActivityLog({
 				<FilterBarReset count={activeFilters} onReset={reset} />
 			</FilterBar>
 
-			{activity.isError ? (
-				// A fetch failure must not render as an empty activity feed.
+			{activity.data === undefined && activity.isError ? (
+				// A failed FIRST load is an error, never an empty feed. Once rows are on screen a later
+				// failure never replaces them (R6 E-26): a failed "Load more" is said under the rows
+				// it would have extended, and a failed background refresh keeps what was loaded.
 				<RegionError
 					title="Couldn't load activity"
 					description="Something went wrong fetching the activity log. Check your connection and try again."
-					onRetry={() => activity.refetch()}
+					onRetry={() => void activity.refetch()}
 				/>
 			) : loading && rows.length === 0 ? (
-				<div className="space-y-3">
-					<Skeleton className="h-10 w-full" />
-					<Skeleton className="h-10 w-full" />
-					<Skeleton className="h-10 w-full" />
-				</div>
+				<ActivityRowsSkeleton rows={6} />
 			) : (
 				<div className={stale ? "opacity-60 transition-opacity" : undefined}>
+					{activity.isRefetchError && !activity.isFetchNextPageError && (
+						<p role="status" className="mb-3 flex items-center gap-2 text-ui-sm text-text-secondary">
+							Couldn&apos;t refresh the activity log; showing what was loaded.
+							<Button variant="outline" size="sm" onClick={() => void activity.refetch()}>
+								Try again
+							</Button>
+						</p>
+					)}
 					<ActivityFeed
 						rows={rows}
 						ctx={ctx}
-						onLoadMore={() => void onLoadMore()}
+						onLoadMore={onLoadMore}
 						hasMore={nextCursor != null}
 						loadingMore={loadingMore}
+						empty={
+							<ActivityEmpty
+								narrowed={narrowingFilters > 0}
+								scopeTotal={scopeTotal}
+								pinnedToProject={projectId !== undefined}
+								// The wider window is offered only on the default window, and only to a plan
+								// whose retention reaches it — never as a button that opens an upsell.
+								canWiden={
+									filters.range === DEFAULT_ACTIVITY_FILTERS.range &&
+									retentionDays !== null &&
+									retentionDays >= 30
+								}
+								onClearFilters={reset}
+								onWiden={() => applyRange(presetRange("30d"), WIDER_RANGE_LABEL)}
+							/>
+						}
+						tail={
+							activity.isFetchNextPageError ? (
+								<div role="alert" className="flex items-center justify-center gap-2 pt-1 text-ui-sm text-text-secondary">
+									Couldn&apos;t load older activity. The rows above are unchanged.
+									<Button variant="outline" size="sm" disabled={loadingMore} onClick={onLoadMore}>
+										Try again
+									</Button>
+								</div>
+							) : undefined
+						}
 					/>
 				</div>
 			)}
@@ -489,5 +537,80 @@ export function ActivityLog({
 				orgSlug={orgSlug}
 			/>
 		</div>
+	);
+}
+
+/** The wider window the quiet-window empty state offers. */
+const WIDER_RANGE_LABEL = RANGE_PRESETS.find((p) => p.id === "30d")?.label ?? "Last 30 days";
+
+/**
+ * Why the feed is empty, said as one of three different answers (R6 E-27):
+ *
+ * - **filtered** — something beyond the time window narrows the feed; the sentence the alerts
+ *   activity panel and the QA flow catalog already pin, with Clear filters;
+ * - **new** — the scope's whole log is empty, whatever the window (the facet totals see no window);
+ * - **quiet** — the log has events, none in this window; offered the wider window when the window
+ *   is still the default and the plan's retention reaches it.
+ *
+ * While the totals are unknown, an unfiltered empty feed is the quiet answer without a figure.
+ */
+function ActivityEmpty({
+	narrowed,
+	scopeTotal,
+	pinnedToProject,
+	canWiden,
+	onClearFilters,
+	onWiden,
+}: {
+	narrowed: boolean;
+	scopeTotal: number | null;
+	pinnedToProject: boolean;
+	canWiden: boolean;
+	onClearFilters: () => void;
+	onWiden: () => void;
+}) {
+	if (narrowed) {
+		return (
+			<EmptyState
+				className="bg-surface-sunken"
+				icon={<ScrollText />}
+				title="No activity matches these filters."
+				description="Clear the filters to see every event in this time range."
+				action={
+					<Button variant="outline" size="sm" onClick={onClearFilters}>
+						Clear filters
+					</Button>
+				}
+			/>
+		);
+	}
+	if (scopeTotal === 0) {
+		return (
+			<EmptyState
+				className="bg-surface-sunken"
+				icon={<ScrollText />}
+				title={pinnedToProject ? "This Project has no activity yet" : "No activity yet"}
+				description={
+					pinnedToProject
+						? "Changes to this Project and the access decisions made on it appear here as they happen."
+						: "Every change made in this organization, and every access decision, appears here as it happens."
+				}
+			/>
+		);
+	}
+	return (
+		<EmptyState
+			className="bg-surface-sunken"
+			icon={<ScrollText />}
+			title="Nothing recorded in this time range"
+			description="Nothing was recorded in this window. Earlier events are one range away."
+			action={
+				canWiden ? (
+					<Button variant="outline" size="sm" onClick={onWiden}>
+						Show the {WIDER_RANGE_LABEL.toLowerCase()}
+					</Button>
+				) : undefined
+			}
+		/>
 	);
 }
