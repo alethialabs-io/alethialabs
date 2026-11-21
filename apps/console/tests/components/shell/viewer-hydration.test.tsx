@@ -21,9 +21,10 @@
 // Mutation check (done when this was written, once per surface): reading `authClient.useSession()`
 // directly again fails BOTH of that surface's tests — SidebarProfile with "Hydration failed because
 // the server rendered text didn't match the client" (the name differs), invite-accept with "…
-// rendered HTML didn't match…" (a card where the server sent a spinner).
+// rendered HTML didn't match…" (a card where the server sent a skeleton).
 
 import { act, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -55,7 +56,13 @@ vi.mock("@/lib/auth/client", () => ({
 		useSession: () => live,
 		signOut: vi.fn(),
 		listAccounts: vi.fn(async () => ({ data: [] })),
-		organization: { acceptInvitation: vi.fn(), rejectInvitation: vi.fn() },
+		organization: {
+			acceptInvitation: vi.fn(),
+			rejectInvitation: vi.fn(),
+			// The invitation read the page makes once a viewer is known; it never settles here, so
+			// the card stays in its skeleton and what is measured is the shell's account line.
+			getInvitation: vi.fn(() => new Promise(() => {})),
+		},
 	},
 	// The live session `useViewer()` follows when it has no seed. `live` is reassigned only between
 	// renderers, so within one it is the same object — as better-auth's atom snapshot is.
@@ -155,9 +162,14 @@ const SURFACES: Array<[string, Surface]> = [
 	[
 		"invite-accept, a public route with no seed",
 		{
-			tree: () => <AcceptInvitePage />,
-			// No seed: both sides render the pending state first, then the card once hydrated.
-			serverShows: "animate-spin",
+			tree: () => (
+				<QueryClientProvider client={new QueryClient()}>
+					<AcceptInvitePage />
+				</QueryClientProvider>
+			),
+			// No seed: both sides render the skeleton first (A-19), then — once hydrated — the
+			// shell's "Signed in as" line names the live viewer while the invitation is read.
+			serverShows: 'aria-busy="true"',
 			afterHydrationShows: "ada@acme.test",
 		},
 	],
