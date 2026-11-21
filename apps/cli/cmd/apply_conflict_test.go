@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 )
 
@@ -40,7 +39,7 @@ func TestExecuteApply_SendsTheRevisionThePlanRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
+	if _, err := applyExec(f, &bytes.Buffer{}, plan, "", false); err != nil {
 		t.Fatal(err)
 	}
 	wantCalls := []string{"upsert cluster prod", "update databases/orders prod", "update databases/orders dev"}
@@ -81,7 +80,7 @@ func TestExecuteApply_NoRevisionIsAnUnconditionalWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
+	if _, err := applyExec(f, &bytes.Buffer{}, plan, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(f.ifMatch, []string{"", ""}) {
@@ -108,7 +107,7 @@ func TestExecuteApply_AConcurrentEditNamesTheFieldsThatChanged(t *testing.T) {
 		}},
 	}}
 	var out bytes.Buffer
-	result, err := executeApply(f, &out, ui.FormatTable, plan, "", false)
+	result, err := applyExec(f, &out, plan, "", false)
 	if err == nil {
 		t.Fatal("a refused update must fail the apply")
 	}

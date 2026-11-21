@@ -539,10 +539,7 @@ func TestFirstRun_UpWaitsThroughAnApproval(t *testing.T) {
 	if !strings.Contains(stderr, "waiting for approval") {
 		t.Errorf("stderr does not say the deploy is waiting for approval:\n%s", stderr)
 	}
-	var result ApplyResult
-	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
-		t.Fatalf("stdout is not the one result document: %v\n%s", err, stdout)
-	}
+	result := applyResultOf(t, stdout)
 	if len(result.Jobs) == 0 || result.Jobs[0].Status != jobStatusSuccess {
 		t.Errorf("jobs: %+v", result.Jobs)
 	}

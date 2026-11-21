@@ -1,0 +1,179 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://alethialabs.io/docs/schemas/alethia-yaml/v1.json",
+  "title": "alethia.yaml",
+  "description": "A project as `alethia apply` reconciles it and `alethia plan` previews it. The file is desired state: apply creates what is missing and changes what differs, and never removes what the file leaves out.",
+  "type": "object",
+  "properties": {
+    "project": {
+      "description": "The project's name. It is unique in the organization, and it is how apply finds a project that already exists.",
+      "type": "string"
+    },
+    "cloud": {
+      "description": "The cloud account and region the project is built in.",
+      "type": "object",
+      "properties": {
+        "account": {
+          "description": "The cloud account, by the label `alethia connector list` shows. An id is also accepted.",
+          "type": "string"
+        },
+        "region": {
+          "description": "The cloud region, for example eu-west-1.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "region"
+      ],
+      "additionalProperties": false
+    },
+    "iac": {
+      "description": "Settings of the infrastructure-as-code engine.",
+      "type": "object",
+      "properties": {
+        "version": {
+          "description": "The OpenTofu version to use. Leave it out to take the control plane's default.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "environments": {
+      "description": "The project's environments, in order. The first one owns the cluster the others are placed on.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The environment's name, unique in the project.",
+            "type": "string"
+          },
+          "stage": {
+            "description": "What the environment is for.",
+            "type": "string",
+            "enum": [
+              "development",
+              "staging",
+              "production"
+            ]
+          },
+          "placement": {
+            "description": "How the environment is isolated: `dedicated` gets its own cluster, `vcluster` and `namespace` share one. Left out, the first environment is dedicated and every later one is a namespace.",
+            "type": "string",
+            "enum": [
+              "namespace",
+              "vcluster",
+              "dedicated"
+            ]
+          },
+          "namespace": {
+            "description": "The Kubernetes namespace of an environment that shares a cluster. Left out, it is derived from the name.",
+            "type": "string"
+          },
+          "lifecycle": {
+            "description": "`persistent` (the default) or `ephemeral`. It is set when the environment is created and cannot be changed afterwards.",
+            "type": "string"
+          },
+          "components": {
+            "description": "The environment's resources, by kind. A kind with one instance (cluster, network, dns, observability, repositories) is a mapping of its fields; a kind with several (databases, caches, ...) is a list of mappings, each with a `name`. `alethia project component kinds` lists the kinds and their fields. A component the file leaves out is unmanaged: it is never removed.",
+            "type": "object",
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "description": "A kind with one instance: its fields.",
+                  "type": "object"
+                },
+                {
+                  "description": "A kind with several instances: one entry each.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "description": "The component's name, unique in its kind and environment.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ]
+                  }
+                },
+                {
+                  "description": "The kind with every field at its default.",
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "addons": {
+            "description": "The catalog add-ons the environment runs. `alethia addon list` shows the ones an environment has. An add-on the file leaves out is unmanaged: it is never disabled.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "description": "The add-on's id in the catalog, for example external-dns.",
+                  "type": "string"
+                },
+                "version": {
+                  "description": "The chart version to pin. Left out, the stored pin is kept; an empty string or null removes the pin.",
+                  "type": [
+                    "string",
+                    "number",
+                    "null"
+                  ]
+                },
+                "mode": {
+                  "description": "How the add-on is delivered. Left out, the stored mode is kept.",
+                  "enum": [
+                    "managed",
+                    "gitops",
+                    null
+                  ]
+                },
+                "settings": {
+                  "description": "The add-on's own settings. Each key is merged over the stored ones; `key: null` resets that key to the add-on's default.",
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "values": {
+                  "description": "Helm values that replace the stored Advanced override whole. `null` removes the override. Not with `values_file`.",
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "values_file": {
+                  "description": "A Helm values file, relative to alethia.yaml, that replaces the stored Advanced override whole. An empty string removes the override. Not with `values`.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "name",
+          "stage"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "project",
+    "cloud",
+    "environments"
+  ],
+  "additionalProperties": false
+}

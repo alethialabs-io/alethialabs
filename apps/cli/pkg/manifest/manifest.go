@@ -5,13 +5,25 @@
 // `alethia.yaml`.
 //
 // The implementation moved to `packages/core` so the CLI and the runner read the file through the
-// same code. Everything here is an ALIAS, never a copy: a `manifest.Manifest` IS a
-// `designfile.Manifest`, so a value built by one package is accepted by the other and there is no
-// second schema to drift. New code should import `designfile` directly; this package exists so the
-// commands that already say `manifest.` keep compiling unchanged.
+// same code. The types and the reading functions here are ALIASES, never copies: a
+// `manifest.Manifest` IS a `designfile.Manifest`, so a value built by one package is accepted by
+// the other and there is no second schema to drift. New code should import `designfile` directly;
+// this package exists so the commands that already say `manifest.` keep compiling unchanged.
+//
+// Write is the one function that is the CLI's own: a file a command authors opens with the line
+// that names its JSON Schema.
 package manifest
 
-import "github.com/alethialabs-io/alethialabs/packages/core/designfile"
+import (
+	"fmt"
+	"os"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/designfile"
+)
+
+// SchemaComment is the first line of a file the CLI writes: the comment that tells an editor's YAML
+// language server which JSON Schema the file follows.
+const SchemaComment = designfile.SchemaComment
 
 // FileName is the manifest's name in a project's working directory.
 const FileName = designfile.FileName
@@ -53,8 +65,6 @@ var (
 	Exists = designfile.Exists
 	// Render writes the manifest as YAML.
 	Render = designfile.Render
-	// Write renders the manifest to a path, refusing to overwrite unless asked.
-	Write = designfile.Write
 	// ScalarKeys is every dotted key Lookup answers, sorted.
 	ScalarKeys = designfile.ScalarKeys
 	// SecretSettings returns the settings keys that are secret, sorted.
@@ -64,3 +74,22 @@ var (
 	// FromEnvironmentSpecs turns the wire shape of an environment matrix into the file's.
 	FromEnvironmentSpecs = designfile.FromEnvironmentSpecs
 )
+
+// Write renders the manifest to path under SchemaComment, refusing to overwrite an existing file
+// unless overwrite is set. It is what `alethia init` and `alethia up` author a file with, so a file
+// the CLI wrote is checked and completed by an editor from its first line, as an exported one is.
+//
+// The comment is not part of the document: every reader of the file ignores it, and
+// designfile.Render — the bytes a comparison or a pull request is made from — does not write it.
+func Write(path string, m *Manifest, overwrite bool) error {
+	if !overwrite {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("%s already exists — edit it, or pass --force to replace it", path)
+		}
+	}
+	data, err := Render(m)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append([]byte(SchemaComment+"\n"), data...), 0o644)
+}
