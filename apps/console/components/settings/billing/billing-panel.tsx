@@ -23,12 +23,13 @@
 // billing permission; anyone else gets one note saying so, instead of four sections that refuse.
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight } from "lucide-react";
+import { AlertTriangle, ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 import { type ReactNode, useState } from "react";
 import { formatDate, formatMoney, scaleMoney } from "@repo/format";
 import { cancelPlan, resumePlan } from "@/app/server/actions/billing";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
+import { manageReason } from "@/components/errors/manage-gate";
 import { RegionError } from "@/components/errors/region-error";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
@@ -38,8 +39,10 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { globalHref } from "@/lib/routing";
 import { orpc } from "@/lib/rpc/client";
 import type { BillingSummary } from "@/lib/rpc/procedures/billing";
+import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Skeleton } from "@repo/ui/skeleton";
 import { aiPlanMeta, planMeta } from "@repo/plan-catalog";
@@ -59,6 +62,9 @@ const STATE_LABEL: Record<BillingSummary["state"], string> = {
 	past_due: "Past due",
 	canceled: "Canceled",
 };
+
+/** The element id of the Payment methods section, which the past-due notice links to. */
+export const PAYMENT_METHODS_ANCHOR = "payment-methods";
 
 /** The Billing page: the summary decides which page this is, then each section reads its own. */
 export function BillingPanel() {
@@ -157,6 +163,10 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 		onSuccess: () => void fetchWorkspace(),
 	});
 	const pending = resume.isPending || cancel.isPending;
+	// CON-L3 (R6 F-03): changing the plan is the billing permission's, the same `manage_billing` the
+	// write asks for. A viewer without it sees the control disabled with the reason, never an
+	// enabled button that the server then refuses.
+	const planReason = manageReason({ canManage: summary.canManageBilling });
 
 	// A subscription exists to manage (show a period + Cancel/Resume) for any live-ish state.
 	const hasSub =
@@ -274,38 +284,53 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 					<div className="flex flex-wrap items-center justify-end gap-4 border-t border-border bg-surface-sunken px-6 py-[14px]">
 						<div className="flex gap-2.5">
 							{hasSub ? (
-								<Button
-									variant="ghost"
-									size="sm"
-									disabled={pending}
-									onClick={
-										// The BRANCH is `cancelAtPeriodEnd`, not `state === "canceling"`,
-										// because that is what the single `toggleCancel` handler this
-										// replaced tested. The two disagree only for a `past_due`
-										// subscription already set to cancel — where the label reads
-										// "Cancel plan" and the click resumes — and that contradiction
-										// is #4276's to record, not to change behind a rename.
-										summary.cancelAtPeriodEnd
-											? () => resume.mutate({})
-											: () => setCancelOpen(true)
-									}
-								>
-									{state === "canceling" ? "Resume plan" : "Cancel plan"}
-								</Button>
+								<DisabledReason reason={planReason}>
+									<Button
+										variant="ghost"
+										size="sm"
+										disabled={pending}
+										onClick={
+											// The BRANCH is `cancelAtPeriodEnd`, not `state === "canceling"`,
+											// because that is what the single `toggleCancel` handler this
+											// replaced tested. The two disagree only for a `past_due`
+											// subscription already set to cancel — where the label reads
+											// "Cancel plan" and the click resumes — and that contradiction
+											// is #4276's to record, not to change behind a rename.
+											summary.cancelAtPeriodEnd
+												? () => resume.mutate({})
+												: () => setCancelOpen(true)
+										}
+									>
+										{state === "canceling" ? "Resume plan" : "Cancel plan"}
+									</Button>
+								</DisabledReason>
 							) : (
-								<Button size="sm" onClick={openUpgrade}>
-									Upgrade to Pro
-								</Button>
+								<DisabledReason reason={planReason}>
+									<Button size="sm" onClick={openUpgrade}>
+										Upgrade to Pro
+									</Button>
+								</DisabledReason>
 							)}
 						</div>
 					</div>
 				</div>
 			</SettingsSection>
 
+			{state === "past_due" && (
+				<PastDueNotice
+					planName={meta.name}
+					canUpdate={summary.canManageBilling && summary.canManage}
+				/>
+			)}
+
 			{summary.canManageBilling ? (
 				<>
 					{/* saved cards — once a customer exists */}
-					{summary.canManage && <PaymentMethodsCard />}
+					{summary.canManage && (
+						<div id={PAYMENT_METHODS_ANCHOR} className="scroll-mt-4">
+							<PaymentMethodsCard />
+						</div>
+					)}
 
 					{/* plan history */}
 					<PlanHistoryTimeline />
@@ -346,6 +371,38 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 				variables={{}}
 			/>
 		</div>
+	);
+}
+
+/**
+ * What a `past_due` subscription means, and what to do about it (CON-L3, R6 F-06). The card used to
+ * show a "Past due" pill beside "Cancel plan" and nothing else, so the one action that fixes it —
+ * a working card — was never offered. A past-due org-plan subscription is not in the paid set
+ * (`lib/billing/org-plan-row.ts`), which is why the copy says the paid features are paused. A viewer
+ * who can update the card gets the link to it; anyone else is told who can.
+ */
+function PastDueNotice({ planName, canUpdate }: { planName: string; canUpdate: boolean }) {
+	return (
+		<Alert variant="destructive" className="mb-[18px]" data-testid="billing-past-due">
+			<AlertTriangle />
+			<AlertTitle>Payment failed</AlertTitle>
+			<AlertDescription>
+				<p>
+					The last payment for {planName} didn&apos;t go through, so this organization&apos;s
+					paid features are paused until a payment succeeds.
+				</p>
+				{canUpdate ? (
+					<a
+						href={`#${PAYMENT_METHODS_ANCHOR}`}
+						className="font-medium text-text-primary underline underline-offset-4"
+					>
+						Update the payment method
+					</a>
+				) : (
+					<p>Ask a member with the billing permission to update the payment method.</p>
+				)}
+			</AlertDescription>
+		</Alert>
 	);
 }
 

@@ -4,8 +4,8 @@
 
 // Invoice preview dialog — the detail view for a single mirrored invoice: header metadata
 // (number, status, paid date, billing period, description, total) over an embedded PDF
-// preview (inline `pdf` route in an iframe). The footer downloads the PDF or, when there's no
-// self-hosted PDF, links out to Stripe's hosted receipt. Presentational — the parent owns the
+// preview (inline `pdf` route in an iframe). The footer downloads the PDF and, whenever Stripe has
+// one, links out to Stripe's hosted receipt as well. Presentational — the parent owns the
 // open state + which invoice is selected.
 
 import { Download, ExternalLink } from "lucide-react";
@@ -43,8 +43,8 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 
 /**
  * The invoice preview dialog. Renders nothing meaningful until an `invoice` is selected;
- * embeds the inline PDF route when a self-hosted PDF exists, and always offers a download
- * (or an external hosted-receipt link when there's no PDF).
+ * embeds the inline PDF route when a PDF exists, offers its download, and offers Stripe's hosted
+ * receipt whenever there is one.
  */
 export function InvoicePreviewDialog({
 	invoice,
@@ -95,30 +95,33 @@ export function InvoicePreviewDialog({
 							/>
 						)}
 
+						{/* The hosted receipt is offered BESIDE the PDF whenever Stripe has one, not only
+						    when there is no PDF: it is the fallback when the preview above cannot load
+						    the stored copy (CON-L3, R6 F-08), and the route's own failure page is a
+						    sentence, not a way to the document. */}
 						<DialogFooter>
-							{invoice.hasPdf ? (
+							{invoice.hostedInvoiceUrl && (
+								<Button
+									size="sm"
+									variant="outline"
+									nativeButton={false}
+									render={
+										<a
+											href={invoice.hostedInvoiceUrl}
+											target="_blank"
+											rel="noopener noreferrer"
+										/>
+									}
+								>
+									<ExternalLink size={14} />
+									Open receipt
+								</Button>
+							)}
+							{invoice.hasPdf && (
 								<Button size="sm" nativeButton={false} render={<a href={invoicePdfHref(org, invoice.id, true)} />}>
 									<Download size={14} />
 									Download PDF
 								</Button>
-							) : (
-								invoice.hostedInvoiceUrl && (
-									<Button
-										size="sm"
-										variant="outline"
-										nativeButton={false}
-										render={
-											<a
-												href={invoice.hostedInvoiceUrl}
-												target="_blank"
-												rel="noopener noreferrer"
-											/>
-										}
-									>
-										<ExternalLink size={14} />
-										Open receipt
-									</Button>
-								)
 							)}
 						</DialogFooter>
 					</>
