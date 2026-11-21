@@ -97,8 +97,9 @@ export class ChatNoticeError extends Error {
 }
 
 /** The AI budget reasons the 402 body carries (mirrors AiBudgetError.reason; "daily" is
- *  the pre-session-window legacy alias, accepted from in-flight old responses). */
-type BudgetReason = "not_enabled" | "session" | "daily" | "weekly" | "out";
+ *  the pre-session-window legacy alias, accepted from in-flight old responses; "paused" is free AI
+ *  stopped platform-wide by the daily ceiling or the operator switch, lib/abuse/free-ai-pool.ts). */
+type BudgetReason = "not_enabled" | "session" | "daily" | "weekly" | "out" | "paused";
 
 /** The parsed shape of the streaming route's 402 body ({error,reason,resetAt,upgradable}). */
 interface ParsedBudget {
@@ -114,6 +115,7 @@ const BUDGET_REASONS: readonly BudgetReason[] = [
 	"daily",
 	"weekly",
 	"out",
+	"paused",
 ];
 
 /**
