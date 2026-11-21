@@ -55,7 +55,7 @@ Cloudflare edge (TLS, DDoS, WAF)
 cloudflared (compose service, OUTBOUND only — box firewall allows SSH only)
   │  http://caddy:80
   ▼
-caddy  ──►  console (catch-all) · marketing (root paths) · /docs · /blog
+caddy  ──►  console (catch-all) · marketing (root paths) · /docs · /news (+ /blog → 308)
              └► postgres + seaweedfs (internal only, on the data volume)
 ```
 

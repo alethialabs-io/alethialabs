@@ -192,7 +192,7 @@ function routeRegex(route) {
 const routePatterns = [];
 for (const [root, prefix] of [
 	[join(REPO_ROOT, "apps/marketing/app"), ""],
-	[join(REPO_ROOT, "apps/blog/app"), "/blog"],
+	[join(REPO_ROOT, "apps/blog/app"), "/news"],
 ]) {
 	for (const file of collectFiles(root, (candidate) => /\/(?:page|route)\.(?:tsx?|jsx?)$/.test(candidate))) {
 		routePatterns.push(routeRegex(nextRoute(root, file, prefix)));

@@ -194,7 +194,7 @@ services:
       HOSTNAME: 0.0.0.0
     restart: unless-stopped
 
-  # Blog (Next.js + velite). Stateless; served at basePath /blog.
+  # News, formerly the blog (Next.js + velite). Stateless; served at basePath /news.
   blog:
     build:
       context: .
