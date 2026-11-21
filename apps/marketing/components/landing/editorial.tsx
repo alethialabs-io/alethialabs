@@ -168,7 +168,9 @@ export function Rows({ rows }: { rows: Row[] }) {
  */
 export function TableBox({ caption, columns, minWidth, children }: { caption: string; columns: string[]; minWidth: number; children: ReactNode }) {
 	return (
-		<div className="overflow-x-auto" style={{ border: "1px solid var(--border)" }}>
+		// `relative` is load-bearing: the sr-only caption is absolutely positioned, and without a
+		// positioned ancestor it escapes this scroll box and widens the whole page on a phone.
+		<div className="relative overflow-x-auto" style={{ border: "1px solid var(--border)" }}>
 			<table className="w-full border-collapse text-left text-sm" style={{ minWidth }}>
 				<caption className="sr-only">{caption}</caption>
 				<thead>
