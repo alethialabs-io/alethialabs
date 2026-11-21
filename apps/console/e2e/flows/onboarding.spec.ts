@@ -170,11 +170,17 @@ test.describe("Onboarding — public auth pages", () => {
 		await expect(page.getByRole("button", { name: /google/i })).toBeVisible();
 	});
 
-	test("SSO option is present but disabled (coming soon)", async ({ page }) => {
+	test("SSO entry takes an organization and hands off to its sign-in route", async ({ page }) => {
 		await page.goto("/login");
 		const sso = page.getByRole("button", { name: /continue with sso/i });
-		await expect(sso).toBeVisible();
-		await expect(sso).toBeDisabled();
+		await expect(sso).toBeEnabled();
+		await sso.click();
+		// An organization that does not exist: /sso/<slug> answers without any identity provider,
+		// so this walks the real hand-off and the real refusal coming back to the banner.
+		await page.getByLabel("Organization").fill(`e2e-no-such-org-${Date.now()}`);
+		await page.getByRole("button", { name: /^continue$/i }).click();
+		await page.waitForURL(/\/login\?.*sso_error=/, { timeout: 15_000 });
+		await expect(page.getByRole("alert").filter({ hasText: /recognize that organization/i })).toBeVisible();
 	});
 
 	test("signup email step reveals the work-email field", async ({ page }) => {
@@ -613,7 +619,8 @@ test.describe("Onboarding — invitation accept", () => {
 		expect(token, `no pending invitation row for ${invitee} after a ${invited.status}`).toBeTruthy();
 		await page.goto(`/invites/accept?token=${token}`);
 		await expect(
-			page.getByRole("heading", { name: /you.*ve been invited to an organization/i }),
+			// The card names the inviting organization (A-20), so the heading is matched up to it.
+			page.getByRole("heading", { name: /you.*ve been invited to join/i }),
 		).toBeVisible({ timeout: 30_000 });
 		await page.getByRole("button", { name: /accept invitation/i }).click();
 		await page.waitForURL((url) => !url.pathname.startsWith("/invites"), { timeout: 60_000 });
