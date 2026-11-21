@@ -3,34 +3,70 @@
 
 // #6459 — the fleet-pool wizard renders from the whole form it watches: a per-location floor that
 // needs more runners than the maximum is said on the Capacity step, and raising the maximum clears
-// it. The wizard reads its values through `useWatch`, so this pins that an edit on one step still
+// it. The values are watched by the wizard engine, so this pins that an edit on one step still
 // reaches what a later step renders.
 
-import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/query/use-fleet-query", () => ({
-	useCreatePool: () => ({ mutateAsync: vi.fn() }),
-	useUpdatePool: () => ({ mutateAsync: vi.fn() }),
-}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/app/server/actions/fleet", () => ({
+	createFleetPoolAction: vi.fn(),
+	updateFleetPoolAction: vi.fn(),
+}));
+vi.mock("@/lib/stores/use-workspace-store", () => ({ useActiveOrgSlug: () => "acme" }));
+vi.mock("@/lib/query/topics", () => ({ TOPIC_KEYS: { fleet: () => [["fleet"]] } }));
+vi.mock("@/lib/query/use-fleet-query", () => ({
+	useFleetQuery: () => ({ data: { configs: [] }, isError: false }),
+}));
+vi.mock("@/lib/rpc/client", () => ({
+	orpc: {
+		connectors: {
+			board: {
+				queryOptions: () => ({
+					queryKey: ["connectors", "board"],
+					queryFn: async () => ({ offeredClouds: ["hetzner"] }),
+				}),
+			},
+		},
+	},
+}));
+vi.mock("@/lib/wizard/location", async () => {
+	const harness = await import("@/tests/components/runners/fleet-pool-wizard-harness");
+	return { useWizardEnvironment: harness.useTestWizardEnvironment };
+});
 
 import { FleetPoolWizard } from "@/components/runners/fleet-pool-wizard";
+import { resetTestPage } from "@/tests/components/runners/fleet-pool-wizard-harness";
+
+beforeEach(() => {
+	resetTestPage();
+});
 
 describe("FleetPoolWizard — the overcommit notice follows the watched values", () => {
 	it("warns when the floor × locations exceeds the max, and clears when the max is raised", async () => {
 		const user = userEvent.setup();
-		render(<FleetPoolWizard open onOpenChange={() => {}} pool={null} usedProviders={[]} />);
+		render(
+			<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+				<FleetPoolWizard open onOpenChange={() => {}} pool={null} usedProviders={[]} />
+			</QueryClientProvider>,
+		);
 
-		// Cloud → Placement. The default locations are two (fsn1, nbg1).
-		await user.click(screen.getByRole("button", { name: /Next/ }));
-		const floor = await screen.findByRole("spinbutton", { name: /Minimum per location/ });
+		// Cloud → Placement: two locations, and a floor of 6 in each.
+		await waitFor(() => expect(screen.getByRole("button", { name: "Next" })).toBeEnabled());
+		await user.click(screen.getByRole("button", { name: "Next" }));
+		const locations = await screen.findByLabelText(/^Locations/);
+		await user.clear(locations);
+		await user.type(locations, "fsn1, nbg1");
+		const floor = screen.getByRole("spinbutton", { name: /Minimum per location/ });
 		await user.clear(floor);
 		await user.type(floor, "6");
 
 		// Placement → Capacity: 6 × 2 = 12 runners, over the default max of 10.
-		await user.click(screen.getByRole("button", { name: /Next/ }));
+		await user.click(screen.getByRole("button", { name: "Next" }));
 		expect(await screen.findByText(/needs 12\s+runners — above your max of 10/)).toBeInTheDocument();
 
 		const max = screen.getByRole("spinbutton", { name: /^Maximum/ });
