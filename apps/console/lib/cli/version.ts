@@ -34,12 +34,15 @@ export const CLI_MIN_VERSION_HEADER = "x-alethia-min-cli";
 export const CLI_REQUEST_ID_HEADER = "x-request-id";
 
 /**
- * Mints a request id: `req_` and 32 hex digits of a random UUID. It is generated here and never
- * derived from the request — an inbound `X-Request-Id` is ignored and overwritten — so an id cannot
- * carry anything the caller sent, and it names nothing about the account or the route.
+ * Mints a request id: `req_` and 32 lowercase hex digits from 16 random bytes. It is generated here
+ * and never derived from the request — an inbound `X-Request-Id` is ignored and overwritten — so an
+ * id cannot carry anything the caller sent, and it names nothing about the account or the route.
+ * `getRandomValues` is used because it is available in every context, secure or not.
  */
 export function newCliRequestId(): string {
-	return `req_${crypto.randomUUID().replaceAll("-", "")}`;
+	const bytes = crypto.getRandomValues(new Uint8Array(16));
+	const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+	return `req_${hex}`;
 }
 
 /** True for the CLI API's paths: `/api/cli` and everything under it. */
