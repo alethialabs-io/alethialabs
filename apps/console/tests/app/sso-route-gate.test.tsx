@@ -12,6 +12,7 @@
 // not as an empty list (B4).
 
 import { type DehydratedState, QueryClient } from "@tanstack/react-query";
+import { act, render } from "@testing-library/react";
 import { isValidElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -50,13 +51,15 @@ vi.mock("@/components/settings/upgrade/feature-upsell", () => ({
 }));
 vi.mock("@/components/settings/members/people-skeleton", () => ({
 	PeopleUpsellSkeleton: ({ toolbar }: { toolbar?: boolean }) => <div data-upsell-skeleton={String(toolbar)} />,
+	PeopleListSkeleton: () => <div data-list-skeleton />,
 }));
 
 import SsoLoading from "@/app/(private)/[org]/~/settings/sso/loading";
 import SsoPage from "@/app/(private)/[org]/~/settings/sso/page";
 import { SsoNoAccess } from "@/components/settings/sso/sso-no-access";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
-import { PeopleUpsellSkeleton } from "@/components/settings/members/people-skeleton";
+import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
+import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 
 /** Renders the route for org `acme` and a link's query. */
 function route(searchParams: Record<string, string> = {}): Promise<ReactNode> {
@@ -115,16 +118,26 @@ describe("the SSO route's plan gate (F021)", () => {
 		expect(h.listed).toEqual([]);
 	});
 
-	it("loading draws the upsell's box alone — no toolbar — for an org without SSO", async () => {
-		h.sso = false;
-		const node = await SsoLoading();
-		expect(isValidElement(node) && node.type === PeopleUpsellSkeleton).toBe(true);
-		expect(isValidElement<{ toolbar?: boolean }>(node) && node.props.toolbar).toBe(false);
+	// The loading state is SYNCHRONOUS (CON-M4): it keys on the workspace store's plan, and while that
+	// is not yet known it draws the entitled shape rather than wait for the actor.
+	it("loading draws the upsell's box alone — no toolbar — for an org known not to have SSO", () => {
+		act(() => useWorkspaceStore.setState({ entitlements: { ...COMMUNITY_ENTITLEMENTS, sso: false } }));
+		const { container } = render(<SsoLoading />);
+		expect(container.querySelector('[data-upsell-skeleton="false"]')).not.toBeNull();
+		expect(container.querySelector('[data-slot="skeleton-root"]')).toBeNull();
 	});
 
-	it("loading draws the manager's shape for an entitled org", async () => {
-		h.sso = true;
-		const node = await SsoLoading();
-		expect(isValidElement(node) && node.type === PeopleUpsellSkeleton).toBe(false);
+	it.each([
+		["an entitled org", true],
+		["an org whose plan is not known yet", null],
+	] as const)("loading draws the manager's shape for %s", (_label, sso) => {
+		act(() =>
+			useWorkspaceStore.setState({
+				entitlements: sso === null ? null : { ...COMMUNITY_ENTITLEMENTS, sso },
+			}),
+		);
+		const { container } = render(<SsoLoading />);
+		expect(container.querySelector("[data-upsell-skeleton]")).toBeNull();
+		expect(container.querySelector('[data-slot="skeleton-root"]')).not.toBeNull();
 	});
 });

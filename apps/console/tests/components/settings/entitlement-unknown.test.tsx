@@ -45,6 +45,7 @@ vi.mock("@/components/settings/teams/manage-team-dialog", () => ({ ManageTeamDia
 
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { TeamsList } from "@/components/settings/teams/teams-list";
+import type { TeamsGate } from "@/components/settings/teams/teams-gate";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 import { useTeamsFilters } from "@/lib/stores/use-settings-filters";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
@@ -57,12 +58,18 @@ const EMPTY: TeamsPage = { rows: [], resultCount: 0, total: 0, facets: { sizes: 
 /** One team, as the teams read returns it. */
 const TEAM = { id: "t-1", name: "Platform", memberCount: 0, members: [] };
 
+/**
+ * A viewer whose role may make every team write. The entitlement is what this file is about; the
+ * role gate (teams-gate.ts) is held open so it cannot be the reason a control is disabled here.
+ */
+const ALL_WRITES: TeamsGate = { canCreate: true, canRename: true, canDelete: true, canEditRoster: true };
+
 /** The list inside a fresh query provider, with the entitlement the ROUTE resolved on the server. */
 function tree(entitled: boolean): ReactNode {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return (
 		<QueryClientProvider client={qc}>
-			<TeamsList entitled={entitled} />
+			<TeamsList entitled={entitled} gate={ALL_WRITES} />
 		</QueryClientProvider>
 	);
 }
@@ -101,7 +108,8 @@ describe("useEntitlement distinguishes unknown from not entitled (#5864)", () =>
 });
 
 describe("Settings · Teams takes its gate from the server, not the unloaded store (#5864, #6129)", () => {
-	const create = () => screen.getByRole("button", { name: /create team/i });
+	// The toolbar's Create team — the first of the name; an empty list offers a second in its body.
+	const create = () => screen.getAllByRole("button", { name: /create team/i })[0];
 
 	it("an entitled org gets a live Create team on the first paint, and never the upsell", async () => {
 		render(tree(true));
@@ -131,7 +139,8 @@ describe("Settings · Teams takes its gate from the server, not the unloaded sto
 		expect(screen.getByPlaceholderText("Search teams…")).toBeTruthy();
 		expect(screen.queryByText(UPSELL)).toBeNull();
 		expect(create().hasAttribute("disabled")).toBe(true);
-		expect(screen.getByRole("button", { name: "Manage team" }).hasAttribute("disabled")).toBe(true);
+		// The row menu still opens (the roster is readable), and its writes say why they are off.
+		expect(screen.getByRole("button", { name: "Manage team Platform" }).hasAttribute("disabled")).toBe(false);
 	});
 
 	it("an in-session upgrade the store reports unlocks Create team", async () => {

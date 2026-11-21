@@ -16,6 +16,7 @@ import { Combobox } from "@/components/settings/access/combobox";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { viaAuth } from "@/components/settings/members/auth-action";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import {
 	Dialog,
 	DialogContent,
@@ -31,16 +32,23 @@ import { orpc } from "@/lib/rpc/client";
 /** Every read a roster change shows in: the teams list, the members table's team chips. */
 const ROSTER_READS = [orpc.members.key()];
 
-/** Add/remove org members on a team (Enterprise). */
+/**
+ * Add/remove org members on a team (Enterprise). The roster is readable by anyone who can see the
+ * page; adding and removing are disabled WITH `rosterReason` when the viewer may not change it
+ * (R6 E-08), rather than live and refused by a toast.
+ */
 export function ManageTeamDialog({
 	team,
 	open,
 	onOpenChange,
+	rosterReason = null,
 }: {
 	/** The team, as the teams list currently holds it (its members included). */
 	team: TeamRow;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	/** Why the viewer may not change this roster, or null when they may. */
+	rosterReason?: string | null;
 }) {
 	const { data: members = [] } = useMembersQuery();
 	const [selected, setSelected] = useState<string>("");
@@ -116,13 +124,15 @@ export function ManageTeamDialog({
 								placeholder="Add a member…"
 							/>
 						</div>
-						<Button
-							size="sm"
-							onClick={() => add.mutate({ userId: selected })}
-							disabled={!selected || add.isPending}
-						>
-							{add.isPending ? "Adding…" : "Add"}
-						</Button>
+						<DisabledReason reason={rosterReason}>
+							<Button
+								size="sm"
+								onClick={() => add.submit({ userId: selected })}
+								disabled={!selected || add.isPending}
+							>
+								{add.isPending ? "Adding…" : "Add"}
+							</Button>
+						</DisabledReason>
 					</div>
 					<div className="space-y-1">
 						{teamUserIds.length === 0 ? (
@@ -136,17 +146,19 @@ export function ManageTeamDialog({
 									className="flex items-center justify-between rounded-md border border-border/40 px-3 py-2"
 								>
 									<span className="text-sm text-foreground">{nameFor(uid)}</span>
-									<Button
-										variant="ghost"
-										size="icon"
-										className="h-7 w-7 text-destructive"
-										disabled={removingUserId === uid}
-										aria-busy={removingUserId === uid || undefined}
-										onClick={() => askToRemove(uid)}
-									>
-										<X className="h-4 w-4" />
-										<span className="sr-only">Remove {nameFor(uid)}</span>
-									</Button>
+									<DisabledReason reason={rosterReason}>
+										<Button
+											variant="ghost"
+											size="icon"
+											className="h-7 w-7 text-destructive"
+											disabled={removingUserId === uid}
+											aria-busy={removingUserId === uid || undefined}
+											onClick={() => askToRemove(uid)}
+										>
+											<X className="h-4 w-4" />
+											<span className="sr-only">Remove {nameFor(uid)}</span>
+										</Button>
+									</DisabledReason>
 								</div>
 							))
 						)}
