@@ -1,37 +1,78 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Where a newly added card lands (#6832).
+// Where a newly added card lands (#6832, #6838).
 //
 // A card is added where the person is looking — the middle of what the board shows, or the point
-// they opened the menu at. Two adds in a row asked for the same point, so the second card was drawn
-// exactly over the first and the board looked as if nothing had been added. `freeSpot` steps the
-// wanted point down and to the right until no card already sits there.
+// they opened the menu at — unless that would put it on top of a card that is already there.
+//
+// The first version of this compared CORNERS: a spot was free when no card's top-left corner was
+// within 32px of it. A card is 248px wide, so a second card 40px to the right of the first still
+// covered almost all of it, and the first browser run of the connection journeys (#7132) showed
+// what that costs: the new card sat over the old card's connection handle, and a press meant for
+// the handle grabbed and moved the new card instead. A spot is now free only when the new card's
+// whole FOOTPRINT, plus a gap, touches no other card's footprint.
+//
+// The search walks outward from the wanted point in card-sized steps, ring by ring, so the card
+// lands in the nearest free slot: beside the cards in view, never under one. On a board too crowded
+// for the rings, it goes to the right of everything, which is free by construction.
 
 import type { XYPosition } from "@xyflow/react";
 
-/** How far each step moves, on both axes. Enough for the card below to show its header. */
-const STEP = 40;
+/** A card's footprint on the board. The width is the card's own; the height covers the full tier. */
+export const CARD_FOOTPRINT = { w: 248, h: 160 } as const;
 
-/** Two cards whose corners are closer than this on both axes count as one on top of the other. */
-const REACH = 32;
+/** The space kept clear between two cards, on both axes. */
+export const CARD_GAP = 32;
 
-/** The most steps taken before the point is used as it is: a board cannot be that crowded. */
-const MAX_STEPS = 24;
+/** How many rings of slots around the wanted point are tried before going right of everything. */
+const MAX_RINGS = 6;
+
+/** True when a card at `a` and a card at `b` would overlap or sit closer than the gap. */
+export function cardsCollide(a: XYPosition, b: XYPosition): boolean {
+	return (
+		Math.abs(a.x - b.x) < CARD_FOOTPRINT.w + CARD_GAP &&
+		Math.abs(a.y - b.y) < CARD_FOOTPRINT.h + CARD_GAP
+	);
+}
 
 /**
- * `wanted`, or the nearest point down and to the right of it where no card of `taken` has its
- * corner within reach. Pure: the same inputs give the same point.
+ * The slot offsets of ring `r` (in slots, not pixels), nearest first: a slot that needs fewer steps
+ * comes first, then right before left, then below before above, so a run of adds fills in to the
+ * right and down from where the person is looking.
+ */
+function ring(r: number): Array<{ i: number; j: number }> {
+	const slots: Array<{ i: number; j: number }> = [];
+	for (let j = -r; j <= r; j++) {
+		for (let i = -r; i <= r; i++) {
+			if (Math.max(Math.abs(i), Math.abs(j)) === r) slots.push({ i, j });
+		}
+	}
+	return slots.sort(
+		(a, b) =>
+			Math.abs(a.i) + Math.abs(a.j) - (Math.abs(b.i) + Math.abs(b.j)) ||
+			Number(a.i < 0) - Number(b.i < 0) ||
+			Number(a.j < 0) - Number(b.j < 0) ||
+			Math.abs(a.j) - Math.abs(b.j),
+	);
+}
+
+/**
+ * `wanted`, or the nearest slot around it where a new card collides with no card of `taken`.
+ * `taken` holds the top-left corners of the cards already on the board. Pure: the same inputs give
+ * the same point, and the point returned never collides with any card of `taken`.
  */
 export function freeSpot(wanted: XYPosition, taken: readonly XYPosition[]): XYPosition {
-	let spot = wanted;
-	for (let step = 0; step < MAX_STEPS; step++) {
-		const at = spot;
-		const occupied = taken.some(
-			(p) => Math.abs(p.x - at.x) < REACH && Math.abs(p.y - at.y) < REACH,
-		);
-		if (!occupied) return spot;
-		spot = { x: spot.x + STEP, y: spot.y + STEP };
+	const free = (spot: XYPosition) => !taken.some((p) => cardsCollide(p, spot));
+	const stepX = CARD_FOOTPRINT.w + CARD_GAP;
+	const stepY = CARD_FOOTPRINT.h + CARD_GAP;
+	for (let r = 0; r <= MAX_RINGS; r++) {
+		for (const { i, j } of ring(r)) {
+			const spot = { x: wanted.x + i * stepX, y: wanted.y + j * stepY };
+			if (free(spot)) return spot;
+		}
 	}
-	return spot;
+	// Every slot near the wanted point is taken: right of the rightmost card is always free.
+	const rightmost = Math.max(...taken.map((p) => p.x));
+	return { x: rightmost + stepX, y: wanted.y };
 }

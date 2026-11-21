@@ -15,6 +15,12 @@ import { useBoardConnections } from "./connection-context";
  *
  * The same removal is on the Delete key; this is its pointer form, and it is a real button, so it
  * is also reachable by Tab.
+ *
+ * It is lifted to `--z-raised`. React Flow draws edge labels in a layer BELOW the cards, and both
+ * sit in the viewport's one stacking context, so on a short line the midpoint falls on a card — in
+ * the first browser run (#7132) on the target card's connection handle, whose hit area reaches 10px
+ * past it — and the card took every click meant for the button. Raised, the label is above any card
+ * that is not itself selected (React Flow lifts a selected card to 1000).
  */
 export function EdgeSelectionLabel({
 	edgeId,
@@ -33,7 +39,7 @@ export function EdgeSelectionLabel({
 	return (
 		<EdgeLabelRenderer>
 			<div
-				className="nodrag nopan pointer-events-auto absolute"
+				className="nodrag nopan pointer-events-auto absolute z-[var(--z-raised)]"
 				style={{ transform: `translate(-50%, -50%) translate(${x}px, ${y}px)` }}
 			>
 				{locked ? (

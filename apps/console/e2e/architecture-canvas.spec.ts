@@ -236,20 +236,6 @@ test.describe("Architecture canvas", () => {
 	}
 
 	/**
-	 * Lay the cards out so none covers another, then fit them in view.
-	 *
-	 * A card added from the picker can land partly on top of the one added before it. The first
-	 * card's bottom handle is then under the second, so a press there grabs and moves the second
-	 * card instead of starting a connection, and a connection's Remove button can sit under a card.
-	 * The first run of these journeys did exactly that (#7132). Tidy layout is the board's own
-	 * answer to it.
-	 */
-	async function separateCards(page: Page) {
-		await moreMenu(page, "Tidy layout");
-		await moreMenu(page, "Fit view");
-	}
-
-	/**
 	 * The centre of an element, once a pointer there would actually hit it (it, or something inside
 	 * it) rather than whatever is drawn over it. The box is re-read on every try, so a layout that is
 	 * still settling is waited out rather than measured mid-move.
@@ -866,7 +852,20 @@ test.describe("Architecture canvas", () => {
 		await addService(page, "Service");
 		await addService(page, "Queue");
 		await closeInspector(page);
-		await separateCards(page);
+		await moreMenu(page, "Fit view");
+
+		// Two adds in a row land side by side, not one over the other (#7132 found the second card
+		// covering the first card's handle). Nothing is rearranged before the drag: a freshly added
+		// card has to be connectable where it landed.
+		const service = await card(page, /^Service/).boundingBox();
+		const queue = await card(page, /^Queue/).boundingBox();
+		if (!service || !queue) throw new Error("both cards are drawn");
+		const overlap =
+			service.x < queue.x + queue.width &&
+			queue.x < service.x + service.width &&
+			service.y < queue.y + queue.height &&
+			queue.y < service.y + service.height;
+		expect(overlap).toBe(false);
 
 		await dragConnection(page, card(page, /^Service/), card(page, /^Queue/));
 
@@ -883,7 +882,7 @@ test.describe("Architecture canvas", () => {
 		await addService(page, "Service");
 		await addService(page, "Bucket");
 		await closeInspector(page);
-		await separateCards(page);
+		await moreMenu(page, "Fit view");
 
 		await dragConnection(page, card(page, /^Service/), card(page, /^Bucket/));
 
@@ -900,8 +899,6 @@ test.describe("Architecture canvas", () => {
 		await addService(page, "Service");
 		await addService(page, "Queue");
 		await closeInspector(page);
-		// The line's Remove button is drawn at its midpoint, which a covering card would hide.
-		await separateCards(page);
 
 		// No pointer at all: focus the service from the keyboard and press C.
 		await keyboardFocus(page, card(page, /^Service/));
