@@ -146,6 +146,26 @@ run "committed_posture_plans_the_email_account" {
     error_message = "the reputation alarms must keep infra/email-ses's thresholds."
   }
   assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.events_delivery_failed.namespace == "AWS/SNS" &&
+      aws_cloudwatch_metric_alarm.events_delivery_failed.metric_name == "NumberOfNotificationsFailed" &&
+      length(aws_cloudwatch_metric_alarm.events_delivery_failed.dimensions) == 1 &&
+      aws_cloudwatch_metric_alarm.events_delivery_failed.dimensions["TopicName"] == "alethia-ses-events" &&
+      aws_cloudwatch_metric_alarm.events_delivery_failed.statistic == "Sum" &&
+      aws_cloudwatch_metric_alarm.events_delivery_failed.comparison_operator == "GreaterThanThreshold" &&
+      aws_cloudwatch_metric_alarm.events_delivery_failed.threshold == 0 &&
+      aws_cloudwatch_metric_alarm.events_delivery_failed.period == 3600
+    )
+    error_message = "any SNS delivery failure on alethia-ses-events in an hour must fire an alarm: an undelivered bounce never reaches the suppression list."
+  }
+  assert {
+    condition = alltrue([
+      for a in [aws_cloudwatch_metric_alarm.bounce_rate, aws_cloudwatch_metric_alarm.complaint_rate, aws_cloudwatch_metric_alarm.events_delivery_failed] :
+      toset(a.alarm_actions) == toset(["arn:aws:sns:eu-central-1:604925221417:alethia-ses-alarms"]) && toset(a.ok_actions) == toset(["arn:aws:sns:eu-central-1:604925221417:alethia-ses-alarms"])
+    ])
+    error_message = "every alarm must notify the alarms topic, on both ALARM and OK."
+  }
+  assert {
     condition     = aws_sesv2_account_vdm_attributes.this.vdm_enabled == "ENABLED" && toset(aws_sesv2_account_suppression_attributes.this.suppressed_reasons) == toset(["BOUNCE", "COMPLAINT"])
     error_message = "VDM must be on and the account suppression list must cover bounces and complaints."
   }

@@ -11,7 +11,7 @@
 #
 # A verified domain covers its subdomains too, so a From address on auth.<domain> or mail.<domain>
 # is authorised against this same identity ARN. The production deploy's default From addresses are
-# on the apex (no-reply@ and hello@), which is what Resend required and what this identity signs as.
+# on the apex (no-reply@ and hello@), which is what this identity signs as.
 
 data "aws_sesv2_email_identity" "domain" {
   email_identity = var.domain

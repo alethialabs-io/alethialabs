@@ -9,7 +9,7 @@
 #   config-sets.tf  alethia-auth / alethia-general, each publishing events to SNS
 #   sns.tf          alethia-ses-events → the console /api/webhooks/ses; alethia-ses-alarms → inboxes
 #   kms.tf          the key both topics are encrypted with
-#   cloudwatch.tf   account bounce-rate and complaint-rate alarms
+#   cloudwatch.tf   account bounce-rate and complaint-rate alarms; events-topic delivery-failure alarm
 #   account.tf      account VDM and the account-level suppression list
 #   sender.tf       alethia-ses-sender, the IAM user the app sends as (no access key in this stack)
 #
