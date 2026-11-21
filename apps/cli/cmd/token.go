@@ -7,10 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
@@ -40,15 +41,27 @@ var (
 var tokenListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List this organization's service-account tokens",
+	Long: "List the active organization's service-account tokens: what each is for, its prefix,\n" +
+		"when it was created, when it expires, when it was last used, and whether it is active,\n" +
+		"expired or revoked. A token's value is never listed: it is shown once, when it is created.",
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		if err := runTokenList(api.NewClient(token), os.Stdout, outputFormat(cmd)); err != nil {
-			failf("Failed to list tokens: %v", err)
+		if err := runTokenList(api.NewClient(token), printer.Out, outputFormat(cmd)); err != nil {
+			fail(err)
 		}
 	},
+}
+
+// tokenListView is how `token list` is drawn.
+var tokenListView = listView[api.ServiceToken]{
+	Title:   "service tokens",
+	Empty:   "No service tokens. Create one with `alethia token create --name ci`.",
+	Columns: tokenListColumns,
+	Rows:    tokenRows,
 }
 
 // runTokenList is the testable half — the same client/writer/format shape runOrgList uses, so the
@@ -56,17 +69,14 @@ var tokenListCmd = &cobra.Command{
 func runTokenList(c apiClient, out io.Writer, format string) error {
 	tokens, err := c.ListServiceTokens()
 	if err != nil {
-		return err
+		return governanceError(err)
 	}
-	if len(tokens) == 0 && format == ui.FormatTable {
-		fmt.Fprintln(out, ui.MutedStyle.Render("No service tokens. Create one with `alethia token create --name ci`."))
-		return nil
-	}
-	return ui.Render(out, format, ui.TableSpec{Columns: tokenListColumns, Rows: tokenRows(tokens, format)}, tokens)
+	return renderList(out, format, tokenListView, tokens)
 }
 
 var tokenListColumns = []string{"ID", "Name", "Prefix", "Created", "Expires", "Last used", "Status"}
 
+// tokenRows projects service tokens into plain table rows.
 func tokenRows(tokens []api.ServiceToken, outFmt string) [][]string {
 	rows := make([][]string, 0, len(tokens))
 	for _, t := range tokens {
@@ -104,20 +114,62 @@ var tokenCreateCmd = &cobra.Command{
 	Short: "Mint a service-account token (shown ONCE)",
 	Long: "Mint a service-account token. Run it with no flags on a terminal and it asks for the\n" +
 		"purpose and the lifetime; --name and --expires-in-days set the same two values without a\n" +
-		"prompt, so --no-input never needs one.",
+		"prompt, so --no-input never needs one.\n\n" +
+		"The token is printed once, alone on stdout, and cannot be read again: only its hash is\n" +
+		"kept. Everything said about it is on stderr, so the output can be piped straight into a\n" +
+		"secret store. Under --output json the token is the `token` field of one document.\n" +
+		"--dry-run checks the input and mints nothing.",
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		name, expires, err := promptTokenCreate(tokenCreateName, tokenCreateExpires)
-		if err != nil {
-			fail(err)
-		}
-		if err := runTokenCreate(api.NewClient(token), os.Stdout, os.Stderr, outputFormat(cmd), name, expires); err != nil {
-			failf("%v", err)
+		if err := runTokenCreateCmd(cmd); err != nil {
+			fail(governanceError(err))
 		}
 	},
+}
+
+// runTokenCreateCmd is `token create`: it asks for the purpose and the lifetime when they are
+// missing, and mints the token.
+func runTokenCreateCmd(cmd *cobra.Command) error {
+	p := resultPrinter(cmd)
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	name, expires, err := promptTokenCreate(tokenCreateName, tokenCreateExpires)
+	if err != nil {
+		return err
+	}
+	if cmdmeta.DryRunRequested(cmd) {
+		return printTokenCreateDryRun(p, name, expires)
+	}
+	return runTokenCreate(api.NewClient(token), p.Out, p.Err, p.Format, name, expires)
+}
+
+// errTokenNameRequired is the refusal for a token with no stated purpose.
+var errTokenNameRequired error = refusal(clierr.CodeInputRequired, "alethia token create --name ci",
+	"--name is required: a list of tokens should be a list of PURPOSES, not of prefixes")
+
+// tokenRequest is the request `token create` sends, as a dry run reports it.
+type tokenRequest struct {
+	Name          string `json:"name"`
+	ExpiresInDays int    `json:"expires_in_days"`
+}
+
+// printTokenCreateDryRun reports the token that would be minted. Nothing is minted, so there is
+// no credential in the result.
+func printTokenCreateDryRun(p *Printer, name string, expiresInDays int) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errTokenNameRequired
+	}
+	lifetime := "never expiring"
+	if expiresInDays > 0 {
+		lifetime = fmt.Sprintf("expiring in %d day(s)", expiresInDays)
+	}
+	return printDryRun(p, MutationResult{
+		ID: name, Kind: govKindServiceToken, Action: ResultCreated,
+		Object: plannedRequest{Request: tokenRequest{Name: name, ExpiresInDays: expiresInDays}},
+	}, fmt.Sprintf("Would mint service token %s, %s", name, lifetime))
 }
 
 // tokenExpiryOptions are the lifetimes the form offers, shortest-lived first
@@ -204,11 +256,17 @@ var promptTokenCreate = func(name string, expiresInDays int) (string, int, error
 func runTokenCreate(c apiClient, out, errOut io.Writer, format, name string, expiresInDays int) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return errors.New("--name is required: a list of tokens should be a list of PURPOSES, not of prefixes")
+		return errTokenNameRequired
 	}
 	created, err := c.CreateServiceToken(name, expiresInDays)
 	if err != nil {
-		return fmt.Errorf("failed to create token: %w", err)
+		return err
+	}
+	if created == nil || created.Token == "" {
+		// A success that carries no token has nothing to show, and the token cannot be read
+		// again: saying "created" over an empty line would cost the caller the credential.
+		return clierr.New(clierr.CodeInternal,
+			"the control plane accepted the request but returned no token; run `alethia token list` and revoke the token it made")
 	}
 	if format != ui.FormatTable {
 		// The caller is a program; the plain value is what it needs.
@@ -250,38 +308,46 @@ func runTokenCreate(c apiClient, out, errOut io.Writer, format, name string, exp
 var tokenRevokeCmd = &cobra.Command{
 	Use:   "revoke [id]",
 	Short: "Revoke a service-account token",
-	Long: "Revoke a service-account token. Omit the id on a terminal to pick from the live tokens;\n" +
-		"pass it to revoke without a prompt.\n\n" +
+	Long: "Revoke a service-account token. It stops working on its next request and cannot be\n" +
+		"restored; mint a new one with `alethia token create`.\n\n" +
+		"Omit the id on a terminal to pick from the live tokens; pass it to revoke without a\n" +
+		"prompt. --dry-run names the token that would be revoked and revokes nothing.\n\n" +
 		"There is no --yes. Revocation is a SAFETY action and its asymmetry runs the other way:\n" +
 		"revoking a token you did not mean to costs one `token create`, while failing to revoke a\n" +
 		"leaked one costs the organization. A confirmation here fails the incident-response pipeline\n" +
 		"and leaves the credential live.",
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		client := api.NewClient(token)
-		id := ""
-		if len(args) > 0 {
-			// Trimmed, and a blank argument counts as ABSENT. `alethia token revoke
-			// "$TOKEN_ID"` with the variable unset would otherwise send
-			// `DELETE /api/cli/tokens/` — a request naming nothing, answered with a 404
-			// that reads as "that token does not exist" rather than "you passed nothing".
-			id = strings.TrimSpace(args[0])
-		}
-		if id == "" {
-			// The handoff this removes: before it, `token revoke` could only be reached
-			// by running `token list` and copying an opaque id out of its output by eye.
-			if id, err = selectServiceToken(client); err != nil {
-				fail(err)
-			}
-		}
-		if err := runTokenRevoke(client, os.Stdout, id); err != nil {
-			failf("Failed to revoke token: %v", err)
+		if err := runTokenRevokeCmd(cmd, args); err != nil {
+			fail(governanceError(err))
 		}
 	},
+}
+
+// runTokenRevokeCmd is `token revoke`: it resolves the token and revokes it.
+func runTokenRevokeCmd(cmd *cobra.Command, args []string) error {
+	p := resultPrinter(cmd)
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	client := api.NewClient(token)
+	id := ""
+	if len(args) > 0 {
+		// Trimmed, and a blank argument counts as ABSENT. `alethia token revoke
+		// "$TOKEN_ID"` with the variable unset would otherwise send
+		// `DELETE /api/cli/tokens/` — a request naming nothing, answered with a 404
+		// that reads as "that token does not exist" rather than "you passed nothing".
+		id = strings.TrimSpace(args[0])
+	}
+	if id == "" {
+		// The handoff this removes: before it, `token revoke` could only be reached
+		// by running `token list` and copying an opaque id out of its output by eye.
+		if id, err = selectServiceToken(client); err != nil {
+			return flagRequired(err, "the token id", "alethia token list")
+		}
+	}
+	return runTokenRevoke(client, p, id, cmdmeta.DryRunRequested(cmd))
 }
 
 // selectServiceToken shows the picker `token revoke` uses when no id was given.
@@ -316,7 +382,8 @@ var selectServiceToken = func(c apiClient) (string, error) {
 	if len(opts) == 0 {
 		// Two different situations, and they are NOT worth two messages: either way
 		// there is nothing to revoke, and the next step is the same.
-		return "", errors.New("no live service tokens to revoke — `alethia token list` shows what exists")
+		return "", refusal(clierr.CodeNotFound, "alethia token list",
+			"no live service tokens to revoke — `alethia token list` shows what exists")
 	}
 
 	spec := mustAuthField("alethia token revoke", fieldKeyTokenID)
@@ -335,12 +402,19 @@ var selectServiceToken = func(c apiClient) (string, error) {
 
 // runTokenRevoke revokes one by id. It takes effect on the token's very next request, because
 // `resolveServiceToken` filters on `revoked_at` inside the lookup query itself.
-func runTokenRevoke(c apiClient, out io.Writer, id string) error {
-	if err := c.RevokeServiceToken(id); err != nil {
-		return err
+func runTokenRevoke(c apiClient, p *Printer, id string, dryRun bool) error {
+	result := MutationResult{
+		ID: id, Kind: govKindServiceToken, Action: ResultDeleted, Object: removedRecord{ID: id},
 	}
-	fmt.Fprintln(out, ui.MutedStyle.Render(fmt.Sprintf("Revoked %s — it stops working on its next request.", id)))
-	return nil
+	if dryRun {
+		return printDryRun(p, result, "Would revoke service token "+id)
+	}
+	if err := c.RevokeServiceToken(id); err != nil {
+		return notFoundHint(err, "alethia token list")
+	}
+	return p.Result(result, func(w io.Writer) {
+		fmt.Fprintln(w, ui.MutedStyle.Render(fmt.Sprintf("Revoked %s — it stops working on its next request.", id)))
+	})
 }
 
 func init() {

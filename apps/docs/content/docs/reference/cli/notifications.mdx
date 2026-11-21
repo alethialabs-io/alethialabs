@@ -30,6 +30,12 @@ show you what exists and you pick. `alerts create --channel` resolves a channel 
 can be created without ever running `channels list` first.
 </Callout>
 
+Every command that changes something prints one sentence, or one result under `-o json`, and takes
+`--dry-run`; a failure exits with the code of its class. Both are described once, under
+[What a command prints and how it fails](/reference/cli/organizations#what-a-command-prints-and-how-it-fails).
+On a plan that does not include alerts, a create is refused with exit code `10`, in the control
+plane's own sentence, and the hint names `alethia billing`.
+
 ## `alethia channels list`
 
 Lists the active organization's notification channels. On a TTY this opens the interactive table;
@@ -55,8 +61,8 @@ asked for a webhook URL. Under `--no-input` the flags are a complete substitute 
 | Type | Destination it asks for |
 | ---- | ----------------------- |
 | `email` | one or more `--recipient <email>` |
-| `pagerduty` | `--routing-key <key>` |
-| every other type | `--url <url>` (optionally `--signing-secret`) |
+| `pagerduty` | `--routing-key <key>`, or `--routing-key-stdin` |
+| every other type | `--url <url>` (optionally `--signing-secret`, or `--signing-secret-stdin`) |
 
 The nine types come from the product's own `alert_channel_type` set: `webhook`, `email`, `slack`,
 `rocketchat`, `discord`, `teams`, `mattermost`, `googlechat`, `pagerduty`. `--type --help` prints
@@ -74,7 +80,16 @@ alethia channels create "On-call" --type email --recipient sre@example.com --rec
 
 # PagerDuty
 alethia channels create "PD" --type pagerduty --routing-key R0UT1NGKEY
+
+# PagerDuty, with the routing key read from stdin
+printf '%s' "$PAGERDUTY_ROUTING_KEY" | alethia channels create "PD" --type pagerduty --routing-key-stdin
 ```
+
+The signing secret and the routing key are secrets. A flag value lands in your shell history and
+in the process list, so pipe the secret in with `--signing-secret-stdin` or `--routing-key-stdin`.
+Stdin carries one secret: giving both `-stdin` flags, or a secret both as a flag and on stdin, is
+refused. At a terminal the routing key is typed into a masked field. Neither secret is printed
+back in any output format, and a `--dry-run` reports only whether one was given.
 
 {/* fieldspec: alethia channels create */}
 
@@ -85,7 +100,9 @@ alethia channels create "PD" --type pagerduty --routing-key R0UT1NGKEY
 | Recipients | Where an email channel delivers; repeat the flag, or separate them with commas | `--recipient` |
 | Webhook URL | Where a webhook or chat channel posts; the endpoint is called before the channel is saved | `--url` |
 | Signing secret | Optional shared secret the receiver checks the delivery signature against | `--signing-secret` |
+| Signing secret from stdin | Read the signing secret from stdin instead of a flag value, which lands in shell history | `--signing-secret-stdin` |
 | Routing key | The PagerDuty Events API integration key the incident is raised against | `--routing-key` |
+| Routing key from stdin | Read the routing key from stdin instead of a flag value, which lands in shell history | `--routing-key-stdin` |
 
 ## `alethia channels verify`
 
@@ -107,7 +124,7 @@ alethia channels verify 3f1c8a2b
 
 Deletes a channel (prompts for confirmation, and the prompt **names the channel** rather than
 asking about "this channel"). Alert rules bound to it lose this destination; delivery history is
-preserved.
+preserved. `--dry-run` names the channel that would be deleted and deletes nothing.
 
 ```bash
 alethia channels delete
@@ -122,8 +139,8 @@ alethia channels delete 3f1c8a2b --yes
 | Channel | The channel to remove, by name or id; omit it to choose from the list | `[channel]` |
 
 <Callout type="warn">
-Deleting is destructive, so with `--no-input` (or a non-terminal stdin) it **fails** rather than
-prompting. Pass `--yes` in a script.
+Deleting is destructive, so with `--no-input` (or a non-terminal stdin) it **fails** with exit
+code `9` rather than prompting, and deletes nothing. Pass `--yes` in a script.
 </Callout>
 
 ## `alethia alerts list`
@@ -184,7 +201,8 @@ alethia alerts delete a1b2c3d4 --yes
 | Alert rule | The rule to remove, by name or id; omit it to choose from the list | `[rule]` |
 
 <Callout type="warn">
-As with `channels delete`, this is destructive: with `--no-input` it fails unless `--yes` is passed.
+As with `channels delete`, this is destructive: with `--no-input` it exits `9` unless `--yes` is
+passed. `--dry-run` names the rule that would be deleted and deletes nothing.
 </Callout>
 
 ## `alethia activity`

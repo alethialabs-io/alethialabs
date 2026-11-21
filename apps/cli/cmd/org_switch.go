@@ -5,22 +5,25 @@ package cmd
 
 import (
 	"fmt"
-	"io"
-	"os"
 
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
 )
 
 var orgSwitchCmd = &cobra.Command{
 	Use:   "switch [org]",
 	Short: "Switch the active organization",
-	Long: `Set the active organization context. Pass an org id, slug, or name; with no
-argument, pick one interactively. The selection is persisted locally and sent as
-the X-Alethia-Org header on subsequent commands.`,
+	Long: `Set the organization your commands act in. Pass its id, slug or name; with no
+argument on a terminal, pick one from the list.
+
+The choice is stored on this machine and sent with every later command. Nothing changes
+on the control plane. To act in another organization for one command only, pass --org to
+that command instead.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		p := resultPrinter(cmd)
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
@@ -29,27 +32,30 @@ the X-Alethia-Org header on subsequent commands.`,
 		if len(args) > 0 {
 			target = args[0]
 		}
-		if err := runOrgSwitch(api.NewClient(token), os.Stdout, target); err != nil {
-			fail(err)
+		if err := runOrgSwitch(api.NewClient(token), p, target); err != nil {
+			fail(governanceError(err))
 		}
 	},
 }
 
 // runOrgSwitch resolves target (id/slug/name, or an interactive pick when empty)
 // to one of the caller's orgs and persists it as the active context.
-func runOrgSwitch(c apiClient, out io.Writer, target string) error {
+func runOrgSwitch(c apiClient, p *Printer, target string) error {
 	// Refused BEFORE the fetch: whether a scripted caller may be asked to pick does not depend on
 	// what the server holds, so asking it would only slow the refusal down — and "no organizations
 	// available" is a badly wrong thing to tell someone whose real problem is --no-input.
 	if target == "" && !canPromptForm() {
-		return refuseNoForm(mustOrgField("alethia org switch", orgFieldKeyOrg))
+		e := refuseNoForm(mustOrgField("alethia org switch", orgFieldKeyOrg))
+		e.Hint = "alethia org list"
+		return e
 	}
 	orgs, err := c.ListOrgs()
 	if err != nil {
 		return err
 	}
 	if len(orgs) == 0 {
-		return fmt.Errorf("no organizations available")
+		return refusal(clierr.CodeNotFound, "create an organization in the console, or ask an owner to invite you",
+			"no organizations available")
 	}
 
 	var chosen *api.OrgSummary
@@ -65,15 +71,25 @@ func runOrgSwitch(c apiClient, out io.Writer, target string) error {
 	} else {
 		chosen = matchOrg(orgs, target)
 		if chosen == nil {
-			return fmt.Errorf("no organization matching %q", target)
+			return refusal(clierr.CodeNotFound, "alethia org list", "no organization matching %q", target)
 		}
 	}
 
-	if err := saveActiveOrg(*chosen); err != nil {
+	// Switching to the organization that is already active writes nothing and says so: the result
+	// is "unchanged", which is what makes the command safe to repeat in a script.
+	action := ResultUpdated
+	if types.LoadCliConfig().ActiveOrgID == chosen.ID {
+		action = ResultUnchanged
+	} else if err := saveActiveOrg(*chosen); err != nil {
 		return fmt.Errorf("failed to save active organization: %w", err)
 	}
-	fmt.Fprintln(out, ui.FormatSuccess("Active organization set to "+chosen.Name))
-	return nil
+	sentence := "Active organization set to " + chosen.Name
+	if action == ResultUnchanged {
+		sentence = chosen.Name + " is already the active organization"
+	}
+	return printChange(p, MutationResult{
+		ID: chosen.ID, Kind: govKindOrganization, Action: action, Object: chosen,
+	}, sentence)
 }
 
 // matchOrg returns the org whose id, slug, or name equals target, or nil.

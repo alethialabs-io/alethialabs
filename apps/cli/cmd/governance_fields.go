@@ -53,7 +53,10 @@ const (
 	fieldKeyChannelURL        = "channel-url"
 	fieldKeyChannelSecret     = "channel-signing-secret"
 	fieldKeyChannelRoutingKey = "channel-routing-key"
-	fieldKeyChannelRef        = "channel-ref"
+
+	fieldKeyChannelSecretStdin     = "channel-signing-secret-stdin"
+	fieldKeyChannelRoutingKeyStdin = "channel-routing-key-stdin"
+	fieldKeyChannelRef             = "channel-ref"
 
 	fieldKeyAlertName     = "alert-name"
 	fieldKeyAlertEvent    = "alert-event"
@@ -201,10 +204,28 @@ var govFields = []govField{
 	},
 	{
 		Command:     "alethia channels create",
+		Key:         fieldKeyChannelSecretStdin,
+		Title:       "Signing secret from stdin",
+		Description: "Read the signing secret from stdin instead of a flag value, which lands in shell history",
+		Flag:        "signing-secret-stdin",
+		Bool:        true,
+		Page:        docsNotificationsPage,
+	},
+	{
+		Command:     "alethia channels create",
 		Key:         fieldKeyChannelRoutingKey,
 		Title:       "Routing key",
 		Description: "The PagerDuty Events API integration key the incident is raised against",
 		Flag:        "routing-key",
+		Page:        docsNotificationsPage,
+	},
+	{
+		Command:     "alethia channels create",
+		Key:         fieldKeyChannelRoutingKeyStdin,
+		Title:       "Routing key from stdin",
+		Description: "Read the routing key from stdin instead of a flag value, which lands in shell history",
+		Flag:        "routing-key-stdin",
+		Bool:        true,
 		Page:        docsNotificationsPage,
 	},
 	{
@@ -486,10 +507,17 @@ func alertSeverityNames() []string {
 	return out
 }
 
-// cloudProviderNames is every cloud_provider value, in schema order.
+// cloudProviderNames is every cloud this build offers, in the catalog's order: AWS, GCP, Azure and
+// Hetzner unless an operator re-enabled a hidden one. It is what the `fleet set` picker offers and
+// what its refusal lists.
+//
+// The offered set and not the whole cloud_provider enum: the enum carries clouds the product does
+// not offer, and a picker that listed them offered a choice the control plane refuses. Nothing is
+// validated against this list — a provider typed as the argument is still sent as written.
 func cloudProviderNames() []string {
-	out := make([]string, len(types.AllCloudProviders))
-	for i, p := range types.AllCloudProviders {
+	offered := EnabledCloudProviders()
+	out := make([]string, len(offered))
+	for i, p := range offered {
 		out[i] = string(p)
 	}
 	return out

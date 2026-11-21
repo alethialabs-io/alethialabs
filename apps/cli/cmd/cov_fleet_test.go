@@ -440,14 +440,9 @@ func TestFleet_ListsFailClosedOnAnUnreachableControlPlane(t *testing.T) {
 		for _, format := range []string{"table", "json"} {
 			t.Run(strings.Join(args, "_")+"_"+format, func(t *testing.T) {
 				full := append(append([]string{}, args...), "--output", format)
-				// `fleet list` classifies the failure (a server fault is exit 11); the lists
-				// that still flatten the error exit 1. Either way it is not a success.
-				want := 1
-				if args[0] == "fleet" {
-					want = 11
-				}
-				if got := run(full...); got != want {
-					t.Errorf("exit code = %d, want %d", got, want)
+				// Every list keeps the failure's class: a server fault is the unavailable row.
+				if got := run(full...); got != clierr.ExitUnavailable {
+					t.Errorf("exit code = %d, want %d", got, clierr.ExitUnavailable)
 				}
 			})
 		}
@@ -524,8 +519,8 @@ func TestFleet_GrantsAddNeedsExactlyOneBinding(t *testing.T) {
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			if got := run(args...); got != 1 {
-				t.Errorf("exit code = %d, want 1", got)
+			if got := run(args...); got != clierr.ExitUsage {
+				t.Errorf("exit code = %d, want %d", got, clierr.ExitUsage)
 			}
 		})
 	}
@@ -597,8 +592,8 @@ func TestFleet_GrantsRemoveIsGatedOnConfirmation(t *testing.T) {
 func TestFleet_GrantsRemoveReportsAServerRefusal(t *testing.T) {
 	_, run := fleetEnv(t, fleetOpts{broken: true})
 	fleetAnswerConfirm(t, true)
-	if got := run("grants", "remove", "g1"); got != 1 {
-		t.Errorf("exit code = %d, want 1", got)
+	if got := run("grants", "remove", "g1"); got != clierr.ExitUnavailable {
+		t.Errorf("exit code = %d, want %d", got, clierr.ExitUnavailable)
 	}
 }
 
@@ -625,27 +620,39 @@ func TestFleet_RolesCreateSendsThePermissionKeys(t *testing.T) {
 func TestFleet_RolesDeleteIsGatedOnConfirmation(t *testing.T) {
 	s, run := fleetEnv(t, fleetOpts{})
 
+	// ro9 is a custom role. The fake's role list holds only the built-in ro1, so ro9 is an id
+	// the list does not carry: it is passed on, and the control plane answers for it.
 	fleetAnswerConfirm(t, false)
-	if got := run("roles", "delete", "ro1"); got != 0 {
+	if got := run("roles", "delete", "ro9"); got != 0 {
 		t.Errorf("declined: exit code = %d, want 0", got)
 	}
-	if s.saw("DELETE", "/api/cli/roles/ro1") {
+	if s.saw("DELETE", "/api/cli/roles/ro9") {
 		t.Fatal("a declined delete still removed the role")
 	}
 
 	s.forget()
 	fleetAnswerConfirm(t, true)
-	if got := run("roles", "delete", "ro1"); got != 0 {
+	if got := run("roles", "delete", "ro9"); got != 0 {
 		t.Errorf("confirmed: exit code = %d, want 0", got)
 	}
-	if !s.saw("DELETE", "/api/cli/roles/ro1") {
+	if !s.saw("DELETE", "/api/cli/roles/ro9") {
 		t.Errorf("a confirmed delete removed nothing; requests = %v", s.requests)
+	}
+
+	// A built-in template named by its id is refused before anything is sent: the control
+	// plane's delete skips it and still answers ok.
+	s.forget()
+	if got := run("roles", "delete", "ro1", "--yes"); got != clierr.ExitConflict {
+		t.Errorf("built-in: exit code = %d, want %d", got, clierr.ExitConflict)
+	}
+	if s.saw("DELETE", "/api/cli/roles/ro1") {
+		t.Error("a delete was sent for a built-in role")
 	}
 
 	_, broken := fleetEnv(t, fleetOpts{broken: true})
 	fleetAnswerConfirm(t, true)
-	if got := broken("roles", "delete", "ro1"); got != 1 {
-		t.Errorf("broken: exit code = %d, want 1", got)
+	if got := broken("roles", "delete", "ro9"); got != clierr.ExitUnavailable {
+		t.Errorf("broken: exit code = %d, want %d", got, clierr.ExitUnavailable)
 	}
 }
 
@@ -665,8 +672,9 @@ func TestFleet_MembersAndTeamsNeedAnActiveOrg(t *testing.T) {
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			if got := run(args...); got != 1 {
-				t.Errorf("exit code = %d, want 1", got)
+			// No organization to act in is a failed precondition; the hint is `alethia org switch`.
+			if got := run(args...); got != clierr.ExitConflict {
+				t.Errorf("exit code = %d, want %d", got, clierr.ExitConflict)
 			}
 		})
 	}
@@ -724,10 +732,9 @@ func TestFleet_MembersMutationsReportAServerRefusal(t *testing.T) {
 		{"members", "remove", "m1"},
 	} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			// `members add` keeps the server fault's class; `members remove` flattens the
-			// error to a string before reporting it, so it exits unclassified.
-			if got := run(args...); got != clierr.ExitUnavailable && got != clierr.ExitUnclassified {
-				t.Errorf("exit code = %d, want %d or %d", got, clierr.ExitUnavailable, clierr.ExitUnclassified)
+			// Both keep the server fault's class.
+			if got := run(args...); got != clierr.ExitUnavailable {
+				t.Errorf("exit code = %d, want %d", got, clierr.ExitUnavailable)
 			}
 		})
 	}
@@ -766,8 +773,8 @@ func TestFleet_TeamsMutationsReportAServerRefusal(t *testing.T) {
 		{"teams", "delete", "t1"},
 	} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			if got := run(args...); got != 1 {
-				t.Errorf("exit code = %d, want 1", got)
+			if got := run(args...); got != clierr.ExitUnavailable {
+				t.Errorf("exit code = %d, want %d", got, clierr.ExitUnavailable)
 			}
 		})
 	}
