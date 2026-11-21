@@ -13,6 +13,9 @@ import { SITE_URL } from "../site";
 const REPO = "alethialabs-io/alethialabs";
 const REVALIDATE_SECONDS = 3600;
 
+/** Release-please components whose display name is not just the id capitalised. */
+const COMPONENT_NAMES: Record<string, string> = { cli: "CLI" };
+
 /** One release, as the home page shows it. */
 export interface ReleaseItem {
 	/** "Runner v0.10.1" — the component name capitalised, then the version. */
@@ -54,18 +57,19 @@ export function releaseTitle(name: string): string {
 	if (!match) return name.trim();
 	const component = match[1] ?? "";
 	const version = match[2] ?? "";
-	const label = component.charAt(0).toUpperCase() + component.slice(1);
+	const label = COMPONENT_NAMES[component.toLowerCase()] ?? component.charAt(0).toUpperCase() + component.slice(1);
 	return `${label} ${version}`;
 }
 
 /**
  * The first bullet of a release-please body, as plain text: markdown links keep their text, bold
- * scopes and trailing PR / commit references are dropped. Returns "" when the body has no bullet.
+ * scopes and trailing PR / commit references are dropped, and the first letter is capitalised
+ * (commit subjects are written lower-case). Returns "" when the body has no bullet.
  */
 export function releaseSummary(body: string): string {
 	const bullet = body.split("\n").find((line) => /^\s*[*-]\s+/.test(line));
 	if (!bullet) return "";
-	return bullet
+	const text = bullet
 		.replace(/^\s*[*-]\s+/, "")
 		.replace(/\*\*[^*]+:\*\*\s*/g, "")
 		.replace(/\s*\(\[[^\]]*\]\([^)]*\)\)/g, "")
@@ -73,6 +77,7 @@ export function releaseSummary(body: string): string {
 		.replace(/[*_`]/g, "")
 		.replace(/\s+/g, " ")
 		.trim();
+	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** Parses the GitHub releases API response into display items, skipping drafts and pre-releases. */

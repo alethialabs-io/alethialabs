@@ -7,7 +7,7 @@ import { parseReleases, parseRss, releaseSummary, releaseTitle } from "../lib/ho
 describe("releaseTitle", () => {
 	it("capitalises a release-please component and keeps the version", () => {
 		expect(releaseTitle("runner: v0.10.1")).toBe("Runner v0.10.1");
-		expect(releaseTitle("cli: v0.5.0")).toBe("Cli v0.5.0");
+		expect(releaseTitle("cli: v0.5.0")).toBe("CLI v0.5.0");
 	});
 
 	it("returns a name without a component prefix as it is", () => {
@@ -26,7 +26,7 @@ describe("releaseSummary", () => {
 	].join("\n");
 
 	it("takes the first bullet as plain text, without scope, links or references", () => {
-		expect(releaseSummary(body)).toBe("retry the state upload on a 503");
+		expect(releaseSummary(body)).toBe("Retry the state upload on a 503");
 	});
 
 	it("returns an empty string when the body has no bullet", () => {
@@ -50,8 +50,8 @@ describe("parseReleases", () => {
 			[release({ draft: true }), release({ prerelease: true }), release({ html_url: "" }), release({}), release({ name: "cli: v0.5.0" }), release({ name: "cli: v0.4.0" })],
 			2,
 		);
-		expect(items.map((i) => i.title)).toEqual(["Runner v0.10.1", "Cli v0.5.0"]);
-		expect(items[0]?.summary).toBe("fixed it");
+		expect(items.map((i) => i.title)).toEqual(["Runner v0.10.1", "CLI v0.5.0"]);
+		expect(items[0]?.summary).toBe("Fixed it");
 	});
 
 	it("returns an empty list for anything that is not an array", () => {

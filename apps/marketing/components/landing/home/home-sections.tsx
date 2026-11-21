@@ -28,7 +28,7 @@ export function Statement() {
 			<Wrap>
 				<h1
 					className="text-display-md"
-					style={{ ...disp, margin: 0, maxWidth: "26ch", lineHeight: 1.12, letterSpacing: "var(--tracking-display)", color: "var(--text-primary)", fontWeight: 400, textWrap: "balance" }}
+					style={{ ...disp, margin: 0, maxWidth: "48ch", lineHeight: 1.14, letterSpacing: "var(--tracking-display)", color: "var(--text-primary)", fontWeight: 400, textWrap: "balance" }}
 				>
 					<span style={{ fontWeight: 600 }}>Alethia provisions Kubernetes into your own cloud and proves every change.</span>{" "}
 					Keyless on AWS, GCP and Azure, with a signed receipt for every apply that you can check without us.
@@ -124,19 +124,12 @@ export function Latest({ releases }: { releases: ReleaseItem[] }) {
 	);
 }
 
-/** One of four cover motifs, picked from the post's URL so each post keeps its own. */
-function coverMotif(url: string): number {
-	let hash = 0;
-	for (const ch of url) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-	return hash % 4;
-}
-
 /**
  * A typographic cover for a post: a quiet geometric motif in the brand's ink, no photograph.
- * Drawn as inline SVG so it costs no request and scales without blur.
+ * Drawn as inline SVG so it costs no request and scales without blur. The motif is the post's
+ * position in the row (0–3), so the four tiles on the page never repeat one.
  */
-function Cover({ url }: { url: string }) {
-	const motif = coverMotif(url);
+function Cover({ motif }: { motif: number }) {
 	const ink = "var(--text-primary)";
 	return (
 		<svg viewBox="0 0 320 200" role="presentation" aria-hidden="true" style={{ width: "100%", height: "auto", display: "block", background: "var(--surface-sunken)" }}>
@@ -176,10 +169,10 @@ export function FromTheBlog({ posts }: { posts: PostItem[] }) {
 					</a>
 				</div>
 				<div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-					{posts.map((p) => (
+					{posts.map((p, i) => (
 						<a key={p.url} href={p.url} className="group flex flex-col gap-3" style={{ textDecoration: "none", minWidth: 0 }}>
 							<div style={{ border: "1px solid var(--border)", overflow: "hidden" }}>
-								<Cover url={p.url} />
+								<Cover motif={i % 4} />
 							</div>
 							<span style={{ ...mono, ...eyebrow, fontSize: 10.5 }}>{day(p.date)}</span>
 							<span className="text-text-primary group-hover:underline" style={{ ...disp, fontSize: 17, fontWeight: 600, lineHeight: 1.25, letterSpacing: "var(--tracking-display)", textUnderlineOffset: 4 }}>
