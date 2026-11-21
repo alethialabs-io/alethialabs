@@ -13,10 +13,9 @@
 // WHAT THIS FILE IS NOT. It does not enforce anything. The lanes that do read from it:
 //   - sign-up ceilings      → REL-L10 (`lib/auth/**`)
 //   - trial ceilings        → REL-L19 (`lib/billing/trial/**`)
-//   - free AI pool          → REL-L11 (`lib/billing/ai-guard.ts`)
-//   - free daily jobs       → REL-L11 (`lib/billing/job-quota.ts`, which still holds its own copy
-//                             of 25 until that lane switches it to `abuseLimit("free_daily_jobs")`;
-//                             the unit test pins the two equal while both exist)
+//   - free AI pool          → REL-L11 (`lib/abuse/free-ai-pool.ts`, gated in `lib/billing/ai-guard.ts`)
+//   - free daily jobs       → REL-L11 (`lib/billing/job-quota.ts`, through `abuseLimit("free_daily_jobs")`;
+//                             the unit test fails if that file grows its own copy again)
 //   - scans, repository size → GIT-A1 (`lib/scanner/**`)
 // A row whose enforcer has not landed is still documented, which is why `enforcedBy` names the
 // unit rather than claiming a file.
@@ -25,7 +24,7 @@
 // stripping (no build step, no `tsx` dependency), which cannot resolve `@/` aliases and rejects
 // enums and parameter properties. Keep it plain data plus two pure functions.
 //
-// ENV OVERRIDES follow `freeDailyJobQuota()`'s rule: a positive number is floored and used; unset,
+// ENV OVERRIDES follow the rule job-quota.ts used before it read this table: a positive number is floored and used; unset,
 // blank, zero, negative or non-numeric falls back to the default. Zero is NOT "refuse everything" —
 // stopping a surface is a kill switch (REL-L11), not a ceiling, so a typo cannot silently close sign-up.
 
