@@ -706,7 +706,7 @@ function FieldRow({
 
 	// One column, every field full width: the rail is 392px, and the two-up grid this replaced put
 	// two ~160px controls side by side, which truncated every select and split a label from its
-	// pair. `field.full` is therefore no longer read here; every row already is.
+	// pair. There is no per-field width any more: every row is the full width.
 	//
 	// The row is the element `data-field-key` marks, so the review view's "Go to" can land on ANY
 	// field by its key; `focusFirstControl` forwards that focus to the control. A composite's row is
