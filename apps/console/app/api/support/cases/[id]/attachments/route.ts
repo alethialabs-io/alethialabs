@@ -6,6 +6,11 @@
 
 import { formatBytes } from "@repo/format";
 import { NextResponse } from "next/server";
+import {
+	ATTACHMENT_HINT,
+	MAX_ATTACHMENT_BYTES,
+	resolveAttachmentType,
+} from "@/components/support/attachment-policy";
 import { getOwner } from "@/lib/auth/owner";
 import { getActiveScope } from "@/lib/auth/scope";
 import { authorizeUserId } from "@/lib/authz/guard";
@@ -15,23 +20,6 @@ import { supportCaseAttachments, supportCases } from "@/lib/db/schema";
 import { storage } from "@/lib/storage";
 import { eq } from "drizzle-orm";
 import { log } from "@/lib/observability/log";
-
-/** Max accepted attachment size (10 MiB). */
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-
-/** Accepted content types (image/* wildcard + a small document/archive allowlist). */
-const ALLOWED_EXACT = new Set([
-	"application/pdf",
-	"text/plain",
-	"application/json",
-	"application/zip",
-	"application/gzip",
-]);
-
-/** True when `contentType` is permitted for a support attachment. */
-function isAllowedContentType(contentType: string): boolean {
-	return contentType.startsWith("image/") || ALLOWED_EXACT.has(contentType);
-}
 
 /** Collapses a filename to a path-safe storage segment. */
 function safeName(name: string): string {
@@ -84,10 +72,12 @@ export async function POST(
 		);
 	}
 
-	const contentType = file.type || "application/octet-stream";
-	if (!isAllowedContentType(contentType)) {
+	// The picker's own allowlist (`attachment-policy.ts`): the browser's type, or the extension
+	// when the browser reported none. What is stored is the resolved type, never an unlisted one.
+	const contentType = resolveAttachmentType(file.name, file.type);
+	if (contentType === null) {
 		return NextResponse.json(
-			{ error: `Unsupported content type: ${contentType}` },
+			{ error: `This file type can't be attached. ${ATTACHMENT_HINT}` },
 			{ status: 415 },
 		);
 	}
@@ -110,11 +100,10 @@ export async function POST(
 			contentType,
 		);
 	} catch (uploadErr: unknown) {
-		const message =
-			uploadErr instanceof Error ? uploadErr.message : "Upload failed";
+		// The storage error is logged, not returned: the person is told what to do instead.
 		log.error("Support attachment upload error", { err: uploadErr });
 		return NextResponse.json(
-			{ error: "Upload failed: " + message },
+			{ error: "The file couldn't be stored. Try again in a moment." },
 			{ status: 500 },
 		);
 	}

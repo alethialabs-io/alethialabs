@@ -3,14 +3,8 @@
 
 // Client helper for support-case attachments. Attachments hang off an EXISTING case, so
 // the submit/abuse forms collect files locally, then POST each one to the freshly created
-// case after `submitCase` returns. The allowlist + size cap mirror the API route so the
-// UI can reject obviously-invalid files before a round-trip.
-
-/** Maximum accepted attachment size (10 MB), matching the API route cap. */
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-
-/** `accept` attribute for the file input — the human-facing side of the allowlist. */
-export const ATTACHMENT_ACCEPT = "image/*,application/pdf,text/*,application/json,application/zip,application/gzip";
+// case after `submitCase` returns. What may be attached is decided in `attachment-policy.ts`,
+// which the upload route reads too, so the picker and the server cannot disagree.
 
 /** The uploaded-attachment record returned by the attachments API. */
 export interface UploadedAttachment {
@@ -18,19 +12,6 @@ export interface UploadedAttachment {
 	file_name: string;
 	size_bytes: number;
 	content_type: string;
-}
-
-/** True when a file's MIME type is on the support attachment allowlist. */
-export function isAllowedAttachment(file: File): boolean {
-	const t = file.type;
-	return (
-		t.startsWith("image/") ||
-		t.startsWith("text/") ||
-		t === "application/pdf" ||
-		t === "application/json" ||
-		t === "application/zip" ||
-		t === "application/gzip"
-	);
 }
 
 // `formatBytes` used to live here AND, byte-for-byte differently, in cases/case-detail.tsx —
