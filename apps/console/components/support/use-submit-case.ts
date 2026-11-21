@@ -13,6 +13,11 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { globalHref } from "@/lib/routing";
 import type { submitCaseSchema } from "@/lib/validations/support";
 
+/** What the person is told when one file could not be attached to the case just opened. */
+export function attachmentFailedMessage(fileName: string): string {
+	return `Couldn't attach ${fileName}. Your case was opened without it — describe what it showed in a reply.`;
+}
+
 /** What a submit sends: the validated case plus any files to attach once it exists. */
 export interface SubmitCaseVariables {
 	values: z.input<typeof submitCaseSchema>;
@@ -49,7 +54,9 @@ export function useSubmitCase(
 					try {
 						await uploadAttachment(result.data.id, file);
 					} catch {
-						toast.error(`Couldn't attach ${file.name}. You can add it later.`);
+						// The case exists by now, and nothing adds a file to an open case, so the
+						// message says what happened rather than promising a later upload (G-03).
+						toast.error(attachmentFailedMessage(file.name));
 					}
 				}
 			}
