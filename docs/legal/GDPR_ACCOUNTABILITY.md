@@ -2,7 +2,7 @@
 
 Owner: Alethia Labs legal/privacy
 
-Effective: 2026-08-12
+Effective: 2026-11-21
 
 Review cadence: quarterly and before any new vendor or materially new processing
 
@@ -17,12 +17,12 @@ evidence described below.
 
 | Activity | People and data | Purpose | GDPR basis | System / recipient | Retention |
 | --- | --- | --- | --- | --- | --- |
-| Account and authentication | Users; email, name, avatar, provider id, session and sign-in events | Create and secure accounts | Contract; legitimate interests | Alethia PostgreSQL; selected identity provider; Resend | Account life plus closure workflow; security records as below |
+| Account and authentication | Users; email, name, avatar, provider id, session and sign-in events | Create and secure accounts | Contract; legitimate interests | Alethia PostgreSQL; selected identity provider; Amazon SES (AWS, eu-central-1) | Account life plus closure workflow; security records as below |
 | Organization and access control | Members; org id, role, grants, authorization decisions | Multi-tenant access and governance | Contract; legitimate interests | Alethia PostgreSQL | Active account; authorization activity 365 days |
 | Infrastructure control | Customer users and incidental people in submitted content; configuration, repo/commit metadata, plans, state, job records, logs | Perform requested provisioning and management | Contract; customer instructions under DPA | Hetzner-hosted compute, PostgreSQL and object storage; selected cloud and git providers | Active project; job logs 30 days; removed inventory 7 days |
 | Cloud federation | Users and cloud-account administrators; issuer, audience, role, tenant, project and session metadata | Obtain short-lived access to customer cloud accounts | Contract; legitimate interests | Selected cloud provider | Configuration until disconnect; short-lived credentials expire at provider |
 | Billing | Billing contacts; organization, plan, invoice, transaction and tax metadata. Card data is entered into Stripe-hosted fields and is never received by Alethia | Take payment for paid plans and keep statutory records | Contract; legal obligation | Alethia PostgreSQL; **Stripe Payments Europe, Ltd. (active)** | Statutory accounting period. **NOT ESTABLISHED — requires the retained period to be confirmed against Bulgarian accounting law and recorded here** |
-| Support and legal requests | Users and correspondents; contact details, message, evidence and response | Resolve requests and establish legal claims | Contract; legitimate interests; legal obligation | Alethia PostgreSQL/email; Cloudflare routing; Resend | Matter closure plus 3 years, unless a claim or law requires longer |
+| Support and legal requests | Users and correspondents; contact details, message, evidence and response | Resolve requests and establish legal claims | Contract; legitimate interests; legal obligation | Alethia PostgreSQL/email; Cloudflare routing; Amazon SES (AWS, eu-central-1) | Matter closure plus 3 years, unless a claim or law requires longer |
 | Security and operations | Users and visitors; IP, user agent, request, incident, audit and diagnostic data | Protect availability, integrity and tenants | Legitimate interests; legal obligation where applicable | Hetzner; Cloudflare; Alethia logs | Minimized by system; job logs 30 days; fleet actions 90 days; authorization activity 365 days |
 | Product analytics and client diagnostics | Consenting users; pseudonymous internal ids, plan/role, pages, feature events, performance and client errors | Understand, improve and diagnose the Service | Consent | PostHog EU Cloud | Provider retention must be verified and recorded before release |
 | Operational diagnostics | Users and visitors; minimized server and migration errors, request metadata and structured operational logs | Secure, diagnose and maintain the hosted Service | Legitimate interests | PostHog EU Cloud | Provider retention must be verified and recorded before release |
@@ -72,8 +72,8 @@ adding or activating a provider:
    telemetry gate where applicable.
 
 Do not claim a transfer mechanism from configuration alone. Before production
-release, record the executed Resend DPA and applicable transfer mechanism, and
-the PostHog DPA, EU project location, retention setting, and secondary-use
+release, record the AWS data processing addendum that covers Amazon SES
+(eu-central-1) and any transfer mechanism it relies on, and the PostHog DPA, EU project location, retention setting, and secondary-use
 settings. Store contracts and transfer-impact records in the restricted legal
 drive, not this public repository. If evidence is missing, disable the provider
 or block the release.
@@ -229,7 +229,8 @@ through with counsel.
 | --- | --- |
 | **Paid markets are unrecorded while billing is live** | `PAID_MARKETS` in `packages/legal/src/processing.ts` is empty, yet Stripe billing is active and the pricing page advertises per-seat monthly charging. Either the markets where charging is offered are recorded there, or the commerce gates in #2372 are enforcing against an empty set. This is the most consequential gap in this table |
 | Stripe DPA and transfer mechanism | The executed DPA reference and the transfer mechanism relied on for card-network processing outside the EEA. Registered as active with no safeguard named |
-| Resend DPA and transfer mechanism | `processing.ts` records `region: "United States"` with no SCC or transfer-impact record anywhere in the tree. #2370 forbids claiming one from configuration |
+| AWS (Amazon SES) DPA and transfer mechanism | `processing.ts` records `aws-ses` as active in `Germany (eu-central-1, Frankfurt)`, contracted with Amazon Web Services EMEA SARL. No executed DPA reference or transfer-impact record is in the tree, and AWS support access from outside the EEA is not assessed. #2370 forbids claiming one from configuration |
+| Resend, the previous email processor | Removed from the processing register and from the code when hosted email moved to Amazon SES. Whether Resend's account was closed and the message data it held deleted is not recorded |
 | PostHog DPA, EU project location, retention settings, secondary-use settings | Provider-side configuration evidence. Until recorded, no retention maximum may be published |
 | Statutory billing retention period | Confirmation against Bulgarian accounting law, then recorded in the processing inventory above |
 | Data Protection Officer | Whether a DPO is appointed, and if so the appointment record and published contact point. No DPO is named anywhere in this repository, and absence of a name is not evidence that none is required |

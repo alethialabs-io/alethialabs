@@ -13,9 +13,9 @@ describe("processing registry", () => {
 		expect(publicProcessingParties().map((party) => party.id)).toEqual([
 			"hetzner",
 			"cloudflare",
-			"resend",
 			"posthog",
 			"stripe",
+			"aws-ses",
 			"customer-cloud",
 			"customer-git",
 			"customer-connector",
@@ -30,8 +30,18 @@ describe("processing registry", () => {
 				expect(published.has(party.id)).toBe(false);
 			}
 		}
-		expect(published.has("aws-ses")).toBe(false);
 		expect(published.has("grafana-prometheus")).toBe(false);
+	});
+
+	// Hosted transactional email moved from Resend to Amazon SES in eu-central-1. The register must
+	// name the processor that actually receives recipients' addresses, and must not keep naming the
+	// one that no longer does.
+	it("registers Amazon SES as the active email processor and no longer lists Resend", () => {
+		const ses = PROCESSING_PARTIES.find((p) => p.id === "aws-ses");
+		expect(ses?.status).toBe("active");
+		expect(ses?.region).toContain("eu-central-1");
+		expect(ses?.purposes.map((p) => p.name).join(" ")).toMatch(/transactional email/i);
+		expect(PROCESSING_PARTIES.some((p) => /resend/i.test(`${p.id} ${p.name}`))).toBe(false);
 	});
 
 	// Stripe was absent from this register entirely while billing was live and the pricing page said
