@@ -67,19 +67,50 @@ export function useUpdateRunner() {
 	});
 }
 
-/**
- * Queues an update for each outdated runner, and answers how many queued vs failed. One failed
- * runner does not fail the batch: the caller reports the split.
- */
-async function updateEach(runnerIds: string[]): Promise<ActionResult<{ queued: number; failed: number }>> {
-	const results = await Promise.allSettled(runnerIds.map((runnerId) => updateRunnerAction({ runnerId })));
-	const queued = results.filter((r) => r.status === "fulfilled" && r.value.ok).length;
-	return ok({ queued, failed: runnerIds.length - queued });
+/** A runner an "Update all" batch names: its id to act on, its name to report. */
+export interface RunnerRef {
+	id: string;
+	name: string;
 }
 
-/** Queues updates for every outdated runner, reporting how many queued vs failed. */
+/** Each runner of an "Update all" batch, sorted by whether its update job was queued. */
+export interface UpdateEachOutcome {
+	queued: RunnerRef[];
+	failed: RunnerRef[];
+}
+
+/**
+ * Queues an update for each outdated runner and answers WHICH were queued and which were not, in
+ * the order they were given. One failed runner does not fail the batch: a refusal, a network
+ * failure or a throw for one runner puts that runner in `failed`, and the caller names them.
+ */
+export async function updateEach(batch: RunnerRef[]): Promise<ActionResult<UpdateEachOutcome>> {
+	const results = await Promise.allSettled(batch.map((r) => updateRunnerAction({ runnerId: r.id })));
+	const queued: RunnerRef[] = [];
+	const failed: RunnerRef[] = [];
+	results.forEach((result, i) => {
+		const runner = batch[i];
+		if (result.status === "fulfilled" && result.value.ok) queued.push(runner);
+		else failed.push(runner);
+	});
+	return ok({ queued, failed });
+}
+
+/** Queues updates for every outdated runner, reporting which were queued and which were not. */
 export function useUpdateAllOutdated() {
 	return useActionMutation(updateEach, { invalidates: runnerAndJobKeys() });
+}
+
+/**
+ * The verified cloud accounts a runner can be deployed into, on the clouds we hold runner templates
+ * for (the `runners.deployableAccounts` read). Read while the Add-runner sheet is open; a cached
+ * answer renders at once and is re-read each time the sheet opens (`staleTime: 0`), so an account
+ * connected meanwhile appears.
+ */
+export function useDeployableAccountsQuery(open: boolean) {
+	return useQuery(
+		orpc.runners.deployableAccounts.queryOptions({ enabled: open, staleTime: 0, retry: retryUnlessRefused }),
+	);
 }
 
 /** Destroys a runner's cloud resources (optionally on a chosen runner). */

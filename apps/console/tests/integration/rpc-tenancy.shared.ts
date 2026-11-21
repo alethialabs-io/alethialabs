@@ -870,6 +870,13 @@ export const FIXTURES: Record<string, Fixture> = {
 		reason: "runner releases are global; every org reads the same changelog",
 		input: { version: "0.0.0-it-6123-none" },
 	},
+	// #7110: the Add-runner sheet's cloud accounts — the ADDRESSED org's verified AWS accounts. Each
+	// org's seeded (verified, org-scoped, W-authored) identity is the marker.
+	"runners.deployableAccounts": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({ x: hasElement(out, "id", s.identityX), y: hasElement(out, "id", s.identityY) }),
+	},
 	// The people & access reads (#6129). Members, teams and the invite context answer any member;
 	// roles and grants answer `member:view`, which the caller U (a viewer) holds. X has three members
 	// (U, V, W), Y two (U, W); the community personal scope has the caller alone.
@@ -1333,6 +1340,9 @@ export async function runRpcTenancySuite(opts: {
 						// A configured account (a role ARN was submitted), so the connectors board lists it
 						// (#6124) — a bare placeholder is filtered out as never-configured.
 						credentials: { role_arn: `arn:aws:iam::123456789012:role/it-6124-${org}` },
+						// Verified (#7110): `runners.deployableAccounts` lists only accounts a deploy can use.
+						is_verified: true,
+						status: "connected",
 					})
 					.returning({ id: cloudIdentities.id });
 				await db.insert(cloudRegions).values({ cloud_identity_id: ci.id, provider: "aws", native_id: regionOf(org) });

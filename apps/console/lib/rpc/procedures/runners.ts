@@ -12,6 +12,7 @@ import { deploymentMode } from "@/lib/billing/config";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import {
 	type CloudProvider,
+	cloudIdentities,
 	type FleetPool,
 	fleetPools,
 	jobs,
@@ -31,6 +32,7 @@ import { jobVisibleTo } from "@/lib/jobs/visibility";
 import { latestReleaseVersion, type ManagedRunnerRow, managedRunnerRowsForProvider } from "@/lib/fleet/queue";
 import { jobMinutesByProvider, provisionedHoursByProvider, queryProvisionedHours } from "@/lib/queries/runner-usage";
 import { type RunnersPage, type RunnersQuery, runnersPage } from "@/lib/queries/runners";
+import { RUNNER_DEPLOY_PROVIDERS } from "@/lib/runners/deploy-providers";
 import { query } from "@/lib/rpc/base";
 
 // The runners domain's reads (ADR 0005 D1, #6123). The runners route used to poll ~8 server-action
@@ -349,6 +351,51 @@ export async function readReleaseNotes(version: string): Promise<RunnerReleaseIn
 		const [r] = await tx.select(RELEASE_FIELDS).from(runnerReleases).where(eq(runnerReleases.version, version)).limit(1);
 		return r ? toReleaseInfo(r) : null;
 	});
+}
+
+// ── The Add-runner sheet's cloud accounts ───────────────────────────────────────────────────────
+
+/** A cloud account a runner can be deployed into, as the Add-runner sheet's selector lists it. */
+export interface DeployableAccount {
+	id: string;
+	name: string;
+	/** The account's public id at its cloud (AWS account, GCP project, Azure subscription), or "". */
+	displayId: string;
+	provider: CloudProvider;
+}
+
+/**
+ * The verified cloud accounts of the ADDRESSED org a runner can be deployed into: only the clouds we
+ * hold runner templates for (`RUNNER_DEPLOY_PROVIDERS`), so an account the deploy would refuse is
+ * never offered. Authorized as `view` on `cloud_identity`, then read under RLS (`withActorScope`):
+ * the credential policy admits the org's shared accounts and the caller's own personal ones.
+ * Bounded to `org_id = actor.orgId` as the connectors board is — a personal account the caller
+ * created in another org is theirs under RLS, but the deploy acts within this org.
+ *
+ * THE CREDENTIALS COLUMN IS NOT SELECTED. The one public fact the selector shows — the account's id
+ * at its cloud — is extracted in SQL, so nothing else stored in `credentials` reaches server memory
+ * or the wire.
+ */
+export async function readDeployableAccounts(): Promise<DeployableAccount[]> {
+	const actor = await authorize("view", { type: "cloud_identity" });
+	return withActorScope(actor, (tx) =>
+		tx
+			.select({
+				id: cloudIdentities.id,
+				name: cloudIdentities.name,
+				displayId: sql<string>`coalesce(${cloudIdentities.credentials} ->> 'account_id', ${cloudIdentities.credentials} ->> 'project_id', ${cloudIdentities.credentials} ->> 'subscription_id', '')`,
+				provider: cloudIdentities.provider,
+			})
+			.from(cloudIdentities)
+			.where(
+				and(
+					eq(cloudIdentities.org_id, actor.orgId),
+					eq(cloudIdentities.is_verified, true),
+					inArray(cloudIdentities.provider, [...RUNNER_DEPLOY_PROVIDERS]),
+				),
+			)
+			.orderBy(asc(cloudIdentities.name), asc(cloudIdentities.id)),
+	);
 }
 
 // ── The managed warm-pool fleet ─────────────────────────────────────────────────────────────────
@@ -673,9 +720,11 @@ const releaseNotesInput = z.object({ version: z.string().min(1).max(100) });
  * - `fleet`: the warm pools (self-managed only; empty on hosted).
  * - `fleetEconomics`: the pools' month-to-date cost and utilization (managers only; null otherwise).
  * - `releaseNotes`: one release, when a version popover opens.
+ * - `deployableAccounts`: the addressed org's verified cloud accounts a runner can be deployed into.
  *
  * None takes a runner or pool id: every runner read is the actor's whole visible set, answered under
- * RLS for the org's own runners, so another org's row cannot be asked for by id.
+ * RLS for the org's own runners, so another org's row cannot be asked for by id. The same holds for
+ * `deployableAccounts`: no input, the addressed org's accounts only.
  */
 export const runnersRouter = {
 	list: query.handler(() => readRunnersData()),
@@ -683,4 +732,5 @@ export const runnersRouter = {
 	fleet: query.handler(() => readFleetData()),
 	fleetEconomics: query.handler(() => readFleetEconomicsForManager()),
 	releaseNotes: query.input(releaseNotesInput).handler(({ input }) => readReleaseNotes(input.version)),
+	deployableAccounts: query.handler(() => readDeployableAccounts()),
 };

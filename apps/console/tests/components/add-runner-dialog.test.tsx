@@ -3,18 +3,31 @@
 
 // The deploy form's identity source. It used to be the UNFILTERED list, so a user whose only
 // verified cloud was GCP could pick it — and CloudIdentitySelector auto-selects a lone identity,
-// so the unbuildable choice arrived pre-filled. These pin that the form asks only for the clouds
-// we hold runner templates for, and that a user with none of them reads a truthful boundary
-// instead of a form whose job dies later in the runner log.
+// so the unbuildable choice arrived pre-filled. The filter is now the `runners.deployableAccounts`
+// procedure's (tests/lib/rpc/runners-procedures.test.ts pins it); these pin that the sheet reads
+// that procedure only while it is open, that each of the read's states renders as its own thing,
+// and that a user with no deployable account reads a truthful boundary instead of a form whose job
+// dies later in the runner log.
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/app/server/actions/aws/identities", () => ({
-	getVerifiedCloudIdentities: vi.fn(async () => []),
-	getVerifiedCloudIdentitiesByProvider: vi.fn(async () => []),
-}));
+/** One verified AWS account, as the deploy path's read returns it. */
+const AWS_ACCOUNT = { id: "id-aws", name: "prod", displayId: "123456789012", provider: "aws" };
+
+/** The cloud-account read's state as the query hook reports it. */
+interface AccountsState {
+	data: (typeof AWS_ACCOUNT)[] | undefined;
+	isError: boolean;
+	isFetching: boolean;
+}
+
+const acc = vi.hoisted(() => {
+	const state: AccountsState = { data: [], isError: false, isFetching: false };
+	return { state, openArgs: Array<boolean>(), refetch: vi.fn() };
+});
+
 const reg = vi.hoisted(() => ({
 	mutateAsync: vi.fn(),
 	onValidationError: undefined as undefined | ((fields: Record<string, string[] | undefined>) => void),
@@ -24,6 +37,10 @@ const reg = vi.hoisted(() => ({
 vi.mock("@/lib/query/use-runners-query", () => ({
 	useRunnersQuery: () => ({ data: { runners: reg.runners }, isPending: false, isError: false, refetch: vi.fn() }),
 	useDeployRunner: () => ({ mutate: vi.fn(), isPending: false }),
+	useDeployableAccountsQuery: (open: boolean) => {
+		acc.openArgs.push(open);
+		return { ...acc.state, refetch: acc.refetch };
+	},
 	useRegisterRunner: (onValidationError: (fields: Record<string, string[] | undefined>) => void) => {
 		reg.onValidationError = onValidationError;
 		return { mutateAsync: reg.mutateAsync, isPending: false };
@@ -53,29 +70,26 @@ vi.mock("next/navigation", () => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { AddRunnerDialog } from "@/components/runners/add-runner-dialog";
-import {
-	getVerifiedCloudIdentities,
-	getVerifiedCloudIdentitiesByProvider,
-} from "@/app/server/actions/aws/identities";
+
+/** Sets what the cloud-account read reports on the next render. */
+function accounts(state: AccountsState) {
+	acc.state = state;
+}
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	reg.runners = [];
-	// `clearAllMocks` keeps an implementation a test installed; every test starts from "none connected".
-	vi.mocked(getVerifiedCloudIdentitiesByProvider).mockImplementation(async () => []);
+	acc.openArgs = [];
+	// Every test starts from a settled "none connected" answer.
+	accounts({ data: [], isError: false, isFetching: false });
 });
 
-/** One verified AWS account, as the deploy path's read returns it. */
-const AWS_ACCOUNT = { id: "id-aws", name: "prod", displayId: "123456789012", provider: "aws" };
-
 describe("AddRunnerDialog — deploy path", () => {
-	it("asks only for the clouds a runner can be deployed into", async () => {
-		render(<AddRunnerDialog open onOpenChange={() => {}} />);
-		await waitFor(() =>
-			expect(getVerifiedCloudIdentitiesByProvider).toHaveBeenCalledWith("aws"),
-		);
-		// The unfiltered list is what offered gcp/azure/alibaba in the first place.
-		expect(getVerifiedCloudIdentities).not.toHaveBeenCalled();
+	it("reads the cloud accounts only while the sheet is open", () => {
+		const { rerender } = render(<AddRunnerDialog open={false} onOpenChange={() => {}} />);
+		expect(acc.openArgs.every((open) => open === false)).toBe(true);
+		rerender(<AddRunnerDialog open onOpenChange={() => {}} />);
+		expect(acc.openArgs.at(-1)).toBe(true);
 	});
 
 	it("tells a user with no deployable cloud the truth, not 'connect AWS, GCP, or Azure'", async () => {
@@ -121,7 +135,7 @@ describe("AddRunnerDialog — register path (#6123: useActionMutation)", () => {
 
 describe("AddRunnerDialog — the deploy path's cloud-account read (R6 C-03)", () => {
 	it("while the read is in flight the pane is a skeleton, not 'No AWS account connected'", async () => {
-		vi.mocked(getVerifiedCloudIdentitiesByProvider).mockImplementation(() => new Promise(() => {}));
+		accounts({ data: undefined, isError: false, isFetching: true });
 		const user = userEvent.setup();
 		render(<AddRunnerDialog open onOpenChange={() => {}} />);
 		await user.click(screen.getByRole("button", { name: /deploy to a cloud/i }));
@@ -130,23 +144,40 @@ describe("AddRunnerDialog — the deploy path's cloud-account read (R6 C-03)", (
 	});
 
 	it("a failed read is an error with a retry, and the retry reads again", async () => {
-		vi.mocked(getVerifiedCloudIdentitiesByProvider).mockRejectedValueOnce(new Error("network"));
+		accounts({ data: undefined, isError: true, isFetching: false });
 		const user = userEvent.setup();
-		render(<AddRunnerDialog open onOpenChange={() => {}} />);
+		const { rerender } = render(<AddRunnerDialog open onOpenChange={() => {}} />);
 		await user.click(screen.getByRole("button", { name: /deploy to a cloud/i }));
 		expect(await screen.findByText(/couldn't load your cloud accounts/i)).toBeInTheDocument();
 		expect(screen.queryByText(/no aws account connected/i)).toBeNull();
 
-		vi.mocked(getVerifiedCloudIdentitiesByProvider).mockResolvedValueOnce([]);
 		await user.click(screen.getByRole("button", { name: /try again/i }));
+		expect(acc.refetch).toHaveBeenCalledTimes(1);
+
+		// The retry in flight renders as pending again, not as the error it is replacing.
+		accounts({ data: undefined, isError: true, isFetching: true });
+		rerender(<AddRunnerDialog open onOpenChange={() => {}} />);
+		expect(screen.getByText(/loading your cloud accounts/i)).toBeInTheDocument();
+		expect(screen.queryByText(/couldn't load your cloud accounts/i)).toBeNull();
+
+		accounts({ data: [], isError: false, isFetching: false });
+		rerender(<AddRunnerDialog open onOpenChange={() => {}} />);
 		expect(await screen.findByRole("heading", { name: /no aws account connected/i })).toBeInTheDocument();
-		expect(getVerifiedCloudIdentitiesByProvider).toHaveBeenCalledTimes(2);
+	});
+
+	it("a cached answer renders at once while it is re-read", async () => {
+		accounts({ data: [AWS_ACCOUNT], isError: false, isFetching: true });
+		const user = userEvent.setup();
+		render(<AddRunnerDialog open onOpenChange={() => {}} />);
+		await user.click(screen.getByRole("button", { name: /deploy to a cloud/i }));
+		expect(await screen.findByRole("button", { name: /deploy runner/i })).toBeInTheDocument();
+		expect(screen.queryByText(/loading your cloud accounts/i)).toBeNull();
 	});
 });
 
 describe("AddRunnerDialog — a deploy needs a runner to run it (R6 C-21)", () => {
 	it("with zero runners the deploy is disabled with its reason, and Register is offered", async () => {
-		vi.mocked(getVerifiedCloudIdentitiesByProvider).mockResolvedValue([AWS_ACCOUNT]);
+		accounts({ data: [AWS_ACCOUNT], isError: false, isFetching: false });
 		const user = userEvent.setup();
 		render(<AddRunnerDialog open onOpenChange={() => {}} />);
 		await user.click(screen.getByRole("button", { name: /deploy to a cloud/i }));
@@ -161,7 +192,7 @@ describe("AddRunnerDialog — a deploy needs a runner to run it (R6 C-21)", () =
 
 	it("with a runner, the deploy is not gated on one", async () => {
 		reg.runners = [{ id: "r1", name: "edge", status: "ONLINE", is_default: true, operator: "self" }];
-		vi.mocked(getVerifiedCloudIdentitiesByProvider).mockResolvedValue([AWS_ACCOUNT]);
+		accounts({ data: [AWS_ACCOUNT], isError: false, isFetching: false });
 		const user = userEvent.setup();
 		render(<AddRunnerDialog open onOpenChange={() => {}} />);
 		await user.click(screen.getByRole("button", { name: /deploy to a cloud/i }));
