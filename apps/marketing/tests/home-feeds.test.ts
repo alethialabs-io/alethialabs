@@ -29,7 +29,8 @@ describe("releaseSummary", () => {
 		expect(releaseSummary(body)).toBe("Retry the state upload on a 503");
 	});
 
-	it("drops a summary that is only a commit hash", () => {
+	it("strips a leading commit hash, and drops a summary that was only a hash", () => {
+		expect(releaseSummary("* 7ed185b0e026edb563adea02e60d92af95ec231b fix the build")).toBe("Fix the build");
 		expect(releaseSummary("* 7ed185b0e026edb563adea02e60d92af95ec231b")).toBe("");
 	});
 
@@ -56,6 +57,10 @@ describe("parseReleases", () => {
 		);
 		expect(items.map((i) => i.title)).toEqual(["Runner v0.10.1", "CLI v0.5.0"]);
 		expect(items[0]?.summary).toBe("Fixed it");
+	});
+
+	it("skips the pre-release-please tags, which carry raw commit subjects", () => {
+		expect(parseReleases([release({ name: "v0.2.0" }), release({})], 3).map((i) => i.title)).toEqual(["Runner v0.10.1"]);
 	});
 
 	it("returns an empty list for anything that is not an array", () => {
