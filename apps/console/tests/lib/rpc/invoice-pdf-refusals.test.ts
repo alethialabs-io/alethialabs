@@ -1,5 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
+// @vitest-environment node
+// (node, not jsdom: the success path builds a `Response` from a `Blob`, and jsdom's Blob is not
+// the one undici's `Response` can stream.)
 
 // #6113 (ADR 0005 stress test R4): a route handler under `/{org}/` must answer a non-member with the
 // same 404 as an unknown org — not 401 ("sign in"), which is what the invoice PDF route said.
