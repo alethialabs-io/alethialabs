@@ -45,7 +45,7 @@ function mount(initial: JobWithMeta[] | undefined) {
 }
 
 function resetToast() {
-	for (const fn of [toast, toast.loading, toast.success, toast.error, toast.info]) {
+	for (const fn of [toast, toast.loading, toast.success, toast.error, toast.info, toast.dismiss]) {
 		fn.mockClear();
 	}
 }
@@ -168,5 +168,54 @@ describe("useJobToasts (JobToaster)", () => {
 			expect(call[1].id).toBe("job-a");
 		}
 		expect(toast.success).not.toHaveBeenCalled();
+	});
+
+	// #6818 (D-32): the feed is the org's newest jobs, capped. A job shown as in flight can be
+	// pushed out of it before it finishes, and then nothing would ever resolve its spinner.
+	describe("a job that leaves the feed while its toast is still loading", () => {
+		it("has its toast dismissed", () => {
+			const t = mount([]);
+			t.snapshot([makeJob({ id: "a", job_type: "DEPLOY", status: "PROCESSING" })]);
+			expect(toast.loading).toHaveBeenCalledTimes(1);
+			expect(toast.dismiss).not.toHaveBeenCalled();
+
+			t.snapshot([makeJob({ id: "newer", job_type: "ANALYZE_REPO", status: "QUEUED" })]);
+			expect(toast.dismiss).toHaveBeenCalledTimes(1);
+			expect(toast.dismiss).toHaveBeenCalledWith("job-a");
+		});
+
+		it("is dismissed once, not on every later snapshot", () => {
+			const t = mount([]);
+			t.snapshot([makeJob({ id: "a", job_type: "DEPLOY", status: "QUEUED" })]);
+			t.snapshot([]);
+			t.snapshot([]);
+			expect(toast.dismiss).toHaveBeenCalledTimes(1);
+		});
+
+		it("is not toasted afresh if it comes back into the feed", () => {
+			const t = mount([]);
+			t.snapshot([makeJob({ id: "a", job_type: "DEPLOY", status: "PROCESSING" })]);
+			t.snapshot([]);
+			resetToast();
+			t.snapshot([makeJob({ id: "a", job_type: "DEPLOY", status: "SUCCESS" })]);
+			expect(toast.loading).not.toHaveBeenCalled();
+			expect(toast.success).not.toHaveBeenCalled();
+		});
+
+		it("a FINISHED job that leaves the feed keeps its toast: it resolves by its own duration", () => {
+			const t = mount([]);
+			t.snapshot([makeJob({ id: "a", job_type: "DEPLOY", status: "SUCCESS" })]);
+			expect(toast.success).toHaveBeenCalledTimes(1);
+			t.snapshot([]);
+			expect(toast.dismiss).not.toHaveBeenCalled();
+		});
+
+		it("a job still in the feed is left alone", () => {
+			const t = mount([]);
+			const running = makeJob({ id: "a", job_type: "DEPLOY", status: "PROCESSING" });
+			t.snapshot([running]);
+			t.snapshot([makeJob({ id: "b", job_type: "PLAN", status: "QUEUED" }), running]);
+			expect(toast.dismiss).not.toHaveBeenCalled();
+		});
 	});
 });

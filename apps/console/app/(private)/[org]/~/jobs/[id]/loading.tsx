@@ -4,7 +4,7 @@
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Skeleton } from "@repo/ui/skeleton";
 
-import { JOB_DETAIL_COLUMN, JOB_DETAIL_SECTIONS, JOB_VIEWPORT_HEIGHT } from "./detail-column";
+import { JOB_DETAIL_COLUMN, JOB_DETAIL_SECTIONS, JOB_LOG_STRIP, JOB_VIEWPORT_HEIGHT } from "./detail-column";
 
 /** A run of placeholder text: the words are there to give the line its real width, and are not shown. */
 function TextBar({ children }: { children: string }) {
@@ -28,7 +28,8 @@ function TextBar({ children }: { children: string }) {
  * page and skeleton now live in the `(list)` route group, where their boundary wraps the list alone.
  *
  * THE LOG PANE IS `flex-1`, so its two edges are set by what sits above and below it, and both are
- * drawn here from what the page draws rather than from a guess:
+ * drawn here from what the page draws rather than from a guess (inside it, the strip above the
+ * lines is the page's own `JOB_LOG_STRIP`, so the first line starts where the page's will):
  *
  * - above it, the status row and the outcome line. Every finished job states an outcome under its
  *   status, and the placeholder is the one-line form (`JobOutcome`'s plain sentence). A job still
@@ -75,18 +76,24 @@ export default function JobDetailLoading() {
 				</div>
 			</div>
 
-			{/* Log column — line number, timestamp, message, at decreasing fill. Full width, like
-			    the pane it stands in for: it is the one region that does not obey the column above. */}
-			<div aria-hidden className="flex-1 space-y-1.5 overflow-hidden bg-muted/20 p-6">
-				{["w-3/4", "w-2/3", "w-5/6", "w-1/2", "w-4/6", "w-3/5", "w-2/5", "w-3/4"].map(
-					(w, i) => (
-						<div key={i} className="flex gap-4">
-							<Skeleton className="h-3 w-8 shrink-0" />
-							<Skeleton className="h-3 w-[85px] shrink-0" />
-							<Skeleton className={`h-3 ${w}`} />
-						</div>
-					),
-				)}
+			{/* The log pane — its strip (the line count and the stream's state, at the page's own
+			    fixed height), then line number, timestamp, message at decreasing fill. Full width,
+			    like the pane it stands in for: the one region that does not obey the column above. */}
+			<div aria-hidden className="flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/20">
+				<div className={JOB_LOG_STRIP} data-slot="job-log-strip-skeleton">
+					<Skeleton className="h-3 w-16" />
+				</div>
+				<div className="flex-1 space-y-1.5 overflow-hidden p-6">
+					{["w-3/4", "w-2/3", "w-5/6", "w-1/2", "w-4/6", "w-3/5", "w-2/5", "w-3/4"].map(
+						(w, i) => (
+							<div key={i} className="flex gap-4">
+								<Skeleton className="h-3 w-12 shrink-0" />
+								<Skeleton className="h-3 w-[85px] shrink-0" />
+								<Skeleton className={`h-3 ${w}`} />
+							</div>
+						),
+					)}
+				</div>
 			</div>
 
 			{/* The detail sections, back inside the column: one row per title the page draws, each

@@ -6,7 +6,7 @@
 // boolean prop, which is all that crosses the boundary. It has to be one: it renders the list's real
 // filter bar, whose controls take handlers.
 
-import { JOBS_DEFAULT_RANGE_LABEL, JobsFilterBar } from "@/components/jobs/jobs-filter-bar";
+import { JobsFilterBar } from "@/components/jobs/jobs-filter-bar";
 import { DEFAULT_JOBS_FILTERS } from "@/components/jobs/jobs-query";
 import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";
 import { JOBS_DEFAULT_PRESET } from "@/lib/rpc/inputs/jobs";
@@ -46,9 +46,6 @@ export function JobsListSkeleton({ showProject = true }: { showProject?: boolean
 				onFilter={ignore}
 				onReset={ignore}
 				range={range}
-				rangeLabel={JOBS_DEFAULT_RANGE_LABEL}
-				onQuickRange={ignore}
-				onDateRange={ignore}
 				authorOptions={[]}
 				authorsLoading={false}
 				facets={undefined}
