@@ -29,9 +29,10 @@ export const metadata: Metadata = {
 const FOUNDER_PHOTO_URL = "/mkt-assets/about/borislav-borisov.jpg";
 const FOUNDER_PHOTO_FILE = join(process.cwd(), "public", "mkt-assets", "about", "borislav-borisov.jpg");
 
-/** Links under the founder's name. Both leave the site. */
+/** Links under the founder's name. All leave the site. */
 const FOUNDER_LINKS: { label: string; href: string }[] = [
 	{ label: "LinkedIn", href: "https://www.linkedin.com/in/bborisov1/" },
+	{ label: "GitHub", href: "https://github.com/bobikenobi12" },
 	{ label: "tovr.eu", href: "https://tovr.eu" },
 ];
 
