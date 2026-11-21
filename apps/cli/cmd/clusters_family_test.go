@@ -270,9 +270,7 @@ func TestClusterToken_RefusalsOwnTheirExitCodes(t *testing.T) {
 // TestClusterToken_DebugOutputNeverCarriesTheCredential: with request diagnostics switched on, the
 // credential is still only in the document on stdout.
 func TestClusterToken_DebugOutputNeverCarriesTheCredential(t *testing.T) {
-	// The environment switch is the one the API client reads for its request log today; the flag
-	// is passed as well, so the test keeps holding once the flag switches the same log on.
-	t.Setenv("ALETHIA_DEBUG", "api")
+	// --debug turns the API client's request log on (root.go hands it the Printer's stderr).
 	env := newKCEnv(t)
 	stdout, stderr, code := env.runCode("cluster", "token", kcClusterID, "--no-input", "--debug")
 	if code != 0 {
