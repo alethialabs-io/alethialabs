@@ -16,6 +16,9 @@ interface StartPageProps {
 	searchParams: Promise<{ plan?: string; trial?: string }>;
 }
 
+/** This page's own address with the trial intent — where sign-in and the terms return to. */
+const START_TRIAL_PATH ="/start?plan=team&trial=1";
+
 /**
  * Intent carrier for the public "Start free trial" CTA. After sign-in the visitor lands
  * here with `?plan=team&trial=1`; we resolve their active org and drop them straight into
@@ -35,6 +38,12 @@ interface StartPageProps {
  * `market_closed` sentence once said "the Pro trial is unaffected" directly under "We can't start
  * your trial checkout", with no way to that trial from here. The sentence no longer makes a claim
  * about a trial; `tests/app/start-page.test.tsx` renders the gate's REAL refusal to pin that.
+ *
+ * ONE REFUSAL IS NOT SHOWN, BECAUSE THE VISITOR CAN ANSWER IT HERE: `terms_not_accepted`. This route
+ * sits outside `(private)`, so the clickwrap gate never ran on the way in, and a brand-new account
+ * always met it — a dead end whose only button led to billing, which bounced through
+ * `/accept-terms` and lost the trial. It now goes to the terms with this page as `next`, so
+ * accepting them comes straight back here and on to Checkout.
  */
 export default async function StartPage({ searchParams }: StartPageProps) {
 	// Only Team has a self-serve trial today; the param is reserved for future plans.
@@ -42,9 +51,7 @@ export default async function StartPage({ searchParams }: StartPageProps) {
 
 	const userId = await getOwner();
 	if (!userId) {
-		redirect(
-			`/login?next=${encodeURIComponent("/start?plan=team&trial=1")}`,
-		);
+		redirect(`/login?next=${encodeURIComponent(START_TRIAL_PATH)}`);
 	}
 
 	const slug = await getActiveOrgSlug();
@@ -54,15 +61,24 @@ export default async function StartPage({ searchParams }: StartPageProps) {
 	// personal scope / missing permission / unconfigured Stripe — fall back to billing.
 	let checkoutUrl: string | null = null;
 	let refusal: string | null = null;
+	let termsPending = false;
 	if (isStripeConfigured()) {
 		try {
 			checkoutUrl = (await createCheckoutSession("team")).url;
 		} catch (err) {
 			// Called in-process from a server component, so the class survives — no server-action
 			// boundary sits between this page and the gate to erase it.
-			if (err instanceof PaidConversionNotAllowedError) refusal = err.message;
+			if (err instanceof PaidConversionNotAllowedError) {
+				if (err.reason === "terms_not_accepted") termsPending = true;
+				else refusal = err.message;
+			}
 			checkoutUrl = null;
 		}
+	}
+
+	// redirect() throws internally, so it must run outside the try above.
+	if (termsPending) {
+		redirect(`/accept-terms?next=${encodeURIComponent(START_TRIAL_PATH)}`);
 	}
 
 	if (refusal) {

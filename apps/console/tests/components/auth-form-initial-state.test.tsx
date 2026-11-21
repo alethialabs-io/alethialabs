@@ -53,7 +53,9 @@ describe("AuthForm — the ?provider= hint", () => {
 		h.social.mockResolvedValue({ data: null, error: { message: "nope" } });
 		render(<AuthForm mode="login" />);
 
-		expect(await screen.findByText("nope")).toBeTruthy();
+		// The form's own sentence, naming the provider by its label — never the server's text (A-08).
+		expect(await screen.findByText("We couldn’t start sign-in with GitHub — try again.")).toBeTruthy();
+		expect(screen.queryByText("nope")).toBeNull();
 		expect(screen.getByRole("button", { name: /^GitHub/ })).not.toBeDisabled();
 	});
 
