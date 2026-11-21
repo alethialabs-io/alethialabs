@@ -137,7 +137,7 @@ function LicenceAndHosted() {
 					title="Use the hosted service"
 					action={<ActionLink variant="outline" link={{ label: "See pricing", href: "/pricing" }} />}
 				>
-					Same product, operated by us: upgrades, backups and on-call included.
+					The same product, operated by us on our infrastructure.
 				</Card>
 			</div>
 		</Block>
