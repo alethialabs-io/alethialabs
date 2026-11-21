@@ -182,6 +182,11 @@ export const CATEGORIES: CatalogCategory[] = [
 			// could not confirm. That purchase is refused; nothing records it for the next one, so this alert
 			// is what a person acts on. Routed the same way.
 			ev("platform.payment_needs_support", "system.platform.payment_needs_support", "Customer payment needs manual review", "critical", true),
+			// Raised by the abuse ceilings (lib/abuse/platform-alert.ts, REL-L11): a cost guard whose count
+			// query failed and admitted the request anyway (the free job quota, the free AI pool), and the
+			// free AI pool reaching its global daily ceiling. Routed the same way, latched per process.
+			ev("platform.cost_guard_failed_open", "system.platform.cost_guard_failed_open", "Cost guard failed open", "critical", true),
+			ev("platform.free_ai_paused", "system.platform.free_ai_paused", "Free AI paused at its daily ceiling", "warning", true),
 		],
 	},
 	{

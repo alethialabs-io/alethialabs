@@ -17,9 +17,22 @@
 // (assertUsageAllowed), and still subject to the plan's concurrency cap at claim time
 // (programmables.sql org_managed_inflight) — this file exempts it from the daily COUNT only. Its
 // enqueue path (lib/kubeconfig-mint/request.ts) therefore does not call this guard.
+//
+// THE CAP is `abuseLimit("free_daily_jobs")` from the typed ceilings table (lib/abuse/limits.ts,
+// REL-S3): default 25, overridden by `ALETHIA_FREE_DAILY_JOB_QUOTA` with the table's rule (a positive
+// number is floored and used; anything else keeps the default). This file holds no copy of it.
+//
+// FAIL OPEN, LOUDLY (REL-L11, #6912). A count query that errors admits the job — a soft cost guard
+// must not wedge provisioning — and raises `system.platform.cost_guard_failed_open` on the platform
+// operator's org (lib/abuse/platform-alert.ts), so a quota that is silently not enforcing is seen.
 
 import "server-only";
 import { and, count, eq, gte, notInArray } from "drizzle-orm";
+import { abuseLimit } from "@/lib/abuse/limits";
+import {
+	COST_GUARD_FAILED_OPEN_EVENT,
+	raisePlatformAbuseAlert,
+} from "@/lib/abuse/platform-alert";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { getServiceDb } from "@/lib/db";
@@ -28,28 +41,19 @@ import { jobs, type ProvisionJobType } from "@/lib/db/schema";
 /** Job types a user may enqueue without them counting toward the daily quota (#5313). */
 export const QUOTA_EXEMPT_JOB_TYPES: readonly ProvisionJobType[] = ["MINT_KUBECONFIG"];
 
-/** Default trailing-24h cap on USER-initiated job enqueues for free/community orgs. */
-export const DEFAULT_FREE_DAILY_JOB_QUOTA = 25;
-
-/**
- * Configured trailing-24h user-job cap (env override `ALETHIA_FREE_DAILY_JOB_QUOTA`). Unset/blank
- * arrives as "" → Number("") = 0 (not > 0) → falls back to the default; a non-positive or
- * non-numeric override is likewise ignored rather than trusted.
- */
+/** The configured trailing-24h user-job cap for free/community orgs, read from the ceilings table. */
 export function freeDailyJobQuota(): number {
-	const raw = Number(process.env.ALETHIA_FREE_DAILY_JOB_QUOTA);
-	return Number.isFinite(raw) && raw > 0
-		? Math.floor(raw)
-		: DEFAULT_FREE_DAILY_JOB_QUOTA;
+	return abuseLimit("free_daily_jobs");
 }
 
 /**
  * Blocks a new USER-initiated enqueue when a free/community org has already enqueued
  * {@link freeDailyJobQuota} jobs in the trailing 24 hours, not counting {@link QUOTA_EXEMPT_JOB_TYPES}. Paid orgs (team/enterprise) are
  * unbounded here — their cost is bounded by the concurrency cap + global instance ceiling, and
- * overage bills. Fail-open: a billing- or count-query error must never wedge provisioning, so it
- * returns (allows) rather than throwing on infrastructure failure — this is a soft cost guard, not
- * a security control. Throws {@link UsageLimitError} (upgradable) when the cap is hit.
+ * overage bills. A billing-read error is read as `community` (capped). A count-query error must
+ * never wedge provisioning, so it returns (allows) rather than throwing — this is a soft cost guard,
+ * not a security control — and raises the fail-open platform alert. Throws {@link UsageLimitError}
+ * (upgradable) when the cap is hit.
  */
 export async function assertJobQuotaAllowed(orgId: string): Promise<void> {
 	// No scope, no count — can't attribute usage without an org, so fail open rather than guess.
@@ -77,8 +81,15 @@ export async function assertJobQuotaAllowed(orgId: string): Promise<void> {
 				),
 			);
 		used = Number(row?.c ?? 0);
-	} catch {
-		// Fail-open — never block a real user on a counter/DB hiccup.
+	} catch (err) {
+		// Fail-open — never block a real user on a counter/DB hiccup — but never silently.
+		raisePlatformAbuseAlert({
+			event: COST_GUARD_FAILED_OPEN_EVENT,
+			subject: "free_daily_jobs",
+			title: "Free job quota check failed open",
+			summary: `The free daily job quota could not count an organization's jobs, so a job was admitted without the ${cap}-a-day cap. Error: ${err instanceof Error ? err.message : String(err)}`,
+			severity: "critical",
+		});
 		return;
 	}
 
