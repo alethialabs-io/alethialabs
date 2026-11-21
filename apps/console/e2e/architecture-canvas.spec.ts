@@ -188,6 +188,21 @@ test.describe("Architecture canvas", () => {
 		await expect(rail(page)).toHaveAttribute("data-open", "true");
 	}
 
+	/**
+	 * Open one of the inspector's Settings groups by its title.
+	 *
+	 * On first view only a group holding a field the schema rejects is open (#6837), so a fresh,
+	 * valid node shows every group collapsed behind its value summary. The trigger is clicked only
+	 * when it reports `aria-expanded="false"`: a blind click would CLOSE a group that is already
+	 * open, and the test would then fail on a field it had just hidden.
+	 */
+	async function openGroup(page: Page, title: string) {
+		const trigger = rail(page).getByRole("button", { name: new RegExp(`^${title}`) }).first();
+		await expect(trigger).toBeVisible();
+		if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
+		await expect(trigger).toHaveAttribute("aria-expanded", "true");
+	}
+
 	/** Open the board's ⋯ menu and choose one of its items. */
 	async function moreMenu(page: Page, item: string | RegExp) {
 		await page.getByRole("button", { name: "More", exact: true }).click();
@@ -226,6 +241,7 @@ test.describe("Architecture canvas", () => {
 		// store, and for a while that let a card go on saying "deployable" while holding a value the
 		// deploy would reject (#4445). The buffer may defer the WRITE; it may not defer the truth, so
 		// a text edit that flips the field between valid and invalid commits with it.
+		await openGroup(page, "Schema");
 		await page.getByLabel("Partition key").fill("");
 
 		await expect(card.getByText("Needs setup", { exact: true })).toBeVisible();
@@ -263,6 +279,7 @@ test.describe("Architecture canvas", () => {
 		// Clicking a row opens that single secret's own card — collapsing the view never takes
 		// away the ability to configure ONE.
 		await page.getByRole("button", { name: /^secret/ }).first().click();
+		await openGroup(page, "General");
 		await expect(page.getByText("Auto-generate value")).toBeVisible();
 
 		// …and there's a route back up to the vault, so you're never stranded.
@@ -278,6 +295,7 @@ test.describe("Architecture canvas", () => {
 		// the Add palette's inline "Configure service" step used to be (#4589). `subscriptions` is a
 		// TopicSubscription[] column that has existed since the baseline migration with NO editor —
 		// you could name a topic and nothing else.
+		await openGroup(page, "Subscriptions");
 		await rail(page).getByRole("button", { name: /add a subscription/i }).click();
 
 		// A row appears carrying the fields the column actually holds.
@@ -337,6 +355,7 @@ test.describe("Architecture canvas", () => {
 		await expect(
 			rail(page).getByRole("heading", { name: "Environment settings" }),
 		).toBeVisible();
+		await openGroup(page, "Node sizing");
 		await expect(rail(page).getByText("vCPU per node")).toBeVisible();
 		await expect(rail(page).getByText(/Memory per node/)).toBeVisible();
 		await expect(page.locator("[data-slot=sheet-overlay]")).toHaveCount(0);
