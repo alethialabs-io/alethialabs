@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -24,12 +23,22 @@ to the project's default environment; pass --env for another).`,
 var stagedListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List an environment's staged changes",
+	Args:  cobra.NoArgs,
+	Long: `Lists the changes staged on an environment's canvas and not yet applied: each one's operation,
+the component it touches and when it was staged.
+
+Use it to see what the next apply of the environment would push. It only reads: staged changes are
+reviewed and applied from the staged-changes tray in the console. The environment defaults to the
+project's default one; pass --env for another.
+
+Name the project with --project; omit it on a terminal and you are asked which. With nobody to
+ask, it is required (exit 9). --output json prints the whole view, and --output csv the changes.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		outFmt := outputFormat(cmd)
+		p := printerFor(cmd)
 		rich := interactiveTable(cmd)
 		project, err := byoProject(cmd, token, rich)
 		if err != nil {
@@ -43,17 +52,17 @@ var stagedListCmd = &cobra.Command{
 				view, err = client.GetProjectStagedChanges(project, env)
 			})
 			if err != nil {
-				failf("Failed to list staged changes: %v", err)
+				fail(fmt.Errorf("list staged changes: %w", err))
 			}
 			if view == nil || len(view.Changes) == 0 {
-				ui.Muted("No staged changes.")
+				fmt.Fprintln(p.Out, ui.MutedStyle.Render("No staged changes."))
 				return
 			}
 			_ = ui.ShowTable(stagedColumns, stagedRows(view.Changes, ui.FormatTable), "staged changes")
 			return
 		}
-		if err := runStagedList(client, os.Stdout, outFmt, project, env); err != nil {
-			failf("Failed to list staged changes: %v", err)
+		if err := runStagedList(client, p.Out, p.Format, project, env); err != nil {
+			fail(fmt.Errorf("list staged changes: %w", err))
 		}
 	},
 }

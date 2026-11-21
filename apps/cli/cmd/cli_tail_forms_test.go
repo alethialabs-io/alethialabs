@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -61,108 +62,96 @@ func tailFormsDown(n int) *authFormScript {
 
 // ── alethia activity ──────────────────────────────────────────────────────────────────────────
 
-// TestTailForms_ActivityRowsComeFromTheLadderAndNotTheSeed drives the row-count select.
+// TestTailForms_ActivityOffersMoreRowsAfterAFullPage drives the "more activity?" select, which is
+// put AFTER the table and only when the page came back full.
 //
-// The seed is the flag's own default (50), which is the ladder's SECOND rung, so one cursor-down
-// lands on 100. Asserting 100 is what makes this test about the widget: a form that never opened,
-// or one whose Value pointer was bound to something else, answers 50.
-func TestTailForms_ActivityRowsComeFromTheLadderAndNotTheSeed(t *testing.T) {
+// For a limit of 50 the options are Done, then 100, 200 and 500, so one cursor-down lands on 100.
+// Asserting 100 is what makes this test about the widget: a form that never opened answers 0.
+func TestTailForms_ActivityOffersMoreRowsAfterAFullPage(t *testing.T) {
 	resetFlagsAroundTest(t)
 	tailFormsTTY(t)
 	scripts := authFormAnswer(t, tailFormsDown(1))
 
-	got, err := promptActivityRows(activityCmd, 50)
+	got, err := offerMoreActivity(50, 50)
 	if err != nil {
-		t.Fatalf("promptActivityRows: %v", err)
+		t.Fatalf("offerMoreActivity: %v", err)
 	}
 	if !scripts[0].ran {
-		t.Fatal("no form was opened, so the answer below came from the seed")
+		t.Fatal("no form was opened, so the answer below did not come from it")
 	}
 	if got != 100 {
-		t.Errorf("row count = %d, want 100 — one rung below the seeded 50 in %v",
-			got, activityRowLadder)
+		t.Errorf("next limit = %d, want 100 — the first rung above 50 in %v", got, activityRowLadder)
 	}
 }
 
-// TestTailForms_ActivityRowsAreNotAskedWhenNamed pins the flag half of the contract.
-func TestTailForms_ActivityRowsAreNotAskedWhenNamed(t *testing.T) {
+// TestTailForms_ActivityAsksNothingAfterAShortPage pins that a page shorter than the limit is the
+// whole log, so no question is put.
+func TestTailForms_ActivityAsksNothingAfterAShortPage(t *testing.T) {
 	resetFlagsAroundTest(t)
 	tailFormsTTY(t)
 	authFormNoForm(t)
-	if err := activityCmd.Flags().Set("limit", "7"); err != nil {
-		t.Fatalf("set --limit: %v", err)
-	}
-	got, err := promptActivityRows(activityCmd, 7)
-	if err != nil {
-		t.Fatalf("promptActivityRows: %v", err)
-	}
-	if got != 7 {
-		t.Errorf("row count = %d, want the flag's 7", got)
+	got, err := offerMoreActivity(50, 12)
+	if err != nil || got != 0 {
+		t.Errorf("offerMoreActivity(50, 12) = (%d, %v), want (0, nil)", got, err)
 	}
 }
 
-// TestTailForms_ActivityRowsHeadlessKeepsTheDefault pins the complete-contract rule: a defaulted
-// field is never a REFUSAL, so a pipeline that names nothing reads what it read before the form.
-func TestTailForms_ActivityRowsHeadlessKeepsTheDefault(t *testing.T) {
+// TestTailForms_ActivityHeadlessAsksNothing pins that a pipeline is never asked: the limit has a
+// default, so a defaulted field is never a refusal and never a question.
+func TestTailForms_ActivityHeadlessAsksNothing(t *testing.T) {
 	resetFlagsAroundTest(t)
 	tailFormsHeadless(t)
 	authFormNoForm(t)
-	got, err := promptActivityRows(activityCmd, 50)
-	if err != nil {
-		t.Fatalf("promptActivityRows: %v", err)
-	}
-	if got != 50 {
-		t.Errorf("row count = %d, want the default 50", got)
+	got, err := offerMoreActivity(50, 50)
+	if err != nil || got != 0 {
+		t.Errorf("offerMoreActivity headless = (%d, %v), want (0, nil)", got, err)
 	}
 }
 
-// TestTailForms_ActivityRowsPropagateADismissal pins that abandoning the picker stops the command
-// rather than silently reading the default — the user said "not this", not "the usual".
-func TestTailForms_ActivityRowsPropagateADismissal(t *testing.T) {
+// TestTailForms_ActivityMorePropagatesADismissal pins that abandoning the question stops the loop
+// with the error rather than reading it as an answer.
+func TestTailForms_ActivityMorePropagatesADismissal(t *testing.T) {
 	resetFlagsAroundTest(t)
 	tailFormsTTY(t)
 	prev := runHuhForm
 	runHuhForm = func(...*huh.Group) error { return errBoom }
 	t.Cleanup(func() { runHuhForm = prev })
 
-	got, err := promptActivityRows(activityCmd, 50)
-	if err == nil {
-		t.Fatal("a dismissed picker must not read as an answer")
-	}
-	if got != 50 {
-		t.Errorf("row count = %d, want the untouched 50 alongside the error", got)
+	if got, err := offerMoreActivity(50, 50); err == nil || got != 0 {
+		t.Errorf("a dismissed question = (%d, %v), want (0, an error)", got, err)
 	}
 }
 
-// TestTailForms_ActivityLadderAlwaysOffersTheCurrentValue is the arithmetic behind the seed.
-//
-// A select seeded with a value the options do not contain opens on the FIRST option, so enter would
-// silently change the row count. The merge is what stops that, and it has to hold for a value below
-// the ladder, above it, between two rungs, and equal to one.
-func TestTailForms_ActivityLadderAlwaysOffersTheCurrentValue(t *testing.T) {
-	for _, limit := range []int{1, 25, 60, 500, 5000} {
-		offered := activityRowsOffered(limit)
-		seen, dups := false, 0
-		for i, n := range offered {
-			if n == limit {
-				seen = true
-				dups++
-			}
-			if i > 0 && offered[i-1] >= n {
-				t.Errorf("limit %d: %v is not strictly ascending", limit, offered)
-				break
-			}
-		}
-		if !seen {
-			t.Errorf("limit %d: %v cannot offer the value the form is seeded with", limit, offered)
-		}
-		if dups > 1 {
-			t.Errorf("limit %d: %v offers it %d times", limit, offered, dups)
-		}
-		if len(offered) < len(activityRowLadder) {
-			t.Errorf("limit %d: %v dropped a rung of %v", limit, offered, activityRowLadder)
+// TestTailForms_ActivityRowsAboveTheLimit is the arithmetic behind the offer: only rungs larger than
+// what was just read, ascending, and nothing at all past the top rung.
+func TestTailForms_ActivityRowsAboveTheLimit(t *testing.T) {
+	for limit, want := range map[int][]int{
+		1:    {25, 50, 100, 200, 500},
+		50:   {100, 200, 500},
+		60:   {100, 200, 500},
+		500:  {},
+		5000: {},
+	} {
+		got := activityRowsAbove(limit)
+		if strings.Join(intStrings(got), ",") != strings.Join(intStrings(want), ",") {
+			t.Errorf("activityRowsAbove(%d) = %v, want %v", limit, got, want)
 		}
 	}
+	// Past the top rung there is nothing to offer, so no question is put even after a full page.
+	tailFormsTTY(t)
+	authFormNoForm(t)
+	if got, err := offerMoreActivity(500, 500); err != nil || got != 0 {
+		t.Errorf("offerMoreActivity(500, 500) = (%d, %v), want (0, nil)", got, err)
+	}
+}
+
+// intStrings renders ints for a comparison message.
+func intStrings(ns []int) []string {
+	out := make([]string, len(ns))
+	for i, n := range ns {
+		out[i] = strconv.Itoa(n)
+	}
+	return out
 }
 
 // ── alethia repo list ─────────────────────────────────────────────────────────────────────────
@@ -550,8 +539,9 @@ func TestTailForms_ADismissedFormStopsEachCommand(t *testing.T) {
 	runHuhForm = func(...*huh.Group) error { return errBoom }
 	t.Cleanup(func() { runHuhForm = prev })
 
+	// `activity` is not here: it asks nothing before printing, and its one question — more rows,
+	// after a full page — is dismissed in TestTailForms_ActivityMorePropagatesADismissal.
 	for _, args := range [][]string{
-		{"activity"},
 		{"repo", "list"},
 		{"classification", "show"},
 		// `open` asks only when the reference misses, so the dismissal needs a miss to reach.

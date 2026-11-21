@@ -30,6 +30,38 @@ work in any position.
 the project picker; with `--no-input`, with `-o json`, or with the output redirected to a file, it
 is required — a form drawn into a redirected stream would corrupt the document you are piping.
 
+## Output and exit codes
+
+**The result is on stdout, and everything else is on stderr.** With `--output json`, `attach`,
+`scan` and `detach` print one object:
+
+```json
+{
+  "id": "api",
+  "kind": "byo_chart",
+  "action": "queued",
+  "job": { "id": "0b7e6c55-2f0a-4d0e-9a3b-6c1d2e3f4a5b", "type": "CHART_SCAN" },
+  "dry_run": false,
+  "object": { "project": "shop", "env": "dev", "job_status": "QUEUED", "warnings": [] }
+}
+```
+
+`action` is `updated` for `attach` (an attach is an upsert, and the control plane does not say
+whether the id was new), `queued` for `scan` and `deleted` for `detach`. `job` is `null` unless the
+command queued a scan. The next step — the scan to run, the command that follows a queued job, the
+flags that reproduce an interactive run — is a line on stderr.
+
+**A refusal exits with the code of its kind.** stdout stays empty, and stderr says what happened
+and the command to run next.
+
+| Exit | Meaning on this page |
+|------|----------------------|
+| `6` | The project, environment or chart that you named does not exist |
+| `8` | A flag value is not valid, for example a `--set` without `=` or a values file that cannot be read |
+| `9` | A value or a confirmation is needed and nothing can ask for it: pass the flag the message names, or `--yes` |
+| `12` | `scan --wait` reached its `--timeout`. The scan is still running |
+| `13` | `scan --wait` saw the scan finish and fail |
+
 ## `alethia chart list`
 
 List the BYO Helm charts attached to a project environment.
@@ -88,7 +120,8 @@ answered once is the command you can commit to a repository.
 
 ### With `--no-input`
 
-Nothing is asked, and the chart id and `--repo` are required. Leaving one out fails and names it.
+Nothing is asked, and the chart id and `--repo` are required. Leaving one out exits `9`, names it,
+and sends nothing.
 Every field above has a flag, so any attach the form can perform, a script can perform.
 
 <Callout type="info">
@@ -99,7 +132,7 @@ Every field above has a flag, so any attach the form can perform, a script can p
 </Callout>
 
 Re-attaching the same id **updates** it, so this is also how you move a chart to a new ref. The
-success line echoes the id the server stored, because it slugifies what you send.
+result's `id` is the one the server stored, because it slugifies what you send.
 
 ## `alethia chart scan`
 
@@ -118,8 +151,20 @@ An attached chart is **not deployable until it has been scanned**: the scan rend
 the verdict the plan-time gate reads. Re-scan whenever the chart's repository moves.
 
 The id is optional. Omit it on a terminal and the environment's attached charts are offered, so
-nothing is copied out of `alethia chart list`. The scan is asynchronous: the queued job id is
-printed, and `alethia jobs logs --latest --follow` tails it without repeating that id back.
+nothing is copied out of `alethia chart list`. With nobody to ask, the id is required (exit `9`).
+
+The scan is a job. Without `--wait` the command returns once it is queued: the job id is in the
+result, and `alethia jobs logs --latest --follow` tails it without repeating that id back. With
+`--wait` the command follows the job to its end and reports its final status.
+
+| Flag | What it does |
+|---|---|
+| `--wait` | Wait for the scan to finish. The command exits `13` when the scan fails |
+| `--timeout` | With `--wait`, stop waiting after this long, for example `10m`. The scan keeps running and the command exits `12` |
+
+```bash
+alethia chart scan api -p shop -e dev --wait --timeout 10m
+```
 
 ## `alethia chart detach`
 
@@ -139,8 +184,8 @@ Like `chart scan`, the id is optional on a terminal and the attached charts are 
 <Callout type="warn">
   Detaching removes the chart's workloads from the cluster on the next sync. The command confirms
   first, and the confirmation **names the chart it resolved to** — including the one you picked from
-  the list. With `--no-input`, or when stdin is not a terminal, `--yes` is required and the command
-  fails without it rather than cancelling quietly.
+  the list. With `--no-input`, or when stdin is not a terminal, `--yes` is required: without it the
+  command exits `9` and detaches nothing, rather than cancelling quietly.
 </Callout>
 
 <Callout type="info">
