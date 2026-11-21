@@ -149,7 +149,7 @@ export async function getLatestReleases(limit = 3): Promise<ReleaseItem[]> {
 /** The latest `limit` blog posts from the blog's RSS feed, or [] when the feed cannot be read. */
 export async function getLatestPosts(limit = 4): Promise<PostItem[]> {
 	try {
-		const res = await fetch(`${SITE_URL}/blog/feed.xml`, { next: { revalidate: REVALIDATE_SECONDS } });
+		const res = await fetch(`${SITE_URL}/news/feed.xml`, { next: { revalidate: REVALIDATE_SECONDS } });
 		if (!res.ok) return [];
 		return parseRss(await res.text(), limit);
 	} catch {
