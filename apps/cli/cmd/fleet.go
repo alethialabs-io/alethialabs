@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
@@ -160,6 +161,10 @@ Omit the provider on a terminal and you are asked which cloud to configure.
 --enabled=false pauses a pool: the controller stops provisioning for it and drains its runners.
 That is confirmed first; with nobody to ask, pass --yes.
 
+--dry-run reports the update that would be sent and sends nothing; it asks no confirmation,
+because nothing is changed. --output json prints the result: the pool as it now is, or under
+--dry-run the request that would have been sent.
+
 This is the platform operator's command. It answers only on a self-managed control plane, to an
 organization owner or admin.`,
 	Args: cobra.MaximumNArgs(1),
@@ -187,6 +192,9 @@ func runFleetSetCmd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	p := printerFor(cmd)
+	if cmdmeta.DryRunRequested(cmd) {
+		return printDryRun(p, fleetDryRunResult(provider, update), fleetDryRunSentence(provider, update))
+	}
 	// Disabling a pool drains its runners (a capacity reduction) — confirm first. The
 	// provider is named, because "this pool" is not something a reader can check against
 	// what they meant, and with the picker the CLI may have chosen it.
@@ -219,6 +227,58 @@ func printFleetSet(p *Printer, result MutationResult) error {
 			)))
 		}
 	})
+}
+
+// fleetPoolRequest is the request `fleet set` sends, as a dry run reports it: the provider and
+// only the fields the caller set, under their wire names.
+type fleetPoolRequest struct {
+	Provider       string  `json:"provider"`
+	WarmMin        *int    `json:"warm_min,omitempty"`
+	Max            *int    `json:"max,omitempty"`
+	SlotsPerRunner *int    `json:"slots_per_runner,omitempty"`
+	Enabled        *bool   `json:"enabled,omitempty"`
+	Channel        *string `json:"channel,omitempty"`
+	Version        *string `json:"version,omitempty"`
+}
+
+// fleetDryRunResult is the result of `fleet set --dry-run`: the update that would have been sent.
+func fleetDryRunResult(provider string, update api.FleetPoolUpdate) MutationResult {
+	return MutationResult{
+		ID: provider, Kind: fleetPoolKind, Action: ResultUpdated,
+		Object: plannedRequest{Request: fleetPoolRequest{
+			Provider:       provider,
+			WarmMin:        update.WarmMin,
+			Max:            update.Max,
+			SlotsPerRunner: update.SlotsPerRunner,
+			Enabled:        update.Enabled,
+			Channel:        update.Channel,
+			Version:        update.Version,
+		}},
+	}
+}
+
+// fleetDryRunSentence names, for a person, the changes a dry run would have sent, in flag order.
+func fleetDryRunSentence(provider string, update api.FleetPoolUpdate) string {
+	var parts []string
+	if update.WarmMin != nil {
+		parts = append(parts, "warm-min "+strconv.Itoa(*update.WarmMin))
+	}
+	if update.Max != nil {
+		parts = append(parts, "max "+strconv.Itoa(*update.Max))
+	}
+	if update.SlotsPerRunner != nil {
+		parts = append(parts, "slots "+strconv.Itoa(*update.SlotsPerRunner))
+	}
+	if update.Enabled != nil {
+		parts = append(parts, enabledLabel(*update.Enabled))
+	}
+	if update.Channel != nil {
+		parts = append(parts, "channel "+ui.OrDash(*update.Channel))
+	}
+	if update.Version != nil {
+		parts = append(parts, "version "+ui.OrDash(*update.Version))
+	}
+	return fmt.Sprintf("Would set the %s pool to %s", provider, strings.Join(parts, ", "))
 }
 
 // resolveFleetProvider answers "which cloud?" from the positional argument or a picker.

@@ -33,7 +33,7 @@ const EMPTY_SUPPORT = {
 
 beforeEach(() => {
 	localStorage.clear();
-	useNotificationsStore.setState({ readJobIds: [], readSupportCaseIds: [] });
+	useNotificationsStore.setState({ readJobIds: [], supportAcks: [] });
 	useRecentJobsQuery.mockReset();
 	useSupportNotifications.mockReset();
 	useSupportNotifications.mockReturnValue(EMPTY_SUPPORT);

@@ -6,10 +6,19 @@
 // findings + coverage blind-spots + env waivers), Receipt (signed/unsigned + field grid +
 // sealed exception + download), and Drift (per-resource divergence). A tab without data
 // shows a purposeful empty state — the sheet can never open blank.
+//
+// The project name is the sheet's `SheetTitle` and the environment line its `SheetDescription`, so
+// the dialog is announced by name ("Evidence detail, payments, dialog") rather than as an unnamed
+// dialog, and the description is read with it.
 
 import Link from "next/link";
 import { ProviderIcon } from "@repo/ui/provider-icon";
-import { Sheet, SheetContent } from "@repo/ui/sheet";
+import {
+	Sheet,
+	SheetContent,
+	SheetDescription,
+	SheetTitle,
+} from "@repo/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
 import { cn } from "@repo/ui/utils";
 import type { EvidenceWaiver } from "@/lib/queries/evidence";
@@ -60,9 +69,9 @@ export function EvidenceDrawer({
 										className="text-text-tertiary"
 									/>
 								)}
-								<span className="font-display text-lg font-semibold tracking-tight text-text-primary">
+								<SheetTitle className="font-display text-lg font-semibold tracking-tight text-text-primary">
 									{row.projectName}
-								</span>
+								</SheetTitle>
 								<span
 									className={cn(
 										"font-mono text-ui-3xs uppercase tracking-[0.12em]",
@@ -72,7 +81,7 @@ export function EvidenceDrawer({
 									{stageShort(row.stage)}
 								</span>
 							</div>
-							<div className="mt-1.5 font-mono text-ui-xs text-text-tertiary">
+							<SheetDescription className="mt-1.5 font-mono text-ui-xs text-text-tertiary">
 								{row.environmentName} · {row.region}
 								{row.verify && (
 									<>
@@ -85,7 +94,7 @@ export function EvidenceDrawer({
 										</Link>
 									</>
 								)}
-							</div>
+							</SheetDescription>
 						</div>
 
 						<Tabs

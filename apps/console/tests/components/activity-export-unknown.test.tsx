@@ -96,6 +96,13 @@ describe("Activity export before the workspace store has loaded (#5864)", () => 
 		loadWorkspace(false);
 		const button = exportButton();
 		expect(button?.hasAttribute("disabled")).toBe(true);
-		expect(button?.getAttribute("title")).toMatch(/requires the Enterprise plan/i);
+		// The reason is the button's DESCRIPTION (DisabledReason, R6 E-09), not a `title` nobody can
+		// hover on a disabled button.
+		const describedBy = button?.getAttribute("aria-describedby") ?? "";
+		const reason = describedBy
+			.split(" ")
+			.map((id) => document.getElementById(id)?.textContent ?? "")
+			.join(" ");
+		expect(reason).toMatch(/requires the Enterprise plan/i);
 	});
 });

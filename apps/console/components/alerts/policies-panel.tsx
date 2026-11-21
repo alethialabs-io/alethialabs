@@ -5,9 +5,13 @@
 // Alerts hub · Policies panel. A master-detail: a rail of policies + an inline view/edit
 // detail. Creating a policy opens the guided PolicySheet (paged stepper); existing ones
 // edit in place (updatePolicy / togglePolicy / deletePolicy) using the shared EventMatrix,
-// ChannelRouting, PolicyConditions and ThrottleField. Mutation affordances are hidden when
-// the caller can't manage; security
-// (authz.*) events are locked without the advancedAlerting entitlement.
+// ChannelRouting, PolicyConditions and ThrottleField. A viewer who may not manage alerts sees
+// every mutation control disabled WITH its reason (`manageReason`), never a silently missing
+// button; security (authz.*) events are locked without the advancedAlerting entitlement.
+//
+// The inline editor is the same react-hook-form + zod form as the create sheet (policy-form.ts):
+// a missing name, event or channel is said inline under its field, not in a toast, and an
+// emptied name is refused rather than saved as a placeholder.
 //
 // An edit draft carries the id of the policy it was opened on. The selection is shared state that
 // other surfaces move, so save targets the draft's id, and a selection that moves off a policy
@@ -19,9 +23,10 @@
 // rows, its empty copy, a skeleton or a region error from the view's READ STATE, never from an
 // empty row list alone: "No policies yet" is an answer, and a read in flight has not given one.
 
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Bell, Plus, SearchX, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
+import { type UseFormReturn, useForm, useFormState, useWatch } from "react-hook-form";
 import {
 	deletePolicy,
 	type PolicyDTO,
@@ -30,13 +35,12 @@ import {
 } from "@/app/server/actions/alerts";
 import type { AlertsHub } from "@/components/alerts/alerts-hub";
 import { AlertsPanelSkeleton } from "@/components/alerts/alerts-skeleton";
+import { manageReason } from "@/components/errors/manage-gate";
 import { RegionError } from "@/components/errors/region-error";
+import { FormRootError } from "@/components/forms/form-root-error";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { alertsKeys } from "@/lib/query/use-alerts-query";
-import {
-	type ChannelBinding,
-	ChannelRouting,
-} from "@/components/alerts/channel-routing";
+import { ChannelRouting } from "@/components/alerts/channel-routing";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
 import { PoliciesFilterBar } from "@/components/alerts/alerts-filter-bar";
 import type { PoliciesView } from "@/components/alerts/alerts-filters";
@@ -52,12 +56,23 @@ import {
 	PolicyConditions,
 } from "@/components/alerts/policy-conditions";
 import { PolicySheet } from "@/components/alerts/policy-sheet";
-import { isSeverity, toMinSeverity } from "@/components/alerts/policy-shared";
+import {
+	NEW_POLICY_FORM,
+	normalizeBindings,
+	POLICY_EDIT,
+	POLICY_SERVER_FIELDS,
+	type PolicyFormValues,
+	policyFormFrom,
+	policyFormSchema,
+	toggleEventIn,
+	toPolicyInput,
+} from "@/components/alerts/policy-form";
+import { toMinSeverity } from "@/components/alerts/policy-shared";
 import { ThrottleField } from "@/components/alerts/throttle-field";
 import { useAlertPolicyFilters } from "@/lib/stores/use-alerts-filters";
 import { useAlertsSection } from "@/lib/stores/use-alerts-section";
-import type { PolicyInput } from "@/lib/validations/alerts";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
@@ -65,75 +80,6 @@ import { StatusBadge } from "@repo/ui/status-badge";
 import { Switch } from "@repo/ui/switch";
 import { Textarea } from "@repo/ui/textarea";
 import { cn } from "@repo/ui/utils";
-
-interface Draft {
-	/**
-	 * The policy this draft was opened on. Save writes to this id and to no other: the selection
-	 * lives in a store that the Channels panel's cross-link and the list itself can both move, so
-	 * "the selected policy" at save time is not a statement about which policy was being edited.
-	 */
-	policyId: string;
-	name: string;
-	description: string;
-	events: Set<string>;
-	channels: ChannelBinding[];
-	minSeverity: string;
-	project_ids: string[];
-	job_types: string[];
-	resource_types: string[];
-	actions: string[];
-	throttle: number;
-}
-
-/** A fresh edit draft of `p`, carrying `p`'s id. */
-function draftFrom(p: PolicyDTO): Draft {
-	return {
-		policyId: p.id,
-		name: p.name,
-		description: p.description ?? "",
-		events: new Set(p.event_patterns),
-		channels: p.channels.map((c) => ({
-			id: c.id,
-			min_severity: c.minSeverity ?? undefined,
-		})),
-		minSeverity: p.match.min_severity ?? "any",
-		project_ids: p.match.project_ids ?? [],
-		job_types: p.match.job_types ?? [],
-		resource_types: p.match.resource_types ?? [],
-		actions: p.match.actions ?? [],
-		throttle: p.throttle_seconds,
-	};
-}
-
-/** Two lists hold the same values in the same order. */
-function sameList(a: readonly string[], b: readonly string[]): boolean {
-	return a.length === b.length && a.every((x, i) => x === b[i]);
-}
-
-/**
- * Whether an edit draft differs from the policy it was opened on — what enables Save (#6125). The
- * event set is compared as a set (toggling an event off and on again is not an edit); everything
- * else as it is ordered in the editor.
- */
-function draftIsDirty(draft: Draft, policy: PolicyDTO): boolean {
-	const base = draftFrom(policy);
-	return (
-		draft.name !== base.name ||
-		draft.description !== base.description ||
-		draft.events.size !== base.events.size ||
-		[...draft.events].some((e) => !base.events.has(e)) ||
-		!sameList(
-			draft.channels.map((c) => `${c.id}:${c.min_severity ?? ""}`),
-			base.channels.map((c) => `${c.id}:${c.min_severity ?? ""}`),
-		) ||
-		draft.minSeverity !== base.minSeverity ||
-		!sameList(draft.project_ids, base.project_ids) ||
-		!sameList(draft.job_types, base.job_types) ||
-		!sameList(draft.resource_types, base.resource_types) ||
-		!sameList(draft.actions, base.actions) ||
-		draft.throttle !== base.throttle
-	);
-}
 
 interface PoliciesPanelProps {
 	hub: AlertsHub;
@@ -148,16 +94,27 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 	const selectedId = useAlertsSection((s) => s.selectedPolicyId);
 	const setSelectedId = useAlertsSection((s) => s.setSelectedPolicyId);
 
-	// Editing IS having a draft — there is no separate flag to fall out of step with it.
-	const [draft, setDraft] = useState<Draft | null>(null);
+	// The policy being edited. Editing IS having this id — there is no separate flag to fall out
+	// of step with it. The draft itself is the form's values, and they belong to this id only.
+	const [editingId, setEditingId] = useState<string | null>(null);
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const [deleteTarget, setDeleteTarget] = useState<PolicyDTO | null>(null);
 	const [disableTarget, setDisableTarget] = useState<PolicyDTO | null>(null);
+	const reason = manageReason(hub);
+
+	// The same form as the create sheet (policy-form.ts): one schema, inline field errors.
+	const form = useForm<PolicyFormValues>({
+		resolver: zodResolver(policyFormSchema),
+		defaultValues: NEW_POLICY_FORM,
+	});
+	// Read during render: react-hook-form tracks `isDirty` only for a component that reads it.
+	const formDirty = form.formState.isDirty;
 
 	const update = useActionMutation(updatePolicy, {
 		invalidates: alertsKeys(),
 		successMessage: "Policy saved",
-		onSuccess: () => setDraft(null),
+		onSuccess: () => setEditingId(null),
+		form: { instance: form, fields: POLICY_SERVER_FIELDS },
 	});
 	const toggle = useActionMutation(togglePolicy, {
 		invalidates: alertsKeys(),
@@ -174,11 +131,10 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 
 	const selected =
 		policies.find((p) => p.id === selectedId) ?? policies[0] ?? null;
-	// The draft's own policy, found by the id the draft carries — never by the selection.
+	// The draft's own policy, found by the id the edit carries — never by the selection.
 	const draftPolicy =
-		draft === null ? null : (policies.find((p) => p.id === draft.policyId) ?? null);
-	const dirty =
-		draft !== null && draftPolicy !== null && draftIsDirty(draft, draftPolicy);
+		editingId === null ? null : (policies.find((p) => p.id === editingId) ?? null);
+	const dirty = draftPolicy !== null && formDirty;
 	// The selection moved off the policy being edited while the draft holds unsaved edits. The
 	// selection can move from outside this panel (a channel's "Used by" link), so this cannot be
 	// asked before the move; instead the detail HOLDS on the draft's policy and the question is
@@ -188,11 +144,10 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 	// A draft with nothing to lose does not outlive its policy being shown: the selection moved
 	// off it, or the policy left the list. Dropped during render, so no frame pairs it with
 	// another policy. Not while the list is unanswered — `[]` then does not mean "gone".
-	if (draft !== null && !held && hub.policiesKnown && selected?.id !== draft.policyId) {
-		setDraft(null);
+	if (editingId !== null && !held && hub.policiesKnown && selected?.id !== editingId) {
+		setEditingId(null);
 	}
-	const activeDraft =
-		draft !== null && shown !== null && draft.policyId === shown.id ? draft : null;
+	const editingShown = editingId !== null && shown !== null && editingId === shown.id;
 	const { rows, facets, stale } = view;
 	const resetFilters = useAlertPolicyFilters((s) => s.reset);
 	// One batched query hydrates every rail row's classification chips.
@@ -201,59 +156,24 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 		policies.map((p) => p.id),
 	);
 
-	const patch = (p: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...p } : d));
-	const toggleEvent = (key: string) =>
-		setDraft((d) => {
-			if (!d) return d;
-			const events = new Set(d.events);
-			events.has(key) ? events.delete(key) : events.add(key);
-			return { ...d, events };
-		});
 	const startEdit = () => {
 		if (!selected) return;
-		setDraft(draftFrom(selected));
+		form.reset(policyFormFrom(selected));
+		setEditingId(selected.id);
 		// Pin the selection. `selected` may be the first-row fallback of a null selection, and a
 		// fallback follows the list: a new first row would otherwise read as a selection change.
 		setSelectedId(selected.id);
 	};
-	const cancel = () => setDraft(null);
+	const cancel = () => setEditingId(null);
 
-	const save = () => {
-		if (!draft || !draftPolicy || !selected || update.isPending) return;
+	const save = form.handleSubmit((values) => {
+		if (editingId === null || !draftPolicy || !selected) return;
 		// Refused unless the selection still names the draft's policy — while it does not, the
 		// discard question is on screen and is the only thing to answer.
-		if (selected.id !== draft.policyId) return;
-		if (draft.events.size === 0) return toast.error("Pick at least one event.");
-		if (draft.channels.length === 0)
-			return toast.error("Bind at least one channel.");
-		const input: PolicyInput = {
-			name: draft.name.trim() || "Untitled policy",
-			description: draft.description.trim() || undefined,
-			event_patterns: [...draft.events],
-			channels: draft.channels.map((b) => ({
-				id: b.id,
-				min_severity:
-					b.min_severity && isSeverity(b.min_severity) ? b.min_severity : undefined,
-			})),
-			match: {
-				...(isSeverity(draft.minSeverity)
-					? { min_severity: draft.minSeverity }
-					: {}),
-				...(draft.project_ids.length ? { project_ids: draft.project_ids } : {}),
-				...(draft.job_types.length ? { job_types: draft.job_types } : {}),
-				...(draft.resource_types.length
-					? { resource_types: draft.resource_types }
-					: {}),
-				...(draft.actions.length ? { actions: draft.actions } : {}),
-			},
-			severity: "warning",
-			throttle_seconds: draft.throttle,
-			escalate: false,
-			recipient: undefined,
-			enabled: draftPolicy.enabled,
-		};
-		update.mutate({ ...input, id: draft.policyId });
-	};
+		if (selected.id !== editingId) return;
+		// `enabled` is the policy's CURRENT state: the switch is its own write, not part of the edit.
+		update.submit({ ...toPolicyInput(values), enabled: draftPolicy.enabled, id: editingId });
+	});
 
 	// The mutation itself, split from the click handler so the confirm path can reach it.
 	const applyEnabled = (p: PolicyDTO, next: boolean) => {
@@ -270,10 +190,13 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 		else applyEnabled(p, true);
 	};
 
-	const newPolicyBtn = canManage && (
-		<Button size="sm" onClick={() => setSheetOpen(true)}>
-			<Plus className="mr-1 size-3.5" /> New policy
-		</Button>
+	// Rendered for every viewer; a viewer who may not create one is told why on the button.
+	const newPolicyBtn = (
+		<DisabledReason reason={reason}>
+			<Button size="sm" onClick={() => setSheetOpen(true)}>
+				<Plus className="mr-1 size-3.5" /> New policy
+			</Button>
+		</DisabledReason>
 	);
 
 	return (
@@ -290,8 +213,8 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 					// the whole Policies region.
 					level={3}
 					title="No policies yet"
-					description={`A policy watches a set of events and routes matches to your channels.${canManage ? " Create one to start." : ""}`}
-					action={canManage ? newPolicyBtn : undefined}
+					description="A policy watches a set of events and routes matches to your channels. Create one to start."
+					action={newPolicyBtn}
 				/>
 			) : (
 				<>
@@ -397,13 +320,12 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 									// carried into the detail of the next.
 									key={shown.id}
 									policy={shown}
-									draft={activeDraft}
+									form={form}
+									editing={editingShown}
 									saving={update.isPending}
 									dirty={dirty}
 									togglePending={toggle.isPending}
 									hub={hub}
-									patch={patch}
-									toggleEvent={toggleEvent}
 									onStartEdit={startEdit}
 									onCancel={cancel}
 									onSave={save}
@@ -437,10 +359,10 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 				confirmLabel="Discard changes"
 				// Keep editing: back to the policy being edited, draft intact.
 				onKeep={() => {
-					if (draft) setSelectedId(draft.policyId);
+					if (editingId !== null) setSelectedId(editingId);
 				}}
 				// The selection has already moved; dropping the draft is what lets it through.
-				onDiscard={() => setDraft(null)}
+				onDiscard={() => setEditingId(null)}
 			/>
 
 			<ConfirmAction
@@ -472,16 +394,16 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 
 interface DetailProps {
 	policy: PolicyDTO;
-	/** The edit draft OF THIS POLICY, or null when it is only being viewed. */
-	draft: Draft | null;
+	/** The panel's edit form. Its values are THIS policy's draft only while `editing` is true. */
+	form: UseFormReturn<PolicyFormValues>;
+	/** This policy is being edited (the form holds its draft); false when it is only viewed. */
+	editing: boolean;
 	saving: boolean;
 	/** The draft differs from the saved policy — Save does nothing until it does. */
 	dirty: boolean;
 	/** The enable switch's write is in flight. */
 	togglePending: boolean;
 	hub: AlertsHub;
-	patch: (p: Partial<Draft>) => void;
-	toggleEvent: (key: string) => void;
 	onStartEdit: () => void;
 	onCancel: () => void;
 	onSave: () => void;
@@ -490,16 +412,27 @@ interface DetailProps {
 	onOpenChannel: (id?: string) => void;
 }
 
+/** The draft fields the detail renders from while editing (name and description are inputs). */
+const DETAIL_WATCHED = [
+	"event_patterns",
+	"channels",
+	"min_severity",
+	"project_ids",
+	"job_types",
+	"resource_types",
+	"actions",
+	"throttle_seconds",
+] as const;
+
 /** Inline view/edit of one existing policy. */
 function PolicyDetail({
 	policy,
-	draft,
+	form,
+	editing: ed,
 	saving,
 	dirty,
 	togglePending,
 	hub,
-	patch,
-	toggleEvent,
 	onStartEdit,
 	onCancel,
 	onSave,
@@ -507,37 +440,46 @@ function PolicyDetail({
 	onDelete,
 	onOpenChannel,
 }: DetailProps) {
-	const { categories, channels, conditionOptions, canManage, advancedAlerting } = hub;
-	const ed = draft !== null;
-
-	const events = ed ? [...draft.events] : policy.event_patterns;
-	const channelBindings: ChannelBinding[] = ed
-		? draft.channels
-		: policy.channels.map((c) => ({
-				id: c.id,
-				min_severity: c.minSeverity ?? undefined,
-			}));
-	const conditions: ConditionsValue = ed
+	const { categories, channels, conditionOptions, advancedAlerting } = hub;
+	const reason = manageReason(hub);
+	const [
+		eventPatterns,
+		boundChannels,
+		minSeverity,
+		projectIds,
+		jobTypes,
+		resourceTypes,
+		actions,
+		throttleSeconds,
+	] = useWatch({ control: form.control, name: DETAIL_WATCHED });
+	const { errors } = useFormState({ control: form.control });
+	// What the detail shows: the draft while editing, the saved policy otherwise.
+	const values: Omit<PolicyFormValues, "name" | "description" | "enabled"> = ed
 		? {
-				min_severity: toMinSeverity(draft.minSeverity),
-				project_ids: draft.project_ids,
-				job_types: draft.job_types,
-				resource_types: draft.resource_types,
-				actions: draft.actions,
+				event_patterns: eventPatterns,
+				channels: boundChannels,
+				min_severity: minSeverity,
+				project_ids: projectIds,
+				job_types: jobTypes,
+				resource_types: resourceTypes,
+				actions,
+				throttle_seconds: throttleSeconds,
 			}
-		: {
-				min_severity: policy.match.min_severity ?? "any",
-				project_ids: policy.match.project_ids ?? [],
-				job_types: policy.match.job_types ?? [],
-				resource_types: policy.match.resource_types ?? [],
-				actions: policy.match.actions ?? [],
-			};
-	const throttle = ed ? draft.throttle : policy.throttle_seconds;
-	const name = ed ? draft.name : policy.name;
-	const description = ed ? draft.description : (policy.description ?? "");
+		: policyFormFrom(policy);
+
+	const conditions: ConditionsValue = {
+		min_severity: toMinSeverity(values.min_severity),
+		project_ids: values.project_ids,
+		job_types: values.job_types,
+		resource_types: values.resource_types,
+		actions: values.actions,
+	};
+	const throttle = values.throttle_seconds;
 	const totalEv = categories.reduce((n, c) => n + c.events.length, 0);
 	const throttleLabel =
 		throttle <= 0 ? "Every event" : `${Math.round(throttle / 60)} min`;
+	const nameId = `policy-name-${policy.id}`;
+	const nameErrorId = `${nameId}-error`;
 
 	return (
 		<div className="overflow-hidden rounded-xl border border-border/60 bg-background shadow-sm">
@@ -550,24 +492,30 @@ function PolicyDetail({
 					<div className="min-w-0 space-y-1.5">
 						<div className="flex flex-wrap items-center gap-2.5">
 							{ed ? (
-								<>
+								<div className="space-y-1">
 									{/* Visually hidden for the same reason as the channel detail's twin:
 									    the field's own text is this panel's heading, and a placeholder
 									    is not a label. */}
-									<Label htmlFor={`policy-name-${policy.id}`} className="sr-only">
+									<Label htmlFor={nameId} className="sr-only">
 										Policy name
 									</Label>
 									<Input
-										id={`policy-name-${policy.id}`}
-										value={name}
-										onChange={(e) => patch({ name: e.target.value })}
+										id={nameId}
 										placeholder="Policy name"
+										aria-invalid={errors.name ? true : undefined}
+										aria-describedby={errors.name ? nameErrorId : undefined}
 										className="h-8 w-64 font-semibold"
+										{...form.register("name")}
 									/>
-								</>
+									{errors.name && (
+										<p id={nameErrorId} className="text-destructive text-xs">
+											{errors.name.message}
+										</p>
+									)}
+								</div>
 							) : (
 								<span className="font-display font-semibold text-lg tracking-tight">
-									{name}
+									{policy.name}
 								</span>
 							)}
 							{policy.is_security && (
@@ -580,15 +528,14 @@ function PolicyDetail({
 							<Textarea
 								aria-label="Policy description"
 								rows={2}
-								value={description}
-								onChange={(e) => patch({ description: e.target.value })}
 								placeholder="What this policy watches and why"
 								className="text-xs"
+								{...form.register("description")}
 							/>
 						) : (
-							description && (
+							policy.description && (
 								<p className="max-w-prose text-muted-foreground text-xs leading-relaxed">
-									{description}
+									{policy.description}
 								</p>
 							)
 						)}
@@ -596,7 +543,7 @@ function PolicyDetail({
 						<ClassificationControl
 							kind="alert_rule"
 							id={policy.id}
-							canEdit={canManage}
+							canEdit={hub.canManage}
 							className="pt-1"
 						/>
 					</div>
@@ -604,41 +551,45 @@ function PolicyDetail({
 				<div className="flex flex-none items-center gap-2">
 					<StatusBadge {...policyBadge(policy)} className="text-ui-2xs" />
 					{/* Named in both states — the name is the control, the state is `aria-checked`. */}
-					<Switch
-						aria-label="Enabled"
-						checked={policy.enabled}
-						disabled={!canManage || ed || togglePending}
-						onCheckedChange={(c) => onToggleEnabled(policy, c)}
-					/>
-					{canManage &&
-						(ed ? (
-							<>
-								<Button
-									variant="ghost"
-									size="sm"
-									onClick={onCancel}
-									disabled={saving}
-								>
-									Cancel
-								</Button>
-								<Button size="sm" onClick={onSave} disabled={saving || !dirty}>
-									{saving ? "Saving…" : "Save"}
-								</Button>
-							</>
-						) : (
+					<DisabledReason reason={reason}>
+						<Switch
+							aria-label="Enabled"
+							checked={policy.enabled}
+							disabled={ed || togglePending}
+							onCheckedChange={(c) => onToggleEnabled(policy, c)}
+						/>
+					</DisabledReason>
+					{ed ? (
+						<>
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={onCancel}
+								disabled={saving}
+							>
+								Cancel
+							</Button>
+							<Button size="sm" onClick={onSave} disabled={saving || !dirty}>
+								{saving ? "Saving…" : "Save"}
+							</Button>
+						</>
+					) : (
+						<DisabledReason reason={reason}>
 							<Button size="sm" variant="outline" onClick={onStartEdit}>
 								Edit policy
 							</Button>
-						))}
+						</DisabledReason>
+					)}
 				</div>
 			</div>
+			{ed && <FormRootError form={form} className="rounded-none border-x-0 border-t-0" />}
 
 			{/* meta */}
 			<div className="flex flex-wrap border-b border-border/60">
-				<MetaCell k="Events" v={`${events.length} of ${totalEv}`} />
+				<MetaCell k="Events" v={`${values.event_patterns.length} of ${totalEv}`} />
 				<MetaCell
 					k="Routes to"
-					v={`${channelBindings.length} ${channelBindings.length === 1 ? "channel" : "channels"}`}
+					v={`${values.channels.length} ${values.channels.length === 1 ? "channel" : "channels"}`}
 				/>
 				<MetaCell k="Throttle" v={throttleLabel} />
 			</div>
@@ -650,16 +601,25 @@ function PolicyDetail({
 						Trigger · events
 					</span>
 					<span className="ml-auto font-mono text-ui-2xs text-muted-foreground">
-						{events.length} selected
+						{values.event_patterns.length} selected
 					</span>
 				</div>
 				<EventMatrix
 					categories={categories}
-					selected={events}
-					onToggle={toggleEvent}
+					selected={values.event_patterns}
+					onToggle={(key) =>
+						form.setValue(
+							"event_patterns",
+							toggleEventIn(form.getValues("event_patterns"), key),
+							POLICY_EDIT,
+						)
+					}
 					advancedAlerting={advancedAlerting}
 					editable={ed}
 				/>
+				{ed && errors.event_patterns && (
+					<p className="text-destructive text-xs">{errors.event_patterns.message}</p>
+				)}
 			</div>
 
 			{/* routing */}
@@ -678,11 +638,16 @@ function PolicyDetail({
 				</div>
 				<ChannelRouting
 					channels={channels}
-					value={channelBindings}
-					onChange={(next) => patch({ channels: next })}
+					value={values.channels}
+					onChange={(next) =>
+						form.setValue("channels", normalizeBindings(next), POLICY_EDIT)
+					}
 					editable={ed}
 					onGoChannels={() => onOpenChannel()}
 				/>
+				{ed && errors.channels && (
+					<p className="text-destructive text-xs">{errors.channels.message}</p>
+				)}
 			</div>
 
 			{/* conditions */}
@@ -694,15 +659,13 @@ function PolicyDetail({
 					options={conditionOptions}
 					editable={ed}
 					value={conditions}
-					onChange={(c) =>
-						patch({
-							minSeverity: c.min_severity,
-							project_ids: c.project_ids,
-							job_types: c.job_types,
-							resource_types: c.resource_types,
-							actions: c.actions,
-						})
-					}
+					onChange={(c) => {
+						form.setValue("min_severity", c.min_severity, POLICY_EDIT);
+						form.setValue("project_ids", c.project_ids, POLICY_EDIT);
+						form.setValue("job_types", c.job_types, POLICY_EDIT);
+						form.setValue("resource_types", c.resource_types, POLICY_EDIT);
+						form.setValue("actions", c.actions, POLICY_EDIT);
+					}}
 				/>
 			</div>
 
@@ -716,7 +679,9 @@ function PolicyDetail({
 				{ed ? (
 					<ThrottleField
 						value={throttle}
-						onChange={(s) => patch({ throttle: s })}
+						onChange={(seconds) =>
+							form.setValue("throttle_seconds", seconds, POLICY_EDIT)
+						}
 					/>
 				) : (
 					<p className="text-muted-foreground text-sm">{throttleLabel}</p>
@@ -724,16 +689,18 @@ function PolicyDetail({
 			</div>
 
 			{/* footer */}
-			{canManage && !ed && (
+			{!ed && (
 				<div className="flex items-center justify-between border-t border-border/60 bg-muted/20 px-5 py-3">
 					<span className="text-muted-foreground text-xs">
 						{policy.is_security
 							? "Security policy · PDP-sourced events"
 							: "Operational policy"}
 					</span>
-					<Button variant="ghost" size="sm" onClick={() => onDelete(policy)}>
-						<Trash2 className="mr-1.5 size-3.5" /> Delete policy
-					</Button>
+					<DisabledReason reason={reason}>
+						<Button variant="ghost" size="sm" onClick={() => onDelete(policy)}>
+							<Trash2 className="mr-1.5 size-3.5" /> Delete policy
+						</Button>
+					</DisabledReason>
 				</div>
 			)}
 		</div>
