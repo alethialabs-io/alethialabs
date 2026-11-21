@@ -29,6 +29,10 @@ describe("releaseSummary", () => {
 		expect(releaseSummary(body)).toBe("Retry the state upload on a 503");
 	});
 
+	it("drops a summary that is only a commit hash", () => {
+		expect(releaseSummary("* 7ed185b0e026edb563adea02e60d92af95ec231b")).toBe("");
+	});
+
 	it("returns an empty string when the body has no bullet", () => {
 		expect(releaseSummary("## Nothing listed")).toBe("");
 	});
