@@ -62,6 +62,11 @@ vi.mock("@/components/settings/upgrade/feature-upsell", () => ({
 const { currentActor } = vi.hoisted(() => ({ currentActor: vi.fn() }));
 vi.mock("@/lib/authz/guard", () => ({ currentActor }));
 vi.mock("@/app/server/actions/resolve", () => ({ resolveProjectId: vi.fn(async () => "proj-1") }));
+// The org page asks the PDP, quietly, whether the viewer may add and revoke grants (R6 E-08).
+vi.mock("@/lib/authz", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz")>()),
+	getPdp: () => ({ can: async () => ({ allowed: true }) }),
+}));
 
 import ProjectAccessPage from "@/app/(private)/[org]/[project]/settings/access/page";
 import OrgAccessPage from "@/app/(private)/[org]/~/settings/access/page";

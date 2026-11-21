@@ -9,6 +9,7 @@ import {
 	isPeopleRead,
 	retryUnlessRefused,
 } from "@/components/settings/members/people-reads";
+import { getPdp } from "@/lib/authz";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { currentActor } from "@/lib/authz/guard";
 import { getQueryClient } from "@/lib/query/client";
@@ -29,6 +30,11 @@ export const metadata = pageMetadata({
  * grants (pristine, and for the link's filters) and the grant builder's options are prefetched
  * in-process through the read router, so the browser fetches nothing on mount. Both reads require
  * `member:view`; a viewer without it gets the no-access render on the first paint (`forbidden`).
+ *
+ * Whether the viewer may add and revoke grants is decided here too, with the question
+ * `assignGrant` and `revokeGrant` ask (`member:manage_members`), and asked QUIETLY — a viewer who may
+ * only read is not recorded as denied for opening the page. A control they cannot use is then
+ * disabled with its reason from the first paint (R6 E-08).
  */
 export default async function AccessPage({
 	searchParams,
@@ -36,7 +42,8 @@ export default async function AccessPage({
 	params: Promise<{ org: string }>;
 	searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-	const { customRoles } = getEntitlements(await currentActor());
+	const actor = await currentActor();
+	const { customRoles } = getEntitlements(actor);
 	if (!customRoles) return <AccessManager customRoles={false} />;
 
 	const filtered = accessQueryFromUrl(paramReader(await searchParams));
@@ -46,7 +53,12 @@ export default async function AccessPage({
 	// and alone: a viewer without `member:view` is refused there, once, and the filtered list and the
 	// builder's options — which would each record the same denial — are not asked at all.
 	const pristine = rpc.members.grants.queryOptions({ input: {}, retry: retryUnlessRefused });
-	await queryClient.prefetchQuery(pristine);
+	const [canManage] = await Promise.all([
+		getPdp()
+			.can(actor, "manage_members", { type: "member" })
+			.then((d) => d.allowed),
+		queryClient.prefetchQuery(pristine),
+	]);
 	const forbidden = isForbiddenRead(queryClient.getQueryState(pristine.queryKey)?.error);
 	if (!forbidden) {
 		await Promise.all([
@@ -59,7 +71,7 @@ export default async function AccessPage({
 
 	return (
 		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isPeopleRead })}>
-			<AccessManager customRoles forbidden={forbidden} />
+			<AccessManager customRoles forbidden={forbidden} canManage={canManage} />
 		</HydrationBoundary>
 	);
 }

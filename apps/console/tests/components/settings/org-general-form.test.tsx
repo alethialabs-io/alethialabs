@@ -311,7 +311,30 @@ describe("F050 — four renders, never confused", () => {
 	});
 });
 
+/**
+ * Answers the typed delete confirmation (CON-SM2 `destroy`): the organization's name, then Delete.
+ * Delete is disabled until the name matches, which the first case below pins.
+ */
+async function confirmDelete(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement): Promise<void> {
+	await user.type(within(dialog).getByRole("textbox"), "Acme");
+	await user.click(within(dialog).getByRole("button", { name: "Delete organization" }));
+}
+
 describe("delete organization", () => {
+	it("keeps Delete disabled until the organization's name is typed (R6 E-03 follow-up)", async () => {
+		const user = userEvent.setup();
+		renderOrgGeneral();
+		await user.click(screen.getByRole("button", { name: "Delete organization" }));
+		const dialog = await screen.findByRole("alertdialog");
+		const confirm = within(dialog).getByRole("button", { name: "Delete organization" });
+		expect(confirm).toBeDisabled();
+		await user.type(within(dialog).getByRole("textbox"), "Acm");
+		expect(confirm).toBeDisabled();
+		await user.type(within(dialog).getByRole("textbox"), "e");
+		expect(confirm).toBeEnabled();
+		expect(deleteOrganization).not.toHaveBeenCalled();
+	});
+
 	it("the confirmation states the live-environment rule before anything is sent (#6800)", async () => {
 		const user = userEvent.setup();
 		renderOrgGeneral();
@@ -321,7 +344,7 @@ describe("delete organization", () => {
 		expect(dialog).toHaveTextContent(
 			"An organization with a live or in-flight environment cannot be deleted: destroy those environments first.",
 		);
-		expect(dialog).toHaveTextContent("destroys nothing in the cloud");
+		expect(dialog).toHaveTextContent("Nothing is destroyed in your cloud accounts.");
 		expect(deleteOrganization).not.toHaveBeenCalled();
 	});
 
@@ -333,7 +356,7 @@ describe("delete organization", () => {
 		renderOrgGeneral();
 		await user.click(screen.getByRole("button", { name: "Delete organization" }));
 		const dialog = await screen.findByRole("alertdialog");
-		await user.click(within(dialog).getByRole("button", { name: "Delete organization" }));
+		await confirmDelete(user, dialog);
 
 		await waitFor(() => expect(toastError).toHaveBeenCalledWith(refusal));
 		expect(toastSuccess).not.toHaveBeenCalled();
@@ -345,7 +368,7 @@ describe("delete organization", () => {
 		renderOrgGeneral();
 		await user.click(screen.getByRole("button", { name: "Delete organization" }));
 		const dialog = await screen.findByRole("alertdialog");
-		await user.click(within(dialog).getByRole("button", { name: "Delete organization" }));
+		await confirmDelete(user, dialog);
 
 		await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
 		expect(deleteOrganization).toHaveBeenCalledTimes(1);
@@ -359,7 +382,7 @@ describe("delete organization", () => {
 		renderOrgGeneral(undefined, client);
 		await user.click(screen.getByRole("button", { name: "Delete organization" }));
 		const dialog = await screen.findByRole("alertdialog");
-		await user.click(within(dialog).getByRole("button", { name: "Delete organization" }));
+		await confirmDelete(user, dialog);
 		await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
 		expect(client.getQueryState(orpc.workspace.context.queryKey())?.isInvalidated).toBe(false);
 		expect(client.getQueryState(orpc.settings.org.queryKey())?.isInvalidated).toBe(false);
@@ -374,7 +397,7 @@ describe("delete organization", () => {
 		renderOrgGeneral();
 		await user.click(screen.getByRole("button", { name: "Delete organization" }));
 		const dialog = await screen.findByRole("alertdialog");
-		await user.click(within(dialog).getByRole("button", { name: "Delete organization" }));
+		await confirmDelete(user, dialog);
 
 		await waitFor(() => expect(toastError).toHaveBeenCalledWith("You don't have permission to do that."));
 		expect(push).not.toHaveBeenCalled();

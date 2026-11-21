@@ -47,30 +47,39 @@ export const ORG_PROFILE_ROWS = {
  */
 export const ORG_CONTROL_NOTES = {
 	slug: "Lowercase, numbers and hyphens.",
-	region: "Region migration requires a support request.",
+	region: "Shown to the CLI by alethia org settings.",
 } as const;
 
 /** The note in the Organization profile panel's Save band. */
 export const ORG_PROFILE_SAVE_NOTE = "Applies across the console";
 
-/** The Defaults panel's three rows and its Save band's note. */
+/**
+ * The Defaults panel's three rows and its Save band's note.
+ *
+ * WHAT THESE DO, SAID PLAINLY (R6 E-04). They are saved for the organization and the CLI reads them
+ * back (`alethia org settings`); creating a Project does not read them, and nothing places data or
+ * pins a Terraform version from them. The hints used to promise all three ("Residency for the
+ * control plane", "Pre-selected stage for newly planted Projects", "Pinned across runners") — copy
+ * that describes an effect nothing produces. Whether the panel is wired into project creation or
+ * removed for the beta is open; until then it says only what is true.
+ */
 export const ORG_DEFAULTS_ROWS = {
 	region: {
 		label: "Data region",
-		hint: "Residency for the control plane and Project state.",
+		hint: "The AWS region your organization prefers.",
 	},
 	defaultEnv: {
 		label: "Default Project environment",
-		hint: "Pre-selected stage for newly planted Projects.",
+		hint: "The stage your organization prefers new Projects to start in.",
 	},
 	terraformVersion: {
 		label: "Terraform version",
-		hint: "Pinned across runners unless a Project overrides it.",
+		hint: "The Terraform version your organization standardizes on.",
 	},
 } as const;
 
 /** The note in the Defaults panel's Save band. */
-export const ORG_DEFAULTS_SAVE_NOTE = "Applies to new resources only";
+export const ORG_DEFAULTS_SAVE_NOTE = "Saved for reference — new Projects don't apply these yet";
 
 /**
  * The Danger zone's two rows. The delete row's description names the org between `before` and
