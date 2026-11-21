@@ -1,0 +1,64 @@
+---
+title: Alethia opens its public beta on four clouds
+description: On January 31 the invite gate comes off. Alethia provisions infrastructure into your own account on AWS, GCP, Azure and Hetzner. This post says what works today, and what "beta" means for you.
+date: 2027-01-25
+author: Alethia Labs
+tags: [launch, beta, product]
+excerpt: On January 31 the invite gate comes off. Alethia provisions into your own account on AWS, GCP, Azure and Hetzner. Here is what works today, and what "beta" means.
+draft: true
+---
+
+On **January 31** we remove the invite gate, and anyone can sign up for Alethia. Until now a small group
+of teams used it by invitation. This week we publish one post a day. Each one covers one part of the
+product that already works. This first post gives the overview.
+
+## What Alethia does
+
+Alethia is a control plane for infrastructure in your own cloud account. You describe a project once,
+in the console or in a file. Alethia plans the change, shows you the plan, and applies it when you
+approve it. A runner executes the OpenTofu job. Your clusters, databases and buckets live in **your**
+account, not in ours.
+
+It runs on four clouds:
+
+| Cloud | What a cluster is | How Alethia signs in |
+| --- | --- | --- |
+| AWS | EKS | An IAM role you create, assumed with a short-lived OIDC token. No access key. |
+| GCP | GKE | Workload identity federation. No service-account key. |
+| Azure | AKS | A managed identity in your subscription, with a federated credential. No client secret. |
+| Hetzner | Talos Linux on Hetzner VMs | A project-scoped API token, encrypted at rest. Hetzner offers no federation. |
+
+You can revoke access at any time. On AWS, GCP and Azure you delete the role or the federation you
+created. On Hetzner you delete the token.
+
+## What one project can hold
+
+A project can hold 19 kinds of component: a cluster, a network, DNS, databases, caches, queues,
+buckets, secrets, a container registry and more. Every one of the four clouds backs all 19. Each
+cluster also gets ArgoCD, so application delivery runs through Git from the first deploy.
+
+## How we know it works
+
+Each cloud has real applies behind it, not screenshots. For each cloud we keep a committed record of a
+real run: the cluster came up, the nodes were ready, ArgoCD reported its applications healthy, and the
+run tore everything down again. The records live in the open repository, under
+[`demos/proofs/`](https://github.com/alethialabs-io/alethialabs/tree/dev/demos/proofs). Friday's post
+explains how that works.
+
+## What "beta" means
+
+Beta is a real word here, not a label for marketing:
+
+- **There is no uptime SLA.** We do not promise an uptime number during the beta.
+- **Things can change.** A command, a field or a screen can still change before general availability.
+- **We offer these four clouds only.** Code for other clouds exists in the repository, but we do not
+  offer a cloud until we test it as thoroughly as these four.
+- **The Hobby plan is free.** It covers your own projects on all four clouds.
+
+## Where to start
+
+- [Sign up](/signup) and connect one cloud account.
+- Or read [Get started](/docs/get-started) first.
+- The source is on [GitHub](https://github.com/alethialabs-io/alethialabs) under the AGPL.
+
+Tomorrow: how you design a project, read the plan, and apply it.
