@@ -8,10 +8,18 @@
 // it (`ProposalDiff`) and applies an accepted one (`applyProposal`). This holds WHICH board that is,
 // with the identity list and the out-of-band cards the workbench already holds for it.
 //
-// It is not a copy for the board to read. Nothing on the board reads it, nothing derives from it,
-// nothing persists it, and its value is the very objects the workbench's providers hold — the same
-// arrays, not a rebuilt list — so it cannot disagree with what the board draws. When the board
-// unmounts, it goes back to the board outside any workbench.
+// It is a pointer, not a copy for the board to read, and it is READ-ONLY to everything but its one
+// publisher:
+//   - the ONLY writer is `BoardSourcesProvider`, through `publishActiveCanvas`. Nothing else sets
+//     it, and nothing writes server data into the board through it — its `identities` and `others`
+//     are the very arrays the providers hold, not a rebuilt list, so they cannot disagree with what
+//     the board draws;
+//   - nothing on the board reads it, nothing derives from it, nothing persists it;
+//   - it is taken down when the provider unmounts AND when its scope changes (the publishing
+//     effect's cleanup runs before the next board is named), so a board that has left the screen
+//     is never read; it then names the board outside any workbench.
+// What the assistant panel does with the board it names is that board's own business: an accepted
+// proposal is applied through the board's commands (`applyProposal`), as a click on it would be.
 
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";

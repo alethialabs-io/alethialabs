@@ -4,10 +4,11 @@
 // The board's read hooks (#6764), rendered: what each returns, and — the reason the store was
 // split — which of them a drag leaves alone.
 
-import { act, renderHook } from "@testing-library/react";
+import { act, render, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
+import { activeCanvas } from "@/lib/canvas/store/active-canvas";
 import { board as outside, boardFor } from "@/lib/canvas/store/board";
 import {
 	BoardSourcesProvider,
@@ -360,5 +361,38 @@ describe("nodeIndex", () => {
 		const list = [projectNode(), databaseNode("orders")];
 		expect(nodeIndex(list)).toBe(nodeIndex(list));
 		expect(nodeIndex(list).get(DATABASE)?.id).toBe(DATABASE);
+	});
+});
+
+describe("the board on screen, for the assistant panel", () => {
+	/** The providers the canvas mounts for `scope`, with the out-of-band cards beside the board. */
+	function Canvas({ scope }: { scope: string }) {
+		return (
+			<CanvasStoreProvider scope={scope} identities={IDENTITIES}>
+				<BoardSourcesProvider others={OTHERS} iacOutputs={OUTPUTS}>
+					{null}
+				</BoardSourcesProvider>
+			</CanvasStoreProvider>
+		);
+	}
+
+	it("names the mounted board with its identities and cards, and nothing once it unmounts", () => {
+		const view = render(<Canvas scope={SCOPE} />);
+		expect(activeCanvas().board).toBe(board);
+		expect(activeCanvas().others).toBe(OTHERS);
+		expect(activeCanvas().identities).toBe(IDENTITIES);
+		view.unmount();
+		expect(activeCanvas().board).toBe(outside);
+		expect(activeCanvas().others).toEqual([]);
+		expect(activeCanvas().identities).toEqual([]);
+	});
+
+	it("follows a scope change: the board that left the screen is not named again", () => {
+		const view = render(<Canvas scope={SCOPE} />);
+		view.rerender(<Canvas scope="proj-1:env-b" />);
+		expect(activeCanvas().board).toBe(boardFor("proj-1:env-b"));
+		expect(activeCanvas().board).not.toBe(board);
+		view.unmount();
+		expect(activeCanvas().board).toBe(outside);
 	});
 });
