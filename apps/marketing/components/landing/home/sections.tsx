@@ -11,7 +11,7 @@ import {
 	Plate,
 } from "@repo/brand/site-sections";
 import { JOBS, JobsTable, Wrap } from "@repo/brand/site-primitives";
-import { CommandBlock } from "@repo/brand/command-block";
+import { CommandBlock } from "@repo/brand/site-command-block";
 
 import { VerifyReceipt } from "./verify-receipt";
 

@@ -19,8 +19,8 @@ export const metadata: Metadata = {
  * scroll-reveal wrapper. Served at /open-source by the marketing zone.
  */
 export default async function OpenSourcePage() {
-	// Fetched again for the section body; Next's fetch cache dedupes it with the
-	// call SiteShell makes for the header.
+	// The header no longer shows a star count, so this page is the one place
+	// that fetches it (cached hourly, `null` when GitHub does not answer).
 	const stars = await getGitHubStars();
 	return (
 		<SiteShell>

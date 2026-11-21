@@ -5,7 +5,7 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import { Button } from "@repo/ui/button";
 import { cloudListLabel } from "@repo/cloud-catalog";
-import { CommandBlock } from "@repo/brand/command-block";
+import { CommandBlock } from "@repo/brand/site-command-block";
 import { disp, Icon, type IconKey, mono, SecMark, Wrap } from "@repo/brand/site-primitives";
 import { formatStars, PageHero } from "@repo/brand/site-sections";
 
