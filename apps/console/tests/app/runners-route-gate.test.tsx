@@ -109,11 +109,19 @@ describe("the runners route's plan gate (F021)", () => {
 });
 
 describe("loading.tsx — shown before the gate is known", () => {
-	it("promises no shape: no skeleton, no grid, no table — only a busy region", () => {
+	it("on a hosted deployment promises no shape: no skeleton, no grid, no table — only a busy region", () => {
+		h.mode = "hosted";
 		const { container } = render(<RunnersLoading />);
 		expect(container.querySelector('[data-slot="skeleton"]')).toBeNull();
+		expect(container.querySelector("[data-skeleton]")).toBeNull();
 		expect(container.querySelector("table, [role=table], [role=grid]")).toBeNull();
-		expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+		expect(container.querySelector('[aria-busy="true"][data-slot="skeleton-root"]')).not.toBeNull();
 		expect(container.textContent).toBe("Loading runners");
+	});
+
+	it("on a self-managed deployment, which is never gated, draws the page's own skeleton with its Pools column", () => {
+		h.mode = "self-managed";
+		const { container } = render(<RunnersLoading />);
+		expect(container.querySelector('[data-skeleton="self"]')).not.toBeNull();
 	});
 });

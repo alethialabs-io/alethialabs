@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -16,48 +15,83 @@ import (
 var addonCmd = &cobra.Command{
 	Use:     "addon",
 	Aliases: []string{"addons"},
-	Short:   "Inspect a project's installed add-ons",
-	Long: `Add-ons are the marketplace OSS Helm charts (observability, databases, caches, …)
-installed into an environment via ArgoCD. List the add-ons installed in an environment (defaults
-to the project's default environment; pass --env for another).`,
+	Short:   "Enable, configure and inspect a project's catalog add-ons",
+	Long: `Add-ons are the marketplace's open-source Helm charts (observability, databases, caches and
+more), installed into an environment by ArgoCD.
+
+List them with "alethia addon list", enable or reconfigure one with "alethia addon enable", disable
+one with "alethia addon disable", and move a GitOps add-on to a newer catalog version with
+"alethia addon bump". --project and --env work on every subcommand; the environment defaults to the
+project's default.`,
 }
 
 var addonListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List the add-ons installed in a project environment",
+	Args:  cobra.NoArgs,
+	Long: `Lists the marketplace add-ons in one environment: whether each is enabled, its delivery mode,
+its version pin, whether the catalog offers a newer version, and how ArgoCD reports it (status,
+sync, health and the last sync).
+
+Use it to check that an add-on reached the cluster, or to find a security update. Each security
+update is followed by the exact command (a pin) or file (a GitOps install) that applies it.
+
+--output json prints the whole view, and --output csv the wire values of the columns.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
+		if err := runAddonListCmd(cmd); err != nil {
 			fail(err)
-		}
-		project, err := projectFromFlag(cmd, token)
-		if err != nil {
-			fail(err)
-		}
-		env, _ := cmd.Flags().GetString("env")
-		client := api.NewClient(token)
-		if interactiveTable(cmd) {
-			var view *api.ProjectAddons
-			runSpinner("Fetching add-ons...", func() {
-				view, err = client.GetProjectAddons(project, env)
-			})
-			if err != nil {
-				failf("Failed to list add-ons: %v", err)
-			}
-			if view == nil || len(view.Addons) == 0 {
-				ui.Muted("No add-ons installed.")
-				return
-			}
-			_ = ui.ShowTable(addonColumns, addonRows(view.Addons, ui.FormatTable), "add-ons")
-			for _, n := range addonSecurityNotices(view.Addons, project, env) {
-				ui.Warning(n)
-			}
-			return
-		}
-		if err := runAddonList(client, os.Stdout, outputFormat(cmd), project, env); err != nil {
-			failf("Failed to list add-ons: %v", err)
 		}
 	},
+}
+
+// addonKind is the kind an add-on result names.
+const addonKind = "addon"
+
+// projectOrAsk resolves the project a command of this family acts on: --project, or the picker on a
+// terminal. A picker that cannot open is the input-required refusal naming the flag.
+func projectOrAsk(cmd *cobra.Command, token string) (string, error) {
+	project, err := projectFromFlag(cmd, token)
+	if err != nil {
+		return "", flagRequired(err, "--project", "alethia project list")
+	}
+	return project, nil
+}
+
+// runAddonListCmd is `addon list` from the command line to the printed list.
+func runAddonListCmd(cmd *cobra.Command) error {
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	p := printerFor(cmd)
+	project, err := projectOrAsk(cmd, token)
+	if err != nil {
+		return err
+	}
+	env, _ := cmd.Flags().GetString("env")
+	client := api.NewClient(token)
+	if !interactiveTable(cmd) {
+		if err := runAddonList(client, p.Out, p.Format, project, env); err != nil {
+			return fmt.Errorf("list add-ons: %w", err)
+		}
+		return nil
+	}
+	var view *api.ProjectAddons
+	runSpinner("Fetching add-ons...", func() {
+		view, err = client.GetProjectAddons(project, env)
+	})
+	if err != nil {
+		return fmt.Errorf("list add-ons: %w", err)
+	}
+	if view == nil || len(view.Addons) == 0 {
+		fmt.Fprintln(p.Out, ui.MutedStyle.Render("No add-ons installed."))
+		return nil
+	}
+	_ = ui.ShowTable(addonColumns, addonRows(view.Addons, ui.FormatTable), "add-ons")
+	for _, n := range addonSecurityNotices(view.Addons, project, env) {
+		p.Warn(n)
+	}
+	return nil
 }
 
 // addonColumns are the table's columns. SYNC is here and was not, and that is the one change

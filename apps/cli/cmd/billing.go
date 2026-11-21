@@ -4,8 +4,8 @@
 package cmd
 
 import (
+	"fmt"
 	"io"
-	"os"
 	"strconv"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -15,17 +15,23 @@ import (
 
 var billingCmd = &cobra.Command{
 	Use:   "billing",
-	Short: "Show the active organization's billing state",
-	Long: `Display the active organization's billing: its plan, subscription status, seat
-count, Stripe subscription id, and the trial / current-period boundaries. Read-only —
-manage the subscription from the console. Use --output json for scripting.`,
+	Short: "Show the active organization's plan and subscription",
+	Args:  cobra.NoArgs,
+	Long: `Shows the active organization's billing: its plan, subscription status, seat count, Stripe
+subscription id, and when the trial and the current period end.
+
+Use it to check which plan a limit comes from. It only reads; the subscription is managed in the
+console. "alethia usage" shows what the plan is being used for.
+
+--output json prints the billing record, and --output csv the card's rows.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		if err := runBilling(api.NewClient(token), os.Stdout, outputFormat(cmd)); err != nil {
-			failf("Failed to get billing: %v", err)
+		p := printerFor(cmd)
+		if err := runBilling(api.NewClient(token), p.Out, p.Format); err != nil {
+			fail(fmt.Errorf("read billing: %w", err))
 		}
 	},
 }

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -236,16 +237,16 @@ func TestOpsPaths_ReasonAndApprovalTakeTheFatalPath(t *testing.T) {
 	if got := opsReason(opsPathsCmd(t, "alethia ops session")); got != "" {
 		t.Errorf("opsReason = %q, want an empty string after the fatal path", got)
 	}
-	if *code != 1 {
-		t.Errorf("exit code = %d, want 1", *code)
+	if *code != clierr.ExitInputRequired {
+		t.Errorf("exit code = %d, want %d (input_required)", *code, clierr.ExitInputRequired)
 	}
 
 	code2 := opsPathsTrapExit(t)
 	if got := opsApproval(opsPathsCmd(t, "alethia ops state-surgery")); got != "" {
 		t.Errorf("opsApproval = %q, want an empty string after the fatal path", got)
 	}
-	if *code2 != 1 {
-		t.Errorf("exit code = %d, want 1", *code2)
+	if *code2 != clierr.ExitInputRequired {
+		t.Errorf("exit code = %d, want %d (input_required)", *code2, clierr.ExitInputRequired)
 	}
 }
 
@@ -521,8 +522,8 @@ func TestOpsPaths_ResolversDieWhenNothingCanBePrompted(t *testing.T) {
 		if got := opsResolveProjectID(opsPathsCmd(t, "alethia ops orphan-clean")); got != "" {
 			t.Errorf("resolved %q with prompting disabled", got)
 		}
-		if *code != 1 {
-			t.Errorf("exit code = %d, want 1", *code)
+		if *code != clierr.ExitInputRequired {
+			t.Errorf("exit code = %d, want %d (input_required)", *code, clierr.ExitInputRequired)
 		}
 	})
 	t.Run("environment", func(t *testing.T) {
@@ -530,8 +531,8 @@ func TestOpsPaths_ResolversDieWhenNothingCanBePrompted(t *testing.T) {
 		if id, status := opsResolveEnvironment(opsPathsCmd(t, "alethia ops unstick-env"), nil); id != "" || status != "" {
 			t.Errorf("resolved (%q, %q) with prompting disabled", id, status)
 		}
-		if *code != 1 {
-			t.Errorf("exit code = %d, want 1", *code)
+		if *code != clierr.ExitInputRequired {
+			t.Errorf("exit code = %d, want %d (input_required)", *code, clierr.ExitInputRequired)
 		}
 	})
 	t.Run("positional", func(t *testing.T) {
@@ -539,8 +540,8 @@ func TestOpsPaths_ResolversDieWhenNothingCanBePrompted(t *testing.T) {
 		if got := opsResolveArg(opsPathsCmd(t, "alethia ops force-release-lock"), opsKeyStateKey, nil, nil); got != "" {
 			t.Errorf("resolved %q with prompting disabled", got)
 		}
-		if *code != 1 {
-			t.Errorf("exit code = %d, want 1", *code)
+		if *code != clierr.ExitInputRequired {
+			t.Errorf("exit code = %d, want %d (input_required)", *code, clierr.ExitInputRequired)
 		}
 	})
 	t.Run("expected-from", func(t *testing.T) {
@@ -548,8 +549,8 @@ func TestOpsPaths_ResolversDieWhenNothingCanBePrompted(t *testing.T) {
 		if got := opsResolveExpectedFrom(opsPathsCmd(t, "alethia ops unstick-env"), ""); got != nil {
 			t.Errorf("resolved %v with prompting disabled", got)
 		}
-		if *code != 1 {
-			t.Errorf("exit code = %d, want 1", *code)
+		if *code != clierr.ExitInputRequired {
+			t.Errorf("exit code = %d, want %d (input_required)", *code, clierr.ExitInputRequired)
 		}
 	})
 	t.Run("target status", func(t *testing.T) {
@@ -557,8 +558,8 @@ func TestOpsPaths_ResolversDieWhenNothingCanBePrompted(t *testing.T) {
 		if got := opsResolveTargetStatus(opsPathsCmd(t, "alethia ops unstick-env")); got != "" {
 			t.Errorf("resolved %q with prompting disabled", got)
 		}
-		if *code != 1 {
-			t.Errorf("exit code = %d, want 1", *code)
+		if *code != clierr.ExitInputRequired {
+			t.Errorf("exit code = %d, want %d (input_required)", *code, clierr.ExitInputRequired)
 		}
 	})
 }
@@ -634,8 +635,8 @@ func TestOpsPaths_ExpectedFromRejectsAnEmptyFlag(t *testing.T) {
 	if got := opsResolveExpectedFrom(cmd, ""); got != nil {
 		t.Errorf("resolved %v from a --from holding only separators", got)
 	}
-	if *code != 1 {
-		t.Errorf("exit code = %d, want 1", *code)
+	if *code != clierr.ExitUsage {
+		t.Errorf("exit code = %d, want %d (validation_failed)", *code, clierr.ExitUsage)
 	}
 }
 
@@ -700,6 +701,14 @@ func TestOpsPaths_DataRows(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// renderOpsResult prints a read-only result the way runOpsAction does: through the command's
+// Printer, dying on the fatal path when the write fails.
+func renderOpsResult(cmd *cobra.Command, result *api.BreakglassResult) {
+	if err := printOpsReport(printerFor(cmd), result); err != nil {
+		fail(err)
 	}
 }
 
@@ -783,13 +792,14 @@ func TestOpsPaths_ConfirmIsATrueNoOpForAReadOnlyVerb(t *testing.T) {
 }
 
 // TestOpsPaths_GroupCommandsWalkIsBounded pins the walk's own edges: an unknown root yields
-// nothing, and neither cobra's generated `help` nor a hidden command joins the group.
+// nothing, and cobra's generated `help` does not join the group. A hidden verb DOES: it still runs
+// when named, so the guards that range over the group must cover it.
 func TestOpsPaths_GroupCommandsWalkIsBounded(t *testing.T) {
 	if got := opsGroupCommands(&cobra.Command{Use: "empty"}); got != nil {
 		t.Errorf("a tree with no `ops` yielded %d commands", len(got))
 	}
 	for _, c := range opsGroupCommands(rootCmd) {
-		if c.Hidden || c.Name() == "help" || c.Name() == "completion" {
+		if c.Name() == "help" || c.Name() == "completion" {
 			t.Errorf("%s should not be in the group", c.CommandPath())
 		}
 	}
@@ -935,8 +945,8 @@ func TestOpsPaths_ApprovalActionRefusalReturnsEmpty(t *testing.T) {
 	if got := opsResolveApprovalAction(opsPathsCmd(t, "alethia ops approve"), []string{"cancel_job"}); got != "" {
 		t.Errorf("opsResolveApprovalAction = %q for an action that takes no approval", got)
 	}
-	if *code != 1 {
-		t.Errorf("exit code = %d, want 1", *code)
+	if *code != clierr.ExitUsage {
+		t.Errorf("exit code = %d, want %d (validation_failed)", *code, clierr.ExitUsage)
 	}
 }
 
@@ -1012,8 +1022,8 @@ func TestOpsPaths_ApproveAndSessionReportAFailedControlPlane(t *testing.T) {
 			opsPathsNoInput(t, true)
 			code := opsPathsTrapExit(t)
 			call(t)
-			if *code != 1 {
-				t.Errorf("exit code = %d, want 1 — a refused break-glass call must not read as success", *code)
+			if *code != clierr.ExitUnavailable {
+				t.Errorf("exit code = %d, want %d (a 500 is unavailable) — a refused break-glass call must not read as success", *code, clierr.ExitUnavailable)
 			}
 		})
 	}
@@ -1057,9 +1067,10 @@ func TestOpsPaths_ApproveAndSessionTakeTheFatalPathOnAFailedWrite(t *testing.T) 
 	}
 }
 
-// TestOpsPaths_GroupWalkSkipsHiddenAndGeneratedCommands drives the branch the live tree cannot: the
-// real `ops` group has no hidden verb, so the skip is only reachable against a built one.
-func TestOpsPaths_GroupWalkSkipsHiddenAndGeneratedCommands(t *testing.T) {
+// TestOpsPaths_GroupWalkKeepsHiddenAndSkipsGeneratedCommands drives the walk against a built tree:
+// a hidden verb is kept, because it still runs when named; cobra's generated commands and a group
+// with nothing to run are not.
+func TestOpsPaths_GroupWalkKeepsHiddenAndSkipsGeneratedCommands(t *testing.T) {
 	root := &cobra.Command{Use: "alethia"}
 	group := &cobra.Command{Use: "ops"}
 	root.AddCommand(group)
@@ -1070,12 +1081,12 @@ func TestOpsPaths_GroupWalkSkipsHiddenAndGeneratedCommands(t *testing.T) {
 	group.AddCommand(&cobra.Command{Use: "not-runnable"})
 
 	got := opsGroupCommands(root)
-	if len(got) != 1 || got[0].Name() != "visible" {
+	if len(got) != 2 || got[0].Name() != "secret" || got[1].Name() != "visible" {
 		names := make([]string, len(got))
 		for i, c := range got {
 			names[i] = c.Name()
 		}
-		t.Errorf("opsGroupCommands = %v, want [visible]", names)
+		t.Errorf("opsGroupCommands = %v, want [secret visible]", names)
 	}
 }
 
@@ -1088,8 +1099,8 @@ func TestOpsPaths_ApprovalActionScriptedWithNoArgumentNamesThePositional(t *test
 	if got := opsResolveApprovalAction(opsPathsCmd(t, "alethia ops approve"), nil); got != "" {
 		t.Errorf("opsResolveApprovalAction = %q with prompting disabled", got)
 	}
-	if *code != 1 {
-		t.Errorf("exit code = %d, want 1", *code)
+	if *code != clierr.ExitInputRequired {
+		t.Errorf("exit code = %d, want %d (input_required)", *code, clierr.ExitInputRequired)
 	}
 }
 
@@ -1111,8 +1122,8 @@ func TestOpsPaths_ExecutorReportsARefusedSession(t *testing.T) {
 		})
 		return 0
 	})
-	if *code != 1 {
-		t.Errorf("exit code = %d, want 1", *code)
+	if *code != clierr.ExitUnavailable {
+		t.Errorf("exit code = %d, want %d (a 500 is unavailable)", *code, clierr.ExitUnavailable)
 	}
 	if strings.Contains(out, "result") {
 		t.Errorf("the executor rendered a result after the session was refused:\n%s", out)

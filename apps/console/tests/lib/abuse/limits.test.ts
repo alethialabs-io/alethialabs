@@ -76,15 +76,14 @@ describe("ABUSE_LIMITS", () => {
 		expect(envs.size).toBe(ABUSE_LIMIT_KEYS.length);
 	});
 
-	it("agrees with job-quota.ts while that file still carries its own copy of the free job cap", () => {
-		// REL-L11 switches job-quota.ts to read this table. Until then two copies exist, and this
-		// pins them equal; once the constant is gone the first branch stops applying.
+	it("job-quota.ts reads the free job cap from this table and keeps no copy of its own", () => {
+		// REL-L11 (#6912) removed job-quota.ts's DEFAULT_FREE_DAILY_JOB_QUOTA and its own env parse.
+		// A second copy is how the docs page and the enforcement drift apart, so its return fails here.
 		const src = readFileSync(path.resolve(__dirname, "../../../lib/billing/job-quota.ts"), "utf8");
-		const m = src.match(/export const DEFAULT_FREE_DAILY_JOB_QUOTA = (\d+);/);
-		if (m) expect(Number(m[1])).toBe(ABUSE_LIMITS.free_daily_jobs.defaultValue);
-		if (src.includes("process.env.ALETHIA_")) {
-			expect(src).toContain(`process.env.${ABUSE_LIMITS.free_daily_jobs.env}`);
-		}
+		expect(src).toContain(`abuseLimit("free_daily_jobs")`);
+		expect(src).not.toMatch(/DEFAULT_FREE_DAILY_JOB_QUOTA/);
+		expect(src).not.toMatch(/process\.env\./);
+		expect(src).not.toMatch(/=\s*25\b/);
 	});
 });
 

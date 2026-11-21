@@ -41,7 +41,8 @@ var opsStateSurgeryCmd = &cobra.Command{
 	Short: "Queue a privileged STATE_SURGERY job through the pipeline (blast: HIGH, two-person; INERT)",
 	Long: "Enqueues a privileged STATE_SURGERY job through the NORMAL runner/state pipeline (fencing\n" +
 		"intact). The runner-side executor ships INERT (fail-closed) — the job will fail cleanly\n" +
-		"without mutating state. Requires a two-person --approval token from a different operator.",
+		"without mutating state. Requires a two-person --approval token from a different operator.\n\n" +
+		"Not listed in help, with the ops switch on or off, until its executor ships.",
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		reason := opsReason(cmd)
