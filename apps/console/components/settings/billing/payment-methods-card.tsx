@@ -25,6 +25,7 @@ import {
 	startAddCard,
 } from "@/app/server/actions/billing";
 import { PaymentForm } from "@/components/billing/payment-form";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { RegionError } from "@/components/errors/region-error";
 import { RegionRefusal, refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
@@ -35,16 +36,6 @@ import {
 	SettingsPanel,
 	SettingsSection,
 } from "@/components/settings/settings-ui";
-import {
-	AlertDialog,
-	AlertDialogAction,
-	AlertDialogCancel,
-	AlertDialogContent,
-	AlertDialogDescription,
-	AlertDialogFooter,
-	AlertDialogHeader,
-	AlertDialogTitle,
-} from "@repo/ui/alert-dialog";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import {
@@ -72,6 +63,37 @@ function formatBrand(brand: string): string {
 function formatExpiry(month: number, year: number): string {
 	return `${String(month).padStart(2, "0")}/${year}`;
 }
+
+/** What a 3-D Secure redirect's return says, read from the URL Stripe sends the browser back to. */
+type SetupReturn =
+	| { kind: "none" }
+	| { kind: "succeeded"; setupIntentId: string }
+	| { kind: "processing" }
+	| { kind: "failed"; clientSecret: string | null };
+
+/**
+ * Reads Stripe's return parameters (`setup_intent`, `setup_intent_client_secret`,
+ * `redirect_status`) off a query string. `redirect_status` is `succeeded`, `processing` or
+ * `failed`; an unknown value is read as a failure, because the one thing a person must not be told
+ * is that a card was saved when it was not.
+ */
+export function readSetupReturn(search: string): SetupReturn {
+	const params = new URLSearchParams(search);
+	const setupIntentId = params.get("setup_intent");
+	if (!setupIntentId) return { kind: "none" };
+	const status = params.get("redirect_status");
+	if (status === "succeeded") return { kind: "succeeded", setupIntentId };
+	if (status === "processing") return { kind: "processing" };
+	return { kind: "failed", clientSecret: params.get("setup_intent_client_secret") };
+}
+
+/** The toast a failed 3-D Secure return shows; the add-card dialog reopens under it. */
+export const SETUP_FAILED_MESSAGE =
+	"Your bank didn't confirm the card, so it wasn't saved. Try again or use another card.";
+
+/** The toast a 3-D Secure return still being confirmed shows. */
+export const SETUP_PROCESSING_MESSAGE =
+	"Your bank is still confirming the card. It appears here once that finishes.";
 
 /** The ordered list of backup payment-method ids (ranked backups, in rank order). */
 function backupIds(cards: PaymentMethodInfo[]): string[] {
@@ -163,19 +185,41 @@ export function PaymentMethodsCard() {
 	// is not subscribed to SetupIntent events (scripts/stripe-setup.ts WEBHOOK_EVENTS), and could
 	// not name who saved the card. The server checks the SetupIntent with Stripe and records it at
 	// most once, so a reload of this URL records nothing twice. The params are then removed.
+	//
+	// A return that did NOT succeed used to strip the params and say nothing, so a person whose bank
+	// declined the challenge saw the page they left and no card (CON-L3, R6 F-09). It now says so and
+	// reopens the add-card dialog. The failed SetupIntent goes back to `requires_payment_method`, so
+	// the same client secret takes another card: reusing it is what `openAddCard` does anyway (#6733).
 	useEffect(() => {
+		const outcome = readSetupReturn(window.location.search);
+		if (outcome.kind === "none") return;
 		const params = new URLSearchParams(window.location.search);
-		const setupIntentId = params.get("setup_intent");
-		if (!setupIntentId) return;
-		const succeeded = params.get("redirect_status") === "succeeded";
 		for (const key of ["setup_intent", "setup_intent_client_secret", "redirect_status"]) {
 			params.delete(key);
 		}
 		const query = params.toString();
 		window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
-		if (!succeeded) return;
+		if (outcome.kind === "failed") {
+			toast.error(SETUP_FAILED_MESSAGE);
+			const retrySecret = outcome.clientSecret;
+			// Deferred one microtask rather than set in the effect body (react-hooks/set-state-in-effect).
+			// Not a timer: the params are already stripped, so StrictMode's second run of this effect
+			// sees `none`, and a cleanup that cancelled a timer would lose the reopen altogether.
+			if (retrySecret) {
+				queueMicrotask(() => {
+					setClientSecret(retrySecret);
+					setAddOpen(true);
+				});
+			}
+			return;
+		}
+		if (outcome.kind === "processing") {
+			toast.message(SETUP_PROCESSING_MESSAGE);
+			void queryClient.invalidateQueries({ queryKey: orpc.billing.paymentMethods.key() });
+			return;
+		}
 		toast.success("Card saved.");
-		void recordCardSaved({ setupIntentId }).catch(() => undefined);
+		void recordCardSaved({ setupIntentId: outcome.setupIntentId }).catch(() => undefined);
 		void queryClient.invalidateQueries({ queryKey: orpc.billing.paymentMethods.key() });
 	}, [queryClient]);
 
@@ -221,12 +265,6 @@ export function PaymentMethodsCard() {
 		if (i < 0 || j < 0 || j >= ids.length) return;
 		[ids[i], ids[j]] = [ids[j], ids[i]];
 		persistBackups(ids);
-	}
-
-	/** Detach the confirmed card from the customer. */
-	function removeCard(card: PaymentMethodInfo) {
-		setConfirmRemove(null);
-		remove.mutate({ pmId: card.id });
 	}
 
 	const backupCount = cards ? backupIds(cards).length : 0;
@@ -383,30 +421,26 @@ export function PaymentMethodsCard() {
 				</DialogContent>
 			</Dialog>
 
-			<AlertDialog
+			{/* The console's one confirmation: it runs the removal, stays open with the button busy
+			    while it is in flight, and closes only when it has succeeded — a refusal leaves it up
+			    beside its toast instead of closing as if the card were gone. */}
+			<ConfirmAction
 				open={confirmRemove !== null}
-				onOpenChange={(o) => !o && setConfirmRemove(null)}
-			>
-				<AlertDialogContent>
-					<AlertDialogHeader>
-						<AlertDialogTitle>Remove this card?</AlertDialogTitle>
-						<AlertDialogDescription>
-							{confirmRemove
-								? `${formatBrand(confirmRemove.brand)} •••• ${confirmRemove.last4} will be detached from your billing account. This can't be undone.`
-								: ""}
-						</AlertDialogDescription>
-					</AlertDialogHeader>
-					<AlertDialogFooter>
-						<AlertDialogCancel>Cancel</AlertDialogCancel>
-						<AlertDialogAction
-							variant="destructive"
-							onClick={() => confirmRemove && removeCard(confirmRemove)}
-						>
-							Remove card
-						</AlertDialogAction>
-					</AlertDialogFooter>
-				</AlertDialogContent>
-			</AlertDialog>
+				onOpenChange={(o) => {
+					if (!o) setConfirmRemove(null);
+				}}
+				title="Remove this card?"
+				description={
+					confirmRemove
+						? `${formatBrand(confirmRemove.brand)} •••• ${confirmRemove.last4} will be detached from your billing account. This can't be undone.`
+						: ""
+				}
+				confirmLabel="Remove card"
+				pendingLabel="Removing…"
+				severity={{ level: "confirm" }}
+				mutation={remove}
+				variables={confirmRemove ? { pmId: confirmRemove.id } : null}
+			/>
 		</>
 	);
 }

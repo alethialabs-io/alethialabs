@@ -7,7 +7,9 @@
 //   · a member without the billing permission gets one note and the billing-admin reads are never
 //     made (they used to be made, refused, toasted, and left a skeleton up forever);
 //   · cancel/resume go through the mutation contract;
-//   · the AI tier is one linked row; the AI card lives on Usage only (#6133).
+//   · the AI tier is one linked row; the AI card lives on Usage only (#6133);
+//   · CON-L3: the plan controls are gated on the billing permission (F-03), and a past-due
+//     subscription says what happened and links to the fix (F-06).
 
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { money } from "@repo/format";
@@ -197,5 +199,63 @@ describe("BillingPanel", () => {
 		fireEvent.click(await screen.findByRole("button", { name: /cancel plan/i }));
 		fireEvent.click(await screen.findByRole("button", { name: /confirm cancellation/i }));
 		await waitFor(() => expect(toast.error).toHaveBeenCalledWith("No active subscription."));
+	});
+
+	// CON-L3, R6 F-03: changing the plan is the billing permission's. A viewer without it sees the
+	// control disabled WITH the reason, never an enabled button the server then refuses.
+	it("a viewer without the billing permission sees Cancel plan disabled with the reason", async () => {
+		reads.summary.mockResolvedValue(summary({ canManageBilling: false }));
+		renderWithReads(<BillingPanel />);
+		const cancel = await screen.findByRole("button", { name: /cancel plan/i });
+		expect(cancel).toBeDisabled();
+		expect(cancel).toHaveAccessibleDescription(/doesn't allow this/i);
+		fireEvent.click(cancel);
+		expect(screen.queryByRole("button", { name: /confirm cancellation/i })).toBeNull();
+		expect(cancelPlan).not.toHaveBeenCalled();
+	});
+
+	it("a viewer without the billing permission sees Upgrade to Pro disabled with the reason", async () => {
+		reads.summary.mockResolvedValue(
+			summary({ plan: "community", status: "none", state: "none", canManageBilling: false }),
+		);
+		renderWithReads(<BillingPanel />);
+		const upgrade = await screen.findByRole("button", { name: /upgrade to pro/i });
+		expect(upgrade).toBeDisabled();
+		expect(upgrade).toHaveAccessibleDescription(/doesn't allow this/i);
+	});
+
+	it("a billing admin's plan controls are live", async () => {
+		reads.summary.mockResolvedValue(summary());
+		renderWithReads(<BillingPanel />);
+		expect(await screen.findByRole("button", { name: /cancel plan/i })).toBeEnabled();
+	});
+
+	// CON-L3, R6 F-06: a past-due subscription used to show a pill and "Cancel plan", nothing else.
+	it("a past-due subscription explains itself and links a billing admin to the payment methods", async () => {
+		reads.summary.mockResolvedValue(summary({ status: "past_due", state: "past_due" }));
+		renderWithReads(<BillingPanel />);
+		const notice = await screen.findByTestId("billing-past-due");
+		expect(within(notice).getByText("Payment failed")).toBeInTheDocument();
+		expect(within(notice).getByText(/didn't go through/)).toBeInTheDocument();
+		const link = within(notice).getByRole("link", { name: /update the payment method/i });
+		expect(link).toHaveAttribute("href", "#payment-methods");
+		expect(document.getElementById("payment-methods")).not.toBeNull();
+	});
+
+	it("a past-due notice tells a viewer without the billing permission who can fix it", async () => {
+		reads.summary.mockResolvedValue(
+			summary({ status: "past_due", state: "past_due", canManageBilling: false }),
+		);
+		renderWithReads(<BillingPanel />);
+		const notice = await screen.findByTestId("billing-past-due");
+		expect(within(notice).queryByRole("link")).toBeNull();
+		expect(within(notice).getByText(/ask a member with the billing permission/i)).toBeInTheDocument();
+	});
+
+	it("an active subscription shows no past-due notice", async () => {
+		reads.summary.mockResolvedValue(summary());
+		renderWithReads(<BillingPanel />);
+		await screen.findByRole("button", { name: /cancel plan/i });
+		expect(screen.queryByTestId("billing-past-due")).toBeNull();
 	});
 });
