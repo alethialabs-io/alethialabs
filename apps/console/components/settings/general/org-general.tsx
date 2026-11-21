@@ -16,12 +16,13 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useId } from "react";
+import { useEffect, useId, useState } from "react";
 import { Controller, type FieldPath, useForm } from "react-hook-form";
 import {
   deleteOrganization,
   saveOrgGeneral,
 } from "@/app/server/actions/org-settings";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { RegionError } from "@/components/errors/region-error";
 import { OrgLogoUpload } from "@/components/org/org-logo-upload";
 import { GeneralRefusal } from "@/components/settings/general/general-states";
@@ -63,28 +64,22 @@ import {
   TERRAFORM_VERSION_MAX_LENGTH,
   orgGeneralSchema,
 } from "@/lib/validations/org-general";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
 import { ReadOnlyValue } from "@repo/ui/read-only-value";
 import { cn } from "@repo/ui/utils";
 
+/**
+ * The data-region choices, value and label. `eu-west-1` is Ireland — it was labelled Frankfurt, which
+ * is `eu-central-1` (R6 E-04).
+ */
 const REGIONS = [
-  "eu-west-1 · Frankfurt",
-  "eu-north-1 · Stockholm",
-  "us-east-1 · N. Virginia",
-  "ap-southeast-1 · Singapore",
+  { value: "eu-west-1", label: "eu-west-1 · Ireland" },
+  { value: "eu-central-1", label: "eu-central-1 · Frankfurt" },
+  { value: "eu-north-1", label: "eu-north-1 · Stockholm" },
+  { value: "us-east-1", label: "us-east-1 · N. Virginia" },
+  { value: "ap-southeast-1", label: "ap-southeast-1 · Singapore" },
 ];
 const ENVS = ["staging", "development", "production"];
 
@@ -99,7 +94,13 @@ const DELETE_REFUSED = "Only the organization's owner can delete it";
  * does and does not do.
  */
 const DELETE_RULE =
-  "An organization with a live or in-flight environment cannot be deleted: destroy those environments first. Deleting removes the organization, its Projects, its members and its access grants, and destroys nothing in the cloud. This cannot be undone.";
+  "An organization with a live or in-flight environment cannot be deleted: destroy those environments first. This cannot be undone.";
+
+/** What the delete removes and what it leaves, listed in the typed confirmation. */
+const DELETE_CONSEQUENCES = [
+  "The organization, its Projects, its members and its access grants are removed.",
+  "Nothing is destroyed in your cloud accounts.",
+] as const;
 
 /** The form's fields — the keys a server field error may name. */
 const FORM_FIELDS: readonly FieldPath<OrgGeneralInput>[] = [
@@ -247,6 +248,8 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
     },
   });
 
+  // The typed confirmation is open; the dialog stays mounted and is driven by this.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const remove = useActionMutation(deleteOrganization, {
     // The org is gone, so nothing under this address can be read again; `/dashboard` resolves the
     // next org and its own cache. Invalidating here would only refetch into a refusal.
@@ -402,7 +405,7 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                         <SettingsSelect
                           value={field.value}
                           onChange={field.onChange}
-                          options={REGIONS.map((r) => ({ value: r.split(" ")[0], label: r }))}
+                          options={REGIONS}
                         />
                       )}
                     />
@@ -481,47 +484,38 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                 </Button>
               </DisabledReason>
             ) : (
-              <AlertDialog>
-                <AlertDialogTrigger
-                  render={
-                    // The name says WHAT it deletes. The dialog this opens is titled "Delete
-                    // organization"; a trigger announced only "Delete" disagreed with its own
-                    // dialog, on a control that cannot be undone (#4462).
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      aria-label="Delete organization"
-                      disabled={remove.isPending}
-                    >
-                      {remove.isPending ? "Deleting…" : "Delete"}
-                    </Button>
-                  }
-                />
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete this organization?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {DELETE_RULE}
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => {
-                        if (!remove.isPending) remove.mutate({});
-                      }}
-                      disabled={remove.isPending}
-                      variant="destructive"
-                    >
-                      Delete organization
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+              // The name says WHAT it deletes. The dialog this opens is titled "Delete this
+              // organization?"; a trigger announced only "Delete" disagreed with its own dialog, on
+              // a control that cannot be undone (#4462).
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="Delete organization"
+                disabled={remove.isPending}
+                onClick={() => setConfirmingDelete(true)}
+              >
+                {remove.isPending ? "Deleting…" : "Delete"}
+              </Button>
             )}
           </SettingsDangerRow>
         </SettingsPanel>
       </SettingsSection>
+
+      {/* The console's one confirmation, at the destroy level (CON-SM2): the consequences are
+          listed and Delete stays disabled until the organization's name is typed. It stays open
+          while the delete runs, and stays up beside the reason when the server refuses — the
+          commonest refusal being a live environment. */}
+      <ConfirmAction
+        open={confirmingDelete}
+        onOpenChange={setConfirmingDelete}
+        title="Delete this organization?"
+        description={DELETE_RULE}
+        confirmLabel="Delete organization"
+        pendingLabel="Deleting…"
+        severity={{ level: "destroy", subject: settings.name, consequences: DELETE_CONSEQUENCES }}
+        mutation={remove}
+        variables={confirmingDelete ? {} : null}
+      />
     </div>
   );
 }
