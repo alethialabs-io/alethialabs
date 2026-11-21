@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -58,10 +59,12 @@ const (
 func opsValidateReason(reason string) error {
 	trimmed := strings.TrimSpace(reason)
 	if len(trimmed) < opsReasonMinLength {
-		return fmt.Errorf("a reason is at least %d characters — it is what the next person reading the audit has to go on", opsReasonMinLength)
+		return clierr.New(clierr.CodeValidationFailed, fmt.Sprintf(
+			"a reason is at least %d characters — it is what the next person reading the audit has to go on", opsReasonMinLength))
 	}
 	if len(trimmed) > opsReasonMaxLength {
-		return fmt.Errorf("a reason is at most %d characters (got %d)", opsReasonMaxLength, len(trimmed))
+		return clierr.New(clierr.CodeValidationFailed, fmt.Sprintf(
+			"a reason is at most %d characters (got %d)", opsReasonMaxLength, len(trimmed)))
 	}
 	return nil
 }
@@ -91,7 +94,7 @@ func opsAsk(f opsField, current string, validate func(string) error) (string, er
 		),
 	)
 	if err != nil {
-		return "", err
+		return "", formError(err)
 	}
 	return strings.TrimSpace(value), nil
 }
@@ -107,9 +110,15 @@ func opsSetter(f opsField) string {
 // opsScripted is the refusal when a value was not supplied and nothing may be prompted. It names
 // the flag or positional that would have answered, because the reader of this message is at a
 // terminal that cannot be asked and needs the next command, not a diagnosis.
+//
+// It is input_required (exit 9): the same invocation at a terminal would have asked, so the line is
+// not wrong as written — it is missing a value nobody was there to give.
 func opsScripted(f opsField, why error) error {
-	return fmt.Errorf("no %s given, and interactive prompts are unavailable (%v): pass %s",
-		strings.ToLower(f.Title), why, opsSetter(f))
+	e := clierr.New(clierr.CodeInputRequired, fmt.Sprintf("no %s given, and interactive prompts are unavailable (%v): pass %s",
+		strings.ToLower(f.Title), why, opsSetter(f)))
+	e.Hint = "Or run it at a terminal without --no-input, and it asks."
+	e.Cause = why
+	return e
 }
 
 // opsRequire resolves a free-text value: the one already supplied, else a prompt, else a refusal
@@ -197,7 +206,7 @@ func opsPick(title, description string, labels []string) (int, error) {
 		),
 	)
 	if err != nil {
-		return 0, err
+		return 0, formError(err)
 	}
 	return chosen, nil
 }
@@ -236,7 +245,8 @@ func opsPickJobID(client jobLister) (string, error) {
 		return "", fmt.Errorf("failed to fetch jobs: %w", err)
 	}
 	if page == nil || len(page.Jobs) == 0 {
-		return "", fmt.Errorf("no jobs in the last %d for this organization — pass the job id instead (break-glass reaches jobs this listing does not)", jobSelectorPageSize)
+		return "", refusal(clierr.CodeNotFound, "Pass the job id from the alert; break-glass reaches jobs this listing does not.",
+			"no jobs in the last %d for this organization — pass the job id instead", jobSelectorPageSize)
 	}
 	labels := make([]string, len(page.Jobs))
 	for i, j := range page.Jobs {
@@ -264,7 +274,8 @@ func opsPickRunnerID(client opsRunnerLister, verb string) (string, error) {
 		return "", fmt.Errorf("failed to fetch runners: %w", err)
 	}
 	if len(runners) == 0 {
-		return "", fmt.Errorf("no runners in this organization — pass the runner id instead")
+		return "", refusal(clierr.CodeNotFound, "Pass the runner id from the alert.",
+			"no runners in this organization — pass the runner id instead")
 	}
 	labels := make([]string, len(runners))
 	for i, r := range runners {
@@ -299,7 +310,8 @@ func opsPickProjectID(client opsProjectLister, description string) (string, erro
 		return "", fmt.Errorf("failed to fetch projects: %w", err)
 	}
 	if len(configs) == 0 {
-		return "", fmt.Errorf("no projects in this organization — pass the project id instead")
+		return "", refusal(clierr.CodeNotFound, "Pass the project id from the alert.",
+			"no projects in this organization — pass the project id instead")
 	}
 	labels := make([]string, len(configs))
 	for i, c := range configs {
@@ -334,7 +346,8 @@ func opsPickEnvironmentID(projects opsProjectLister, envs opsEnvLister) (id, sta
 		return "", "", fmt.Errorf("failed to fetch environments: %w", err)
 	}
 	if len(list) == 0 {
-		return "", "", fmt.Errorf("project %s has no environments — pass the environment id instead", ui.TruncID(projectID))
+		return "", "", refusal(clierr.CodeNotFound, "Pass the environment id from the alert.",
+			"project %s has no environments — pass the environment id instead", ui.TruncID(projectID))
 	}
 	labels := make([]string, len(list))
 	for i, e := range list {
@@ -374,8 +387,8 @@ func opsValidateStatuses(field string, values []string) error {
 	allowed := opsStatusValues()
 	for _, v := range values {
 		if !containsFold(allowed, v) {
-			return fmt.Errorf("--%s %q is not a project status (want one of: %s)",
-				field, v, strings.Join(allowed, ", "))
+			return clierr.New(clierr.CodeValidationFailed, fmt.Sprintf("--%s %q is not a project status (want one of: %s)",
+				field, v, strings.Join(allowed, ", ")))
 		}
 	}
 	return nil
@@ -420,7 +433,7 @@ func opsAskStatuses(f opsField, preselect string) ([]string, error) {
 		),
 	)
 	if err != nil {
-		return nil, err
+		return nil, formError(err)
 	}
 	return chosen, nil
 }
