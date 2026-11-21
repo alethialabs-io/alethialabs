@@ -701,7 +701,9 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 										) : (
 											// A connector with no credential form in the registry: said in words,
 											// where the sheet used to open empty.
-											<RegionError
+											<EmptyState
+												className="border"
+												icon={<Plug />}
 												title={`${name} can't be connected from here`}
 												description="This connector has no connect form in this release. Nothing was changed."
 											/>
