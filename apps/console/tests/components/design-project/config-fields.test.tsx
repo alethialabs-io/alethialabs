@@ -11,8 +11,8 @@
 // REQUIRED one commits nothing at all and restores what was there, because 0 is a value the user
 // did not type and it fights them the moment they backspace to retype.
 
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigFields } from "@/components/design-project/canvas/inspector/config-fields";
 import {
 	getKindConfig,
@@ -20,6 +20,7 @@ import {
 } from "@/components/design-project/canvas/inspector/config-schema";
 import { nodeReadiness } from "@/lib/canvas/node-status";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
 
 const SCHEMA: KindConfig = {
 	sections: [
@@ -152,20 +153,26 @@ describe("ConfigFields — number fields", () => {
 // They are the browser-free proof of `architecture-canvas.spec.ts`'s "a card goes Needs-setup the
 // moment its config stops being deployable", whose own subject is `fill("")`, i.e. no blur.
 
-describe("ConfigFields — readiness cannot lag the buffer", () => {
-	/** A canvas holding one project root and one NoSQL table, with the table's id. */
-	function seedTable(): string {
-		useCanvasStore.setState({ nodes: [], card: null });
-		const id = useCanvasStore.getState().addNode("nosql");
-		return id;
-	}
+/** A canvas holding one project root and one NoSQL table, with the table's id. */
+function seedTable(): string {
+	useCanvasStore.setState({ nodes: [], card: null });
+	const id = useCanvasStore.getState().addNode("nosql");
+	return id;
+}
 
-	/** The table node's current config, straight from the store. */
-	function tableConfig(id: string): Record<string, unknown> {
-		const node = useCanvasStore.getState().nodes.find((n) => n.id === id);
-		if (!node) throw new Error(`no node ${id}`);
-		return node.data.config;
-	}
+/** The table node's current config, straight from the store. */
+function tableConfig(id: string): Record<string, unknown> {
+	const node = useCanvasStore.getState().nodes.find((n) => n.id === id);
+	if (!node) throw new Error(`no node ${id}`);
+	return node.data.config;
+}
+
+describe("ConfigFields — readiness cannot lag the buffer", () => {
+	// A fresh table is valid, so on first view its Schema group is collapsed (#6837). These tests are
+	// about the buffer, not the disclosure, so the person has Schema open — the remembered choice.
+	beforeEach(() => {
+		useInspectorPrefsStore.setState({ openSections: { "nosql:schema": true }, tab: {} });
+	});
 
 	/** Readiness as the board and the card read it — from the store, never from the form. */
 	function stateOf(id: string) {
@@ -300,5 +307,258 @@ describe("ConfigFields — readiness cannot lag the buffer", () => {
 		fireEvent.change(key, { target: { value: "use" } });
 
 		expect(onChange).not.toHaveBeenCalled();
+	});
+});
+
+// ── #6837 — a buffer flushes on every way out, not only on blur ──────────────────────────────────
+//
+// The inspector has no Save button: a value typed into it reaches the design on blur. These pin the
+// two exits that are not a blur — the card unmounting under the caret, and the rail handing the same
+// card another node's config — so nothing typed is ever silently dropped.
+
+describe("ConfigFields — leaving without a blur", () => {
+	it("type, unmount: the store holds the value", () => {
+		useInspectorPrefsStore.setState({ openSections: { "nosql:schema": true }, tab: {} });
+		const id = seedTable();
+		const schema = getKindConfig("nosql");
+		if (!schema) throw new Error("nosql has no config schema");
+		const view = render(
+			<ConfigFields
+				schema={schema}
+				config={tableConfig(id)}
+				provider="aws"
+				kind="nosql"
+				onChange={(patch) => useCanvasStore.getState().updateNodeConfig(id, patch)}
+			/>,
+		);
+
+		// Valid throughout, so no early commit: the value lives only in the buffer.
+		fireEvent.change(screen.getByLabelText("Partition key"), { target: { value: "order_id" } });
+		expect(tableConfig(id).partition_key).not.toBe("order_id");
+
+		view.unmount();
+		expect(tableConfig(id).partition_key).toBe("order_id");
+	});
+
+	it("a half-typed number is committed on unmount by the blur rules", () => {
+		const onChange = vi.fn();
+		const view = render(
+			<ConfigFields
+				schema={SCHEMA}
+				config={{ storage_gb: 32, count: 2, label: "db" }}
+				provider="hetzner"
+				onChange={onChange}
+			/>,
+		);
+		const [storage] = screen.getAllByRole("spinbutton");
+		fireEvent.change(storage, { target: { value: "64" } });
+		expect(onChange).not.toHaveBeenCalled();
+
+		view.unmount();
+		expect(onChange).toHaveBeenCalledTimes(1);
+		expect(onChange).toHaveBeenCalledWith({ storage_gb: 64 });
+	});
+
+	it("a cleared REQUIRED number is still withheld on unmount, never written as 0", () => {
+		const onChange = vi.fn();
+		const view = render(
+			<ConfigFields
+				schema={SCHEMA}
+				config={{ storage_gb: 32, count: 2, label: "db" }}
+				provider="hetzner"
+				onChange={onChange}
+			/>,
+		);
+		const [, count] = screen.getAllByRole("spinbutton");
+		fireEvent.change(count, { target: { value: "" } });
+
+		view.unmount();
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
+	it("a field already committed by its blur is not committed again on unmount", () => {
+		const onChange = vi.fn();
+		const view = render(
+			<ConfigFields
+				schema={SCHEMA}
+				config={{ storage_gb: 32, count: 2, label: "db" }}
+				provider="hetzner"
+				onChange={onChange}
+			/>,
+		);
+		const label = screen.getByRole("textbox");
+		fireEvent.change(label, { target: { value: "orders" } });
+		fireEvent.blur(label);
+
+		view.unmount();
+		expect(onChange).toHaveBeenCalledTimes(1);
+	});
+
+	it("handed another node's config mid-edit, it commits the typed value to the node it was typed into", () => {
+		const first = vi.fn();
+		const second = vi.fn();
+		const view = render(
+			<ConfigFields
+				schema={SCHEMA}
+				config={{ storage_gb: 32, count: 2, label: "db" }}
+				provider="hetzner"
+				onChange={first}
+			/>,
+		);
+		fireEvent.change(screen.getByRole("textbox"), { target: { value: "orders" } });
+
+		view.rerender(
+			<ConfigFields
+				schema={SCHEMA}
+				config={{ storage_gb: 8, count: 1, label: "cache" }}
+				provider="hetzner"
+				onChange={second}
+			/>,
+		);
+
+		expect(first).toHaveBeenCalledTimes(1);
+		expect(first).toHaveBeenCalledWith({ label: "orders" });
+		expect(second).not.toHaveBeenCalled();
+		// …and the card now shows the node it was handed.
+		expect(screen.getByRole("textbox")).toHaveValue("cache");
+	});
+
+	it("an equal config rebuilt by the parent flushes nothing", () => {
+		const onChange = vi.fn();
+		const view = render(
+			<ConfigFields
+				schema={SCHEMA}
+				config={{ storage_gb: 32, count: 2, label: "db" }}
+				provider="hetzner"
+				onChange={onChange}
+			/>,
+		);
+		fireEvent.change(screen.getByRole("textbox"), { target: { value: "orders" } });
+		view.rerender(
+			<ConfigFields
+				schema={SCHEMA}
+				config={{ storage_gb: 32, count: 2, label: "db" }}
+				provider="hetzner"
+				onChange={onChange}
+			/>,
+		);
+		expect(onChange).not.toHaveBeenCalled();
+	});
+});
+
+// ── #6837 — what is open on first view ───────────────────────────────────────────────────────────
+
+describe("ConfigFields — only a group that needs you is open on first view", () => {
+	beforeEach(() => {
+		useInspectorPrefsStore.setState({ openSections: {}, tab: {} });
+	});
+
+	/** Renders the real NoSQL Settings body over `config`. */
+	function renderTable(config: Record<string, unknown>) {
+		const schema = getKindConfig("nosql");
+		if (!schema) throw new Error("nosql has no config schema");
+		return render(
+			<ConfigFields
+				schema={schema}
+				config={config}
+				provider="aws"
+				kind="nosql"
+				onChange={vi.fn()}
+			/>,
+		);
+	}
+
+	it("a node whose defaults all deploy opens with every group collapsed", () => {
+		const id = seedTable();
+		renderTable(tableConfig(id));
+
+		expect(screen.getByRole("button", { name: /^Schema/ })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /^Capacity/ })).toBeInTheDocument();
+		expect(screen.queryByLabelText("Partition key")).not.toBeInTheDocument();
+		expect(screen.queryByRole("radiogroup", { name: "Capacity mode" })).not.toBeInTheDocument();
+	});
+
+	it("the group holding a field with no usable value is open, and only that group", () => {
+		const id = seedTable();
+		renderTable({ ...tableConfig(id), partition_key: "" });
+
+		expect(screen.getByLabelText("Partition key")).toBeInTheDocument();
+		expect(screen.queryByRole("radiogroup", { name: "Capacity mode" })).not.toBeInTheDocument();
+	});
+
+	it("fixing the field does not fold its group shut under the caret", () => {
+		const id = seedTable();
+		renderTable({ ...tableConfig(id), partition_key: "" });
+
+		const key = screen.getByLabelText("Partition key");
+		act(() => key.focus());
+		fireEvent.change(key, { target: { value: "order_id" } });
+
+		expect(screen.getByLabelText("Partition key")).toBeInTheDocument();
+	});
+
+	it("a group the person closed, forced open by an error, stays open while they fix it", () => {
+		useInspectorPrefsStore.setState({ openSections: { "nosql:schema": false }, tab: {} });
+		const id = seedTable();
+		renderTable({ ...tableConfig(id), partition_key: "" });
+
+		const key = screen.getByLabelText("Partition key");
+		act(() => key.focus());
+		fireEvent.change(key, { target: { value: "order_id" } });
+
+		expect(screen.getByLabelText("Partition key")).toBeInTheDocument();
+	});
+
+	it("the person's own choice is remembered over the first-view rule", () => {
+		useInspectorPrefsStore.setState({ openSections: { "nosql:capacity": true }, tab: {} });
+		const id = seedTable();
+		renderTable(tableConfig(id));
+
+		expect(screen.getByRole("radiogroup", { name: "Capacity mode" })).toBeInTheDocument();
+		expect(screen.queryByLabelText("Partition key")).not.toBeInTheDocument();
+	});
+
+	it("without a kind there is no validator to ask, so the schema's own defaultOpen stands", () => {
+		renderFields(vi.fn());
+		expect(screen.getByRole("textbox")).toBeInTheDocument();
+	});
+});
+
+// ── #6837 — one column, and every field reachable by its key ────────────────────────────────────
+
+describe("ConfigFields — a narrow rail", () => {
+	it("lays its fields out in one column", () => {
+		const { container } = render(
+			<ConfigFields
+				schema={SCHEMA}
+				config={{ storage_gb: 32, count: 2, label: "db" }}
+				provider="hetzner"
+				onChange={vi.fn()}
+			/>,
+		);
+		const twoUp = Array.from(container.querySelectorAll("*")).filter((el) =>
+			Array.from(el.classList).some((c) => /^(?:[a-z0-9]+:)*grid-cols-(?!1$)/.test(c)),
+		);
+		expect(twoUp.map((el) => el.className)).toEqual([]);
+	});
+
+	it("marks every field row with its key, and focusing a row puts the caret in its control", () => {
+		const { container } = render(
+			<ConfigFields
+				schema={SCHEMA}
+				config={{ storage_gb: 32, count: 2, label: "db" }}
+				provider="hetzner"
+				onChange={vi.fn()}
+			/>,
+		);
+		const keys = Array.from(container.querySelectorAll("[data-field-key]")).map((el) =>
+			el.getAttribute("data-field-key"),
+		);
+		expect(keys).toEqual(["storage_gb", "count", "label"]);
+
+		const row = container.querySelector<HTMLElement>('[data-field-key="label"]');
+		if (!row) throw new Error("no row for label");
+		act(() => row.focus());
+		expect(screen.getByRole("textbox")).toHaveFocus();
 	});
 });
