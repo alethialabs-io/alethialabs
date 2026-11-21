@@ -29,7 +29,8 @@ var opsOrphanCleanCmd = &cobra.Command{
 	Short: "Force-destroy detected orphans (blast: HIGH; ships INERT/fail-closed)",
 	Long: "Cross-cloud force-destroy — the most dangerous action. Ships INERT: it refuses unless the\n" +
 		"deployment is separately armed (ALETHIA_BREAKGLASS_ORPHAN_CLEAN_ENABLED), and even then is\n" +
-		"unimplemented rather than performing an unscoped delete. Requires a two-person --approval.",
+		"unimplemented rather than performing an unscoped delete. Requires a two-person --approval.\n\n" +
+		"Not listed in help, with the ops switch on or off, until its executor ships.",
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		reason := opsReason(cmd)
