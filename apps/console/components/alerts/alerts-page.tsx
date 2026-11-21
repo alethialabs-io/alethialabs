@@ -36,6 +36,7 @@ import { AlertsSkeleton } from "@/components/alerts/alerts-skeleton";
 import { ChannelsPanel } from "@/components/alerts/channels-panel";
 import { PoliciesPanel } from "@/components/alerts/policies-panel";
 import { RegionError } from "@/components/errors/region-error";
+import { RegionRefusal } from "@/components/errors/region-refusal";
 import { isForbidden } from "@/components/overview/overview-reads";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
 import {
@@ -47,7 +48,6 @@ import {
 	type AlertsSection,
 	useAlertsSection,
 } from "@/lib/stores/use-alerts-section";
-import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { SectionHeading } from "@repo/ui/section-heading";
 
 const SECTIONS: AlertsSection[] = ["policies", "channels", "activity"];
@@ -105,15 +105,10 @@ export function AlertsPage() {
 	// open, or a prefetch that failed. Each answer is its own render (RUBRIC B4).
 	if (settings.data === undefined) {
 		if (!settings.isError) return <AlertsSkeleton />;
+		// The same refusal the route's server gate renders, so a permission revoked while the tab
+		// was open reads exactly as arriving without it does.
 		if (isForbidden(settings.error)) {
-			return (
-				<Alert>
-					<AlertTitle>No access to alerts</AlertTitle>
-					<AlertDescription>
-						You don&apos;t have permission to view alerting for this organization.
-					</AlertDescription>
-				</Alert>
-			);
+			return <RegionRefusal refusal="forbidden" subject="alerts" />;
 		}
 		return <RegionError title="Couldn't load alerts" onRetry={() => void settings.refetch()} />;
 	}
