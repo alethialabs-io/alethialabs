@@ -15,6 +15,8 @@ vi.mock("@/lib/config/auth", () => ({
 		providers: { github: null, google: null, gitlab: null, bitbucket: null },
 	}),
 	getAuthRateLimit: () => ({ enabled: false }),
+	// Loaded transitively through lib/auth; the sign-up challenge is off here.
+	getSignupChallengeConfig: () => null,
 }));
 vi.mock("@/lib/oidc/issuer", () => ({
 	oidcIssuerConfigured: () => issuerState.on,

@@ -50,6 +50,13 @@ vi.mock("@/lib/config/auth", () => ({
 }));
 
 vi.mock("@/lib/auth/plugins", () => ({ getAuthPlugins: vi.fn(() => []) }));
+// The sign-up controls are tested on their own (tests/lib/auth/signup-guard/**); here only the
+// wiring is: the create-before hook hands the address and the request context to the guard, and the
+// challenge plugins are spliced into the chain.
+vi.mock("@/lib/auth/signup-guard", () => ({
+	assertNewAccountAllowed: vi.fn(async () => {}),
+	signupChallengePlugins: vi.fn(() => [{ id: "captcha" }]),
+}));
 vi.mock("@/lib/authz/grants", () => ({ ensureMemberGrant: vi.fn(async () => {}) }));
 vi.mock("@/lib/auth/onboarding", () => ({ provisionPrimaryOrg: vi.fn(async () => {}) }));
 vi.mock("@/lib/email/auth-email", () => ({ sendSignInCodeEmail: vi.fn(async () => {}) }));
@@ -96,6 +103,7 @@ import { provisionPrimaryOrg } from "@/lib/auth/onboarding";
 import { sendSignInCodeEmail } from "@/lib/email/auth-email";
 import { sendWelcomeEmail } from "@/lib/email/notify-email";
 import { log } from "@/lib/observability/log";
+import { assertNewAccountAllowed } from "@/lib/auth/signup-guard";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const opts = (auth as any).options;
@@ -333,5 +341,26 @@ describe("provider-absent branch (re-imported with empty providers)", () => {
 	// but confirm the original config was the full-providers one for clarity.
 	it("the originally imported auth still had all four providers configured", () => {
 		expect(vi.mocked(getAuthConfig)).toBeDefined();
+	});
+});
+
+describe("databaseHooks.user.create.before (REL-L10 sign-up controls)", () => {
+	it("hands the new address and the request context to the sign-up guard", async () => {
+		const ctx = { path: "/sign-in/email-otp", headers: new Headers() };
+		await opts.databaseHooks.user.create.before({ id: "u1", email: "new@test.io" }, ctx);
+		expect(assertNewAccountAllowed).toHaveBeenCalledWith("new@test.io", ctx);
+	});
+
+	it("lets the guard's refusal propagate, so the user row is never written", async () => {
+		vi.mocked(assertNewAccountAllowed).mockRejectedValueOnce(new Error("refused"));
+		await expect(
+			opts.databaseHooks.user.create.before({ id: "u2", email: "other@test.io" }, null),
+		).rejects.toThrow("refused");
+	});
+
+	it("registers the challenge plugins before nextCookies", () => {
+		const ids = opts.plugins.map((p: { id: string }) => p.id);
+		expect(ids).toContain("captcha");
+		expect(ids.indexOf("captcha")).toBeLessThan(ids.indexOf("nextCookies"));
 	});
 });
