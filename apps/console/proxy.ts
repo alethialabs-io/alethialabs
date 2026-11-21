@@ -4,6 +4,16 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { type NextRequest, NextResponse } from "next/server";
 import { ORG_PATH_HEADER, orgPathToPublish } from "@/lib/authz/org-path";
+import {
+	CLI_MIN_VERSION_HEADER,
+	CLI_REQUEST_ID_HEADER,
+	checkCliHandshake,
+	cliTooOldResponse,
+	configuredMinimumCliVersion,
+	formatCliVersion,
+	isCliApiPath,
+	newCliRequestId,
+} from "@/lib/cli/version";
 
 // Routes that require a session. The post-signup onboarding flow (/onboarding) is
 // gated too so unauthenticated hits bounce to /login instead of erroring server-side.
@@ -65,7 +75,36 @@ export async function proxy(request: NextRequest) {
 	// is kept (#5001). `orgPathToPublish` states the conditions and what forging them would get.
 	const forwarded = new Headers(request.headers);
 	forwarded.set(ORG_PATH_HEADER, orgPathToPublish(path, request.headers));
+
+	if (isCliApiPath(path)) return cliHandshake(request, forwarded);
+
 	return NextResponse.next({ request: { headers: forwarded } });
+}
+
+/**
+ * The CLI API's half of the version handshake (`lib/cli/version.ts`). Every `/api/cli` response —
+ * the route's own answer, a 426 refusal, a route's error — carries a freshly minted `X-Request-Id`,
+ * and the route handler sees the same id on its request, replacing any the client sent. When the
+ * operator configured a minimum it is named in `X-Alethia-Min-CLI` on every answer, and a CLI that
+ * declares a version below it is refused here, before any route code runs. A request that names no
+ * version, or one that does not parse, passes: the refusal needs evidence of an old CLI.
+ */
+function cliHandshake(request: NextRequest, forwarded: Headers): NextResponse {
+	const requestId = newCliRequestId();
+	const handshake = checkCliHandshake(request.headers, configuredMinimumCliVersion());
+	if (!handshake.ok) {
+		const refused = cliTooOldResponse(handshake, requestId);
+		refused.headers.set(CLI_REQUEST_ID_HEADER, requestId);
+		return refused;
+	}
+
+	forwarded.set(CLI_REQUEST_ID_HEADER, requestId);
+	const response = NextResponse.next({ request: { headers: forwarded } });
+	response.headers.set(CLI_REQUEST_ID_HEADER, requestId);
+	if (handshake.minimum) {
+		response.headers.set(CLI_MIN_VERSION_HEADER, formatCliVersion(handshake.minimum));
+	}
+	return response;
 }
 
 export const config = {
