@@ -29,6 +29,39 @@ work in any position.
 the project picker; with `--no-input`, with `-o json`, or with the output redirected to a file, it
 is required — a form drawn into a redirected stream would corrupt the document you are piping.
 
+## Output and exit codes
+
+**The result is on stdout, and everything else is on stderr.** With `--output json`, `attach`,
+`scan` and `detach` print one object:
+
+```json
+{
+  "id": "",
+  "kind": "iac_source",
+  "action": "queued",
+  "job": { "id": "0b7e6c55-2f0a-4d0e-9a3b-6c1d2e3f4a5b", "type": "IAC_SCAN" },
+  "dry_run": false,
+  "object": { "project": "shop", "env": "dev", "job_status": "QUEUED", "warnings": [] }
+}
+```
+
+`action` is `updated` for `attach` (an attach is an upsert, and the control plane does not say
+whether the id was new), `queued` for `scan` and `deleted` for `detach`. `job` is `null` unless the
+command queued a scan. An environment holds one source, so the environment is its address: `id`
+is the source's id after an `attach` and empty otherwise. The next step — the scan to run, the command that follows a queued job, the
+flags that reproduce an interactive run — is a line on stderr.
+
+**A refusal exits with the code of its kind.** stdout stays empty, and stderr says what happened
+and the command to run next.
+
+| Exit | Meaning on this page |
+|------|----------------------|
+| `6` | The project, environment or source that you named does not exist |
+| `8` | A flag value is not valid, for example a `--var` without `=` |
+| `9` | A value or a confirmation is needed and nothing can ask for it: pass the flag the message names, or `--yes` |
+| `12` | `scan --wait` reached its `--timeout`. The scan is still running |
+| `13` | `scan --wait` saw the scan finish and fail |
+
 ## `alethia iac show`
 
 Show the BYO IaC source attached to a project environment.
@@ -76,8 +109,8 @@ The run finishes by printing the flags that would have produced the same result.
 
 ### With `--no-input`
 
-Nothing is asked, and `--repo` is required. Every field above has a flag, so any attach the form can
-perform, a script can perform.
+Nothing is asked, and `--repo` is required: leaving it out exits `9` and sends nothing. Every field
+above has a flag, so any attach the form can perform, a script can perform.
 
 <Callout type="info">
   **A private repository needs no credential flag.** The runner fetches a short-lived token at job
@@ -98,11 +131,20 @@ An environment holds **at most one** source, so re-attaching replaces it.
 
 ```bash
 alethia iac scan -p shop -e dev
+alethia iac scan -p shop -e dev --wait --timeout 10m
 ```
 
 An attached source is **not deployable until scanned**: the scan reads the module's variables and
-records the verdict the plan-time gate reads. The scan is asynchronous: the queued job id is
-printed, and `alethia jobs logs --latest --follow` tails it without repeating that id back.
+records the verdict the plan-time gate reads.
+
+The scan is a job. Without `--wait` the command returns once it is queued: the job id is in the
+result, and `alethia jobs logs --latest --follow` tails it without repeating that id back. With
+`--wait` the command follows the job to its end and reports its final status.
+
+| Flag | What it does |
+|---|---|
+| `--wait` | Wait for the scan to finish. The command exits `13` when the scan fails |
+| `--timeout` | With `--wait`, stop waiting after this long, for example `10m`. The scan keeps running and the command exits `12` |
 
 ## `alethia iac detach`
 
@@ -113,8 +155,8 @@ alethia iac detach -p shop -e dev --yes
 <Callout type="warn">
   Detaching stops Alethia managing what the source created. Resources it applied are **not
   destroyed** — run a destroy first if that is what you want. The command confirms first and names
-  the environment; with `--no-input`, or when stdin is not a terminal, `--yes` is required and the
-  command fails without it rather than cancelling quietly.
+  the environment; with `--no-input`, or when stdin is not a terminal, `--yes` is required: without
+  it the command exits `9` and detaches nothing, rather than cancelling quietly.
 </Callout>
 
 <Callout type="info">

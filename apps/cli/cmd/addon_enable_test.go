@@ -6,6 +6,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,24 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
+// saysAddonEnable enables through addonEnable and prints the result as a person reads it.
+func saysAddonEnable(c apiClient, out io.Writer, p api.EnableAddonParams) error {
+	r, err := addonEnable(c, p)
+	if err != nil {
+		return err
+	}
+	return printAddonEnable(terminalPrinter(out), r)
+}
+
+// saysAddonDisable disables through addonDisable and prints the result as a person reads it.
+func saysAddonDisable(c apiClient, out io.Writer, project, env, addonID string) error {
+	r, err := addonDisable(c, project, env, addonID)
+	if err != nil {
+		return err
+	}
+	return printAddonEnable(terminalPrinter(out), r)
+}
+
 func TestRunAddonEnable(t *testing.T) {
 	t.Run("forwards every field", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -29,7 +48,7 @@ func TestRunAddonEnable(t *testing.T) {
 			Values:     map[string]interface{}{"retention_days": float64(7)},
 			ValuesYAML: &yaml,
 		}
-		if err := runAddonEnable(f, &buf, p); err != nil {
+		if err := saysAddonEnable(f, &buf, p); err != nil {
 			t.Fatalf("runAddonEnable: %v", err)
 		}
 		if !reflect.DeepEqual(f.enabledAddon, p) {
@@ -44,7 +63,7 @@ func TestRunAddonEnable(t *testing.T) {
 	t.Run("requires an add-on id", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runAddonEnable(f, &buf, api.EnableAddonParams{Project: "shop"}); err == nil {
+		if err := saysAddonEnable(f, &buf, api.EnableAddonParams{Project: "shop"}); err == nil {
 			t.Fatal("an empty add-on id must be refused locally")
 		}
 		if f.enabledAddon.AddonID != "" {
@@ -54,7 +73,7 @@ func TestRunAddonEnable(t *testing.T) {
 
 	t.Run("surfaces a server error", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := runAddonEnable(&fakeClient{err: errBoom}, &buf, api.EnableAddonParams{AddonID: "loki"}); err == nil {
+		if err := saysAddonEnable(&fakeClient{err: errBoom}, &buf, api.EnableAddonParams{AddonID: "loki"}); err == nil {
 			t.Fatal("expected the server error to surface")
 		}
 	})
@@ -62,7 +81,7 @@ func TestRunAddonEnable(t *testing.T) {
 	// No environment named → the confirmation must not invent one.
 	t.Run("omits the environment when none was given", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := runAddonEnable(&fakeClient{}, &buf, api.EnableAddonParams{AddonID: "loki"}); err != nil {
+		if err := saysAddonEnable(&fakeClient{}, &buf, api.EnableAddonParams{AddonID: "loki"}); err != nil {
 			t.Fatalf("runAddonEnable: %v", err)
 		}
 		if strings.Contains(buf.String(), " in ") {
@@ -75,7 +94,7 @@ func TestRunAddonDisable(t *testing.T) {
 	t.Run("forwards the arguments", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runAddonDisable(f, &buf, "shop", "dev", "falco"); err != nil {
+		if err := saysAddonDisable(f, &buf, "shop", "dev", "falco"); err != nil {
 			t.Fatalf("runAddonDisable: %v", err)
 		}
 		if f.disabledAddonProj != "shop" || f.disabledAddonEnv != "dev" || f.disabledAddonID != "falco" {
@@ -89,7 +108,7 @@ func TestRunAddonDisable(t *testing.T) {
 	t.Run("requires an add-on id", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runAddonDisable(f, &buf, "shop", "", ""); err == nil {
+		if err := saysAddonDisable(f, &buf, "shop", "", ""); err == nil {
 			t.Fatal("an empty add-on id must be refused locally")
 		}
 		if f.disabledAddonID != "" {
@@ -99,7 +118,7 @@ func TestRunAddonDisable(t *testing.T) {
 
 	t.Run("surfaces a server error", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := runAddonDisable(&fakeClient{err: errBoom}, &buf, "shop", "", "falco"); err == nil {
+		if err := saysAddonDisable(&fakeClient{err: errBoom}, &buf, "shop", "", "falco"); err == nil {
 			t.Fatal("expected the server error to surface")
 		}
 	})

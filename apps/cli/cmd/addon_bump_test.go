@@ -42,32 +42,43 @@ func bumpResult(status string) *api.GitopsBumpResult {
 	return r
 }
 
-// TestRunAddonBump (#6549): each answer is said with what to do next, a refusal always carries the
+// TestAddonBump (#6549): each answer is said with what to do next, a refusal always carries the
 // manual instruction, and --again is passed through and nothing else sets it.
-func TestRunAddonBump(t *testing.T) {
+func TestAddonBump(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		reply *api.GitopsBumpResult
-		again bool
-		want  []string
+		name   string
+		reply  *api.GitopsBumpResult
+		again  bool
+		action ResultAction
+		want   []string
 	}{
-		{"opened", func() *api.GitopsBumpResult { r := bumpResult("open"); r.Created = true; return r }(), false,
+		{"opened", func() *api.GitopsBumpResult { r := bumpResult("open"); r.Created = true; return r }(), false, ResultCreated,
 			[]string{"Pull request opened: #42 https://github.com/acme/apps/pull/42", "spec.source.targetRevision", "addons/ingress-nginx.yaml", "4.15.1"}},
-		{"already open", bumpResult("open"), false, []string{"is already open: #42"}},
-		{"merged", bumpResult("merged"), false, []string{"was merged", "The next deploy reads 4.15.1"}},
-		{"declined", bumpResult("declined"), false, []string{"You closed pull request #42", "--again"}},
-		{"refused", bumpResult("refused"), true,
+		{"already open", bumpResult("open"), false, ResultUnchanged, []string{"is already open: #42"}},
+		{"merged", bumpResult("merged"), false, ResultUnchanged, []string{"was merged", "The next deploy reads 4.15.1"}},
+		{"declined", bumpResult("declined"), false, ResultUnchanged, []string{"You closed pull request #42", "--again"}},
+		{"refused", bumpResult("refused"), true, ResultUnchanged,
 			[]string{"No pull request was opened.", "GitHub only", "set spec.source.targetRevision in addons/ingress-nginx.yaml to 4.15.1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &fakeBumper{reply: tc.reply}
-			var out bytes.Buffer
-			if err := runAddonBump(f, &out, "acme", "prod", "ingress-nginx", tc.again); err != nil {
-				t.Fatalf("runAddonBump: %v", err)
+			result, err := addonBump(f, "acme", "prod", "ingress-nginx", tc.again)
+			if err != nil {
+				t.Fatalf("addonBump: %v", err)
 			}
+			if result.Action != tc.action {
+				t.Errorf("action = %q, want %q", result.Action, tc.action)
+			}
+			obj, ok := result.Object.(addonBumpObject)
+			if !ok {
+				t.Fatalf("object is %T", result.Object)
+			}
+			var out bytes.Buffer
+			renderAddonBump(&out, obj.GitopsBumpResult)
+			said := out.String() + addonBumpNote(obj.GitopsBumpResult)
 			for _, w := range tc.want {
-				if !strings.Contains(out.String(), w) {
-					t.Errorf("output is missing %q:\n%s", w, out.String())
+				if !strings.Contains(said, w) {
+					t.Errorf("output is missing %q:\n%s", w, said)
 				}
 			}
 			if f.got[3] != tc.again {
@@ -76,11 +87,50 @@ func TestRunAddonBump(t *testing.T) {
 		})
 	}
 
-	if err := runAddonBump(&fakeBumper{}, &bytes.Buffer{}, "acme", "", "", false); err == nil {
+	if _, err := addonBump(&fakeBumper{}, "acme", "", "", false); err == nil {
 		t.Error("an empty add-on id was sent")
 	}
-	if err := runAddonBump(&fakeBumper{err: errors.New("boom")}, &bytes.Buffer{}, "acme", "", "x", false); err == nil {
+	if _, err := addonBump(&fakeBumper{err: errors.New("boom")}, "acme", "", "x", false); err == nil {
 		t.Error("an API error was swallowed")
+	}
+}
+
+// TestAddonBump_JSONCarriesThePullRequestAsFields is the spec's acceptance line for this command:
+// `addon bump -o json` carries the pull request's url as a field, not only in prose.
+func TestAddonBump_JSONCarriesThePullRequestAsFields(t *testing.T) {
+	reply := bumpResult("open")
+	reply.Created = true
+	result, err := addonBump(&fakeBumper{reply: reply}, "acme", "prod", "ingress-nginx", false)
+	if err != nil {
+		t.Fatalf("addonBump: %v", err)
+	}
+	var out bytes.Buffer
+	if err := testPrinter(&out, "json").Result(result, nil); err != nil {
+		t.Fatalf("Result: %v", err)
+	}
+	var doc struct {
+		ID     string `json:"id"`
+		Kind   string `json:"kind"`
+		Action string `json:"action"`
+		Object struct {
+			Project string `json:"project"`
+			Env     string `json:"env"`
+			Status  string `json:"status"`
+			Number  int    `json:"number"`
+			URL     string `json:"url"`
+		} `json:"object"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("not one json document: %v\n%s", err, out.String())
+	}
+	if doc.ID != "ingress-nginx" || doc.Kind != "addon" || doc.Action != "created" {
+		t.Errorf("result = %+v", doc)
+	}
+	if doc.Object.URL != "https://github.com/acme/apps/pull/42" || doc.Object.Number != 42 || doc.Object.Status != "open" {
+		t.Errorf("the pull request is not in the object: %+v", doc.Object)
+	}
+	if doc.Object.Project != "acme" || doc.Object.Env != "prod" {
+		t.Errorf("the target is not in the object: %+v", doc.Object)
 	}
 }
 
