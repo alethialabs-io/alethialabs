@@ -10,7 +10,7 @@
 #
 # Assumed by .github/workflows/spend-report.yml and by nothing else. It READS Cost Explorer (this
 # account's spend) and the tagging API (the e2e leak list). It writes nothing, and — unlike the
-# platform reporter — it holds NO secret read: the Resend key the report is mailed with is read in
+# platform reporter — it holds NO secret read: the SES sender key the report is mailed with is read in
 # the platform account, through that account's role.
 #
 # TRUST — one subject, the same as the platform reporter's: `repo:<repo>:environment:spend-report`.

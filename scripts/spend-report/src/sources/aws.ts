@@ -298,8 +298,9 @@ export function scanAwsLeaks(cfg: AwsConfig, accounts: AwsAccount[]): Promise<Le
 }
 
 /**
- * Reads the prod vault (`alethia/prod/env`) and returns the keys the email send needs. The value is
- * returned, never printed; the caller masks it before anything is logged.
+ * Reads the prod vault (`alethia/prod/env`) and returns the keys the email send needs (the SES
+ * sender of the alethia-email account and the from-addresses). The values are returned, never
+ * printed; the caller masks the credentials before anything is logged.
  */
 export async function readVault(secretId: string, region: string): Promise<Record<string, string>> {
 	const out = await runJson("aws", ["secretsmanager", "get-secret-value", "--secret-id", secretId, "--region", region, "--output", "json"]);
@@ -307,7 +308,14 @@ export async function readVault(secretId: string, region: string): Promise<Recor
 	const blob: unknown = JSON.parse(out.SecretString);
 	if (!isRecord(blob)) throw new Error(`${secretId} is not a JSON object`);
 	const keys: Record<string, string> = {};
-	for (const k of ["RESEND_API_KEY", "EMAIL_FROM", "AUTH_EMAIL_FROM"]) {
+	for (const k of [
+		"ALETHIA_SES_REGION",
+		"ALETHIA_SES_ACCESS_KEY_ID",
+		"ALETHIA_SES_SECRET_ACCESS_KEY",
+		"ALETHIA_SES_GENERAL_CONFIG_SET",
+		"EMAIL_FROM",
+		"AUTH_EMAIL_FROM",
+	]) {
 		const v = blob[k];
 		if (typeof v === "string" && v !== "") keys[k] = v;
 	}

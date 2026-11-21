@@ -76,7 +76,7 @@ jobs:
           # else fails here instead of reporting some other account's spend as e2e spend.
           allowed-account-ids: "556074788436"
 
-      # ── AWS, the platform account: Cost Explorer + the tagging API + the vault (the Resend key) ──
+      # ── AWS, the platform account: Cost Explorer + the tagging API + the vault (the SES sender key) ──
       - name: Configure AWS credentials (OIDC)
         id: aws
         if: vars.SPEND_REPORTER_ROLE_ARN != ''

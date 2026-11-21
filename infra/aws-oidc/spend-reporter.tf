@@ -3,8 +3,8 @@
 #
 # ── Weekly spend report role (`alethia-spend-reporter`) ─────────────────────────────────────────
 # Assumed by .github/workflows/spend-report.yml, and by nothing else. It READS: Cost Explorer (the
-# account's spend), the tagging API (the e2e leak list) and the one prod secret (for the Resend key
-# the report is mailed with). It writes nothing anywhere.
+# account's spend), the tagging API (the e2e leak list) and the one prod secret (for the SES sender key
+# of the alethia-email account, which the report is mailed with). It writes nothing anywhere.
 #
 # TRUST — ONE subject, an ENVIRONMENT, never the shared `deployer_trust`. `deployer_trust` admits
 # `ref:refs/heads/main`, which every workflow on main presents; this role must be reachable from
@@ -20,9 +20,9 @@
 # FIRST, and this stack after it. scripts/spend-report/README.md carries the order.
 #
 # THE SECRET GRANT IS THE WHOLE BLOB. Secrets Manager authorizes `GetSecretValue` per SECRET, not
-# per JSON key, so this role can read every key in `alethia/prod/env`, not only `RESEND_API_KEY`.
-# That is the same reach `alethia-deploy-reader` already has; narrowing it would mean a separate
-# secret holding the Resend key alone (a new container + a second writer in bootstrap-secrets.sh),
+# per JSON key, so this role can read every key in `alethia/prod/env`, not only the
+# `ALETHIA_SES_*` sender keys. That is the same reach `alethia-deploy-reader` already has; narrowing
+# it would mean a separate secret holding the sender key alone (a new container + a second writer in bootstrap-secrets.sh),
 # which is a follow-up rather than something this role can do by itself.
 
 locals {
@@ -92,7 +92,7 @@ data "aws_iam_policy_document" "spend_reporter" {
     actions   = ["tag:GetResources"]
     resources = ["*"]
   }
-  # The Resend key the report is mailed with. One secret, read-only — see the header for why this
+  # The SES sender key the report is mailed with. One secret, read-only — see the header for why this
   # cannot be one KEY of that secret.
   statement {
     sid       = "AsmRead"

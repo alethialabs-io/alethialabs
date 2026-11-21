@@ -162,7 +162,7 @@ check "spend_reporter_sub_does_not_reach_the_nightly_role" {
 
 check "spend_reporter_policy_is_read_only" {
   assert {
-    # No secretsmanager:GetSecretValue here, unlike the platform reporter: the Resend key is read there.
+    # No secretsmanager:GetSecretValue here, unlike the platform reporter: the SES sender key is read there.
     condition = alltrue([
       for a in flatten([for st in jsondecode(data.aws_iam_policy_document.spend_reporter.json).Statement : flatten([st.Action])]) :
       contains(["ce:GetCostAndUsage", "ce:GetCostForecast", "tag:GetResources"], a)
