@@ -259,7 +259,7 @@ export const CONSUMER_ADR: readonly ConsumerDisputeBody[] = [
 	{
 		name: "General Conciliation Commission, Sofia",
 		localName: "Обща помирителна комисия — София",
-		url: "https://kzp.bg/pomiritelna-komisiya",
+		url: "https://kzp.bg/bg/pomiritelna-komisiya",
 		role: "Alternative dispute resolution for consumer disputes with traders established in Bulgaria.",
 	},
 ];
