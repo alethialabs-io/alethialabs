@@ -6,35 +6,28 @@
 // (lib/query/README.md → "Server-side filters"): a URL-synced zustand store → debounce →
 // `normalizeTeamsQuery` → the `members.teams` GET procedure, which the route prefetches (#6129).
 //
-// Writes go to Better Auth's organization endpoints (createTeam/removeTeam, and the member roster
-// in ManageTeamDialog) through `useActionMutation`, so each is pending while in flight and the list
-// is invalidated when it settles; a `members` hint refreshes it when someone else changes a team.
-// The design's per-team description, stored slug and role-tag have no backend yet — omitted and
+// Writes go to Better Auth's organization endpoints (createTeam/updateTeam/removeTeam, and the
+// member roster in ManageTeamDialog) through `useActionMutation`, so each is pending while in flight
+// and the list is invalidated when it settles; a `members` hint refreshes it when someone else
+// changes a team. What the viewer may write is the route's `gate` (teams-gate.ts — the same
+// access-control statements the writes check), so a control they cannot use is disabled with its
+// reason rather than live and refused by a toast (R6 E-08). A team has no stored slug, so none is
+// shown (R6 E-14); the design's per-team description and role-tag have no backend yet — omitted and
 // tracked in dataroom/spec/features/settings-design-port.md.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { planMeta } from "@repo/plan-catalog";
-import type { ColumnDef } from "@tanstack/react-table";
+import type { CellContext, ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Plus, Users } from "lucide-react";
-import { useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
-import { z } from "zod";
 import type { TeamRow } from "@/app/server/actions/teams";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { DataTable } from "@/components/data-table";
 import { RegionError } from "@/components/errors/region-error";
 import { viaAuth } from "@/components/settings/members/auth-action";
 import { PeopleListSkeleton } from "@/components/settings/members/people-skeleton";
 import { settingsControl, settingsControlSize } from "@/components/settings/settings-ui";
-import {
-	AlertDialog,
-	AlertDialogAction,
-	AlertDialogCancel,
-	AlertDialogContent,
-	AlertDialogDescription,
-	AlertDialogFooter,
-	AlertDialogHeader,
-	AlertDialogTitle,
-} from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import {
@@ -57,7 +50,6 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { authClient } from "@/lib/auth/client";
 import { useTeamsPageQuery } from "@/lib/query/use-teams-query";
 import { orpc } from "@/lib/rpc/client";
-import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useTeamsFilters } from "@/lib/stores/use-settings-filters";
 import { cn } from "@repo/ui/utils";
@@ -67,6 +59,8 @@ import {
 	TEAM_SIZE_OPTIONS,
 } from "./teams-filters";
 import { ManageTeamDialog } from "./manage-team-dialog";
+import { RenameTeamDialog, type TeamNameInput, teamNameSchema } from "./rename-team-dialog";
+import { NO_TEAM_WRITES, type TeamsGate } from "./teams-gate";
 
 /** Two-letter avatar initials for a team name. */
 function monogram(name: string): string {
@@ -80,19 +74,164 @@ function monogram(name: string): string {
 /** Why Create team is disabled without the entitlement — the plan the upsell below names. */
 const TEAMS_GATE_REASON = `Teams are available on the ${planMeta(FEATURE_UPSELLS.teams.requiredPlan).name} plan.`;
 
+/**
+ * Why a team write is disabled for a viewer whose role does not hold it. Deliberately not the shared
+ * "ask an owner or admin" sentence: which roles may manage teams is an open decision (#7050), and
+ * today no role holds the team statements, so that sentence would send an owner to ask themselves.
+ */
+export const TEAM_WRITE_DENIED = "Your role in this organization doesn't include managing teams.";
+
+/** The reason a team write is unavailable, or null when the viewer may make it. */
+function writeReason(entitled: boolean, allowed: boolean): string | null {
+	if (!entitled) return TEAMS_GATE_REASON;
+	return allowed ? null : TEAM_WRITE_DENIED;
+}
+
 /** Every read that shows a team: the teams page, and the member lists' team chips. */
 const TEAM_READS = [orpc.members.key()];
 
-/** The inline create form: a team name. */
-const newTeamSchema = z.object({ name: z.string().trim().min(1, "Name the team").max(120) });
-type NewTeam = z.infer<typeof newTeamSchema>;
+// ── STABLE CELLS (R6 E-15, the members table's #5023) ────────────────────────────────────────
+//
+// Every cell is a MODULE-LEVEL component and the columns are a module-level constant. `DataTable`
+// renders a cell through `flexRender`, for which the `cell` function IS the component type, so
+// columns rebuilt on every render gave every cell a new type each time: React remounted every cell
+// on any re-render — a refetch, a keystroke in the search box — and closed a row menu under the
+// person using it. What changes between renders (the gate, which row is mid-delete, the openers)
+// reaches the cells through `TeamsCellsContext`; a context change RE-RENDERS a cell, only a new
+// type REMOUNTS it.
+
+/** The per-render state the cells read. */
+interface TeamsCells {
+	entitled: boolean;
+	gate: TeamsGate;
+	/** The team a delete is in flight for: its row menu is closed until it settles. */
+	removingId: string | undefined;
+	openRoster: (team: TeamRow) => void;
+	openRename: (team: TeamRow) => void;
+	askDelete: (team: TeamRow) => void;
+}
+
+const TeamsCellsContext = createContext<TeamsCells | null>(null);
+
+/** The teams table's cell state; a cell rendered outside `TeamsList` is a wiring defect. */
+function useTeamsCells(): TeamsCells {
+	const ctx = useContext(TeamsCellsContext);
+	if (!ctx) throw new Error("A teams-table cell rendered outside TeamsCellsContext.");
+	return ctx;
+}
+
+/** Monogram and name. */
+function TeamCell({ row }: CellContext<TeamRow, unknown>) {
+	const t = row.original;
+	return (
+		<div className="flex min-w-0 items-center gap-3">
+			<span
+				aria-hidden
+				className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-ink font-display text-ui-sm font-semibold text-ink-foreground"
+			>
+				{monogram(t.name)}
+			</span>
+			<span className="truncate text-ui-md font-medium text-text-primary">{t.name}</span>
+		</div>
+	);
+}
+
+/** The avatar stack and the member count. */
+function MembersCell({ row }: CellContext<TeamRow, unknown>) {
+	const t = row.original;
+	return (
+		<div className="flex items-center gap-3">
+			{t.members.length > 0 && (
+				<div aria-hidden className="flex -space-x-2">
+					{t.members.slice(0, 4).map((m) => (
+						<span
+							key={m.userId}
+							className="flex size-6 items-center justify-center rounded-full border-2 border-surface bg-surface-muted font-mono text-ui-3xs text-text-secondary"
+						>
+							{m.initials}
+						</span>
+					))}
+					{t.members.length > 4 && (
+						<span className="flex size-6 items-center justify-center rounded-full border-2 border-surface bg-surface-sunken font-mono text-ui-3xs text-text-tertiary">
+							+{t.members.length - 4}
+						</span>
+					)}
+				</div>
+			)}
+			<span className="whitespace-nowrap font-mono text-ui-xs text-text-tertiary">
+				{t.memberCount} member{t.memberCount === 1 ? "" : "s"}
+			</span>
+		</div>
+	);
+}
+
+/**
+ * One row's "Manage team …" menu. The roster is always viewable; rename and delete are items that
+ * say why when the viewer may not use them (`disabledReason`), never items that are missing.
+ */
+function ActionsCell({ row }: CellContext<TeamRow, unknown>) {
+	const { entitled, gate, removingId, openRoster, openRename, askDelete } = useTeamsCells();
+	const t = row.original;
+	const removing = removingId === t.id;
+	return (
+		<div className="text-right">
+			<DropdownMenu>
+				<DropdownMenuTrigger
+					disabled={removing}
+					render={
+						<Button
+							variant="ghost"
+							size="icon"
+							className="size-7"
+							aria-label={`Manage team ${t.name}`}
+							aria-busy={removing || undefined}
+							disabled={removing}
+						>
+							<MoreHorizontal size={16} />
+						</Button>
+					}
+				/>
+				<DropdownMenuContent align="end" className="w-56">
+					<DropdownMenuItem onClick={() => openRoster(t)}>Manage members</DropdownMenuItem>
+					<DropdownMenuItem
+						disabledReason={writeReason(entitled, gate.canRename)}
+						onClick={() => openRename(t)}
+					>
+						Rename team
+					</DropdownMenuItem>
+					<DropdownMenuItem
+						className="text-destructive focus:text-destructive"
+						disabledReason={writeReason(entitled, gate.canDelete)}
+						onClick={() => askDelete(t)}
+					>
+						Delete team
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</div>
+	);
+}
+
+/** The table's columns: module-level, so no render can hand `DataTable` a new cell type. */
+const TEAM_COLUMNS: ColumnDef<TeamRow>[] = [
+	{ accessorKey: "name", header: "Team", cell: TeamCell },
+	{ accessorKey: "memberCount", header: "Members", cell: MembersCell },
+	{ id: "actions", header: "", enableSorting: false, cell: ActionsCell },
+];
 
 /**
  * Settings · Teams. `entitled` is the `teams` entitlement as the ROUTE resolved it on the server,
  * so the first paint already knows whether Create team is live (F017); the workspace store can
  * still turn it on later (an in-session upgrade), never off.
  */
-export function TeamsList({ entitled: serverEntitled = false }: { entitled?: boolean } = {}) {
+export function TeamsList({
+	entitled: serverEntitled = false,
+	gate = NO_TEAM_WRITES,
+}: {
+	entitled?: boolean;
+	/** What the viewer may write, as the route decided it on the server (teams-gate.ts). */
+	gate?: TeamsGate;
+} = {}) {
 	// Teams are an Enterprise capability. Without it the page stays visible — existing teams render
 	// read-only, Create team is disabled with its reason, and the upsell is the body when there is
 	// nothing else to show — matching the server-side `beforeCreateTeam` gate (no hard wall).
@@ -115,11 +254,16 @@ export function TeamsList({ entitled: serverEntitled = false }: { entitled?: boo
 
 	const [creating, setCreating] = useState(false);
 	const [manage, setManage] = useState<TeamRow | null>(null);
+	const [renaming, setRenaming] = useState<TeamRow | null>(null);
 	const [deleting, setDeleting] = useState<TeamRow | null>(null);
-	const form = useForm<NewTeam>({
-		resolver: zodResolver(newTeamSchema),
+	// The name the delete confirmation is RENDERING, which outlives `deleting` by one close (the
+	// dialog stays mounted and fades out; a description built from the cleared row would blank).
+	const [deletingName, setDeletingName] = useState("");
+	const form = useForm<TeamNameInput>({
+		resolver: zodResolver(teamNameSchema),
 		defaultValues: { name: "" },
 	});
+	const createReason = writeReason(entitled, gate.canCreate);
 
 	// Filtered SERVER-SIDE: `members.teams` narrows in SQL and returns the size facet counted
 	// over the org's UNFILTERED teams, so an option never disappears as you select it. The
@@ -145,7 +289,7 @@ export function TeamsList({ entitled: serverEntitled = false }: { entitled?: boo
 		filters.search !== search;
 
 	const createTeam = useActionMutation(
-		({ name }: NewTeam) => viaAuth(() => authClient.organization.createTeam({ name })),
+		({ name }: TeamNameInput) => viaAuth(() => authClient.organization.createTeam({ name })),
 		{
 			invalidates: TEAM_READS,
 			successMessage: "Team created",
@@ -167,111 +311,30 @@ export function TeamsList({ entitled: serverEntitled = false }: { entitled?: boo
 	const removingId = removeTeam.isPending ? removeTeam.variables?.teamId : undefined;
 
 	const submitCreate = form.handleSubmit((values) => {
-		if (!entitled || createTeam.isPending) return;
-		createTeam.mutate(values);
+		if (createReason !== null) return;
+		createTeam.submit(values);
 	});
+
+	const askDelete = useCallback((team: TeamRow) => {
+		setDeletingName(team.name);
+		setDeleting(team);
+	}, []);
+	const cells = useMemo<TeamsCells>(
+		() => ({
+			entitled,
+			gate,
+			removingId,
+			openRoster: setManage,
+			openRename: setRenaming,
+			askDelete,
+		}),
+		[entitled, gate, removingId, askDelete],
+	);
 
 	// The team the roster dialog is open on, read from the CURRENT rows, so an add or a removal
 	// shows in the dialog as soon as the list refetches; the snapshot covers a team the filters
 	// now exclude.
 	const manageRow = manage ? (rows.find((r) => r.id === manage.id) ?? manage) : null;
-
-	const columns: ColumnDef<TeamRow>[] = [
-		{
-			accessorKey: "name",
-			header: "Team",
-			cell: ({ row }) => {
-				const t = row.original;
-				return (
-					<div className="flex min-w-0 items-center gap-3">
-						<span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-ink font-display text-ui-sm font-semibold text-ink-foreground">
-							{monogram(t.name)}
-						</span>
-						<div className="flex min-w-0 flex-col">
-							<span className="truncate text-ui-md font-medium text-text-primary">
-								{t.name}
-							</span>
-							<span className="font-mono text-ui-2xs text-text-tertiary">
-								{slugifyOrEmpty(t.name)}
-							</span>
-						</div>
-					</div>
-				);
-			},
-		},
-		{
-			accessorKey: "memberCount",
-			header: "Members",
-			cell: ({ row }) => {
-				const t = row.original;
-				return (
-					<div className="flex items-center gap-3">
-						{t.members.length > 0 && (
-							<div className="flex -space-x-2">
-								{t.members.slice(0, 4).map((m) => (
-									<span
-										key={m.userId}
-										className="flex size-6 items-center justify-center rounded-full border-2 border-surface bg-surface-muted font-mono text-ui-3xs text-text-secondary"
-									>
-										{m.initials}
-									</span>
-								))}
-								{t.members.length > 4 && (
-									<span className="flex size-6 items-center justify-center rounded-full border-2 border-surface bg-surface-sunken font-mono text-ui-3xs text-text-tertiary">
-										+{t.members.length - 4}
-									</span>
-								)}
-							</div>
-						)}
-						<span className="whitespace-nowrap font-mono text-ui-xs text-text-tertiary">
-							{t.memberCount} member{t.memberCount === 1 ? "" : "s"}
-						</span>
-					</div>
-				);
-			},
-		},
-		{
-			id: "actions",
-			header: "",
-			enableSorting: false,
-			cell: ({ row }) => {
-				const t = row.original;
-				const removing = removingId === t.id;
-				return (
-					<div className="text-right">
-						<DropdownMenu>
-							<DropdownMenuTrigger
-								disabled={!entitled || removing}
-								render={
-									<Button
-										variant="ghost"
-										size="icon"
-										className="size-7"
-										aria-label="Manage team"
-										aria-busy={removing || undefined}
-										disabled={!entitled || removing}
-									>
-										<MoreHorizontal size={16} />
-									</Button>
-								}
-							/>
-							<DropdownMenuContent align="end" className="w-44">
-								<DropdownMenuItem onClick={() => setManage(t)}>
-									Manage members
-								</DropdownMenuItem>
-								<DropdownMenuItem
-									className="text-destructive focus:text-destructive"
-									onClick={() => setDeleting(t)}
-								>
-									Delete team
-								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</div>
-				);
-			},
-		},
-	];
 
 	const activeFilters = countActiveFilters(filters, DEFAULT_TEAMS_FILTERS);
 
@@ -289,18 +352,16 @@ export function TeamsList({ entitled: serverEntitled = false }: { entitled?: boo
 		);
 	}
 
-	const createButton = (
-		<Button size="sm" onClick={() => setCreating((v) => !v)}>
-			<Plus size={13} />
-			Create team
-		</Button>
-	);
-	// Without the entitlement the SAME button is shown disabled with its reason (F017) — not an
-	// enabled control that opens an upgrade modal. The upsell panel below explains the plan.
-	const createAction = entitled ? (
-		createButton
-	) : (
-		<DisabledReason reason={TEAMS_GATE_REASON}>{createButton}</DisabledReason>
+	// Without the entitlement, or without a role that may create a team, the SAME button is shown
+	// disabled with its reason (F017, R6 E-08) — not an enabled control that opens an upgrade modal
+	// or ends in a refusal toast. The upsell panel below explains the plan.
+	const createAction = (
+		<DisabledReason reason={createReason}>
+			<Button size="sm" aria-expanded={creating} onClick={() => setCreating((v) => !v)}>
+				<Plus size={13} />
+				Create team
+			</Button>
+		</DisabledReason>
 	);
 	// The upsell IS the page body when the org is not entitled and has no teams to show; then there
 	// is nothing to filter, so the filter bar is not drawn above it (F017).
@@ -342,7 +403,7 @@ export function TeamsList({ entitled: serverEntitled = false }: { entitled?: boo
 			)}
 
 			{/* inline create panel */}
-			{entitled && creating && (
+			{createReason === null && creating && (
 				<form
 					onSubmit={(e) => void submitCreate(e)}
 					className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm"
@@ -408,11 +469,16 @@ export function TeamsList({ entitled: serverEntitled = false }: { entitled?: boo
 								: "No team matches these filters."
 						}
 						action={
-							total === 0 ? undefined : (
+							total > 0 ? (
 								<Button variant="outline" size="sm" onClick={reset}>
 									Clear filters
 								</Button>
-							)
+							) : createReason === null && !creating ? (
+								<Button variant="outline" size="sm" onClick={() => setCreating(true)}>
+									<Plus size={13} />
+									Create team
+								</Button>
+							) : undefined
 						}
 					/>
 				)
@@ -422,7 +488,9 @@ export function TeamsList({ entitled: serverEntitled = false }: { entitled?: boo
 						teamsQuery.isPlaceholderData && "opacity-60 transition-opacity",
 					)}
 				>
-					<DataTable columns={columns} data={rows} pageSize={10} />
+					<TeamsCellsContext.Provider value={cells}>
+						<DataTable columns={TEAM_COLUMNS} data={rows} pageSize={10} />
+					</TeamsCellsContext.Provider>
 				</div>
 			)}
 
@@ -431,35 +499,27 @@ export function TeamsList({ entitled: serverEntitled = false }: { entitled?: boo
 					team={manageRow}
 					open={manage !== null}
 					onOpenChange={(o) => !o && setManage(null)}
+					rosterReason={writeReason(entitled, gate.canEditRoster)}
 				/>
 			)}
 
-			<AlertDialog
+			<RenameTeamDialog team={renaming} onOpenChange={(o) => !o && setRenaming(null)} />
+
+			{/* The console's one confirmation (CON-SM2): it stays open while the delete runs, closes
+			    itself once it has succeeded, and stays up beside the reason when it is refused. */}
+			<ConfirmAction
 				open={deleting !== null}
-				onOpenChange={(o) => !o && setDeleting(null)}
-			>
-				<AlertDialogContent>
-					<AlertDialogHeader>
-						<AlertDialogTitle>Delete this team?</AlertDialogTitle>
-						<AlertDialogDescription>
-							This removes the team and its membership. Grants made to the team are
-							revoked. Members keep their own roles. This cannot be undone.
-						</AlertDialogDescription>
-					</AlertDialogHeader>
-					<AlertDialogFooter>
-						<AlertDialogCancel>Cancel</AlertDialogCancel>
-						<AlertDialogAction
-							onClick={() => {
-								if (deleting) removeTeam.mutate({ teamId: deleting.id });
-								setDeleting(null);
-							}}
-							variant="destructive"
-						>
-							Delete team
-						</AlertDialogAction>
-					</AlertDialogFooter>
-				</AlertDialogContent>
-			</AlertDialog>
+				onOpenChange={(o) => {
+					if (!o) setDeleting(null);
+				}}
+				title="Delete this team?"
+				description={`${deletingName} and its membership are removed. Grants made to the team are revoked; its members keep their own roles. This cannot be undone.`}
+				confirmLabel="Delete team"
+				pendingLabel="Deleting…"
+				severity={{ level: "confirm" }}
+				mutation={removeTeam}
+				variables={deleting ? { teamId: deleting.id } : null}
+			/>
 		</div>
 	);
 }
