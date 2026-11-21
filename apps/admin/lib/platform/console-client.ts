@@ -21,16 +21,8 @@ function provisionSecret(): string {
 	return s;
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
-	const res = await fetch(`${consoleOrigin()}/api/internal/platform${path}`, {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-			authorization: `Bearer ${provisionSecret()}`,
-		},
-		body: JSON.stringify(body),
-		cache: "no-store",
-	});
+/** Reads a console response: the parsed JSON body on 2xx, else throws the route's `error` text. */
+async function readResponse(path: string, res: Response): Promise<unknown> {
 	const text = await res.text();
 	if (!res.ok) {
 		let message = text || `console ${path} failed (HTTP ${res.status})`;
@@ -49,7 +41,42 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 		}
 		throw new Error(message);
 	}
-	return (text ? JSON.parse(text) : {}) as T;
+	return text ? JSON.parse(text) : {};
+}
+
+/** POSTs a JSON body to a console platform route with the provisioning bearer. */
+async function post<T>(path: string, body: unknown): Promise<T> {
+	const res = await fetch(`${consoleOrigin()}/api/internal/platform${path}`, {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+			authorization: `Bearer ${provisionSecret()}`,
+		},
+		body: JSON.stringify(body),
+		cache: "no-store",
+	});
+	return (await readResponse(path, res)) as T;
+}
+
+/**
+ * GETs a console platform route with the provisioning bearer. Answers `unknown` on purpose: a read
+ * crosses a service boundary, so the caller validates the body (zod) instead of trusting a type.
+ */
+async function get(path: string): Promise<unknown> {
+	const res = await fetch(`${consoleOrigin()}/api/internal/platform${path}`, {
+		method: "GET",
+		headers: { authorization: `Bearer ${provisionSecret()}` },
+		cache: "no-store",
+	});
+	return readResponse(path, res);
+}
+
+/**
+ * The Postgres-derived funnel for the last `days` UTC days (REL-L12) — aggregate counts only. The
+ * body is unvalidated here; app/funnel/report.ts parses it.
+ */
+export function getFunnelReport(days: number): Promise<unknown> {
+	return get(`/funnel?days=${encodeURIComponent(String(days))}`);
 }
 
 /** Create an org shell + invite its owner (Flow B). Returns the new org id + invitation id. */
