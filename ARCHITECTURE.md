@@ -129,7 +129,7 @@ turbo fan-out picks them up.
   `apps/console/scripts/check-marketing-routes.mjs` fails CI if the two encodings drift.
 - **docs** — Next.js + Fumadocs, content in `apps/docs/content/docs/`. The prose bar (Diátaxis,
   plain language, Vale) is a required check — see `apps/docs/README.md`.
-- **blog** — Next.js + Velite.
+- **blog** — Next.js + Velite, served at `/news` (the old `/blog` paths 308 there). Posts carry a `kind` (announcement · changelog · engineering · company); the /news list merges them with changelog rows read from the GitHub releases API.
 - **admin** — the internal staff support dashboard (cases, orgs, spend). Owns the schema in
   `packages/platform`. Fronted by Cloudflare Access; the app trusts the
   `Cf-Access-Authenticated-User-Email` header.

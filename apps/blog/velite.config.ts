@@ -17,6 +17,14 @@ const posts = defineCollection({
 			tags: s.array(s.string()).default([]),
 			cover: s.string().optional(),
 			excerpt: s.string().optional(),
+			// Which tier of news this is: drives the /news filter and the featured fallback. Most
+			// posts are deep dives, so that is the default. `changelog` exists for a hand-written
+			// roll-up; the automatic changelog rows come from GitHub releases (lib/releases.ts).
+			kind: s.enum(["announcement", "changelog", "engineering", "company"]).default("engineering"),
+			// Pins the post to the /news featured slot; the newest featured post wins.
+			featured: s.boolean().default(false),
+			// Card text for the index and the feed; falls back to `excerpt`, then `description`.
+			summary: s.string().max(280).optional(),
 			draft: s.boolean().default(false),
 			path: s.path(),
 			code: s.mdx(),
@@ -24,7 +32,7 @@ const posts = defineCollection({
 		})
 		.transform((data) => {
 			const slug = data.path.replace(/^posts\//, "");
-			return { ...data, slug, permalink: `/blog/${slug}` };
+			return { ...data, slug, permalink: `/news/${slug}` };
 		}),
 });
 

@@ -8,7 +8,9 @@ import type { NextConfig } from "next";
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../");
 
 const config: NextConfig = {
-	basePath: "/blog",
+	// The blog became News: `/blog` and `/blog/*` are 308-redirected here by every
+	// Caddyfile that fronts this app, so old links and feed subscribers keep resolving.
+	basePath: "/news",
 	output: "standalone",
 	// Monorepo: trace workspace files from the repo root for a self-contained
 	// standalone bundle inside Docker.
@@ -36,7 +38,7 @@ const config: NextConfig = {
 	},
 	reactStrictMode: true,
 	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
-	transpilePackages: ["@repo/brand", "@repo/ui"],
+	transpilePackages: ["@repo/brand", "@repo/format", "@repo/ui"],
 };
 
 export default config;

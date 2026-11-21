@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { MDXContent } from "@/components/mdx-content";
-import { formatDate, getPost, getPublishedPosts } from "@/lib/posts";
+import { KIND_LABELS, newsDate } from "@/lib/news";
+import { getPost, getPublishedPosts } from "@/lib/posts";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -26,12 +27,12 @@ export default async function Page(props: { params: Promise<{ slug: string }> })
 	return (
 		<article className="mx-auto max-w-3xl px-6 py-12">
 			<Link href="/" className="text-sm text-muted-foreground no-underline hover:text-foreground">
-				← All posts
+				← All news
 			</Link>
 
 			<h1 className="mt-6 font-grotesk text-3xl font-semibold tracking-[-0.03em] text-text-primary sm:text-4xl">{post.title}</h1>
 			<div className="mt-3 text-xs font-mono uppercase tracking-wider text-muted-foreground">
-				{formatDate(post.date)} · {post.author} · {post.metadata.readingTime} min read
+				{KIND_LABELS[post.kind]} · {newsDate(post.date)} · {post.author} · {post.metadata.readingTime} min read
 			</div>
 
 			<div className="vx-prose mt-8">
