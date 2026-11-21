@@ -48,24 +48,27 @@ const VARIANT_TIER: Record<CalloutVariant, StatusTier> = {
  * grayscale — the state reads from the shared status dot + title, not a colored fill.
  * Shared across every provider connection component so the states look identical everywhere.
  *
- * It is a live region, so the outcome of a press is announced where it appears: a failure as an
- * alert, the other two politely as a status (B-05). `action` sits at the row's end — the Cancel of
- * a verify in flight.
+ * With `live`, it is the live region itself, so the outcome of a press is announced where it
+ * appears: a failure as an alert, the other two politely as a status (B-05). Without it, it is a
+ * plain block, for a host that wraps it in a live region of its own — two nested regions would be
+ * announced twice. `action` sits at the row's end — the Cancel of a verify in flight.
  */
 export function StatusCallout({
   variant,
   title,
   children,
   action,
+  live = false,
 }: {
   variant: CalloutVariant;
   title: string;
   children: ReactNode;
   action?: ReactNode;
+  live?: boolean;
 }) {
   return (
     <div
-      role={variant === "error" ? "alert" : "status"}
+      role={live ? (variant === "error" ? "alert" : "status") : undefined}
       className={cn(
         "flex gap-3 rounded-md border border-border/60 bg-muted/20 p-3.5",
         variant === "error" ? "items-start" : "items-center",
@@ -111,14 +114,14 @@ export function ConnectStatus({
         ? ` (${state.missingPermissions.join(", ")})`
         : "";
       return (
-        <StatusCallout variant="pending" title="Connected — limited permissions">
+        <StatusCallout live variant="pending" title="Connected — limited permissions">
           {successText} Some provisioning permissions look missing{missing} —
           provisioning may fail until the role is widened.
         </StatusCallout>
       );
     }
     return (
-      <StatusCallout variant="success" title="Connection verified">
+      <StatusCallout live variant="success" title="Connection verified">
         {successText}
       </StatusCallout>
     );
@@ -126,6 +129,7 @@ export function ConnectStatus({
   if (state.phase === "saving") {
     return (
       <StatusCallout
+        live
         variant="pending"
         title="Verifying connection…"
         action={
@@ -146,7 +150,7 @@ export function ConnectStatus({
   }
   if (state.phase === "failed") {
     return (
-      <StatusCallout variant="error" title="Verification failed">
+      <StatusCallout live variant="error" title="Verification failed">
         {state.error}
       </StatusCallout>
     );
