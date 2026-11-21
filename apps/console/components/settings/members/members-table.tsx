@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Settings · Members — toolbar (count / invite) + filter bar + a bulk bar, over the shared
-// DataTable. Real members + pending invitations, filtered SERVER-SIDE by the `members.page` GET
+// DataTable. A pending invitation says when it was sent and can be re-sent (R6 E-13); the viewer's
+// own row offers no suspend or remove (R6 E-10); and the selection is always a subset of the rows on
+// screen, so a bulk action acts on what the person can see (R6 E-11). Real members + pending invitations, filtered SERVER-SIDE by the `members.page` GET
 // procedure (rows + facets), prefetched by the route with the `members.gate` read that decides the
 // toolbar (#6129). Inline role change, suspend/reactivate (real PDP grant revoke), remove, invite
 // and cancel all go through `useActionMutation`: each row shows its own pending state, and the
@@ -267,6 +269,8 @@ function RoleSelect({
 /** The per-render state the table's cells read, delivered by context so no cell type changes. */
 interface MembersCells {
   canManage: boolean;
+  /** Re-sends a pending invitation (no confirmation: it removes nothing). */
+  resend: (row: MemberRowView) => void;
   /** Row keys with a write in flight: their controls are disabled until it settles. */
   busy: ReadonlySet<string>;
   selected: ReadonlySet<string>;
@@ -294,10 +298,11 @@ function useMembersCells(): MembersCells {
   return ctx;
 }
 
-/** The row-selection checkbox. */
+/** The row-selection checkbox. The viewer's own row has none: no bulk action applies to yourself. */
 function SelectCell({ row }: CellContext<MemberRowView, unknown>) {
   const { selected, toggle } = useMembersCells();
   const r = row.original;
+  if (r.isYou) return null;
   return (
     <input
       type="checkbox"
@@ -419,13 +424,27 @@ function ActivityCell({ row }: CellContext<MemberRowView, unknown>) {
 }
 
 /**
- * One row's "Manage …" menu. Every item only RECORDS the action (`askFor`); the table's one
- * `ConfirmAction` decides whether it happens. The owner's row has no menu.
+ * Why a pending invitation cannot be re-sent from here, or null when it can. A re-send repeats the
+ * invitation at its role, and only the three invitable roles can be sent; anything else (a role
+ * stored by an older path) is cancelled and invited again instead.
+ */
+function resendReason(r: MemberRowView): string | null {
+  const role = toOrgRole(r.role);
+  return role && role !== "owner"
+    ? null
+    : "This invitation's role can't be sent again. Cancel it and invite them afresh.";
+}
+
+/**
+ * One row's "Manage …" menu. Every destructive item only RECORDS the action (`askFor`); the table's
+ * one `ConfirmAction` decides whether it happens. The owner's row has no menu, and neither has the
+ * viewer's own: suspending or removing yourself from this table is not something it offers.
  */
 function ActionsCell({ row }: CellContext<MemberRowView, unknown>) {
-  const { askFor, busy } = useMembersCells();
+  const { askFor, busy, resend } = useMembersCells();
   const r = row.original;
   if (r.kind === "member" && r.role === "owner") return null;
+  if (r.isYou) return null;
   // A row whose write is in flight takes no second one: the menu is closed to it and the trigger
   // says so, which is also the double-submit guard for a confirmation answered twice.
   const pending = busy.has(r.key);
@@ -447,7 +466,7 @@ function ActionsCell({ row }: CellContext<MemberRowView, unknown>) {
             </Button>
           }
         />
-        <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuContent align="end" className="w-56">
           {r.kind === "member" ? (
             <>
               {r.status === "suspended" ? (
@@ -477,18 +496,23 @@ function ActionsCell({ row }: CellContext<MemberRowView, unknown>) {
               </DropdownMenuItem>
             </>
           ) : (
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onClick={() =>
-                askFor({
-                  kind: "cancel-invite",
-                  invitationId: r.refId,
-                  who: r.name,
-                })
-              }
-            >
-              Cancel invitation
-            </DropdownMenuItem>
+            <>
+              <DropdownMenuItem disabledReason={resendReason(r)} onClick={() => resend(r)}>
+                Resend invitation
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() =>
+                  askFor({
+                    kind: "cancel-invite",
+                    invitationId: r.refId,
+                    who: r.name,
+                  })
+                }
+              >
+                Cancel invitation
+              </DropdownMenuItem>
+            </>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -647,6 +671,16 @@ export function MembersTable() {
     invalidates: MEMBERS_READS,
     successMessage: (d) => (d.suspended ? "Member suspended" : "Member reactivated"),
   });
+  // Re-sending repeats the invitation at its role: Better Auth refreshes the pending row's expiry and
+  // sends the email again rather than creating a second invitation.
+  const resendInvite = useActionMutation(
+    ({ email, role }: { invitationId: string; email: string; role: Exclude<OrgRole, "owner"> }) =>
+      viaAuth(() => authClient.organization.inviteMember({ email, role, resend: true })),
+    {
+      invalidates: MEMBERS_READS,
+      successMessage: "Invitation sent again",
+    },
+  );
   const bulk = useActionMutation(
     ({ steps }: { steps: BulkStep[]; keys: string[] }) => runBulk(steps),
     {
@@ -674,6 +708,9 @@ export function MembersTable() {
     if (cancellation.isPending && cancellation.variables) {
       keys.add(`i:${cancellation.variables.invitationId}`);
     }
+    if (resendInvite.isPending && resendInvite.variables) {
+      keys.add(`i:${resendInvite.variables.invitationId}`);
+    }
     if (bulk.isPending && bulk.variables) for (const k of bulk.variables.keys) keys.add(k);
     return keys;
   }, [
@@ -685,6 +722,8 @@ export function MembersTable() {
     suspension.variables,
     cancellation.isPending,
     cancellation.variables,
+    resendInvite.isPending,
+    resendInvite.variables,
     bulk.isPending,
     bulk.variables,
   ]);
@@ -712,7 +751,11 @@ export function MembersTable() {
       kind: "invite",
       refId: i.id,
       name: i.email,
-      meta: `invited by ${i.inviterName}`,
+      // WHEN it was sent, against the payload's `asOf` like every other relative time here (#5377).
+      // It rides in the member cell's second line, which WRAPS, and not in "Last active", which is
+      // `whitespace-nowrap`: "invited less than a minute ago" there widened that column until the
+      // row's last column — the "Manage …" trigger — was pushed past the table's clip edge.
+      meta: `invited by ${i.inviterName} · ${formatRelative(i.createdAt, asOf ? new Date(asOf) : undefined)}`,
       avatar: userInitials({ email: i.email }),
       role: i.role,
       teams: [],
@@ -747,6 +790,17 @@ export function MembersTable() {
   }, [page.data]);
   const activeFilters = countActiveFilters(filters, DEFAULT_MEMBERS_FILTERS);
 
+  // THE SELECTION IS ALWAYS A SUBSET OF THE ROWS ON SCREEN (R6 E-11). `selected` keeps what was
+  // ticked; what the bar counts, the cells show and the bulk actions act on is its intersection with
+  // the current rows. A filter that hides a ticked row takes it out of the selection — "2 selected"
+  // can no longer change 5 — and clearing the filter brings the tick back, because nothing was
+  // forgotten, only not shown. Derived, not synchronised in an effect, so the two can never disagree
+  // for a render.
+  const visibleSelected = useMemo(() => {
+    const onScreen = new Set(rows.filter((r) => !r.isYou).map((r) => r.key));
+    return new Set([...selected].filter((key) => onScreen.has(key)));
+  }, [rows, selected]);
+
   const toggle = useCallback((key: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -761,7 +815,7 @@ export function MembersTable() {
    * Settles when the batch has.
    */
   function bulkRemove() {
-    const picked = filtered.filter((x) => selected.has(x.key));
+    const picked = filtered.filter((x) => visibleSelected.has(x.key) && !x.isYou);
     const steps: BulkStep[] = [];
     for (const r of picked) {
       if (r.kind === "member") {
@@ -784,7 +838,7 @@ export function MembersTable() {
   /** Suspends every active, non-owner member in the selection. Settles when the batch has. */
   function bulkSuspend() {
     const steps: BulkStep[] = filtered
-      .filter((r) => selected.has(r.key))
+      .filter((r) => visibleSelected.has(r.key) && !r.isYou)
       .filter((r) => r.kind === "member" && r.role !== "owner" && r.status === "active")
       .map((r) => ({
         key: r.key,
@@ -818,9 +872,26 @@ export function MembersTable() {
   // Memoized on `canManage` alone, and every `cell` is a module-level component (see STABLE
   // CELLS above): a re-render of this table must never hand DataTable a new cell TYPE.
   const columns = useMemo(() => membersColumns(canManage), [canManage]);
+  const resend = useCallback(
+    (r: MemberRowView) => {
+      const role = toOrgRole(r.role);
+      if (r.kind !== "invite" || !role || role === "owner") return;
+      resendInvite.submit({ invitationId: r.refId, email: r.name, role });
+    },
+    [resendInvite],
+  );
   const cells = useMemo<MembersCells>(
-    () => ({ canManage, busy: busyKeys, selected, toggle, askFor, changeRole, classMap }),
-    [canManage, busyKeys, selected, toggle, askFor, changeRole, classMap],
+    () => ({
+      canManage,
+      resend,
+      busy: busyKeys,
+      selected: visibleSelected,
+      toggle,
+      askFor,
+      changeRole,
+      classMap,
+    }),
+    [canManage, resend, busyKeys, visibleSelected, toggle, askFor, changeRole, classMap],
   );
 
   // Pending is the route skeleton's shape, not a second, different one (B2). The route prefetches
@@ -923,11 +994,11 @@ export function MembersTable() {
       </FilterBar>
 
       {/* bulk bar */}
-      {canManage && selected.size > 0 && (
+      {canManage && visibleSelected.size > 0 && (
         <div className="mb-3 flex items-center justify-between gap-4 rounded-md border border-foreground bg-muted py-[9px] pl-4 pr-[14px]">
           <div className="flex items-center gap-3 text-ui-sm text-foreground">
             <span>
-              <b className="font-semibold">{selected.size}</b> selected
+              <b className="font-semibold">{visibleSelected.size}</b> selected
             </span>
             <button
               type="button"
@@ -943,7 +1014,7 @@ export function MembersTable() {
               size="sm"
               disabled={bulkPending}
               onClick={() =>
-                askFor({ kind: "bulk-suspend", count: selected.size })
+                askFor({ kind: "bulk-suspend", count: visibleSelected.size })
               }
             >
               Suspend
@@ -953,7 +1024,7 @@ export function MembersTable() {
               size="sm"
               disabled={bulkPending}
               onClick={() =>
-                askFor({ kind: "bulk-remove", count: selected.size })
+                askFor({ kind: "bulk-remove", count: visibleSelected.size })
               }
             >
               Remove
