@@ -307,6 +307,9 @@ describe("ByoChartDialog — the worked example resolves", () => {
 		await user.click(next());
 		sweep();
 		git.unmount();
+		// A fresh canvas: the git walk left its step (Review) in the URL and its values in the tab
+		// draft, so rendering again over them would RESTORE the git walk — a reload, not a new chart.
+		resetTestPage();
 
 		// OCI: Source → Registry → Version → Review.
 		await renderDialog();
