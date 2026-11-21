@@ -19,8 +19,8 @@
 // emailed token and an unexpired case. The sweep deletes the object when the link expires.
 //
 // What is in it is the account's own data, read on the service connection: profile, sign-in
-// methods (never their tokens or password hash), sessions, memberships, accepted terms, AI
-// conversations, and the account's privacy requests. Organization data — projects,
+// methods (never their tokens or password hash), sessions, memberships, accepted terms, email
+// choices, AI conversations, and the account's privacy requests. Organization data — projects,
 // environments, state — belongs to the organization, whose admins export it; it is not here.
 
 import "server-only";
@@ -29,6 +29,7 @@ import { getServiceDb } from "@/lib/db";
 import {
 	account,
 	agentThreads,
+	emailPreference,
 	legalAcceptance,
 	member,
 	organization,
@@ -122,6 +123,16 @@ export async function collectExportFiles(userId: string, subjectEmailSha256: str
 		})
 		.from(legalAcceptance)
 		.where(eq(legalAcceptance.userId, userId));
+	const emailChoices = await db
+		.select({
+			email: emailPreference.email,
+			category: emailPreference.category,
+			enabled: emailPreference.enabled,
+			source: emailPreference.source,
+			updatedAt: emailPreference.updated_at,
+		})
+		.from(emailPreference)
+		.where(eq(emailPreference.user_id, userId));
 	const threads = await db
 		.select({
 			title: agentThreads.title,
@@ -156,6 +167,7 @@ export async function collectExportFiles(userId: string, subjectEmailSha256: str
 		{ path: "account/sessions.json", describes: "Your active sign-in sessions, with the network address and browser each started from.", rows: sessions },
 		{ path: "organizations/memberships.json", describes: "The teams you belong to and your role in each.", rows: memberships },
 		{ path: "legal/acceptances.json", describes: "Which versions of our terms you accepted, and when.", rows: acceptances },
+		{ path: "email/preferences.json", describes: "The email choices you made, such as product updates and muted alert channels.", rows: emailChoices },
 		{ path: "ai/conversations.json", describes: "Your conversations with the Alethia agent, newest first.", rows: threads },
 		{ path: "privacy/requests.json", describes: "The privacy requests you made, including this one.", rows: requests },
 	];

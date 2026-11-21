@@ -17,6 +17,7 @@ import * as platformSchema from "@repo/platform/schema";
 import * as supportSchema from "@repo/support/schema";
 import {
 	aiUsageLedger,
+	emailSuppression,
 	member,
 	organization,
 	organizationBilling,
@@ -29,6 +30,7 @@ const schema = {
 	...supportSchema,
 	...platformSchema,
 	aiUsageLedger,
+	emailSuppression,
 	member,
 	organization,
 	organizationBilling,

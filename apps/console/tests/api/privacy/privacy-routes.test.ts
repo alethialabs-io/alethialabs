@@ -1,34 +1,82 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The token-carrying routes a privacy email links to:
+// The token-carrying routes a privacy or alert email links to:
+//   · POST /api/email/unsubscribe — RFC 8058 one-click, and the confirmation page's button;
 //   · POST /api/account/deletion/cancel — the "Keep my account" button;
 //   · GET  /api/privacy/export/<reference> — the export download.
 //
-// Pinned: a bad token changes nothing; a cancel never happens on a GET (there is none);
+// Pinned: a bad token changes nothing; one-click answers 200 with no redirect while the page's
+// button is redirected back to its confirmation; a cancel never happens on a GET (there is none);
 // and a download needs a session, sends a signed-out person to sign in and back, and answers a
 // missing export with the same 404 a wrong account gets.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { cancel, getSession, readExport } = vi.hoisted(() => ({
+const { setPref, cancel, getSession, readExport } = vi.hoisted(() => ({
+	setPref: vi.fn(),
 	cancel: vi.fn(),
 	getSession: vi.fn(),
 	readExport: vi.fn(),
 }));
+vi.mock("@/lib/email/preferences", () => ({
+	readUnsubscribeToken: (t: string) => (t === "good" ? { email: "ada@example.io", category: "product_updates" } : null),
+	setEmailPreference: (...a: unknown[]) => setPref(...a),
+}));
+vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: async () => ({ ok: true, remaining: 10 }) }));
 vi.mock("@/lib/privacy/self-deletion", () => ({ cancelScheduledErasure: (...a: unknown[]) => cancel(...a) }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: (...a: unknown[]) => getSession(...a) } } }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("@/lib/privacy/export", () => ({ readExportForDownload: (...a: unknown[]) => readExport(...a) }));
 
 import { POST as cancelPost } from "@/app/api/account/deletion/cancel/route";
+import { POST as unsubscribe } from "@/app/api/email/unsubscribe/route";
 import { GET as download } from "@/app/api/privacy/export/[reference]/route";
 
 const ORIGIN = "https://console.example.io";
 const TOKEN = "t".repeat(43);
 
 beforeEach(() => {
-	for (const m of [cancel, getSession, readExport]) m.mockReset();
+	for (const m of [setPref, cancel, getSession, readExport]) m.mockReset();
+	setPref.mockResolvedValue(undefined);
+});
+
+describe("POST /api/email/unsubscribe", () => {
+	it("records a one-click unsubscribe and answers 200", async () => {
+		const res = await unsubscribe(
+			new Request(`${ORIGIN}/api/email/unsubscribe?t=good`, {
+				method: "POST",
+				headers: { "content-type": "application/x-www-form-urlencoded" },
+				body: "List-Unsubscribe=One-Click",
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(setPref).toHaveBeenCalledWith({
+			email: "ada@example.io",
+			category: "product_updates",
+			enabled: false,
+			source: "one_click",
+		});
+	});
+
+	it("sends the confirmation page's button back to the page", async () => {
+		const res = await unsubscribe(
+			new Request(`${ORIGIN}/api/email/unsubscribe?t=good`, {
+				method: "POST",
+				headers: { "content-type": "application/x-www-form-urlencoded" },
+				body: "from=page",
+			}),
+		);
+		expect(res.status).toBe(303);
+		expect(res.headers.get("location")).toBe(`${ORIGIN}/email/unsubscribe?t=good&done=1`);
+		expect(setPref).toHaveBeenCalledWith(expect.objectContaining({ source: "unsubscribe_page" }));
+	});
+
+	it("changes nothing for a token that does not verify", async () => {
+		const res = await unsubscribe(new Request(`${ORIGIN}/api/email/unsubscribe?t=forged`, { method: "POST" }));
+		expect(res.status).toBe(400);
+		expect(setPref).not.toHaveBeenCalled();
+	});
 });
 
 describe("POST /api/account/deletion/cancel", () => {
