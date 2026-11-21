@@ -20,7 +20,10 @@ file is deleted, not aliased.
 
 | File | Role |
 |------|------|
-| `connectors-page.tsx` | The client page. Owns the filter pipeline, the connect/disconnect/re-verify handlers, the manage drawer and the confirm dialog. |
+| `connectors-page.tsx` | The client page. Owns the filter pipeline, the layout (`?view=`), the connect/disconnect/re-verify handlers, the manage drawer and the `?connect=` link. |
+| `connectors-action.tsx` | **The one action ladder** (Connect / Manage / Reconnect / Manage + Re-verify / none) the card and the row both render. A control the viewer may not use is disabled with its reason. |
+| `connectors-disconnect-dialog.tsx` | The disconnect confirmation, on `ConfirmAction`. For a cloud account it names the projects that use it and asks for the account's name. |
+| `connectors-link-error.ts` | The sentence for a failed git-provider connection, shared with `components/repository-selector.tsx`. |
 | `connectors-query.ts` | **Pure filter/query plumbing.** `connectorState()` (the one status ladder), `GROUP_META`, `normalizeConnectorQuery()`, `selectConnectors()`, `buildConnectorFacets()`, `buildConnectorsView()`. No React, no server imports. |
 | `connectors-filter-bar.tsx` | The filter bar: `FilterSearch` + `FilterChipGroup` (status) + `FacetFilter` (group) + `MultiCombobox` (vendor) + `FilterBarReset`. |
 | `connector-card.tsx` | One connector as a tile (card view). Also used by the create-project cloud picker. |
@@ -54,6 +57,31 @@ short-lived minted assertion; the token clouds have no federation, so a scoped t
 | `connector-assets.ts` | `connectorAssetUrl()` (setup script / template URLs), `CONNECTOR_DOCS_BASE`, `connectorDocsHref()` (maps a connector → its `/docs/guides/connectors/*` page), and the pre-filled issuer/client-id env constants. |
 | `../cloud-connect/use-cloud-connect.tsx` | **The host hook.** Owns the sheet open/close state, reuses a seeded or starts (`startCloudConnect`) a pending identity, wires the per-provider save handlers to the server actions, and renders every `<Sheet>` + `ConnectSheetHeader`. Callers use `openConnect(integration)` + render `sheets`. |
 | `../../lib/cloud-providers/gcp-wif.ts` | Pure WIF helper — `buildWifConfig(projectId, projectNumber)` + the fixed pool/provider/SA constants + `GCP_PROJECT_ID_REGEX`. No server deps, so the server verify **and** the client sheet import the same builder. |
+
+## Clouds a deployment does not offer
+
+The board keeps no list of clouds. `connectors.board` answers `offeredClouds`, and
+`connectors-query.ts` turns it into two rules:
+
+- `acceptsNewConnections(integration, offeredClouds)` — false for a cloud card that is not offered.
+  The read lists such a card only when the organization already has an account on it. The card,
+  the row and the sheet then offer Manage, Re-verify, Rename and Disconnect, print one sentence why
+  (`notOfferedSentence`), and offer no Connect and no "Add another account". The `?connect=` link
+  is refused with the same reason.
+- `listedConnectors(integrations, offeredClouds)` — leaves out a connector that signs in with the
+  cluster's own cloud identity (any `auth_method` other than `api_key` and `oauth`, outside the
+  cloud group) when no OFFERED cloud card has that method. A connector that takes its own credential
+  is never dropped, whoever makes it. When a row is dropped the page rebuilds the rows, facets and
+  total with `buildConnectorsView` for the read's own query, so no count includes it.
+
+Both are the board's rendering only. The server is what refuses a new connection for a cloud that
+is not offered (`lib/cloud-providers/availability.ts`).
+
+## Who may change a connection
+
+`connectors.board` answers `canManage`. A viewer without it reads the same board and the same
+sheet: one line says they are read-only, Manage still opens, and every control that would change
+something is drawn disabled with its reason (`DisabledReason` + `MANAGE_DENIED_REASON`).
 
 ## One status ladder
 
@@ -97,7 +125,7 @@ and invalidates `connectorKeys()` (`connectors-board.ts`) when it settles:
 |---|---|
 | Start a cloud connect (the pending identity a sheet binds to) | `startCloudConnect` |
 | Save + verify a cloud account | `connectCloudAccount` (one discriminated input per connect method) |
-| Re-verify / rename / disconnect a cloud account | `verifyCloudAccount` / `renameCloudAccount` / `disconnectCloudAccount` |
+| Re-verify / rename / disconnect a cloud account | `verifyCloudAccount` / `renameCloudAccount` (the sheet's inline form) / `disconnectCloudAccount` |
 | Unlink a git provider | `deleteProviderToken` |
 | Save / remove an api_key credential | `saveConnectorCredential` / `deleteConnectorCredential` |
 

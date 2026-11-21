@@ -46,6 +46,8 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { ConnectorDetailSheet } from "@/components/connectors/connector-detail-sheet";
+import { notOfferedSentence } from "@/components/connectors/connectors-query";
+import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { unnamedControls } from "../support/accessible-names";
 
 // `classification.canEdit` answers TRUE (not false) so `ClassificationControl` takes its
@@ -66,6 +68,9 @@ vi.mock("@/lib/rpc/client", async () => {
 		}).orpc,
 	};
 });
+// The sheet owns the rename (#6816): its inline form submits through `useActionMutation`.
+const renameCloudAccount = vi.hoisted(() => vi.fn());
+vi.mock("@/app/server/actions/identities", () => ({ renameCloudAccount }));
 vi.mock("@/app/server/actions/classification/assignments", () => ({
 	assignClassification: vi.fn(),
 	unassignClassification: vi.fn(),
@@ -123,19 +128,19 @@ function connector(): ConnectorWithConnection {
 	};
 }
 
-/** Renders the sheet, `canManage`, open. */
-function renderSheet() {
+/** Renders the sheet, open, for a manager unless `over` says otherwise. */
+function renderSheet(over: { canManage?: boolean; offered?: boolean } = {}) {
 	return render(
 		<ConnectorDetailSheet
 			integration={connector()}
 			open
 			onOpenChange={() => {}}
-			canManage
+			canManage={over.canManage ?? true}
+			offered={over.offered}
 			onConnect={() => {}}
 			onDisconnectConnector={() => {}}
 			onDisconnectAccount={() => {}}
 			onReverifyAccount={async () => {}}
-			onRenameAccount={async () => {}}
 		/>,
 	);
 }
@@ -173,11 +178,10 @@ describe("ConnectorDetailSheet — account row controls are reachable by accessi
 		expectNamedWithoutTitleFallback("Disconnect Staging AWS");
 		expectNamedWithoutTitleFallback("Classify Staging AWS");
 
-		// Only the failed account is eligible to re-verify.
+		// Every account can be re-verified (#6816), not only one that already failed: a role
+		// changed in the cloud is checked from here.
 		expectNamedWithoutTitleFallback("Re-verify Staging AWS");
-		expect(
-			screen.queryByRole("button", { name: /re-verify prod aws/i }),
-		).not.toBeInTheDocument();
+		expectNamedWithoutTitleFallback("Re-verify Prod AWS");
 
 		// The sweep, so the next icon-only control this sheet grows doesn't ship silently unnamed
 		// just because nobody added it to the list above.
@@ -211,5 +215,109 @@ describe("ConnectorDetailSheet — account row controls are reachable by accessi
 			).toBeInTheDocument(),
 		);
 		expect(unnamedControls(container)).toEqual([]);
+	});
+});
+
+describe("ConnectorDetailSheet — renaming a cloud account (#6816)", () => {
+	it("refuses an empty name under the field, and sends nothing", async () => {
+		const user = userEvent.setup();
+		renameCloudAccount.mockReset();
+		renderSheet();
+
+		await user.click(screen.getByRole("button", { name: "Rename Prod AWS" }));
+		const field = screen.getByRole("textbox", { name: "Account name" });
+		await user.clear(field);
+		await user.click(screen.getByRole("button", { name: "Save name" }));
+
+		expect(await screen.findByText("Name cannot be empty.")).toBeInTheDocument();
+		expect(renameCloudAccount).not.toHaveBeenCalled();
+		// The form is still open, with the field still there to correct.
+		expect(screen.getByRole("textbox", { name: "Account name" })).toBeInTheDocument();
+	});
+
+	it("sends the trimmed name once and closes the form when the rename lands", async () => {
+		const user = userEvent.setup();
+		renameCloudAccount.mockReset();
+		renameCloudAccount.mockResolvedValue({ ok: true, data: { identityId: "acc-1", name: "Production" } });
+		renderSheet();
+
+		await user.click(screen.getByRole("button", { name: "Rename Prod AWS" }));
+		const field = screen.getByRole("textbox", { name: "Account name" });
+		await user.clear(field);
+		await user.type(field, "  Production {Enter}");
+
+		await waitFor(() =>
+			expect(renameCloudAccount).toHaveBeenCalledWith({ identityId: "acc-1", name: "Production" }),
+		);
+		expect(renameCloudAccount).toHaveBeenCalledTimes(1);
+		await waitFor(() =>
+			expect(screen.queryByRole("textbox", { name: "Account name" })).not.toBeInTheDocument(),
+		);
+	});
+
+	it("keeps the form open with the server's sentence under the field when the name is refused", async () => {
+		const user = userEvent.setup();
+		renameCloudAccount.mockReset();
+		renameCloudAccount.mockResolvedValue({
+			ok: false,
+			error: { kind: "validation", message: "Invalid input.", fields: { name: ["Keep the name under 120 characters."] } },
+		});
+		renderSheet();
+
+		await user.click(screen.getByRole("button", { name: "Rename Prod AWS" }));
+		const field = screen.getByRole("textbox", { name: "Account name" });
+		await user.clear(field);
+		await user.type(field, "Another{Enter}");
+
+		expect(await screen.findByText("Keep the name under 120 characters.")).toBeInTheDocument();
+		expect(screen.getByRole("textbox", { name: "Account name" })).toHaveValue("Another");
+	});
+
+	it("closes without a request when the name was not changed", async () => {
+		const user = userEvent.setup();
+		renameCloudAccount.mockReset();
+		renderSheet();
+
+		await user.click(screen.getByRole("button", { name: "Rename Prod AWS" }));
+		await user.click(screen.getByRole("button", { name: "Save name" }));
+
+		await waitFor(() =>
+			expect(screen.queryByRole("textbox", { name: "Account name" })).not.toBeInTheDocument(),
+		);
+		expect(renameCloudAccount).not.toHaveBeenCalled();
+	});
+});
+
+describe("ConnectorDetailSheet — a viewer who may not manage connections (#6816)", () => {
+	it("draws every changing control disabled with the reason, and says the sheet is read-only", () => {
+		const { container } = renderSheet({ canManage: false });
+
+		for (const name of [
+			"Re-verify Prod AWS",
+			"Rename Prod AWS",
+			"Disconnect Prod AWS",
+			"Add another account",
+		]) {
+			const control = screen.getByRole("button", { name });
+			expect(control).toBeDisabled();
+			expect(control).toHaveAccessibleDescription(MANAGE_DENIED_REASON);
+		}
+		expect(container.ownerDocument.querySelector('[data-slot="connector-read-only"]')).toHaveTextContent(
+			MANAGE_DENIED_REASON,
+		);
+	});
+});
+
+describe("ConnectorDetailSheet — a cloud that takes no new connection (#6816)", () => {
+	it("says why once, keeps the account's controls, and offers no way to add an account", () => {
+		const { container } = renderSheet({ offered: false });
+
+		expect(container.ownerDocument.querySelector('[data-slot="connector-not-offered"]')).toHaveTextContent(
+			notOfferedSentence("AWS"),
+		);
+		expect(screen.getByRole("button", { name: "Re-verify Prod AWS" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Rename Prod AWS" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Disconnect Prod AWS" })).toBeEnabled();
+		expect(screen.queryByRole("button", { name: "Add another account" })).not.toBeInTheDocument();
 	});
 });

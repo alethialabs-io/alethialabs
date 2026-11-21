@@ -166,7 +166,13 @@ export function connectorState(
 	}
 	const isCloud = integration.category === "cloud";
 	const isGit = integration.category === "git";
-	if ((isCloud || isGit) && !platformConfigured && !isConnected) {
+	// An account that is already on the card outranks "this instance cannot connect one". A cloud
+	// whose only account failed to verify is not connected, and the instance may have no way to add
+	// another (the platform credentials are gone, or the cloud is not offered here) — but that
+	// account is still the user's to re-verify or remove, and the manage sheet is the only place
+	// to do it. Read as `unavailable`, the card offered neither.
+	const hasAccounts = (integration.accounts?.length ?? 0) > 0;
+	if ((isCloud || isGit) && !platformConfigured && !isConnected && !hasAccounts) {
 		return {
 			health: "unavailable",
 			label: "Not enabled on this instance",
@@ -194,6 +200,74 @@ export function connectorState(
 		return { health: "attention", label: "Verifying…", destructive: false };
 	}
 	return { health: "disconnected", label: HEALTH_LABEL.disconnected, destructive: false };
+}
+
+/**
+ * Whether a NEW connection may be started for this connector: always, unless it is a cloud this
+ * deployment does not offer. `offeredClouds` is the server's answer on the board payload
+ * (`ConnectorsBoard.offeredClouds`); nothing on the client keeps a list of its own.
+ *
+ * A cloud that is not offered reaches the board only when the organization already has an account
+ * on it. That account can be re-verified, renamed and disconnected; it cannot be joined by a
+ * second one, and the server refuses the attempt.
+ */
+export function acceptsNewConnections(
+	integration: Pick<ConnectorWithConnection, "category" | "slug">,
+	offeredClouds: readonly string[],
+): boolean {
+	return integration.category !== "cloud" || offeredClouds.includes(integration.slug);
+}
+
+/** The one sentence a card or a sheet gives for a cloud that takes no new connection. */
+export function notOfferedSentence(name: string): string {
+	return `${name} is not available for new projects in this release. Accounts connected earlier can still be re-verified, renamed and disconnected.`;
+}
+
+/** The same statement in the space a card has for it. */
+export const NOT_OFFERED_SHORT = "Not available for new projects in this release.";
+
+/**
+ * Whether a connector signs in with the CLUSTER'S OWN cloud identity instead of a credential the
+ * user gives it. That is every connector outside the cloud group whose `auth_method` is not
+ * `api_key` and not `oauth`: the cross-account stores and registries, which hold no credential
+ * fields and work only from a cluster running in the cloud whose identity they use.
+ */
+function usesClusterCloudIdentity(integration: ConnectorWithConnection): boolean {
+	return (
+		integration.category !== "cloud" &&
+		integration.auth_method !== "api_key" &&
+		integration.auth_method !== "oauth"
+	);
+}
+
+/**
+ * The connectors the board lists, out of the catalog the read returned.
+ *
+ * The read already leaves out the card of a cloud this deployment does not offer (unless the
+ * organization has an account on it). One more kind of row depends on a cloud: a connector that
+ * signs in with the cluster's own cloud identity ({@link usesClusterCloudIdentity}). With its
+ * cloud not offered, no cluster it could run from can be created, so it is left out too. The cloud
+ * is found by `auth_method`: such a connector shares its method with exactly the cloud whose
+ * identity it uses, so it is listed while an OFFERED cloud card on the board has that method.
+ *
+ * A connector that takes its own credential is never dropped here, whoever makes it: a registry
+ * that needs only an API token can be pulled from any cluster.
+ *
+ * WHAT THIS DOES NOT DO. It is the board's listing only. It does not stop a save for a dropped
+ * connector on the server, and it does not reach the other places the catalog is read.
+ */
+export function listedConnectors(
+	integrations: ConnectorWithConnection[],
+	offeredClouds: readonly string[],
+): ConnectorWithConnection[] {
+	const offeredMethods = new Set(
+		integrations
+			.filter((i) => i.category === "cloud" && offeredClouds.includes(i.slug))
+			.map((i) => i.auth_method),
+	);
+	return integrations.filter(
+		(i) => !usesClusterCloudIdentity(i) || offeredMethods.has(i.auth_method),
+	);
 }
 
 /** The board's filter state (the shape its zustand store holds). */

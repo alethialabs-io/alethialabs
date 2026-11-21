@@ -4,6 +4,7 @@
 // No "use client": the route's `loading.tsx` (a server component) and the board's own pending
 // render draw this one skeleton, so the two cannot disagree about the layout they promise.
 
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { PageToolbarSkeleton } from "@repo/ui/page-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 
@@ -41,7 +42,9 @@ function ConnectorTileSkeleton() {
  */
 export function ConnectorsSkeleton() {
 	return (
-		<div data-slot="connectors-skeleton" aria-hidden className="space-y-6">
+		// `SkeletonRoot` (RUBRIC, "The skeleton rules", rule 1): the root says the region is pending
+		// (`aria-busy`). It used to be `aria-hidden`, which says nothing is here at all.
+		<SkeletonRoot data-skeleton="connectors" className="space-y-6">
 			<PageToolbarSkeleton count />
 
 			<div className="mb-4 flex flex-wrap items-center gap-2.5">
@@ -72,6 +75,6 @@ export function ConnectorsSkeleton() {
 					</section>
 				))}
 			</div>
-		</div>
+		</SkeletonRoot>
 	);
 }
