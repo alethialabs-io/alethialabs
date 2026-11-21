@@ -99,7 +99,7 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 
 import { ViewerProvider } from "@/components/providers/viewer-provider";
 import { SidebarProfile } from "@/components/shell/sidebar-profile";
-import AcceptInvitePage from "@/app/(public)/invites/accept/page";
+import { AcceptInviteScreen } from "@/app/(public)/invites/accept/accept-invite";
 
 /** The instant the server read the session and rendered the page. */
 const READ_AT = Date.parse("2026-10-02T17:03:18.000Z");
@@ -164,7 +164,7 @@ const SURFACES: Array<[string, Surface]> = [
 		{
 			tree: () => (
 				<QueryClientProvider client={new QueryClient()}>
-					<AcceptInvitePage />
+					<AcceptInviteScreen completeSetup={async () => {}} />
 				</QueryClientProvider>
 			),
 			// No seed: both sides render the skeleton first (A-19), then — once hydrated — the

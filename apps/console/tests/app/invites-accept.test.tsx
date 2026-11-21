@@ -45,12 +45,9 @@ vi.mock("@/lib/auth/client", () => ({
 		},
 	},
 }));
-vi.mock("@/app/server/actions/onboarding", () => ({
-	markOnboardingComplete: h.markOnboardingComplete,
-}));
 vi.mock("@/components/shell/hard-navigate", () => ({ hardNavigate: h.hardNavigate }));
 
-import AcceptInvitePage from "@/app/(public)/invites/accept/page";
+import { AcceptInviteScreen } from "@/app/(public)/invites/accept/accept-invite";
 import { invitationActionFailure, readInvitation } from "@/app/(public)/invites/accept/invitation";
 
 const ADA: Viewer = {
@@ -85,7 +82,7 @@ function renderPage() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
 		<QueryClientProvider client={client}>
-			<AcceptInvitePage />
+			<AcceptInviteScreen completeSetup={h.markOnboardingComplete} />
 		</QueryClientProvider>,
 	);
 }
