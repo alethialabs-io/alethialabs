@@ -84,7 +84,7 @@ function Proof() {
 				<SecMark n="01" label="Portable · closed-origin" />
 				<div className="grid grid-cols-1 items-start gap-10 lg:grid-cols-[1fr_1.15fr] lg:gap-14">
 					<div>
-						<h2 className="text-[34px] max-[640px]:text-[28px]" style={{ ...disp, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 14px", color: "var(--text-primary)" }}>
+						<h2 className="text-[34px] max-[640px]:text-[28px]" style={{ ...disp, fontWeight: 600, letterSpacing: "var(--tracking-display)", lineHeight: 1.1, margin: "0 0 14px", color: "var(--text-primary)" }}>
 							One control plane, four clouds, no open web ports.
 						</h2>
 						{/* Scoped to the Terraform stacks on purpose: the one-click templates
@@ -147,7 +147,7 @@ function Editions() {
 		<section className="py-[84px] max-[640px]:py-[64px]" style={{ borderBottom: "1px solid var(--border)" }}>
 			<Wrap>
 				<SecMark n="02" label="What's open" />
-				<h2 className="text-[34px] max-[640px]:text-[28px]" style={{ ...disp, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 30px", color: "var(--text-primary)", maxWidth: 620 }}>
+				<h2 className="text-[34px] max-[640px]:text-[28px]" style={{ ...disp, fontWeight: 600, letterSpacing: "var(--tracking-display)", lineHeight: 1.1, margin: "0 0 30px", color: "var(--text-primary)", maxWidth: 620 }}>
 					Genuinely open source. One honest paid boundary.
 				</h2>
 				<div className="grid grid-cols-1 gap-5 md:grid-cols-2">
@@ -242,7 +242,7 @@ function Close({ stars }: { stars: number | null }) {
 	return (
 		<section style={{ padding: "92px 0" }}>
 			<Wrap style={{ textAlign: "center" }}>
-				<h2 style={{ ...disp, fontSize: 40, fontWeight: 600, letterSpacing: "-0.04em", margin: "0 0 16px", color: "var(--text-primary)" }}>Yours to run.</h2>
+				<h2 style={{ ...disp, fontSize: 40, fontWeight: 600, letterSpacing: "var(--tracking-display)", lineHeight: 1.1, margin: "0 0 16px", color: "var(--text-primary)" }}>Yours to run.</h2>
 				<p style={{ fontSize: 15.5, color: "var(--text-tertiary)", lineHeight: 1.6, margin: "0 auto 28px", maxWidth: 440 }}>
 					Clone it, read the source, deploy it on your own cloud. Open the docs or star the repo.
 				</p>
