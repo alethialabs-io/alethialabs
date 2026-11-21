@@ -7,7 +7,7 @@ import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
-	title: "Switching and data portability · Alethia",
+	title: "Switching and data portability",
 	description:
 		"How to leave Alethia: what you can take with you, how long you have, and what it costs (nothing).",
 };

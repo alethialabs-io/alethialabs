@@ -9,7 +9,7 @@ import { PageCTA, PageHero } from "@repo/brand/site-sections";
 import { Wrap } from "@repo/brand/site-primitives";
 
 export const metadata: Metadata = {
-	title: "Security · Alethia",
+	title: "Security",
 	description:
 		"How Alethia is built: zero stored cloud credentials, short-lived federated identity, sealed per-job execution, and signed evidence you can verify offline.",
 };

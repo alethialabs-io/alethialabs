@@ -7,7 +7,7 @@ import { Reveal } from "@/components/landing/reveal";
 import { EnterpriseSections } from "@/components/landing/enterprise/page-sections";
 
 export const metadata: Metadata = {
-	title: "Enterprise · Alethia",
+	title: "Enterprise",
 	description:
 		"Govern multi-cloud infrastructure for the whole organization — single sign-on, custom roles over OpenFGA, granular IAM, a complete audit trail, and self-managed deployment. Access maps to who needs it, and every decision is on the record.",
 };
