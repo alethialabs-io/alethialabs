@@ -112,7 +112,7 @@ describe("AlertsPage — the settings read's four answers", () => {
 			throw new ORPCError("FORBIDDEN", { defined: true });
 		};
 		renderHub();
-		expect(await screen.findByText("No access to alerts")).toBeInTheDocument();
+		expect(await screen.findByText("You don't have access to alerts")).toBeInTheDocument();
 		expect(screen.queryByText("Couldn't load alerts")).toBeNull();
 		expect(screen.queryByText("No policies yet")).toBeNull();
 	});
@@ -124,7 +124,7 @@ describe("AlertsPage — the settings read's four answers", () => {
 		renderHub();
 		expect(await screen.findByText("Couldn't load alerts")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
-		expect(screen.queryByText("No access to alerts")).toBeNull();
+		expect(screen.queryByText("You don't have access to alerts")).toBeNull();
 		expect(screen.queryByText("No policies yet")).toBeNull();
 	});
 
