@@ -58,7 +58,10 @@ vi.mock("@/lib/db", () => ({
 		insert: () => ({
 			values: (v: unknown) => {
 				h.insertValues(v);
-				return { returning: async () => [{ id: "team-1", name: "Platform" }] };
+				// A real uuid: the response is checked against the CLI wire contract (`teamWire.id`).
+				return {
+					returning: async () => [{ id: "44444444-4444-4444-8444-444444444444", name: "Platform" }],
+				};
 			},
 		}),
 		delete: () => ({ where: h.deleteWhere }),
