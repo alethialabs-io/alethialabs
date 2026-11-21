@@ -12,7 +12,10 @@ import "github.com/spf13/cobra"
 var opsDrainRunnerCmd = &cobra.Command{
 	Use:   "drain-runner [runner-id]",
 	Short: "Mark an ONLINE runner DRAINING so it stops claiming jobs (blast: low)",
-	Args:  cobra.MaximumNArgs(1),
+	Long: "Mark an online runner DRAINING. It finishes the jobs it already holds and claims no new\n" +
+		"ones, so queued work waits for another runner. Use it to take a degraded runner out of\n" +
+		"rotation without killing what it is running.",
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		reason := opsReason(cmd)
 		runnerID := opsResolveRunnerID(cmd, args)
@@ -27,7 +30,10 @@ var opsDrainRunnerCmd = &cobra.Command{
 var opsRestartRunnerCmd = &cobra.Command{
 	Use:   "restart-runner [runner-id]",
 	Short: "Drain a runner and wake the scaler to roll a replacement (blast: medium)",
-	Args:  cobra.MaximumNArgs(1),
+	Long: "Drain a runner and wake the fleet scaler to roll a replacement: in the fleet's model a\n" +
+		"restart is drain, then replace. The drained runner claims no new work. Use it on a runner\n" +
+		"that is wedged but still holds its slot.",
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		reason := opsReason(cmd)
 		runnerID := opsResolveRunnerID(cmd, args)

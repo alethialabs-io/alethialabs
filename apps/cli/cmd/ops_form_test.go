@@ -18,6 +18,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -445,8 +446,8 @@ func TestOpsForm_ReasonIsAskedForAndUsed(t *testing.T) {
 // TestOpsForm_ScriptedWithoutAReasonNamesTheFlag pins the arm a pipeline hits.
 func TestOpsForm_ScriptedWithoutAReasonNamesTheFlag(t *testing.T) {
 	s, _, run := opsFormEnv(t)
-	if got := run("ops", "cancel-job", "job-alpha", "--no-input", "--yes"); got != 1 {
-		t.Fatalf("exit code = %d, want 1 — a break-glass verb with no reason must not proceed", got)
+	if got := run("ops", "cancel-job", "job-alpha", "--no-input", "--yes"); got != clierr.ExitInputRequired {
+		t.Fatalf("exit code = %d, want %d (input_required) — a break-glass verb with no reason must not proceed", got, clierr.ExitInputRequired)
 	}
 	if s.sawAny("/api/breakglass") {
 		t.Errorf("the refusal cost a round trip: %v", s.all())
@@ -460,8 +461,8 @@ func TestOpsForm_ScriptedWithoutAReasonNamesTheFlag(t *testing.T) {
 // zod issue list in the middle of an incident.
 func TestOpsForm_TooShortAReasonIsRefusedBeforeTheRoundTrip(t *testing.T) {
 	s, executed, run := opsFormEnv(t)
-	if got := run("ops", "cancel-job", "job-alpha", "--reason", "sevench", "--no-input", "--yes"); got != 1 {
-		t.Fatalf("exit code = %d, want 1", got)
+	if got := run("ops", "cancel-job", "job-alpha", "--reason", "sevench", "--no-input", "--yes"); got != clierr.ExitUsage {
+		t.Fatalf("exit code = %d, want %d (validation_failed)", got, clierr.ExitUsage)
 	}
 	if s.sawAny("/api/breakglass") {
 		t.Errorf("a reason the server would refuse still cost a round trip: %v", s.all())
@@ -561,8 +562,8 @@ func TestOpsForm_PickersOfferTheLiveListing(t *testing.T) {
 // TestOpsForm_ScriptedWithoutAnIdNamesThePositional pins the refusal a runbook gets.
 func TestOpsForm_ScriptedWithoutAnIdNamesThePositional(t *testing.T) {
 	s, _, run := opsFormEnv(t)
-	if got := run("ops", "inspect-job", "--reason", "incident-4711", "--no-input"); got != 1 {
-		t.Fatalf("exit code = %d, want 1", got)
+	if got := run("ops", "inspect-job", "--reason", "incident-4711", "--no-input"); got != clierr.ExitInputRequired {
+		t.Fatalf("exit code = %d, want %d (input_required)", got, clierr.ExitInputRequired)
 	}
 	if s.sawAny("/api/jobs") {
 		t.Errorf("a listing was fetched with prompting disabled: %v", s.all())
@@ -593,8 +594,8 @@ func TestOpsForm_NoStreamToDrawOnRefusesRatherThanDrawingAForm(t *testing.T) {
 	t.Cleanup(func() { stdinIsTTY, interactiveOutIsTTY = prevIn, prevOut })
 	authFormNoForm(t)
 
-	if got := run("ops", "inspect-job", "--reason", "incident-4711", "-o", "json"); got != 1 {
-		t.Fatalf("exit code = %d, want 1 — with nowhere to draw the form the command must refuse", got)
+	if got := run("ops", "inspect-job", "--reason", "incident-4711", "-o", "json"); got != clierr.ExitInputRequired {
+		t.Fatalf("exit code = %d, want %d — with nowhere to draw the form the command must refuse", got, clierr.ExitInputRequired)
 	}
 	if s.sawAny("/api/jobs") {
 		t.Errorf("the listing was fetched for a picker that could never be shown: %v", s.all())
@@ -645,8 +646,8 @@ func TestOpsForm_UnstickEnvRejectsAStatusOutsideTheEnum(t *testing.T) {
 	} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			s, _, run := opsFormEnv(t)
-			if got := run(args...); got != 1 {
-				t.Fatalf("exit code = %d, want 1", got)
+			if got := run(args...); got != clierr.ExitUsage {
+				t.Fatalf("exit code = %d, want %d (validation_failed)", got, clierr.ExitUsage)
 			}
 			if s.sawAny("/api/breakglass") {
 				t.Errorf("a status the server refuses still cost a round trip: %v", s.all())
@@ -678,8 +679,8 @@ func TestOpsForm_UnstickEnvAcceptsTheEnumAndNormalisesIt(t *testing.T) {
 // given an id, the CLI has not looked the environment up, so it does not invent a precondition.
 func TestOpsForm_UnstickEnvScriptedWithAnIdStillNeedsTheCasSides(t *testing.T) {
 	s, _, run := opsFormEnv(t)
-	if got := run("ops", "unstick-env", "env-alpha", "--to", "FAILED", "--reason", "incident-4711", "--yes", "--no-input"); got != 1 {
-		t.Fatalf("exit code = %d, want 1 — a compare-and-swap with no precondition is a raw UPDATE", got)
+	if got := run("ops", "unstick-env", "env-alpha", "--to", "FAILED", "--reason", "incident-4711", "--yes", "--no-input"); got != clierr.ExitInputRequired {
+		t.Fatalf("exit code = %d, want %d — a compare-and-swap with no precondition is a raw UPDATE", got, clierr.ExitInputRequired)
 	}
 	if s.sawAny("/api/breakglass") {
 		t.Errorf("the refusal cost a round trip: %v", s.all())
@@ -713,8 +714,8 @@ func TestOpsForm_UnstickEnvPickerSeedsThePreconditionFromTheLiveStatus(t *testin
 // the catalog rather than typed.
 func TestOpsForm_ApproveRefusesAnActionThatTakesNoApproval(t *testing.T) {
 	s, _, run := opsFormEnv(t)
-	if got := run("ops", "approve", "cancel_job", "job-alpha", "--reason", "incident-4711", "--no-input"); got != 1 {
-		t.Fatalf("exit code = %d, want 1 — the approval endpoint answers 400 for a low-blast action", got)
+	if got := run("ops", "approve", "cancel_job", "job-alpha", "--reason", "incident-4711", "--no-input"); got != clierr.ExitUsage {
+		t.Fatalf("exit code = %d, want %d — the approval endpoint answers 400 for a low-blast action", got, clierr.ExitUsage)
 	}
 	if s.sawAny("/api/breakglass/approval") {
 		t.Errorf("the refusal cost a round trip: %v", s.all())

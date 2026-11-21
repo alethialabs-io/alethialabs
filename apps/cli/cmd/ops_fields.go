@@ -167,22 +167,47 @@ type opsAction struct {
 	ReadOnly bool
 	// RequiresApproval is the catalog's requiresApproval — the two-person gate, enforced server-side.
 	RequiresApproval bool
+
+	// The fields below are the CLI's own and are not in the server catalog; ops_catalog_test.go
+	// compares only the four above.
+
+	// Kind names the subject in a mutation result: "job", "runner", "environment" …
+	Kind string
+	// Queues reports that a successful run queues a job, whose id the result payload carries as
+	// `jobId`. A verb that queues one takes --wait and --timeout.
+	Queues bool
+	// JobType is the type of the job it queues when that is fixed, or empty when it is the type of
+	// the job being retried.
+	JobType string
 }
 
 // opsActions is every dispatchable break-glass action, in catalog order.
 var opsActions = []opsAction{
-	{Command: "alethia ops inspect-job", Action: "inspect_job", Blast: "none", ReadOnly: true},
-	{Command: "alethia ops retry-job", Action: "retry_job", Blast: "low"},
-	{Command: "alethia ops cancel-job", Action: "cancel_job", Blast: "low"},
-	{Command: "alethia ops unstick-env", Action: "unstick_env", Blast: "medium"},
-	{Command: "alethia ops drain-runner", Action: "drain_runner", Blast: "low"},
-	{Command: "alethia ops restart-runner", Action: "restart_runner", Blast: "medium"},
-	{Command: "alethia ops replay-webhook", Action: "replay_webhook", Blast: "low"},
-	{Command: "alethia ops force-release-lock", Action: "force_release_state_lock", Blast: "high", RequiresApproval: true},
-	{Command: "alethia ops state-surgery", Action: "state_surgery", Blast: "high", RequiresApproval: true},
-	{Command: "alethia ops orphan-detect", Action: "orphan_detect", Blast: "none", ReadOnly: true},
-	{Command: "alethia ops orphan-clean", Action: "orphan_clean", Blast: "high", RequiresApproval: true},
+	{Command: "alethia ops inspect-job", Action: "inspect_job", Blast: "none", ReadOnly: true, Kind: opsKindJob},
+	{Command: "alethia ops retry-job", Action: "retry_job", Blast: "low", Kind: opsKindJob, Queues: true},
+	{Command: "alethia ops cancel-job", Action: "cancel_job", Blast: "low", Kind: opsKindJob},
+	{Command: "alethia ops unstick-env", Action: "unstick_env", Blast: "medium", Kind: opsKindEnvironment},
+	{Command: "alethia ops drain-runner", Action: "drain_runner", Blast: "low", Kind: opsKindRunner},
+	{Command: "alethia ops restart-runner", Action: "restart_runner", Blast: "medium", Kind: opsKindRunner},
+	{Command: "alethia ops replay-webhook", Action: "replay_webhook", Blast: "low", Kind: opsKindStripeEvent},
+	{Command: "alethia ops force-release-lock", Action: "force_release_state_lock", Blast: "high", RequiresApproval: true, Kind: opsKindStateLock},
+	{Command: "alethia ops state-surgery", Action: "state_surgery", Blast: "high", RequiresApproval: true, Kind: opsKindState, Queues: true, JobType: "STATE_SURGERY"},
+	{Command: "alethia ops orphan-detect", Action: "orphan_detect", Blast: "none", ReadOnly: true, Kind: opsKindProject},
+	{Command: "alethia ops orphan-clean", Action: "orphan_clean", Blast: "high", RequiresApproval: true, Kind: opsKindProject},
 }
+
+// The subjects of the group's mutation results, and of the two records it creates.
+const (
+	opsKindJob         = "job"
+	opsKindRunner      = "runner"
+	opsKindEnvironment = "environment"
+	opsKindStripeEvent = "stripe_event"
+	opsKindStateLock   = "state_lock"
+	opsKindState       = "state"
+	opsKindProject     = "project"
+	opsKindSession     = "breakglass_session"
+	opsKindApproval    = "breakglass_approval"
+)
 
 // opsApprovalActions is the closed set `ops approve` offers, DERIVED from the catalog rather than
 // typed a second time.
@@ -238,12 +263,28 @@ func opsYesFor(path string) bool {
 	return false
 }
 
-// resetOpsConfirmFlags clears every ops --yes opt-in. Called from the confirm suite's flag reset:
+// opsWait holds --wait and --timeout for each verb that queues a job, keyed by cobra command path,
+// for the reason opsYes is a map: the reset below reaches every one of them without a list.
+var opsWait = map[string]*waitFlags{}
+
+// opsWaitFor reads a command's --wait and --timeout. A verb that queues nothing reads the zero
+// value: no wait.
+func opsWaitFor(path string) waitFlags {
+	if w, ok := opsWait[path]; ok {
+		return *w
+	}
+	return waitFlags{}
+}
+
+// resetOpsConfirmFlags clears every ops --yes opt-in, and every --wait and --timeout with them. Called from the confirm suite's flag reset:
 // cobra never clears a flag between Execute calls, and a --yes left set by one test would silently
 // pre-confirm a destructive command in the next.
 func resetOpsConfirmFlags() {
 	for _, v := range opsYes {
 		*v = false
+	}
+	for _, w := range opsWait {
+		*w = waitFlags{}
 	}
 }
 
@@ -251,6 +292,11 @@ func resetOpsConfirmFlags() {
 
 // opsGroupCommands returns every runnable command under `ops`, derived from the live tree rather
 // than listed, so a new verb joins the guards without anyone remembering to add it.
+//
+// A HIDDEN verb is in the set. `orphan-clean` and `state-surgery` are not listed (meta_ops.go), but
+// a hidden command still runs when it is named, so its field spec, its form and its confirmation
+// must hold exactly as a listed one's do. Skipping hidden verbs here also made the set depend on
+// whether some earlier test had applied the registry, which is what sets Hidden.
 func opsGroupCommands(root *cobra.Command) []*cobra.Command {
 	group, _, err := root.Find([]string{"ops"})
 	if err != nil || group == root {
@@ -258,7 +304,7 @@ func opsGroupCommands(root *cobra.Command) []*cobra.Command {
 	}
 	var out []*cobra.Command
 	for _, c := range group.Commands() {
-		if c.Hidden || c.Name() == "help" || c.Name() == "completion" {
+		if c.Name() == "help" || c.Name() == "completion" {
 			continue
 		}
 		if c.Run != nil || c.RunE != nil {
@@ -311,6 +357,11 @@ func registerOpsVerb(cmd *cobra.Command) {
 	// verb must, and a mutating one gets the confirmation opt-in.
 	if a, ok := opsActionFor(path); ok && !a.ReadOnly {
 		addOpsYesFlag(cmd, path)
+	}
+	if a, ok := opsActionFor(path); ok && a.Queues {
+		w := &waitFlags{}
+		opsWait[path] = w
+		addWaitFlags(cmd, w, false)
 	}
 	opsCmd.AddCommand(cmd)
 }

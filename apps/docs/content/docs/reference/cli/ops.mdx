@@ -9,6 +9,23 @@ The `ops` group is the terminal-first **break-glass** surface: privileged incide
 actions for on-call operators. Every verb hits the same audited `/api/breakglass/*` endpoints as
 the operator UI and writes to the same append-only audit trail.
 
+## Showing the group
+
+`ops` is not listed in `alethia --help` by default, because almost nobody who installs the CLI can
+use it. Set `ALETHIA_OPS=1` in your shell and `alethia --help` lists the group under
+**Organization**:
+
+```bash
+export ALETHIA_OPS=1
+```
+
+The switch changes only what the CLI lists. The commands run when you name them with or without
+it, and the server's operator allowlist decides who may act.
+
+Two verbs, `orphan-clean` and `state-surgery`, are not listed even with the switch on. Their
+executors have not shipped, so neither can do its work yet. They are described at the end of this
+page.
+
 ## Signing in for break-glass
 
 Break-glass accepts only an interactive CLI session: the one [`alethia login`](/reference/cli/authentication)
@@ -51,10 +68,10 @@ Four rules hold for every action.
   consequence and waits for you. `--yes` opts in ahead of time, which is what a runbook script
   passes. With prompts unavailable and no `--yes`, the command exits non-zero having
   changed nothing — it never exits `0` having done nothing.
-- **Two-person approval for high-blast actions.** `force-release-lock`, `state-surgery`, and
-  `orphan-clean` require an `--approval` token minted by a **different** operator through
-  [`alethia ops approve`](#alethia-ops-approve). The server enforces that the approver and the actor
-  are different people.
+- **Two-person approval for high-blast actions.** `force-release-lock` requires an `--approval`
+  token minted by a **different** operator through [`alethia ops approve`](#alethia-ops-approve), and
+  so do the two unlisted verbs. The server enforces that the approver and the actor are different
+  people.
 
 Each action opens a fresh time-boxed break-glass session before it runs, records the reason, then
 executes against the single audited execute endpoint. The session opens **after** you confirm, so a
@@ -93,12 +110,13 @@ break-glass catalog, so they are the same ones the dispatcher enforces.
 | none (read-only) | `inspect-job`, `orphan-detect` | no — nothing changes |
 | low | `retry-job`, `cancel-job`, `drain-runner`, `replay-webhook` | yes |
 | medium | `unstick-env`, `restart-runner` | yes |
-| HIGH (two-person) | `force-release-lock`, `state-surgery`, `orphan-clean` | yes, plus `--approval` |
+| HIGH (two-person) | `force-release-lock` (and the unlisted `state-surgery`, `orphan-clean`) | yes, plus `--approval` |
 
 ## `alethia ops`
 
-The group itself is runnable and prints the verb list with each one's blast radius, which is the
-fastest way to see what break-glass can do without reading this page.
+The group itself is runnable and prints the listed verbs with each one's blast radius, which is the
+fastest way to see what break-glass can do without reading this page. It works whether or not
+`ALETHIA_OPS` is set.
 
 ```bash
 alethia ops
@@ -122,7 +140,9 @@ alethia ops session --reason incident-1234-triage
 | --- | --- | --- |
 | Reason | Why you are breaking glass; it is written to the immutable audit before the act | `--reason` |
 
-Prints the session id, the resolved operator, and the session's expiry.
+Prints the session id, the resolved operator, and the session's expiry. Under `-o json` it prints the
+[shared result shape](#scripting-the-group) with `kind` `breakglass_session`; `.id` is the session
+id.
 
 ## `alethia ops approve`
 
@@ -146,7 +166,9 @@ The action must be one that takes an approval: `force_release_state_lock`, `stat
 `orphan_clean`. The server answers `400` for any other one, so the CLI refuses it first and names
 the three.
 
-Prints the approval id, the action and resource it is bound to, the approver, and its expiry.
+Prints the approval id, the action and resource it is bound to, the approver, and its expiry. Under
+`-o json` it prints the shared result shape with `kind` `breakglass_approval`; `.id` is the value the
+acting operator passes as `--approval`.
 
 ## `alethia ops inspect-job`
 
@@ -184,6 +206,13 @@ alethia ops retry-job 8f3c2a1b-77de-4c05-9a41-2b8e6a1d40f7 --reason incident-123
 | --- | --- | --- |
 | Job | The job to re-enqueue; a fresh job is created and the poison counter resets | `[job-id]` |
 | Reason | Why you are breaking glass; it is written to the immutable audit before the act | `--reason` |
+
+The new job is the result's `job`. Pass `--wait` to follow it to the end: the command exits `13`
+when the job fails and `12` when `--timeout` passes first, and the job keeps running.
+
+```bash
+alethia ops retry-job 8f3c2a1b-77de-4c05-9a41-2b8e6a1d40f7 --reason incident-1234-runner-crash --yes --wait --timeout 30m
+```
 
 ## `alethia ops cancel-job`
 
@@ -285,7 +314,8 @@ alethia ops force-release-lock projects/acme/prod.tfstate --approval 6b21d8f4-0c
 ## `alethia ops state-surgery`
 
 Queue a privileged `STATE_SURGERY` job through the normal Runner/state pipeline, with fencing intact
-(blast: HIGH, two-person).
+(blast: HIGH, two-person). Not listed in help, with or without `ALETHIA_OPS`, until its executor
+ships.
 
 ```bash
 alethia ops state-surgery projects/acme/prod.tfstate --approval 6b21d8f4-0c5e-4a93-9f27-3d81b6e5c704 --note import-orphaned-rds --reason incident-1234-failed-apply --yes
@@ -306,7 +336,8 @@ that gets escalated.
 
 <Callout type="info">
 The runner-side executor ships **inert** (fail-closed): the queued job fails cleanly without
-mutating state. See the `STATE_SURGERY` job type in [Job Commands](/reference/cli/jobs).
+mutating state, so `--wait` ends with exit `13`. See the `STATE_SURGERY` job type in
+[Job Commands](/reference/cli/jobs).
 </Callout>
 
 ## `alethia ops orphan-detect`
@@ -329,7 +360,8 @@ alethia ops orphan-detect --project 1d4e7c30-8b62-4f95-a70d-9c2e5b1a3f88 --reaso
 ## `alethia ops orphan-clean`
 
 Force-destroy detected orphans across clouds (blast: HIGH, two-person) — the most dangerous action.
-The resources do not come back.
+The resources do not come back. Not listed in help, with or without `ALETHIA_OPS`, until its
+executor ships.
 
 ```bash
 alethia ops orphan-clean --project 1d4e7c30-8b62-4f95-a70d-9c2e5b1a3f88 --approval 6b21d8f4-0c5e-4a93-9f27-3d81b6e5c704 --reason incident-1234-cleanup-approved --yes
@@ -382,22 +414,22 @@ command tells you which flag or positional would have answered it, and exits non
 exception is `state-surgery`'s `--note`, which is optional: an unattended run gets no note rather
 than a refusal.
 
-Two things a script needs to know:
+What a script needs to know:
 
 - `--yes` is required on every mutating verb when prompts are unavailable. Without it the command
-  exits non-zero and changes nothing, which is the safe answer for a script that reached a
-  destructive verb it did not mean to.
-- `-o json` prints the payload alone. The styled success line is only rendered for the table
-  format, so a break-glass result pipes into `jq` without a sentence in front of it.
-
-  <Callout type="warn">
-  One thing still writes to `stdout` ahead of the payload: the loading spinner, which draws its
-  frames there rather than on `stderr`. A redirected or piped `-o json` result can therefore begin
-  with terminal escape sequences, and `jq` reports `Invalid numeric literal at line 1, column 2`.
-  Until [#3838](https://github.com/alethialabs-io/alethialabs/issues/3838) lands, parse from the
-  first `{` or `[` rather than from byte zero. This affects every command with a spinner, not only
-  `ops`.
-  </Callout>
+  exits `9` and changes nothing, which is the safe answer for a script that reached a destructive
+  verb it did not mean to.
+- `-o json` prints one document on `stdout` and nothing else; notes, the queued-job line and errors
+  go to `stderr`. A verb that changes something prints the shared result shape: `id` (the resource
+  you named), `kind` (`job`, `runner`, `environment`, `stripe_event`, `state_lock`, `state` or
+  `project`), `action` (`updated`, or `queued` when it queued a job), `job` (the queued job, or
+  `null`), `dry_run` and `object` (the server's answer: `ok`, `detail` and `data`). The two read-only
+  verbs, `inspect-job` and `orphan-detect`, print the server's answer itself.
+- The exit code says how a run ended. A value that was not given and could not be asked for exits
+  `9`; a value that is wrong as given, such as a reason under eight characters or a status that is
+  not a project status, exits `8`; the server's refusals keep their own codes, for example `5` for a
+  forbidden session and `11` for a server fault. Under `-o json` the error is one JSON object on
+  `stderr`.
 
 ```bash
 alethia ops inspect-job 8f3c2a1b-77de-4c05-9a41-2b8e6a1d40f7 --reason incident-1234-triage --no-input -o json
