@@ -53,6 +53,8 @@ async function openCreateMenu(createProjectReason: string | null = null) {
 		/>,
 	);
 	await user.click(screen.getByRole("button", { name: "Create" }));
+	// The menu mounts its items after the click resolves, so wait for them before any lookup.
+	await screen.findAllByRole("menuitem");
 	return user;
 }
 
