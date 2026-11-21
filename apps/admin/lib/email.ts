@@ -4,13 +4,16 @@
 // Customer-facing staff notification emails. Thin senders over @repo/email/send (SES)
 // using the shared @repo/support case templates. These fire when a STAFF agent
 // replies to / assigns / transitions a case, so the customer hears back on the general
-// (product) stream. Unlike the console's lib/email/support-email.ts these call sendEmail
-// directly — there is no DB suppression guard here, which is acceptable for the internal,
-// low volume of staff-driven notifications.
-// TODO: if volume grows, route through a shared suppression-aware guard like the console's.
+// (product) stream. Every one goes through `sendGuardedEmail` below, which skips an address
+// on the console's suppression list exactly as the console's own senders do
+// (apps/console/lib/email/guard.ts): a hard-bounced or complained address is not mailed again
+// because a staff member, rather than the product, triggered the message.
 
+import { eq } from "drizzle-orm";
 import { getEmailConfig } from "@repo/email/config";
-import { sendEmail } from "@repo/email/send";
+import { sendEmail, type SendEmailArgs } from "@repo/email/send";
+import { getServiceDb } from "@/lib/db";
+import { emailSuppression } from "@/lib/db-schema";
 import type { SupportContactPrefs } from "@repo/support/types";
 import {
 	SupportCaseAssignedEmail,
@@ -33,6 +36,35 @@ import {
 	subject as resolvedSubject,
 } from "@repo/support/emails/support-case-resolved";
 
+/** True when the address is on the suppression list (the key is trimmed and lower-cased). */
+export async function isSuppressed(email: string): Promise<boolean> {
+	const [row] = await getServiceDb()
+		.select({ email: emailSuppression.email })
+		.from(emailSuppression)
+		.where(eq(emailSuppression.email, email.trim().toLowerCase()))
+		.limit(1);
+	return row !== undefined;
+}
+
+/**
+ * Sends one email unless its recipient is suppressed, and drops suppressed CC addresses. The
+ * admin app's twin of the console's `sendGuardedEmail`; every sender in this module uses it.
+ */
+export async function sendGuardedEmail(args: SendEmailArgs): Promise<void> {
+	if (await isSuppressed(args.to)) {
+		console.warn(`[email] skipped "${args.subject}" (recipient suppressed)`);
+		return;
+	}
+	const cc = args.cc?.length
+		? (
+				await Promise.all(
+					args.cc.map(async (addr) => ((await isSuppressed(addr)) ? null : addr)),
+				)
+			).filter((addr): addr is string => addr !== null)
+		: undefined;
+	await sendEmail({ ...args, cc: cc?.length ? cc : undefined });
+}
+
 /**
  * Whether the customer wants email for a case, per their stored contact prefs. When they
  * chose the in-app channel we suppress transactional email. Undefined prefs default to
@@ -54,7 +86,7 @@ export async function sendStaffReplyEmail(
 	},
 ): Promise<void> {
 	const config = getEmailConfig();
-	await sendEmail({
+	await sendGuardedEmail({
 		from: config.from.general,
 		configurationSetName: config.configSet.general,
 		to,
@@ -76,7 +108,7 @@ export async function sendCaseAssignedEmail(
 	args: { caseNumber: number; agentName?: string; url: string; cc?: string[] },
 ): Promise<void> {
 	const config = getEmailConfig();
-	await sendEmail({
+	await sendGuardedEmail({
 		from: config.from.general,
 		configurationSetName: config.configSet.general,
 		to,
@@ -96,7 +128,7 @@ export async function sendCaseResolvedEmail(
 	args: { caseNumber: number; url: string; cc?: string[] },
 ): Promise<void> {
 	const config = getEmailConfig();
-	await sendEmail({
+	await sendGuardedEmail({
 		from: config.from.general,
 		configurationSetName: config.configSet.general,
 		to,
@@ -112,7 +144,7 @@ export async function sendCaseReopenedEmail(
 	args: { caseNumber: number; url: string; cc?: string[] },
 ): Promise<void> {
 	const config = getEmailConfig();
-	await sendEmail({
+	await sendGuardedEmail({
 		from: config.from.general,
 		configurationSetName: config.configSet.general,
 		to,
@@ -128,7 +160,7 @@ export async function sendCaseClosedEmail(
 	args: { caseNumber: number; url: string; cc?: string[] },
 ): Promise<void> {
 	const config = getEmailConfig();
-	await sendEmail({
+	await sendGuardedEmail({
 		from: config.from.general,
 		configurationSetName: config.configSet.general,
 		to,

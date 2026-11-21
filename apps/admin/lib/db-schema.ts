@@ -72,6 +72,15 @@ export const member = pgTable("member", {
 });
 
 /**
+ * The console-owned suppression list (apps/console/lib/db/schema/email.ts) — addresses that hard-
+ * bounced or complained. Read here so staff-driven customer email skips them exactly as the
+ * console's own senders do (lib/email.ts). Read-only; the SES webhook in the console writes it.
+ */
+export const emailSuppression = pgTable("email_suppression", {
+	email: text().primaryKey(),
+});
+
+/**
  * The console-owned privacy case (apps/console/lib/db/schema/privacy.ts), for the staff privacy
  * queue. READ-ONLY here: every decision on a case goes through the console's platform route
  * (`/api/internal/platform/privacy`), which records it in the case's append-only ledger.
