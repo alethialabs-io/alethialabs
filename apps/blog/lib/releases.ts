@@ -74,10 +74,11 @@ export function releaseSummary(body: string): string {
 		.replace(/[*_`]/g, "")
 		.replace(/\s+/g, " ")
 		.trim();
-	// Early releases list bare commit hashes ("7ed185b0e026…") — meaningless to a reader, and an
-	// unbreakable 40-character string. Treat a summary that is only a hash as no summary.
-	if (/^[0-9a-f]{7,40}\b/.test(text) && text.replace(/[0-9a-f]{7,40}/g, "").trim().length < 3) return "";
-	return text.charAt(0).toUpperCase() + text.slice(1);
+	// Early releases lead with a bare commit hash ("7ed185b0e026… fix: …") — meaningless to a reader,
+	// and an unbreakable 40-character string. Strip it; a summary that was only a hash is no summary.
+	const clean = text.replace(/^[0-9a-f]{7,40}\b\s*/, "").trim();
+	if (clean.length < 3) return "";
+	return clean.charAt(0).toUpperCase() + clean.slice(1);
 }
 
 /** Parses the GitHub releases API response into display items, skipping drafts and pre-releases. */
@@ -87,6 +88,9 @@ export function parseReleases(json: unknown, limit: number): ReleaseItem[] {
 	for (const entry of json) {
 		if (!isRecord(entry) || entry.draft === true || entry.prerelease === true) continue;
 		const name = str(entry, "name") || str(entry, "tag_name");
+		// Only release-please releases ("runner: v0.10.1"). The bare "v0.x" tags before it carry raw
+		// commit subjects and merge messages, which are not release notes.
+		if (!/^\s*[a-z0-9-]+\s*:\s*v?\d/i.test(name)) continue;
 		const url = str(entry, "html_url");
 		const date = str(entry, "published_at");
 		if (!name || !url || !date) continue;
