@@ -36,7 +36,7 @@ function LeftRail() {
 					...disp,
 					fontSize: "clamp(32px, 5vw, 44px)",
 					fontWeight: 600,
-					letterSpacing: "-0.04em",
+					letterSpacing: "var(--tracking-display)",
 					lineHeight: 1.05,
 					margin: "0 0 18px",
 					color: "var(--text-primary)",
