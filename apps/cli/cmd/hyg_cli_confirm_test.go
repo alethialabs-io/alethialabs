@@ -455,6 +455,12 @@ func hygCliConfirmEnv(t *testing.T) (*hygCliConfirmServer, func(args ...string) 
 				"id": "g1", "principal_type": "user", "principal_id": "u1", "effect": "deny",
 				"role": "viewer", "resource_type": "org",
 			}})
+		// `token create` refuses a success that carries no token: the token cannot be read
+		// again, so an empty one is not something to report as created.
+		case p == "/api/cli/tokens" && r.Method == http.MethodPost:
+			_ = enc.Encode(map[string]interface{}{
+				"id": "tok1", "name": "from-the-form", "token_prefix": "alethia_sat_x", "token": "alethia_sat_x_secret",
+			})
 		case p == "/api/jobs" && r.Method == http.MethodPost:
 			_ = enc.Encode(map[string]interface{}{"job": map[string]interface{}{
 				"id": "j1", "job_type": "DESTROY", "status": "PENDING",

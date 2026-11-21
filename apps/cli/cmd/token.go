@@ -262,8 +262,11 @@ func runTokenCreate(c apiClient, out, errOut io.Writer, format, name string, exp
 	if err != nil {
 		return err
 	}
-	if created == nil {
-		return errNoRecord("token")
+	if created == nil || created.Token == "" {
+		// A success that carries no token has nothing to show, and the token cannot be read
+		// again: saying "created" over an empty line would cost the caller the credential.
+		return clierr.New(clierr.CodeInternal,
+			"the control plane accepted the request but returned no token; run `alethia token list` and revoke the token it made")
 	}
 	if format != ui.FormatTable {
 		// The caller is a program; the plain value is what it needs.
