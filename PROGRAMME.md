@@ -9,13 +9,12 @@ has to re-brief it after a context clear.
 
 The programme is one sentence:
 
-> Establish cloud parity across **hetzner · aws · gcp · azure** for the full product
-> capability surface, prove every demo scenario end-to-end on each cloud, and drive all of it through
-> the `alethia` CLI — so the MVP is provably reached. Then, and only then, UI.
+> Reach the public beta defined by the nine predicates B1–B9 in `docs/beta/README.md`, on every cloud
+> the catalog offers, and prove each predicate from evidence a script reads.
 
-Those four are not a list kept in this file. They are the clouds `packages/core/catalog/catalog.json`
+The clouds are not a list kept in this file. They are the clouds `packages/core/catalog/catalog.json`
 can provision and marks `available`, and decision D6 says what a `hidden` cloud keeps and how one
-comes back.
+comes back. Predicate B1 holds that set to the one the beta is defined on.
 
 ## How to rejoin it — four commands
 
@@ -36,25 +35,27 @@ mechanical next names an issue that is closed or already claimed, that is a boar
 reach-around to a different issue. If a cell has no issue at all, the first act is to decompose it
 onto the board, because the ledger is not a work queue.
 
-## §0 · What "MVP reached" means
+## §0 · What "beta reached" means
 
-Six predicates. They are written to be **checked by a script, not read as prose**, because the thing
-that went wrong before was a board asserting a state the tree disagreed with.
+Nine predicates, **B1–B9**, defined in `docs/beta/README.md` (REL-S1, #6773), with the evidence-record
+format in `docs/beta/evidence-schema.json`. They replace the six MVP predicates this section used to
+hold and the management roadmap's MVP definition. They are written to be **checked by a script, not
+read as prose**: `scripts/programme-rollup.mjs` evaluates each one and renders the result first under
+the marker. This file does not restate them, because a copy here would go stale and nothing would
+report it.
 
-1. **Capability parity is recorded, and the debt has a shrinking balance.** All three generated
-   parity boards regenerate byte-identical, and every kind the product refuses on a cloud is either a
-   documented ceiling with provider evidence or a debt item with an open issue.
-2. **Every proof cell carries a real-apply proof.** For every (cloud × dimension) cell, the proof
-   ledger's surviving claim must be a PASS whose bundle exists in the tree — never a green harness,
-   never an expiring CI run tag.
-3. **No `DeferredInProduct` cells remain** in `test/e2e/maxconfig.go` — the last product debt in the
-   capability matrix.
-4. **Driven from the CLI**: zero `CLIGap` verdicts, and a committed `cli-demo` proof row per cloud
-   (the bar's real-binary half must actually have executed).
-5. **Every demo scenario is asserted** — a set difference, both directions, between the runbook beats
-   plus the per-cloud tutorial pages and the harness steps that assert them.
-6. **Nothing is standing, and the boards are fresh** — the orphan reaper reports no leaks per cloud,
-   and no board cites a closed issue as open.
+The old predicates survive as inputs, not as a second definition: the proof grid (old 2) and the CLI
+row (old 4) feed B3 and B4, and the orphan reaper (old 6) feeds B9. Capability parity (old 1),
+`DeferredInProduct` (old 3) and the scenario set difference (old 5) are still rendered and still held
+by the ratchets below.
+
+Three rules decide how the rollup evaluates them, and each is stated in the definition:
+
+- **Nothing is assumed from silence.** A missing record, an instrument not built yet, and a fact the
+  tree and the snapshot do not carry all render `not measured`, and `not measured` is not met.
+- **No clock.** Every age limit is measured back from the snapshot's `derived_at`, printed verbatim.
+- **A record is one observation.** It is never edited to change its verdict; the newest by `date`
+  decides.
 
 **Declared ratchet ceilings** — human-set, machine-enforced, may only ever decrease:
 
@@ -78,8 +79,8 @@ The phases below are **intent**. Their state is rendered under the marker; do no
    and touch no credential and no migration. This is where N-way agent parallelism actually lives.
 5. **The full bar, per cloud, by dispatch** — blocked on a durable ledger and on that cloud's floor.
 6. **Scenario layers, then the CLI bar** — one gate per dispatch, then unset it.
-7. **The MVP predicate, then UI.** See decision D5 — the UI conformance wave is qualified out of this
-   ordering, not exempted from it.
+7. **The beta predicates B1–B9.** The CLI-first order that ended in "then UI" is withdrawn by the
+   2027-01-31 beta spec; decision D5's qualification of the UI wave is kept as history.
 
 ## §2 · Standing decisions
 
@@ -236,7 +237,7 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## §5 · The CLI programme — epic #3612
 
-Predicate #4 asks for a `cli-demo` proof row per cloud. Reaching it is not one unit of work, so it
+The CLI half of predicate B3 asks for a `cli-demo` proof row per cloud (it was MVP predicate #4). Reaching it is not one unit of work, so it
 is decomposed as a programme, and **#3612** is the umbrella: the census it starts from, the rulings
 the maintainer has made, the wave ordering, and the resume protocol.
 
@@ -270,6 +271,77 @@ Work is claimed from the board, never hand-picked: `scripts/coordinate.sh --repo
 `scripts/claim-work.sh --class backend`.
 
 <!-- BEGIN GENERATED: programme-rollup · tree-derived · DO NOT EDIT BELOW -->
+
+## Beta predicates — B1 to B9
+
+**1 of 9 beta predicates are met.** 6 not met · 2 not measured. Evaluated on this tree at the snapshot instant **2026-11-19T17:43:22Z**, over the 4 scored clouds: `aws`, `gcp`, `azure`, `hetzner`.
+
+The predicates are defined in `docs/beta/README.md`; this section only evaluates them. `not measured` is not met: it means the instrument does not exist yet, or reads something the tree and the snapshot do not carry. Evidence records read: **0**.
+
+| # | predicate | state |
+|---|---|:---:|
+| B1 | Exactly four clouds are offered | ✅ met |
+| B2 | Golden path observed on production | ❌ not met |
+| B3 | Same path from the CLI and through an outside agent | ❌ not met |
+| B4 | A full-bar real-apply proof | ❌ not met |
+| B5 | Paid plans are open, with live evidence | ❌ not met |
+| B6 | Legal set published at sealed versions, including beta terms | ? not measured |
+| B7 | Operations: backup, restore drill, public hosts | ❌ not met |
+| B8 | Editions meet their own predicates | ❌ not met |
+| B9 | Nothing left standing; nightly green | ? not measured |
+
+| cloud | B2 | B3 | B4 | B9 |
+|---|:---:|:---:|:---:|:---:|
+| **aws** | ❌ not met | ❌ not met | ❌ not met | ? not measured |
+| **gcp** | ❌ not met | ❌ not met | ❌ not met | ? not measured |
+| **azure** | ❌ not met | ❌ not met | ❌ not met | ? not measured |
+| **hetzner** | ❌ not met | ❌ not met | ❌ not met | ? not measured |
+
+<details><summary>Why, per predicate</summary>
+
+- **B1** ✅ met
+  - offered set: ✅ met — Go (`Catalog.OfferedProviders`, via the mirror) and TypeScript (`AVAILABLE_CLOUDS`) both offer exactly {aws, azure, gcp, hetzner}
+- **B2** ❌ not met
+  - aws: ❌ not met — no B2 record
+  - gcp: ❌ not met — no B2 record
+  - azure: ❌ not met — no B2 record
+  - hetzner: ❌ not met — no B2 record
+- **B3** ❌ not met
+  - aws CLI: ✅ met — `demos/proofs/aws/20260930T061330Z`
+  - aws agent: ❌ not met — no agent-path record
+  - gcp CLI: ✅ met — `demos/proofs/gcp/20260930T065516Z`
+  - gcp agent: ❌ not met — no agent-path record
+  - azure CLI: ✅ met — `demos/proofs/azure/20260930T095658Z`
+  - azure agent: ❌ not met — no agent-path record
+  - hetzner CLI: ✅ met — `demos/proofs/hetzner/20260930T011519Z`
+  - hetzner agent: ❌ not met — no agent-path record
+- **B4** ❌ not met
+  - aws: ❌ not met — no successful bundle with `dimension: full`
+  - gcp: ❌ not met — no successful bundle with `dimension: full`
+  - azure: ❌ not met — no successful bundle with `dimension: full`
+  - hetzner: ❌ not met — no successful bundle with `dimension: full`
+- **B5** ❌ not met
+  - paid state: ❌ not met — `PAID_MARKETS` is empty, so `paidLaunchState()` is not `open` (announced for: no date); decision M15 counts `announced` as not met
+  - live evidence: ❌ not met — no B5 live-billing record
+- **B6** ? not measured
+  - sealed register: ✅ met — `terms` is sealed at 2026-08-24; the hashes themselves are held by `pnpm check:legal-hashes` and `pnpm check:legal-set` in CI
+  - beta terms: ? not measured — nothing in the register records which `terms` version carries the beta and no-SLA wording (LEG-L2 writes it)
+- **B7** ❌ not met
+  - off-box backup: ? not measured — no instrument reads the off-box backup listing yet (REL-L7 builds the job)
+  - restore drill: ❌ not met — no restore-drill record
+  - public hosts: ? not measured — the post-deploy smoke result is not in the snapshot, and the installer and status hosts are not in the smoke yet (REL-L8)
+- **B8** ❌ not met
+  - hosted: ❌ not met — no B8 record
+  - enterprise: ❌ not met — no B8 record
+  - self-hosted: ❌ not met — no B8 record
+- **B9** ? not measured
+  - aws reaper: ✅ met — run 44567340110 at 2026-11-19T16:44:07Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean
+  - gcp reaper: ✅ met — run 44567340110 at 2026-11-19T16:44:07Z found no orphan runs and verified clean
+  - azure reaper: ✅ met — run 44567340110 at 2026-11-19T16:44:07Z found no orphan runs and verified clean
+  - hetzner reaper: ? not measured — run 44567340110 at 2026-11-19T16:44:07Z found 1 unattributable resource(s)
+  - nightly 6 of 7: ? not measured — the snapshot does not record the scheduled nightly's per-cloud verdicts, so 6 green of the last 7 cannot be counted
+
+</details>
 
 ## Where the programme actually is
 
@@ -446,6 +518,17 @@ Every number above is derived from these, and from nothing else:
 - `apps/console/lib/cloud-providers/unsupported-kinds.ts`
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
+- `docs/beta/evidence-schema.json`
+- `packages/cloud-catalog/src/generated.ts`
+- `packages/legal/src/commerce.ts`
+- `packages/legal/src/launch.ts`
+- `docs/legal/legal-set.json`
+- `apps/console/docs/qa/prod-runs/`
+- `docs/beta/evidence/managed-runner/`
+- `docs/beta/evidence/b3/`
+- `docs/beta/evidence/b5/`
+- `docs/beta/evidence/b7/`
+- `docs/beta/evidence/b8/`
 
 Live board snapshot: taken **2026-11-19T17:43:22Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
