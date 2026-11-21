@@ -7,7 +7,7 @@
 // pin that both halves still land on the same open.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
@@ -31,6 +31,7 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+import { createDimensionWithValues } from "@/app/server/actions/classification/dimensions";
 import { DimensionEditorSheet } from "@/components/classification/dimension-editor-sheet";
 
 /** Renders the sheet open in create mode, optionally on a template. */
@@ -59,5 +60,50 @@ describe("DimensionEditorSheet", () => {
 		expect(await screen.findByDisplayValue("Environment")).toBeInTheDocument();
 		expect(screen.getByText("3 staged")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /Create dimension/ })).toBeEnabled();
+	});
+
+	// #6825 (F-13): a validation message about anything the sheet has no field for used to be
+	// dropped, so Save did nothing. The template create names its fields `dimension.*` and
+	// `values.N.*`; each must reach the reader.
+	it("puts a template create's dimension message under its field and a staged value's in the root error", async () => {
+		vi.mocked(createDimensionWithValues).mockResolvedValueOnce({
+			ok: false,
+			error: {
+				kind: "validation",
+				message: "Check the highlighted fields.",
+				fields: {
+					"dimension.key": ["Another dimension already uses this key."],
+					"values.1.value": ["Use lowercase letters, numbers, and single - or _ separators."],
+				},
+			},
+		});
+		const user = userEvent.setup();
+		renderSheet("environment");
+		await screen.findByDisplayValue("Environment");
+		await user.click(screen.getByRole("button", { name: /Create dimension/ }));
+
+		expect(await screen.findByText("Another dimension already uses this key.")).toBeInTheDocument();
+		const root = await screen.findByRole("alert");
+		// The template's second staged value is "Staging": the message names it.
+		expect(
+			within(root).getByText(
+				"“Staging”: Use lowercase letters, numbers, and single - or _ separators.",
+			),
+		).toBeInTheDocument();
+	});
+
+	it("refuses to stage a value with no letter or number, and says why", async () => {
+		const user = userEvent.setup();
+		renderSheet();
+		const box = screen.getByLabelText("New value label");
+		await user.type(box, "!!!{Enter}");
+
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"A value needs at least one letter or number.",
+		);
+		expect(screen.getByText("add now or after")).toBeInTheDocument();
+
+		await user.type(box, "a");
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 	});
 });
