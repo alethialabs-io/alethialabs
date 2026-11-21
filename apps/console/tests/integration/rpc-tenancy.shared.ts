@@ -793,6 +793,15 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: undefined,
 		markers: (out, s) => ({ x: hasCluster(out, s.clusterX), y: hasCluster(out, s.clusterY) }),
 	},
+	// #6819: the filtered page over the same universe — its rows are the list's rows.
+	"clusters.page": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({
+			x: hasCluster(field(out, "rows"), s.clusterX),
+			y: hasCluster(field(out, "rows"), s.clusterY),
+		}),
+	},
 	// General settings (#6128).
 	"settings.org": {
 		// The org's own row: its slug is the marker (seeded as `it-6113-<first 8 of its id>`). The

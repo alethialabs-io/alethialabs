@@ -97,29 +97,32 @@ vi.mock("@/lib/queries/classification", () => ({
 
 /** A drizzle-shaped thenable fake: every builder method chains, awaiting yields the next result. */
 function fakeTx() {
-	return {
-		select: () => {
-			const rows = h.results[h.selects] ?? [];
-			h.selects += 1;
-			const chain = {
-				from: () => chain,
-				leftJoin: () => chain,
-				innerJoin: () => chain,
-				where: (w: unknown) => {
-					h.wheres.push(w);
-					return chain;
-				},
-				orderBy: () => chain,
-				limit: () => Promise.resolve(rows),
-				then: (ok: (v: unknown[]) => unknown) => Promise.resolve(rows).then(ok),
-			};
+	const select = fakeSelect;
+	// `selectDistinctOn` is the same builder with a `distinct on` in front; the last-run read uses it.
+	return { select, selectDistinctOn: select };
+}
+
+/** One select on the fake: every builder method chains, awaiting yields the next scripted result. */
+function fakeSelect() {
+	const rows = h.results[h.selects] ?? [];
+	h.selects += 1;
+	const chain = {
+		from: () => chain,
+		leftJoin: () => chain,
+		innerJoin: () => chain,
+		where: (w: unknown) => {
+			h.wheres.push(w);
 			return chain;
 		},
+		orderBy: () => chain,
+		limit: () => Promise.resolve(rows),
+		then: (ok: (v: unknown[]) => unknown) => Promise.resolve(rows).then(ok),
 	};
+	return chain;
 }
 
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
-import { readClusterList, readClusters } from "@/lib/rpc/procedures/clusters";
+import { readClusterList, readClusters, readClustersPage } from "@/lib/rpc/procedures/clusters";
 
 const ACTOR: Actor = { userId: "u1", orgId: "o1", credential: "session" };
 
@@ -395,5 +398,94 @@ describe("readClusterList", () => {
 		const [c] = await readClusterList(ACTOR);
 		expect(c.classification).toEqual([]);
 		expect(h.chipIds).toEqual([]);
+	});
+});
+
+// #6819: what "Last run failed" links to, and the list's filtered page.
+describe("readClusterList — the last run", () => {
+	it("carries the newest run of each cluster's environment, and null where there is none", async () => {
+		h.results = [
+			[baseRow({}), baseRow({ cluster_id: "c2", cluster_environment_id: "e2" })],
+			[],
+			[],
+			[GCP_DEPLOY],
+			[GCP_DEPLOY],
+			// The last-run read: one row per environment, `job_id` null where it has no run.
+			[
+				{ environment_id: "e1", job_id: "job-7" },
+				{ environment_id: "e2", job_id: null },
+			],
+		];
+		const list = await readClusterList(ACTOR);
+		expect(list.map((c) => [c.project_cluster.id, c.last_job_id])).toEqual([
+			["c1", "job-7"],
+			["c2", null],
+		]);
+	});
+
+	it("is read in the actor's org, for the environments the list already holds, and only for runs", async () => {
+		h.results = [[baseRow({})], [], [], [GCP_DEPLOY], [{ environment_id: "e1", job_id: "job-7" }]];
+		await readClusterList(ACTOR);
+		const lastRunWhere = h.wheres.at(-1);
+		if (!isSql(lastRunWhere)) throw new Error("the last-run read was built with no WHERE");
+		const rendered = dialect.sqlToQuery(lastRunWhere);
+		// The org first, then the environments the list holds, then the three kinds of run.
+		expect(rendered.params).toEqual(["o1", "e1", "PLAN", "DEPLOY", "DESTROY"]);
+		expect(rendered.sql.replace(/\s+/g, " ")).toMatch(/"jobs"\."org_id" = \$1 and "jobs"\."environment_id" in \(\$2\)/);
+	});
+});
+
+describe("readClustersPage", () => {
+	/** Two projects' clusters: p1 on GCP in europe-west3, p2 on AWS in eu-central-1. */
+	function twoProjects() {
+		h.results = [
+			[
+				baseRow({}),
+				baseRow({
+					id: "p2",
+					project_name: "search",
+					cluster_id: "c2",
+					cluster_environment_id: "e2",
+					provider: "aws",
+					region: "eu-central-1",
+					environment_status: "FAILED",
+				}),
+			],
+			[],
+			[],
+			[GCP_DEPLOY],
+			[GCP_DEPLOY],
+		];
+	}
+
+	it("the pristine page is the whole list, with facets over all of it", async () => {
+		twoProjects();
+		const page = await readClustersPage(ACTOR);
+		expect(page.rows.map((c) => c.project_cluster.id)).toEqual(["c1", "c2"]);
+		expect(page).toMatchObject({ resultCount: 2, total: 2 });
+		expect(page.facets.clouds.map((o) => o.value)).toEqual(["aws", "gcp"]);
+	});
+
+	it("a filter narrows the rows and leaves the facets and the total alone", async () => {
+		twoProjects();
+		const page = await readClustersPage(ACTOR, { statuses: ["failed"] });
+		expect(page.rows.map((c) => c.project_cluster.id)).toEqual(["c2"]);
+		expect(page).toMatchObject({ resultCount: 1, total: 2 });
+		expect(page.facets.clouds.map((o) => o.value)).toEqual(["aws", "gcp"]);
+	});
+
+	it("a project is a SCOPE: its page lists, counts and offers only its own clusters", async () => {
+		twoProjects();
+		const page = await readClustersPage(ACTOR, { projectId: "p2" });
+		expect(page.rows.map((c) => c.project_cluster.id)).toEqual(["c2"]);
+		expect(page).toMatchObject({ resultCount: 1, total: 1 });
+		expect(page.facets.clouds.map((o) => o.value)).toEqual(["aws"]);
+		expect(page.facets.regions.map((o) => o.value)).toEqual(["eu-central-1"]);
+	});
+
+	it("still enforces project:view first — a refused page reads nothing", async () => {
+		h.decisions.set("view:project:", false);
+		await expect(readClustersPage(ACTOR)).rejects.toBeInstanceOf(ForbiddenError);
+		expect(h.selects).toBe(0);
 	});
 });

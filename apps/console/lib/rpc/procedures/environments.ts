@@ -37,6 +37,7 @@ import {
 import type { ProtectionSummary } from "@/app/server/actions/protection";
 import { type EnvReconcileState, getEnvReconcileStates } from "@/app/server/actions/reconcile";
 import { ActionRefusal } from "@/lib/actions/result";
+import { getPdp } from "@/lib/authz";
 import { authorizeRead, currentActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
 import { getServiceDb, withActorScope } from "@/lib/db";
@@ -53,6 +54,11 @@ import {
 	readByoAdmissionCardStates,
 } from "@/lib/environments/byo-admission-state";
 import { readGitopsDeployStatus } from "@/lib/gitops/deploy-status";
+import {
+	type EnvironmentsPage,
+	type EnvironmentsQuery,
+	environmentsPage,
+} from "@/lib/queries/environments";
 import { diffDesigns } from "@/lib/promotions/diff";
 import { IN_FLIGHT, type PromotionRow, type ProtectionRow } from "@/lib/promotions/lifecycle";
 import { assertProjectInActorOrg, promotionInActorOrg } from "@/lib/promotions/org-binding";
@@ -119,7 +125,19 @@ export interface PromotionDetail {
 /** Everything the Environments page paints, in one read. */
 export interface EnvironmentsOverview {
 	projectId: string;
+	/**
+	 * Whether the viewer may change this project's environments (`project:edit` — the question
+	 * create, duplicate, delete, auto-heal, BYO admission and the protection rules each ask). A
+	 * DISPLAY decision: every write re-checks.
+	 */
+	canManage: boolean;
+	/** Whether the viewer may promote, approve, reject or cancel (`project:deploy`). */
+	canPromote: boolean;
+	/** EVERY environment of the project, whatever the filter bar selects. */
 	envs: EnvRow[];
+	/** Which of `envs` the list shows for the read's filters, and the facet options (the filter
+	 *  standard's server half, lib/queries/environments.ts). */
+	page: EnvironmentsPage;
 	consistency: EnvConsistency;
 	reconcile: EnvReconcileState[];
 	promotions: PromotionRowView[];
@@ -363,6 +381,18 @@ export async function readProtectionRules(
 // ── The page's one read ───────────────────────────────────────────────────────────────────────
 
 /**
+ * Whether `actor` may `action` on the project — a `can()`, so asking records nothing. Fail-closed:
+ * a check that cannot be answered is "no", and the page still renders, read-only.
+ */
+async function mayOnProject(actor: Actor, action: "edit" | "deploy", projectId: string): Promise<boolean> {
+	try {
+		return (await getPdp().can(actor, action, { type: "project", id: projectId })).allowed;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Everything the Environments page paints for the project `slug` names in the addressed org.
  *
  * What may degrade and what may not:
@@ -374,9 +404,16 @@ export async function readProtectionRules(
  *    for a reason unrelated to the page (a since-deleted cloud identity). They degrade: the matrix to
  *    no rows (it is then not rendered), the badges to "never scanned".
  */
-export async function readEnvironmentsOverview(slug: string): Promise<EnvironmentsOverview> {
+export async function readEnvironmentsOverview(
+	slug: string,
+	query: EnvironmentsQuery = {},
+): Promise<EnvironmentsOverview> {
 	const projectId = await resolveProjectInOrg(await currentActor(), slug);
 	const actor = await authorizeRead("view", { type: "project", id: projectId });
+	const [canManage, canPromote] = await Promise.all([
+		mayOnProject(actor, "edit", projectId),
+		mayOnProject(actor, "deploy", projectId),
+	]);
 
 	const { environments } = await getProjectEnvironments(projectId);
 	const [consistency, reconcile, promotions, protectionByEnv] = await Promise.all([
@@ -403,6 +440,9 @@ export async function readEnvironmentsOverview(slug: string): Promise<Environmen
 
 	return {
 		projectId,
+		canManage,
+		canPromote,
+		page: environmentsPage(environments, query),
 		envs: environments.map((e) => ({
 			id: e.id,
 			name: e.name,
@@ -457,6 +497,23 @@ export async function readByoAdmissionReport(
 
 // ── The procedures ────────────────────────────────────────────────────────────────────────────
 
+const values = z.array(z.string().min(1).max(200)).max(200).optional();
+
+/**
+ * The Environments page's read input: the project (the route's SCOPE) and the bar's filters.
+ * Normalized (trimmed, sorted, empty → absent) by the caller, so a pristine list's input is
+ * `{ project }` alone and equal views are one query key.
+ */
+export const environmentsOverviewInput = z.object({
+	project: z.string().min(1).max(200),
+	search: z.string().max(200).optional(),
+	stages: values,
+	statuses: values,
+});
+
+/** The validated shape of {@link environmentsOverviewInput}. */
+export type EnvironmentsOverviewInput = z.infer<typeof environmentsOverviewInput>;
+
 /**
  * The environments domain's read procedures (ADR 0005 D1, #6120). Every one is a GET (the `query`
  * base). `overview` is prefetched by the Environments page; the two dialog reads are fetched when
@@ -467,8 +524,8 @@ export async function readByoAdmissionReport(
 export const environmentsRouter = {
 	/** The page: environments, consistency, reconcile, promotions, the active one, protection. */
 	overview: query
-		.input(z.object({ project: z.string().min(1).max(200) }))
-		.handler(({ input }) => readEnvironmentsOverview(input.project)),
+		.input(environmentsOverviewInput)
+		.handler(({ input: { project, ...filters } }) => readEnvironmentsOverview(project, filters)),
 	/** One environment's latest BYO admission report (the BYO admission drawer, #6541). */
 	byoAdmissionReport: query
 		.input(z.object({ projectId: z.uuid(), environmentId: z.uuid() }))
