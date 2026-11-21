@@ -80,13 +80,21 @@ export function EvidenceClient() {
 		setDrawerId(row.environmentId);
 	};
 
-	/** Downloads the row's signed receipt and shows a confirmation toast. */
+	/**
+	 * Saves the row's signed receipt and says what happened: the file name once the browser has
+	 * been handed the file, or that it could not be saved — never "downloaded" for a save that threw.
+	 */
 	const download = (row: EvidenceEnvRow) => {
 		if (!row.verify?.receipt) return;
 		// The shared `Toaster` (mounted bottom-center in `app/layout.tsx`) replaces the
 		// fixed-position z-index-95 div this page used to hand-roll — one toast surface, one
 		// dismiss affordance, one place in the layer scale.
-		toast.success(downloadReceipt(row.verify.receipt, row.verify.jobId));
+		try {
+			const fileName = downloadReceipt(row.verify.receipt, row.verify.jobId);
+			toast.success(`Receipt saved as ${fileName}`);
+		} catch {
+			toast.error("Couldn't save the receipt. Try again.");
+		}
 	};
 
 	if (!result) {
