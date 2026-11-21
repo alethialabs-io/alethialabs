@@ -3,16 +3,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Shared ⋮ actions menu for a project, used by both the overview card and the table row so the
-// two surfaces never drift. Routes to the project's Elench canvas / logs / settings, opens the
-// duplicate-to-another-cloud dialog, and toggles the (browser-local) favourite.
+// two surfaces never drift. Its entries are the project's own pages under the names the sidebar
+// gives them (Architecture, Jobs, Settings), the duplicate-to-another-cloud dialog, and the star.
 
 import {
+  ClipboardList,
   Copy,
   MoreVertical,
-  ScrollText,
   Settings,
-  Sparkles,
   Star,
+  Waypoints,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -26,6 +26,7 @@ import {
 import { cn } from "@repo/ui/utils";
 import type { ProjectListItem } from "@/app/server/actions/projects";
 import { DuplicateProjectDialog } from "@/components/projects/duplicate-project-dialog";
+import { ARCHITECTURE } from "@/lib/copy/vocabulary";
 import { projectGlobalHref, projectHref } from "@/lib/routing";
 
 /** The project actions dropdown. `triggerClassName` positions/reveals the trigger per surface. */
@@ -39,7 +40,8 @@ export function ProjectActionsMenu({
   project: ProjectListItem;
   orgSlug: string;
   isFavorite: boolean;
-  onToggleFavorite: () => void;
+  /** Stars or unstars the project. Absent while nobody is signed in to star it for. */
+  onToggleFavorite?: () => void;
   triggerClassName?: string;
 }) {
   const router = useRouter();
@@ -52,19 +54,19 @@ export function ProjectActionsMenu({
         <DropdownMenuTrigger
           aria-label={`${project.project_name} actions`}
           className={cn(
-            "grid size-6 place-items-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground data-[popup-open]:bg-muted data-[popup-open]:text-foreground",
+            "grid size-6 place-items-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[popup-open]:bg-muted data-[popup-open]:text-foreground",
             triggerClassName,
           )}
         >
-          <MoreVertical className="h-3.5 w-3.5" />
+          <MoreVertical aria-hidden className="h-3.5 w-3.5" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
           <DropdownMenuItem
             disabled={!slug}
             onSelect={() => slug && router.push(projectHref(orgSlug, slug))}
           >
-            <Sparkles className="mr-2 h-3.5 w-3.5" />
-            Open in Elench
+            <Waypoints className="mr-2 h-3.5 w-3.5" />
+            {ARCHITECTURE}
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={!slug}
@@ -72,8 +74,8 @@ export function ProjectActionsMenu({
               slug && router.push(projectGlobalHref(orgSlug, slug, "jobs"))
             }
           >
-            <ScrollText className="mr-2 h-3.5 w-3.5" />
-            View Logs
+            <ClipboardList className="mr-2 h-3.5 w-3.5" />
+            Jobs
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={!slug}
@@ -92,11 +94,14 @@ export function ProjectActionsMenu({
             Duplicate to another cloud…
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => onToggleFavorite()}>
+          <DropdownMenuItem
+            disabled={!onToggleFavorite}
+            onSelect={() => onToggleFavorite?.()}
+          >
             <Star
               className={cn("mr-2 h-3.5 w-3.5", isFavorite && "fill-current")}
             />
-            {isFavorite ? "Remove from Favourites" : "Add to Favourites"}
+            {isFavorite ? "Remove from favourites" : "Add to favourites"}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

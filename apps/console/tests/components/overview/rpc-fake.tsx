@@ -22,6 +22,8 @@ export const reads = {
 	alerts: vi.fn<(input: unknown) => Promise<unknown>>(),
 	recentJobs: vi.fn<(input: unknown) => Promise<unknown>>(),
 	projects: vi.fn<(input: unknown) => Promise<unknown>>(),
+	/** The project grid's read, `overview.projects` (`projects` above is the shell's list). */
+	grid: vi.fn<(input: unknown) => Promise<unknown>>(),
 	context: vi.fn<(input: unknown) => Promise<unknown>>(),
 };
 
@@ -30,6 +32,7 @@ const fakeClient = {
 	overview: {
 		usage: (input: unknown) => reads.usage(input),
 		alerts: (input: unknown) => reads.alerts(input),
+		projects: (input: unknown) => reads.grid(input),
 	},
 	workspace: {
 		recentJobs: (input: unknown) => reads.recentJobs(input),

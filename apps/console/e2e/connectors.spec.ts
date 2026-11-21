@@ -154,8 +154,11 @@ test.describe("Connectors page", () => {
 		// Back on the overview, open the setup guide from the topbar.
 		await page.goto(`/${orgSlug}`);
 		await page.getByRole("button", { name: /setup guide/i }).click();
-		await expect(page.getByText(/connect a cloud/i)).toBeVisible();
+		// Scoped to the guide: the overview's first-run empty state also says "Connect a cloud account"
+		// (#6817), and this asserts the guide's step, not that sentence.
+		const guide = page.getByRole("region", { name: "Setup guide" });
+		await expect(guide.getByText(/connect a cloud/i)).toBeVisible();
 		// Nothing is done on a brand-new org (pre-fix, the phantom cloud made this "1 of …").
-		await expect(page.getByText(/\b0 of \d+ done/i)).toBeVisible();
+		await expect(guide.getByText(/\b0 of \d+ done/i)).toBeVisible();
 	});
 });
