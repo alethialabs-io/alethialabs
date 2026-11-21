@@ -581,10 +581,10 @@
 			"kind": "internal-record",
 			"route": null,
 			"source": "docs/legal/TERMS_ACCEPTANCE.md",
-			"status": "planned",
+			"status": "current",
 			"sealed": false,
-			"version": null,
-			"displayedDate": null,
+			"version": "2026-11-21",
+			"displayedDate": "2026-11-21",
 			"contentHash": null,
 			"owner": "LEG-L5"
 		},
@@ -594,7 +594,7 @@
 			"kind": "source-module",
 			"route": null,
 			"source": "apps/console/components/legal/terms-acceptance-copy.ts",
-			"status": "planned",
+			"status": "current",
 			"sealed": false,
 			"version": null,
 			"displayedDate": null,
@@ -835,6 +835,163 @@
 			"requires": "The value of EMAIL_PROVIDER in the production vault. The repository holds only the example file, which defaults to resend; infra/email-ses-account/README.md records that a second AWS account now has SES production access, so the statement stops being true the day the vault value changes.",
 			"owner": "LEG-L1",
 			"verifiedOn": "2026-11-17"
+		},
+		{
+			"id": "terms-acceptance.checkbox-wording",
+			"document": "terms-acceptance",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "> I have read and accept the Terms of Service (version 2026-08-24).",
+			"evidence": [
+				{
+					"path": "packages/legal/src/documents.ts",
+					"pattern": "checkboxPrefix: \"I have read and accept\",",
+					"shows": "The label opens with the shared constant the e2e fixture locates the box by."
+				},
+				{
+					"path": "apps/console/components/legal/terms-acceptance-copy.ts",
+					"pattern": "text: `\\$\\{TERMS_ACCEPTANCE_TEXT\\.checkboxPrefix\\} the `",
+					"shows": "The module builds the label from that prefix followed by \"the\"."
+				},
+				{
+					"path": "apps/console/components/legal/terms-acceptance-copy.ts",
+					"pattern": "text: ` \\(version \\$\\{doc\\.version\\}\\)`",
+					"shows": "Each document title is followed by its version in brackets."
+				},
+				{
+					"path": "packages/legal/src/documents.ts",
+					"pattern": "id: \"terms\",\\s*title: \"Terms of Service\",(?:\\s*//[^\\n]*)*\\s*version: \"2026-08-24\",",
+					"shows": "The Terms of Service are sealed at version 2026-08-24, the version the example prints."
+				}
+			],
+			"owner": "LEG-L5",
+			"verifiedOn": "2026-11-21"
+		},
+		{
+			"id": "terms-acceptance.privacy-notice-not-accepted",
+			"document": "terms-acceptance",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "> How we use your personal data is explained in our Privacy Policy.",
+			"evidence": [
+				{
+					"path": "apps/console/components/legal/terms-acceptance-copy.ts",
+					"pattern": "noticeBefore: \"How we use your personal data is explained in our \",",
+					"shows": "The notice line opens with these words and is followed by the Privacy Policy link."
+				},
+				{
+					"path": "apps/console/components/legal/terms-acceptance-copy.ts",
+					"pattern": "export const NOTICE_DOCUMENT_ID = \"privacy\";",
+					"shows": "The notice line links the Privacy Policy."
+				},
+				{
+					"path": "packages/legal/src/documents.ts",
+					"pattern": "id: \"privacy\",[^}]*acceptanceRequired: false,",
+					"shows": "The Privacy Policy is not an acceptance-required document, so the box does not cover it."
+				}
+			],
+			"owner": "LEG-L5",
+			"verifiedOn": "2026-11-21"
+		},
+		{
+			"id": "terms-acceptance.accepted-set",
+			"document": "terms-acceptance",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "The accepted set is every document in `LEGAL_DOCUMENTS` with `acceptanceRequired: true`.",
+			"evidence": [
+				{
+					"path": "apps/console/components/legal/terms-acceptance-copy.ts",
+					"pattern": "LEGAL_DOCUMENTS\\.filter\\(\\(d\\) => d\\.acceptanceRequired\\)",
+					"shows": "The module derives the accepted set from the registry flag."
+				},
+				{
+					"path": "apps/console/app/server/actions/legal.ts",
+					"pattern": "Boolean\\(d\\) && d!\\.acceptanceRequired",
+					"shows": "The server action records only acceptance-required documents."
+				}
+			],
+			"owner": "LEG-L5",
+			"verifiedOn": "2026-11-21"
+		},
+		{
+			"id": "terms-acceptance.record-snapshots-sealed-version",
+			"document": "terms-acceptance",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "The version and the hash are copied in, never looked up later.",
+			"evidence": [
+				{
+					"path": "apps/console/app/server/actions/legal.ts",
+					"pattern": "documentVersion: doc\\.version,\\s*documentHash: doc\\.contentHash,",
+					"shows": "The server action writes the sealed version and hash from the registry into the row it inserts."
+				},
+				{
+					"path": "apps/console/components/legal/terms-acceptance-copy.ts",
+					"pattern": "documentVersion: doc\\.version,\\s*documentHash: doc\\.contentHash,",
+					"shows": "The module names the same two registry values for the same documents."
+				}
+			],
+			"owner": "LEG-L5",
+			"verifiedOn": "2026-11-21"
+		},
+		{
+			"id": "terms-acceptance.context-from-history",
+			"document": "terms-acceptance",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "`signup` if the person never accepted any version of the document before, otherwise `reacceptance`",
+			"evidence": [
+				{
+					"path": "apps/console/app/server/actions/legal.ts",
+					"pattern": "return first \\? \"signup\" : \"reacceptance\";",
+					"shows": "The context is signup for a first acceptance and reacceptance otherwise."
+				},
+				{
+					"path": "apps/console/app/server/actions/legal.ts",
+					"pattern": "await isFirstAcceptance\\(actor\\.userId, doc\\.id\\)",
+					"shows": "First acceptance is decided per document from the stored rows, not from client input."
+				}
+			],
+			"owner": "LEG-L5",
+			"verifiedOn": "2026-11-21"
+		},
+		{
+			"id": "terms-acceptance.idempotent",
+			"document": "terms-acceptance",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "Submitting twice does not add a second row for the same version.",
+			"evidence": [
+				{
+					"path": "apps/console/app/server/actions/legal.ts",
+					"pattern": "eq\\(legalAcceptance\\.documentVersion, doc\\.version\\),\\s*\\),\\s*\\)\\s*\\.limit\\(1\\);\\s*if \\(existing\\) continue;",
+					"shows": "An existing row for the same person, document and version skips the insert."
+				}
+			],
+			"owner": "LEG-L5",
+			"verifiedOn": "2026-11-21"
+		},
+		{
+			"id": "terms-acceptance.links-instance-legal-base",
+			"document": "terms-acceptance",
+			"kind": "other",
+			"status": "tied",
+			"quote": "Links use the instance's legal address (`legalUrl`, which reads `NEXT_PUBLIC_LEGAL_URL`)",
+			"evidence": [
+				{
+					"path": "apps/console/components/legal/terms-acceptance-copy.ts",
+					"pattern": "const defaultHref: LegalHrefResolver = \\(path\\) => legalUrl\\(path\\);",
+					"shows": "The module resolves links through legalUrl by default."
+				},
+				{
+					"path": "apps/console/lib/legal.ts",
+					"pattern": "env\\(\"NEXT_PUBLIC_LEGAL_URL\"\\) \\?\\? DEFAULT_LEGAL_BASE",
+					"shows": "legalUrl reads NEXT_PUBLIC_LEGAL_URL."
+				}
+			],
+			"owner": "LEG-L5",
+			"verifiedOn": "2026-11-21"
 		}
 	],
 	"findings": [
