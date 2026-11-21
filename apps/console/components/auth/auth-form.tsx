@@ -6,6 +6,15 @@ import { lookup } from "@/lib/typed-object";
 import type React from "react";
 
 import { authClient } from "@/lib/auth/client";
+import {
+	CHALLENGE_REFUSAL_CODES,
+	CHALLENGE_REFUSED_MESSAGE,
+	SIGNUP_CHALLENGE_ACTION,
+	SIGNUP_DISPOSABLE_EMAIL,
+	SIGNUP_NETWORK_LIMIT,
+	SIGNUP_REFUSAL_MESSAGES,
+	isSignupRefusalCode,
+} from "@/lib/auth/signup-guard/codes";
 import { requestEmailCode } from "@/app/server/actions/auth";
 import { track } from "@/lib/analytics/track";
 import { safeNext } from "@/lib/auth/safe-next";
@@ -24,6 +33,7 @@ import { ArrowRight, KeyRound, Loader2, Lock } from "lucide-react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { env } from "next-runtime-env";
 import { useHydrated } from "@repo/ui/use-hydrated";
 
 type AuthProvider = "github" | "gitlab" | "bitbucket" | "google";
@@ -108,7 +118,146 @@ const AUTH_MESSAGES: Record<string, string> = {
 	no_provider: "Single sign-on isn’t set up for that organization.",
 	sso_unavailable: "Single sign-on is temporarily unavailable — try again shortly.",
 	sign_in_unavailable: "We couldn’t start single sign-on — try again shortly.",
+	// The sign-up controls (lib/auth/signup-guard). An OAuth sign-up they refuse comes back here
+	// as `?error=<code>`; the copy is the server's own, from the one shared module.
+	[SIGNUP_DISPOSABLE_EMAIL]: SIGNUP_REFUSAL_MESSAGES[SIGNUP_DISPOSABLE_EMAIL],
+	[SIGNUP_NETWORK_LIMIT]: SIGNUP_REFUSAL_MESSAGES[SIGNUP_NETWORK_LIMIT],
 };
+
+/**
+ * The banner for a `?error=` / `?message=` / `?sso_error=` redirect, or null.
+ *
+ * Every `error` value is read, last first, because Better Auth APPENDS its own `error` to the
+ * errorCallbackURL it was given, which already carries `?error=oauth`. A refused OAuth sign-up
+ * therefore arrives as `?error=oauth&error=SIGNUP_NETWORK_LIMIT`, and reading only the first value
+ * would show the generic provider message instead of the reason. Only allowlisted codes render;
+ * `error_description` never does.
+ */
+function bannerFor(searchParams: URLSearchParams): string | null {
+	const codes = [
+		...searchParams.getAll("error").reverse(),
+		searchParams.get("message"),
+		searchParams.get("sso_error"),
+	];
+	for (const code of codes) {
+		if (code && Object.hasOwn(AUTH_MESSAGES, code)) return AUTH_MESSAGES[code] ?? null;
+	}
+	return null;
+}
+
+/** Turnstile's explicit-render script. Loaded only when the sign-up challenge is configured. */
+const TURNSTILE_SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+
+/** The slice of the Turnstile browser API the form uses. */
+interface TurnstileApi {
+	render: (
+		el: HTMLElement,
+		opts: {
+			sitekey: string;
+			action: string;
+			appearance: "always" | "execute" | "interaction-only";
+			callback: (token: string) => void;
+			"expired-callback": () => void;
+			"error-callback": () => void;
+		},
+	) => string | undefined;
+	remove: (widgetId: string) => void;
+}
+
+/** Narrows an unknown value to the Turnstile API by the two methods the form calls. */
+function isTurnstileApi(v: unknown): v is TurnstileApi {
+	return (
+		typeof v === "object" &&
+		v !== null &&
+		"render" in v &&
+		typeof v.render === "function" &&
+		"remove" in v &&
+		typeof v.remove === "function"
+	);
+}
+
+/** The Turnstile API the script installed on `window`, or null before it has loaded. */
+function turnstileApi(): TurnstileApi | null {
+	const api: unknown = Reflect.get(window, "turnstile");
+	return isTurnstileApi(api) ? api : null;
+}
+
+let turnstileLoad: Promise<TurnstileApi> | null = null;
+
+/** Loads the Turnstile script once per page and resolves with its API. */
+function loadTurnstile(): Promise<TurnstileApi> {
+	const ready = turnstileApi();
+	if (ready) return Promise.resolve(ready);
+	turnstileLoad ??= new Promise<TurnstileApi>((resolve, reject) => {
+		const script = document.createElement("script");
+		script.src = TURNSTILE_SCRIPT_SRC;
+		script.async = true;
+		script.onload = () => {
+			const api = turnstileApi();
+			if (api) resolve(api);
+			else reject(new Error("challenge unavailable"));
+		};
+		script.onerror = () => {
+			turnstileLoad = null;
+			reject(new Error("challenge unavailable"));
+		};
+		document.head.appendChild(script);
+	});
+	return turnstileLoad;
+}
+
+/**
+ * The sign-up challenge (REL-L10). Renders a Turnstile widget and reports its token — or null when
+ * the token expires or the widget fails. A token is single-use: the parent remounts this (a new
+ * `key`) after every send so the next send gets a fresh one. `interaction-only` keeps it invisible
+ * unless Cloudflare decides the visitor must click.
+ */
+function SignupChallenge({
+	siteKey,
+	onToken,
+	onUnavailable,
+}: {
+	siteKey: string;
+	onToken: (token: string | null) => void;
+	onUnavailable: () => void;
+}) {
+	const el = useRef<HTMLDivElement>(null);
+	// The callbacks change identity every render; the widget must not be re-rendered for that.
+	const handlers = useRef({ onToken, onUnavailable });
+	useEffect(() => {
+		handlers.current = { onToken, onUnavailable };
+	});
+
+	useEffect(() => {
+		let cancelled = false;
+		let widgetId: string | undefined;
+		loadTurnstile()
+			.then((api) => {
+				if (cancelled || !el.current) return;
+				widgetId = api.render(el.current, {
+					sitekey: siteKey,
+					action: SIGNUP_CHALLENGE_ACTION,
+					appearance: "interaction-only",
+					callback: (token) => handlers.current.onToken(token),
+					"expired-callback": () => handlers.current.onToken(null),
+					"error-callback": () => handlers.current.onToken(null),
+				});
+			})
+			.catch(() => {
+				if (!cancelled) handlers.current.onUnavailable();
+			});
+		return () => {
+			cancelled = true;
+			if (widgetId) turnstileApi()?.remove(widgetId);
+		};
+	}, [siteKey]);
+
+	return <div ref={el} className="flex justify-center empty:hidden" />;
+}
+
+/** Shown when the challenge script could not load (an extension or a network blocking it). */
+const CHALLENGE_UNAVAILABLE_MESSAGE =
+	"The security check couldn’t load. Allow challenges.cloudflare.com, or sign in with a provider above.";
 
 /** One OAuth provider tile — spinner while its own sign-in is in flight. */
 function ProviderButton({
@@ -228,12 +377,31 @@ export function AuthForm({ mode }: AuthFormProps) {
 	const [error, setError] = useState<string | null>(() => {
 		// An auto-started provider clears any banner, as a click on its tile does.
 		if (hintedProvider !== null) return null;
-		const code =
-			searchParams.get("error") ??
-			searchParams.get("message") ??
-			searchParams.get("sso_error");
-		return code ? (AUTH_MESSAGES[code] ?? null) : null;
+		return bannerFor(new URLSearchParams(searchParams.toString()));
 	});
+
+	// The sign-up challenge on code issuance (REL-L10): on only when the deployment configured a
+	// Turnstile site key (lib/config/auth.ts `getSignupChallengeConfig`, which also needs the
+	// server's secret). `challengeRound` remounts the widget after each send, because a token is
+	// single-use; `challengeToken` is the current round's token, null until the widget yields one.
+	const challengeSiteKey = env("NEXT_PUBLIC_TURNSTILE_SITE_KEY")?.trim() || null;
+	const [challengeToken, setChallengeToken] = useState<string | null>(null);
+	const [challengeRound, setChallengeRound] = useState(0);
+	const challengePending = challengeSiteKey !== null && challengeToken === null;
+	/** Spends the current token: clears it and remounts the widget for a fresh one. */
+	const nextChallengeRound = () => {
+		setChallengeToken(null);
+		setChallengeRound((r) => r + 1);
+	};
+	const challenge =
+		challengeSiteKey !== null ? (
+			<SignupChallenge
+				key={challengeRound}
+				siteKey={challengeSiteKey}
+				onToken={setChallengeToken}
+				onUnavailable={() => setError(CHALLENGE_UNAVAILABLE_MESSAGE)}
+			/>
+		) : null;
 
 	// Resend guard: number of resends so far + seconds left before resend re-enables.
 	const [resendCount, setResendCount] = useState(0);
@@ -356,19 +524,30 @@ export function AuthForm({ mode }: AuthFormProps) {
 	 * message is fixed here rather than read off the response.
 	 */
 	const sendCode = async () => {
-		const { error } = await authClient.emailOtp.sendVerificationOtp({
-			email,
-			type: "sign-in",
-		});
+		const type: "sign-in" = "sign-in";
+		const body = { email, type };
+		// With the challenge on, the token rides in the header Better Auth's captcha plugin reads,
+		// and is spent whatever the answer — the next send needs a new one.
+		const token = challengeToken;
+		if (challengeSiteKey !== null) nextChallengeRound();
+		const { error } = token
+			? await authClient.emailOtp.sendVerificationOtp(body, {
+					headers: { "x-captcha-response": token },
+				})
+			: await authClient.emailOtp.sendVerificationOtp(body);
 		if (!error) return;
 		if (error.code === "SIGN_IN_CODE_SEND_FAILED") {
 			throw new Error(SEND_FAILED_MESSAGE);
+		}
+		if (error.code && CHALLENGE_REFUSAL_CODES.includes(error.code)) {
+			throw new Error(CHALLENGE_REFUSED_MESSAGE);
 		}
 		throw new Error(error.message ?? SEND_FAILED_MESSAGE);
 	};
 
 	const handleSendCode = async (e: React.FormEvent) => {
 		e.preventDefault();
+		if (challengePending) return;
 		setIsLoading(true);
 		setLoadingProvider("email");
 		setError(null);
@@ -403,7 +582,13 @@ export function AuthForm({ mode }: AuthFormProps) {
 
 		const { error } = await authClient.signIn.emailOtp({ email, otp: value });
 		if (error) {
-			setError("That code didn’t work — try again.");
+			// A refused NEW account (lib/auth/signup-guard) is not a wrong code: say why, from the
+			// shared copy. Anything else is still "that code didn't work".
+			setError(
+				isSignupRefusalCode(error.code)
+					? SIGNUP_REFUSAL_MESSAGES[error.code]
+					: "That code didn’t work — try again.",
+			);
 			setCode("");
 			setIsLoading(false);
 			setLoadingProvider(null);
@@ -445,7 +630,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 	}, [step, email, isLoading]);
 
 	const handleResend = async () => {
-		if (cooldown > 0 || isLoading) return;
+		if (cooldown > 0 || isLoading || challengePending) return;
 		setIsLoading(true);
 		setLoadingProvider("resend");
 		setError(null);
@@ -549,6 +734,8 @@ export function AuthForm({ mode }: AuthFormProps) {
 						{copy.verifyCta}
 					</PrimaryButton>
 
+					{challenge}
+
 					<div className="flex items-center justify-between text-ui-md">
 						<button
 							type="button"
@@ -560,7 +747,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 						<button
 							type="button"
 							onClick={handleResend}
-							disabled={isLoading || cooldown > 0}
+							disabled={isLoading || cooldown > 0 || challengePending}
 							className="text-text-tertiary transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
 						>
 							{cooldown > 0
@@ -661,9 +848,11 @@ export function AuthForm({ mode }: AuthFormProps) {
 						</div>
 					</div>
 
+					{challenge}
+
 					<PrimaryButton
 						type="submit"
-						disabled={isLoading || !email}
+						disabled={isLoading || !email || challengePending}
 						loading={loadingProvider === "email"}
 						loadingLabel="Sending code…"
 					>
