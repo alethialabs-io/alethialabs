@@ -442,7 +442,13 @@ export interface AlertDeliveriesQuery {
 export interface AlertDeliveriesPage {
 	/** The newest matching deliveries, capped at `limit`. */
 	rows: DeliveryDTO[];
+	/**
+	 * How many deliveries match the query — ALL of them, not the size of the window. When it is
+	 * larger than `rows.length` the ledger is showing only the newest `limit`, and says so.
+	 */
 	resultCount: number;
+	/** The window `rows` was cut to: the most rows a read returns. */
+	limit: number;
 	/**
 	 * Every delivery in the org's ledger — NOT the size of the window. The filter selects
 	 * from the whole ledger (that is the point of filtering in SQL), so the counts beside
@@ -503,9 +509,23 @@ export async function queryAlertDeliveriesPage(
 		total += r.n;
 	}
 
+	// A window that is not full holds every match, so its length IS the count. Only a full one can
+	// be hiding older matches, and only then is the true count asked for — with the rows pass's own
+	// predicates, so it counts exactly what the window was cut from.
+	const resultCount =
+		rows.length < limit
+			? rows.length
+			: ((
+					await db
+						.select({ n: count() })
+						.from(alertDeliveries)
+						.where(and(eq(alertDeliveries.org_id, orgId), ...filterConditions))
+				)[0]?.n ?? rows.length);
+
 	return {
 		rows: rows.map(toDeliveryDTO),
-		resultCount: rows.length,
+		resultCount,
+		limit,
 		total,
 		facets: {
 			status: orderedOptions(statusCounts, DELIVERY_STATUS_ORDER),

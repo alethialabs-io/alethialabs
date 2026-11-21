@@ -8,14 +8,27 @@
 // enable switch that confirms on disable, the unified ChannelVerify re-verify control, and
 // a confirmed Delete. "Used by" cross-links into the Policies section.
 //
+// The inline editor is the add sheet's form (channel-form.ts): react-hook-form + zod, errors
+// inline under their field. The form lives HERE, not in the detail, so that a selection moving off
+// a channel with unsaved edits — a rail click, or a cross-link from the Policies section — is held
+// behind a discard question instead of silently dropping the edits, the same rule the Policies
+// panel follows. A viewer who may not manage alerts sees every mutation control disabled with its
+// reason, never a missing button.
+//
 // Every write goes through `useActionMutation` (#6125) — pending state on its trigger, one toast
 // for a refusal, and invalidation of every key that shows alert data. The panel's body follows the
 // view's READ STATE: a skeleton while the first answer is in flight, a region error when it failed,
 // "No channels yet" only once the org's channels were read and there are none.
 
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Plus, SearchX, Send, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
-import { toast } from "sonner";
+import {
+	type UseFormReturn,
+	useForm,
+	useFormState,
+	useWatch,
+} from "react-hook-form";
 import {
 	type ChannelDTO,
 	deleteChannel,
@@ -25,7 +38,16 @@ import {
 } from "@/app/server/actions/alerts";
 import type { AlertsHub } from "@/components/alerts/alerts-hub";
 import { AlertsPanelSkeleton } from "@/components/alerts/alerts-skeleton";
+import {
+	type ChannelFormValues,
+	channelEditSchema,
+	channelFormFrom,
+	NEW_CHANNEL_FORM,
+	toChannelInput,
+} from "@/components/alerts/channel-form";
+import { manageReason } from "@/components/errors/manage-gate";
 import { RegionError } from "@/components/errors/region-error";
+import { FormRootError } from "@/components/forms/form-root-error";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { alertsKeys } from "@/lib/query/use-alerts-query";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
@@ -40,11 +62,13 @@ import { ChannelSheet } from "@/components/alerts/channel-sheet";
 import { ChannelVerify } from "@/components/alerts/channel-verify";
 import { CHANNEL_TYPE_META } from "@/components/alerts/channel-meta";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
+import { DiscardPrompt } from "@/components/confirm/use-unsaved-guard";
 import { FieldHelp } from "@/components/alerts/field-help";
 import { RecipientsEditor } from "@/components/alerts/recipients-editor";
 import { useAlertChannelFilters } from "@/lib/stores/use-alerts-filters";
 import { useAlertsSection } from "@/lib/stores/use-alerts-section";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
@@ -60,9 +84,12 @@ function targetOf(c: ChannelDTO): string {
 			: "No recipients";
 	return c.has_secret ? "Endpoint configured" : "Not configured";
 }
-function sameRecipients(a: string[], b: string[]): boolean {
-	return a.length === b.length && a.every((x, i) => x === b[i]);
-}
+
+/** Every edit-form field a server validation key can name directly; the rest go to the root error. */
+const CHANNEL_SERVER_FIELDS = ["name", "recipients"] as const;
+
+/** Marks a programmatic write as an edit, and re-validates the field it wrote. */
+const EDIT = { shouldDirty: true, shouldValidate: true } as const;
 
 interface ChannelsPanelProps {
 	hub: AlertsHub;
@@ -79,9 +106,36 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const [deleteTarget, setDeleteTarget] = useState<ChannelDTO | null>(null);
+	const reason = manageReason(hub);
 
 	const selected =
 		channels.find((c) => c.id === selectedId) ?? channels[0] ?? null;
+
+	// The channel whose values the edit form holds. Set during render whenever the detail moves to
+	// another channel with nothing to lose, so it always names the channel the form is about.
+	const [formFor, setFormFor] = useState<string | null>(null);
+	const formChannel =
+		formFor === null ? null : (channels.find((c) => c.id === formFor) ?? null);
+	// The edit form, held at the panel so a selection change can be asked about (see header).
+	// `values` keeps it on the channel it is about: another channel resets it, and so does a change
+	// to this channel's SAVED values (compared by value — every live refetch hands back a new row
+	// object, and resetting on identity would throw away an edit in progress each time).
+	const form = useForm<ChannelFormValues>({
+		resolver: zodResolver(channelEditSchema),
+		defaultValues: NEW_CHANNEL_FORM,
+		values: formChannel ? channelFormFrom(formChannel) : undefined,
+	});
+	// Read during render: react-hook-form tracks `isDirty` only for a component that reads it.
+	const formDirty = form.formState.isDirty;
+	// The selection moved off the channel being edited while it holds unsaved edits: the detail
+	// HOLDS on that channel and the discard question is asked. Keep puts the selection back.
+	const held =
+		canManage && formDirty && formChannel !== null && selected?.id !== formChannel.id;
+	const shown = held ? formChannel : selected;
+	if (!held && (shown?.id ?? null) !== formFor) {
+		setFormFor(shown?.id ?? null);
+	}
+
 	// One batched query hydrates every channel row's classification chips.
 	const { data: classMap = {} } = useAssignmentsForKind(
 		"alert_channel",
@@ -99,10 +153,13 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 		},
 	});
 
-	const addBtn = canManage && (
-		<Button size="sm" onClick={() => setSheetOpen(true)}>
-			<Plus className="mr-1 size-3.5" /> Add channel
-		</Button>
+	// Rendered for every viewer; a viewer who may not add one is told why on the button.
+	const addBtn = (
+		<DisabledReason reason={reason}>
+			<Button size="sm" onClick={() => setSheetOpen(true)}>
+				<Plus className="mr-1 size-3.5" /> Add channel
+			</Button>
+		</DisabledReason>
 	);
 
 	const policiesUsing = (id: string) =>
@@ -124,8 +181,8 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 					// which is the regression EmptyState's own docstring warns about.
 					level={3}
 					title="No channels yet"
-					description={`Channels are where alerts get delivered — Slack, email, Rocket.Chat or a signed webhook.${canManage ? " Add one to start." : ""}`}
-					action={canManage ? addBtn : undefined}
+					description="Channels are where alerts get delivered — Slack, email, Rocket.Chat or a signed webhook. Add one to start."
+					action={addBtn}
 				/>
 			) : (
 				<>
@@ -174,7 +231,7 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 										<ChannelRow
 											key={c.id}
 											channel={c}
-											selected={selected?.id === c.id}
+											selected={shown?.id === c.id}
 											onSelect={() => setSelectedId(c.id)}
 											assignments={classMap[c.id]}
 										/>
@@ -184,14 +241,19 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 						</div>
 
 						<div className="min-w-[min(500px,100%)] flex-[100]">
-							{selected ? (
+							{shown ? (
 								<ChannelDetail
-									key={selected.id}
-									channel={selected}
+									key={shown.id}
+									channel={shown}
+									form={form}
+									// The form holds this channel's values only once `formFor` names it; for
+									// the one render in which it does not yet, the detail shows the saved values.
+									formReady={formFor === shown.id}
 									canManage={canManage}
+									reason={reason}
 									encryptionConfigured={encryptionConfigured}
-									usingPolicies={policiesUsing(selected.id)}
-									onRequestDelete={() => setDeleteTarget(selected)}
+									usingPolicies={policiesUsing(shown.id)}
+									onRequestDelete={() => setDeleteTarget(shown)}
 									onOpenPolicy={onOpenPolicy}
 								/>
 							) : (
@@ -211,6 +273,20 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 					encryptionConfigured={encryptionConfigured}
 				/>
 			)}
+
+			<DiscardPrompt
+				open={held}
+				title="Discard unsaved changes?"
+				description={`Your edits to "${formChannel?.name ?? ""}" have not been saved. Opening another channel discards them.`}
+				confirmLabel="Discard changes"
+				// Keep editing: back to the channel being edited, edits intact.
+				onKeep={() => {
+					if (formFor !== null) setSelectedId(formFor);
+				}}
+				// The selection has already moved; the form takes the newly selected channel's values,
+				// which is what lets it through.
+				onDiscard={() => form.reset(selected ? channelFormFrom(selected) : NEW_CHANNEL_FORM)}
+			/>
 
 			<ConfirmAction
 				open={deleteTarget !== null}
@@ -279,43 +355,52 @@ function ChannelRow({
 
 interface ChDetailProps {
 	channel: ChannelDTO;
+	/** The panel's edit form; it holds THIS channel's values while `formReady` is true. */
+	form: UseFormReturn<ChannelFormValues>;
+	formReady: boolean;
 	canManage: boolean;
+	/** Why the viewer cannot change this channel, or null when they can. */
+	reason: string | null;
 	encryptionConfigured: boolean;
 	usingPolicies: PolicyDTO[];
 	onRequestDelete: () => void;
 	onOpenPolicy: (id?: string) => void;
 }
 
+/** Inline view/edit of one channel; editable in place for a manager. */
 function ChannelDetail({
 	channel,
+	form,
+	formReady,
 	canManage,
+	reason,
 	encryptionConfigured,
 	usingPolicies,
 	onRequestDelete,
 	onOpenPolicy,
 }: ChDetailProps) {
 	const meta = CHANNEL_TYPE_META[channel.type];
-
-	// Directly-editable draft (no edit-mode toggle). Reset whenever the channel changes.
-	const [name, setName] = useState(channel.name);
-	const [recipients, setRecipients] = useState<string[]>(channel.recipients);
-	const [url, setUrl] = useState("");
-	const [secret, setSecret] = useState("");
-	// Each credential field's `id`, paired with its `<Label htmlFor>` so the label names it.
+	// Editable only once the form holds this channel's values; until then the saved ones show.
+	const editable = canManage && formReady;
+	// Each field's `id`, paired with its `<Label htmlFor>` so the label names it.
 	const routingKeyId = useId();
 	const urlId = useId();
 	const secretId = useId();
-	const [routingKey, setRoutingKey] = useState("");
+	const nameErrorId = useId();
 	const [disableConfirm, setDisableConfirm] = useState(false);
+	const [watchedRecipients] = useWatch({ control: form.control, name: ["recipients"] });
+	const { errors, isDirty } = useFormState({ control: form.control });
+	const recipients = editable ? watchedRecipients : channel.recipients;
+	const dirty = editable && isDirty;
 
 	const update = useActionMutation(updateChannel, {
 		invalidates: alertsKeys(),
 		successMessage: "Channel saved",
-		onSuccess: () => {
-			setUrl("");
-			setSecret("");
-			setRoutingKey("");
-		},
+		// The saved values are what the form now holds; the credential fields go back to blank
+		// ("keep the stored one"), so nothing reads as unsaved after a save.
+		onSuccess: () =>
+			form.reset({ ...form.getValues(), url: "", signingSecret: "", routingKey: "" }),
+		form: { instance: form, fields: CHANNEL_SERVER_FIELDS },
 	});
 	const toggle = useActionMutation(setChannelEnabled, {
 		invalidates: alertsKeys(),
@@ -323,59 +408,12 @@ function ChannelDetail({
 	});
 	const saving = update.isPending;
 	const togglePending = toggle.isPending;
-
-	// Reset the draft when the SAVED values change — not whenever the row object does. The row is a
-	// query result now, and every live refetch (any alert hint: a delivery, another member's toggle)
-	// hands back a new object; resetting on identity would throw away an edit in progress each time.
-	const saved = JSON.stringify([channel.name, channel.recipients]);
-	const [savedSeen, setSavedSeen] = useState(saved);
-	if (saved !== savedSeen) {
-		setSavedSeen(saved);
-		setName(channel.name);
-		setRecipients(channel.recipients);
-		setUrl("");
-		setSecret("");
-		setRoutingKey("");
-	}
-
-	const dirty =
-		name.trim() !== channel.name ||
-		!sameRecipients(recipients, channel.recipients) ||
-		url.trim() !== "" ||
-		secret.trim() !== "" ||
-		routingKey.trim() !== "";
 	const needsKey = meta.credential !== "email" && !encryptionConfigured;
 
-	const discard = () => {
-		setName(channel.name);
-		setRecipients(channel.recipients);
-		setUrl("");
-		setSecret("");
-		setRoutingKey("");
-	};
-
-	const save = () => {
-		if (saving) return;
-		if (channel.type === "email" && recipients.length === 0)
-			return toast.error("Add at least one recipient.");
-		update.mutate({
-				id: channel.id,
-				type: channel.type,
-				name: name.trim() || meta.name,
-				enabled: channel.enabled,
-				recipients: channel.type === "email" ? recipients : undefined,
-				secret:
-					meta.credential === "url"
-						? {
-								url: url.trim() || undefined,
-								signingSecret:
-									channel.type === "webhook" ? secret.trim() || undefined : undefined,
-							}
-						: meta.credential === "routingKey"
-							? { routingKey: routingKey.trim() || undefined }
-							: undefined,
-		});
-	};
+	const discard = () => form.reset();
+	const save = form.handleSubmit((values) =>
+		update.submit({ id: channel.id, ...toChannelInput(values, channel.enabled) }),
+	);
 
 	const applyEnabled = (next: boolean) => {
 		if (togglePending) return;
@@ -393,8 +431,8 @@ function ChannelDetail({
 				<div className="flex min-w-0 gap-3">
 					<ChannelTile type={channel.type} active={channel.is_verified} size="lg" />
 					<div className="min-w-0 space-y-1.5">
-						{canManage ? (
-							<>
+						{editable ? (
+							<div className="space-y-1">
 								{/*
 								 * The detail header's name field is a real, editable input and was
 								 * reachable only through its placeholder — which is not a label: it
@@ -408,12 +446,18 @@ function ChannelDetail({
 								</Label>
 								<Input
 									id={`channel-name-${channel.id}`}
-									value={name}
-									onChange={(e) => setName(e.target.value)}
 									placeholder="Channel name"
+									aria-invalid={errors.name ? true : undefined}
+									aria-describedby={errors.name ? nameErrorId : undefined}
 									className="h-8 w-64 font-display font-semibold text-lg"
+									{...form.register("name")}
 								/>
-							</>
+								{errors.name && (
+									<p id={nameErrorId} className="text-destructive text-xs">
+										{errors.name.message}
+									</p>
+								)}
+							</div>
 						) : (
 							<span className="font-display font-semibold text-lg tracking-tight">
 								{channel.name}
@@ -468,23 +512,27 @@ function ChannelDetail({
 				)}
 
 				{meta.credential === "email" && (
-					<RecipientsEditor
-						recipients={recipients}
-						editable={canManage}
-						onChange={setRecipients}
-					/>
+					<div className="space-y-1.5">
+						<RecipientsEditor
+							recipients={recipients}
+							editable={editable}
+							onChange={(next) => form.setValue("recipients", next, EDIT)}
+						/>
+						{editable && errors.recipients && (
+							<p className="text-destructive text-xs">{errors.recipients.message}</p>
+						)}
+					</div>
 				)}
 
 				{meta.credential === "routingKey" && (
 					<div className="space-y-2">
 						<Label htmlFor={routingKeyId}>Integration routing key</Label>
-						{canManage ? (
+						{editable ? (
 							<Input
 								id={routingKeyId}
-								value={routingKey}
-								onChange={(e) => setRoutingKey(e.target.value)}
 								placeholder="•••••• (leave blank to keep current)"
 								className="font-mono text-xs"
+								{...form.register("routingKey")}
 							/>
 						) : (
 							<p className="font-mono text-muted-foreground text-xs">
@@ -502,13 +550,13 @@ function ChannelDetail({
 									? "Payload URL"
 									: `${meta.name} webhook URL`}
 							</Label>
-							{canManage ? (
+							{editable ? (
 								<Input
 									id={urlId}
-									value={url}
-									onChange={(e) => setUrl(e.target.value)}
 									placeholder="•••••• (leave blank to keep current)"
+									aria-invalid={errors.url ? true : undefined}
 									className="font-mono text-xs"
+									{...form.register("url")}
 								/>
 							) : (
 								<p className="font-mono text-muted-foreground text-xs">
@@ -517,8 +565,11 @@ function ChannelDetail({
 										: "Not configured"}
 								</p>
 							)}
+							{editable && errors.url && (
+								<p className="text-destructive text-xs">{errors.url.message}</p>
+							)}
 						</div>
-						{channel.type === "webhook" && canManage && (
+						{channel.type === "webhook" && editable && (
 							<div className="space-y-2">
 								<div className="flex items-center gap-1.5">
 									<Label htmlFor={secretId}>Signing secret</Label>
@@ -530,10 +581,9 @@ function ChannelDetail({
 								</div>
 								<Input
 									id={secretId}
-									value={secret}
-									onChange={(e) => setSecret(e.target.value)}
 									placeholder="Leave blank to keep current"
 									className="font-mono text-xs"
+									{...form.register("signingSecret")}
 								/>
 							</div>
 						)}
@@ -541,34 +591,34 @@ function ChannelDetail({
 				)}
 			</div>
 
-			{/* enable — standalone, confirm on disable */}
-			{canManage && (
-				<div className="flex items-center justify-between gap-4 border-b border-border/60 p-5">
-					<div>
-						<div className="text-sm">
-							{channel.enabled ? "Enabled" : "Disabled"}
-						</div>
-						<div className="text-muted-foreground text-xs">
-							{channel.enabled
-								? "Receiving alerts from the policies routed here."
-								: "Paused — policies routed here won't deliver."}
-						</div>
+			{/* enable — standalone, confirm on disable; shown to every viewer, usable by a manager */}
+			<div className="flex items-center justify-between gap-4 border-b border-border/60 p-5">
+				<div>
+					<div className="text-sm">
+						{channel.enabled ? "Enabled" : "Disabled"}
 					</div>
-					{/*
-					 * The name is "Enabled" in BOTH states — it names the control, not the state,
-					 * which `aria-checked` already carries. It is also the name
-					 * `apps/console/destructive-actions.yaml` records for `alerts.channel.disable`
-					 * (`control: { role: switch, name: "Enabled" }`), which until now was a claim
-					 * about a switch that announced nothing at all.
-					 */}
+					<div className="text-muted-foreground text-xs">
+						{channel.enabled
+							? "Receiving alerts from the policies routed here."
+							: "Paused — policies routed here won't deliver."}
+					</div>
+				</div>
+				{/*
+				 * The name is "Enabled" in BOTH states — it names the control, not the state,
+				 * which `aria-checked` already carries. It is also the name
+				 * `apps/console/destructive-actions.yaml` records for `alerts.channel.disable`
+				 * (`control: { role: switch, name: "Enabled" }`), which until now was a claim
+				 * about a switch that announced nothing at all.
+				 */}
+				<DisabledReason reason={reason}>
 					<Switch
 						aria-label="Enabled"
 						checked={channel.enabled}
 						disabled={togglePending}
 						onCheckedChange={onToggle}
 					/>
-				</div>
-			)}
+				</DisabledReason>
+			</div>
 
 			{/* verification */}
 			<div className="border-b border-border/60 p-5">
@@ -576,7 +626,7 @@ function ChannelDetail({
 					channelId={channel.id}
 					isVerified={channel.is_verified}
 					lastVerifiedAt={channel.last_verified_at}
-					canManage={canManage}
+					reason={reason}
 				/>
 			</div>
 
@@ -616,8 +666,8 @@ function ChannelDetail({
 			</div>
 
 			{/* footer: delete */}
-			{canManage && (
-				<div className="flex items-center justify-end bg-muted/20 px-5 py-3">
+			<div className="flex items-center justify-end bg-muted/20 px-5 py-3">
+				<DisabledReason reason={reason}>
 					<Button
 						variant="ghost"
 						size="sm"
@@ -626,13 +676,16 @@ function ChannelDetail({
 					>
 						<Trash2 className="mr-1.5 size-3.5" /> Delete channel
 					</Button>
-				</div>
-			)}
+				</DisabledReason>
+			</div>
 
 			{/* dirty save bar */}
-			{canManage && dirty && (
+			{dirty && (
 				<div className="sticky bottom-0 flex items-center justify-between gap-4 border-t border-border bg-background/95 px-5 py-3 backdrop-blur">
-					<span className="text-muted-foreground text-xs">Unsaved changes</span>
+					<div className="min-w-0 space-y-1">
+						<span className="text-muted-foreground text-xs">Unsaved changes</span>
+						<FormRootError form={form} />
+					</div>
 					<div className="flex items-center gap-2">
 						<Button variant="ghost" size="sm" onClick={discard} disabled={saving}>
 							Discard

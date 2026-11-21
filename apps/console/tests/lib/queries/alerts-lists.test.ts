@@ -357,6 +357,27 @@ describe("queryAlertDeliveriesPage", () => {
 		]);
 	});
 
+	it("counts every match when the window is full, so the newest 50 never pass for the whole answer", async () => {
+		const full = Array.from({ length: 50 }, (_, i) => deliveryRow({ id: `d${i}` }));
+		const chains = seed(full, [{ status: "failed", n: 300 }], [{ n: 240 }]);
+		const page = await queryAlertDeliveriesPage("org-1", { status: ["failed"] });
+		expect(page.rows).toHaveLength(50);
+		expect(page.limit).toBe(50);
+		expect(page.resultCount).toBe(240);
+		// The count pass is scoped and filtered like the rows pass, and is neither windowed nor grouped.
+		const countPass = chains[2];
+		expect(countPass.called("where")).toBe(true);
+		expect(countPass.called("limit")).toBe(false);
+		expect(countPass.called("groupBy")).toBe(false);
+	});
+
+	it("asks for no count when the window is not full — its length IS the count", async () => {
+		const chains = seed([deliveryRow()], [{ status: "sent", n: 1 }]);
+		const page = await queryAlertDeliveriesPage("org-1");
+		expect(page.resultCount).toBe(1);
+		expect(chains).toHaveLength(2);
+	});
+
 	it("windows at 50 by default and caps a client's ask at 200", async () => {
 		const cases: [number | undefined, number][] = [
 			[undefined, 50],
