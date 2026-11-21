@@ -25,8 +25,8 @@ async function clientIp(): Promise<string> {
 }
 
 /**
- * Public, unauthenticated handler for the Talk-to-sales / Enterprise-trial
- * forms. Validates the payload, drops obvious bots via the honeypot, rate-limits
+ * Public, unauthenticated handler for the contact form (every topic: product
+ * demo, Enterprise trial, services project, something else). Validates the payload, drops obvious bots via the honeypot, rate-limits
  * per IP, and notifies the sales inbox. Persisting leads to the database is a
  * deliberate follow-up — see the TODO below.
  *

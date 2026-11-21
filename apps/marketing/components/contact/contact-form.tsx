@@ -5,7 +5,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
 import { Form, FormControl, FormField, FormItem, FormMessage } from "@repo/ui/form";
@@ -23,14 +23,35 @@ import { PhoneInput } from "@repo/ui/phone-input";
 import { submitContactLead } from "@/app/server/actions/contact";
 import { disp, Icon, mono } from "@repo/brand/site-primitives";
 import {
+	CONTACT_TOPIC_LABELS,
+	CONTACT_TOPICS,
 	contactLeadSchema,
+	DEFAULT_CONTACT_TOPIC,
 	DEFAULT_COUNTRY,
 	INTERESTS,
 	SALES_MAIL,
 	SIZES,
+	topicAsksInterest,
+	topicAsksSize,
 	type ContactLeadInput,
-	type ContactLeadType,
+	type ContactTopic,
 } from "@/lib/validations/contact.schema";
+
+/** The submit button's words for each topic, when the caller does not pass its own. */
+const SUBMIT_LABELS: Record<ContactTopic, string> = {
+	demo: "Request a demo",
+	enterprise: "Request your trial",
+	services: "Send project details",
+	other: "Send message",
+};
+
+/** The message box's prompt for each topic — what a useful first message contains. */
+const MESSAGE_PLACEHOLDERS: Record<ContactTopic, string> = {
+	demo: "Your stack — which clouds, how many clusters, how many teams.",
+	enterprise: "Your company needs — teams, identity provider, where your data has to live.",
+	services: "What you are running, and what you need built, audited or run.",
+	other: "What can we help with?",
+};
 
 /** Field label, with an optional "optional" tag mirroring the design. */
 function FieldLabel({
@@ -63,27 +84,49 @@ function FieldLabel({
 	);
 }
 
+/** Props for {@link ContactForm}. Every field is optional; the bare form opens on a product demo. */
+export interface ContactFormProps {
+	/** The topic the form opens on. */
+	topic?: ContactTopic;
+	/**
+	 * The preset the enterprise page's embedded form still passes (`type="enterprise"`).
+	 * It names a topic in the old two-value vocabulary and maps onto `topic`; `topic`
+	 * wins when both are given. Kept only because that page belongs to another change —
+	 * switch it to `topic="enterprise"` and delete this prop.
+	 */
+	type?: "sales" | "enterprise";
+	/** Overrides the topic's own submit label. */
+	submitLabel?: string;
+	/**
+	 * Show the topic picker. The contact page does; a form embedded in a page that is
+	 * already about one topic (the enterprise trial) does not, and posts its preset.
+	 */
+	showTopic?: boolean;
+}
+
+/** The topic a legacy `type` preset names: the old "sales" page was the demo request. */
+function topicFromType(type: "sales" | "enterprise" | undefined): ContactTopic | undefined {
+	if (type === "enterprise") return "enterprise";
+	if (type === "sales") return "demo";
+	return undefined;
+}
+
 /**
- * Shared contact form for the Talk-to-sales and Enterprise-trial pages. Wires
- * react-hook-form + the shared zod schema into our UI kit, posts to the public
- * `submitContactLead` server action, and swaps to a success card on success.
- * Only `type` (the lead discriminator) and `submitLabel` differ per page.
+ * The one contact form on the site. Wires react-hook-form + the shared zod
+ * schema into our UI kit, posts to the public `submitContactLead` server action,
+ * and swaps to a success card on success. The topic decides which of the
+ * company-size and product-interest fields are asked, and what the button says.
  */
-export function ContactForm({
-	type,
-	submitLabel,
-}: {
-	type: ContactLeadType;
-	submitLabel: string;
-}) {
+export function ContactForm({ topic, type, submitLabel, showTopic = false }: ContactFormProps) {
 	const [sent, setSent] = useState(false);
 	const [pending, startTransition] = useTransition();
+	const initialTopic = topic ?? topicFromType(type) ?? DEFAULT_CONTACT_TOPIC;
 
 	const form = useForm<ContactLeadInput>({
 		resolver: zodResolver(contactLeadSchema),
 		mode: "onChange",
 		defaultValues: {
-			type,
+			topic: initialTopic,
 			email: "",
 			name: "",
 			country: DEFAULT_COUNTRY,
@@ -97,11 +140,24 @@ export function ContactForm({
 		},
 	});
 
-	/** Submit via the server action; show success card or toast the error. */
+	const currentTopic = useWatch({ control: form.control, name: "topic" });
+	const asksSize = topicAsksSize(currentTopic);
+	const asksInterest = topicAsksInterest(currentTopic);
+
+	/**
+	 * Submit via the server action; show success card or toast the error. A field
+	 * the chosen topic does not ask is dropped first, so switching from "Product
+	 * demo" to "Something else" does not mail a hidden company size along with it.
+	 */
 	function onSubmit(values: ContactLeadInput) {
+		const lead: ContactLeadInput = {
+			...values,
+			companySize: topicAsksSize(values.topic) ? values.companySize : undefined,
+			interest: topicAsksInterest(values.topic) ? values.interest : undefined,
+		};
 		startTransition(async () => {
 			try {
-				await submitContactLead(values);
+				await submitContactLead(lead);
 				setSent(true);
 			} catch (err) {
 				toast.error(
@@ -166,8 +222,7 @@ export function ContactForm({
 						lineHeight: 1.6,
 					}}
 				>
-					Your request is in. Someone from our team will reach out — usually
-					within one business day.
+					Your message is in. We reply by email, to the address you gave.
 				</p>
 				<div
 					style={{
@@ -230,6 +285,54 @@ export function ContactForm({
 						aria-hidden="true"
 						style={{ position: "absolute", left: "-9999px", width: 1, height: 1, opacity: 0 }}
 					/>
+
+					{showTopic ? (
+						<FormField
+							control={form.control}
+							name="topic"
+							render={({ field }) => (
+								<FormItem>
+									{/* Native radios in a fieldset: a submitted form input, so a
+									    radiogroup and not SegmentedControl's toggle buttons — and
+									    four options, which is past what that control is for. */}
+									<fieldset style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+										<legend style={{ padding: 0, marginBottom: 8 }}>
+											<FieldLabel>What is this about?</FieldLabel>
+										</legend>
+										<div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+											{CONTACT_TOPICS.map((option) => {
+												const checked = field.value === option;
+												return (
+													<label
+														key={option}
+														className="flex cursor-pointer items-center gap-2.5 rounded-[var(--radius-md)] border px-3 py-2.5 transition-colors"
+														style={{
+															borderColor: checked ? "var(--border-strong)" : "var(--border)",
+															background: checked ? "var(--surface-muted)" : "transparent",
+															fontSize: 13,
+															color: checked ? "var(--text-primary)" : "var(--text-secondary)",
+														}}
+													>
+														<input
+															type="radio"
+															name={field.name}
+															value={option}
+															checked={checked}
+															onChange={() => field.onChange(option)}
+															onBlur={field.onBlur}
+															style={{ accentColor: "var(--text-primary)", margin: 0, flexShrink: 0 }}
+														/>
+														{CONTACT_TOPIC_LABELS[option]}
+													</label>
+												);
+											})}
+										</div>
+									</fieldset>
+									<FormMessage className="text-[11px]" />
+								</FormItem>
+							)}
+						/>
+					) : null}
 
 					<FormField
 						control={form.control}
@@ -327,56 +430,62 @@ export function ContactForm({
 						)}
 					/>
 
-					<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-						<FormField
-							control={form.control}
-							name="companySize"
-							render={({ field }) => (
-								<FormItem>
-									<FieldLabel>Company size</FieldLabel>
-									<Select value={field.value} onValueChange={field.onChange}>
-										<FormControl>
-											<SelectTrigger className="w-full">
-												<SelectValue placeholder="Select a value" />
-											</SelectTrigger>
-										</FormControl>
-										<SelectContent>
-											{SIZES.map((s) => (
-												<SelectItem key={s} value={s}>
-													{s}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-									<FormMessage className="text-[11px]" />
-								</FormItem>
-							)}
-						/>
-						<FormField
-							control={form.control}
-							name="interest"
-							render={({ field }) => (
-								<FormItem>
-									<FieldLabel>Primary product interest</FieldLabel>
-									<Select value={field.value} onValueChange={field.onChange}>
-										<FormControl>
-											<SelectTrigger className="w-full">
-												<SelectValue placeholder="Select a value" />
-											</SelectTrigger>
-										</FormControl>
-										<SelectContent>
-											{INTERESTS.map((s) => (
-												<SelectItem key={s} value={s}>
-													{s}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-									<FormMessage className="text-[11px]" />
-								</FormItem>
-							)}
-						/>
-					</div>
+					{asksSize || asksInterest ? (
+						<div className={asksSize && asksInterest ? "grid grid-cols-1 gap-4 sm:grid-cols-2" : "grid grid-cols-1 gap-4"}>
+							{asksSize ? (
+								<FormField
+									control={form.control}
+									name="companySize"
+									render={({ field }) => (
+										<FormItem>
+											<FieldLabel>Company size</FieldLabel>
+											<Select value={field.value} onValueChange={field.onChange}>
+												<FormControl>
+													<SelectTrigger className="w-full">
+														<SelectValue placeholder="Select a value" />
+													</SelectTrigger>
+												</FormControl>
+												<SelectContent>
+													{SIZES.map((s) => (
+														<SelectItem key={s} value={s}>
+															{s}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+											<FormMessage className="text-[11px]" />
+										</FormItem>
+									)}
+								/>
+							) : null}
+							{asksInterest ? (
+								<FormField
+									control={form.control}
+									name="interest"
+									render={({ field }) => (
+										<FormItem>
+											<FieldLabel>Primary product interest</FieldLabel>
+											<Select value={field.value} onValueChange={field.onChange}>
+												<FormControl>
+													<SelectTrigger className="w-full">
+														<SelectValue placeholder="Select a value" />
+													</SelectTrigger>
+												</FormControl>
+												<SelectContent>
+													{INTERESTS.map((s) => (
+														<SelectItem key={s} value={s}>
+															{s}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+											<FormMessage className="text-[11px]" />
+										</FormItem>
+									)}
+								/>
+							) : null}
+						</div>
+					) : null}
 
 					<FormField
 						control={form.control}
@@ -388,7 +497,7 @@ export function ContactForm({
 									<Textarea
 										rows={6}
 										className="min-h-36"
-										placeholder="Your company needs — teams, identity provider, where your data has to live."
+										placeholder={MESSAGE_PLACEHOLDERS[currentTopic]}
 										style={{ resize: "vertical" }}
 										{...field}
 									/>
@@ -447,7 +556,7 @@ export function ContactForm({
 						disabled={pending}
 						style={{ width: "100%", marginTop: 4 }}
 					>
-						{pending ? "Sending…" : submitLabel}
+						{pending ? "Sending…" : (submitLabel ?? SUBMIT_LABELS[currentTopic])}
 						{!pending && <Icon k="arrow" size={15} />}
 					</Button>
 				</div>

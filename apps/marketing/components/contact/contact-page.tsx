@@ -1,32 +1,34 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import Link from "next/link";
-import { disp, eyebrow, Icon, type IconKey, mono, Wrap } from "@repo/brand/site-primitives";
-import type { ContactLeadType } from "@/lib/validations/contact.schema";
+import type { Metadata } from "next";
+import { LEGAL_ENTITY } from "@repo/legal/entity";
+import { SiteShell } from "@repo/brand/site-shell";
+import { disp, eyebrow, mono, Wrap } from "@repo/brand/site-primitives";
+import { SALES_MAIL, type ContactTopic } from "@/lib/validations/contact.schema";
 import { ContactForm } from "./contact-form";
 
-/** A single value-prop in the left rail: icon, title, description. */
-export type RailPoint = [icon: IconKey, title: string, description: string];
+/**
+ * The direct addresses the rail lists, in the order a reader looks for them.
+ * Security and privacy have their own inboxes so a vulnerability report or a
+ * data request never queues behind a sales thread; the addresses come from the
+ * same `LEGAL_ENTITY` record the legal pages read.
+ */
+const DIRECT_ADDRESSES: { address: string; purpose: string }[] = [
+	{ address: SALES_MAIL, purpose: "Demos, trials and services projects" },
+	{ address: LEGAL_ENTITY.securityEmail, purpose: "Vulnerability reports" },
+	{ address: LEGAL_ENTITY.privacyEmail, purpose: "Data-protection requests" },
+];
 
-export interface ContactRail {
-	tag: string;
-	title: string;
-	sub: string;
-	points: RailPoint[];
-	/** Optional footer note under the value props. */
-	foot?: string;
-}
-
-/** The pitch rail beside the form — eyebrow, headline, sub, and value props. */
-function LeftRail({ tag, title, sub, points, foot }: ContactRail) {
+/** The rail beside the form: eyebrow, headline, one sentence, and the direct addresses. */
+function LeftRail() {
 	return (
 		<div>
 			<div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
 				<span style={{ ...mono, fontSize: 11, color: "var(--text-disabled)", letterSpacing: "0.1em" }}>
 					—
 				</span>
-				<span style={eyebrow}>{tag}</span>
+				<span style={eyebrow}>Contact</span>
 			</div>
 			<h1
 				style={{
@@ -39,7 +41,7 @@ function LeftRail({ tag, title, sub, points, foot }: ContactRail) {
 					color: "var(--text-primary)",
 				}}
 			>
-				{title}
+				Tell us what you need.
 			</h1>
 			<p
 				style={{
@@ -50,107 +52,76 @@ function LeftRail({ tag, title, sub, points, foot }: ContactRail) {
 					maxWidth: 440,
 				}}
 			>
-				{sub}
+				One form for demos, trials and projects. We reply by email.
 			</p>
-			<div style={{ display: "flex", flexDirection: "column", gap: 2, borderTop: "1px solid var(--border)" }}>
-				{points.map(([ic, t, d]) => (
-					<div key={t} style={{ display: "flex", gap: 14, padding: "18px 0", borderBottom: "1px solid var(--border)" }}>
-						<span
-							style={{
-								display: "grid",
-								placeItems: "center",
-								width: 38,
-								height: 38,
-								flexShrink: 0,
-								borderRadius: "var(--radius-md)",
-								border: "1px solid var(--border)",
-								background: "var(--surface-muted)",
-								color: "var(--text-primary)",
-							}}
+			<p className="vx-eyebrow" style={{ margin: "0 0 4px" }}>
+				Or write directly
+			</p>
+			<ul style={{ listStyle: "none", margin: 0, padding: 0, borderTop: "1px solid var(--border)" }}>
+				{DIRECT_ADDRESSES.map(({ address, purpose }) => (
+					<li
+						key={address}
+						style={{
+							display: "flex",
+							flexDirection: "column",
+							gap: 4,
+							padding: "14px 0",
+							borderBottom: "1px solid var(--border)",
+						}}
+					>
+						<a
+							href={`mailto:${address}`}
+							style={{ ...mono, fontSize: 13, color: "var(--text-primary)", overflowWrap: "anywhere" }}
 						>
-							<Icon k={ic} size={18} />
-						</span>
-						<div>
-							<div style={{ ...disp, fontSize: 14.5, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>
-								{t}
-							</div>
-							<p style={{ fontSize: 12.5, color: "var(--text-tertiary)", lineHeight: 1.5, margin: 0, maxWidth: 380 }}>
-								{d}
-							</p>
-						</div>
-					</div>
+							{address}
+						</a>
+						<span style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>{purpose}</span>
+					</li>
 				))}
-			</div>
-			{foot && (
-				<div
-					style={{
-						display: "flex",
-						alignItems: "center",
-						gap: 9,
-						marginTop: 22,
-						...mono,
-						fontSize: 11.5,
-						color: "var(--text-tertiary)",
-					}}
-				>
-					<Icon k="route" size={13} sw={1.7} />
-					{foot}
-				</div>
-			)}
+			</ul>
 		</div>
 	);
 }
 
-export interface ContactSectionProps {
-	type: ContactLeadType;
-	submitLabel: string;
-	rail: ContactRail;
-	/** Cross-link card to the sibling contact page. */
-	crossLabel: string;
-	crossHref: string;
-	crossSub: string;
-}
-
 /**
- * The contact hero: a split layout with the pitch rail on the left and the
- * sticky form (plus a cross-link card to the sibling page) on the right. Page
- * routes wrap this with the shared landing Header/Footer.
+ * The contact page body: the rail on the left and the sticky form on the right.
+ * `topic` is the form's preset — from `?topic=`, or from the `/contact/sales`
+ * and `/contact/enterprise` deep links. The form is keyed on it so a client-side
+ * navigation between two presets re-seeds the form instead of keeping the old one.
  */
-export function ContactSection({
-	type,
-	submitLabel,
-	rail,
-	crossLabel,
-	crossHref,
-	crossSub,
-}: ContactSectionProps) {
+export function ContactSection({ topic }: { topic: ContactTopic }) {
 	return (
 		<section style={{ position: "relative", overflow: "hidden", borderBottom: "1px solid var(--border)" }}>
 			<div className="ah-grid-bg" />
 			<Wrap style={{ position: "relative", paddingBlock: "64px 80px" }}>
 				<div className="grid grid-cols-1 gap-10 lg:grid-cols-[0.92fr_1fr] lg:gap-16 lg:items-start">
-					<LeftRail {...rail} />
-					<div className="lg:sticky lg:top-[86px]">
-						<ContactForm type={type} submitLabel={submitLabel} />
-						<Link
-							href={crossHref}
-							className="mt-3.5 flex items-center gap-3.5 rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface-sunken)] px-[18px] py-[15px] no-underline transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-muted)]"
-						>
-							<div style={{ minWidth: 0 }}>
-								<div style={{ ...disp, fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>
-									{crossLabel}
-								</div>
-								<div style={{ fontSize: 11.5, color: "var(--text-tertiary)", marginTop: 2 }}>
-									{crossSub}
-								</div>
-							</div>
-							<span style={{ marginLeft: "auto", color: "var(--text-tertiary)", flexShrink: 0 }}>
-								<Icon k="arrow" size={15} />
-							</span>
-						</Link>
+					<LeftRail />
+					<div className="min-w-0 lg:sticky lg:top-[86px]">
+						<ContactForm key={topic} topic={topic} showTopic />
 					</div>
 				</div>
 			</Wrap>
 		</section>
+	);
+}
+
+/** The metadata every contact route shares. The two deep links canonicalise to `/contact`. */
+export const CONTACT_METADATA: Metadata = {
+	title: "Contact",
+	description:
+		"Ask for a product demo, start an Enterprise trial, or tell us about a platform, cloud or AI project. One form; we reply by email.",
+	alternates: { canonical: "/contact" },
+};
+
+/**
+ * A whole contact route — the shared site chrome around {@link ContactSection}.
+ * `/contact`, `/contact/sales` and `/contact/enterprise` all render this and
+ * differ only in the topic they preset.
+ */
+export async function ContactPage({ topic }: { topic: ContactTopic }) {
+	return (
+		<SiteShell>
+			<ContactSection topic={topic} />
+		</SiteShell>
 	);
 }
