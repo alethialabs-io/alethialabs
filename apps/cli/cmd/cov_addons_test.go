@@ -1012,8 +1012,8 @@ func TestAddonDocs_RecordTheOneHandoffThatRemains(t *testing.T) {
 // they wait for, or a question they answer for nothing.
 func TestAddonEnable_RefusesABadModeBeforeAnyRequest(t *testing.T) {
 	s, run := hygCliConfirmEnv(t)
-	if code := run("addon", "enable", "loki", "--project", "p1", "--mode", "helm", "--no-input"); code != 1 {
-		t.Errorf("exit code = %d, want 1 for a --mode outside the enum", code)
+	if code := run("addon", "enable", "loki", "--project", "p1", "--mode", "helm", "--no-input"); code != 8 {
+		t.Errorf("exit code = %d, want 8 (invalid_flag) for a --mode outside the enum", code)
 	}
 	if len(s.requests) != 0 {
 		t.Errorf("a refused --mode still reached the control plane: %v", s.requests)
