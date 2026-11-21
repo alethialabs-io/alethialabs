@@ -9,6 +9,12 @@
 	"retired_clouds": [
 		"alibaba"
 	],
+	"offered_clouds": [
+		"aws",
+		"gcp",
+		"azure",
+		"hetzner"
+	],
 	"kinds": [
 		{
 			"kind": "network",
