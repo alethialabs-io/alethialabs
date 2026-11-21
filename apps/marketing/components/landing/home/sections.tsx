@@ -119,7 +119,7 @@ export function ConsoleBand() {
 export function CliBand() {
 	return (
 		<Band
-			lines={["Or drive the whole thing", "from your shell."]}
+			lines={["Or drive it all", "from your shell."]}
 			visual={
 				<div className="space-y-6">
 					<Plate label="zsh">

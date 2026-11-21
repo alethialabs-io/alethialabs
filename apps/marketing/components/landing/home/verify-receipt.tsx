@@ -128,7 +128,7 @@ export function VerifyReceipt({
 						key={c.id}
 						style={{
 							display: "grid",
-							gridTemplateColumns: "128px 1fr auto",
+							gridTemplateColumns: "minmax(96px, 128px) 1fr auto",
 							gap: 16,
 							alignItems: "center",
 							padding: "13px 18px",
@@ -142,7 +142,9 @@ export function VerifyReceipt({
 							</Badge>
 							<span style={{ fontSize: 13.5, color: "var(--text-secondary)" }}>{c.title}</span>
 						</span>
-						<span style={{ ...mono, fontSize: 10.5, color: "var(--text-tertiary)", letterSpacing: "0.04em", textAlign: "right", whiteSpace: "nowrap" }}>
+						{/* The framework mapping is the first thing a phone can do without: below 620px it
+						    would squeeze the control title into a one-word column. */}
+						<span className="ah-hide-sm" style={{ ...mono, fontSize: 10.5, color: "var(--text-tertiary)", letterSpacing: "0.04em", textAlign: "right", whiteSpace: "nowrap" }}>
 							{c.frameworks?.join(" · ") ?? ""}
 						</span>
 					</div>

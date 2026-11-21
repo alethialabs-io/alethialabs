@@ -24,8 +24,12 @@ const REPO_URL = "https://github.com/alethialabs-io/alethialabs";
 const INSTALL_COMMAND =
 	"curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh | sh";
 
-/** "Star on GitHub · 2.4k", or just "Star on GitHub" when the count is unknown. */
+/** Below this many stars the count reads as an admission, not as proof, so it is not shown. */
+const STAR_COUNT_FLOOR = 100;
+
+/** "Star on GitHub · 2.4k", or just "Star on GitHub" when the count is unknown or still small. */
 function starLabel(stars: number | null): string {
+	if (stars === null || stars < STAR_COUNT_FLOOR) return "Star on GitHub";
 	const count = formatStars(stars);
 	return count ? `Star on GitHub · ${count}` : "Star on GitHub";
 }
