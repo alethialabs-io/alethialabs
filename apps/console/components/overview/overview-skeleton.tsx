@@ -4,16 +4,12 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@repo/ui/skeleton";
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { orpc } from "@/lib/rpc/client";
 import { AlertsCardSkeleton } from "./alerts-card";
+import { ProjectsSkeleton } from "./projects-skeleton";
 import { RecentJobsCardSkeleton } from "./recent-jobs-card";
 import { UsageCardSkeleton } from "./usage-card";
-
-/** The most project cards the skeleton draws — past the second row they are below the fold. */
-const MAX_PROJECT_PLACEHOLDERS = 6;
-
-/** Project cards drawn when the shell's project list is not in the cache (its prefetch failed). */
-const UNKNOWN_PROJECT_PLACEHOLDERS = 2;
 
 /**
  * The shell's answer to one of its reads, from the cache only. `enabled: false` makes this an
@@ -42,8 +38,9 @@ function useShellAnswers() {
  * four project cards in a two-wide grid over an org with one project. So the shape is read from the
  * shell's cached reads, never fetched:
  *
- * - the projects area: one card placeholder per project (up to `MAX_PROJECT_PLACEHOLDERS`), or the
- *   "No projects yet" panel's height in plain bars when the org has none;
+ * - the projects area (`ProjectsSkeleton`, which the grid's own pending render also draws): one
+ *   card placeholder per project (up to `MAX_PROJECT_PLACEHOLDERS`), or the "No projects yet"
+ *   panel's height in plain bars when the org has none;
  * - the Recent-jobs card: one row per job in the shell's feed, or the empty line's height;
  * - the Alerts card: the plan gate's shape when the org's plan has no alerting, rows otherwise.
  *
@@ -53,7 +50,7 @@ function useShellAnswers() {
 export function OverviewSkeleton() {
 	const { projectCount, jobCount, alerting } = useShellAnswers();
 	return (
-		<div className="space-y-5" aria-busy="true">
+		<SkeletonRoot className="space-y-5">
 			<div className="mb-4 flex flex-wrap items-center gap-2.5">
 				<Skeleton className="h-9 min-w-[200px] flex-1 rounded-sm" />
 				<Skeleton className="h-9 w-9 rounded-sm" />
@@ -73,38 +70,6 @@ export function OverviewSkeleton() {
 					<ProjectsSkeleton count={projectCount} />
 				</div>
 			</div>
-		</div>
-	);
-}
-
-/**
- * The projects area: `count` card placeholders in the page's grid, or — for an org with no
- * projects — the "No projects yet" panel's height (`EmptyState`'s padding and gaps around its icon
- * tile, title, two description lines and button) drawn as plain bars, with no frame and no empty
- * copy: the panel has no frame, and a pending page must not say there is nothing (RUBRIC B3).
- */
-function ProjectsSkeleton({ count }: { count: number | undefined }) {
-	if (count === 0) {
-		return (
-			<div className="flex flex-col items-center justify-center gap-6 p-6 md:p-12" data-testid="projects-empty-skeleton">
-				<div className="flex flex-col items-center gap-2">
-					<Skeleton className="mb-2 size-10 rounded-lg" />
-					<Skeleton className="h-7 w-40" />
-					<div className="flex flex-col items-center gap-1">
-						<Skeleton className="h-5 w-72 max-w-full" />
-						<Skeleton className="h-5 w-56 max-w-full" />
-					</div>
-				</div>
-				<Skeleton className="h-8 w-36" />
-			</div>
-		);
-	}
-	const cards = Math.min(count ?? UNKNOWN_PROJECT_PLACEHOLDERS, MAX_PROJECT_PLACEHOLDERS);
-	return (
-		<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(238px,1fr))]">
-			{Array.from({ length: cards }, (_, i) => (
-				<Skeleton key={i} className="h-32 w-full rounded-lg" data-testid="project-card-skeleton" />
-			))}
-		</div>
+		</SkeletonRoot>
 	);
 }
