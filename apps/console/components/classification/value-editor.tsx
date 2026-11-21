@@ -25,11 +25,12 @@ import { Check, ShieldCheck } from "lucide-react";
 import { useEffect, useId } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import type { ValueDTO } from "@/app/server/actions/classification/dimensions";
+import { FormRootError } from "@/components/forms/form-root-error";
 import {
 	createValue,
 	updateValue,
 } from "@/app/server/actions/classification/dimensions";
-import type { ActionResult, FieldErrors } from "@/lib/actions/result";
+import type { ActionResult } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { classificationReadKeys } from "@/lib/query/use-classification-query";
 import { type ValueInput, valueInputSchema } from "@/lib/validations/classification";
@@ -38,6 +39,9 @@ import { InfoHint, Spinner } from "./classification-ui";
 
 /** The fields the editor renders from. */
 const WATCHED = ["label", "enforcement"] as const;
+
+/** The fields that show a message of their own; every other server message goes to the root. */
+const VALUE_FIELDS = ["value", "label"] as const;
 
 /**
  * The value editor dialog. Pass an existing `value` to edit, or omit it to create one on
@@ -108,12 +112,10 @@ export function ValueEditor({
 	const save = useActionMutation(saveValue, {
 		invalidates: classificationReadKeys(),
 		successMessage: () => (isEdit ? "Value updated." : "Value added."),
-		onValidationError: (fields: FieldErrors) => {
-			for (const name of ["value", "label", "color"] as const) {
-				const message = fields[name]?.[0];
-				if (message) form.setError(name, { type: "server", message });
-			}
-		},
+		// The slug and the label show their own message; anything else the server says — the
+		// colour this grayscale dialog has no field for, the enforcement policy, the form as a
+		// whole — goes to the root error above the footer instead of being dropped (#6825, F-13).
+		form: { instance: form, fields: VALUE_FIELDS },
 		onSuccess: () => onOpenChange(false),
 	});
 
@@ -255,8 +257,16 @@ export function ValueEditor({
 						)}
 					</div>
 
+					<FormRootError form={form} />
 					<DialogFooter>
-						<Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+						{/* Held while the save is in flight, as the dimension sheet's is: closing
+						    mid-save would leave a toast about a dialog that is gone. */}
+						<Button
+							type="button"
+							variant="outline"
+							onClick={() => onOpenChange(false)}
+							disabled={save.isPending}
+						>
 							Cancel
 						</Button>
 						{/* An edit with nothing changed has nothing to save; a new value always does. */}

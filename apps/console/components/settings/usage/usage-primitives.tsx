@@ -171,6 +171,73 @@ export function Fact({
 	);
 }
 
+/** The slice of a TanStack query result a {@link FactRead} renders from. */
+export interface FactReadState<T> {
+	data: T | undefined;
+	isError: boolean;
+	error: unknown;
+	/** Asks again; the failed render's retry. */
+	refetch: () => unknown;
+}
+
+/**
+ * The VALUE of a fact whose read can fail on its own, in each of its four states (RUBRIC B4):
+ * the answer, a short skeleton while it has not answered, a calm note with no retry when the read
+ * was REFUSED (asking again gets the same answer), and "Couldn't load" with a Retry when it FAILED.
+ *
+ * It exists because a dash was the old answer to all three of the non-data states (#6825, D-31):
+ * a failed cost read rendered "—", which a reader takes as "nothing to report". A fact that failed
+ * is now told apart from a fact that is empty, and the reader can ask again without reloading the
+ * page. Data a refetch failed to refresh stays on screen — the last good answer beats an error.
+ */
+export function FactRead<T>({
+	read,
+	render,
+	what,
+	isRefusal,
+}: {
+	read: FactReadState<T>;
+	/** Renders the answer. */
+	render: (data: T) => ReactNode;
+	/** What the fact is, lowercase, for the retry button's accessible name ("AI credits"). */
+	what: string;
+	/** Whether a failure is an expected refusal rather than a fault. */
+	isRefusal: (error: unknown) => boolean;
+}) {
+	if (read.data !== undefined) return <>{render(read.data)}</>;
+	if (!read.isError) {
+		// A span with the Skeleton primitive's look, not the primitive: it renders a `<div>`, and
+		// this sits inside the fact's `<dd>` value span, where only phrasing content belongs.
+		return (
+			<span
+				data-state="loading"
+				aria-hidden="true"
+				className="inline-block h-3 w-14 animate-pulse rounded-md bg-accent align-middle"
+			/>
+		);
+	}
+	if (isRefusal(read.error)) {
+		return (
+			<span data-state="refused" className="font-sans text-text-tertiary">
+				Not available to you
+			</span>
+		);
+	}
+	return (
+		<span data-state="error" className="inline-flex items-baseline gap-2 font-sans">
+			<span className="text-destructive">Couldn&apos;t load</span>
+			<button
+				type="button"
+				aria-label={`Retry loading ${what}`}
+				onClick={() => void read.refetch()}
+				className="rounded-sm text-text-secondary underline underline-offset-2 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+			>
+				Retry
+			</button>
+		</span>
+	);
+}
+
 /**
  * A lightweight CSS bar chart for one over-time metric (no chart dependency). Generic over
  * any day-keyed point so the org and project over-time series both render through it.
