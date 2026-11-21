@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
@@ -128,15 +129,17 @@ func resolveGovRef(spec govSelectSpec, refs []govRef, args []string) (govRef, er
 	}
 
 	if len(refs) == 0 {
-		return govRef{}, fmt.Errorf("no %s exists in this organization — run `%s` to check",
-			spec.Noun, spec.ListCmd)
+		return govRef{}, refusal(clierr.CodeNotFound, spec.ListCmd,
+			"no %s exists in this organization — run `%s` to check", spec.Noun, spec.ListCmd)
 	}
 
 	if query == "" {
 		if err := requireInteractiveForm(); err != nil {
-			return govRef{}, fmt.Errorf(
-				"no %s given, and there is nowhere to ask: pass the %s's name or id as the argument (see `%s`) (%w)",
+			e := refusal(clierr.CodeInputRequired, spec.ListCmd,
+				"no %s given, and there is nowhere to ask: pass the %s's name or id as the argument (see `%s`) (%v)",
 				spec.Noun, spec.Noun, spec.ListCmd, err)
+			e.Cause = err
+			return govRef{}, e
 		}
 		return pickGovRef(spec, refs)
 	}
@@ -149,12 +152,13 @@ func resolveGovRef(spec govSelectSpec, refs []govRef, args []string) (govRef, er
 		case 1:
 			return hits[0], nil
 		default:
-			return govRef{}, fmt.Errorf("%q matches %d %ss — name one exactly:\n%s",
+			return govRef{}, refusal(clierr.CodeInvalidUsage, spec.ListCmd,
+				"%q matches %d %ss — name one exactly:\n%s",
 				query, len(hits), spec.Noun, govCandidateList(hits))
 		}
 	}
-	return govRef{}, fmt.Errorf("no %s matches %q — run `%s` to see what there is",
-		spec.Noun, query, spec.ListCmd)
+	return govRef{}, refusal(clierr.CodeNotFound, spec.ListCmd,
+		"no %s matches %q — run `%s` to see what there is", spec.Noun, query, spec.ListCmd)
 }
 
 // pickGovRef shows the picker over already-fetched records.

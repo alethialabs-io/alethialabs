@@ -74,6 +74,10 @@ alethia jobs list -o csv > jobs.csv
 When output is **not** `table` (or stdout is piped / `--no-input` is set), list/get commands print
 static output instead of the interactive table — so they're safe to use in scripts and CI.
 
+Stdout carries the result and nothing else. Notes, progress and errors go to stderr, so a parser
+reading stdout never meets a sentence. An empty list is `[]` under `-o json`. Under `-o json` an
+error is one object on the last line of stderr, and stdout stays empty.
+
 ## The `--no-input` Flag
 
 ```
@@ -83,7 +87,8 @@ static output instead of the interactive table — so they're safe to use in scr
 Interactive selectors and confirmation prompts are disabled with `--no-input`. It is **auto-enabled
 when stdin is not a TTY** (a pipe, CI, etc.), so the CLI never hangs waiting for input that can't
 come. With prompting disabled, supply required values explicitly (`--project-id`, `--runner-id`, an
-org argument, …) or the command fails with a clear error. See [TUI Components](https://github.com/alethialabs-io/alethialabs/blob/dev/docs/contributing/cli-tui.md).
+org argument, …) or the command exits with code `9` and names the flag or argument to pass. A
+destructive command with nobody to ask needs `--yes`, and exits `9` without it. See [TUI Components](https://github.com/alethialabs-io/alethialabs/blob/dev/docs/contributing/cli-tui.md).
 
 ## Utility Commands
 

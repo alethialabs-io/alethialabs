@@ -43,11 +43,17 @@ func TestRunOrgSettingsJSON(t *testing.T) {
 func TestRunOrgSettingsCommunity(t *testing.T) {
 	c := &fakeClient{orgSettings: nil}
 	var buf bytes.Buffer
+	// No organization means no record to print: the notice is on stderr and stdout stays empty.
+	p, _, said := splitPrinter("table")
+	withPrinter(t, p)
 	if err := runOrgSettings(c, &buf, "table"); err != nil {
 		t.Fatalf("runOrgSettings community: %v", err)
 	}
-	if !strings.Contains(buf.String(), "community mode") {
-		t.Errorf("expected community notice, got: %q", buf.String())
+	if !strings.Contains(said.String(), "community mode") {
+		t.Errorf("expected community notice on stderr, got: %q", said.String())
+	}
+	if buf.Len() != 0 {
+		t.Errorf("stdout is not empty: %q", buf.String())
 	}
 }
 
