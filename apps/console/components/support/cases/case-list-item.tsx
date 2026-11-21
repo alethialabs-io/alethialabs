@@ -12,9 +12,9 @@ import { formatCaseNumber } from "./case-query";
 
 // `formatCaseNumber` moved to the pure `case-query` module (the search predicate there
 // matches on the same reference, and a filter helper must not import a React component to
-// get it). Re-exported here only because two modules outside this change's scope —
-// components/shell/notifications-popover.tsx and hooks/use-support-toasts.ts — still import
-// it from this path; delete this line once they point at ./case-query.
+// get it). Re-exported here only because components/shell/notifications-popover.tsx, outside
+// the support area, still imports it from this path; delete this line once it points at
+// ./case-query.
 export { formatCaseNumber };
 
 /**

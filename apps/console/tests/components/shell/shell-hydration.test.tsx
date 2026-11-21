@@ -141,7 +141,7 @@ afterEach(() => {
 describe("the seeded shell hydrates (#6114)", () => {
 	it("reports no mismatch when this browser holds read marks the server cannot see", async () => {
 		// The server has no localStorage, so no read marks…
-		useNotificationsStore.setState({ readJobIds: [], readSupportCaseIds: [] });
+		useNotificationsStore.setState({ readJobIds: [], supportAcks: [] });
 		const serverHtml = renderToString(<Chrome />);
 		// The fixture does its job only if the server render carries the seeded chrome: the org and
 		// the setup ring (which a client fetch used to fill after hydration).
@@ -149,7 +149,10 @@ describe("the seeded shell hydrates (#6114)", () => {
 		expect(serverHtml).toContain("steps done");
 		// …and the browser marked both notifications read in an earlier session (the persisted store
 		// loads them from localStorage before anything renders).
-		useNotificationsStore.setState({ readJobIds: ["job-1"], readSupportCaseIds: ["case-1"] });
+		useNotificationsStore.setState({
+			readJobIds: ["job-1"],
+			supportAcks: [{ caseId: "case-1", lastMessageAt: "2099-01-01T00:00:00.000Z" }],
+		});
 		container = document.createElement("div");
 		container.innerHTML = serverHtml;
 		document.body.appendChild(container);
