@@ -2358,7 +2358,7 @@ export function render(v) {
 	L.push("");
 	L.push("Every number above is derived from these, and from nothing else:");
 	L.push("");
-	for (const f of [SPINE, LEDGER, WORKFLOW, RESOLVER, UNSUPPORTED_KINDS, `${PROOFS_DIR}/<cloud>/<stamp>/`, SNAPSHOT, ...(v.beta ? [BETA_SCHEMA, TS_CATALOG, PAID_MARKETS_SOURCE, LAUNCH_SOURCE, LEGAL_SET, ...EVIDENCE_DIRS.map((d) => `${d.dir}/`)] : [])]) L.push(`- \`${f}\``);
+	for (const f of [SPINE, LEDGER, WORKFLOW, RESOLVER, UNSUPPORTED_KINDS, `${PROOFS_DIR}/<cloud>/<stamp>/`, SNAPSHOT, ...(v.beta ? [BETA_SCHEMA, TS_CATALOG, PAID_MARKETS_SOURCE, LAUNCH_SOURCE, LEGAL_SET, `${EVIDENCE_DIRS[0].dir}/`, "docs/beta/evidence/<record kind>/"] : [])]) L.push(`- \`${f}\``);
 	L.push("");
 	L.push(
 		v.board.present

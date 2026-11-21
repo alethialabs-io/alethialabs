@@ -524,11 +524,7 @@ Every number above is derived from these, and from nothing else:
 - `packages/legal/src/launch.ts`
 - `docs/legal/legal-set.json`
 - `apps/console/docs/qa/prod-runs/`
-- `docs/beta/evidence/managed-runner/`
-- `docs/beta/evidence/b3/`
-- `docs/beta/evidence/b5/`
-- `docs/beta/evidence/b7/`
-- `docs/beta/evidence/b8/`
+- `docs/beta/evidence/<record kind>/`
 
 Live board snapshot: taken **2026-11-19T17:43:22Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
