@@ -16,11 +16,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import type {
-  ConnTestPhase,
-  ConnTestState,
-  VerifyStatus,
-} from "./use-connection-test";
+import type { ConnTestState } from "./use-connection-test";
 
 // Design system: grayscale, hairline borders, no shadowed cards, no colored status fills.
 // Status is a dot/icon + label, never hue. Mirrors components/connectors/connector-detail-sheet.tsx.
@@ -51,18 +47,25 @@ const VARIANT_TIER: Record<CalloutVariant, StatusTier> = {
  * The status banner shown while saving / after a verification attempt. Hairline row,
  * grayscale — the state reads from the shared status dot + title, not a colored fill.
  * Shared across every provider connection component so the states look identical everywhere.
+ *
+ * It is a live region, so the outcome of a press is announced where it appears: a failure as an
+ * alert, the other two politely as a status (B-05). `action` sits at the row's end — the Cancel of
+ * a verify in flight.
  */
 export function StatusCallout({
   variant,
   title,
   children,
+  action,
 }: {
   variant: CalloutVariant;
   title: string;
   children: ReactNode;
+  action?: ReactNode;
 }) {
   return (
     <div
+      role={variant === "error" ? "alert" : "status"}
       className={cn(
         "flex gap-3 rounded-md border border-border/60 bg-muted/20 p-3.5",
         variant === "error" ? "items-start" : "items-center",
@@ -74,48 +77,41 @@ export function StatusCallout({
         showLabel={false}
         className={cn("shrink-0", variant === "error" && "mt-0.5")}
       />
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="font-medium text-foreground text-sm">{title}</p>
         <p className="mt-0.5 text-muted-foreground text-xs leading-relaxed">
           {children}
         </p>
       </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   );
 }
 
 /**
- * Renders the in-progress / done states of an instant server-side connection verify (driven by
- * `useConnectionTest`): `saving` (the single save+verify round trip, with a Cancel so the flow can
- * never get stuck) and `success` — which distinguishes a fully CONNECTED account from a DEGRADED one
- * (authenticated, but missing some provisioning permissions). The caller handles `idle`/`failed` by
- * showing its credential form.
+ * Where a connect press stands, said once in one place under the form: verifying (with a Cancel,
+ * so the flow can never get stuck), verified — a fully CONNECTED account or a DEGRADED one
+ * (authenticated, but missing some provisioning permissions) — or failed with the provider's
+ * reason. Nothing for a form that has not been sent.
  */
-export function ConnectionTestStatus({
-  phase,
+export function ConnectStatus({
+  state,
   successText,
   verifyingText,
   onCancel,
-  status,
-  missingPermissions,
 }: {
-  phase: ConnTestPhase;
+  state: ConnTestState;
   successText: string;
   verifyingText: string;
   onCancel: () => void;
-  status?: VerifyStatus;
-  missingPermissions?: string[];
 }) {
-  if (phase === "success") {
-    if (status === "degraded") {
-      const missing = missingPermissions?.length
-        ? ` (${missingPermissions.join(", ")})`
+  if (state.phase === "success") {
+    if (state.status === "degraded") {
+      const missing = state.missingPermissions?.length
+        ? ` (${state.missingPermissions.join(", ")})`
         : "";
       return (
-        <StatusCallout
-          variant="pending"
-          title="Connected — limited permissions"
-        >
+        <StatusCallout variant="pending" title="Connected — limited permissions">
           {successText} Some provisioning permissions look missing{missing} —
           provisioning may fail until the role is widened.
         </StatusCallout>
@@ -127,25 +123,35 @@ export function ConnectionTestStatus({
       </StatusCallout>
     );
   }
-
-  return (
-    <div className="space-y-3">
-      <StatusCallout variant="pending" title="Verifying connection…">
+  if (state.phase === "saving") {
+    return (
+      <StatusCallout
+        variant="pending"
+        title="Verifying connection…"
+        action={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 border-border/60 text-xs"
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+        }
+      >
         {verifyingText}
       </StatusCallout>
-      <div className="flex justify-end">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 border-border/60 text-xs"
-          onClick={onCancel}
-        >
-          Cancel
-        </Button>
-      </div>
-    </div>
-  );
+    );
+  }
+  if (state.phase === "failed") {
+    return (
+      <StatusCallout variant="error" title="Verification failed">
+        {state.error}
+      </StatusCallout>
+    );
+  }
+  return null;
 }
 
 /** The muted "how your credentials are handled" footnote. Shared. */
@@ -168,7 +174,7 @@ function HowItWorks({ children }: { children: ReactNode }) {
         render={
           <button
             type="button"
-            className="inline-flex shrink-0 items-center gap-1 text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
+            className="inline-flex shrink-0 items-center gap-1 rounded-sm text-ui-xs text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             <HelpCircle className="size-3.5" />
             How this works
@@ -239,7 +245,8 @@ export interface MethodTab {
 
 /**
  * The setup-method selector (e.g. CloudFormation vs Terraform) — a compact segmented control with a
- * "?" popover explaining how to choose. Replaces the two oversized bordered cards.
+ * "?" popover explaining how to choose. Replaces the two oversized bordered cards. The chosen
+ * method is said by `aria-pressed`, not by its fill alone (B-05).
  */
 export function MethodTabs({
   tabs,
@@ -262,16 +269,17 @@ export function MethodTabs({
         </span>
         {help && <FieldHelp title={label}>{help}</FieldHelp>}
       </div>
-      <div className="inline-flex rounded-md border border-border/60 p-0.5">
+      <div role="group" aria-label={label} className="inline-flex rounded-md border border-border/60 p-0.5">
         {tabs.map((t) => {
           const active = value === t.id;
           return (
             <button
               key={t.id}
               type="button"
+              aria-pressed={active}
               onClick={() => onChange(t.id)}
               className={cn(
-                "flex items-center gap-1.5 rounded px-3 py-1.5 font-medium text-xs transition-colors",
+                "flex items-center gap-1.5 rounded px-3 py-1.5 font-medium text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
                 active
                   ? "bg-foreground text-background"
                   : "text-muted-foreground hover:text-foreground",
@@ -306,50 +314,6 @@ export function Step({
         <div className="font-medium text-foreground text-sm">{title}</div>
         {children}
       </div>
-    </div>
-  );
-}
-
-/**
- * The verify section + form. While the instant server-side verify is in flight it shows the shared
- * verifying/success status (with Cancel); on idle/failure it shows the provider-specific form
- * (`children`). A hairline rule separates it from the steps above.
- */
-export function VerifySection({
-  state,
-  successText,
-  verifyingText,
-  onCancel,
-  children,
-}: {
-  state: ConnTestState;
-  successText: string;
-  verifyingText: string;
-  onCancel: () => void;
-  children: ReactNode;
-}) {
-  const inFlight = state.phase === "success" || state.phase === "saving";
-  return (
-    <div className="space-y-4 border-border/60 border-t pt-6">
-      {inFlight ? (
-        <ConnectionTestStatus
-          phase={state.phase}
-          status={state.status}
-          missingPermissions={state.missingPermissions}
-          successText={successText}
-          verifyingText={verifyingText}
-          onCancel={onCancel}
-        />
-      ) : (
-        <>
-          {state.phase === "failed" && (
-            <StatusCallout variant="error" title="Verification failed">
-              {state.error}
-            </StatusCallout>
-          )}
-          {children}
-        </>
-      )}
     </div>
   );
 }

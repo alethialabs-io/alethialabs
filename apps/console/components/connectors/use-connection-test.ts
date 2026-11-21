@@ -7,7 +7,7 @@ import type { CloudVerifyResult } from "@/app/server/actions/identities";
 import { connectorKeys } from "@/components/connectors/connectors-board";
 import type { AnalyticsProps } from "@/lib/analytics/track";
 import { track } from "@/lib/analytics/track";
-import { type ActionResult, describeActionError } from "@/lib/actions/result";
+import { type ActionResult, type FieldErrors, describeActionError } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 
 /** Phases a connect flow moves through. Verification is instant + server-side (no runner, no job). */
@@ -31,6 +31,17 @@ export interface ConnTestState {
 	missingPermissions?: string[];
 }
 
+/** What a host may take over from the hook's default rendering. */
+export interface ConnectionTestOptions {
+	/**
+	 * A server refusal that names fields. Given, the messages go here — a form puts each under its
+	 * field — and the flow returns to its form instead of showing them again in the failure callout.
+	 */
+	readonly onValidationError?: (fields: FieldErrors) => void;
+	/** A connect that verified (connected or degraded), with the identity it was saved to. */
+	readonly onVerified?: (result: VerifyOutcome) => void;
+}
+
 /** Runs one connect form's save; the save carries its own values, so the hook needs no input type. */
 function runSave(save: ConnectSave): Promise<ActionResult<VerifyOutcome>> {
 	return save();
@@ -46,21 +57,31 @@ function runSave(save: ConnectSave): Promise<ActionResult<VerifyOutcome>> {
  * - saved but not verified → `failed` with the provider's reason (a SUCCESSFUL action);
  * - refused (a malformed value, no permission, a session this workspace cannot reach) → `failed`
  *   with the refusal's message. A validation refusal is not also toasted: the message is beside the
- *   field the user is looking at.
+ *   field the user is looking at — under it, when the host passes `onValidationError`.
  */
-export function useConnectionTest() {
+export function useConnectionTest(options: ConnectionTestOptions = {}) {
 	const meta = useRef<AnalyticsProps | undefined>(undefined);
 	const [validation, setValidation] = useState<string | null>(null);
+	const routed = options.onValidationError !== undefined;
 
 	const mutation = useActionMutation(runSave, {
 		invalidates: connectorKeys(),
 		onValidationError: (fields) => {
+			if (options.onValidationError) {
+				options.onValidationError(fields);
+				return;
+			}
 			const first = Object.values(fields).find((messages) => messages && messages.length > 0);
 			setValidation(first?.[0] ?? "Check the values you entered.");
 		},
+		// A refusal (no permission, a session this workspace cannot reach) is said once, in the
+		// failure callout beside the form — not also in a toast.
+		onRefusal: () => undefined,
 		onSuccess: (result) => {
+			if (!result.verified) return;
 			// Activation milestone — completes the connect_started → connected pair.
-			if (result.verified) track("connector_connected", { status: result.status, ...meta.current });
+			track("connector_connected", { status: result.status, ...meta.current });
+			options.onVerified?.(result);
 		},
 	});
 
@@ -85,7 +106,7 @@ export function useConnectionTest() {
 		mutation.reset();
 	}, [mutation]);
 
-	return { state: connTestState(mutation, validation), run, cancel, reset: cancel };
+	return { state: connTestState(mutation, validation, routed), run, cancel, reset: cancel };
 }
 
 /** The mutation's state, as the phases the shared status UI renders. */
@@ -96,10 +117,15 @@ function connTestState(
 		error: { error: Parameters<typeof describeActionError>[0] } | null;
 	},
 	validation: string | null,
+	routed: boolean,
 ): ConnTestState {
 	if (mutation.isPending) return { phase: "saving" };
 	if (validation) return { phase: "failed", error: validation };
-	if (mutation.error) return { phase: "failed", error: describeActionError(mutation.error.error) };
+	if (mutation.error) {
+		// A field refusal the host placed under its fields is not repeated in the callout.
+		if (routed && mutation.error.error.kind === "validation") return { phase: "idle" };
+		return { phase: "failed", error: describeActionError(mutation.error.error) };
+	}
 	const r = mutation.data;
 	if (!r) return { phase: "idle" };
 	return r.verified
