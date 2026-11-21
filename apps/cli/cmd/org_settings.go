@@ -14,11 +14,16 @@ import (
 var orgSettingsCmd = &cobra.Command{
 	Use:   "settings",
 	Short: "Show the active organization's general settings",
-	Long: `Show the active organization's name, slug, description, default region, default
-environment and Terraform version. Read-only: the settings are changed in the console.
+	Long: `Show the active organization's name, slug and description. Read-only: the settings
+are changed in the console.
 
 Under --output json the whole record is printed, or null on a deployment with no
-organizations.`,
+organizations.
+
+Deprecated: the JSON record still carries "region", "default_env" and
+"terraform_version" so existing scripts keep working, but nothing reads them and the
+console no longer sets them. They are no longer shown in the table, and scripts should
+stop relying on them.`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
@@ -32,7 +37,8 @@ organizations.`,
 }
 
 // runOrgSettings fetches and renders the active org's general settings. json emits the whole
-// object (or null in community mode); table/csv render the field/value card.
+// object (or null in community mode), deprecated keys included; table/csv render the field/value
+// card without the deprecated region, default environment and Terraform version.
 func runOrgSettings(c apiClient, out io.Writer, format string) error {
 	s, err := c.GetOrgSettings()
 	if err != nil {
@@ -50,9 +56,6 @@ func runOrgSettings(c apiClient, out io.Writer, format string) error {
 		{"name", s.Name},
 		{"slug", s.Slug},
 		{"description", ui.OrDash(s.Description)},
-		{"region", s.Region},
-		{"default env", s.DefaultEnv},
-		{"terraform", s.TerraformVersion},
 	}
 	return ui.RenderCard(out, format, "alethia · org settings", rows, s)
 }

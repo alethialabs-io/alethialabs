@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Settings · General — the authored claude.ai/design panel (Organization profile / Defaults /
-// Danger zone), composed from the shared settings primitives.
+// Settings · General — the authored claude.ai/design panel (Organization profile / Danger zone),
+// composed from the shared settings primitives. The Defaults panel (data region, default
+// environment, Terraform version) was removed in #7147: nothing read those values.
 //
 // #6128: the values arrive with the page (`settings.org`, prefetched by the route and hydrated), so
 // there is no client fetch on mount and no skeleton after the route's; the form is react-hook-form
@@ -29,8 +30,6 @@ import { GeneralRefusal } from "@/components/settings/general/general-states";
 import {
   ORG_CONTROL_NOTES,
   ORG_DANGER_ROWS,
-  ORG_DEFAULTS_ROWS,
-  ORG_DEFAULTS_SAVE_NOTE,
   ORG_GENERAL_SECTIONS,
   ORG_PROFILE_ROWS,
   ORG_PROFILE_SAVE_NOTE,
@@ -44,7 +43,6 @@ import {
   SettingsInput,
   SettingsPanel,
   SettingsSection,
-  SettingsSelect,
   SettingsTextarea,
   settingsControl,
   settingsControlSize,
@@ -61,7 +59,6 @@ import {
   ORG_NAME_MAX_LENGTH,
   type OrgGeneralInput,
   type OrgGeneralValues,
-  TERRAFORM_VERSION_MAX_LENGTH,
   orgGeneralSchema,
 } from "@/lib/validations/org-general";
 import { Button } from "@repo/ui/button";
@@ -69,19 +66,6 @@ import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
 import { ReadOnlyValue } from "@repo/ui/read-only-value";
 import { cn } from "@repo/ui/utils";
-
-/**
- * The data-region choices, value and label. `eu-west-1` is Ireland — it was labelled Frankfurt, which
- * is `eu-central-1` (R6 E-04).
- */
-const REGIONS = [
-  { value: "eu-west-1", label: "eu-west-1 · Ireland" },
-  { value: "eu-central-1", label: "eu-central-1 · Frankfurt" },
-  { value: "eu-north-1", label: "eu-north-1 · Stockholm" },
-  { value: "us-east-1", label: "us-east-1 · N. Virginia" },
-  { value: "ap-southeast-1", label: "ap-southeast-1 · Singapore" },
-];
-const ENVS = ["staging", "development", "production"];
 
 /** Why Save is disabled for anyone but the owner (the plugin updates the org for the owner only). */
 const EDIT_REFUSED = "Only the organization's owner can change these settings";
@@ -107,9 +91,6 @@ const FORM_FIELDS: readonly FieldPath<OrgGeneralInput>[] = [
   "name",
   "slug",
   "description",
-  "region",
-  "defaultEnv",
-  "terraformVersion",
 ];
 
 /** Narrows a server field-error key to one of the form's fields. */
@@ -131,9 +112,6 @@ function formValues(s: OrgSettings): OrgGeneralInput {
     name: s.name,
     slug: s.slug,
     description: s.description,
-    region: s.region,
-    defaultEnv: s.defaultEnv,
-    terraformVersion: s.terraformVersion,
   };
 }
 
@@ -181,7 +159,7 @@ export function OrgGeneral() {
         className="border border-dashed border-border p-6 md:p-6"
         icon={<Building2 size={18} aria-hidden />}
         title="No organization settings here"
-        description="This is your personal workspace. An organization's name, URL and defaults are set in the organization."
+        description="This is your personal workspace. An organization's name and URL are set in the organization."
       />
     );
   }
@@ -197,7 +175,6 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
     name: useId(),
     slug: useId(),
     description: useId(),
-    terraformVersion: useId(),
   };
 
   const form = useForm<OrgGeneralInput, unknown, OrgGeneralValues>({
@@ -283,7 +260,7 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
     <div>
       <form noValidate onSubmit={onSubmit} aria-label="Organization settings">
         {/* A role that cannot save cannot edit either: every field is read-only, and the Save
-            buttons say why. */}
+            button says why. */}
         <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
           <SettingsColumns>
             <SettingsSection title={ORG_GENERAL_SECTIONS.profile}>
@@ -388,63 +365,6 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                   </SettingsField>
                 </div>
                 <SettingsCardFoot note={ORG_PROFILE_SAVE_NOTE}>{saveBtn}</SettingsCardFoot>
-              </SettingsPanel>
-            </SettingsSection>
-
-            <SettingsSection title={ORG_GENERAL_SECTIONS.defaults}>
-              <SettingsPanel>
-                <div className="py-1">
-                  <SettingsField
-                    label={ORG_DEFAULTS_ROWS.region.label}
-                    hint={ORG_DEFAULTS_ROWS.region.hint}
-                  >
-                    <Controller
-                      control={form.control}
-                      name="region"
-                      render={({ field }) => (
-                        <SettingsSelect
-                          value={field.value}
-                          onChange={field.onChange}
-                          options={REGIONS}
-                        />
-                      )}
-                    />
-                    <span className="font-mono text-ui-2xs text-text-tertiary">
-                      {ORG_CONTROL_NOTES.region}
-                    </span>
-                  </SettingsField>
-                  <SettingsField
-                    label={ORG_DEFAULTS_ROWS.defaultEnv.label}
-                    hint={ORG_DEFAULTS_ROWS.defaultEnv.hint}
-                  >
-                    <Controller
-                      control={form.control}
-                      name="defaultEnv"
-                      render={({ field }) => (
-                        <SettingsSelect
-                          value={field.value}
-                          onChange={field.onChange}
-                          options={ENVS.map((en) => ({ value: en, label: en }))}
-                        />
-                      )}
-                    />
-                  </SettingsField>
-                  <SettingsField
-                    label={ORG_DEFAULTS_ROWS.terraformVersion.label}
-                    hint={ORG_DEFAULTS_ROWS.terraformVersion.hint}
-                  >
-                    <SettingsInput
-                      className={cn(settingsControl, settingsControlSize, "font-mono text-ui-sm")}
-                      autoComplete="off"
-                      maxLength={TERRAFORM_VERSION_MAX_LENGTH}
-                      aria-invalid={errors.terraformVersion ? true : undefined}
-                      aria-describedby={errors.terraformVersion ? ids.terraformVersion : undefined}
-                      {...form.register("terraformVersion")}
-                    />
-                    <FieldError id={ids.terraformVersion} message={errors.terraformVersion?.message} />
-                  </SettingsField>
-                </div>
-                <SettingsCardFoot note={ORG_DEFAULTS_SAVE_NOTE}>{saveBtn}</SettingsCardFoot>
               </SettingsPanel>
             </SettingsSection>
           </SettingsColumns>

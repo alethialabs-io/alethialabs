@@ -63,7 +63,7 @@ function CONTEXT(role: string): WorkspaceContext {
 	};
 }
 
-/** Both Save buttons (Organization profile, Defaults). */
+/** The Save buttons on the page (the Organization profile panel's one, since #7147). */
 function saveButtons() {
 	return screen.getAllByRole("button", { name: /^(Save changes|Saving…)$/ });
 }
@@ -78,7 +78,7 @@ beforeEach(() => {
 });
 
 describe("F012/F024 — one form standard: pristine is not saveable", () => {
-	it("paints the loaded values on first render, with both Saves disabled", () => {
+	it("paints the loaded values on first render, with Save disabled", () => {
 		renderOrgGeneral();
 		// First paint IS the form: the read was hydrated, nothing is fetched (B1).
 		expect(screen.getByRole("textbox", { name: "Organization name" })).toHaveValue("Acme");
@@ -101,7 +101,29 @@ describe("F012/F024 — one form standard: pristine is not saveable", () => {
 		const names = [...container.querySelectorAll("input[name], textarea[name]")].map((el) =>
 			el.getAttribute("name"),
 		);
-		expect(names).toEqual(["name", "slug", "description", "terraformVersion"]);
+		expect(names).toEqual(["name", "slug", "description"]);
+	});
+});
+
+describe("#7147 — no Defaults section", () => {
+	it("renders the profile and the danger zone, and no data region, default environment or Terraform version", () => {
+		renderOrgGeneral();
+		const headings = screen.getAllByRole("heading").map((h) => h.textContent);
+		expect(headings).toEqual(["Organization profile", "Danger zone"]);
+		expect(screen.queryByText("Data region")).toBeNull();
+		expect(screen.queryByText("Default Project environment")).toBeNull();
+		expect(screen.queryByText("Terraform version")).toBeNull();
+		expect(screen.queryByRole("combobox")).toBeNull();
+		expect(saveButtons()).toHaveLength(1);
+	});
+
+	it("saves only the profile's fields", async () => {
+		const user = userEvent.setup();
+		renderOrgGeneral();
+		await user.type(screen.getByRole("textbox", { name: "Description" }), "x");
+		await user.click(saveButtons()[0]);
+		await waitFor(() => expect(saveOrgGeneral).toHaveBeenCalledTimes(1));
+		expect(Object.keys(saveOrgGeneral.mock.calls[0][0]).sort()).toEqual(["description", "name", "slug"]);
 	});
 });
 
@@ -126,8 +148,8 @@ describe("F013 — validation is inline, never raw validator text in a toast", (
 			ok: false,
 			error: {
 				kind: "validation",
-				message: "Use a release number such as 1.9.5.",
-				fields: { terraformVersion: ["Use a release number such as 1.9.5."] },
+				message: "Use at most 280 characters.",
+				fields: { description: ["Use at most 280 characters."] },
 			},
 		});
 		const user = userEvent.setup();
@@ -135,7 +157,7 @@ describe("F013 — validation is inline, never raw validator text in a toast", (
 		await user.type(screen.getByRole("textbox", { name: "Description" }), "x");
 		await user.click(saveButtons()[0]);
 
-		expect(await screen.findByRole("alert")).toHaveTextContent("Use a release number such as 1.9.5.");
+		expect(await screen.findByRole("alert")).toHaveTextContent("Use at most 280 characters.");
 		expect(toastError).not.toHaveBeenCalled();
 	});
 

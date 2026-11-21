@@ -79,9 +79,6 @@ const VALID = {
 	name: "Acme Corp",
 	slug: "acme-corp",
 	description: "Platform team",
-	region: "eu-west-1",
-	defaultEnv: "staging",
-	terraformVersion: "1.9.5",
 };
 
 /** better-auth's answer to the dispatched request. */
@@ -115,7 +112,6 @@ describe("saveOrgGeneral — the schema refuses before anything is dispatched (F
 		["a description over 280 characters", { ...VALID, description: "d".repeat(281) }, "description", "Use at most 280 characters."],
 		["a reserved slug", { ...VALID, slug: "docs" }, "slug", "That slug is reserved — try another."],
 		["a slug with capitals", { ...VALID, slug: "Acme" }, "slug", "Lowercase letters, numbers and hyphens."],
-		["a malformed Terraform version", { ...VALID, terraformVersion: "latest" }, "terraformVersion", "Use a release number such as 1.9.5."],
 	])("%s → a field error, no write", async (_label, input, field, message) => {
 		const result = await saveOrgGeneral(input);
 		expect(result).toMatchObject({ ok: false, error: { kind: "validation", fields: { [field]: [message] } } });
@@ -157,11 +153,24 @@ describe("saveOrgGeneral — a save", () => {
 			data: {
 				metadata: {
 					...stored,
-					region: "eu-west-1",
 					description: "Platform team",
-					defaultEnv: "staging",
-					terraformVersion: "1.9.5",
 				},
+			},
+		});
+	});
+
+	it("no longer accepts the data region, default environment or Terraform version, and keeps the stored ones (#7147)", async () => {
+		const stored = { region: "us-east-1", defaultEnv: "production", terraformVersion: "1.10.0" };
+		mockDb([{ metadata: JSON.stringify(stored) }]);
+		const fromAnOldClient = { ...VALID, region: "eu-west-1", defaultEnv: "staging", terraformVersion: "latest" };
+		expect(await saveOrgGeneral(fromAnOldClient)).toMatchObject({ ok: true });
+		const sent = await dispatched();
+		expect(sent.body).toEqual({
+			organizationId: "org-1",
+			data: {
+				name: "Acme Corp",
+				slug: "acme-corp",
+				metadata: { ...stored, description: "Platform team" },
 			},
 		});
 	});
@@ -209,9 +218,6 @@ describe("saveOrgGeneral — what the client cannot add (review on #6216)", () =
 				metadata: {
 					...stored,
 					description: "Platform team",
-					region: "eu-west-1",
-					defaultEnv: "staging",
-					terraformVersion: "1.9.5",
 				},
 			},
 		});
