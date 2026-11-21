@@ -3,6 +3,7 @@
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { z } from "zod";
 
 /** Cap on remembered ids so the persisted set can't grow unbounded. */
 const MAX_READ_IDS = 200;
@@ -21,32 +22,75 @@ function dedupeCapped(ids: string[]): string[] {
 }
 
 /**
+ * One acknowledged support case: the case, and the newest message the person had seen when they
+ * acknowledged it. A later message on the same case is newer than `lastMessageAt`, so the case is
+ * unread again (G-08) — an id alone would have kept every later staff reply silent forever.
+ */
+export interface SupportAck {
+	caseId: string;
+	/** ISO timestamp of the case's newest message at the time of the acknowledgement. */
+	lastMessageAt: string;
+}
+
+/** Puts `incoming` first (one per case, the newest acknowledgement wins) and caps the list. */
+function mergeAcks(incoming: SupportAck[], existing: SupportAck[]): SupportAck[] {
+	const seen = new Set<string>();
+	const next: SupportAck[] = [];
+	for (const ack of [...incoming, ...existing]) {
+		if (seen.has(ack.caseId)) continue;
+		seen.add(ack.caseId);
+		next.push(ack);
+		if (next.length >= MAX_READ_IDS) break;
+	}
+	return next;
+}
+
+/**
+ * Whether the person has already seen everything on a case that has its newest message at
+ * `lastMessageAt`: they acknowledged it at that message or a later one. Compared as instants,
+ * so two spellings of one time agree.
+ */
+export function isSupportAcked(
+	acks: readonly SupportAck[],
+	caseId: string,
+	lastMessageAt: string,
+): boolean {
+	const ack = acks.find((entry) => entry.caseId === caseId);
+	if (ack === undefined) return false;
+	const acked = Date.parse(ack.lastMessageAt);
+	const latest = Date.parse(lastMessageAt);
+	return Number.isFinite(acked) && Number.isFinite(latest) && acked >= latest;
+}
+
+/**
  * Read-state for the notifications bell. The notification list itself is derived live from
  * the jobs query (`useJobNotifications`) and the support-cases query (`useSupportNotifications`);
- * this store only remembers which job / support-case ids the user has acknowledged, persisted to
- * `localStorage` so the unread badge survives reloads and is shared across tabs (unlike the
- * ephemeral React state the bell used before).
+ * this store only remembers which jobs and which support-case messages the user has acknowledged,
+ * persisted to `localStorage` so the unread badge survives reloads and is shared across tabs.
  */
 interface NotificationsStore {
 	/** Job ids the user has marked read (persisted, capped to the most recent). */
 	readJobIds: string[];
-	/** Support-case ids the user has marked read (persisted, capped to the most recent). */
-	readSupportCaseIds: string[];
+	/** Support cases the user has acknowledged, each up to a message (persisted, capped). */
+	supportAcks: SupportAck[];
 	/** Marks one job id read. */
 	markRead: (jobId: string) => void;
 	/** Marks a batch of job ids read (e.g. "Mark all read"). */
 	markAllRead: (jobIds: string[]) => void;
-	/** Marks one support-case id read. */
-	markSupportRead: (caseId: string) => void;
-	/** Marks a batch of support-case ids read (e.g. "Mark all read"). */
-	markAllSupportRead: (caseIds: string[]) => void;
+	/** Acknowledges one support case up to its newest message. */
+	markSupportRead: (ack: SupportAck) => void;
+	/** Acknowledges a batch of support cases (e.g. "Mark all read"). */
+	markAllSupportRead: (acks: SupportAck[]) => void;
 }
+
+/** The persisted shape before version 2: support cases were remembered by id alone. */
+const persistedV1Schema = z.object({ readJobIds: z.array(z.string()).catch([]) });
 
 export const useNotificationsStore = create<NotificationsStore>()(
 	persist(
 		(set) => ({
 			readJobIds: [],
-			readSupportCaseIds: [],
+			supportAcks: [],
 
 			markRead: (jobId) => {
 				set((state) => {
@@ -61,37 +105,28 @@ export const useNotificationsStore = create<NotificationsStore>()(
 				}));
 			},
 
-			markSupportRead: (caseId) => {
-				set((state) => {
-					if (state.readSupportCaseIds.includes(caseId)) return state;
-					return {
-						readSupportCaseIds: [caseId, ...state.readSupportCaseIds].slice(
-							0,
-							MAX_READ_IDS,
-						),
-					};
-				});
+			markSupportRead: (ack) => {
+				set((state) => ({ supportAcks: mergeAcks([ack], state.supportAcks) }));
 			},
 
-			markAllSupportRead: (caseIds) => {
-				set((state) => ({
-					readSupportCaseIds: dedupeCapped([
-						...caseIds,
-						...state.readSupportCaseIds,
-					]),
-				}));
+			markAllSupportRead: (acks) => {
+				set((state) => ({ supportAcks: mergeAcks(acks, state.supportAcks) }));
 			},
 		}),
 		{
 			name: "notifications-store",
 			storage: createJSONStorage(() => localStorage),
-			// Additive change: v1 payloads lack `readSupportCaseIds`, which the shallow
-			// merge fills from the initial `[]` — no version bump / migrate needed (the
-			// store never versioned its migrations), and existing job read-state is kept.
-			version: 1,
+			// v2 replaced `readSupportCaseIds` (ids, which hid every later reply) with `supportAcks`.
+			// A v1 id carries no message time, so it cannot be converted: it is dropped, and the
+			// server's own read watermark decides those cases until the person opens them again.
+			version: 2,
+			migrate: (persisted) => {
+				const parsed = persistedV1Schema.safeParse(persisted);
+				return { readJobIds: parsed.success ? parsed.data.readJobIds : [], supportAcks: [] };
+			},
 			partialize: (state) => ({
 				readJobIds: state.readJobIds,
-				readSupportCaseIds: state.readSupportCaseIds,
+				supportAcks: state.supportAcks,
 			}),
 		},
 	),

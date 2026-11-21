@@ -8,23 +8,24 @@ import { useId, useRef } from "react";
 import { Button } from "@repo/ui/button";
 import {
 	ATTACHMENT_ACCEPT,
-	isAllowedAttachment,
-	MAX_ATTACHMENT_BYTES,
-} from "@/components/support/attachments";
+	ATTACHMENT_HINT,
+	attachmentRejection,
+} from "@/components/support/attachment-policy";
 
 interface AttachmentPickerProps {
 	/** Currently-selected files (owned by the parent form). */
 	files: File[];
 	/** Replaces the selected-file list. */
 	onChange: (files: File[]) => void;
-	/** Reports a rejected file (bad type / too large) so the parent can toast. */
+	/** Reports a rejected file (type not accepted, empty, too large) with the sentence to show. */
 	onReject?: (reason: string) => void;
 }
 
 /**
  * Collects optional case attachments before submit. The files are held by the parent (not
- * uploaded here) and posted to the created case after submission. Rejects files outside the
- * allowlist or over the 10 MB cap client-side, reporting the reason via `onReject`.
+ * uploaded here) and posted to the created case after submission. Rejects, client-side, what the
+ * upload route would refuse — the same `attachment-policy` decides both — and reports why via
+ * `onReject`. A file the browser gives no type (a `.log`) is judged by its extension.
  */
 export function AttachmentPicker({ files, onChange, onReject }: AttachmentPickerProps) {
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -35,12 +36,9 @@ export function AttachmentPicker({ files, onChange, onReject }: AttachmentPicker
 		if (!selected) return;
 		const next = [...files];
 		for (const file of Array.from(selected)) {
-			if (!isAllowedAttachment(file)) {
-				onReject?.(`${file.name}: unsupported file type`);
-				continue;
-			}
-			if (file.size > MAX_ATTACHMENT_BYTES) {
-				onReject?.(`${file.name}: exceeds the 10 MB limit`);
+			const rejection = attachmentRejection(file);
+			if (rejection !== null) {
+				onReject?.(rejection);
 				continue;
 			}
 			if (next.some((f) => f.name === file.name && f.size === file.size)) continue;
@@ -76,9 +74,7 @@ export function AttachmentPicker({ files, onChange, onReject }: AttachmentPicker
 				<Paperclip className="h-4 w-4" />
 				Add files
 			</Button>
-			<p className="text-xs text-muted-foreground">
-				Images, PDF, text, JSON, or archives up to 10 MB each.
-			</p>
+			<p className="text-xs text-muted-foreground">{ATTACHMENT_HINT}</p>
 
 			{files.length > 0 && (
 				<ul className="space-y-1.5 pt-1">
