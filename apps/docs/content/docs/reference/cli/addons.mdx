@@ -18,14 +18,14 @@ it is refused with `403` if you are not a member of it.
 
 ## No id is copied between commands
 
-`enable` and `disable` take the add-on id as an **optional** first argument. Omit it on a terminal
+`enable`, `disable` and `bump` take the add-on id as an **optional** first argument. Omit it on a terminal
 and the add-ons installed in the environment are offered to choose from, so nothing has to be read
 out of one command's output and pasted into the next. The add-on the CLI resolved is printed on
 **stderr**, so `-o json` still emits a document that parses.
 
 Pass `--project` and the id is the only thing missing; omit `--project` too and you are asked for
 that as well. With `--no-input` (or a non-terminal stdin/stdout) nothing is asked: the command
-fails naming the argument to pass, so a script never blocks on a prompt it cannot answer.
+exits `9` naming the argument to pass, so a script never blocks on a prompt it cannot answer.
 
 <Callout type="warn">
 One handoff remains, and it is the CLI's only one here: installing an add-on that is **not yet
@@ -33,6 +33,38 @@ enabled** needs its catalog id, and the CLI has no endpoint that enumerates the 
 catalog — browse it in the console. The picker offers what is installed, which covers every
 reconfigure and every disable.
 </Callout>
+
+## Output and exit codes
+
+**The result is on stdout, and everything else is on stderr.** With `--output json`, `enable`,
+`disable` and `bump` print one object:
+
+```json
+{
+  "id": "loki",
+  "kind": "addon",
+  "action": "updated",
+  "job": null,
+  "dry_run": false,
+  "object": { "project": "shop", "env": "staging", "enabled": true, "mode": "", "version": null }
+}
+```
+
+`enable` and `disable` both report `updated`: an enable is an upsert, and a disabled add-on keeps
+its record with `enabled` set to `false`. In the object, an empty `mode` and a `null` `version` mean
+that the stored value was kept. `bump` reports `created` when it opened a pull request and
+`unchanged` otherwise, and its object is described under [`alethia addon bump`](#alethia-addon-bump).
+When the next step needs saying — "it reaches the cluster on the next apply" — it is a line on
+stderr.
+
+**A refusal exits with the code of its kind.** stdout stays empty, and stderr says what happened
+and the command to run next.
+
+| Exit | Meaning on this page |
+|------|----------------------|
+| `6` | The add-on, project or environment that you named does not exist, or the picker had nothing installed to offer |
+| `8` | A flag value is not valid: a `--mode` outside the enum, a `--set` without `=`, or a values file that cannot be read |
+| `9` | A value or a confirmation is needed and nothing can ask for it: pass the add-on id, `--project` or `--yes` |
 
 ## `alethia addon list`
 
@@ -204,7 +236,7 @@ alethia addon disable -p my-project
   Disabling removes the add-on's workloads from the cluster on the next sync. Data held in its
   volumes may not survive — take a backup first if it matters. The add-on the CLI resolved is
   named on stderr **before** the confirmation, so what you are confirming is always something you
-  can read. The command requires `--yes` when it cannot prompt, and fails rather than exiting 0
+  can read. The command requires `--yes` when it cannot prompt, and exits `9` rather than exiting 0
   having done nothing.
 </Callout>
 
@@ -248,6 +280,39 @@ before you merge.
   open a pull request, it shows the file, the field and the version to change yourself. The
   command exits 0 in that case, because the refusal is an answer, not a failure.
 </Callout>
+
+With `--output json` the pull request is in the object as fields, so a script does not read it out
+of a sentence:
+
+```bash
+alethia addon bump ingress-nginx -p my-project -e production --output json
+```
+
+```json
+{
+  "id": "ingress-nginx",
+  "kind": "addon",
+  "action": "created",
+  "job": null,
+  "dry_run": false,
+  "object": {
+    "project": "my-project",
+    "env": "production",
+    "status": "open",
+    "created": true,
+    "version": "4.15.1",
+    "file": "addons/ingress-nginx.yaml",
+    "field": "spec.source.targetRevision",
+    "number": 42,
+    "url": "https://github.com/acme/apps/pull/42",
+    "reason": null,
+    "message": null
+  }
+}
+```
+
+`status` is `open`, `merged`, `declined` (you closed it without merging) or `refused`. A refusal
+carries `reason` and `message`, and `number` and `url` are `null`.
 
 ## See also
 
