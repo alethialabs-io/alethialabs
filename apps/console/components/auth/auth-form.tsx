@@ -365,7 +365,13 @@ function ProviderButton({
 			variant="outline"
 			onClick={() => onSelect(provider)}
 			disabled={isLoading}
-			className="h-[46px] w-full min-w-0 gap-[9px] border-border-strong text-ui-md hover:border-ring hover:bg-surface-muted"
+			// The three-up tiles take tighter padding and gap: at the card's desktop width a tile is
+			// ~105px, and the default 16px sides left "Bitbucket" ~47px of the ~60px it needs.
+			className={
+				compact
+					? "h-[46px] w-full min-w-0 gap-[6px] border-border-strong px-2 text-ui-md hover:border-ring hover:bg-surface-muted"
+					: "h-[46px] w-full min-w-0 gap-[9px] border-border-strong text-ui-md hover:border-ring hover:bg-surface-muted"
+			}
 		>
 			{loadingProvider === provider ? (
 				<Loader2 className="size-[17px] animate-spin" />
