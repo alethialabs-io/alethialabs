@@ -5,16 +5,6 @@
 // Runner action + version controls, shared by the runner card. Extracted from the
 // former table columns when the runners list moved to cards.
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@repo/ui/alert-dialog";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
@@ -24,6 +14,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@repo/ui/tooltip";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { ReleaseNotesPopover } from "@/components/runners/release-notes-popover";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 import {
@@ -33,6 +24,8 @@ import {
   useDeleteRunner,
   type RunnerView,
 } from "@/lib/query/use-runners-query";
+import { globalHref } from "@/lib/routing";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { ArrowUpCircle, Loader2, Star } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -132,6 +125,7 @@ export function RunnerVersion({ runner }: { runner: RunnerRow }) {
  *  is in flight it renders a link to that job instead. */
 export function RunnerActions({ runner }: { runner: RunnerRow }) {
   const router = useRouter();
+  const orgSlug = useActiveOrgSlug();
   const setDefault = useSetDefaultRunner();
   const destroy = useDestroyRunner();
   const remove = useDeleteRunner();
@@ -160,7 +154,7 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
           toast.success("Destroy job queued", {
             action: {
               label: "View job",
-              onClick: () => router.push(`/dashboard/jobs/${jobId}`),
+              onClick: () => router.push(globalHref(orgSlug, `jobs/${jobId}`)),
             },
           });
         },
@@ -168,13 +162,20 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
     );
   };
 
-  const handleRemove = () => {
-    remove.mutate(runner.id, {
-      onSuccess: () => toast.success(`${runner.name} removed`),
-      onSettled: () => setShowRemoveDialog(false),
-    });
+  // The removal the confirmation runs: it closes on success (with one toast) and stays open on a
+  // failure, which `useActionMutation` has already reported.
+  const confirmableRemove = {
+    isPending: remove.isPending,
+    mutate: (runnerId: string, options?: { onSuccess?: () => void; onSettled?: () => void }) => {
+      remove.mutate(runnerId, {
+        onSuccess: () => {
+          toast.success(`${runner.name} removed`);
+          options?.onSuccess?.();
+        },
+        onSettled: options?.onSettled,
+      });
+    },
   };
-  const acting = remove.isPending;
 
   if (busy && runner.active_job) {
     const label =
@@ -185,7 +186,7 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
           : "Destroying…";
     return (
       <Link
-        href={`/dashboard/jobs/${runner.active_job.id}`}
+        href={globalHref(orgSlug, `jobs/${runner.active_job.id}`)}
         onClick={(e) => e.stopPropagation()}
         className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
       >
@@ -279,34 +280,17 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
               Remove
             </Button>
 
-            <AlertDialog
+            <ConfirmAction
               open={showRemoveDialog}
-              onOpenChange={(open) => !open && setShowRemoveDialog(false)}
-            >
-              <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    Remove runner &ldquo;{runner.name}&rdquo;?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will remove the runner record from the database. This
-                    cannot be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={acting}>
-                    Cancel
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={handleRemove}
-                    disabled={acting}
-                    variant="destructive"
-                  >
-                    {acting ? "Removing..." : "Remove"}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+              onOpenChange={setShowRemoveDialog}
+              title={`Remove runner \u201C${runner.name}\u201D?`}
+              description="The runner is removed from this list and is no longer given jobs. The machine it runs on is not touched. This cannot be undone."
+              confirmLabel="Remove"
+              pendingLabel="Removing…"
+              severity={{ level: "confirm" }}
+              mutation={confirmableRemove}
+              variables={showRemoveDialog ? runner.id : null}
+            />
           </>
         )}
     </div>

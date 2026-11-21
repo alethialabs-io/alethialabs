@@ -35,8 +35,12 @@ export const SHORTCUT_CANVAS_REDO = "canvas.redo";
 export const SHORTCUT_CANVAS_DUPLICATE = "canvas.duplicate";
 /** Close the inspector. */
 export const SHORTCUT_CANVAS_CLOSE = "canvas.close";
-/** Save the design without deploying it. */
-export const SHORTCUT_CANVAS_SAVE = "canvas.save";
+/**
+ * Open the review-and-deploy view (#6833). ⌘S is the chord people reach for when they are done with
+ * an edit, so it leads to the one way forward from an edit: a plan, reviewed, then a deploy. Nothing
+ * is bound to Deploy itself.
+ */
+export const SHORTCUT_CANVAS_REVIEW_PLAN = "canvas.review-plan";
 /** Open the assistant on this project. */
 export const SHORTCUT_CANVAS_ASSISTANT = "canvas.assistant";
 /** Fit the whole design in view. */
@@ -107,10 +111,10 @@ export const CANVAS_KEYS: readonly ShortcutBinding[] = [
 		label: "Close the inspector",
 	},
 	{
-		id: SHORTCUT_CANVAS_SAVE,
+		id: SHORTCUT_CANVAS_REVIEW_PLAN,
 		chord: { key: "s", mod: true, shift: false },
 		scope: "canvas",
-		label: "Save the design",
+		label: "Review plan",
 		// Taken in a field too: the browser's own "save this page" must not open over the board.
 		allowInInput: true,
 	},

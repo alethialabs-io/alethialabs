@@ -22,6 +22,8 @@ import {
 } from "@/components/runners/runner-actions";
 import { formatMinutes, formatRelative } from "@repo/format";
 import { ClockSlot } from "@/components/overview/clock-slot";
+import { globalHref } from "@/lib/routing";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { Cloud, Server, Star } from "lucide-react";
 import Link from "next/link";
 
@@ -60,6 +62,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 	);
 }
 
+/** One runner: its status, facts, the job acting on it (if any) and its actions. */
 export function RunnerCard({
 	runner,
 	initialAssignments,
@@ -67,6 +70,7 @@ export function RunnerCard({
 	runner: RunnerRow;
 	initialAssignments?: AssignedValue[];
 }) {
+	const orgSlug = useActiveOrgSlug();
 	const isManaged = runner.operator === "managed";
 	const OperatorIcon = isManaged ? Cloud : Server;
 	const providers = runner.supported_providers ?? [];
@@ -82,7 +86,12 @@ export function RunnerCard({
 				<div className="min-w-0 flex-1">
 					<div className="flex items-center gap-1.5">
 						<span className="truncate text-sm font-semibold tracking-tight text-foreground">{runner.name}</span>
-						{runner.is_default && <Star className="h-3 w-3 shrink-0 fill-foreground text-foreground" />}
+						{runner.is_default && (
+							<>
+								<Star className="h-3 w-3 shrink-0 fill-foreground text-foreground" aria-hidden />
+								<span className="sr-only">Default runner</span>
+							</>
+						)}
 					</div>
 					<div className="mt-1 flex min-w-0 items-center gap-1.5">
 						<StatusBadge status={displayStatus(runner)} className="text-ui-2xs" />
@@ -137,7 +146,7 @@ export function RunnerCard({
 			{/* active job */}
 			{job && jobInfo && (
 				<Link
-					href={`/dashboard/jobs/${job.id}`}
+					href={globalHref(orgSlug, `jobs/${job.id}`)}
 					className="flex items-center gap-1.5 border-t border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
 				>
 					{JobIcon && <JobIcon className="h-3 w-3 shrink-0" />}
