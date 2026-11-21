@@ -31,6 +31,7 @@ import {
 	SubscriptionCanceledEmail,
 	subject as canceledSubject,
 } from "@/emails/subscription-canceled";
+import { TrialEndedEmail, subject as trialEndedSubject } from "@/emails/trial-ended";
 import { TrialEndingEmail, subject as trialEndingSubject } from "@/emails/trial-ending";
 import {
 	WelcomeToPlanEmail,
@@ -244,10 +245,36 @@ export async function sendPaymentFailedEmail(
 	});
 }
 
-/** Nudge sent ~3 days before a trial ends (trial_will_end). */
+/**
+ * The subscription's customer as an object: the expanded one when the event carried it, else one
+ * retrieve. Null for a deleted customer or none.
+ */
+async function customerOf(sub: Stripe.Subscription): Promise<Stripe.Customer | null> {
+	const ref = sub.customer;
+	if (!ref) return null;
+	if (typeof ref !== "string") return ref.deleted ? null : ref;
+	const c = await getStripe().customers.retrieve(ref);
+	return c.deleted ? null : c;
+}
+
+/**
+ * Whether a payment method is on file for this subscription: its own default, or the customer's
+ * invoice default. Decides which reminder a trial gets — "add a card or it ends" or "it continues".
+ */
+function hasPaymentMethodOnFile(sub: Stripe.Subscription, customer: Stripe.Customer | null): boolean {
+	return Boolean(sub.default_payment_method) || Boolean(customer?.invoice_settings?.default_payment_method);
+}
+
+/**
+ * The reminder sent before a trial ends (`customer.subscription.trial_will_end`, ~3 days out). A
+ * card-less trial is told to add a payment method or return to Hobby; a trial with one on file is
+ * told it continues.
+ */
 export async function sendTrialEndingEmail(sub: Stripe.Subscription): Promise<void> {
-	const to = await recipient(sub.customer);
-	if (!to || !sub.trial_end) return;
+	if (!sub.trial_end) return;
+	const customer = await customerOf(sub);
+	const to = customer?.email ?? null;
+	if (!to) return;
 	const config = getEmailConfig();
 	await sendGuardedEmail({
 		from: config.from.general,
@@ -258,8 +285,32 @@ export async function sendTrialEndingEmail(sub: Stripe.Subscription): Promise<vo
 			orgName: await orgName(sub.metadata?.organization_id),
 			planLabel: planLabelFromSub(sub),
 			trialEndLabel: fmtDate(sub.trial_end),
+			paymentMethodOnFile: hasPaymentMethodOnFile(sub, customer),
 		}),
 		devLog: `trial ending ${fmtDate(sub.trial_end)}`,
+	});
+}
+
+/**
+ * The notice sent when a card-less trial ran out with no payment method
+ * (lib/billing/trial/end.ts `isCardlessTrialEnd`): the organization is on Hobby now, nothing was
+ * deleted, and how to subscribe.
+ */
+export async function sendTrialEndedEmail(sub: Stripe.Subscription): Promise<void> {
+	const to = await recipient(sub.customer);
+	if (!to) return;
+	const config = getEmailConfig();
+	await sendGuardedEmail({
+		from: config.from.general,
+		configurationSetName: config.configSet.general,
+		to,
+		subject: trialEndedSubject,
+		react: TrialEndedEmail({
+			orgName: await orgName(sub.metadata?.organization_id),
+			planLabel: planLabelFromSub(sub),
+			trialEndLabel: sub.trial_end ? fmtDate(sub.trial_end) : undefined,
+		}),
+		devLog: "trial ended",
 	});
 }
 
