@@ -1,25 +1,26 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Building2, CircleDollarSign } from "lucide-react";
+import { Building2, CircleDollarSign, Filter } from "lucide-react";
 import Link from "next/link";
 import type React from "react";
 import { AlethiaLockup } from "@repo/brand/lockup";
 import { cn } from "@repo/ui/utils";
 
 /** Which top-nav section is active (drives the highlighted link). */
-export type StaffNav = "cases" | "spend" | "orgs";
+export type StaffNav = "cases" | "spend" | "funnel" | "orgs";
 
 /** The staff-console top-nav sections: label + route + active key. */
 const NAV: { key: StaffNav; label: string; href: string }[] = [
 	{ key: "cases", label: "Cases", href: "/" },
 	{ key: "spend", label: "AI spend", href: "/spend" },
+	{ key: "funnel", label: "Funnel", href: "/funnel" },
 	{ key: "orgs", label: "Orgs", href: "/orgs" },
 ];
 
 /**
  * The minimal chrome for the admin console — a slim top bar with the "Alethia staff"
- * brand + the cross-tenant nav (Cases · AI spend), the acting staff email on the right, and
+ * brand + the cross-tenant nav (Cases · AI spend · Funnel · Orgs), the acting staff email on the right, and
  * a centered max-width content column. This dashboard is cross-tenant and has no org
  * sidebar; the whole subdomain sits behind Cloudflare Access. `active` highlights the
  * current section.
@@ -59,6 +60,7 @@ export function StaffShell({
 									{item.key === "spend" && (
 										<CircleDollarSign className="size-4" />
 									)}
+									{item.key === "funnel" && <Filter className="size-4" />}
 									{item.key === "orgs" && <Building2 className="size-4" />}
 									{item.label}
 								</Link>
