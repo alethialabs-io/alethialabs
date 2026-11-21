@@ -243,22 +243,9 @@ describe("settings pages — accessible names", () => {
 		const { container } = renderOrgGeneral();
 		// The panel renders a skeleton when its read has not answered — without the wait this
 		// asserts against a tree that contains no select at all and passes for the wrong reason.
-		await screen.findByText("Data region");
+		await screen.findByText("Organization name");
 		expect(container.querySelectorAll(NAME_REQUIRED).length).toBeGreaterThan(0);
 		expect(unnamedControls(container)).toEqual([]);
-	});
-
-	it("takes the two Defaults selects' names from their visible row labels", async () => {
-		renderOrgGeneral();
-		// Neither call site passes an `aria-label`; both are named by `SettingsField` publishing the
-		// id of the label the user can already read. Asserting the NAME (not the attribute) is what
-		// makes this a claim about what a screen reader says.
-		expect(
-			await screen.findByRole("combobox", { name: "Data region" }),
-		).toBeInTheDocument();
-		expect(
-			screen.getByRole("combobox", { name: "Default Project environment" }),
-		).toBeInTheDocument();
 	});
 
 	it("names every control on Settings · Preview environments", async () => {
@@ -408,6 +395,22 @@ describe("access combobox — accessible names", () => {
 });
 
 describe("the settings field primitive", () => {
+	it("names a select inside a field row from the row's visible label", () => {
+		// No `aria-label`: the name comes from `SettingsField` publishing the id of the label the user
+		// can already read. Asserting the NAME (not the attribute) is what makes this a claim about
+		// what a screen reader says. (Settings · General's Defaults selects carried this until #7147.)
+		render(
+			<SettingsField label="Data region">
+				<SettingsSelect
+					value="eu-west-1"
+					onChange={() => {}}
+					options={[{ value: "eu-west-1", label: "eu-west-1" }]}
+				/>
+			</SettingsField>,
+		);
+		expect(screen.getByRole("combobox", { name: "Data region" })).toBeInTheDocument();
+	});
+
 	it("lets an explicit name win, and never sets both naming attributes", () => {
 		// `aria-labelledby` beats `aria-label` in the accname algorithm, so a select that carried
 		// both would silently discard the explicit one — which is what the two `access-manager` call

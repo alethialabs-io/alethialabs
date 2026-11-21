@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The org's General-settings WRITES. Name + slug live on the organization row; the rest
-// (description, data region, default Project env, Terraform version) live in the org `metadata`
-// JSON. The READ is `settings.org` on the read router (lib/rpc/procedures/settings.ts, #6128).
+// The org's General-settings WRITES. Name + slug live on the organization row; the description
+// lives in the org `metadata` JSON. The data region, default environment and Terraform version that
+// older saves wrote there are no longer accepted (#7147) and are kept as stored. The READ is `settings.org` on the read router (lib/rpc/procedures/settings.ts, #6128).
 //
 // The rename and the delete still go through better-auth's organization plugin — it owns the org
 // row, the role check (`organization: ["update"]` / `["delete"]`) and the ee/ hooks that refuse a
@@ -171,8 +171,8 @@ export interface OrgGeneralSaved {
 }
 
 /**
- * Saves the addressed org's General settings (name, slug, description, data region, default
- * environment, Terraform version) — the org the page's ADDRESS names, never one the client sends.
+ * Saves the addressed org's General settings (name, slug, description) — the org the page's
+ * ADDRESS names, never one the client sends.
  *
  * The PDP's `edit` on the org runs first (`decideOrgEdit`): it refuses a viewer or operator before
  * anything is written, AND a member whose membership is not active — the `/api/auth` route refuses those
@@ -201,9 +201,6 @@ async function writeOrgGeneral(input: OrgGeneralValues): Promise<OrgGeneralSaved
 	const metadata = {
 		...(await storedMetadata(actor.orgId)),
 		description: input.description,
-		region: input.region,
-		defaultEnv: input.defaultEnv,
-		terraformVersion: input.terraformVersion,
 	};
 	const outcome = await callOrganizationEndpoint("/organization/update", {
 		organizationId: actor.orgId,

@@ -78,12 +78,12 @@ describe("OrgGeneralSkeleton — the form's layout while the read is pending", (
 		const formOutline = outline(form.container, ACME.name);
 
 		expect(skeletonOutline).toEqual(formOutline);
-		// The comparison is about something: three sections, eight field rows, two danger rows, and
-		// the profile and Defaults panels side by side over a full-width Danger zone.
+		// The comparison is about something: two sections, five field rows, two danger rows, and the
+		// profile panel in the column grid over a full-width Danger zone (the Defaults panel that sat
+		// beside it was removed in #7147).
 		const inColumns = (wrapper: string | null) => wrapper?.includes("lg:grid-cols-2") ?? false;
 		expect(formOutline.map((s) => [s.heading, inColumns(s.wrapper), s.rows.length, s.dangerRows.length])).toEqual([
 			["Organization profile", true, 5, 0],
-			["Defaults", true, 3, 0],
 			["Danger zone", false, 0, 2],
 		]);
 	});
@@ -94,14 +94,11 @@ describe("OrgGeneralSkeleton — the form's layout while the read is pending", (
 		const control = (label: string, selector: string) =>
 			sRows.get(label)?.lastElementChild?.querySelector(`[data-slot="skeleton"]${selector}`) ?? null;
 
-		// The logo's 56px avatar; the 38px inputs; the textarea's 64px floor; the 36px select triggers.
+		// The logo's 56px avatar; the 38px inputs; the textarea's 64px floor.
 		expect(control("Logo", ".size-14")).not.toBeNull();
 		expect(control("Organization name", ".h-\\[38px\\]")).not.toBeNull();
 		expect(control("Organization URL", ".h-\\[38px\\]")).not.toBeNull();
 		expect(control("Description", ".h-16")).not.toBeNull();
-		expect(control("Data region", ".h-9")).not.toBeNull();
-		expect(control("Default Project environment", ".h-9")).not.toBeNull();
-		expect(control("Terraform version", ".h-\\[38px\\]")).not.toBeNull();
 		skeleton.unmount();
 
 		// …and those ARE the form's controls' heights, so a resized control fails here rather than on
@@ -113,9 +110,6 @@ describe("OrgGeneralSkeleton — the form's layout while the read is pending", (
 		expect(formControl("Organization name", "input.h-\\[38px\\]")).not.toBeNull();
 		expect(formControl("Organization URL", "div.h-\\[38px\\]")).not.toBeNull();
 		expect(formControl("Description", "textarea.min-h-16")).not.toBeNull();
-		expect(formControl("Data region", '[data-slot="select-trigger"][data-size="default"]')).not.toBeNull();
-		expect(formControl("Default Project environment", '[data-slot="select-trigger"][data-size="default"]')).not.toBeNull();
-		expect(formControl("Terraform version", "input.h-\\[38px\\]")).not.toBeNull();
 	});
 
 	it("is one hidden region the page can tell from the form", () => {

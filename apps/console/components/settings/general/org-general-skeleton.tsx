@@ -16,9 +16,9 @@
 // Danger zone, 131px, was scored against the profile panel the form had grown into (0.182 against
 // the 0.02 budget, release-gate run 40822681524).
 //
-// The controls are bars at the real control's fixed height (`h-[38px]` inputs, `h-9` selects, the
-// 64px textarea, the 56px avatar, `h-8` buttons). The two fixed notes under a control are the real
-// text, because one of them wraps.
+// The controls are bars at the real control's fixed height (`h-[38px]` inputs, the 64px textarea,
+// the 56px avatar, `h-8` buttons). The fixed note under the slug control is the real
+// text, because it wraps.
 
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
@@ -33,8 +33,6 @@ import {
 import {
 	ORG_CONTROL_NOTES,
 	ORG_DANGER_ROWS,
-	ORG_DEFAULTS_ROWS,
-	ORG_DEFAULTS_SAVE_NOTE,
 	ORG_GENERAL_SECTIONS,
 	ORG_PROFILE_ROWS,
 	ORG_PROFILE_SAVE_NOTE,
@@ -55,9 +53,8 @@ function LineSkeleton({ className, bar }: { className: string; bar: string }) {
 }
 
 /**
- * The org General page while its read is pending: Organization profile (five rows) beside Defaults
- * (three rows), each with its Save band, then the two-row Danger zone, which is the page's final
- * layout. No title above it.
+ * The org General page while its read is pending: Organization profile (five rows) with its Save
+ * band, then the two-row Danger zone, which is the page's final layout. No title above it.
  */
 export function OrgGeneralSkeleton() {
 	return (
@@ -92,32 +89,6 @@ export function OrgGeneralSkeleton() {
 							</SettingsField>
 						</div>
 						<SettingsCardFoot note={ORG_PROFILE_SAVE_NOTE}>
-							<Skeleton className="h-8 w-28" />
-						</SettingsCardFoot>
-					</SettingsPanel>
-				</SettingsSection>
-
-				<SettingsSection title={ORG_GENERAL_SECTIONS.defaults}>
-					<SettingsPanel>
-						<div className="py-1">
-							<SettingsField label={ORG_DEFAULTS_ROWS.region.label} hint={ORG_DEFAULTS_ROWS.region.hint}>
-								<Skeleton className="h-9 w-full" />
-								<ControlNote>{ORG_CONTROL_NOTES.region}</ControlNote>
-							</SettingsField>
-							<SettingsField
-								label={ORG_DEFAULTS_ROWS.defaultEnv.label}
-								hint={ORG_DEFAULTS_ROWS.defaultEnv.hint}
-							>
-								<Skeleton className="h-9 w-full" />
-							</SettingsField>
-							<SettingsField
-								label={ORG_DEFAULTS_ROWS.terraformVersion.label}
-								hint={ORG_DEFAULTS_ROWS.terraformVersion.hint}
-							>
-								<Skeleton className="h-[38px] rounded-sm" />
-							</SettingsField>
-						</div>
-						<SettingsCardFoot note={ORG_DEFAULTS_SAVE_NOTE}>
 							<Skeleton className="h-8 w-28" />
 						</SettingsCardFoot>
 					</SettingsPanel>

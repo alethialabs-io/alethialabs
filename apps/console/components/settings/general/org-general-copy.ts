@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The org General page's fixed copy: the section titles, each row's label and hint, the Save
-// bands' notes and the Danger zone's rows. The form (`org-general.tsx`) and its skeleton
+// band's note and the Danger zone's rows. The form (`org-general.tsx`) and its skeleton
 // (`org-general-skeleton.tsx`) both render from here (#6352). A row's height depends on how its
 // hint wraps — at 200px beside the control from the panel's 32rem container step, at the panel's
 // full width stacked above the control below it (#6135) — and a danger row's on its description,
@@ -12,7 +12,6 @@
 /** The section headings, top to bottom. */
 export const ORG_GENERAL_SECTIONS = {
 	profile: "Organization profile",
-	defaults: "Defaults",
 	danger: "Danger zone",
 } as const;
 
@@ -41,45 +40,17 @@ export const ORG_PROFILE_ROWS = {
 } as const;
 
 /**
- * The fixed notes under two controls. Where the row is side by side in a narrow panel (just above
- * the 32rem container step, in the two-column layout) the control column can be under 200px wide,
- * so a note can wrap to a second line, which makes the row taller than its label column.
+ * The fixed note under the slug control. Where the row is side by side in a narrow panel (just
+ * above the 32rem container step, in the two-column layout) the control column can be under 200px
+ * wide, so the note can wrap to a second line, which makes the row taller than its label column.
  */
 export const ORG_CONTROL_NOTES = {
 	slug: "Lowercase, numbers and hyphens.",
-	region: "Shown to the CLI by alethia org settings.",
 } as const;
 
 /** The note in the Organization profile panel's Save band. */
 export const ORG_PROFILE_SAVE_NOTE = "Applies across the console";
 
-/**
- * The Defaults panel's three rows and its Save band's note.
- *
- * WHAT THESE DO, SAID PLAINLY (R6 E-04). They are saved for the organization and the CLI reads them
- * back (`alethia org settings`); creating a Project does not read them, and nothing places data or
- * pins a Terraform version from them. The hints used to promise all three ("Residency for the
- * control plane", "Pre-selected stage for newly planted Projects", "Pinned across runners") — copy
- * that describes an effect nothing produces. Whether the panel is wired into project creation or
- * removed for the beta is open; until then it says only what is true.
- */
-export const ORG_DEFAULTS_ROWS = {
-	region: {
-		label: "Data region",
-		hint: "The AWS region your organization prefers.",
-	},
-	defaultEnv: {
-		label: "Default Project environment",
-		hint: "The stage your organization prefers new Projects to start in.",
-	},
-	terraformVersion: {
-		label: "Terraform version",
-		hint: "The Terraform version your organization standardizes on.",
-	},
-} as const;
-
-/** The note in the Defaults panel's Save band. */
-export const ORG_DEFAULTS_SAVE_NOTE = "Saved for reference — new Projects don't apply these yet";
 
 /**
  * The Danger zone's two rows. The delete row's description names the org between `before` and
