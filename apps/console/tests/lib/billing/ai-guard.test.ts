@@ -37,6 +37,12 @@ vi.mock("@/lib/billing/ai-quota", () => ({
 	purchasedBalance: vi.fn(),
 }));
 vi.mock("@/lib/billing/ai-credits", () => ({ creditsFor: vi.fn(() => 5) }));
+// The free AI pool (REL-L11) decides on its own count; here it is open unless a test closes it.
+// Its decision logic is pinned in tests/lib/abuse/free-ai-pool.test.ts.
+vi.mock("@/lib/abuse/free-ai-pool", () => ({
+	freeAiPoolState: vi.fn(),
+	readFreeAiPoolUsed: vi.fn(),
+}));
 
 import {
 	AiBudgetError,
@@ -54,6 +60,7 @@ import {
 	sumCreditsForUser,
 } from "@/lib/billing/ai-quota";
 import { isStripeConfigured } from "@/lib/billing/config";
+import { freeAiPoolState } from "@/lib/abuse/free-ai-pool";
 
 /**
  * A free-tier spec with small caps to keep the math legible: org session 30 / weekly 100,
@@ -87,6 +94,7 @@ beforeEach(() => {
 	vi.mocked(sumCreditsForUser).mockResolvedValue(0);
 	vi.mocked(oldestUsageSince).mockResolvedValue(OLDEST);
 	vi.mocked(oldestUsageForUserSince).mockResolvedValue(OLDEST);
+	vi.mocked(freeAiPoolState).mockResolvedValue({ open: true });
 });
 
 describe("isAiSurfaceEnabled", () => {
@@ -305,5 +313,78 @@ describe("aiBudgetRefusalError", () => {
 		expect(err.reason).toBe("weekly");
 		expect(err.upgradable).toBe(true);
 		expect(err.resetAt).toBe(WEEK_RESET);
+	});
+});
+
+describe("the free AI pool (REL-L11) on the fixed (scan) path", () => {
+	const RESET = "2026-11-22T00:00:00.000Z";
+
+	it("refuses a free-tier scan with reason paused and the next UTC midnight when the ceiling is reached", async () => {
+		vi.mocked(freeAiPoolState).mockResolvedValue({ open: false, cause: "ceiling", resetAt: RESET });
+		vi.mocked(sumCredits).mockResolvedValue(0);
+		vi.mocked(purchasedBalance).mockResolvedValue(0);
+		const err = await assertAiAllowed("org-1", "scan").catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(AiBudgetError);
+		if (!(err instanceof AiBudgetError)) return;
+		expect(err.reason).toBe("paused");
+		expect(err.resetAt).toBe(RESET);
+		expect(err.upgradable).toBe(true);
+		expect(err.message).toMatch(/daily free AI allowance/);
+	});
+
+	it("states the operator's switch, with no reset time, when the kill switch is on", async () => {
+		vi.mocked(freeAiPoolState).mockResolvedValue({ open: false, cause: "switch", resetAt: null });
+		vi.mocked(sumCredits).mockResolvedValue(0);
+		vi.mocked(purchasedBalance).mockResolvedValue(0);
+		const err = await assertAiAllowed("org-1", "scan").catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(AiBudgetError);
+		if (!(err instanceof AiBudgetError)) return;
+		expect(err.reason).toBe("paused");
+		expect(err.resetAt).toBeNull();
+		expect(err.message).toMatch(/paused by the platform operator/);
+	});
+
+	it("still spends purchased credits while free AI is paused", async () => {
+		vi.mocked(freeAiPoolState).mockResolvedValue({ open: false, cause: "ceiling", resetAt: RESET });
+		vi.mocked(sumCredits).mockResolvedValue(0);
+		vi.mocked(purchasedBalance).mockResolvedValue(50);
+		expect(await assertAiAllowed("org-1", "scan")).toEqual({ source: "purchased", credits: 5 });
+	});
+
+	it("does not spend purchased credits while paused when the org's hard cap is on", async () => {
+		vi.mocked(resolveAiPlan).mockResolvedValue({
+			tier: "ai_free",
+			hardCap: true,
+			orgWeeklyCapCredits: null,
+			perUserWeeklyCapCredits: null,
+		});
+		vi.mocked(freeAiPoolState).mockResolvedValue({ open: false, cause: "ceiling", resetAt: RESET });
+		vi.mocked(sumCredits).mockResolvedValue(0);
+		vi.mocked(purchasedBalance).mockResolvedValue(50);
+		await expect(assertAiAllowed("org-1", "scan")).rejects.toMatchObject({ reason: "paused" });
+	});
+
+	it("never consults the pool for a paid AI tier", async () => {
+		vi.mocked(resolveAiPlan).mockResolvedValue({
+			tier: "ai_plus",
+			hardCap: false,
+			orgWeeklyCapCredits: null,
+			perUserWeeklyCapCredits: null,
+		});
+		vi.mocked(freeAiPoolState).mockResolvedValue({ open: false, cause: "switch", resetAt: null });
+		vi.mocked(sumCredits).mockResolvedValue(0);
+		expect(await assertAiAllowed("org-1", "scan")).toEqual({ source: "included", credits: 5 });
+		expect(freeAiPoolState).not.toHaveBeenCalled();
+	});
+
+	it("aiBudgetRefusalError turns a paused refusal into the paused error with its reset", async () => {
+		const err = await aiBudgetRefusalError("org-1", "user-1", {
+			reason: "paused",
+			cause: "ceiling",
+			resetAt: RESET,
+		});
+		expect(err.reason).toBe("paused");
+		expect(err.resetAt).toBe(RESET);
+		expect(oldestUsageSince).not.toHaveBeenCalled();
 	});
 });
