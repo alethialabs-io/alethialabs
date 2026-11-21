@@ -17,6 +17,7 @@ import {
 	STARTER_CHART_PATH,
 	STARTER_CHART_REPO_URL,
 } from "@/components/design-project/byo/byo-chart-dialog";
+import { resetTestPage } from "@/tests/components/design-project/byo/byo-wizard-harness";
 
 // The attach is on the mutation contract (#6119): the dialog hands `attachByoChartAction` to
 // `useActionMutation`, which answers an `ActionResult`. `attachByoChart` below is that action's mock.
@@ -25,6 +26,14 @@ vi.mock("@/app/server/actions/byo-charts", () => ({
 	attachByoChartAction: (input: unknown) => attachByoChart(input),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
+// The dialog's open state and step live in the URL; the harness holds that URL in a store.
+vi.mock("@/lib/wizard/location", async (importOriginal) => {
+	const harness = await import("@/tests/components/design-project/byo/byo-wizard-harness");
+	return {
+		...(await importOriginal<typeof import("@/lib/wizard/location")>()),
+		useWizardEnvironment: harness.useTestWizardEnvironment,
+	};
+});
 vi.mock("@/lib/rpc/client", async () => {
 	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
 	return { orpc: fakeOrpc({}).orpc };
@@ -58,15 +67,17 @@ const { toast } = vi.hoisted(() => ({
 vi.mock("sonner", () => ({ toast }));
 
 beforeEach(() => {
+	resetTestPage();
 	attachByoChart.mockReset();
 	attachByoChart.mockResolvedValue({ ok: true, data: { id: "payments" } });
 	toast.success.mockReset();
 	toast.error.mockReset();
 });
 
-function renderDialog() {
+/** Renders the dialog as the canvas asks for it, and waits for the wizard's first step. */
+async function renderDialog() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	return render(
+	const view = render(
 		<QueryClientProvider client={client}>
 			<ByoChartDialog
 				open
@@ -76,6 +87,9 @@ function renderDialog() {
 			/>
 		</QueryClientProvider>,
 	);
+	// Until the draft is read the dialog shows its skeleton, which has no Next.
+	await screen.findByRole("button", { name: /next/i });
+	return view;
 }
 
 const next = () => screen.getByRole("button", { name: /next/i });
@@ -83,7 +97,7 @@ const next = () => screen.getByRole("button", { name: /next/i });
 describe("ByoChartDialog — OCI source", () => {
 	it("attaches an OCI chart as a single reference with no chart path", async () => {
 		const user = userEvent.setup();
-		renderDialog();
+		await renderDialog();
 
 		await user.click(screen.getByRole("radio", { name: /OCI registry/i }));
 		await user.click(next());
@@ -118,7 +132,7 @@ describe("ByoChartDialog — OCI source", () => {
 
 	it("defaults the chart version to * (latest), not HEAD", async () => {
 		const user = userEvent.setup();
-		renderDialog();
+		await renderDialog();
 
 		await user.click(screen.getByRole("radio", { name: /OCI registry/i }));
 		await user.click(next());
@@ -136,7 +150,7 @@ describe("ByoChartDialog — OCI source", () => {
 
 	it("blocks advancing on a reference that names no chart, and says why", async () => {
 		const user = userEvent.setup();
-		renderDialog();
+		await renderDialog();
 
 		await user.click(screen.getByRole("radio", { name: /OCI registry/i }));
 		await user.click(next());
@@ -157,7 +171,7 @@ describe("ByoChartDialog — OCI source", () => {
 
 	it("does not claim OCI charts are unscannable — the runner pulls and scans them (#1300)", async () => {
 		const user = userEvent.setup();
-		renderDialog();
+		await renderDialog();
 
 		await user.click(screen.getByRole("radio", { name: /OCI registry/i }));
 		await user.click(next());
@@ -175,7 +189,7 @@ describe("ByoChartDialog — OCI source", () => {
 describe("ByoChartDialog — git source", () => {
 	it("still attaches a git chart with its path and ref", async () => {
 		const user = userEvent.setup();
-		renderDialog();
+		await renderDialog();
 
 		// Git is the default source.
 		await user.click(next());
@@ -244,7 +258,7 @@ describe("ByoChartDialog — the worked example resolves", () => {
 
 	it("offers the starter repository and its chart path on the git branch", async () => {
 		const user = userEvent.setup();
-		renderDialog();
+		await renderDialog();
 
 		await user.click(next());
 		expect(screen.getByLabelText(/chart repository/i)).toHaveAttribute(
@@ -264,7 +278,7 @@ describe("ByoChartDialog — the worked example resolves", () => {
 
 	it("offers a pullable chart reference on the OCI branch", async () => {
 		const user = userEvent.setup();
-		renderDialog();
+		await renderDialog();
 
 		await user.click(screen.getByRole("radio", { name: /OCI registry/i }));
 		await user.click(next());
@@ -280,7 +294,7 @@ describe("ByoChartDialog — the worked example resolves", () => {
 		const sweep = () => seen.push(...shownRepoExamples());
 
 		// Git: Source → Repository → Chart path → Ref → Review.
-		const git = renderDialog();
+		const git = await renderDialog();
 		sweep();
 		await user.click(next());
 		sweep();
@@ -295,7 +309,7 @@ describe("ByoChartDialog — the worked example resolves", () => {
 		git.unmount();
 
 		// OCI: Source → Registry → Version → Review.
-		renderDialog();
+		await renderDialog();
 		await user.click(screen.getByRole("radio", { name: /OCI registry/i }));
 		await user.click(next());
 		sweep();
@@ -420,7 +434,7 @@ describe("ByoChartDialog — the attach's outcomes", () => {
 		const refusal = "Bring-your-own Helm charts are not enabled on this instance.";
 		attachByoChart.mockResolvedValue({ ok: false, error: { kind: "conflict", message: refusal } });
 		const user = userEvent.setup();
-		renderDialog();
+		await renderDialog();
 		await attachOci(user);
 
 		expect(await screen.findByText(refusal)).toBeInTheDocument();
@@ -432,7 +446,7 @@ describe("ByoChartDialog — the attach's outcomes", () => {
 
 	it("confirms a landed attach with the chart's name", async () => {
 		const user = userEvent.setup();
-		renderDialog();
+		await renderDialog();
 		await attachOci(user);
 
 		await waitFor(() =>
@@ -444,7 +458,7 @@ describe("ByoChartDialog — the attach's outcomes", () => {
 		let settle: (v: unknown) => void = () => {};
 		attachByoChart.mockReturnValue(new Promise((resolve) => (settle = resolve)));
 		const user = userEvent.setup();
-		renderDialog();
+		await renderDialog();
 		await attachOci(user);
 
 		await waitFor(() => expect(screen.getByRole("button", { name: /attach chart/i })).toBeDisabled());
