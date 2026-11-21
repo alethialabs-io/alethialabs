@@ -191,7 +191,7 @@ PreToolUse hook spawned before the command runs.
 ## Spend: what the box and the e2e runs cost you
 
 `.claude/hooks/guard-spend.sh` charges every priced action to `~/.alethia/spend-ledger.jsonl`
-before it runs, against **EUR 30 per rolling 7 days** shared by every instance on this machine:
+before it runs, against **EUR 80 per rolling 7 days** shared by every instance on this machine:
 `pnpm env:box` is EUR 1, an `e2e-nightly.yml` floor dispatch EUR 0.50 plus EUR 15 per heavy input
 per provider, `e2e-ai-nightly.yml` EUR 0.10, and `gh run rerun` the price of the jobs it reruns.
 `pnpm spend:status` prints the window and what is left. A charge is taken even when the command
