@@ -10,6 +10,8 @@ import { StatusBadge } from "@repo/ui/status-badge";
 import { Skeleton } from "@repo/ui/skeleton";
 import { RegionError } from "@/components/errors/region-error";
 import { useUpdateRunner } from "@/lib/query/use-runners-query";
+import { globalHref } from "@/lib/routing";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { orpc } from "@/lib/rpc/client";
 import { useQuery } from "@tanstack/react-query";
 import { formatRelative } from "@repo/format";
@@ -73,6 +75,7 @@ export function ReleaseNotesPopover({
   children,
 }: ReleaseNotesPopoverProps) {
   const router = useRouter();
+  const orgSlug = useActiveOrgSlug();
   const updateRunner = useUpdateRunner();
   const [open, setOpen] = useState(false);
   // Read when the popover opens (the reader's own action), through the read router; cached per
@@ -93,7 +96,7 @@ export function ReleaseNotesPopover({
         toast.success("Update job queued", {
           action: {
             label: "View job",
-            onClick: () => router.push(`/dashboard/jobs/${jobId}`),
+            onClick: () => router.push(globalHref(orgSlug, `jobs/${jobId}`)),
           },
         });
         setOpen(false);
@@ -178,12 +181,12 @@ export function ReleaseNotesPopover({
                 {updateRunner.isPending ? (
                   <>
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    Updating...
+                    Updating…
                   </>
                 ) : (
                   <>
                     <ArrowUpCircle className="mr-1.5 h-3.5 w-3.5" />
-                    Update Runner
+                    Update runner
                   </>
                 )}
               </Button>
