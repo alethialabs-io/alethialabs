@@ -78,9 +78,9 @@ function cloud(slug: string): ConnectorWithConnection {
 		name: slug,
 		description: slug,
 		category: "cloud",
-		auth_method: "oidc",
+		auth_method: "iam_role",
 		organization: slug,
-		icon_url: null,
+		icon_url: `/icons/${slug}.png`,
 		docs_url: null,
 		support_url: null,
 		privacy_url: null,
@@ -90,7 +90,7 @@ function cloud(slug: string): ConnectorWithConnection {
 		updated_at: null,
 		connected: false,
 		connection_details: null,
-		group: "cloud",
+		group: "clouds",
 	};
 }
 

@@ -35,8 +35,11 @@ import {
 	sensitiveDraftKeys,
 } from "@/lib/wizard/define";
 
+/** The module's exports, read as plain values so the definitions can be picked out by shape. */
+const EXPORTS: Readonly<Record<string, unknown>> = cloudConnect;
+
 /** Every definition the module exports. */
-const DEFINITIONS = Object.values(cloudConnect).filter(isWizardDefinition);
+const DEFINITIONS = Object.values(EXPORTS).filter(isWizardDefinition);
 
 /** The keys each cloud's draft may keep — identifiers only. `null`: the cloud keeps no draft. */
 const EXPECTED_DRAFT_KEYS: Record<string, readonly string[] | null> = {
