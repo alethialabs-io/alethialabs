@@ -2,36 +2,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { HydrationBoundary, type QueryClient, dehydrate } from "@tanstack/react-query";
-import { queryProjects, type ProjectListQuery } from "@/app/server/actions/projects";
-import { readConnectedCloudProviders } from "@/lib/rpc/procedures/connectors";
 import { isOverviewPageRead, isRecentJobsKey } from "@/components/overview/overview-reads";
+import {
+	type OverviewSearchParams,
+	overviewProjectsInput,
+	toOverviewState,
+} from "@/components/overview/overview-state";
 import { getQueryClient } from "@/lib/query/client";
 import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
-import type { ViewMode } from "@repo/ui/view-toggle";
-import { OverviewClient, type OverviewState } from "./overview-client";
+import { OverviewClient } from "./overview-client";
 
 export const metadata = pageMetadata({
 	title: "Overview",
 	description: "Your organization's projects, usage, alerts, and recent jobs.",
 });
-
-/** Raw search params owning the grid's search/filter/sort/view state (all optional). */
-type OverviewSearchParams = {
-	q?: string;
-	cloud?: string;
-	repo?: string;
-	sort?: string;
-	view?: string;
-};
-
-/** Splits a comma-separated URL param into a trimmed, non-empty list. */
-function toList(value: string | undefined): string[] {
-	return (value ?? "")
-		.split(",")
-		.map((s) => s.trim())
-		.filter(Boolean);
-}
 
 /**
  * Join the `[org]` layout's read of the shell's job feed (`workspace.recentJobs`), or start it for
@@ -52,21 +37,25 @@ function joinRecentJobs(queryClient: QueryClient, rpc: ReturnType<typeof serverO
 }
 
 /**
- * Org root overview. Reads the grid's search/filter/sort state from the URL, resolves the matching
- * projects (searched/filtered/sorted server-side) plus the full facet universe, and passes them to
- * the client.
+ * Org root overview. Reads the grid's search, filter, sort and view from the address and prefetches
+ * every read the page makes for it; the client reads the same keys.
  *
- * The unfiltered project list (for the total count) is the SAME `workspace.projects` read the
- * `[org]` layout prefetches for the shell, asked of the same per-request QueryClient, so it is one
- * read, not two; the layout already hands it to the client.
+ * NOTHING HERE IS AWAITED UNCAUGHT. Each read is a `prefetchQuery`, which swallows a failure, so no
+ * read can send the page to the organization's error boundary: a read that was refused or failed is
+ * simply not handed down, and the region that owns it renders its own refused or failed state in
+ * the browser (RUBRIC B5). The project grid used to be awaited here and passed as props, so a viewer
+ * without `view` on projects got the error page and a retry that could not work.
  *
- * The overview cards' reads are prefetched here (#6118, ADR 0005 D1) — `overview.usage` and
- * `overview.alerts` — in-process through the read router, with exactly the keys the cards ask for,
- * and hydrated by this page's own boundary, filtered to those reads (`isOverviewPageRead`): the
- * layout dehydrates when IT renders, which does not wait for this page's prefetches, and it already
- * hands down the shell's reads — this boundary does not serialize them a second time, with ONE
- * exception. A prefetch that fails is not dehydrated: that card alone renders its error (or retries
- * its read in the browser), and the rest of the page is unaffected (RUBRIC B5).
+ * The reads, all in-process through the read router and with exactly the keys the regions ask for:
+ *
+ * - `overview.projects` — the grid, for this address's search, filters and sort
+ *   (`overviewProjectsInput`: the browser builds its key from the same function);
+ * - `overview.usage` and `overview.alerts` — the cards (#6118, ADR 0005 D1).
+ *
+ * They are hydrated by this page's own boundary, filtered to those reads (`isOverviewPageRead`):
+ * the layout dehydrates when IT renders, which does not wait for this page's prefetches, and it
+ * already hands down the shell's reads — this boundary does not serialize them a second time, with
+ * ONE exception.
  *
  * The exception is the Recent-jobs card's read, the shell's `workspace.recentJobs` (#6347). The card
  * must draw its rows in the server HTML (RUBRIC B1), and may do that only when the hydrating render
@@ -84,26 +73,16 @@ export default async function OrgOverviewRoute({
 	searchParams: Promise<OverviewSearchParams>;
 }) {
 	const { org } = await params;
-	const sp = await searchParams;
-
-	const sort: ProjectListQuery["sort"] = sp.sort === "name" ? "name" : "activity";
-	const view: ViewMode = sp.view === "table" ? "table" : "card";
-	const state: OverviewState = {
-		q: sp.q ?? "",
-		clouds: toList(sp.cloud),
-		repos: toList(sp.repo),
-		sort,
-		view,
-	};
+	const state = toOverviewState(await searchParams);
 
 	const queryClient = getQueryClient();
 	const rpc = serverOrpc();
-	const [{ projects, facets }, allProjects, connectedProviders] = await Promise.all([
-		queryProjects({ q: state.q, clouds: state.clouds, repos: state.repos, sort }),
-		queryClient.fetchQuery(rpc.workspace.projects.queryOptions()),
-		readConnectedCloudProviders(),
+	await Promise.all([
 		// `retry: false`: the console's default `retry: 1` would hold the first byte ~1 s on a refusal
-		// or a transient failure, and the card retries in the browser anyway. Not part of the key.
+		// or a transient failure, and each region retries in the browser anyway. Not part of the key.
+		queryClient.prefetchQuery(
+			rpc.overview.projects.queryOptions({ input: overviewProjectsInput(state), retry: false }),
+		),
 		queryClient.prefetchQuery(rpc.overview.usage.queryOptions({ retry: false })),
 		queryClient.prefetchQuery(rpc.overview.alerts.queryOptions({ retry: false })),
 		joinRecentJobs(queryClient, rpc),
@@ -114,15 +93,7 @@ export default async function OrgOverviewRoute({
 
 	return (
 		<HydrationBoundary state={dehydrated}>
-			<OverviewClient
-				orgSlug={org}
-				projects={projects}
-				facets={facets}
-				state={state}
-				totalCount={allProjects.length}
-				connectedProviders={connectedProviders}
-				jobsPrefetched={jobsPrefetched}
-			/>
+			<OverviewClient orgSlug={org} state={state} jobsPrefetched={jobsPrefetched} />
 		</HydrationBoundary>
 	);
 }

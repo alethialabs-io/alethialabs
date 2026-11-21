@@ -59,8 +59,8 @@ describe("DuplicateProjectDialog — watched account and region", () => {
 		expect(duplicate).toBeDisabled();
 		expect(screen.getByText("Select an account first")).toBeInTheDocument();
 
-		// The account picker replaces "Loading accounts…" once the read lands.
-		await screen.findByText("Select cloud account");
+		// The account picker replaces its placeholder bar once the read lands.
+		await screen.findByText("Select a cloud account");
 		const [account] = screen.getAllByRole("combobox");
 		await user.click(account);
 		await user.click(await screen.findByRole("option", { name: /GCP prod/ }));
@@ -68,5 +68,56 @@ describe("DuplicateProjectDialog — watched account and region", () => {
 		expect(await screen.findByText("Select region")).toBeInTheDocument();
 		expect(screen.queryByText("Select an account first")).toBeNull();
 		expect(duplicate).toBeDisabled();
+	});
+});
+
+describe("DuplicateProjectDialog — nothing to duplicate onto (#6817)", () => {
+	it("names the page where a cloud account is connected, and links to it", async () => {
+		const targets = h.handlers["projects.duplicateTargets"];
+		h.handlers["projects.duplicateTargets"] = async () => ({
+			provider: "aws",
+			projectName: "Shop",
+			categories: [],
+			suggestedNames: {},
+			identities: [],
+		});
+		try {
+			render(
+				<DuplicateProjectDialog
+					open
+					onOpenChange={() => {}}
+					sourceProjectId="p1"
+					sourceProjectName="Shop"
+					orgSlug="acme"
+				/>,
+				{ wrapper: queryWrapper() },
+			);
+			const link = await screen.findByRole("link", { name: "Connect one in Connectors" });
+			expect(link).toHaveAttribute("href", "/acme/~/connectors?type=cloud");
+			expect(screen.queryByText(/Integrations/)).toBeNull();
+		} finally {
+			if (targets) h.handlers["projects.duplicateTargets"] = targets;
+		}
+	});
+
+	it("while the accounts load: a placeholder the size of the picker, marked busy, and no spinner", () => {
+		const targets = h.handlers["projects.duplicateTargets"];
+		h.handlers["projects.duplicateTargets"] = () => new Promise(() => {});
+		try {
+			render(
+				<DuplicateProjectDialog
+					open
+					onOpenChange={() => {}}
+					sourceProjectId="p1"
+					sourceProjectName="Shop"
+					orgSlug="acme"
+				/>,
+				{ wrapper: queryWrapper() },
+			);
+			expect(document.querySelector("[aria-busy='true'] [data-slot='skeleton']")).not.toBeNull();
+			expect(document.querySelector(".animate-spin")).toBeNull();
+		} finally {
+			if (targets) h.handlers["projects.duplicateTargets"] = targets;
+		}
 	});
 });
