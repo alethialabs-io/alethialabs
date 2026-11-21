@@ -1,147 +1,154 @@
 ---
 title: The node inspector
-description: Open a resource's docked side panel to rename it, read its status, cost and activity, edit its configuration, and remove it — all without leaving the canvas.
+description: Use the one docked panel beside the canvas to rename a resource, edit its settings, connect a service, read its status and cost, and duplicate or delete it, without leaving the board.
 ---
 
 # The node inspector
 
-The node inspector is the docked side panel that opens beside the [canvas](/guides/design-project/the-canvas)
-when you select a resource. It replaces the old full-page configuration form: everything you used to
-edit in a form, you now edit here, on the same board you designed. The panel is split into
-**Overview**, **Cost**, **Activity** and **Settings** tabs (the cluster adds a **Deploy** tab), with an
-editable header and a status strip above them.
+The inspector is the one panel docked on the right of the [canvas](/guides/design-project/the-canvas).
+Everything you select on the board opens in it: a resource, the vault of secrets, an add-on, a chart,
+the environment itself, or several cards at once. It does not cover the board, so the board stays
+usable while it is open.
 
 <Callout>
-The inspector is the **Architecture view** only. It appears when a node is selected and slides away
-when nothing is.
+The inspector is part of the **Architecture** view only. It opens when you select something and
+closes when nothing is selected.
 </Callout>
 
-## Open the inspector
+## Open and close the inspector
 
 1. Open a project's **Architecture** view.
-2. Click a resource card.
+2. Click a card. To use the keyboard instead, move the focus to the card with **Tab** and press
+   **Enter**.
 
-The panel docks on the right. Clicking a different card swaps the panel to that resource; clicking an
-empty area of the board, or the **✕** in the panel header, closes it.
+Clicking a different card switches the inspector to that card. To close it, click an empty area of
+the board, click **✕** in the inspector, or press **Esc**.
 
-Some cards open a purpose-built panel instead of the generic inspector:
+While the [review view](/guides/design-project/the-canvas) is open, opening a card puts the review
+aside. Close the card and the review comes back.
 
-- A **Secrets vault** (or any collapsed collection) opens its member list — see [Secrets](/guides/design-project/secrets).
-- An **external** card from a bring-your-own IaC module opens a read-only resource list — see
-  [Bring your own charts](/guides/design-project/bring-your-own-charts).
-- A described **chart workload** opens its own describe-and-bind panel.
+## What the inspector shows
+
+Every subject is drawn in the same frame, in the same order, so the name, the state and the close
+control are always in the same place:
+
+1. **Back**, only when you came from another subject (for example a secret you opened from the vault).
+2. **Identity**: the icon, the kind, the name, and a one-line summary.
+3. **One action**, when there is an obvious next step. A resource that needs setup offers
+   **Open settings** from its other tabs.
+4. **Status**: one badge and one sentence. If the cloud has drifted from what Alethia recorded, a
+   `N drifted` chip rides beside it; hover it to see the OpenTofu addresses that drifted.
+5. **Tabs**, when the subject has more than one view.
+6. **Messages**: what is staged and what went wrong, in one place.
+7. **The body**, which scrolls on its own.
+
+There is no **Save** button in the inspector. An edit goes into the design as soon as you make it,
+and the changes bar at the bottom of the board counts it. Review and deploy your changes from there.
+
+What opens depends on what you select:
+
+| You select | The inspector shows |
+| --- | --- |
+| A resource | **Settings** and **Status**, and **Connections** for a service |
+| The secrets vault | Its members, with a filter. A row opens that secret, with **Back** to the vault |
+| An add-on | Its configuration and how it is installed |
+| A bring-your-own chart | Its safety scan |
+| A chart workload | What the chart describes, and how it is connected |
+| An external card from a bring-your-own IaC module | The read-only list of its resources |
+| The environment | **Settings**, **Sources**, **Status** and **Activity** |
+| Several cards | What you can do to all of them at once: **Duplicate** or **Remove**, as one undo step |
 
 ## Rename a resource
 
-The resource name lives in the panel header, next to the type badge.
+The name is in the identity row, next to the kind.
 
-1. Click the name field in the header.
+1. Click the name.
 2. Type the new name.
 
-Only resources that carry an editable name show an input here — the **project** (its project name) and
-the array-style resources you can add many of (databases, caches, secrets, …). For array resources the
-name is forced to lowercase as you type, to match cloud naming rules. Resources with no name of their
-own show a fixed label instead.
+Only resources with a name of their own can be renamed: the project, and the resources you can add
+many of (databases, caches, secrets, and so on). For those, the name is made lowercase as you type, to
+match cloud naming rules.
 
 <Callout>
-The cloud account is **not** set in the inspector. It is chosen once, at project creation, so there is
-no per-node cloud selector.
+The cloud account is **not** set in the inspector. It is chosen once, when the project is created, so
+there is no cloud selector per resource.
 </Callout>
 
-## Read the status strip
+## Edit settings (Settings)
 
-Under the header, a strip shows the resource's **resolved status** — a grayscale dot and a mono label —
-followed by the most actionable line for that state (a config issue, a failure message, or a probe
-reason). If the real cloud has diverged from what Alethia recorded, a `N drifted` chip rides alongside
-the state; hover it to see the OpenTofu addresses that diverged.
+The **Settings** tab is where you change a resource. Its fields come from the resource's own
+configuration schema, so each kind shows only the settings that apply to it.
 
-Status merges the design's readiness with the environment's server truth, and picks one state to show.
-See [The canvas → Status without colour](/guides/design-project/the-canvas) for the full vocabulary and
-precedence order.
+The fields are in groups, one column wide. When you first open a resource, a group is open only if
+it holds a value that would stop the deploy, such as a required field that is empty. Every other group
+is collapsed, and shows a one-line summary of its values, so you can read the resource without
+opening anything.
 
-## Check what a resource produced and costs (Overview)
+1. Click a group to open it.
+2. Edit a field. The change goes into the design when you leave the field.
 
-The **Overview** tab is a read-only summary of the selected resource:
+A problem with a value is shown under the field. A group that you opened to fix a problem stays open
+while you type, even after the value becomes valid. The inspector remembers which groups you open
+and close for each kind of resource.
+
+A value you typed is kept even if you leave without leaving the field first: close the inspector or
+select another card and the value still goes to the resource you typed it into.
+
+Groups that apply to one cloud only carry a badge with that cloud's name (for example `AWS only`). A
+group that does not apply to your project's cloud is not shown.
+
+<Callout type="warn">
+A **core** resource placed on a different cloud than the project is **gated**: **Settings** shows a
+notice that it can be drawn, but the project does not provision until the resource is on the
+project's cloud.
+</Callout>
+
+## Connect a service (Connections)
+
+A service has a **Connections** tab. It lists the backing infrastructure the service uses (databases,
+caches, queues and secrets) and what Alethia gives the service from each one when it deploys.
+
+You can add a connection here, or draw it on the board: drag from the service's bottom handle to a
+card, or select the service and press **C**. A connection drawn on the board opens this tab, so you
+can choose what the service gets from it. See
+[The canvas → Connect a service to what it uses](/guides/design-project/the-canvas).
+
+## Read status, endpoints and cost (Status)
+
+The **Status** tab is read only:
 
 | Section | Shows |
 | --- | --- |
-| **Type / Status** | The resource kind and its resolved status label (with the status message, if any) |
-| **Environment** | For the project only — the real environment's name, stage, and provisioning status |
-| **Endpoints** | What the deploy produced (for example a database hostname or ArgoCD URL), each with a copy button |
-| **Cost** | The resource's estimated monthly cost from the last plan |
-| **Recent activity** | The environment's latest jobs, condensed to the most recent few |
-| **Drift** | Each drifted OpenTofu address, listed on its own |
-| **Configuration** | The resource's scalar configuration values |
+| **State** | The resolved state and the reason for it |
+| **Endpoints** | What the deploy produced, for example a database hostname, each with a copy button |
+| **Drift** | Each OpenTofu address that drifted |
+| **Cost** | The monthly cost from the last plan, itemised by OpenTofu address |
 
-Sections that have nothing to show are omitted — Endpoints appears only once the resource is deployed,
-and Cost appears only once the resource has been priced.
-
-## Break down cost by resource (Cost)
-
-The **Cost** tab shows the resource's monthly spend, itemised by OpenTofu address.
-
-1. Open the **Cost** tab.
-2. Read the **Monthly** rollup at the top.
-3. Read the **Breakdown** — one line per OpenTofu address, sorted from most to least expensive.
-
-The rollup and the per-line detail both come from the last plan's Infracost breakdown, and the tab
-notes when that plan ran.
-
-<Callout>
-A resource that has never been priced says **"Not priced yet"** rather than showing `$0` — run a plan
-and its estimated monthly cost appears here. See [Cost Sidebar](/guides/design-project/cost-sidebar) for
-the pre-plan estimate.
-</Callout>
-
-## Review recent jobs (Activity)
-
-The **Activity** tab lists the environment's recent job history. Activity is scoped to the
-**environment**, not the single resource — a deploy provisions the whole board, so a node has no jobs of
-its own. Each row shows the job type, its status dot, and how long ago it ran. An environment with no
-jobs yet reads **"No activity yet for this environment."**
-
-## Edit configuration (Settings)
-
-The **Settings** tab is where you change the resource. Its fields are built from the resource's own
-config schema, so each kind shows only the knobs that apply to it.
-
-1. Open the **Settings** tab.
-2. Expand a section to reveal its fields.
-3. Edit a field — changes apply to the design immediately.
-
-Portable fields sit in the top sections, which open by default. **Advanced**, cloud-specific sections
-are collapsed by default and badged with the provider they belong to (for example `AWS only`), so you
-open the door to non-portable ground deliberately. A section whose fields don't apply to your project's
-cloud is not shown at all.
-
-For the **project** panel on a provisioned environment, Settings also shows the environment's name and
-stage read-only — the stage is a fact of the environment you're viewing, not a field you pick on the
-board.
-
-<Callout type="warn">
-A **core** resource placed on a different cloud than the project is **gated**: Settings shows a notice
-that it can be drawn but the project will not provision until the resource is colocated.
-</Callout>
+Endpoints appear only after the resource is deployed. A resource that was never priced says
+**Not priced yet** rather than showing `$0`. Review a plan from the changes bar and its cost appears.
+See [The canvas → Status without colour](/guides/design-project/the-canvas) for what each state means.
 
 ## Duplicate or delete a resource
 
-Structural actions live in the collapsed **Danger zone** at the bottom of the **Settings** tab.
+The **Danger zone** is at the bottom of the **Settings** tab.
 
-- **Duplicate resource** — create a copy with the same configuration. Available for the array-style
-  resources you can have many of.
-- **Delete resource** — remove the resource from the canvas. You can undo this with **⌘Z**.
+- **Duplicate**: creates a copy with the same configuration. It is offered for the resources you can
+  add many of.
+- **Delete**: removes the resource from the design. Press **⌘Z** to undo it.
 
-The Danger zone is hidden for the project root (which can't be deleted) and for out-of-band resources
-such as marketplace add-ons and bring-your-own charts, which are managed where they were installed.
+You can also select a card on the board and press **Delete**, or right-click it and choose
+**Remove**.
+
+The Danger zone is not shown for the project, which cannot be deleted, or for resources that are
+managed where they were installed, such as add-ons and bring-your-own charts.
 
 ## Destroy an environment
 
-When you inspect the **project** in an editable environment, the Settings tab also carries a separate
-**Destroy environment** action.
+The environment's **Settings** tab carries **Destroy**. To open the environment, click its name at the
+start of the toolbar, or choose **Environment settings** from the **⋯** menu.
 
-1. Open the project's **Settings** tab.
+1. Open the environment's **Settings** tab.
 2. Click **Destroy**.
-3. Confirm in the dialog.
+3. Confirm with **Destroy environment**.
 
-This queues a `DESTROY` job that tears down the environment's provisioned cloud infrastructure. It
-cannot be undone.
+This queues a `DESTROY` job that removes the environment's cloud infrastructure. It cannot be undone.
