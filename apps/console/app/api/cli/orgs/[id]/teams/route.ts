@@ -12,6 +12,7 @@ import {
 	cliTeamResponse,
 	cliTeamsResponse,
 } from "@/lib/validations/cli-contract";
+import { teamPlanRefusal, teamRoleRefusal } from "./team-access";
 
 /** Body of POST /api/cli/orgs/:id/teams — create a team. */
 const createTeamBody = z.object({ name: z.string().min(1) });
@@ -48,7 +49,12 @@ export async function GET(
 	}
 }
 
-/** Creates a team in organization `id`. */
+/**
+ * Creates a team in organization `id`. Beyond the route's PDP check it asks what the console's
+ * team endpoint asks, in the same order: the caller's membership role must hold `team:create`
+ * (owners and admins), then the organization must hold the teams entitlement, read through the
+ * licence-aware resolver.
+ */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
@@ -69,6 +75,11 @@ export async function POST(
 	}
 
 	try {
+		const roleRefusal = await teamRoleRefusal(actor.userId, id, "create");
+		if (roleRefusal) return roleRefusal;
+		const planRefusal = await teamPlanRefusal(id);
+		if (planRefusal) return planRefusal;
+
 		const [row] = await getServiceDb()
 			.insert(team)
 			.values({ name: parsed.data.name, organizationId: id })
