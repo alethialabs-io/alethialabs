@@ -8,16 +8,15 @@
 
 import { z } from "zod";
 import { useQueryClient } from "@tanstack/react-query";
-import { useRunnersQuery, useDeployRunner, useRegisterRunner } from "@/lib/query/use-runners-query";
+import {
+	useDeployableAccountsQuery,
+	useDeployRunner,
+	useRegisterRunner,
+	useRunnersQuery,
+} from "@/lib/query/use-runners-query";
 import type { FieldErrors } from "@/lib/actions/result";
-import {
-	getVerifiedCloudIdentitiesByProvider,
-	type CloudIdentityOption,
-} from "@/app/server/actions/aws/identities";
-import {
-	RUNNER_DEPLOY_PROVIDERS,
-	RUNNER_DEPLOY_PROVIDERS_LABEL,
-} from "@/lib/runners/deploy-providers";
+import type { DeployableAccount } from "@/lib/rpc/procedures/runners";
+import { RUNNER_DEPLOY_PROVIDERS_LABEL } from "@/lib/runners/deploy-providers";
 import { groupRegions } from "@/lib/cloud-providers";
 import { CLOUD_ACCOUNT } from "@/lib/copy/vocabulary";
 import { orpc } from "@/lib/rpc/client";
@@ -101,48 +100,32 @@ const PATHS: {
 type DeployableAccountsRead =
 	| { status: "pending" }
 	| { status: "error" }
-	| { status: "ready"; identities: CloudIdentityOption[] };
+	| { status: "ready"; identities: DeployableAccount[] };
 
 /**
- * Reads the verified cloud accounts on the clouds we hold runner templates for, each time the
- * sheet opens, with a retry. Three states, rendered as three different things: while the read is
- * in flight the deploy pane is a skeleton (it used to say "No AWS account connected" until the
- * answer came), a failure is an error with "Try again" (it used to say the same sentence forever),
- * and only a successful empty answer says no account is connected.
+ * The verified cloud accounts on the clouds we hold runner templates for — the
+ * `runners.deployableAccounts` read, through the query cache — reduced to three states rendered as
+ * three different things: while the first answer is in flight (or a retry after a failure is) the
+ * deploy pane is a skeleton, a failure with nothing to show is an error with "Try again", and only
+ * a successful empty answer says no account is connected. A cached answer renders at once and is
+ * re-read each time the sheet opens.
  *
  * Only the clouds we hold runner templates for: the unfiltered list used to be offered here, so a
  * GCP-only user could pick an identity, submit, and read "no templates for provider gcp" in the job
  * log — and because CloudIdentitySelector auto-selects a lone identity, the unbuildable choice
- * arrived pre-filled.
+ * arrived pre-filled. The procedure filters on the server.
  */
 function useDeployableAccounts(open: boolean): {
 	read: DeployableAccountsRead;
 	retry: () => void;
 } {
-	// Every attempt has a number; an answer counts only for the attempt that asked. Bumping it is
-	// how both "Try again" and the next opening start a fresh read that renders as pending.
-	const [attempt, setAttempt] = useState(0);
-	const [settled, setSettled] = useState<{ attempt: number; read: DeployableAccountsRead } | null>(null);
-
-	useEffect(() => {
-		if (!open) return;
-		let cancelled = false;
-		Promise.all(RUNNER_DEPLOY_PROVIDERS.map((p) => getVerifiedCloudIdentitiesByProvider(p))).then(
-			(lists) => {
-				if (!cancelled) setSettled({ attempt, read: { status: "ready", identities: lists.flat() } });
-			},
-			() => {
-				if (!cancelled) setSettled({ attempt, read: { status: "error" } });
-			},
-		);
-		return () => {
-			cancelled = true;
-		};
-	}, [open, attempt]);
-
-	const read: DeployableAccountsRead =
-		settled !== null && settled.attempt === attempt ? settled.read : { status: "pending" };
-	return { read, retry: () => setAttempt((n) => n + 1) };
+	const accounts = useDeployableAccountsQuery(open);
+	const read: DeployableAccountsRead = accounts.data
+		? { status: "ready", identities: accounts.data }
+		: accounts.isError && !accounts.isFetching
+			? { status: "error" }
+			: { status: "pending" };
+	return { read, retry: () => void accounts.refetch() };
 }
 
 /**
@@ -159,7 +142,6 @@ export function AddRunnerDialog({ open, onOpenChange }: AddRunnerDialogProps) {
 	const finish = () => {
 		setPath(null);
 		setCredentials(null);
-		accounts.retry();
 		onOpenChange(false);
 	};
 
@@ -350,7 +332,7 @@ function DeployForm({
 	onRegisterInstead,
 	onClose,
 }: {
-	identities: CloudIdentityOption[];
+	identities: DeployableAccount[];
 	onRegisterInstead: () => void;
 	onClose: () => void;
 }) {

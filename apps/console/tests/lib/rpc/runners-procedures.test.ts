@@ -76,8 +76,9 @@ vi.mock("@/lib/db", async () => {
 
 import { authorize, authorizeQuiet } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
-import { runners } from "@/lib/db/schema";
+import { cloudIdentities, runners } from "@/lib/db/schema";
 import {
+	readDeployableAccounts,
 	readOwnRunnerViews,
 	readReleaseNotes,
 	readRunnersData,
@@ -307,5 +308,46 @@ describe("runners.releaseNotes", () => {
 		expect((await readReleaseNotes("1.3.0"))?.released_at).toBe("2026-09-01T00:00:00.000Z");
 		h.rows.set("tx:runner_releases", []);
 		expect(await readReleaseNotes("0.0.0")).toBeNull();
+	});
+});
+
+describe("runners.deployableAccounts — the Add-runner sheet's cloud accounts (#7110)", () => {
+	/** The SQL text of the one cloud_identities WHERE the read built. */
+	async function identitiesWhere(): Promise<{ sql: string; params: unknown[] }> {
+		const { PgDialect } = await import("drizzle-orm/pg-core");
+		const { SQL } = await import("drizzle-orm");
+		const where = h.wheres.find((w) => w.table === "cloud_identities")?.where;
+		if (!(where instanceof SQL)) throw new Error("the read built no WHERE");
+		return new PgDialect().sqlToQuery(where);
+	}
+
+	it("authorizes view on cloud_identity, then reads under RLS — never the service path", async () => {
+		h.rows.set("tx:cloud_identities", [{ id: "ci1", name: "prod", displayId: "123456789012", provider: "aws" }]);
+		expect(await readDeployableAccounts()).toEqual([{ id: "ci1", name: "prod", displayId: "123456789012", provider: "aws" }]);
+		expect(vi.mocked(authorize).mock.calls).toEqual([["view", { type: "cloud_identity" }]]);
+		expect(h.projections.filter((p) => p.table === "cloud_identities").map((p) => p.path)).toEqual(["tx"]);
+	});
+
+	it("is bounded to the addressed org, verified accounts, and the clouds a runner can be deployed into", async () => {
+		await readDeployableAccounts();
+		const { sql, params } = await identitiesWhere();
+		expect(sql).toContain('"cloud_identities"."org_id" = $');
+		expect(sql).toContain('"cloud_identities"."is_verified" = $');
+		expect(sql).toContain('"cloud_identities"."provider" in (');
+		expect(params).toEqual([ORG, true, "aws"]);
+	});
+
+	it("never selects the credentials column — only the account id at its cloud, extracted in SQL", async () => {
+		await readDeployableAccounts();
+		const projection = h.projections.find((p) => p.table === "cloud_identities")?.projection;
+		if (typeof projection !== "object" || projection === null) throw new Error("no projection recorded");
+		expect(Object.keys(projection).sort()).toEqual(["displayId", "id", "name", "provider"]);
+		const columns = Object.values(projection);
+		expect(columns).not.toContain(getTableColumns(cloudIdentities).credentials);
+	});
+
+	it("propagates a refusal (the sheet shows an error, not 'no account connected')", async () => {
+		vi.mocked(authorize).mockRejectedValue(new ForbiddenError("view", { type: "cloud_identity" }));
+		await expect(readDeployableAccounts()).rejects.toBeInstanceOf(ForbiddenError);
 	});
 });
