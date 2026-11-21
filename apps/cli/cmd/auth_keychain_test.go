@@ -1085,6 +1085,7 @@ func TestKeychain_TheRequestLogIsOnStderrAndCarriesNoCredential(t *testing.T) {
 	}
 	renewed := fake.renews(t)
 	t.Setenv(api.DebugEnv, "api")
+	modeEnv(t, map[string]string{api.DebugEnv: "api"})
 
 	stdout, stderr, code := authRun(t, "whoami", "--output", "json")
 	if code != 0 {

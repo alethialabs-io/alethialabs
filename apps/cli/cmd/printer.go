@@ -12,6 +12,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/spf13/cobra"
 )
 
@@ -43,8 +44,9 @@ type Mode struct {
 const (
 	// AgentEnv forces agent mode on or off: yes, no or auto.
 	AgentEnv = "ALETHIA_AGENT"
-	// DebugEnv turns request diagnostics on when it names the "api" topic.
-	DebugEnv = "ALETHIA_DEBUG"
+	// DebugEnv turns request diagnostics on when it names the "api" topic. It is the API client's
+	// own switch, so the CLI and the client cannot disagree about its name.
+	DebugEnv = api.DebugEnv
 )
 
 // agentMarkers are the environment variables an agent harness sets in the shells it spawns. Under
@@ -91,19 +93,6 @@ func agentDetected(lookup func(string) (string, bool)) bool {
 	return false
 }
 
-// debugRequested reports whether DebugEnv asks for request diagnostics: a comma-separated list of
-// topics naming "api" or "all", or a plain true.
-func debugRequested(raw string) bool {
-	for _, topic := range strings.Split(raw, ",") {
-		switch strings.ToLower(strings.TrimSpace(topic)) {
-		case "api", "all":
-			return true
-		}
-	}
-	on, err := strconv.ParseBool(strings.TrimSpace(raw))
-	return err == nil && on
-}
-
 // resolveMode computes the Mode of one invocation from its flags and its environment.
 //
 // The agent switch is read in precedence order — the --agent flag, then ALETHIA_AGENT, then
@@ -137,7 +126,7 @@ func resolveMode(cmd *cobra.Command, lookup func(string) (string, bool)) (Mode, 
 		Agent:   agent,
 		NoInput: agent || noInput || !stdinIsTTY(),
 		Color:   !agent && !ui.ColorDisabledByEnv(lookup),
-		Debug:   debug || debugRequested(debugEnv),
+		Debug:   debug || api.DebugRequested(debugEnv),
 	}, nil
 }
 
@@ -238,6 +227,21 @@ func (p *Printer) Debugf(format string, args ...any) {
 		return
 	}
 	fmt.Fprintf(p.Err, "debug: "+format+"\n", args...)
+}
+
+// applyDebugOutput points the API client's request log at the Printer's diagnostic stream when the
+// invocation asked for diagnostics, and switches it off when it did not. The log goes to Err and
+// never to Out, so a parser reading the result never meets it; the client itself withholds every
+// header and query value that could carry a credential, and never writes a body.
+//
+// It is set on every invocation rather than once, so a run without --debug does not inherit the log
+// of the run before it.
+func applyDebugOutput(p *Printer) {
+	if p.Mode.Debug {
+		api.SetDebugOutput(p.Err)
+		return
+	}
+	api.SetDebugOutput(nil)
 }
 
 // --- The mutation result ---
