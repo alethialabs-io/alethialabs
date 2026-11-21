@@ -125,10 +125,10 @@ describe("the board's key table", () => {
 		expect(unregistered.map((binding) => binding.id)).toEqual([]);
 	});
 
-	it("lets nothing but the palette and the save chord fire while typing in a field", () => {
+	it("lets nothing but the palette and the review chord fire while typing in a field", () => {
 		const inFields = CANVAS_KEYS.filter((binding) => binding.allowInInput === true).map(
 			(binding) => binding.label,
 		);
-		expect(inFields).toEqual(["Command palette", "Save the design"]);
+		expect(inFields).toEqual(["Command palette", "Review plan"]);
 	});
 });
