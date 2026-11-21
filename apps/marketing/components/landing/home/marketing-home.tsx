@@ -10,11 +10,13 @@ import {
 	Close,
 	ConsoleBand,
 	Hero,
+	LabsLine,
 	ReceiptBand,
 } from "./sections";
 
 /**
- * The home page: hero, what it runs on, three bands, close.
+ * The home page: hero, what it runs on, three bands, a one-line pointer to
+ * the services side, close.
  *
  * The announcement line sits inside `main` rather than above the header, where
  * its Vercel counterpart lives — `SiteShell` is shared with apps/blog, so a bar
@@ -29,6 +31,7 @@ export async function MarketingHome({ homeHref = "/" }: { homeHref?: "/" | "/hom
 			<ConsoleBand />
 			<CliBand />
 			<ReceiptBand />
+			<LabsLine />
 			<Close />
 		</SiteShell>
 	);

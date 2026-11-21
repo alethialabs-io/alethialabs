@@ -3,7 +3,6 @@
 
 import Link from "next/link";
 import { AVAILABLE_CLOUDS, cloudListLabel } from "@repo/cloud-catalog";
-import { Badge } from "@repo/ui/badge";
 import {
 	Band,
 	LogoWall,
@@ -11,7 +10,8 @@ import {
 	PageOpen,
 	Plate,
 } from "@repo/brand/site-sections";
-import { JOBS, JobsTable } from "@repo/brand/site-primitives";
+import { JOBS, JobsTable, Wrap } from "@repo/brand/site-primitives";
+import { CommandBlock } from "@repo/brand/command-block";
 
 import { VerifyReceipt } from "./verify-receipt";
 
@@ -27,22 +27,26 @@ import { VerifyReceipt } from "./verify-receipt";
  */
 
 /**
- * Real `alethia verify receipt` output, copied verbatim from
- * apps/docs/content/docs/reference/cli/verify.mdx. If the CLI's output changes,
- * this changes with it — it is a quotation, not a mock-up.
+ * The four commands the CLI band lists. Each is a real top-level command in
+ * apps/cli/cmd (login.go, apply.go for `plan` and `apply`, verify_receipt.go).
+ * This used to be a pasted `verify receipt` transcript whose catalog version,
+ * control count and key id disagreed with the receipt card one band below — two
+ * "real" artefacts on one page that could not both be true.
  */
-const VERIFY_TRANSCRIPT = `$ alethia verify receipt --job 4f3c2b1a
+const CLI_COMMANDS: { command: string; what: string }[] = [
+	{ command: "alethia login", what: "Sign in from the terminal." },
+	{ command: "alethia plan", what: "Show what alethia.yaml would change." },
+	{ command: "alethia apply", what: "Create it and deploy every environment." },
+	{ command: "alethia verify receipt --latest", what: "Check the newest receipt's signature." },
+];
 
-alethia · verify receipt
-  Signature        ✓ signature verified against your organization's own recorded key
-  Trust            org
-  Algorithm        ed25519
-  Key ID           9f2c4a1b7e5d3068
-  Verdict          pass
-  Sealed to plan   3b1f...c204
-  Control catalog  elench-controls-0.5.2
-  Controls         14 pass, 0 fail, 0 warn, 0 n/a`;
+/**
+ * The CLI install line, from the recommended method on
+ * /docs/get-started/install-the-cli.
+ */
+const CLI_INSTALL = "brew install alethialabs-io/tap/alethia";
 
+/** The opening: headline left, three plain statements right. */
 export function Hero() {
 	return (
 		<PageOpen
@@ -62,13 +66,16 @@ export function Hero() {
 					// encrypted at rest in our database unless you self-manage the runner.
 					// See docs/runner/cloud-credentials.
 					"Keyless on AWS, GCP and Azure — no access key on disk.",
-					"Every apply seals a receipt you can verify offline.",
+					// "verify offline, without us" is said by the announce line and the
+					// receipt band; a third time here was one too many.
+					"Every apply seals a signed receipt.",
 				],
 			}}
 		/>
 	);
 }
 
+/** The clouds Alethia provisions into, from the cloud catalog. */
 export function Clouds() {
 	return (
 		<LogoWall
@@ -78,6 +85,7 @@ export function Clouds() {
 	);
 }
 
+/** The console band: the jobs table and the designer links. */
 export function ConsoleBand() {
 	return (
 		<Band
@@ -88,9 +96,12 @@ export function ConsoleBand() {
 				</Plate>
 			}
 			rail={{
+				// Was "Nineteen component kinds". The console's component registry
+				// (apps/console/lib/cli/project-components.ts) lists fourteen, so the
+				// count was wrong; the claim no longer carries one.
 				proof: {
-					lead: "Nineteen component kinds",
-					rest: " from one Project — clusters, databases, caches, queues, buckets.",
+					lead: "One Project",
+					rest: " holds the clusters, databases, caches, queues and buckets of every environment.",
 				},
 				label: "Console",
 				links: [
@@ -104,23 +115,33 @@ export function ConsoleBand() {
 	);
 }
 
+/** The CLI band: four real commands and the install line. */
 export function CliBand() {
 	return (
 		<Band
 			lines={["Or drive the whole thing", "from your shell."]}
 			visual={
-				<Plate label="zsh">
-					<pre
-						className="m-0 overflow-x-auto p-5 font-mono text-[12px] leading-[1.75] text-text-secondary"
-						style={{ background: "var(--surface-sunken)" }}
-					>
-						{VERIFY_TRANSCRIPT}
-					</pre>
-				</Plate>
+				<div className="space-y-6">
+					<Plate label="zsh">
+						<ul className="m-0 list-none p-0" style={{ background: "var(--surface-sunken)" }}>
+							{CLI_COMMANDS.map((item) => (
+								<li
+									key={item.command}
+									className="flex flex-wrap items-baseline gap-x-6 gap-y-1 px-5 py-3.5"
+									style={{ borderBottom: "1px solid var(--border-faint)" }}
+								>
+									<code className="font-mono text-ui-sm text-text-primary">{item.command}</code>
+									<span className="text-ui-sm text-text-tertiary">{item.what}</span>
+								</li>
+							))}
+						</ul>
+					</Plate>
+					<CommandBlock label="Install" command={CLI_INSTALL} />
+				</div>
 			}
 			rail={{
 				proof: {
-					lead: "Plan, apply, destroy, verify",
+					lead: "Plan, apply, verify",
 					rest: " — the same operations the console runs, from your terminal.",
 				},
 				label: "Commands",
@@ -135,15 +156,19 @@ export function CliBand() {
 	);
 }
 
+/** The receipt band: the sample signed receipt, labelled as a demo. */
 export function ReceiptBand() {
 	return (
 		<Band
+			// The card is the engine's real output signed with a DEMO key (see
+			// lib/proof/verify-receipt-sample.ts), so the band says so.
+			eyebrow="Sample receipt · demo signing key"
 			lines={["Every apply", "leaves evidence."]}
 			visual={<VerifyReceipt />}
 			rail={{
 				proof: {
 					lead: "Signed ed25519",
-					rest: ", the receipt verifies offline against the published key — without us.",
+					rest: ", the receipt verifies offline against your org's published key — without us.",
 				},
 				label: "Receipts",
 				links: [
@@ -157,40 +182,51 @@ export function ReceiptBand() {
 	);
 }
 
+/** The closing line and its two actions. */
 export function Close() {
 	return (
 		<PageClose
 			line="Provision it. Prove it."
 			ctas={[
 				{ label: "Start free", href: "/signup" },
-				// Was /contact/enterprise, which is the TRIAL form, not a demo.
-				{ label: "Talk to sales", href: "/contact/sales", variant: "outline" },
+				{ label: "Contact", href: "/contact?topic=demo", variant: "outline" },
 			]}
 		/>
 	);
 }
 
 /**
- * The thin line above the fold, and the page's Beta label. Home only — /pricing
- * and /enterprise do not carry it.
- *
- * It says two things a visitor should know before they sign up: the product is in
- * beta, with no uptime SLA, and which clouds it runs on. The cloud names come from
- * `@repo/cloud-catalog`, so a cloud that is hidden drops out of this line by itself.
- * It names no launch date, because the date can still move (decision M15, 2026-11-17).
+ * One quiet line for the services side of the company, just above the close.
+ * No visual and no band headline: the product is the page, this is a pointer.
  */
+export function LabsLine() {
+	return (
+		<section className="py-14" style={{ borderTop: "1px solid var(--border)" }}>
+			<Wrap>
+				<p className="m-0 flex flex-wrap items-baseline gap-x-4 gap-y-2 text-ui-md text-text-secondary">
+					<span>Need hands on your platform? Alethia Labs builds and audits cloud platforms for teams.</span>
+					<Link
+						href="/services"
+						className="vx-clamp vx-clamp--tight text-text-primary no-underline transition-colors hover:text-text-secondary"
+					>
+						Services ›
+					</Link>
+				</p>
+			</Wrap>
+		</section>
+	);
+}
+
+/** The thin line above the fold. Home only — /pricing and /enterprise do not carry it. */
 export function Announce() {
 	return (
 		<div className="py-2.5 text-center" style={{ borderBottom: "1px solid var(--border-faint)" }}>
 			<Link
-				href="/docs/get-started"
-				className="vx-clamp vx-clamp--tight inline-flex flex-wrap items-center justify-center gap-2 text-[11px] text-text-tertiary no-underline transition-colors hover:text-text-secondary"
+				href="/docs/concepts/elench/receipts"
+				className="vx-clamp vx-clamp--tight inline-flex items-center gap-2 text-[11px] text-text-tertiary no-underline transition-colors hover:text-text-secondary"
 			>
-				<Badge variant="outline" className="vx-badge-mono px-1.5 py-px">
-					Beta
-				</Badge>
-				{`On ${cloudListLabel()}. No uptime SLA during the beta.`}
-				<span className="text-text-disabled">Get started ›</span>
+				Receipts verify offline, without us
+				<span className="text-text-disabled">Read the spec ›</span>
 			</Link>
 		</div>
 	);
