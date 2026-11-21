@@ -5,13 +5,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import { cn } from "@repo/ui/utils";
-import { track } from "@/lib/analytics/track";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useStore } from "zustand";
 import {
-	deployDesignAction,
 	destroyEnvironmentAction,
 	discardStagedDesignAction,
 	saveDesignAction,
@@ -68,7 +66,6 @@ import {
 	SHORTCUT_CANVAS_HAND,
 	SHORTCUT_CANVAS_PALETTE,
 	SHORTCUT_CANVAS_REDO,
-	SHORTCUT_CANVAS_SAVE,
 	SHORTCUT_CANVAS_SELECT,
 	SHORTCUT_CANVAS_SHORTCUTS,
 	SHORTCUT_CANVAS_TIDY,
@@ -209,8 +206,12 @@ function CanvasInner({
 	// Each is one `useActionMutation`: pending while in flight (the triggers bind it, and each handler
 	// below drops a press that races one in flight), every refusal routed by kind, a confirmation
 	// only where the outcome is not already on screen, and every key that shows the changed data
-	// invalidated when it settles. A deploy, a destroy and a save all move the environment's status
-	// and its job history; a destroy also moves the environments list and what a held destroy waits on.
+	// invalidated when it settles. A destroy moves the environment's status, its job history, the
+	// environments list and what a held destroy waits on.
+	//
+	// There is no deploy here (#6833, decision M23). A deploy is offered in one place, the review
+	// view the changes bar opens, and only through `usePlanReview(serverCurrent).gate`: for a plan of
+	// the saved design that was reviewed. A second deploy path in this file would be a way round it.
 	const environmentKeys = [orpc.canvas.environmentStatus.key(), orpc.canvas.environmentJobs.key()];
 	// The revision the write in flight will leave the server design at (`savedRevision`), noted when
 	// the write is sent and recorded when it lands.
@@ -232,14 +233,6 @@ function CanvasInner({
 		successMessage: "Design saved",
 		onSuccess: commitSaved,
 	});
-	const deployDesign = useActionMutation(deployDesignAction, {
-		invalidates: environmentKeys,
-		successMessage: "Deploy queued",
-		onSuccess: (data) => {
-			track("deploy_queued", { environmentId: data.environmentId });
-			commitSaved();
-		},
-	});
 	const discardStaged = useActionMutation(discardStagedDesignAction, {
 		invalidates: [orpc.canvas.environmentStatus.key()],
 	});
@@ -253,7 +246,6 @@ function CanvasInner({
 		successMessage: (data) =>
 			data.queued > 1 ? `Destroy queued for ${data.queued} environments` : "Destroy queued",
 	});
-	const deploying = deployDesign.isPending;
 	const saving = saveDesign.isPending;
 
 	/**
@@ -435,29 +427,6 @@ function CanvasInner({
 		mutateSave({ projectId, environmentId: environmentId ?? null, design: parsed.data });
 	}, [projectId, environmentId, saveIsPending, mutateSave, board]);
 
-	const deployIsPending = deployDesign.isPending;
-	const mutateDeploy = deployDesign.mutate;
-	/**
-	 * Persist the desired config to the live project, then provision the active environment (config
-	 * is environment-scoped; the server re-resolves the environment, so a stale or absent id still
-	 * lands on the project's default). A refused deploy leaves the design saved and the baseline
-	 * uncommitted: nothing deployed, and the refusal's sentence says how to fix it (#5445).
-	 */
-	const handleDeploy = useCallback(() => {
-		if (deployIsPending) return;
-		const nodes = useCanvasStore.getState().nodes;
-		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
-		if (!parsed.success) {
-			const first = parsed.error.issues[0];
-			toast.error(
-				`Can't deploy: ${first?.path.join(".") || "project"} — ${first?.message}`,
-			);
-			return;
-		}
-		writtenRevision.current = savedRevision(board.document.getState().seed?.revision, parsed.data);
-		mutateDeploy({ projectId, environmentId: environmentId ?? null, design: parsed.data });
-	}, [projectId, environmentId, deployIsPending, mutateDeploy, board]);
-
 	const discardIsPending = discardStaged.isPending;
 	const mutateDiscard = discardStaged.mutate;
 	/** Clear the active environment's staged changes (the Discard action) — once. */
@@ -527,9 +496,8 @@ function CanvasInner({
 	useShortcut(SHORTCUT_CANVAS_DUPLICATE, () => {
 		if (selectedIds.length) duplicateNodes(selectedIds);
 	});
-	// Swallowed so the browser's own Save-page dialog never lands on the canvas: it saves the
-	// design without deploying.
-	useShortcut(SHORTCUT_CANVAS_SAVE, handleSaveDesign);
+	// ⌘S is the changes bar's: it opens the review (`pending-changes-bar.tsx`), the one way from an
+	// edit to a deploy.
 	useShortcut(SHORTCUT_CANVAS_ASSISTANT, openAssistantExclusive);
 	useShortcut(SHORTCUT_CANVAS_FIT, fitBoard);
 	useShortcut(SHORTCUT_CANVAS_TIDY, tidyBoard);
@@ -657,8 +625,8 @@ function CanvasInner({
 
 			{/* Bottom-centre: the pending changes, and the way from them to a deploy. */}
 			<PendingChangesBar
-				onDeploy={handleDeploy}
-				deploying={deploying}
+				projectId={projectId}
+				environmentId={environmentId ?? null}
 				onDiscard={handleDiscardStaged}
 				discarding={discardStaged.isPending}
 				onSave={handleSaveDesign}
