@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { disp, eyebrow, mono, Wrap } from "@repo/brand/site-primitives";
+import { cloudListLabel } from "@repo/cloud-catalog";
 import { formatDate } from "@repo/format";
+import { Badge } from "@repo/ui/badge";
 import type { PostItem, ReleaseItem } from "@/lib/home/feeds";
 
 /**
@@ -21,11 +23,32 @@ function day(iso: string): string {
 	return formatDate(iso, "date", "UTC");
 }
 
-/** The opening statement: a bold lead sentence and a quieter continuation, no buttons. */
+/**
+ * The Beta line above the statement (REL-L17, #7100): the product is in beta with no uptime SLA,
+ * on the clouds the catalog offers — a hidden cloud drops out by itself. No launch date, because
+ * the date can still move (decision M15, 2026-11-17).
+ */
+function BetaLine() {
+	return (
+		<a
+			href="/docs/get-started"
+			className="mb-6 inline-flex flex-wrap items-center gap-2 text-ui-xs text-text-tertiary no-underline transition-colors hover:text-text-secondary"
+		>
+			<Badge variant="outline" className="vx-badge-mono px-1.5 py-px">
+				Beta
+			</Badge>
+			{`On ${cloudListLabel()}. No uptime SLA during the beta.`}
+			<span className="text-text-disabled">Get started ›</span>
+		</a>
+	);
+}
+
+/** The opening statement: the Beta line, then a bold lead sentence and a quieter continuation. */
 export function Statement() {
 	return (
 		<section className="pt-[72px] pb-12 max-[640px]:pt-12 max-[640px]:pb-8">
 			<Wrap>
+				<BetaLine />
 				<h1
 					className="text-display-md"
 					style={{ ...disp, margin: 0, maxWidth: "48ch", lineHeight: 1.14, letterSpacing: "var(--tracking-display)", color: "var(--text-primary)", fontWeight: 400, textWrap: "balance" }}
