@@ -5,14 +5,15 @@
 // workspace carries `personal_elsewhere: true`: its default star is gated with the reason (and never
 // fires the mutation), while a runner of the addressed org keeps the live toggle.
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const setDefaultRunner = vi.fn();
 const toastError = vi.fn();
+const removeRunner = vi.hoisted(() => ({ mutate: vi.fn() }));
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), useParams: () => ({ org: "acme" }) }));
 vi.mock("sonner", () => ({ toast: { error: (...a: unknown[]) => toastError(...a), success: vi.fn() } }));
 vi.mock("@/components/runners/release-notes-popover", () => ({ ReleaseNotesPopover: () => null }));
 vi.mock("@/components/runners/runner-select-popover", () => ({ RunnerSelectPopover: () => null }));
@@ -20,7 +21,7 @@ vi.mock("@/lib/query/use-runners-query", () => ({
 	useRunnersQuery: () => ({ data: undefined }),
 	useSetDefaultRunner: () => ({ mutate: setDefaultRunner, isPending: false }),
 	useDestroyRunner: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false }),
-	useDeleteRunner: () => ({ mutate: vi.fn(), isPending: false }),
+	useDeleteRunner: () => ({ mutate: removeRunner.mutate, isPending: false }),
 }));
 
 import {
@@ -73,5 +74,29 @@ describe("default runner star", () => {
 		await userEvent.click(star);
 		expect(setDefaultRunner).not.toHaveBeenCalled();
 		expect(toastError).not.toHaveBeenCalled();
+	});
+});
+
+describe("the job a runner is busy with (R6 C-04)", () => {
+	it("links to the job under the org in the address, not the legacy /dashboard redirect", () => {
+		render(
+			<RunnerActions
+				runner={row({ active_job: { id: "job-7", job_type: "UPDATE_RUNNER", project_name: null } })}
+			/>,
+		);
+		expect(screen.getByRole("link", { name: /Updating/ }).getAttribute("href")).toBe("/acme/~/jobs/job-7");
+	});
+});
+
+describe("removing a registered runner", () => {
+	it("asks first, in plain words, and removes only on confirm", async () => {
+		render(<RunnerActions runner={row({})} />);
+		await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+		const dialog = screen.getByRole("alertdialog");
+		expect(dialog.textContent).toContain("Remove runner \u201Cbuild-box\u201D?");
+		expect(dialog.textContent).not.toContain("database");
+		expect(removeRunner.mutate).not.toHaveBeenCalled();
+		await userEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+		expect(removeRunner.mutate).toHaveBeenCalledWith("r1", expect.anything());
 	});
 });
