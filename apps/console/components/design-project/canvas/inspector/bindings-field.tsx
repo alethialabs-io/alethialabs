@@ -269,7 +269,9 @@ export function BindingsField({
 							</Button>
 						</div>
 
-						<div className="grid grid-cols-2 gap-2">
+						{/* Stacked, not two-up: in the 392px rail a resource name next to its kind was cut to a
+						    few characters. Layout only; what each control does is unchanged. */}
+						<div className="grid gap-2">
 							<div className="space-y-1">
 								<span className="vx-eyebrow text-ui-3xs">Target kind</span>
 								<Select
