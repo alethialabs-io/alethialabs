@@ -1025,14 +1025,15 @@
 }
 
 /* ============================================================
-   AnimatedMark (site/animated-mark.tsx) — the header logo.
-   Expanded: [ Alethia · LABS ]. Compact ([data-compact], set past 24px of scroll):
+   The lockup — AlethiaLockup (lockup.tsx), drawn by every surface. The site
+   header animates it (site/animated-mark.tsx); everywhere else it is static
+   (.ah-mark--static). Expanded: [ Alethia · LABS ]. Compact ([data-compact], set past 24px of scroll):
    [ · ]. Each word is an overflow-hidden box whose max-width folds from its
    measured width (--w, written once by the component) to 0 while its letters
    slide into the dot, fade and blur. Pure CSS transitions; nothing per frame.
 
    Geometry is the canonical mark's (viewBox 0 0 32 32: stroke 2.4, dot r 2.9),
-   scaled by --mark-s, the same `size` AlethiaLockup takes: 24 on desktop, 20 on a
+   scaled by --mark-s — AlethiaLockup's `size`, else 24 on desktop and 20 on a
    phone. Each bracket is cropped to a 7.5 x 23 unit box, so in the compact state
    the 0.6-unit dot margins put the dot exactly where the mark draws it.
    ============================================================ */
@@ -1106,12 +1107,20 @@
 .ah-mark[data-compact] .ah-mark__alethia > span { transform: translateX(40%); }
 .ah-mark[data-compact] .ah-mark__labs > span { transform: translateX(-40%); }
 .ah-mark[data-compact] .ah-mark__dot { margin: 0 calc(var(--mark-s) * .6 / 32); transform: scale(1.2); }
+/* A static lockup (every one but the header's) never folds, so it takes its words'
+   natural width instead of a measured --w. */
+.ah-mark--static .ah-mark__word { max-width: none; }
+/* The product lockup, `[ Alethia ]`, has no dot or tag: the closing bracket keeps the
+   same air after the word that the dot gives it in `[ Alethia · LABS ]`. */
+.ah-mark__br--solo { margin-left: calc(var(--mark-s) * .3); }
+/* Reduce motion keeps the fold — a small, contained change of width that the visitor
+   caused by scrolling, not the large or parallax motion the setting exists to calm —
+   and drops only the blur, the drift and the dot's scale. A fade alone read as the
+   logo jumping between two states. */
 @media (prefers-reduced-motion: reduce) {
-  .ah-mark__word,
-  .ah-mark__word > span,
-  .ah-mark__dot,
-  .ah-mark__br { transition: opacity 220ms linear; }
+  .ah-mark { --mark-dur: 450ms; }
   .ah-mark[data-compact] .ah-mark__alethia > span,
   .ah-mark[data-compact] .ah-mark__labs > span { transform: none; }
   .ah-mark[data-compact] .ah-mark__word { filter: none; }
+  .ah-mark[data-compact] .ah-mark__dot { transform: none; }
 }

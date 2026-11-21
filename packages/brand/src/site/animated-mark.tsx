@@ -4,6 +4,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { AlethiaLockup } from "../lockup";
 
 /**
  * Scroll thresholds, in px. Compact once the page has left the top, expanded again
@@ -27,10 +28,10 @@ const EXPAND_BELOW = 8;
  * state: it is not in the JSX, so React never reconciles it, and a scroll past the
  * threshold costs one attribute write instead of a re-render of the header.
  *
- * Purely visual: every piece is `aria-hidden`, so the enclosing link must carry the
- * accessible name. The bracket and dot geometry is the canonical mark's
- * (`AlethiaMark` in `../lockup.tsx`); the brackets are its two paths, each cropped
- * to its own viewBox.
+ * The drawing is `AlethiaLockup` itself (`../lockup.tsx`) — the same lockup the footer,
+ * the console and the docs render — so the animated logo cannot drift from the static
+ * one. Purely visual: the lockup is `aria-hidden`, so the enclosing link must carry
+ * the accessible name.
  */
 export function AnimatedMark() {
   const ref = useRef<HTMLSpanElement>(null);
@@ -86,33 +87,5 @@ export function AnimatedMark() {
     };
   }, []);
 
-  return (
-    <span ref={ref} className="ah-mark" aria-hidden="true">
-      <svg className="ah-mark__br" viewBox="5 4.5 7.5 23" fill="none">
-        <path
-          d="M11 6 H6.5 V26 H11"
-          stroke="currentColor"
-          strokeWidth="2.4"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-      <span className="ah-mark__word ah-mark__alethia">
-        <span>Alethia</span>
-      </span>
-      <span className="ah-mark__dot" />
-      <span className="ah-mark__word ah-mark__labs">
-        <span>LABS</span>
-      </span>
-      <svg className="ah-mark__br" viewBox="19.5 4.5 7.5 23" fill="none">
-        <path
-          d="M21 6 H25.5 V26 H21"
-          stroke="currentColor"
-          strokeWidth="2.4"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </span>
-  );
+  return <AlethiaLockup ref={ref} tag="labs" animated />;
 }
