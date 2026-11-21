@@ -18,7 +18,7 @@ import { NodeSubject } from "@/components/design-project/canvas/inspector-shell/
 import type { NodeStatus } from "@/lib/canvas/node-status";
 import { board } from "@/lib/canvas/store/board";
 import { useNode } from "@/lib/canvas/store/use-board";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { setBoardNodes } from "@/tests/fixtures/canvas/board";
 
 const { nodeStatus } = vi.hoisted(() => ({
 	nodeStatus: { current: null as NodeStatus | null },
@@ -103,7 +103,8 @@ function Host({ id }: { id: string }) {
 /** Seeds the board with `nodes` as the saved design and renders the subject for the first. */
 function renderSubject(first: CanvasNode, ...rest: CanvasNode[]) {
 	const nodes = [first, ...rest];
-	useCanvasStore.setState({ nodes, baseline: nodes });
+	setBoardNodes(nodes);
+	board.document.getState().replaceBaseline(nodes);
 	return render(<Host id={first.id} />);
 }
 
@@ -115,7 +116,7 @@ function configOf(id: string): Record<string, unknown> {
 
 beforeEach(() => {
 	nodeStatus.current = null;
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("NodeSubject", () => {
@@ -181,7 +182,8 @@ describe("NodeSubject", () => {
 
 	it("opens on the tab the view store asks for", () => {
 		const node = designNode("service", "api");
-		useCanvasStore.setState({ nodes: [node], baseline: [node] });
+		setBoardNodes([node]);
+		board.document.getState().replaceBaseline([node]);
 		act(() => board.view.getState().setSubject({ kind: "node", id: node.id }, "connections"));
 		renderSubject(node);
 		expect(screen.getByRole("tab", { name: "Connections" })).toHaveAttribute("aria-selected", "true");

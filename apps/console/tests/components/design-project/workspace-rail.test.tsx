@@ -8,6 +8,7 @@
 // grammar the canvas consumes on mount.
 
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	parseCardParam,
@@ -24,7 +25,9 @@ import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-reg
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import { board } from "@/lib/canvas/store/board";
 import type { Subject } from "@/lib/canvas/store/types";
-import { useCanvasStore, type WorkspaceCard } from "@/lib/stores/use-canvas-store";
+import type { WorkspaceCard } from "@/lib/canvas/store/types";
+import { BoardSourcesProvider } from "@/lib/canvas/store/canvas-store-provider";
+import { setBoardNodes } from "@/tests/fixtures/canvas/board";
 
 const { fieldLeft } = vi.hoisted(() => ({ fieldLeft: vi.fn() }));
 
@@ -83,7 +86,7 @@ function designNode(kind: "database" | "bucket", name: string): CanvasNode {
 	} as unknown as CanvasNode;
 }
 
-/** A card the design does not own, as the canvas mirrors it into the store. */
+/** A card the design does not own, as the canvas builds it from its query. */
 function otherNode(id: string, kind: "chart_workload" | "external"): CanvasNode {
 	return {
 		id,
@@ -111,17 +114,23 @@ function boardCard(id: string): HTMLElement {
 
 const rail = () => screen.getByTestId("workspace-rail");
 
+/** The cards the design does not own, as the canvas hands them to the board from their queries. */
+const OTHERS = [otherNode("cw-w1", "chart_workload"), otherNode("external-network", "external")];
+const NO_OUTPUTS: string[] = [];
+
+/** The rail with the out-of-band cards on the board beside the design. */
+function OnBoard({ children }: { children: ReactNode }) {
+	return (
+		<BoardSourcesProvider others={OTHERS} iacOutputs={NO_OUTPUTS}>
+			{children}
+		</BoardSourcesProvider>
+	);
+}
+
 beforeEach(() => {
 	fieldLeft.mockReset();
-	useCanvasStore.getState().reset();
-	useCanvasStore.setState({
-		nodes: [
-			designNode("database", "orders"),
-			designNode("bucket", "assets"),
-			otherNode("cw-w1", "chart_workload"),
-			otherNode("external-network", "external"),
-		],
-	});
+	board.reset();
+	setBoardNodes([designNode("database", "orders"), designNode("bucket", "assets")]);
 });
 
 afterEach(() => {
@@ -130,14 +139,14 @@ afterEach(() => {
 
 describe("WorkspaceRail", () => {
 	it("is closed with no subject, and never renders a dialog or an overlay", () => {
-		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
 		expect(rail()).toHaveAttribute("data-open", "false");
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(document.querySelector("[data-slot=sheet-overlay]")).toBeNull();
 	});
 
 	it("draws the body of every subject", () => {
-		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
 
 		show({ kind: "node", id: "database-orders" });
 		expect(screen.getByText("node subject database-orders")).toBeInTheDocument();
@@ -168,7 +177,7 @@ describe("WorkspaceRail", () => {
 	});
 
 	it("says so when the subject names a node that is not on the board", () => {
-		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
 		show({ kind: "node", id: "database-gone" });
 		expect(rail()).toHaveAttribute("data-open", "true");
 		expect(screen.getByText("This is no longer on the board")).toBeInTheDocument();
@@ -176,8 +185,8 @@ describe("WorkspaceRail", () => {
 	});
 
 	it("shows each legacy rail card as the subject it maps onto", () => {
-		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
-		const open = (card: WorkspaceCard) => act(() => useCanvasStore.getState().openCard(card));
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
+		const open = (card: WorkspaceCard) => act(() => board.view.getState().openCard(card));
 
 		open({ kind: "inspector", nodeId: "database-orders" });
 		expect(screen.getByText("node subject database-orders")).toBeInTheDocument();
@@ -202,7 +211,7 @@ describe("WorkspaceRail", () => {
 	});
 
 	it("has one width for every subject, and swaps the content in place", () => {
-		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
 		const width = `${RAIL_W + RAIL_GAP}px`;
 		expect(rail()).toHaveClass("workspace-rail");
 		expect(rail()).toHaveStyle({ width: "0px" });
@@ -235,15 +244,15 @@ describe("WorkspaceRail", () => {
 	});
 
 	it("an add-on needs a project to read its catalog from, so without one the rail stays shut", () => {
-		render(<WorkspaceRail />);
+		render(<WorkspaceRail />, { wrapper: OnBoard });
 		show({ kind: "node", id: "addon-grafana" });
 		expect(screen.queryByText(/addon subject/)).not.toBeInTheDocument();
 		expect(rail()).toHaveAttribute("data-open", "false");
 	});
 
 	it("offers the environment's activity only when it has a project and an environment to read", () => {
-		render(<WorkspaceRail projectId="p1" />);
-		act(() => useCanvasStore.getState().openCard({ kind: "activity" }));
+		render(<WorkspaceRail projectId="p1" />, { wrapper: OnBoard });
+		act(() => board.view.getState().openCard({ kind: "activity" }));
 		expect(rail()).toHaveAttribute("data-open", "true");
 		expect(screen.getByText("environment subject")).toBeInTheDocument();
 	});
@@ -261,18 +270,18 @@ describe("WorkspaceRail", () => {
 	});
 
 	it("unmounting the rail closes the inspector", () => {
-		const { unmount } = render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		const { unmount } = render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
 		show({ kind: "environment" });
 		act(() => unmount());
 		expect(board.view.getState().subject).toBeNull();
-		expect(useCanvasStore.getState().card).toBeNull();
+		expect(board.view.getState().card).toBeNull();
 	});
 });
 
 describe("WorkspaceRail — Escape, closing and the focus", () => {
 	it("Escape inside the rail closes it and returns the focus to the subject's card", () => {
 		const card = boardCard("database-orders");
-		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
 		show({ kind: "node", id: "database-orders" });
 
 		const control = screen.getByRole("button", { name: "A control" });
@@ -286,7 +295,7 @@ describe("WorkspaceRail — Escape, closing and the focus", () => {
 
 	it("Escape in a field leaves the field first, so what was typed is committed", () => {
 		boardCard("database-orders");
-		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
 		show({ kind: "node", id: "database-orders" });
 
 		const field = screen.getByLabelText("A field");
@@ -301,7 +310,7 @@ describe("WorkspaceRail — Escape, closing and the focus", () => {
 		const outside = document.createElement("button");
 		outside.setAttribute("data-outside", "");
 		document.body.appendChild(outside);
-		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
 		show({ kind: "environment" });
 
 		// The environment has no card on the board: the focus goes back to the control it left.
@@ -317,7 +326,7 @@ describe("WorkspaceRail — Escape, closing and the focus", () => {
 	});
 
 	it("going to another subject from inside the rail keeps the focus in the inspector", () => {
-		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
 		show({ kind: "node", id: "database-orders" });
 
 		// A row or a crumb inside the rail was pressed: it goes away with the old content.
@@ -330,7 +339,7 @@ describe("WorkspaceRail — Escape, closing and the focus", () => {
 
 	it("selecting another card on the board does not pull the focus into the rail", () => {
 		const card = boardCard("bucket-assets");
-		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
 		show({ kind: "node", id: "database-orders" });
 
 		act(() => screen.getByLabelText("A field").focus());
@@ -347,7 +356,7 @@ describe("WorkspaceRail — Escape, closing and the focus", () => {
 		const outside = document.createElement("button");
 		outside.setAttribute("data-outside", "");
 		document.body.appendChild(outside);
-		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
 		show({ kind: "node", id: "database-orders" });
 
 		act(() => outside.focus());
@@ -357,7 +366,7 @@ describe("WorkspaceRail — Escape, closing and the focus", () => {
 	});
 
 	it("Escape that a menu or a select opened from the rail owns does not close the inspector", () => {
-		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />, { wrapper: OnBoard });
 		show({ kind: "node", id: "database-orders" });
 
 		const control = screen.getByRole("button", { name: "A control" });
@@ -432,14 +441,14 @@ describe("resolveCardParam", () => {
 describe("useCardDeepLink", () => {
 	it("opens the card AFTER a parent's mount effect has seeded the graph", async () => {
 		const search = new URLSearchParams("environment_id=e1&card=env-settings");
-		const openCard = (card: WorkspaceCard) => useCanvasStore.getState().openCard(card);
+		const openCard = (card: WorkspaceCard) => board.view.getState().openCard(card);
 
 		renderHook(() => useCardDeepLink(search, openCard));
 		// A parent's mount effect runs after the child's and clears the card (what `setGraph` does).
-		act(() => useCanvasStore.setState({ card: null }));
+		act(() => board.view.getState().openCard(null));
 
 		await Promise.resolve();
-		expect(useCanvasStore.getState().card).toEqual({ kind: "env-settings" });
+		expect(board.view.getState().card).toEqual({ kind: "env-settings" });
 		expect(board.view.getState().subject).toEqual({ kind: "environment" });
 	});
 

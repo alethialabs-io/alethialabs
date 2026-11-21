@@ -5,27 +5,31 @@
 import type { CanvasContext } from "@/lib/ai/canvas-context";
 import type { AssistantView } from "@/lib/ai/project-assistant-body";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
-import { PROJECT_NODE_ID, selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { activeBoardActions, activeCanvas } from "@/lib/canvas/store/active-canvas";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
 import { graphToForm } from "@/components/design-project/canvas/graph/graph-to-form";
 import { configName } from "@/components/design-project/canvas/graph/node-config";
 
 /**
- * Reads the live canvas (shared global store) at SEND time so the assistant reasons
- * about the current design. Returns `undefined` when the canvas is empty (form-only
- * view) — the route degrades gracefully (summarizeCanvas(undefined) = "empty").
+ * Reads the board on screen (`activeCanvas`, since the assistant panel is not drawn inside the
+ * workbench) at SEND time so the assistant reasons about the current design. Returns `undefined`
+ * when the board is empty (form-only view) — the route degrades gracefully
+ * (summarizeCanvas(undefined) = "empty").
  */
 export function snapshotCanvas(): CanvasContext | undefined {
-	const store = useCanvasStore.getState();
-	if (store.nodes.length === 0) return undefined;
-	const clusterNode = store.nodes.find((n) => n.data.kind === "cluster");
+	const { board } = activeCanvas();
+	const actions = activeBoardActions();
+	const nodes = actions.nodes();
+	if (nodes.length === 0) return undefined;
+	const clusterNode = nodes.find((n) => n.data.kind === "cluster");
+	const card = board.view.getState().card;
 	return {
-		provider:
-			store.getEffectiveProvider(PROJECT_NODE_ID) ?? "aws",
+		provider: actions.effectiveProvider(PROJECT_NODE_ID) ?? "aws",
 		// The cluster's own cloud, from the resolver its card renders with (#5361), so
 		// `estimate_cost` prices the machine the card shows.
-		clusterProvider: clusterNode ? store.getEffectiveProvider(clusterNode.id) : null,
-		form: graphToForm(store.nodes),
-		nodes: store.nodes.map((n) => ({
+		clusterProvider: clusterNode ? actions.effectiveProvider(clusterNode.id) : null,
+		form: graphToForm(nodes),
+		nodes: nodes.map((n) => ({
 			id: n.id,
 			kind: n.data.kind,
 			name: configName(n.data),
@@ -33,8 +37,8 @@ export function snapshotCanvas(): CanvasContext | undefined {
 		// What the user is LOOKING AT. Without this, "make this bigger" is unresolvable — the
 		// assistant could see the whole design but had no idea which node you had selected, so a
 		// pronoun could only ever be guessed at.
-		selectedIds: store.selectedIds,
-		inspectorNodeId: selectInspectorNodeId(store),
+		selectedIds: board.view.getState().selection,
+		inspectorNodeId: card?.kind === "inspector" ? card.nodeId : null,
 	};
 }
 
@@ -74,25 +78,25 @@ export function snapshotView(): AssistantView {
 		path,
 		surface: toSurface(segments.at(-1)),
 	};
-	// The card is only reported ON Architecture, and the gate is not tidiness. `useCanvasStore` is
-	// a global store whose `reset()` runs only after a successful CREATE, so leaving the canvas
-	// clears neither `card` nor `nodes`. A question asked from the Jobs page — or from an org route
-	// with the project panel still open — shipped `openCard: {kind:"inspector", name:"prod-postgres"}`
-	// for a card the user cannot see, possibly from a DIFFERENT project's board, since the store is
-	// re-seeded only when a canvas mounts.
+	// The card is only reported ON Architecture, and the gate is not tidiness. A board outlives the
+	// page that drew it — each environment's board is kept for the life of the tab, and nothing
+	// closes its card when the canvas unmounts — so leaving the canvas clears neither the card nor the
+	// nodes. A question asked from the Jobs page — or from an org route with the project panel still
+	// open — shipped `openCard: {kind:"inspector", name:"prod-postgres"}` for a card the user cannot
+	// see, possibly from a DIFFERENT project's board.
 	//
 	// The whole point of naming the node is pronoun resolution, so pointing "this database" at a
 	// stale card is worse than omitting it: the model answers confidently about the wrong thing
 	// instead of asking. Found in review.
 	if (view.surface !== "architecture") return view;
-	const card = useCanvasStore.getState().card;
+	const card = activeCanvas().board.view.getState().card;
 	if (!card) return view;
 	if (card.kind !== "inspector") return { ...view, openCard: { kind: card.kind } };
 	// An inspector card is about ONE node — name it, so a pronoun ("this database") resolves to
 	// the thing on the rail rather than to whatever the model guesses.
-	const node = useCanvasStore
-		.getState()
-		.nodes.find((n) => n.id === card.nodeId);
+	const node = activeBoardActions()
+		.nodes()
+		.find((n) => n.id === card.nodeId);
 	return {
 		...view,
 		openCard: {

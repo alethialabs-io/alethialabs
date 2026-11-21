@@ -33,7 +33,7 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { useIacSourceCanvas } from "@/components/design-project/byo/iac-source-canvas-context";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
 import type { IacScanReport } from "@/types/jsonb.types";
 
 /** The scan-status chip — label + tone + icon, derived from the scan lifecycle + the report's
@@ -67,7 +67,7 @@ function shortSha(sha: string | null): string {
 /** The read-only external-IaC source card, driven by IacSourceCanvasContext. */
 export function IacNode({ source }: { source: IacSourceState }) {
 	const ctx = useIacSourceCanvas();
-	const openCard = useCanvasStore((s) => s.openCard);
+	const board = useBoard();
 	// Pending while in flight, and held after it lands: the card leaves the board when the source read
 	// settles, and until then a second press would detach a source that is already gone.
 	const detachSource = useActionMutation(detachIacSourceAction, {
@@ -141,7 +141,7 @@ export function IacNode({ source }: { source: IacSourceState }) {
 				{/* Scan chip — opens the findings card on the workspace rail. */}
 				<button
 					type="button"
-					onClick={() => openCard({ kind: "iac-scan" })}
+					onClick={() => board.view.getState().openCard({ kind: "iac-scan" })}
 					title="IaC safety scan"
 					className="flex items-center gap-1.5 self-start rounded-none border border-border px-2 py-1 font-mono text-ui-2xs transition-colors hover:bg-muted"
 				>

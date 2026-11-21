@@ -7,9 +7,9 @@ import { EmptyState } from "@repo/ui/empty";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { IacNode } from "@/components/design-project/byo/iac-node";
 import { useIacSourceCanvas } from "@/components/design-project/byo/iac-source-canvas-context";
-import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
+import { useBoard, useOthers } from "@/lib/canvas/store/canvas-store-provider";
 import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useNode } from "@/lib/canvas/store/use-board";
 import { SourceReposCard, type SourceRepoRow } from "../../source-repos-card";
 import { IacScanCard } from "../cards/iac-scan-card";
 import { InspectorEmbed } from "./inspector-frame";
@@ -29,13 +29,13 @@ const NO_REPOS: readonly SourceRepoRow[] = [];
 export function EnvironmentSources() {
 	const board = useBoard();
 	const iac = useIacSourceCanvas();
-	const nodes = useCanvasStore((s) => s.nodes);
-	const charts = useMemo(() => nodes.filter((n) => n.data.kind === "chart"), [nodes]);
+	const others = useOthers();
+	const project = useNode(PROJECT_NODE_ID);
+	const charts = useMemo(() => others.filter((n) => n.data.kind === "chart"), [others]);
 	const repos = useMemo<readonly SourceRepoRow[]>(() => {
-		const project = nodes.find((n) => n.id === PROJECT_NODE_ID);
 		const scanned = project?.data.kind === "project" ? project.data.config.source_repos : undefined;
 		return Array.isArray(scanned) ? scanned : NO_REPOS;
-	}, [nodes]);
+	}, [project]);
 
 	return (
 		<div className="space-y-6">

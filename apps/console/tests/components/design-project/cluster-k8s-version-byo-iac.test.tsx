@@ -47,7 +47,8 @@ import {
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import { BYO_IAC_K8S_VERSION_REASON } from "@/lib/compat";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { setBoardNodes } from "@/tests/fixtures/canvas/board";
 
 /** An enabled BYO-IaC source, as `getEnvironmentComponentStatus` reports one. */
 const IAC: IacEnvironment = {
@@ -74,8 +75,7 @@ function envStatus(byo: boolean): EnvironmentStatus {
 
 /** Seed an aws cluster with `version` ("" = unset) plus a kyverno add-on card (window 1.25+). */
 function seed(version: string) {
-	useCanvasStore.setState({
-		nodes: [
+	setBoardNodes([
 			{
 				id: "cluster",
 				type: "cluster",
@@ -98,8 +98,7 @@ function seed(version: string) {
 					provider: "aws" as const,
 				},
 			},
-		],
-	});
+		]);
 }
 
 /** Render `ui` inside the environment-status provider (and React Flow, for the card). */
@@ -161,7 +160,7 @@ function AddonCard() {
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("BYO-IaC with an unset cluster version is not_evaluable on every surface", () => {

@@ -174,7 +174,8 @@ vi.mock("@/components/design-project/byo/iac-source-canvas-context", () => ({
 
 import { DesignProjectCanvas } from "@/components/design-project/canvas/design-project-canvas";
 import { DESTROY_HOLD_KEY } from "@/lib/query/topics";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { isBoardDirty } from "@/tests/fixtures/canvas/board";
 
 /** The environment the destroy tree named — what the dialog hands the destroy. */
 const TREE_ENV = "env-from-tree";
@@ -200,7 +201,7 @@ const refused = (message: string) => ({ ok: false, error: { kind: "conflict", me
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("Canvas Deploy", () => {
@@ -224,7 +225,8 @@ describe("Canvas Deploy", () => {
 describe("Canvas Save", () => {
 	it("shows the refusal's own sentence and leaves the changes pending — nothing saved", async () => {
 		saveDesign.mockResolvedValue(refused(NO_ACCOUNT));
-		useCanvasStore.setState({ dirty: true });
+		// A change is pending: the save has something to save.
+		board.addNode("bucket");
 		const user = userEvent.setup();
 		renderCanvas();
 
@@ -236,7 +238,7 @@ describe("Canvas Save", () => {
 			environmentId: "env-1",
 			design: {},
 		});
-		expect(useCanvasStore.getState().dirty).toBe(true);
+		expect(isBoardDirty()).toBe(true);
 		expect(toastSuccess).not.toHaveBeenCalled();
 		// The button is usable again: the mutation settled.
 		expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
@@ -244,14 +246,15 @@ describe("Canvas Save", () => {
 
 	it("commits the baseline and says so when the design is saved", async () => {
 		saveDesign.mockResolvedValue({ ok: true, data: { environmentId: "env-1" } });
-		useCanvasStore.setState({ dirty: true });
+		// A change is pending: the save has something to save.
+		board.addNode("bucket");
 		const user = userEvent.setup();
 		renderCanvas();
 
 		await user.click(screen.getByRole("button", { name: "Save" }));
 
 		await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Design saved"));
-		expect(useCanvasStore.getState().dirty).toBe(false);
+		expect(isBoardDirty()).toBe(false);
 		expect(toastError).not.toHaveBeenCalled();
 	});
 });

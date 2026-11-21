@@ -37,9 +37,18 @@ import {
 } from "@/lib/canvas/collections";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
-import { nodeIndex, usePendingChanges } from "@/lib/canvas/store/use-board";
+import { OUT_OF_BAND } from "@/lib/canvas/store/derive";
+import {
+	nodeIndex,
+	useAllEdges,
+	useAllNodes,
+	useBoardActions,
+	useCollectionPositions,
+	useHiddenKinds,
+	usePendingChanges,
+	useShowConnections,
+} from "@/lib/canvas/store/use-board";
 import { useShortcut } from "@/lib/shortcuts/use-shortcut";
-import { OUT_OF_BAND, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { configName } from "./graph/node-config";
 import type { CanvasNode, NodeKind } from "./graph/types";
 import { addableKindsFor, NODE_REGISTRY } from "./graph/node-registry";
@@ -305,9 +314,9 @@ function releasePoint(event: MouseEvent | TouchEvent): { x: number; y: number } 
  * offers what it could connect to. Lines are selected and removed by pointer and by key. Every card
  * and line is a named focus stop, and nothing here needs a pointer.
  *
- * The node SET is still read through the legacy store selector, because the cards the design does
- * not own are mirrored there until the shell stops copying them; every write goes to the board's
- * document store, and everything derived here is keyed on the design, never on a card's position.
+ * The node set is the design joined with the cards the design does not own, which come from their
+ * queries (`BoardSourcesProvider`); every write goes to the board's document store, and everything
+ * derived here is keyed on the design, never on a card's position.
  */
 export function CanvasFlow({
 	onPaneContextMenu,
@@ -315,13 +324,17 @@ export function CanvasFlow({
 	onSelectionContextMenu,
 }: CanvasFlowProps = {}) {
 	const board = useBoard();
-	const nodes = useCanvasStore((s) => s.nodes);
-	const edges = useCanvasStore((s) => s.edges);
-	const onNodesChange = useCanvasStore((s) => s.onNodesChange);
-	const openInspector = useCanvasStore((s) => s.openInspector);
-	const showConnections = useCanvasStore((s) => s.showConnections);
-	const hiddenKinds = useCanvasStore((s) => s.hiddenKinds);
-	const collectionPositions = useCanvasStore((s) => s.collectionPositions);
+	const nodes = useAllNodes();
+	const edges = useAllEdges();
+	const actions = useBoardActions();
+	const onNodesChange = actions.onNodesChange;
+	const openInspector = useCallback(
+		(id: string | null) => board.view.getState().openInspector(id),
+		[board],
+	);
+	const showConnections = useShowConnections();
+	const hiddenKinds = useHiddenKinds();
+	const collectionPositions = useCollectionPositions();
 	const pendingChanges = usePendingChanges();
 
 	// Traversal mode: the hand tool or a held Space turns left-drag into a pan (Excalidraw/Miro);
@@ -511,18 +524,18 @@ export function CanvasFlow({
 			/** Offer only these cards and this kind: the members of the vault the line ended on. */
 			only?: { kind: BindableKind; candidateIds: string[] };
 		}) => {
-			const current = useCanvasStore.getState();
-			const source = current.nodes.find((n) => n.id === options.sourceId);
+			const current = actions.nodes();
+			const source = current.find((n) => n.id === options.sourceId);
 			if (!source) return;
 			const sourceName = configName(source.data) || nodeTitle(source);
 			const offered = options.only
-				? current.nodes.filter((n) => options.only?.candidateIds.includes(n.id))
-				: connectableTargets(current.nodes, options.sourceId);
+				? current.filter((n) => options.only?.candidateIds.includes(n.id))
+				: connectableTargets(current, options.sourceId);
 			// What can be ADDED is the catalogue's answer for this cloud, and nothing while a
 			// bring-your-own module governs the environment.
 			const addable = iacGoverned
 				? []
-				: addableKindsFor(current.getEffectiveProvider(options.sourceId));
+				: addableKindsFor(actions.effectiveProvider(options.sourceId));
 			const kinds = BINDABLE_KINDS.filter(
 				(kind) => addable.includes(kind) && (!options.only || options.only.kind === kind),
 			);
@@ -548,7 +561,7 @@ export function CanvasFlow({
 			// would take that click as a press outside itself and close again.
 			window.setTimeout(() => setMenu(next), 0);
 		},
-		[iacGoverned, refuse],
+		[actions, iacGoverned, refuse],
 	);
 
 	/** Act on what a connection would do: make it, ask which one, or say why not. */
@@ -562,7 +575,7 @@ export function CanvasFlow({
 				return;
 			}
 			if (verdict.outcome === "bind") {
-				const target = useCanvasStore.getState().nodes.find((n) => n.id === verdict.targetId);
+				const target = actions.nodes().find((n) => n.id === verdict.targetId);
 				bind(verdict.sourceId, verdict.target, target ? nodeTitle(target) : verdict.target.name);
 				return;
 			}
@@ -574,7 +587,7 @@ export function CanvasFlow({
 				only: { kind: verdict.kind, candidateIds: verdict.candidateIds },
 			});
 		},
-		[bind, openConnectMenu, refuse],
+		[actions, bind, openConnectMenu, refuse],
 	);
 
 	/** Remove the bindings the given edges stand for, as ONE undo step. */
@@ -586,7 +599,7 @@ export function CanvasFlow({
 				refuse(locked.source, locked.data.locked);
 				return;
 			}
-			const current = useCanvasStore.getState().nodes;
+			const current = actions.nodes();
 			const bySource = new Map<string, BindingTargetRef[]>();
 			for (const edge of targets) {
 				const refs = bindingsBehindEdge(current, edge.source, edge.target);
@@ -613,7 +626,7 @@ export function CanvasFlow({
 			const first = targets[0];
 			if (first) focusCard(first.source);
 		},
-		[board, boardEdges, announce, refuse, focusCard],
+		[actions, board, boardEdges, announce, refuse, focusCard],
 	);
 
 	const connections = useMemo(
@@ -695,7 +708,7 @@ export function CanvasFlow({
 		(target: { type: "node" | "edge"; id: string }) => {
 			const collection = target.type === "node" ? kindFromCollectionId(target.id) : null;
 			const changes: NodeChange<CanvasNode>[] = [];
-			for (const node of useCanvasStore.getState().nodes) {
+			for (const node of actions.nodes()) {
 				const selected = target.type === "node" && node.id === target.id;
 				if (!!node.selected !== selected) changes.push({ id: node.id, type: "select", selected });
 			}
@@ -703,7 +716,7 @@ export function CanvasFlow({
 			setSelectedCollections(collection ? [collection] : []);
 			setSelectedEdges(target.type === "edge" ? [target.id] : []);
 		},
-		[onNodesChange],
+		[actions, onNodesChange],
 	);
 
 	// ── keys ──────────────────────────────────────────────────────────────────────────────────
@@ -835,7 +848,7 @@ export function CanvasFlow({
 					connectionLineStyle={CONNECTION_LINE_STYLE}
 					isValidConnection={(connection) =>
 						evaluateConnection(
-							useCanvasStore.getState().nodes,
+							actions.nodes(),
 							connection.source,
 							connection.target,
 						).outcome !== "refused"
@@ -854,7 +867,7 @@ export function CanvasFlow({
 						const rect = cardElement(connection.target)?.getBoundingClientRect();
 						resolveConnection(
 							evaluateConnection(
-								useCanvasStore.getState().nodes,
+								actions.nodes(),
 								connection.source,
 								connection.target,
 							),
@@ -888,7 +901,7 @@ export function CanvasFlow({
 							if (otherId === start.id) return;
 							resolveConnection(
 								evaluateConnection(
-									useCanvasStore.getState().nodes,
+									actions.nodes(),
 									...endsOf(start, otherId),
 								),
 								{ point, fallbackNodeId: otherId },
@@ -1027,7 +1040,7 @@ export function CanvasFlow({
 					}}
 					onConnect={(state, targetId) => {
 						resolveConnection(
-							evaluateConnection(useCanvasStore.getState().nodes, state.sourceId, targetId),
+							evaluateConnection(actions.nodes(), state.sourceId, targetId),
 							{ point: state.point, fallbackNodeId: state.sourceId },
 						);
 					}}

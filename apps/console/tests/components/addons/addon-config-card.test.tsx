@@ -31,7 +31,6 @@ import {
 import { board } from "@/lib/canvas/store/board";
 import type { StagedOperation } from "@/lib/canvas/store/types";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 /** The operations staged in the document. */
 const staged = () => board.document.getState().operations;
@@ -43,7 +42,7 @@ function stagedValues(operation: StagedOperation | undefined): unknown {
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 	forgetSecrets("addon:kube-prometheus-stack");
 	forgetSecrets("addon:minio");
 });

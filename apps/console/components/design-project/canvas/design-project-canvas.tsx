@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import { cn } from "@repo/ui/utils";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useStore } from "zustand";
 import {
@@ -24,15 +24,25 @@ import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
 import { arrangeBoard } from "@/lib/canvas/arrange";
 import { draftScope } from "@/lib/canvas/design-revision";
-import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
-import { useSubject } from "@/lib/canvas/store/use-board";
+import {
+	BoardSourcesProvider,
+	useBoard,
+	useOthers,
+} from "@/lib/canvas/store/canvas-store-provider";
+import {
+	useBoardActions,
+	useCard,
+	useSelection,
+	useSubject,
+} from "@/lib/canvas/store/use-board";
+import { useIacOutputs, useOutOfBandNodes } from "@/lib/canvas/store/use-board-sources";
+import type { WorkspaceCard } from "@/lib/canvas/store/types";
 import { environmentStatusInput } from "@/lib/query/use-environment-status-query";
 import { DESTROY_HOLD_KEY } from "@/lib/query/topics";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
 import { useShortcut } from "@/lib/shortcuts/use-shortcut";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import type { DestroyOptions } from "./cards/destroy-tree-view";
 import { CanvasCommandPalette } from "./canvas-command-palette";
@@ -107,9 +117,38 @@ export function DesignProjectCanvas(props: DesignProjectCanvasProps) {
 	return (
 		<ReactFlowProvider>
 			<EnvironmentStatusScope projectId={props.projectId} environmentId={props.environmentId}>
-				<CanvasInner {...props} />
+				<BoardSources {...props}>
+					<CanvasInner {...props} />
+				</BoardSources>
 			</EnvironmentStatusScope>
 		</ReactFlowProvider>
+	);
+}
+
+/**
+ * The board's out-of-band layers, read where they live. BYO charts, their described workloads,
+ * installed add-ons and a BYO-IaC module's resources are each a GET procedure the Architecture page
+ * prefetched under this same input, so the first paint carries them; a change to any of them
+ * arrives as a hint on the org's change stream and invalidates the key (lib/query/topics.ts). They
+ * are built into cards in a `useMemo` (`useOutOfBandNodes`) and handed to everything on the board
+ * through context: nothing copies them into the board's stores, so undo, discard and the draft can
+ * never contain one, and a refetch can never leave a stale copy behind.
+ */
+function BoardSources({
+	projectId,
+	environmentId,
+	byoHelmEnabled,
+	byoDescribeEnabled,
+	children,
+}: DesignProjectCanvasProps & { children: ReactNode }) {
+	const others = useOutOfBandNodes({ projectId, environmentId, byoHelmEnabled, byoDescribeEnabled });
+	// The module's output names ride the same round-trip as its cards, so a service binding's
+	// facet→output picker (#823) has choices whenever there are BYO-IaC cards to bind to.
+	const iacOutputs = useIacOutputs();
+	return (
+		<BoardSourcesProvider others={others} iacOutputs={iacOutputs}>
+			{children}
+		</BoardSourcesProvider>
 	);
 }
 
@@ -165,31 +204,25 @@ function CanvasInner({
 	const [iacDialogOpen, setIacDialogOpen] = useState(false);
 	// The environment's attached BYO IaC source (flag on) — the module's provenance:
 	// repo · ref · pinned commit · scan verdict, with detach/rescan. Its RESOURCES are separate: they
-	// are external nodes on the board (see the setIacNodes effect below), because a customer who
-	// brought an entire infrastructure should see an architecture, not one card over a dimmed graph.
-	const openCard = useCanvasStore((s) => s.openCard);
-	const closeCard = useCanvasStore((s) => s.closeCard);
-	const card = useCanvasStore((s) => s.card);
+	// are external nodes on the board (`BoardSources`, above), because a customer who brought an
+	// entire infrastructure should see an architecture, not one card over a dimmed graph.
+	const openCard = useCallback(
+		(next: WorkspaceCard | null) => board.view.getState().openCard(next),
+		[board],
+	);
+	const closeCard = useCallback(() => board.view.getState().openCard(null), [board]);
+	const card = useCard();
 	const openConfigureAddon = useCallback(
 		(item: AddonMarketItem) => openCard({ kind: "addon", itemId: item.id }),
 		[openCard],
 	);
 	const openPanel = useElenchStore((s) => s.openPanel);
 	const [shortcutsOpen, setShortcutsOpen] = useState(false);
-	const selectedIds = useCanvasStore((s) => s.selectedIds);
-	const undo = useCanvasStore((s) => s.undo);
-	const redo = useCanvasStore((s) => s.redo);
-	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
-	const removeNodes = useCanvasStore((s) => s.removeNodes);
-	const setChartNodes = useCanvasStore((s) => s.setChartNodes);
-	const setChartWorkloadNodes = useCanvasStore((s) => s.setChartWorkloadNodes);
-	const setAddonNodes = useCanvasStore((s) => s.setAddonNodes);
-	const setIacNodes = useCanvasStore((s) => s.setIacNodes);
-	const setIacOutputs = useCanvasStore((s) => s.setIacOutputs);
-	// The seed the store holds. Out-of-band layers (charts, add-ons, IaC cards) are re-applied
-	// whenever it changes: a scope switch RESETS the store, and these reads are prefetched, so their
-	// data can land before the seed does — without this they would be applied and then wiped.
-	const seed = useCanvasStore((s) => s.seed);
+	const selectedIds = useSelection();
+	const actions = useBoardActions();
+	const { undo, redo, duplicateNodes, removeNodes } = actions;
+	// The seed the store holds: which scope and server revision the draft was seeded from.
+	const seed = useStore(board.document, (s) => s.seed);
 	// Whether the store holds THIS environment's design yet. Until it does, the board shows the
 	// skeleton over itself rather than an empty canvas (F009).
 	const seeded = seed?.scope === draftScope(projectId, environmentId);
@@ -225,8 +258,6 @@ function CanvasInner({
 	const commitSaved = useCallback(() => {
 		board.document.getState().commitBaseline(writtenRevision.current);
 		writtenRevision.current = undefined;
-		// The legacy store's "dirty" allowance is its own, and a save ends it.
-		useCanvasStore.setState({ dirty: false });
 	}, [board]);
 	const saveDesign = useActionMutation(saveDesignAction, {
 		invalidates: [orpc.canvas.environmentStatus.key()],
@@ -291,75 +322,7 @@ function CanvasInner({
 		[projectName, loadDestroyTree, handleDestroyEnvironment],
 	);
 
-	// STILL COPIED INTO THE LEGACY STORE (#6832, and why it is not finished here). The four effects
-	// below hand query data to the legacy store's mirror (`lib/stores/use-canvas-store.ts`), and the
-	// replacement that needs no copy exists: `useOutOfBandNodes` / `useIacOutputs`
-	// (`lib/canvas/store/use-board-sources.ts`). They cannot be deleted from this file alone. The
-	// board (`canvas-flow.tsx`) and the inspector's fields (`inspector/bindings-field.tsx`) still
-	// read `useCanvasStore((s) => s.nodes)` and `s.iacOutputs`, which are that mirror: with these
-	// effects gone and those readers unchanged, every chart, add-on and BYO-IaC card leaves the
-	// board. They go in the same change that moves those two readers onto `useBoardNodes(others)`.
-	// The copy is kept out of the document, so undo, discard and the draft never contain one.
-	//
-	// The reads below are the board's out-of-band layers. Each is a GET procedure the Architecture
-	// page prefetched under this same input, so the first paint carries them; a change to any of
-	// them arrives as a hint on the org's change stream and invalidates the key (lib/query/topics.ts).
 	const envInput = environmentStatusInput(projectId, environmentId);
-
-	// BYO chart nodes are out-of-band: they come from `canvas.byoCharts`, never from the design.
-	// Only with the feature on.
-	const byoChartsQuery = useQuery({
-		...orpc.canvas.byoCharts.queryOptions({ input: envInput }),
-		enabled: !!byoHelmEnabled,
-	});
-	// Described chart workloads (W5 Path A) are out-of-band too: children of their chart nodes. Only
-	// with the describe flag on; a failed read leaves the workloads absent (the honest
-	// empty state — a chart with no described children yet).
-	const chartWorkloadsQuery = useQuery({
-		...orpc.canvas.chartWorkloads.queryOptions({ input: envInput }),
-		enabled: !!byoDescribeEnabled,
-	});
-	const byoCharts = byoChartsQuery.data?.charts;
-	const chartWorkloads = chartWorkloadsQuery.data?.workloads;
-	useEffect(() => {
-		if (byoCharts) setChartNodes(byoCharts);
-	}, [byoCharts, setChartNodes, seed]);
-	useEffect(() => {
-		if (chartWorkloads) setChartWorkloadNodes(chartWorkloads);
-	}, [chartWorkloads, setChartWorkloadNodes, seed]);
-
-	// Installed marketplace add-ons become NODES. They were configured in a sheet and explicitly not
-	// graph nodes, so an installed Grafana was invisible on the architecture — even though it's an
-	// ArgoCD Application whose health and sync are already in the database. Out-of-band like charts:
-	// never written by graphToForm, never part of the Deploy diff.
-	useEffect(() => {
-		const installed = (addonsQuery.data?.items ?? []).filter(
-			(a) => a.install?.enabled,
-		);
-		setAddonNodes(
-			installed.map((a) => ({
-				id: a.id,
-				name: a.name,
-				version: a.version,
-				namespace: a.namespace,
-				status: a.install?.status,
-				health: a.install?.health ?? null,
-				sync: a.install?.sync ?? null,
-			})),
-		);
-	}, [addonsQuery.data, setAddonNodes, seed]);
-
-	// The BYO IaC module's RESOURCES, as read-only external cards. They ride on the environment
-	// status — the one round-trip the board already makes — so a card and its status, cost and drift
-	// can never disagree about which plan they came from. Empty for a template env, which clears
-	// them. (getEnvironmentComponentStatus derives the groups: the last successful PLAN's exact,
-	// expanded addresses when there is one, else the IAC_SCAN's declared skeleton.)
-	useEffect(() => {
-		setIacNodes(envStatus.iac?.groups ?? []);
-		// The module's output names ride the same round-trip as its cards, so the bind sheet's
-		// facet→output picker (#823) has choices whenever there are BYO-IaC cards to bind to.
-		setIacOutputs(envStatus.iac?.outputs ?? []);
-	}, [envStatus.iac, setIacNodes, setIacOutputs, seed]);
 
 	// BYO IaC source is single-per-env: the module's provenance card, from `canvas.iacSource`. Only
 	// with the feature on; attach / detach / rescan invalidate it (their mutations' keys).
@@ -414,8 +377,7 @@ function CanvasInner({
 	 */
 	const handleSaveDesign = useCallback(() => {
 		if (saveIsPending) return;
-		const nodes = useCanvasStore.getState().nodes;
-		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
+		const parsed = projectFormSchema.safeParse(graphToForm(actions.nodes()));
 		if (!parsed.success) {
 			const first = parsed.error.issues[0];
 			toast.error(
@@ -425,7 +387,7 @@ function CanvasInner({
 		}
 		writtenRevision.current = savedRevision(board.document.getState().seed?.revision, parsed.data);
 		mutateSave({ projectId, environmentId: environmentId ?? null, design: parsed.data });
-	}, [projectId, environmentId, saveIsPending, mutateSave, board]);
+	}, [projectId, environmentId, saveIsPending, mutateSave, board, actions]);
 
 	const discardIsPending = discardStaged.isPending;
 	const mutateDiscard = discardStaged.mutate;
@@ -465,9 +427,10 @@ function CanvasInner({
 	const fitBoard = useCallback(() => {
 		if (hasDrawnNodes) void fitView({ padding: 0.3 });
 	}, [hasDrawnNodes, fitView]);
+	const others = useOthers();
 	const tidyBoard = useCallback(() => {
-		if (hasDrawnNodes) void arrangeBoard(fitView);
-	}, [hasDrawnNodes, fitView]);
+		if (hasDrawnNodes) void arrangeBoard(board, others, fitView);
+	}, [hasDrawnNodes, board, others, fitView]);
 
 	// ── The board's keys ─────────────────────────────────────────────────────────────────────────
 	//

@@ -32,7 +32,7 @@ import { applyLayout, layoutZoned } from "@/lib/canvas/layout";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
 import { environmentStatusInput } from "@/lib/query/use-environment-status-query";
 import { orpc } from "@/lib/rpc/client";
-import { PROJECT_NODE_ID } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
 import { buildDefaultFormValues, type SourceProjectData } from "../source-project";
 import { CanvasSkeleton } from "./canvas-skeleton";
 import { BoardGuideView, type CloudChoices } from "./empty/board-guide-view";

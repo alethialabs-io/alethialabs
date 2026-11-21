@@ -21,7 +21,9 @@ import {
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { ComponentStatus } from "@/lib/db/schema/enums";
-import { PROJECT_NODE_ID, selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { board } from "@/lib/canvas/store/board";
+import { boardNodes, inspectorNodeId, setBoardNodes } from "@/tests/fixtures/canvas/board";
 
 /** N secrets in the store, plus the project root. */
 function seedSecrets(names: string[]) {
@@ -52,12 +54,9 @@ function seedSecrets(names: string[]) {
 			}) as CanvasNode,
 	);
 
-	useCanvasStore.setState({
-		nodes: [root, ...secrets],
-		identities: [],
-		baseline: [],
-		collectionPositions: {},
-	});
+	setBoardNodes([root, ...secrets]);
+	board.document.getState().replaceBaseline([]);
+	board.document.setState({ collectionPositions: {} });
 	return secrets;
 }
 
@@ -98,7 +97,7 @@ function renderPanel(env?: Partial<EnvironmentStatus>) {
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("the vault card", () => {
@@ -221,7 +220,7 @@ describe("the vault's panel — where the secrets actually live", () => {
 
 		await user.click(screen.getByText("stripe-api-key"));
 
-		expect(selectInspectorNodeId(useCanvasStore.getState())).toBe(secrets[0].id);
+		expect(inspectorNodeId()).toBe(secrets[0].id);
 	});
 
 	it("adds a secret", async () => {
@@ -231,9 +230,8 @@ describe("the vault's panel — where the secrets actually live", () => {
 
 		await user.click(screen.getByRole("button", { name: "Add" }));
 
-		const secrets = useCanvasStore
-			.getState()
-			.nodes.filter((n) => n.data.kind === "secret");
+		const secrets = boardNodes()
+			.filter((n) => n.data.kind === "secret");
 		expect(secrets).toHaveLength(2);
 	});
 
@@ -244,9 +242,8 @@ describe("the vault's panel — where the secrets actually live", () => {
 
 		await user.click(screen.getByRole("button", { name: "Remove doomed" }));
 
-		const names = useCanvasStore
-			.getState()
-			.nodes.filter((n) => n.data.kind === "secret")
+		const names = boardNodes()
+			.filter((n) => n.data.kind === "secret")
 			.map((n) => (n.data.config as { name?: string }).name);
 		expect(names).toEqual(["keeper"]);
 	});

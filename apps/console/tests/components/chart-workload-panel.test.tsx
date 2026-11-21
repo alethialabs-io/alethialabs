@@ -18,18 +18,24 @@ import type { CanvasNode } from "@/components/design-project/canvas/graph/types"
 import type { ServiceBinding } from "@/components/design-project/canvas/inspector/bindings-field";
 import { ChartWorkloadPanel } from "@/components/design-project/canvas/inspector/chart-workload-panel";
 import { board } from "@/lib/canvas/store/board";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { BoardSourcesProvider } from "@/lib/canvas/store/canvas-store-provider";
+
+/** The cards the design does not own, as the canvas hands them from their queries. */
+let others: CanvasNode[] = [];
+const NO_OUTPUTS: string[] = [];
 
 /** The panel inside the board's BYO-chart context (a project to stage the overlay for). */
 function InBoard({ children }: { children: ReactNode }) {
 	return (
 		<ByoChartCanvasProvider value={{ projectId: "proj-1", environmentId: "env-1" }}>
-			{children}
+			<BoardSourcesProvider others={others} iacOutputs={NO_OUTPUTS}>
+				{children}
+			</BoardSourcesProvider>
 		</ByoChartCanvasProvider>
 	);
 }
 
-/** A described-workload node seeded straight into the store (as the loader would build it). */
+/** A described-workload node, as `outOfBandNodes` builds it from the workloads read. */
 function workloadNode(
 	bindings: ServiceBinding[] = [],
 	config: { replicas?: number } = {},
@@ -66,8 +72,8 @@ function workloadNode(
 const staged = () => board.document.getState().operations;
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
-	useCanvasStore.setState({ nodes: [workloadNode()] });
+	board.reset();
+	others = [workloadNode()];
 });
 
 describe("ChartWorkloadPanel", () => {
@@ -97,16 +103,14 @@ describe("ChartWorkloadPanel", () => {
 	});
 
 	it("offers the `database` facet, which only the chart lane resolves (#6467)", () => {
-		useCanvasStore.setState({
-			nodes: [
-				workloadNode([
-					{
-						target: { kind: "database", name: "orders" },
-						inject: [{ env: "DB_NAME", from: "database" }],
-					},
-				]),
-			],
-		});
+		others = [
+			workloadNode([
+				{
+					target: { kind: "database", name: "orders" },
+					inject: [{ env: "DB_NAME", from: "database" }],
+				},
+			]),
+		];
 		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
 		expect(screen.getByText("database name")).toBeInTheDocument();
 	});

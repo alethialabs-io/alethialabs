@@ -44,7 +44,8 @@ import {
 import { addCatalogue, catalogueKinds } from "@/lib/canvas/store/add-catalogue";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
 import { CLOUD_PROVIDER_SLUGS, isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { boardNodes, setBoardNodes } from "@/tests/fixtures/canvas/board";
 
 /** The fixture's blocked kinds, as node kinds. */
 function blockedKinds(): NodeKind[] {
@@ -53,8 +54,7 @@ function blockedKinds(): NodeKind[] {
 
 /** Seeds the board with a project root on `provider` (null = no cloud chosen yet). */
 function seedProject(provider: CloudProviderSlug | null) {
-	useCanvasStore.setState({
-		nodes: [
+	setBoardNodes([
 			{
 				id: "project-root",
 				type: "project",
@@ -71,8 +71,7 @@ function seedProject(provider: CloudProviderSlug | null) {
 					provider,
 				},
 			},
-		],
-	});
+		]);
 }
 
 /** The option row that shows `label`, in whichever surface is open. */
@@ -86,7 +85,7 @@ function option(label: string): HTMLElement {
 const CLOUDS: (CloudProviderSlug | null)[] = [null, ...CLOUD_PROVIDER_SLUGS];
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("the add picker and the command palette read one catalogue", () => {
@@ -139,7 +138,7 @@ describe("a row this board cannot take is listed, disabled, with the reason", ()
 		// A kind the cloud does back is live beside it.
 		expect(option(NODE_REGISTRY.bucket.label)).not.toHaveAttribute("aria-disabled", "true");
 		// Nothing was added by pressing the disabled rows.
-		expect(useCanvasStore.getState().nodes.map((n) => n.data.kind)).toEqual(["project"]);
+		expect(boardNodes().map((n) => n.data.kind)).toEqual(["project"]);
 	});
 
 	it("lists that kind as available on a cloud that backs it", () => {
@@ -175,7 +174,7 @@ describe("a row this board cannot take is listed, disabled, with the reason", ()
 		await user.click(bucket);
 		await user.click(chart);
 		expect(onAttachChart).not.toHaveBeenCalled();
-		expect(useCanvasStore.getState().nodes.map((n) => n.data.kind)).toEqual(["project"]);
+		expect(boardNodes().map((n) => n.data.kind)).toEqual(["project"]);
 	});
 });
 

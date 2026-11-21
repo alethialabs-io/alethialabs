@@ -18,7 +18,8 @@ import { formToGraph } from "@/components/design-project/canvas/graph/form-to-gr
 import { graphToForm } from "@/components/design-project/canvas/graph/graph-to-form";
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
-import { OUT_OF_BAND, PROJECT_NODE_ID } from "@/lib/stores/use-canvas-store";
+import { OUT_OF_BAND } from "@/lib/canvas/store/derive";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import allKindsForm from "@/tests/fixtures/canvas/all-kinds.form.json";
 
