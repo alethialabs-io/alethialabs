@@ -320,9 +320,9 @@ docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml \
 
 The next deploy rewrites `.env` from the vault, so change the vault as well.
 
-**A revert.** Reverting the PR that removed Resend restores the Resend transport and the deploy's
-`resend` default. It needs a valid `RESEND_API_KEY` back in the vault first, and Resend must still
-have `alethialabs.io` verified. Prefer the SMTP path; a revert is a full deploy cycle.
+**There is no Resend rollback.** The Resend account was closed on 2026-11-21 and its DNS records
+(`send.` MX and SPF, `resend._domainkey`) were deleted the same day, so reverting the PR that removed
+the transport would restore code with nothing to send through. SMTP is the only rollback.
 
 To return to SES after either, set `EMAIL_PROVIDER=ses` (or remove the key) and redeploy: step 7.
 
