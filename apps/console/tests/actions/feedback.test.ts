@@ -19,7 +19,7 @@ import { sendEmail } from "@repo/email/send";
 const ORIGINAL_MODE = process.env.ALETHIA_DEPLOYMENT_MODE;
 const ORIGINAL_FEEDBACK = process.env.FEEDBACK_EMAIL;
 const ORIGINAL_EMAIL_PROVIDER = process.env.EMAIL_PROVIDER;
-const ORIGINAL_RESEND_API_KEY = process.env.RESEND_API_KEY;
+const ORIGINAL_SES_REGION = process.env.ALETHIA_SES_REGION;
 
 /** A well-formed submission used by the happy-path assertions. */
 const validInput = { topic: "idea", rating: 4, message: "Love the new dashboard" } as const;
@@ -27,8 +27,8 @@ const validInput = { topic: "idea", rating: 4, message: "Love the new dashboard"
 beforeEach(() => {
 	vi.clearAllMocks();
 	process.env.ALETHIA_DEPLOYMENT_MODE = "hosted";
-	process.env.EMAIL_PROVIDER = "resend";
-	process.env.RESEND_API_KEY = "test";
+	process.env.EMAIL_PROVIDER = "ses";
+	process.env.ALETHIA_SES_REGION = "eu-central-1";
 	delete process.env.FEEDBACK_EMAIL;
 	vi.mocked(auth.api.getSession).mockResolvedValue({
 		user: { email: "user@acme.io" },
@@ -43,8 +43,8 @@ afterEach(() => {
 	else process.env.FEEDBACK_EMAIL = ORIGINAL_FEEDBACK;
 	if (ORIGINAL_EMAIL_PROVIDER === undefined) delete process.env.EMAIL_PROVIDER;
 	else process.env.EMAIL_PROVIDER = ORIGINAL_EMAIL_PROVIDER;
-	if (ORIGINAL_RESEND_API_KEY === undefined) delete process.env.RESEND_API_KEY;
-	else process.env.RESEND_API_KEY = ORIGINAL_RESEND_API_KEY;
+	if (ORIGINAL_SES_REGION === undefined) delete process.env.ALETHIA_SES_REGION;
+	else process.env.ALETHIA_SES_REGION = ORIGINAL_SES_REGION;
 });
 
 describe("submitFeedback", () => {
