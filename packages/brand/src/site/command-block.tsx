@@ -34,6 +34,9 @@ export function CommandBlock({
 					display: "flex",
 					alignItems: "stretch",
 					maxWidth: "100%",
+					// Without this the row's min-width is its content's width, and a long command
+					// widens every ancestor instead of scrolling inside the <pre>.
+					minWidth: 0,
 					border: "1px solid var(--border)",
 					borderRadius: "var(--radius-md)",
 					background: "var(--surface-sunken)",
