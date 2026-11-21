@@ -69,7 +69,7 @@ function Opening() {
 			lead="The control plane is open source."
 			rest="Run it on your own infrastructure, read every line of it, and keep it for as long as you like."
 		>
-			<div className="max-w-[640px]">
+			<div className="min-w-0 max-w-[640px]">
 				<CommandBlock command={SELF_HOST_INSTALL_COMMAND} />
 			</div>
 			<Actions>

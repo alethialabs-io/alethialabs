@@ -55,7 +55,7 @@ export function EditorialStatement({ lead, rest, children }: { lead: string; res
 				>
 					<span style={{ fontWeight: 600 }}>{lead}</span> {rest}
 				</h1>
-				{children && <div className="mt-[30px] grid gap-3.5">{children}</div>}
+				{children && <div className="mt-[30px] flex min-w-0 flex-col gap-3.5">{children}</div>}
 			</Wrap>
 		</section>
 	);
