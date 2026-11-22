@@ -2488,13 +2488,16 @@ jobs:
       - name: The playwright-install retry retries a fetch and refuses a real failure
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/ci/playwright-install.sh --self-test
-      - name: Guards self-test (runtime · compose · merge · iac · worktree · spend · destroy)
+      - name: Guards self-test (runtime · compose · merge · secrets · worktree · spend · destroy)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           bash .claude/hooks/guard-runtime.sh --self-test
           bash .claude/hooks/guard-compose.sh --self-test
           bash .claude/hooks/guard-merge.sh --self-test
-          bash .claude/hooks/guard-iac.sh --self-test
+          # The IaC guard was removed 2026-11-22: instructed applies are the agent's now. What
+          # replaced it is the credential broker and guard-secrets (use a secret, never print it).
+          bash .claude/hooks/guard-secrets.sh --self-test
+          python3 scripts/creds.py --self-test
           # guard-worktree had NO self-test, alone among the four, and it is the one with the most
           # moving parts — two rules, a quote-stripped scan, a target resolver and a fail-closed
           # fall-through. Every defect fixed in #3192 was found by tripping over it in ordinary

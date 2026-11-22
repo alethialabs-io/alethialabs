@@ -767,10 +767,9 @@ preflight_capacity() {
 
 # The two commands that MUTATE infrastructure: `env:box` (tofu apply) and `env:reap` (tofu
 # destroy). Both are agent-runnable by the maintainer's ruling on #4483 (2026-09-18): the
-# cost model needs the box restored and reaped without waiting for a human. Raw tofu
-# apply/destroy is still refused by .claude/hooks/guard-iac.sh, so "an agent can apply
-# arbitrary infrastructure" stays false — this opens only the two commands that manage THIS
-# box, against THIS state.
+# cost model needs the box restored and reaped without waiting for a human. (Since
+# 2026-11-22 raw tofu is no longer refused either — instructed applies are the agent's —
+# but these two stay the ONLY way to touch the sandbox, because they carry the checks below.)
 #
 # What still guards them is WHERE they run, enforced below: a worktree has no state (it is
 # gitignored and lives only in the main checkout), so an apply from one would build a SECOND
@@ -945,8 +944,7 @@ MSG
 # is not a terminal — an agent, a scheduled reap, CI — reads EOF and dies:
 #   Enter a value: Error: error asking for approval: EOF
 # env:reap hit exactly that after taking its snapshot. The prompt is not what makes these
-# safe: guard-iac.sh (raw tofu still blocked), require_main_checkout and
-# reap_guard all run before here. A prompt that only fires for humans
+# safe: require_main_checkout and reap_guard both run before here. A prompt that only fires for humans
 # adds nothing and breaks every other caller — including the nightly reap the cost model
 # depends on.
 cmd_box() {

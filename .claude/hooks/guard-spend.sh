@@ -60,9 +60,24 @@
 #                      the same real-cloud applies as one heavy nightly leg.
 #   C-HCLOUD     100   `hcloud --context alethia-e2e|alethia-sandbox <resource> create` — the
 #                      same order of cost as one sandbox bring-up.
+#   C-UNKNOWN    100   a dispatch the guard cannot price from its inputs — a workflow not in the
+#                      table below, a numeric workflow id, `gh workflow run` naming no workflow it can
+#                      read, or a raw `gh api …/workflows/<f>/dispatches` of a priced or unknown
+#                      workflow; also a rerun of a workflow not in the table. A conservative default,
+#                      not a measurement. For a PRICED workflow whose inputs it cannot read (`--json`
+#                      on stdin, a raw `gh api` dispatch) it is charged ON TOP of that workflow's
+#                      no-input price, so the charge never falls below the known floor.
+#   C-CLOUDCREATE 500  each expensive cloud CREATE, priced per command: aws ec2 run-instances|
+#                      create-nat-gateway, eks create-cluster|create-nodegroup, rds create-db-instance|
+#                      create-db-cluster, elasticache create-*, opensearch create-domain; gcloud
+#                      [alpha|beta] container clusters create, compute instances create, sql instances
+#                      create; az aks create, vm create, postgres|mysql flexible-server create, redis
+#                      create; aliyun cs|ecs|rds Create*/create-* and ecs RunInstances|run-instances. An
+#                      estimate of a day of a managed cluster/database/NAT left running; every other
+#                      cloud command (reads AND other writes) is free.
 #   C-RERUN            `gh run rerun <id>` — the run's workflow is looked up over the REST API and
-#                      priced from the same table: free → 0, prod → refused, e2e-ai → 10,
-#                      byo-users-managed-mysql → 200. An
+#                      priced from the same table: free → 0, prod → 0, e2e-ai → 10,
+#                      byo-users-managed-mysql → 200, not in the table → 100 (C-UNKNOWN). An
 #                      e2e-nightly rerun is charged per "Provision" job it runs again (all of them;
 #                      only the failed ones with --failed; the one named with --job): 50 for a
 #                      SCHEDULED run (the floor is the only scheduled dimension) and 1550 for a
@@ -70,32 +85,32 @@
 #                      have been heavy. A rerun with no run id, or whose lookup fails, is refused
 #                      (R-RERUN).
 #
-# ── ALWAYS REFUSED (no price makes these an agent's call) ───────────────────────────────────────
-#   R-PROD       a production deploy/release/infra workflow dispatch. Production ships ONLY
-#                through promotion merges (guard-merge.sh); a deploy-console dispatch would also
-#                skip the release-gate receipt.
-#   R-WORKFLOW   a dispatch the guard cannot price: a workflow not in the table below, a numeric
-#                workflow id, `--json` inputs on stdin, or a raw `gh api …/dispatches` call.
-#   R-NIGHTLY    e2e-nightly with alibaba_allow_prepaid (~USD 150/month, non-refundable) or
-#                azure_redis_allow_known_bad (a measured capacity failure, orphan risk).
-#   R-VARS       `gh variable set|delete` of E2E_* or INFRA_*_APPLY, a bulk `--env-file` set,
-#                or the same through `gh api …/actions/variables`. A repo variable persists into
-#                every SCHEDULED run — the 2026-09-25 leak ran fabric on all four clouds.
-#   R-HCLOUD     any hcloud mutation without an explicit disposable --context (the default
-#                context on this Mac is another company's production), or with HCLOUD_TOKEN set.
-#   R-CLOUDWRITE aws/gcloud/az/aliyun verbs that create or modify. Reads (describe/list/get/show,
-#                secretsmanager get-secret-value, s3 ls, auth/config) pass. An unrecognised verb
-#                is refused: for a spend class the safe reading of "unknown" is "write".
-#   R-STRIPE     the stripe CLI with --live, or any sk_live_/rk_live_ key in a command.
-#   R-VERCEL     `vercel … --prod` / `--target production`, `vercel promote|rollback`.
+# ── ALWAYS REFUSED ──────────────────────────────────────────────────────────────────────────────
+# The maintainer's ruling (2026-11-22): the ONLY spend refusal is the budget itself, plus the rules
+# that keep the budget and its reaper honest, plus wrong-account protection. Anything else an
+# instructed agent does is priced (above) or free (below), never refused.
+#   R-BUDGET     a charge that would take the rolling 7-day total over the budget.
+#   R-LEDGER     writing, moving or deleting the ledger (that would reset the budget), or a ledger
+#                that cannot be read, written, appended to or read back while charging.
 #   R-REAP       anything that stops the box being reaped: `env:box` without the LaunchAgent,
 #                `pnpm env:timer off`, touching ALETHIA_REAP_AFTER_MIN, or unloading/editing
 #                ~/Library/LaunchAgents/io.alethialabs.sandbox-reap.plist.
-#   R-LEDGER     writing, moving or deleting the ledger (that would reset the budget).
-#   R-BUDGET     a charge that would take the rolling 7-day total over the budget.
+#   R-RERUN      a rerun the guard cannot look up to price: no literal run id, a non-numeric job
+#                id, a failed or empty run/job lookup.
+#   R-NOJQ       no jq, and the payload mentions a priced or refused action (see above).
+#   R-NIGHTLY    e2e-nightly with alibaba_allow_prepaid (~USD 150/month, non-refundable) or
+#                azure_redis_allow_known_bad (a measured capacity failure, orphan risk).
+#   R-HCLOUD     any hcloud mutation without an explicit disposable --context (the default
+#                context on this Mac is ANOTHER COMPANY's production — wrong-account protection,
+#                not spend), or with HCLOUD_TOKEN set.
 #
-# FREE AND ALLOWED: release-gate.yml, ci.yml and the other free workflows in the table, a rerun
-# of one of them, gh run cancel, pnpm env:up|push|logs|status|down|reap, every read.
+# FREE AND ALLOWED: every workflow classed `free` or `prod` in the table — production deploy,
+# release and infra workflows dispatch and rerun at no charge, because production ships through
+# them when the maintainer instructs it (guard-merge.sh still governs promotion merges) — gh run
+# cancel, `gh variable set|delete` of any variable, every aws/gcloud/az/aliyun command other than
+# the C-CLOUDCREATE creates (s3 writes, IAM, resizes, deletes included), the stripe CLI including
+# --live, vercel including --prod/promote/rollback, pnpm env:up|push|logs|status|down|reap, every
+# read. A literal live Stripe key in a command is guard-secrets.sh's concern, not this file's.
 #
 # gh's global flags before the subcommand are parsed by lib/cmdline.sh, so a command spelled that
 # way is priced like any other.
@@ -105,6 +120,10 @@
 #   · Write/Edit tool calls on the plist or the ledger (this hook sees Bash only).
 #   · cloud consoles, the Stripe/Vercel MCP tools, anything that is not a Bash command.
 #   · the price is an ESTIMATE taken before the run; the ledger is not reconciled with invoices.
+#   · a cloud create NOT in the C-CLOUDCREATE list (a load balancer, a GPU node via an IaC tool,
+#     terraform/tofu, a CloudFormation stack, kubectl scaling a node group) is free here.
+#   · heavy e2e-nightly inputs passed through `--json` or a raw `gh api` dispatch are unread: the
+#     charge is the floor + C-UNKNOWN, not the heavy price, and R-NIGHTLY cannot see them.
 
 SPEND_BUDGET_EUR_7D=80
 SPEND_WINDOW_SEC=604800
@@ -124,7 +143,8 @@ REAP_PLIST="$HOME/Library/LaunchAgents/io.alethialabs.sandbox-reap.plist"
 # directions (an unclassified workflow, and an entry naming no file).
 #   free     costs nothing worth metering (CI minutes on the repo's own runners)
 #            (spend-report.yml: read-only cost APIs — 4 Cost Explorer requests per AWS account, two accounts, at USD 0.01 each — and one email)
-#   prod     ships or changes production — refused (R-PROD)
+#   prod     ships or changes production — free (0); kept as its own class so the table still says
+#            which workflows touch production
 #   nightly  priced from its inputs (C-NIGHTLY)
 #   ai       C-AI
 #   byomysql C-BYOMYSQL
@@ -461,8 +481,10 @@ rule_workflow() {
 		done
 		;;
 	esac
-	[ -n "$wf" ] || refuse R-WORKFLOW "\`gh workflow run\` with no workflow the guard can read." \
-		"Name the workflow file explicitly: gh workflow run <file>.yml"
+	if [ -z "$wf" ]; then
+		charge C-UNKNOWN 100 "gh workflow run (no workflow the guard can read)"
+		return 0
+	fi
 	local file="$wf"
 	case "$wf" in
 	*.yml | *.yaml) file="${wf##*/}" ;;
@@ -470,26 +492,22 @@ rule_workflow() {
 		file="$(wf_file_for_name "$wf")"
 		;;
 	*)
-		refuse R-WORKFLOW "\`gh workflow run $wf\` names a workflow by numeric id, which the guard cannot price." \
-			"Use the file name: gh workflow run <file>.yml"
+		charge C-UNKNOWN 100 "gh workflow run $wf (numeric workflow id, not priceable)"
+		return 0
 		;;
 	esac
 	local class
 	class="$(wf_class "$file")"
 	case "$class" in
-	free) return 0 ;;
-	prod)
-		refuse R-PROD "\`gh workflow run $file\` ships or changes PRODUCTION." \
-			"Production ships only through promotion merges (dev → staging → main, guard-merge.sh). A direct deploy-console dispatch also skips the release-gate receipt."
-		;;
+	free | prod) return 0 ;;
 	unknown)
-		refuse R-WORKFLOW "\`gh workflow run $wf\` is not in guard-spend.sh's workflow table, so it cannot be priced." \
-			"Classify the workflow in wf_class() in a reviewed PR."
+		charge C-UNKNOWN 100 "gh workflow run $wf (not in guard-spend.sh's workflow table)"
+		return 0
 		;;
 	esac
+	# Inputs on stdin cannot be read: surcharge, then price the -f inputs that ARE visible as usual.
 	case " $SEG " in *" --json"*)
-		refuse R-WORKFLOW "\`gh workflow run $file --json\` reads its inputs from stdin, which the guard cannot price." \
-			"Pass each input as -f name=value."
+		charge C-UNKNOWN 100 "gh workflow run $file --json (inputs on stdin, unread)"
 		;;
 	esac
 	# collect the -f/-F inputs
@@ -631,16 +649,11 @@ rule_rerun() {
 	fi
 	cls="$(wf_class "$wf")"
 	case "$cls" in
-	free) return 0 ;;
-	prod)
-		# A PULL-REQUEST run of a production workflow is plan/validate-only: every infra-* apply
-		# job is gated on a push to main or a dispatch, and infra-templates, infra-e2e-issuer,
-		# infra-aws-oidc and infra-sandbox have no apply job at all. Re-running one is a check.
-		[ "$ev" = pull_request ] && return 0
-		# @mut rerun-prod
-		refuse R-PROD "\`gh run rerun $id\` re-runs $wf ($ev), which ships or changes PRODUCTION."
+	free | prod) return 0 ;;
+	unknown)
+		charge C-UNKNOWN 100 "gh run rerun $id ($wf, not in guard-spend.sh's workflow table)"
+		return 0
 		;;
-	unknown) refuse R-WORKFLOW "\`gh run rerun $id\` re-runs $wf, which is not in guard-spend.sh's workflow table." ;;
 	ai)
 		charge C-RERUN 10 "gh run rerun $id ($wf)"
 		return 0
@@ -672,29 +685,10 @@ rule_rerun() {
 }
 
 rule_gh() {
-	local sub="${TOK[1]:-}" verb="${TOK[2]:-}" a name="" i n path=""
+	local sub="${TOK[1]:-}" verb="${TOK[2]:-}" a i n path=""
 	case "$sub" in
 	workflow) [ "$verb" = run ] && rule_workflow ;;
 	run) [ "$verb" = rerun ] && rule_rerun ;;
-	variable)
-		case "$verb" in set | delete | remove) ;; *) return 0 ;; esac
-		n=${#TOK[@]}
-		for ((i = 3; i < n; i++)); do
-			a="${TOK[$i]}"
-			case "$a" in
-			-f | --env-file)
-				[ "$verb" = set ] && refuse R-VARS "\`gh variable set --env-file\` sets variables in bulk from a file the guard cannot read." ;;
-			-b | --body | -R | --repo | -e | --env | -o | --org | -v | --visibility | -r | --repos) i=$((i + 1)) ;;
-			-*) ;;
-			*) [ -n "$name" ] || name="$a" ;;
-			esac
-		done
-		case "$name" in E2E_* | INFRA_*_APPLY)
-			refuse R-VARS "\`gh variable $verb $name\` changes a variable every SCHEDULED run reads." \
-				"Use the workflow's dispatch inputs, which die with the run. A variable outlives the agent that set it (the 2026-09-25 leak ran fabric on all four clouds)."
-			;;
-		esac
-		;;
 	api)
 		n=${#TOK[@]}
 		for ((i = 2; i < n; i++)); do
@@ -709,24 +703,17 @@ rule_gh() {
 			esac
 		done
 		path="${path#/}"
+		# A raw dispatch carries its inputs as -f inputs[...]=…, which are not read: a priced
+		# workflow is charged its no-input price plus C-UNKNOWN, an unknown one C-UNKNOWN.
 		if [[ "$path" =~ actions/workflows/([^/]+)/dispatches ]]; then
 			local f="${BASH_REMATCH[1]}"
 			case "$(wf_class "$f")" in
-			free) ;;
-			prod) refuse R-PROD "\`gh api …/workflows/$f/dispatches\` dispatches a PRODUCTION workflow." ;;
-			*) refuse R-WORKFLOW "\`gh api …/workflows/$f/dispatches\` dispatches a priced or unknown workflow behind the price table's back." \
-				"Use gh workflow run $f -f name=value so the inputs can be priced." ;;
+			free | prod) return 0 ;;
+			nightly) charge C-NIGHTLY 50 "gh api …/workflows/$f/dispatches (floor)" ;;
+			ai) charge C-AI 10 "gh api …/workflows/$f/dispatches" ;;
+			byomysql) charge C-BYOMYSQL 200 "gh api …/workflows/$f/dispatches" ;;
 			esac
-		fi
-		if [[ "$path" =~ actions/variables/(E2E_[A-Za-z0-9_]*|INFRA_[A-Za-z0-9_]*_APPLY)$ ]] || {
-			[[ "$path" =~ actions/variables/?$ ]] && case " ${TOK[*]} " in *" name=E2E_"* | *" name=INFRA_"*) true ;; *) false ;; esac
-		}; then
-			case " ${TOK[*]} " in *" -X GET"* | *" --method GET"*) ;; *)
-				case " ${TOK[*]} " in *" -X "* | *" --method "* | *" -f "* | *" -F "* | *" --field "* | *" --raw-field "* | *" --input "*)
-					refuse R-VARS "\`gh api\` writes an E2E_*/INFRA_*_APPLY repository variable that every scheduled run reads." ;;
-				esac
-				;;
-			esac
+			charge C-UNKNOWN 100 "gh api …/workflows/$f/dispatches (inputs unread, or workflow not in the table)"
 		fi
 		;;
 	esac
@@ -761,98 +748,54 @@ rule_hcloud() {
 	return 0
 }
 
-rule_cloudwrite() {
-	local prog="$1" w svc op last
+# rule_cloudprice <prog> — charge C-CLOUDCREATE for the expensive create verbs named in the price
+# table. Every other aws/gcloud/az/aliyun command — a read, or any other write — is free.
+rule_cloudprice() {
+	local prog="$1" a b c hit=0
 	nonflag_words
+	a="${NF[0]:-}"
+	b="${NF[1]:-}"
+	c="${NF[2]:-}"
 	case "$prog" in
 	aws)
-		svc="${NF[0]:-}"
-		op="${NF[1]:-}"
-		case "$svc" in "" | help | configure | sso | sts | --version) return 0 ;; esac
-		if [ "$svc" = s3 ]; then
-			case "$op" in ls | presign | "") return 0 ;; esac
-			last="${NF[${#NF[@]} - 1]}"
-			case "$op" in cp | sync) case "$last" in s3://*) ;; *) return 0 ;; esac ;; esac
-			refuse R-CLOUDWRITE "\`aws s3 $op\` writes to S3."
-		fi
-		case "$op" in
-		describe-* | list-* | get-* | head-* | lookup-* | search-* | batch-get-* | scan | query | select* | filter-* | \
-			validate-* | simulate-* | estimate-* | test-* | preview-* | wait | help | tail | start-query | \
-			update-kubeconfig | generate-presigned-url | decode-authorization-message)
-			return 0
+		case "$a $b" in
+		"ec2 run-instances" | "ec2 create-nat-gateway" | "eks create-cluster" | "eks create-nodegroup" | \
+			"rds create-db-instance" | "rds create-db-cluster" | "elasticache create-"* | "opensearch create-domain")
+			hit=1
 			;;
 		esac
-		refuse R-CLOUDWRITE "\`aws $svc $op\` creates or modifies an AWS resource." \
-			"Reads (describe-*, list-*, get-*, secretsmanager get-secret-value) are allowed; real-cloud work runs in the e2e workflows under their own cost ceilings."
 		;;
-	gcloud | az)
-		local read=0 write=0
-		case "${NF[0]:-}" in "" | config | auth | info | version | help | login | logout | account | extension | components) return 0 ;; esac
-		for w in "${NF[@]}"; do
-			case "$w" in
-			list | describe | show | get-* | print-* | read | tail | query | wait | check-* | exists | explain) read=1 ;;
-			create | delete | update | deploy | set | set-* | add | add-* | remove | remove-* | patch | apply | enable | disable | \
-				resize | start | stop | restart | reset | import | export | submit | run | attach | detach | move | rename | \
-				rollback | upgrade | scale | purge | undelete | migrate | swap | assign | invoke | publish)
-				write=1
-				;;
-			esac
-		done
-		[ "$write" = 0 ] && [ "$read" = 1 ] && return 0
-		refuse R-CLOUDWRITE "\`$prog ${NF[*]}\` creates or modifies a cloud resource (or uses a verb the guard does not recognise as a read)." \
-			"Reads (list, describe, show, get-*) are allowed."
+	gcloud)
+		# a release track precedes the group: `gcloud beta container clusters create`
+		case "$a" in alpha | beta)
+			a="$b"
+			b="$c"
+			c="${NF[3]:-}"
+			;;
+		esac
+		case "$a $b $c" in
+		"container clusters create" | "compute instances create" | "sql instances create") hit=1 ;;
+		esac
+		;;
+	az)
+		case "$a $b" in "aks create" | "vm create" | "redis create") hit=1 ;; esac
+		case "$a $b $c" in "postgres flexible-server create" | "mysql flexible-server create") hit=1 ;; esac
 		;;
 	aliyun)
-		case "${NF[0]:-}" in "" | configure | help | version | --version) return 0 ;; esac
-		case "${NF[1]:-}" in Describe* | List* | Get* | Query* | Check*) return 0 ;; esac
-		refuse R-CLOUDWRITE "\`aliyun ${NF[0]} ${NF[1]:-}\` creates or modifies an Alibaba Cloud resource." \
-			"Reads (Describe*, List*, Get*, Query*) are allowed."
+		case "$a" in cs | ecs | rds)
+			case "$b" in Create* | create-*) hit=1 ;; esac
+			;;
+		esac
+		case "$a $b" in "ecs RunInstances" | "ecs run-instances") hit=1 ;; esac
 		;;
 	esac
-	return 0
-}
-
-rule_stripe() { # raw segment: the key may be in an assignment prefix
-	local raw="$1"
-	# A key SHAPE, not the prefix: `grep sk_live_` and a commit message naming it are text.
-	if [[ "$raw" =~ (sk|rk)_live_[A-Za-z0-9]{8,} ]]; then
-		refuse R-STRIPE "the command carries a LIVE Stripe key (sk_live_/rk_live_)." \
-			"Live mode moves real money. Use the test key; live-mode operations are the maintainer's."
-	fi
-	if [ "${TOK[0]##*/}" = stripe ]; then
-		case " ${TOK[*]} " in *" --live"*)
-			refuse R-STRIPE "\`stripe … --live\` runs against live mode." "Drop --live: the CLI defaults to test mode." ;;
-		esac
-	fi
-	return 0
-}
-
-rule_vercel() {
-	local i n=${#TOK[@]} at=-1 a
-	for ((i = 0; i < n && i < 4; i++)); do
-		[ "${TOK[$i]##*/}" = vercel ] && at=$i && break
-	done
-	[ "$at" -ge 0 ] || return 0
-	case "${TOK[$((at + 1))]:-}" in promote | rollback)
-		refuse R-VERCEL "\`vercel ${TOK[$((at + 1))]}\` changes what PRODUCTION serves." ;;
-	esac
-	for ((i = at + 1; i < n; i++)); do
-		a="${TOK[$i]}"
-		case "$a" in
-		--prod | --production | --target=production | --target=prod)
-			refuse R-VERCEL "\`vercel … $a\` deploys to PRODUCTION." "Preview deploys are fine; production ships through promotion merges."
-			;;
-		--target)
-			case "${TOK[$((i + 1))]:-}" in production | prod) refuse R-VERCEL "\`vercel … --target production\` deploys to PRODUCTION." ;; esac
-			;;
-		esac
-	done
+	[ "$hit" = 1 ] && charge C-CLOUDCREATE 500 "$prog ${NF[*]:0:4} (cloud create)"
 	return 0
 }
 
 # ── main ───────────────────────────────────────────────────────────────────────────────────────
 # Words that mark a payload the guard would price or refuse; used only when jq is missing.
-NOJQ_RE='env:box|env:timer|env\.sh|workflow run|run rerun|-e2e\.sh|hcloud|aws |gcloud|az |aliyun|stripe|_live_|vercel|variable (set|delete)|REAP_AFTER|sandbox-reap|spend-ledger|actions/workflows'
+NOJQ_RE='env:box|env:timer|env\.sh|workflow run|run rerun|-e2e\.sh|hcloud|aws |gcloud|az |aliyun|REAP_AFTER|sandbox-reap|spend-ledger|actions/workflows'
 
 main() {
 	cmdline_read_payload
@@ -866,8 +809,8 @@ main() {
 	fi
 	[ -n "$CMD" ] || exit 0
 	case "$CMD" in
-	*env:box* | *env.sh* | *env:timer* | *REAP_AFTER* | *sandbox-reap* | *workflow* | *variable* | *rerun* | *hcloud* | *aws* | \
-		*gcloud* | *az* | *aliyun* | *stripe* | *_live_* | *vercel* | *-e2e.sh* | *spend-ledger* | *.alethia*) ;;
+	*env:box* | *env.sh* | *env:timer* | *REAP_AFTER* | *sandbox-reap* | *workflow* | *rerun* | *hcloud* | *aws* | \
+		*gcloud* | *az* | *aliyun* | *-e2e.sh* | *spend-ledger* | *.alethia*) ;;
 	*) exit 0 ;;
 	esac
 	cmdline_split "$CMD"
@@ -897,7 +840,6 @@ main() {
 		cmdline_is_inspect && continue
 		rule_reap_settings "$raw"
 		rule_ledger "$raw"
-		rule_stripe "$raw"
 		rule_box
 		if [[ "$SEG" =~ $LOCAL_E2E_RE ]]; then
 			charge C-LOCALE2E 1500 "${BASH_REMATCH[0]} (local real-cloud e2e)"
@@ -905,9 +847,8 @@ main() {
 		case "$prog" in
 		gh) rule_gh ;;
 		hcloud) rule_hcloud ;;
-		aws | gcloud | az | aliyun) rule_cloudwrite "$prog" ;;
+		aws | gcloud | az | aliyun) rule_cloudprice "$prog" ;;
 		esac
-		rule_vercel
 	done
 	settle
 	exit 0
@@ -1046,8 +987,44 @@ STUB
 	c 200 'gh workflow run byo-users-managed-mysql.yml --ref feat/x'
 	c 200 'gh workflow run "BYO users — managed MySQL (AWS)"'
 	c 200 'gh run rerun 112'
-	t block 'gh workflow run not-in-the-table.yml'
-	grep -q 'not in guard-spend.sh' "$tmp/stderr" && pass=$((pass + 1)) || bad "an unclassified dispatch is refused by naming the table: $(cat "$tmp/stderr")"
+	# what the guard cannot price is charged C-UNKNOWN, never refused
+	c 100 'gh workflow run not-in-the-table.yml'
+	c 100 'gh workflow run 123456'
+	c 100 'gh workflow run --ref dev'
+	c 100 'gh --repo o/r workflow run not-a-workflow.yml'
+	# --json inputs on stdin: the surcharge rides ON TOP of the workflow's own price
+	c 150 'gh workflow run e2e-nightly.yml --json'
+	c 110 'gh workflow run e2e-ai-nightly.yml --json'
+	c 300 'gh workflow run byo-users-managed-mysql.yml --json'
+	c 1650 'gh workflow run e2e-nightly.yml --json -f full_bar=true'
+	# a raw gh api dispatch: the workflow's no-input price + C-UNKNOWN; free/prod stay free
+	c 150 'gh api -X POST repos/o/r/actions/workflows/e2e-nightly.yml/dispatches -f ref=dev'
+	c 110 'gh api -X POST repos/o/r/actions/workflows/e2e-ai-nightly.yml/dispatches -f ref=dev'
+	c 300 'gh api -X POST repos/o/r/actions/workflows/byo-users-managed-mysql.yml/dispatches -f ref=dev'
+	c 100 'gh api -X POST repos/o/r/actions/workflows/not-in-the-table.yml/dispatches -f ref=dev'
+	c 100 'gh api -X POST /repos/o/r/actions/workflows/123456/dispatches -f ref=dev'
+	# expensive cloud creates: C-CLOUDCREATE each
+	c 500 'aws ec2 run-instances --image-id ami-1'
+	c 500 'aws --region eu-central-1 rds create-db-instance --db-instance-identifier x'
+	c 500 'aws rds create-db-cluster --db-cluster-identifier x'
+	c 500 'aws ec2 create-nat-gateway --subnet-id s'
+	c 500 'aws eks create-cluster --name c'
+	c 500 'aws --profile p eks create-nodegroup --cluster-name c'
+	c 500 'aws elasticache create-replication-group --replication-group-id r'
+	c 500 'aws opensearch create-domain --domain-name d'
+	c 500 'gcloud compute instances create vm-1'
+	c 500 'gcloud container clusters create c --zone z'
+	c 500 'gcloud beta container clusters create c'
+	c 500 'gcloud --project p sql instances create db'
+	c 500 'az vm create -n x -g rg'
+	c 500 'az aks create -n x -g rg'
+	c 500 'az postgres flexible-server create -n x -g rg'
+	c 500 'az mysql flexible-server create -n x -g rg'
+	c 500 'az redis create -n x -g rg'
+	c 500 'aliyun ecs RunInstances --ImageId x'
+	c 500 'aliyun cs CreateKubernetesCluster --body x'
+	c 500 'aliyun rds CreateDBInstance --Engine MySQL'
+	c 1000 'aws ec2 run-instances --image-id a && az vm create -n x -g rg'
 	c 1500 'bash scripts/e2e/keyless-db-e2e.sh'
 	c 1500 './scripts/e2e/provisioning-e2e.sh --provider hetzner'
 	c 100 'hcloud --context alethia-e2e server create --name x --type cx22'
@@ -1071,10 +1048,10 @@ STUB
 	c 1550 'gh run rerun 105 --failed'
 	c 10 'gh run rerun 103'
 	c 0 'gh run rerun 101'
-	t block 'gh run rerun 102'
-	grep -q 'ships or changes PRODUCTION' "$tmp/stderr" && pass=$((pass + 1)) || bad "a production rerun is refused as production: $(cat "$tmp/stderr")"
+	# a production workflow's rerun is free, whatever event started it
+	t allow 'gh run rerun 102'
 	t allow 'gh run rerun 108 --failed'
-	t block 'gh run rerun 109'
+	t allow 'gh run rerun 109'
 	t block 'gh run rerun "$rid" --failed'
 	grep -q 'not a literal number' "$tmp/stderr" && pass=$((pass + 1)) || bad "a variable run id is named as such"
 	t block 'gh run rerun 106'
@@ -1090,8 +1067,8 @@ STUB
 	c 10 'gh -R o/other run rerun 110'
 	t block 'gh run rerun 110'
 	grep -q 'HTTP 404' "$tmp/stderr" && pass=$((pass + 1)) || bad "a run absent from the cwd repo is a lookup failure: $(cat "$tmp/stderr")"
-	t block 'gh run rerun 107'
-	grep -q 'not in guard-spend.sh' "$tmp/stderr" && pass=$((pass + 1)) || bad "an unknown workflow's rerun names the table"
+	# a rerun of a workflow not in the table is charged C-UNKNOWN
+	c 100 'gh run rerun 107'
 	t block 'gh run rerun'
 	grep -q 'rerun <no id>' "$tmp/stderr" && pass=$((pass + 1)) || bad "a rerun with no id is refused by name: $(cat "$tmp/stderr")"
 	t block 'gh run rerun --failed'
@@ -1114,53 +1091,13 @@ STUB
 	: >"$ledger"
 
 	# ── hard refusals ──
-	t block 'gh workflow run deploy-console.yml'
-	t block 'gh --repo alethialabs-io/alethialabs workflow run deploy-console.yml'
-	t block 'gh -R o/r variable set E2E_FABRIC_DEMO --body 1'
-	t block 'gh -R o/r api -X POST repos/o/r/actions/workflows/deploy-console.yml/dispatches -f ref=main'
 	t block 'npx pnpm env:timer off'
-	t block 'gh workflow run deploy-fleet-aws.yml -f x=y'
-	t block 'gh workflow run release-cli.yml'
-	t block 'gh workflow run infra-cp-hetzner.yml'
-	t block 'gh workflow run "Deploy Console"'
-	t block 'gh workflow run 123456'
-	t block 'gh workflow run not-a-workflow.yml'
-	t block 'gh workflow run e2e-nightly.yml --json'
-	t block 'gh api -X POST repos/o/r/actions/workflows/deploy-console.yml/dispatches -f ref=main'
-	t block 'gh api -X POST repos/o/r/actions/workflows/e2e-nightly.yml/dispatches -f ref=dev'
 	t block 'gh workflow run e2e-nightly.yml -f provider=alibaba -f alibaba_allow_prepaid=true'
 	t block 'gh workflow run e2e-nightly.yml -f provider=azure -f azure_redis_allow_known_bad=true'
-	t block 'gh variable set E2E_FABRIC_DEMO --body 1'
-	t block 'gh variable delete E2E_KEYLESS_DB'
-	t block 'gh variable set INFRA_CP_AWS_APPLY -b true'
-	t block 'gh variable set -f vars.env'
-	t block 'gh api -X PATCH repos/o/r/actions/variables/E2E_FABRIC_DEMO -f value=1'
-	t block 'gh api repos/o/r/actions/variables -f name=E2E_X -f value=1'
 	t block 'hcloud server create --name x'
 	t block 'hcloud --context tovr-prod server create --name x'
 	t block 'hcloud --context alethia-console-prod firewall add-rule fw'
 	t block 'hcloud --context alethia-e2e server create --name x' HCLOUD_TOKEN=abc
-	t block 'aws ec2 run-instances --image-id ami-1'
-	t block 'aws --region eu-central-1 rds create-db-instance --db-instance-identifier x'
-	t block 'aws s3 cp ./f s3://bucket/f'
-	t block 'aws iam put-role-policy --role-name x'
-	t block 'gcloud compute instances create vm-1'
-	t block 'gcloud container clusters resize c --num-nodes 9'
-	t block 'gcloud compute frobnicate x'
-	t block 'az vm create -n x -g rg'
-	t block 'aliyun ecs RunInstances --ImageId x'
-	t block 'stripe charges create --amount 100 --live'
-	# The fixture keys are ASSEMBLED at run time: a literal key shape in this file is exactly what
-	# the gitleaks history scan (rightly) fails a PR on.
-	local live="live" sk rk
-	sk="sk_${live}_51Habc123XYZ"
-	rk="rk_${live}_51Habc123XYZ"
-	t block "STRIPE_API_KEY=$sk node scripts/x.mjs"
-	t block "curl https://api.stripe.com/v1/charges -u $rk:"
-	t block 'vercel deploy --prod'
-	t block 'npx vercel --prod'
-	t block 'vercel deploy --target production'
-	t block 'vercel promote https://x.vercel.app'
 	t block 'pnpm env:timer off'
 	t block 'bash scripts/env.sh timer off'
 	t block 'ALETHIA_REAP_AFTER_MIN=100000 pnpm env:timer'
@@ -1181,6 +1118,43 @@ STUB
 	: >"$home/Library/LaunchAgents/io.alethialabs.sandbox-reap.plist"
 
 	# ── free, and allowed ──
+	# production workflows dispatch free (the maintainer's 2026-11-22 ruling), every spelling
+	t allow 'gh workflow run deploy-console.yml'
+	t allow 'gh --repo alethialabs-io/alethialabs workflow run deploy-console.yml'
+	t allow 'gh workflow run deploy-fleet-aws.yml -f x=y'
+	t allow 'gh workflow run release-cli.yml'
+	t allow 'gh workflow run infra-cp-hetzner.yml'
+	t allow 'gh workflow run "Deploy Console"'
+	t allow 'gh workflow run deploy-console.yml --json'
+	t allow 'gh api -X POST repos/o/r/actions/workflows/deploy-console.yml/dispatches -f ref=main'
+	t allow 'gh -R o/r api -X POST repos/o/r/actions/workflows/deploy-console.yml/dispatches -f ref=main'
+	t allow 'gh api -X POST repos/o/r/actions/workflows/ci.yml/dispatches -f ref=dev'
+	# repository variables are not spend
+	t allow 'gh variable set E2E_FABRIC_DEMO --body 1'
+	t allow 'gh -R o/r variable set E2E_FABRIC_DEMO --body 1'
+	t allow 'gh variable delete E2E_KEYLESS_DB'
+	t allow 'gh variable set INFRA_CP_AWS_APPLY -b true'
+	t allow 'gh variable set -f vars.env'
+	t allow 'gh api -X PATCH repos/o/r/actions/variables/E2E_FABRIC_DEMO -f value=1'
+	# cloud writes that are not an expensive create are free
+	t allow 'aws s3 cp ./f s3://bucket/f'
+	t allow 'aws iam put-role-policy --role-name x'
+	t allow 'aws ec2 terminate-instances --instance-ids i-1'
+	t allow 'aws ec2 create-tags --resources i-1 --tags Key=a,Value=b'
+	t allow 'aws rds describe-db-instances'
+	t allow 'gcloud container clusters resize c --num-nodes 9'
+	t allow 'gcloud compute frobnicate x'
+	t allow 'gcloud compute instances delete vm-1'
+	t allow 'az vm delete -n x -g rg'
+	t allow 'az group create -n rg -l westeurope'
+	t allow 'aliyun ecs DeleteInstance --InstanceId x'
+	t allow 'aliyun vpc CreateVpc'
+	# stripe live mode and vercel production are not this guard's (guard-secrets.sh owns live keys)
+	t allow 'stripe charges create --amount 100 --live'
+	t allow 'vercel deploy --prod'
+	t allow 'npx vercel --prod'
+	t allow 'vercel deploy --target production'
+	t allow 'vercel promote https://x.vercel.app'
 	t allow 'gh workflow run release-gate.yml -f legs=hero'
 	t allow 'gh workflow run ci.yml --ref feat/x'
 	t allow 'gh workflow run e2e-orphan-reaper.yml'
@@ -1306,6 +1280,8 @@ pnpm env:box"
 	nojq block 'pnpm env:box'
 	nojq block 'gh workflow run e2e-nightly.yml -f full_bar=true'
 	nojq block 'gh run rerun 104'
+	nojq block 'aws ec2 run-instances --image-id a'
+	nojq allow 'vercel deploy --prod'
 	nojq allow 'git status --short'
 	nojq allow 'pnpm -F console test'
 
