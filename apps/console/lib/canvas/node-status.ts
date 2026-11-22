@@ -21,8 +21,7 @@ import type {
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
 import { coreIdentity, isDesignNode } from "@/lib/canvas/store/derive";
-import { useDesignNodes } from "@/lib/canvas/store/use-board";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useAnyNode, useDesignNodes } from "@/lib/canvas/store/use-board";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import type { DriftDetail } from "@/types/jsonb.types";
 import {
@@ -530,7 +529,7 @@ export function resolveExternalStatus(
 export function useNodeStatus(id: string): NodeStatus {
 	const readiness = useNodeReadiness(id);
 	const env = useEnvironmentStatus();
-	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
+	const node = useAnyNode(id);
 
 	return useMemo(() => {
 		if (!node)

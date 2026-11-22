@@ -74,8 +74,16 @@ import { REQUIREMENT_HINTS } from "@/lib/addons/requirements";
 import type { AddOnField, AddOnMode } from "@/lib/addons/types";
 import { addOnUpdateNotice } from "@/lib/addons/update-notice";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
-import type { InspectorTab, StagedOperation } from "@/lib/canvas/store/types";
-import { useInspectorTab, useOperations } from "@/lib/canvas/store/use-board";
+import {
+  PROJECT_NODE_ID,
+  type InspectorTab,
+  type StagedOperation,
+} from "@/lib/canvas/store/types";
+import {
+  useEffectiveProvider,
+  useInspectorTab,
+  useOperations,
+} from "@/lib/canvas/store/use-board";
 import type { CloudProviderSlug } from "@/lib/cloud-providers/generated/catalog";
 import { addonCompat } from "@/lib/compat";
 import {
@@ -84,7 +92,6 @@ import {
   useRequestGitopsBump,
 } from "@/lib/query/use-addons-query";
 import { asRecord } from "@/lib/records";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { AddonDeprecationNotice } from "./addon-deprecation-notice";
 import { AddonUpdateNotice } from "./addon-update-notice";
 import { AddonIcon } from "./addon-visuals";
@@ -298,7 +305,7 @@ export function AddonConfigCard({
   const addons = useAddonsQuery(projectId, environmentId);
   const board = useBoard();
   const close = useCloseInspector();
-  const provider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
+  const provider = useEffectiveProvider(PROJECT_NODE_ID);
   const live = addons.data?.items.find((i) => i.id === itemId) ?? null;
   const staged = useOperations().some((o) => o.id === addonOperationId(itemId));
 

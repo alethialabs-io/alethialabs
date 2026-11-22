@@ -24,7 +24,6 @@ vi.mock("@/lib/query/use-addons-query", () => ({
 
 import { AddonConfigForm } from "@/components/addons/addon-config-card";
 import { board } from "@/lib/canvas/store/board";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 const GUIDE = "https://alethialabs.io/docs/guides/design-project/migrate-from-ingress-nginx";
 
@@ -89,7 +88,7 @@ function at(iso: string) {
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 afterEach(() => {

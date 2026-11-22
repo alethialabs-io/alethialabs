@@ -20,7 +20,8 @@ import {
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import { board } from "@/lib/canvas/store/board";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { setBoardNodes } from "@/tests/fixtures/canvas/board";
 import { queryWrapper } from "@/tests/helpers/query-wrapper";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "acme" }) }));
@@ -49,12 +50,9 @@ function renderSubject(
 	env: Partial<EnvironmentStatus> = {},
 	slots: { sources?: ReactNode; activity?: ReactNode } = {},
 ) {
-	useCanvasStore.setState({
-		nodes: [node("project"), node("cluster"), node("network")],
-		identities: [],
-		baseline: [],
-		collectionPositions: {},
-	});
+	setBoardNodes([node("project"), node("cluster"), node("network")]);
+	board.document.getState().replaceBaseline([]);
+	board.document.setState({ collectionPositions: {} });
 	return render(
 		<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, ...env }}>
 			<EnvSettingsCard {...slots} />
@@ -67,7 +65,7 @@ function renderSubject(
 const tabs = () => screen.getAllByRole("tab").map((tab) => tab.textContent);
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("the environment subject", () => {

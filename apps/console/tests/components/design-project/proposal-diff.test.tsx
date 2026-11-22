@@ -17,7 +17,10 @@ import { summarizeCanvas } from "@/lib/ai/canvas-context";
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { AiActionParsed } from "@/lib/ai/proposal";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { publishActiveCanvas } from "@/lib/canvas/store/active-canvas";
+import { board } from "@/lib/canvas/store/board";
+import { boardNodes, setBoardNodes } from "@/tests/fixtures/canvas/board";
 
 /** A canvas with a project root and one database named `orders`. */
 function seed() {
@@ -49,20 +52,24 @@ function seed() {
 		},
 	} as CanvasNode;
 
-	useCanvasStore.setState({
-		nodes: [root, db],
+	setBoardNodes([root, db]);
+	board.document.getState().replaceBaseline([]);
+	// The assistant panel is drawn outside the workbench: it reads the board on screen, which the
+	// workbench publishes with the identity list the page read.
+	publishActiveCanvas({
+		board,
 		identities: [
 			{ id: "ident-aws", provider: "aws", displayId: "prod-eu" },
 			{ id: "ident-gcp", provider: "gcp", displayId: "data-gcp" },
 		] as never,
-		baseline: [],
+		others: [],
 	});
 }
 
 const diff = (actions: AiActionParsed[]) => render(<ProposalDiff actions={actions} />);
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 	seed();
 });
 
@@ -126,7 +133,7 @@ describe("the assistant can finally propose a removal", () => {
 			actions: [{ kind: "remove_node", nodeId: "database-1" }],
 		});
 
-		const kinds = useCanvasStore.getState().nodes.map((n) => n.data.kind);
+		const kinds = boardNodes().map((n) => n.data.kind);
 		expect(kinds).not.toContain("database");
 		// …and the project root survives — it is not removable.
 		expect(kinds).toContain("project");

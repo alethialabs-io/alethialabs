@@ -37,7 +37,8 @@ import {
 } from "@/lib/canvas/component-status";
 import { buildRenderNodes, collectionNodeId } from "@/lib/canvas/collections";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { setBoardNodes } from "@/tests/fixtures/canvas/board";
 import {
 	chartNode,
 	databaseNode,
@@ -64,7 +65,8 @@ function renderCard(
 	marks: BoardMarks = marksOf(),
 	env: Partial<EnvironmentStatus> = {},
 ) {
-	useCanvasStore.setState({ nodes, identities: [], baseline: [] });
+	setBoardNodes(nodes);
+	board.document.getState().replaceBaseline([]);
 	return render(
 		<ReactFlowProvider>
 			<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, ...env }}>
@@ -82,7 +84,7 @@ function descriptionOf(id: string): string {
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 	lodState.current = "full";
 });
 
@@ -243,11 +245,8 @@ describe("the name the focused element carries", () => {
 describe("the vault card's marks", () => {
 	/** The vault for `members`, with `marks` in scope. */
 	function renderVault(members: CanvasNode[], marks: BoardMarks) {
-		useCanvasStore.setState({
-			nodes: [awsProjectNode(), ...members],
-			identities: [],
-			baseline: [],
-		});
+		setBoardNodes([awsProjectNode(), ...members]);
+		board.document.getState().replaceBaseline([]);
 		return render(
 			<ReactFlowProvider>
 				<EnvironmentStatusProvider value={EMPTY_ENVIRONMENT_STATUS}>

@@ -363,8 +363,25 @@ export function createBoard(): Board {
 }
 
 /**
- * The board of this tab. The shell reads it through `CanvasStoreProvider`; the legacy
- * `useCanvasStore` reads the same instance, which is what keeps the two views of one board in step
- * while both exist.
+ * The board outside any workbench: what `useBoard()` returns with no `CanvasStoreProvider` above
+ * it (a component test, the assistant panel on a page without a board). A workbench never edits
+ * this one; it edits the board of its own scope, from {@link boardFor}.
  */
 export const board: Board = createBoard();
+
+/** The boards this tab has opened, one per project:environment. */
+const boards = new Map<string, Board>();
+
+/**
+ * The board of one project:environment: created the first time the scope is opened, and the same
+ * board every time after, for the life of the tab. Two environments never share stores, so a write
+ * that lands after the person switched environments lands on the board it was meant for, and
+ * switching back finds that board as it was left.
+ */
+export function boardFor(scope: string): Board {
+	const found = boards.get(scope);
+	if (found) return found;
+	const created = createBoard();
+	boards.set(scope, created);
+	return created;
+}

@@ -10,7 +10,7 @@ import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { formToGraph } from "@/components/design-project/canvas/graph/form-to-graph";
 import { configName } from "@/components/design-project/canvas/graph/node-config";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
-import { deriveEdges } from "@/lib/stores/use-canvas-store";
+import { deriveEdges } from "@/lib/canvas/store/derive";
 import { nodeReadiness } from "@/lib/canvas/node-status";
 import { buildDefaultFormValues } from "@/components/design-project/source-project";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";

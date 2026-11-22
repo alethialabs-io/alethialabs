@@ -119,7 +119,7 @@ describe("cards are cloud-honest", () => {
 });
 
 describe("card handles mirror the derived edge topology", () => {
-	// deriveEdges (use-canvas-store) links network → cluster → every leaf. The nubs a card draws
+	// deriveEdges (lib/canvas/store/derive.ts) links network → cluster → every leaf. The nubs a card draws
 	// must match, or an edge lands on a node with nowhere to attach.
 	it("the network sources only", () => {
 		expect(NODE_REGISTRY.network.card.handles).toEqual({ source: true });

@@ -24,7 +24,8 @@ import {
 	type EnvironmentStatus,
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { setBoardNodes } from "@/tests/fixtures/canvas/board";
 import { queryWrapper } from "@/tests/helpers/query-wrapper";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "acme" }) }));
@@ -68,7 +69,8 @@ function control(tree: DestroyTreeNode[]): DestroyEnvironmentControl & {
 
 /** Renders the Environment settings card in edit mode under `status`. */
 function renderCard(c: DestroyEnvironmentControl, status: Partial<EnvironmentStatus> = {}) {
-	useCanvasStore.setState({ nodes: [], card: { kind: "env-settings" } });
+	setBoardNodes([]);
+	board.view.getState().openCard({ kind: "env-settings" });
 	return render(
 		<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, ...status }}>
 			<EnvSettingsCard destroyEnvironment={c} />
@@ -85,7 +87,7 @@ async function openDialog(c: DestroyEnvironmentControl) {
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("a tree that could not be read", () => {

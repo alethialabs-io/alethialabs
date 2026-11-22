@@ -37,7 +37,9 @@ import {
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import type { ComponentStatus } from "@/lib/db/schema/enums";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { board } from "@/lib/canvas/store/board";
+import { setBoardNodes } from "@/tests/fixtures/canvas/board";
 
 /** A canvas holding the project root plus one node of `kind`, both on `provider`. */
 function seedCanvas<K extends NodeKind>(
@@ -69,7 +71,8 @@ function seedCanvas<K extends NodeKind>(
 		},
 	} as CanvasNode;
 
-	useCanvasStore.setState({ nodes: [root, node], identities: [], baseline: [] });
+	setBoardNodes([root, node]);
+	board.document.getState().replaceBaseline([]);
 	return node;
 }
 
@@ -97,7 +100,7 @@ function serverStatus(
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 	lodState.current = "full";
 });
 

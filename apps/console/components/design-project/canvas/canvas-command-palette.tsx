@@ -19,7 +19,15 @@ import {
 	type CloudProviderMeta,
 } from "@/lib/cloud-providers";
 import { addCatalogue, catalogueKinds } from "@/lib/canvas/store/add-catalogue";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import {
+	useAllNodes,
+	useBoardActions,
+	useEffectiveProvider,
+	useHiddenKinds,
+	useShowConnections,
+} from "@/lib/canvas/store/use-board";
 import { NODE_REGISTRY } from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";
 import { configName } from "./graph/node-config";
@@ -158,18 +166,16 @@ export function CanvasCommandPalette({
 	onShowShortcuts,
 	dropPosition,
 }: CanvasCommandPaletteProps) {
-	const addNode = useCanvasStore((s) => s.addNode);
-	const openInspector = useCanvasStore((s) => s.openInspector);
-	const undo = useCanvasStore((s) => s.undo);
-	const redo = useCanvasStore((s) => s.redo);
-	const repairOverlaps = useCanvasStore((s) => s.repairOverlaps);
-	const showConnections = useCanvasStore((s) => s.showConnections);
-	const toggleConnections = useCanvasStore((s) => s.toggleConnections);
-	const nodes = useCanvasStore((s) => s.nodes);
-	const hiddenKinds = useCanvasStore((s) => s.hiddenKinds);
-	const toggleKindVisibility = useCanvasStore((s) => s.toggleKindVisibility);
+	const board = useBoard();
+	const { addNode, undo, redo, repairOverlaps } = useBoardActions();
+	const openInspector = (id: string) => board.view.getState().openInspector(id);
+	const showConnections = useShowConnections();
+	const toggleConnections = () => board.view.getState().toggleConnections();
+	const nodes = useAllNodes();
+	const hiddenKinds = useHiddenKinds();
+	const toggleKindVisibility = (kind: NodeKind) => board.view.getState().toggleKindVisibility(kind);
 	// Null until the project has a cloud: every kind is offered, and no service name is shown.
-	const coreProvider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
+	const coreProvider = useEffectiveProvider(PROJECT_NODE_ID);
 	const meta = coreProvider ? getProvider(coreProvider) : null;
 
 	const run = (fn: () => void) => {

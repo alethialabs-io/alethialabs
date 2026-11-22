@@ -9,7 +9,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CanvasMoreMenu } from "@/components/design-project/canvas/canvas-more-menu";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { boardCard } from "@/tests/fixtures/canvas/board";
 
 vi.mock("@xyflow/react", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@xyflow/react")>();
@@ -22,8 +23,9 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 });
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
-	useCanvasStore.setState({ showConnections: true, hiddenKinds: [] });
+	board.reset();
+	board.view.setState({ showConnections: true });
+	board.view.setState({ hiddenKinds: [] });
 });
 
 describe("CanvasMoreMenu", () => {
@@ -32,11 +34,11 @@ describe("CanvasMoreMenu", () => {
 		render(<CanvasMoreMenu iacGoverned={false} onShowShortcuts={vi.fn()} />);
 		await user.click(screen.getByRole("button", { name: "More" }));
 		await user.click(await screen.findByRole("menuitem", { name: /environment settings/i }));
-		expect(useCanvasStore.getState().card).toEqual({ kind: "env-settings" });
+		expect(boardCard()).toEqual({ kind: "env-settings" });
 
 		await user.click(screen.getByRole("button", { name: "More" }));
 		await user.click(await screen.findByRole("menuitem", { name: /^activity$/i }));
-		expect(useCanvasStore.getState().card).toEqual({ kind: "activity" });
+		expect(boardCard()).toEqual({ kind: "activity" });
 	});
 
 	it("hides environment settings while a BYO-IaC source governs the environment", async () => {
@@ -52,7 +54,7 @@ describe("CanvasMoreMenu", () => {
 		render(<CanvasMoreMenu iacGoverned={false} onShowShortcuts={vi.fn()} />);
 		await user.click(screen.getByRole("button", { name: "More" }));
 		await user.click(await screen.findByRole("menuitemcheckbox", { name: /show connections/i }));
-		expect(useCanvasStore.getState().showConnections).toBe(false);
+		expect(board.view.getState().showConnections).toBe(false);
 	});
 
 	it("the shortcut entry calls back", async () => {

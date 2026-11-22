@@ -24,7 +24,7 @@ import {
 	resolveNodeStatusFor,
 } from "@/lib/canvas/node-status";
 import type { NodeKind } from "../graph/types";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useAllNodes, useBoardActions, useCoreIdentity } from "@/lib/canvas/store/use-board";
 
 /**
  * The vault's panel — where a collection kind's resources actually live.
@@ -36,13 +36,13 @@ import { useCanvasStore } from "@/lib/stores/use-canvas-store";
  */
 export function CollectionPanel({ kind }: { kind: NodeKind }) {
 	const def = NODE_REGISTRY[kind];
-	const nodes = useCanvasStore((s) => s.nodes);
-	const core = useCanvasStore((s) => s.getCoreIdentity());
+	const nodes = useAllNodes();
+	const core = useCoreIdentity();
 	const env = useEnvironmentStatus();
-	const addNode = useCanvasStore((s) => s.addNode);
-	const updateNodeConfig = useCanvasStore((s) => s.updateNodeConfig);
-	const removeNodes = useCanvasStore((s) => s.removeNodes);
+	const { addNode, removeNodes } = useBoardActions();
 	const board = useBoard();
+	const updateNodeConfig = (id: string, patch: Record<string, unknown>) =>
+		board.document.getState().updateNodeConfig(id, patch);
 	const close = useCloseInspector();
 	const [filter, setFilter] = useState("");
 

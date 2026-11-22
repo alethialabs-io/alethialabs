@@ -28,7 +28,8 @@ import {
 	type AddCatalogueRow,
 } from "@/lib/canvas/store/add-catalogue";
 import { getProvider } from "@/lib/cloud-providers";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { useAllNodes, useBoardActions, useEffectiveProvider } from "@/lib/canvas/store/use-board";
 import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
 import { NODE_REGISTRY, variantOptionsFor } from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";
@@ -135,9 +136,8 @@ export function NodePalette({
 	governed = false,
 	dropPosition,
 }: NodePaletteProps) {
-	const addNode = useCanvasStore((s) => s.addNode);
-	const addNodeWithConfig = useCanvasStore((s) => s.addNodeWithConfig);
-	const nodes = useCanvasStore((s) => s.nodes);
+	const { addNode, addNodeWithConfig } = useBoardActions();
+	const nodes = useAllNodes();
 	// Which tab a kind's card opens on. Adding a service records "settings" for that kind: the
 	// inline step this palette used to show WAS that form, and picking a service is a statement that
 	// you intend to configure it. Written through the preference the tabs already keep, rather than a
@@ -148,9 +148,7 @@ export function NodePalette({
 	// it and the badge says so (#5365); no cluster yet is an honest `not_evaluable`.
 	const clusterK8s = useClusterK8sVersion();
 	// The project root's effective provider decides which kinds this board can take.
-	const coreProvider = useCanvasStore((s) =>
-		s.getEffectiveProvider(PROJECT_NODE_ID),
-	);
+	const coreProvider = useEffectiveProvider(PROJECT_NODE_ID);
 	// When set, the palette shows the variant step for this kind (e.g. pick a DB engine). The ONLY
 	// nested step left: it is part of naming WHICH service you are adding, so it still precedes the
 	// add. Everything after the add happens on the rail.

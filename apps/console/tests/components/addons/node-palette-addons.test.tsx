@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import { NodePalette } from "@/components/design-project/canvas/node-palette";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { setBoardNodes } from "@/tests/fixtures/canvas/board";
 
 const ITEMS: AddonMarketItem[] = [
 	{
@@ -80,7 +80,7 @@ const kyverno: AddonMarketItem = {
 
 beforeEach(() => {
 	// A clean graph so the service groups' "on canvas" checks are deterministic.
-	useCanvasStore.setState({ nodes: [] });
+	setBoardNodes([]);
 });
 
 describe("NodePalette — Add-ons group", () => {
@@ -108,9 +108,7 @@ describe("NodePalette — Add-ons group", () => {
 	// states that want attention, and that a compatible add-on stays silent.
 	it("badges an add-on the cluster's Kubernetes minor is too old for", () => {
 		// kyverno is 1.25+ in the matrix; put the cluster below it.
-		useCanvasStore.setState({
-			nodes: [clusterNode("1.24")],
-		});
+		setBoardNodes([clusterNode("1.24")]);
 		render(
 			<NodePalette
 				open
@@ -124,7 +122,7 @@ describe("NodePalette — Add-ons group", () => {
 	});
 
 	it("stays silent for a compatible add-on", () => {
-		useCanvasStore.setState({ nodes: [clusterNode("1.35")] });
+		setBoardNodes([clusterNode("1.35")]);
 		render(
 			<NodePalette
 				open
@@ -140,7 +138,7 @@ describe("NodePalette — Add-ons group", () => {
 
 	it("marks an add-on with no recorded window UNVERIFIED, never compatible", () => {
 		// loki has both bounds empty — the majority case in the catalogue.
-		useCanvasStore.setState({ nodes: [clusterNode("1.35")] });
+		setBoardNodes([clusterNode("1.35")]);
 		render(
 			<NodePalette
 				open
@@ -157,7 +155,7 @@ describe("NodePalette — Add-ons group", () => {
 	// used to read the raw "" and mark every add-on Unverified on exactly the clusters that pin
 	// nothing (CLI-created and blank projects).
 	it("judges an unset cluster version as the catalog default, not as unverifiable", () => {
-		useCanvasStore.setState({ nodes: [clusterNode("")] });
+		setBoardNodes([clusterNode("")]);
 		render(
 			<NodePalette
 				open
@@ -173,7 +171,7 @@ describe("NodePalette — Add-ons group", () => {
 	});
 
 	it("marks everything unverified when there is no cluster to judge against", () => {
-		useCanvasStore.setState({ nodes: [] });
+		setBoardNodes([]);
 		render(
 			<NodePalette
 				open

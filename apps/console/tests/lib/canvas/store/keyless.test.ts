@@ -10,7 +10,9 @@
 // stops an honest user reaching it by accident.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { boardNodes, seedBoard } from "@/tests/fixtures/canvas/board";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 
@@ -48,23 +50,17 @@ function dbNode(
 }
 
 function seed(nodes: CanvasNode[]) {
-	useCanvasStore.setState({
-		nodes,
-		baseline: structuredClone(nodes),
-		past: [],
-		future: [],
-		dirty: false,
-	});
+	seedBoard(nodes);
 }
 
 /** The database node's `iam_auth` as the store currently holds it. */
 const iamAuth = () => {
-	const node = useCanvasStore.getState().nodes.find((n) => n.id === DB_ID);
+	const node = boardNodes().find((n) => n.id === DB_ID);
 	return node?.data.kind === "database" ? node.data.config.iam_auth : undefined;
 };
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("keyless auth follows the cell the database sits on", () => {
@@ -73,7 +69,7 @@ describe("keyless auth follows the cell the database sits on", () => {
 			projectNode("aws"),
 			dbNode("aws", { engine_family: "postgres", iam_auth: true }),
 		]);
-		useCanvasStore.getState().setNodeIdentity(DB_ID, null, "hetzner");
+		board.document.getState().setNodeIdentity(DB_ID, null, "hetzner");
 		expect(iamAuth()).toBe(false);
 	});
 
@@ -84,7 +80,7 @@ describe("keyless auth follows the cell the database sits on", () => {
 			projectNode("aws"),
 			dbNode(null, { engine_family: "mysql", iam_auth: true }),
 		]);
-		useCanvasStore.getState().setNodeIdentity(PROJECT_NODE_ID, null, "alibaba");
+		board.document.getState().setNodeIdentity(PROJECT_NODE_ID, null, "alibaba");
 		expect(iamAuth()).toBe(false);
 	});
 
@@ -93,7 +89,7 @@ describe("keyless auth follows the cell the database sits on", () => {
 			projectNode("aws"),
 			dbNode("aws", { engine_family: "postgres", iam_auth: true }),
 		]);
-		useCanvasStore.getState().setNodeIdentity(DB_ID, null, "gcp");
+		board.document.getState().setNodeIdentity(DB_ID, null, "gcp");
 		expect(iamAuth()).toBe(true);
 	});
 
@@ -105,7 +101,7 @@ describe("keyless auth follows the cell the database sits on", () => {
 			projectNode("hetzner"),
 			dbNode("hetzner", { engine_family: "postgres", iam_auth: false }),
 		]);
-		useCanvasStore.getState().updateNodeConfig(DB_ID, { iam_auth: true });
+		board.document.getState().updateNodeConfig(DB_ID, { iam_auth: true });
 		expect(iamAuth()).toBe(false);
 	});
 
@@ -114,7 +110,7 @@ describe("keyless auth follows the cell the database sits on", () => {
 			projectNode("aws"),
 			dbNode("aws", { engine_family: "postgres", iam_auth: false }),
 		]);
-		useCanvasStore.getState().setNodeIdentity(DB_ID, null, "hetzner");
+		board.document.getState().setNodeIdentity(DB_ID, null, "hetzner");
 		expect(iamAuth()).toBe(false);
 	});
 });

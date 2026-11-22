@@ -49,7 +49,7 @@ import {
 } from "@/components/design-project/canvas/toolbar/reasons";
 import { NOTHING_TO_FIT } from "@/components/design-project/canvas/use-has-drawn-nodes";
 import { board } from "@/lib/canvas/store/board";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { boardCard } from "@/tests/fixtures/canvas/board";
 
 /** The toolbar's callbacks, as spies a test can read. */
 function handlers() {
@@ -98,7 +98,7 @@ function toolNames(): string[] {
 
 beforeEach(() => {
 	flow.drawn = 1;
-	useCanvasStore.getState().reset();
+	board.reset();
 	board.view.getState().setHandTool(false);
 });
 
@@ -161,7 +161,7 @@ describe("the environment chip", () => {
 		await user.click(tool("Environment"));
 		expect(board.view.getState().subject).toEqual({ kind: "environment" });
 		expect(board.view.getState().tab).toBeNull();
-		expect(useCanvasStore.getState().card).toEqual({ kind: "env-settings" });
+		expect(boardCard()).toEqual({ kind: "env-settings" });
 		live.unmount();
 
 		board.view.getState().setSubject(null);
@@ -212,7 +212,7 @@ describe("a tool that cannot be used stays on the toolbar and says why", () => {
 		expect(tool("Redo")).toHaveAccessibleDescription(NOTHING_TO_REDO);
 
 		act(() => {
-			useCanvasStore.getState().addNode("bucket");
+			board.addNode("bucket");
 		});
 		expect(tool("Undo")).toBeEnabled();
 		await user.click(tool("Undo"));
@@ -243,14 +243,14 @@ describe("a tool that cannot be used stays on the toolbar and says why", () => {
 
 		// A bucket is selected: still not a service.
 		act(() => {
-			useCanvasStore.getState().addNode("bucket");
+			board.addNode("bucket");
 		});
 		expect(tool("Connect the selected service")).toBeDisabled();
 
 		// Adding a card selects it.
 		let service = "";
 		act(() => {
-			service = useCanvasStore.getState().addNode("service");
+			service = board.addNode("service");
 		});
 		const connect = tool("Connect the selected service");
 		expect(connect).toBeEnabled();

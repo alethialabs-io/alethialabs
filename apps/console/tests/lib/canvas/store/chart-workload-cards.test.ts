@@ -4,10 +4,15 @@
 // W5 Path A (Lane 3) — described chart-workload nodes are out-of-band (never a staged change), render
 // as children of their parent chart node, and derive their edges from the model exactly like the
 // service binding rule: a solid chart→workload parent edge + a dotted workload→resource binding edge
-// per placed binding. These tests pin that wiring end-to-end through the store.
+// per placed binding. These tests pin that wiring end-to-end: from the two reads, through
+// `outOfBandNodes` (what the canvas builds from its queries), to the board's nodes and edges.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { deriveEdges } from "@/lib/canvas/store/derive";
+import { outOfBandNodes } from "@/lib/canvas/store/out-of-band";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { seedBoard } from "@/tests/fixtures/canvas/board";
 import type {
 	ByoChartState,
 	ChartWorkloadState,
@@ -42,7 +47,7 @@ function dbNode(name: string): CanvasNode {
 	} as unknown as CanvasNode;
 }
 
-/** A minimal attached BYO chart (only the fields setChartNodes reads matter for the node id). */
+/** A minimal attached BYO chart (only the fields `chartNodes` reads matter for the node id). */
 function chart(id: string): ByoChartState {
 	return {
 		id,
@@ -77,27 +82,19 @@ function workload(
 	};
 }
 
-function seed(nodes: CanvasNode[]) {
-	useCanvasStore.setState({
-		nodes,
-		baseline: structuredClone(nodes),
-		past: [],
-		future: [],
-		dirty: false,
-	});
+/** The board's nodes and edges with the cards the two reads describe beside the design. */
+function boardWith(charts: ByoChartState[], workloads: ChartWorkloadState[]) {
+	const nodes = board.nodes(outOfBandNodes({ charts, workloads }));
+	return { nodes, edges: deriveEdges(nodes) };
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
-describe("setChartWorkloadNodes", () => {
+describe("described chart workloads on the board", () => {
 	it("builds a non-deletable child node per described workload and a chart→workload edge", () => {
-		const s = useCanvasStore.getState();
-		s.setChartNodes([chart("pg")]);
-		s.setChartWorkloadNodes([workload({ id: "w1", chartId: "pg", name: "web" })]);
-
-		const state = useCanvasStore.getState();
+		const state = boardWith([chart("pg")], [workload({ id: "w1", chartId: "pg", name: "web" })]);
 		const cw = state.nodes.find((n) => n.id === "cw-w1");
 		expect(cw).toBeDefined();
 		expect(cw?.data.kind).toBe("chart_workload");
@@ -110,32 +107,32 @@ describe("setChartWorkloadNodes", () => {
 	});
 
 	it("draws a dotted binding edge to a placed backing resource, and nothing when unplaced", () => {
-		seed([projectNode(), dbNode("orders-db")]);
-		const s = useCanvasStore.getState();
-		s.setChartNodes([chart("pg")]);
-		s.setChartWorkloadNodes([
-			workload({
-				id: "w1",
-				chartId: "pg",
-				bindings: [
-					{
-						target: { kind: "database", name: "orders-db" },
-						inject: [{ env: "DB_URL", from: "connection_string" }],
-					},
-				],
-			}),
-			// A binding whose target isn't on the canvas → no edge (never a dangling edge).
-			workload({
-				id: "w2",
-				chartId: "pg",
-				name: "worker",
-				bindings: [
-					{ target: { kind: "cache", name: "not-placed" }, inject: [] },
-				],
-			}),
-		]);
+		seedBoard([projectNode(), dbNode("orders-db")]);
+		const { edges } = boardWith(
+			[chart("pg")],
+			[
+				workload({
+					id: "w1",
+					chartId: "pg",
+					bindings: [
+						{
+							target: { kind: "database", name: "orders-db" },
+							inject: [{ env: "DB_URL", from: "connection_string" }],
+						},
+					],
+				}),
+				// A binding whose target isn't on the canvas → no edge (never a dangling edge).
+				workload({
+					id: "w2",
+					chartId: "pg",
+					name: "worker",
+					bindings: [
+						{ target: { kind: "cache", name: "not-placed" }, inject: [] },
+					],
+				}),
+			],
+		);
 
-		const { edges } = useCanvasStore.getState();
 		const bind = edges.filter((e) => e.type === "cw_binding");
 		expect(bind).toHaveLength(1);
 		expect(bind[0]).toMatchObject({
@@ -145,27 +142,23 @@ describe("setChartWorkloadNodes", () => {
 		});
 	});
 
-	it("preserves described-workload nodes across a form reseed (out-of-band)", () => {
-		const s = useCanvasStore.getState();
-		s.setChartNodes([chart("pg")]);
-		s.setChartWorkloadNodes([workload({ id: "w1", chartId: "pg" })]);
+	it("keeps described-workload nodes across a form reseed, and out of the design", () => {
+		const charts = [chart("pg")];
+		const workloads = [workload({ id: "w1", chartId: "pg" })];
 
 		// A form reseed carries only form-graph nodes; out-of-band nodes must survive it.
-		s.setGraph({ nodes: [projectNode()] });
+		board.load({ nodes: [projectNode()] });
 
-		const state = useCanvasStore.getState();
+		const state = boardWith(charts, workloads);
 		expect(state.nodes.some((n) => n.id === "cw-w1")).toBe(true);
 		expect(state.nodes.some((n) => n.id === "chart-pg")).toBe(true);
+		// …because they were never in the document: the design is the project root alone.
+		expect(board.document.getState().designNodes.map((n) => n.id)).toEqual([PROJECT_NODE_ID]);
 	});
 
-	it("replaces workloads on each call (never accumulates stale rows)", () => {
-		const s = useCanvasStore.getState();
-		s.setChartNodes([chart("pg")]);
-		s.setChartWorkloadNodes([workload({ id: "w1", chartId: "pg" })]);
-		s.setChartWorkloadNodes([workload({ id: "w2", chartId: "pg", name: "worker" })]);
-
-		const ids = useCanvasStore
-			.getState()
+	it("a new read replaces the workloads (never accumulates stale rows)", () => {
+		boardWith([chart("pg")], [workload({ id: "w1", chartId: "pg" })]);
+		const ids = boardWith([chart("pg")], [workload({ id: "w2", chartId: "pg", name: "worker" })])
 			.nodes.filter((n) => n.data.kind === "chart_workload")
 			.map((n) => n.id);
 		expect(ids).toEqual(["cw-w2"]);

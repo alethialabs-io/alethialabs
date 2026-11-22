@@ -10,7 +10,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { applyProposal } from "@/components/design-project/canvas/ai/apply-proposal";
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
 import { nodeOfKind } from "@/components/design-project/canvas/graph/types";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { board } from "@/lib/canvas/store/board";
+import { boardNodes, setBoardNodes } from "@/tests/fixtures/canvas/board";
 
 const toastError = vi.fn();
 vi.mock("sonner", () => ({ toast: { error: (m: string) => toastError(m), warning: vi.fn() } }));
@@ -19,8 +21,7 @@ const CLUSTER_ID = "cluster-1";
 
 /** A canvas with a project root and a cluster holding the default pinned type. */
 function seed() {
-	useCanvasStore.setState({
-		nodes: [
+	setBoardNodes([
 			{
 				id: PROJECT_NODE_ID,
 				type: "project",
@@ -43,15 +44,14 @@ function seed() {
 					provider: "gcp",
 				},
 			},
-		],
-		baseline: [],
-	});
+		]);
+	board.document.getState().replaceBaseline([]);
 }
 
 /** The cluster node's current config. */
 function clusterConfig() {
 	const node = nodeOfKind(
-		useCanvasStore.getState().nodes.find((n) => n.id === CLUSTER_ID),
+		boardNodes().find((n) => n.id === CLUSTER_ID),
 		"cluster",
 	);
 	return node?.data.config;
@@ -67,7 +67,7 @@ function accept(patch: Record<string, unknown>) {
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 	toastError.mockClear();
 	seed();
 });

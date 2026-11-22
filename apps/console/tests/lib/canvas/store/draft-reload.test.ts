@@ -16,27 +16,42 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import {
-	diffNodes,
-	draftStorageKey,
-	switchDraftScope,
-	useCanvasStore,
-} from "@/lib/stores/use-canvas-store";
+import { board as theBoard } from "@/lib/canvas/store/board";
+import { diffNodes } from "@/lib/canvas/store/derive";
+import { draftStorageKey } from "@/lib/canvas/store/draft-persist";
+import { isBoardDirty } from "@/tests/fixtures/canvas/board";
 import draftV1 from "@/tests/fixtures/canvas/draft-v1.json";
 import { cacheNode, databaseNode, projectNode } from "@/tests/fixtures/canvas/nodes";
 
 const SCOPE = "proj-1:env-a";
 const STORAGE_KEY = "design-project-canvas-draft:proj-1:env-a";
 
-/** The envelope zustand's `persist` writes: the partialized state and the format version. */
+/** The envelope the draft slot holds: the persisted state and the format version. */
 const persistedDraft = z.object({
 	state: z.record(z.string(), z.unknown()),
 	version: z.number(),
 });
 
-/** The live store. */
+/** The board as it stands, and the commands these cases take. */
 function board() {
-	return useCanvasStore.getState();
+	const d = theBoard.document.getState();
+	return {
+		nodes: theBoard.nodes([]),
+		baseline: d.baseline,
+		seed: d.seed,
+		collectionPositions: d.collectionPositions,
+		dirty: isBoardDirty(),
+		reset: () => theBoard.reset(),
+		reseed: theBoard.reseed,
+		addNode: theBoard.addNode,
+		updateNodeConfig: d.updateNodeConfig,
+		removeNodes: (ids: string[]) => theBoard.removeNodes(ids, []),
+	};
+}
+
+/** Open the scope's draft slot, as the workbench does when the board for it mounts. */
+function openScope(scope: string): boolean {
+	return theBoard.openDraftScope(scope);
 }
 
 /** What is in the scope's storage slot right now, parsed. Throws when the slot is empty. */
@@ -48,7 +63,7 @@ function readSlot() {
 
 /**
  * What a page reload does to the tab: the in-memory store starts over, sessionStorage keeps what it
- * held. The slot is put back after the reset because the reset itself writes through `persist`.
+ * held. The slot is put back after the reset because the reset itself writes the draft.
  */
 function reloadTab() {
 	const kept = sessionStorage.getItem(STORAGE_KEY);
@@ -70,10 +85,10 @@ beforeEach(() => {
 });
 
 describe("where and what the draft persists", () => {
-	it("writes the draft under one key per project and environment", async () => {
+	it("writes the draft under one key per project and environment", () => {
 		expect(draftStorageKey(SCOPE)).toBe(STORAGE_KEY);
 
-		await switchDraftScope(SCOPE);
+		openScope(SCOPE);
 		board().reseed(
 			{ nodes: [projectNode(), databaseNode("orders")] },
 			{ scope: SCOPE, revision: "rev-1" },
@@ -83,8 +98,8 @@ describe("where and what the draft persists", () => {
 		expect(readSlot().state.seed).toEqual({ scope: SCOPE, revision: "rev-1" });
 	});
 
-	it("persists exactly these keys, at version 2", async () => {
-		await switchDraftScope(SCOPE);
+	it("persists exactly these keys, at version 2", () => {
+		openScope(SCOPE);
 		board().reseed(
 			{ nodes: [projectNode(), databaseNode("orders")] },
 			{ scope: SCOPE, revision: "rev-1" },
@@ -128,8 +143,8 @@ describe("a version-1 draft found in the tab", () => {
 		sessionStorage.setItem(STORAGE_KEY, JSON.stringify(draftV1));
 	});
 
-	it("rehydrates to the same nodes and baseline", async () => {
-		expect(await switchDraftScope(SCOPE)).toBe(true);
+	it("rehydrates to the same nodes and baseline", () => {
+		expect(openScope(SCOPE)).toBe(true);
 
 		expect(board().nodes).toEqual(draftV1.state.nodes);
 		expect(board().baseline).toEqual(draftV1.state.baseline);
@@ -137,15 +152,15 @@ describe("a version-1 draft found in the tab", () => {
 		expect(board().collectionPositions).toEqual({ secret: { x: 40, y: 80 } });
 	});
 
-	it("comes back with its pending changes, still unsaved", async () => {
-		await switchDraftScope(SCOPE);
+	it("comes back with its pending changes, still unsaved", () => {
+		openScope(SCOPE);
 
 		expect(diffNodes(board().baseline, board().nodes)).toEqual(DRAFT_V1_CHANGES);
 		expect(board().dirty).toBe(true);
 	});
 
-	it("is not replaced when the server hands back the design it was seeded from", async () => {
-		await switchDraftScope(SCOPE);
+	it("is not replaced when the server hands back the design it was seeded from", () => {
+		openScope(SCOPE);
 		// The first render after a reload: the same scope, the same revision.
 		board().reseed(
 			{ nodes: [projectNode(), databaseNode("orders"), cacheNode("sessions")] },
@@ -158,8 +173,8 @@ describe("a version-1 draft found in the tab", () => {
 });
 
 describe("pending changes across a reload", () => {
-	it("survive it: an edit, an add and a remove are all still pending", async () => {
-		await switchDraftScope(SCOPE);
+	it("survive it: an edit, an add and a remove are all still pending", () => {
+		openScope(SCOPE);
 		board().reseed(
 			{ nodes: [projectNode(), databaseNode("orders"), cacheNode("sessions")] },
 			{ scope: SCOPE, revision: "rev-1" },
@@ -178,13 +193,13 @@ describe("pending changes across a reload", () => {
 		reloadTab();
 		expect(board().nodes.map((n) => n.id)).toEqual(["project-root"]);
 
-		expect(await switchDraftScope(SCOPE)).toBe(true);
+		expect(openScope(SCOPE)).toBe(true);
 		expect(diffNodes(board().baseline, board().nodes)).toEqual(pending);
 		expect(board().dirty).toBe(true);
 	});
 
-	it("a clean draft comes back clean", async () => {
-		await switchDraftScope(SCOPE);
+	it("a clean draft comes back clean", () => {
+		openScope(SCOPE);
 		board().reseed(
 			{ nodes: [projectNode(), databaseNode("orders")] },
 			{ scope: SCOPE, revision: "rev-1" },
@@ -192,7 +207,7 @@ describe("pending changes across a reload", () => {
 
 		reloadTab();
 
-		expect(await switchDraftScope(SCOPE)).toBe(true);
+		expect(openScope(SCOPE)).toBe(true);
 		expect(diffNodes(board().baseline, board().nodes)).toEqual([]);
 		expect(board().dirty).toBe(false);
 	});

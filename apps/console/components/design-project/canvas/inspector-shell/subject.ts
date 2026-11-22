@@ -8,10 +8,8 @@
 
 import { useCallback } from "react";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
-import { isDesignNode } from "@/lib/canvas/store/derive";
 import type { InspectorTab, Subject } from "@/lib/canvas/store/types";
-import { useNode } from "@/lib/canvas/store/use-board";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useAnyNode } from "@/lib/canvas/store/use-board";
 import type { CanvasNode } from "../graph/types";
 
 /** What the rail knows about its host, for the subjects that need a project or an environment. */
@@ -76,18 +74,11 @@ export function resolveTab(
 }
 
 /**
- * The node a subject names: a design node from the document, else a card the design does not own.
- *
- * The second half reads the legacy store's mirror of the out-of-band cards. That mirror is where
- * the canvas keeps them until it builds them with `useOutOfBandNodes`; when it does, this is the
- * one read to move.
+ * The node a subject names: a design node from the document, else a card the design does not own,
+ * from its query (`BoardSourcesProvider`).
  */
 export function useSubjectNode(id: string): CanvasNode | undefined {
-	const design = useNode(id);
-	const other = useCanvasStore((s) =>
-		design ? undefined : s.nodes.find((n) => n.id === id && !isDesignNode(n)),
-	);
-	return design ?? other;
+	return useAnyNode(id);
 }
 
 /** Close the inspector. The rail returns the focus to where it came from. */

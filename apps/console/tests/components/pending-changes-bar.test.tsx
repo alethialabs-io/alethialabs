@@ -20,7 +20,6 @@ import {
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import { board } from "@/lib/canvas/store/board";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
 import { queryWrapper } from "@/tests/helpers/query-wrapper";
 
@@ -93,11 +92,11 @@ function bar() {
 
 /** Stage one design change: a new database. */
 function stageOneChange() {
-	useCanvasStore.getState().addNode("database");
+	board.addNode("database");
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 	h.calls.length = 0;
 	h.handlers["canvas.reviewPlan"] = async () => NO_PLAN;
 });

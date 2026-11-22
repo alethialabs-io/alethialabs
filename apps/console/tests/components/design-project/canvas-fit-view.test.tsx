@@ -14,7 +14,7 @@ import { CanvasCommandPalette } from "@/components/design-project/canvas/canvas-
 import { CanvasControls } from "@/components/design-project/canvas/canvas-controls";
 import { CanvasMoreMenu } from "@/components/design-project/canvas/canvas-more-menu";
 import { NOTHING_TO_FIT } from "@/components/design-project/canvas/use-has-drawn-nodes";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
 
 const flow = vi.hoisted(() => ({ drawn: 0, fitView: vi.fn() }));
 
@@ -36,7 +36,7 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 });
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 	flow.fitView.mockClear();
 });
 

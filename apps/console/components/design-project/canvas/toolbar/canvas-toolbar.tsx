@@ -53,11 +53,11 @@ import {
 	useCanRedo,
 	useCanUndo,
 	useDesignNodes,
+	useEffectiveProvider,
 	useSelection,
 } from "@/lib/canvas/store/use-board";
 import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
 import { getProvider } from "@/lib/cloud-providers";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { CanvasMoreMenu } from "../canvas-more-menu";
 import { SHORTCUT_BOARD_CONNECT } from "../nodes/board-shortcuts";
 import { RunMenu } from "../run-menu";
@@ -170,7 +170,7 @@ function EnvironmentChip({ governed }: { governed: boolean }) {
 	const board = useBoard();
 	const env = useEnvironmentStatus();
 	const k8s = useClusterK8sVersion();
-	const provider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
+	const provider = useEffectiveProvider(PROJECT_NODE_ID);
 	const name = env.environment?.name ?? null;
 	const called = name ? `Environment ${name}` : "Environment";
 	const service = provider ? getProvider(provider).clusterService : null;

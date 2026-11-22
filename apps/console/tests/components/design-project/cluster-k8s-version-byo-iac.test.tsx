@@ -35,6 +35,7 @@ vi.mock("@/lib/query/use-addons-query", () => ({
 }));
 
 import type { AddonMarketItem } from "@/app/server/actions/addons";
+import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import { AddonConfigForm } from "@/components/addons/addon-config-card";
 import { CompatAlert } from "@/components/design-project/canvas/inspector/compat-alert";
 import { NodePalette } from "@/components/design-project/canvas/node-palette";
@@ -47,7 +48,8 @@ import {
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import { BYO_IAC_K8S_VERSION_REASON } from "@/lib/compat";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { setBoardNodes, withBoardSources } from "@/tests/fixtures/canvas/board";
 
 /** An enabled BYO-IaC source, as `getEnvironmentComponentStatus` reports one. */
 const IAC: IacEnvironment = {
@@ -72,42 +74,48 @@ function envStatus(byo: boolean): EnvironmentStatus {
 	return { ...EMPTY_ENVIRONMENT_STATUS, iac: byo ? IAC : null };
 }
 
-/** Seed an aws cluster with `version` ("" = unset) plus a kyverno add-on card (window 1.25+). */
+/** The kyverno add-on card (window 1.25+), as the canvas builds it from the installed add-ons. */
+const KYVERNO_CARD: CanvasNode = {
+	id: "addon-kyverno",
+	type: "addon",
+	position: { x: 0, y: 0 },
+	data: {
+		kind: "addon" as const,
+		config: { id: "kyverno", name: "kyverno", version: "3.2.6", namespace: "kyverno" },
+		cloud_identity_id: null,
+		provider: "aws" as const,
+	},
+};
+
+/** Seed an aws cluster with `version` ("" = unset); the kyverno card sits beside it (`renderIn`). */
 function seed(version: string) {
-	useCanvasStore.setState({
-		nodes: [
-			{
-				id: "cluster",
-				type: "cluster",
-				position: { x: 0, y: 0 },
-				data: {
-					kind: "cluster" as const,
-					config: { cluster_version: version },
-					cloud_identity_id: null,
-					provider: "aws" as const,
-				},
+	setBoardNodes([
+		{
+			id: "cluster",
+			type: "cluster",
+			position: { x: 0, y: 0 },
+			data: {
+				kind: "cluster" as const,
+				config: { cluster_version: version },
+				cloud_identity_id: null,
+				provider: "aws" as const,
 			},
-			{
-				id: "addon-kyverno",
-				type: "addon",
-				position: { x: 0, y: 0 },
-				data: {
-					kind: "addon" as const,
-					config: { id: "kyverno", name: "kyverno", version: "3.2.6", namespace: "kyverno" },
-					cloud_identity_id: null,
-					provider: "aws" as const,
-				},
-			},
-		],
-	});
+		},
+	]);
 }
 
-/** Render `ui` inside the environment-status provider (and React Flow, for the card). */
+/**
+ * Render `ui` inside the environment-status provider (and React Flow, for the card), with the
+ * kyverno card on the board beside the design, handed down as the canvas hands it.
+ */
 function renderIn(byo: boolean, ui: ReactNode) {
 	return render(
-		<ReactFlowProvider>
-			<EnvironmentStatusProvider value={envStatus(byo)}>{ui}</EnvironmentStatusProvider>
-		</ReactFlowProvider>,
+		withBoardSources(
+			<ReactFlowProvider>
+				<EnvironmentStatusProvider value={envStatus(byo)}>{ui}</EnvironmentStatusProvider>
+			</ReactFlowProvider>,
+			{ others: [KYVERNO_CARD] },
+		),
 	);
 }
 
@@ -161,7 +169,7 @@ function AddonCard() {
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("BYO-IaC with an unset cluster version is not_evaluable on every surface", () => {

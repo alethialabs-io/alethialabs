@@ -15,9 +15,12 @@ import { DeployPane } from "@/components/agent/deploy-pane";
 import type { DeployState } from "@/lib/canvas/component-status";
 import { JOB_LABEL } from "@/lib/canvas/job-display";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
-import type { InspectorTab } from "@/lib/canvas/store/types";
-import { useInspectorTab } from "@/lib/canvas/store/use-board";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID, type InspectorTab } from "@/lib/canvas/store/types";
+import {
+	useAllNodes,
+	useEffectiveProvider,
+	useInspectorTab,
+} from "@/lib/canvas/store/use-board";
 import {
 	NATIVE_LABELS,
 	environmentConnector,
@@ -110,9 +113,10 @@ export function EnvSettingsCard({
 	if (activity) tabs.push("activity");
 	const tab = resolveTab(requested, tabs);
 	const environment = envStatus.environment;
-	const nodes = useCanvasStore((s) => s.nodes);
-	const updateNodeConfig = useCanvasStore((s) => s.updateNodeConfig);
-	const provider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
+	const nodes = useAllNodes();
+	const updateNodeConfig = (id: string, patch: Record<string, unknown>) =>
+		board.document.getState().updateNodeConfig(id, patch);
+	const provider = useEffectiveProvider(PROJECT_NODE_ID);
 
 	const secretsStore = environmentConnector(nodes, "secret");
 	const secretNodes = nodes.filter((n) => n.data.kind === "secret");

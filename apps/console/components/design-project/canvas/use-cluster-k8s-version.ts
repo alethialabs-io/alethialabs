@@ -2,9 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { useStore } from "zustand";
 import { judgedK8sVersion, type JudgedK8sVersion } from "@/lib/compat";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
+import { effectiveProvider } from "@/lib/canvas/store/derive";
 
 /**
  * The environment cluster's Kubernetes version as the compat checks must judge it: the version
@@ -30,13 +32,14 @@ export function useClusterK8sVersion(): JudgedK8sVersion {
 	const byoIac = useEnvironmentStatus().iac !== null;
 	// Two primitive selections, not one object: a selector returning a fresh object every call
 	// would re-render (and, in zustand, loop) on every store change.
-	const raw = useCanvasStore((s) => {
-		const c = s.nodes.find((n) => n.data.kind === "cluster")?.data.config;
+	const doc = useBoard().document;
+	const raw = useStore(doc, (s) => {
+		const c = s.designNodes.find((n) => n.data.kind === "cluster")?.data.config;
 		return c && "cluster_version" in c && typeof c.cluster_version === "string" ? c.cluster_version : undefined;
 	});
-	const provider = useCanvasStore((s) => {
-		const cluster = s.nodes.find((n) => n.data.kind === "cluster");
-		return cluster ? s.getEffectiveProvider(cluster.id) : null;
+	const provider = useStore(doc, (s) => {
+		const cluster = s.designNodes.find((n) => n.data.kind === "cluster");
+		return cluster ? effectiveProvider(s.designNodes, cluster.id) : null;
 	});
 	return judgedK8sVersion(provider, raw, byoIac);
 }
