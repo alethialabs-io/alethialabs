@@ -95,13 +95,14 @@ const CREDS = [
 function renderPanel(
 	initialConfig = null,
 	fabrics: (typeof FABRICS)[number][] = [...FABRICS],
-	canManage: boolean | undefined = true,
+	// `null` stands for "no answer yet": an `undefined` argument would take this default instead.
+	canManage: boolean | null = true,
 ) {
 	return render(
 		withQueryClient(
 			<PreviewSettings
 				projectId="proj-1"
-				canManage={canManage}
+				canManage={canManage ?? undefined}
 				initialConfig={initialConfig}
 				fabrics={fabrics}
 				gitCredentials={[...CREDS]}
@@ -342,7 +343,7 @@ describe("Preview settings — what the viewer may change", () => {
 	});
 
 	it("no answer yet: read-only, with the checking reason rather than a refusal", () => {
-		renderPanel(null, [...FABRICS], undefined);
+		renderPanel(null, [...FABRICS], null);
 		expect(reasonsOf(screen.getByRole("button", { name: /save changes/i }))).toContain(MANAGE_PENDING_REASON);
 	});
 
