@@ -120,7 +120,7 @@ jobs:
   #      `--filter=…[HEAD^1]` when `ts_filter` is `affected`. The job still RUNS and still reports,
   #      so no required context changes shape; it only does less work.
   #
-  #   2. JOB-LEVEL SKIPS — DORMANT until `AFFECTED_ONLY_ARMED` below reads "true". A skipped job
+  #   2. JOB-LEVEL SKIPS — ARMED (`AFFECTED_ONLY_ARMED` below reads "true"; see there). A skipped job
   #      reports `skipped` and a matrix leg that is not generated reports NOTHING. `CI required`
   #      accepts both (a skipped need is "not needed"); a per-job `check-success=` in `.mergify.yml`
   #      accepts neither, and a ruleset that names a per-job context waits forever on a leg that
@@ -177,10 +177,14 @@ jobs:
       contents: read
       pull-requests: read
     env:
-      # Stays "false" until conditions a–c under "AFFECTED-ONLY" (2. JOB-LEVEL SKIPS) above all hold:
-      # `.mergify.yml` on main requires `CI required`, the live protect-dev ruleset does too (applied,
-      # `check-required-checks.mjs --live` agreeing), and `CI required` has been seen green after both.
-      AFFECTED_ONLY_ARMED: "false"
+      # ARMED 2026-11-22. (a) `.mergify.yml` on main requires `CI required` (promotion #7288).
+      # (b) The live protect-dev and protect-main rulesets require it too: infra/github was applied
+      # after #7286 and `check-required-checks.mjs --live` agreed, with every required context
+      # observed green. (c) The arming PR's own run was the first `CI required` under both; it
+      # changes this file, so it ran in full and arming could not skip anything in it. Set this
+      # back to "false" if a required check is ever named again outside the aggregator: a skipped
+      # job reads as not-green there.
+      AFFECTED_ONLY_ARMED: "true"
     outputs:
       agent: ${{ steps.plan.outputs.agent }}
       console: ${{ steps.plan.outputs.console }}
@@ -4696,10 +4700,9 @@ jobs:
   #
   # THE ROLLOUT. Introduced additively (#7267), required from the follow-up that switched
   # `.mergify.yml` and infra/github to it. Mergify acts on that only once it is on `main`, and the
-  # LIVE rulesets only once infra/github is applied; until the apply they may still name the per-job
-  # contexts, which keep their names and keep reporting, so the overlap is safe. The job-level skips
-  # stay DORMANT until both have happened (`AFFECTED_ONLY_ARMED` in `detect-changes` lists exactly
-  # what must be true first).
+  # LIVE rulesets only once infra/github is applied; both happened on 2026-11-22 (promotion #7288; the infra/github apply
+  # after #7286), and the job-level skips were armed after them (`AFFECTED_ONLY_ARMED` in
+  # `detect-changes` records the evidence).
   #
   # WHAT IT CANNOT COVER: `contribution-legal`, which comes from cla.yml — a `pull_request_target`
   # workflow — and `needs:` cannot reach across workflows. It stays required on its own.
