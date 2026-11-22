@@ -24,7 +24,8 @@ export async function providerTokenForUser(
 	try {
 		// No `headers`: see the file comment.
 		const res = await auth.api.getAccessToken({ body: { accountId, userId } });
-		return res.accessToken ?? null;
+		// `||`, not `??`: a link whose stored token is absent or unreadable answers "" here.
+		return res.accessToken || null;
 	} catch {
 		// A link whose token cannot be refreshed is, for the caller, no link. The reason is not
 		// logged here: the error may carry provider text, and the caller says "reconnect".
