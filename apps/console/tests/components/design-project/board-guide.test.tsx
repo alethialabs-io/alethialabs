@@ -47,12 +47,14 @@ const { BOARD_SENTENCE, NOT_ENABLED } = await import(
 const { formToGraph } = await import("@/components/design-project/canvas/graph/form-to-graph");
 const { buildDefaultFormValues } = await import("@/components/design-project/source-project");
 const { PROVIDERS } = await import("@/lib/cloud-providers");
-const { board } = await import("@/lib/canvas/store/board");
+const { boardFor } = await import("@/lib/canvas/store/board");
 const { CanvasStoreProvider } = await import("@/lib/canvas/store/canvas-store-provider");
 const { pendingCount } = await import("@/lib/canvas/store/document-store");
 const { draftStorageKey } = await import("@/lib/canvas/store/draft-persist");
 
 const SCOPE = "proj-1:env-a";
+/** The board the provider publishes for `SCOPE`: each project:environment has its own. */
+const board = boardFor(SCOPE);
 const PATH = "/acme/shop/architecture";
 /** What the server says this deployment offers. `cloudflare` is offered and runs no cluster. */
 const OFFERED = ["aws", "gcp", "azure", "hetzner", "cloudflare"];

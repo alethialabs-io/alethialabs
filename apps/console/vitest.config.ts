@@ -81,10 +81,10 @@ export default defineConfig({
 				//
 				// And the parenthetical was never true. `tests/lib/scanner/{schema,
 				// suggest-bindings,to-project,to-project-services}.test.ts` and
-				// `tests/lib/stores/use-canvas-store-{containers,keyless}.test.ts` are not
-				// skipped — they run on every PR, importing `@/lib/scanner/*` and
-				// `@/lib/stores/use-canvas-store` directly. Their coverage was being computed by
-				// v8 and then discarded by this scope. So the badge was not merely excluding
+				// `tests/lib/stores/use-canvas-store-{containers,keyless}.test.ts` were not
+				// skipped — they ran on every PR, importing `@/lib/scanner/*` and the canvas
+				// store directly (that store is now `lib/canvas/store/`, #7129). Their coverage
+				// was being computed by v8 and then discarded by this scope. So the badge was not merely excluding
 				// untested code; it was throwing away tests that were already passing.
 				//
 				// `lib/scanner/**` and `use-canvas-store.ts` were re-included first, and CI measured

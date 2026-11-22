@@ -27,7 +27,7 @@ import {
 	useNodeStatus,
 } from "@/lib/canvas/node-status";
 import { useCanvasLod } from "@/lib/canvas/use-canvas-lod";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useAnyNode, useEffectiveProvider } from "@/lib/canvas/store/use-board";
 import { addonCompat } from "@/lib/compat";
 
 /**
@@ -79,11 +79,11 @@ const DEFAULT_HANDLES: { source?: boolean; target?: boolean } = { target: true }
  * stays legible.
  */
 export function BaseNode({ id, selected }: BaseNodeProps) {
-	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
+	const node = useAnyNode(id);
 	// `provider` (the effective cloud) still drives the fact grid + zones; the visible cloud-account
 	// chip is gone — the cloud is chosen once, at project creation, so repeating it on every card is
 	// noise. (getEffectiveIdentity, which fed that chip, is no longer read here.)
-	const provider = useCanvasStore((s) => s.getEffectiveProvider(id));
+	const provider = useEffectiveProvider(id);
 	const resolved = useNodeStatus(id);
 	// The node's own validation problem, kept apart from its status: a card that is deploying or has
 	// failed can ALSO be incomplete, and the status badge then shows the server's word, not this.

@@ -17,7 +17,7 @@ import { formatMonthlyRate } from "@repo/format";
 import { cn } from "@repo/ui/utils";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { NODE_STATUS_META, nodeStatusKey, useNodeStatus } from "@/lib/canvas/node-status";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useAnyNode } from "@/lib/canvas/store/use-board";
 import { InspectorFrame } from "../inspector-shell/inspector-frame";
 import { useCloseInspector } from "../inspector-shell/subject";
 import { NODE_REGISTRY } from "../graph/node-registry";
@@ -34,7 +34,7 @@ const ACTION_LABEL: Record<string, string> = {
 
 /** The read-only member list for one external group. */
 export function ExternalPanel({ nodeId }: { nodeId: string }) {
-	const raw = useCanvasStore((s) => s.nodes.find((n) => n.id === nodeId));
+	const raw = useAnyNode(nodeId);
 	const node = nodeOfKind(raw, "external");
 	const env = useEnvironmentStatus();
 	const status = useNodeStatus(nodeId);

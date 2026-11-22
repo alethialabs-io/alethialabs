@@ -40,7 +40,7 @@ import type {
 /**
  * Does the loaded bag actually describe THIS node's cloud?
  *
- * `getEffectiveIdentity` and `getEffectiveProvider` (use-canvas-store) resolve by independent paths
+ * `effectiveIdentity` and `effectiveProvider` (`lib/canvas/store/derive.ts`) resolve by independent paths
  * and can disagree — a node can carry a `provider` with no `cloud_identity_id`. Keying the bag on
  * the effective identity *should* make a mismatch unreachable; this guard is kept anyway, because
  * the failure it prevents (an AWS project offering GCP machine types) is silent and wrong-looking

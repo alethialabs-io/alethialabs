@@ -25,8 +25,16 @@ import {
 } from "@repo/ui/dropdown-menu";
 import { arrangeBoard } from "@/lib/canvas/arrange";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useBoard, useOthers } from "@/lib/canvas/store/canvas-store-provider";
+import { PROJECT_NODE_ID, type WorkspaceCard } from "@/lib/canvas/store/types";
+import {
+	useBoardActions,
+	useEffectiveProvider,
+	useHiddenKinds,
+	useShowConnections,
+} from "@/lib/canvas/store/use-board";
 import { addableKindsFor, NODE_REGISTRY } from "./graph/node-registry";
+import type { NodeKind } from "./graph/types";
 import { NOTHING_TO_FIT, useHasDrawnNodes } from "./use-has-drawn-nodes";
 
 /**
@@ -57,13 +65,15 @@ export function CanvasMoreMenu({
 }) {
 	const { fitView } = useReactFlow();
 	const canFit = useHasDrawnNodes();
-	const openCard = useCanvasStore((s) => s.openCard);
-	const showConnections = useCanvasStore((s) => s.showConnections);
-	const toggleConnections = useCanvasStore((s) => s.toggleConnections);
-	const repairOverlaps = useCanvasStore((s) => s.repairOverlaps);
-	const hiddenKinds = useCanvasStore((s) => s.hiddenKinds);
-	const toggleKindVisibility = useCanvasStore((s) => s.toggleKindVisibility);
-	const coreProvider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
+	const board = useBoard();
+	const others = useOthers();
+	const openCard = (card: WorkspaceCard) => board.view.getState().openCard(card);
+	const showConnections = useShowConnections();
+	const toggleConnections = () => board.view.getState().toggleConnections();
+	const { repairOverlaps } = useBoardActions();
+	const hiddenKinds = useHiddenKinds();
+	const toggleKindVisibility = (kind: NodeKind) => board.view.getState().toggleKindVisibility(kind);
+	const coreProvider = useEffectiveProvider(PROJECT_NODE_ID);
 	const env = useEnvironmentStatus();
 
 	return (
@@ -112,7 +122,7 @@ export function CanvasMoreMenu({
 				>
 					Show connections
 				</DropdownMenuCheckboxItem>
-				<DropdownMenuItem onSelect={() => void arrangeBoard(fitView)}>
+				<DropdownMenuItem onSelect={() => void arrangeBoard(board, others, fitView)}>
 					<LayoutGrid className="mr-2 h-4 w-4 text-muted-foreground" />
 					Tidy layout
 				</DropdownMenuItem>

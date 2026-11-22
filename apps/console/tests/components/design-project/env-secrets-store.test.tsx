@@ -14,7 +14,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EnvSettingsCard } from "@/components/design-project/canvas/cards/env-settings-card";
 import { CollectionPanel } from "@/components/design-project/canvas/inspector/collection-panel";
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { board } from "@/lib/canvas/store/board";
+import { boardNodes, setBoardNodes } from "@/tests/fixtures/canvas/board";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { ConnectorProviderMeta } from "@/lib/connectors/registry.generated";
 import { queryWrapper } from "@/tests/helpers/query-wrapper";
@@ -94,27 +96,23 @@ function seed(secretNames: string[], config: Record<string, unknown> = {}, kind:
 				},
 			}) as CanvasNode,
 	);
-	useCanvasStore.setState({
-		nodes: [root, ...secrets],
-		identities: [],
-		baseline: [],
-		collectionPositions: {},
-		card: { kind: "env-settings" },
-	});
+	setBoardNodes([root, ...secrets]);
+	board.document.getState().replaceBaseline([]);
+	board.document.setState({ collectionPositions: {} });
+	board.view.getState().openCard({ kind: "env-settings" });
 	return secrets;
 }
 
 /** Each secret node's stored provider, in seed order. */
 const providersOf = (kind: "secret" | "registry") =>
-	useCanvasStore
-		.getState()
-		.nodes.filter((n) => n.data.kind === kind)
+	boardNodes()
+		.filter((n) => n.data.kind === kind)
 		.map((n) => (n.data.config as { provider?: unknown }).provider);
 const providers = () => providersOf("secret");
 
 describe("environment secret store", () => {
 	beforeEach(() => {
-		useCanvasStore.setState({ card: null });
+		board.view.getState().openCard(null);
 	});
 
 	it("writes the chosen store to EVERY secret in the environment", async () => {
@@ -158,9 +156,8 @@ describe("environment secret store", () => {
 
 		// Both the pre-existing secret and the new one.
 		expect(providers()).toEqual(["vault", "vault"]);
-		const added = useCanvasStore
-			.getState()
-			.nodes.filter((n) => n.data.kind === "secret")
+		const added = boardNodes()
+			.filter((n) => n.data.kind === "secret")
 			.at(-1);
 		expect((added?.data.config as { provider_config?: unknown }).provider_config).toEqual({
 			mount_path: "secret",
@@ -200,7 +197,7 @@ describe("environment secret store", () => {
 
 describe("environment container registry", () => {
 	beforeEach(() => {
-		useCanvasStore.setState({ card: null });
+		board.view.getState().openCard(null);
 	});
 
 	// Registry goes through the SAME dominantProvider collapse as secrets (compose.go:152): the first
@@ -228,14 +225,13 @@ describe("environment container registry", () => {
 	it("keeps each registry's own cloud settings across a provider change", async () => {
 		seed(["apps", "jobs"], {}, "registry");
 		// Give the two rows different native settings.
-		const [a, b] = useCanvasStore
-			.getState()
-			.nodes.filter((n) => n.data.kind === "registry");
-		useCanvasStore.getState().updateNodeConfig(a.id, {
+		const [a, b] = boardNodes()
+			.filter((n) => n.data.kind === "registry");
+		board.document.getState().updateNodeConfig(a.id, {
 			immutable_tags: true,
 			vulnerability_scanning: true,
 		});
-		useCanvasStore.getState().updateNodeConfig(b.id, {
+		board.document.getState().updateNodeConfig(b.id, {
 			immutable_tags: false,
 			vulnerability_scanning: false,
 		});
@@ -245,9 +241,8 @@ describe("environment container registry", () => {
 		await user.click(screen.getByRole("combobox", { name: /container registry/i }));
 		await user.click(await screen.findByRole("option", { name: /harbor/i }));
 
-		const configs = useCanvasStore
-			.getState()
-			.nodes.filter((n) => n.data.kind === "registry")
+		const configs = boardNodes()
+			.filter((n) => n.data.kind === "registry")
 			.map(
 				(n) =>
 					n.data.config as { immutable_tags?: boolean; vulnerability_scanning?: boolean },

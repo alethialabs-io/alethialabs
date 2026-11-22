@@ -47,7 +47,6 @@ import {
 import { StagedOperationsStrip } from "@/components/design-project/canvas/inspector-shell/staged-operations-strip";
 import { board } from "@/lib/canvas/store/board";
 import type { StagedOperation } from "@/lib/canvas/store/types";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 /** A staged add-on install, with `secretPaths` naming the secrets it expects. */
 function installOperation(addonId: string, secretPaths: string[] = []): StagedOperation {
@@ -99,7 +98,7 @@ beforeEach(() => {
 	saveOverlay.mockResolvedValue({ ok: true, data: { workloadId: "w1" } });
 	toast.success.mockReset();
 	toast.error.mockReset();
-	useCanvasStore.getState().reset();
+	board.reset();
 	forgetSecrets(addonOperationId("grafana"));
 });
 

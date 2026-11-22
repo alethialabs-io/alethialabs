@@ -43,13 +43,13 @@ import { useClaimStagedOperations } from "@/components/design-project/canvas/ins
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
 import {
+	useBoardActions,
 	useDesignNodes,
 	useOperations,
 	usePendingChanges,
 	useSubject,
 } from "@/lib/canvas/store/use-board";
 import { useShortcut } from "@/lib/shortcuts/use-shortcut";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { barState, countOf } from "./review/changeset-status";
 import { JobLink } from "./review/job-link";
 import { reviewIssues } from "./review/review-issues";
@@ -87,6 +87,7 @@ export function PendingChangesBar({
 	onSave,
 	saving,
 }: PendingChangesBarProps) {
+	const { discard } = useBoardActions();
 	const board = useBoard();
 	const env = useEnvironmentStatus();
 	const host = useByoChartCanvas();
@@ -147,9 +148,9 @@ export function PendingChangesBar({
 
 	/** Puts the board back to the saved design, then clears what the server had staged. */
 	const discardAll = () => {
-		// The board's host still owns the cards the design does not hold; the store's discard takes
-		// them from there, so a discard cannot drop one.
-		useCanvasStore.getState().discardChanges();
+		// The cards the design does not hold come from their queries and are never in the document,
+		// so a discard cannot drop one; they are passed only so the view is reconciled against them.
+		discard();
 		onDiscard?.();
 	};
 

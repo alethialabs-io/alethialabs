@@ -13,7 +13,8 @@ import { useState } from "react";
 import { GitBranch, Loader2, RefreshCw, ShieldAlert, ShieldCheck, ShieldQuestion, X } from "lucide-react";
 import { cn } from "@repo/ui/utils";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
+import { useAnyNode } from "@/lib/canvas/store/use-board";
 import { detachByoChartAction } from "@/app/server/actions/byo-charts";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
@@ -71,10 +72,10 @@ const STATUS_META: Record<ChartStatus, { label: string; dot: string }> = {
 
 /** React Flow node renderer for a `chart` kind. */
 export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
-	const raw = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
+	const raw = useAnyNode(id);
 	const node = nodeOfKind(raw, "chart");
 	const ctx = useByoChartCanvas();
-	const openCard = useCanvasStore((s) => s.openCard);
+	const board = useBoard();
 	const [confirmDetach, setConfirmDetach] = useState(false);
 	// Pending while in flight, and held after it lands: the node leaves the board when the chart
 	// read settles, and until then a second press would detach a chart that is already gone.
@@ -158,7 +159,7 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 				{/* Chart-safety scan chip — opens the findings card on the workspace rail. */}
 				<button
 					type="button"
-					onClick={() => openCard({ kind: "chart-scan", chartId: c.id })}
+					onClick={() => board.view.getState().openCard({ kind: "chart-scan", chartId: c.id })}
 					title="Chart safety scan"
 					className="flex items-center gap-1.5 self-start rounded-none border border-border px-2 py-1 font-mono text-ui-2xs transition-colors hover:bg-muted"
 				>

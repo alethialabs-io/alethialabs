@@ -134,7 +134,6 @@ import { collectionNodeId } from "@/lib/canvas/collections";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import { board } from "@/lib/canvas/store/board";
 import { nodeIndex } from "@/lib/canvas/store/use-board";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import { cacheNode, serviceNode } from "@/tests/fixtures/canvas/nodes";
 import { awsDatabaseNode, awsProjectNode, bucketNode, secretNode } from "./fixtures";
@@ -158,7 +157,7 @@ function design(bindings: Parameters<typeof serviceNode>[1] = []): CanvasNode[] 
 
 /** Load `nodes` as the saved design and draw the board. */
 function renderBoard(nodes: CanvasNode[] = design()) {
-	useCanvasStore.getState().setGraph({ nodes });
+	board.load({ nodes });
 	return render(
 		<ReactFlowProvider>
 			<EnvironmentStatusProvider value={EMPTY_ENVIRONMENT_STATUS}>
@@ -229,7 +228,7 @@ function announced(): string {
 
 beforeEach(() => {
 	sessionStorage.clear();
-	useCanvasStore.getState().reset();
+	board.reset();
 	flow.capture.mockClear();
 });
 
@@ -494,7 +493,7 @@ describe("a connection that cannot be made", () => {
 	});
 
 	it("nothing is connectable while a bring-your-own module governs the environment", () => {
-		useCanvasStore.getState().setGraph({ nodes: design() });
+		board.load({ nodes: design() });
 		render(
 			<ReactFlowProvider>
 				<EnvironmentStatusProvider
@@ -593,7 +592,7 @@ describe("the vault", () => {
 		});
 
 		expect((props().nodes ?? []).find((n) => n.id === VAULT)?.selected).toBe(true);
-		expect(useCanvasStore.getState().selectedIds).toEqual([]);
+		expect(board.view.getState().selection).toEqual([]);
 
 		fireEvent.keyDown(stop(VAULT), { key: "Delete" });
 
@@ -691,11 +690,11 @@ describe("keys on a focused card", () => {
 
 		fireEvent.focus(stop(ORDERS));
 
-		expect(useCanvasStore.getState().selectedIds).toEqual([ORDERS]);
+		expect(board.view.getState().selection).toEqual([ORDERS]);
 
 		fireEvent.focus(stop("cache-sessions"));
 
-		expect(useCanvasStore.getState().selectedIds).toEqual(["cache-sessions"]);
+		expect(board.view.getState().selection).toEqual(["cache-sessions"]);
 	});
 
 	it("a card focused by a press is left to React Flow's own click selection", () => {
@@ -704,7 +703,7 @@ describe("keys on a focused card", () => {
 		fireEvent.pointerDown(stop(ORDERS));
 		fireEvent.focus(stop(ORDERS));
 
-		expect(useCanvasStore.getState().selectedIds).toEqual([]);
+		expect(board.view.getState().selection).toEqual([]);
 	});
 
 	it("Enter opens the inspector on the focused card", () => {

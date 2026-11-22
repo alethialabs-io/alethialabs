@@ -39,7 +39,10 @@ import type {
 	CanvasNode,
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { board } from "@/lib/canvas/store/board";
+import { isDesignNode } from "@/lib/canvas/store/derive";
+import { boardCard, boardNodes, setBoardNodes, withBoardSources } from "@/tests/fixtures/canvas/board";
 
 /** A store node of `kind` on AWS. `deletable` is left off unless a test pins it. */
 function makeNode<K extends NodeKind>(
@@ -66,17 +69,17 @@ function makeRoot(): CanvasNode {
 	return makeNode(PROJECT_NODE_ID, "project", false);
 }
 
-/** Put a graph in the store with a clean history, so `past` growing means THIS action grew it. */
+/** The cards of the seeded graph the design does not own, as the canvas hands them from queries. */
+let others: CanvasNode[] = [];
+
+/** Put a graph on the board with a clean history, so `past` growing means THIS action grew it. */
 function seed(nodes: CanvasNode[]): void {
-	useCanvasStore.setState({
-		nodes,
-		edges: [],
-		past: [],
-		future: [],
-		selectedIds: [],
-		card: null,
-		baseline: [],
-	});
+	others = nodes.filter((n) => !isDesignNode(n));
+	setBoardNodes(nodes);
+	board.view.getState().setSelection([]);
+	board.view.getState().openCard(null);
+	board.document.getState().replaceBaseline([]);
+	board.document.getState().clearHistory();
 }
 
 /** Render the menu already open on `target`, at an arbitrary point. */
@@ -85,12 +88,15 @@ function renderMenu(
 	opts?: { iacGoverned?: boolean; onAddService?: () => void },
 ) {
 	return render(
-		<CanvasContextMenu
-			state={{ target, point: { x: 120, y: 80 } }}
-			onClose={vi.fn()}
-			iacGoverned={opts?.iacGoverned ?? false}
-			onAddService={opts?.onAddService ?? vi.fn()}
-		/>,
+		withBoardSources(
+			<CanvasContextMenu
+				state={{ target, point: { x: 120, y: 80 } }}
+				onClose={vi.fn()}
+				iacGoverned={opts?.iacGoverned ?? false}
+				onAddService={opts?.onAddService ?? vi.fn()}
+			/>,
+			{ others },
+		),
 	);
 }
 
@@ -110,8 +116,10 @@ function pointerEvent(
 beforeEach(() => {
 	// `reset()` leaves the view prefs alone (they are not design state), so clear the two this
 	// file writes — otherwise one test's Hide is the next test's starting condition.
-	useCanvasStore.getState().reset();
-	useCanvasStore.setState({ hiddenKinds: [], showConnections: true });
+	board.reset();
+	others = [];
+	board.view.setState({ hiddenKinds: [] });
+	board.view.setState({ showConnections: true });
 });
 
 describe("CanvasContextMenu — node", () => {
@@ -124,7 +132,7 @@ describe("CanvasContextMenu — node", () => {
 		expect(remove).toHaveAttribute("data-disabled");
 
 		await user.click(remove);
-		expect(useCanvasStore.getState().nodes).toHaveLength(2);
+		expect(boardNodes(board, others)).toHaveLength(2);
 	});
 
 	it("Remove shrinks the node set and grows the undo stack", async () => {
@@ -134,12 +142,12 @@ describe("CanvasContextMenu — node", () => {
 
 		await user.click(await screen.findByRole("menuitem", { name: /remove/i }));
 
-		const state = useCanvasStore.getState();
-		expect(state.nodes.map((n) => n.id)).toEqual([PROJECT_NODE_ID]);
+		expect(boardNodes().map((n) => n.id)).toEqual([PROJECT_NODE_ID]);
 		// The undo step is the point: React Flow's own delete path left no history, so ⌘Z after a
 		// right-click Remove used to do nothing.
-		expect(state.past).toHaveLength(1);
-		expect(state.past[0].map((n) => n.id)).toEqual([PROJECT_NODE_ID, "db-1"]);
+		const past = board.document.getState().history.past;
+		expect(past).toHaveLength(1);
+		expect(past[0].designNodes.map((n) => n.id)).toEqual([PROJECT_NODE_ID, "db-1"]);
 	});
 
 	it("offers Duplicate only for an array kind", async () => {
@@ -164,7 +172,7 @@ describe("CanvasContextMenu — node", () => {
 		renderMenu({ kind: "node", nodeId: "db-1" });
 
 		await user.click(await screen.findByRole("menuitem", { name: /configure/i }));
-		expect(useCanvasStore.getState().card).toEqual({
+		expect(boardCard()).toEqual({
 			kind: "inspector",
 			nodeId: "db-1",
 		});
@@ -176,7 +184,7 @@ describe("CanvasContextMenu — node", () => {
 		renderMenu({ kind: "node", nodeId: "db-1" });
 
 		await user.click(await screen.findByRole("menuitem", { name: /hide database/i }));
-		expect(useCanvasStore.getState().hiddenKinds).toContain("database");
+		expect(board.view.getState().hiddenKinds).toContain("database");
 	});
 });
 
@@ -213,13 +221,13 @@ describe("CanvasContextMenu — pane", () => {
 
 	it("Show connections toggles the board's view state", async () => {
 		const user = userEvent.setup();
-		useCanvasStore.setState({ showConnections: true });
+		board.view.setState({ showConnections: true });
 		renderMenu({ kind: "pane" });
 
 		await user.click(
 			await screen.findByRole("menuitemcheckbox", { name: /show connections/i }),
 		);
-		expect(useCanvasStore.getState().showConnections).toBe(false);
+		expect(board.view.getState().showConnections).toBe(false);
 	});
 });
 
@@ -235,7 +243,7 @@ describe("useCanvasContextMenu", () => {
 			});
 		});
 
-		expect(useCanvasStore.getState().selectedIds).toEqual(["db-2"]);
+		expect(board.view.getState().selection).toEqual(["db-2"]);
 		expect(result.current.state).toEqual({
 			target: { kind: "node", nodeId: "db-2" },
 			point: { x: 40, y: 60 },
@@ -310,10 +318,10 @@ describe("CanvasContextMenu — selection", () => {
 		renderMenu({ kind: "selection", ids: ["db-1", "db-2"] });
 
 		await user.click(await screen.findByRole("menuitem", { name: /remove/i }));
-		expect(useCanvasStore.getState().nodes.map((n) => n.id)).toEqual([
+		expect(boardNodes().map((n) => n.id)).toEqual([
 			PROJECT_NODE_ID,
 		]);
-		expect(useCanvasStore.getState().past).toHaveLength(1);
+		expect(board.document.getState().history.past).toHaveLength(1);
 	});
 
 	it("disables Duplicate when nothing in the set can be cloned", async () => {

@@ -19,7 +19,9 @@ import {
 	type KindConfig,
 } from "@/components/design-project/canvas/inspector/config-schema";
 import { nodeReadiness } from "@/lib/canvas/node-status";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { coreIdentity } from "@/lib/canvas/store/derive";
+import { boardNodes, setBoardNodes } from "@/tests/fixtures/canvas/board";
 import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
 
 const SCHEMA: KindConfig = {
@@ -155,14 +157,15 @@ describe("ConfigFields — number fields", () => {
 
 /** A canvas holding one project root and one NoSQL table, with the table's id. */
 function seedTable(): string {
-	useCanvasStore.setState({ nodes: [], card: null });
-	const id = useCanvasStore.getState().addNode("nosql");
+	setBoardNodes([]);
+	board.view.getState().openCard(null);
+	const id = board.addNode("nosql");
 	return id;
 }
 
 /** The table node's current config, straight from the store. */
 function tableConfig(id: string): Record<string, unknown> {
-	const node = useCanvasStore.getState().nodes.find((n) => n.id === id);
+	const node = boardNodes().find((n) => n.id === id);
 	if (!node) throw new Error(`no node ${id}`);
 	return node.data.config;
 }
@@ -176,8 +179,8 @@ describe("ConfigFields — readiness cannot lag the buffer", () => {
 
 	/** Readiness as the board and the card read it — from the store, never from the form. */
 	function stateOf(id: string) {
-		const s = useCanvasStore.getState();
-		return nodeReadiness(s.nodes, s.getCoreIdentity(), id).state;
+		const designNodes = board.document.getState().designNodes;
+		return nodeReadiness(designNodes, coreIdentity(designNodes), id).state;
 	}
 
 	/** Renders the table's real Settings body, wired to the store the way the inspector wires it. */
@@ -190,7 +193,7 @@ describe("ConfigFields — readiness cannot lag the buffer", () => {
 				config={tableConfig(id)}
 				provider="aws"
 				kind="nosql"
-				onChange={(patch) => useCanvasStore.getState().updateNodeConfig(id, patch)}
+				onChange={(patch) => board.document.getState().updateNodeConfig(id, patch)}
 			/>,
 		);
 		// The card is re-rendered from the store on every commit, as the inspector does — otherwise
@@ -202,7 +205,7 @@ describe("ConfigFields — readiness cannot lag the buffer", () => {
 					config={tableConfig(id)}
 					provider="aws"
 					kind="nosql"
-					onChange={(patch) => useCanvasStore.getState().updateNodeConfig(id, patch)}
+					onChange={(patch) => board.document.getState().updateNodeConfig(id, patch)}
 				/>,
 			);
 	}
@@ -328,7 +331,7 @@ describe("ConfigFields — leaving without a blur", () => {
 				config={tableConfig(id)}
 				provider="aws"
 				kind="nosql"
-				onChange={(patch) => useCanvasStore.getState().updateNodeConfig(id, patch)}
+				onChange={(patch) => board.document.getState().updateNodeConfig(id, patch)}
 			/>,
 		);
 

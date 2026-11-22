@@ -13,7 +13,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NodePalette } from "@/components/design-project/canvas/node-palette";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
-import { selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { boardNodes, inspectorNodeId, setBoardNodes } from "@/tests/fixtures/canvas/board";
 import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
 
 /** Builds a minimal project-root node whose `provider` drives the palette's kind filter. */
@@ -39,7 +40,7 @@ function projectRoot(provider: CloudProviderSlug | null): CanvasNode<"project"> 
 /** Seeds the canvas store with a lone project root on the given provider. */
 function seedCanvas(provider: CloudProviderSlug | null) {
 	const nodes: CanvasNode[] = [projectRoot(provider)];
-	useCanvasStore.setState({ nodes });
+	setBoardNodes(nodes);
 }
 
 /** Renders the palette open, with no identities/add-ons (the create flow). */
@@ -48,7 +49,8 @@ function renderPalette() {
 }
 
 beforeEach(() => {
-	useCanvasStore.setState({ nodes: [], card: null });
+	setBoardNodes([]);
+	board.view.getState().openCard(null);
 	// The remembered tab is a persisted, per-kind preference, so a test that asserts the add RECORDED
 	// it has to start from a state where it was not already recorded — otherwise it passes on the
 	// previous test's write.
@@ -170,9 +172,8 @@ describe("NodePalette — per-provider variant filtering", () => {
 describe("NodePalette — handing off to the rail", () => {
 	/** The bucket node just added by the flow under test. */
 	function addedBucketId(): string | undefined {
-		return useCanvasStore
-			.getState()
-			.nodes.find((n) => n.data.kind === "bucket")?.id;
+		return boardNodes()
+			.find((n) => n.data.kind === "bucket")?.id;
 	}
 
 	it("adds the node, opens its card on the rail, and closes", async () => {
@@ -186,7 +187,7 @@ describe("NodePalette — handing off to the rail", () => {
 		const id = addedBucketId();
 		expect(id).toBeDefined();
 		// ...its card is what the rail is showing...
-		expect(selectInspectorNodeId(useCanvasStore.getState())).toBe(id);
+		expect(inspectorNodeId()).toBe(id);
 		// ...and the palette asked to close rather than swapping to a step of its own.
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 	});
@@ -225,9 +226,9 @@ describe("NodePalette — handing off to the rail", () => {
 		await userEvent.click(screen.getByText("Database"));
 		await userEvent.click(screen.getByText("PostgreSQL"));
 
-		const db = useCanvasStore.getState().nodes.find((n) => n.data.kind === "database");
+		const db = boardNodes().find((n) => n.data.kind === "database");
 		expect(db).toBeDefined();
-		expect(selectInspectorNodeId(useCanvasStore.getState())).toBe(db?.id);
+		expect(inspectorNodeId()).toBe(db?.id);
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 		expect(useInspectorPrefsStore.getState().tab.database).toBe("settings");
 	});

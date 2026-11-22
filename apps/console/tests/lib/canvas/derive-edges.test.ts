@@ -6,7 +6,7 @@
 // nodes, so the function can move to another module without the picture changing.
 
 import { describe, expect, it } from "vitest";
-import { deriveEdges } from "@/lib/stores/use-canvas-store";
+import { deriveEdges } from "@/lib/canvas/store/derive";
 import {
 	cacheNode,
 	chartNode,

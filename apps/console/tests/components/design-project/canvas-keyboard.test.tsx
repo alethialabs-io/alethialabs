@@ -117,7 +117,8 @@ vi.mock("@/components/design-project/byo/iac-source-canvas-context", () => ({
 }));
 
 import { DesignProjectCanvas } from "@/components/design-project/canvas/design-project-canvas";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { boardNodes } from "@/tests/fixtures/canvas/board";
 
 const SHORTCUT_SHEET = "Keyboard shortcuts";
 
@@ -140,7 +141,7 @@ function renderBoardWithField() {
 
 /** Every node id on the board. */
 function ids(): string[] {
-	return useCanvasStore.getState().nodes.map((n) => n.id);
+	return boardNodes().map((n) => n.id);
 }
 
 /**
@@ -148,13 +149,13 @@ function ids(): string[] {
  * Returns its id.
  */
 function addSelectedCard(): string {
-	return useCanvasStore.getState().addNode("bucket");
+	return board.addNode("bucket");
 }
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	sessionStorage.clear();
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("undo (⌘Z)", () => {
@@ -201,7 +202,7 @@ describe("remove (Backspace)", () => {
 	it("on the board, removes the selected card", () => {
 		const card = addSelectedCard();
 		renderBoardWithField();
-		expect(useCanvasStore.getState().selectedIds).toEqual([card]);
+		expect(board.view.getState().selection).toEqual([card]);
 
 		fireEvent.keyDown(document.body, { key: "Backspace" });
 
@@ -211,7 +212,7 @@ describe("remove (Backspace)", () => {
 	it("in a text field, does nothing", () => {
 		const card = addSelectedCard();
 		const field = renderBoardWithField();
-		expect(useCanvasStore.getState().selectedIds).toEqual([card]);
+		expect(board.view.getState().selection).toEqual([card]);
 
 		fireEvent.keyDown(field, { key: "Backspace" });
 

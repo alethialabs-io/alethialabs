@@ -26,7 +26,6 @@ vi.mock("@/lib/query/use-addons-query", () => ({
 
 import { AddonConfigForm } from "@/components/addons/addon-config-card";
 import { board } from "@/lib/canvas/store/board";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 const ITEM: AddonMarketItem = {
 	id: "kube-prometheus-stack",
@@ -82,7 +81,7 @@ function stagedVersion(): unknown {
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("AddonConfigForm — chart version", () => {

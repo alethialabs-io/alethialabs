@@ -25,7 +25,8 @@ import {
 } from "@repo/ui/context-menu";
 import { arrangeBoard } from "@/lib/canvas/arrange";
 import { kindFromCollectionId } from "@/lib/canvas/collections";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useBoard, useOthers } from "@/lib/canvas/store/canvas-store-provider";
+import { useAllNodes, useBoardActions, useShowConnections } from "@/lib/canvas/store/use-board";
 import type { CanvasNode, NodeKind } from "./graph/types";
 import { NODE_REGISTRY } from "./graph/node-registry";
 import { GOVERNED_ROW_REASON } from "./toolbar/reasons";
@@ -97,6 +98,7 @@ function targetIdsFor(nodeId: string, nodes: CanvasNode[]): string[] {
  */
 export function useCanvasContextMenu(): CanvasContextMenuController {
 	const [state, setState] = useState<CanvasContextMenuState | null>(null);
+	const actions = useBoardActions();
 
 	/** Dismiss the menu (Escape, an outside press, or after an item runs). */
 	const close = useCallback(() => setState(null), []);
@@ -131,20 +133,20 @@ export function useCanvasContextMenu(): CanvasContextMenuController {
 		(event: CanvasPointerEvent, node: { id: string }) => {
 			// Nothing in React Flow suppresses the browser menu on a card — only the pane gets that.
 			event.preventDefault();
-			const { nodes, onNodesChange } = useCanvasStore.getState();
+			const nodes = actions.nodes();
 			const ids = targetIdsFor(node.id, nodes);
 			const changes: NodeChange<CanvasNode>[] = nodes.map((n) => ({
 				id: n.id,
 				type: "select",
 				selected: ids.includes(n.id),
 			}));
-			onNodesChange(changes);
+			actions.onNodesChange(changes);
 			setState({
 				target: { kind: "node", nodeId: node.id },
 				point: { x: event.clientX, y: event.clientY },
 			});
 		},
-		[],
+		[actions],
 	);
 
 	const onSelectionContextMenu = useCallback(
@@ -198,14 +200,15 @@ export function CanvasContextMenu({
 }: CanvasContextMenuProps) {
 	const { fitView } = useReactFlow();
 	const canFit = useHasDrawnNodes();
-	const nodes = useCanvasStore((s) => s.nodes);
-	const openCard = useCanvasStore((s) => s.openCard);
-	const removeNodes = useCanvasStore((s) => s.removeNodes);
-	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
-	const toggleKindVisibility = useCanvasStore((s) => s.toggleKindVisibility);
-	const repairOverlaps = useCanvasStore((s) => s.repairOverlaps);
-	const showConnections = useCanvasStore((s) => s.showConnections);
-	const toggleConnections = useCanvasStore((s) => s.toggleConnections);
+	const board = useBoard();
+	const others = useOthers();
+	const nodes = useAllNodes();
+	const { removeNodes, duplicateNodes, repairOverlaps } = useBoardActions();
+	const openCard = (card: { kind: "inspector"; nodeId: string }) =>
+		board.view.getState().openCard(card);
+	const toggleKindVisibility = (kind: NodeKind) => board.view.getState().toggleKindVisibility(kind);
+	const showConnections = useShowConnections();
+	const toggleConnections = () => board.view.getState().toggleConnections();
 
 	const target = state?.target ?? null;
 
@@ -250,7 +253,7 @@ export function CanvasContextMenu({
 							Add service…
 						</ContextMenuItem>
 						<ContextMenuSeparator />
-						<ContextMenuItem onSelect={() => void arrangeBoard(fitView)}>
+						<ContextMenuItem onSelect={() => void arrangeBoard(board, others, fitView)}>
 							<LayoutGrid className="mr-2 h-4 w-4 text-muted-foreground" />
 							Tidy layout
 						</ContextMenuItem>

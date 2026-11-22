@@ -25,8 +25,7 @@ import { EmptyState } from "@repo/ui/empty";
 import { AddonConfigCard } from "@/components/addons/addon-config-card";
 import { isDesignNode } from "@/lib/canvas/store/derive";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
-import { useDesignNodes, useSubject } from "@/lib/canvas/store/use-board";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useBoardActions, useDesignNodes, useSubject } from "@/lib/canvas/store/use-board";
 import { ActivityCard } from "../cards/activity-card";
 import { ChartScanCard } from "../cards/chart-scan-card";
 import type { DestroyEnvironmentControl } from "../cards/destroy-tree-view";
@@ -89,7 +88,9 @@ export function Inspector({ projectId, environmentId, destroyEnvironment }: Insp
  */
 function NodeSubjectRouter({ id, projectId, environmentId }: { id: string } & InspectorContext) {
 	const node = useSubjectNode(id);
-	if (node && isDesignNode(node)) return <NodeSubject node={node} />;
+	// Keyed by the node's id: a new subject is a new body, so nothing typed for one node (a field's
+	// buffer, a group's open state) is carried into the next.
+	if (node && isDesignNode(node)) return <NodeSubject key={node.id} node={node} />;
 
 	const addonId = addonIdOf(id);
 	if (addonId !== null) {
@@ -123,8 +124,7 @@ function SelectionSubject({ ids }: { ids: string[] }) {
 	const board = useBoard();
 	const close = useCloseInspector();
 	const designNodes = useDesignNodes();
-	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
-	const removeNodes = useCanvasStore((s) => s.removeNodes);
+	const { duplicateNodes, removeNodes } = useBoardActions();
 	const members = designNodes.filter((n) => ids.includes(n.id));
 	const duplicable = members.filter((n) => NODE_REGISTRY[n.data.kind].cardinality === "array");
 	const removable = members.filter((n) => n.deletable !== false);

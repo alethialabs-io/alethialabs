@@ -297,8 +297,6 @@ export interface FieldDef<C = AnyConfig> {
 	optional?: boolean;
 	/** Field needs an effective cloud provider; renders a notice when none is set. */
 	requiresProvider?: boolean;
-	/** Span the full section width (radio-card/region/repository/switch already do). */
-	full?: boolean;
 	/** Hide the field unless the predicate holds (e.g. only when a toggle is on, or only
 	 * for a given provider via the context). One-arg closures keep working unchanged. */
 	visibleWhen?: (config: C, ctx: FieldCtx<C>) => boolean;
@@ -563,7 +561,6 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "text",
 						label: "Repository URL",
 						mono: true,
-						full: true,
 						placeholder: "https://github.com/org/repo",
 						visibleWhen: (c) => c.source.kind === "repo",
 						get: (c) => (c.source.kind === "repo" ? c.source.repo_url : ""),
@@ -597,7 +594,6 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "text",
 						label: "Image",
 						mono: true,
-						full: true,
 						placeholder: "ghcr.io/org/api:1.4.0",
 						description: "A pushed image reference to deploy as-is.",
 						visibleWhen: (c) => c.source.kind === "image",
@@ -679,7 +675,6 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 									label: "Name",
 									mono: true,
 									placeholder: "optional",
-									full: true,
 								},
 							],
 						},
@@ -702,8 +697,8 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 							title: (item) =>
 								typeof item.name === "string" && item.name ? item.name : "",
 							fields: [
-								{ key: "name", type: "text", label: "Name", mono: true, full: true },
-								{ key: "value", type: "text", label: "Value", full: true },
+								{ key: "name", type: "text", label: "Name", mono: true },
+								{ key: "value", type: "text", label: "Value" },
 							],
 						},
 					},
@@ -730,7 +725,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				title: "Runtime",
 				defaultOpen: true,
 				fields: [
-					{ key: "replicas", type: "number", label: "Replicas", min: 1, max: 5, full: true },
+					{ key: "replicas", type: "number", label: "Replicas", min: 1, max: 5 },
 					{
 						key: "requests_cpu",
 						type: "text",
@@ -838,7 +833,6 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "text",
 						label: "Path",
 						mono: true,
-						full: true,
 						placeholder: "/healthz",
 						visibleWhen: (c) => c.probe?.type === "http",
 						get: (c) => c.probe?.path ?? "",
@@ -1596,7 +1590,6 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 									label: "Endpoint",
 									mono: true,
 									placeholder: "https://example.com/events",
-									full: true,
 								},
 							],
 						},
@@ -1906,7 +1899,6 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Chart repository",
 						description:
 							"The connected chart-repo connector ArgoCD authenticates with. Its credential is seeded as a repository credential at deploy — it never enters the project's config snapshot.",
-						full: true,
 					},
 				],
 			},
@@ -1931,7 +1923,6 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "DNS provider",
 						description:
 							"Which DNS backend external-dns manages records through. The cluster cloud's own (Route 53 / Cloud DNS / Azure DNS) unless you connect one.",
-						full: true,
 						// The zone lives on `project_dns.zone_id` — its own field below — and Cloudflare's
 						// connector declares a `zone_id` knob too. Two inputs for one concept, writing to
 						// two places, is worse than either; the column wins. Safe because

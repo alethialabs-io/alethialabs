@@ -20,7 +20,7 @@ import { scanByoChartAction } from "@/app/server/actions/byo-charts";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
 import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useOthers } from "@/lib/canvas/store/canvas-store-provider";
 import { InspectorAction } from "../inspector-shell/inspector-frame";
 import { useCloseInspector } from "../inspector-shell/subject";
 import { SheetCard } from "./sheet-card";
@@ -137,9 +137,7 @@ function SummaryPill({ label, count, tone }: { label: string; count: number; ton
  */
 export function ChartScanCard({ chartId }: { chartId: string }) {
 	const closeCard = useCloseInspector();
-	const node = useCanvasStore((s) =>
-		s.nodes.find((n) => n.data.kind === "chart" && n.data.config.id === chartId),
-	);
+	const node = useOthers().find((n) => n.data.kind === "chart" && n.data.config.id === chartId);
 	const ctx = useByoChartCanvas();
 	// The rescan, on the mutation contract. No follow-up refetches: the scan's progress and its
 	// verdict are writes to the chart's row, which arrive as `addons` hints on the org's change stream

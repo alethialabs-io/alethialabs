@@ -8,7 +8,9 @@
 // save. A project with nothing to rewrite must still open clean.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { boardNodes, isBoardDirty, seedBoard } from "@/tests/fixtures/canvas/board";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { CloudProviderSlug, NosqlCapacityMode } from "@/lib/cloud-providers";
 
@@ -46,28 +48,27 @@ function tableNode(capacity_mode: NosqlCapacityMode): CanvasNode {
 
 /** The table's capacity mode as the store holds it in the desired graph. */
 function heldMode(): unknown {
-	const n = useCanvasStore.getState().nodes.find((x) => x.id === TABLE_ID);
+	const n = boardNodes().find((x) => x.id === TABLE_ID);
 	return n?.data.kind === "nosql" ? n.data.config.capacity_mode : undefined;
 }
 
 beforeEach(() => {
-	useCanvasStore.setState({ nodes: [], baseline: [], past: [], future: [], dirty: false });
+	seedBoard([]);
 });
 
 describe("capacity mode follows what the table's cloud can build", () => {
 	it("rewrites a legacy Azure `provisioned` table at load, as a staged change", () => {
-		useCanvasStore.getState().setGraph({ nodes: [projectNode("azure"), tableNode("provisioned")] });
-		const s = useCanvasStore.getState();
+		board.load({ nodes: [projectNode("azure"), tableNode("provisioned")] });
 		expect(heldMode()).toBe("on_demand");
-		expect(s.dirty).toBe(true);
+		expect(isBoardDirty()).toBe(true);
 		// The baseline still says what the server holds, so the pending-changes bar shows the rewrite.
-		const base = s.baseline.find((x) => x.id === TABLE_ID);
+		const base = board.document.getState().baseline.find((x) => x.id === TABLE_ID);
 		expect(base?.data.kind === "nosql" ? base.data.config.capacity_mode : undefined).toBe("provisioned");
 	});
 
 	it("opens a project with nothing to rewrite clean", () => {
-		useCanvasStore.getState().setGraph({ nodes: [projectNode("aws"), tableNode("provisioned")] });
+		board.load({ nodes: [projectNode("aws"), tableNode("provisioned")] });
 		expect(heldMode()).toBe("provisioned");
-		expect(useCanvasStore.getState().dirty).toBe(false);
+		expect(isBoardDirty()).toBe(false);
 	});
 });
