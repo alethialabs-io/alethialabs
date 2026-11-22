@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { COMPONENTS, rollUp, type Health } from "../src/probes";
+import { LOCKUP_CSS, LOCKUP_HTML } from "../src/brand.generated";
 import { renderPage } from "../src/render";
 import { uptimeFraction, type ComponentSummary, type DayRollup, type IncidentSummary, type Summary } from "../src/state";
 
@@ -79,10 +80,13 @@ describe("renderPage", () => {
 		expect(renderPage(s)).toContain("<title>Alethia Status — Major outage");
 	});
 
-	it("carries the brand: the [·] mark, the lockup, and the three typefaces", () => {
+	it("carries the brand: the main site's lockup, its CSS, and the three typefaces", () => {
 		const html = renderPage(summary());
-		expect(html).toContain('<svg class="mark"');
-		expect(html).toContain('<span class="word">Alethia</span><span class="labs">Labs</span>');
+		// brand.test.ts proves these equal what packages/brand renders; this proves the page serves them.
+		expect(html).toContain(LOCKUP_HTML);
+		expect(html).toContain(LOCKUP_CSS);
+		// The lockup CSS reads these; an unset one would void its font-family declaration.
+		for (const v of ["--font-grotesk:", "--font-geist-sans:", "--font-mono:"]) expect(html).toContain(v);
 		for (const face of ["family=Geist:", "family=Geist+Mono", "family=Space+Grotesk"]) expect(html).toContain(face);
 	});
 

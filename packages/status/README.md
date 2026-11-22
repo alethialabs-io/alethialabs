@@ -79,7 +79,13 @@ ones, so one blip (a deploy, a container restart) never becomes an incident.
 pnpm -C packages/status run test         # probes, state machine, schema, a real cycle on node:sqlite, render
 pnpm -C packages/status run check-types  # Worker types for src, Node types for the tests
 pnpm -C packages/status run build        # dist/worker.js — the bundle the apply uploads
+pnpm -C packages/status run gen:brand    # src/brand.generated.ts — the logo + favicon, from packages/brand
 ```
+
+> **The header lockup and the favicon are generated, not written.** `scripts/gen-brand.ts` renders
+> `AlethiaLockup tag="labs"` and lifts its CSS from `packages/brand/src/tokens.css`, so this page
+> draws exactly the main site's logo. `tests/brand.test.ts` fails when `src/brand.generated.ts`
+> drifts from packages/brand; run `gen:brand` and commit the result.
 
 > **`src/render.ts` holds its CSS in a template literal, so it must contain no backtick anywhere —
 > comments included.** One backtick ends the string. `tests/render.test.ts` imports and renders the
