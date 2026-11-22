@@ -280,8 +280,10 @@ describe("the encryption step (scripts/encrypt-oauth-tokens.ts)", () => {
 	});
 
 	it("leaves an undecryptable row to the caller instead of overwriting it", () => {
+		useKey(newKey(), "1");
 		const row = { ...plainRow, access_token: sealOAuthToken("gho_x") };
-		useKey(newKey());
+		// The key for kid "1" is gone from the ring, so the row cannot be moved to kid "2".
+		useKey(newKey(), "2");
 		expect(() => planRow(row)).toThrow();
 	});
 
