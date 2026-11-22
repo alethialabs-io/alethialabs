@@ -12,6 +12,12 @@
 // `saveOrgGeneral` through `useActionMutation` — pending, double-submit guarded, field errors inline,
 // and every key that shows the org's name invalidated (the switcher reads the workspace context).
 // The logo saves itself through its own upload control; ownership transfer is not built yet.
+//
+// #7204: Leave organization sits in the danger zone beside Delete. It calls better-auth's
+// `organization.leave` through the mutation contract (`viaAuth`), confirmed by `ConfirmAction`; the
+// org's last ACTIVE owner sees it disabled with the reason, the rule the auth route applies to
+// `/organization/leave` (member-guards.ts, lib/authz/active-owner.ts). On success the person lands
+// in their next organization, or `/dashboard` resolves where they go when there is none.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -27,6 +33,7 @@ import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { RegionError } from "@/components/errors/region-error";
 import { OrgLogoUpload } from "@/components/org/org-logo-upload";
 import { GeneralRefusal } from "@/components/settings/general/general-states";
+import { viaAuth } from "@/components/settings/members/auth-action";
 import {
   ORG_CONTROL_NOTES,
   ORG_DANGER_ROWS,
@@ -49,8 +56,11 @@ import {
 } from "@/components/settings/settings-ui";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import type { FieldErrors } from "@/lib/actions/result";
+import { authClient } from "@/lib/auth/client";
+import { toPdpRole } from "@/lib/authz/org-access-control";
 import type { OrgPrimaryAddress, OrgSettings } from "@/lib/org/settings";
 import { orgHost } from "@/lib/org-url";
+import { orgHref } from "@/lib/routing";
 import { orpc } from "@/lib/rpc/client";
 import { readRefusalOf, retryUnlessRefused } from "@/lib/rpc/refusal";
 import { finishSlugDraft, slugifyDraft } from "@/lib/utils/slugify";
@@ -79,6 +89,46 @@ const DELETE_REFUSED = "Only the organization's owner can delete it";
  */
 const DELETE_RULE =
   "An organization with a live or in-flight environment cannot be deleted: destroy those environments first. This cannot be undone.";
+
+/** Why Leave is disabled for the org's last active owner — the auth route refuses that leave. */
+const LEAVE_SOLE_OWNER =
+  "You are this organization's only active owner. Make another active member an owner before you leave.";
+/** Why Leave is disabled while the org's owners are being read. */
+const LEAVE_CHECKING = "Checking whether another active owner remains";
+/** Why Leave is disabled when the page does not know which organization it is on. */
+const LEAVE_UNKNOWN_ORG = "Reload the page to leave this organization";
+
+/** What the leave confirmation says before anything is sent. */
+const LEAVE_RULE =
+  "You lose access to its Projects and settings right away. To come back, someone in the organization has to invite you again.";
+
+/**
+ * Where the person lands after leaving `leftOrgId`: their next organization that has an address,
+ * else `/dashboard`, which resolves their primary organization or their personal workspace.
+ */
+function leaveDestination(
+  organizations: readonly { id: string; slug: string | null }[],
+  leftOrgId: string,
+): string {
+  const next = organizations.find((o) => o.id !== leftOrgId && o.slug);
+  return next?.slug ? orgHref(next.slug) : "/dashboard";
+}
+
+/**
+ * Whether the caller is the org's last active owner: an owner by `toPdpRole`, and no more than one
+ * active member of the org holds that role (the caller's own row is one of them). The same count
+ * `removalOwnerRefusal` makes on the server.
+ */
+function isSoleActiveOwner(
+  callerRole: string,
+  members: readonly { role: string; status: string }[],
+): boolean {
+  if (toPdpRole(callerRole) !== "owner") return false;
+  const activeOwners = members.filter(
+    (m) => m.status === "active" && toPdpRole(m.role) === "owner",
+  );
+  return activeOwners.length <= 1;
+}
 
 /** What the delete removes and what it leaves, listed in the typed confirmation. */
 const DELETE_CONSEQUENCES = [
@@ -204,6 +254,27 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
   const canEdit = role === null || role === "owner";
   const canDelete = role === null || role === "owner";
 
+  // Leave: an owner may leave only while another ACTIVE owner remains, so an owner's page reads the
+  // org's members (the shared `members.list` universe) to know before the click. Anyone else may
+  // always leave, and reads nothing for it. An unreadable member list leaves the control enabled
+  // for the auth route to rule on; it refuses the last active owner with its own sentence.
+  const orgId = context.data?.activeOrgId ?? null;
+  const callerIsOwner = role !== null && toPdpRole(role) === "owner";
+  const members = useQuery(
+    orpc.members.list.queryOptions({ input: undefined, enabled: callerIsOwner }),
+  );
+  const leaveRefusal =
+    orgId === null
+      ? LEAVE_UNKNOWN_ORG
+      : callerIsOwner && members.isPending
+        ? LEAVE_CHECKING
+        : role !== null && members.data && isSoleActiveOwner(role, members.data)
+          ? LEAVE_SOLE_OWNER
+          : null;
+  // Where to land is decided from the orgs the switcher lists, before the membership is gone.
+  const leaveTarget =
+    orgId === null ? "/dashboard" : leaveDestination(context.data?.organizations ?? [], orgId);
+
   const save = useActionMutation(saveOrgGeneral, {
     // A slug rename leaves this address naming nothing: a refetch under it would only paint a
     // refusal before the navigation lands. The new address is a new tenant cache, filled by its own
@@ -234,6 +305,20 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
     successMessage: "Organization deleted.",
     onSuccess: () => router.push("/dashboard"),
   });
+
+  // The leave confirmation is open; driven the same way as the delete's.
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const leave = useActionMutation(
+    ({ organizationId }: { organizationId: string }) =>
+      viaAuth(() => authClient.organization.leave({ organizationId })),
+    {
+      // The membership is gone, so this org's reads would only answer with a refusal; the
+      // destination's own server render fills its cache. Nothing here is invalidated.
+      invalidates: [],
+      successMessage: `You left ${settings.name}.`,
+      onSuccess: () => router.push(leaveTarget),
+    },
+  );
 
   // `mutateAsync` inside `handleSubmit` keeps `isSubmitting` true until the save has settled, so
   // the buttons stay disabled for the whole round trip — three rapid clicks are one save (F015).
@@ -387,6 +472,29 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
             </DisabledReason>
           </SettingsDangerRow>
           <SettingsDangerRow
+            title={ORG_DANGER_ROWS.leave.title}
+            description={ORG_DANGER_ROWS.leave.description}
+          >
+            {leaveRefusal ? (
+              <DisabledReason reason={leaveRefusal}>
+                <Button variant="outline" size="sm" aria-label="Leave organization" disabled>
+                  Leave
+                </Button>
+              </DisabledReason>
+            ) : (
+              // Named for what it leaves, as Delete is: the dialog it opens says "Leave <org>?".
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="Leave organization"
+                disabled={leave.isPending}
+                onClick={() => setConfirmingLeave(true)}
+              >
+                {leave.isPending ? "Leaving…" : "Leave"}
+              </Button>
+            )}
+          </SettingsDangerRow>
+          <SettingsDangerRow
             title={ORG_DANGER_ROWS.delete.title}
             description={
               <>
@@ -435,6 +543,20 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
         severity={{ level: "destroy", subject: settings.name, consequences: DELETE_CONSEQUENCES }}
         mutation={remove}
         variables={confirmingDelete ? {} : null}
+      />
+
+      {/* A yes/no question: leaving removes the person's own access, not the organization, and
+          an admin can invite them back. It stays up beside the reason when the server refuses. */}
+      <ConfirmAction
+        open={confirmingLeave}
+        onOpenChange={setConfirmingLeave}
+        title={`Leave ${settings.name}?`}
+        description={LEAVE_RULE}
+        confirmLabel="Leave organization"
+        pendingLabel="Leaving…"
+        severity={{ level: "confirm" }}
+        mutation={leave}
+        variables={confirmingLeave && orgId !== null ? { organizationId: orgId } : null}
       />
     </div>
   );

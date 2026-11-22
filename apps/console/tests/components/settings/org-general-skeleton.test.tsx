@@ -78,13 +78,13 @@ describe("OrgGeneralSkeleton — the form's layout while the read is pending", (
 		const formOutline = outline(form.container, ACME.name);
 
 		expect(skeletonOutline).toEqual(formOutline);
-		// The comparison is about something: two sections, five field rows, two danger rows, and the
-		// profile panel in the column grid over a full-width Danger zone (the Defaults panel that sat
-		// beside it was removed in #7147).
+		// The comparison is about something: two sections, five field rows, three danger rows
+		// (Transfer, Leave and Delete — Leave added in #7204), and the profile panel in the column
+		// grid over a full-width Danger zone (the Defaults panel that sat beside it was removed in #7147).
 		const inColumns = (wrapper: string | null) => wrapper?.includes("lg:grid-cols-2") ?? false;
 		expect(formOutline.map((s) => [s.heading, inColumns(s.wrapper), s.rows.length, s.dangerRows.length])).toEqual([
 			["Organization profile", true, 5, 0],
-			["Danger zone", false, 0, 2],
+			["Danger zone", false, 0, 3],
 		]);
 	});
 
