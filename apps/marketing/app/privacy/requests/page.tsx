@@ -6,7 +6,7 @@ import type { Metadata } from "next";
 import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
-	title: "Privacy requests · Alethia",
+	title: "Privacy requests",
 	description: "Exercise a privacy right or ask Alethia a data-protection question.",
 };
 

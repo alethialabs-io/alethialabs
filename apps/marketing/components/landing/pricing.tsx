@@ -10,7 +10,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Accordion, AccordionContent, AccordionHeader, AccordionItem, AccordionTrigger } from "@repo/ui/accordion";
 import { SegmentedControl } from "@repo/ui/segmented-control";
 import { Input } from "@repo/ui/input";
-import { ProviderIcon } from "@repo/ui/provider-icon";
 import { cn } from "@repo/ui/utils";
 import {
 	disp,
@@ -19,7 +18,6 @@ import {
 	mono,
 	Wrap,
 } from "@repo/brand/site-primitives";
-import { AlethiaMark } from "@repo/brand/lockup";
 import { PageClose } from "@repo/brand/site-sections";
 import {
 	PLAN_CATALOG,
@@ -28,7 +26,9 @@ import {
 } from "@repo/plan-catalog";
 import { splitPriceLabel } from "@/lib/billing/price-label";
 
-const SALES = "/contact/sales";
+/** Every "talk to us" path on the site is the one contact form. */
+const CONTACT_ENTERPRISE = "/contact?topic=enterprise";
+const CONTACT_DEMO = "/contact?topic=demo";
 
 interface Cta {
 	label: string;
@@ -39,8 +39,7 @@ interface Cta {
 /**
  * One CTA per tier. Enterprise used to carry two ("Get a demo" + "Request trial"),
  * which made its column a different shape from the other two and asked the visitor
- * to choose twice. `/enterprise` now closes with the trial form itself, so this is
- * the demo path only.
+ * to choose twice. It goes to the contact form with the enterprise topic preset.
  */
 function ctaFor(plan: PlanId): Cta {
 	switch (plan) {
@@ -55,7 +54,7 @@ function ctaFor(plan: PlanId): Cta {
 				variant: "default",
 			};
 		case "enterprise":
-			return { label: "Talk to sales", href: SALES, variant: "outline" };
+			return { label: "Contact", href: CONTACT_ENTERPRISE, variant: "outline" };
 		default:
 			return { label: "Get started", href: "/signup", variant: "outline" };
 	}
@@ -231,7 +230,7 @@ interface MatrixGroup {
 	rows: [string, MatrixValue, MatrixValue, MatrixValue][];
 }
 
-// Columns: Hobby (community) · Team · Enterprise. Values are substantiated by
+// Columns: Hobby (community) · Pro (id `team`) · Enterprise. Values are substantiated by
 // PLAN_CATALOG.included + enforced entitlements (plan_max_concurrency = 2/8/∞).
 const MATRIX: MatrixGroup[] = [
 	{
@@ -265,13 +264,14 @@ const MATRIX: MatrixGroup[] = [
 	{
 		label: "Support & deployment",
 		rows: [
-			["Deployment", "Self-hosted", "Hosted", "Hosted · self-managed"],
+			// Hobby was "Self-hosted" while its CTA is the hosted signup. It is both.
+			["Deployment", "Hosted · self-hosted", "Hosted", "Hosted · self-managed"],
 			["Support", "Community", "Standard", "Dedicated + SLA"],
 		],
 	},
 ];
 
-const POP_COL = 1; // Team, 0-based among the 3 plans
+const POP_COL = 1; // Pro (id `team`), 0-based among the 3 plans
 
 /** One matrix cell — check / dash / text. */
 function MatrixCell({ value, head }: { value: MatrixValue; head: boolean }) {
@@ -286,7 +286,10 @@ function MatrixCell({ value, head }: { value: MatrixValue; head: boolean }) {
 		return <span style={{ display: "block", textAlign: "center", color: "var(--text-disabled)", fontSize: 14 }}>—</span>;
 	}
 	return (
-		<span style={{ display: "block", textAlign: "center", ...mono, fontSize: 11.5, color: head ? "var(--text-primary)" : "var(--text-secondary)" }}>
+		<span
+			className="text-[10.5px] md:text-[11.5px]"
+			style={{ display: "block", textAlign: "center", ...mono, color: head ? "var(--text-primary)" : "var(--text-secondary)" }}
+		>
 			{value}
 		</span>
 	);
@@ -298,7 +301,7 @@ function MatrixCell({ value, head }: { value: MatrixValue; head: boolean }) {
  * It was a stack of nested `display:grid` divs — no `<table>`, no `<th scope>`, no
  * row/column association — so a screen reader was handed an undifferentiated run of
  * text with no way to tell which cell belonged to which plan. There was not a single
- * `<table>` element in the whole marketing app. The Team column stays tinted, and the
+ * `<table>` element in the whole marketing app. The Pro column stays tinted, and the
  * group headers keep their spacer cells so the tint runs unbroken down the column.
  */
 function Matrix({ teamPriceLabel, query, onQuery }: { teamPriceLabel: string; query: string; onQuery: (q: string) => void }) {
@@ -335,23 +338,40 @@ function Matrix({ teamPriceLabel, query, onQuery }: { teamPriceLabel: string; qu
 						{matchCount} {matchCount === 1 ? "feature matches" : "features match"}
 					</p>
 				</div>
-				<div className="overflow-hidden rounded-lg border border-border bg-surface">
-					<Table className="min-w-[720px]">
+				{/* `overflow-clip`, not `overflow-hidden`: both round the corners, but
+				    `hidden` makes this box a scroll container, which would trap the
+				    sticky header below. `clip` does not, so the header sticks to the page. */}
+				<div className="overflow-clip rounded-lg border border-border bg-surface">
+					{/* No `scroll` and no min-width — that pair was the cause of both
+					    scrollbars. `scroll` made the wrapper `overflow-x: auto`, which per spec
+					    forces `overflow-y: auto` too, and every row's clamp marks are a box
+					    `--cl-gap` outside the row, resting at `--cl-reach` scale — so the
+					    wrapper overflowed on both axes and scrolled both ways even on a wide
+					    screen. The default wrapper clips instead and scrolls nothing.
+					    It fits a 375px phone without scrolling: below `md` the cells lose most
+					    of their padding and the values drop a size, and the feature column
+					    wraps — anywhere, as a last resort — so the three plan columns always
+					    get their full width and none of them is clipped. */}
+					<Table>
 						<caption className="sr-only">
 							Alethia plan comparison — features by plan
 						</caption>
-						<TableHeader>
+						{/* Sticky against the page, below the site header: the header is the
+						    frame inset, a 1px top pad, a 62px row and a 1px rule. */}
+						<TableHeader className="sticky top-[calc(var(--frame-inset)+64px)] z-[var(--z-sticky-head)]">
 							<TableRow className="border-border bg-surface-muted hover:bg-surface-muted">
-								<TableHead scope="col" className="px-[18px] py-4">
+								<TableHead scope="col" className="px-2 py-4 md:px-[18px]">
 									<span style={{ ...eyebrow, fontSize: 9 }}>Plan</span>
 								</TableHead>
 								{PLAN_CATALOG.map((p, i) => (
 									<TableHead
 										key={p.id}
 										scope="col"
-										className={cn("border-l border-border-faint px-3 py-3.5 text-center", colClass(i))}
+										className={cn("border-l border-border-faint px-1.5 py-3.5 text-center whitespace-normal md:px-3", colClass(i))}
 									>
-										<span style={{ ...disp, fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>{p.name}</span>
+										<span className="text-[13px] md:text-[14px]" style={{ ...disp, fontWeight: 600, color: "var(--text-primary)" }}>
+											{p.name}
+										</span>
 										<span style={{ ...mono, fontSize: 10, color: "var(--text-tertiary)", display: "block", marginTop: 3 }}>
 											{priceFor(p.id, p.priceLabel)}
 										</span>
@@ -362,7 +382,7 @@ function Matrix({ teamPriceLabel, query, onQuery }: { teamPriceLabel: string; qu
 						{groups.map((group) => (
 							<TableBody key={group.label}>
 								<TableRow className="border-border-faint bg-surface-sunken hover:bg-surface-sunken">
-									<TableHead scope="colgroup" className="px-[18px] py-2.5">
+									<TableHead scope="colgroup" className="px-2 py-2.5 whitespace-normal md:px-[18px]">
 										<span style={{ ...eyebrow, fontSize: 9 }}>{group.label}</span>
 									</TableHead>
 									{/* Spacer cells, not a colspan: the popular column's tint has to
@@ -373,11 +393,14 @@ function Matrix({ teamPriceLabel, query, onQuery }: { teamPriceLabel: string; qu
 								</TableRow>
 								{group.rows.map((row) => (
 									<TableRow key={row[0]} className="border-border-faint">
-										<TableHead scope="row" className="px-[18px] py-[11px] text-[12.5px] font-normal text-text-secondary">
+										<TableHead
+											scope="row"
+											className="px-2 py-[11px] text-[12px] font-normal whitespace-normal text-text-secondary max-md:[overflow-wrap:anywhere] md:px-[18px] md:text-[12.5px]"
+										>
 											{row[0]}
 										</TableHead>
 										{[1, 2, 3].map((c) => (
-											<TableCell key={c} className={cn("border-l border-border-faint px-3 py-[11px]", colClass(c - 1))}>
+											<TableCell key={c} className={cn("border-l border-border-faint px-1.5 py-[11px] whitespace-normal md:px-3", colClass(c - 1))}>
 												<MatrixCell value={row[c as 1 | 2 | 3]} head={c - 1 === POP_COL} />
 											</TableCell>
 										))}
@@ -392,33 +415,24 @@ function Matrix({ teamPriceLabel, query, onQuery }: { teamPriceLabel: string; qu
 	);
 }
 
-/* ============ Open-core band ============ */
-/** Open-core messaging — free, self-hostable, AGPL. */
+/* ============ Open-core line ============ */
+/**
+ * One line and one link. The star button and the feature list that used to sit
+ * here live on /open-source, which is where a reader who cares about them goes.
+ */
 function OpenCore() {
 	return (
-		<section style={{ padding: "72px 0", borderTop: "1px solid var(--border)", background: "var(--surface-sunken)" }}>
+		<section className="py-14" style={{ borderTop: "1px solid var(--border)" }}>
 			<Wrap>
-				<div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)", padding: "40px 36px", display: "grid", gridTemplateColumns: "1fr auto", gap: 32, alignItems: "center" }} className="ah-surface">
-					<div>
-						<div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, color: "var(--text-primary)" }}>
-							<AlethiaMark size={26} /><span style={{ ...eyebrow }}>Open core</span>
-						</div>
-						<h2 style={{ ...disp, fontSize: 30, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 12px", color: "var(--text-primary)" }}>
-							Free forever. Run it in your own cloud.
-						</h2>
-						<p style={{ fontSize: 15, color: "var(--text-tertiary)", lineHeight: 1.6, margin: 0, maxWidth: 620 }}>
-							The complete single-tenant product is open source under AGPL-3.0 — full provisioning, the Project designer, GitOps, the AI agent, and community RBAC. The paid tiers add multi-member organizations, SSO, custom roles, and audit export.
-						</p>
-					</div>
-					<div style={{ display: "flex", flexDirection: "column", gap: 10 }} className="ah-hide-sm">
-						<Button variant="outline" nativeButton={false} render={<a href="https://github.com/alethialabs-io/alethialabs" target="_blank" rel="noopener noreferrer" />}>
-							<ProviderIcon provider="github" size={15} />Star on GitHub
-						</Button>
-						<Button variant="outline" nativeButton={false} render={<Link href="/docs" />}>
-							<Icon k="book" size={15} />Read the docs
-						</Button>
-					</div>
-				</div>
+				<p className="m-0 flex flex-wrap items-baseline gap-x-4 gap-y-2 text-ui-md text-text-secondary">
+					<span>The single-tenant core is open source under AGPL-3.0.</span>
+					<Link
+						href="/open-source"
+						className="vx-clamp vx-clamp--tight text-text-primary no-underline transition-colors hover:text-text-secondary"
+					>
+						Open source ›
+					</Link>
+				</p>
 			</Wrap>
 		</section>
 	);
@@ -426,10 +440,10 @@ function OpenCore() {
 
 /* ============ FAQ ============ */
 const FAQ: { q: string; a: string }[] = [
-	{ q: "Is the free tier really free?", a: "Yes. The core is open source under AGPL-3.0 — self-host it in your own cloud and pay nothing. It's a management layer over infrastructure you already own." },
-	{ q: "How does per-seat billing work?", a: "Team is billed per active member of your organization, monthly through Stripe. Add or remove seats as your team changes." },
-	{ q: "Can I self-host the paid features?", a: "Enterprise includes a self-managed license, so you can run the full governance feature set — SSO, custom roles, audit — in your own environment." },
-	{ q: "Do you store my cloud credentials?", a: "On AWS, GCP and Azure, no — the runner mints short-lived federated credentials per job and no access key is written to disk or held in our database. Hetzner has no federation, so a scoped API token is stored encrypted at rest and decrypted only for the job. Run a self-managed runner there and the token never reaches us at all." },
+	{ q: "Is the free tier really free?", a: "Yes. The core is open source under AGPL-3.0, so you can self-host it in your own cloud and pay nothing." },
+	{ q: "How does per-seat billing work?", a: "Pro is billed per active member of your organization, monthly through Stripe. Seats follow your team as it changes." },
+	{ q: "Can I self-host the paid features?", a: "Yes, with Enterprise. It includes a self-managed license for SSO, custom roles and audit in your own environment." },
+	{ q: "Do you store my cloud credentials?", a: "On AWS, GCP and Azure, no: the runner mints short-lived federated credentials per job, and no access key is written to disk or held in our database. Hetzner has no federation, so a scoped API token is stored encrypted at rest and decrypted only for the job — run a self-managed runner there and it never reaches us at all." },
 ];
 
 /**
@@ -484,25 +498,24 @@ function PricingClose() {
 			line="Start free. Upgrade when your team does."
 			ctas={[
 				{ label: "Get started", href: "/signup" },
-				{ label: "Talk to sales", href: SALES, variant: "outline" },
+				{ label: "Contact", href: CONTACT_DEMO, variant: "outline" },
 			]}
 		/>
 	);
 }
 
 interface PricingProps {
-	/** Team per-seat label per currency, read live from Stripe (catalog fallback). */
+	/** Pro (id `team`) per-seat label per currency, read live from Stripe (catalog fallback). */
 	teamPrice: Record<SupportedCurrency, string>;
 	/** Currency to show first (from the visitor's region); the toggle overrides. */
 	initialCurrency: SupportedCurrency;
 }
 
-/** A small USD/EUR segmented toggle for the pricing page. */
 /**
  * Public pricing page body (between Header/Footer). Tiers come from PLAN_CATALOG — the
  * same source of truth as the in-app billing picker — so marketing never drifts from the
  * enforced entitlement ladder. The EUR/USD toggle (defaulted from the visitor's region)
- * switches the Team per-seat label.
+ * switches the Pro per-seat label.
  */
 export function Pricing({ teamPrice, initialCurrency }: PricingProps) {
 	const [currency, setCurrency] = useState<SupportedCurrency>(initialCurrency);

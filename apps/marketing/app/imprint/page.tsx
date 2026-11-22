@@ -8,7 +8,7 @@ import { LegalShell } from "@/components/legal/legal-shell";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-	title: "Company information · Alethia",
+	title: "Company information",
 	description: "Registered company and contact information for Alethia Labs.",
 };
 

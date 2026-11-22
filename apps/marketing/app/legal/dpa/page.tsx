@@ -7,7 +7,7 @@ import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
-	title: "Data Processing Addendum · Alethia",
+	title: "Data Processing Addendum",
 	description: "Alethia's GDPR data-processing terms for business customers.",
 };
 

@@ -13,7 +13,7 @@ import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
-	title: "Consumer rights · Alethia",
+	title: "Consumer rights",
 	description:
 		"Your statutory rights when buying Alethia as a consumer: the 14-day withdrawal right, what it costs, and where to take a dispute.",
 };

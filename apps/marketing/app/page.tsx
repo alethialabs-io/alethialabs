@@ -4,12 +4,8 @@
 import { MarketingHome } from "@/components/landing/home/marketing-home";
 
 /**
- * Alethia Labs public home page.
- *
- * Four moves: an asymmetric hero, the clouds it provisions into, three bands
- * (console, CLI, receipt), and a close. No scrollytelling, no numbered beats,
- * no client islands — the previous comment here described a ten-section version
- * that no longer exists.
+ * Alethia Labs public home page: a statement, the film, the latest three releases and four
+ * blog posts. The structure and the feeds are described on `MarketingHome`.
  */
 export default async function HomePage() {
 	return <MarketingHome />;

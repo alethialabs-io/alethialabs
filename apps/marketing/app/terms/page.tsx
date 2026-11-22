@@ -7,7 +7,7 @@ import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
-	title: "Terms of Service · Alethia",
+	title: "Terms of Service",
 	description: "Terms governing use of Alethia's hosted service.",
 };
 
