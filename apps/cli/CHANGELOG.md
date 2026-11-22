@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.11.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.10.0...cli-v0.11.0) (2026-11-22)
+
+
+### Features
+
+* **cli:** --debug prints the API request log, every request names the CLI build ([#6996](https://github.com/alethialabs-io/alethialabs/issues/6996)) ([#7097](https://github.com/alethialabs-io/alethialabs/issues/7097)) ([d73347f](https://github.com/alethialabs-io/alethialabs/commit/d73347f9b7144e80a3dd22610515648f0afc5e23))
+* **cli:** a command registry, grouped help and capability switches ([#6845](https://github.com/alethialabs-io/alethialabs/issues/6845)) ([#6979](https://github.com/alethialabs-io/alethialabs/issues/6979)) ([69d67a9](https://github.com/alethialabs-io/alethialabs/commit/69d67a937f4276323da033b14c339709dfe5683a))
+* **cli:** dynamic shell completion for project, environment, runner, cluster and org names ([#6858](https://github.com/alethialabs-io/alethialabs/issues/6858)) ([#7084](https://github.com/alethialabs-io/alethialabs/issues/7084)) ([14d020a](https://github.com/alethialabs-io/alethialabs/commit/14d020a74922f8b7d46930a684b1a71806ce238a))
+* **cli:** fleet set takes --dry-run and reports the request it would send ([#7109](https://github.com/alethialabs-io/alethialabs/issues/7109)) ([#7112](https://github.com/alethialabs-io/alethialabs/issues/7112)) ([b3d03ae](https://github.com/alethialabs-io/alethialabs/commit/b3d03ae90f74a08e21d604b0e3a5aa2dfc32723d))
+* **cli:** jobs, clusters and verify report through one writer with typed exits ([#6850](https://github.com/alethialabs-io/alethialabs/issues/6850)) ([#7020](https://github.com/alethialabs-io/alethialabs/issues/7020)) ([21922b5](https://github.com/alethialabs-io/alethialabs/commit/21922b5e430a1184a29062e973c30e9e233ae5ab))
+* **cli:** keep the sign-in in the system keychain, add auth status, and finish login, logout and whoami ([#6856](https://github.com/alethialabs-io/alethialabs/issues/6856)) ([#7034](https://github.com/alethialabs-io/alethialabs/issues/7034)) ([50a0a9d](https://github.com/alethialabs-io/alethialabs/commit/50a0a9db9affcc0b5d13bd30b409242e8568dd73))
+* **cli:** one output writer, resolved modes and a typed job wait ([#6844](https://github.com/alethialabs-io/alethialabs/issues/6844)) ([#6961](https://github.com/alethialabs-io/alethialabs/issues/6961)) ([3d7b90c](https://github.com/alethialabs-io/alethialabs/commit/3d7b90cbbbf4c3b365f33a7cad6751184560f7ea))
+* **cli:** ops is listed only behind ALETHIA_OPS, its two inert verbs never, and every verb reports through one writer ([#6853](https://github.com/alethialabs-io/alethialabs/issues/6853)) ([#7083](https://github.com/alethialabs-io/alethialabs/issues/7083)) ([6d5819b](https://github.com/alethialabs-io/alethialabs/commit/6d5819b343b75ef7a2c2bd17171b9f8c58d25742))
+* **cli:** the clouds family reports through one result shape and names only offered clouds ([#6848](https://github.com/alethialabs-io/alethialabs/issues/6848)) ([#7019](https://github.com/alethialabs-io/alethialabs/issues/7019)) ([c2476b8](https://github.com/alethialabs-io/alethialabs/commit/c2476b853fddeb84201cccc92f0becc7f6587f03))
+* **cli:** the first-run commands report a result, classify every refusal, and up checks for a runner ([#6846](https://github.com/alethialabs-io/alethialabs/issues/6846)) ([#7018](https://github.com/alethialabs-io/alethialabs/issues/7018)) ([35e854a](https://github.com/alethialabs-io/alethialabs/commit/35e854af5bffc7a9183c5c70bec4a80886795f77))
+* **cli:** the governance family reports through one writer, with typed exits, dry runs and confirmed removals ([#6851](https://github.com/alethialabs-io/alethialabs/issues/6851)) ([#7077](https://github.com/alethialabs-io/alethialabs/issues/7077)) ([5537d5c](https://github.com/alethialabs-io/alethialabs/commit/5537d5cd506f8308d493c7de0c9ce42d088ea8f7))
+* **cli:** the manifest family reports through one writer, with typed exits and a published alethia.yaml schema ([#6931](https://github.com/alethialabs-io/alethialabs/issues/6931)) ([#7062](https://github.com/alethialabs-io/alethialabs/issues/7062)) ([3b345ea](https://github.com/alethialabs-io/alethialabs/commit/3b345ea3c9052dc73d509880afa714fcfda6a3ef))
+* **cli:** the project family reports through one writer with typed exits ([#6847](https://github.com/alethialabs-io/alethialabs/issues/6847)) ([#7033](https://github.com/alethialabs-io/alethialabs/issues/7033)) ([88aa6c2](https://github.com/alethialabs-io/alethialabs/commit/88aa6c2053a86feb74110af4246f895f556a1ba4))
+* **cli:** the reads, BYO and add-on family reports through one writer, with typed exits ([#6852](https://github.com/alethialabs-io/alethialabs/issues/6852)) ([#7086](https://github.com/alethialabs-io/alethialabs/issues/7086)) ([8007a8c](https://github.com/alethialabs-io/alethialabs/commit/8007a8cbcbf9a6587d2bae81421007bd2dc11e8e))
+* **cli:** the runners family reports through one writer, with typed exits and a first-runner path that works ([#6849](https://github.com/alethialabs-io/alethialabs/issues/6849)) ([#7060](https://github.com/alethialabs-io/alethialabs/issues/7060)) ([a6e866e](https://github.com/alethialabs-io/alethialabs/commit/a6e866e2bb701531fcf5d16b9111b6ea9757b252))
+* **cli:** typed errors, one exit table and a stderr-only fatal path ([#6789](https://github.com/alethialabs-io/alethialabs/issues/6789)) ([ea30860](https://github.com/alethialabs-io/alethialabs/commit/ea30860cd8ba05c616de5485b9e74daab45b049a)), closes [#6770](https://github.com/alethialabs-io/alethialabs/issues/6770)
+* **console:** remove the organization Defaults section; alethia org settings stops showing the deprecated defaults ([#7147](https://github.com/alethialabs-io/alethialabs/issues/7147)) ([#7149](https://github.com/alethialabs-io/alethialabs/issues/7149)) ([cb2c295](https://github.com/alethialabs-io/alethialabs/commit/cb2c295948b78ca004136982d055d107ab280711))
+
+
+### Bug Fixes
+
+* **cli:** name Mark as destroyed beside redeploy and tear down for a missing cluster ([#7029](https://github.com/alethialabs-io/alethialabs/issues/7029)) ([bdff479](https://github.com/alethialabs-io/alethialabs/commit/bdff47908c9422e5e81b235c210c3da3df136aea))
+* **console:** show the cluster and environment status the console has actually observed ([#6736](https://github.com/alethialabs-io/alethialabs/issues/6736)) ([#6739](https://github.com/alethialabs-io/alethialabs/issues/6739)) ([2662af9](https://github.com/alethialabs-io/alethialabs/commit/2662af9c94f7512053fe5ff8506153044242a2c8))
+
 ## [0.10.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.9.0...cli-v0.10.0) (2026-11-12)
 
 
