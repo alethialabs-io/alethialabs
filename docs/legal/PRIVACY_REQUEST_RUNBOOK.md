@@ -8,10 +8,19 @@ Target response: one month from receipt
 
 ## Intake
 
-1. Create an entry in the restricted privacy-request register with an internal
-   id, receipt date, requester, request type, jurisdiction, systems, owner,
-   deadline, verification status, actions, exceptions, response date and
-   evidence location.
+1. Record the request as a privacy case. The console keeps cases in
+   `privacy_case`, with every step appended to `privacy_case_event` (WORM in
+   `apps/console/lib/db/programmables.sql`); the response clock is stored at
+   receipt. A signed-in user who presses **Delete account** in the account
+   settings opens an erasure case themselves (`requestMyErasure` in
+   `apps/console/app/server/actions/privacy/self-serve.ts`), recorded as
+   session-verified, and the privacy inbox is emailed. A request that arrives
+   by email is opened with `openPrivacyCase` in
+   `apps/console/app/server/actions/privacy/cases.ts`. No console or admin
+   screen calls `openPrivacyCase`, `verifyPrivacyCaseIdentity` or
+   `fulfilErasure` yet, so until one does, keep the details the case table
+   does not hold (jurisdiction, systems searched, evidence location) in the
+   restricted privacy-request register.
 2. Acknowledge promptly. Never copy the request or identity evidence into Git,
    issue trackers, analytics, or ordinary chat.
 3. Triage whether Alethia is controller. If a business customer is controller,
@@ -37,9 +46,16 @@ from the response bundle and delete it when no longer needed.
 - object storage and state objects
 - support cases and inbound/outbound email
 - Stripe customer, subscription, invoice and transaction records
-- configured telemetry provider, only if the requester consented
-- selected git, identity, cloud and AI providers where Alethia controls the data
-- encrypted backups, recorded for expiry rather than selectively rewritten
+- configured telemetry provider (PostHog EU), only if the requester consented,
+  and its operational logs
+- the AI provider (Anthropic by default) where Alethia sent the requester's
+  prompts, and the stored assistant conversations
+- Slack, if support notifications are configured (case subject only)
+- selected git, identity, cloud and connector providers where Alethia controls
+  the data
+- encrypted backups (Hetzner server backups and the off-box copy), recorded for
+  expiry rather than selectively rewritten; the erasure tombstone makes a
+  restore replay the deletion
 
 Use tenant-scoped access and the break-glass process where required. Export only
 the requester’s personal data, review third-party data and secrets, and provide
@@ -66,5 +82,5 @@ requester’s local authority. Complex or numerous requests may be extended by u
 to two months; notify the requester within the first month.
 
 Close only after every system and vendor action has evidence. Retain the
-minimal request log for three years to demonstrate handling, unless counsel
-sets a different period.
+minimal request log for three years to demonstrate handling. There is no counsel
+to set a different period (decision of 2026-11-17); a change is the maintainer's.

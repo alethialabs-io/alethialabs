@@ -16,11 +16,28 @@ describe("processing registry", () => {
 			"posthog",
 			"stripe",
 			"aws-ses",
+			"anthropic",
 			"customer-cloud",
 			"customer-git",
 			"customer-connector",
-			"customer-ai-endpoint",
 		]);
+	});
+
+	// The hosted assistant runs on Alethia's own Anthropic key with Anthropic default models; the
+	// customer configures no endpoint. So the model provider is Alethia's subprocessor and must be
+	// listed as one, and the register must not describe a customer-chosen AI endpoint the hosted
+	// product does not offer.
+	it("registers the default AI model provider as Alethia's subprocessor", () => {
+		const anthropic = PROCESSING_PARTIES.find((p) => p.id === "anthropic");
+		expect(anthropic?.status).toBe("active");
+		expect(anthropic?.role).toBe("subprocessor");
+		expect(anthropic?.purposes.map((p) => p.name).join(" ")).toMatch(
+			/only while the assistant is switched on/,
+		);
+		const customerAi = CUSTOMER_DIRECTED_PARTIES.filter((p) =>
+			/\b(ai|model)\b/i.test(`${p.id} ${p.name}`),
+		);
+		expect(customerAi.map((p) => p.id)).toEqual([]);
 	});
 
 	it("never publishes an inactive or merely planned party", () => {

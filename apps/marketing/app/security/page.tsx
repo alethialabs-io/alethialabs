@@ -19,7 +19,7 @@ export const metadata: Metadata = {
  * "Last updated", a middle dot, then a long date closed by a double quote — so it stays one string
  * literal in that exact shape, and no other text in this file may spell that prefix.
  */
-const LAST_UPDATED = "Last updated · November 21, 2026";
+const LAST_UPDATED = "Last updated · November 22, 2026";
 
 /** One cloud's row in the ledger. `holdsNothing` marks the clouds where nothing is stored. */
 interface LedgerRow {
@@ -85,8 +85,9 @@ export default function SecurityPage() {
 				</TableBox>
 				<div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
 					<Card label="What we do hold">
-						One signing key for our identity provider. The private half never leaves the control
-						plane; the public keys are published.
+						The signing key for our identity provider: the private half never leaves the control
+						plane, and the public keys are published. We also hold the credentials you give us
+						for the git provider and the connectors you choose to connect.
 					</Card>
 					<Card label="Certifications">
 						No SOC 2 or ISO 27001 today, and we will not imply otherwise. The code is open for you
