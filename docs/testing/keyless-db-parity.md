@@ -59,7 +59,7 @@ the symbol.
 
 ### The security row is two different claims
 
-The static gate is real and required (`.github/workflows/capabilities-security.yml`), and it does
+The static gate is real and required (the `capabilities-security` job in `.github/workflows/ci.yml`), and it does
 reach the keyless sources. But it decides **four deterministic invariants** (its header, A–D): RLS
 registration of a new `cloud_capability_*` table, a `provider` filter on queries against one, no
 `as any` / `as unknown as`, and no static credentials (`AKIA…` access-key ids, embedded PEMs). Only
