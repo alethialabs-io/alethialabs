@@ -65,7 +65,7 @@ const COPY: Record<
 > = {
 	login: {
 		eyebrow: "Welcome back",
-		title: "Log in to Alethia",
+		title: "Sign in to Alethia",
 		sub: "Your clusters are where you left them.",
 		emailEyebrow: "Sign in",
 		emailTitle: "Sign in with email",
@@ -80,6 +80,38 @@ const COPY: Record<
 		verifyCta: "Create account",
 	},
 };
+
+/**
+ * The query parameter that records "the code step is open" (R6 A-25). With `email` beside it, a
+ * refresh on "Enter your code" reopens that step for that address instead of dropping the person
+ * back on the provider grid with a code in their inbox and nowhere to type it.
+ */
+export const CODE_STEP_PARAM = "step";
+
+/**
+ * The query string of `current` with the code step recorded for `email`, or cleared when `email` is
+ * null. Every other parameter (`next`, an invitation's token, …) is kept as it was.
+ */
+export function codeStepSearch(current: string, email: string | null): string {
+	const params = new URLSearchParams(current);
+	if (email === null) {
+		params.delete(CODE_STEP_PARAM);
+	} else {
+		params.set("email", email);
+		params.set(CODE_STEP_PARAM, "code");
+	}
+	const query = params.toString();
+	return query ? `?${query}` : "";
+}
+
+/**
+ * Writes the code step into the address bar without a navigation: `history.replaceState`, which the
+ * App Router observes, so nothing re-fetches and no history entry is added.
+ */
+function recordCodeStep(email: string | null): void {
+	const search = codeStepSearch(window.location.search, email);
+	window.history.replaceState(window.history.state, "", `${window.location.pathname}${search}`);
+}
 
 /** Resend cooldown (seconds) — escalates with each resend (30s → 1m → 2m → 5m);
  *  the last value repeats. Guards against spamming the code-send endpoint. */
@@ -487,7 +519,15 @@ export function AuthForm({ mode }: AuthFormProps) {
 		return hinted && arrayIncludes(OAUTH_PROVIDERS, hinted) ? hinted : null;
 	});
 
-	const [step, setStep] = useState<Step>(prefillEmail ? "email" : "providers");
+	// A recorded code step (`?email=…&step=code`, written when the code was sent) reopens on the code
+	// field, so a refresh there keeps the person where they were (A-25).
+	const [step, setStep] = useState<Step>(
+		prefillEmail && searchParams.get(CODE_STEP_PARAM) === "code"
+			? "code"
+			: prefillEmail
+				? "email"
+				: "providers",
+	);
 	const [isLoading, setIsLoading] = useState(hintedProvider !== null);
 	const [loadingProvider, setLoadingProvider] = useState<string | null>(hintedProvider);
 
@@ -737,6 +777,9 @@ export function AuthForm({ mode }: AuthFormProps) {
 			track("signup_email_requested", { mode });
 			setCode("");
 			setStep("code");
+			// Not on an OAuth resume: there the whole query string is the authorize request, handed
+			// back to the authorize endpoint verbatim, and must not carry this form's own keys.
+			if (!isOAuthResume) recordCodeStep(values.email.trim());
 			setResendCount(0);
 			armCooldown(0);
 		} finally {
@@ -836,6 +879,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 	/** Back to the email step, clearing the half-typed code and any stale error. */
 	const backToEmail = () => {
 		setStep("email");
+		if (!isOAuthResume) recordCodeStep(null);
 		setCode("");
 		setError(null);
 	};

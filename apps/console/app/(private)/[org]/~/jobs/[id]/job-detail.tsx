@@ -8,6 +8,7 @@ import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { RegionError } from "@/components/errors/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { ClockSlot, JOB_TYPES, JobDuration, RelativeTime } from "@/components/jobs/columns";
+import { JobNotFoundState } from "@/components/jobs/job-not-found-state";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 // `FactList`/`Fact` are the console's ONE label-and-value list. They live under `settings/usage`
 // because that is where they were first needed, and this page is their second consumer — which is
@@ -32,14 +33,13 @@ import {
 	CollapsibleTrigger,
 } from "@repo/ui/collapsible";
 import { DisabledReason } from "@repo/ui/disabled-reason";
-import { EmptyState } from "@repo/ui/empty";
 import { PageToolbar } from "@repo/ui/page-toolbar";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { TooltipProvider } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
 import { type QueryKey, useQuery } from "@tanstack/react-query";
-import { Ban, ChevronRight, Loader2, RefreshCw, Rocket, SearchX, XCircle } from "lucide-react";
+import { Ban, ChevronRight, Loader2, RefreshCw, Rocket, XCircle } from "lucide-react";
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -274,34 +274,9 @@ export function JobDetail({
 	}
 
 	if (!job) {
-		// The bare "Job not found." paragraph this replaces was the console's smallest empty state
-		// and its least useful: a slug someone pasted wrong, an org they are no longer in and a job
-		// that was deleted all rendered the same four words with nowhere to go from them. The
-		// SENTENCE IS KEPT VERBATIM, trailing full stop and all, because `deploy-jobs.negative.spec`
-		// asserts it exactly — this issue's scope is the component these states are built from, not
-		// the words in them, and quietly rewriting copy an out-of-scope spec pins is how a lane
-		// lands green and reds the QA run instead.
-		return (
-			<EmptyState
-				className="min-h-[50dvh]"
-				icon={<SearchX />}
-				level={2}
-				title="Job not found."
-				description="This job has been deleted, or it belongs to an organization you are not a member of."
-				action={
-					// `render` + `nativeButton={false}`, not `asChild`: `@repo/ui/button` is base-ui,
-					// which has no `asChild` prop at all — it would not compile.
-					<Button
-						variant="outline"
-						size="sm"
-						nativeButton={false}
-						render={<Link href={`/${org}/~/jobs`} />}
-					>
-						Back to jobs
-					</Button>
-				}
-			/>
-		);
+		// The same state the route's `not-found.tsx` draws (D-25): one sentence and one way back,
+		// however the address was wrong. `deploy-jobs.negative.spec` pins the sentence and the link.
+		return <JobNotFoundState orgSlug={org} />;
 	}
 
 	return (

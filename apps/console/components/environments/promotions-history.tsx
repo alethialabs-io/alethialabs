@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The project's promotions, newest first, as a table: source → target, status, when it started and,
-// for one that stopped, why. The in-flight one has a View into the detail overlay. Every promotion
+// for one that stopped, why. The in-flight one — the promotion the page's detail overlay shows — has
+// a View into that overlay; no other row offers a View that would open something else (R6 D-29). Every promotion
 // the read returned is reachable — the table pages — where this used to show the newest eight and
 // say nothing about the rest.
 
@@ -15,20 +16,24 @@ import { DataTable } from "@/components/data-table";
 import type { PromotionRowView } from "@/lib/rpc/procedures/environments";
 import { promoStatus, RelativeStamp } from "./env-ui";
 
-const IN_FLIGHT = new Set(["PENDING_PLAN", "PENDING_APPROVAL", "APPROVED", "DEPLOYING"]);
-
 /** Promotions per page. */
 export const PROMOTIONS_PAGE_SIZE = 8;
 
-/** The promotions table. `envName` resolves an environment id to its name. */
+/**
+ * The promotions table. `envName` resolves an environment id to its name. `activeId` is the
+ * promotion the detail overlay shows (the project's in-flight one), or null; only its row has a
+ * View, and `onView` opens that overlay.
+ */
 export function PromotionsHistory({
 	promotions,
 	envName,
+	activeId,
 	onView,
 }: {
 	promotions: PromotionRowView[];
 	envName: (id: string) => string;
-	onView: (id: string) => void;
+	activeId: string | null;
+	onView: () => void;
 }) {
 	const columns = useMemo<ColumnDef<PromotionRowView>[]>(
 		() => [
@@ -74,16 +79,16 @@ export function PromotionsHistory({
 				header: () => <span className="sr-only">Actions</span>,
 				enableSorting: false,
 				cell: ({ row }) =>
-					IN_FLIGHT.has(row.original.status) ? (
+					row.original.id === activeId ? (
 						<div className="text-right">
-							<Button variant="ghost" size="sm" onClick={() => onView(row.original.id)}>
+							<Button variant="ghost" size="sm" onClick={onView}>
 								View
 							</Button>
 						</div>
 					) : null,
 			},
 		],
-		[envName, onView],
+		[envName, activeId, onView],
 	);
 	return <DataTable columns={columns} data={promotions} pageSize={PROMOTIONS_PAGE_SIZE} />;
 }

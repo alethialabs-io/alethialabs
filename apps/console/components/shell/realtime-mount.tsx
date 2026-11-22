@@ -53,6 +53,15 @@ export function RealtimeMount() {
 }
 
 /**
+ * Where the notice sits: centred just under the shell header. Toasts are bottom-centre
+ * (`app/layout.tsx`), and the notice used to be fixed bottom-centre on the same rung, so a toast and
+ * "Live updates paused" drew over each other. The header's own centre is the breadcrumb, so the
+ * notice hangs below it, offset by the header's height variable rather than a number of its own.
+ */
+export const CONNECTION_NOTICE_POSITION =
+	"pointer-events-none fixed top-[calc(var(--shell-header-h)+0.5rem)] left-1/2 z-[var(--z-toast)] -translate-x-1/2";
+
+/**
  * A deliberately minimal "live updates paused" notice. Its visual design is the maintainer's call
  * (#6115); this is the smallest thing that meets R7: visible, announced politely, on the toast rung.
  * The live region is always in the DOM so a screen reader hears the text when it appears.
@@ -77,7 +86,8 @@ function ConnectionIndicator() {
 		<div
 			role="status"
 			aria-live="polite"
-			className="pointer-events-none fixed bottom-4 left-1/2 z-[var(--z-toast)] -translate-x-1/2"
+			data-slot="realtime-notice"
+			className={CONNECTION_NOTICE_POSITION}
 		>
 			{text ? (
 				<span className="border border-border bg-background px-3 py-1.5 text-ui-sm text-text-secondary shadow-sm">

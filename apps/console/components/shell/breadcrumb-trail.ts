@@ -119,6 +119,13 @@ export const ANCESTOR_REDIRECTS: Record<
 	"support/cases": { trail: "support/my-cases", label: "My cases" },
 };
 
+/**
+ * The crumb of a job the resolver cannot name — one outside the shell's recent-jobs feed. It used to
+ * be the id's first eight characters and an ellipsis (`1a2b3c4d…`); the page itself names the job,
+ * so the crumb says what kind of page this is, as an unresolved case's crumb says "Case".
+ */
+export const UNRESOLVED_JOB_LABEL = "Job";
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** True when `seg` is a v4-shaped UUID — the console's id shape in a URL. */
@@ -149,8 +156,8 @@ function ancestorCrumb(base: string, rest: string[], j: number): Crumb {
  * The header trail for `pathname`.
  *
  * @param pathname  the current URL path
- * @param jobLabel  resolves a job UUID to its type label; ids it cannot resolve fall back to a
- *                  truncated form, exactly as the header did before the split
+ * @param jobLabel  resolves a job UUID to its type label; an id it cannot resolve reads "Job" —
+ *                  never a truncated id, which named nothing a person could recognise (S-15)
  * @param caseLabel resolves a support case UUID to its case number; a case it cannot resolve
  *                  reads "Case" — never the raw id
  */
@@ -182,7 +189,7 @@ export function buildCrumbs(
 						isLast ? { label: segmentLabel(s) } : ancestorCrumb(base, rest, j),
 					);
 				} else if (rest[j - 1] === "jobs") {
-					out.push({ label: jobLabel(s) ?? `${s.slice(0, 8)}…` });
+					out.push({ label: jobLabel(s) ?? UNRESOLVED_JOB_LABEL });
 				} else if (rest[j - 1] === "cases" && rest[j - 2] === "support") {
 					out.push({ label: caseLabel(s) ?? "Case" });
 				} else {
@@ -232,7 +239,7 @@ export function buildCrumbs(
 		}
 
 		if (isIdSegment(seg) && raw[i - 1] === "jobs") {
-			result.push({ label: jobLabel(seg) ?? `${seg.slice(0, 8)}…` });
+			result.push({ label: jobLabel(seg) ?? UNRESOLVED_JOB_LABEL });
 			i++;
 			continue;
 		}

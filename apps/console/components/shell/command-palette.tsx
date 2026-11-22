@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The global command palette behind the sidebar "Find…" box. Opens on click or the
-// ⌘K shortcut and searches navigable pages plus live resources (projects, jobs)
-// pulled from the same stores the rest of the shell uses. Selecting an entry navigates
+// ⌘K shortcut and searches the starting points of the common actions (create a project,
+// connect a cloud account, invite a member), navigable pages and live resources (projects,
+// jobs) pulled from the same stores the rest of the shell uses. Selecting an entry navigates
 // and closes. Mounted once by the AppShell.
 
-import { Box, ClipboardList, type LucideIcon } from "lucide-react";
+import { Box, ClipboardList, Cloud, type LucideIcon, Plus, UserPlus } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useMemo } from "react";
 import {
@@ -19,6 +20,7 @@ import {
 	CommandList,
 } from "@repo/ui/command";
 import { groupResults, useCommandSearch } from "@repo/ui/command-search";
+import { CLOUD_ACCOUNT, ORGANIZATION, PROJECT } from "@/lib/copy/vocabulary";
 import { JOB_TYPES } from "@/lib/jobs/format";
 import { settingsNavItemsForScope } from "@/components/settings/settings-nav-items";
 import {
@@ -34,17 +36,45 @@ import { useRecentJobsQuery } from "@/lib/query/use-jobs-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
 
-/** The palette's three groups, in the order they list for an empty search. */
-type PaletteGroup = "Pages" | "Projects" | "Jobs";
+/** The palette's four groups, in the order they list for an empty search. */
+type PaletteGroup = "Actions" | "Pages" | "Projects" | "Jobs";
 
 /** A flat, navigable palette entry. */
-interface PaletteEntry {
+export interface PaletteEntry {
 	group: PaletteGroup;
 	label: string;
 	href: string;
 	icon: LucideIcon;
 	/** Secondary muted text shown on the right (e.g. a job id). */
 	hint?: string;
+}
+
+/**
+ * The palette's Actions group: where each common action STARTS. Each entry navigates to the page
+ * that owns the action, which decides there whether the viewer may take it and says why not — the
+ * palette holds no permission of its own to get wrong (R6 S-07).
+ */
+export function paletteActions(orgSlug: string): PaletteEntry[] {
+	return [
+		{ group: "Actions", label: `Create a ${PROJECT.one}`, href: globalHref(orgSlug, "new"), icon: Plus },
+		{
+			group: "Actions",
+			label: `Connect a ${CLOUD_ACCOUNT.one}`,
+			href: `${globalHref(orgSlug, "connectors")}?type=cloud`,
+			icon: Cloud,
+		},
+		{
+			group: "Actions",
+			label: `Invite an ${ORGANIZATION.one} member`,
+			href: globalHref(orgSlug, "settings/members"),
+			icon: UserPlus,
+		},
+	];
+}
+
+/** A job's palette label: its type, and the project it ran for when it has one. */
+export function paletteJobLabel(typeLabel: string, projectName: string | null | undefined): string {
+	return projectName ? `${typeLabel} · ${projectName}` : typeLabel;
 }
 
 /**
@@ -124,20 +154,22 @@ export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean 
 		return out;
 	}, [projects, orgSlug]);
 
-	// Live jobs.
+	// Live jobs, named by what ran and where — "Deploy · Shop" — so two deploys are told apart by
+	// their project rather than only by an id fragment. The id stays as the hint.
 	const jobEntries = useMemo<PaletteEntry[]>(() => {
 		return jobs.map((j) => ({
 			group: "Jobs",
-			label: JOB_TYPES[j.job_type]?.label ?? String(j.job_type),
+			label: paletteJobLabel(JOB_TYPES[j.job_type]?.label ?? String(j.job_type), j.project_name),
 			href: globalHref(orgSlug, `jobs/${j.id}`),
 			icon: ClipboardList,
 			hint: j.id.slice(0, 8),
 		}));
 	}, [jobs, orgSlug]);
 
+	const actions = useMemo(() => paletteActions(orgSlug), [orgSlug]);
 	const entries = useMemo(
-		() => [...pages, ...projectEntries, ...jobEntries],
-		[pages, projectEntries, jobEntries],
+		() => [...actions, ...pages, ...projectEntries, ...jobEntries],
+		[actions, pages, projectEntries, jobEntries],
 	);
 	// Ranked by the shared ranker (exact > prefix > word start > substring), so the best match is
 	// listed first and its group leads.
@@ -162,7 +194,7 @@ export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean 
 			onSearchChange={onSearchChange}
 			filteredItems={groups.flatMap((g) => g.items)}
 		>
-			<CommandInput placeholder="Search pages, projects, jobs…" />
+			<CommandInput placeholder="Search actions, pages, projects, jobs…" />
 			<CommandList>
 				<CommandEmpty>No results found.</CommandEmpty>
 				{groups.map(({ group, items }) => (

@@ -38,7 +38,7 @@ vi.mock("next/navigation", () => ({
 
 import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { type OverviewState, overviewProjectsInput } from "@/components/overview/overview-state";
-import { ProjectsGrid } from "@/components/overview/projects-grid";
+import { PROJECTS_RENDER_STEP, ProjectsGrid } from "@/components/overview/projects-grid";
 import { useOverviewProjects } from "@/components/overview/use-overview-projects";
 import type { OverviewProjects } from "@/lib/rpc/procedures/overview";
 import { useProjectsStore } from "@/lib/stores/use-projects-store";
@@ -308,5 +308,25 @@ describe("ProjectsGrid — live", () => {
 			expect(screen.queryByText(/Live updates are disconnected/)).not.toBeInTheDocument();
 			unmount();
 		}
+	});
+});
+
+// R6 B-30: the read answers every project, so the grid draws them a page at a time.
+describe("ProjectsGrid — a large organization", () => {
+	it("draws one page of projects, then the rest a page per press of Show more", () => {
+		const total = PROJECTS_RENDER_STEP * 2 + 3;
+		const projects = Array.from({ length: total }, (_, i) => makeProject(`p${i}`, `proj-${i}`));
+		renderAnswered(makeGrid(projects));
+		expect(screen.getAllByRole("link", { name: /^Open proj-/ })).toHaveLength(PROJECTS_RENDER_STEP);
+		fireEvent.click(screen.getByRole("button", { name: `Show ${PROJECTS_RENDER_STEP} more of ${total - PROJECTS_RENDER_STEP}` }));
+		expect(screen.getAllByRole("link", { name: /^Open proj-/ })).toHaveLength(PROJECTS_RENDER_STEP * 2);
+		fireEvent.click(screen.getByRole("button", { name: "Show 3 more of 3" }));
+		expect(screen.getAllByRole("link", { name: /^Open proj-/ })).toHaveLength(total);
+		expect(screen.queryByRole("button", { name: /^Show \d+ more/ })).toBeNull();
+	});
+
+	it("offers no Show more when every project fits", () => {
+		renderAnswered(makeGrid([makeProject("p1", "proj-1")]));
+		expect(screen.queryByRole("button", { name: /^Show \d+ more/ })).toBeNull();
 	});
 });
