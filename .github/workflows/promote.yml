@@ -1,0 +1,104 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+name: Promote
+# OPENS THE dev → main PROMOTION PR, FROM ONE PINNED, ALREADY-GREEN dev COMMIT.
+#
+# The standing `dev → staging` promotion PR had `dev` as its HEAD, so every queue merge into dev
+# was a `synchronize` on it and restarted ~9 workflows (220 cancelled runs in 2026-11-15→22), and
+# its ~50-minute release gate never finished before dev moved again (#7196: open all day, 99
+# commits). `staging` deployed nothing. The maintainer's decision: drop the staging hop and promote
+# dev → main from a pinned SHA.
+#
+# So the head of a promotion PR is now `release/<12-char sha>`, a branch created at exactly that
+# commit and NEVER MOVED: its checks run once, to completion. scripts/ci/promote.mjs does the work
+# and its header carries the rules — which commit counts as green (a successful `CI` run on the same
+# commit or the same git tree, on a `pull_request` or `push` event), when an older promotion PR is
+# left alone (still running, or green and waiting for its merge) and when it is closed as superseded
+# (red).
+#
+# WHAT GATES THE MERGE IS UNCHANGED: every required check on `main` (protect-main), all seven
+# `Release gate (<leg>)` contexts (release-gate.yml runs on every non-draft PR into main), the
+# `branch-flow-guard` check (which now admits a `release/*` head only when its commit is on dev),
+# `.claude/hooks/guard-merge.sh` for an agent's merge, and deploy-console.yml's receipt after it.
+#
+# THE APP TOKEN IS LOAD-BEARING. A branch or PR created with GITHUB_TOKEN raises events that do not
+# start workflow runs, so a promotion opened that way would never run its checks and could never go
+# green. The branch and the PR are therefore written with the alethia-labs-ci GitHub App token —
+# the same app release-please.yml uses — and guard-merge.sh requires a promotion PR's author to be
+# that app.
+#
+# NOT `pull_request`-triggered and never on a dev push, on purpose: a promotion is opened when one
+# is wanted (dispatch) or on a slow schedule, never as a side effect of the queue.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "A dev commit to promote. Empty picks the newest dev commit with a green CI run."
+        required: false
+        default: ""
+      force:
+        description: "Supersede an older promotion PR even if it is still running or green, and accept a sha with no green CI run."
+        type: boolean
+        required: false
+        default: false
+      dry_run:
+        description: "Report what would happen; create nothing."
+        type: boolean
+        required: false
+        default: false
+  # Twice on weekdays. A `schedule` runs the DEFAULT branch's copy of this file, so it starts once
+  # this file has reached `main`. Each run is a no-op while an older promotion is still running or is
+  # green and waiting for its merge, so the schedule cannot recreate the churn this file removes.
+  schedule:
+    - cron: "17 7,13 * * 1-5"
+
+# One promotion decision at a time, and never cancel one half-way through creating a branch or PR.
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read # list ci.yml's successful runs
+  checks: read # read an older promotion PR's checks
+  pull-requests: read # list the open promotion PRs
+
+jobs:
+  promote:
+    name: Open the promotion PR for a green dev commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # The full history of dev and main, without blobs: the script asks ancestry and tree questions
+      # only (`git log --format=%H %T`, `merge-base --is-ancestor`), never file contents.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Mint the GitHub App token (a GITHUB_TOKEN PR would never start its checks)
+        id: app-token
+        if: ${{ !inputs.dry_run }}
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: alethialabs
+
+      - name: Pick the commit and open the promotion PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WRITE_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          INPUT_SHA: ${{ inputs.sha }}
+          INPUT_FORCE: ${{ inputs.force }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet --filter=blob:none origin dev main
+          args=()
+          if [ -n "${INPUT_SHA:-}" ]; then args+=(--sha "$INPUT_SHA"); fi
+          if [ "${INPUT_FORCE:-}" = "true" ]; then args+=(--force); fi
+          if [ "${INPUT_DRY_RUN:-}" = "true" ]; then args+=(--dry-run); fi
+          node scripts/ci/promote.mjs "${args[@]}"

@@ -1,7 +1,7 @@
 # Mergify merge queue for the integration branch `dev`.
 #
 # Mergify reads THIS FILE ONLY FROM THE DEFAULT BRANCH (`main`) — config changes take effect only after they
-# reach main (via the dev→staging→main train), not from a PR's base branch. So iterate carefully.
+# reach main (via a pinned release/<sha> promotion, promote.yml), not from a PR's base branch. So iterate carefully.
 #
 # It REPLACES the native GitHub merge queue (the `merge_queue` rule was removed from the Terraform-managed
 # `protect-dev` ruleset, infra/github/main.tf). Why: the native queue re-ran required checks via the
@@ -163,7 +163,7 @@ queue_rules:
       # A plain `check-success=` on purpose: no `or:`, and no template braces in the value — Mergify
       # gives those a meaning inside conditions, and an invalid file stops the queue for everyone.
       - "check-success=BYO users SQL — real Postgres"
-    # SQUASH matches feature→dev convention (promotions dev→staging→main stay human `--merge`).
+    # SQUASH matches feature→dev convention (release/<sha> → main promotions stay a `--merge`, outside Mergify).
     merge_method: squash
 
 # Merge protections: `auto_merge_conditions` below only fires once a merge_protections rule's
