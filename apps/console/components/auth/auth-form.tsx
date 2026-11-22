@@ -34,7 +34,7 @@ import {
 	InputOTPGroup,
 	InputOTPSlot,
 } from "@repo/ui/input-otp";
-import { ArrowRight, KeyRound, Loader2 } from "lucide-react";
+import { ArrowRight, KeyRound, Loader2, Lock } from "lucide-react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
