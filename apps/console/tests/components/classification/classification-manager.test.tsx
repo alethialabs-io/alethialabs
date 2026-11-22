@@ -197,9 +197,8 @@ describe("keyboard reorder (F-29)", () => {
 		h.handlers["classification.dimensions"] = async () => [dimension("env", "Environment", ["dev", "prod"])];
 		renderManager();
 		const heading = await screen.findByRole("heading", { name: "Environment" });
-		const pane = heading.closest(".rounded-lg");
-		expect(pane).not.toBeNull();
-		if (!pane) return;
+		const pane = heading.closest<HTMLElement>(".rounded-lg");
+		if (!(pane instanceof HTMLElement)) throw new Error("the detail pane did not render");
 		expect(await within(pane).findByRole("button", { name: "Move dev down" })).toBeEnabled();
 		expect(within(pane).getByRole("button", { name: "Move prod down" })).toBeDisabled();
 	});
