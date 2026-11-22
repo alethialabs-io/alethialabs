@@ -29,7 +29,7 @@ alethia cloud inventory
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `[provider]` | No | `aws`, `gcp`, `azure`, `alibaba`, or `hetzner`. Omit for a picker. A cloud-identity id is still accepted. |
+| `[provider\|cloud-identity-id]` | No | `aws`, `gcp`, `azure`, or `hetzner`, or the id of one connection. Omit for a picker. |
 
 <Callout type="info">
 **No id to copy.** This command used to take a bare `<cloud-identity-id>` — an opaque token
@@ -38,14 +38,16 @@ does the lookup for you, and omitting the argument shows a picker. An id a scrip
 holds keeps working, byte for byte: an id is a lookup key, so nothing here rewrites one.
 
 Under `--no-input` there is no picker to show, so the argument is required and the refusal
-says which providers are valid. If two accounts are connected for the same provider, the
-command reports the ambiguity and lists their ids rather than guessing.
+says which providers are valid, with exit `9`. If two accounts are connected for the same
+provider, the command reports the ambiguity with exit `8` and lists their ids rather than
+guessing. A provider with no connected account exits `6` and names the command that connects one.
 </Callout>
 
 Renders a **Networks** table (network id, name, region, CIDR, default), a **Subnets** table
 (subnet id, name, region, AZ, CIDR, public), and a **Regions** line. Add `-o json` for the full
-inventory object; `-o csv` emits the networks rows. Prints `No cloud inventory discovered yet.`
-when the account hasn't been swept. Backing call: `GET /cli/cloud-identities/<id>/inventory`.
+inventory object; `-o csv` emits the networks rows. When the account hasn't been swept, the
+table form prints nothing on stdout and says `No cloud inventory discovered yet.` on stderr.
+Backing call: `GET /cli/cloud-identities/<id>/inventory`.
 
 ## See also
 

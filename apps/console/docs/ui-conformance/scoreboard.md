@@ -191,13 +191,13 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **H7** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H8** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H9** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
-| **F1** | F | `check-filter-standard` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
-| **F2** | F | `check-filter-standard` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
-| **F3** | F | `check-filter-standard` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
-| **F4** | F | `check-filter-standard` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
-| **F5** | F | `check-filter-standard` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
-| **F6** | F | `check-filter-standard` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
-| **F7** | F | `check-filter-standard` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
+| **F1** | F | `check-filter-standard` | 19 | 0 | 21 | 0 | 1.00 | `not-a-list-page` 21 |
+| **F2** | F | `check-filter-standard` | 19 | 0 | 21 | 0 | 1.00 | `not-a-list-page` 21 |
+| **F3** | F | `check-filter-standard` | 19 | 0 | 21 | 0 | 1.00 | `not-a-list-page` 21 |
+| **F4** | F | `check-filter-standard` | 19 | 0 | 21 | 0 | 1.00 | `not-a-list-page` 21 |
+| **F5** | F | `check-filter-standard` | 19 | 0 | 21 | 0 | 1.00 | `not-a-list-page` 21 |
+| **F6** | F | `check-filter-standard` | 19 | 0 | 21 | 0 | 1.00 | `not-a-list-page` 21 |
+| **F7** | F | `check-filter-standard` | 19 | 0 | 21 | 0 | 1.00 | `not-a-list-page` 21 |
 | **F8** | F | live — `interaction` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
 | **F9** | F | live — `interaction` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
 | **F10** | F | live — `interaction` | 15 | 0 | 25 | 0 | 1.00 | `no-search-field` 1, `not-a-list-page` 24 |
@@ -248,8 +248,8 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | `/[org]` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]` · | all N/A | 3/3 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 1 withheld of 44 |
 | `/[org]/[project]/architecture` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 4 withheld of 44 |
-| `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
-| `/[org]/[project]/environments` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
+| `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 7/7 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
+| `/[org]/[project]/environments` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 7/7 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]/jobs` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 1 withheld of 44 |
 | `/[org]/[project]/settings` · | all N/A | 2/2 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 1 withheld of 44 |
 | `/[org]/[project]/settings/access` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
@@ -258,7 +258,7 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | `/[org]/[project]/settings/preview` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]/usage` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
 | `/[org]/~/alerts` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
-| `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
+| `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 7/7 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/evidence` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/jobs` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 0 withheld of 44 |
@@ -292,7 +292,7 @@ the console errors it produces and the time it takes to land are real and are me
 
 ## Where every shared-surface occurrence landed
 
-`check-shared-surface` found **22 occurrences across 14 files**. This section
+`check-shared-surface` found **21 occurrences across 14 files**. This section
 accounts for all of them twice — once by ledger, once by reach — so a rule or a file falling out
 of the scoreboard cannot be quiet.
 
@@ -303,12 +303,12 @@ of the scoreboard cannot be quiet.
 | `format` | H5 | 4 | 4 | 0 | 0 | 1 | 3 | 0 | 0 |
 | `ink_alpha` | **none** — #4309 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `layer_token` | H7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `page_title` | H1 | 17 | 17 | 0 | 0 | 6 | 1 | 0 | 10 |
+| `page_title` | H1 | 16 | 16 | 0 | 0 | 6 | 1 | 0 | 9 |
 | `section_header` | H2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `stat_strip` | H6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `status_badge` | H3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `type_scale` | H8 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
-| **total** | | 22 | 22 | 0 | 0 | 7 | 4 | 0 | 11 |
+| **total** | | 21 | 21 | 0 | 0 | 7 | 4 | 0 | 10 |
 
 **`unlisted` is the column to read first.** A non-zero value means the guard is red — an
 occurrence neither a `reason:` nor a `lifts:` entry accounts for. It is not a defect of this
@@ -346,8 +346,8 @@ stated subject and are listed here rather than scored. A file reached only throu
 | file | occurrences |
 |---|---:|
 | `apps/console/components/auth/auth-form.tsx` | 5 |
-| `apps/console/components/auth/onboarding-form.tsx` | 2 |
 | `apps/console/components/forms/oauth-consent-form.tsx` | 2 |
+| `apps/console/components/auth/onboarding-form.tsx` | 1 |
 | `apps/console/components/errors/error-state.tsx` | 1 |
 | `apps/console/components/legal/accept-terms-form.tsx` | 1 |
 

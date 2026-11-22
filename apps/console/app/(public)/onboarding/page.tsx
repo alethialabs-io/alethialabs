@@ -1,76 +1,116 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { AuthCard, AuthShell } from "@/components/auth/auth-shell";
-import { OnboardingForm } from "@/components/auth/onboarding-form";
-import { getOwner } from "@/lib/auth/owner";
-import { safeNext } from "@/lib/auth/safe-next";
-import { ensurePrimaryOrg, isOnboardingComplete } from "@/lib/auth/onboarding";
 import { getProOffer } from "@/app/server/actions/billing";
+import { getPendingAcceptance } from "@/app/server/actions/legal";
+import { setActiveOrganization } from "@/app/server/actions/workspace";
+import { AuthShell } from "@/components/auth/auth-shell";
+import { OnboardingForm, type OnboardingTrial } from "@/components/auth/onboarding-form";
+import {
+	completeOnboarding,
+	deduceBillingCountry,
+	resolveOnboarding,
+	suggestedPayerCapacity,
+} from "@/lib/auth/onboarding";
+import { getViewer } from "@/lib/auth/owner";
+import { safeNext } from "@/lib/auth/safe-next";
 import { isStripeConfigured } from "@/lib/billing/config";
+import { getOrgBilling } from "@/lib/billing/queries";
+import { OnboardingStatus } from "./onboarding-status";
 
 interface OnboardingPageProps {
 	searchParams: Promise<{ next?: string }>;
 }
 
 /**
- * Post-signup onboarding: pick a plan + name the organization (everything else
- * optional). Gated — only brand-new accounts (onboarding not yet complete) see it;
- * everyone else is sent straight to the console. Operates on the user's
- * auto-provisioned primary organization, then drops into the in-product first-run.
+ * The `next` this page was given, when it is a real destination: same-origin (`safeNext`) and not
+ * this page itself — `/onboarding?next=/onboarding` would otherwise redirect to itself forever.
+ */
+function requestedDestination(next: string | undefined): string | null {
+	const requested = safeNext(next);
+	if (!requested) return null;
+	const path = requested.split("?")[0] ?? "";
+	return path === "/onboarding" || path.startsWith("/onboarding/") ? null : requested;
+}
+
+/** Whether the Pro trial can be started here, and the tile's reason when it cannot. */
+async function trialFor(): Promise<OnboardingTrial> {
+	if (!isStripeConfigured()) {
+		return { kind: "unavailable", reason: "Hosted billing isn’t configured on this deployment." };
+	}
+	const offer = await getProOffer();
+	if (offer.kind === "trial") return { kind: "available", days: offer.trialDays ?? 30 };
+	return {
+		kind: "unavailable",
+		reason: "No trial is available for this account. Start on Hobby and upgrade from Billing at any time.",
+	};
+}
+
+/**
+ * Post-signup onboarding (WIZ-W6, #6929). WHERE SETUP STANDS IS DECIDED HERE, ON THE SERVER, before
+ * anything renders (`resolveOnboarding`):
+ *
+ *  - finished before → the `next` it was given, else `/dashboard`;
+ *  - not marked finished but the org already has a live plan (the trial started and the completion
+ *    write was lost) → finished now, then the destination. The form is never shown again for it;
+ *  - a payment still being confirmed, a state nobody could read, or an org that could not be
+ *    provisioned → a card that says so, with a retry and the support address, and no form;
+ *  - otherwise → the form, with every default it can work out filled in.
+ *
+ * The destination after the form is `/{slug}/~/new` unless a `next` was given.
  */
 export default async function OnboardingPage({ searchParams }: OnboardingPageProps) {
-	const userId = await getOwner();
-	if (!userId) redirect("/login");
+	const viewer = await getViewer();
+	if (!viewer) redirect("/login");
 
 	const { next } = await searchParams;
-	// `safeNext` rejects an off-origin target, but a same-origin one can still point at
-	// THIS page — `/onboarding?next=/onboarding` would redirect to itself forever. A
-	// self-target is not a destination, so fall back to the console.
-	const requested = safeNext(next);
-	const requestedPath = requested?.split("?")[0] ?? "";
-	const isSelf =
-		requestedPath === "/onboarding" || requestedPath.startsWith("/onboarding/");
-	const destination = requested && !isSelf ? requested : "/dashboard";
+	const requested = requestedDestination(next);
+	const retryHref = requested ? `/onboarding?next=${encodeURIComponent(requested)}` : "/onboarding";
 
-	// Already onboarded → nothing to set up.
-	if (await isOnboardingComplete(userId)) redirect(destination);
-
-	// The primary org is provisioned at signup, but that provisioning is best-effort —
-	// so repair it here instead of redirecting. Falling through to `destination` used to
-	// look like the safe move; it was the bug. /dashboard sends a user with incomplete
-	// onboarding straight back to this page, so "no org" bounced between the two forever
-	// and the user never reached the app. If the repair cannot succeed, stop here with
-	// something readable: a dead end the user can act on beats a loop they cannot leave.
-	const org = await ensurePrimaryOrg(userId);
-	if (!org) {
-		return (
-			<AuthShell>
-				<AuthCard>
-					<div className="flex flex-col gap-2.5">
-						<p className="vx-eyebrow">Setup incomplete</p>
-						<h1 className="font-grotesk text-display-sm font-semibold leading-[1.05] tracking-display text-text-primary">
-							We couldn&apos;t finish setting up your account
-						</h1>
-					<p className="text-ui-lg leading-[1.55] text-text-secondary">
-							Your sign-in worked, but we couldn&apos;t create your organization.
-							This is on us, not you. Reload to try again — if it keeps happening,
-							contact support and we&apos;ll fix it from our side.
-						</p>
-					</div>
-				</AuthCard>
-			</AuthShell>
-		);
+	const state = await resolveOnboarding(viewer.id);
+	if (state.kind === "complete") redirect(requested ?? "/dashboard");
+	if (state.kind === "settled") {
+		await completeOnboarding(viewer.id);
+		redirect(requested ?? `/${state.org.slug}/~/new`);
 	}
+	if (state.kind !== "not-started") {
+		return <OnboardingStatus kind={state.kind} retryHref={retryHref} />;
+	}
+	const org = state.org;
 
-	// The account's Pro offer (one-time trial vs none) gates the trial CTA; Stripe being
-	// configured gates the paid Pro path.
-	const offer = await getProOffer();
+	// The session is scoped to the org being set up here, on the server — the logo upload behind
+	// "Customize" acts on the session's org. It used to be set from a mount effect in the form, racing
+	// the upload and the trial (A-06). Idempotent: it writes the same value on every load.
+	await setActiveOrganization(org.id);
+
+	const h = await headers();
+	const [trial, pending, billing] = await Promise.all([
+		trialFor(),
+		getPendingAcceptance(),
+		getOrgBilling(org.id),
+	]);
+	// The request's country header and language are read, never stored or logged; the org's own
+	// earlier declaration comes first, so a retry does not re-guess what the person already said.
+	const country = deduceBillingCountry({
+		declared: billing?.billingCountry,
+		geoCountry: h.get("cf-ipcountry"),
+		email: viewer.email,
+		acceptLanguage: h.get("accept-language"),
+	});
 
 	return (
 		<AuthShell cardWidth="fluid">
-			<OnboardingForm org={org} offer={offer} proAvailable={isStripeConfigured()} />
+			<OnboardingForm
+				org={org}
+				viewerId={viewer.id}
+				trial={trial}
+				terms={pending.satisfied ? [] : pending.documents}
+				country={country}
+				capacity={suggestedPayerCapacity(viewer.email)}
+				destination={requested}
+			/>
 		</AuthShell>
 	);
 }

@@ -195,7 +195,7 @@ export interface DocumentActions {
 	clearReviewedPlan: () => void;
 
 	/** Replace the design nodes and the positions of every node given, with no undo step. For a
-	 * caller that holds whole board nodes: React Flow's structural changes and the legacy store. */
+	 * caller that holds whole board nodes: React Flow's structural changes. */
 	replaceNodes: (nodes: CanvasNode[]) => void;
 	/** Replace the saved design, with no other change. */
 	replaceBaseline: (baseline: CanvasNode[]) => void;

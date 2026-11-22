@@ -7,8 +7,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 One email a week: what every cloud cost, compared with the week before, plus every resource that
 still carries an e2e handle. Sent by `.github/workflows/spend-report.yml` every Monday at 07:00 UTC
-to `vars.SPEND_REPORT_TO` (default `borislav@alethialabs.io`), through `@repo/email` (Resend). The
-Resend key is read from AWS Secrets Manager `alethia/prod/env`. No GitHub secret was added.
+to `vars.SPEND_REPORT_TO` (default `borislav@alethialabs.io`), through `@repo/email` (AWS SES, the
+`alethia-email` account, configuration set `alethia-general`). The SES sender key
+(`ALETHIA_SES_REGION`, `ALETHIA_SES_ACCESS_KEY_ID`, `ALETHIA_SES_SECRET_ACCESS_KEY`,
+`ALETHIA_SES_GENERAL_CONFIG_SET`) is read from AWS Secrets Manager `alethia/prod/env`. No GitHub
+secret was added.
 
 ## What each line means
 
@@ -133,7 +136,7 @@ same `-target`s first. The plan should only **add** resources.
 |---|---|---|
 | `SPEND_REPORT_TO` | `borislav@alethialabs.io` | The recipient. |
 | `SPEND_REPORT_THRESHOLDS_EUR` | `{"aws":30,"azure":15,"gcp":15,"hetzner":30,"alibaba":10}` | Red-flag limits, **EUR per 7 days**, as JSON. Name only the clouds you want to change, for example `{"aws":50}`. A malformed value falls back to the defaults, and the email says so. |
-| `SPEND_REPORTER_ROLE_ARN` | — | Output of step 2. Without it, the platform account is not readable **and the email cannot be sent**: the Resend key is in AWS. |
+| `SPEND_REPORTER_ROLE_ARN` | — | Output of step 2. Without it, the platform account is not readable **and the email cannot be sent**: the SES sender key is in AWS. |
 | `SPEND_REPORTER_E2E_ROLE_ARN` | — | Output of step 2b (`arn:aws:iam::556074788436:role/alethia-e2e/alethia-spend-reporter`). Without it, the AWS line covers the platform account only and says so. The workflow refuses credentials for any other account (`allowed-account-ids`). |
 | `SPEND_AWS_TAG_KEYS` | `alethia:project-id,alethia:environment-id,alethia:e2e-run` | Cost-allocation tags to break AWS spend down by. |
 | `SPEND_AWS_GROUP_BY_LINKED_ACCOUNT` | `false` | `true` on an Organization payer account. |
@@ -147,9 +150,10 @@ Hetzner uses the existing `secrets.HCLOUD_TOKEN`.
 
 ## Known limits
 
-- **The AWS role can read the whole `alethia/prod/env` secret, not only `RESEND_API_KEY`.** Secrets
-  Manager grants `GetSecretValue` per secret, not per JSON key. `alethia-deploy-reader` already has
-  the same reach. To narrow it, the Resend key would need its own secret.
+- **The AWS role can read the whole `alethia/prod/env` secret, not only the `ALETHIA_SES_*`
+  sender keys.** Secrets Manager grants `GetSecretValue` per secret, not per JSON key.
+  `alethia-deploy-reader` already has the same reach. To narrow it, the sender key would need its
+  own secret.
 - Nothing here is armed in the coverage ratchet yet (`vitest.config.ts` explains why).
 - Pricing and parsing are tested against payloads in each provider's documented response shape.
   Whether the live APIs still return that shape is shown by the first dispatch, not by a unit test.

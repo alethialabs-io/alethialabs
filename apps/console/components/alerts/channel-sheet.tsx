@@ -18,8 +18,14 @@ import { AlertCircle, ExternalLink } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
-import { z } from "zod";
 import { addChannel } from "@/app/server/actions/alerts";
+import {
+	type ChannelFormValues,
+	channelCreateSchema,
+	channelFieldOf,
+	NEW_CHANNEL_FORM,
+	toChannelInput,
+} from "@/components/alerts/channel-form";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
 import { DiscardPrompt, useUnsavedGuard } from "@/components/confirm/use-unsaved-guard";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
@@ -30,7 +36,7 @@ import {
 } from "@/components/alerts/channel-meta";
 import { FieldHelp } from "@/components/alerts/field-help";
 import { RecipientsEditor } from "@/components/alerts/recipients-editor";
-import { alertChannelType, type AlertChannelType } from "@/lib/db/schema/enums";
+import type { AlertChannelType } from "@/lib/db/schema/enums";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
@@ -130,68 +136,6 @@ const HELP: Record<AlertChannelType, ReactNode> = {
 	),
 };
 
-const configSchema = z
-	.object({
-		type: z.enum(alertChannelType.enumValues),
-		name: z.string().min(1, "Name your channel").max(120),
-		recipients: z.array(z.string().email()),
-		url: z.string(),
-		signingSecret: z.string(),
-		routingKey: z.string(),
-	})
-	.superRefine((v, ctx) => {
-		const cred = CHANNEL_TYPE_META[v.type].credential;
-		if (cred === "email") {
-			if (v.recipients.length === 0)
-				ctx.addIssue({
-					code: "custom",
-					path: ["recipients"],
-					message: "Add at least one recipient.",
-				});
-			return;
-		}
-		if (cred === "routingKey") {
-			if (!v.routingKey.trim())
-				ctx.addIssue({
-					code: "custom",
-					path: ["routingKey"],
-					message: "Paste the integration routing key.",
-				});
-			return;
-		}
-		if (!v.url.trim()) {
-			ctx.addIssue({
-				code: "custom",
-				path: ["url"],
-				message: "A destination URL is required.",
-			});
-			return;
-		}
-		try {
-			new URL(v.url);
-		} catch {
-			ctx.addIssue({ code: "custom", path: ["url"], message: "Enter a valid URL." });
-		}
-	});
-type ConfigValues = z.infer<typeof configSchema>;
-
-const DEFAULTS: ConfigValues = {
-	type: "slack",
-	name: CHANNEL_TYPE_META.slack.name,
-	recipients: [],
-	url: "",
-	signingSecret: "",
-	routingKey: "",
-};
-
-/** The sheet's field a server validation path is about (`secret.url` → `url`), or null. */
-function channelFieldOf(path: string): keyof ConfigValues | null {
-	const [head, sub] = path.split(".");
-	if (head === "name" || head === "recipients") return head;
-	if (head === "secret" && (sub === "url" || sub === "signingSecret" || sub === "routingKey")) return sub;
-	return null;
-}
-
 interface ChannelSheetProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -212,9 +156,9 @@ export function ChannelSheet({
 	const wasOpen = useRef(false);
 	const blockedReasonId = useId();
 
-	const form = useForm<ConfigValues>({
-		resolver: zodResolver(configSchema),
-		defaultValues: DEFAULTS,
+	const form = useForm<ChannelFormValues>({
+		resolver: zodResolver(channelCreateSchema),
+		defaultValues: NEW_CHANNEL_FORM,
 		mode: "onChange",
 	});
 	const [channelType, recipients] = useWatch({ control: form.control, name: WATCHED });
@@ -225,13 +169,13 @@ export function ChannelSheet({
 	useEffect(() => {
 		if (open && !wasOpen.current) {
 			setSubmitError(null);
-			form.reset(DEFAULTS);
+			form.reset(NEW_CHANNEL_FORM);
 		}
 		wasOpen.current = open;
 	}, [open, form]);
 
 	const pickTransport = (type: AlertChannelType) => {
-		form.reset({ ...DEFAULTS, type, name: CHANNEL_TYPE_META[type].name });
+		form.reset({ ...NEW_CHANNEL_FORM, type, name: CHANNEL_TYPE_META[type].name });
 		setSubmitError(null);
 	};
 
@@ -267,27 +211,8 @@ export function ChannelSheet({
 	};
 
 	const create = form.handleSubmit((values) => {
-		if (saving) return;
 		setSubmitError(null);
-		const cred = CHANNEL_TYPE_META[values.type].credential;
-		mutation.mutate({
-				type: values.type,
-				name: values.name.trim(),
-				enabled: true,
-				recipients: cred === "email" ? values.recipients : undefined,
-				secret:
-					cred === "url"
-						? {
-								url: values.url.trim() || undefined,
-								signingSecret:
-									values.type === "webhook"
-										? values.signingSecret.trim() || undefined
-										: undefined,
-							}
-						: cred === "routingKey"
-							? { routingKey: values.routingKey.trim() || undefined }
-							: undefined,
-		});
+		mutation.submit(toChannelInput(values, true));
 	});
 
 	return (

@@ -25,7 +25,9 @@ import {
 	type IacEnvironment,
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { board } from "@/lib/canvas/store/board";
+import { setBoardNodes } from "@/tests/fixtures/canvas/board";
 import { queryWrapper } from "@/tests/helpers/query-wrapper";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "acme" }) }));
@@ -63,13 +65,10 @@ function node(kind: "project" | "cluster" | "network"): CanvasNode {
 
 /** Renders the Environment settings card over a project/cluster/network board under `iac`. */
 function renderCard(iac: IacEnvironment | null, destroyEnvironment?: DestroyEnvironmentControl) {
-	useCanvasStore.setState({
-		nodes: [node("project"), node("cluster"), node("network")],
-		identities: [],
-		baseline: [],
-		collectionPositions: {},
-		card: { kind: "env-settings" },
-	});
+	setBoardNodes([node("project"), node("cluster"), node("network")]);
+	board.document.getState().replaceBaseline([]);
+	board.document.setState({ collectionPositions: {} });
+	board.view.getState().openCard({ kind: "env-settings" });
 	return render(
 		<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, iac }}>
 			<EnvSettingsCard destroyEnvironment={destroyEnvironment} />
@@ -79,7 +78,7 @@ function renderCard(iac: IacEnvironment | null, destroyEnvironment?: DestroyEnvi
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("environment settings under a BYO-IaC source", () => {

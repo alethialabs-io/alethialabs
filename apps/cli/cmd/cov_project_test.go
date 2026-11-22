@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/spec"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -90,6 +91,15 @@ type projServer struct {
 	destroyRefusal string
 	// cascadeJobs is returned as `cascade_jobs` when a DESTROY is queued with cascade: true.
 	cascadeJobs []map[string]any
+	// queuedStatus is the status a newly queued job is returned with; empty means QUEUED. A job
+	// that waits for a person's approval is returned in a status of its own.
+	queuedStatus string
+	// createStatus and createMessage make POST /api/cli/projects answer with that status and that
+	// sentence, the way the control plane refuses a project it will not create.
+	createStatus  int
+	createMessage string
+	// noJob makes POST /api/jobs answer 200 with no job in the body.
+	noJob bool
 }
 
 // jobBody returns the next polled job document, advancing through jobStatuses and
@@ -153,6 +163,19 @@ func (s *projServer) destroyResponse(w http.ResponseWriter, r *http.Request, enc
 		},
 		"cascade_jobs": cascadeJobs,
 	})
+	return true
+}
+
+// createRefused answers a project create with the configured refusal, and reports whether it did.
+func (s *projServer) createRefused(w http.ResponseWriter, enc *json.Encoder) bool {
+	s.mu.Lock()
+	status, message := s.createStatus, s.createMessage
+	s.mu.Unlock()
+	if status == 0 {
+		return false
+	}
+	w.WriteHeader(status)
+	_ = enc.Encode(map[string]string{"error": message})
 	return true
 }
 
@@ -347,6 +370,7 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = enc.Encode(map[string]any{"cloud_identities": []map[string]any{
 			{"id": "ci1", "provider": "aws", "label": "prod-account"},
 		}})
+	case p == "/api/cli/projects" && s.createRefused(w, enc):
 	case p == "/api/cli/projects":
 		_ = enc.Encode(map[string]any{"project": map[string]any{
 			"id": "p1", "project_name": "api", "slug": "api", "region": "eu-west-1",
@@ -402,8 +426,18 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = enc.Encode(map[string]any{"tree": tree})
 	case p == "/api/jobs" && s.destroyResponse(w, r, enc):
 	case p == "/api/jobs":
+		s.mu.Lock()
+		status, noJob := s.queuedStatus, s.noJob
+		s.mu.Unlock()
+		if noJob {
+			_ = enc.Encode(map[string]any{})
+			return
+		}
+		if status == "" {
+			status = "QUEUED"
+		}
 		_ = enc.Encode(map[string]any{"job": map[string]any{
-			"id": "j1", "job_type": "PLAN", "status": "QUEUED",
+			"id": "j1", "job_type": "PLAN", "status": status,
 			"created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
 		}})
 	case strings.HasPrefix(p, "/api/cli/jobs/"):
@@ -442,16 +476,27 @@ type projHarness struct {
 	run   func(args ...string) bool
 	srv   *projServer
 	creds string
+	// exit is the code the last run exited with, or 0 when it returned normally.
+	exit *int
+}
+
+// projExitCode runs one invocation and returns its exit code with what it wrote on each stream.
+// It is what a test of a refusal reads: the code is the class, stdout must be empty, and the
+// sentence and its hint are on stderr.
+func projExitCode(t *testing.T, h projHarness, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
+	stdout, stderr = captureStreams(t, func() { h.run(args...) })
+	return *h.exit, stdout, stderr
 }
 
 // projResetFlags clears every sticky flag target these commands bind to. rootCmd is a
 // package global whose parsed flag values survive an Execute, so without this one
 // invocation leaks its flags into the next.
 func projResetFlags() {
-	projectPlanProjectID, projectPlanRunnerID, projectPlanEnv, projectPlanWait = "", "", "", false
+	projectPlanProjectID, projectPlanRunnerID, projectPlanEnv, projectPlanWait = "", "", "", waitFlags{}
 	projectApplyProjectID, projectApplyRunnerID, projectApplyPlanJobID = "", "", ""
-	projectApplyEnv, projectApplyWait = "", false
-	projectDestroyProjectID, projectDestroyRunnerID, projectDestroyEnv, projectDestroyWait = "", "", "", false
+	projectApplyEnv, projectApplyWait = "", waitFlags{}
+	projectDestroyProjectID, projectDestroyRunnerID, projectDestroyEnv, projectDestroyWait = "", "", "", waitFlags{}
 	componentListKind = ""
 	componentAddKind, componentAddName, componentAddSet = "", "", nil
 	componentRemoveKind, componentRemoveName = "", ""
@@ -546,12 +591,16 @@ func projEnv(t *testing.T, s *projServer) projHarness {
 		projResetFlags()
 	})
 
+	exit := new(int)
 	run := func(args ...string) (exited bool) {
+		*exit = 0
 		defer func() {
 			if r := recover(); r != nil {
-				if _, ok := r.(projExit); !ok {
+				pe, ok := r.(projExit)
+				if !ok {
 					panic(r)
 				}
+				*exit = pe.code
 				exited = true
 			}
 		}()
@@ -562,7 +611,7 @@ func projEnv(t *testing.T, s *projServer) projHarness {
 		}
 		return false
 	}
-	return projHarness{run: run, srv: s, creds: credsPath}
+	return projHarness{run: run, srv: s, creds: credsPath, exit: exit}
 }
 
 // projTTY forces the terminal seams on, which is what makes the `interactiveTable`
@@ -592,9 +641,11 @@ func projConfirm(t *testing.T, answer bool) {
 	// A destructive command consults noInputMode before it prompts, so the stubbed
 	// answer is only reachable with the terminal seams on.
 	projTTY(t)
-	prev := confirm
+	prev, prevTyped := confirm, confirmTypedName
 	confirm = func(string, string) bool { return answer }
-	t.Cleanup(func() { confirm = prev })
+	// `project destroy` confirms by having the name typed, which no stub of the form can do either.
+	confirmTypedName = func(string, string, string) bool { return answer }
+	t.Cleanup(func() { confirm, confirmTypedName = prev, prevTyped })
 }
 
 // projForm makes every huh form succeed without a terminal, so what happens AFTER a
@@ -1086,9 +1137,9 @@ func TestProj_GetScriptingFormats(t *testing.T) {
 	}
 }
 
-// TestProj_GetTableOpensBrowser pins the TTY arm: the rendered project, the "open in
-// browser?" prompt, and the --open shortcut that skips it.
-func TestProj_GetTableOpensBrowser(t *testing.T) {
+// TestProj_GetOpensTheProjectOnlyWhenAsked pins --open: a plain `project get` on a terminal
+// prints the project and asks nothing, and --open opens the project's own console page.
+func TestProj_GetOpensTheProjectOnlyWhenAsked(t *testing.T) {
 	h := projEnv(t, &projServer{config: projSampleConfig()})
 	projTTY(t)
 	projConfirm(t, true)
@@ -1101,20 +1152,20 @@ func TestProj_GetTableOpensBrowser(t *testing.T) {
 	if h.run("project", "get", "web", "--output", "table") {
 		t.Error("project get exited fatally")
 	}
-	// THE PROJECT. This used to assert a `/dashboard` suffix, which is what the command built —
-	// a legacy catch-all that 307s to the org root, so `--open` printed the project and then
-	// opened something else. The URL now comes from the console's own route tree: /<org>/<project>.
-	if len(opened) != 1 || !strings.HasSuffix(opened[0], "/acme/web") {
-		t.Errorf("expected one /<org>/<project> open, got %v", opened)
-	}
-	if strings.Contains(opened[0], "/dashboard") {
-		t.Errorf("the legacy catch-all is back: %v", opened)
+	if len(opened) != 0 {
+		t.Fatalf("project get opened a browser without --open: %v", opened)
 	}
 	if h.run("project", "get", "web", "--open", "--output", "table") {
 		t.Error("project get --open exited fatally")
 	}
-	if len(opened) != 2 {
-		t.Errorf("--open should open the browser too, got %v", opened)
+	// THE PROJECT. This used to assert a `/dashboard` suffix, which is what the command built —
+	// a legacy catch-all that 307s to the org root, so `--open` printed the project and then
+	// opened something else. The URL now comes from the console's own route tree: /<org>/<project>.
+	if len(opened) != 1 || !strings.HasSuffix(opened[0], "/acme/web") {
+		t.Fatalf("expected one /<org>/<project> open, got %v", opened)
+	}
+	if strings.Contains(opened[0], "/dashboard") {
+		t.Errorf("the legacy catch-all is back: %v", opened)
 	}
 }
 
@@ -1158,17 +1209,29 @@ func TestProj_GetLinkFailureIsNotFatal(t *testing.T) {
 	}
 }
 
-// TestProj_GetMissingAndError pins the "no project found" notice and the fatal fetch error.
+// TestProj_GetMissingAndError pins the two ways a read fails: a project that does not exist is a
+// not-found exit with the command that lists the ones that do, and a failed fetch keeps the class
+// of the control plane's answer.
 func TestProj_GetMissingAndError(t *testing.T) {
 	s := &projServer{}
 	h := projEnv(t, s)
 
-	if h.run("project", "get", "nope", "--output", "table") {
-		t.Error("a missing project should not be fatal")
+	code, stdout, stderr := projExitCode(t, h, "project", "get", "nope", "--output", "table")
+	if code != clierr.ExitNotFound {
+		t.Errorf("a project that does not exist: exit %d, want %d", code, clierr.ExitNotFound)
 	}
+	if stdout != "" {
+		t.Errorf("a refusal wrote on stdout: %q", stdout)
+	}
+	for _, want := range []string{`no project named "nope"`, "alethia project list"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the refusal is missing %q:\n%s", want, stderr)
+		}
+	}
+
 	s.failOn = []string{"by-project-name"}
-	if !h.run("project", "get", "web", "--output", "table") {
-		t.Error("project get should exit on a fetch error")
+	if code, _, _ := projExitCode(t, h, "project", "get", "web", "--output", "table"); code != clierr.ExitUnavailable {
+		t.Errorf("a failed fetch: exit %d, want %d", code, clierr.ExitUnavailable)
 	}
 }
 
@@ -1465,6 +1528,7 @@ func TestProj_UnauthenticatedIsFatal(t *testing.T) {
 	projNoAuth(t, h)
 
 	cases := [][]string{
+		{"project", "component", "kinds"},
 		{"project", "component", "list", "--project", "web"},
 		{"project", "component", "add", "--project", "web", "--kind", "databases"},
 		{"project", "component", "remove", "--project", "web", "--kind", "databases"},
@@ -1472,9 +1536,13 @@ func TestProj_UnauthenticatedIsFatal(t *testing.T) {
 		{"project", "env", "add", "staging", "--project", "web"},
 		{"project", "get", "web"},
 		{"project", "create", "api", "--region", "eu-west-1"},
+		{"project", "list"},
+		{"project", "preview", "--project-id", "p1"},
+		{"project", "deploy", "--project-id", "p1"},
 		{"project", "plan", "--project-id", "p1"},
 		{"project", "apply", "--project-id", "p1"},
 		{"project", "destroy", "--project-id", "p1"},
+		{"project", "design", "apply", "--project", "web", "--file", "testdata/design-document.json"},
 		{"classification", "dimensions"},
 		{"classification", "show", "project_environment", "e1"},
 		{"classification", "assign", "project_environment", "e1", "tier", "gold"},
@@ -2287,6 +2355,19 @@ var projectLeafSpecs = map[string][]projectLeafSpec{
 			"--placement-mode", "dedicated", "--iac-version", "1.11.4"},
 		asks: true,
 	}},
+	"alethia project preview": {{
+		interactive: []string{"project", "preview"},
+		scripted:    []string{"project", "preview", "--project", "web", "--runner-id", "r1", "--env", "production"},
+		asks:        true,
+	}},
+	// A deploy confirms, so said entirely in flags it carries --yes.
+	"alethia project deploy": {{
+		interactive: []string{"project", "deploy"},
+		scripted: []string{"project", "deploy", "--project", "web", "--runner-id", "r1", "--env", "production",
+			"--plan-job-id", "j0", "--yes"},
+		asks: true,
+	}},
+	// The old names of the two above. Hidden, and still held to both contracts while they run.
 	"alethia project plan": {{
 		interactive: []string{"project", "plan"},
 		scripted:    []string{"project", "plan", "--project", "web", "--runner-id", "r1", "--env", "production"},
@@ -2808,7 +2889,7 @@ func TestProj_PromptSetValuesLoopsUntilToldToStop(t *testing.T) {
 	prev := askKeyValue
 	pairs := [][2]string{{"engine", "postgres"}, {"port", "5432"}}
 	i := 0
-	askKeyValue = func() (string, string, error) {
+	askKeyValue = func([]string) (string, string, error) {
 		if i >= len(pairs) {
 			return "", "", fmt.Errorf("the loop asked for field %d and the script has %d", i+1, len(pairs))
 		}
@@ -2818,7 +2899,7 @@ func TestProj_PromptSetValuesLoopsUntilToldToStop(t *testing.T) {
 	}
 	t.Cleanup(func() { askKeyValue = prev })
 
-	got, err := promptSetValues(nil)
+	got, err := promptSetValues(nil, nil)
 	if err != nil {
 		t.Fatalf("promptSetValues: %v", err)
 	}
@@ -2846,10 +2927,10 @@ func TestProj_PromptSetValuesLoopsUntilToldToStop(t *testing.T) {
 func TestProj_PromptSetValuesKeepsWhatTheFlagsAlreadySet(t *testing.T) {
 	projScriptYesNo(t, false)
 	prev := askKeyValue
-	askKeyValue = func() (string, string, error) { return "", "", fmt.Errorf("must not be asked") }
+	askKeyValue = func([]string) (string, string, error) { return "", "", fmt.Errorf("must not be asked") }
 	t.Cleanup(func() { askKeyValue = prev })
 
-	got, err := promptSetValues([]string{"engine=postgres"})
+	got, err := promptSetValues([]string{"engine=postgres"}, nil)
 	if err != nil {
 		t.Fatalf("promptSetValues: %v", err)
 	}
@@ -2862,9 +2943,9 @@ func TestProj_PromptSetValuesKeepsWhatTheFlagsAlreadySet(t *testing.T) {
 func TestProj_PromptSetValuesRefusesANamelessField(t *testing.T) {
 	projScriptYesNo(t, true, false)
 	prev := askKeyValue
-	askKeyValue = func() (string, string, error) { return "  ", "postgres", nil }
+	askKeyValue = func([]string) (string, string, error) { return "  ", "postgres", nil }
 	t.Cleanup(func() { askKeyValue = prev })
-	if _, err := promptSetValues(nil); err == nil {
+	if _, err := promptSetValues(nil, nil); err == nil {
 		t.Fatal("a field with no name must be refused, not stored as `=postgres`")
 	}
 }
@@ -2886,7 +2967,7 @@ func TestProj_ADismissedQuestionStopsTheLoop(t *testing.T) {
 	if _, err := promptEnvMatrix(""); err == nil {
 		t.Error("a dismissed matrix question must be an error, not an empty matrix")
 	}
-	if _, err := promptSetValues(nil); err == nil {
+	if _, err := promptSetValues(nil, nil); err == nil {
 		t.Error("a dismissed --set question must be an error, not an empty field list")
 	}
 }
@@ -3235,7 +3316,7 @@ func TestProj_ComponentAddAnsweredAndFlaggedSendTheSameRequest(t *testing.T) {
 	prev := askKeyValue
 	pairs := [][2]string{{"engine", "postgres"}, {"port", "5432"}}
 	i := 0
-	askKeyValue = func() (string, string, error) {
+	askKeyValue = func([]string) (string, string, error) {
 		p := pairs[i]
 		i++
 		return p[0], p[1], nil
@@ -3395,7 +3476,7 @@ func TestProj_DesignApplyPrintsWhatItDeleted(t *testing.T) {
 		{Kind: "storage_buckets", Name: strPtr("receipts"), Action: "DELETE"},
 	}}
 	c := &fakeClient{designResult: res}
-	if err := runDesignApply(c, &out, api.ApplyDesignParams{Project: "shop", Env: "dev", Document: []byte("{}")}); err != nil {
+	if err := runDesignApply(c, testPrinter(&out, "table"), api.ApplyDesignParams{Project: "shop", Env: "dev", Document: []byte("{}")}); err != nil {
 		t.Fatalf("runDesignApply: %v", err)
 	}
 	for _, want := range []string{"DELETE", "storage_buckets", "receipts"} {
@@ -3412,14 +3493,22 @@ func strPtr(s string) *string { return &s }
 // renderings. An error reading "have: " with nothing after it tells a new user their name is
 // wrong rather than that they have no projects yet.
 func TestProj_KnownProjectNamesAndLabelsHandleAnEmptyOrg(t *testing.T) {
-	if got := knownProjectNames(nil); !strings.Contains(got, "project create") {
+	if got := knownProjectNames(nil); !strings.Contains(got, "project create") || !strings.Contains(got, "alethia up") {
 		t.Errorf("empty project list rendered %q; it must say how to make one", got)
 	}
-	if got := knownIdentityLabels(nil); !strings.Contains(got, "connector add") {
-		t.Errorf("empty account list rendered %q; it must say how to link one", got)
+	// The command that links an account, once per offered cloud. `connector add` — what this
+	// used to say — is not a command.
+	got := knownIdentityLabels(nil)
+	for _, cloud := range EnabledCloudProviders() {
+		if !strings.Contains(got, string(cloud)) {
+			t.Errorf("empty account list rendered %q; it must name `alethia connector %s`", got, cloud)
+		}
+	}
+	if strings.Contains(got, "alibaba") || strings.Contains(got, "connector add") {
+		t.Errorf("empty account list names a cloud that is not offered, or a command that does not exist: %q", got)
 	}
 	// Sorted and de-duplicated, so a shared name is offered once and the order is stable.
-	got := knownProjectNames([]types.ConfigurationSummary{
+	got = knownProjectNames([]types.ConfigurationSummary{
 		{ID: "1", ProjectName: "shop"}, {ID: "2", ProjectName: "api"}, {ID: "3", ProjectName: "shop"},
 	})
 	if got != "api, shop" {
@@ -3801,9 +3890,9 @@ func TestProj_ComponentAddRefusalArms(t *testing.T) {
 	t.Run("a dismissed key/value form stops the loop", func(t *testing.T) {
 		projScriptYesNo(t, true, false)
 		prev := askKeyValue
-		askKeyValue = func() (string, string, error) { return "", "", fmt.Errorf("dismissed") }
+		askKeyValue = func([]string) (string, string, error) { return "", "", fmt.Errorf("dismissed") }
 		t.Cleanup(func() { askKeyValue = prev })
-		if _, err := promptSetValues(nil); err == nil {
+		if _, err := promptSetValues(nil, nil); err == nil {
 			t.Error("a dismissed field form must be an error, not a field list without it")
 		}
 	})
@@ -3838,7 +3927,7 @@ func TestProj_AskKeyValueReadsTheForm(t *testing.T) {
 		return nil
 	}
 	t.Cleanup(func() { runHuhForm = prev })
-	key, _, err := askKeyValue()
+	key, _, err := askKeyValue(nil)
 	if err != nil {
 		t.Fatalf("askKeyValue: %v", err)
 	}
@@ -3847,7 +3936,7 @@ func TestProj_AskKeyValueReadsTheForm(t *testing.T) {
 	}
 
 	runHuhForm = func(...*huh.Group) error { return fmt.Errorf("dismissed") }
-	if _, _, err := askKeyValue(); err == nil {
+	if _, _, err := askKeyValue(nil); err == nil {
 		t.Error("a dismissed field form must surface as an error")
 	}
 }
@@ -4056,13 +4145,19 @@ func TestProj_EnvAddPrintsTheReplayLineForAnAnsweredRun(t *testing.T) {
 	s := &projServer{envs: projSampleEnvs()}
 	h := projEnv(t, s)
 
-	out := projCaptureStdout(t)
 	projTTY(t)
 	projForm(t)
-	if h.run("project", "env", "add", "staging", "--project", "web", "--placement-mode", "vcluster") {
+	var exited bool
+	// The replay line is said about the run, so it is on stderr: stdout carries the result only.
+	stdout, got := captureStreams(t, func() {
+		exited = h.run("project", "env", "add", "staging", "--project", "web", "--placement-mode", "vcluster")
+	})
+	if exited {
 		t.Fatal("an answered env add exited fatally")
 	}
-	got := out()
+	if strings.Contains(stdout, "alethia project env add staging") {
+		t.Errorf("the replay line is on stdout:\n%s", stdout)
+	}
 	if !strings.Contains(got, "alethia project env add staging") {
 		t.Errorf("an answered env add printed no replay line:\n%s", got)
 	}

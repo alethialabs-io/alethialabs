@@ -1,0 +1,331 @@
+"use client";
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// The Environments table's columns: identity (name, default tag, what needs attention, stage, when
+// it last changed, its classification), lifecycle status with its drift, the gates into the
+// environment, and auto-heal. The row's menu sits beside the name, in the first cell: a table cell
+// does not wrap and the table clips what overflows it, so a menu in a last column could be pushed
+// out of reach. Presentational — every write is the page's
+// (`environments-view.tsx`), reached through the handlers.
+
+import type { QueryKey } from "@tanstack/react-query";
+import type { ColumnDef } from "@tanstack/react-table";
+import { formatMonthlyRate } from "@repo/format";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@repo/ui/dropdown-menu";
+import { StatusBadge } from "@repo/ui/status-badge";
+import { Check, MoreHorizontal, TriangleAlert } from "lucide-react";
+import Link from "next/link";
+import type { ProtectionSummary } from "@/app/server/actions/protection";
+import type { EnvReconcileState } from "@/app/server/actions/reconcile";
+import { ClassificationControl } from "@/components/classification/classification-control";
+import { ARCHITECTURE } from "@/lib/copy/vocabulary";
+import type { AssignedValue } from "@/lib/queries/classification";
+import { envHref } from "@/lib/routing";
+import type { EnvRow } from "@/lib/rpc/procedures/environments";
+import { AutoHealSwitch } from "./auto-heal-switch";
+import { RelativeStamp } from "./env-ui";
+import { envLifecycleBadge, stageLabel } from "./environment-status";
+
+/** One table row: the environment and everything the page read about it. */
+export interface EnvironmentRow {
+	id: string;
+	env: EnvRow;
+	reconcile: EnvReconcileState | undefined;
+	protection: ProtectionSummary | undefined;
+	/** Its classification chips; undefined until the batched read has answered. */
+	classAssignments: AssignedValue[] | undefined;
+	/** The project the environment belongs to — what its auto-heal write names. */
+	projectId: string;
+	/** The key of the read the page is showing, which an optimistic auto-heal change patches. */
+	overviewKey: QueryKey;
+}
+
+/** The gates a classification value tagged on this environment forces onto promotions into it. */
+function inheritedGates(assignments: AssignedValue[] | undefined): string[] {
+	const out: string[] = [];
+	for (const a of assignments ?? []) {
+		const e = a.enforcement;
+		if (!e) continue;
+		if (e.require_approval) {
+			out.push(`${e.min_approvals > 1 ? `Approval ×${e.min_approvals}` : "Approval"} · ${a.value_label}`);
+		}
+		if (e.require_verify_pass) out.push(`Verify · ${a.value_label}`);
+	}
+	return out;
+}
+
+/** The protection rules that are ENFORCED, as short labels. */
+function enforcedGates(p: ProtectionSummary | undefined): string[] {
+	if (!p) return [];
+	const out: string[] = [];
+	if (p.require_predecessor) out.push("Predecessor");
+	if (p.require_verify_pass) out.push("Verify");
+	if (p.require_approval) out.push(p.min_count ? `Approval ×${p.min_count}` : "Approval");
+	if (p.soak_minutes != null) out.push(`Soak ${p.soak_minutes}m`);
+	if (p.cost_delta_threshold != null) out.push(`Cost ${formatMonthlyRate(p.cost_delta_threshold, "exact")}`);
+	return out;
+}
+
+/** A gate, as a chip. */
+const GATE_CHIP =
+	"inline-flex items-center rounded-sm border border-border-strong bg-surface-muted px-1.5 py-0.5 font-mono text-ui-2xs text-text-primary";
+
+/** What the columns need from the page. */
+export interface EnvironmentColumnsOptions {
+	org: string;
+	project: string;
+	/** Why the viewer cannot change environments, or null when they can (`manageReason`). */
+	manageDenied: string | null;
+	onEditRules: (env: EnvRow) => void;
+	onEditAdmission: (env: EnvRow) => void;
+	onDuplicate: (env: EnvRow) => void;
+	onDelete: (env: EnvRow) => void;
+}
+
+/** What a row's menu needs: the environment, where its board is, and the page's handlers. */
+interface RowMenuProps extends Pick<EnvironmentColumnsOptions, "org" | "project" | "manageDenied" | "onEditAdmission" | "onDuplicate" | "onDelete"> {
+	env: EnvRow;
+}
+
+/**
+ * The row's menu, named for its environment. It sits beside the environment's name, in the first
+ * cell, so it is on screen at every width: as a last column it was pushed past the table's clipped
+ * edge and could not be pressed.
+ */
+function RowMenu({ env, org, project, manageDenied, onEditAdmission, onDuplicate, onDelete }: RowMenuProps) {
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger
+				render={
+					<Button
+						variant="ghost"
+						size="icon"
+						className="size-7"
+						aria-label={`Environment actions for ${env.name}`}
+					>
+						<MoreHorizontal size={16} aria-hidden />
+					</Button>
+				}
+			/>
+			<DropdownMenuContent align="start" className="w-64">
+				<DropdownMenuItem render={<Link href={envHref(org, project, env.id)} />}>
+					Open in {ARCHITECTURE}
+				</DropdownMenuItem>
+				<DropdownMenuSeparator />
+				{env.byo_admission_has_charts && (
+					<DropdownMenuItem disabledReason={manageDenied} onClick={() => onEditAdmission(env)}>
+						Change BYO admission
+					</DropdownMenuItem>
+				)}
+				<DropdownMenuItem disabledReason={manageDenied} onClick={() => onDuplicate(env)}>
+					Duplicate
+				</DropdownMenuItem>
+				{/* The default environment is the project's anchor and has no delete: the item is
+				    absent for it, as it always was, not offered and refused. */}
+				{!env.is_default && (
+					<DropdownMenuItem
+						className="text-destructive focus:text-destructive"
+						disabledReason={manageDenied}
+						onClick={() => onDelete(env)}
+					>
+						Delete
+					</DropdownMenuItem>
+				)}
+			</DropdownMenuContent>
+		</DropdownMenu>
+	);
+}
+
+/**
+ * The columns. A control the viewer may not use is rendered disabled WITH its reason
+ * (`manageDenied`), never hidden: the auto-heal switch through `DisabledReason` (`AutoHealSwitch`),
+ * the row's menu items through their own `disabledReason`.
+ */
+export function buildEnvironmentColumns({
+	org,
+	project,
+	manageDenied,
+	onEditRules,
+	onEditAdmission,
+	onDuplicate,
+	onDelete,
+}: EnvironmentColumnsOptions): ColumnDef<EnvironmentRow>[] {
+	return [
+		{
+			id: "environment",
+			header: "Environment",
+			accessorFn: (row) => row.env.name,
+			cell: ({ row }) => {
+				const { env, reconcile, classAssignments } = row.original;
+				const clusterMissing = reconcile?.clusterMissing ?? null;
+				const drifted = reconcile?.driftInSync === false;
+				return (
+					// A table cell does not wrap; this one holds badges, so it is given a width to wrap in —
+					// eight unwrapped columns pushed the row's menu past the table's clipped edge.
+					<div className="flex min-w-0 max-w-sm flex-col gap-1.5 whitespace-normal">
+						<div className="flex flex-wrap items-center gap-2">
+							<Link
+								href={envHref(org, project, env.id)}
+								className="font-mono text-ui-md font-medium text-text-primary hover:underline"
+							>
+								{env.name}
+							</Link>
+							<RowMenu
+								env={env}
+								org={org}
+								project={project}
+								manageDenied={manageDenied}
+								onEditAdmission={onEditAdmission}
+								onDuplicate={onDuplicate}
+								onDelete={onDelete}
+							/>
+							{env.is_default && (
+								<span className="shrink-0 rounded-full border px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
+									Default
+								</span>
+							)}
+							{reconcile?.deployPending && (
+								<Badge variant="secondary" className="text-ui-2xs">
+									Undeployed changes
+								</Badge>
+							)}
+							{clusterMissing && (
+								<Badge variant="destructive" className="gap-1.5 text-ui-2xs">
+									<TriangleAlert className="size-3" aria-hidden />
+									Cluster missing
+								</Badge>
+							)}
+							{drifted && !clusterMissing && (
+								<Badge variant="secondary" className="gap-1.5 text-ui-2xs">
+									<TriangleAlert className="size-3" aria-hidden />
+									Drifted
+								</Badge>
+							)}
+						</div>
+						<span className="text-ui-xs text-text-tertiary">
+							{stageLabel(env.stage)} · Updated <RelativeStamp at={env.updated_at} />
+						</span>
+						{/* Shown only where a BYO chart makes the setting mean something (#6541); changing it is
+						    in the row's menu. */}
+						{env.byo_admission_has_charts && (
+							<span className="text-ui-xs text-text-tertiary" data-slot="byo-admission">
+								BYO admission: {env.byo_admission_enforce ? "Refuse" : "Report"}
+								{env.byo_admission_pending && " · Redeploy to apply"}
+							</span>
+						)}
+						<ClassificationControl
+							kind="project_environment"
+							id={env.id}
+							canEdit={manageDenied === null}
+							initialAssignments={classAssignments}
+							label={env.name}
+							compact
+						/>
+					</div>
+				);
+			},
+		},
+		{
+			id: "status",
+			header: "Status",
+			accessorFn: (row) => envLifecycleBadge(row.env.status).label,
+			cell: ({ row }) => {
+				const { env, reconcile } = row.original;
+				const lifecycle = envLifecycleBadge(env.status);
+				return (
+					<div className="flex flex-col gap-1">
+						<StatusBadge status={env.status} tier={lifecycle.tier} label={lifecycle.label} />
+						<span className="text-ui-xs text-text-tertiary">
+							{reconcile?.clusterMissing ? (
+								"Cluster deleted outside Alethia"
+							) : reconcile?.driftInSync === false ? (
+								"Diverged from provisioned state"
+							) : reconcile?.driftInSync !== true ? (
+								// Never scanned is not "in sync": nothing has compared the cloud with the state.
+								"Not scanned for drift"
+							) : (
+								<span className="inline-flex items-center gap-1.5">
+									<Check className="size-3" aria-hidden />
+									In sync
+								</span>
+							)}
+						</span>
+					</div>
+				);
+			},
+		},
+		{
+			id: "gates",
+			header: "Gates into it",
+			enableSorting: false,
+			cell: ({ row }) => {
+				const { env } = row.original;
+				const own = enforcedGates(row.original.protection);
+				const inherited = inheritedGates(row.original.classAssignments);
+				return (
+					<div className="flex max-w-[15rem] flex-col items-start gap-1.5 whitespace-normal">
+						{own.length === 0 && inherited.length === 0 ? (
+							<span className="text-text-tertiary">None — any editor can promote in</span>
+						) : (
+							<div className="flex flex-wrap gap-1">
+								{own.map((gate) => (
+									<span key={gate} className={GATE_CHIP}>
+										{gate}
+									</span>
+								))}
+								{inherited.map((gate) => (
+									<span
+										key={`inherited-${gate}`}
+										className={`${GATE_CHIP} border-dashed`}
+										title="Required by a classification on this environment"
+									>
+										{gate}
+									</span>
+								))}
+							</div>
+						)}
+						<DisabledReason reason={manageDenied}>
+							<Button
+								variant="link"
+								size="xs"
+								className="h-auto p-0 text-ui-sm text-text-secondary"
+								aria-label={`Edit rules for ${env.name}`}
+								onClick={() => onEditRules(env)}
+							>
+								Edit rules
+							</Button>
+						</DisabledReason>
+					</div>
+				);
+			},
+		},
+		{
+			id: "autoHeal",
+			header: "Auto-heal",
+			enableSorting: false,
+			cell: ({ row }) => {
+				const { env, reconcile, projectId, overviewKey } = row.original;
+				return (
+					<AutoHealSwitch
+						projectId={projectId}
+						environmentId={env.id}
+						environmentName={env.name}
+						enabled={reconcile?.autoHeal ?? false}
+						overviewKey={overviewKey}
+						deniedReason={manageDenied}
+					/>
+				);
+			},
+		},
+	];
+}

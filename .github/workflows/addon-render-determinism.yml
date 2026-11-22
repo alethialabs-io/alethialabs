@@ -52,9 +52,13 @@ on:
 permissions:
   contents: read
 
+# CONCURRENCY HYGIENE (2026-11-22): cancellation is for SUPERSEDED PR runs only. A push or a dispatch
+# keys its group on its own commit, so it neither cancels nor is cancelled — not by a newer push
+# (a pending run in a group is replaced by the next one, which is also a cancellation), and not by a
+# run of a different event on the same ref.
 concurrency:
-  group: addon-chart-guards-${{ github.ref }}
-  cancel-in-progress: true
+  group: addon-chart-guards-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   determinism:

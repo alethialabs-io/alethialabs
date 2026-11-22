@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 )
 
@@ -47,6 +48,14 @@ const (
 	exitPlanProblems = 3
 )
 
+// codePlanRefused is the `code` of a refused plan in the json error object. It is not in the
+// global registry on purpose: the registry's classes start at 4, and 2 and 3 are these two
+// commands' own (pkg/clierr/registry.go).
+const codePlanRefused = "plan_refused"
+
+// planRefusedHint is the next step after a refusal.
+const planRefusedHint = "change the file so it matches what the server has, or make the change in the console, then run `alethia plan` again"
+
 // planExitCode is the code `plan` exits with for a plan it computed. Errors before the plan exists
 // exit 1 through fail and never reach this.
 func planExitCode(p *ApplyPlan, detailed bool) int {
@@ -62,25 +71,31 @@ func planExitCode(p *ApplyPlan, detailed bool) int {
 	return 0
 }
 
-// reportRefusal prints why the plan cannot be applied. In table form it is the usual error line on
-// stdout, under the plan. With `--output json` stdout carries the document and nothing else, so the
-// sentence goes to stderr for the person reading the CI log. `--output csv` takes the same arm: the
-// plan has no table shape and renders no rows, and the reason still belongs on stderr.
-func reportRefusal(err error, format string) {
-	if format == ui.FormatTable {
-		ui.Error(err.Error())
+// reportRefusal prints why the plan cannot be applied, on stderr in every format: stdout carries
+// the plan and nothing else, so the sentence is there for the person reading the terminal or the CI
+// log and never in a document a program parses. Under `--output json` it is the same error object
+// every other failure is, with the code `plan_refused` and the exit code the command is about to
+// leave with, which is its own and not a class's.
+func reportRefusal(err error, format string, exit int) {
+	if format == ui.FormatJSON {
+		e := clierr.New(codePlanRefused, err.Error())
+		e.Exit = exit
+		e.Hint = planRefusedHint
+		_ = clierr.WriteJSON(os.Stderr, e)
 		return
 	}
-	fmt.Fprintf(os.Stderr, "%s %s\n", ui.SymbolError, err.Error())
+	ui.ErrorTo(os.Stderr, err.Error())
+	fmt.Fprintf(os.Stderr, "  %s\n", ui.MutedStyle.Render("hint     "+planRefusedHint))
 }
 
 // finishPlan ends `plan` once the plan has been printed: it reports any refusal and exits with the
 // code planExitCode chooses. A zero code returns normally.
 func finishPlan(p *ApplyPlan, detailed bool, format string) {
+	code := planExitCode(p, detailed)
 	if err := p.Refusal(); err != nil {
-		reportRefusal(err, format)
+		reportRefusal(err, format, code)
 	}
-	if code := planExitCode(p, detailed); code != 0 {
+	if code != 0 {
 		exitFunc(code)
 	}
 }

@@ -20,7 +20,7 @@ import {
 } from "./env-ui";
 
 /** The blocked/failed/cancelled banner copy for a promotion. */
-function banner(detail: PromotionDetail): { title: string; body: string } | null {
+export function promotionBanner(detail: PromotionDetail): { title: string; body: string } | null {
 	if (detail.status === "BLOCKED")
 		return {
 			title: "Blocked — a required gate failed",
@@ -30,8 +30,18 @@ function banner(detail: PromotionDetail): { title: string; body: string } | null
 		};
 	if (detail.status === "FAILED")
 		return { title: "Deploy failed", body: "The promotion's deploy did not complete." };
-	if (detail.status === "CANCELLED")
-		return { title: "Promotion cancelled", body: "A reviewer rejected this promotion. Nothing was deployed." };
+	if (detail.status === "CANCELLED") {
+		// A rejection and a cancel both end as CANCELLED; only a rejection leaves a rejected approval
+		// slot behind. Saying "a reviewer rejected it" about a promotion somebody cancelled names a
+		// decision nobody made (R6 D-29).
+		const rejection = detail.approvals.find((slot) => slot.status === "rejected");
+		if (rejection)
+			return {
+				title: "Promotion rejected",
+				body: `${rejection.name ?? "A reviewer"} rejected this promotion. Nothing was deployed.`,
+			};
+		return { title: "Promotion cancelled", body: "This promotion was cancelled before it completed." };
+	}
 	return null;
 }
 
@@ -58,7 +68,7 @@ export function ActivePromotionPanel({
 	const status = promoStatus(detail.status);
 	const steps = pipelineSteps(detail.status);
 	const gates = detail.gates.map(gateView);
-	const b = banner(detail);
+	const b = promotionBanner(detail);
 
 	return (
 		<section className="overflow-hidden rounded-lg border bg-surface shadow-sm">

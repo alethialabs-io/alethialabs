@@ -30,6 +30,16 @@ email_sha256: "a98de191398bbc502f67f23ddfd0d88571988caad8c9c02b65d48a72dbae0911"
 # The organization the pass may act in. Digest of the slug `/dashboard` resolves to.
 org_slug_sha256: "b7564f6a4bdb5011fd92062da60ad56d3688f62146f6e1f1d3a90331d191a8f6"
 
+# The golden-path mode (SKILL.md §7) signs up a FRESH account per run, so no fixed email can be
+# allowlisted for it. It uses the QA mailbox with a per-run tag instead:
+# `<mailbox>+qa-<run-id>-<cloud>@<domain>`. This is the digest of that address with the `+tag`
+# REMOVED — `<mailbox>@<domain>` — computed with `printf` as above. The skill strips the tag from the
+# session email, hashes the rest, and compares; the tag itself must equal the run's.
+#
+# Ships EMPTY on purpose, for the reason the header gives: only the maintainer knows the mailbox, and
+# the golden path refuses on empty (SKILL.md §7, G·0 step 4). The sweep modes do not read it.
+golden_path_mailbox_sha256: ""
+
 # Optional. When set, the pass refuses any host but this one, so a copied session cookie on a
 # staging or branch host cannot be mistaken for production. Plaintext is fine here: the hostname
 # is public and already in the marketing site, the docs and the DNS.

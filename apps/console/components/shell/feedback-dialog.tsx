@@ -5,8 +5,9 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Angry, Frown, Laugh, Meh, Smile } from "lucide-react";
 import { Controller, useForm } from "react-hook-form";
-import { toast } from "sonner";
 import { submitFeedback } from "@/app/server/actions/feedback";
+import { FormRootError } from "@/components/forms/form-root-error";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import {
 	type FeedbackInput,
 	FEEDBACK_TOPIC_LABELS,
@@ -31,7 +32,6 @@ import {
 	SelectValue,
 } from "@repo/ui/select";
 import { Textarea } from "@repo/ui/textarea";
-import { cn } from "@repo/ui/utils";
 
 /** The 1–5 satisfaction faces, low → high. */
 const RATING_FACES = [
@@ -42,39 +42,50 @@ const RATING_FACES = [
 	{ value: 5, icon: Laugh, label: "Very happy" },
 ] as const;
 
+/** The toast a sent message earns: the dialog closes, so nothing else on screen says it went. */
+export const FEEDBACK_SENT_MESSAGE = "Thanks for the feedback.";
+
+/** The form fields a server validation message can be placed under. */
+const FEEDBACK_FIELDS = ["topic", "rating", "message"] as const;
+
 interface FeedbackDialogProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }
 
 /**
- * The hosted-only feedback dialog: pick a topic, rate the experience 1–5, write a
- * message, and send. Submits via the `submitFeedback` server action (which emails the
- * team). Controlled by the account dropdown so the "Feedback" item can open it.
+ * The hosted-only feedback dialog: pick a topic, rate the experience 1–5, write a message, and send.
+ * Submits `submitFeedback` through the mutation contract (`useActionMutation`, R6 G-27): Send is
+ * disabled while the message is in flight and a second press does nothing; a server validation
+ * message lands under its field; an ended session brings up the session-ended dialog; anything else
+ * is one toast. On success it toasts, clears and closes. Controlled by the account dropdown so the
+ * "Feedback" item can open it.
+ *
+ * The rating is a fieldset of native radios (visually the faces) named by its legend, so arrow keys
+ * move the choice and a screen reader hears the question with each face's name.
  */
 export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
-	const {
-		register,
-		handleSubmit,
-		control,
-		reset,
-		formState: { errors, isSubmitting },
-	} = useForm<FeedbackInput>({
+	const form = useForm<FeedbackInput>({
 		resolver: zodResolver(feedbackSchema),
 		defaultValues: { topic: "idea", rating: 5, message: "" },
 	});
+	const {
+		register,
+		control,
+		reset,
+		formState: { errors },
+	} = form;
 
-	/** Sends the feedback, then toasts + closes (or surfaces the failure). */
-	const onSubmit = handleSubmit(async (values) => {
-		try {
-			await submitFeedback(values);
-			toast.success("Thanks for the feedback!");
-			reset();
-			onOpenChange(false);
-		} catch {
-			toast.error("Couldn't send your feedback. Please try again.");
-		}
+	const send = useActionMutation(submitFeedback, {
+		invalidates: [],
+		form: { instance: form, fields: FEEDBACK_FIELDS },
+		successMessage: FEEDBACK_SENT_MESSAGE,
+		closes: onOpenChange,
+		onSuccess: () => reset(),
 	});
+
+	/** Sends the feedback once its schema passes; a second submit while one is in flight does nothing. */
+	const onSubmit = form.handleSubmit((values) => send.submit(values));
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -110,34 +121,42 @@ export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
 						/>
 					</div>
 
-					<div className="space-y-2">
-						<Label>How was your experience?</Label>
-						<Controller
-							control={control}
-							name="rating"
-							render={({ field }) => (
+					<Controller
+						control={control}
+						name="rating"
+						render={({ field }) => (
+							<fieldset className="space-y-2">
+								<legend className="text-sm font-medium leading-none">
+									How was your experience?
+								</legend>
 								<div className="flex items-center gap-1.5">
 									{RATING_FACES.map(({ value, icon: Icon, label }) => (
-										<button
-											key={value}
-											type="button"
-											aria-label={label}
-											aria-pressed={field.value === value}
-											onClick={() => field.onChange(value)}
-											className={cn(
-												"flex h-9 w-9 items-center justify-center rounded-md border transition-colors",
-												field.value === value
-													? "border-foreground bg-muted text-foreground"
-													: "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-											)}
-										>
-											<Icon className="h-5 w-5" />
-										</button>
+										<label key={value} className="cursor-pointer">
+											<input
+												type="radio"
+												name={field.name}
+												value={value}
+												aria-label={label}
+												checked={field.value === value}
+												onChange={() => field.onChange(value)}
+												onBlur={field.onBlur}
+												className="peer sr-only"
+											/>
+											<span
+												aria-hidden
+												className="flex h-9 w-9 items-center justify-center rounded-md border border-transparent text-muted-foreground transition-colors hover:bg-muted hover:text-foreground peer-checked:border-foreground peer-checked:bg-muted peer-checked:text-foreground peer-focus-visible:ring-[3px] peer-focus-visible:ring-ring/50"
+											>
+												<Icon className="h-5 w-5" />
+											</span>
+										</label>
 									))}
 								</div>
-							)}
-						/>
-					</div>
+								{errors.rating && (
+									<p className="text-xs text-destructive">{errors.rating.message}</p>
+								)}
+							</fieldset>
+						)}
+					/>
 
 					<div className="space-y-2">
 						<Label htmlFor="feedback-message">Message</Label>
@@ -145,6 +164,7 @@ export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
 							id="feedback-message"
 							rows={4}
 							placeholder="Describe your experience…"
+							aria-invalid={errors.message ? true : undefined}
 							{...register("message")}
 						/>
 						{errors.message && (
@@ -154,9 +174,11 @@ export function FeedbackDialog({ open, onOpenChange }: FeedbackDialogProps) {
 						)}
 					</div>
 
+					<FormRootError form={form} />
+
 					<DialogFooter>
-						<Button type="submit" disabled={isSubmitting}>
-							{isSubmitting ? "Sending…" : "Send"}
+						<Button type="submit" disabled={send.isPending} aria-busy={send.isPending}>
+							{send.isPending ? "Sending…" : "Send"}
 						</Button>
 					</DialogFooter>
 				</form>

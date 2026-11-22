@@ -221,6 +221,20 @@ export const PROJECTIONS: Readonly<Record<string, Projection>> = {
 		why: "same as --ease: no interpolated frame to accelerate. A press in the terminal is a keystroke and a redraw.",
 	},
 
+	// ── The site header's animated mark ───────────────────────────────────────────────────
+	"--mark-s": {
+		kind: "none",
+		why: "the pixel height of the bracketed [ Alethia ] lockup in the web header. The CLI draws the mark as text in one row, so its size is the terminal's font size, not ours.",
+	},
+	"--mark-dur": {
+		kind: "none",
+		why: "how long the header logo takes to fold into [·] on scroll. The terminal never folds the mark, so there is no animation to time.",
+	},
+	"--mark-ease": {
+		kind: "none",
+		why: "same as --ease: the header fold's curve, and the terminal has no interpolated frame to shape.",
+	},
+
 	// ── Tracking ──────────────────────────────────────────────────────────────────────────
 	"--tracking-eyebrow": {
 		kind: "exact",

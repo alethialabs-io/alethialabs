@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -175,7 +174,7 @@ func TestComputePlan_ProviderConfigRemovalSettlesAfterOneApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executeApply(before, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
+	if _, err := applyExec(before, &bytes.Buffer{}, plan, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if len(before.calls) != 1 || !reflect.DeepEqual(before.calls[0].Fields, map[string]any{"provider_config": map[string]any{"rds_performance_insights": nil}}) {
@@ -379,7 +378,7 @@ func TestComputePlan_AMatchingSingletonIsUnchangedAndApplySendsNothing(t *testin
 			t.Errorf("%s: action %s changes %v, want unchanged with no diff", componentLabel(c), c.Action, c.Changes)
 		}
 	}
-	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
+	if _, err := applyExec(f, &bytes.Buffer{}, plan, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.calls) != 0 {
@@ -408,7 +407,7 @@ func TestComputePlan_ADifferingSingletonIsAnUpdateWithItsDiff(t *testing.T) {
 	if got.Action != ActionUpdate || !reflect.DeepEqual(got.Changes, want) {
 		t.Errorf("got %s %+v, want update %+v", got.Action, got.Changes, want)
 	}
-	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
+	if _, err := applyExec(f, &bytes.Buffer{}, plan, "", false); err != nil {
 		t.Fatal(err)
 	}
 	// A singleton is upserted through the add route — there is no name to PATCH.
@@ -436,7 +435,7 @@ func TestExecuteApply_ASingletonUpdateSendsOnlyWhatChanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
+	if _, err := applyExec(f, &bytes.Buffer{}, plan, "", false); err != nil {
 		t.Fatal(err)
 	}
 	want := []diffCall{{"upsert", "cluster", "", "prod", map[string]any{"node_max_size": 5}}}
@@ -540,7 +539,7 @@ func TestExecuteApply_PatchesOnlyTheChangedFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	result, err := executeApply(f, &out, ui.FormatTable, plan, "", false)
+	result, err := applyExec(f, &out, plan, "", false)
 	if err != nil {
 		t.Fatalf("executeApply: %v", err)
 	}
@@ -567,7 +566,7 @@ func TestExecuteApply_ARefusedUpdateIsThatComponentsErrorAndOtherEnvironmentsCar
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	result, err := executeApply(f, &out, ui.FormatTable, plan, "", false)
+	result, err := applyExec(f, &out, plan, "", false)
 	if err == nil || !strings.Contains(err.Error(), "prod databases/orders: max_capacity cannot be changed") {
 		t.Fatalf("err = %v, want the refusal named by environment and component", err)
 	}
@@ -643,11 +642,8 @@ func TestApply_JSONOutputCarriesARefusalBeforeFailing(t *testing.T) {
 		t.Error("a refused update must make apply exit non-zero")
 	}
 	out := read()
-	var got ApplyResult
-	// The result comes first, then the failure line: decode the first JSON value only.
-	if err := json.NewDecoder(strings.NewReader(out)).Decode(&got); err != nil {
-		t.Fatalf("the partial result is not JSON: %v\n%s", err, out)
-	}
+	// The result is the only thing on stdout; the failure is on stderr.
+	got := applyResultOf(t, out)
 	if len(got.Errors) != 1 || got.Errors[0].Component != "databases/orders" || got.Errors[0].Environment != "production" {
 		t.Errorf("errors = %+v, want the refused databases/orders in production", got.Errors)
 	}

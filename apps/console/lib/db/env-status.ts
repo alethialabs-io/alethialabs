@@ -75,6 +75,11 @@ export const ENV_TRANSITIONS = {
 	// (deploySuccess: PROVISIONING|QUEUED → ACTIVE) can never move a DESTROYED env back to ACTIVE.
 	destroySuccess: { from: ["DESTROYING", "QUEUED"], to: "DESTROYED" },
 	destroyFailed: { from: ["QUEUED", "DESTROYING"], to: "FAILED" },
+
+	// ── A person's "Mark as destroyed" on a cluster found deleted outside Alethia (#6736,
+	// app/server/actions/missing-cluster.ts): no job, no cloud call. Only off a SETTLED env — never
+	// one with a job in flight (QUEUED/PROVISIONING/DESTROYING), whose runner will write the outcome.
+	markDestroyed: { from: ["ACTIVE", "FAILED", "DRAFT"], to: "DESTROYED" },
 } satisfies Record<string, EnvTransition>;
 
 /**

@@ -15,8 +15,10 @@ vi.mock("@/lib/db", () => ({
 
 import {
 	__resetHealthCache,
+	type DeepHealth,
 	getDeepHealth,
 	httpStatusFor,
+	statusProbeView,
 } from "@/lib/observability/health";
 import {
 	__resetLoopHeartbeats,
@@ -36,6 +38,9 @@ beforeEach(() => {
 afterEach(() => {
 	if (savedOtel === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 	else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = savedOtel;
+	delete process.env.OPENFGA_API_URL;
+	delete process.env.OPENFGA_STORE_ID;
+	vi.unstubAllGlobals();
 });
 
 describe("getDeepHealth — the change bus's NOTIFY queue (#6127)", () => {
@@ -116,5 +121,121 @@ describe("getDeepHealth — TTL cache (no probe-storm DB load)", () => {
 		const [a, b] = await Promise.all([getDeepHealth(), getDeepHealth()]);
 		expect(execute).toHaveBeenCalledTimes(1);
 		expect(b).toBe(a);
+	});
+});
+
+// The schema check (#7148). A restored-but-empty cluster answers `SELECT 1`, so connectivity alone reads
+// healthy through it; the probe reads `to_regclass(<sentinel>) is not null` on the SAME round-trip, and a
+// definite "the table is not there" is unhealthy. The public status page's Database row reads this.
+describe("getDeepHealth — the schema check", () => {
+	it("reads schema_ok off the connectivity round-trip, without a second query", async () => {
+		execute.mockResolvedValue([{ notify_queue_usage: 0, schema_ok: true }]);
+		const health = await getDeepHealth();
+		expect(health.schema).toEqual({ ok: true });
+		expect(health.status).toBe("healthy");
+		expect(execute).toHaveBeenCalledTimes(1);
+	});
+
+	it("is UNHEALTHY (503) on a reachable database with no schema", async () => {
+		execute.mockResolvedValue([{ notify_queue_usage: 0, schema_ok: false }]);
+		const health = await getDeepHealth();
+		expect(health.db.reachable).toBe(true);
+		expect(health.schema).toEqual({ ok: false });
+		expect(health.status).toBe("unhealthy");
+		expect(httpStatusFor(health)).toBe(503);
+	});
+
+	it("an unestablished schema (DB down, or no boolean in the row) is null — never true", async () => {
+		execute.mockResolvedValue([{ notify_queue_usage: 0 }]);
+		expect((await getDeepHealth()).schema).toEqual({ ok: null });
+		__resetHealthCache();
+		execute.mockRejectedValue(new Error("ECONNREFUSED"));
+		expect((await getDeepHealth()).schema).toEqual({ ok: null });
+	});
+});
+
+// OpenFGA, when it is the configured engine (#7148): `GET <apiUrl>/healthz` must say SERVING. Unreachable is
+// DEGRADED, not unhealthy — every instance shares the one OpenFGA server, so a 503 there would drain the
+// whole fleet from the load balancer at once.
+describe("getDeepHealth — OpenFGA", () => {
+	/** Configure OpenFGA and answer its /healthz with `answer`. Returns the fetch spy. */
+	function withOpenFga(answer: () => Promise<Response>): ReturnType<typeof vi.fn> {
+		process.env.OPENFGA_API_URL = "http://openfga.internal:8080/";
+		process.env.OPENFGA_STORE_ID = "store-1";
+		const spy = vi.fn(answer);
+		vi.stubGlobal("fetch", spy);
+		return spy;
+	}
+
+	it("is not configured — and not probed — when OPENFGA_* is unset", async () => {
+		const spy = vi.fn();
+		vi.stubGlobal("fetch", spy);
+		const health = await getDeepHealth();
+		expect(health.openfga).toEqual({ configured: false, reachable: null });
+		expect(spy).not.toHaveBeenCalled();
+	});
+
+	it("is reachable when /healthz answers SERVING (and the URL's trailing slash is not doubled)", async () => {
+		const spy = withOpenFga(async () => Response.json({ status: "SERVING" }));
+		const health = await getDeepHealth();
+		expect(health.openfga).toEqual({ configured: true, reachable: true });
+		expect(health.status).toBe("healthy");
+		expect(spy.mock.calls[0]?.[0]).toBe("http://openfga.internal:8080/healthz");
+	});
+
+	it("is unreachable — and the aggregate DEGRADED, still 200 — when /healthz fails", async () => {
+		withOpenFga(async () => {
+			throw new Error("ECONNREFUSED");
+		});
+		const health = await getDeepHealth();
+		expect(health.openfga).toMatchObject({ configured: true, reachable: false, error: "ECONNREFUSED" });
+		expect(health.status).toBe("degraded");
+		expect(httpStatusFor(health)).toBe(200);
+	});
+
+	it("a 200 that is not SERVING is unreachable, not up", async () => {
+		withOpenFga(async () => Response.json({ status: "NOT_SERVING" }));
+		expect((await getDeepHealth()).openfga.reachable).toBe(false);
+	});
+});
+
+// The status-page view: what a caller holding ALETHIA_STATUS_PROBE_TOKEN receives. One boolean per
+// component and nothing else — the exhaustive key check is the point.
+describe("statusProbeView", () => {
+	/** A deep document with the given sub-checks. */
+	function doc(over: Partial<DeepHealth> = {}): DeepHealth {
+		return {
+			status: "healthy",
+			ts: "2026-11-21T00:00:00.000Z",
+			version: "test",
+			db: { reachable: true, latencyMs: 3, notifyQueueUsage: 0.5 },
+			schema: { ok: true },
+			openfga: { configured: false, reachable: null },
+			loops: [],
+			otel: { configured: true, reachable: true, endpoint: "http://collector.internal:4318" },
+			...over,
+		};
+	}
+
+	it("carries the aggregate and three booleans — no latency, endpoint, error or loop detail", () => {
+		const view = statusProbeView(doc());
+		expect(view).toEqual({
+			status: "healthy",
+			mode: "status",
+			ts: "2026-11-21T00:00:00.000Z",
+			checks: { db: true, schema: true, openfga: null },
+		});
+		expect(JSON.stringify(view)).not.toMatch(/collector|latency|version|loops|notify/);
+	});
+
+	it("reports an unestablished schema as false — the page must not green what nobody measured", () => {
+		expect(statusProbeView(doc({ schema: { ok: null } })).checks.schema).toBe(false);
+	});
+
+	it("reports OpenFGA as a boolean only when it is the configured engine", () => {
+		expect(statusProbeView(doc({ openfga: { configured: true, reachable: false, error: "x" } })).checks.openfga).toBe(
+			false,
+		);
+		expect(statusProbeView(doc({ openfga: { configured: true, reachable: true } })).checks.openfga).toBe(true);
 	});
 });

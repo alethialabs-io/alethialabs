@@ -59,9 +59,8 @@ export type { StatusTier };
  * A thin adapter over {@link StatusBadge}, not a second renderer: the tiers, the markup and the
  * dot come from `@repo/ui/status-badge`. It exists because the promotion surfaces resolve a tier
  * themselves (`promoStatus`, `pipelineSteps`, `gateView` below) from vocabulary `statusTier()`'s
- * lookup does not know, so there is no product status string to hand the badge. The last consumer
- * outside `components/environments/` is `components/create-project/environment-placement.tsx`
- * (#3624's lane); once that moves to `StatusBadge` this can go with it.
+ * lookup does not know, so there is no product status string to hand the badge. A caller that does
+ * hold a product status string uses `StatusBadge` directly.
  *
  * The `size` prop is gone. It rendered the same device at 8px, 9px and 12px on three surfaces of
  * one product, which is exactly the disagreement §6 is about — every dot is now the shared 7px.

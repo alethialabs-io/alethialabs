@@ -38,11 +38,11 @@ func TestMisc_JobLogsAndCancel(t *testing.T) {
 		}
 	})
 
-	t.Run("follow waits while the job is still running", func(t *testing.T) {
+	t.Run("follow waits while the job is still running, and a failed job is fatal", func(t *testing.T) {
 		jobsLogsFollow = false
-		run := miscAdminEnv(t, miscAdminOpts{jobStatus: "PROCESSING", jobStatusAfter: "FAILED"})
-		if err := run("jobs", "logs", "j1", "--follow", "--output", "json"); err != nil {
-			t.Error(err)
+		exits := miscFatalRunner(miscAdminEnv(t, miscAdminOpts{jobStatus: "PROCESSING", jobStatusAfter: "FAILED"}))
+		if !exits("jobs", "logs", "j1", "--follow", "--output", "json") {
+			t.Error("expected a follow of a job that ended FAILED to be fatal")
 		}
 	})
 

@@ -3,8 +3,8 @@
 
 // E2E — Projects domain: validation errors, the member denial, delete guards, duplicate-name
 // behavior, not-found and auth checks. Happy paths live in projects.spec.ts, whose header explains
-// what `/{org}/~/new` became — in short, every create in this file goes through the **Configure**
-// step (`~/new?scratch=blank`), because the single-form "Create empty project" button these tests
+// what `/{org}/~/new` became — in short, every create in this file goes through the one-screen
+// create form opened on Blank (`~/new?scratch=blank`), because the single-form "Create empty project" button these tests
 // used to click no longer exists.
 //
 // Run (self-check):
@@ -101,6 +101,8 @@ test.describe("Projects — create validation", () => {
 		await owner.page.goto(`/${owner.orgSlug}/~/new?scratch=blank`);
 		const create = owner.page.getByRole("button", { name: /create project/i });
 		await expect(create).toBeVisible({ timeout: 45_000 });
+		// The screen fills a name in (#6843); emptying it is the person's doing.
+		await owner.page.getByLabel(/project name/i).fill("");
 		await create.click();
 		// `project-form.schema.ts` states this rule as `.min(1, "Project name is required")`, and
 		// #4269 made the Configure step say it in those words rather than "Name your project.".
@@ -135,14 +137,16 @@ test.describe("Projects — create validation", () => {
 	test("the import bridge says so when the scan it was handed does not exist", async ({
 		owner,
 	}) => {
-		// `?scan=<jobId>` is the other way into Configure. A well-formed id that names no job
-		// resolves NOT_FOUND, and the screen has to say that rather than sit on a spinner — a
-		// stale bookmark and a scan still running must not look alike.
+		// `?scan=<jobId>` opens the screen on "Import a repository", following that scan. A
+		// well-formed id that names no job resolves NOT_FOUND, and the screen has to say that rather
+		// than sit on a spinner — a stale bookmark and a scan still running must not look alike —
+		// and Create stays disabled with its reason.
 		await owner.page.goto(`/${owner.orgSlug}/~/new?scan=${randomUUID()}`);
-		await expect(
-			owner.page.getByRole("heading", { name: "Configure your project" }),
-		).toBeVisible({ timeout: 45_000 });
-		await expect(owner.page.getByText(/find that scan/i)).toBeVisible({ timeout: 15_000 });
+		await expect(owner.page.getByRole("radio", { name: "Import a repository", exact: true })).toBeChecked({
+			timeout: 45_000,
+		});
+		await expect(owner.page.getByText(/scan was not found/i)).toBeVisible({ timeout: 15_000 });
+		await expect(owner.page.getByRole("button", { name: /create project/i })).toBeDisabled();
 	});
 });
 
@@ -302,7 +306,12 @@ test.describe("Projects — delete guard on a live environment", () => {
 		await owner.page.getByRole("button", { name: /^Delete project$/ }).click();
 		const dialog = owner.page.getByRole("alertdialog");
 		await expect(dialog.getByText(/delete this project\?/i)).toBeVisible();
-		await dialog.getByRole("button", { name: /delete project/i }).click();
+		// Delete is destroy-class (#7198): the confirm stays disabled until the name is typed.
+		const confirm = dialog.getByRole("button", { name: /delete project/i });
+		await expect(confirm).toBeDisabled();
+		await dialog.getByRole("textbox").fill(name);
+		await expect(confirm).toBeEnabled();
+		await confirm.click();
 		// Before the wait below: the toast is gone in ~4s.
 		await expectErrorToast(owner.page);
 		// Long enough that a delete which SUCCEEDED would certainly have navigated by now: passing

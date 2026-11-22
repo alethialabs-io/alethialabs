@@ -113,31 +113,7 @@ async function dismissConsentBanner(page: Page): Promise<void> {
 	await reject.click();
 }
 
-/**
- * Walks the post-auth clickwrap if it is showing, and returns once it is not.
- *
- * The gate (#2372) redirects every route under (private) to /accept-terms until the account has
- * accepted the CURRENT Terms, so a brand-new account meets it between onboarding and the org. The
- * July persona factory predates it and walked straight from "Create organization" to a
- * `waitForURL(/{slug})` that could therefore never resolve — /accept-terms is a single segment and
- * was not in NON_ORG_SEGMENTS either, so the wait resolved on the GATE and called it the org slug.
- */
-async function acceptCurrentTerms(page: Page): Promise<void> {
-	const accept = page.getByRole("button", { name: ACCEPTANCE_LABELS.submit });
-	try {
-		await accept.waitFor({ state: "visible", timeout: 15_000 });
-	} catch {
-		return; // already accepted — nothing to walk
-	}
-	await page
-		.getByText(new RegExp(ACCEPTANCE_LABELS.checkboxPrefix, "i"))
-		.first()
-		.click();
-	await accept.click();
-	await accept.waitFor({ state: "hidden", timeout: 30_000 });
-}
-
-/** Resolves the org slug from the current post-onboarding URL (/{slug}). */
+/** Resolves the org slug from the current post-onboarding URL (/{slug} or /{slug}/~/new). */
 function slugFromUrl(page: Page): string {
 	return page.url().replace(/^https?:\/\/[^/]+\//, "").replace(/[/?#].*$/, "");
 }
@@ -156,17 +132,50 @@ const NON_ORG_SEGMENTS = new Set([
 	"dashboard",
 ]);
 
-/** Waits until the URL is a real org overview (/{slug}), i.e. a single segment that isn't a known
- * public route. Onboarding's own `/onboarding` is a single segment, so it must be excluded. */
+/** Waits until the URL is inside a real org — its overview (/{slug}) or the new-project screen
+ * onboarding hands off to (/{slug}/~/new, WIZ-W6) — and returns the slug. The first segment must not
+ * be a known public route: onboarding's own `/onboarding` is a single segment, so it is excluded. */
 async function waitForOrgLanding(page: Page): Promise<string> {
 	await page.waitForURL(
 		(url) => {
 			const parts = url.pathname.split("/").filter(Boolean);
-			return parts.length === 1 && !NON_ORG_SEGMENTS.has(parts[0]);
+			if (parts.length === 0 || NON_ORG_SEGMENTS.has(parts[0])) return false;
+			return parts.length === 1 || (parts.length === 3 && parts[1] === "~" && parts[2] === "new");
 		},
 		{ timeout: 30_000 },
 	);
 	return slugFromUrl(page);
+}
+
+/**
+ * Ticks onboarding's inline terms box when it is there (WIZ-W6). A new account accepts the current
+ * Terms on the onboarding form itself; an account that already accepted them sees no box. Located by
+ * the exported label prefix, like the `/accept-terms` walk.
+ */
+export async function tickOnboardingTerms(page: Page): Promise<void> {
+	const box = page.getByRole("checkbox", { name: new RegExp(ACCEPTANCE_LABELS.checkboxPrefix, "i") });
+	if (!(await box.isVisible().catch(() => false))) return;
+	if (!(await box.isChecked())) await box.click();
+}
+
+/**
+ * Fills the payer facts a Pro trial asks for on onboarding when they are not already there. The
+ * country is deduced by the page (the request's location, the email domain, the browser language),
+ * so it is usually set; the role is asked only for a business purchase, which a company-domain
+ * address (every persona's `@alethia.test`) defaults to.
+ */
+async function fillTrialPayerFacts(page: Page): Promise<void> {
+	const pickCountry = page.getByRole("button", { name: "Select a country" });
+	if (await pickCountry.isVisible().catch(() => false)) {
+		await pickCountry.click();
+		await page.getByRole("combobox", { name: "Search country", exact: true }).fill("Germany");
+		await page.getByRole("option", { name: /Germany/ }).first().click();
+	}
+	const role = page.getByRole("textbox", { name: /your role/i });
+	if (await role.isVisible().catch(() => false)) {
+		await role.click();
+		await page.keyboard.type("Founder");
+	}
 }
 
 /**
@@ -202,10 +211,10 @@ export async function signUpHobby(
 	await emailOtpSignIn(page, email, "signup", patience);
 	await page.waitForURL(/\/onboarding/, { timeout: 30_000 });
 	await page.locator("#org-name").fill(orgNameFor("Hobby", email));
-	// Hobby (community) tile is selected by default; click it for determinism, then create.
-	await page.getByRole("button", { name: /personal projects/i }).click();
+	// Hobby (community) is selected by default; pick it for determinism, then create.
+	await page.getByText("Personal projects", { exact: true }).click();
+	await tickOnboardingTerms(page);
 	await page.getByRole("button", { name: /create organization/i }).click();
-	await acceptCurrentTerms(page);
 	const orgSlug = await waitForOrgLanding(page);
 	return { orgSlug };
 }
@@ -219,29 +228,24 @@ export async function signUpTeamTrial(page: Page, email: string): Promise<{ orgS
 	await emailOtpSignIn(page, email, "signup");
 	await page.waitForURL(/\/onboarding/, { timeout: 30_000 });
 	await page.locator("#org-name").fill(orgNameFor("Team", email));
-	const proTile = page.getByRole("button", { name: /commercial projects/i });
+	const proTile = page.getByRole("radio", { name: /commercial projects/i });
 	const proDisabled = await proTile.isDisabled().catch(() => true);
+	const createBtn = page.getByRole("button", { name: /create organization/i });
 	if (proDisabled) {
-		// Stripe not configured — record intent to fall back so the suite still runs.
-		await page.getByRole("button", { name: /personal projects/i }).click();
-		await page.getByRole("button", { name: /create organization/i }).click();
-		await acceptCurrentTerms(page);
-		const orgSlug = await waitForOrgLanding(page);
+		// No trial here (Stripe unconfigured, or the trial is not offered) — fall back so the suite
+		// still runs; global-setup refuses the fallback where Stripe was promised.
+		await page.getByText("Personal projects", { exact: true }).click();
+		await tickOnboardingTerms(page);
+		await createBtn.click();
+			const orgSlug = await waitForOrgLanding(page);
 		return { orgSlug, plan: "community" };
 	}
-	await proTile.click();
-	// Trial path shows "Create organization" (card-less); paid path shows "Continue to payment".
-	// A fresh account should always get the trial; guard for the paid label just in case.
-	const createBtn = page.getByRole("button", { name: /create organization/i });
-	const payBtn = page.getByRole("button", { name: /continue to payment/i });
-	if (await payBtn.isVisible().catch(() => false)) {
-		// No trial available (shouldn't happen for a fresh account) — bail to community.
-		await page.getByRole("button", { name: /personal projects/i }).click();
-		await createBtn.click();
-	} else {
-		await createBtn.click();
-	}
-	await acceptCurrentTerms(page);
+	await page.getByText("Commercial projects", { exact: true }).click();
+	// The card-less trial runs the purchase gate (#7107), so onboarding collects the payer facts
+	// and the terms acceptance before it starts.
+	await fillTrialPayerFacts(page);
+	await tickOnboardingTerms(page);
+	await createBtn.click();
 	const orgSlug = await waitForOrgLanding(page);
 	return { orgSlug, plan: "team" };
 }

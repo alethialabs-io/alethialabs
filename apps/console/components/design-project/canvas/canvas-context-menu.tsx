@@ -25,9 +25,11 @@ import {
 } from "@repo/ui/context-menu";
 import { arrangeBoard } from "@/lib/canvas/arrange";
 import { kindFromCollectionId } from "@/lib/canvas/collections";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useBoard, useOthers } from "@/lib/canvas/store/canvas-store-provider";
+import { useAllNodes, useBoardActions, useShowConnections } from "@/lib/canvas/store/use-board";
 import type { CanvasNode, NodeKind } from "./graph/types";
 import { NODE_REGISTRY } from "./graph/node-registry";
+import { GOVERNED_ROW_REASON } from "./toolbar/reasons";
 import { NOTHING_TO_FIT, useHasDrawnNodes } from "./use-has-drawn-nodes";
 
 /**
@@ -96,6 +98,7 @@ function targetIdsFor(nodeId: string, nodes: CanvasNode[]): string[] {
  */
 export function useCanvasContextMenu(): CanvasContextMenuController {
 	const [state, setState] = useState<CanvasContextMenuState | null>(null);
+	const actions = useBoardActions();
 
 	/** Dismiss the menu (Escape, an outside press, or after an item runs). */
 	const close = useCallback(() => setState(null), []);
@@ -130,20 +133,20 @@ export function useCanvasContextMenu(): CanvasContextMenuController {
 		(event: CanvasPointerEvent, node: { id: string }) => {
 			// Nothing in React Flow suppresses the browser menu on a card — only the pane gets that.
 			event.preventDefault();
-			const { nodes, onNodesChange } = useCanvasStore.getState();
+			const nodes = actions.nodes();
 			const ids = targetIdsFor(node.id, nodes);
 			const changes: NodeChange<CanvasNode>[] = nodes.map((n) => ({
 				id: n.id,
 				type: "select",
 				selected: ids.includes(n.id),
 			}));
-			onNodesChange(changes);
+			actions.onNodesChange(changes);
 			setState({
 				target: { kind: "node", nodeId: node.id },
 				point: { x: event.clientX, y: event.clientY },
 			});
 		},
-		[],
+		[actions],
 	);
 
 	const onSelectionContextMenu = useCallback(
@@ -173,8 +176,9 @@ export interface CanvasContextMenuProps {
 	onClose: () => void;
 	/** A BYO-IaC source governs this environment (replace mode): the design is inert, so no add. */
 	iacGoverned: boolean;
-	/** Open the Add palette. Owned by the canvas, which also owns the palette's open state. */
-	onAddService: () => void;
+	/** Open the add picker for a node that lands where the menu was opened (viewport CSS pixels).
+	 * Owned by the canvas, which also owns the picker's open state. */
+	onAddService: (point: ContextMenuPoint) => void;
 }
 
 /**
@@ -196,14 +200,15 @@ export function CanvasContextMenu({
 }: CanvasContextMenuProps) {
 	const { fitView } = useReactFlow();
 	const canFit = useHasDrawnNodes();
-	const nodes = useCanvasStore((s) => s.nodes);
-	const openCard = useCanvasStore((s) => s.openCard);
-	const removeNodes = useCanvasStore((s) => s.removeNodes);
-	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
-	const toggleKindVisibility = useCanvasStore((s) => s.toggleKindVisibility);
-	const repairOverlaps = useCanvasStore((s) => s.repairOverlaps);
-	const showConnections = useCanvasStore((s) => s.showConnections);
-	const toggleConnections = useCanvasStore((s) => s.toggleConnections);
+	const board = useBoard();
+	const others = useOthers();
+	const nodes = useAllNodes();
+	const { removeNodes, duplicateNodes, repairOverlaps } = useBoardActions();
+	const openCard = (card: { kind: "inspector"; nodeId: string }) =>
+		board.view.getState().openCard(card);
+	const toggleKindVisibility = (kind: NodeKind) => board.view.getState().toggleKindVisibility(kind);
+	const showConnections = useShowConnections();
+	const toggleConnections = () => board.view.getState().toggleConnections();
 
 	const target = state?.target ?? null;
 
@@ -238,14 +243,19 @@ export function CanvasContextMenu({
 
 				{target?.kind === "pane" && (
 					<>
-						<ContextMenuItem disabled={iacGoverned} onSelect={onAddService}>
+						<ContextMenuItem
+							disabledReason={iacGoverned ? GOVERNED_ROW_REASON : null}
+							onSelect={() => {
+								if (state) onAddService(state.point);
+							}}
+						>
 							<Plus className="mr-2 h-4 w-4 text-muted-foreground" />
 							Add service…
 						</ContextMenuItem>
 						<ContextMenuSeparator />
-						<ContextMenuItem onSelect={() => void arrangeBoard(fitView)}>
+						<ContextMenuItem onSelect={() => void arrangeBoard(board, others, fitView)}>
 							<LayoutGrid className="mr-2 h-4 w-4 text-muted-foreground" />
-							Auto-arrange
+							Tidy layout
 						</ContextMenuItem>
 						<ContextMenuItem onSelect={() => repairOverlaps()}>
 							<Shuffle className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -325,7 +335,13 @@ function NodeItems({
 			<ContextMenuSeparator />
 			<ContextMenuItem
 				variant="destructive"
-				disabled={!canRemove}
+				disabledReason={
+					canRemove
+						? null
+						: node
+							? "Not part of the design. It is removed from its own card."
+							: "Open the list to remove its members one at a time."
+				}
 				onSelect={() => removeNodes([nodeId])}
 			>
 				<Trash2 className="mr-2 h-4 w-4" />
@@ -361,7 +377,9 @@ function SelectionItems({
 		<>
 			<ContextMenuLabel>{ids.length} selected</ContextMenuLabel>
 			<ContextMenuItem
-				disabled={!canDuplicate}
+				disabledReason={
+					canDuplicate ? null : "Each selected card is the only one of its kind."
+				}
 				onSelect={() => duplicateNodes(ids)}
 			>
 				<Copy className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -370,7 +388,9 @@ function SelectionItems({
 			<ContextMenuSeparator />
 			<ContextMenuItem
 				variant="destructive"
-				disabled={!canRemove}
+				disabledReason={
+					canRemove ? null : "None of the selected cards is part of the design."
+				}
 				onSelect={() => removeNodes(ids)}
 			>
 				<Trash2 className="mr-2 h-4 w-4" />

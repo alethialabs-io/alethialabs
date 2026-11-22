@@ -46,8 +46,9 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // WHY EVERY ERROR PATH IS FAIL-OPEN
 //
-// This runs inside `TypeScript (lint · types · test · docs)`, a REQUIRED check with no path
-// filter — it gates every pull request in the repository, not only TypeScript ones. A false
+// This runs inside ci.yml's `ts-test` job, which the REQUIRED `TypeScript (lint · types · test ·
+// docs)` context aggregates — a check with no path filter, so it gates every pull request in the
+// repository, not only TypeScript ones. A false
 // failure does not inconvenience one author; it stops the merge queue for everyone.
 //
 // So the rule is: THE ONLY CONDITION THAT MAY EXIT NON-ZERO is a directory present in BOTH the
@@ -206,13 +207,13 @@ function currentEnv(projectDir) {
 		// The divergence is NOT local-vs-CI. It is turbo-vs-direct, and it runs the other way from
 		// what this comment used to claim:
 		//
-		//   pnpm exec turbo run test   -> dist PRESENT   (ci.yml:138, and a laptop running turbo)
+		//   pnpm exec turbo run test   -> dist PRESENT   (ci.yml's `ts-test` job, and a laptop running turbo)
 		//   pnpm -C apps/console run test       -> dist ABSENT    (scripts/env.sh, i.e. `pnpm env:check`)
 		//
 		// apps/console declares @alethia/ee under **optionalDependencies**, and turbo.json declares
 		// `test.dependsOn: ["^build"]` — so turbo builds the dist as part of the test task. That is
-		// why no explicit `Build @alethia/ee` step appears in the `typescript` job even though the
-		// floors are reachable there. ci.yml (~:186) carries the measured evidence; it is not
+		// why no explicit `Build @alethia/ee` step appears in the `ts-test` job even though the
+		// floors are reachable there. ci.yml (above `ts-test`'s ratchet steps) carries the measured evidence; it is not
 		// restated here, so the two cannot drift apart again.
 		//
 		// This comment previously asserted the exact opposite, and that is the part worth keeping:

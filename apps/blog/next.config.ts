@@ -8,7 +8,9 @@ import type { NextConfig } from "next";
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../");
 
 const config: NextConfig = {
-	basePath: "/blog",
+	// The blog became News: `/blog` and `/blog/*` are 308-redirected here by every
+	// Caddyfile that fronts this app, so old links and feed subscribers keep resolving.
+	basePath: "/news",
 	output: "standalone",
 	// Monorepo: trace workspace files from the repo root for a self-contained
 	// standalone bundle inside Docker.
@@ -34,9 +36,15 @@ const config: NextConfig = {
 	outputFileTracingIncludes: {
 		"/**/*": ["../../node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/**"],
 	},
+	// A post's optional real cover (velite `cover:`) is either in public/static or on the assets
+	// host under /news/. Nothing else may be optimised through this app's image route.
+	images: {
+		remotePatterns: [{ protocol: "https", hostname: "assets.alethialabs.io", pathname: "/news/**" }],
+		localPatterns: [{ pathname: "/news/static/**" }],
+	},
 	reactStrictMode: true,
 	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
-	transpilePackages: ["@repo/brand", "@repo/ui"],
+	transpilePackages: ["@repo/brand", "@repo/format", "@repo/ui"],
 };
 
 export default config;

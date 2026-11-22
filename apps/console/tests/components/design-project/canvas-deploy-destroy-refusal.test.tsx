@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// #5445 — the canvas's Deploy and Destroy show the server's refusal sentence.
+// #5445 — the canvas's Destroy and Save show the server's refusal sentence; #6833 — the board's host
+// has no Deploy of its own.
+//
+// DEPLOY (#6833, decision M23). The host used to hand the changes bar a deploy handler that saved and
+// provisioned in one press, with no plan in between. That path is gone: a deploy is offered only in
+// the review view, behind `usePlanReview(serverCurrent).gate` (review-view.test.tsx pins that). What
+// this file pins is the absence: the host passes the bar no deploy handler and never calls
+// `deployDesignAction`, whatever is pressed. The history below is kept because the Destroy half of it
+// still holds.
 //
 // Deploy (the pending-changes bar) and Destroy (the environment settings card on the workspace rail)
 // called `provisionProject` / `destroyProject`, which refused by THROWING out of a `"use server"`
@@ -16,9 +24,9 @@
 // tests/actions/canvas-writes.test.ts.
 //
 // The board is other files' subject (React Flow, every card, the palettes), so each of its pieces is
-// a stub. What is real is `DesignProjectCanvas`'s own `handleDeploy` / `handleDestroyEnvironment`,
+// a stub. What is real is `DesignProjectCanvas`'s own `handleSaveDesign` / `handleDestroyEnvironment`,
 // the mutation contract, and the canvas store, which is where "the baseline is NOT committed when
-// nothing deployed" is read.
+// nothing was saved" is read.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
@@ -27,6 +35,7 @@ import { createContext, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const deployDesign = vi.fn();
+const saveDesign = vi.fn();
 const destroyEnvironment = vi.fn();
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
@@ -37,7 +46,7 @@ vi.mock("@/app/server/actions/canvas-writes", () => ({
 	deployDesignAction: (...a: unknown[]) => deployDesign(...a),
 	destroyEnvironmentAction: (...a: unknown[]) => destroyEnvironment(...a),
 	discardStagedDesignAction: vi.fn(),
-	saveDesignAction: vi.fn(),
+	saveDesignAction: (...a: unknown[]) => saveDesign(...a),
 }));
 vi.mock("@/lib/rpc/client", async () => {
 	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
@@ -84,13 +93,19 @@ vi.mock("@/lib/stores/use-elench-store", () => ({
 vi.mock("@/lib/stores/use-workspace-store", () => ({ useActiveOrgSlug: () => "acme" }));
 
 // The board's pieces. The two that carry the handlers under test are buttons that call them the
-// way the real components do: the bar's Deploy, and the settings card's Destroy (non-cascading).
+// way the real components do: the bar's Save, and the settings card's Destroy (non-cascading). The
+// bar also records the names of the props it was given, so the absence of a deploy handler can be
+// asserted rather than assumed.
+const barProps: { names: string[] } = { names: [] };
 vi.mock("@/components/design-project/canvas/pending-changes-bar", () => ({
-	PendingChangesBar: ({ onDeploy }: { onDeploy: () => void }) => (
-		<button type="button" onClick={onDeploy}>
-			Deploy
-		</button>
-	),
+	PendingChangesBar: (props: { onSave?: () => void }) => {
+		barProps.names = Object.keys(props);
+		return (
+			<button type="button" onClick={props.onSave}>
+				Save
+			</button>
+		);
+	},
 }));
 vi.mock("@/components/design-project/canvas/cards/workspace-rail", () => ({
 	isRailOpen: () => false,
@@ -159,7 +174,8 @@ vi.mock("@/components/design-project/byo/iac-source-canvas-context", () => ({
 
 import { DesignProjectCanvas } from "@/components/design-project/canvas/design-project-canvas";
 import { DESTROY_HOLD_KEY } from "@/lib/query/topics";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { isBoardDirty } from "@/tests/fixtures/canvas/board";
 
 /** The environment the destroy tree named — what the dialog hands the destroy. */
 const TREE_ENV = "env-from-tree";
@@ -185,42 +201,60 @@ const refused = (message: string) => ({ ok: false, error: { kind: "conflict", me
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("Canvas Deploy", () => {
-	it("shows the refusal's own sentence and leaves the changes pending — nothing deployed", async () => {
-		deployDesign.mockResolvedValue(refused(NO_ACCOUNT));
-		useCanvasStore.setState({ dirty: true });
+	it("is not the host's: the bar is handed no deploy handler", () => {
+		renderCanvas();
+		expect(barProps.names.filter((name) => /deploy/i.test(name))).toEqual([]);
+	});
+
+	it("is never asked for from the host, whatever is pressed", async () => {
+		saveDesign.mockResolvedValue({ ok: true, data: { environmentId: "env-1" } });
 		const user = userEvent.setup();
 		renderCanvas();
 
-		await user.click(screen.getByRole("button", { name: "Deploy" }));
+		for (const button of screen.getAllByRole("button")) await user.click(button);
+
+		expect(deployDesign).not.toHaveBeenCalled();
+		expect(track).not.toHaveBeenCalled();
+	});
+});
+
+describe("Canvas Save", () => {
+	it("shows the refusal's own sentence and leaves the changes pending — nothing saved", async () => {
+		saveDesign.mockResolvedValue(refused(NO_ACCOUNT));
+		// A change is pending: the save has something to save.
+		board.addNode("bucket");
+		const user = userEvent.setup();
+		renderCanvas();
+
+		await user.click(screen.getByRole("button", { name: "Save" }));
 
 		await vi.waitFor(() => expect(toastError).toHaveBeenCalledWith(NO_ACCOUNT));
-		expect(deployDesign).toHaveBeenCalledWith({
+		expect(saveDesign).toHaveBeenCalledWith({
 			projectId: "proj-1",
 			environmentId: "env-1",
 			design: {},
 		});
-		expect(useCanvasStore.getState().dirty).toBe(true);
+		expect(isBoardDirty()).toBe(true);
 		expect(toastSuccess).not.toHaveBeenCalled();
-		expect(track).not.toHaveBeenCalled();
 		// The button is usable again: the mutation settled.
-		expect(screen.getByRole("button", { name: "Deploy" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 	});
 
-	it("commits the baseline and says so when the deploy is queued", async () => {
-		deployDesign.mockResolvedValue({ ok: true, data: { environmentId: "env-1", jobId: "job-1" } });
-		useCanvasStore.setState({ dirty: true });
+	it("commits the baseline and says so when the design is saved", async () => {
+		saveDesign.mockResolvedValue({ ok: true, data: { environmentId: "env-1" } });
+		// A change is pending: the save has something to save.
+		board.addNode("bucket");
 		const user = userEvent.setup();
 		renderCanvas();
 
-		await user.click(screen.getByRole("button", { name: "Deploy" }));
+		await user.click(screen.getByRole("button", { name: "Save" }));
 
-		await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Deploy queued"));
-		expect(useCanvasStore.getState().dirty).toBe(false);
-		expect(track).toHaveBeenCalledWith("deploy_queued", { environmentId: "env-1" });
+		await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Design saved"));
+		expect(isBoardDirty()).toBe(false);
 		expect(toastError).not.toHaveBeenCalled();
 	});
 });
@@ -279,18 +313,18 @@ describe("Canvas Destroy", () => {
 });
 
 describe("the double-submit guard", () => {
-	it("asks for one deploy however often Deploy is pressed while it is in flight", async () => {
+	it("asks for one save however often Save is pressed while it is in flight", async () => {
 		let settle: (v: unknown) => void = () => {};
-		deployDesign.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+		saveDesign.mockReturnValue(new Promise((resolve) => (settle = resolve)));
 		const user = userEvent.setup();
 		renderCanvas();
 
-		await user.click(screen.getByRole("button", { name: "Deploy" }));
-		await user.click(screen.getByRole("button", { name: "Deploy" }));
-		await user.click(screen.getByRole("button", { name: "Deploy" }));
+		await user.click(screen.getByRole("button", { name: "Save" }));
+		await user.click(screen.getByRole("button", { name: "Save" }));
+		await user.click(screen.getByRole("button", { name: "Save" }));
 
-		expect(deployDesign).toHaveBeenCalledTimes(1);
-		settle({ ok: true, data: { environmentId: "env-1", jobId: "job-1" } });
-		await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Deploy queued"));
+		expect(saveDesign).toHaveBeenCalledTimes(1);
+		settle({ ok: true, data: { environmentId: "env-1" } });
+		await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Design saved"));
 	});
 });

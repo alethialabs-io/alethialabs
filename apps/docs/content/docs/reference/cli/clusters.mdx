@@ -69,10 +69,12 @@ first and copy a name out of it.
 
 The selector is required when a prompt could not work: with `--no-input`, with a piped stdin that
 could never answer one, and with a redirected stdout that has no screen to draw one on. In each
-case the command exits non-zero explaining what to pass. The last is the easy one to hit —
+case the command exits `9` explaining what to pass. The last is the easy one to hit —
 `alethia cluster get -o json > clusters.json` refuses rather than writing a form into your file.
-A selector that matches **nothing** is an error too, not an empty screen —
-`alethia cluster get typo || echo missing` prints `missing`.
+A selector that matches **nothing** is an error too, not an empty screen: the command exits `6`,
+lists the clusters you have, and `alethia cluster get typo || echo missing` prints `missing`. A
+selector that matches **several** clusters exits `9` and lists them, unless a terminal is there to
+ask which one.
 
 A selector that matches **more than one** cluster — the usual case is one project with a production
 and a staging environment — asks which you meant rather than picking for you. With `--no-input` it
@@ -142,8 +144,8 @@ Only this machine can open the result. For the task, with the tiers, lifetimes a
 alethia cluster kubeconfig
 alethia cluster kubeconfig api-backend
 alethia cluster kubeconfig api-backend --admin --ttl 4h
-alethia cluster kubeconfig api-backend --output api-backend.kubeconfig
-alethia cluster kubeconfig api-backend --static --output -
+alethia cluster kubeconfig api-backend --out api-backend.kubeconfig
+alethia cluster kubeconfig api-backend --static --out -
 alethia cluster kubeconfig api-backend-production --no-input
 ```
 
@@ -152,9 +154,10 @@ alethia cluster kubeconfig api-backend-production --no-input
 | `[selector]` | No — at a terminal | The picker | The same selector as `cluster get`: a project name, a cluster name or a cluster id. Omit it at a terminal and the CLI asks which cluster. |
 | `--admin` | No | Off (read-only) | Get the admin tier. Needs the `cluster:access_admin` permission, which owners and admins hold. Without it, the tier is read-only, which needs `cluster:access_readonly` (owners, admins and operators). |
 | `--ttl` | No | `1h` | The credential's lifetime, from `15m` to `8h`, in whole seconds (`90m` and `2h30m` work). An admin credential's real lifetime is set by the cloud. See [the lifetime table](/guides/get-a-kubeconfig#choose-how-long-the-credential-lasts). |
-| `--static` | No | Off (exec) | Write a kubeconfig that holds the credential itself and stops working when it expires. Hetzner and Alibaba Cloud always get this shape. |
+| `--static` | No | Off (exec) | Write a kubeconfig that holds the credential itself and stops working when it expires. Hetzner always gets this shape. |
 | `--merge` | No | On | Merge into the first file in `$KUBECONFIG`, or into `~/.kube/config`, and make the context current. |
-| `--output` | No | None | Write a standalone kubeconfig to this file instead of merging. `-` writes it to stdout. |
+| `--out` | No | None | Write a standalone kubeconfig to this file, with mode `0600`, instead of merging. `-` writes it to stdout. |
+| `--output` | No | None | The older spelling of `--out`. It still works, and prints one line on stderr naming `--out`. |
 
 The selector is required where a prompt cannot work: with `--no-input`, with a piped stdin, and
 with a redirected stdout. Every flag has a default, so a selector with `--no-input` is a complete
@@ -165,25 +168,30 @@ call.
 | Flags | Result |
 |-------|--------|
 | None, or `--merge` | The CLI merges the context `alethia-<project>-<env>` into the first file in `$KUBECONFIG`, or into `~/.kube/config`, and makes it the current context. It replaces the cluster, user and context entries with that name, and keeps every other entry, unknown key and comment. It takes kubectl's `<file>.lock` lock while it writes, and follows a symlinked kubeconfig. |
-| `--output FILE` | The CLI writes a standalone kubeconfig to that file. |
-| `--output -` | The CLI writes the kubeconfig to stdout. This is the only way the credential goes to stdout. |
+| `--out FILE` | The CLI writes a standalone kubeconfig to that file. |
+| `--out -` | The CLI writes the kubeconfig to stdout. This is the only way the credential goes to stdout. |
 
-Every file the command writes gets mode `0600`, and the write is atomic. All other messages go to
-stderr, so stdout is empty unless you pass `--output -`.
+Every file the command writes gets mode `0600`, including a kubeconfig that was readable by others
+before the merge, and the write is atomic. The command says on stderr which file it wrote. All
+other messages go to stderr too, so stdout is empty unless you pass `--out -`. No message, error or
+`--debug` line contains the credential.
 
-**The `--output` rules.** In this command `--output` takes a file path, not the global
-`table`/`json`/`csv` format, and it has no `-o` short form. `--output table`, `--output json` and
-`--output csv` are refused, so a habit cannot write a credential to a file called `json`. To write a
-file with one of those names, pass `./json`. `--output` replaces the merge, so do not pass
-`--merge` with it, not even as `--merge=false`: the two flags together are an error. Turning off
-`--merge` without an `--output` is refused too, because the kubeconfig would go nowhere.
+**The `--out` and `--output` rules.** `--out` is the flag [`alethia export`](/reference/cli/plan-and-apply)
+uses for the same thing. `--output FILE` is its older spelling on this command. It still works for
+now and prints one line on stderr naming `--out`; in a later release `--output` becomes the global
+`table`/`json`/`csv` format flag here, as it is on every other command. Until then `--output table`,
+`--output json` and `--output csv` are refused, so a habit cannot write a credential to a file
+called `json`. This command has no table, JSON or CSV form and no `-o` short form. `--out` replaces
+the merge, so do not pass `--merge` with it, not even as `--merge=false`: the two flags together are
+an error, and so are `--out` and `--output` together. Turning off `--merge` without an `--out` is
+refused too, because the kubeconfig would go nowhere.
 
 ### Exec and static
 
 | Shape | Clouds | What the kubeconfig holds |
 |-------|--------|---------------------------|
 | Exec (the default) | AWS, GCP, Azure | No credential. It runs `alethia cluster token` with the cluster id, so `kubectl` gets a new token whenever one expires. The command also caches the token it just minted, so the first `kubectl` call does not wait for a runner. |
-| Static (`--static`) | All five, and always on Hetzner and Alibaba Cloud | The credential itself: a bearer token, or a client certificate and key. It stops working at its expiry. |
+| Static (`--static`) | All four, and always on Hetzner | The credential itself: a bearer token, or a client certificate and key. It stops working at its expiry. |
 
 The cluster list does not tell the CLI which cloud a cluster is on. So without `--static`, the CLI
 asks for exec. If the cloud refuses (`422`), it asks again for static. A second `422` means the cloud
@@ -197,7 +205,7 @@ with it.
 
 On stderr, after the kubeconfig is written:
 
-- the context name and the file it went to;
+- the context name, the file it went to, and that the file has mode `0600`;
 - the tier, and for an exec kubeconfig the TTL of each token, or for a static one its real expiry;
 - a `kubectl --context` command to try;
 - if the cluster's API endpoint is private, a note that `kubectl` needs network access to it, for
@@ -208,18 +216,26 @@ A spinner shows while the runner works, but only at a terminal with prompts turn
 
 ### Exit codes and refusals
 
-The command exits `0` when it wrote the kubeconfig, and `1` for every error. It prints the error on
-stderr after `Error:`. These are the refusals from the control plane, and what the CLI prints:
+The command exits `0` when it wrote the kubeconfig. Every error is one line on stderr, with a hint
+when there is a next command to run, and an exit code that says what kind of failure it was. A flag
+that is wrong exits `8` before anything is sent. A missing selector, or one that matches several
+clusters, exits `9` when there is no terminal to ask on. A selector that matches nothing exits `6`. These are the refusals
+from the control plane, and what the CLI prints:
 
-| Status | Cause | The CLI prints |
-|--------|-------|----------------|
-| `401` | The session is not valid. | Run `alethia login`. |
-| `402` | A usage limit of the organization's plan. The mint runs on a runner and uses runner minutes. | The server's reason, and a pointer to `alethia usage`. |
-| `403` | Your role does not hold the tier's permission. | Which roles can mint that tier. For `--admin`, a hint to drop it. |
-| `404` | No such cluster in the active organization. | A pointer to `alethia org switch` and `--org`. |
-| `409` | The environment is a draft, is being destroyed, or has no successful deploy. | The server's reason, and a pointer to `alethia project apply`. |
-| `422` | The cluster's cloud cannot mint a kubeconfig (it is not AWS, GCP, Azure, Alibaba Cloud or Hetzner, or it has no cloud identity). | The server's reason. |
-| `429` | More than 20 requests in 10 minutes, per person, per organization. | How long to wait, from the `Retry-After` header. |
+| Status | Exit | Cause | The CLI prints |
+|--------|------|-------|----------------|
+| `401` | `4` | The session is not valid. | Run `alethia login`. |
+| `402` | `10` | A usage limit of the organization's plan. The mint runs on a runner and uses runner minutes. | The server's reason, and a pointer to `alethia usage`. |
+| `403` | `5` | Your role does not hold the tier's permission. | Which roles can mint that tier. For `--admin`, a hint to drop it. |
+| `404` | `6` | No such cluster in the active organization. | A pointer to `alethia org switch` and `--org`. |
+| `409` | `7` | The environment is a draft, is being destroyed, or has no successful deploy. | The server's reason, and a pointer to `alethia project apply`. |
+| `422` | `8` | The cluster's cloud cannot mint a kubeconfig (it is not AWS, GCP, Azure or Hetzner, or it has no cloud identity). | The server's reason. |
+| `429` | `10` | More than 20 requests in 10 minutes, per person, per organization. | How long to wait, from the `Retry-After` header. |
+| `5xx`, or no answer | `11` | The control plane is unavailable. | The failure. A retry can help. |
+
+Two more outcomes come from the mint itself. A runner that tried and failed exits `13` with the
+runner's reason. A request that no runner picked up before it expired exits `11` and points at
+`alethia runner list`.
 
 After the request is accepted, the CLI polls until the mint is ready, failed or expired. It waits
 up to 10 minutes, the server's window, and gives up a minute after that on its own clock. A failed
@@ -248,9 +264,12 @@ alethia cluster token
 The command takes no flags of its own. The global `--org` and `--token` flags apply.
 
 **Stdout** carries one `client.authentication.k8s.io/v1` `ExecCredential` document and nothing
-else: the token and its expiry. **Stderr** carries every error, after `alethia cluster token:`,
-and `kubectl` shows that line. The command exits `0` when it printed a credential and `1`
-otherwise. It never prompts: if your session expired, it fails and tells you to run
+else: the token and its expiry. **Stderr** carries every error, as one line that names
+`alethia cluster token:`, and `kubectl` shows that line. No error, note or `--debug` line contains
+the token. The command exits `0` when it printed a credential. Otherwise it exits with the code of
+the failure, the same codes as [`alethia cluster kubeconfig`](#exit-codes-and-refusals): `4` for a
+session that is not valid, `5` when your role no longer allows the mint, `8` for an argument that
+is not a cluster id, `9` for no cluster id without a terminal. It never prompts: if your session expired, it fails and tells you to run
 `alethia login`. It never prints the update notice.
 
 ### The cache
@@ -287,7 +306,7 @@ works is your cloud account's decision. To get a kubeconfig through Alethia inst
 Alethia builds the command from values the cluster's last successful deploy recorded, so it is
 the same command the console's cluster card shows. Run it, then use `kubectl`:
 
-<Tabs items={["AWS", "GCP", "Azure", "Alibaba Cloud", "Hetzner"]}>
+<Tabs items={["AWS", "GCP", "Azure", "Hetzner"]}>
   <Tab value="AWS">
     ```bash
     aws eks update-kubeconfig --name api-backend-production --region eu-west-1
@@ -308,13 +327,6 @@ the same command the console's cluster card shows. Run it, then use `kubectl`:
     az aks get-credentials --resource-group rg-api-backend-production --name api-backend-production
     kubectl get nodes
     ```
-  </Tab>
-  <Tab value="Alibaba Cloud">
-    Alethia does not record the ACK cluster ID yet, and ACK's kubeconfig API needs it. The
-    **Kubeconfig** row names the cluster and its region instead. Find the cluster's ID in the ACK
-    console, then call `DescribeClusterUserKubeconfig` with the `aliyun` CLI. Its `config` field
-    is the kubeconfig. Or use [`alethia cluster kubeconfig`](#alethia-cluster-kubeconfig), which
-    needs no ACK cluster ID.
   </Tab>
   <Tab value="Hetzner">
     Hetzner has no cloud CLI command for a kubeconfig, so the **Kubeconfig** row has none. The

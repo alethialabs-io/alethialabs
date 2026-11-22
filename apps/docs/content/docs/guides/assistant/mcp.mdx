@@ -1,43 +1,56 @@
 ---
 title: MCP server (external agents)
-description: Connect an external agent — Claude or a claude.ai connector — to Alethia over MCP so it can read your infrastructure with the same tools Elench uses, read-only.
+description: Connect an external agent such as Claude Code, Claude, Cursor or Codex to Alethia over MCP, so it can read your infrastructure with the same tools Elench uses. The tools are read-only.
 ---
 
 # MCP server
 
-Elench's read tools are re-exposed as an [MCP](https://modelcontextprotocol.io) server so an agent
-*outside* the Console — Claude, or a claude.ai connector — can read your real infrastructure without
-you copying anything in by hand. It calls the **same PDP-gated, org-scoped tools** the in-console
-assistant uses, so it can only see what you can see.
+Elench's read tools are also served as an [MCP](https://modelcontextprotocol.io) server. An agent
+*outside* the console, such as Claude Code, Claude, Cursor or Codex, can then read your real
+infrastructure without you copying anything in by hand. It calls the **same permission-checked tools**
+the console's assistant uses, so it sees only what you can see.
 
-The external surface is **read-only by design**. It exposes just the read tools; the assistant's
-proposal, canvas, and job-queuing tools (including repo scans) are excluded. An external agent can
-read your projects, clusters, jobs, and drift — it can never queue an apply.
+The tools are **read-only**. An external agent can read your projects, clusters, jobs and drift. It
+cannot change a design, start a job, or approve anything. To act, an agent uses the
+[CLI](/agents/cli). [Alethia for agents](/agents) puts the two together.
 
 <Callout type="info">
-  The connector requires AI to be enabled for your organization. On self-host it is always enabled
-  (no hosted billing). On hosted Alethia every org has at least the free AI tier, which is enabled,
-  so the endpoint is available by default — it returns a `403` only if AI is explicitly disabled for
-  the org. See [Assistant](/guides/assistant).
+  The server needs AI to be on for your organization. On self-host it is always on. On hosted Alethia
+  every organization has at least the free AI tier, which is on, so the server is available by
+  default. It answers `403` only when AI is turned off for the organization. See
+  [Assistant](/guides/assistant).
 </Callout>
 
 ## Before you start
 
-- Your Alethia Console origin, e.g. `https://app.alethialabs.io`. The MCP endpoint is that origin
-  plus `/api/mcp`.
-- An MCP client that speaks remote MCP over Streamable HTTP with OAuth — for example Claude or a
-  claude.ai connector.
+- Your console origin: the address you sign in to Alethia at. `alethia auth status` prints it as
+  `web origin`. The MCP endpoint is that origin plus `/api/mcp`.
+- An MCP client that meets the [client requirements](#client-requirements).
+
+## Client requirements
+
+The server is strict about protocol versions, so check your client first:
+
+| Requirement | Detail |
+| --- | --- |
+| Transport | Remote MCP over Streamable HTTP, as `POST` requests to `/api/mcp`. The server has no `GET` or `DELETE` endpoint and no SSE transport. |
+| Protocol | The current generation of the protocol. The server refuses requests in the 2025 format, so a client that speaks only a 2025 revision cannot connect. |
+| Sign-in | OAuth 2.1. The client discovers the authorization server from the `401` answer, and you sign in to Alethia in the browser. |
+| Client registration | A Client ID Metadata Document (CIMD): the client's id is the HTTPS URL of a metadata document that the client publishes. The server does not accept anonymous dynamic client registration. |
+
+Alethia has not yet published a test record per client. The pages under
+[Pick a client](/agents#pick-a-client) show the setup for Claude Code, Claude, Cursor, VS Code and
+Codex.
 
 ## Connect a client
 
-The endpoint authenticates with OAuth 2.1. Clients register themselves (dynamic client
-registration), so there is no key to paste — you sign in to Alethia and approve access.
+There is no key to paste. You sign in to Alethia and approve access.
 
 <Steps>
 
-### Add the connector
+### Add the server
 
-In your MCP client, add a custom / remote MCP server pointing at your endpoint:
+In your MCP client, add a remote MCP server pointing at your endpoint:
 
 ```text
 https://<your-console-origin>/api/mcp
@@ -45,52 +58,68 @@ https://<your-console-origin>/api/mcp
 
 ### Sign in to Alethia
 
-The client discovers Alethia's authorization server and sends you to the Console sign-in page. Sign
-in as you normally would.
+The client sends you to the console's sign-in page. Sign in as you normally do.
 
 ### Approve access
 
-If the client requests consent, approve it. The token issued is bound to **your** user — the tools
-run as you, under your organization's grants, with no new authority.
+If the page asks for consent, approve it. The token belongs to **you**: the tools run as you, under
+your role in the organization, with no access of their own. The token names this MCP endpoint as its
+audience, and the server refuses tokens issued for anything else.
 
 ### Use the tools
 
-The connector now lists Alethia's read tools. Ask the external agent about your infrastructure and
-it calls them on your behalf.
+The client now lists Alethia's read tools. Ask the agent about your infrastructure and it calls them
+for you.
 
 </Steps>
 
+If the client cannot connect:
+
+- A `503` with "MCP is not configured on this deployment" comes from a self-hosted console whose
+  `NEXT_PUBLIC_APP_URL` is not an absolute `https` URL. The server needs one to name itself in tokens.
+- An error during sign-in that names the client usually means the client cannot use a Client ID
+  Metadata Document. Update the client.
+- A `403` after sign-in means AI is turned off for the organization.
+- Any other refusal of the client's first request after sign-in usually means the client speaks a
+  2025 revision of the protocol. Update the client.
+
+## Which organization the tools read
+
+The token belongs to you, not to an organization. Each request reads the organization the console
+picks for you when there is no browser session: the first organization you joined, or your personal
+organization if you have joined none. Switching organizations in the console does not change what the
+MCP tools read.
+
 ## What the agent can read
 
-The external projection is the read-only subset of Elench's tools:
+The [tool reference](/agents/tools) lists the 20 tools with their arguments. In short:
 
 | Area | What the agent can do |
 | --- | --- |
-| Projects | List projects and read one project's full configuration (components + sizes). |
-| Jobs | List recent provisioning jobs; read a job's status and error; read a plan/deploy result, including the Elench verification verdict. |
-| Runtime | List clusters (endpoints, databases, caches — no secrets), runners, connectors, and verified cloud accounts; read a cloud account's live inventory. |
-| Drift | Read a project's latest day-2 drift posture. |
-| Catalog | Browse the provider-neutral service catalog and its options; compute a CIDR for a host count. |
+| Projects | List projects and read one project's configuration (components and sizes). |
+| Jobs | List recent jobs; read a job's status and error; read a plan or deploy result. |
+| Runtime | List clusters (endpoints, databases, caches, no secrets), runners, connectors and verified cloud accounts; read a cloud account's live inventory. |
+| Drift | Read a project's latest drift posture. |
+| Catalog | Browse the service catalog and its options; compute a CIDR block for a host count. |
 | Docs | Search the Alethia documentation. |
-| Scans | Read a completed repo-scan result and compare its estimated cost across providers. |
-| Usage | Read the org's managed-runner usage, standalone AI standing, and billing summary. |
+| Scans | Read a finished repository scan and compare its estimated cost across clouds. |
+| Usage | Read the organization's managed-runner usage, AI usage and billing summary. |
 
-Returns are trimmed and secret-free — never ArgoCD passwords, tokens, or credentials.
+Results are trimmed and leave secrets out: never ArgoCD passwords, tokens or credentials.
 
-## What it can't do
+## What it cannot do
 
-The connector deliberately excludes every write and every stateful, UI-bound tool:
+The server leaves out every tool that writes, starts a job, or opens part of the console:
 
-- It cannot **queue a repo scan or an audit** — those start a runner job. Start them from the
-  [assistant](/guides/assistant) instead.
-- It cannot **propose a plan or deploy**. A real apply stays human-gated behind the
-  [verification engine](/concepts/elench).
-- It cannot open Console UI, build dashboards, pin widgets, or read and write
+- It cannot **start a repository scan or an audit**. Each one starts a runner job. Start them from
+  the [assistant](/guides/assistant) instead.
+- It cannot **plan, apply or destroy**, or propose one. Use the console or the
+  [CLI](/agents/cli). Every deploy still passes the [verification engine](/concepts/elench).
+- It cannot open console pages, build dashboards, pin widgets, or read and write
   [artifacts](/guides/assistant/artifacts).
 
 <Callout type="warn">
-  The read-only boundary is enforced at the source: only tools classified as externally safe are
-  ever projected onto the MCP endpoint, and a tool with no explicit classification is excluded. The
-  same server actions still re-check their own permission on every call, so the agent can never read
-  across tenants.
+  The read-only boundary is set where the tools are chosen: only tools marked as safe to expose reach
+  the MCP endpoint, and a tool with no mark is left out. Each tool also checks your permission again on
+  every call, so the agent cannot read across organizations.
 </Callout>

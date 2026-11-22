@@ -68,6 +68,12 @@ under a key the `jobs` topic invalidates — `orpc.jobs.status`, for example —
 status changes. No `await sleep()` loop over a server action, and no recursive `setTimeout`:
 `check:no-polling` cannot see either, which is why this is a rule and not only a guard.
 
+When what the wait reads cannot be a query — reading a kubeconfig mint COLLECTS it, so the read is
+a write — the wait is a Query entry with no fetcher under a key the topic invalidates, and the flow
+reads again each time that entry is invalidated. `components/clusters/kubeconfig-download/mint-wait.ts`
+is that shape: it re-arms the entry before each read so a hint that lands during a read is not lost,
+and it is bounded by the request's own window.
+
 ### 4. Every poll that is left names the unit that lifts it
 
 `apps/console/no-polling-ledger.json` lists every `setInterval` and `refetchInterval` in the console:
@@ -103,8 +109,6 @@ row leaves this table in the PR that closes it.
 | Surface | Today | Rule | Owner |
 |---|---|---|---|
 | Job log (`hooks/use-job-log-stream.ts`) | reads with `EventSource`; a failed stream is not shown, and a finished job still opens one | 2 | #6818 |
-| Kubeconfig mint wait (`components/clusters/kubeconfig-download/`) | a sleep loop over a server action | 3 | #6819 |
-| Project grid on the overview (`app/(private)/[org]/overview-client.tsx`) | server props; no topic reaches it | 1 | #6817 |
 | Paid-setup settling state (`components/org/pending-paid-setup.ts`) | a 3-second interval | 4 | #7004 |
 | "Being answered" wait (`components/agent/elench/elench-conversation.tsx`) | an interval over `getThread` | 4 | #7005 |
 | Elench drafts list (`lib/stores/elench-drafts/store.ts`) | a 60-second interval while the surface is open | 4 | #7006 |

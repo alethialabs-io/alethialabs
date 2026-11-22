@@ -105,10 +105,12 @@ provider/identity/pricing selections, workspace/org context. Anything that is a
 *navigation-prefetched server-data list* belongs in a query hook. After the migration:
 
 - Keep (pure UI / session): `use-alerts-section`, `use-artifact-store`,
-  `use-command-palette`, `use-canvas-store`, `use-workspace-store`,
-  `use-setup-guide-store`.
+  `use-command-palette`, `use-workspace-store`, `use-setup-guide-store`.
+- The design canvas is `lib/canvas/store/` (#6764, #7129): a document store and a view store per
+  board, one board per project:environment. It holds no server data: the cards the design does
+  not own are built from their queries (`use-board-sources.ts`) and read through context.
 - Keep (design-surface state in `components/design-project/`, driven by in-canvas user
-  actions rather than navigation — same category as `use-canvas-store`):
+  actions rather than navigation — same category as the canvas store):
   `use-cloud-provider-store` (selected provider/identity + its cached resources).
   (`use-pricing-store` was on this list and is gone — #2873 found nothing imported it.)
 - Slimmed to UI state: `use-jobs-store` (filters/pagination), `use-projects-store`
@@ -247,21 +249,27 @@ runners (`getRunnersPage` + `useRunnerFilters`), and activity (`useActivityQuery
 cursor-paginated infinite variant — the cursor is the `pageParam`, never part of the key)
 follow it (#578).
 
-**All fifteen surfaces are on it, and `pnpm check:filter-standard` GATES that** (#4890). It
-used to print a per-surface score and exit 0 — which is how ten of the fifteen came to blank
-their list on a filter change with every check in the repository green. A surface that fails
+**Every surface is on it — seventeen since the clusters and environments lists joined (#6819) —
+and `pnpm check:filter-standard` GATES that** (#4890). It used to print a per-surface score and
+exit 0 — which is how ten of the then fifteen came to blank their list on a filter change with
+every check in the repository green. A surface that fails
 F1–F6 now fails the check, and the census it scores is floored from below so the finding
 cannot be silenced by deleting the surface. A deviation that genuinely cannot conform yet goes
 in that script's `FILTER_STANDARD_DEBT` with an owner and a mechanism — it is empty today, and
 it is checked in both directions, so an entry that outlives its finding fails too.
 
-**One surface resolves its query in memory, deliberately, and says so.** A runner row is a
-composition of the RLS read (the org's own runners) and the service read (the platform's
+**Three surfaces resolve their query in memory, deliberately, and each says so.** A runner row is
+a composition of the RLS read (the org's own runners) and the service read (the platform's
 managed fleet, `[]` on hosted), not a table's row, so `getRunnersPage()` narrows over the
-composed universe rather than in SQL (`lib/queries/runners.ts`). What does NOT change is step
+composed universe rather than in SQL (`lib/queries/runners.ts`). A cluster row is composed the same
+way (the RLS read, the PDP's project visibility, drift and probe evidence) and the status it is
+filtered under is derived from all of it (`lib/queries/clusters.ts`); a project's environments are
+read once for the whole Environments page, whose other panels need every one of them
+(`lib/queries/environments.ts`). What does NOT change is step
 6: the facet pass is handed the whole universe and never the query, and
-`tests/lib/queries/runners-page.test.ts` asserts the option set does not shrink as the query
-narrows. Reach for this shape only when the universe is genuinely composed; a single table's
+`tests/lib/queries/runners-page.test.ts`, `clusters-page.test.ts` and `environments-page.test.ts`
+assert the option set does not shrink as the query narrows (and, for clusters, that it does shrink
+to the project's rows when the scope narrows). Reach for this shape only when the universe is genuinely composed; a single table's
 list page filters in SQL.
 
 **The URL→RSC variant (blessed for RSC-rendered grids).** The org overview keeps its
@@ -290,7 +298,8 @@ org's QueryClient, so each refetch goes back through the read router (RLS + the 
 | --- | --- | --- |
 | `~/jobs`, `~/jobs/[id]` | jobs | query (pilot) |
 | `~/runners` | runners + fleet | query — the grid is `getRunnersPage(q)` (#4890) |
-| `~/clusters` | clusters | query |
+| `~/clusters`, `[project]/clusters` | clusters | query — the table is `clusters.page`, scoped by the route (#6819) |
+| `[project]/environments` | environments | query — the table's rows are the read's `page` (#6819) |
 | `~/` overview, switcher, palette | projects | query |
 | `[project]` | pricing + cloud resources | query |
 | `~/alerts` | settings · channels · policies · deliveries | query over GET (`alerts.*`), prefetched; live on the `alerts` topic (#6125) |

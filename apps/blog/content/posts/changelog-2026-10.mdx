@@ -1,0 +1,42 @@
+---
+title: "October: kubeconfigs from the console, and pages that update by themselves"
+description: Download a short-lived kubeconfig for any cluster, export a project to alethia.yaml, and watch console pages update without a refresh.
+date: 2026-10-31
+author: Alethia Labs
+tags: [changelog, console, cli, runner]
+kind: changelog
+summary: Download a short-lived kubeconfig for any cluster, export a project to alethia.yaml, and watch console pages update without a refresh.
+versions:
+  cli: 0.8.0
+  runner: 0.8.0
+---
+
+**A kubeconfig in one click.** Every cluster card has a button that downloads a read-only kubeconfig,
+valid for one hour, and shows the command for your cloud. In the terminal, `alethia cluster
+kubeconfig` and `alethia cluster token` do the same, and `alethia logout` removes the cached
+credentials.
+
+## New
+
+- **Export a project.** `alethia export` writes an existing project as `alethia.yaml`, so you can
+  start managing it as a file.
+- **Add-ons per environment** in `alethia.yaml`, through `init`, `plan` and `apply`.
+- **Plans show a field diff**, and `apply` changes the fields you edited on existing components.
+- **Look before you destroy.** Deleting something shows everything that goes with it, and you confirm
+  by typing its name.
+
+## Improved
+
+- **Pages update by themselves.** Jobs, clusters, runners, alerts, environments, settings and support
+  refresh when something changes, without reloading the page.
+- Pages draw with their data on the first paint instead of showing a placeholder first.
+- A job's page says what a drift scan or a plan found.
+- `alethia plan` exits non-zero when the plan has problems, and `--detailed-exitcode` tells "no
+  changes" from "changes".
+- Paid features that are not on sale yet say so up front.
+
+## Fixed
+
+- On a self-hosted console served over plain HTTP, the copy buttons did nothing.
+- Organization URL fields would not accept a hyphen.
+- On touch devices, the delete control for a chat never appeared.

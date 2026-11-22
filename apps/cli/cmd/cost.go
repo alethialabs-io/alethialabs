@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/format"
@@ -19,14 +19,24 @@ import (
 var costCmd = &cobra.Command{
 	Use:   "cost",
 	Short: "Inspect a project environment's infrastructure cost",
-	Long: `Every PLAN runs Infracost over the terraform plan and records the priced breakdown
-per environment. Show the latest cost for a project environment (defaults to the project's
-default environment; pass --env for another).`,
+	Long: `Every plan prices its Terraform plan with Infracost and records the breakdown per
+environment. "alethia cost show" reads the latest one.`,
 }
 
 var costShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show the latest cost for a project environment",
+	Args:  cobra.NoArgs,
+	Long: `Shows the monthly cost the latest plan priced for one environment: the total, when it was
+captured, and each priced resource with its monthly cost in the environment's own currency.
+
+Use it before an apply to see what a change will cost, or to find the expensive resources. The
+environment defaults to the project's default one; pass --env for another. "not priced" means no
+plan has costed the environment yet.
+
+Name the project with --project; omit it on a terminal and you are asked which. With nobody to
+ask, it is required (exit 9). --output json prints the whole cost record, with the currency as its
+ISO code, and --output csv the resource rows with bare numbers.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -36,14 +46,14 @@ var costShowCmd = &cobra.Command{
 		// rejected without first opening a picker; and interactiveTable is what decides whether the
 		// picker may run at all — huh and its spinner write to os.Stdout, so a picker opened for
 		// `-o json > cost.json` would put its frames in the file ahead of the JSON document.
-		outFmt := outputFormat(cmd)
+		p := printerFor(cmd)
 		project, err := resolveCostProject(cmd, interactiveTable(cmd), func() (string, error) { return selectProject(token) })
 		if err != nil {
 			fail(err)
 		}
 		env, _ := cmd.Flags().GetString("env")
-		if err := runCostShow(api.NewClient(token), os.Stdout, outFmt, project, env); err != nil {
-			failf("Failed to get cost: %v", err)
+		if err := runCostShow(api.NewClient(token), p.Out, p.Format, project, env); err != nil {
+			fail(fmt.Errorf("read cost: %w", err))
 		}
 	},
 }
@@ -76,7 +86,7 @@ func resolveCostProject(cmd *cobra.Command, mayPick bool, pick func() (string, e
 	}
 	project, err := pick()
 	if err != nil {
-		if errors.Is(err, errNoInput) {
+		if errors.Is(err, errNoInput) || errors.Is(err, errNoTTY) {
 			return "", errCostProjectRequired
 		}
 		return "", err
@@ -89,7 +99,10 @@ func resolveCostProject(cmd *cobra.Command, mayPick bool, pick func() (string, e
 	return project, nil
 }
 
-var errCostProjectRequired = errors.New("--project is required (pass the project name or id)")
+// errCostProjectRequired is the refusal for an omitted --project with nobody to ask: input
+// required (exit 9), naming the flag and where the names are.
+var errCostProjectRequired = refusal(clierr.CodeInputRequired, "alethia project list",
+	"--project is required (pass the project name or id)")
 
 var costColumns = []string{"Address", "Type", "Monthly"}
 

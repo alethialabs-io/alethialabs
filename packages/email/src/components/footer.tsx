@@ -2,24 +2,42 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Link, Section, Text } from "@react-email/components";
+import { env } from "next-runtime-env";
 import type { ReactNode } from "react";
 import { Mark } from "./mark";
 import { colors, fonts } from "./theme";
 
-const FOOT_LINKS = [
-	{ label: "Documentation", href: "https://alethialabs.io/docs" },
-	{ label: "Console", href: "https://alethialabs.io" },
-	{ label: "GitHub", href: "https://github.com/alethialabs-io" },
-	{ label: "Status", href: "https://status.alethialabs.io" },
-] as const;
+/** One link in the footer row. */
+interface FootLink {
+	label: string;
+	href: string;
+}
+
+/**
+ * The footer's resource links. The Status link is the configured status page (`NEXT_PUBLIC_STATUS_URL`,
+ * the same variable the console's `statusUrl()` reads) and is OMITTED when none is configured: it used to
+ * hard-code status.alethialabs.io, which had no DNS record, and a self-hoster's mail has no business
+ * pointing at our status page at all.
+ */
+function footLinks(statusUrl: string | null | undefined): FootLink[] {
+	const links: FootLink[] = [
+		{ label: "Documentation", href: "https://alethialabs.io/docs" },
+		{ label: "Console", href: "https://alethialabs.io" },
+		{ label: "GitHub", href: "https://github.com/alethialabs-io" },
+	];
+	if (statusUrl) links.push({ label: "Status", href: statusUrl });
+	return links;
+}
 
 interface EmailFooterProps {
 	/** Per-email legal/explanatory line (why this email was sent). */
 	legal: ReactNode;
+	/** The status page to link; defaults to `NEXT_PUBLIC_STATUS_URL`. Empty or unset hides the link. */
+	statusUrl?: string | null;
 }
 
 /** Shared email footer — mark, resource links, legal line, copyright. */
-export function EmailFooter({ legal }: EmailFooterProps) {
+export function EmailFooter({ legal, statusUrl = env("NEXT_PUBLIC_STATUS_URL") }: EmailFooterProps) {
 	return (
 		<Section
 			className="a-border"
@@ -60,7 +78,7 @@ export function EmailFooter({ legal }: EmailFooterProps) {
 			</Section>
 
 			<Section style={{ marginBottom: "18px" }}>
-				{FOOT_LINKS.map((link) => (
+				{footLinks(statusUrl).map((link) => (
 					<Link
 						key={link.label}
 						href={link.href}

@@ -6,9 +6,9 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/verify"
@@ -44,8 +44,9 @@ the two that carry a receipt — and a terminal gets a picker.`,
 		if err != nil {
 			fail(err)
 		}
+		p := printerFor(cmd)
 		announceResolvedJob(ref, "Showing")
-		if err := runVerifyShow(client, os.Stdout, outputFormat(cmd), ref.ID); err != nil {
+		if err := runVerifyShow(client, p.Out, p.Format, ref.ID); err != nil {
 			fail(err)
 		}
 	},
@@ -113,7 +114,7 @@ func writeFindings(out io.Writer, r *verify.Report, ex *verify.RecordedException
 func runVerifyShow(c apiClient, out io.Writer, format, jobID string) error {
 	job, err := c.GetJob(jobID)
 	if err != nil {
-		return err
+		return jobLookupError(err, jobID)
 	}
 	sr, err := receiptFromJob(job)
 	if err != nil {
@@ -121,7 +122,7 @@ func runVerifyShow(c apiClient, out io.Writer, format, jobID string) error {
 	}
 	report := sr.Receipt.Report
 	if report == nil {
-		return fmt.Errorf("this job's receipt carries no verification report")
+		return clierr.New(clierr.CodeNotFound, "this job's receipt carries no verification report")
 	}
 
 	if format == ui.FormatJSON {

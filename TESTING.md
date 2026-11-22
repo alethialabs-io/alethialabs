@@ -251,8 +251,8 @@ the **release gate** on the promotion path; one is nightly-only.
 Nothing runs nowhere any more — `LOCAL_ONLY_REASON` in `playwright.config.ts` is empty, and
 `assertNoDeadZone()` still reads `.github/workflows/**` on every invocation to keep that true. But
 "this is covered by e2e" still needs the **leg** named: on a `dev` PR a gate leg runs only when the
-PR carries `release-gate:run` / `release-gate:all` or changes that leg's own specs, so an unlabelled
-PR's other legs say nothing about the code it changed, and an exclusion justified by a suite nothing
+PR carries `release-gate:run` / `release-gate:all` (since 2026-11-22 release-gate.yml does not run on
+an unlabelled dev PR at all), so an unlabelled PR's legs say nothing about the code it changed, and an exclusion justified by a suite nothing
 launched on that PR is justified by nothing.
 
 **A gate leg passes by ratchet, and the ledger's bar is: no `failed` entry, and every `{fixme}` cites an open issue.** Each leg fails
@@ -265,7 +265,7 @@ places:
 | rule | enforced by | where it runs |
 |---|---|---|
 | a recorded `passed` still passes; a test the ledger does not know passes; a recorded `failed` that now passes is moved out of the ledger; a skip is recorded as a `{fixme}` or a `{skip}` | `scripts/e2e-ratchet.mjs`, the `Ratchet` step of each `Release gate (<leg>)` | every leg that runs: every promotion PR and dispatch, and a `dev` PR only as above |
-| the ledger holds **no `failed` entry** | the ``Zero `failed` entries in gate-baseline.json`` step of `Gate ledger — zero failed, every fixme cites an open issue` in `release-gate.yml` | every non-draft PR into `dev`, `staging` or `main`, and every dispatch |
+| the ledger holds **no `failed` entry** | the ``Zero `failed` entries in gate-baseline.json`` step of `Gate ledger — zero failed, every fixme cites an open issue` in `ci.yml` (moved from `release-gate.yml` on 2026-11-22) | every PR into any branch, and every `ci.yml` dispatch |
 | every `{fixme}` cites exactly one issue, and that issue is **OPEN** (an unreadable state is red, never skipped) | `scripts/check-gate-fixme-issues.mjs` | the same `Gate ledger` job, on a promotion PR, a dispatch, or a `dev` PR that changes the ledger or the code that reads its fixmes. `gate-fixme-currency.yml` schedules a daily run too, but a schedule runs from the DEFAULT branch (`main`) and that workflow has not reached `main` yet, so as of 2026-10-04 it has never run |
 
 Read the two ledger rules precisely. The ratchet cannot enforce zero failed: a recorded `failed` test

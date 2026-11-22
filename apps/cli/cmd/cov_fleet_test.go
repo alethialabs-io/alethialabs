@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -340,9 +341,12 @@ func fleetEnv(t *testing.T, opts fleetOpts) (*fleetServer, func(args ...string) 
 // the huh group owns, so the confirmed arm of a destructive command is otherwise dark.
 func fleetAnswerConfirm(t *testing.T, answer bool) {
 	t.Helper()
-	old := confirm
+	old, oldTyped := confirm, confirmTypedName
 	confirm = func(string, string) bool { return answer }
-	t.Cleanup(func() { confirm = old })
+	// A runner is destroyed or removed by typing its name, which is a second seam: no stub of
+	// runHuhForm can type it.
+	confirmTypedName = func(string, string, string) bool { return answer }
+	t.Cleanup(func() { confirm, confirmTypedName = old, oldTyped })
 }
 
 // fleetAnswerForm makes every huh form return err (nil = "the user accepted the
@@ -437,8 +441,9 @@ func TestFleet_ListsFailClosedOnAnUnreachableControlPlane(t *testing.T) {
 		for _, format := range []string{"table", "json"} {
 			t.Run(strings.Join(args, "_")+"_"+format, func(t *testing.T) {
 				full := append(append([]string{}, args...), "--output", format)
-				if got := run(full...); got != 1 {
-					t.Errorf("exit code = %d, want 1", got)
+				// Every list keeps the failure's class: a server fault is the unavailable row.
+				if got := run(full...); got != clierr.ExitUnavailable {
+					t.Errorf("exit code = %d, want %d", got, clierr.ExitUnavailable)
 				}
 			})
 		}
@@ -464,8 +469,9 @@ func TestFleet_SetSendsOnlyTheFlagsThatWerePassed(t *testing.T) {
 // silent round-trip that rewrites the pool with its own values.
 func TestFleet_SetWithoutAnyFlagIsRefused(t *testing.T) {
 	s, run := fleetEnv(t, fleetOpts{})
-	if got := run("fleet", "set", "aws"); got != 1 {
-		t.Errorf("exit code = %d, want 1", got)
+	// A command line that changes nothing is wrong as written: the usage row, exit 8.
+	if got := run("fleet", "set", "aws"); got != 8 {
+		t.Errorf("exit code = %d, want 8", got)
 	}
 	if s.saw("PUT", "/api/cli/fleet/aws") {
 		t.Error("a pool update was sent for a set with no flags")
@@ -498,8 +504,123 @@ func TestFleet_SetDisableIsGatedOnConfirmation(t *testing.T) {
 // TestFleet_SetReportsAServerRefusal pins that a rejected pool update is fatal.
 func TestFleet_SetReportsAServerRefusal(t *testing.T) {
 	_, run := fleetEnv(t, fleetOpts{broken: true})
-	if got := run("fleet", "set", "aws", "--max", "6"); got != 1 {
-		t.Errorf("exit code = %d, want 1", got)
+	// A server fault is the unavailable row, exit 11.
+	if got := run("fleet", "set", "aws", "--max", "6"); got != 11 {
+		t.Errorf("exit code = %d, want 11", got)
+	}
+}
+
+// fleetSetRun drives `fleet set` with the registry applied (it registers --dry-run, as main does)
+// and returns the exit code and both streams.
+func fleetSetRun(t *testing.T, opts fleetOpts, args ...string) (*fleetServer, int, string, string) {
+	t.Helper()
+	applyCommandMeta()
+	s, run := fleetEnv(t, opts)
+	var code int
+	stdout, stderr := captureStreams(t, func() { code = run(append([]string{"fleet", "set"}, args...)...) })
+	return s, code, stdout, stderr
+}
+
+// TestFleet_SetReturnsTheMutationResult pins the JSON shape of `fleet set`: one MutationResult on
+// stdout whose object is the pool as the control plane now holds it.
+func TestFleet_SetReturnsTheMutationResult(t *testing.T) {
+	s, code, stdout, stderr := fleetSetRun(t, fleetOpts{}, "aws", "--max", "6", "--output", "json", "--no-input")
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, stderr)
+	}
+	if !s.saw("PUT", "/api/cli/fleet/aws") {
+		t.Fatalf("no pool update was sent; requests = %v", s.requests)
+	}
+	r := govFamDecode(t, stdout)
+	if r.ID != "aws" || r.Kind != fleetPoolKind || r.Action != string(ResultUpdated) || r.DryRun {
+		t.Errorf("result = %+v", r)
+	}
+	var pool struct {
+		Provider string `json:"provider"`
+		Max      int    `json:"max"`
+	}
+	if err := json.Unmarshal(r.Object, &pool); err != nil || pool.Provider != "aws" || pool.Max != 6 {
+		t.Errorf("object = %s (%v)", r.Object, err)
+	}
+}
+
+// TestFleet_SetDryRunSendsNothing pins --dry-run: no request reaches the pool, the result says it
+// is a dry run and carries the request that would have been sent, and a person is told nothing
+// was sent. A dry-run pause asks no confirmation, because it changes nothing.
+func TestFleet_SetDryRunSendsNothing(t *testing.T) {
+	t.Run("json", func(t *testing.T) {
+		s, code, stdout, stderr := fleetSetRun(t, fleetOpts{}, "aws",
+			"--max", "6", "--enabled=false", "--dry-run", "--output", "json", "--no-input")
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, stderr)
+		}
+		if s.saw("PUT", "/api/cli/fleet/aws") {
+			t.Fatal("a dry run sent the update")
+		}
+		r := govFamDecode(t, stdout)
+		if !r.DryRun || r.ID != "aws" || r.Kind != fleetPoolKind || r.Action != string(ResultUpdated) {
+			t.Errorf("result = %+v", r)
+		}
+		var planned struct {
+			Request map[string]any `json:"request"`
+		}
+		if err := json.Unmarshal(r.Object, &planned); err != nil {
+			t.Fatalf("object = %s (%v)", r.Object, err)
+		}
+		want := map[string]any{"provider": "aws", "max": float64(6), "enabled": false}
+		if len(planned.Request) != len(want) {
+			t.Errorf("request = %v, want %v", planned.Request, want)
+		}
+		for k, v := range want {
+			if planned.Request[k] != v {
+				t.Errorf("request[%q] = %v, want %v", k, planned.Request[k], v)
+			}
+		}
+	})
+	t.Run("table", func(t *testing.T) {
+		s, code, stdout, stderr := fleetSetRun(t, fleetOpts{}, "aws", "--warm-min", "2", "--dry-run", "--output", "table")
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, stderr)
+		}
+		if s.saw("PUT", "/api/cli/fleet/aws") {
+			t.Fatal("a dry run sent the update")
+		}
+		if !strings.Contains(stdout, "Would set the aws pool to warm-min 2") || !strings.Contains(stdout, "Nothing was sent.") {
+			t.Errorf("the dry run does not say what it would send:\n%s", stdout)
+		}
+	})
+}
+
+// TestFleet_SetRefusalsExitWithTheirClass pins each refusal's exit code and stream: nothing on
+// stdout, the reason and a next step on stderr, and no request sent.
+func TestFleet_SetRefusalsExitWithTheirClass(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		exit int
+		say  string
+	}{
+		{"no provider and nobody to ask", []string{"--max", "3", "--no-input"}, clierr.ExitInputRequired, "no provider given"},
+		{"a pause with nobody to confirm it", []string{"aws", "--enabled=false", "--no-input"}, clierr.ExitInputRequired, "--yes"},
+		{"nothing to update", []string{"aws", "--no-input"}, clierr.ExitUsage, "--warm-min"},
+	} {
+		for _, format := range []string{ui.FormatTable, ui.FormatJSON} {
+			t.Run(tc.name+"/"+format, func(t *testing.T) {
+				s, code, stdout, stderr := fleetSetRun(t, fleetOpts{}, append(tc.args, "--output", format)...)
+				if code != tc.exit {
+					t.Errorf("exit code = %d, want %d\n%s", code, tc.exit, stderr)
+				}
+				if stdout != "" {
+					t.Errorf("a refusal wrote on stdout:\n%s", stdout)
+				}
+				if !strings.Contains(stderr, tc.say) {
+					t.Errorf("stderr does not say %q:\n%s", tc.say, stderr)
+				}
+				if s.saw("PUT", "/api/cli/fleet/aws") {
+					t.Error("a refused set still sent the update")
+				}
+			})
+		}
 	}
 }
 
@@ -513,8 +634,8 @@ func TestFleet_GrantsAddNeedsExactlyOneBinding(t *testing.T) {
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			if got := run(args...); got != 1 {
-				t.Errorf("exit code = %d, want 1", got)
+			if got := run(args...); got != clierr.ExitUsage {
+				t.Errorf("exit code = %d, want %d", got, clierr.ExitUsage)
 			}
 		})
 	}
@@ -586,8 +707,8 @@ func TestFleet_GrantsRemoveIsGatedOnConfirmation(t *testing.T) {
 func TestFleet_GrantsRemoveReportsAServerRefusal(t *testing.T) {
 	_, run := fleetEnv(t, fleetOpts{broken: true})
 	fleetAnswerConfirm(t, true)
-	if got := run("grants", "remove", "g1"); got != 1 {
-		t.Errorf("exit code = %d, want 1", got)
+	if got := run("grants", "remove", "g1"); got != clierr.ExitUnavailable {
+		t.Errorf("exit code = %d, want %d", got, clierr.ExitUnavailable)
 	}
 }
 
@@ -614,27 +735,39 @@ func TestFleet_RolesCreateSendsThePermissionKeys(t *testing.T) {
 func TestFleet_RolesDeleteIsGatedOnConfirmation(t *testing.T) {
 	s, run := fleetEnv(t, fleetOpts{})
 
+	// ro9 is a custom role. The fake's role list holds only the built-in ro1, so ro9 is an id
+	// the list does not carry: it is passed on, and the control plane answers for it.
 	fleetAnswerConfirm(t, false)
-	if got := run("roles", "delete", "ro1"); got != 0 {
+	if got := run("roles", "delete", "ro9"); got != 0 {
 		t.Errorf("declined: exit code = %d, want 0", got)
 	}
-	if s.saw("DELETE", "/api/cli/roles/ro1") {
+	if s.saw("DELETE", "/api/cli/roles/ro9") {
 		t.Fatal("a declined delete still removed the role")
 	}
 
 	s.forget()
 	fleetAnswerConfirm(t, true)
-	if got := run("roles", "delete", "ro1"); got != 0 {
+	if got := run("roles", "delete", "ro9"); got != 0 {
 		t.Errorf("confirmed: exit code = %d, want 0", got)
 	}
-	if !s.saw("DELETE", "/api/cli/roles/ro1") {
+	if !s.saw("DELETE", "/api/cli/roles/ro9") {
 		t.Errorf("a confirmed delete removed nothing; requests = %v", s.requests)
+	}
+
+	// A built-in template named by its id is refused before anything is sent: the control
+	// plane's delete skips it and still answers ok.
+	s.forget()
+	if got := run("roles", "delete", "ro1", "--yes"); got != clierr.ExitConflict {
+		t.Errorf("built-in: exit code = %d, want %d", got, clierr.ExitConflict)
+	}
+	if s.saw("DELETE", "/api/cli/roles/ro1") {
+		t.Error("a delete was sent for a built-in role")
 	}
 
 	_, broken := fleetEnv(t, fleetOpts{broken: true})
 	fleetAnswerConfirm(t, true)
-	if got := broken("roles", "delete", "ro1"); got != 1 {
-		t.Errorf("broken: exit code = %d, want 1", got)
+	if got := broken("roles", "delete", "ro9"); got != clierr.ExitUnavailable {
+		t.Errorf("broken: exit code = %d, want %d", got, clierr.ExitUnavailable)
 	}
 }
 
@@ -654,8 +787,9 @@ func TestFleet_MembersAndTeamsNeedAnActiveOrg(t *testing.T) {
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			if got := run(args...); got != 1 {
-				t.Errorf("exit code = %d, want 1", got)
+			// No organization to act in is a failed precondition; the hint is `alethia org switch`.
+			if got := run(args...); got != clierr.ExitConflict {
+				t.Errorf("exit code = %d, want %d", got, clierr.ExitConflict)
 			}
 		})
 	}
@@ -713,10 +847,9 @@ func TestFleet_MembersMutationsReportAServerRefusal(t *testing.T) {
 		{"members", "remove", "m1"},
 	} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			// `members add` keeps the server fault's class; `members remove` flattens the
-			// error to a string before reporting it, so it exits unclassified.
-			if got := run(args...); got != clierr.ExitUnavailable && got != clierr.ExitUnclassified {
-				t.Errorf("exit code = %d, want %d or %d", got, clierr.ExitUnavailable, clierr.ExitUnclassified)
+			// Both keep the server fault's class.
+			if got := run(args...); got != clierr.ExitUnavailable {
+				t.Errorf("exit code = %d, want %d", got, clierr.ExitUnavailable)
 			}
 		})
 	}
@@ -755,8 +888,8 @@ func TestFleet_TeamsMutationsReportAServerRefusal(t *testing.T) {
 		{"teams", "delete", "t1"},
 	} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			if got := run(args...); got != 1 {
-				t.Errorf("exit code = %d, want 1", got)
+			if got := run(args...); got != clierr.ExitUnavailable {
+				t.Errorf("exit code = %d, want %d", got, clierr.ExitUnavailable)
 			}
 		})
 	}
@@ -812,13 +945,15 @@ func TestFleet_RunnerDeployReportsAServerRefusal(t *testing.T) {
 	_, run := fleetEnv(t, fleetOpts{broken: true})
 	got := run("runner", "deploy", "--cloud-identity-id", "ci1", "--name", "edge",
 		"--region", "eu-west-1", "--assigned-runner-id", "r1")
-	if got != 1 {
-		t.Errorf("exit code = %d, want 1", got)
+	// A server fault is the unavailable row, exit 11.
+	if got != 11 {
+		t.Errorf("exit code = %d, want 11", got)
 	}
 }
 
 // TestFleet_RunnerDeployWaitsForTheJob pins that --wait blocks on the queued job and
-// carries its outcome into the exit code: a succeeded deploy exits 0, a failed one exits 1.
+// carries its outcome into the exit code: a succeeded deploy exits 0, a failed one exits 13,
+// the operation-failed row.
 func TestFleet_RunnerDeployWaitsForTheJob(t *testing.T) {
 	flags := []string{"runner", "deploy", "--cloud-identity-id", "ci1", "--name", "edge",
 		"--region", "eu-west-1", "--assigned-runner-id", "r1", "--wait"}
@@ -829,8 +964,8 @@ func TestFleet_RunnerDeployWaitsForTheJob(t *testing.T) {
 	}
 
 	_, bad := fleetEnv(t, fleetOpts{jobID: "j-fail"})
-	if got := bad(flags...); got != 1 {
-		t.Errorf("failed job: exit code = %d, want 1", got)
+	if got := bad(flags...); got != 13 {
+		t.Errorf("failed job: exit code = %d, want 13", got)
 	}
 }
 
@@ -839,8 +974,9 @@ func TestFleet_RunnerDeployWaitsForTheJob(t *testing.T) {
 func TestFleet_RunnerDestroyRefusesAnyAvailable(t *testing.T) {
 	s, run := fleetEnv(t, fleetOpts{noDefaultRunner: true})
 	fleetAnswerForm(t, nil)
-	if got := run("runner", "destroy"); got != 1 {
-		t.Errorf("exit code = %d, want 1", got)
+	// "Any available" is not a runner: the usage row, exit 8.
+	if got := run("runner", "destroy"); got != 8 {
+		t.Errorf("exit code = %d, want 8", got)
 	}
 	if s.saw("POST", "/api/jobs") {
 		t.Error("a teardown was queued without a runner id")
@@ -898,8 +1034,9 @@ func TestFleet_RunnerDestroyReportsAServerRefusal(t *testing.T) {
 	_, run := fleetEnv(t, fleetOpts{broken: true})
 	fleetAnswerConfirm(t, true)
 	got := run("runner", "destroy", "--runner-id", "r1", "--assigned-runner-id", "r2")
-	if got != 1 {
-		t.Errorf("exit code = %d, want 1", got)
+	// A server fault is the unavailable row, exit 11.
+	if got != 11 {
+		t.Errorf("exit code = %d, want 11", got)
 	}
 }
 
@@ -916,8 +1053,9 @@ func TestFleet_RunnerDestroyWaitsForTheJob(t *testing.T) {
 
 	_, bad := fleetEnv(t, fleetOpts{jobID: "j-cancelled"})
 	fleetAnswerConfirm(t, true)
-	if got := bad(flags...); got != 1 {
-		t.Errorf("cancelled job: exit code = %d, want 1", got)
+	// A cancelled job is the operation-failed row, exit 13.
+	if got := bad(flags...); got != 13 {
+		t.Errorf("cancelled job: exit code = %d, want 13", got)
 	}
 }
 
@@ -927,8 +1065,9 @@ func TestFleet_RunnerRemoveRefusesAnyAvailable(t *testing.T) {
 	s, run := fleetEnv(t, fleetOpts{noDefaultRunner: true})
 
 	fleetAnswerForm(t, nil)
-	if got := run("runner", "remove"); got != 1 {
-		t.Errorf("any-available: exit code = %d, want 1", got)
+	// "Any available" is not a runner: the usage row, exit 8.
+	if got := run("runner", "remove"); got != 8 {
+		t.Errorf("any-available: exit code = %d, want 8", got)
 	}
 
 	fleetAnswerForm(t, errFleetPrompt)
@@ -977,8 +1116,9 @@ func TestFleet_RunnerRemoveIsGatedOnConfirmation(t *testing.T) {
 func TestFleet_RunnerRemoveReportsAServerRefusal(t *testing.T) {
 	_, run := fleetEnv(t, fleetOpts{broken: true})
 	fleetAnswerConfirm(t, true)
-	if got := run("runner", "remove", "r1"); got != 1 {
-		t.Errorf("exit code = %d, want 1", got)
+	// A server fault is the unavailable row, exit 11.
+	if got := run("runner", "remove", "r1"); got != 11 {
+		t.Errorf("exit code = %d, want 11", got)
 	}
 }
 
@@ -998,11 +1138,12 @@ func TestFleet_JobsLogsPrintsOneShotAndStops(t *testing.T) {
 }
 
 // TestFleet_JobsLogsReportsAFetchFailure pins that an unreadable log stream is fatal
-// rather than an empty, apparently-successful read.
+// rather than an empty, apparently-successful read, and that a server fault exits with the
+// unavailable code, so a script knows a retry can help.
 func TestFleet_JobsLogsReportsAFetchFailure(t *testing.T) {
 	_, run := fleetEnv(t, fleetOpts{broken: true})
-	if got := run("jobs", "logs", "j1"); got != 1 {
-		t.Errorf("exit code = %d, want 1", got)
+	if got := run("jobs", "logs", "j1"); got != clierr.ExitUnavailable {
+		t.Errorf("exit code = %d, want %d", got, clierr.ExitUnavailable)
 	}
 }
 
@@ -1042,7 +1183,7 @@ func TestFleet_JobsCancelStopsAJob(t *testing.T) {
 	}
 
 	_, broken := fleetEnv(t, fleetOpts{broken: true})
-	if got := broken("jobs", "cancel", "j1", "--yes"); got != 1 {
-		t.Errorf("broken: exit code = %d, want 1", got)
+	if got := broken("jobs", "cancel", "j1", "--yes"); got != clierr.ExitUnavailable {
+		t.Errorf("broken: exit code = %d, want %d", got, clierr.ExitUnavailable)
 	}
 }

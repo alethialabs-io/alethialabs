@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 )
 
@@ -116,7 +115,7 @@ func TestPlanAndApply_AStageNamedEnvironmentReadsAndWritesItself(t *testing.T) {
 		t.Errorf("unmanaged add-ons = %v — those are the default environment's", env.UnmanagedAddons)
 	}
 
-	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
+	if _, err := applyExec(f, &bytes.Buffer{}, plan, "", false); err != nil {
 		t.Fatal(err)
 	}
 	// Every write — the upsert, the PATCH and the add — lands on `staging`, addressed by its id, and
@@ -163,7 +162,7 @@ func TestApply_AStageNamedEnvironmentsAddonIsEnabledInItself(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
+	if _, err := applyExec(f, &bytes.Buffer{}, plan, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.enabled) != 1 || f.enabled[0].AddonID != "loki" || f.enabled[0].Env != "staging" {
@@ -190,7 +189,7 @@ func TestExecuteApply_AnEnvironmentWithNoIdIsRefusedBeforeAnyWrite(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false)
+	_, err = applyExec(f, &bytes.Buffer{}, plan, "", false)
 	if err == nil || !strings.Contains(err.Error(), "environment dev was declared but the server does not list it") {
 		t.Errorf("err = %v, want dev refused for having no id", err)
 	}

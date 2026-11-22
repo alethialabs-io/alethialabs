@@ -8,6 +8,7 @@
 // backend lane resolves no output_keys.
 
 import { render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	BindingsField,
@@ -15,9 +16,11 @@ import {
 	type ServiceBinding,
 } from "@/components/design-project/canvas/inspector/bindings-field";
 import type { IacGroup } from "@/lib/canvas/iac-inventory";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { iacNodes } from "@/lib/canvas/store/out-of-band";
+import { withBoardSources } from "@/tests/fixtures/canvas/board";
 
-/** A scanned BYO-IaC module with one database resource + two outputs, as the store would hold it. */
+/** A scanned BYO-IaC module with one database resource + two outputs, as the status read carries it. */
 const DB_GROUP: IacGroup = {
 	key: "database|module.db",
 	kind: "database",
@@ -48,15 +51,21 @@ const byoBinding: ServiceBinding = {
 	],
 };
 
+/** The module's cards and outputs on the board, as the canvas hands them from the status read. */
+const IAC_CARDS = iacNodes([DB_GROUP]);
+
+/** Render `ui` with the module's cards and output names on the board. */
+function renderOnBoard(ui: ReactNode) {
+	return render(withBoardSources(ui, { others: IAC_CARDS, iacOutputs: OUTPUTS }));
+}
+
 beforeEach(() => {
-	useCanvasStore.getState().reset();
-	useCanvasStore.getState().setIacNodes([DB_GROUP]);
-	useCanvasStore.getState().setIacOutputs(OUTPUTS);
+	board.reset();
 });
 
 describe("BindingsField — BYO-IaC facet→output picker (#823)", () => {
 	it("shows the facet→output mapping for a service bound to a BYO-IaC target", () => {
-		render(
+		renderOnBoard(
 			<BindingsField enableIacTargets value={[byoBinding]} onChange={vi.fn()} />,
 		);
 		// The mapping block + the credential row (its label is unique to the picker; "endpoint"
@@ -74,7 +83,7 @@ describe("BindingsField — BYO-IaC facet→output picker (#823)", () => {
 			target: { kind: "database", name: "orders-db" },
 			inject: [{ env: "DATABASE_HOST", from: "endpoint" }],
 		};
-		render(
+		renderOnBoard(
 			<BindingsField enableIacTargets value={[firstClass]} onChange={vi.fn()} />,
 		);
 		expect(screen.queryByText("Map to module outputs")).not.toBeInTheDocument();
@@ -83,7 +92,7 @@ describe("BindingsField — BYO-IaC facet→output picker (#823)", () => {
 	it("does NOT show the picker when the context opts out (chart-workload safety)", () => {
 		// enableIacTargets omitted → even a BYO-IaC target gets no output picker, because the
 		// chart-workload lane does not resolve output_keys.
-		render(<BindingsField value={[byoBinding]} onChange={vi.fn()} />);
+		renderOnBoard(<BindingsField value={[byoBinding]} onChange={vi.fn()} />);
 		expect(screen.queryByText("Map to module outputs")).not.toBeInTheDocument();
 	});
 });
@@ -103,12 +112,12 @@ describe("BindingsField — the database facet is chart-workload only (#6467)", 
 	});
 
 	it("the chart-workload editor lists it", () => {
-		render(<BindingsField allowDatabaseFacet value={[dbName]} onChange={vi.fn()} />);
+		renderOnBoard(<BindingsField allowDatabaseFacet value={[dbName]} onChange={vi.fn()} />);
 		expect(screen.getByText("database name")).toBeInTheDocument();
 	});
 
 	it("the service editor does not", () => {
-		render(<BindingsField enableIacTargets value={[dbName]} onChange={vi.fn()} />);
+		renderOnBoard(<BindingsField enableIacTargets value={[dbName]} onChange={vi.fn()} />);
 		expect(screen.queryByText("database name")).not.toBeInTheDocument();
 	});
 });

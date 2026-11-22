@@ -4,10 +4,10 @@
 #
 # Alethia self-host installer — one command on a fresh Linux VM:
 #
-#   curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh | sh
+#   curl -fsSL https://get.alethialabs.io/self-host | sh
 #
 # With a domain (gets automatic HTTPS):
-#   curl -fsSL .../deploy/install.sh | DOMAIN=alethia.example.com ACME_EMAIL=you@example.com sh
+#   curl -fsSL https://get.alethialabs.io/self-host | DOMAIN=alethia.example.com ACME_EMAIL=you@example.com sh
 #
 # Env overrides: DOMAIN, ACME_EMAIL, ALETHIA_DIR (=/opt/alethia), REF (=main),
 #                REPO_URL. Idempotent — re-run to upgrade.

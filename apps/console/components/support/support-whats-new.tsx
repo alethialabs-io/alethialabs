@@ -3,30 +3,36 @@
 
 import { Activity, BookOpen, Newspaper } from "lucide-react";
 import { SectionHeading } from "@repo/ui/section-heading";
+import { statusUrl } from "@/lib/legal";
 
-/**
- * A chip in the "See what's new" band. Every destination is a real, deployed surface — the
- * docs app (`/docs`) and blog app (`/blog`) served on this origin, and the hosted status page
- * (the same links used by the sidebar profile menu) — so none of these dead-link.
- */
-const LINKS: {
+/** A chip in the "See what's new" band. */
+interface WhatsNewLink {
 	label: string;
 	href: string;
 	icon: typeof BookOpen;
 	external?: boolean;
-}[] = [
-	{ label: "Engineering blog", href: "/blog", icon: Newspaper },
-	{ label: "Documentation", href: "/docs", icon: BookOpen },
-	{
-		label: "Platform status",
-		href: "https://status.alethialabs.io",
-		icon: Activity,
-		external: true,
-	},
-];
+}
+
+/**
+ * The band's chips. Every destination is a real, deployed surface — the docs app (`/docs`) and the news app
+ * (`/news`, formerly `/blog`) served on this origin, and the status page this instance is CONFIGURED with
+ * (`NEXT_PUBLIC_STATUS_URL`, through `statusUrl()` — the same source as the sign-in line and the sidebar
+ * profile menu). The status chip used to hard-code status.alethialabs.io, which had no DNS record, and a
+ * self-hosted console has no business linking it at all; with no status URL configured the chip is
+ * omitted rather than pointed at a page that does not exist.
+ */
+export function whatsNewLinks(status: string | null): WhatsNewLink[] {
+	const links: WhatsNewLink[] = [
+		{ label: "News", href: "/news", icon: Newspaper },
+		{ label: "Documentation", href: "/docs", icon: BookOpen },
+	];
+	if (status) links.push({ label: "Platform status", href: status, icon: Activity, external: true });
+	return links;
+}
 
 /** The "See what's new" band on the support hub — a prompt to stay current + resource chips. */
 export function SupportWhatsNew() {
+	const links = whatsNewLinks(statusUrl());
 	return (
 		<section className="border-y bg-muted/20">
 			<div className="space-y-6 py-12">
@@ -37,7 +43,7 @@ export function SupportWhatsNew() {
 					description="Stay up to date with the latest platform updates, releases, and announcements."
 				/>
 				<div className="flex flex-wrap gap-3">
-					{LINKS.map(({ label, href, icon: Icon, external }) => (
+					{links.map(({ label, href, icon: Icon, external }) => (
 						<a
 							key={label}
 							href={href}

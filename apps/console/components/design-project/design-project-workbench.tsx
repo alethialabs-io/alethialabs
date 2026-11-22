@@ -8,8 +8,8 @@ import { useEffect, useRef, useState } from "react";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { draftScope, fnv1a32, stableStringify } from "@/lib/canvas/design-revision";
+import { boardFor } from "@/lib/canvas/store/board";
 import { CanvasStoreProvider } from "@/lib/canvas/store/canvas-store-provider";
-import { switchDraftScope, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { RegionError } from "@/components/errors/region-error";
 import { BoardPreview, BoardPreviewProvider } from "./canvas/board-preview";
 import { formToGraph } from "./canvas/graph/form-to-graph";
@@ -119,9 +119,9 @@ export function DesignProjectWorkbench({
 	// the board that is already open.
 	const openedScope = useRef<string | null>(null);
 	// THE ONE SEED. Everything the board holds of the server design arrives here, keyed on the
-	// design's revision. The identity list rides the same call for the legacy store's lookups (the
-	// revision moves when the list does); the shell reads it from `CanvasStoreProvider` below, so
-	// no effect keeps a copy of it in step.
+	// design's revision. The identity list is read here only to resolve each node's cloud (the
+	// revision moves when the list does); the shell reads the list from `CanvasStoreProvider`
+	// below, so no effect keeps a copy of it in step.
 	useEffect(() => {
 		// An environment switch while a seed is still pending: whichever run settles later must not
 		// seed the board, or report a failure, for a scope the user has already left.
@@ -133,33 +133,44 @@ export function DesignProjectWorkbench({
 		const source = latest.current.sourceProject;
 		if (revision === null || !source) return;
 		const identities = latest.current.cloudIdentities;
+		// Each environment has its own board; this is the one the provider below publishes.
+		const board = boardFor(scope);
 		/** Open this scope's draft slot (if this mount has not), then seed under the revision. */
-		const seed = async () => {
-			if (openedScope.current !== scope) {
-				// Recorded BEFORE the await: the slot is read synchronously inside the call, so a run
-				// that overtakes this one must see the scope this run already opened and open its own.
-				openedScope.current = scope;
-				await switchDraftScope(scope);
-			}
-			// Superseded while suspended: the board now belongs to the scope that overtook this run.
+		const seed = () => {
+			// Superseded before it ran: the person has moved to the scope that overtook this run.
 			if (cancelled) return;
-			const store = useCanvasStore.getState();
-			store.setIdentities(identities);
-			store.reseed(formToGraph(buildDefaultFormValues(source), identities), {
+			if (openedScope.current !== scope) {
+				openedScope.current = scope;
+				board.openDraftScope(scope);
+			}
+			board.reseed(formToGraph(buildDefaultFormValues(source), identities), {
 				scope,
 				revision,
 			});
 		};
 		// A seed that throws (`formToGraph` on a design it cannot read) would leave the store
 		// unseeded — and the board's skeleton up forever (RUBRIC B4). It is the design load failing,
-		// so it renders as one. Keyed by revision, so a later good design clears it.
-		seed().catch(() => {
-			if (!cancelled) setSeedFailedFor(revision);
-		});
+		// so it renders as one. Keyed by revision, so a later good design clears it. Run as a
+		// microtask, so the failure is reported from a callback and never from the effect's body.
+		Promise.resolve()
+			.then(seed)
+			.catch(() => {
+				if (!cancelled) setSeedFailedFor(revision);
+			});
 		return () => {
 			cancelled = true;
 		};
 	}, [scope, revision]);
+
+	// A tab that is closed, reloaded or sent to the background mid-drag would otherwise lose the
+	// drag: the draft is written when a drag ENDS, and `pagehide` is the last event a page is
+	// promised. Writing the draft there keeps whatever is on the board when the page goes.
+	useEffect(() => {
+		const board = boardFor(scope);
+		const flush = () => board.flushDraft();
+		window.addEventListener("pagehide", flush);
+		return () => window.removeEventListener("pagehide", flush);
+	}, [scope]);
 
 	if (revision === null || seedFailedFor === revision) return <DesignLoadError />;
 

@@ -349,7 +349,8 @@ describeIfDb("job visibility follows project visibility", () => {
 			expect(await readAs(VIEWER, () => readJob(seeded.jobP))).toMatchObject({ id: seeded.jobP, project_id: P });
 			await expect(readAs(VIEWER, () => readJobStatus(seeded.jobP))).resolves.toMatchObject({ status: "SUCCESS" });
 			await expect(readAs(VIEWER, () => readPlanResult(seeded.jobP))).resolves.toMatchObject({ status: "SUCCESS" });
-			await expect(readAs(VIEWER, () => readJobLogsHead(seeded.jobP))).resolves.toEqual({ lines: [], lastId: 0 });
+			// The subject here is that the head is READABLE; what else it carries is tests/lib/rpc/jobs-procedures.test.ts.
+			await expect(readAs(VIEWER, () => readJobLogsHead(seeded.jobP))).resolves.toMatchObject({ lines: [], lastId: 0 });
 			expect(ids(await readAs(VIEWER, () => readProjectJobs(P)))).toContain(seeded.jobP);
 		});
 

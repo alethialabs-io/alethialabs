@@ -4,7 +4,7 @@
 import { isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
-import { PROJECT_NODE_ID } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 import { configName } from "./node-config";
 import type { CanvasNode, CanvasNodeData, NodeConfigMap, NodeKind } from "./types";

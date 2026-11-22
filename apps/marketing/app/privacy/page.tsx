@@ -7,7 +7,7 @@ import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
-	title: "Privacy Policy · Alethia",
+	title: "Privacy Policy",
 	description:
 		"How Alethia collects, uses, shares, and protects personal data.",
 };
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 /** Public GDPR privacy notice for Alethia's website and hosted service. */
 export default function PrivacyPage() {
 	return (
-		<LegalShell title="Privacy Policy" lastUpdated="August 12, 2026">
+		<LegalShell title="Privacy Policy" lastUpdated="November 21, 2026">
 			<p>
 				This notice explains how <strong>{CURRENT_LEGAL_OPERATOR}</strong>, EIK{" "}
 				{LEGAL_ENTITY.registrationNumber}, at {LEGAL_ENTITY.registeredAddress}{" "}
@@ -119,7 +119,8 @@ export default function PrivacyPage() {
 				The primary hosted control plane, PostgreSQL database, and S3-compatible
 				object storage run in Hetzner’s <code>fsn1</code> location in Germany.
 				Cloudflare processes edge-network and security data. Transactional email
-				is currently delivered through Resend. PostHog EU Cloud processes the
+				is delivered through Amazon Web Services (Amazon SES) in its Frankfurt,
+				Germany region (eu-central-1). PostHog EU Cloud processes the
 				telemetry and operational data described above. Other active providers
 				are listed on our{" "}
 				<Link href="/legal/subprocessors">Subprocessors page</Link>.

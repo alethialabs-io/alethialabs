@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/format"
@@ -289,16 +290,25 @@ func TestWriteJobLogs_RendersEachStreamAndAdvances(t *testing.T) {
 	}
 }
 
-// TestIsTerminalJobStatus names the states `--follow` stops on, and one that it must not.
-func TestIsTerminalJobStatus(t *testing.T) {
-	for _, s := range []string{"SUCCESS", "FAILED", "CANCELLED"} {
-		if !isTerminalJobStatus(s) {
-			t.Errorf("isTerminalJobStatus(%q) = false — --follow would never return", s)
+// TestJobVerdict_NamesTheStatesAFollowStopsOn names the states `--follow` stops on, the error each
+// one is, and the ones it must not stop on.
+func TestJobVerdict_NamesTheStatesAFollowStopsOn(t *testing.T) {
+	op := &clierr.Op{ID: "j1"}
+	if done, err := jobVerdict(&api.ProvisionJob{Status: "SUCCESS"}, op); !done || err != nil {
+		t.Errorf("SUCCESS = (%v, %v), want a finished job and no error", done, err)
+	}
+	for _, s := range []string{"FAILED", "CANCELLED"} {
+		done, err := jobVerdict(&api.ProvisionJob{Status: s}, op)
+		if !done {
+			t.Errorf("%s is not terminal — --follow would never return", s)
+		}
+		if got := clierr.From(err); got == nil || got.Exit != clierr.ExitOperationFailed {
+			t.Errorf("%s = %v, want the operation_failed exit %d", s, err, clierr.ExitOperationFailed)
 		}
 	}
 	for _, s := range []string{"QUEUED", "CLAIMED", "PROCESSING", "", "success"} {
-		if isTerminalJobStatus(s) {
-			t.Errorf("isTerminalJobStatus(%q) = true — --follow would stop on a live job", s)
+		if done, _ := jobVerdict(&api.ProvisionJob{Status: s}, op); done {
+			t.Errorf("%q is terminal — --follow would stop on a live job", s)
 		}
 	}
 }

@@ -13,14 +13,31 @@ describe("processing registry", () => {
 		expect(publicProcessingParties().map((party) => party.id)).toEqual([
 			"hetzner",
 			"cloudflare",
-			"resend",
 			"posthog",
 			"stripe",
+			"aws-ses",
+			"anthropic",
 			"customer-cloud",
 			"customer-git",
 			"customer-connector",
-			"customer-ai-endpoint",
 		]);
+	});
+
+	// The hosted assistant runs on Alethia's own Anthropic key with Anthropic default models; the
+	// customer configures no endpoint. So the model provider is Alethia's subprocessor and must be
+	// listed as one, and the register must not describe a customer-chosen AI endpoint the hosted
+	// product does not offer.
+	it("registers the default AI model provider as Alethia's subprocessor", () => {
+		const anthropic = PROCESSING_PARTIES.find((p) => p.id === "anthropic");
+		expect(anthropic?.status).toBe("active");
+		expect(anthropic?.role).toBe("subprocessor");
+		expect(anthropic?.purposes.map((p) => p.name).join(" ")).toMatch(
+			/only while the assistant is switched on/,
+		);
+		const customerAi = CUSTOMER_DIRECTED_PARTIES.filter((p) =>
+			/\b(ai|model)\b/i.test(`${p.id} ${p.name}`),
+		);
+		expect(customerAi.map((p) => p.id)).toEqual([]);
 	});
 
 	it("never publishes an inactive or merely planned party", () => {
@@ -30,8 +47,18 @@ describe("processing registry", () => {
 				expect(published.has(party.id)).toBe(false);
 			}
 		}
-		expect(published.has("aws-ses")).toBe(false);
 		expect(published.has("grafana-prometheus")).toBe(false);
+	});
+
+	// Hosted transactional email moved from Resend to Amazon SES in eu-central-1. The register must
+	// name the processor that actually receives recipients' addresses, and must not keep naming the
+	// one that no longer does.
+	it("registers Amazon SES as the active email processor and no longer lists Resend", () => {
+		const ses = PROCESSING_PARTIES.find((p) => p.id === "aws-ses");
+		expect(ses?.status).toBe("active");
+		expect(ses?.region).toContain("eu-central-1");
+		expect(ses?.purposes.map((p) => p.name).join(" ")).toMatch(/transactional email/i);
+		expect(PROCESSING_PARTIES.some((p) => /resend/i.test(`${p.id} ${p.name}`))).toBe(false);
 	});
 
 	// Stripe was absent from this register entirely while billing was live and the pricing page said

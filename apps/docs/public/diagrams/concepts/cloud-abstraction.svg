@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 420" width="100%" role="img" aria-label="Cloud abstraction: one ProjectConfig of capability categories maps through ProviderTfvars to five cloud providers">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 420" width="100%" role="img" aria-label="Cloud abstraction: one ProjectConfig of capability categories maps through ProviderTfvars to four cloud providers">
   <style>
     .d-bg{fill:#fafafa}.d-surface{fill:#fff;stroke:#e4e4e7;stroke-width:1}.d-surface2{fill:#f4f4f5;stroke:#e4e4e7;stroke-width:1}.d-emph{fill:#18181b;stroke:#18181b}
     .d-title{fill:#18181b}.d-label{fill:#3f3f46}.d-sub{fill:#71717a}.d-emph-text{fill:#fff}
@@ -20,7 +20,7 @@
   <rect x="0" y="0" width="840" height="420" rx="12" fill="url(#grid)"/>
   <rect class="d-surface" x="0.5" y="0.5" width="839" height="419" rx="12" fill="none"/>
   <text class="d-eyebrow mono" x="28" y="34" font-size="10">ALETHIA · CLOUD ABSTRACTION</text>
-  <text class="d-title" x="28" y="58" font-size="15" font-weight="600">One capability model, five providers</text>
+  <text class="d-title" x="28" y="58" font-size="15" font-weight="600">One capability model, four providers</text>
 
   <!-- Capability categories -->
   <rect class="d-surface" x="28" y="96" width="220" height="288" rx="8"/>
@@ -59,20 +59,15 @@
   <text class="d-label" x="552" y="240" font-size="12" font-weight="600">Azure</text>
   <text class="d-sub mono" x="808" y="240" text-anchor="end" font-size="9">AKS · Azure DB · Blob · Azure DNS</text>
 
-  <rect class="d-surface" x="532" y="268" width="280" height="46" rx="8"/>
-  <text class="d-label" x="552" y="296" font-size="12" font-weight="600">Alibaba</text>
-  <text class="d-sub mono" x="808" y="296" text-anchor="end" font-size="9">ACK · ApsaraDB · OSS · AliDNS</text>
-
-  <rect class="d-surface2" x="532" y="324" width="280" height="52" rx="8"/>
-  <text class="d-label" x="552" y="348" font-size="12" font-weight="600">Hetzner</text>
-  <text class="d-sub mono" x="808" y="348" text-anchor="end" font-size="9">Talos K8s + private network</text>
-  <text class="d-sub mono" x="552" y="366" font-size="9">lean · managed services in-cluster (BYO)</text>
+  <rect class="d-surface2" x="532" y="268" width="280" height="52" rx="8"/>
+  <text class="d-label" x="552" y="292" font-size="12" font-weight="600">Hetzner</text>
+  <text class="d-sub mono" x="808" y="292" text-anchor="end" font-size="9">Talos K8s + private network</text>
+  <text class="d-sub mono" x="552" y="310" font-size="9">lean · managed services in-cluster (BYO)</text>
 
   <line class="d-edge" x1="472" y1="230" x2="532" y2="123" marker-end="url(#ar)"/>
   <line class="d-edge" x1="472" y1="236" x2="532" y2="179" marker-end="url(#ar)"/>
   <line class="d-edge" x1="472" y1="244" x2="532" y2="235" marker-end="url(#ar)"/>
-  <line class="d-edge" x1="472" y1="250" x2="532" y2="291" marker-end="url(#ar)"/>
-  <line class="d-edge" x1="472" y1="256" x2="532" y2="348" marker-end="url(#ar)"/>
+  <line class="d-edge" x1="472" y1="252" x2="532" y2="292" marker-end="url(#ar)"/>
 
   <text class="d-sub mono" x="812" y="404" text-anchor="end" font-size="12">[ · ]</text>
 </svg>

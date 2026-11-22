@@ -9,7 +9,7 @@ import { Pricing } from "@/components/landing/pricing";
 import { getTeamPrice } from "@/lib/billing/pricing-display";
 
 export const metadata: Metadata = {
-	title: "Pricing · Alethia",
+	title: "Pricing",
 	description:
 		"Alethia pricing — start free with your own Projects, upgrade for teams, governance, and enterprise SSO. You only pay your own cloud for what you provision.",
 };

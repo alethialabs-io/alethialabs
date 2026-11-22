@@ -46,6 +46,14 @@ describe("RecentJobsCard read", () => {
 	});
 });
 
+describe("RecentJobsCard rows", () => {
+	it("each row is a link to its job's page (#6817)", () => {
+		renderAnswered([makeJob({ id: "j1", project_name: "payments", status: "FAILED" })]);
+		const row = screen.getByRole("link", { name: /payments/ });
+		expect(row).toHaveAttribute("href", "/acme/~/jobs/j1");
+	});
+});
+
 describe("RecentJobsCard states", () => {
 	it("a failed read is an error with a retry (not 'No jobs yet')", async () => {
 		reads.recentJobs.mockRejectedValue(new Error("boom"));

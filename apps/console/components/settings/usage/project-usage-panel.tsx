@@ -42,6 +42,7 @@ import {
 	count,
 	Fact,
 	FactList,
+	FactRead,
 	type Metric,
 	OverTimeCard,
 } from "@/components/settings/usage/usage-primitives";
@@ -52,6 +53,11 @@ import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { PageToolbar } from "@repo/ui/page-toolbar";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
+
+/** Whether a failed secondary read is an expected refusal rather than a fault. */
+function isRefusal(error: unknown): boolean {
+	return refusalOf(error) !== null;
+}
 
 /**
  * Renders the Usage view for a single project. `projectId` is resolved from the URL slug in
@@ -138,17 +144,23 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 								// disagreeing minutes readouts. formatMinutes owns the rounding now.
 								// No allowance to render against — a project has no quota of its own,
 								// so this is `formatMinutes` and not `formatQuota`.
-								usage.data ? formatMinutes(usage.data.jobMinutes) : "—"
+								// `usage.data` is defined here: the panel returned above without it.
+								formatMinutes(usage.data.jobMinutes)
 							}
-							sub={
-								usage.data
-									? `${count(usage.data.jobCount)} managed jobs this period`
-									: "managed runner usage this period"
-							}
+							sub={`${count(usage.data.jobCount)} managed jobs this period`}
 						/>
 						<Fact
 							label="AI credits used"
-							value={ai.data ? count(ai.data.creditsThisPeriod) : "—"}
+							// Its own read, with its own failure: a failed AI read says so and offers a
+							// retry instead of a dash that reads as "none" (#6825, D-31).
+							value={
+								<FactRead
+									read={ai}
+									what="AI credits"
+									isRefusal={isRefusal}
+									render={(d) => count(d.creditsThisPeriod)}
+								/>
+							}
 							sub="attributed to this project *"
 						/>
 					</FactList>
@@ -202,12 +214,19 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 					<FactList>
 						<Fact
 							label="Clusters"
-							value={counts.data ? count(counts.data.clusters) : "—"}
+							value={
+								<FactRead
+									read={counts}
+									what="clusters"
+									isRefusal={isRefusal}
+									render={(d) => count(d.clusters)}
+								/>
+							}
 							sub="under management"
 						/>
 						<Fact
 							label="Running jobs"
-							value={usage.data ? count(usage.data.runningJobs) : "—"}
+							value={count(usage.data.runningJobs)}
 							sub="in flight right now"
 						/>
 						{/* In the list, not under it — see the sibling comment in usage-panel.tsx. */}
@@ -215,10 +234,15 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 							className="border-t bg-surface-sunken"
 							icon={<Info size={13} />}
 							label="Estimated cloud spend for this project"
+							// A failed cost read is an error with a retry, never "—": a dash under a
+							// money label reads as "costs nothing" (#6825, D-31).
 							value={
-								counts.data
-									? formatMonthlyRate(counts.data.estimatedMonthlyCost)
-									: "—"
+								<FactRead
+									read={counts}
+									what="estimated cloud spend"
+									isRefusal={isRefusal}
+									render={(d) => formatMonthlyRate(d.estimatedMonthlyCost)}
+								/>
 							}
 						/>
 					</FactList>

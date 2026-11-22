@@ -11,9 +11,6 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/cloudshell"
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/connector"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
-	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
@@ -26,8 +23,21 @@ var (
 	connectorAlibabaTerraform bool
 )
 
-const defaultAlibabaRegion = "cn-hangzhou"
+const (
+	defaultAlibabaRegion = "cn-hangzhou"
+	alibabaCloudShellURL = "https://shell.aliyun.com"
+)
 
+// alibabaConnector is the Alibaba entry of the parent command's help. The catalog hides this
+// cloud, so the entry is read only when an operator has re-enabled it.
+var alibabaConnector = registerConnector(connectorInfo{
+	Slug:    "alibaba",
+	Keyless: "an Alibaba RAM role assumed with OIDC",
+})
+
+// connectorAlibabaCmd connects an Alibaba Cloud account. The command is kept and not offered:
+// the registry leaves it out of help while the catalog hides the cloud, and running it, or
+// asking for its help, is refused with the release's one sentence before anything is sent.
 var connectorAlibabaCmd = &cobra.Command{
 	Use:   "alibaba",
 	Short: "Connect an Alibaba Cloud account",
@@ -43,82 +53,87 @@ Alibaba Cloud Shell and paste back the role ARN, or --terraform to apply the Ope
 module instead. Pass --role-arn to submit a role you already created — the flag form of
 that same paste, so the command works under --no-input with no aliyun CLI on the
 machine.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := refuseMultipleModes(
-			modeFlag{"--role-arn", strings.TrimSpace(connectorAlibabaRoleArn) != ""},
-			modeFlag{"--terraform", connectorAlibabaTerraform},
-			modeFlag{"--manual", connectorAlibabaManual},
-		); err != nil {
+		if err := runConnect(cmd, alibabaConnectFlow()); err != nil {
 			fail(err)
 		}
-
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		apiClient := api.NewClient(token)
-		steps := []string{"Initialize", "Create RAM role", "Connection test"}
-
-		origin, _ := types.ResolveWebOrigin()
-		issuer := strings.TrimRight(origin, "/") + "/api/oidc"
-
-		ui.PrintStepper(steps, 0)
-		initResp, err := initProviderIdentity(apiClient, "alibaba")
-		if err != nil {
-			fail(err)
-		}
-
-		ui.PrintStepper(steps, 1)
-		var roleArn string
-		switch {
-		case strings.TrimSpace(connectorAlibabaRoleArn) != "":
-			// The flag half of the manual/terraform flows: the RAM role already exists, so
-			// there is nothing to create and nothing to prompt for.
-			roleArn = strings.TrimSpace(connectorAlibabaRoleArn)
-		case connectorAlibabaTerraform:
-			roleArn, err = alibabaTerraformFlow(issuer)
-		case connectorAlibabaManual:
-			roleArn, err = alibabaManualFlow(issuer)
-		default:
-			roleArn, err = alibabaLocalFlow(issuer)
-		}
-		if err != nil {
-			fail(err)
-		}
-
-		ui.PrintStepper(steps, 2)
-		if err := finalizeConnection(apiClient, "alibaba", initResp.IdentityID,
-			map[string]interface{}{"role_arn": roleArn}); err != nil {
-			fail(err)
-		}
-
-		ui.Success(fmt.Sprintf("Alibaba Cloud account connected (role %s)", roleArn))
 	},
 }
 
-// alibabaLocalFlow runs the setup script with the local aliyun CLI (federating to this
-// control plane's issuer) and returns the created RAM role ARN parsed from its output.
-func alibabaLocalFlow(issuer string) (string, error) {
-	if err := cloudshell.EnsureAliyun(); err != nil {
-		ui.Error("aliyun CLI not found on PATH")
-		ui.Muted("Install it: https://www.alibabacloud.com/help/en/cli/install-cli")
-		ui.Muted("Or re-run with --manual to set it up in the Alibaba Cloud Shell.")
-		return "", err
+// alibabaConnectFlow is the Alibaba half of the connection pipeline, for the flags this
+// invocation gave.
+func alibabaConnectFlow() connectFlow {
+	given := strings.TrimSpace(connectorAlibabaRoleArn)
+	mode := "local"
+	switch {
+	case given != "":
+		mode = "role-arn"
+	case connectorAlibabaTerraform:
+		mode = "terraform"
+	case connectorAlibabaManual:
+		mode = "manual"
 	}
-	ui.Info("Running setup via the local aliyun CLI...")
-	return cloudshell.RunAlibabaSetup(connector.AlibabaSetupScript, issuer)
+
+	var roleArn string
+	return connectFlow{
+		Provider: alibabaConnector.Slug,
+		Mode:     mode,
+		Steps:    []string{"Initialize", "Create RAM role", "Connection test"},
+		Check: func() error {
+			if err := refuseMultipleModes(
+				modeFlag{"--role-arn", given != ""},
+				modeFlag{"--terraform", connectorAlibabaTerraform},
+				modeFlag{"--manual", connectorAlibabaManual},
+			); err != nil {
+				return err
+			}
+			switch mode {
+			case "manual", "terraform":
+				return requirePromptFor("--"+mode, "the role ARN", "--role-arn")
+			case "local":
+				if err := cloudshell.EnsureAliyun(); err != nil {
+					return missingToolError(err,
+						"Install it from https://www.alibabacloud.com/help/en/cli/install-cli. "+
+							"Or re-run with --manual to set it up in the Alibaba Cloud Shell.")
+				}
+			}
+			return nil
+		},
+		Capture: func(p *Printer, issuer string) (map[string]interface{}, error) {
+			var err error
+			switch mode {
+			case "role-arn":
+				// The flag half of the manual/terraform flows: the RAM role already exists, so
+				// there is nothing to create and nothing to prompt for.
+				roleArn = given
+			case "terraform":
+				roleArn, err = alibabaTerraformFlow(p, issuer)
+			case "manual":
+				roleArn, err = alibabaManualFlow(p, issuer)
+			default:
+				p.Progress("Running setup via the local aliyun CLI...")
+				roleArn, err = cloudshell.RunAlibabaSetup(connector.AlibabaSetupScript, issuer)
+			}
+			if err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"role_arn": roleArn}, nil
+		},
+		Connected: func() string { return fmt.Sprintf("Alibaba Cloud account connected (role %s)", roleArn) },
+	}
 }
 
 // alibabaManualFlow guides the user through the Alibaba Cloud Shell and prompts for the
 // resulting RAM role ARN.
-func alibabaManualFlow(issuer string) (string, error) {
-	ui.Info("Manual setup:")
-	fmt.Printf("  Open the Alibaba Cloud Shell (%s) and run:\n\n", ui.LinkStyle.Render(alibabaCloudShellURL))
-	fmt.Printf(
+func alibabaManualFlow(p *Printer, issuer string) (string, error) {
+	p.Progress("Manual setup:")
+	fmt.Fprintf(p.Err, "  Open the Alibaba Cloud Shell (%s) and run:\n\n", alibabaCloudShellURL)
+	fmt.Fprintf(p.Err,
 		"     curl -sO %s/alethia-alibaba-setup.sh && bash alethia-alibaba-setup.sh %s\n\n",
 		connectorBaseURL, issuer,
 	)
-	fmt.Printf("  Then paste the %s it prints below.\n", ui.ValueStyle.Render("role_arn"))
+	fmt.Fprintln(p.Err, "  Then paste the role_arn it prints below.")
 
 	return promptAlibabaRoleArn()
 }
@@ -126,7 +141,7 @@ func alibabaManualFlow(issuer string) (string, error) {
 // alibabaTerraformFlow writes the connector module to a local directory, guides the user to apply
 // it in their Alibaba account (with the issuer URL of THIS control plane), and prompts for the
 // resulting RAM role ARN.
-func alibabaTerraformFlow(issuer string) (string, error) {
+func alibabaTerraformFlow(p *Printer, issuer string) (string, error) {
 	dir := connectorAlibabaDir
 	if dir == "" {
 		dir = "alethia-alibaba-connector"
@@ -144,20 +159,17 @@ func alibabaTerraformFlow(issuer string) (string, error) {
 		region = defaultAlibabaRegion
 	}
 
-	ui.Info("Apply the connector module in your Alibaba account:")
-	fmt.Printf("  1. Authenticate to Alibaba (aliyun CLI, or ALICLOUD_ACCESS_KEY / ALICLOUD_SECRET_KEY).\n")
-	fmt.Printf("  2. Run:\n\n     cd %s\n     tofu init\n     tofu apply -var \"region=%s\" -var \"alethia_issuer_url=%s\"\n\n",
+	p.Progress("Apply the connector module in your Alibaba account:")
+	fmt.Fprintln(p.Err, "  1. Authenticate to Alibaba (aliyun CLI, or ALICLOUD_ACCESS_KEY / ALICLOUD_SECRET_KEY).")
+	fmt.Fprintf(p.Err, "  2. Run:\n\n     cd %s\n     tofu init\n     tofu apply -var \"region=%s\" -var \"alethia_issuer_url=%s\"\n\n",
 		dir, region, issuer)
-	fmt.Printf("  3. Copy the %s output below.\n", ui.ValueStyle.Render("role_arn"))
+	fmt.Fprintln(p.Err, "  3. Copy the role_arn output below.")
 
 	return promptAlibabaRoleArn()
 }
 
 // promptAlibabaRoleArn asks the user to paste the RAM role ARN and validates it is non-empty.
 func promptAlibabaRoleArn() (string, error) {
-	if err := requireInteractiveForm(); err != nil {
-		return "", fmt.Errorf("no role ARN given: pass --role-arn (%w)", err)
-	}
 	var roleArn string
 	if err := runHuhForm(huh.NewGroup(
 		huh.NewInput().
@@ -165,17 +177,18 @@ func promptAlibabaRoleArn() (string, error) {
 			Placeholder("acs:ram::123456789012:role/AlethiaProvisioner").
 			Value(&roleArn),
 	)); err != nil {
-		return "", err
+		return "", formError(err)
 	}
 	roleArn = strings.TrimSpace(roleArn)
 	if roleArn == "" {
-		return "", fmt.Errorf("no Role ARN provided")
+		return "", invalidInputError("no role ARN provided")
 	}
 	return roleArn, nil
 }
 
 func init() {
 	connectorCmd.AddCommand(connectorAlibabaCmd)
+	refuseHelpForHiddenCloud(connectorAlibabaCmd, alibabaConnector.Slug)
 	connectorAlibabaCmd.Flags().StringVar(&connectorAlibabaRegion, "region", "", "Alibaba region for the RAM provider (default cn-hangzhou)")
 	connectorAlibabaCmd.Flags().StringVar(&connectorAlibabaRoleArn, "role-arn", "", "ARN of a RAM role you already created — submits it instead of prompting (the flag form of --manual)")
 	connectorAlibabaCmd.Flags().StringVar(&connectorAlibabaDir, "dir", "", "Directory to write the OpenTofu module into (--terraform; default ./alethia-alibaba-connector)")

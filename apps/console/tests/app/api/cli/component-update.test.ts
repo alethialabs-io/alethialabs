@@ -477,7 +477,13 @@ describe("cloud_identity_id is bound to the caller's org", () => {
 	it("a SERVICE token cannot use a personal identity, even its minter's", async () => {
 		const { verifyCliToken } = await import("@/lib/cli/auth");
 		vi.mocked(verifyCliToken).mockResolvedValueOnce({
-			payload: { sub: "u-editor", service_token_org_id: ORG_A, service_token_id: "st-1" },
+			payload: {
+				sub: "u-editor",
+				service_token_org_id: ORG_A,
+				service_token_id: "st-1",
+				service_token_scopes: ["read", "design", "plan", "apply", "destroy"],
+				service_token_project_ids: null,
+			},
 			error: null,
 		});
 		const res = await patch({ fields: { cloud_identity_id: IDENTITY_A_MINE } });

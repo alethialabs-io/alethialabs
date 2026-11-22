@@ -25,6 +25,11 @@ export interface OrgSettings {
 	description: string;
 	/** Billing-derived primary address (set from checkout); null when unset. */
 	primaryAddress: OrgPrimaryAddress | null;
+	/**
+	 * The data region, default environment and Terraform version: deprecated (#7147). The console no
+	 * longer shows or saves them; they are still read so `GET /api/cli/org-settings` keeps its JSON
+	 * shape for scripts. Nothing else reads them.
+	 */
 	region: string;
 	defaultEnv: string;
 	terraformVersion: string;

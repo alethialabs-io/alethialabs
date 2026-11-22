@@ -8,8 +8,12 @@ import { team } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliOkResponse } from "@/lib/validations/cli-contract";
+import { teamRoleRefusal } from "../team-access";
 
-/** Deletes a team from organization `id` (team_member rows cascade). */
+/**
+ * Deletes a team from organization `id` (team_member rows cascade). Beyond the route's PDP check,
+ * the caller's membership role must hold `team:delete` (owners and admins), as on the console.
+ */
 export async function DELETE(
 	req: Request,
 	{ params }: { params: Promise<{ id: string; teamId: string }> },
@@ -25,6 +29,9 @@ export async function DELETE(
 	if (denied) return denied;
 
 	try {
+		const roleRefusal = await teamRoleRefusal(actor.userId, id, "delete");
+		if (roleRefusal) return roleRefusal;
+
 		const db = getServiceDb();
 		const [t] = await db
 			.select({ id: team.id })

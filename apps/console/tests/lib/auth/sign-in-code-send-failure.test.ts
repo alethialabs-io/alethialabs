@@ -44,6 +44,8 @@ vi.mock("@/lib/config/auth", () => ({
 	})),
 	getGitlabBaseUrl: vi.fn(() => "https://gitlab.example.com"),
 	getAuthRateLimit: vi.fn(() => ({ enabled: false })),
+	// The sign-up challenge is off here; tests/lib/auth/signup-guard/challenge.test.ts turns it on.
+	getSignupChallengeConfig: vi.fn(() => null),
 }));
 vi.mock("@/lib/auth/plugins", () => ({ getAuthPlugins: vi.fn(() => []) }));
 vi.mock("@/lib/authz/grants", () => ({ ensureMemberGrant: vi.fn(async () => {}) }));

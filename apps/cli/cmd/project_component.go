@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
@@ -104,6 +106,13 @@ func (v componentVocabulary) isSingleton(kind string) bool {
 	return ok && k.Singleton
 }
 
+// fields is the field names the published registry lists for a kind, in its own order. Empty for
+// an unknown or unresolved kind, which is when the form falls back to a free-text field name.
+func (v componentVocabulary) fields(kind string) []string {
+	k, _ := v.doc.Kind(kind)
+	return k.Fields
+}
+
 // first is the kind a picker starts on. Empty for an unresolved vocabulary, which the interactive
 // callers have already refused before reaching here.
 func (v componentVocabulary) first() string {
@@ -116,18 +125,24 @@ func (v componentVocabulary) first() string {
 var projectComponentCmd = &cobra.Command{
 	Use:     "component",
 	Aliases: []string{"components", "comp"},
-	Short:   "Manage a project's component resources",
-	Long: `Components are the building blocks of a project's infrastructure: the network and
+	Short:   "List, add and remove a project's components",
+	Long: `Components are the building blocks of an environment's infrastructure: the network and
 cluster, plus databases, caches, queues, topics, nosql tables, container registries, secrets,
-storage buckets, DNS, and observability. One uniform group authors them all. The project is
-named with --project (its name or id).`,
+storage buckets, DNS, and observability. Use this group to see which kinds exist, list what a
+project has, and add or remove one. A change here edits the project's design; it reaches your
+cloud account on the next "alethia project deploy". The project is named with --project (its
+name or id).`,
 }
 
 // --- kinds ---
 
 var projectComponentKindsCmd = &cobra.Command{
 	Use:   "kinds",
-	Short: "List the supported component kinds",
+	Short: "List the component kinds a project can use",
+	Long: `List every component kind the control plane accepts, and whether each is a singleton (one per environment, no name) or a multi kind (any number, each with a name).
+
+Use it before "alethia project component add" to find the value --kind takes.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		// This command's whole job is to name what the SERVER accepts, so it needs a token and a
 		// round-trip. It used to answer offline from a literal, which is how it came to omit a kind.
@@ -135,8 +150,8 @@ var projectComponentKindsCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		if err := runComponentKinds(api.NewClient(token), os.Stdout, outputFormat(cmd)); err != nil {
-			failf("Failed to list kinds: %v", err)
+		if err := runComponentKinds(api.NewClient(token), printer.Out, outputFormat(cmd)); err != nil {
+			fail(fmt.Errorf("failed to list the component kinds: %w", err))
 		}
 	},
 }
@@ -195,6 +210,11 @@ func currentComponentEnv(cmd *cobra.Command) string {
 var projectComponentListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List a project's components",
+	Long: `List the components of a project: each one's kind, name, status and the cloud account it uses.
+
+Use it to see what an environment is built from, or to find a component's name before removing
+it. Without --env it lists every environment's components; --kind narrows it to one kind.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -211,19 +231,24 @@ var projectComponentListCmd = &cobra.Command{
 				comps, err = client.ListComponents(project, componentListKind, currentComponentEnv(cmd))
 			})
 			if err != nil {
-				failf("Failed to list components: %v", err)
+				fail(fmt.Errorf("failed to list components: %w", err))
 			}
 			if len(comps) == 0 {
-				ui.Muted("No components found.")
+				printer.Note(noComponentsNote(project))
 				return
 			}
 			_ = ui.ShowTable(componentListColumns, componentRows(comps, ui.FormatTable), "components")
 			return
 		}
-		if err := runComponentList(client, os.Stdout, outputFormat(cmd), project, componentListKind, currentComponentEnv(cmd)); err != nil {
-			failf("Failed to list components: %v", err)
+		if err := runComponentList(client, printer.Out, outputFormat(cmd), project, componentListKind, currentComponentEnv(cmd)); err != nil {
+			fail(fmt.Errorf("failed to list components: %w", err))
 		}
 	},
+}
+
+// noComponentsNote is what an empty component list says, with the command that adds one.
+func noComponentsNote(project string) string {
+	return "No components found. Add one with `alethia project component add --project " + shellQuote(project) + "`."
 }
 
 var componentListColumns = []string{"Kind", "Name", "Status", "Identity"}
@@ -252,8 +277,7 @@ func runComponentList(c apiClient, out io.Writer, format, project, kind, env str
 	if err != nil {
 		return err
 	}
-	if len(comps) == 0 && format == ui.FormatTable {
-		fmt.Fprintln(out, ui.MutedStyle.Render("No components found."))
+	if len(comps) == 0 && emptyListNote(printer, format, noComponentsNote(project)) {
 		return nil
 	}
 	return ui.Render(out, format, ui.TableSpec{
@@ -273,9 +297,15 @@ var (
 var projectComponentAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a component to a project",
-	Long: `Add a component of --kind to a project. Set its fields with repeatable --set
-key=value pairs (validated server-side against the component's schema). Singletons
-(network, cluster, dns, observability, repositories) ignore --name; multi kinds require it.
+	Long: `Add a component of --kind to one environment of a project, or change the fields of a singleton that is already there.
+
+Use it to design an environment one piece at a time. Set fields with repeatable --set
+key=value pairs; the control plane checks them against the kind's schema. A singleton kind
+(one per environment, such as cluster or dns) takes no --name; a multi kind (such as databases)
+requires one. "alethia project component kinds" lists both. Omit --kind or --set on a terminal
+and you are asked, with the kind's own fields to choose from. --dry-run checks the input and
+prints the request without sending it. The change reaches your cloud account on the next
+"alethia project deploy".
 
 Values are parsed as JSON when possible, else taken literally:
   --set port=5432            (number)
@@ -309,7 +339,7 @@ A cluster takes node_size OR instance_types: setting one clears the other.`,
 			// there authors the wrong shape. So a fetch failure fails the command with its cause.
 			v, vErr := fetchComponentVocabulary(client)
 			if vErr != nil {
-				failf("Could not read the component registry: %v", vErr)
+				fail(fmt.Errorf("could not read the component registry: %w", vErr))
 			}
 			answers, err := promptComponentAdd(client, v, project, componentAddSpec{
 				Kind: kind, Name: name, Env: env, Sets: sets,
@@ -325,10 +355,12 @@ A cluster takes node_size OR instance_types: setting one clears the other.`,
 		if err != nil {
 			fail(err)
 		}
-		if err := runComponentAdd(api.NewClient(token), os.Stdout, project, kind, name, env, fields); err != nil {
-			failf("Failed to add component: %v", err)
+		outFmt := outputFormat(cmd)
+		request := componentRequest{Project: project, Kind: kind, Name: name, Env: env, Fields: fields}
+		if err := runComponentAdd(client, printerFor(cmd), request, cmdmeta.DryRunRequested(cmd)); err != nil {
+			fail(fmt.Errorf("failed to add component: %w", err))
 		}
-		printReplay(os.Stdout, outputFormat(cmd), asked, componentAddReplayArgs(project, componentAddSpec{
+		printReplay(printer.Err, outFmt, asked, componentAddReplayArgs(project, componentAddSpec{
 			Kind: kind, Name: name, Env: env, Sets: sets,
 		})...)
 	},
@@ -446,10 +478,10 @@ func promptComponentAdd(c apiClient, v componentVocabulary, project string, seed
 	// the server registry's answer, not this list's, so a blank name is sent and the server
 	// decides rather than the CLI refusing a component it has merely not heard of.
 	if v.known(out.Kind) && !v.isSingleton(out.Kind) && out.Name == "" {
-		return out, fmt.Errorf("%s is a multi kind and needs a name", out.Kind)
+		return out, refusal(clierr.CodeValidationFailed, "", "%s is a multi kind and needs a name", out.Kind)
 	}
 
-	sets, err := promptSetValues(out.Sets)
+	sets, err := promptSetValues(out.Sets, v.fields(out.Kind))
 	if err != nil {
 		return out, err
 	}
@@ -527,12 +559,12 @@ func componentEnvSeedValue(envs []api.Environment, seed string) string {
 // already passed with --set, and returns them in --set syntax so the SAME parser handles the
 // answered and the typed forms.
 //
-// Generic key/value rather than a form built per kind, deliberately. The fields a kind accepts
-// are published by the server (#3671, GET /api/cli/schema/components) precisely so the CLI
-// stops holding a second opinion of them; a hand-written field list here would be that second
-// opinion, and it would drift the way componentKinds already has. The typed form arrives when
-// a Go client for that document does.
-func promptSetValues(seed []string) ([]string, error) {
+// fields is the field names the published registry lists for the chosen kind (#3671, GET
+// /api/cli/schema/components). When it has any, the field is PICKED from them rather than typed,
+// so the form offers what the kind accepts instead of asking the person to know it. The list is
+// the server's, fetched for this run; nothing here holds a second opinion of it. An unknown kind
+// has no list, and its field name is typed.
+func promptSetValues(seed, fields []string) ([]string, error) {
 	out := append([]string{}, seed...)
 	for {
 		title := "Set a field?"
@@ -546,13 +578,13 @@ func promptSetValues(seed []string) ([]string, error) {
 		if !more {
 			return out, nil
 		}
-		key, value, err := askKeyValue()
+		key, value, err := askKeyValue(fields)
 		if err != nil {
 			return nil, err
 		}
 		key = strings.TrimSpace(key)
 		if key == "" {
-			return nil, fmt.Errorf("a field needs a name")
+			return nil, refusal(clierr.CodeValidationFailed, "", "a field needs a name")
 		}
 		out = append(out, key+"="+value)
 	}
@@ -560,15 +592,29 @@ func promptSetValues(seed []string) ([]string, error) {
 
 // askKeyValue is the one-field question as a seam, so promptSetValues' loop is testable. See
 // the question seams in project.go.
-var askKeyValue = func() (string, string, error) {
+var askKeyValue = func(fields []string) (string, string, error) {
 	var key, value string
 	if err := runHuhForm(huh.NewGroup(
-		huh.NewInput().Title("Field").Description("e.g. engine, port, instance_types").Value(&key),
+		fieldNameQuestion(fields, &key),
 		huh.NewInput().Title("Value").Description(`JSON when it parses, else literal text — 5432, true, ["t3.medium"], postgres`).Value(&value),
 	)); err != nil {
 		return "", "", err
 	}
 	return key, value, nil
+}
+
+// fieldNameQuestion is the "which field" question: a picker over the kind's published fields when
+// there are any, and a text box otherwise.
+func fieldNameQuestion(fields []string, key *string) huh.Field {
+	if len(fields) == 0 {
+		return huh.NewInput().Title("Field").Description("e.g. engine, port, instance_types").Value(key)
+	}
+	*key = fields[0]
+	return huh.NewSelect[string]().
+		Title("Field").
+		Description("The fields this kind accepts").
+		Options(huh.NewOptions(fields...)...).
+		Value(key)
 }
 
 // setsSoFar renders the assignments collected so far for the loop's prompt, so the answer to
@@ -602,7 +648,7 @@ func parseSetValues(sets []string) (map[string]interface{}, error) {
 	for _, s := range sets {
 		key, val, ok := strings.Cut(s, "=")
 		if !ok || key == "" {
-			return nil, fmt.Errorf("invalid --set %q (want key=value)", s)
+			return nil, refusal(clierr.CodeInvalidFlag, "", "invalid --set %q (want key=value)", s)
 		}
 		out[key] = coerceSetValue(val)
 	}
@@ -633,18 +679,66 @@ func coerceSetValue(raw string) interface{} {
 	return raw
 }
 
-// runComponentAdd creates the component and confirms it. An empty env means the project's default
-// environment, resolved server-side.
-func runComponentAdd(c apiClient, out io.Writer, project, kind, name, env string, fields map[string]interface{}) error {
-	if kind == "" {
-		return fmt.Errorf("--kind is required (see `alethia project component kinds`)")
+// componentRequest is one component write as the flags and the form resolved it. It is also what
+// the dry run reports as the request.
+type componentRequest struct {
+	Project string `json:"project"`
+	Kind    string `json:"kind"`
+	Name    string `json:"name,omitempty"`
+	// Env is the environment by name, stage or id. Empty means the project's default environment,
+	// resolved by the control plane.
+	Env    string                 `json:"environment,omitempty"`
+	Fields map[string]interface{} `json:"fields,omitempty"`
+}
+
+// errKindRequired is the refusal of a component command that was given no --kind and has nobody
+// to ask.
+func errKindRequired() error {
+	return refusal(clierr.CodeInputRequired, "alethia project component kinds",
+		"--kind is required (see `alethia project component kinds`)")
+}
+
+// runComponentAdd creates the component and reports it. An empty env means the project's default
+// environment, resolved server-side. On a dry run nothing is sent and the result carries the
+// request.
+func runComponentAdd(c apiClient, p *Printer, r componentRequest, dryRun bool) error {
+	if r.Kind == "" {
+		return errKindRequired()
 	}
-	comp, err := c.AddComponent(project, kind, name, env, fields)
+	if dryRun {
+		return p.Result(MutationResult{
+			ID: componentID(r.Kind, r.Name), Kind: "component", Action: ResultCreated, DryRun: true,
+			Object: map[string]componentRequest{"request": r},
+		}, func(w io.Writer) {
+			fmt.Fprintln(w, ui.MutedStyle.Render(fmt.Sprintf(
+				"Would add %s%s. Nothing was sent.", componentSubject(r.Kind, r.Name), envSuffix(r.Env))))
+		})
+	}
+	comp, err := c.AddComponent(r.Project, r.Kind, r.Name, r.Env, r.Fields)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Added %s component %s (%s)%s", comp.Kind, comp.Name, comp.ID, envSuffix(env))))
-	return nil
+	return p.Result(MutationResult{ID: comp.ID, Kind: "component", Action: ResultCreated, Object: comp},
+		func(w io.Writer) {
+			fmt.Fprintln(w, ui.FormatSuccess(fmt.Sprintf("Added %s component %s (%s)%s", comp.Kind, comp.Name, comp.ID, envSuffix(r.Env))))
+		})
+}
+
+// componentSubject names a component for a sentence: its kind, and its name when it has one.
+func componentSubject(kind, name string) string {
+	if name == "" {
+		return kind
+	}
+	return kind + " " + name
+}
+
+// componentID is the handle a result names a component by when the control plane's own id is not
+// known: `kind`, or `kind/name` for a named one.
+func componentID(kind, name string) string {
+	if name == "" {
+		return kind
+	}
+	return kind + "/" + name
 }
 
 // envSuffix renders " in <env>" for a confirmation line, or nothing when no environment was named.
@@ -672,6 +766,14 @@ var componentRemoveYes bool
 var projectComponentRemoveCmd = &cobra.Command{
 	Use:   "remove",
 	Short: "Remove a component from a project",
+	Long: `Remove one component from one environment of a project. Other environments keep theirs.
+
+Use it to take a piece out of an environment's design. It removes the component's configuration
+now; the cloud resources it built are removed by the next "alethia project deploy". On a
+terminal it asks which component and confirms before removing it; a script or an agent passes
+--kind, --name for a multi kind, and --yes. --dry-run checks the input and prints the request
+without sending it.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -704,7 +806,8 @@ var projectComponentRemoveCmd = &cobra.Command{
 			// name what is about to go, and a prompt that asked "remove this component?" and
 			// only then asked which one would be a confirmation of nothing.
 			if v.doc == nil {
-				failf("Could not read the component registry, so there is nothing to offer — pass --kind (see `alethia project component kinds`)")
+				fail(refusal(clierr.CodeServiceUnavailable, "alethia project component kinds",
+					"could not read the component registry, so there is nothing to offer — pass --kind (see `alethia project component kinds`)"))
 			}
 			picked, err := promptComponentKind(v)
 			if err != nil {
@@ -713,7 +816,7 @@ var projectComponentRemoveCmd = &cobra.Command{
 			kind = picked
 		}
 		if kind == "" {
-			failf("--kind is required (see `alethia project component kinds`)")
+			fail(errKindRequired())
 		}
 		// A multi kind is deleted BY NAME — the server refuses a nameless one with
 		// "<kind> components are removed by name (pass --name)" — so the name is asked for
@@ -730,14 +833,18 @@ var projectComponentRemoveCmd = &cobra.Command{
 				}
 			}
 			if name == "" {
-				failf("%s is a multi kind and needs a name — pass --name (see `alethia project component list --kind %s`)", kind, kind)
+				fail(refusal(clierr.CodeInputRequired, "alethia project component list --kind "+kind,
+					"%s is a multi kind and needs a name — pass --name (see `alethia project component list --kind %s`)", kind, kind))
 			}
 		}
-		if !confirmDestructive(componentRemoveYes, "Remove this component?", removalDescription(v, kind, name, env)) {
+		dryRun := cmdmeta.DryRunRequested(cmd)
+		// A dry run removes nothing, so there is nothing to confirm.
+		if !dryRun && !confirmDestructive(componentRemoveYes, "Remove this component?", removalDescription(v, kind, name, env)) {
 			return
 		}
-		if err := runComponentRemove(client, v, os.Stdout, project, kind, name, env); err != nil {
-			failf("Failed to remove component: %v", err)
+		request := componentRequest{Project: project, Kind: kind, Name: name, Env: env}
+		if err := runComponentRemove(client, v, printerFor(cmd), request, dryRun); err != nil {
+			fail(fmt.Errorf("failed to remove component: %w", err))
 		}
 	},
 }
@@ -842,23 +949,34 @@ func removalDescription(v componentVocabulary, kind, name, env string) string {
 		what, where)
 }
 
-// runComponentRemove deletes the component and confirms it. Singleton kinds ignore the name. An empty
+// runComponentRemove deletes the component and reports it. Singleton kinds ignore the name. An empty
 // env means the project's default environment; the delete is scoped to that ONE environment either
-// way, so a sibling tier's row is never collateral.
-func runComponentRemove(c apiClient, v componentVocabulary, out io.Writer, project, kind, name, env string) error {
-	if v.isSingleton(kind) {
-		name = ""
+// way, so a sibling tier's row is never collateral. On a dry run nothing is sent.
+func runComponentRemove(c apiClient, v componentVocabulary, p *Printer, r componentRequest, dryRun bool) error {
+	if v.isSingleton(r.Kind) {
+		r.Name = ""
 	}
-	if err := c.RemoveComponent(project, kind, name, env); err != nil {
+	result := MutationResult{
+		ID: componentID(r.Kind, r.Name), Kind: "component", Action: ResultDeleted, DryRun: dryRun,
+		Object: map[string]componentRequest{"request": r},
+	}
+	if dryRun {
+		return p.Result(result, func(w io.Writer) {
+			fmt.Fprintln(w, ui.MutedStyle.Render(fmt.Sprintf(
+				"Would remove %s%s. Nothing was sent.", componentSubject(r.Kind, r.Name), envSuffix(r.Env))))
+		})
+	}
+	if err := c.RemoveComponent(r.Project, r.Kind, r.Name, r.Env); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, ui.FormatSuccess("Component removed"+envSuffix(env)))
-	return nil
+	return p.Result(result, func(w io.Writer) {
+		fmt.Fprintln(w, ui.FormatSuccess("Removed "+componentSubject(r.Kind, r.Name)+envSuffix(r.Env)))
+	})
 }
 
 // The usage strings for the two scope flags, shared by list/add/remove so the three cannot drift.
 const (
-	componentProjectFlagUsage = "Project name or id"
+	componentProjectFlagUsage = "Project name or id (asked for on a terminal when omitted)"
 	componentEnvFlagUsage     = "Environment id, name or stage — writes default to the project's default environment, `list` defaults to all"
 )
 
@@ -881,12 +999,14 @@ func init() {
 
 	projectComponentListCmd.Flags().StringVar(&componentListKind, "kind", "", "Filter by component kind")
 
-	projectComponentAddCmd.Flags().StringVar(&componentAddKind, "kind", "", "Component kind (required)")
-	projectComponentAddCmd.Flags().StringVar(&componentAddName, "name", "", "Component name (multi kinds)")
-	projectComponentAddCmd.Flags().StringArrayVar(&componentAddSet, "set", nil, "Field assignment key=value (repeatable)")
+	projectComponentAddCmd.Flags().StringVar(&componentAddKind, "kind", "", "Component kind, from `alethia project component kinds` (asked for on a terminal when omitted)")
+	projectComponentAddCmd.Flags().StringVar(&componentAddName, "name", "", "Component name (required for a multi kind, ignored for a singleton)")
+	projectComponentAddCmd.Flags().StringArrayVar(&componentAddSet, "set", nil, "Field assignment key=value (repeatable; the value is JSON when it parses)")
+	addDryRunFlag(projectComponentAddCmd)
 
-	projectComponentRemoveCmd.Flags().StringVar(&componentRemoveKind, "kind", "", "Component kind (required)")
-	projectComponentRemoveCmd.Flags().StringVar(&componentRemoveName, "name", "", "Component name (multi kinds)")
+	projectComponentRemoveCmd.Flags().StringVar(&componentRemoveKind, "kind", "", "Component kind, from `alethia project component kinds` (asked for on a terminal when omitted)")
+	projectComponentRemoveCmd.Flags().StringVar(&componentRemoveName, "name", "", "Component name (required for a multi kind, ignored for a singleton)")
+	addDryRunFlag(projectComponentRemoveCmd)
 
 	projectComponentCmd.AddCommand(projectComponentKindsCmd)
 	projectComponentCmd.AddCommand(projectComponentListCmd)

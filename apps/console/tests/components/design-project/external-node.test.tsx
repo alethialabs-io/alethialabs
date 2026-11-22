@@ -21,11 +21,11 @@ import {
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
-import {
-	diffNodes,
-	PROJECT_NODE_ID,
-	useCanvasStore,
-} from "@/lib/stores/use-canvas-store";
+import { diffNodes } from "@/lib/canvas/store/derive";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { board } from "@/lib/canvas/store/board";
+import { iacNodes } from "@/lib/canvas/store/out-of-band";
+import { boardNodes, setBoardNodes, withBoardSources } from "@/tests/fixtures/canvas/board";
 
 /** A plan_result exactly as the runner posts it. */
 const PLAN = {
@@ -82,7 +82,10 @@ const SOURCE: IacEnvironment["source"] = {
 
 const groups = buildIacInventory({ planMembers: parsePlanInventory(PLAN) });
 
-/** Seed the store with the project root + the module's external cards (as setIacNodes would). */
+/** The module's external cards, as the canvas builds them from the environment status. */
+const IAC = iacNodes(groups);
+
+/** Seed the board with the project root; the module's cards sit beside it (`IAC`). */
 function seed() {
 	const root = {
 		id: PROJECT_NODE_ID,
@@ -96,8 +99,8 @@ function seed() {
 		},
 	} as CanvasNode;
 
-	useCanvasStore.setState({ nodes: [root], identities: [], baseline: [] });
-	useCanvasStore.getState().setIacNodes(groups);
+	setBoardNodes([root]);
+	board.document.getState().replaceBaseline([]);
 }
 
 /** The env status the server would return for this module. */
@@ -122,11 +125,14 @@ function envStatus(overrides: Partial<EnvironmentStatus> = {}): EnvironmentStatu
  * two props to `BaseNode` — the ONE data-driven card every registry kind renders through. */
 function renderNode(id: string, env: EnvironmentStatus = envStatus()) {
 	return render(
-		<EnvironmentStatusProvider value={env}>
-			<ReactFlowProvider>
-				<BaseNode id={id} selected={false} />
-			</ReactFlowProvider>
-		</EnvironmentStatusProvider>,
+		withBoardSources(
+			<EnvironmentStatusProvider value={env}>
+				<ReactFlowProvider>
+					<BaseNode id={id} selected={false} />
+				</ReactFlowProvider>
+			</EnvironmentStatusProvider>,
+			{ others: IAC },
+		),
 	);
 }
 
@@ -192,9 +198,12 @@ describe("the card's panel — read-only, and joined by exact address", () => {
 	function renderPanel(env: EnvironmentStatus) {
 		const network = groups.find((g) => g.kind === "network");
 		return render(
-			<EnvironmentStatusProvider value={env}>
-				<ExternalPanel nodeId={`external-${network!.key}`} />
-			</EnvironmentStatusProvider>,
+			withBoardSources(
+				<EnvironmentStatusProvider value={env}>
+					<ExternalPanel nodeId={`external-${network!.key}`} />
+				</EnvironmentStatusProvider>,
+				{ others: IAC },
+			),
 		);
 	}
 
@@ -249,43 +258,36 @@ describe("external cards are out-of-band", () => {
 	it("never enter the Deploy diff — the design does not own them", () => {
 		// If a card the design doesn't own showed up as a staged change, the Deploy button would lie:
 		// it would offer to deploy resources whose definition lives in the customer's repo.
-		const { baseline, nodes } = useCanvasStore.getState();
-		const changes = diffNodes(baseline, nodes);
+		const changes = diffNodes(board.document.getState().baseline, boardNodes(board, IAC));
 		expect(changes.filter((c) => c.kind === "external")).toHaveLength(0);
 	});
 
 	it("are not deletable — a stray Backspace must not pretend to remove a customer's resource", () => {
-		const nodes = useCanvasStore.getState().nodes.filter((n) => n.data.kind === "external");
+		const nodes = boardNodes(board, IAC).filter((n) => n.data.kind === "external");
 		expect(nodes).toHaveLength(4);
 		expect(nodes.every((n) => n.deletable === false)).toBe(true);
 	});
 
 	it("keep their position across a status poll — a dragged card must not snap back", () => {
-		// setIacNodes is driven by the environment-status query, which POLLS (every 30s; every 4s
+		// The cards are built from the environment-status query, which POLLS (every 30s; every 4s
 		// mid-deploy). Rebuilding the nodes from scratch each time yanked every card back to the
 		// default grid — repeatedly, while the user was trying to arrange the board.
 		const id = `external-${groups[0].key}`;
 		const moved = { x: 1234, y: 567 };
-		useCanvasStore.setState({
-			nodes: useCanvasStore
-				.getState()
-				.nodes.map((n) => (n.id === id ? { ...n, position: moved } : n)),
-		});
+		board.onNodesChange([{ id, type: "position", position: moved, dragging: false }], IAC);
 
-		// The next poll delivers the same groups (nothing changed server-side).
-		useCanvasStore.getState().setIacNodes(groups);
-
-		expect(useCanvasStore.getState().nodes.find((n) => n.id === id)?.position).toEqual(moved);
+		// The next poll delivers the same groups (nothing changed server-side), as a new read.
+		expect(boardNodes(board, iacNodes(groups)).find((n) => n.id === id)?.position).toEqual(moved);
 	});
 
 	it("still refresh their CONTENT on a poll — the position is remembered, the data is not", () => {
 		// The other half of the contract: remembering positions must not freeze the card's facts, or a
 		// new plan's resources would never reach the board.
 		const id = `external-${groups[0].key}`;
-		useCanvasStore
-			.getState()
-			.setIacNodes(groups.map((g) => (g.key === groups[0].key ? { ...g, members: [] } : g)));
-		const after = useCanvasStore.getState().nodes.find((n) => n.id === id);
+		const next = iacNodes(
+			groups.map((g) => (g.key === groups[0].key ? { ...g, members: [] } : g)),
+		);
+		const after = boardNodes(board, next).find((n) => n.id === id);
 		expect((after?.data.config as { members: unknown[] }).members).toHaveLength(0);
 	});
 });

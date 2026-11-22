@@ -39,7 +39,9 @@ test.describe("Activity — CSV export gating", () => {
 		await owner.page.goto(activityPath(owner.orgSlug));
 		const exportBtn = owner.page.getByRole("button", { name: /export csv/i });
 		await expect(exportBtn).toBeVisible({ timeout: 30_000 });
-		await expect(exportBtn).toHaveAttribute("title", /enterprise plan/i);
+		// The reason is the button's accessible DESCRIPTION (DisabledReason, CON-L10 / R6 E-09): a
+		// `title` on a disabled button is never shown to anyone, so it is no longer used.
+		await expect(exportBtn).toHaveAccessibleDescription(/enterprise plan/i);
 	});
 
 	test("Pro (non-Enterprise) org also sees Export CSV disabled", async ({ team }) => {

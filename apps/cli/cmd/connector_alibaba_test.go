@@ -10,7 +10,11 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/connector"
 )
 
+// TestConnectorAlibabaCommandRegistered pins that the command is kept while the cloud is hidden:
+// it is registered, it carries its own description, and the parent's help leaves it out until an
+// operator re-enables the cloud.
 func TestConnectorAlibabaCommandRegistered(t *testing.T) {
+	cloudsRestoreHelp(t)
 	var found bool
 	var short string
 	for _, c := range connectorCmd.Commands() {
@@ -26,9 +30,14 @@ func TestConnectorAlibabaCommandRegistered(t *testing.T) {
 	if !strings.Contains(short, "Alibaba") {
 		t.Errorf("connector alibaba Short = %q, want it to mention Alibaba", short)
 	}
-	// The parent command's help should advertise Alibaba too (parity with AWS/GCP/Azure).
-	if !strings.Contains(connectorCmd.Short, "Alibaba") {
-		t.Errorf("connector Short = %q, want Alibaba listed", connectorCmd.Short)
+
+	cloudsOffer(t, "")
+	if strings.Contains(connectorCmd.Short, "Alibaba") {
+		t.Errorf("connector Short = %q, names a cloud that is not offered", connectorCmd.Short)
+	}
+	cloudsOffer(t, "alibaba")
+	if connectorCmd.Short != "Connect cloud accounts (AWS, GCP, Azure, Alibaba and Hetzner)" {
+		t.Errorf("connector Short = %q, want the re-enabled cloud listed", connectorCmd.Short)
 	}
 }
 

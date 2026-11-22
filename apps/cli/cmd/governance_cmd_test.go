@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -440,9 +441,10 @@ func TestGovCmd_AMutationRefusedAfterASuccessfulResolveIsFatal(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			run := govCmdCustom(t, govCmdBody(), tc.failMethod, tc.failPath)
 			code, _ := run(append(append([]string{}, tc.args...), "--output", "json", "--no-input")...)
-			if code != 1 {
-				t.Errorf("%v: exit %d, want 1 — a refused mutation must not exit 0 after a "+
-					"successful resolve", tc.args, code)
+			// The fake refuses with a 500, and the refusal keeps that class.
+			if code != clierr.ExitUnavailable {
+				t.Errorf("%v: exit %d, want %d — a refused mutation must not exit 0 after a "+
+					"successful resolve", tc.args, code, clierr.ExitUnavailable)
 			}
 		})
 	}
@@ -474,8 +476,8 @@ func TestGovCmd_ClassificationPickersRefuseAnEmptyOffer(t *testing.T) {
 		// The taxonomy's only dimensions target `cluster` and `project_environment`; nothing
 		// targets a runner, so there is no question to ask.
 		code, _ := run("classification", "assign", "runner", "r1", "--output", "table", "--no-input=false")
-		if code != 1 {
-			t.Errorf("exit %d, want 1 when no dimension targets the kind", code)
+		if code != clierr.ExitNotFound {
+			t.Errorf("exit %d, want %d when no dimension targets the kind", code, clierr.ExitNotFound)
 		}
 	})
 	t.Run("the dimension has no values", func(t *testing.T) {
@@ -485,16 +487,16 @@ func TestGovCmd_ClassificationPickersRefuseAnEmptyOffer(t *testing.T) {
 		// `empty` is the only dimension targeting project_environment, and it has no values.
 		code, _ := run("classification", "assign", "project_environment", "e1",
 			"--output", "table", "--no-input=false")
-		if code != 1 {
-			t.Errorf("exit %d, want 1 when the chosen dimension has no values to assign", code)
+		if code != clierr.ExitConflict {
+			t.Errorf("exit %d, want %d when the chosen dimension has no values to assign", code, clierr.ExitConflict)
 		}
 	})
 	t.Run("scripted, the value refusal names the values", func(t *testing.T) {
 		run := govCmdCustom(t, govCmdBody(), "", "")
 		code, _ := run("classification", "assign", "cluster", "c1", "tier",
 			"--output", "json", "--no-input")
-		if code != 1 {
-			t.Errorf("exit %d, want 1 when no value slug is given and nothing may be asked", code)
+		if code != clierr.ExitInputRequired {
+			t.Errorf("exit %d, want %d when no value slug is given and nothing may be asked", code, clierr.ExitInputRequired)
 		}
 	})
 }

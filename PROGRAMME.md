@@ -9,13 +9,12 @@ has to re-brief it after a context clear.
 
 The programme is one sentence:
 
-> Establish cloud parity across **hetzner · aws · gcp · azure** for the full product
-> capability surface, prove every demo scenario end-to-end on each cloud, and drive all of it through
-> the `alethia` CLI — so the MVP is provably reached. Then, and only then, UI.
+> Reach the public beta defined by the nine predicates B1–B9 in `docs/beta/README.md`, on every cloud
+> the catalog offers, and prove each predicate from evidence a script reads.
 
-Those four are not a list kept in this file. They are the clouds `packages/core/catalog/catalog.json`
+The clouds are not a list kept in this file. They are the clouds `packages/core/catalog/catalog.json`
 can provision and marks `available`, and decision D6 says what a `hidden` cloud keeps and how one
-comes back.
+comes back. Predicate B1 holds that set to the one the beta is defined on.
 
 ## How to rejoin it — four commands
 
@@ -36,25 +35,27 @@ mechanical next names an issue that is closed or already claimed, that is a boar
 reach-around to a different issue. If a cell has no issue at all, the first act is to decompose it
 onto the board, because the ledger is not a work queue.
 
-## §0 · What "MVP reached" means
+## §0 · What "beta reached" means
 
-Six predicates. They are written to be **checked by a script, not read as prose**, because the thing
-that went wrong before was a board asserting a state the tree disagreed with.
+Nine predicates, **B1–B9**, defined in `docs/beta/README.md` (REL-S1, #6773), with the evidence-record
+format in `docs/beta/evidence-schema.json`. They replace the six MVP predicates this section used to
+hold and the management roadmap's MVP definition. They are written to be **checked by a script, not
+read as prose**: `scripts/programme-rollup.mjs` evaluates each one and renders the result first under
+the marker. This file does not restate them, because a copy here would go stale and nothing would
+report it.
 
-1. **Capability parity is recorded, and the debt has a shrinking balance.** All three generated
-   parity boards regenerate byte-identical, and every kind the product refuses on a cloud is either a
-   documented ceiling with provider evidence or a debt item with an open issue.
-2. **Every proof cell carries a real-apply proof.** For every (cloud × dimension) cell, the proof
-   ledger's surviving claim must be a PASS whose bundle exists in the tree — never a green harness,
-   never an expiring CI run tag.
-3. **No `DeferredInProduct` cells remain** in `test/e2e/maxconfig.go` — the last product debt in the
-   capability matrix.
-4. **Driven from the CLI**: zero `CLIGap` verdicts, and a committed `cli-demo` proof row per cloud
-   (the bar's real-binary half must actually have executed).
-5. **Every demo scenario is asserted** — a set difference, both directions, between the runbook beats
-   plus the per-cloud tutorial pages and the harness steps that assert them.
-6. **Nothing is standing, and the boards are fresh** — the orphan reaper reports no leaks per cloud,
-   and no board cites a closed issue as open.
+The old predicates survive as inputs, not as a second definition: the proof grid (old 2) and the CLI
+row (old 4) feed B3 and B4, and the orphan reaper (old 6) feeds B9. Capability parity (old 1),
+`DeferredInProduct` (old 3) and the scenario set difference (old 5) are still rendered and still held
+by the ratchets below.
+
+Three rules decide how the rollup evaluates them, and each is stated in the definition:
+
+- **Nothing is assumed from silence.** A missing record, an instrument not built yet, and a fact the
+  tree and the snapshot do not carry all render `not measured`, and `not measured` is not met.
+- **No clock.** Every age limit is measured back from the snapshot's `derived_at`, printed verbatim.
+- **A record is one observation.** It is never edited to change its verdict; the newest by `date`
+  decides.
 
 **Declared ratchet ceilings** — human-set, machine-enforced, may only ever decrease:
 
@@ -78,8 +79,8 @@ The phases below are **intent**. Their state is rendered under the marker; do no
    and touch no credential and no migration. This is where N-way agent parallelism actually lives.
 5. **The full bar, per cloud, by dispatch** — blocked on a durable ledger and on that cloud's floor.
 6. **Scenario layers, then the CLI bar** — one gate per dispatch, then unset it.
-7. **The MVP predicate, then UI.** See decision D5 — the UI conformance wave is qualified out of this
-   ordering, not exempted from it.
+7. **The beta predicates B1–B9.** The CLI-first order that ended in "then UI" is withdrawn by the
+   2027-01-31 beta spec; decision D5's qualification of the UI wave is kept as history.
 
 ## §2 · Standing decisions
 
@@ -236,7 +237,7 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## §5 · The CLI programme — epic #3612
 
-Predicate #4 asks for a `cli-demo` proof row per cloud. Reaching it is not one unit of work, so it
+The CLI half of predicate B3 asks for a `cli-demo` proof row per cloud (it was MVP predicate #4). Reaching it is not one unit of work, so it
 is decomposed as a programme, and **#3612** is the umbrella: the census it starts from, the rulings
 the maintainer has made, the wave ordering, and the resume protocol.
 
@@ -271,9 +272,80 @@ Work is claimed from the board, never hand-picked: `scripts/coordinate.sh --repo
 
 <!-- BEGIN GENERATED: programme-rollup · tree-derived · DO NOT EDIT BELOW -->
 
+## Beta predicates — B1 to B9
+
+**1 of 9 beta predicates are met.** 6 not met · 2 not measured. Evaluated on this tree at the snapshot instant **2026-11-21T16:29:42Z**, over the 4 scored clouds: `aws`, `gcp`, `azure`, `hetzner`.
+
+The predicates are defined in `docs/beta/README.md`; this section only evaluates them. `not measured` is not met: it means the instrument does not exist yet, or reads something the tree and the snapshot do not carry. Evidence records read: **0**.
+
+| # | predicate | state |
+|---|---|:---:|
+| B1 | Exactly four clouds are offered | ✅ met |
+| B2 | Golden path observed on production | ❌ not met |
+| B3 | Same path from the CLI and through an outside agent | ❌ not met |
+| B4 | A full-bar real-apply proof | ❌ not met |
+| B5 | Paid plans are open, with live evidence | ❌ not met |
+| B6 | Legal set published at sealed versions, including beta terms | ? not measured |
+| B7 | Operations: backup, restore drill, public hosts | ❌ not met |
+| B8 | Editions meet their own predicates | ❌ not met |
+| B9 | Nothing left standing; nightly green | ? not measured |
+
+| cloud | B2 | B3 | B4 | B9 |
+|---|:---:|:---:|:---:|:---:|
+| **aws** | ❌ not met | ❌ not met | ❌ not met | ? not measured |
+| **gcp** | ❌ not met | ❌ not met | ❌ not met | ? not measured |
+| **azure** | ❌ not met | ❌ not met | ❌ not met | ? not measured |
+| **hetzner** | ❌ not met | ❌ not met | ❌ not met | ? not measured |
+
+<details><summary>Why, per predicate</summary>
+
+- **B1** ✅ met
+  - offered set: ✅ met — Go (`Catalog.OfferedProviders`, via the mirror) and TypeScript (`AVAILABLE_CLOUDS`) both offer exactly {aws, azure, gcp, hetzner}
+- **B2** ❌ not met
+  - aws: ❌ not met — no B2 record
+  - gcp: ❌ not met — no B2 record
+  - azure: ❌ not met — no B2 record
+  - hetzner: ❌ not met — no B2 record
+- **B3** ❌ not met
+  - aws CLI: ✅ met — `demos/proofs/aws/20260930T061330Z`
+  - aws agent: ❌ not met — no agent-path record
+  - gcp CLI: ✅ met — `demos/proofs/gcp/20260930T065516Z`
+  - gcp agent: ❌ not met — no agent-path record
+  - azure CLI: ✅ met — `demos/proofs/azure/20260930T095658Z`
+  - azure agent: ❌ not met — no agent-path record
+  - hetzner CLI: ✅ met — `demos/proofs/hetzner/20260930T011519Z`
+  - hetzner agent: ❌ not met — no agent-path record
+- **B4** ❌ not met
+  - aws: ❌ not met — no successful bundle with `dimension: full`
+  - gcp: ❌ not met — no successful bundle with `dimension: full`
+  - azure: ❌ not met — no successful bundle with `dimension: full`
+  - hetzner: ❌ not met — no successful bundle with `dimension: full`
+- **B5** ❌ not met
+  - paid state: ❌ not met — `PAID_MARKETS` is empty, so `paidLaunchState()` is not `open` (announced for: no date); decision M15 counts `announced` as not met
+  - live evidence: ❌ not met — no B5 live-billing record
+- **B6** ? not measured
+  - sealed register: ✅ met — `terms` is sealed at 2026-08-24; the hashes themselves are held by `pnpm check:legal-hashes` and `pnpm check:legal-set` in CI
+  - beta terms: ? not measured — nothing in the register records which `terms` version carries the beta and no-SLA wording (LEG-L2 writes it)
+- **B7** ❌ not met
+  - off-box backup: ? not measured — no instrument reads the off-box backup listing yet (REL-L7 builds the job)
+  - restore drill: ❌ not met — no restore-drill record
+  - public hosts: ? not measured — the post-deploy smoke result is not in the snapshot, and the installer and status hosts are not in the smoke yet (REL-L8)
+- **B8** ❌ not met
+  - hosted: ❌ not met — no B8 record
+  - enterprise: ❌ not met — no B8 record
+  - self-hosted: ❌ not met — no B8 record
+- **B9** ? not measured
+  - aws reaper: ✅ met — run 44918712969 at 2026-11-21T16:14:20Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean
+  - gcp reaper: ✅ met — run 44918712969 at 2026-11-21T16:14:20Z found no orphan runs and verified clean
+  - azure reaper: ✅ met — run 44918712969 at 2026-11-21T16:14:20Z found no orphan runs and verified clean
+  - hetzner reaper: ? not measured — run 44918712969 at 2026-11-21T16:14:20Z found 1 unattributable resource(s)
+  - nightly 6 of 7: ? not measured — the snapshot does not record the scheduled nightly's per-cloud verdicts, so 6 green of the last 7 cannot be counted
+
+</details>
+
 ## Where the programme actually is
 
-**25 of 29 proof cells are proven.** 0 failing · 4 contested (the ledger and the board disagree) · 0 stale (cause fixed, needs a re-run) · 0 blocked · 0 never run.
+**29 of 29 proof cells are proven.** 0 failing · 0 contested (the ledger and the board disagree) · 0 stale (cause fixed, needs a re-run) · 0 blocked · 0 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -281,10 +353,10 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 
 | cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 | Starter templates | CLI-driven |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **aws** | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
-| **gcp** | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
-| **azure** | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
-| **hetzner** | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **aws** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| **gcp** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| **azure** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| **hetzner** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale · ⚠️ contested · — ceiling · 🔶 deferred · 💰 cost
 
@@ -292,7 +364,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 <details><summary>Every cell that has any evidence at all</summary>
 
-- `aws/floor` **contested** — ledger 2026-09-30, bundle `demos/proofs/aws/20260930T194843Z` — but #6716 was filed 2026-11-15, AFTER the 2026-09-30 run that proved it, and CLOSED 2026-11-16 inside this refresh window, so no derivation ever saw it open
+- `aws/floor` **proven** — ledger 2026-09-30, bundle `demos/proofs/aws/20260930T194843Z`
 - `aws/maxconfig` **proven** — ledger 2026-08-26, bundle `demos/proofs/aws/20260826T114712Z`
 - `aws/addons` **proven** — ledger 2026-08-30, bundle `demos/proofs/aws/20260830T100243Z`
 - `aws/gitops` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T142417Z`
@@ -300,7 +372,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `aws/day2` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T190408Z`
 - `aws/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
 - `aws/cli-demo` **proven** — ledger 2026-09-30, bundle `demos/proofs/aws/20260930T061330Z`
-- `gcp/floor` **contested** — ledger 2026-09-30, bundle `demos/proofs/gcp/20260930T190822Z` — but #6717 was filed 2026-11-15, AFTER the 2026-09-30 run that proved it, and CLOSED 2026-11-16 inside this refresh window, so no derivation ever saw it open
+- `gcp/floor` **proven** — ledger 2026-09-30, bundle `demos/proofs/gcp/20260930T190822Z`
 - `gcp/maxconfig` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T124233Z`
 - `gcp/addons` **proven** — ledger 2026-08-29, bundle `demos/proofs/gcp/20260829T093816Z` (⚠️ argocd counts unmeasured: pre-#3281 binary (A0.6's convergence loop wrote no summary); the assertion DID run and pass — run 33243600150 logs `all 20 asserted ArgoCD Applications are Healthy+Synced (1 withheld)`)
 - `gcp/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
@@ -308,7 +380,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `gcp/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/gcp/20260825T210602Z`
 - `gcp/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
 - `gcp/cli-demo` **proven** — ledger 2026-09-30, bundle `demos/proofs/gcp/20260930T065516Z`
-- `azure/floor` **contested** — ledger 2026-09-29, bundle `demos/proofs/azure/20260929T103904Z` — but #6718 was filed 2026-11-15, AFTER the 2026-09-29 run that proved it, and CLOSED 2026-11-16 inside this refresh window, so no derivation ever saw it open
+- `azure/floor` **proven** — ledger 2026-09-29, bundle `demos/proofs/azure/20260929T103904Z`
 - `azure/maxconfig` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T211849Z`
 - `azure/addons` **proven** — ledger 2026-08-30, bundle `demos/proofs/azure/20260830T005214Z`
 - `azure/gitops` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T210320Z`
@@ -316,7 +388,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `azure/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T235236Z`
 - `azure/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
 - `azure/cli-demo` **proven** — ledger 2026-09-30, bundle `demos/proofs/azure/20260930T095658Z`
-- `hetzner/floor` **contested** — ledger 2026-09-30, bundle `demos/proofs/hetzner/20260930T124805Z` — but #6715 was filed 2026-11-15, AFTER the 2026-09-30 run that proved it, and CLOSED 2026-11-16 inside this refresh window, so no derivation ever saw it open
+- `hetzner/floor` **proven** — ledger 2026-09-30, bundle `demos/proofs/hetzner/20260930T124805Z`
 - `hetzner/maxconfig` **proven** — ledger 2026-08-29, bundle `demos/proofs/hetzner/20260829T105705Z`
 - `hetzner/addons` **proven** — ledger 2026-08-29, bundle `demos/proofs/hetzner/20260829T085104Z`
 - `hetzner/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/2026-08-25T175213Z`
@@ -329,18 +401,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 ### The mechanical next
 
-**`aws/floor`** — contested. ledger 2026-09-30, bundle `demos/proofs/aws/20260930T194843Z` — but #6716 was filed 2026-11-15, AFTER the 2026-09-30 run that proved it, and CLOSED 2026-11-16 inside this refresh window, so no derivation ever saw it open
-
-Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
-
-<details><summary>The next 10</summary>
-
-1. `aws/floor` — contested
-1. `gcp/floor` — contested
-1. `azure/floor` — contested
-1. `hetzner/floor` — contested
-
-</details>
+Nothing is actionable from the tree — every cell is proven, a ceiling, or blocked on a human.
 
 ### Capability surface
 
@@ -370,10 +431,10 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 43855704868 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 43855704868 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 43855704868 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 43855704868 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 44896799575 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 44896799575 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 44896799575 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 44896799575 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -393,23 +454,6 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 ### Open REDs
 
 No cell is failing or blocked.
-### ⚠️ Contested — proven by the ledger, contradicted by a red
-
-A nightly that goes red files an **issue** and writes **no ledger row**. So from the ledger's point of view that failure never happened, and a cell proven earlier stays ✅ forever: PASS is durable, a later FAIL is invisible. That makes the grid a **high-water mark** presented as current state, in the one direction that overstates — which is the thing this whole file exists to prevent.
-
-| cell | proven by a run dated | red | filed | red's state |
-|---|:---:|---|:---:|---|
-| `azure/floor` | 2026-09-29 | #6718 | 2026-11-15 | closed 2026-11-16, inside this refresh window |
-| `gcp/floor` | 2026-09-30 | #6717 | 2026-11-15 | closed 2026-11-16, inside this refresh window |
-| `aws/floor` | 2026-09-30 | #6716 | 2026-11-15 | closed 2026-11-16, inside this refresh window |
-| `hetzner/floor` | 2026-09-30 | #6715 | 2026-11-15 | closed 2026-11-16, inside this refresh window |
-
-`contested` takes **no side**. Whether a later red is a flake or a regression needs someone to read the run, and guessing either way is worse than naming the contradiction. It claims only what is derivable — the two sources disagree, so the ✅ is not trustworthy right now.
-
-**Two human acts clear it, and either one is fine:** close the issue if that run was a flake, or append a `FAIL` row for it if it was not. The next derivation picks the answer up.
-
-A row marked **closed … inside this refresh window** is a red that was filed and closed between two snapshots, so it was never in anybody's `open_issues` and no derivation ever saw it. It is shown once, here, and clears on the next refresh — the closing act has already happened. That is the whole of it: a red is evidence whether or not its issue is still open, and `0 failing` is a claim about **today**.
-
 
 ### Orphan reaper — nothing standing
 
@@ -419,13 +463,30 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 
 | cloud | state | durable evidence |
 |---|:---:|---|
-| **aws** | ✅ clean | run 43913503877 at 2026-11-16T17:09:17Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
-| **gcp** | ✅ clean | run 43913503877 at 2026-11-16T17:09:17Z found no orphan runs and verified clean |
-| **azure** | ✅ clean | run 43913503877 at 2026-11-16T17:09:17Z found no orphan runs and verified clean |
-| **hetzner** | ? indeterminate | run 43913503877 at 2026-11-16T17:09:17Z found 1 unattributable resource(s) |
+| **aws** | ✅ clean | run 44918712969 at 2026-11-21T16:14:20Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
+| **gcp** | ✅ clean | run 44918712969 at 2026-11-21T16:14:20Z found no orphan runs and verified clean |
+| **azure** | ✅ clean | run 44918712969 at 2026-11-21T16:14:20Z found no orphan runs and verified clean |
+| **hetzner** | ? indeterminate | run 44918712969 at 2026-11-21T16:14:20Z found 1 unattributable resource(s) |
 
 ### Blocked on a human
 
+- #7050 — EDN-E4b Team creation applies one entitlement rule on every path; roles that manage teams are named
+- #7030 — e2e nightly: 1 of 5 clouds are not enabled
+- #7006 — CON-SM5c Lift the drafts list poll in the Elench drafts store
+- #7005 — CON-SM5b Lift the being-answered poll in the Elench conversation
+- #7004 — CON-SM5a Lift the settling plan-state poll in paid setup
+- #6946 — EDN-H12 Nightly release-install run
+- #6945 — EDN-H11 Decoupled per-cloud control-plane stacks
+- #6944 — EDN-H10 Tested one-click templates
+- #6943 — EDN-H9 Helm at parity with the compose install
+- #6927 — CON-L14 Delete blockers: blocker list and audited release on account, organization, project, environment and cloud account
+- #6898 — EDN-E9 Second factor and session policy
+- #6897 — EDN-E8 Audit-log streaming
+- #6896 — EDN-E7 SCIM provisioning
+- #6895 — EDN-E6 IdP group-to-role mapping
+- #6891 — EDN-S3 seams: the editions wave's one migration
+- #6868 — AGT-L13 Registry and directory submissions
+- #6803 — EDN-H0b Self-host configuration: required values, template placeholders, start-up check, rotation that runs on the box
 - #6082 — e2e nightly: aws RED (keyless-db)
 - #5235 — test(fabric): prove the enterprise demo on azure — blocked on the e2e subscription's 10-vCPU regional quota
 - #4923 — epic(ownership): ALETHIA LABS EDPK takes possession — chain of title, the notices that disagree, the ee/ repository boundary, and public-repo licensing
@@ -446,7 +507,7 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 | `infra/offer-exclusions.yaml` | exclusions: 26 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/config-carriage-exclusions.yaml` | exclusions: 32 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 310 · uniform: 22 |
-| `apps/console/e2e/gate-baseline.json` | failed: 0 · fixme: 0 · skip: 1 |
+| `apps/console/e2e/gate-baseline.json` | failed: 0 · fixme: 0 · skip: 0 |
 
 ### Provenance
 
@@ -459,8 +520,15 @@ Every number above is derived from these, and from nothing else:
 - `apps/console/lib/cloud-providers/unsupported-kinds.ts`
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
+- `docs/beta/evidence-schema.json`
+- `packages/cloud-catalog/src/generated.ts`
+- `packages/legal/src/commerce.ts`
+- `packages/legal/src/launch.ts`
+- `docs/legal/legal-set.json`
+- `apps/console/docs/qa/prod-runs/`
+- `docs/beta/evidence/<record kind>/`
 
-Live board snapshot: taken **2026-11-16T18:57:51Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-11-21T16:29:42Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 

@@ -5,7 +5,7 @@ description: Attach a git repo holding your own OpenTofu root module to a projec
 
 # Bring-your-own IaC
 
-Alethia normally provisions from its own per-cloud project templates (EKS / GKE / AKS / ACK / Talos +
+Alethia normally provisions from its own per-cloud project templates (EKS / GKE / AKS / Talos +
 supporting services). **Bring-your-own IaC (BYO IaC, "E3")** lets you point a project **environment** at
 a git repository holding your **own OpenTofu root module** — Alethia then provisions that environment
 from *your* module instead of the built-in template.
@@ -161,14 +161,14 @@ to emit the generic names:
 | Cluster name | `cluster_name` | `eks_cluster_name` · `gke_cluster_name` · `aks_cluster_name` · `talos_cluster_name` · `ack_cluster_name` | **Gates all post-apply wiring.** Empty ⇒ Alethia treats the deploy as cluster-less and skips kubeconfig/reachability/ArgoCD/add-ons. |
 | API endpoint | `cluster_endpoint` | `eks_cluster_endpoint` · `gke_cluster_endpoint` · `aks_cluster_endpoint` · … | The API server URL the kubeconfig points at. |
 | Cluster CA | `cluster_ca_certificate` | `gke_cluster_ca_certificate` · `aks_cluster_ca_certificate` | Base64 CA the kubeconfig trusts (GKE/AKS-style clouds). |
-| Ready kubeconfig | `kubeconfig` | (Talos/ACK emit `kubeconfig` directly) | A complete kubeconfig. If present it is used **verbatim** — for a self-managed / non-cloud-managed cluster (incl. a non-EKS cluster on AWS, where it short-circuits the EKS `DescribeCluster` path). |
+| Ready kubeconfig | `kubeconfig` | (Talos emits `kubeconfig` directly) | A complete kubeconfig. If present it is used **verbatim** — for a self-managed / non-cloud-managed cluster (incl. a non-EKS cluster on AWS, where it short-circuits the EKS `DescribeCluster` path). |
 
 How the two kubeconfig shapes are used:
 
 - **Managed-style (AWS/GCP/Azure):** emit `cluster_name` + `cluster_endpoint` + `cluster_ca_certificate`.
   The runner builds a kubeconfig whose auth is its own in-process keyless token minter (`kube-token`) — no
   static credential in your outputs.
-- **Self-managed (Talos, ACK, or any cluster you hold the PKI for):** emit a complete **`kubeconfig`**
+- **Self-managed (Talos, or any cluster you hold the PKI for):** emit a complete **`kubeconfig`**
   output. The runner writes it verbatim.
 
 <Callout type="warn">

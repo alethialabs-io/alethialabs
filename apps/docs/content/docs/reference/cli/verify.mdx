@@ -139,7 +139,9 @@ Exit status is part of the contract, so this can gate a pipeline:
 | Situation | Exit |
 |---|---|
 | Signature verified against a vouched-for or pinned key | `0` |
-| The job carries no receipt | non-zero |
+| The job carries no receipt, or no job matches the flags | `6` |
+| The job has not finished, so its receipt is not written yet | `7` |
+| `--key` or `--key-file` cannot be read as a public key, or the job id is given twice | `8` |
 | The receipt is unsigned (`algorithm: "none"`) | non-zero, or `0` with `--allow-unsigned` |
 | The signature does not match the receipt | non-zero — **always**, no flag forgives it |
 | The signature is valid but its key is not vouched for | non-zero, or `0` with `--allow-untrusted` |
@@ -177,7 +179,9 @@ Controls reporting `not_evaluable` are shown, never hidden. A control the engine
 is not a control that passed, and a report that quietly dropped them would overstate what was
 checked. Any recorded waiver prints with who granted it, why, and when it expires.
 
-`verify show` exits non-zero on a blocking verdict, matching `elench-verify`.
+`verify show` exits non-zero on a blocking verdict, matching `elench-verify`. A job with no
+receipt exits `6`, and a job that has not finished yet exits `7`: its receipt is written when the
+run completes, and the error names the command that follows the job to the end.
 
 Add `-o json` for the full report object; `-o csv` emits the control rows.
 

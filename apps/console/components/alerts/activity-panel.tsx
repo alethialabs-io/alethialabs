@@ -15,7 +15,9 @@
 // cell, because a `<tr>` has no honest place for a second row about the same delivery.
 //
 // The result count is NOT in the bar: it renders in the count pill beside the section
-// heading, which is where the console filter standard puts it.
+// heading, which is where the console filter standard puts it. It is the number of deliveries
+// that MATCH, not the number on screen: the ledger returns the newest 50, and when more match it
+// says so under the table rather than letting the window pass for the whole answer.
 //
 // #6125: the ledger is server-rendered with its rows now, so "When" — which reads the browser's
 // time zone — renders after hydration in a width-reserving slot (React #418 otherwise). And the
@@ -127,7 +129,17 @@ export function ActivityPanel({
 						/>
 					)
 				) : (
-					<DataTable columns={columns} data={rows} />
+					<>
+						<DataTable columns={columns} data={rows} />
+						{view.count > rows.length && (
+							<p
+								data-slot="activity-window"
+								className="mt-2 text-ui-sm text-muted-foreground"
+							>
+								{`Showing the newest ${rows.length} of ${view.count} ${view.count === 1 ? "delivery" : "deliveries"}${filtered ? " that match" : ""}. Narrow the filters to find older ones.`}
+							</p>
+						)}
+					</>
 				)}
 			</div>
 				</>

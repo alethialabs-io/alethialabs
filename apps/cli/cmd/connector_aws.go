@@ -10,9 +10,6 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/cloudshell"
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/connector"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
-	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
@@ -27,89 +24,114 @@ var (
 
 const defaultAwsRoleName = "AlethiaProvisionerRole"
 
+// awsConnector is the AWS entry of the parent command's help.
+var awsConnector = registerConnector(connectorInfo{
+	Slug:    "aws",
+	Keyless: "an AWS role assumed with a web identity",
+})
+
 var connectorAwsCmd = &cobra.Command{
 	Use:   "aws",
 	Short: "Connect an AWS account",
-	Long: `Connect an AWS account using a keyless, issuer-direct IAM role.
+	Long: `Connect an AWS account with a keyless IAM role. Run it once per account, before
+the first deploy into that account.
 
 Alethia deploys a CloudFormation stack that creates an IAM OIDC provider trusting
 the Alethia issuer and a role Alethia assumes via AssumeRoleWithWebIdentity — no
 access keys and no external id.
 
-By default the stack is deployed with your local aws CLI. Use --manual to deploy
-it from the AWS console and paste back the role ARN, or --role-arn to submit a role
-you already created — the flag form of that same paste, so the command works under
---no-input with no aws CLI on the machine.`,
+By default the stack is deployed with your local aws CLI. Use --script to run the
+aws-CLI setup script instead, --manual to deploy from the AWS console and paste
+back the role ARN, or --role-arn to submit a role you already created — the flag
+form of that same paste, so the command works under --no-input with no aws CLI on
+the machine.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := refuseMultipleModes(
-			modeFlag{"--role-arn", strings.TrimSpace(connectorAwsRoleArn) != ""},
-			modeFlag{"--manual", connectorAwsManual},
-			modeFlag{"--script", connectorAwsScript},
-		); err != nil {
+		if err := runConnect(cmd, awsConnectFlow()); err != nil {
 			fail(err)
 		}
-
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		apiClient := api.NewClient(token)
-		steps := []string{"Initialize", "Create IAM role", "Connection test"}
-
-		ui.PrintStepper(steps, 0)
-		initResp, err := initProviderIdentity(apiClient, "aws")
-		if err != nil {
-			fail(err)
-		}
-
-		// The customer's role trusts THIS control plane's issuer (derived from the web origin).
-		origin, _ := types.ResolveWebOrigin()
-		issuerURL := strings.TrimRight(origin, "/") + "/api/oidc"
-
-		ui.PrintStepper(steps, 1)
-		var roleArn string
-		switch {
-		case strings.TrimSpace(connectorAwsRoleArn) != "":
-			// The flag half of the manual flow: the role already exists, so there is nothing to
-			// create and nothing to prompt for.
-			roleArn = strings.TrimSpace(connectorAwsRoleArn)
-		case connectorAwsManual:
-			roleArn, err = awsManualFlow(issuerURL)
-		case connectorAwsScript:
-			roleArn, err = awsScriptFlow(issuerURL)
-		default:
-			roleArn, err = awsLocalFlow(issuerURL)
-		}
-		if err != nil {
-			fail(err)
-		}
-
-		ui.PrintStepper(steps, 2)
-		if err := finalizeConnection(apiClient, "aws", initResp.IdentityID,
-			map[string]interface{}{"role_arn": roleArn}); err != nil {
-			fail(err)
-		}
-
-		ui.Success(fmt.Sprintf("AWS account connected (role %s)", roleArn))
 	},
+}
+
+// awsConnectFlow is the AWS half of the connection pipeline, for the flags this invocation gave.
+func awsConnectFlow() connectFlow {
+	given := strings.TrimSpace(connectorAwsRoleArn)
+	mode := "local"
+	switch {
+	case given != "":
+		mode = "role-arn"
+	case connectorAwsManual:
+		mode = "manual"
+	case connectorAwsScript:
+		mode = "script"
+	}
+
+	var roleArn string
+	return connectFlow{
+		Provider: awsConnector.Slug,
+		Mode:     mode,
+		Steps:    []string{"Initialize", "Create IAM role", "Connection test"},
+		Check: func() error {
+			if err := refuseMultipleModes(
+				modeFlag{"--role-arn", given != ""},
+				modeFlag{"--manual", connectorAwsManual},
+				modeFlag{"--script", connectorAwsScript},
+			); err != nil {
+				return err
+			}
+			switch mode {
+			case "manual":
+				return requirePromptFor("--manual", "the role ARN", "--role-arn")
+			case "local":
+				return requireAwsCLI("Or re-run with --manual to deploy from the AWS console.")
+			case "script":
+				return requireAwsCLI(fmt.Sprintf("Or run it in AWS CloudShell (%s) with --manual.", awsCloudShellURL))
+			}
+			return nil
+		},
+		Capture: func(p *Printer, issuer string) (map[string]interface{}, error) {
+			var err error
+			switch mode {
+			case "role-arn":
+				// The flag half of the manual flow: the role already exists, so there is nothing to
+				// create and nothing to prompt for.
+				roleArn = given
+			case "manual":
+				roleArn, err = awsManualFlow(p, issuer)
+			case "script":
+				p.Progress("Running the setup script via the local aws CLI...")
+				roleArn, err = cloudshell.RunAwsSetupScript(connector.AwsSetupScript, issuer)
+			default:
+				roleArn, err = awsLocalFlow(p, issuer)
+			}
+			if err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"role_arn": roleArn}, nil
+		},
+		Connected: func() string { return fmt.Sprintf("AWS account connected (role %s)", roleArn) },
+	}
+}
+
+// requireAwsCLI refuses a setup that needs the aws CLI on a machine that does not have it, saying
+// where to get it and how to go on without it.
+func requireAwsCLI(otherwise string) error {
+	if err := cloudshell.EnsureAws(); err != nil {
+		return missingToolError(err,
+			"Install it from https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html. "+otherwise)
+	}
+	return nil
 }
 
 // awsLocalFlow deploys the CloudFormation stack with the local aws CLI and
 // returns the created role ARN.
-func awsLocalFlow(issuerURL string) (string, error) {
-	if err := cloudshell.EnsureAws(); err != nil {
-		ui.Error("aws CLI not found on PATH")
-		ui.Muted("Install it: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html")
-		ui.Muted("Or re-run with --manual to deploy from the AWS console.")
-		return "", err
-	}
-
+func awsLocalFlow(p *Printer, issuerURL string) (string, error) {
 	roleName := connectorAwsRoleName
 	if roleName == "" {
 		roleName = defaultAwsRoleName
 	}
 
-	ui.Info("Deploying the CloudFormation stack via the local aws CLI...")
+	p.Progress("Deploying the CloudFormation stack via the local aws CLI...")
 	return cloudshell.RunAwsBootstrap(
 		connector.AwsBootstrapTemplate,
 		issuerURL,
@@ -119,36 +141,18 @@ func awsLocalFlow(issuerURL string) (string, error) {
 	)
 }
 
-// awsScriptFlow runs the aws-CLI setup script locally (federating to the given issuer) and
-// returns the created role ARN — an alternative to the CloudFormation stack for users who
-// prefer the shell path (mirrors the console's "AWS CLI / CloudShell" tab).
-func awsScriptFlow(issuerURL string) (string, error) {
-	if err := cloudshell.EnsureAws(); err != nil {
-		ui.Error("aws CLI not found on PATH")
-		ui.Muted("Install it: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html")
-		ui.Muted(fmt.Sprintf("Or run it in AWS CloudShell (%s) with --manual.", awsCloudShellURL))
-		return "", err
-	}
-	ui.Info("Running the setup script via the local aws CLI...")
-	return cloudshell.RunAwsSetupScript(connector.AwsSetupScript, issuerURL)
-}
-
 // awsManualFlow prints a CloudFormation quick-create link and prompts for the
 // resulting role ARN.
-func awsManualFlow(issuerURL string) (string, error) {
+func awsManualFlow(p *Printer, issuerURL string) (string, error) {
 	templateURL := connectorBaseURL + "/alethia-bootstrap.yaml"
 	quickCreate := fmt.Sprintf(
 		"https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=%s&stackName=AlethiaConnect&param_IssuerUrl=%s",
 		url.QueryEscape(templateURL), url.QueryEscape(issuerURL),
 	)
 
-	ui.Info("Manual setup:")
-	fmt.Printf("  1. Open the CloudFormation quick-create link:\n\n     %s\n\n", ui.LinkStyle.Render(quickCreate))
-	fmt.Println("  2. Create the stack (it trusts the Alethia issuer — no external id), then copy its RoleArn output below.")
-
-	if err := requireInteractiveForm(); err != nil {
-		return "", fmt.Errorf("no role ARN given: pass --role-arn (%w)", err)
-	}
+	p.Progress("Manual setup:")
+	fmt.Fprintf(p.Err, "  1. Open the CloudFormation quick-create link:\n\n     %s\n\n", quickCreate)
+	fmt.Fprintln(p.Err, "  2. Create the stack (it trusts the Alethia issuer — no external id), then copy its RoleArn output below.")
 
 	var roleArn string
 	if err := runHuhForm(huh.NewGroup(
@@ -157,11 +161,11 @@ func awsManualFlow(issuerURL string) (string, error) {
 			Placeholder("arn:aws:iam::123456789012:role/AlethiaProvisionerRole-...").
 			Value(&roleArn),
 	)); err != nil {
-		return "", err
+		return "", formError(err)
 	}
 	roleArn = strings.TrimSpace(roleArn)
 	if roleArn == "" {
-		return "", fmt.Errorf("no Role ARN provided")
+		return "", invalidInputError("no role ARN provided")
 	}
 	return roleArn, nil
 }
@@ -169,7 +173,7 @@ func awsManualFlow(issuerURL string) (string, error) {
 func init() {
 	connectorCmd.AddCommand(connectorAwsCmd)
 	connectorAwsCmd.Flags().StringVar(&connectorAwsRegion, "region", "", "AWS region for the CloudFormation stack")
-	connectorAwsCmd.Flags().StringVar(&connectorAwsRoleName, "role-name", defaultAwsRoleName, "Name for the cross-account IAM role")
+	connectorAwsCmd.Flags().StringVar(&connectorAwsRoleName, "role-name", defaultAwsRoleName, "Name for the IAM role the stack creates")
 	connectorAwsCmd.Flags().StringVar(&connectorAwsRoleArn, "role-arn", "", "ARN of a role you already created — submits it instead of prompting (the flag form of --manual)")
 	connectorAwsCmd.Flags().BoolVar(&connectorAwsManual, "manual", false, "Deploy from the AWS console and paste the role ARN")
 	connectorAwsCmd.Flags().BoolVar(&connectorAwsScript, "script", false, "Use the aws-CLI setup script instead of the CloudFormation stack")

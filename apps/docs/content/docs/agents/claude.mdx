@@ -1,0 +1,55 @@
+---
+title: Claude on the web and desktop
+description: Add Alethia as a custom connector in Claude on claude.ai or in the Claude desktop app, so Claude can read your infrastructure.
+---
+
+# Claude on the web and desktop
+
+In Claude on claude.ai and in the Claude desktop app, Alethia is a **custom connector**. Claude can
+then read your projects, jobs and clusters through the MCP server. Claude cannot change anything
+through it.
+
+## Before you start
+
+- Your console origin: the address you sign in to Alethia at. The MCP endpoint is that origin plus
+  `/api/mcp`.
+- A Claude plan that lets you add custom connectors. On a team plan, an owner may need to add the
+  connector for the organization first.
+
+## Add the connector
+
+<Steps>
+
+### Open the connector settings
+
+In Claude, open **Settings**, then **Connectors**, and choose **Add custom connector**.
+
+### Enter the endpoint
+
+Give the connector a name, for example `Alethia`, and enter your endpoint:
+
+```text
+https://<your-console-origin>/api/mcp
+```
+
+### Sign in
+
+Choose **Connect**. Your browser opens the Alethia sign-in page. Sign in, and approve access if the
+page asks.
+
+### Use it in a chat
+
+Turn the connector on for a chat and ask about your infrastructure, for example "which of my
+Alethia jobs failed this week?".
+
+</Steps>
+
+<Callout type="info">
+  The server speaks only the current generation of the MCP protocol and expects a Client ID Metadata
+  Document from the client. If the connection fails, see
+  [Connect a client](/guides/assistant/mcp#connect-a-client).
+</Callout>
+
+The connector acts as you, in one organization: see
+[which organization the tools read](/guides/assistant/mcp#which-organization-the-tools-read). The
+[tool reference](/agents/tools) lists what Claude can read.

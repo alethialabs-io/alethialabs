@@ -110,7 +110,7 @@ Code used by more than one app is **promoted here, never duplicated**. The npm s
 | `packages/legal` | versioned company identity, legal-document metadata, and processing registry |
 | `packages/plan-catalog` | plan display catalog, shared by console billing and marketing pricing |
 | `packages/assets` | static files only, synced into each app's `public/` at dev/build |
-| `packages/email` | Resend, SMTP, and SES transports plus react-email building blocks (templates stay per-app) |
+| `packages/email` | SMTP and SES transports plus react-email building blocks (templates stay per-app) |
 | `packages/platform` | schema/enums/types **owned by `apps/admin`**, re-exported into console |
 | `packages/support` | support-case schema, storage, validations, emails |
 | `packages/eslint-config`, `packages/typescript-config` | shared presets |
@@ -129,7 +129,7 @@ turbo fan-out picks them up.
   `apps/console/scripts/check-marketing-routes.mjs` fails CI if the two encodings drift.
 - **docs** — Next.js + Fumadocs, content in `apps/docs/content/docs/`. The prose bar (Diátaxis,
   plain language, Vale) is a required check — see `apps/docs/README.md`.
-- **blog** — Next.js + Velite.
+- **blog** — Next.js + Velite, served at `/news` (the old `/blog` paths 308 there). Posts carry a `kind` (announcement · product · changelog · engineering · company) and a generated grayscale cover (`@repo/brand/cover`, or an optional real image rendered grayscale). The changelog is curated `kind: changelog` MDX entries, drafted weekly from merged PRs by `scripts/news/draft-changelog.mjs` and shown in full at `/news/changelog`; GitHub release rows are not shown. The release/RSS reader the marketing home page uses is `@repo/brand/news-feeds`.
 - **admin** — the internal staff support dashboard (cases, orgs, spend). Owns the schema in
   `packages/platform`. Fronted by Cloudflare Access; the app trusts the
   `Cf-Access-Authenticated-User-Email` header.

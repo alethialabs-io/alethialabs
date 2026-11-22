@@ -21,13 +21,13 @@ push to `main`). PR jobs run **no cloud/state credentials** (static checks only:
 | `connector-assets/` | Public S3 bucket serving cloud-connector setup artifacts (acct **270587882865**) | **GitHub OIDC** (`alethia-connector-assets-deployer`) | `…270587882865` · `connector-assets/` | `connector-assets/bootstrap/` — adopts the OIDC provider + state bucket |
 | `cp-hetzner` | The hosted control-plane box (prod) | **GitHub OIDC** (`alethia-cp-deployer`); Hetzner + Cloudflare tokens from AWS Secrets Manager | `…270587882865` · `hetzner/` | — |
 | `cp-aws` / `cp-gcp` / `cp-azure` / `cp-alibaba` | Self-host options: the control-plane box on another cloud. Not deployment targets of ours | **None** — CI is validate-only (no backend, no secrets); a self-hoster applies it locally | S3-compatible, the self-hoster's own (`backend.hcl`) | — |
-| `status/` | `status.alethialabs.io` Gatus VPS (Hetzner) | Static keys (CI secrets) | S3-compatible `terraform-state` · `status/` | — |
+| `status/` | `status.alethialabs.io` — a Cloudflare Worker (D1 history, KV snapshot, 1-minute cron, DNS record, route) built from `packages/status` (#7148). **Applied by hand** (its token needs account-level Workers/KV/D1 scopes); CI builds the bundle and validates only | none — the provider reads the maintainer's `CLOUDFLARE_API_TOKEN` | `alethia-tofu-state-270587882865` · `status/` | — |
 
 ### The e2e federation stacks
 
 The OIDC/WIF plane the T2 real-cloud nightly authenticates through. **Never applied by CI** — each
-one mints broad provisioning identity, so a maintainer applies it by hand with an admin identity
-(`tofu apply` on `infra/` identity stacks is maintainer-only). All of them keep state remotely and
+one mints broad provisioning identity, so it is applied by hand with an admin identity
+— by the maintainer, or by an agent on the maintainer's instruction, plan first. All of them keep state remotely and
 no static state keys exist. `aws-oidc`, `gcp-e2e`, `azure-e2e` and `alibaba-e2e` keep it in the same
 account/project/subscription as the identity they describe. `aws-e2e` is the deliberate exception:
 its state stays in the platform account's bucket, OUTSIDE the e2e account whose role holds `s3:*`
@@ -133,7 +133,7 @@ that stops describing anything fails too.
 
 `connector-assets` uses **GitHub OIDC** (no stored keys); `email-ses` did until its apply job
 was removed on 2026-11-15. The five `cp-*` stacks
-and `status` still use **static cloud keys** in CI secrets. Full OIDC parity is deferred: it
+still use **static cloud keys** in CI secrets (`status` no longer applies from CI at all, #7148). Full OIDC parity is deferred: it
 needs per-cloud federation (GCP Workload Identity Federation, Azure federated credentials,
 Alibaba `AssumeRoleWithOIDC` — the console already federates into all three keyless; Hetzner has
 no native OIDC and stays token-only), **and** the `cp-*` state lives in an

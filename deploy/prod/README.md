@@ -55,7 +55,7 @@ Cloudflare edge (TLS, DDoS, WAF)
 cloudflared (compose service, OUTBOUND only — box firewall allows SSH only)
   │  http://caddy:80
   ▼
-caddy  ──►  console (catch-all) · marketing (root paths) · /docs · /blog
+caddy  ──►  console (catch-all) · marketing (root paths) · /docs · /news (+ /blog → 308)
              └► postgres + seaweedfs (internal only, on the data volume)
 ```
 
@@ -86,7 +86,7 @@ assumed role authenticates it). See `.env.production.example` for the vault-key 
 |---|---|
 | **Transfer repo → `alethialabs-io/alethialabs`** | do this FIRST (OIDC trust + rulesets are owner/repo-scoped) |
 | **AWS admin creds (local)** | to apply `infra/aws-oidc` + populate the vault (you already have these) |
-| **Externals into the vault** | fill `deploy/prod/secrets.local.env` (see the example) — scoped Cloudflare token (DNS:Edit + Tunnel:Edit), two Hetzner project tokens, the deploy SSH keypair, Resend, the public company phone, and any approved optional integrations |
+| **Externals into the vault** | fill `deploy/prod/secrets.local.env` (see the example) — scoped Cloudflare token (DNS:Edit + Tunnel:Edit), two Hetzner project tokens, the deploy SSH keypair, the public company phone, and any approved optional integrations |
 | **GHCR packages → public** (one UI toggle, no REST API) | `console`/`console-migrate`/`docs`/`blog`/`marketing`/`runner` + `runner-{aws,gcp,azure}` — one-time, persists across re-pushes |
 
 Everything else is generated / chained / applied automatically. **No GitHub App.**
@@ -189,6 +189,7 @@ Switch-on-when-funded target — do not provision yet:
 - **Hetzner CAX21 (default) ≈ €11/mo** — 4 vCPU/8 GB + 25 GB volume + backups; 20 TB
   egress incl. (CAX31 ≈ €18 when busy.) The bundled runner is in the box — no separate cost.
 - **Fleet ≈ €0 idle** (`warm_min=0`) + hourly Hetzner VM cost only while jobs run.
-- **Cloudflare Tunnel is free.** Status page (`deploy/status/`) is a separate tiny box.
+- **Cloudflare Tunnel is free.** The status page is a Cloudflare Worker on the free plan
+  (`packages/status`, `infra/status/`) — outside this box on purpose.
 - **AWS t4g.medium ≈ $36/mo** alternative (`infra/cp-aws`) — ~3× the always-on box; Hetzner
   chosen for the MVP.

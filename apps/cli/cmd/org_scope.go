@@ -4,8 +4,7 @@
 package cmd
 
 import (
-	"fmt"
-
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -52,5 +51,6 @@ func currentOrgID() (string, error) {
 	if o := types.LoadCliConfig().ActiveOrgID; o != "" {
 		return o, nil
 	}
-	return "", fmt.Errorf("no active organization — run `alethia org switch` or pass --org")
+	return "", refusal(clierr.CodeConflict, "alethia org switch",
+		"no active organization — run `alethia org switch` or pass --org")
 }

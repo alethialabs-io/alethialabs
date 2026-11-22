@@ -118,6 +118,23 @@ describe("/start — what the trial CTA does", () => {
 		expect(result.html).toContain('href="/acme/~/settings/billing"');
 	});
 
+	// A-01. A brand-new account reaches /start before it has accepted the Terms — the route sits
+	// outside `(private)`, so the clickwrap gate never ran. That refusal is one the visitor can
+	// answer on the spot, so it goes to the terms and comes back here, intent intact.
+	it("sends a visitor who has not accepted the Terms to accept them, returning to /start", async () => {
+		vi.mocked(createCheckoutSession).mockRejectedValue(
+			new PaidConversionNotAllowedError(
+				"terms_not_accepted",
+				"Accept the current Terms of Service before subscribing.",
+			),
+		);
+		const result = await visit();
+		if (!("redirect" in result)) throw new Error("/start rendered instead of going to the terms");
+		const target = new URL(result.redirect, "https://console.test");
+		expect(target.pathname).toBe("/accept-terms");
+		expect(target.searchParams.get("next")).toBe("/start?plan=team&trial=1");
+	});
+
 	it("keeps the billing fallback for a failure that is not a refusal", async () => {
 		vi.mocked(createCheckoutSession).mockRejectedValue(
 			new Error("Create an organization before subscribing to a plan."),

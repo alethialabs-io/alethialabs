@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/format"
 	"github.com/alethialabs-io/alethialabs/packages/core/kubeaccess"
@@ -71,12 +72,20 @@ var (
 	kubeMintSleep       = time.Sleep
 	kubeNow             = time.Now
 	kubeGenerateKey     = kubeaccess.GenerateClientKey
-	errKubeMintExpired  = errors.New("the kubeconfig request expired before a runner completed it — check that a runner is online for this organization (`alethia runner list`), then try again")
-	errKubeMintTimedOut = errors.New("timed out waiting for a runner to mint the kubeconfig — check that a runner is online for this organization (`alethia runner list`), then try again")
+	errKubeMintExpired  = kubeNoRunnerError("the kubeconfig request expired before a runner completed it — check that a runner is online for this organization, then try again")
+	errKubeMintTimedOut = kubeNoRunnerError("timed out waiting for a runner to mint the kubeconfig — check that a runner is online for this organization, then try again")
 	// errKubeMintPoll marks a refusal of the POLL rather than of the request, whose statuses mean
 	// different things: a 404 there is a mint already collected or swept, not a missing cluster.
 	errKubeMintPoll = errors.New("polling the kubeconfig request failed")
 )
+
+// kubeNoRunnerError is a mint nobody picked up in time: unavailable (exit 11), because running the
+// same command again can succeed once a runner is online.
+func kubeNoRunnerError(message string) *clierr.Error {
+	e := clierr.New(clierr.CodeServiceUnavailable, message)
+	e.Hint = "alethia runner list"
+	return e
+}
 
 // mintKubeCredential runs the whole flow for spec and returns the opened credential. Its errors
 // are the control plane's (an *api.APIError the caller maps with kubeMintRefusal) or a sentence of
@@ -121,7 +130,8 @@ func mintKubeCredential(c kubeMintAPI, spec kubeMintSpec) (*kubeMinted, error) {
 		case types.KubeconfigMintStatusFailed:
 			// The reason is one of the console's fixed sentences (lib/kubeconfig-mint/reasons.ts),
 			// never a cloud SDK's error text, so it is safe to show as it is.
-			return nil, fmt.Errorf("the runner could not mint the kubeconfig: %s", poll.Reason)
+			return nil, clierr.New(clierr.CodeOperationFailed,
+				fmt.Sprintf("the runner could not mint the kubeconfig: %s", poll.Reason))
 		case types.KubeconfigMintStatusExpired:
 			return nil, errKubeMintExpired
 		}
@@ -166,44 +176,57 @@ func kubeMintStatus(err error) int {
 // kubeMintRefusal turns a control-plane refusal into the sentence a person acts on. The server's
 // own message is kept where it is the explanation (409, 422, 402); the status decides the next
 // step. Any other error passes through unchanged.
+//
+// The result keeps the class the status owns — 401 is still an authentication failure (exit 4), 403
+// a permission one (exit 5), 429 a rate limit (exit 10) with its wait — and only the sentence and
+// the hint are this command's. Neither is ever built from a credential.
 func kubeMintRefusal(err error, tier types.KubeconfigMintTier) error {
 	var apiErr *api.APIError
 	if !errors.As(err, &apiErr) {
 		return err
 	}
+	// say rewords the classified error and names its next step.
+	say := func(message, hint string) error {
+		e := *clierr.From(err)
+		e.Message = message
+		if hint != "" {
+			e.Hint = hint
+		}
+		return &e
+	}
 	if errors.Is(err, errKubeMintPoll) {
 		switch apiErr.StatusCode {
 		case http.StatusNotFound:
-			return errors.New("the kubeconfig request is gone (already collected, or expired and swept) — run the command again")
+			return say("the kubeconfig request is gone (already collected, or expired and swept) — run the command again", "")
 		case http.StatusForbidden:
-			return errors.New("your role no longer allows collecting this kubeconfig (it changed after the request)")
+			return say("your role no longer allows collecting this kubeconfig (it changed after the request)", "")
 		}
 		return err
 	}
 	switch apiErr.StatusCode {
 	case http.StatusUnauthorized:
-		return errors.New("your session is not valid — run `alethia login`, then try again")
+		return say("your session is not valid — run `alethia login`, then try again", "alethia login")
 	case http.StatusPaymentRequired:
-		return fmt.Errorf("your organization's plan does not allow another kubeconfig right now: %s (see `alethia usage`)", apiErr.Message)
+		return say(fmt.Sprintf("your organization's plan does not allow another kubeconfig right now: %s (see `alethia usage`)", apiErr.Message), "alethia usage")
 	case http.StatusForbidden:
 		if tier == types.KubeconfigMintTierAdmin {
 			// Two causes share this status, and the CLI cannot tell which credential it holds: a
 			// role without cluster:access_admin, or a service token, which never mints admin (#5310).
-			return errors.New("you cannot mint an admin kubeconfig for this cluster: your role lacks it (owners and admins can), or you are using a service token, which mints read-only only; drop --admin for read-only access")
+			return say("you cannot mint an admin kubeconfig for this cluster: your role lacks it (owners and admins can), or you are using a service token, which mints read-only only; drop --admin for read-only access", "")
 		}
-		return errors.New("your role cannot mint a kubeconfig for this cluster (owners, admins and operators can)")
+		return say("your role cannot mint a kubeconfig for this cluster (owners, admins and operators can)", "")
 	case http.StatusNotFound:
-		return errors.New("the cluster was not found in the active organization (`alethia org switch`, or pass --org)")
+		return say("the cluster was not found in the active organization (`alethia org switch`, or pass --org)", "alethia cluster list")
 	case http.StatusConflict:
-		return fmt.Errorf("%s — deploy the environment first (`alethia project apply`)", apiErr.Message)
+		return say(fmt.Sprintf("%s — deploy the environment first (`alethia project apply`)", apiErr.Message), "")
 	case http.StatusUnprocessableEntity:
-		return errors.New(apiErr.Message)
+		return say(apiErr.Message, "")
 	case http.StatusTooManyRequests:
 		wait := "a few minutes"
 		if apiErr.RetryAfter > 0 {
 			wait = format.Duration(apiErr.RetryAfter)
 		}
-		return fmt.Errorf("too many kubeconfig requests — try again in %s", wait)
+		return say(fmt.Sprintf("too many kubeconfig requests — try again in %s", wait), "")
 	}
 	return err
 }

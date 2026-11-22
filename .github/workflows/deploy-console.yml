@@ -341,8 +341,9 @@ jobs:
           echo "✓ every required key present"
 
       # The CONDITIONAL half of the list above: the vault selects the email transport
-      # (EMAIL_PROVIDER, unset = resend), and SES needs keys Resend does not. The deploy step runs
-      # the same script again; this run is here so a missing SES key fails before the builds.
+      # (EMAIL_PROVIDER, unset = ses; smtp is the other accepted value, resend is refused), and each
+      # transport needs its own keys. The deploy step runs the same script again; this run is here
+      # so a missing transport key fails before the builds.
       - name: The selected email transport has its keys
         run: |
           set -euo pipefail

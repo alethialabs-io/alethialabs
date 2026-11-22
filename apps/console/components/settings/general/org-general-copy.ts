@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The org General page's fixed copy: the section titles, each row's label and hint, the Save
-// bands' notes and the Danger zone's rows. The form (`org-general.tsx`) and its skeleton
+// band's note and the Danger zone's rows. The form (`org-general.tsx`) and its skeleton
 // (`org-general-skeleton.tsx`) both render from here (#6352). A row's height depends on how its
 // hint wraps — at 200px beside the control from the panel's 32rem container step, at the panel's
 // full width stacked above the control below it (#6135) — and a danger row's on its description,
@@ -12,7 +12,6 @@
 /** The section headings, top to bottom. */
 export const ORG_GENERAL_SECTIONS = {
 	profile: "Organization profile",
-	defaults: "Defaults",
 	danger: "Danger zone",
 } as const;
 
@@ -41,48 +40,36 @@ export const ORG_PROFILE_ROWS = {
 } as const;
 
 /**
- * The fixed notes under two controls. Where the row is side by side in a narrow panel (just above
- * the 32rem container step, in the two-column layout) the control column can be under 200px wide,
- * so a note can wrap to a second line, which makes the row taller than its label column.
+ * The fixed note under the slug control. Where the row is side by side in a narrow panel (just
+ * above the 32rem container step, in the two-column layout) the control column can be under 200px
+ * wide, so the note can wrap to a second line, which makes the row taller than its label column.
  */
 export const ORG_CONTROL_NOTES = {
 	slug: "Lowercase, numbers and hyphens.",
-	region: "Region migration requires a support request.",
 } as const;
 
 /** The note in the Organization profile panel's Save band. */
 export const ORG_PROFILE_SAVE_NOTE = "Applies across the console";
 
-/** The Defaults panel's three rows and its Save band's note. */
-export const ORG_DEFAULTS_ROWS = {
-	region: {
-		label: "Data region",
-		hint: "Residency for the control plane and Project state.",
-	},
-	defaultEnv: {
-		label: "Default Project environment",
-		hint: "Pre-selected stage for newly planted Projects.",
-	},
-	terraformVersion: {
-		label: "Terraform version",
-		hint: "Pinned across runners unless a Project overrides it.",
-	},
-} as const;
-
-/** The note in the Defaults panel's Save band. */
-export const ORG_DEFAULTS_SAVE_NOTE = "Applies to new resources only";
 
 /**
- * The Danger zone's two rows. The delete row's description names the org between `before` and
+ * The Danger zone's three rows. The delete row's description names the org between `before` and
  * `after`, so it is two strings around the name rather than one. It says what the delete does NOT
  * do (destroy anything in the cloud) and what the server therefore refuses (`deleteOrganization`
- * answers `conflict` while an environment is live or in flight, #6752).
+ * answers `conflict` while an environment is live or in flight, #6752). The leave row states the
+ * rule the auth route applies to `/organization/leave`: the org's last active owner cannot leave
+ * (#5472, #7204).
  */
 export const ORG_DANGER_ROWS = {
 	transfer: {
 		title: "Transfer ownership",
 		description:
 			"Move this organization to another owner. They take over billing and the Owner role.",
+	},
+	leave: {
+		title: "Leave organization",
+		description:
+			"Remove yourself from this organization. You lose access to its Projects until someone invites you again. Its only active owner cannot leave.",
 	},
 	delete: {
 		title: "Delete organization",

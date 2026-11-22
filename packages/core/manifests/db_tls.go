@@ -114,6 +114,20 @@ func (t dbTLS) dbTLSFailureReason() string {
 		" checked against " + t.Source + "). The Job stops here; it never retries without verification."
 }
 
+// ManagedDBCABundle returns the pinned CA bundle a client verifies a cloud's managed database
+// against, and a human name for it: the Amazon RDS global bundle for aws, the Azure Database roots for
+// azure. ok is false for any other provider (GCP's Cloud SQL CA is per instance and comes from the
+// provision's outputs), so a caller fails closed rather than falling back to a weaker trust store.
+func ManagedDBCABundle(provider string) (pem, source string, ok bool) {
+	switch provider {
+	case string(types.CloudProviderAws):
+		return awsRDSCABundle, "the Amazon RDS global CA bundle", true
+	case string(types.CloudProviderAzure):
+		return azureDBCABundle, "the Azure Database root CAs", true
+	}
+	return "", "", false
+}
+
 // dbTLSFor resolves the verification for one cloud's managed database from the provision's tofu
 // outputs. It fails closed: an unknown provider, a missing or unparseable GCP server CA, or a Cloud SQL
 // CA mode in which the CA alone does not identify the instance is an error, never a weaker mode.

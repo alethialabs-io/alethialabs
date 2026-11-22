@@ -7,6 +7,11 @@
 // wraps — to two or three lines in the 200px label column from the panel's 32rem container step, at
 // the panel's full width stacked above the control below it (#6135) — so the skeleton has to carry
 // the same words to be the same height. Two copies of a hint would drift apart one edit at a time.
+//
+// "Fabric" comes from the console's vocabulary (`lib/copy/vocabulary.ts`) and is never printed
+// without its definition beside it (R6 F-32): the Placement row's hint carries it.
+
+import { FABRIC } from "@/lib/copy/vocabulary";
 
 /** The section heading over the form. */
 export const PREVIEW_SECTION_TITLE = "Preview environments";
@@ -26,7 +31,7 @@ export const PREVIEW_ROWS = {
 	},
 	placement: {
 		label: "Placement",
-		hint: "How each pull request is isolated on the selected fabric.",
+		hint: `How each pull request is isolated, and on which ${FABRIC.label}: ${FABRIC.definition.charAt(0).toLowerCase()}${FABRIC.definition.slice(1)}`,
 	},
 	credentials: {
 		label: "Credentials",

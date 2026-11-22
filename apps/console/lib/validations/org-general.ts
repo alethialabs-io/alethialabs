@@ -25,15 +25,6 @@ export const ORG_NAME_MAX_LENGTH = 64;
 /** The longest organization description, in characters ("a short line for teammates"). */
 export const ORG_DESCRIPTION_MAX_LENGTH = 280;
 
-/** The longest Terraform version string (`1.9.5`, `1.10.0-rc1`). */
-export const TERRAFORM_VERSION_MAX_LENGTH = 32;
-
-/** The longest region / default-environment value (both are picked from fixed lists). */
-const CHOICE_MAX_LENGTH = 64;
-
-/** A Terraform release: `MAJOR.MINOR.PATCH`, optionally with a pre-release suffix. */
-const TERRAFORM_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
-
 /** The sentence for a field longer than its cap. */
 function tooLong(max: number): string {
 	return `Use at most ${max} characters.`;
@@ -42,6 +33,10 @@ function tooLong(max: number): string {
 /**
  * The General-settings values the form edits and the server saves. The logo is not here: it is
  * saved by its own upload control (`/api/org/logo`), the moment a file is picked.
+ *
+ * The data region, default environment and Terraform version are not here either (#7147): nothing
+ * read them, so the form no longer asks for them. zod strips unknown keys, so a client that still
+ * sends them saves nothing for them, and the values already stored are left as they are.
  */
 export const orgGeneralSchema = z.object({
 	name: z
@@ -70,13 +65,6 @@ export const orgGeneralSchema = z.object({
 		.string()
 		.trim()
 		.max(ORG_DESCRIPTION_MAX_LENGTH, tooLong(ORG_DESCRIPTION_MAX_LENGTH)),
-	region: z.string().trim().min(1, "Pick a data region.").max(CHOICE_MAX_LENGTH),
-	defaultEnv: z.string().trim().min(1, "Pick a default environment.").max(CHOICE_MAX_LENGTH),
-	terraformVersion: z
-		.string()
-		.trim()
-		.max(TERRAFORM_VERSION_MAX_LENGTH, tooLong(TERRAFORM_VERSION_MAX_LENGTH))
-		.regex(TERRAFORM_VERSION_PATTERN, "Use a release number such as 1.9.5."),
 });
 
 /** What the form holds (before the slug draft is finished). */

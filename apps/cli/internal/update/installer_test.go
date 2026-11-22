@@ -170,23 +170,28 @@ func TestApplyHomebrewRunsNativeUpdateAndVerifies(t *testing.T) {
 	runner := &fakeCommandRunner{
 		paths: map[string]string{"brew": "/opt/homebrew/bin/brew"},
 		outputs: map[string][]byte{
-			"brew --prefix alethialabs-io/tap/alethia":               []byte("/opt/homebrew/Cellar/alethia/1.0.0\n"),
-			"/opt/homebrew/Cellar/alethia/1.0.0/bin/alethia version": []byte("alethia v1.1.0\n"),
+			"brew --prefix alethialabs-io/tap/alethia":                              []byte("/opt/homebrew/Cellar/alethia/1.0.0\n"),
+			"/opt/homebrew/Cellar/alethia/1.0.0/bin/alethia version --output table": []byte("alethia v1.1.0\n"),
 		},
 		errors: map[string]error{},
 	}
 	var out bytes.Buffer
 	u := testUpdater("darwin", "arm64", "/opt/homebrew/Cellar/alethia/1.0.0/bin/alethia", runner)
 	u.stdout = &out
-	if err := u.apply(context.Background(), "1.0.0", Release{Version: "1.1.0"}); err != nil {
+	outcome, err := u.apply(context.Background(), "1.0.0", Release{Version: "1.1.0"})
+	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	want := []string{"brew update", "brew upgrade alethialabs-io/tap/alethia"}
 	if strings.Join(runner.runs, "|") != strings.Join(want, "|") {
 		t.Fatalf("commands = %v, want %v", runner.runs, want)
 	}
-	if !strings.Contains(out.String(), "Updated alethia to v1.1.0") {
-		t.Fatalf("missing success output: %s", out.String())
+	if outcome != (Outcome{From: "1.0.0", To: "1.1.0", Method: "homebrew", Updated: true, UpdateAvailable: true}) {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	// What it says while it works is progress, and names the channel it went through.
+	if !strings.Contains(out.String(), "Updating alethia 1.0.0 → 1.1.0 (homebrew)") {
+		t.Fatalf("missing progress output: %s", out.String())
 	}
 }
 
@@ -195,11 +200,12 @@ func TestApplyAlreadyCurrentDoesNotRunInstaller(t *testing.T) {
 	var out bytes.Buffer
 	u := testUpdater("linux", "amd64", "/tmp/alethia", runner)
 	u.stdout = &out
-	if err := u.apply(context.Background(), "1.2.0", Release{Version: "1.2.0"}); err != nil {
+	outcome, err := u.apply(context.Background(), "1.2.0", Release{Version: "1.2.0"})
+	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if len(runner.runs) != 0 || !strings.Contains(out.String(), "already up to date") {
-		t.Fatalf("unexpected result: runs=%v out=%q", runner.runs, out.String())
+	if len(runner.runs) != 0 || out.Len() != 0 || outcome != (Outcome{From: "1.2.0", To: "1.2.0"}) {
+		t.Fatalf("unexpected result: runs=%v out=%q outcome=%+v", runner.runs, out.String(), outcome)
 	}
 }
 
@@ -232,7 +238,7 @@ func TestManualUpdateErrorAndPlatformHelpers(t *testing.T) {
 }
 
 func TestApplyRejectsInvalidReleaseBeforeInstall(t *testing.T) {
-	err := Apply(context.Background(), "1.0.0", Release{Version: "not-a-version"}, io.Discard, io.Discard)
+	_, err := Apply(context.Background(), "1.0.0", Release{Version: "not-a-version"}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "invalid CLI version") {
 		t.Fatalf("expected invalid release error, got %v", err)
 	}
@@ -252,14 +258,14 @@ func TestStandaloneUpdateVerifiesChecksumAndReplacesBinary(t *testing.T) {
 	runner := &fakeCommandRunner{
 		paths: map[string]string{},
 		outputs: map[string][]byte{
-			commandKey(executable, "version"): []byte("alethia v1.1.0\n"),
+			commandKey(executable, "version", "--output", "table"): []byte("alethia v1.1.0\n"),
 		},
 		errors: map[string]error{},
 	}
 	u := testUpdater("linux", "amd64", executable, runner)
 	u.releaseBase = server.URL
 	u.client = server.Client()
-	if err := u.apply(context.Background(), "1.0.0", Release{Version: "1.1.0"}); err != nil {
+	if _, err := u.apply(context.Background(), "1.0.0", Release{Version: "1.1.0"}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	got, err := os.ReadFile(executable)
@@ -281,7 +287,7 @@ func TestStandaloneUpdateRefusesChecksumMismatch(t *testing.T) {
 	u := testUpdater("linux", "amd64", executable, &fakeCommandRunner{paths: map[string]string{}, outputs: map[string][]byte{}, errors: map[string]error{}})
 	u.releaseBase = server.URL
 	u.client = server.Client()
-	if err := u.apply(context.Background(), "1.0.0", Release{Version: "1.1.0"}); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+	if _, err := u.apply(context.Background(), "1.0.0", Release{Version: "1.1.0"}); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("expected checksum mismatch, got %v", err)
 	}
 	got, _ := os.ReadFile(executable)
@@ -304,8 +310,12 @@ func TestWindowsStandaloneStagesDeferredReplacement(t *testing.T) {
 	u := testUpdater("windows", "amd64", executable, runner)
 	u.releaseBase = server.URL
 	u.client = server.Client()
-	if err := u.apply(context.Background(), "1.0.0", Release{Version: "1.1.0"}); err != nil {
+	outcome, err := u.apply(context.Background(), "1.0.0", Release{Version: "1.1.0"})
+	if err != nil {
 		t.Fatalf("apply: %v", err)
+	}
+	if !outcome.Deferred || outcome.Updated || outcome.Method != "standalone" {
+		t.Fatalf("outcome = %+v", outcome)
 	}
 	if len(runner.starts) != 1 || !strings.HasPrefix(runner.starts[0], "powershell.exe ") {
 		t.Fatalf("deferred commands = %v", runner.starts)

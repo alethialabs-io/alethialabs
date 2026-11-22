@@ -97,9 +97,9 @@ describe("RepositorySelector — Link buttons", () => {
 				providerAvailability={{ ...NONE, gitlab: true }}
 			/>,
 		);
-		const github = await screen.findByRole("button", { name: /link github/i });
-		const bitbucket = screen.getByRole("button", { name: /link bitbucket/i });
-		const gitlab = screen.getByRole("button", { name: /link gitlab/i });
+		const github = await screen.findByRole("button", { name: /connect github/i });
+		const bitbucket = screen.getByRole("button", { name: /connect bitbucket/i });
+		const gitlab = screen.getByRole("button", { name: /connect gitlab/i });
 		// Described, not titled: a disabled button's `title` is never shown (the review of #5000).
 		// DisabledReason itself proves the tooltip opens on hover and focus (packages/ui).
 		for (const off of [github, bitbucket]) {
@@ -112,7 +112,7 @@ describe("RepositorySelector — Link buttons", () => {
 	});
 
 	it("shows a failed link as an alert and returns to the page it was started on", async () => {
-		linkSocial.mockResolvedValue({ error: { message: "provider not found" } });
+		linkSocial.mockResolvedValue({ error: { status: 404, code: "PROVIDER_NOT_FOUND", message: "provider not found" } });
 		const user = userEvent.setup();
 		window.history.pushState({}, "", "/acme/~/new?x=1");
 		render(
@@ -123,8 +123,10 @@ describe("RepositorySelector — Link buttons", () => {
 				providerAvailability={{ github: true, gitlab: true, bitbucket: true }}
 			/>,
 		);
-		await user.click(await screen.findByRole("button", { name: /link github/i }));
-		expect(await screen.findByRole("alert")).toHaveTextContent(/failed to link github/i);
+		await user.click(await screen.findByRole("button", { name: /connect github/i }));
+		expect(await screen.findByRole("alert")).toHaveTextContent("GitHub is not enabled on this instance.");
+		// The sentence is chosen from the failure; its code and the library's words are not shown.
+		expect(screen.getByRole("alert")).not.toHaveTextContent(/PROVIDER_NOT_FOUND|provider not found/);
 		expect(linkSocial).toHaveBeenCalledWith(
 			expect.objectContaining({
 				provider: "github",
@@ -149,7 +151,7 @@ describe("CreateProjectForm — Design with the agent", () => {
 		const user = userEvent.setup();
 		render(
 			<QueryClientProvider client={new QueryClient()}>
-				<CreateProjectForm orgSlug="acme" canCollaborate providerAvailability={NONE} />
+				<CreateProjectForm orgSlug="acme" canCollaborate />
 			</QueryClientProvider>,
 		);
 		await user.type(screen.getByRole("textbox"), "An EKS cluster");

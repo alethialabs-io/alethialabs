@@ -14,11 +14,11 @@ import { Header as SiteHeader } from "@repo/brand/site-header";
 export const metadata: Metadata = {
 	metadataBase: new URL("https://alethialabs.io"),
 	title: {
-		default: "Alethia Blog",
-		template: "%s · Alethia Blog",
+		default: "Alethia News",
+		template: "%s · Alethia News",
 	},
 	description:
-		"Engineering deep dives from Alethia Labs — a multi-cloud control plane you run in your own cloud.",
+		"Announcements, the changelog and engineering deep dives from Alethia Labs — a multi-cloud control plane you run in your own cloud.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -40,7 +40,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 
 				    Consent genuinely CROSSES here rather than being answered twice: the record is
 				    a host-only cookie at `Path=/` (packages/privacy/src/consent.ts), and the blog
-				    is the same host under `basePath: "/blog"` — so a choice made on the marketing
+				    is the same host under `basePath: "/news"` — so a choice made on the marketing
 				    site is already in effect on arrival. Imported from @repo/brand, which already
 				    depends on @repo/privacy, so this app does not take a second direct dependency
 				    for a contract its chrome brought with it. */}

@@ -3,24 +3,40 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useQuery } from "@tanstack/react-query";
-import { Maximize, MoreHorizontal, Play, Plus, Redo2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import {
+	Cable,
+	GitBranch,
+	Hand,
+	Keyboard,
+	LayoutGrid,
+	Maximize,
+	MoreHorizontal,
+	MousePointer2,
+	Play,
+	Plus,
+	Redo2,
+	Search,
+	Undo2,
+	ZoomIn,
+	ZoomOut,
+} from "lucide-react";
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { Button } from "@repo/ui/button";
-import { Separator } from "@repo/ui/separator";
 import { cn } from "@repo/ui/utils";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { buildRenderNodes } from "@/lib/canvas/collections";
+import type { CloudProviderSlug } from "@/lib/cloud-providers";
+import { isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { applyLayout, layoutZoned } from "@/lib/canvas/layout";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
 import { environmentStatusInput } from "@/lib/query/use-environment-status-query";
 import { orpc } from "@/lib/rpc/client";
-import { PROJECT_NODE_ID } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
 import { buildDefaultFormValues, type SourceProjectData } from "../source-project";
-import { BoardGuide } from "./board-guide";
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { CanvasSkeleton } from "./canvas-skeleton";
-import { ActivityStatusLine } from "./cards/activity-status-line";
-import { CostChip } from "./cost-chip";
+import { BoardGuideView, type CloudChoices } from "./empty/board-guide-view";
 import { EnvironmentStatusScope } from "./environment-status-scope";
 import { formToGraph } from "./graph/form-to-graph";
 import { configName } from "./graph/node-config";
@@ -98,6 +114,23 @@ export function previewLayout(
 	return { cards, width: maxX - minX + CARD_W, height: maxY - minY + CARD_H };
 }
 
+/**
+ * The cloud of the account the project is bound to, or null when it has none — what the live board
+ * reads off the project root, so the picture's guide and the live guide offer the same template
+ * start.
+ */
+function previewProjectCloud(
+	sourceProject: SourceProjectData | undefined,
+	identities: CloudIdentityOption[],
+): CloudProviderSlug | null {
+	const identityId = buildDefaultFormValues(sourceProject).project.cloud_identity_id;
+	const provider = identityId ? identities.find((i) => i.id === identityId)?.provider : undefined;
+	return provider && isCloudProviderSlug(provider) ? provider : null;
+}
+
+/** The picture cannot ask the server which clouds are offered; the live board does. */
+const CLOUDS_ON_THEIR_WAY: CloudChoices = { status: "loading" };
+
 /** What the page already knows about the board — the props the workbench hands the canvas. */
 interface BoardPreviewData {
 	sourceProject?: SourceProjectData;
@@ -105,6 +138,8 @@ interface BoardPreviewData {
 	projectId?: string;
 	environmentId?: string;
 	byoHelmEnabled?: boolean;
+	/** Whether bring-your-own IaC is enabled (server flag): whether the guide offers that start. */
+	byoIacEnabled?: boolean;
 }
 
 const BoardPreviewContext = createContext<BoardPreviewData | null>(null);
@@ -129,14 +164,22 @@ export function BoardPreviewProvider({
  *
  * With the page's data (`BoardPreviewProvider`) it is the BOARD — the design's cards, the
  * environment's last job and cost, the toolbar, or the blank-board guide — drawn without React Flow.
- * Without it (a caller that never provided any), it is the skeleton, as before.
+ * Without it (a caller that never provided any), it is the skeleton inside `SkeletonRoot`.
  *
  * `overlay` is for inside the canvas, which already reads the environment status; on its own the
  * preview opens that same read (prefetched under the same key, so it renders with the page).
  */
 export function BoardPreview({ overlay = false }: { overlay?: boolean }) {
 	const data = useContext(BoardPreviewContext);
-	if (!data) return <CanvasSkeleton overlay={overlay} />;
+	if (!data) {
+		// The skeleton is a part; `SkeletonRoot` is its one busy region. The root takes the box the
+		// skeleton would have taken (over the board, or filling the parent) so nothing moves.
+		return (
+			<SkeletonRoot className={overlay ? "absolute inset-0 z-[var(--z-raised)]" : "h-full w-full"}>
+				<CanvasSkeleton overlay={overlay} />
+			</SkeletonRoot>
+		);
+	}
 	if (overlay) return <StaticBoard data={data} overlay />;
 	return (
 		<EnvironmentStatusScope projectId={data.projectId} environmentId={data.environmentId}>
@@ -156,7 +199,8 @@ function noop() {}
  * its way: anything waiting for the page to be ready waits for the live board.
  */
 function StaticBoard({ data, overlay }: { data: BoardPreviewData; overlay: boolean }) {
-	const { sourceProject, cloudIdentities, projectId, environmentId, byoHelmEnabled } = data;
+	const { sourceProject, cloudIdentities, projectId, environmentId, byoHelmEnabled, byoIacEnabled } =
+		data;
 	const env = useEnvironmentStatus();
 	const layout = useMemo(
 		() => previewLayout(sourceProject, cloudIdentities),
@@ -204,48 +248,108 @@ function StaticBoard({ data, overlay }: { data: BoardPreviewData; overlay: boole
 				</div>
 			)}
 
-			{blank && <BoardGuide onAdd={noop} />}
+			{blank && (
+				<div
+					data-slot="board-guide"
+					className="pointer-events-none absolute inset-0 flex items-center justify-center p-3"
+				>
+					<BoardGuideView
+						projectCloud={previewProjectCloud(sourceProject, cloudIdentities)}
+						cloudChoices={CLOUDS_ON_THEIR_WAY}
+						onTemplate={noop}
+						onAdd={noop}
+						onAttachChart={byoHelmEnabled ? noop : undefined}
+						onAttachIac={byoIacEnabled ? noop : undefined}
+						onOpenCluster={noop}
+					/>
+				</div>
+			)}
 
-			{projectId && environmentId && <ActivityStatusLine />}
-
-			<div className="absolute right-3 top-3 z-10 flex items-center gap-2">
-				{projectId && environmentId && <CostChip />}
-				{projectId && environmentId && (
-					<Button type="button" variant="outline" size="sm" className="h-8 text-xs">
+			{/* The board's toolbar, top-centre, as the live board draws it (`toolbar/canvas-toolbar.tsx`):
+			    the environment, the tools, and nothing in any other corner but the zoom controls. A
+			    picture of the wide form; the live toolbar folds on a narrow board. */}
+			<div className="absolute inset-x-0 top-3 flex justify-center px-3">
+				<div className="flex max-w-full items-center overflow-hidden border border-border bg-card p-1 shadow-sm">
+					<Button type="button" variant="ghost" size="sm" className="h-8 max-w-40 rounded-none px-2 text-xs">
+						<span className="truncate font-medium">{env.environment?.name ?? "Environment"}</span>
+					</Button>
+					<PreviewDivider />
+					<PreviewControl
+						label="Select"
+						className="bg-foreground text-background"
+						icon={<MousePointer2 className="h-3.5 w-3.5" />}
+					/>
+					<PreviewControl label="Hand tool (pan)" icon={<Hand className="h-3.5 w-3.5" />} />
+					<PreviewDivider />
+					{/* Off, not gone, while an IaC module governs the environment — as on the live board. */}
+					<Button
+						type="button"
+						size="sm"
+						className="h-8 rounded-none px-2.5 text-xs"
+						disabled={iacGoverned}
+					>
+						<Plus className="h-3.5 w-3.5" />
+						Add
+					</Button>
+					<PreviewControl label="Connect the selected service" icon={<Cable className="h-3.5 w-3.5" />} />
+					<PreviewDivider />
+					<PreviewControl label="Undo" icon={<Undo2 className="h-3.5 w-3.5" />} />
+					<PreviewControl label="Redo" icon={<Redo2 className="h-3.5 w-3.5" />} />
+					<PreviewDivider />
+					<PreviewControl label="Tidy layout" icon={<LayoutGrid className="h-3.5 w-3.5" />} />
+					<PreviewControl label="Fit view" icon={<Maximize className="h-3.5 w-3.5" />} />
+					<PreviewDivider />
+					<Button type="button" variant="ghost" size="sm" className="h-8 rounded-none px-2 text-xs">
 						<Play className="mr-1 h-3.5 w-3.5" />
 						Run
 					</Button>
-				)}
-				{!iacGoverned && (
-					<Button type="button" size="sm" className="h-8 text-xs">
-						<Plus className="mr-1 h-3.5 w-3.5" />
-						Add
-					</Button>
-				)}
-				<Button type="button" variant="outline" size="icon" className="h-8 w-8" aria-label="More">
-					<MoreHorizontal className="h-3.5 w-3.5" />
-				</Button>
+					<PreviewControl label="Sources" icon={<GitBranch className="h-3.5 w-3.5" />} />
+					<PreviewDivider />
+					<PreviewControl label="Command palette" icon={<Search className="h-3.5 w-3.5" />} />
+					<PreviewControl label="Keyboard shortcuts" icon={<Keyboard className="h-3.5 w-3.5" />} />
+					<PreviewControl label="More" icon={<MoreHorizontal className="h-3.5 w-3.5" />} />
+				</div>
 			</div>
 
-			<div className="absolute bottom-3 left-3 z-10 flex items-center border border-border bg-background/90 backdrop-blur">
+			{/* Bottom-left: zoom out, the level, zoom in, fit (`canvas-controls.tsx`). */}
+			<div className="absolute bottom-3 left-3 flex items-center border border-border bg-card">
 				<PreviewControl label="Zoom out" icon={<ZoomOut className="h-3.5 w-3.5" />} />
+				<span className="flex h-8 min-w-12 items-center justify-center px-1.5 font-mono text-ui-xs tabular-nums">
+					100%
+				</span>
 				<PreviewControl label="Zoom in" icon={<ZoomIn className="h-3.5 w-3.5" />} />
 				<PreviewControl label="Fit view" icon={<Maximize className="h-3.5 w-3.5" />} />
-				<Separator orientation="vertical" className="h-5" />
-				<PreviewControl label="Undo" icon={<Undo2 className="h-3.5 w-3.5" />} />
-				<PreviewControl label="Redo" icon={<Redo2 className="h-3.5 w-3.5" />} />
 			</div>
 		</div>
 	);
 }
 
-/** One of the bottom-left controls, drawn as the board draws it (`canvas-controls.tsx`). */
-function PreviewControl({ label, icon }: { label: string; icon: ReactNode }) {
+/** One icon tool of the picture, drawn as the live toolbar and zoom controls draw theirs. */
+function PreviewControl({
+	label,
+	icon,
+	className,
+}: {
+	label: string;
+	icon: ReactNode;
+	className?: string;
+}) {
 	return (
-		<Button type="button" variant="ghost" size="icon" className="h-8 w-8 rounded-none" aria-label={label}>
+		<Button
+			type="button"
+			variant="ghost"
+			size="icon"
+			className={cn("h-8 w-8 rounded-none", className)}
+			aria-label={label}
+		>
 			{icon}
 		</Button>
 	);
+}
+
+/** The line between two groups of tools in the picture of the toolbar. */
+function PreviewDivider() {
+	return <span className="mx-1 block h-5 w-px shrink-0 bg-border" />;
 }
 
 /** A design card as the board's full tier heads it (`nodes/base-node.tsx`): plate, eyebrow, name. */

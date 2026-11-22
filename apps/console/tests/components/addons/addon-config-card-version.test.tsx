@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// #5525: the configure card's Chart version field. It is prefilled with the stored pin, shows the
-// catalog default as its placeholder, sends the pin on submit, sends null when cleared (the reset),
-// and refuses a range in the form with the same sentence the server would return.
+// #5525: the add-on subject's Chart version field. It is prefilled with the stored pin, shows the
+// catalog default as its placeholder, stages the pin when the field is left, stages null when
+// cleared (the reset), and refuses a range in the form with the same sentence the server would
+// return. Staged, not sent: the operation runs when the changeset is applied (#6834).
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -14,18 +15,17 @@ import type {
 } from "@/app/server/actions/addons";
 import { CHART_VERSION_REFUSAL } from "@/lib/addons/chart-version";
 
-const { enableMut, disableMut } = vi.hoisted(() => ({
-	enableMut: { mutateAsync: vi.fn(), isPending: false },
+const { disableMut } = vi.hoisted(() => ({
 	disableMut: { mutateAsync: vi.fn(), isPending: false },
 }));
 vi.mock("@/lib/query/use-addons-query", () => ({
-	useEnableAddon: () => enableMut,
 	useDisableAddon: () => disableMut,
 	useRequestGitopsBump: () => ({ mutate: () => {}, isPending: false }),
 	useAddonsQuery: vi.fn(),
 }));
 
 import { AddonConfigForm } from "@/components/addons/addon-config-card";
+import { board } from "@/lib/canvas/store/board";
 
 const ITEM: AddonMarketItem = {
 	id: "kube-prometheus-stack",
@@ -71,15 +71,17 @@ function renderForm(item: AddonMarketItem) {
 	return screen.getByLabelText("Chart version");
 }
 
-/** The `version` the last enable mutation was called with. */
-function sentVersion(): unknown {
-	const call = enableMut.mutateAsync.mock.calls.at(-1)?.[0];
-	return call && typeof call === "object" && "version" in call ? call.version : "<absent>";
+/** The operations staged in the document. */
+const staged = () => board.document.getState().operations;
+
+/** The `version` the staged operation carries. */
+function stagedVersion(): unknown {
+	const input = staged().at(-1)?.input;
+	return input && typeof input === "object" && "version" in input ? input.version : "<absent>";
 }
 
 beforeEach(() => {
-	enableMut.mutateAsync.mockReset();
-	enableMut.mutateAsync.mockResolvedValue({ ok: true });
+	board.reset();
 });
 
 describe("AddonConfigForm — chart version", () => {
@@ -94,37 +96,41 @@ describe("AddonConfigForm — chart version", () => {
 		expect(field).toHaveValue("");
 	});
 
-	it("submits a pin", async () => {
+	it("stages a pin when the field is left", async () => {
 		const user = userEvent.setup();
 		const field = renderForm(ITEM);
 		await user.type(field, "58.2.1");
-		await user.click(screen.getByRole("button", { name: /enable add-on/i }));
-		expect(enableMut.mutateAsync).toHaveBeenCalledTimes(1);
-		expect(sentVersion()).toBe("58.2.1");
+		expect(staged()).toEqual([]);
+		await user.tab();
+		expect(staged()).toHaveLength(1);
+		expect(stagedVersion()).toBe("58.2.1");
+		expect(staged()[0]?.summary).toBe("Install add-on Prometheus + Grafana at 58.2.1");
 	});
 
-	it("clearing the field sends null — the reset to the catalog default", async () => {
+	it("clearing the field stages null — the reset to the catalog default", async () => {
 		const user = userEvent.setup();
 		const field = renderForm({ ...ITEM, install: PINNED });
 		await user.clear(field);
-		await user.click(screen.getByRole("button", { name: /save changes/i }));
-		expect(enableMut.mutateAsync).toHaveBeenCalledTimes(1);
-		expect(sentVersion()).toBeNull();
+		await user.tab();
+		expect(staged()).toHaveLength(1);
+		expect(stagedVersion()).toBeNull();
 	});
 
-	it("an untouched pin is sent back unchanged", async () => {
+	it("an untouched pin stages nothing", async () => {
 		const user = userEvent.setup();
-		renderForm({ ...ITEM, install: PINNED });
-		await user.click(screen.getByRole("button", { name: /save changes/i }));
-		expect(sentVersion()).toBe("58.2.1");
+		const field = renderForm({ ...ITEM, install: PINNED });
+		await user.click(field);
+		await user.tab();
+		expect(staged()).toEqual([]);
 	});
 
-	it("refuses a range in the form and sends nothing", async () => {
+	it("refuses a range in the form and stages nothing", async () => {
 		const user = userEvent.setup();
 		const field = renderForm(ITEM);
 		await user.type(field, "^58");
-		await user.click(screen.getByRole("button", { name: /enable add-on/i }));
+		await user.tab();
 		expect(await screen.findByRole("alert")).toHaveTextContent(CHART_VERSION_REFUSAL);
-		expect(enableMut.mutateAsync).not.toHaveBeenCalled();
+		expect(field).toHaveAttribute("aria-invalid", "true");
+		expect(staged()).toEqual([]);
 	});
 });

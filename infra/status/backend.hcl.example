@@ -2,10 +2,14 @@
 #
 #   tofu init -backend-config=backend.hcl
 #
-# In CI the apply job assumes the alethia-cp-deployer OIDC role (infra/aws-oidc), which
-# grants status/* and authenticates this backend natively — no static state keys.
+# The bucket already exists (infra/email-ses/bootstrap/ owns it) and is versioned. The applying
+# maintainer's own AWS credentials authenticate it — no static state keys.
+#
+# THIS STATE HOLDS A SECRET: the Worker's STATUS_PROBE_TOKEN binding stores its text in state. Hence
+# `encrypt`, and hence the bucket's access policy is the real control.
 
 bucket       = "alethia-tofu-state-270587882865"
 key          = "status/terraform.tfstate"
 region       = "eu-central-1"
+encrypt      = true
 use_lockfile = true

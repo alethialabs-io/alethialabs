@@ -5,12 +5,14 @@
 //
 //   1. generate an ephemeral X25519 key (private half non-extractable);
 //   2. ask for a read-only, static, 1h mint, sending only the PUBLIC key;
-//   3. poll until the mint is ready, failed or expired (or the poll window closes);
+//   3. read the mint, and read it again each time the org's change stream says a job moved, until it
+//      is ready, failed or expired (or the request's window closes) — no timer loop: the mint is a
+//      job, and a job that moves is a `jobs` hint (lib/realtime/README.md, rule 3);
 //   4. open the seal locally, check it is a static read-only kubeconfig, save it as a file;
 //   5. drop the key and the plaintext.
 //
-// Every dependency with a side effect — the two server actions, the clock, the save — is passed in, so
-// the whole flow runs under test against a mocked poll. Nothing here logs: the plaintext and the key
+// Every dependency with a side effect — the two server actions, the wait, the clock, the save — is
+// passed in, so the whole flow runs under test against a mocked read. Nothing here logs: the plaintext and the key
 // never reach `console.*` or any logger, and tests/components/clusters/kubeconfig-download/flow.test.ts
 // spies on both to hold that.
 //
@@ -26,9 +28,6 @@ import type {
 } from "@/app/server/actions/kubeconfig-download";
 import { type OpenedKubeconfig, readOpenedCredential } from "./credential";
 import { type RecipientKey, generateRecipientKey, openSealed, toBase64Url } from "./hpke";
-
-/** How often the card polls while the runner mints. */
-export const POLL_INTERVAL_MS = 2000;
 
 /** How the download ended. */
 export type DownloadOutcome =
@@ -52,16 +51,19 @@ export interface DownloadDeps {
 	save: (fileName: string, contents: string) => void;
 	/** Defaults to WebCrypto X25519; a test injects a known key. */
 	generateKey?: () => Promise<RecipientKey>;
-	sleep?: (ms: number) => Promise<void>;
+	/** Called before each read of the mint: what changes after it is what {@link waitForChange} reports. */
+	beforeRead?: () => void;
+	/**
+	 * Resolves when the mint may have moved: a `jobs` hint arrived, the request's window (`deadline`,
+	 * epoch ms) closed, or the wait was cancelled. Never a fixed delay (./mint-wait.ts).
+	 */
+	waitForChange: (deadline: number) => Promise<void>;
 	now?: () => number;
 	signal?: AbortSignal;
-	/** Called on each poll that reports the endpoint, so the card can show the notice while it waits. */
+	/** Called once the request is queued, with when its window closes (ISO). */
+	onQueued?: (expiresAt: string) => void;
+	/** Called on each read that reports the endpoint, so the control can show the notice while it waits. */
 	onPrivateEndpoint?: (privateEndpoint: boolean) => void;
-}
-
-/** Resolves after `ms`. */
-function defaultSleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -69,7 +71,6 @@ function defaultSleep(ms: number): Promise<void> {
  * failure of the action call itself, which the card reports generically.
  */
 export async function runKubeconfigDownload(deps: DownloadDeps): Promise<DownloadOutcome> {
-	const sleep = deps.sleep ?? defaultSleep;
 	const now = deps.now ?? Date.now;
 	// The key is local to this call: nothing outside it holds a reference, so it is collectable the
 	// moment the call returns, whatever the outcome.
@@ -85,12 +86,16 @@ export async function runKubeconfigDownload(deps: DownloadDeps): Promise<Downloa
 		clientPublicKey: toBase64Url(key.publicKey),
 	});
 	if (!queued.ok) return { kind: "refused", status: queued.status, message: queued.message };
+	deps.onQueued?.(queued.pollExpiresAt);
 
 	const deadline = Date.parse(queued.pollExpiresAt);
 	let privateEndpoint = false;
 	for (;;) {
 		if (deps.signal?.aborted) return { kind: "cancelled" };
+		deps.beforeRead?.();
 		const res = await deps.poll({ clusterId: deps.clusterId, mintId: queued.mintId });
+		// A cancel while the read was out: whatever it answered is dropped, and nothing is saved.
+		if (deps.signal?.aborted) return { kind: "cancelled" };
 		if (!res.ok) return res.status === 404 ? { kind: "lost" } : { kind: "refused", status: res.status };
 		const p = res.poll;
 		if (p.private_endpoint !== null) {
@@ -116,8 +121,8 @@ export async function runKubeconfigDownload(deps: DownloadDeps): Promise<Downloa
 			case "pending":
 				break;
 		}
-		if (Number.isFinite(deadline) && now() >= deadline) return { kind: "expired", privateEndpoint };
-		await sleep(POLL_INTERVAL_MS);
+		if (!Number.isFinite(deadline) || now() >= deadline) return { kind: "expired", privateEndpoint };
+		await deps.waitForChange(deadline);
 	}
 }
 
@@ -149,7 +154,7 @@ export function outcomeMessage(outcome: Exclude<DownloadOutcome, { kind: "saved"
 		case "failed":
 			return outcome.reason;
 		case "expired":
-			return "The runner did not finish the kubeconfig in time. Try again.";
+			return "No runner finished the kubeconfig in time. Check that a runner is online, then try again.";
 		case "unreadable":
 			return "The kubeconfig arrived but could not be opened in this browser. Nothing was saved. Try again.";
 		case "lost":

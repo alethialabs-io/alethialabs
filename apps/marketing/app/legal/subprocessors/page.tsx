@@ -7,7 +7,7 @@ import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
-	title: "Subprocessors · Alethia",
+	title: "Subprocessors",
 	description: "Providers that may process personal data for Alethia.",
 };
 
@@ -24,7 +24,7 @@ export default function SubprocessorsPage() {
 	);
 
 	return (
-		<LegalShell title="Subprocessors" lastUpdated="August 12, 2026">
+		<LegalShell title="Subprocessors" lastUpdated="November 22, 2026">
 			<p>
 				These providers may process personal data for the hosted Alethia
 				Service. <strong>Current providers</strong> process data for the hosted

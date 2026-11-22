@@ -44,7 +44,7 @@ that offers ordering makes the choice when the queue is created and never after,
 replace the queue to change it. Set it when you create the queue.
 </Callout>
 
-<Tabs items={["AWS", "GCP", "Azure", "Alibaba Cloud"]}>
+<Tabs items={["AWS", "GCP", "Azure"]}>
   <Tab value="AWS">
     **SQS** (Simple Queue Service) — ordered delivery creates a FIFO queue.
     - Order holds within a `MessageGroupId`, which your publisher sets on every send
@@ -64,12 +64,6 @@ replace the queue to change it. Set it when you create the queue.
     - Order holds within a `SessionId`, and one receiver holds every message for that session
     - Sessions need the Standard or Premium tier. Alethia blocks a Basic project before it deploys
     - Dead letter queues built-in. A message moved back from one loses its place in the session
-  </Tab>
-  <Tab value="Alibaba Cloud">
-    **Simple Message Service** — Alethia does not offer ordered delivery here, and the toggle has no
-    effect. The service accepts a FIFO queue type, but Alibaba Cloud publishes no ordering
-    guarantee behind it: no delivery order, no message key to group by, and no throughput limit.
-    Alethia does not offer a guarantee the cloud does not make.
   </Tab>
 </Tabs>
 

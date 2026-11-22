@@ -6,7 +6,7 @@ import type { Metadata } from "next";
 import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
-	title: "Privacy requests · Alethia",
+	title: "Privacy requests",
 	description: "Exercise a privacy right or ask Alethia a data-protection question.",
 };
 
@@ -18,12 +18,19 @@ export default function PrivacyRequestsPage() {
 	);
 
 	return (
-		<LegalShell title="Privacy requests" lastUpdated="July 29, 2026">
+		<LegalShell title="Privacy requests" lastUpdated="November 22, 2026">
 			<p>
 				Use this channel to request access, correction, deletion, restriction,
 				portability, or objection; withdraw consent; or ask a privacy question. You
-				can change analytics and replay consent immediately with the{" "}
+				can change your analytics choice immediately with the{" "}
 				<strong>Privacy settings</strong> control in the site footer.
+			</p>
+			<p>
+				If you are signed in to the console, you can also ask for your account to
+				be deleted from <strong>Delete account</strong> in your account settings.
+				That opens a deletion request and sends it to our privacy team; nothing is
+				deleted at that moment, and a person handles the request as described
+				below.
 			</p>
 
 			<h2>1. Send the request</h2>

@@ -479,6 +479,12 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: undefined,
 		markers: (out, s) => ({ x: hasItem(out, "deliveries", s.deliveryX), y: hasItem(out, "deliveries", s.deliveryY) }),
 	},
+	// #6817. The project grid's rows are the ADDRESSED org's projects, for the pristine address.
+	"overview.projects": {
+		kind: "org-scoped",
+		input: { q: "", clouds: [], repos: [], sort: "activity" },
+		markers: (out, s) => ({ x: hasItem(out, "projects", s.projectX), y: hasItem(out, "projects", s.projectY) }),
+	},
 	// The Alerts hub's reads (#6125). Each list's PRISTINE page is the org's whole list, so the marker
 	// is that org's seeded row; the settings read's condition options list the ADDRESSED org's projects.
 	"alerts.settings": {
@@ -793,6 +799,15 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: undefined,
 		markers: (out, s) => ({ x: hasCluster(out, s.clusterX), y: hasCluster(out, s.clusterY) }),
 	},
+	// #6819: the filtered page over the same universe — its rows are the list's rows.
+	"clusters.page": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({
+			x: hasCluster(field(out, "rows"), s.clusterX),
+			y: hasCluster(field(out, "rows"), s.clusterY),
+		}),
+	},
 	// General settings (#6128).
 	"settings.org": {
 		// The org's own row: its slug is the marker (seeded as `it-6113-<first 8 of its id>`). The
@@ -854,6 +869,13 @@ export const FIXTURES: Record<string, Fixture> = {
 		kind: "not-org-scoped",
 		reason: "runner releases are global; every org reads the same changelog",
 		input: { version: "0.0.0-it-6123-none" },
+	},
+	// #7110: the Add-runner sheet's cloud accounts — the ADDRESSED org's verified AWS accounts. Each
+	// org's seeded (verified, org-scoped, W-authored) identity is the marker.
+	"runners.deployableAccounts": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({ x: hasElement(out, "id", s.identityX), y: hasElement(out, "id", s.identityY) }),
 	},
 	// The people & access reads (#6129). Members, teams and the invite context answer any member;
 	// roles and grants answer `member:view`, which the caller U (a viewer) holds. X has three members
@@ -1318,6 +1340,9 @@ export async function runRpcTenancySuite(opts: {
 						// A configured account (a role ARN was submitted), so the connectors board lists it
 						// (#6124) — a bare placeholder is filtered out as never-configured.
 						credentials: { role_arn: `arn:aws:iam::123456789012:role/it-6124-${org}` },
+						// Verified (#7110): `runners.deployableAccounts` lists only accounts a deploy can use.
+						is_verified: true,
+						status: "connected",
 					})
 					.returning({ id: cloudIdentities.id });
 				await db.insert(cloudRegions).values({ cloud_identity_id: ci.id, provider: "aws", native_id: regionOf(org) });

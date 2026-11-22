@@ -13,7 +13,8 @@ import {
 	type EnvironmentStatus,
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { boardCard } from "@/tests/fixtures/canvas/board";
 import { queryWrapper } from "@/tests/helpers/query-wrapper";
 
 function renderWith(status: Partial<EnvironmentStatus>) {
@@ -26,7 +27,7 @@ function renderWith(status: Partial<EnvironmentStatus>) {
 }
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("ActivityStatusLine", () => {
@@ -44,7 +45,7 @@ describe("ActivityStatusLine", () => {
 		expect(line).toHaveTextContent(/deploy/i);
 		expect(line).toHaveTextContent(/running/i);
 		await userEvent.setup().click(line);
-		expect(useCanvasStore.getState().card).toEqual({ kind: "activity" });
+		expect(boardCard()).toEqual({ kind: "activity" });
 	});
 
 	it("falls back to the last job with its status and age", () => {

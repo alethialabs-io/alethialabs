@@ -154,10 +154,16 @@ func TestRunnerRef_AnEmptyListingSaysHowToGetARunner(t *testing.T) {
 		t.Fatal("no runners at all is still a refusal")
 	}
 	// "have: " followed by nothing is the message that made this arm worth its own case.
-	for _, want := range []string{"runner deploy", "runner register"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("an empty listing must name the way out (%q): %v", want, err)
-		}
+	if !strings.Contains(err.Error(), "runner register") {
+		t.Errorf("an empty listing must name the way out (%q): %v", "runner register", err)
+	}
+	// With no runner at all, `runner deploy` is not a way out: building a runner is itself a job,
+	// and there is nothing to run it.
+	if strings.Contains(err.Error(), "runner deploy") {
+		t.Errorf("an empty listing must not send the reader to `runner deploy`: %v", err)
+	}
+	if got := clierr.From(err).Class; got != clierr.ClassNotFound {
+		t.Errorf("class = %s, want %s", got, clierr.ClassNotFound)
 	}
 }
 
@@ -480,8 +486,10 @@ func runnerEnv(t *testing.T) (*runnerEnvServer, func(args ...string) int) {
 			_ = enc.Encode(map[string]interface{}{"runners": []map[string]interface{}{
 				// r-us is FIRST so that "resolved the name" and "took the first row" are
 				// different answers — see runnerRefFixture for the run where they were not.
+				// ONLINE, because it is the executor the destroy cases name: a teardown is a job
+				// another runner has to run, and one that is offline is refused.
 				{"id": "r-us", "name": "us-runner", "operator": "managed",
-					"status": "OFFLINE", "created_at": "2026-01-01T00:00:00Z"},
+					"status": "ONLINE", "created_at": "2026-01-01T00:00:00Z"},
 				{"id": "r-eu", "name": "eu-runner", "operator": "self", "provisioning": "deployed",
 					"status": "ONLINE", "version": "1.2.3", "is_default": true,
 					"last_heartbeat": "2026-01-01T00:00:00Z", "created_at": "2026-01-01T00:00:00Z"},
@@ -672,9 +680,10 @@ func TestRunnerField_EveryLeafRunsUnattended(t *testing.T) {
 			opened := 0
 			prevForm := runHuhForm
 			runHuhForm = func(...*huh.Group) error { opened++; return nil }
-			prevConfirm := confirm
+			prevConfirm, prevTyped := confirm, confirmTypedName
 			confirm = func(string, string) bool { opened++; return false }
-			t.Cleanup(func() { runHuhForm, confirm = prevForm, prevConfirm })
+			confirmTypedName = func(string, string, string) bool { opened++; return false }
+			t.Cleanup(func() { runHuhForm, confirm, confirmTypedName = prevForm, prevConfirm, prevTyped })
 
 			if got := run(append(append([]string{}, tc.args...), "--no-input")...); got != 0 {
 				t.Fatalf("exit code = %d, want 0; requests = %v", got, s.seen())
@@ -854,10 +863,10 @@ func TestRunnerField_ARefusalNamesTheFlagToAdd(t *testing.T) {
 			s.forget()
 			var code int
 			out := runnerCaptureRefusal(t, func() { code = run(tc.args...) })
-			// These refusals are reported as plain sentences, so they carry no class yet and
-			// exit unclassified.
-			if code != clierr.ExitUnclassified {
-				t.Fatalf("exit code = %d, want %d; requests = %v", code, clierr.ExitUnclassified, s.seen())
+			// A value that is missing with nobody to ask is the input-required row: the same
+			// invocation on a terminal would have asked.
+			if code != clierr.ExitInputRequired {
+				t.Fatalf("exit code = %d, want %d; requests = %v", code, clierr.ExitInputRequired, s.seen())
 			}
 			if s.saw(tc.method, tc.path) {
 				t.Errorf("a command that refused still reached %s %s", tc.method, tc.path)
@@ -877,8 +886,8 @@ func TestRunnerField_ARefusalNamesTheFlagToAdd(t *testing.T) {
 func TestRunnerField_AnAmbiguousCommandLineIsRefusedBeforeAnyMutation(t *testing.T) {
 	s, run := runnerEnv(t)
 	if got := run("runner", "destroy", "--runner", "eu-runner", "--runner-id", "r-us",
-		"--no-input", "--yes"); got != 1 {
-		t.Fatalf("exit code = %d, want 1; requests = %v", got, s.seen())
+		"--no-input", "--yes"); got != clierr.ExitUsage {
+		t.Fatalf("exit code = %d, want %d; requests = %v", got, clierr.ExitUsage, s.seen())
 	}
 	if s.saw(http.MethodPost, "/api/jobs") {
 		t.Error("a DESTROY_RUNNER job was queued from a command line that named two different runners")
@@ -901,8 +910,8 @@ func TestRunnerField_TheLegacyIDFormStillWorks(t *testing.T) {
 // the two flags on destroy.
 func TestRunnerField_RemoveRefusesTwoNamesForOneRunner(t *testing.T) {
 	s, run := runnerEnv(t)
-	if got := run("runner", "remove", "r-us", "--runner", "eu-runner", "--no-input", "--yes"); got != 1 {
-		t.Fatalf("exit code = %d, want 1; requests = %v", got, s.seen())
+	if got := run("runner", "remove", "r-us", "--runner", "eu-runner", "--no-input", "--yes"); got != clierr.ExitUsage {
+		t.Fatalf("exit code = %d, want %d; requests = %v", got, clierr.ExitUsage, s.seen())
 	}
 	if s.saw(http.MethodDelete, "/api/cli/runners/r-us") || s.saw(http.MethodDelete, "/api/cli/runners/r-eu") {
 		t.Error("a removal happened from a command line that named two different runners")
@@ -941,8 +950,8 @@ func TestRunnerField_RegisterAsksForTheNameOnATerminal(t *testing.T) {
 		runHuhForm = func(...*huh.Group) error { opened++; return nil }
 		t.Cleanup(func() { runHuhForm = prevForm })
 
-		if got := run("runner", "register", "--no-input"); got != 1 {
-			t.Fatalf("exit code = %d, want 1", got)
+		if got := run("runner", "register", "--no-input"); got != clierr.ExitInputRequired {
+			t.Fatalf("exit code = %d, want %d", got, clierr.ExitInputRequired)
 		}
 		if opened != 0 {
 			t.Errorf("%d form(s) opened with prompting disabled", opened)
@@ -953,8 +962,8 @@ func TestRunnerField_RegisterAsksForTheNameOnATerminal(t *testing.T) {
 // TestRunnerField_RegisterRefusesTwoDifferentNames pins the argument/flag pair.
 func TestRunnerField_RegisterRefusesTwoDifferentNames(t *testing.T) {
 	s, run := runnerEnv(t)
-	if got := run("runner", "register", "box-1", "--name", "box-2", "--no-input"); got != 1 {
-		t.Fatalf("exit code = %d, want 1; requests = %v", got, s.seen())
+	if got := run("runner", "register", "box-1", "--name", "box-2", "--no-input"); got != clierr.ExitUsage {
+		t.Fatalf("exit code = %d, want %d; requests = %v", got, clierr.ExitUsage, s.seen())
 	}
 	if s.saw(http.MethodPost, "/api/cli/runners/register") {
 		t.Error("a registration ran from a command line that gave two different names")
@@ -1195,8 +1204,10 @@ func TestRunnerField_AFailedResolutionStopsTheCommand(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s.forget()
-			if got := run(tc.args...); got != 1 {
-				t.Fatalf("exit code = %d, want 1; requests = %v", got, s.seen())
+			// A name that matches nothing is a not-found refusal, whichever resolver read it.
+			want := clierr.ExitNotFound
+			if got := run(tc.args...); got != want {
+				t.Fatalf("exit code = %d, want %d; requests = %v", got, want, s.seen())
 			}
 			if s.saw(tc.method, tc.path) {
 				t.Errorf("a failed resolution still reached %s %s", tc.method, tc.path)
@@ -1267,13 +1278,13 @@ func TestRunnerField_ADestroyIsNotConfirmedBeforeItsFlagsAreChecked(t *testing.T
 	s, run := runnerEnv(t)
 	hygCliConfirmInteractive(t)
 	asked := 0
-	prev := confirm
-	confirm = func(string, string) bool { asked++; return true }
-	t.Cleanup(func() { confirm = prev })
+	prev := confirmTypedName
+	confirmTypedName = func(string, string, string) bool { asked++; return true }
+	t.Cleanup(func() { confirmTypedName = prev })
 
 	if got := run("runner", "destroy", "--runner", "eu-runner",
-		"--assigned-runner", "us-runner", "--assigned-runner-id", "r-eu"); got != 1 {
-		t.Fatalf("exit code = %d, want 1; requests = %v", got, s.seen())
+		"--assigned-runner", "us-runner", "--assigned-runner-id", "r-eu"); got != clierr.ExitUsage {
+		t.Fatalf("exit code = %d, want %d; requests = %v", got, clierr.ExitUsage, s.seen())
 	}
 	if asked != 0 {
 		t.Errorf("the user was asked to confirm %d time(s) a teardown that could never run", asked)
@@ -1296,15 +1307,15 @@ func TestRunnerField_ADestroyIsNeverAssignedToItself(t *testing.T) {
 	s, run := runnerEnv(t)
 	hygCliConfirmInteractive(t)
 	asked := 0
-	prev := confirm
-	confirm = func(string, string) bool { asked++; return true }
-	t.Cleanup(func() { confirm = prev })
+	prev := confirmTypedName
+	confirmTypedName = func(string, string, string) bool { asked++; return true }
+	t.Cleanup(func() { confirmTypedName = prev })
 
 	// The name form on both sides, with --yes — the command line from the finding, and the one a
 	// person actually types.
 	if got := run("runner", "destroy", "--runner", "eu-runner",
-		"--assigned-runner", "eu-runner", "--yes"); got != 1 {
-		t.Fatalf("name form: exit code = %d, want 1; requests = %v", got, s.seen())
+		"--assigned-runner", "eu-runner", "--yes"); got != clierr.ExitUsage {
+		t.Fatalf("name form: exit code = %d, want %d; requests = %v", got, clierr.ExitUsage, s.seen())
 	}
 	if s.saw(http.MethodPost, "/api/jobs") {
 		t.Error("a DESTROY_RUNNER job was queued naming the runner being destroyed as its own executor")
@@ -1314,8 +1325,8 @@ func TestRunnerField_ADestroyIsNeverAssignedToItself(t *testing.T) {
 	// still land BEFORE the prompt, so the user is never asked about a teardown that cannot run.
 	s.forget()
 	if got := run("runner", "destroy", "--runner", "eu-runner",
-		"--assigned-runner-id", "r-eu"); got != 1 {
-		t.Fatalf("id form: exit code = %d, want 1; requests = %v", got, s.seen())
+		"--assigned-runner-id", "r-eu"); got != clierr.ExitUsage {
+		t.Fatalf("id form: exit code = %d, want %d; requests = %v", got, clierr.ExitUsage, s.seen())
 	}
 	if asked != 0 {
 		t.Errorf("the user was asked to confirm %d time(s) a teardown that was never going to run", asked)

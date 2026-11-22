@@ -8,28 +8,25 @@
 //
 // A chart arrives one of two ways, and they are genuinely different shapes rather than one shape
 // with an odd URL:
-//   - a GIT repo, where the chart is a directory (repo + chart path + git ref). Step 0 reuses the
-//     production RepositorySelector (git-provider auth, repo fetch, token refresh, no-provider state).
+//   - a GIT repo, where the chart is a directory (repo + chart path + git ref). The repository step
+//     reuses the production RepositorySelector (git-provider auth, repo fetch, token refresh).
 //   - an OCI REGISTRY, where the chart is an artifact addressed by one `oci://host/ns/chart` URL and
 //     versioned by a chart version. There is no path to give and no branch to track.
-// So the source choice comes first and the wizard adapts: the chart-path step disappears for OCI and
-// "Git ref" becomes "Chart version". `attachByoChart` and `resolveByoChartInstall` (PR #1246) already
-// speak both; this is the surface that could only ever produce the git one.
+// So the source choice comes first and the wizard adapts: the chart-path step is skipped for OCI and
+// "Git ref" becomes "Chart version".
+//
+// It runs on the shared wizard engine (`lib/wizard/`), as an overlay:
+//   - the dialog is open exactly while the URL says `?wizard=byo-chart`, and the step is
+//     `&step=<id>`. Linking a git provider leaves for the provider and comes back to the same URL,
+//     so the dialog reopens on the step it left, with what was typed restored from the tab's draft;
+//   - every rule is the attach form's own (`byoChartFormSchema`), run per step, so Next refuses what
+//     Attach would, and a server field refusal takes the person to the step that shows the field;
+//   - Next and Attach are different buttons whose clicks are cancelled (the footer's guarantee), so
+//     the press that reaches Review cannot also attach.
 
-import { useCallback, useMemo, useState } from "react";
-import { Controller, useForm, useWatch, type FieldPath } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import {
-	ArrowLeft,
-	ArrowRight,
-	Check,
-	GitBranch,
-	Loader2,
-	Package,
-	TriangleAlert,
-} from "lucide-react";
-import { Alert, AlertDescription } from "@repo/ui/alert";
-import { Button } from "@repo/ui/button";
+import { type FormEvent, useEffect, useMemo, useRef } from "react";
+import { Controller, FormProvider, useWatch } from "react-hook-form";
+import { GitBranch, Package, TriangleAlert } from "lucide-react";
 import {
 	Dialog,
 	DialogContent,
@@ -39,32 +36,48 @@ import {
 } from "@repo/ui/dialog";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
+import { Skeleton } from "@repo/ui/skeleton";
 import { Textarea } from "@repo/ui/textarea";
-import { cn } from "@repo/ui/utils";
+import {
+	type StepperItem,
+	Stepper,
+	WizardFooter,
+	WizardFormError,
+	WizardRestoredNotice,
+	WizardStepHeading,
+} from "@repo/ui/wizard";
 import { RepositorySelector } from "@/components/repository-selector";
 import { RadioCardGroup } from "@/components/design-project/canvas/inspector/radio-card-group";
 import { useConnectedProviders } from "@/components/design-project/connectors-context";
+import { nodeOfKind } from "@/components/design-project/canvas/graph/types";
 import { attachByoChartAction } from "@/app/server/actions/byo-charts";
+import type { FieldErrors } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import { orpc } from "@/lib/rpc/client";
+import { useDesignNodes } from "@/lib/canvas/store/use-board";
 import {
 	helmRegistryServesHost,
 	isSelectableHelmRegistry,
 	ociHostOf,
 } from "@/lib/connectors/helm-registry-hosts";
-import { nodeOfKind } from "@/components/design-project/canvas/graph/types";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
-import {
-	byoChartFormSchema,
-	byoChartNamespace,
-	type ByoChartFormValues,
-	type ChartSource,
-} from "@/lib/validations/byo-charts";
+import { WIZARD_PARAM } from "@/lib/query/view-url-params";
+import { orpc } from "@/lib/rpc/client";
+import { byoChartNamespace, type ChartSource } from "@/lib/validations/byo-charts";
 import { chartSlug } from "@/lib/validations/names";
+import { useWizardEnvironment, wizardOpener } from "@/lib/wizard/location";
+import { useOpenRequest } from "@/lib/wizard/use-open-request";
+import { useWizardEngine } from "@/lib/wizard/use-wizard";
+import {
+	BYO_CHART_WIZARD_ID,
+	type ByoChartWizardValues,
+	byoChartWizard,
+	wizardFieldOf,
+} from "@/components/design-project/byo/byo-chart.wizard";
 
 interface ByoChartDialogProps {
+	/** The canvas asks for the dialog. The URL (`?wizard=byo-chart`) is what keeps it open. */
 	open: boolean;
+	/** Told when the dialog opens or closes for a reason the canvas did not start (Back, a link). */
 	onOpenChange: (open: boolean) => void;
 	projectId: string;
 	environmentId: string | null;
@@ -115,11 +128,56 @@ const SOURCE_OPTIONS = [
 	},
 ];
 
-/** Wizard steps per source — OCI has no chart path to collect. */
-const STEPS: Record<ChartSource, readonly string[]> = {
-	git: ["Source", "Repository", "Chart path", "Ref", "Review"],
-	oci: ["Source", "Registry", "Version", "Review"],
+// ── THE WIZARD ───────────────────────────────────────────────────────────────────────────────────
+//
+// The definition — steps, rules and draft — is `byo-chart.wizard.ts`. What is below is how this
+// dialog shows it.
+
+/** A fresh chart: from git, nothing typed. */
+const DEFAULT_VALUES: ByoChartWizardValues = {
+	source: "git",
+	gitUrl: "",
+	ociRef: "",
+	chartPath: "",
+	ref: "",
+	name: "",
+	namespace: "",
+	valuesYaml: "",
 };
+
+/** The step rail's accessible name. */
+const STEPPER_LABEL = "Attach a Helm chart";
+
+/** The heading and one line of copy each step opens with. */
+interface StepCopy {
+	readonly title: string;
+	readonly description: string;
+}
+
+/** Each step's heading, by step id. */
+const STEP_COPY: Readonly<Record<string, StepCopy>> = {
+	source: { title: "Where is the chart?", description: "A directory in a git repository, or a packaged chart in a registry." },
+	repository: { title: "Chart repository", description: "The git repository that holds the chart." },
+	registry: { title: "Chart reference", description: "The OCI address of the packaged chart." },
+	"chart-path": { title: "Chart path", description: "Where Chart.yaml is inside the repository." },
+	ref: { title: "Version", description: "What ArgoCD tracks." },
+	review: { title: "Review", description: "Name the chart, choose its namespace, and attach it." },
+};
+
+/** What a step without its own copy would show; never reached while every step id is above. */
+const FALLBACK_COPY: StepCopy = { title: "Attach a Helm chart", description: "" };
+
+/** The rail before the draft is read: the first step current, the rest not started. */
+const FIRST_STEP_ITEMS: readonly StepperItem[] = byoChartWizard.steps
+	.filter((step) => step.when === undefined || step.when(DEFAULT_VALUES))
+	.map((step, index) => ({ id: step.id, label: step.label, state: index === 0 ? "current" : "todo" }));
+
+/** What the Review step says about the Helm values: they are the one thing a reload drops. */
+export const HELM_VALUES_NOT_KEPT =
+	"Not kept if the page reloads — values often hold credentials, so they are never stored.";
+
+/** Where a refusal that names no field is filed: no step owns it, so the engine says it above the buttons. */
+const FORM_LEVEL_KEY = "_form";
 
 /** Derives a default chart name from the repo URL's last path segment
  * (`alethialabs-io/alethia-starter-chart` → `alethia-starter-chart`;
@@ -129,32 +187,17 @@ function defaultNameFromRepo(repoUrl: string): string {
 	return tail || "chart";
 }
 
-/** The fields each step owns, so advancing validates exactly what is on screen. */
-const STEP_FIELDS: Record<string, FieldPath<ByoChartFormValues>[]> = {
-	Source: ["source"],
-	Repository: ["repoUrl"],
-	Registry: ["repoUrl"],
-	"Chart path": ["chartPath"],
-};
-
-/** The form fields a server field refusal can name (the action's input keys that are also form fields). */
-const SERVER_FIELDS: ReadonlySet<string> = new Set<FieldPath<ByoChartFormValues>>([
-	"repoUrl",
-	"chartPath",
-	"ref",
-	"namespace",
-	"valuesYaml",
-]);
-
-/** Narrows a server field key to one of this form's fields. */
-function isServerField(key: string): key is FieldPath<ByoChartFormValues> {
-	return SERVER_FIELDS.has(key);
+/** A server's field refusals, keyed by the wizard field that shows each one. */
+function toWizardFieldErrors(fields: FieldErrors, source: ChartSource): FieldErrors {
+	const mapped: FieldErrors = {};
+	for (const [key, messages] of Object.entries(fields)) {
+		const field = wizardFieldOf(key, source);
+		mapped[field] = [...(mapped[field] ?? []), ...(messages ?? [])];
+	}
+	return mapped;
 }
 
-/** The fields the dialog renders from. */
-const WATCHED = ["source", "repoUrl", "chartPath", "name", "namespace", "ref"] as const;
-
-/** The "attach a Helm chart" dialog. Self-contained: it owns the wizard state and resets on close. */
+/** The "attach a Helm chart" dialog: open while the URL names it, its wizard mounted only while open. */
 export function ByoChartDialog({
 	open,
 	onOpenChange,
@@ -162,183 +205,166 @@ export function ByoChartDialog({
 	environmentId,
 	onAttached,
 }: ByoChartDialogProps) {
-	const form = useForm<ByoChartFormValues>({
-		resolver: zodResolver(byoChartFormSchema),
-		mode: "onChange",
-		defaultValues: {
-			source: "git",
-			repoUrl: "",
-			chartPath: "",
-			ref: "",
-			name: "",
-			namespace: "",
-			valuesYaml: "",
+	const env = useWizardEnvironment();
+	const opener = wizardOpener(env.location, BYO_CHART_WIZARD_ID);
+	// Opening drops the canvas's one-shot `?attachChart=1`, which would otherwise be read again and
+	// strip the URL the dialog just opened.
+	useOpenRequest(open, onOpenChange, opener, () =>
+		env.location.push({ [WIZARD_PARAM]: BYO_CHART_WIZARD_ID, attachChart: null }),
+	);
+
+	return (
+		<Dialog open={opener.open} onOpenChange={opener.setOpen}>
+			<DialogContent className="sm:max-w-[560px]">
+				{opener.open ? (
+					<ByoChartWizard
+						projectId={projectId}
+						environmentId={environmentId}
+						onAttached={onAttached}
+					/>
+				) : null}
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+/** The dialog's header. The icon follows the source. */
+function ByoChartHeader({ source }: { source: ChartSource }) {
+	return (
+		<DialogHeader>
+			<DialogTitle className="flex items-center gap-2">
+				{source === "oci" ? (
+					<Package className="h-4 w-4 text-muted-foreground" />
+				) : (
+					<GitBranch className="h-4 w-4 text-muted-foreground" />
+				)}
+				Bring your own Helm chart
+			</DialogTitle>
+			<DialogDescription>
+				Point a project at a Helm chart — in a git repo or an OCI registry — and Alethia deploys
+				and governs it on the cluster through ArgoCD.
+			</DialogDescription>
+		</DialogHeader>
+	);
+}
+
+/** The steps' frame. A fixed minimum height, so the footer does not move between steps. */
+const STEP_BODY = "flex min-h-[260px] flex-col gap-3 py-2";
+
+/** The wizard inside the dialog, while it is open. */
+function ByoChartWizard({
+	projectId,
+	environmentId,
+	onAttached,
+}: Omit<ByoChartDialogProps, "open" | "onOpenChange">) {
+	const env = useWizardEnvironment();
+	// The wizard calls this when every step passes; it is pointed at the mutation after each render.
+	const attachChart = useRef<(values: ByoChartWizardValues) => void>(() => undefined);
+
+	const wizard = useWizardEngine<ByoChartWizardValues, ByoChartWizardValues>(
+		byoChartWizard,
+		{
+			defaultValues: DEFAULT_VALUES,
+			scope: `${projectId}:${environmentId ?? "default"}`,
+			onSubmit: (values) => attachChart.current(values),
 		},
-	});
-	const {
-		control,
-		register,
-		handleSubmit,
-		trigger,
-		reset,
-		setValue,
-		formState: { errors, isSubmitting },
-	} = form;
+		env,
+	);
+	const { control, register, formState } = wizard.form;
+	const { errors } = formState;
 
-	// The wizard step lives in plain component state (not a schema field).
-	const [step, setStep] = useState(0);
-	// Why the attach was refused, said in the dialog beside Attach — the Review step shows none of the
-	// earlier steps' fields, so a field the server refused is ALSO summarised here.
-	const [refusal, setRefusal] = useState<string | null>(null);
-
-	// The attach, on the mutation contract: pending while in flight (the double-submit guard), each
-	// refusal routed into the dialog, and the board's chart nodes and their described workloads
-	// re-read when it settles.
+	// The attach, on the mutation contract: pending while in flight (the double-submit guard), a
+	// field refusal routed to its step, a refusal said above the buttons, and the board's chart nodes
+	// and their described workloads re-read when it settles.
 	const attach = useActionMutation(attachByoChartAction, {
 		invalidates: [orpc.canvas.byoCharts.key(), orpc.canvas.chartWorkloads.key()],
-		onValidationError: (fields) => {
-			const messages: string[] = [];
-			for (const [key, list] of Object.entries(fields)) {
-				const message = list?.[0];
-				if (!message) continue;
-				messages.push(message);
-				if (isServerField(key)) form.setError(key, { type: "server", message });
-			}
-			setRefusal(messages.join(" ") || "Check the chart's details.");
-		},
-		onRefusal: (error) => setRefusal(error.message),
+		onValidationError: (fields) =>
+			wizard.applyFieldErrors(toWizardFieldErrors(fields, wizard.form.getValues("source"))),
+		onRefusal: (error) => wizard.applyFieldErrors({ [FORM_LEVEL_KEY]: [error.message] }),
 		successMessage: (data) => `Chart "${data.id}" attached — deploys on the next sync.`,
+		onSuccess: (data) => {
+			wizard.complete();
+			onAttached?.(data.id);
+		},
 	});
 
-	// Subscribing to `source` re-renders the dialog, so the step rail and the per-step bodies below
-	// (which differ per source) are rebuilt when it changes.
-	const [source, repoUrl, chartPath, name, namespace, ref] = useWatch({ control, name: WATCHED });
-
+	const [source, gitUrl, ociRef, chartPath, name, namespace, ref] = useWatch({
+		control,
+		name: ["source", "gitUrl", "ociRef", "chartPath", "name", "namespace", "ref"],
+	});
 	const isOci = source === "oci";
-	const steps = STEPS[source];
-	const lastStep = steps.length - 1;
-
-	const effectiveUrl = (repoUrl ?? "").trim();
-	const effectiveName = (name ?? "").trim() || defaultNameFromRepo(effectiveUrl);
+	const effectiveUrl = (isOci ? ociRef : gitUrl).trim();
+	const effectiveName = name.trim() || defaultNameFromRepo(effectiveUrl);
 	// Its own namespace by default (#6446) — the same `byo-<id>` the attach action would choose, from
 	// the same id the action derives (`chartSlug` of the name).
 	const defaultNs = byoChartNamespace(chartSlug(effectiveName));
-	const effectiveNs = (namespace ?? "").trim() || defaultNs;
+	const effectiveNs = namespace.trim() || defaultNs;
 	// A git ref defaults to HEAD; an OCI chart version defaults to `*` (ArgoCD for "latest").
-	const effectiveRef = (ref ?? "").trim() || (isOci ? "*" : "HEAD");
+	const effectiveRef = ref.trim() || (isOci ? "*" : "HEAD");
 
-	const close = useCallback(
-		(next: boolean) => {
-			if (!next) {
-				reset();
-				setStep(0);
-				setRefusal(null);
-			}
-			onOpenChange(next);
-		},
-		[onOpenChange, reset],
-	);
-
-	/** Validate the current step's fields before advancing. Steps differ per source, so they are
-	 * keyed by NAME rather than by index. */
-	const next = useCallback(async () => {
-		const fields = STEP_FIELDS[steps[step]];
-		if (fields && !(await trigger(fields))) return;
-		setStep((s) => s + 1);
-	}, [steps, step, trigger]);
-
-	/** Switching source invalidates the URL that was typed for the other one — an `oci://` reference
-	 * is not a git remote and vice versa — so clear it rather than carry a value that can only fail. */
-	const changeSource = useCallback(
-		(value: string) => {
-			const nextSource: ChartSource = value === "oci" ? "oci" : "git";
-			setValue("source", nextSource, { shouldValidate: false });
-			setValue("repoUrl", "", { shouldValidate: false });
-			setValue("chartPath", "", { shouldValidate: false });
-		},
-		[setValue],
-	);
-
-	/** Attaches the chart with the effective name, ref and namespace, then closes the dialog. */
-	async function onSubmit(values: ByoChartFormValues) {
-		if (attach.isPending) return;
-		setRefusal(null);
-		try {
-			const res = await attach.mutateAsync({
+	useEffect(() => {
+		attachChart.current = (values) =>
+			attach.submit({
 				projectId,
 				environmentId,
 				id: effectiveName,
-				repoUrl: values.repoUrl,
+				repoUrl: (values.source === "oci" ? values.ociRef : values.gitUrl).trim(),
 				// An OCI chart has no path — the chart name is the URL's last segment.
 				...(values.source === "oci" ? {} : { chartPath: values.chartPath }),
 				ref: effectiveRef,
 				namespace: effectiveNs,
-				valuesYaml: values.valuesYaml?.trim() ? values.valuesYaml : null,
+				valuesYaml: values.valuesYaml.trim() ? values.valuesYaml : null,
 			});
-			onAttached?.(res.id);
-			close(false);
-		} catch {
-			// Already said: in the dialog for a refusal or a field, in one toast for anything else.
-		}
+	});
+
+	if (!wizard.ready) return <ByoChartWizardSkeleton />;
+
+	const step = wizard.current.id;
+	const copy = STEP_COPY[step] ?? FALLBACK_COPY;
+	const pending = attach.isPending;
+
+	/** Enter in a field means "go on": Next before Review, Attach on it. */
+	function onEnter(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		if (pending) return;
+		void (wizard.isLast ? wizard.submit() : wizard.next());
 	}
 
 	return (
-		<Dialog open={open} onOpenChange={close}>
-			<DialogContent className="sm:max-w-[560px]">
-				<DialogHeader>
-					<DialogTitle className="flex items-center gap-2">
-						{isOci ? (
-							<Package className="h-4 w-4 text-muted-foreground" />
-						) : (
-							<GitBranch className="h-4 w-4 text-muted-foreground" />
-						)}
-						Bring your own Helm chart
-					</DialogTitle>
-					<DialogDescription>
-						Point a project at a Helm chart — in a git repo or an OCI registry — and Alethia
-						deploys and governs it on the cluster through ArgoCD.
-					</DialogDescription>
-				</DialogHeader>
+		<FormProvider {...wizard.form}>
+			<ByoChartHeader source={source} />
+			<Stepper label={STEPPER_LABEL} items={wizard.items} onSelect={wizard.goTo} />
+			{wizard.restored ? <WizardRestoredNotice onStartOver={wizard.discard} /> : null}
+			<form onSubmit={onEnter} noValidate className="flex flex-col gap-4">
+				<div className={STEP_BODY}>
+					<WizardStepHeading
+						title={copy.title}
+						description={copy.description}
+						position={wizard.stepNumber}
+						total={wizard.stepCount}
+						level={3}
+					/>
 
-				{/* Step rail */}
-				<div className="flex items-center gap-2">
-					{steps.map((label, i) => (
-						<div key={label} className="flex flex-1 flex-col gap-1.5">
-							<div
-								className={cn(
-									"h-0.5 rounded-full transition-colors",
-									i <= step ? "bg-foreground" : "bg-border",
-								)}
-							/>
-							<span
-								className={cn(
-									"font-mono text-ui-2xs uppercase tracking-wide",
-									i === step ? "text-foreground" : "text-muted-foreground",
-								)}
-							>
-								{label}
-							</span>
-						</div>
-					))}
-				</div>
+					{step === "source" ? (
+						<Controller
+							control={control}
+							name="source"
+							render={({ field }) => (
+								<RadioCardGroup
+									value={field.value}
+									onChange={(value) => field.onChange(value === "oci" ? "oci" : "git")}
+									options={SOURCE_OPTIONS}
+									ariaLabel="Chart source"
+								/>
+							)}
+						/>
+					) : null}
 
-				<div className="min-h-[220px] py-2">
-					{steps[step] === "Source" && (
-						<div className="flex flex-col gap-3">
-							<RadioCardGroup
-								value={source}
-								onChange={changeSource}
-								options={SOURCE_OPTIONS}
-								ariaLabel="Chart source"
-							/>
-						</div>
-					)}
-
-					{steps[step] === "Repository" && (
-						<div className="flex flex-col gap-3">
+					{step === "repository" ? (
+						<>
 							<Controller
 								control={control}
-								name="repoUrl"
+								name="gitUrl"
 								render={({ field }) => (
 									<RepositorySelector
 										value={field.value}
@@ -349,49 +375,51 @@ export function ByoChartDialog({
 									/>
 								)}
 							/>
-							{errors.repoUrl ? (
-								<p className="text-xs text-destructive">{errors.repoUrl.message}</p>
+							{errors.gitUrl ? (
+								<p role="alert" className="text-xs text-destructive">
+									{errors.gitUrl.message}
+								</p>
 							) : (
 								<>
 									<p className="text-xs text-muted-foreground">
-										From the git providers you&apos;ve linked. No provider yet? The selector
-										offers a connect step — identity comes from your existing connectors, no new
-										login.
+										From the git providers you&apos;ve linked. No provider yet? The selector offers
+										a connect step and brings you back here with what you typed.
 									</p>
 									<p className="text-xs text-muted-foreground">
 										No chart of your own yet? Switch the selector to manual entry and paste{" "}
-										<code>{STARTER_CHART_REPO_URL}</code> — a public starter chart that honours
-										the BYO contract, with its chart at{" "}
-										<code>{STARTER_CHART_PATH}</code>.
+										<code>{STARTER_CHART_REPO_URL}</code> — a public starter chart that honours the
+										BYO contract, with its chart at <code>{STARTER_CHART_PATH}</code>.
 									</p>
 								</>
 							)}
-						</div>
-					)}
+						</>
+					) : null}
 
-					{steps[step] === "Registry" && (
+					{step === "registry" ? (
 						<div className="flex flex-col gap-2">
 							<Label htmlFor="byo-chart-oci">Chart reference</Label>
 							<Input
 								id="byo-chart-oci"
-								{...register("repoUrl")}
+								{...register("ociRef")}
 								placeholder={EXAMPLE_OCI_CHART_REF}
 								className="font-mono"
-								aria-invalid={errors.repoUrl ? true : undefined}
+								aria-invalid={errors.ociRef ? true : undefined}
 								autoFocus
 							/>
-							{errors.repoUrl ? (
-								<p className="text-xs text-destructive">{errors.repoUrl.message}</p>
+							{errors.ociRef ? (
+								<p role="alert" className="text-xs text-destructive">
+									{errors.ociRef.message}
+								</p>
 							) : (
 								<p className="text-xs text-muted-foreground">
 									The whole path including the chart name — host, namespace, chart.
 								</p>
 							)}
-							<OciCredentialNote url={repoUrl} />
+							<OciCredentialNote url={ociRef} />
 						</div>
-					)}
+					) : null}
 
-					{steps[step] === "Chart path" && (
+					{step === "chart-path" ? (
 						<div className="flex flex-col gap-2">
 							<Label htmlFor="byo-chart-path">Chart path</Label>
 							<Input
@@ -403,7 +431,9 @@ export function ByoChartDialog({
 								autoFocus
 							/>
 							{errors.chartPath ? (
-								<p className="text-xs text-destructive">{errors.chartPath.message}</p>
+								<p role="alert" className="text-xs text-destructive">
+									{errors.chartPath.message}
+								</p>
 							) : (
 								<p className="text-xs text-muted-foreground">
 									The directory inside the repo that contains <code>Chart.yaml</code> —{" "}
@@ -412,9 +442,9 @@ export function ByoChartDialog({
 								</p>
 							)}
 						</div>
-					)}
+					) : null}
 
-					{(steps[step] === "Ref" || steps[step] === "Version") && (
+					{step === "ref" ? (
 						<div className="flex flex-col gap-2">
 							<Label htmlFor="byo-chart-ref">{isOci ? "Chart version" : "Git ref"}</Label>
 							<Input
@@ -422,25 +452,32 @@ export function ByoChartDialog({
 								{...register("ref")}
 								placeholder={isOci ? "1.4.2 (default: * = latest)" : "main (default: HEAD)"}
 								className="font-mono"
+								aria-invalid={errors.ref ? true : undefined}
 								autoFocus
 							/>
-							<p className="text-xs text-muted-foreground">
-								{isOci ? (
-									<>
-										The chart version ArgoCD pulls. Leave blank for <code>*</code> — the latest
-										published version.
-									</>
-								) : (
-									<>
-										Branch, tag, or commit ArgoCD tracks. Leave blank for <code>HEAD</code>.
-									</>
-								)}
-							</p>
+							{errors.ref ? (
+								<p role="alert" className="text-xs text-destructive">
+									{errors.ref.message}
+								</p>
+							) : (
+								<p className="text-xs text-muted-foreground">
+									{isOci ? (
+										<>
+											The chart version ArgoCD pulls. Leave blank for <code>*</code> — the latest
+											published version.
+										</>
+									) : (
+										<>
+											Branch, tag, or commit ArgoCD tracks. Leave blank for <code>HEAD</code>.
+										</>
+									)}
+								</p>
+							)}
 						</div>
-					)}
+					) : null}
 
-					{steps[step] === "Review" && (
-						<div className="flex flex-col gap-3">
+					{step === "review" ? (
+						<>
 							<div className="grid grid-cols-2 gap-3">
 								<div className="flex flex-col gap-1.5">
 									<Label htmlFor="byo-chart-name">Name</Label>
@@ -449,7 +486,13 @@ export function ByoChartDialog({
 										{...register("name")}
 										placeholder={defaultNameFromRepo(effectiveUrl)}
 										className="font-mono"
+										aria-invalid={errors.name ? true : undefined}
 									/>
+									{errors.name ? (
+										<p role="alert" className="text-xs text-destructive">
+											{errors.name.message}
+										</p>
+									) : null}
 								</div>
 								<div className="flex flex-col gap-1.5">
 									<Label htmlFor="byo-chart-ns">Namespace</Label>
@@ -461,7 +504,9 @@ export function ByoChartDialog({
 										aria-invalid={errors.namespace ? true : undefined}
 									/>
 									{errors.namespace ? (
-										<p className="text-xs text-destructive">{errors.namespace.message}</p>
+										<p role="alert" className="text-xs text-destructive">
+											{errors.namespace.message}
+										</p>
 									) : null}
 								</div>
 							</div>
@@ -472,7 +517,15 @@ export function ByoChartDialog({
 									{...register("valuesYaml")}
 									placeholder={"replicaCount: 2\nimage:\n  tag: v1.2.3"}
 									className="h-24 font-mono text-xs"
+									aria-invalid={errors.valuesYaml ? true : undefined}
 								/>
+								{errors.valuesYaml ? (
+									<p role="alert" className="text-xs text-destructive">
+										{errors.valuesYaml.message}
+									</p>
+								) : (
+									<p className="text-xs text-muted-foreground">{HELM_VALUES_NOT_KEPT}</p>
+								)}
 							</div>
 							<div className="rounded-md border border-border bg-muted/40 p-3 font-mono text-ui-xs text-muted-foreground">
 								<div className="text-foreground">{effectiveName}</div>
@@ -482,54 +535,41 @@ export function ByoChartDialog({
 								</div>
 								<div>namespace {effectiveNs} · manual sync</div>
 							</div>
-						</div>
-					)}
+						</>
+					) : null}
+
+					<WizardFormError message={wizard.formError} />
 				</div>
 
-				{refusal && (
-					<Alert variant="destructive">
-						<AlertDescription>{refusal}</AlertDescription>
-					</Alert>
-				)}
+				<WizardFooter
+					back={wizard.stepNumber > 1 ? wizard.back : null}
+					primary={
+						wizard.isLast
+							? { kind: "submit", label: "Attach chart", onPress: () => void wizard.submit() }
+							: { kind: "next", label: "Next", onPress: () => void wizard.next() }
+					}
+					pending={pending}
+				/>
+			</form>
+		</FormProvider>
+	);
+}
 
-				<div className="flex items-center justify-between">
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						onClick={() => (step === 0 ? close(false) : setStep((s) => s - 1))}
-						disabled={isSubmitting || attach.isPending}
-					>
-						{step === 0 ? (
-							"Cancel"
-						) : (
-							<>
-								<ArrowLeft className="h-3.5 w-3.5" /> Back
-							</>
-						)}
-					</Button>
-					{step < lastStep ? (
-						<Button type="button" size="sm" onClick={next}>
-							Next <ArrowRight className="h-3.5 w-3.5" />
-						</Button>
-					) : (
-						<Button
-							type="button"
-							size="sm"
-							onClick={handleSubmit(onSubmit)}
-							disabled={isSubmitting || attach.isPending}
-						>
-							{isSubmitting || attach.isPending ? (
-								<Loader2 className="h-3.5 w-3.5 animate-spin" />
-							) : (
-								<Check className="h-3.5 w-3.5" />
-							)}
-							Attach chart
-						</Button>
-					)}
-				</div>
-			</DialogContent>
-		</Dialog>
+/** The dialog while the wizard reads its draft: the header, the rail and the step's frame. */
+function ByoChartWizardSkeleton() {
+	return (
+		<div aria-busy="true" className="flex flex-col gap-4">
+			<ByoChartHeader source="git" />
+			<Stepper label={STEPPER_LABEL} items={FIRST_STEP_ITEMS} />
+			<div className={STEP_BODY}>
+				<Skeleton className="h-5 w-40" />
+				<Skeleton className="h-16 w-full" />
+				<Skeleton className="h-16 w-full" />
+			</div>
+			<div className="flex items-center justify-end">
+				<Skeleton className="h-9 w-20" />
+			</div>
+		</div>
 	);
 }
 
@@ -540,7 +580,7 @@ export function ByoChartDialog({
  * cheaper. Silent for a public registry, which needs no credential at all.
  */
 function OciCredentialNote({ url }: { url: string }) {
-	const nodes = useCanvasStore((s) => s.nodes);
+	const nodes = useDesignNodes();
 	const connected = useConnectedProviders("helm_registry");
 	const host = ociHostOf(url.trim());
 

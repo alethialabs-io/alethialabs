@@ -33,6 +33,16 @@ filing.
 | Noto Sans | Fallback/localized typography | SIL OFL 1.1 |
 | Lucide | Interface icons | ISC |
 | Base UI, Radix, shadcn-derived code | Component primitives | Upstream permissive licences; local modifications remain recorded in Git |
+| Founder portrait (`packages/assets/static/mkt-assets/about/borislav-borisov.jpg`) | `/about` | Commissioned studio photograph (Canon, 2026-02-23), paid for by the founder, who holds the rights to use it; cropped and resized in-house, shown in grayscale by CSS. No GPS metadata. |
+
+## Marketing media
+
+| Asset | Creator and tooling | Date | Licence and notes |
+|---|---|---|---|
+| `packages/assets/static/mkt-assets/home/film-poster.jpg` | A still rendered from code in the Alethia film project (Remotion 4.0.540, composition `Poster`). The code was written with Claude (Anthropic) under the founder's direction. No image- or video-generation model was used; the picture is drawn by the code. | 2026-11-21 | Owned by Alethia Labs. Remotion is free for companies of up to three people; a company licence is needed above that. |
+
+The home page follows anthropic.com's section order (statement, film, announcements, posts) at the
+maintainer's direction. That is a layout pattern: no copy, imagery or code was taken from it.
 
 ## Logo evidence
 

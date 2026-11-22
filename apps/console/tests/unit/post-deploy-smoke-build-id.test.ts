@@ -49,20 +49,31 @@ const PUBLIC_HOST = "alethialabs.io";
 /** One matcher condition; a matcher is the AND of its conditions. */
 type Condition =
 	| { kind: "path"; patterns: string[] }
+	| { kind: "path_regexp"; pattern: RegExp }
 	| { kind: "host"; hosts: string[] }
 	| { kind: "header" };
 
-/** A `handle` block: its conditions (empty for the catch-all) and the upstream it proxies to. */
+/** A `handle` block: its conditions (empty for the catch-all) and the upstream it proxies to — or
+ * {@link REDIRECT} for a block that answers with `redir` and proxies nowhere. */
 interface Route {
 	label: string;
 	conditions: Condition[] | null;
 	upstream: string;
 }
 
-/** Parses one matcher line (`path /a /b`, `host x`, `header_regexp …`) into a condition. */
+/** The upstream recorded for a `handle` block that redirects instead of proxying. */
+const REDIRECT = "(redirect)";
+
+/** Parses one matcher line (`path /a /b`, `path_regexp [name] re`, `host x`, `header_regexp …`) into a condition. */
 function parseCondition(line: string): Condition {
 	const [kind, ...args] = line.trim().split(/\s+/);
 	if (kind === "path") return { kind: "path", patterns: args };
+	if (kind === "path_regexp") {
+		// Caddy's form is `path_regexp [<name>] <regexp>`: the regexp is always the last argument.
+		const source = args.at(-1);
+		if (!source) throw new Error("Caddyfile.tunnel has a path_regexp matcher with no pattern");
+		return { kind: "path_regexp", pattern: new RegExp(source) };
+	}
 	if (kind === "host") return { kind: "host", hosts: args };
 	if (kind === "header" || kind === "header_regexp") return { kind: "header" };
 	throw new Error(`Caddyfile.tunnel uses matcher "${kind}", which this resolver cannot read`);
@@ -100,12 +111,16 @@ function parseRoutes(caddyfile: string): Route[] {
 		if (handle) {
 			const arg = handle[1];
 			let upstream: string | null = null;
+			let redirects = false;
 			i += 1;
 			while (lines[i].trim() !== "}") {
 				const proxy = /^reverse_proxy\s+(\S+)$/.exec(lines[i].trim());
 				if (proxy) upstream = proxy[1];
+				if (/^redir\s/.test(lines[i].trim())) redirects = true;
 				i += 1;
 			}
+			if (upstream && redirects) throw new Error(`handle ${arg ?? "{}"} both proxies and redirects`);
+			if (!upstream && redirects) upstream = REDIRECT;
 			if (!upstream) throw new Error(`handle ${arg ?? "{}"} has no reverse_proxy`);
 			let conditions: Condition[] | null = null;
 			if (arg?.startsWith("@")) {
@@ -141,6 +156,7 @@ function pathMatches(pattern: string, pathname: string): boolean {
 /** Whether an anonymous request (no cookies) for `host` + `pathname` satisfies a condition. */
 function conditionHolds(c: Condition, host: string, pathname: string): boolean {
 	if (c.kind === "path") return c.patterns.some((p) => pathMatches(p, pathname));
+	if (c.kind === "path_regexp") return c.pattern.test(pathname);
 	if (c.kind === "host") return c.hosts.includes(host);
 	return false;
 }
@@ -196,6 +212,15 @@ describe("the edge resolver can tell the apps apart (the controls)", () => {
 		expect(upstreamFor("/legal/dpa")).toBe("marketing:3000");
 		expect(upstreamFor("/docs/cli")).toBe("docs:3000");
 		expect(upstreamFor("/dashboard")).toBe("app:3000");
+	});
+
+	it("serves News from the blog app and redirects only the old /blog segment", () => {
+		expect(upstreamFor("/news")).toBe("blog:3000");
+		expect(upstreamFor("/news/feed.xml")).toBe("blog:3000");
+		expect(upstreamFor("/blog")).toBe(REDIRECT);
+		expect(upstreamFor("/blog/feed.xml")).toBe(REDIRECT);
+		// The anchored pattern must not swallow a path that merely starts with "blog".
+		expect(upstreamFor("/blogroll")).not.toBe(REDIRECT);
 	});
 
 	it("names the console image as the `app` service production runs", () => {

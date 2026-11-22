@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -160,8 +161,8 @@ func (s jobSelector) validate() error {
 		v := *f.Target(&s)
 		allowed := f.Allowed()
 		if !containsFold(allowed, v) {
-			return fmt.Errorf("--%s %q is not a job %s (want one of: %s)",
-				f.Flag, v, f.Flag, strings.Join(allowed, ", "))
+			return clierr.New(clierr.CodeInvalidFlag, fmt.Sprintf("--%s %q is not a job %s (want one of: %s)",
+				f.Flag, v, f.Flag, strings.Join(allowed, ", ")))
 		}
 	}
 	return nil
@@ -295,11 +296,14 @@ type jobRef struct {
 // The narrowing flags are listed FROM THE SPEC. A hand-typed list here would be a fourth
 // rendering of the spec that nothing keeps in step, and the reader of this message is exactly
 // the person who cannot afford to be told about two of the three flags that exist.
-var errJobIDRequired = errors.New(
-	"no job id given, and the picker cannot be shown: " +
-		"pass the job id, or --latest to take the most recent job (narrow it with " +
-		strings.Join(jobSelectorFlagNames(), "/") + ")",
-)
+var errJobIDRequired = func() *clierr.Error {
+	e := clierr.New(clierr.CodeInputRequired,
+		"no job id given, and the picker cannot be shown: "+
+			"pass the job id, or --latest to take the most recent job (narrow it with "+
+			strings.Join(jobSelectorFlagNames(), "/")+")")
+	e.Hint = "alethia jobs list"
+	return e
+}()
 
 // jobSelectorFlagNames renders the narrowing flags as `--type`, `--status`, `--project`.
 func jobSelectorFlagNames() []string {
@@ -336,12 +340,14 @@ func resolveJob(client jobLister, args []string, sel jobSelector) (jobRef, error
 func resolveJobIn(client jobLister, args []string, sel jobSelector, scope jobScope) (jobRef, error) {
 	if len(args) > 0 && args[0] != "" {
 		if sel.latest {
-			return jobRef{}, fmt.Errorf("pass a job id or --latest, not both (%q was given)", args[0])
+			return jobRef{}, clierr.New(clierr.CodeInvalidUsage,
+				fmt.Sprintf("pass a job id or --latest, not both (%q was given)", args[0]))
 		}
 		if narrowed := sel.describe(); narrowed != "" {
 			// Silently ignoring the narrowing would be the worse answer: `jobs logs <id> --type
 			// DEPLOY` on a PLAN job would print the PLAN's logs and look like it had filtered.
-			return jobRef{}, fmt.Errorf("a job id selects one job, so %s cannot also apply — drop the id, or drop the narrowing", narrowed)
+			return jobRef{}, clierr.New(clierr.CodeInvalidUsage,
+				fmt.Sprintf("a job id selects one job, so %s cannot also apply — drop the id, or drop the narrowing", narrowed))
 		}
 		return jobRef{ID: args[0]}, nil
 	}
@@ -354,7 +360,10 @@ func resolveJobIn(client jobLister, args []string, sel jobSelector, scope jobSco
 		// disabled" and "the stream the prompt draws on is redirected" have different next
 		// steps, and this message can only carry the half it knows.
 		if err := requireInteractiveForm(); err != nil {
-			return jobRef{}, fmt.Errorf("%w (%w)", errJobIDRequired, err)
+			missing := *errJobIDRequired
+			missing.Message = fmt.Sprintf("%s (%v)", errJobIDRequired.Message, err)
+			missing.Cause = errors.Join(errJobIDRequired, err)
+			return jobRef{}, &missing
 		}
 	}
 
@@ -371,7 +380,9 @@ func resolveJobIn(client jobLister, args []string, sel jobSelector, scope jobSco
 		if scope.applies(sel) {
 			noun = scope.describe()
 		}
-		return jobRef{}, fmt.Errorf("no %s %s — run `alethia jobs list` to see what there is", noun, where)
+		none := clierr.New(clierr.CodeNotFound, fmt.Sprintf("no %s %s", noun, where))
+		none.Hint = "alethia jobs list"
+		return jobRef{}, none
 	}
 
 	if sel.latest {

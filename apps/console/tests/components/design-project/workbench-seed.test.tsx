@@ -6,7 +6,8 @@
 // revalidate, a sibling mutation or an env poll re-ran `setGraph`, closed the open card and
 // discarded every unsaved edit. It is now keyed on [project, environment, content revision], and
 // each project:environment persists its draft in its own sessionStorage slot. These drive the
-// component the way the page does — re-render with new props — and read the store.
+// component the way the page does — re-render with new props — and read the board of the
+// environment on screen (`boardFor(scope)`: each project:environment has its own board).
 
 import { act, render, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -15,7 +16,9 @@ import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { SourceProjectData } from "@/components/design-project/source-project";
 import { buildDefaultFormValues } from "@/components/design-project/source-project";
 import { draftScope } from "@/lib/canvas/design-revision";
-import { draftStorageKey, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { boardFor } from "@/lib/canvas/store/board";
+import { draftStorageKey } from "@/lib/canvas/store/draft-persist";
+import { boardCard, boardNodes, isBoardDirty } from "@/tests/fixtures/canvas/board";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 
 // The board itself is another lane's concern and drags in xyflow + every card; the seed effect
@@ -62,20 +65,34 @@ function serverDesign(databases: ProjectFormData["databases"] = [ORDERS]): Sourc
 	};
 }
 
-/** The port the `database-orders` node currently holds in the store. */
+/** The environment on screen: the scope the last `seeded` waited for. */
+let onScreen = "proj-1:env-a";
+
+/** The board of the environment on screen. */
+function current() {
+	return boardFor(onScreen);
+}
+
+/** The document of the environment on screen. */
+function doc() {
+	return current().document.getState();
+}
+
+/** The port the `database-orders` node currently holds on the board on screen. */
 function ordersPort(): unknown {
-	const node = useCanvasStore.getState().nodes.find((n) => n.id === "database-orders");
+	const node = boardNodes(current()).find((n) => n.id === "database-orders");
 	return node && "port" in node.data.config ? node.data.config.port : undefined;
 }
 
-/** Ids of the nodes in the store, in order. */
+/** Ids of the nodes on the board on screen, in order. */
 function nodeIds(): string[] {
-	return useCanvasStore.getState().nodes.map((n) => n.id);
+	return boardNodes(current()).map((n) => n.id);
 }
 
-/** Wait for the async seed (switch scope → rehydrate → reseed) to land for `scope`. */
+/** Wait for the async seed (open the scope's draft slot → reseed) to land for `scope`. */
 async function seeded(scope: string) {
-	await waitFor(() => expect(useCanvasStore.getState().seed?.scope).toBe(scope));
+	onScreen = scope;
+	await waitFor(() => expect(boardFor(scope).document.getState().seed?.scope).toBe(scope));
 }
 
 function Workbench({
@@ -98,9 +115,10 @@ function Workbench({
 }
 
 beforeEach(() => {
-	// Reset first: persist writes every `set` to whichever slot the previous test left it on.
-	useCanvasStore.getState().reset();
+	// Reset first: a board writes every change to its draft slot, so the slots are cleared after.
+	for (const scope of ["proj-1:env-a", "proj-1:env-b"]) boardFor(scope).reset();
 	sessionStorage.clear();
+	onScreen = "proj-1:env-a";
 });
 
 describe("DesignProjectWorkbench seeding", () => {
@@ -108,8 +126,17 @@ describe("DesignProjectWorkbench seeding", () => {
 		render(<Workbench source={serverDesign()} />);
 		await seeded("proj-1:env-a");
 		expect(nodeIds()).toContain("database-orders");
-		expect(useCanvasStore.getState().dirty).toBe(false);
+		expect(isBoardDirty(current())).toBe(false);
 		expect(sessionStorage.getItem(draftStorageKey("proj-1:env-a"))).not.toBeNull();
+	});
+
+	it("the board it seeds is that environment's own, not the board outside a workbench", async () => {
+		render(<Workbench source={serverDesign()} environmentId="env-a" />);
+		await seeded("proj-1:env-a");
+		expect(boardFor("proj-1:env-b").document.getState().seed).toBeNull();
+		expect(boardNodes(boardFor("proj-1:env-b")).map((n) => n.id)).not.toContain(
+			"database-orders",
+		);
 	});
 
 	it("an identical-content re-render is not a re-seed: the open card and the edit survive", async () => {
@@ -117,10 +144,10 @@ describe("DesignProjectWorkbench seeding", () => {
 		await seeded("proj-1:env-a");
 
 		act(() => {
-			useCanvasStore.getState().openInspector("database-orders");
-			useCanvasStore.getState().updateNodeConfig("database-orders", { port: 6543 });
+			current().view.getState().openInspector("database-orders");
+			doc().updateNodeConfig("database-orders", { port: 6543 });
 		});
-		const draft = useCanvasStore.getState().nodes;
+		const draft = doc().designNodes;
 
 		// The page re-rendered: same design, NEW object (and a new identities array too).
 		await act(async () => {
@@ -130,59 +157,56 @@ describe("DesignProjectWorkbench seeding", () => {
 			rerender(<Workbench source={serverDesign()} />);
 		});
 
-		const s = useCanvasStore.getState();
-		expect(s.nodes).toBe(draft);
+		expect(doc().designNodes).toBe(draft);
 		expect(ordersPort()).toBe(6543);
-		expect(s.card).toEqual({ kind: "inspector", nodeId: "database-orders" });
-		expect(s.dirty).toBe(true);
+		expect(boardCard(current())).toEqual({ kind: "inspector", nodeId: "database-orders" });
+		expect(isBoardDirty(current())).toBe(true);
 	});
 
 	it("a changed design while the draft is dirty moves the baseline only and keeps the draft", async () => {
 		const { rerender } = render(<Workbench source={serverDesign()} />);
 		await seeded("proj-1:env-a");
-		const firstRevision = useCanvasStore.getState().seed?.revision;
+		const firstRevision = doc().seed?.revision;
 
 		act(() => {
-			useCanvasStore.getState().openInspector("database-orders");
-			useCanvasStore.getState().updateNodeConfig("database-orders", { port: 6543 });
+			current().view.getState().openInspector("database-orders");
+			doc().updateNodeConfig("database-orders", { port: 6543 });
 		});
-		const draft = useCanvasStore.getState().nodes;
+		const draft = doc().designNodes;
 
 		// The server design moved: someone added a table.
 		await act(async () => {
 			rerender(<Workbench source={serverDesign([ORDERS, { ...ORDERS, name: "audit" }])} />);
 		});
 		await waitFor(() =>
-			expect(useCanvasStore.getState().seed?.revision).not.toBe(firstRevision),
+			expect(doc().seed?.revision).not.toBe(firstRevision),
 		);
 
-		const s = useCanvasStore.getState();
-		expect(s.nodes).toBe(draft);
+		expect(doc().designNodes).toBe(draft);
 		expect(ordersPort()).toBe(6543);
-		expect(s.card).toEqual({ kind: "inspector", nodeId: "database-orders" });
-		expect(s.baseline.map((n) => n.id)).toContain("database-audit");
-		expect(s.nodes.map((n) => n.id)).not.toContain("database-audit");
+		expect(boardCard(current())).toEqual({ kind: "inspector", nodeId: "database-orders" });
+		expect(doc().baseline.map((n) => n.id)).toContain("database-audit");
+		expect(nodeIds()).not.toContain("database-audit");
 	});
 
 	it("a changed design on a clean draft replaces the graph and keeps the card on a surviving node", async () => {
 		const { rerender } = render(<Workbench source={serverDesign()} />);
 		await seeded("proj-1:env-a");
-		act(() => useCanvasStore.getState().openInspector("database-orders"));
+		act(() => current().view.getState().openInspector("database-orders"));
 
 		await act(async () => {
 			rerender(<Workbench source={serverDesign([ORDERS, { ...ORDERS, name: "audit" }])} />);
 		});
 		await waitFor(() => expect(nodeIds()).toContain("database-audit"));
 
-		const s = useCanvasStore.getState();
-		expect(s.card).toEqual({ kind: "inspector", nodeId: "database-orders" });
-		expect(s.dirty).toBe(false);
+		expect(boardCard(current())).toEqual({ kind: "inspector", nodeId: "database-orders" });
+		expect(isBoardDirty(current())).toBe(false);
 	});
 
 	it("each environment has its own draft slot, and switching back restores the edit", async () => {
 		const { rerender } = render(<Workbench source={serverDesign()} environmentId="env-a" />);
 		await seeded("proj-1:env-a");
-		act(() => useCanvasStore.getState().updateNodeConfig("database-orders", { port: 6543 }));
+		act(() => doc().updateNodeConfig("database-orders", { port: 6543 }));
 
 		// The topbar env switcher: the page re-renders with env-b's design.
 		const envB = serverDesign([{ ...ORDERS, name: "reports" }]);
@@ -192,7 +216,7 @@ describe("DesignProjectWorkbench seeding", () => {
 		await seeded("proj-1:env-b");
 		expect(nodeIds()).toContain("database-reports");
 		expect(nodeIds()).not.toContain("database-orders");
-		expect(useCanvasStore.getState().dirty).toBe(false);
+		expect(isBoardDirty(current())).toBe(false);
 
 		expect(sessionStorage.getItem(draftStorageKey(draftScope("proj-1", "env-a")))).not.toBeNull();
 		expect(sessionStorage.getItem(draftStorageKey(draftScope("proj-1", "env-b")))).not.toBeNull();
@@ -203,13 +227,13 @@ describe("DesignProjectWorkbench seeding", () => {
 		});
 		await seeded("proj-1:env-a");
 		expect(ordersPort()).toBe(6543);
-		expect(useCanvasStore.getState().dirty).toBe(true);
+		expect(isBoardDirty(current())).toBe(true);
 	});
 
 	it("a switch that overtakes an in-flight switch settles on the environment the user is on", async () => {
 		const { rerender } = render(<Workbench source={serverDesign()} environmentId="env-a" />);
 		await seeded("proj-1:env-a");
-		act(() => useCanvasStore.getState().updateNodeConfig("database-orders", { port: 6543 }));
+		act(() => doc().updateNodeConfig("database-orders", { port: 6543 }));
 
 		const envB = serverDesign([{ ...ORDERS, name: "reports" }]);
 		// Two renders before either switch resolves: b, then straight back to a.
@@ -218,31 +242,30 @@ describe("DesignProjectWorkbench seeding", () => {
 			rerender(<Workbench source={serverDesign()} environmentId="env-a" />);
 		});
 		await waitFor(() => expect(nodeIds()).toContain("database-orders"));
-		const s = useCanvasStore.getState();
-		expect(s.seed?.scope).toBe("proj-1:env-a");
+		expect(doc().seed?.scope).toBe("proj-1:env-a");
 		expect(nodeIds()).not.toContain("database-reports");
 		// The stale b-switch never seeded, and a's own slot came back with the edit.
 		expect(ordersPort()).toBe(6543);
-		expect(s.dirty).toBe(true);
+		expect(isBoardDirty(current())).toBe(true);
 	});
 
 	it("a project's draft survives a remount", async () => {
 		const first = render(<Workbench source={serverDesign()} />);
 		await seeded("proj-1:env-a");
 
-		act(() => useCanvasStore.getState().updateNodeConfig("database-orders", { port: 6543 }));
+		act(() => doc().updateNodeConfig("database-orders", { port: 6543 }));
 		first.unmount();
 
-		// A reload: the in-memory store is gone but the sessionStorage slot is not. Reset the store
+		// A reload: the in-memory board is gone but the sessionStorage slot is not. Reset the board
 		// under a throwaway key so the reset itself does not overwrite the slot being tested.
 		const blob = sessionStorage.getItem(draftStorageKey("proj-1:env-a"));
 		expect(blob).not.toBeNull();
-		useCanvasStore.persist.setOptions({ name: "throwaway" });
-		useCanvasStore.getState().reset();
+		current().setDraftKey("throwaway");
+		current().reset();
 		expect(sessionStorage.getItem(draftStorageKey("proj-1:env-a"))).toBe(blob);
 		render(<Workbench source={serverDesign()} />);
 		await seeded("proj-1:env-a");
 		expect(ordersPort()).toBe(6543);
-		expect(useCanvasStore.getState().dirty).toBe(true);
+		expect(isBoardDirty(current())).toBe(true);
 	});
 });

@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import type React from "react";
 import { Suspense, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle, Loader2, XCircle } from "lucide-react";
 import { Button } from "@repo/ui/button";
@@ -12,6 +14,8 @@ import {
 	isValidUserCode,
 	serverErrorMessage,
 } from "@/lib/auth/cli-device-code";
+import { signInHref } from "@/lib/auth/sign-in-href";
+import { AUTH } from "@/lib/copy/vocabulary";
 import { useCliAccount } from "./cli-session";
 import {
 	CliRequestClosed,
@@ -64,10 +68,15 @@ function CliLoginContent() {
 	const [stage, setStage] = useState<Stage>(
 		linkIsWellFormed ? "confirm" : "error",
 	);
-	const [error, setError] = useState(
+	const [failure, setFailure] = useState<CliFailure>(
 		linkIsWellFormed
-			? ""
-			: "This link is not a valid CLI login request. Run `alethia login` and open the link it prints.",
+			? { action: "approve", message: "", signedOut: false }
+			: {
+					action: "link",
+					message:
+						"This link is not a valid CLI login request. Run `alethia login` and open the link it prints.",
+					signedOut: false,
+				},
 	);
 
 	// #3889. The server's description of what is being approved — which account, what is handed
@@ -130,13 +139,21 @@ function CliLoginContent() {
 
 			if (!response.ok) {
 				const body: unknown = await response.json().catch(() => null);
-				setError(serverErrorMessage(body, "Failed to approve device."));
+				setFailure({
+					action: "approve",
+					message: serverErrorMessage(body, "Failed to approve device."),
+					signedOut: response.status === 401,
+				});
 				setStage("error");
 				return;
 			}
 			setStage("approved");
 		} catch {
-			setError("Could not reach the control plane. Please try again.");
+			setFailure({
+				action: "approve",
+				message: "Could not reach the control plane. Please try again.",
+				signedOut: false,
+			});
 			setStage("error");
 		}
 	}
@@ -163,8 +180,10 @@ function CliLoginContent() {
 			});
 			if (!response.ok) {
 				const body: unknown = await response.json().catch(() => ({}));
-				setError(
-					serverErrorMessage(
+				setFailure({
+					action: "decline",
+					signedOut: response.status === 401,
+					message: serverErrorMessage(
 						body,
 						// NOT the approval fallback. A deny that fails with a body carrying no
 						// `error` — a 502 HTML page from the proxy, a Next error page, an edge
@@ -174,15 +193,18 @@ function CliLoginContent() {
 						// thing for the same reason.
 						"Could not record the refusal. Close your terminal to be sure nothing is shared.",
 					),
-				);
+				});
 				setStage("error");
 				return;
 			}
 			setStage("declined");
 		} catch {
-			setError(
-				"Could not reach the control plane to record the refusal. Close your terminal to be sure nothing is shared.",
-			);
+			setFailure({
+				action: "decline",
+				message:
+					"Could not reach the control plane to record the refusal. Close your terminal to be sure nothing is shared.",
+				signedOut: false,
+			});
 			setStage("error");
 		}
 	}
@@ -190,168 +212,263 @@ function CliLoginContent() {
 	if (stage === "confirm" || stage === "approving" || stage === "declining") {
 		const busy = stage === "approving" || stage === "declining";
 		return (
-			<div className="flex flex-col gap-6">
-				<div className="space-y-2 text-center">
-					<p className="text-sm font-medium text-text-primary">
-						Confirm the code from your terminal
-					</p>
-					<p className="text-xs text-text-secondary">
-						A device is asking to sign in to your account. Approve it only if this
-						code matches the one <code>alethia login</code> printed.
-					</p>
-				</div>
+			<CliStageFrame announcement={stageAnnouncement(stage)}>
+				<div className="flex flex-col gap-6">
+					<div className="space-y-2 text-center">
+						<p className="text-sm font-medium text-text-primary">
+							Confirm the code from your terminal
+						</p>
+						<p className="text-xs text-text-secondary">
+							A device is asking to sign in to your account. Approve it only if this
+							code matches the one <code>alethia login</code> printed.
+						</p>
+					</div>
 
-				{/* The code is set at a display size rather than at a `--text-ui-*` rung, and that
-				    is a decision rather than drift: the reader is character-matching this string
-				    against a terminal, one glyph at a time, and legibility of a code being typed
-				    is not reading type. It is the same call the maintainer made for the sign-in
-				    OTP input on 2026-09-02. `text-2xl` and not a hardcoded `text-[24px]`, so it
-				    stays on a scale rather than becoming a number this file invented.
+					{/* The code is set at a display size rather than at a `--text-ui-*` rung, and that
+					    is a decision rather than drift: the reader is character-matching this string
+					    against a terminal, one glyph at a time, and legibility of a code being typed
+					    is not reading type. It is the same call the maintainer made for the sign-in
+					    OTP input on 2026-09-02. `text-2xl` and not a hardcoded `text-[24px]`, so it
+					    stays on a scale rather than becoming a number this file invented.
 
-				    The REGISTERED code once one is known, and the link's only until then. They
-				    are equal by construction whenever both exist — `/api/auth/cli/request` 409s
-				    on a disagreement — and preferring the server's is what makes this plate mean
-				    "what the terminal printed" rather than "what the link said", which is the
-				    only reading under which comparing it by eye is worth anything. */}
-				<div
-					className="border border-border bg-surface-sunken py-4 text-center font-mono text-2xl tracking-[0.3em] text-text-primary"
-					aria-label="Device confirmation code"
-				>
-					{request.phase === "verified" ? request.view.user_code : userCode}
-				</div>
+					    The REGISTERED code once one is known, and the link's only until then. They
+					    are equal by construction whenever both exist — `/api/auth/cli/request` 409s
+					    on a disagreement — and preferring the server's is what makes this plate mean
+					    "what the terminal printed" rather than "what the link said", which is the
+					    only reading under which comparing it by eye is worth anything. */}
+					<div
+						className="border border-border bg-surface-sunken py-4 text-center font-mono text-2xl tracking-[0.3em] text-text-primary"
+						aria-label="Device confirmation code"
+					>
+						{request.phase === "verified" ? request.view.user_code : userCode}
+					</div>
 
-				{/* WHAT IS BEING APPROVED. This block used to be three `<li>`s written by hand in
-				    this file, plus a comment saying the requester and the deadline were "#3889's
-				    server half" and could not be shown. That half landed (#4035):
-				    `/api/auth/cli/request` answers with the scopes `deviceApprovalScopes` emits —
-				    the same function `/api/auth/cli/generate` reads when it decides which
-				    git-provider token to stash — along with the account, the requester and the
-				    pending deadline. The screen reads them rather than restating them, so a
-				    provider added to the stash cannot become a token this list never named.
+					{/* WHAT IS BEING APPROVED. This block used to be three `<li>`s written by hand in
+					    this file, plus a comment saying the requester and the deadline were "#3889's
+					    server half" and could not be shown. That half landed (#4035):
+					    `/api/auth/cli/request` answers with the scopes `deviceApprovalScopes` emits —
+					    the same function `/api/auth/cli/generate` reads when it decides which
+					    git-provider token to stash — along with the account, the requester and the
+					    pending deadline. The screen reads them rather than restating them, so a
+					    provider added to the stash cannot become a token this list never named.
 
-				    Every arm renders SOMETHING. There is no branch in which the panel is absent,
-				    because "no panel" and "a panel with nothing in it" are how a reader ends up
-				    consenting to a description that was never given. */}
-				{request.phase === "verified" && closedLifecycle === null ? (
-					<CliRequestDetails
-						view={request.view}
-						account={account}
-						remainingMs={remainingMs}
-					/>
-				) : closedLifecycle !== null ? (
-					<CliRequestClosed {...closedRequestCopy(closedLifecycle)} />
-				) : request.phase === "unverified" ? (
-					<CliRequestUnverified
-						reason={request.reason}
-						// `deviceApprovalScopes(null)` — the server's own words for the two tokens
-						// EVERY approval hands over, from the same function the route calls. What
-						// it cannot know without the server is whether a git-provider token joins
-						// them, and `CliRequestUnverified` says exactly that instead of guessing.
-						scopes={deviceApprovalScopes(null)}
-						account={account}
-					/>
-				) : request.phase === "refused" ? (
-					<CliRequestClosed
-						heading="Alethia will not approve this request"
-						body={request.reason}
-					/>
-				) : (
-					<CliRequestDetailsSkeleton />
-				)}
+					    Every arm renders SOMETHING. There is no branch in which the panel is absent,
+					    because "no panel" and "a panel with nothing in it" are how a reader ends up
+					    consenting to a description that was never given. */}
+					{request.phase === "verified" && closedLifecycle === null ? (
+						<CliRequestDetails
+							view={request.view}
+							account={account}
+							remainingMs={remainingMs}
+						/>
+					) : closedLifecycle !== null ? (
+						<CliRequestClosed {...closedRequestCopy(closedLifecycle)} />
+					) : request.phase === "unverified" ? (
+						<CliRequestUnverified
+							reason={request.reason}
+							// `deviceApprovalScopes(null)` — the server's own words for the two tokens
+							// EVERY approval hands over, from the same function the route calls. What
+							// it cannot know without the server is whether a git-provider token joins
+							// them, and `CliRequestUnverified` says exactly that instead of guessing.
+							scopes={deviceApprovalScopes(null)}
+							account={account}
+						/>
+					) : request.phase === "refused" ? (
+						<CliRequestClosed
+							heading="Alethia will not approve this request"
+							body={request.reason}
+						/>
+					) : (
+						<CliRequestDetailsSkeleton />
+					)}
 
-				<div className="flex flex-col gap-2">
-					{/* ABSENT rather than disabled where approval is not on offer. A greyed-out
-					    Approve invites the reader to look for the thing that would enable it,
-					    which on a refused or expired request is nothing — and on a still-loading
-					    one is a wait they should not be made to watch for. The refuse button
-					    stays in every case: refusing is the safe direction, `/api/auth/cli/deny`
-					    revokes an approval as well as pre-empting one, and its own failure is
-					    surfaced honestly by `declineDevice`. */}
-					{approvable ? (
-						<Button onClick={approveDevice} disabled={busy}>
-							{stage === "approving" ? (
+					<div className="flex flex-col gap-2">
+						{/* ABSENT rather than disabled where approval is not on offer. A greyed-out
+						    Approve invites the reader to look for the thing that would enable it,
+						    which on a refused or expired request is nothing — and on a still-loading
+						    one is a wait they should not be made to watch for. The refuse button
+						    stays in every case: refusing is the safe direction, `/api/auth/cli/deny`
+						    revokes an approval as well as pre-empting one, and its own failure is
+						    surfaced honestly by `declineDevice`. */}
+						{approvable ? (
+							<Button onClick={approveDevice} disabled={busy}>
+								{stage === "approving" ? (
+									<>
+										<Loader2 className="h-4 w-4 animate-spin" />
+										Approving…
+									</>
+								) : (
+									"Approve"
+								)}
+							</Button>
+						) : null}
+						<Button variant="ghost" onClick={declineDevice} disabled={busy}>
+							{stage === "declining" ? (
 								<>
 									<Loader2 className="h-4 w-4 animate-spin" />
-									Approving…
+									Recording…
 								</>
 							) : (
-								"Approve"
+								"This isn't me"
 							)}
 						</Button>
-					) : null}
-					<Button variant="ghost" onClick={declineDevice} disabled={busy}>
-						{stage === "declining" ? (
-							<>
-								<Loader2 className="h-4 w-4 animate-spin" />
-								Recording…
-							</>
-						) : (
-							"This isn't me"
-						)}
-					</Button>
-				</div>
+					</div>
 
-				<p className="text-center text-xs text-text-secondary">
-					If you did not start this sign-in, do not approve it.
-				</p>
-			</div>
+					<p className="text-center text-xs text-text-secondary">
+						If you did not start this sign-in, do not approve it.
+					</p>
+				</div>
+			</CliStageFrame>
 		);
 	}
 
 	if (stage === "approved") {
 		return (
-			<div className="flex flex-col items-center justify-center gap-4">
-				<div className="h-12 w-12 rounded-full bg-surface-muted flex items-center justify-center">
-					<CheckCircle className="h-6 w-6 text-text-primary" />
+			<CliStageFrame announcement={stageAnnouncement(stage)}>
+				<div className="flex flex-col items-center justify-center gap-4">
+					<div className="h-12 w-12 rounded-full bg-surface-muted flex items-center justify-center">
+						<CheckCircle className="h-6 w-6 text-text-primary" />
+					</div>
+					<div className="text-center space-y-1">
+						<p className="text-sm font-medium text-text-primary">
+							Authentication successful
+						</p>
+						<p className="text-xs text-text-secondary">
+							You can close this window and return to your terminal.
+						</p>
+					</div>
 				</div>
-				<div className="text-center space-y-1">
-					<p className="text-sm font-medium text-text-primary">
-						Authentication successful
-					</p>
-					<p className="text-xs text-text-secondary">
-						You can close this window and return to your terminal.
-					</p>
-				</div>
-			</div>
+			</CliStageFrame>
 		);
 	}
 
 	if (stage === "declined") {
 		return (
-			<div className="flex flex-col items-center justify-center gap-4">
-				<div className="h-12 w-12 rounded-full bg-surface-muted flex items-center justify-center">
-					<XCircle className="h-6 w-6 text-text-primary" />
+			<CliStageFrame announcement={stageAnnouncement(stage)}>
+				<div className="flex flex-col items-center justify-center gap-4">
+					<div className="h-12 w-12 rounded-full bg-surface-muted flex items-center justify-center">
+						<XCircle className="h-6 w-6 text-text-primary" />
+					</div>
+					<div className="text-center space-y-1">
+						<p className="text-sm font-medium text-text-primary">
+							Sign-in not approved
+						</p>
+						{/* This wording tracks the behaviour exactly, and it moved when the behaviour
+						    did. It used to promise only that nothing was approved, because the refusal
+						    was browser-local and that was all that was true. #3887 landed, so the
+						    refusal is now recorded, the polling CLI is told, and the link cannot be
+						    approved afterwards — all three are claims the server now backs. */}
+						<p className="text-xs text-text-secondary">
+							Nothing was shared, and the refusal has been recorded — the device has been
+							told, and this link cannot be approved later. You can close this window.
+						</p>
+					</div>
 				</div>
-				<div className="text-center space-y-1">
-					<p className="text-sm font-medium text-text-primary">
-						Sign-in not approved
-					</p>
-					{/* This wording tracks the behaviour exactly, and it moved when the behaviour
-					    did. It used to promise only that nothing was approved, because the refusal
-					    was browser-local and that was all that was true. #3887 landed, so the
-					    refusal is now recorded, the polling CLI is told, and the link cannot be
-					    approved afterwards — all three are claims the server now backs. */}
-					<p className="text-xs text-text-secondary">
-						Nothing was shared, and the refusal has been recorded — the device has been
-						told, and this link cannot be approved later. You can close this window.
-					</p>
-				</div>
-			</div>
+			</CliStageFrame>
 		);
 	}
 
+	// The failure names what failed — the link, the approval or the refusal — and offers the way on
+	// that fits it: another try where the request is still answerable, sign-in again where the
+	// session ended, and nothing to press for a link that never parsed (the instruction is the way on).
+	const copy = failureCopy(failure);
+	const retryable = failure.action !== "link" && !failure.signedOut;
 	return (
-		<div className="flex flex-col items-center justify-center gap-4">
-			<div className="h-12 w-12 rounded-full bg-destructive/10 flex items-center justify-center">
-				<XCircle className="h-6 w-6 text-destructive" />
+		<CliStageFrame announcement={stageAnnouncement(stage)}>
+			<div className="flex flex-col items-center justify-center gap-4">
+				<div className="flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
+					<XCircle className="h-6 w-6 text-destructive" aria-hidden="true" />
+				</div>
+				<div className="space-y-1 text-center">
+					<p className="text-sm font-medium text-text-primary">{copy.title}</p>
+					<p role="alert" className="text-xs text-destructive">
+						{failure.message}
+					</p>
+				</div>
+				{failure.signedOut ? (
+					<Button
+						nativeButton={false}
+						render={<Link href={signInHref(currentPathWithQuery(searchParams))} />}
+					>
+						{AUTH.signIn}
+					</Button>
+				) : retryable ? (
+					<Button variant="outline" onClick={() => setStage("confirm")}>
+						Try again
+					</Button>
+				) : null}
 			</div>
-			<div className="text-center space-y-1">
-				<p className="text-sm font-medium text-text-primary">
-					Authentication failed
-				</p>
-				<p className="text-xs text-destructive">{error}</p>
-			</div>
-		</div>
+		</CliStageFrame>
+	);
+}
+
+/** What went wrong, as the CLI screen's error stage reports it. */
+interface CliFailure {
+	/** What failed: the link itself, an approval, or a refusal. */
+	action: "link" | "approve" | "decline";
+	/** The sentence shown under the title. */
+	message: string;
+	/** The session ended before the request was answered (a 401), so signing in is the way on. */
+	signedOut: boolean;
+}
+
+/** The title for a failure — by what was attempted, never one sentence for all three. */
+function failureCopy(failure: CliFailure): { title: string } {
+	switch (failure.action) {
+		case "link":
+			return { title: "This sign-in link can’t be used" };
+		case "approve":
+			return { title: failure.signedOut ? "Sign in to approve" : "Approval failed" };
+		case "decline":
+			return { title: failure.signedOut ? "Sign in to refuse" : "Refusal not recorded" };
+	}
+}
+
+/** The sentence a screen reader hears when the stage changes; empty while nothing has happened. */
+function stageAnnouncement(stage: Stage): string {
+	switch (stage) {
+		case "confirm":
+			return "";
+		case "approving":
+			return "Approving…";
+		case "declining":
+			return "Recording the refusal…";
+		case "approved":
+			return "Approved. You can return to your terminal.";
+		case "declined":
+			return "Sign-in refused and recorded.";
+		case "error":
+			// Empty on purpose: the failure's sentence is a `role="alert"` of its own, which is
+			// announced as it appears, and a second region repeating it would be read twice.
+			return "";
+	}
+}
+
+/** This page's address with its query, so signing in again returns to the same request. */
+function currentPathWithQuery(searchParams: { toString(): string }): string {
+	const query = searchParams.toString();
+	return query ? `/cli/login?${query}` : "/cli/login";
+}
+
+/**
+ * Every stage renders inside this, so the polite live region is ONE node that survives stage
+ * changes: a region inserted together with its text is not reliably announced, and a stage change
+ * with no announcement left a screen-reader user on a screen that had silently become another.
+ */
+function CliStageFrame({
+	announcement,
+	children,
+}: {
+	announcement: string;
+	children: React.ReactNode;
+}) {
+	return (
+		<>
+			<p role="status" aria-live="polite" className="sr-only">
+				{announcement}
+			</p>
+			{children}
+		</>
 	);
 }
 
@@ -372,7 +489,10 @@ export default function CliLoginPage() {
 	return (
 		<>
 			<div className="mb-6 text-center">
-				<p className="vx-eyebrow">Device authorization</p>
+				{/* "Sign in" everywhere (R6 A-21): the heading is the route's own title, `layout.tsx`'s
+				    "Approve CLI sign-in", where it used to read "CLI Authentication" under a "Device
+				    authorization" eyebrow — three names for one screen. */}
+				<p className="vx-eyebrow">Alethia CLI</p>
 				{/* `text-display-xs` — the display rung for type rendered inside a shell,
 				    24/22/20px. It replaces this file's own `text-[22px]`, which was one of the five
 				    console sites sitting in the gap between the UI ladder's 17px top and the display
@@ -380,7 +500,7 @@ export default function CliLoginPage() {
 				    it to packages/brand/src/tokens.css's `@theme`, where it resolves today — four
 				    other console files already read it. */}
 				<h1 className="mt-2 font-grotesk text-display-xs font-semibold tracking-[-0.03em] text-text-primary">
-					CLI Authentication
+					Approve CLI sign-in
 				</h1>
 			</div>
 			{/* The same body `loading.tsx` draws. `useSearchParams` forces a client bailout, and

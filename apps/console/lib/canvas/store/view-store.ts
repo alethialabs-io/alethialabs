@@ -73,6 +73,11 @@ export interface ViewActions {
 	/** Legacy: return to the card a detour came from (no-op when there is none). */
 	goBackCard: () => void;
 	/**
+	 * Open the inspector on node `id`, or close the rail with null. Unlike `openCard`, the card a
+	 * detour came from is kept, so a node opened from the environment's settings can still go Back.
+	 */
+	openInspector: (id: string | null) => void;
+	/**
 	 * The node set changed (undo, redo, discard, remove, a moved server design). An inspector whose
 	 * node is gone closes, the selection drops the ids that are gone, and everything else stays —
 	 * undoing a move must not close the activity log.
@@ -244,6 +249,11 @@ export function createViewStore(): ViewStore {
 						}
 					: {},
 			),
+
+		openInspector: (id) => {
+			const card: WorkspaceCard | null = id ? { kind: "inspector", nodeId: id } : null;
+			set({ card, subject: subjectOfCard(card), tab: tabOfCard(card), focus: null });
+		},
 
 		reconcile: (nodes, options) =>
 			set((s) => {

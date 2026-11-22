@@ -76,17 +76,23 @@ test.describe("Deploy jobs — negative & empty states", () => {
 			timeout: 25_000,
 		});
 		await expect(
-			owner.page.getByText(/A cluster appears here once its environment's first deploy succeeds/i),
+			owner.page.getByText(/A cluster appears here once an environment's first deploy succeeds/i),
 		).toBeVisible();
+		// Its one action stays IN the project (#6819): every new project is here before its first
+		// deploy, and "Back to projects" was the only thing it used to be offered.
+		await expect(owner.page.getByRole("link", { name: "Open Architecture" })).toHaveAttribute(
+			"href",
+			`/${owner.orgSlug}/${singleEnvProject.slug}/architecture`,
+		);
 		// WHAT THIS MEASURES IS THE EMPTY PREDICATE, and its other direction is
 		// `deploy-jobs.spec.ts` › "the project's clusters page names the cluster and its endpoint":
-		// `ClustersClient` filters ONE org-wide list by `projectId`, so a filter that dropped a
-		// project's real clusters would show this same empty state, and that sibling test is the
-		// only thing that would notice. The two together are the measurement. An undeployed
+		// the project is the read's SCOPE (`clusters.page`), so a scope that dropped a project's real
+		// clusters would show this same empty state, and that sibling test is the only thing that
+		// would notice. The two together are the measurement. An undeployed
 		// project's cluster row is a DRAFT environment's PENDING row — not under management
 		// (lib/queries/usage-counts.ts), which is why this page is empty for it.
 		//
-		// The grid's other renders — pending, refused, failed, a failed refresh over cards — are
+		// The list's other renders — pending, refused, failed, a failed refresh over rows — are
 		// mutually exclusive branches of one component, so asserting one's absence from inside
 		// another has no failing input here. They are pinned at the component level
 		// (tests/components/clusters/clusters-client.test.tsx).

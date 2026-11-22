@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -149,8 +150,10 @@ func TestTokenCommandsExitOnFailure(t *testing.T) {
 				_ = run(tc.args...)
 			}()
 
-			if exited != 1 {
-				t.Errorf("a failing %s exited with %d, want 1 — the error arm must terminate, not fall through", tc.name, exited)
+			// A 500 is a server fault, and every token command keeps that class.
+			if exited != clierr.ExitUnavailable {
+				t.Errorf("a failing %s exited with %d, want %d — the error arm must terminate, not fall through",
+					tc.name, exited, clierr.ExitUnavailable)
 			}
 		})
 	}

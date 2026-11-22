@@ -13,18 +13,17 @@ import type {
 	AddonMarketItem,
 } from "@/app/server/actions/addons";
 
-const { enableMut, disableMut } = vi.hoisted(() => ({
-	enableMut: { mutateAsync: vi.fn(), isPending: false },
+const { disableMut } = vi.hoisted(() => ({
 	disableMut: { mutateAsync: vi.fn(), isPending: false },
 }));
 vi.mock("@/lib/query/use-addons-query", () => ({
-	useEnableAddon: () => enableMut,
 	useDisableAddon: () => disableMut,
 	useRequestGitopsBump: () => ({ mutate: () => {}, isPending: false }),
 	useAddonsQuery: vi.fn(),
 }));
 
 import { AddonConfigForm } from "@/components/addons/addon-config-card";
+import { board } from "@/lib/canvas/store/board";
 
 const GUIDE = "https://alethialabs.io/docs/guides/design-project/migrate-from-ingress-nginx";
 
@@ -89,8 +88,7 @@ function at(iso: string) {
 }
 
 beforeEach(() => {
-	enableMut.mutateAsync.mockReset();
-	enableMut.mutateAsync.mockResolvedValue({ ok: true });
+	board.reset();
 });
 
 afterEach(() => {
@@ -98,7 +96,7 @@ afterEach(() => {
 });
 
 describe("AddonConfigForm — a deprecated add-on", () => {
-	it("before the removal date, leads a new install to the replacement and still allows Enable", async () => {
+	it("before the removal date, leads a new install to the replacement and still lets it be added", async () => {
 		at("2026-12-01T12:00:00Z");
 		const user = userEvent.setup();
 		const onOpenAddon = renderForm(ITEM);
@@ -110,20 +108,26 @@ describe("AddonConfigForm — a deprecated add-on", () => {
 		expect(screen.getByRole("link", { name: /migration guide/i })).toHaveAttribute("href", GUIDE);
 		await user.click(screen.getByRole("button", { name: "Open Traefik" }));
 		expect(onOpenAddon).toHaveBeenCalledWith("traefik");
-		expect(screen.getByRole("button", { name: /enable add-on/i })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Add to changes" })).toBeInTheDocument();
 	});
 
-	it("from the removal date, says new installs are closed and offers no Enable button", () => {
+	it("from the removal date, says new installs are closed and stages nothing", async () => {
 		at("2027-02-09T00:00:00Z");
 		renderForm(ITEM);
 		const notice = screen.getByTestId("addon-deprecation-notice");
 		expect(notice).toHaveAttribute("data-closed", "true");
 		expect(notice).toHaveTextContent("Ingress NGINX no longer accepts new installs");
-		expect(screen.queryByRole("button", { name: /enable add-on/i })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Add to changes" })).toBeNull();
 		expect(screen.getByRole("button", { name: "Open Traefik" })).toBeInTheDocument();
+		// A change that could only be refused is not offered: the form is disabled, and leaving it
+		// stages nothing.
+		const version = screen.getByLabelText("Chart version");
+		expect(version).toBeDisabled();
+		await userEvent.setup().tab();
+		expect(board.document.getState().operations).toEqual([]);
 	});
 
-	it("tells an installed environment it keeps working, and keeps Save — even after the date", () => {
+	it("tells an installed environment it keeps working, and can still be reconfigured — even after the date", async () => {
 		at("2027-06-01T00:00:00Z");
 		renderForm({ ...ITEM, install: INSTALLED });
 		const notice = screen.getByTestId("addon-deprecation-notice");
@@ -131,7 +135,12 @@ describe("AddonConfigForm — a deprecated add-on", () => {
 		expect(notice).toHaveTextContent("Ingress NGINX is deprecated");
 		expect(notice).toHaveTextContent("This environment keeps it");
 		expect(notice).toHaveTextContent("New installs closed on");
-		expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument();
+		const user = userEvent.setup();
+		const version = screen.getByLabelText("Chart version");
+		expect(version).toBeEnabled();
+		await user.type(version, "4.12.0");
+		await user.tab();
+		expect(board.document.getState().operations.map((o) => o.verb)).toEqual(["update"]);
 	});
 
 	it("after the date, the Remove confirm says plainly that removal cannot be undone", async () => {

@@ -13,7 +13,7 @@ import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
-	title: "Consumer rights · Alethia",
+	title: "Consumer rights",
 	description:
 		"Your statutory rights when buying Alethia as a consumer: the 14-day withdrawal right, what it costs, and where to take a dispute.",
 };
@@ -30,7 +30,7 @@ export default function ConsumerRightsPage() {
 	const sellsToConsumers = PAID_MARKETS.some((c) => c.capacity === "consumer");
 
 	return (
-		<LegalShell title="Consumer rights" lastUpdated="August 24, 2026">
+		<LegalShell title="Consumer rights" lastUpdated="November 22, 2026">
 			<p>
 				This page is for people buying Alethia as an individual, outside a trade,
 				business or profession. If you are buying on behalf of a company, these
@@ -44,8 +44,9 @@ export default function ConsumerRightsPage() {
 				<>
 					<h2>We are not currently selling to consumers</h2>
 					<p>
-						{CURRENT_LEGAL_OPERATOR} is not yet registered for VAT, so we do not
-						currently take payment from individuals in any country. Community
+						{CURRENT_LEGAL_OPERATOR} has not yet opened paid plans to individuals
+						in any country, so we do not currently take payment from
+						individuals. Community
 						remains free and
 						unlimited in time, and the Pro trial requires no card. This page
 						describes the rights that will apply when consumer sales open, and
@@ -72,12 +73,13 @@ export default function ConsumerRightsPage() {
 			<p>
 				You may withdraw from the contract within {WITHDRAWAL_PERIOD_DAYS} days
 				of placing your order, for any reason, and you do not have to tell us
-				why. You can do it from the billing settings in the console, or by
-				emailing{" "}
+				why. You can do it by emailing{" "}
 				<a href={`mailto:${LEGAL_ENTITY.contactEmail}`}>
 					{LEGAL_ENTITY.contactEmail}
 				</a>
-				. We show you what you will get back <em>before</em> you confirm.
+				. We tell you what you will get back <em>before</em> the withdrawal
+				takes effect. A withdrawal control in the console&rsquo;s billing
+				settings will be in place before consumer sales open.
 			</p>
 
 			<h3>What withdrawing costs you</h3>

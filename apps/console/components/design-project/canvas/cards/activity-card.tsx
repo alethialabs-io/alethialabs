@@ -13,7 +13,7 @@ import { RegionError } from "@/components/errors/region-error";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { orpc } from "@/lib/rpc/client";
 import { orgHref } from "@/lib/routing";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { JobList } from "./job-list";
 import { SheetCard } from "./sheet-card";
@@ -39,7 +39,8 @@ export function ActivityCard({
 	projectId: string;
 	environmentId: string;
 }) {
-	const closeCard = useCanvasStore((s) => s.closeCard);
+	const board = useBoard();
+	const closeCard = () => board.view.getState().openCard(null);
 	const orgSlug = useActiveOrgSlug();
 	const env = useEnvironmentStatus();
 

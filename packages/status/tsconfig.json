@@ -1,0 +1,18 @@
+{
+  "extends": "@repo/typescript-config/base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    // A Worker, not Node and not a browser page: WebWorker carries fetch, Request, Response, URL and
+    // AbortSignal, and `types: []` keeps @types/node's globals (process, Buffer, node:fs) out, so a
+    // Node-only API in Worker source is a compile error rather than a runtime 1101.
+    "lib": ["ES2022", "WebWorker"],
+    "types": [],
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true
+  },
+  // Tests run under Node (node:sqlite stands in for D1) and are checked by tsconfig.test.json.
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

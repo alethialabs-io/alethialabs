@@ -17,8 +17,10 @@ import type {
 import { getAuthConfig, getAuthRateLimit, getGitlabBaseUrl } from "@/lib/config/auth";
 import { getAuthPlugins } from "@/lib/auth/plugins";
 import { mcpResourceFromBaseUrl } from "@/lib/auth/mcp-resource";
+import { MCP_PROVIDER_SCOPES } from "@/lib/auth/mcp-scopes";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { provisionPrimaryOrg } from "@/lib/auth/onboarding";
+import { assertNewAccountAllowed, signupChallengePlugins } from "@/lib/auth/signup-guard";
 import { getServiceDb } from "@/lib/db";
 import {
 	account,
@@ -195,6 +197,8 @@ const plugins: BetterAuthOptions["plugins"] = [
 		},
 	}),
 	signInCodeSendFailure,
+	// The sign-up challenge on code issuance (REL-L10) — none when it is not configured.
+	...signupChallengePlugins(),
 	// REQUIRED by mcp(): it supplies the stable signing key for ID/access tokens and
 	// exposes /jwks for resource servers to verify them. Without it mcp() has nothing
 	// to sign with.
@@ -237,6 +241,10 @@ if (resource !== null) {
 			// clients that omit it are issued a code directly (documented MVP posture).
 			consentPage: "/auth/oauth/consent",
 			resource,
+			// The agent scopes (read, design, plan, apply, destroy) beside the OpenID Connect ones.
+			// An access token's `scope` claim is read into the caller's ceiling by
+			// lib/auth/mcp-scopes.ts; a token with no agent scope, or an undeclared one, is refused.
+			scopes: MCP_PROVIDER_SCOPES,
 		}),
 		// Client ID Metadata Documents. 1.7 stopped allowing unauthenticated Dynamic
 		// Client Registration, which is how the connectors used to register themselves —
@@ -336,6 +344,13 @@ export const auth = betterAuth({
 	databaseHooks: {
 		user: {
 			create: {
+				// Sign-up controls (REL-L10): a temporary-inbox address or a network over today's
+				// ceiling is refused here, before the row exists. Throws the error the client sees.
+				// Every path that creates a user passes through this hook; signing in to an existing
+				// account never does (lib/auth/signup-guard/guard.ts).
+				before: async (u, ctx) => {
+					await assertNewAccountAllowed(u.email, ctx);
+				},
 				after: async (u) => {
 					await upsertProfile(u);
 					// Owner of the personal scope (org_id == user.id) — grant + FGA tuple.

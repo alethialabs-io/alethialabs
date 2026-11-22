@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 )
 
@@ -154,7 +153,7 @@ func TestApply_TwiceTheSecondSendsNothing(t *testing.T) {
 	files := map[string]string{"kps.yaml": "grafana:\n  replicas: 2\n"}
 
 	first := planAddonManifest2(t, f, addonManifest, files)
-	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, first, "", false); err != nil {
+	if _, err := applyExec(f, &bytes.Buffer{}, first, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if len(base.enabled) == 0 {
@@ -170,7 +169,7 @@ func TestApply_TwiceTheSecondSendsNothing(t *testing.T) {
 			}
 		}
 	}
-	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, second, "", false); err != nil {
+	if _, err := applyExec(f, &bytes.Buffer{}, second, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if len(base.enabled) != 0 {

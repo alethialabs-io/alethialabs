@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { redirect } from "next/navigation";
-import { AuthShell } from "@/components/auth/auth-shell";
+import { AuthCard, AuthShell } from "@/components/auth/auth-shell";
 import { AcceptTermsForm } from "@/components/legal/accept-terms-form";
 import { getPendingAcceptance } from "@/app/server/actions/legal";
 import { getOwner } from "@/lib/auth/owner";
@@ -19,7 +19,9 @@ interface AcceptTermsPageProps {
  * under `(private)`, whose layout carries the gate that sends people here. A gated route inside the
  * gate is an infinite redirect.
  *
- * It shows on first sign-in and again whenever a document reaches a new version, because a new
+ * A new account that signs up accepts inline on /onboarding (WIZ-W6). This page is reached by a
+ * new account that joined through an invitation (which skips onboarding), and by everyone whenever
+ * a document reaches a new version, because a new
  * version is a new agreement. A user who accepted v1 has not agreed to v2, and carrying the old row
  * forward would be inventing consent — the same rule #2371 applied when it refused to migrate a v1
  * consent cookie into v2.
@@ -46,7 +48,11 @@ export default async function AcceptTermsPage({
 
 	return (
 		<AuthShell>
-			<AcceptTermsForm documents={pending.documents} next={destination} />
+			{/* In the card every other post-sign-in screen sits in (A-22). The shell's "Signed in as ·
+			    Sign out" line is the way out for a person who will not accept (A-10). */}
+			<AuthCard>
+				<AcceptTermsForm documents={pending.documents} next={destination} />
+			</AuthCard>
 		</AuthShell>
 	);
 }

@@ -17,7 +17,8 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@repo/ui/select";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useBoardIacOutputs } from "@/lib/canvas/store/canvas-store-provider";
+import { useAllNodes } from "@/lib/canvas/store/use-board";
 import { configName } from "../graph/node-config";
 import { type NodeKind, nodeOfKind } from "../graph/types";
 
@@ -171,8 +172,8 @@ export function BindingsField({
 	allowDatabaseFacet?: boolean;
 }) {
 	const facets = bindingFacets(allowDatabaseFacet);
-	const nodes = useCanvasStore((s) => s.nodes);
-	const iacOutputs = useCanvasStore((s) => s.iacOutputs);
+	const nodes = useAllNodes();
+	const iacOutputs = useBoardIacOutputs();
 	const bindings = value ?? [];
 
 	/** Canvas resources of a given kind, as first-class target-name options. */
@@ -269,7 +270,9 @@ export function BindingsField({
 							</Button>
 						</div>
 
-						<div className="grid grid-cols-2 gap-2">
+						{/* Stacked, not two-up: in the 392px rail a resource name next to its kind was cut to a
+						    few characters. Layout only; what each control does is unchanged. */}
+						<div className="grid gap-2">
 							<div className="space-y-1">
 								<span className="vx-eyebrow text-ui-3xs">Target kind</span>
 								<Select

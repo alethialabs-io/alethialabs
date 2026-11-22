@@ -21,7 +21,7 @@
 		"scoredHere": 24,
 		"live": 19,
 		"notInstrumented": 1,
-		"findings": 22,
+		"findings": 21,
 		"findingFiles": 14,
 		"liveNotMeasured": 102
 	},
@@ -370,12 +370,12 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 16,
+			"pass": 19,
 			"fail": 0,
-			"na": 24,
+			"na": 21,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 24
+				"not-a-list-page": 21
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -384,12 +384,12 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 16,
+			"pass": 19,
 			"fail": 0,
-			"na": 24,
+			"na": 21,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 24
+				"not-a-list-page": 21
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -398,12 +398,12 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 16,
+			"pass": 19,
 			"fail": 0,
-			"na": 24,
+			"na": 21,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 24
+				"not-a-list-page": 21
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -412,12 +412,12 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 16,
+			"pass": 19,
 			"fail": 0,
-			"na": 24,
+			"na": 21,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 24
+				"not-a-list-page": 21
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -426,12 +426,12 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 16,
+			"pass": 19,
 			"fail": 0,
-			"na": 24,
+			"na": 21,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 24
+				"not-a-list-page": 21
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -440,12 +440,12 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 16,
+			"pass": 19,
 			"fail": 0,
-			"na": 24,
+			"na": 21,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 24
+				"not-a-list-page": 21
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -454,12 +454,12 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 16,
+			"pass": 19,
 			"fail": 0,
-			"na": 24,
+			"na": 21,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 24
+				"not-a-list-page": 21
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -956,11 +956,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 0,
+					"pass": 7,
 					"fail": 0,
-					"na": 10,
+					"na": 3,
 					"notMeasured": 0,
-					"score": null
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -982,9 +982,9 @@
 				}
 			},
 			"overall": {
-				"pass": 28,
+				"pass": 35,
 				"fail": 0,
-				"na": 10,
+				"na": 3,
 				"notMeasured": 5,
 				"score": 1
 			}
@@ -1023,11 +1023,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 0,
+					"pass": 7,
 					"fail": 0,
-					"na": 10,
+					"na": 3,
 					"notMeasured": 0,
-					"score": null
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1049,9 +1049,9 @@
 				}
 			},
 			"overall": {
-				"pass": 29,
+				"pass": 36,
 				"fail": 0,
-				"na": 11,
+				"na": 4,
 				"notMeasured": 3,
 				"score": 1
 			}
@@ -1626,11 +1626,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 0,
+					"pass": 7,
 					"fail": 0,
-					"na": 10,
+					"na": 3,
 					"notMeasured": 0,
-					"score": null
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1652,9 +1652,9 @@
 				}
 			},
 			"overall": {
-				"pass": 27,
+				"pass": 34,
 				"fail": 0,
-				"na": 12,
+				"na": 5,
 				"notMeasured": 4,
 				"score": 1
 			}
@@ -4139,8 +4139,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F1",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -4151,38 +4150,33 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F2",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F3",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F4",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F5",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F6",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F7",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -4368,8 +4362,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F1",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -4380,38 +4373,33 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F2",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F3",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F4",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F5",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F6",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F7",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -6420,8 +6408,7 @@
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "F1",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -6432,38 +6419,33 @@
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "F2",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "F3",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "F4",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "F5",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "F6",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "F7",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -12545,14 +12527,14 @@
 	"reconciliation": {
 		"byRule": {
 			"page_title": {
-				"total": 17,
-				"decision": 17,
+				"total": 16,
+				"decision": 16,
 				"debt": 0,
 				"unlisted": 0,
 				"inPageClosure": 6,
 				"chromeOnly": 1,
 				"sharedPackage": 0,
-				"offTree": 10,
+				"offTree": 9,
 				"predicate": "H1",
 				"owner": null
 			},
@@ -12686,12 +12668,12 @@
 				"hits": 5
 			},
 			{
-				"file": "apps/console/components/auth/onboarding-form.tsx",
+				"file": "apps/console/components/forms/oauth-consent-form.tsx",
 				"hits": 2
 			},
 			{
-				"file": "apps/console/components/forms/oauth-consent-form.tsx",
-				"hits": 2
+				"file": "apps/console/components/auth/onboarding-form.tsx",
+				"hits": 1
 			},
 			{
 				"file": "apps/console/components/errors/error-state.tsx",

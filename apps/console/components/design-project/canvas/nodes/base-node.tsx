@@ -8,17 +8,42 @@ import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { NODE_REGISTRY, type NodeFact } from "../graph/node-registry";
-import { configName } from "../graph/node-config";
 import type { NodeConfig } from "../graph/types";
-import { nodeAccessibleName } from "./node-name";
+import { canEndConnection, canStartConnection } from "../edges/connection-rules";
+import {
+	CardDescription,
+	PENDING_MARK,
+	PENDING_OUTLINE_CLASS,
+	PendingMark,
+	ProblemMark,
+	useBoardMarks,
+} from "./card-marks";
+import { cardIdentity } from "./node-name";
 import { useClusterK8sVersion } from "../use-cluster-k8s-version";
-import { NODE_STATUS_META, gitopsBadge, useNodeStatus } from "@/lib/canvas/node-status";
+import {
+	NODE_STATUS_META,
+	gitopsBadge,
+	useNodeReadiness,
+	useNodeStatus,
+} from "@/lib/canvas/node-status";
 import { useCanvasLod } from "@/lib/canvas/use-canvas-lod";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useAnyNode, useEffectiveProvider } from "@/lib/canvas/store/use-board";
 import { addonCompat } from "@/lib/compat";
 
-/** Small squared connection nub — grayscale, no radius (design system). */
-const HANDLE_CLASS = "!h-2 !w-2 !rounded-none !border !border-border !bg-background";
+/**
+ * Small squared connection nub — grayscale, no radius (design system). The `after` box is the nub's
+ * real pointer target: an 8px square is a target nobody hits twice in a row, so the press area is
+ * 28px while the drawn nub stays small.
+ */
+const HANDLE_CLASS =
+	"!h-2 !w-2 !cursor-crosshair !rounded-none !border !border-border-strong !bg-background after:absolute after:-inset-2.5 after:content-[''] hover:!border-foreground hover:!bg-foreground";
+
+/**
+ * A handle no connection can start from or end at. It stays in the DOM because the edges the board
+ * derives (a chart to its workloads) still anchor on it, but it is not drawn and takes no pointer:
+ * a nub that does nothing when dragged is a control that lies.
+ */
+const INERT_HANDLE_CLASS = "!h-2 !w-2 !border-0 !bg-transparent !opacity-0 !pointer-events-none";
 
 /**
  * The classification rule: a node's top border says what KIND of citizen it is. Grayscale-legal
@@ -54,12 +79,16 @@ const DEFAULT_HANDLES: { source?: boolean; target?: boolean } = { target: true }
  * stays legible.
  */
 export function BaseNode({ id, selected }: BaseNodeProps) {
-	const node = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
+	const node = useAnyNode(id);
 	// `provider` (the effective cloud) still drives the fact grid + zones; the visible cloud-account
 	// chip is gone — the cloud is chosen once, at project creation, so repeating it on every card is
 	// noise. (getEffectiveIdentity, which fed that chip, is no longer read here.)
-	const provider = useCanvasStore((s) => s.getEffectiveProvider(id));
+	const provider = useEffectiveProvider(id);
 	const resolved = useNodeStatus(id);
+	// The node's own validation problem, kept apart from its status: a card that is deploying or has
+	// failed can ALSO be incomplete, and the status badge then shows the server's word, not this.
+	const readiness = useNodeReadiness(id);
+	const marks = useBoardMarks();
 	const lod = useCanvasLod();
 	// The env's Kubernetes version as it will deploy, for the add-on compat overlay. Above the early
 	// return — hooks must run in the same order on every render. An unset version resolves to the
@@ -81,22 +110,25 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	const external = node.data.kind === "external" ? node.data.config : null;
 	const mapped = external?.mappedKind ? NODE_REGISTRY[external.mappedKind] : null;
 	const Icon = mapped?.icon ?? def.icon;
-	const eyebrow = mapped?.eyebrow ?? def.eyebrow;
-	const title = external
-		? external.module || "root module"
-		: configName(node.data) || def.label;
-	// Every tier below carries this. A card is a GROUP — a labelled region holding the status, the
-	// facts and the handles — not a button and not an image, and `group` is the one role that says
-	// that without promising an interaction the card does not implement. The label is the card's own
-	// two visible identifiers, so what a screen reader announces and what the eye reads are the same
-	// string. `eyebrow` rather than `def.label`: for an EXTERNAL card both the eyebrow and the title
-	// already speak for the kind the BYO module maps to, and reading the wrapper's own kind there
-	// would announce "External" over a card that says CLUSTER.
-	const accessibleName = nodeAccessibleName(eyebrow, title);
-	// The canvas stays calm when everything is fine: the two nominal states show only their dot;
-	// every state that wants attention carries a label.
-	const showLabel = resolved.state !== "ready" && resolved.state !== "live";
+	// The card's two visible identifiers. They are also its accessible NAME, which is not set here:
+	// the element a keyboard lands on is React Flow's wrapper around this card, so the board puts
+	// the name there (`boardCardName`, from this same function) and this element stays unnamed —
+	// two named groups, one inside the other, would be read twice and found twice by every query.
+	// `eyebrow` rather than `def.label`: for an EXTERNAL card both the eyebrow and the title already
+	// speak for the kind the BYO module maps to.
+	const { eyebrow, title } = cardIdentity(node.data);
+	// A design that has not been deployed and has nothing wrong with it shows only its dot: there is
+	// nothing to report. Every other state carries its word beside the dot — including Live, because
+	// "deployed" and "never deployed" must not be the same dot with no word between them.
+	const showLabel = resolved.state !== "ready";
 	const drifted = resolved.drift.length;
+	const pending = marks.pending.get(id);
+	const problem = readiness.issue ?? "";
+	// A source handle draws only where a connection can start (a service) and a target handle only
+	// where one can end (the kinds a service binds to). The registry still says which handles a
+	// card HAS — derived edges anchor on them — and this says which of them a person can use.
+	const sourceClass = canStartConnection(node.data.kind) ? HANDLE_CLASS : INERT_HANDLE_CLASS;
+	const targetClass = canEndConnection(node.data.kind) ? HANDLE_CLASS : INERT_HANDLE_CLASS;
 	// ArgoCD health overlay (#574) — a chip only when NOT plainly healthy, same calm-canvas
 	// rule as drift. Card/dense tiers only (the glyph tier stays an icon and a pulse).
 	const gitops = gitopsBadge(resolved.gitops);
@@ -149,16 +181,45 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 		/>
 	);
 
+	// What a screen reader hears after the card's name: every mark the card draws, in words. Each
+	// tier renders it, because zoom is not a reason for a card to go quiet.
+	const descriptionEl = (
+		<CardDescription
+			nodeId={id}
+			facts={{
+				status: status.label,
+				pending: pending ? PENDING_MARK[pending].spoken : "",
+				problem,
+				notes: [
+					// The status's own line (a failure message, a probe reason) when it is not the
+					// validation problem already said above.
+					!problem && resolved.message ? resolved.message : "",
+					drifted > 0 ? `${drifted} drifted` : "",
+					gitops ? `ArgoCD: ${gitops.label}` : "",
+					compatChip ? `Kubernetes compatibility: ${compatChip.label}` : "",
+				],
+				connections:
+					marks.connections.get(id) ??
+					(canStartConnection(node.data.kind) || canEndConnection(node.data.kind)
+						? []
+						: undefined),
+			}}
+		/>
+	);
+
 	// ── glyph tier — far out, a node is an icon, a name, and a pulse ────────
 	if (lod === "glyph") {
 		return (
-			<div
-				role="group"
-				aria-label={accessibleName}
-				className="flex w-[76px] flex-col items-center gap-1.5"
-			>
+			<div className="relative flex w-[76px] flex-col items-center gap-1.5">
+				{descriptionEl}
+				{pending && <PendingMark op={pending} compact />}
 				{handles.target && (
-					<Handle type="target" position={Position.Top} className={HANDLE_CLASS} />
+					<Handle
+						type="target"
+						position={Position.Top}
+						className={targetClass}
+						isConnectable={canEndConnection(node.data.kind)}
+					/>
 				)}
 				<span
 					className={cn(
@@ -167,6 +228,7 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 							? "border-foreground"
 							: "border-border-strong hover:border-foreground",
 						def.classification === "external" && "border-dashed",
+						pending && PENDING_OUTLINE_CLASS,
 					)}
 				>
 					<Icon className="h-5 w-5 text-muted-foreground" />
@@ -175,8 +237,14 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 					{title}
 				</span>
 				{statusEl}
+				{problem && <ProblemMark message={problem} compact />}
 				{handles.source && (
-					<Handle type="source" position={Position.Bottom} className={HANDLE_CLASS} />
+					<Handle
+						type="source"
+						position={Position.Bottom}
+						className={sourceClass}
+						isConnectable={canStartConnection(node.data.kind)}
+					/>
 				)}
 			</div>
 		);
@@ -194,8 +262,6 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	if (dense) {
 		return (
 			<div
-				role="group"
-				aria-label={accessibleName}
 				className={cn(
 					"relative w-[158px] cursor-pointer rounded-none border bg-card text-card-foreground transition-colors",
 					"before:absolute before:-inset-x-px before:-top-px before:h-0.5 before:content-['']",
@@ -204,10 +270,18 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 					selected
 						? "border-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
 						: "border-border hover:border-border-strong",
+					pending && PENDING_OUTLINE_CLASS,
 				)}
 			>
+				{descriptionEl}
+				{pending && <PendingMark op={pending} />}
 				{handles.target && (
-					<Handle type="target" position={Position.Top} className={HANDLE_CLASS} />
+					<Handle
+						type="target"
+						position={Position.Top}
+						className={targetClass}
+						isConnectable={canEndConnection(node.data.kind)}
+					/>
 				)}
 
 				{/* inline icon (no plate), kind eyebrow, and the status DOT only — the detail rides in the
@@ -215,11 +289,16 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 				<div className="flex items-center gap-1.5 border-b border-border/60 px-2 py-1">
 					<Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
 					<span className="vx-eyebrow truncate text-ui-3xs">{eyebrow}</span>
+					{problem && (
+						<span className="ml-auto flex shrink-0">
+							<ProblemMark message={problem} compact />
+						</span>
+					)}
 					<StatusBadge
 						status={status.label}
 						tier={status.vx}
 						showLabel={false}
-						className="ml-auto shrink-0"
+						className={cn("shrink-0", !problem && "ml-auto")}
 						title={resolved.message ?? status.label}
 						suppressHydrationWarning
 					/>
@@ -276,7 +355,12 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 				</div>
 
 				{handles.source && (
-					<Handle type="source" position={Position.Bottom} className={HANDLE_CLASS} />
+					<Handle
+						type="source"
+						position={Position.Bottom}
+						className={sourceClass}
+						isConnectable={canStartConnection(node.data.kind)}
+					/>
 				)}
 			</div>
 		);
@@ -285,8 +369,6 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	// ── full tier — the anatomy: plate, name, the whole fact grid, cost footer ──
 	return (
 		<div
-			role="group"
-			aria-label={accessibleName}
 			className={cn(
 				"relative w-[248px] cursor-pointer rounded-none border bg-card text-card-foreground transition-colors",
 				// the classification rule — a 2px band across the card's top edge
@@ -296,10 +378,18 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 				selected
 					? "border-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
 					: "border-border hover:border-border-strong",
+				pending && PENDING_OUTLINE_CLASS,
 			)}
 		>
+			{descriptionEl}
+			{pending && <PendingMark op={pending} />}
 			{handles.target && (
-				<Handle type="target" position={Position.Top} className={HANDLE_CLASS} />
+				<Handle
+					type="target"
+					position={Position.Top}
+					className={targetClass}
+					isConnectable={canEndConnection(node.data.kind)}
+				/>
 			)}
 
 			<div className="flex items-center gap-2 border-b border-border/60 px-2.5 py-2">
@@ -347,6 +437,10 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 				</div>
 
 				<FactGrid facts={facts} />
+
+				{/* The validation problem in its own words. The status badge can only say "Needs setup";
+				    this says what is missing, and it stays when the badge is showing a server state. */}
+				{problem && <ProblemMark message={problem} />}
 			</div>
 
 			{/* What this resource costs, from the last PLAN's Infracost breakdown. Absent until the
@@ -365,7 +459,12 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 			)}
 
 			{handles.source && (
-				<Handle type="source" position={Position.Bottom} className={HANDLE_CLASS} />
+				<Handle
+					type="source"
+					position={Position.Bottom}
+					className={sourceClass}
+					isConnectable={canStartConnection(node.data.kind)}
+				/>
 			)}
 		</div>
 	);

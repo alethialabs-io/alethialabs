@@ -89,6 +89,8 @@ beforeEach(() => {
 		organizationId: "org-A",
 		name: "ci",
 		createdBy: OPERATOR_ID,
+		scopes: ["read", "design", "plan", "apply", "destroy"],
+		projectIds: null,
 	});
 });
 

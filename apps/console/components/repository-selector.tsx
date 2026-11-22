@@ -3,6 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { coerceEnum } from "@/lib/coerce";
+import {
+  GIT_CONNECT_VERB,
+  gitLinkFailureMessage,
+} from "@/components/connectors/connectors-link-error";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
@@ -38,7 +42,7 @@ import { Repository } from "@/app/server/actions/git/types";
 import { getLinkedProviders } from "@/app/server/actions/identities";
 import { useRepositoryContext } from "@/components/design-project/repository-context";
 import { resolveGitProvider } from "@/lib/git/provider-host";
-import { AlertCircle, Plus, RefreshCw } from "lucide-react";
+import { AlertCircle, PencilLine, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 
 interface RepositorySelectorProps {
@@ -174,6 +178,7 @@ export function RepositorySelectorSkeleton({
         )}
       />
       <Skeleton className="size-9 shrink-0" />
+      <Skeleton className="size-9 shrink-0" />
     </div>
   );
 }
@@ -291,7 +296,7 @@ export function RepositorySelector({
         console.error(`Error fetching ${providerName} repositories:`, err);
         setError(
           recoveryProvider
-            ? `Authentication with ${recoveryProvider} failed or expired. Relink your account and try again.`
+            ? `Authentication with ${PROVIDER_LABEL[recoveryProvider]} failed or expired. Reconnect your account and try again.`
             : err instanceof Error
               ? err.message
               : "Failed to fetch repositories",
@@ -360,12 +365,12 @@ export function RepositorySelector({
         callbackURL,
       });
 
-      if (error) throw new Error(error.message);
+      // The whole error object, so the sentence can be chosen from its status and code.
+      if (error) throw error;
     } catch (err) {
       console.error("Error linking provider:", providerName, err);
-      setError(
-        `Failed to link ${providerName} account. Please try signing out and back in.`,
-      );
+      // The same sentence the connectors board shows for the same failure, by display name.
+      setError(gitLinkFailureMessage(PROVIDER_LABEL[providerName], err));
     }
   };
 
@@ -423,8 +428,8 @@ export function RepositorySelector({
           <span>No Git accounts linked</span>
         </div>
         <p className="text-sm text-muted-foreground">
-          Link an account to select repositories automatically, or enter the URL
-          manually.
+          Connect an account to select repositories automatically, or enter the
+          URL manually.
         </p>
         {error && (
           <p role="alert" className="text-sm text-destructive">
@@ -433,7 +438,7 @@ export function RepositorySelector({
         )}
         <div className="flex flex-wrap gap-2">
           {LINK_ORDER.map((p) =>
-            linkButton(p, `Link ${PROVIDER_LABEL[p]}`, undefined, "mr-2"),
+            linkButton(p, `${GIT_CONNECT_VERB} ${PROVIDER_LABEL[p]}`, undefined, "mr-2"),
           )}
           <div className="w-full mt-2">
             <Button
@@ -546,7 +551,7 @@ export function RepositorySelector({
                 <SelectItem key={p} value={p}>
                   <div className="flex items-center gap-2">
                     <GitProviderIcon provider={p} mono={false} />
-                    <span className="capitalize">{p}</span>
+                    <span>{PROVIDER_LABEL[p]}</span>
                   </div>
                 </SelectItem>
               ))}
@@ -559,7 +564,7 @@ export function RepositorySelector({
                   setShowLinkOptions(!showLinkOptions);
                 }}
               >
-                <Plus className="w-3 h-3 mr-2" /> Link another
+                <Plus className="w-3 h-3 mr-2" /> {GIT_CONNECT_VERB} another
               </Button>
             </SelectContent>
           </Select>
@@ -585,7 +590,7 @@ export function RepositorySelector({
                 )}
               >
                 {authRecoveryProvider
-                  ? "Session expired — relink to continue"
+                  ? "Session expired — reconnect to continue"
                   : error}
               </span>
             </div>
@@ -697,7 +702,8 @@ export function RepositorySelector({
                 ? "text-text-tertiary hover:text-text-primary"
                 : "text-destructive hover:text-destructive",
             )}
-            title="Relink account"
+            title="Reconnect account"
+            aria-label={`Reconnect ${PROVIDER_LABEL[authRecoveryProvider]} account`}
           >
             <GitProviderIcon provider={authRecoveryProvider} size={14} mono={false} />
           </Button>
@@ -712,21 +718,42 @@ export function RepositorySelector({
             disabled={fetchingRepos || !selectedProvider}
             className="h-9 w-9 shrink-0"
             title="Refresh repositories"
+            aria-label="Refresh repositories"
           >
             <RefreshCw
               className={`w-3.5 h-3.5 ${fetchingRepos ? "animate-spin" : ""}`}
             />
           </Button>
         )}
+        {/* Manual entry stays reachable once a provider is connected. It used to be offered only
+            on the "No Git accounts linked" panel, so a repository the connected account cannot
+            list — another host, another owner — could not be entered at all. In the row, not
+            under it, so the selector keeps the one-row height its skeleton draws. */}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={() => setIsManual(true)}
+          className="h-9 w-9 shrink-0"
+          title="Enter repository URL manually"
+          aria-label="Enter repository URL manually"
+        >
+          <PencilLine className="w-3.5 h-3.5" />
+        </Button>
       </div>
 
       {showLinkOptions && (
         <div className="flex flex-wrap gap-2 p-2 border rounded-md bg-muted/20 animate-in fade-in slide-in-from-top-1">
           <p className="text-ui-2xs uppercase font-bold text-muted-foreground w-full mb-1">
-            Link Platform
+            {GIT_CONNECT_VERB} a provider
           </p>
           {LINK_ORDER.filter((p) => !linkedProviders.includes(p)).map((p) =>
-            linkButton(p, PROVIDER_LABEL[p], "h-7 text-xs", "mr-1"),
+            linkButton(
+              p,
+              `${GIT_CONNECT_VERB} ${PROVIDER_LABEL[p]}`,
+              "h-7 text-xs",
+              "mr-1",
+            ),
           )}
         </div>
       )}

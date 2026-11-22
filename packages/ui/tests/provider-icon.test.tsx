@@ -120,8 +120,16 @@ describe("ProviderIcon", () => {
 		expect(screen.queryByRole("img")).not.toBeInTheDocument();
 		const svg = container.querySelector("svg");
 		expect(svg).not.toBeNull();
-		// The grayscale Google glyph is composed of four arc <path>s.
-		expect(svg?.querySelectorAll("path").length).toBe(4);
+		// The grayscale Google glyph is composed of four arc <path>s, all in currentColor.
+		const paths = svg?.querySelectorAll("path") ?? [];
+		expect(paths.length).toBe(4);
+		for (const path of paths) expect(path).toHaveAttribute("fill", "currentColor");
+	});
+
+	it("renders google in its own four colours when mono=false (sign-in surfaces)", () => {
+		const { container } = render(<ProviderIcon provider="google" mono={false} />);
+		const fills = [...container.querySelectorAll("path")].map((p) => p.getAttribute("fill"));
+		expect(fills).toEqual(["#4285F4", "#34A853", "#FBBC05", "#EA4335"]);
 	});
 
 	it("falls back to rendering nothing for an unknown provider slug", () => {

@@ -5,7 +5,9 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
@@ -33,7 +36,7 @@ func TestRunChartAttach(t *testing.T) {
 			ValuesYAML: "image:\n  tag: v1\n", GitCredID: "cred-1",
 			Values: map[string]interface{}{"replicas": float64(2)},
 		}
-		if err := runChartAttach(f, &buf, p); err != nil {
+		if err := saysChartAttach(f, &buf, p); err != nil {
 			t.Fatalf("runChartAttach: %v", err)
 		}
 		if !reflect.DeepEqual(f.attachedChart, p) {
@@ -53,7 +56,7 @@ func TestRunChartAttach(t *testing.T) {
 	t.Run("echoes the server's resolved id", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{attachResult: &api.ByoAttachResult{OK: true, ID: "my-api"}}
-		if err := runChartAttach(f, &buf, api.AttachChartParams{ID: "My API!", RepoURL: "oci://r/x"}); err != nil {
+		if err := saysChartAttach(f, &buf, api.AttachChartParams{ID: "My API!", RepoURL: "oci://r/x"}); err != nil {
 			t.Fatalf("runChartAttach: %v", err)
 		}
 		if !strings.Contains(buf.String(), "my-api") || strings.Contains(buf.String(), "My API!") {
@@ -76,7 +79,7 @@ func TestRunChartAttach(t *testing.T) {
 		t.Run("refuses with "+tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			f := &fakeClient{}
-			err := runChartAttach(f, &buf, tc.p)
+			err := saysChartAttach(f, &buf, tc.p)
 			if err == nil {
 				t.Fatal("expected a local refusal")
 			}
@@ -93,7 +96,7 @@ func TestRunChartAttach(t *testing.T) {
 
 	t.Run("surfaces a server error", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := runChartAttach(&fakeClient{err: errBoom}, &buf,
+		if err := saysChartAttach(&fakeClient{err: errBoom}, &buf,
 			api.AttachChartParams{ID: "api", RepoURL: "https://x"}); err == nil {
 			t.Fatal("expected the server error to surface")
 		}
@@ -104,7 +107,7 @@ func TestRunChartDetachAndScan(t *testing.T) {
 	t.Run("detach forwards and confirms", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runChartDetach(f, &buf, "shop", "dev", "api"); err != nil {
+		if err := saysChartDetach(f, &buf, "shop", "dev", "api"); err != nil {
 			t.Fatalf("runChartDetach: %v", err)
 		}
 		if len(f.byoDetached) != 1 || f.byoDetached[0] != "chart:shop:dev:api" {
@@ -118,7 +121,7 @@ func TestRunChartDetachAndScan(t *testing.T) {
 	t.Run("scan prints the job to follow", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runChartScan(f, &buf, "shop", "dev", "api"); err != nil {
+		if err := saysChartScan(f, &buf, "shop", "dev", "api"); err != nil {
 			t.Fatalf("runChartScan: %v", err)
 		}
 		out := buf.String()
@@ -140,10 +143,10 @@ func TestRunChartDetachAndScan(t *testing.T) {
 	t.Run("both refuse an empty id locally", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runChartDetach(f, &buf, "shop", "", ""); err == nil {
+		if err := saysChartDetach(f, &buf, "shop", "", ""); err == nil {
 			t.Error("detach must refuse an empty id")
 		}
-		if err := runChartScan(f, &buf, "shop", "", ""); err == nil {
+		if err := saysChartScan(f, &buf, "shop", "", ""); err == nil {
 			t.Error("scan must refuse an empty id")
 		}
 		if len(f.byoDetached) != 0 || len(f.byoScanned) != 0 {
@@ -153,10 +156,10 @@ func TestRunChartDetachAndScan(t *testing.T) {
 
 	t.Run("both surface a server error", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := runChartDetach(&fakeClient{err: errBoom}, &buf, "s", "", "api"); err == nil {
+		if err := saysChartDetach(&fakeClient{err: errBoom}, &buf, "s", "", "api"); err == nil {
 			t.Error("expected an error from detach")
 		}
-		if err := runChartScan(&fakeClient{err: errBoom}, &buf, "s", "", "api"); err == nil {
+		if err := saysChartScan(&fakeClient{err: errBoom}, &buf, "s", "", "api"); err == nil {
 			t.Error("expected an error from scan")
 		}
 	})
@@ -171,7 +174,7 @@ func TestRunIacWrites(t *testing.T) {
 			Ref: "main", Path: "iac/drift/aws", GitCredID: "cred-1",
 			VarValues: map[string]interface{}{"region": "eu-west-1", "count": float64(2)},
 		}
-		if err := runIacAttach(f, &buf, p); err != nil {
+		if err := saysIacAttach(f, &buf, p); err != nil {
 			t.Fatalf("runIacAttach: %v", err)
 		}
 		if !reflect.DeepEqual(f.attachedIac, p) {
@@ -185,7 +188,7 @@ func TestRunIacWrites(t *testing.T) {
 	t.Run("attach refuses without a repo", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runIacAttach(f, &buf, api.AttachIacParams{Project: "shop"}); err == nil {
+		if err := saysIacAttach(f, &buf, api.AttachIacParams{Project: "shop"}); err == nil {
 			t.Fatal("expected a local refusal")
 		}
 		if f.attachedIac.RepoURL != "" {
@@ -196,10 +199,10 @@ func TestRunIacWrites(t *testing.T) {
 	t.Run("detach and scan forward", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runIacDetach(f, &buf, "shop", "dev"); err != nil {
+		if err := saysIacDetach(f, &buf, "shop", "dev"); err != nil {
 			t.Fatalf("runIacDetach: %v", err)
 		}
-		if err := runIacScan(f, &buf, "shop", "dev"); err != nil {
+		if err := saysIacScan(f, &buf, "shop", "dev"); err != nil {
 			t.Fatalf("runIacScan: %v", err)
 		}
 		if len(f.byoDetached) != 1 || f.byoDetached[0] != "iac:shop:dev" {
@@ -216,21 +219,93 @@ func TestRunIacWrites(t *testing.T) {
 		if _, err := bad.AttachIac(api.AttachIacParams{}); err == nil {
 			t.Error("attach")
 		}
-		if err := runIacDetach(bad, &buf, "s", ""); err == nil {
+		if err := saysIacDetach(bad, &buf, "s", ""); err == nil {
 			t.Error("detach")
 		}
-		if err := runIacScan(bad, &buf, "s", ""); err == nil {
+		if err := saysIacScan(bad, &buf, "s", ""); err == nil {
 			t.Error("scan")
 		}
 	})
 }
 
-func TestPrintScanQueued(t *testing.T) {
-	// A nil result must not panic and must not invent a job id.
+// terminalPrinter is a Printer whose two streams are one buffer: what a person at a terminal reads.
+func terminalPrinter(out io.Writer) *Printer {
+	return &Printer{Out: out, Err: out, Format: ui.FormatTable}
+}
+
+// saysChartAttach attaches through chartAttach and prints the result as a person reads it.
+func saysChartAttach(c apiClient, out io.Writer, p api.AttachChartParams) error {
+	r, err := chartAttach(c, p)
+	if err != nil {
+		return err
+	}
+	return printChartAttach(terminalPrinter(out), r)
+}
+
+// saysChartDetach detaches through chartDetach and prints the result as a person reads it.
+func saysChartDetach(c apiClient, out io.Writer, project, env, id string) error {
+	r, err := chartDetach(c, project, env, id)
+	if err != nil {
+		return err
+	}
+	return terminalPrinter(out).Result(r, func(w io.Writer) { renderByoDetach(w, r) })
+}
+
+// saysChartScan queues a scan through chartScan, without waiting, and prints it as a person reads it.
+func saysChartScan(c apiClient, out io.Writer, project, env, id string) error {
+	p := terminalPrinter(out)
+	r, err := chartScan(context.Background(), p, c, waitFlags{}, project, env, id)
+	if err != nil {
+		return err
+	}
+	return printByoScan(p, r, "chart "+id)
+}
+
+// saysIacAttach attaches through iacAttach and prints the result as a person reads it.
+func saysIacAttach(c apiClient, out io.Writer, p api.AttachIacParams) error {
+	r, err := iacAttach(c, p)
+	if err != nil {
+		return err
+	}
+	return printIacAttach(terminalPrinter(out), r)
+}
+
+// saysIacDetach detaches through iacDetach and prints the result as a person reads it.
+func saysIacDetach(c apiClient, out io.Writer, project, env string) error {
+	r, err := iacDetach(c, project, env)
+	if err != nil {
+		return err
+	}
+	return terminalPrinter(out).Result(r, func(w io.Writer) { renderByoDetach(w, r) })
+}
+
+// saysIacScan queues a scan through iacScan, without waiting, and prints it as a person reads it.
+func saysIacScan(c apiClient, out io.Writer, project, env string) error {
+	p := terminalPrinter(out)
+	r, err := iacScan(context.Background(), p, c, waitFlags{}, project, env)
+	if err != nil {
+		return err
+	}
+	return printByoScan(p, r, "IaC source")
+}
+
+// A scan answered without a job id must not invent one, and must still say what was queued.
+func TestPrintByoScan_NoJobInventsNoID(t *testing.T) {
 	var buf bytes.Buffer
-	printScanQueued(&buf, "chart x", "", nil)
-	if strings.Contains(buf.String(), "Job ID") {
-		t.Errorf("a nil result must not print a job id: %q", buf.String())
+	p := terminalPrinter(&buf)
+	r, err := followByoScan(context.Background(), p, &fakeClient{}, waitFlags{}, MutationResult{Kind: byoChartKind},
+		chartScanJobType, byoTarget{Project: "shop"}, nil)
+	if err != nil {
+		t.Fatalf("followByoScan: %v", err)
+	}
+	if r.Job != nil {
+		t.Errorf("a nil scan answer must carry no job, got %+v", r.Job)
+	}
+	if err := printByoScan(p, r, "chart x"); err != nil {
+		t.Fatalf("printByoScan: %v", err)
+	}
+	if strings.Contains(buf.String(), "job") {
+		t.Errorf("a nil result must not name a job: %q", buf.String())
 	}
 	if !strings.Contains(buf.String(), "Queued a scan of the chart x") {
 		t.Errorf("unexpected output: %q", buf.String())

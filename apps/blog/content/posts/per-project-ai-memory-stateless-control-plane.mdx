@@ -4,10 +4,11 @@ description: How Elench gives each infrastructure project its own knowledge and 
 date: 2026-07-15
 author: Alethia Labs Engineering
 tags: [architecture, ai, elench, database]
+kind: engineering
 excerpt: Each project gets its own knowledge and memory with no standing process — one table keyed like the memory namespace, injected into a cached prompt. Plus a scoping bug only RLS could hide.
 ---
 
-We wanted Elench, [our in-console assistant](/blog/elench-grounded-ai-for-infrastructure), to feel like
+We wanted Elench, [our in-console assistant](/news/elench-grounded-ai-for-infrastructure), to feel like
 it *knows* each of your infrastructure projects — its conventions, its owners, its history — the way a
 "project" in a modern AI product does. The constraint: our control plane is **stateless**. There is no
 long-lived agent process per project to hold that context. So where does a project's memory live?

@@ -36,6 +36,7 @@ Read `readme.md` in this skill first — the full design guide and manifest (con
 - **Controls are square.** Button and Badge are `rounded-none` outright; the radius ladder (`xs 0 · sm 2 · md 3 · lg 4 · xl 6`) applies to surfaces, not controls. The blog forces `border-radius: 0` globally.
 - **Voice:** terse, declarative, sentence case; UPPERCASE mono only for eyebrow labels. No emoji.
 - **Structure over decoration:** hairline borders define surfaces; shadows are a whisper; the only background motif is a faint blueprint grid. No gradients.
+- **News covers:** generated grayscale cover art (`@repo/brand/cover`, deterministic per post) is allowed for News; a photo only as a post's optional cover, and only rendered grayscale.
 
 ## Names
 **Alethia Labs** = the company (alethialabs.io). **Alethia** = the product/platform (control plane + the `alethia` CLI). CLI usage: `alethia login`, `alethia whoami`, `alethia deploy`.

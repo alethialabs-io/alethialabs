@@ -11,7 +11,7 @@ export type { ClusterData };
  * Every cluster under management in the caller's org, for the server-side readers that are not the
  * Clusters page: the agent's `list_clusters` tool and the @-mention picker. The body is the read
  * procedure's (lib/rpc/procedures/clusters.ts `readClusters`, #6122), so they and the page agree on
- * what a cluster is. The page itself reads `clusters.list` over GET. No signed-in actor → no clusters.
+ * what a cluster is. The pages themselves read `clusters.page` over GET. No signed-in actor → no clusters.
  */
 export async function getClusters(): Promise<ClusterData[]> {
 	const actor = await currentActor().catch(() => null);

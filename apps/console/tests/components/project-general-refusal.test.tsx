@@ -45,6 +45,7 @@ vi.mock("@/components/classification/classification-control", () => ({
   ClassificationControl: () => null,
 }));
 
+import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { orpc } from "@/lib/rpc/client";
 import type { ProjectGeneral as ProjectGeneralRow } from "@/lib/rpc/procedures/settings";
 import {
@@ -177,25 +178,61 @@ describe("ProjectGeneral — a rename that lands (F040, F015)", () => {
   });
 });
 
+/**
+ * Types the project's name into the delete confirmation, asserting first that Delete project is
+ * disabled until it is (#7198: delete is destroy-class, confirmed by the typed name).
+ */
+async function typeProjectName(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement) {
+  const confirm = within(dialog).getByRole("button", { name: /delete project/i });
+  expect(confirm).toBeDisabled();
+  await user.type(within(dialog).getByRole("textbox"), MY_APP.project_name);
+  await waitFor(() => expect(confirm).toBeEnabled());
+}
+
+describe("ProjectGeneral — the delete confirmation asks for the project's name", () => {
+  it("keeps Delete project disabled until the name is typed exactly, and sends nothing before", async () => {
+    const user = userEvent.setup();
+    renderProjectGeneral();
+
+    await user.click(screen.getByRole("button", { name: /^Delete project$/ }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(/destroy the environments first/i)).toBeInTheDocument();
+    const confirm = within(dialog).getByRole("button", { name: /delete project/i });
+    const input = within(dialog).getByRole("textbox");
+    expect(confirm).toBeDisabled();
+    await user.type(input, "My Ap");
+    expect(confirm).toBeDisabled();
+    await user.click(confirm);
+    expect(removeProject).not.toHaveBeenCalled();
+    await user.type(input, "p");
+    await waitFor(() => expect(confirm).toBeEnabled());
+  });
+});
+
 describe("ProjectGeneral — a delete the server refuses", () => {
-  it("keeps the reason on the page after the dialog closes", async () => {
+  it("keeps the question open beside the reason, and the reason on the page once dismissed", async () => {
     removeProject.mockResolvedValue({ ok: false, error: { kind: "conflict", message: LIVE } });
     const user = userEvent.setup();
     renderProjectGeneral();
 
     await user.click(screen.getByRole("button", { name: /^Delete project$/ }));
     const dialog = await screen.findByRole("alertdialog");
+    await typeProjectName(user, dialog);
     await user.click(
       // The dialog's own confirm, not the trigger that opened it.
       within(dialog).getByRole("button", { name: /delete project/i }),
     );
 
-    // The dialog closes on click, so a toast alone leaves a user who looked away with a page that
-    // did nothing. The sentence stays put.
-    expect(await screen.findByRole("alert")).toHaveTextContent(LIVE);
-    expect(toastError).toHaveBeenCalledWith(LIVE);
+    // A refusal leaves the question on screen beside the toast (ConfirmAction, CON-SM2).
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith(LIVE));
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
     expect(toastSuccess).not.toHaveBeenCalled();
+
+    // Dismissed, the sentence stays put in the danger zone — a toast alone is gone in seconds.
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(await screen.findByRole("alert")).toHaveTextContent(LIVE);
   });
 
   it("navigates to the org on a successful delete", async () => {
@@ -205,11 +242,48 @@ describe("ProjectGeneral — a delete the server refuses", () => {
 
     await user.click(screen.getByRole("button", { name: /^Delete project$/ }));
     const dialog = await screen.findByRole("alertdialog");
+    await typeProjectName(user, dialog);
     await user.click(within(dialog).getByRole("button", { name: /delete project/i }));
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/acme"));
     expect(removeProject).toHaveBeenCalledWith({ projectId: MY_APP.id });
+    expect(removeProject).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+// R6 F-11: the read carries the viewer's write side. A control they may not use is disabled WITH
+// its reason (`manage-gate.ts`), never left enabled to be refused and never hidden without a word.
+describe("ProjectGeneral — what the viewer may change", () => {
+  it("a viewer who may not edit: the name is read-only and Save says why", () => {
+    renderProjectGeneral({ ...MY_APP, canManage: false });
+    expect(screen.getByRole("textbox", { name: "Project name" })).toBeDisabled();
+    const save = screen.getByRole("button", { name: /save changes/i });
+    expect(save).toBeDisabled();
+    const describedBy = save.getAttribute("aria-describedby") ?? "";
+    const reasons = describedBy
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent ?? "")
+      .join(" ");
+    expect(reasons).toContain(MANAGE_DENIED_REASON);
+  });
+
+  it("a viewer who may edit but not delete: Delete is disabled with the reason, rename still works", () => {
+    renderProjectGeneral({ ...MY_APP, canDelete: false });
+    expect(screen.getByRole("textbox", { name: "Project name" })).toBeEnabled();
+    const remove = screen.getByRole("button", { name: /^Delete project$/ });
+    expect(remove).toBeDisabled();
+    const reasons = (remove.getAttribute("aria-describedby") ?? "")
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent ?? "")
+      .join(" ");
+    expect(reasons).toContain(MANAGE_DENIED_REASON);
+  });
+
+  it("a viewer who may do both sees neither reason", () => {
+    renderProjectGeneral();
+    expect(screen.queryByText(MANAGE_DENIED_REASON)).toBeNull();
+    expect(screen.getByRole("button", { name: /^Delete project$/ })).toBeEnabled();
   });
 });
 

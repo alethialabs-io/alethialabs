@@ -65,8 +65,10 @@ import {
 	sendPaymentFailedEmail,
 	sendReceiptEmail,
 	sendSubscriptionCanceledEmail,
+	sendTrialEndedEmail,
 	sendTrialEndingEmail,
 } from "@/lib/email/billing-email";
+import { isCardlessTrialEnd } from "@/lib/billing/trial/end";
 import { and, eq, isNull, ne, or, type SQL } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { paymentHolds } from "@/lib/db/schema";
@@ -304,9 +306,15 @@ export async function handleStripeEvent(
 	// Tells the customer an org-plan subscription that the row named has ended: the revenue event and the
 	// "subscription canceled" email, unless Alethia made the cancel (a hold closing a checkout, or a
 	// close-out): the row still records that, but there was never a plan to tell them about (§5.3 (4)).
+	// A card-less trial that ran out with no payment method (REL-L19, #6907) is not a cancellation the
+	// customer made: the org is on Hobby now with its data kept, and it is told its TRIAL ended.
 	const reportCancellation = async (sub: Stripe.Subscription): Promise<void> => {
 		if (await isAlethiaCancel(sub, holds)) return;
 		await trackRevenue(sub, "subscription_canceled");
+		if (isCardlessTrialEnd(sub)) {
+			await safeEmail("trial ended", () => sendTrialEndedEmail(sub));
+			return;
+		}
 		await safeEmail("subscription canceled", () => sendSubscriptionCanceledEmail(sub));
 	};
 	// Syncs a subscription the dispatcher has just READ from Stripe, then runs the org-plan row's

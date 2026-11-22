@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
@@ -30,29 +32,29 @@ ask on a terminal.`,
 var channelsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List notification channels",
+	Long: `List the active organization's notification channels: the integration each one
+delivers through, whether its endpoint has been verified, and whether it is enabled.
+No destination secret is ever printed.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
 		client := api.NewClient(token)
-		if interactiveTable(cmd) {
-			var channels []api.Channel
-			runSpinner("Fetching channels...", func() { channels, err = client.ListChannels() })
-			if err != nil {
-				failf("Failed to list channels: %v", err)
-			}
-			if len(channels) == 0 {
-				ui.Muted("No notification channels found.")
-				return
-			}
-			_ = ui.ShowTable(channelListColumns, channelRows(channels, ui.FormatTable), "channels")
-			return
-		}
-		if err := runChannelsList(client, os.Stdout, outputFormat(cmd)); err != nil {
-			failf("Failed to list channels: %v", err)
+		if err := runListCommand(cmd, channelListView, client.ListChannels); err != nil {
+			fail(err)
 		}
 	},
+}
+
+// channelListView is how `channels list` is drawn.
+var channelListView = listView[api.Channel]{
+	Spinner: "Fetching channels...",
+	Title:   "channels",
+	Empty:   "No notification channels found. Create one with `alethia channels create`.",
+	Columns: channelListColumns,
+	Rows:    channelRows,
 }
 
 var channelListColumns = []string{"Name", "Type", "Verified", "Enabled", "ID"}
@@ -70,16 +72,9 @@ func channelRows(channels []api.Channel, outFmt string) [][]string {
 func runChannelsList(c apiClient, out io.Writer, format string) error {
 	channels, err := c.ListChannels()
 	if err != nil {
-		return err
+		return governanceError(err)
 	}
-	if len(channels) == 0 && format == ui.FormatTable {
-		fmt.Fprintln(out, ui.MutedStyle.Render("No notification channels found."))
-		return nil
-	}
-	return ui.Render(out, format, ui.TableSpec{
-		Columns: channelListColumns,
-		Rows:    channelRows(channels, format),
-	}, channels)
+	return renderList(out, format, channelListView, channels)
 }
 
 // resolveChannel answers "which channel?" for `verify` and `delete`.
@@ -103,11 +98,13 @@ func resolveChannel(c apiClient, args []string) (govRef, error) {
 }
 
 var (
-	channelType          string
-	channelRecipients    []string
-	channelURL           string
-	channelSigningSecret string
-	channelRoutingKey    string
+	channelType               string
+	channelRecipients         []string
+	channelURL                string
+	channelSigningSecret      string
+	channelSigningSecretStdin bool
+	channelRoutingKey         string
+	channelRoutingKeyStdin    bool
 )
 
 var channelTypes = []string{"webhook", "email", "slack", "rocketchat", "discord", "teams", "mattermost", "googlechat", "pagerduty"}
@@ -117,28 +114,88 @@ var channelsCreateCmd = &cobra.Command{
 	Short: "Create a notification channel",
 	Long: `Create a notification channel. The destination depends on --type:
   email             one or more --recipient flags
-  slack/webhook/... a --url (with optional --signing-secret)
-  pagerduty         a --routing-key
+  slack/webhook/... a --url (with an optional signing secret)
+  pagerduty         a routing key
 
 Omit anything on a terminal and you are asked for it; every question has a flag,
 so --no-input can still create any channel this form can.
 
+The signing secret and the routing key are secrets. Pipe one in with
+--signing-secret-stdin or --routing-key-stdin rather than passing it as a flag value:
+a flag value lands in your shell history and in the process list. Neither is ever
+printed back, in any output format.
+
 The endpoint is verified before the channel is saved (a channel never exists
-unverified).`,
+unverified). --dry-run checks the input, calls nothing, and creates nothing.
+
+Notification channels require a Pro plan or higher.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		draft, err := resolveChannelDraft(args)
-		if err != nil {
-			fail(err)
-		}
-		if err := runChannelsCreate(api.NewClient(token), os.Stdout, draft.Name, draft.Type, draft.config()); err != nil {
-			failf("Failed to create channel: %v", err)
+		if err := runChannelsCreateCmd(cmd, args, os.Stdin); err != nil {
+			fail(governanceError(err))
 		}
 	},
+}
+
+// runChannelsCreateCmd is `channels create`: it reads a secret from stdin when one was asked for
+// that way, fills the channel from the flags and the form, and creates it.
+func runChannelsCreateCmd(cmd *cobra.Command, args []string, stdin io.Reader) error {
+	p := resultPrinter(cmd)
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	secrets, err := readChannelSecrets(stdin)
+	if err != nil {
+		return err
+	}
+	draft, err := resolveChannelDraft(args, secrets)
+	if err != nil {
+		return err
+	}
+	return runChannelsCreate(api.NewClient(token), p, draft, cmdmeta.DryRunRequested(cmd))
+}
+
+// channelSecrets are the two secret values a channel can carry, from whichever source gave them.
+type channelSecrets struct {
+	SigningSecret string
+	RoutingKey    string
+}
+
+// readChannelSecrets returns the signing secret and the routing key: each from its flag, or from
+// stdin when its -stdin flag was given.
+//
+// Stdin is one stream, so it can carry one secret: asking for both from it is refused, and so is
+// naming one secret twice. No channel type takes both, so nothing a caller can create is lost.
+func readChannelSecrets(stdin io.Reader) (channelSecrets, error) {
+	secrets := channelSecrets{SigningSecret: channelSigningSecret, RoutingKey: channelRoutingKey}
+	if channelSigningSecretStdin && channelRoutingKeyStdin {
+		return secrets, refusal(clierr.CodeInvalidUsage, "",
+			"--signing-secret-stdin and --routing-key-stdin both read stdin: pass one of them")
+	}
+	if channelSigningSecretStdin {
+		if channelSigningSecret != "" {
+			return secrets, refusal(clierr.CodeInvalidUsage, "",
+				"--signing-secret and --signing-secret-stdin both name the signing secret: pass one of them")
+		}
+		secret, err := readSecretLine(stdin, "signing-secret-stdin")
+		if err != nil {
+			return secrets, err
+		}
+		secrets.SigningSecret = secret
+	}
+	if channelRoutingKeyStdin {
+		if channelRoutingKey != "" {
+			return secrets, refusal(clierr.CodeInvalidUsage, "",
+				"--routing-key and --routing-key-stdin both name the routing key: pass one of them")
+		}
+		secret, err := readSecretLine(stdin, "routing-key-stdin")
+		if err != nil {
+			return secrets, err
+		}
+		secrets.RoutingKey = secret
+	}
+	return secrets, nil
 }
 
 // channelDraft is one answered `channels create` form: the same four values whether they arrived
@@ -208,25 +265,28 @@ func destinationFor(channelType string) channelDestination {
 }
 
 // errChannelTypeRequired is the refusal when no --type was given and nothing may be asked.
-var errChannelTypeRequired = fmt.Errorf(
+var errChannelTypeRequired error = refusal(clierr.CodeInputRequired, channelsCreateExample,
 	"--type is required (%s) — with --no-input there is nowhere to ask",
 	strings.Join(channelTypeNames(), ", "))
 
+// channelsCreateExample is the complete command line the missing-value refusals offer.
+const channelsCreateExample = `alethia channels create "Ops Slack" --type slack --url https://hooks.slack.com/services/T000/B000/XXXX`
+
 // errChannelNameRequired is the refusal when no name was given and nothing may be asked.
-var errChannelNameRequired = fmt.Errorf(
+var errChannelNameRequired error = refusal(clierr.CodeInputRequired, channelsCreateExample,
 	"a channel name is required — pass it as the argument, or run on a terminal to be asked")
 
 // resolveChannelDraft fills a draft from the flags, then asks for whatever is still missing.
 //
 // The order is deliberate: the TYPE is settled before the destination question, because the type
 // is what decides which destination question there is.
-func resolveChannelDraft(args []string) (channelDraft, error) {
+func resolveChannelDraft(args []string, secrets channelSecrets) (channelDraft, error) {
 	draft := channelDraft{
 		Type:          channelType,
 		Recipients:    channelRecipients,
 		URL:           channelURL,
-		SigningSecret: channelSigningSecret,
-		RoutingKey:    channelRoutingKey,
+		SigningSecret: secrets.SigningSecret,
+		RoutingKey:    secrets.RoutingKey,
 	}
 	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
 		draft.Name = strings.TrimSpace(args[0])
@@ -278,13 +338,14 @@ func (d channelDraft) hasDestination() bool {
 func (d channelDraft) missingDestinationErr() error {
 	switch destinationFor(d.Type) {
 	case channelDestEmail:
-		return fmt.Errorf("an %s channel needs at least one --recipient", d.Type)
+		return refusal(clierr.CodeInputRequired, "", "an %s channel needs at least one --recipient", d.Type)
 	case channelDestRoutingKey:
-		return fmt.Errorf("a %s channel needs --routing-key", d.Type)
+		return refusal(clierr.CodeInputRequired, "",
+			"a %s channel needs --routing-key, or --routing-key-stdin to read it from stdin", d.Type)
 	case channelDestURL:
-		return fmt.Errorf("a %s channel needs --url", d.Type)
+		return refusal(clierr.CodeInputRequired, "", "a %s channel needs --url", d.Type)
 	}
-	return fmt.Errorf("a %s channel needs --url", d.Type)
+	return refusal(clierr.CodeInputRequired, "", "a %s channel needs --url", d.Type)
 }
 
 // askChannelDraft opens the create form for whatever the flags did not supply.
@@ -334,8 +395,11 @@ func askChannelDestination(draft channelDraft) (channelDraft, error) {
 		draft.Recipients = splitList(joined)
 	case channelDestRoutingKey:
 		f := mustGovField("alethia channels create", fieldKeyChannelRoutingKey)
+		// Masked: the key is a credential, and an unmasked field leaves it on the screen and in
+		// the terminal's scrollback.
 		if err := runHuhForm(huh.NewGroup(huh.NewInput().
-			Title(f.Title).Description(f.Description).Value(&draft.RoutingKey))); err != nil {
+			Title(f.Title).Description(f.Description).EchoMode(huh.EchoModePassword).
+			Value(&draft.RoutingKey))); err != nil {
 			return draft, err
 		}
 	case channelDestURL:
@@ -368,43 +432,79 @@ func splitList(raw string) []string {
 	return out
 }
 
+// channelRequest is the request `channels create` sends, as a dry run reports it. A secret is
+// reported as present or absent, never by value.
+type channelRequest struct {
+	Name             string   `json:"name"`
+	Type             string   `json:"type"`
+	Recipients       []string `json:"recipients,omitempty"`
+	URL              string   `json:"url,omitempty"`
+	HasSigningSecret bool     `json:"has_signing_secret"`
+	HasRoutingKey    bool     `json:"has_routing_key"`
+}
+
 // runChannelsCreate creates a channel and confirms it.
-func runChannelsCreate(c apiClient, out io.Writer, name, channelType string, config map[string]interface{}) error {
-	canonical, err := canonicalOneOf("type", channelType, channelTypes)
+func runChannelsCreate(c apiClient, p *Printer, draft channelDraft, dryRun bool) error {
+	canonical, err := canonicalOneOf("type", draft.Type, channelTypes)
 	if err != nil {
 		return err
 	}
-	ch, err := c.CreateChannel(name, canonical, config)
+	if dryRun {
+		return printDryRun(p, MutationResult{
+			ID: draft.Name, Kind: govKindChannel, Action: ResultCreated,
+			Object: plannedRequest{Request: channelRequest{
+				Name: draft.Name, Type: canonical, Recipients: draft.Recipients, URL: draft.URL,
+				HasSigningSecret: draft.SigningSecret != "", HasRoutingKey: draft.RoutingKey != "",
+			}},
+		}, fmt.Sprintf("Would create %s channel %s", canonical, draft.Name))
+	}
+	ch, err := c.CreateChannel(draft.Name, canonical, draft.config())
 	if err != nil {
 		return err
 	}
 	if ch == nil {
-		return fmt.Errorf("the control plane accepted the channel but returned no record of it")
+		return errNoRecord("channel")
 	}
-	fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Created %s channel %s (%s)", ch.Type, ch.Name, ch.ID)))
-	return nil
+	return printChange(p, MutationResult{ID: ch.ID, Kind: govKindChannel, Action: ResultCreated, Object: ch},
+		fmt.Sprintf("Created %s channel %s (%s)", ch.Type, ch.Name, ch.ID))
 }
 
 var channelsVerifyCmd = &cobra.Command{
 	Use:   "verify [channel]",
 	Short: "Send a test event through a channel and mark it verified",
-	Long: `Send a synthetic event through a channel and mark it verified. Name the channel by its
-name or its id; omit it on a terminal and you are asked which.`,
+	Long: `Send a synthetic event through a channel and mark it verified. Use it after the
+destination changed, or to check that a channel still delivers. Each run sends one test
+event to the real destination.
+
+Name the channel by its name or its id; omit it on a terminal and you are asked which.
+--dry-run names the channel that would be tested and sends nothing.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		client := api.NewClient(token)
-		ref, err := resolveChannel(client, args)
-		if err != nil {
-			fail(err)
-		}
-		if err := runChannelsVerify(client, os.Stdout, ref.ID); err != nil {
-			failf("Failed to verify channel: %v", err)
+		if err := runChannelsVerifyCmd(cmd, args); err != nil {
+			fail(governanceError(err))
 		}
 	},
+}
+
+// runChannelsVerifyCmd is `channels verify`: it resolves the channel and sends the test event.
+func runChannelsVerifyCmd(cmd *cobra.Command, args []string) error {
+	p := resultPrinter(cmd)
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	client := api.NewClient(token)
+	ref, err := resolveChannel(client, args)
+	if err != nil {
+		return err
+	}
+	if cmdmeta.DryRunRequested(cmd) {
+		return printDryRun(p, MutationResult{
+			ID: ref.ID, Kind: govKindChannel, Action: ResultUpdated,
+			Object: removedRecord{ID: ref.ID, Name: ref.Name},
+		}, "Would send a test event through channel "+ref.Name)
+	}
+	return runChannelsVerify(client, p, ref.ID)
 }
 
 // runChannelsVerify verifies a channel and confirms it.
@@ -415,16 +515,16 @@ name or its id; omit it on a terminal and you are asked which.`,
 // confirmation line below dereferenced it. That was a panic with a Go stack trace where the honest
 // answer is "the control plane said yes and did not say what it verified". Found by driving the
 // command against a fake control plane whose envelope had no channel key.
-func runChannelsVerify(c apiClient, out io.Writer, id string) error {
+func runChannelsVerify(c apiClient, p *Printer, id string) error {
 	ch, err := c.VerifyChannel(id)
 	if err != nil {
-		return err
+		return notFoundHint(err, channelSelect.ListCmd)
 	}
 	if ch == nil {
-		return fmt.Errorf("the control plane accepted the verification but returned no channel")
+		return clierr.New(clierr.CodeInternal, "the control plane accepted the verification but returned no channel")
 	}
-	fmt.Fprintln(out, ui.FormatSuccess("Verified channel "+ch.Name))
-	return nil
+	return printChange(p, MutationResult{ID: ch.ID, Kind: govKindChannel, Action: ResultUpdated, Object: ch},
+		"Verified channel "+ch.Name)
 }
 
 // channelsDeleteYes is the --yes opt-in: skip the confirmation prompt (and make the
@@ -434,39 +534,49 @@ var channelsDeleteYes bool
 var channelsDeleteCmd = &cobra.Command{
 	Use:   "delete [channel]",
 	Short: "Delete a notification channel",
-	Long: `Delete a notification channel. Name it by its name or its id; omit it on a terminal
-and you are asked which. Scripted, pass the name or id together with --yes.`,
+	Long: `Delete a notification channel. Alert rules that route to it lose this destination.
+This cannot be undone; create the channel again to restore it.
+
+Name the channel by its name or its id; omit it on a terminal and you are asked which.
+The command asks before it deletes; with nobody to ask, pass --yes. --dry-run names the
+channel that would be deleted and deletes nothing.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		client := api.NewClient(token)
-		ref, err := resolveChannel(client, args)
-		if err != nil {
-			fail(err)
-		}
-		if !confirmDestructive(
-			channelsDeleteYes,
-			"Delete "+ref.Label+"?",
-			"Alert rules bound to it will lose this destination. This cannot be undone.",
-		) {
-			return
-		}
-		if err := runChannelsDelete(client, os.Stdout, ref.ID); err != nil {
-			failf("Failed to delete channel: %v", err)
+		if err := runChannelsDeleteCmd(cmd, args); err != nil {
+			fail(governanceError(err))
 		}
 	},
 }
 
-// runChannelsDelete deletes a channel and confirms it.
-func runChannelsDelete(c apiClient, out io.Writer, id string) error {
-	if err := c.DeleteChannel(id); err != nil {
+// runChannelsDeleteCmd is `channels delete`: it resolves the channel, confirms, and deletes it.
+func runChannelsDeleteCmd(cmd *cobra.Command, args []string) error {
+	p := resultPrinter(cmd)
+	token, err := getAuthToken()
+	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, ui.FormatSuccess("Channel deleted"))
-	return nil
+	client := api.NewClient(token)
+	ref, err := resolveChannel(client, args)
+	if err != nil {
+		return err
+	}
+	if cmdmeta.DryRunRequested(cmd) {
+		return printDryRun(p, govRefRemoval(govKindChannel, ref), "Would delete channel "+ref.Name)
+	}
+	ok, err := confirmChange(channelsDeleteYes, "alethia channels delete "+shellQuote(ref.ID),
+		"Delete "+ref.Label+"?", "Alert rules bound to it will lose this destination. This cannot be undone.")
+	if err != nil || !ok {
+		return err
+	}
+	return runChannelsDelete(client, p, ref)
+}
+
+// runChannelsDelete deletes a channel and confirms it.
+func runChannelsDelete(c apiClient, p *Printer, ref govRef) error {
+	if err := c.DeleteChannel(ref.ID); err != nil {
+		return notFoundHint(err, channelSelect.ListCmd)
+	}
+	return printChange(p, govRefRemoval(govKindChannel, ref), "Deleted channel "+ref.Name)
 }
 
 func init() {
@@ -475,8 +585,14 @@ func init() {
 		"Channel type ("+strings.Join(channelTypeNames(), ", ")+")")
 	channelsCreateCmd.Flags().StringArrayVar(&channelRecipients, "recipient", nil, "Email recipient (repeatable; email channels)")
 	channelsCreateCmd.Flags().StringVar(&channelURL, "url", "", "Destination webhook URL (slack/webhook/…)")
-	channelsCreateCmd.Flags().StringVar(&channelSigningSecret, "signing-secret", "", "Optional webhook signing secret")
-	channelsCreateCmd.Flags().StringVar(&channelRoutingKey, "routing-key", "", "PagerDuty Events API routing key")
+	channelsCreateCmd.Flags().StringVar(&channelSigningSecret, "signing-secret", "",
+		"Optional webhook signing secret (prefer --signing-secret-stdin: a flag lands in your shell history and the process list)")
+	channelsCreateCmd.Flags().BoolVar(&channelSigningSecretStdin, "signing-secret-stdin", false,
+		"Read the webhook signing secret from stdin")
+	channelsCreateCmd.Flags().StringVar(&channelRoutingKey, "routing-key", "",
+		"PagerDuty Events API routing key (prefer --routing-key-stdin: a flag lands in your shell history and the process list)")
+	channelsCreateCmd.Flags().BoolVar(&channelRoutingKeyStdin, "routing-key-stdin", false,
+		"Read the PagerDuty routing key from stdin")
 
 	channelsCmd.AddCommand(channelsListCmd)
 	channelsCmd.AddCommand(channelsCreateCmd)

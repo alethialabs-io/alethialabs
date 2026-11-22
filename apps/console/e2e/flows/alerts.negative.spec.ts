@@ -12,6 +12,7 @@
 
 import { test, expect } from "../fixtures/qa";
 import type { Page } from "@playwright/test";
+import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 
 const ALERTS = (org: string) => `/${org}/~/alerts`;
 
@@ -95,12 +96,15 @@ test.describe("Alerts — a reduced-permission member", () => {
 		await expect(
 			member.page.getByRole("heading", { name: "Channels", exact: true }),
 		).toBeVisible({ timeout: 15_000 });
-		await expect(
-			member.page.getByRole("button", { name: "Add channel" }),
-		).toHaveCount(0);
-		await expect(
-			member.page.getByRole("button", { name: "New policy" }),
-		).toHaveCount(0);
+		// Gated, not hidden (CON-SM4, #6821): the member sees each control DISABLED, with the manage
+		// reason as its description — a missing button reads as a bug, a disabled one with a reason
+		// is an answer. Count 1 first, so "disabled" is about the one control and not vacuous.
+		for (const name of ["Add channel", "New policy"]) {
+			const control = member.page.getByRole("button", { name, exact: true });
+			await expect(control).toHaveCount(1);
+			await expect(control).toBeDisabled();
+			await expect(control).toHaveAccessibleDescription(MANAGE_DENIED_REASON);
+		}
 	});
 });
 

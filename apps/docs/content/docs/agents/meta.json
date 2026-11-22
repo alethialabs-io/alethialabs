@@ -1,0 +1,19 @@
+{
+	"title": "Agents",
+	"icon": "Bot",
+	"root": true,
+	"pages": [
+		"index",
+		"---Connect a client---",
+		"claude-code",
+		"claude",
+		"cursor",
+		"vs-code",
+		"codex",
+		"---Reference---",
+		"tools",
+		"cli",
+		"security",
+		"markdown-docs"
+	]
+}

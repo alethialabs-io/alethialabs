@@ -2,18 +2,20 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect } from "react";
-import { type FieldPath, Controller, useForm } from "react-hook-form";
-import type { z } from "zod";
+import { type FormEvent, useEffect, useRef } from "react";
+import { Controller } from "react-hook-form";
+import {
+	type AbuseReportOutput,
+	type AbuseReportValues,
+	abuseReportSubmission,
+	abuseReportWizard,
+} from "@/components/support/abuse/abuse-report.wizard";
 import { FieldMessage } from "@/components/support/field-message";
 import { useSubmitCase } from "@/components/support/use-submit-case";
 import { supportAbuseCategory } from "@/lib/db/schema/enums";
-import {
-	SUPPORT_ABUSE_CATEGORY_LABELS,
-	type SubmitCaseInput,
-	submitCaseSchema,
-} from "@/lib/validations/support";
+import { SUPPORT_ABUSE_CATEGORY_LABELS } from "@/lib/validations/support";
+import type { WizardEnvironment, WizardLocation } from "@/lib/wizard/types";
+import { useWizardEngine } from "@/lib/wizard/use-wizard";
 import { PageToolbar } from "@repo/ui/page-toolbar";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -28,27 +30,31 @@ import {
 import { Skeleton } from "@repo/ui/skeleton";
 import { Textarea } from "@repo/ui/textarea";
 import { cn } from "@repo/ui/utils";
+import { WizardFormError, WizardRestoredNotice } from "@repo/ui/wizard";
 
 interface AbuseFormProps {
-	/** Active org slug — targets the post-submit redirect to `/{org}/~/support/cases/{id}`. */
+	/** Active org slug — scopes the draft and targets the redirect to `/{org}/~/support/cases/{id}`. */
 	orgSlug: string;
 	/** Pre-fills the notification email (the signed-in user's address). */
 	defaultEmail?: string;
+	/** The signed-in user's id, which keys the report's tab draft. Without it nothing is kept. */
+	viewerId?: string | null;
 }
 
 /**
- * The form's raw field-value type — the pre-parse input shape of `submitCaseSchema`
- * (which transforms `contact.channel`), paired with the parsed {@link SubmitCaseInput}
- * output so `handleSubmit` yields the parsed values.
+ * The report is one page, so the engine's URL is a place that holds nothing: no step is written to
+ * the address bar, and a finished report has nothing there to clear.
  */
-type AbuseFormValues = z.input<typeof submitCaseSchema>;
+const NO_URL: WizardLocation = {
+	read: () => null,
+	push: () => undefined,
+	replace: () => undefined,
+	leave: () => undefined,
+};
 
-/** The fields a server validation refusal may name (its keys are react-hook-form paths). */
-const ABUSE_FIELDS: FieldPath<AbuseFormValues>[] = ["subject", "description", "contact.notifyEmail"];
-
-/** True when a refusal's field key is one this form renders a message for. */
-function isAbuseField(name: string): name is FieldPath<AbuseFormValues> {
-	return ABUSE_FIELDS.some((field) => field === name);
+/** The console context stamped onto a report when it is filed: where the person was, and the browser. */
+function browserContext(): { consoleUrl: string; userAgent: string } {
+	return { consoleUrl: window.location.href, userAgent: navigator.userAgent };
 }
 
 /**
@@ -80,57 +86,64 @@ const RELATIONSHIP_LABELS: Record<"third_party" | "affected_party", string> = {
 };
 
 /**
- * The focused abuse-report form. Presets the shared submit contract to `type: "abuse"`
- * (category `other`, high severity) and collects the abuse-specific fields plus a subject,
- * description, and notification email in a single page. Submits through `useSubmitCase` (the
- * mutation contract) and routes to the created case thread. Every validation message has its line
- * reserved (`FieldMessage`), so a message appearing never moves the submit button (F043).
+ * The focused abuse-report form. Collects the abuse-specific fields plus a subject, description and
+ * notification email on one page; the fixed parts of every abuse report (type `abuse`, category
+ * `other`, high severity) and the console context are added when it is filed. It runs on the wizard
+ * engine as a one-step wizard (`abuse-report.wizard.ts`), which gives it:
+ *   - a tab draft: a reload, Back or a detour brings the report back, with "Start over" (G-07);
+ *   - server field refusals under their fields, and one that belongs to no field shown above the
+ *     button rather than dropped (G-04).
+ * Submits through `useSubmitCase` (the mutation contract) and routes to the created case thread.
+ * Every validation message has its line reserved (`FieldMessage`), so a message appearing never
+ * moves the submit button (F043).
  */
-export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
+export function AbuseForm({ orgSlug, defaultEmail, viewerId }: AbuseFormProps) {
+	// The engine calls this once every field passes; it points at the mutation after each render.
+	const fileReport = useRef<(values: AbuseReportOutput) => void>(() => undefined);
+	const env: WizardEnvironment = { location: NO_URL, viewerId: viewerId ?? null };
+	const wizard = useWizardEngine<AbuseReportValues, AbuseReportOutput>(
+		abuseReportWizard,
+		{
+			defaultValues: {
+				subject: "",
+				description: "",
+				contact: { notifyEmail: defaultEmail ?? "" },
+				abuse: { reporterRelationship: "affected_party" },
+			},
+			scope: orgSlug,
+			onSubmit: (values) => fileReport.current(values),
+		},
+		env,
+	);
 	const {
 		control,
 		register,
-		handleSubmit,
-		setValue,
-		setError,
 		formState: { errors },
-	} = useForm<AbuseFormValues, unknown, SubmitCaseInput>({
-		resolver: zodResolver(submitCaseSchema),
-		defaultValues: {
-			type: "abuse",
-			category: "other",
-			severity: "high",
-			context: {},
-			contact: { notifyEmail: defaultEmail ?? "", channel: "email" },
-			abuse: { reporterRelationship: "affected_party" },
-		},
-	});
+	} = wizard.form;
 
 	const submit = useSubmitCase(orgSlug, {
-		// A server-side validation refusal lands on the field it names, like a client-side one.
-		onValidationError: (fields) => {
-			for (const [name, messages] of Object.entries(fields)) {
-				const message = messages?.[0];
-				if (message && isAbuseField(name)) setError(name, { message });
-			}
-		},
+		onValidationError: wizard.applyFieldErrors,
+		onSuccess: () => wizard.complete(),
 	});
 
-	// Snapshot the browser context (deep link + UA) for triage.
 	useEffect(() => {
-		setValue("context.consoleUrl", window.location.href);
-		setValue("context.userAgent", navigator.userAgent);
-	}, [setValue]);
-
-	/** Creates the abuse case, then routes to the thread. */
-	const onSubmit = handleSubmit((values) => {
-		if (submit.isPending) return;
-		submit.mutate({ values });
+		fileReport.current = (values) =>
+			submit.submit({ values: abuseReportSubmission(values, browserContext()) });
 	});
+
+	const pending = submit.isPending || submit.isSuccess;
+
+	/** Enter or the button: validates every field, then files the report once. */
+	function onSubmit(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		if (pending) return;
+		void wizard.submit();
+	}
 
 	return (
-		<form onSubmit={onSubmit} className={FORM}>
+		<form onSubmit={onSubmit} className={FORM} noValidate>
 			<PageToolbar description={DESCRIPTION} />
+			{wizard.restored ? <WizardRestoredNotice onStartOver={wizard.discard} /> : null}
 
 			<section className={SECTION}>
 				<div className={FIELD}>
@@ -198,9 +211,11 @@ export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
 					<Input
 						id="abuse-subject"
 						placeholder="Short summary of the report"
+						aria-invalid={errors.subject ? true : undefined}
+						aria-describedby="abuse-subject-message"
 						{...register("subject")}
 					/>
-					<FieldMessage message={errors.subject?.message} />
+					<FieldMessage id="abuse-subject-message" message={errors.subject?.message} />
 				</div>
 
 				<div className={FIELD}>
@@ -209,9 +224,11 @@ export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
 						id="abuse-description"
 						className={DESCRIPTION_BOX}
 						placeholder="Describe the abuse, including any relevant details or evidence…"
+						aria-invalid={errors.description ? true : undefined}
+						aria-describedby="abuse-description-message"
 						{...register("description")}
 					/>
-					<FieldMessage message={errors.description?.message} />
+					<FieldMessage id="abuse-description-message" message={errors.description?.message} />
 				</div>
 			</section>
 
@@ -223,17 +240,19 @@ export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
 						type="email"
 						placeholder="you@company.com"
 						className={NARROW}
+						aria-invalid={errors.contact?.notifyEmail ? true : undefined}
+						aria-describedby="abuse-email-message"
 						{...register("contact.notifyEmail")}
 					/>
-					<FieldMessage
-						message={errors.contact?.notifyEmail ? "Enter a valid email address." : undefined}
-					/>
+					<FieldMessage id="abuse-email-message" message={errors.contact?.notifyEmail?.message} />
 				</div>
 			</section>
 
+			<WizardFormError message={wizard.formError} />
+
 			<div className={BUTTON_ROW}>
-				<Button type="submit" disabled={submit.isPending}>
-					{submit.isPending ? "Submitting…" : "Submit report"}
+				<Button type="submit" disabled={pending}>
+					{pending ? "Submitting…" : "Submit report"}
 				</Button>
 			</div>
 		</form>

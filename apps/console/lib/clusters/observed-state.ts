@@ -148,7 +148,37 @@ export function observeControlPlane(input: {
  * scan reports deleted — the command would point at a cluster (or resource group) that is gone.
  */
 export const KUBECONFIG_MISSING_CLUSTER_NOTE =
-	"No kubeconfig is offered: Alethia's latest check found this cluster deleted outside Alethia. Redeploy the environment to recreate it, or tear it down.";
+	"No kubeconfig is offered: Alethia's latest check found this cluster deleted outside Alethia. Redeploy the environment to recreate it, tear it down, or mark it as destroyed if it is gone for good.";
+
+/** A `missing` observation — the evidence a notification and a "mark as destroyed" both name. */
+export type MissingObservation = Extract<ControlPlaneObservation, { kind: "missing" }>;
+
+/**
+ * The evidence of a missing control plane as one sentence: what saw it, when (the reading's own ISO
+ * stamp), and what it saw. Deterministic in the observation, so it is also the finding's identity:
+ * the activity-log row of a finding carries it as its `reason`, which is how a second notification
+ * of the same finding is recognised (lib/clusters/missing.ts).
+ */
+export function missingEvidence(o: MissingObservation): string {
+	return o.source === "drift"
+		? `Drift scan at ${o.observedAt} found deleted: ${o.deleted.join(", ")}`
+		: `Probe at ${o.observedAt}: the cloud reports the cluster not found`;
+}
+
+/**
+ * Whether a reading just turned a control plane MISSING: the observation after the reading is
+ * `missing` and the one before it was not. A later scan that still finds the cluster gone is the
+ * same finding, not a new one, and does not notify again; nor does a re-posted status callback,
+ * whose "before" already holds the reading it repeats. Returns the new finding, or null.
+ */
+export function newlyMissing(
+	before: ControlPlaneObservation,
+	after: ControlPlaneObservation,
+): MissingObservation | null {
+	if (after.kind !== "missing") return null;
+	if (before.kind === "missing") return null;
+	return after;
+}
 
 /**
  * The observation as the CLI receives it (`GET /api/cli/clusters/:id`, `alethia cluster get`): flat,

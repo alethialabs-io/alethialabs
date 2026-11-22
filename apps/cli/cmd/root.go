@@ -11,6 +11,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/update"
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/version"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
 )
@@ -23,6 +24,9 @@ const (
 
 func init() {
 	rootCmd.Version = version.Version
+	// Every request the API client sends names this build, in its User-Agent and in
+	// X-Alethia-CLI-Version, so the control plane can tell which CLI is asking.
+	api.SetCLIVersion(version.Version)
 	// The four flags every command in the tree inherits, registered from the ONE place they are
 	// described. Their usage strings, their defaults and the rows the docs tables carry for them
 	// all come from shellFields — see shell_fields.go for why a global is the value most likely to
@@ -37,9 +41,9 @@ var rootCmd = &cobra.Command{
 	Use:   "alethia",
 	Short: "alethia — multi-cloud Kubernetes control plane, from the terminal",
 	Long:  rootLong(),
-	// Resolves the input mode (--no-input / non-TTY stdin) and the org scope (--org) before any
-	// subcommand runs, so the interactive selectors know whether prompting is allowed and every
-	// request the command makes names the same organization.
+	// Resolves the input mode (--no-input / non-TTY stdin), the API client's request log (--debug)
+	// and the org scope (--org) before any subcommand runs, so the interactive selectors know
+	// whether prompting is allowed and every request the command makes names the same organization.
 	//
 	// This is the ONLY PersistentPreRun in the tree, and that is load-bearing rather than
 	// incidental: cobra runs the nearest one and no others, so a subcommand growing its own would
@@ -47,6 +51,7 @@ var rootCmd = &cobra.Command{
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		errorFormat = rootOutputFormat(cmd)
 		resolveInputMode(cmd)
+		applyDebugOutput(printer)
 		applyOrgScope()
 	},
 	// Runs after any subcommand that doesn't override it — surfaces the upgrade

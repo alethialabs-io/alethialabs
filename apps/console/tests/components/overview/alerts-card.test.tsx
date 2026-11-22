@@ -62,6 +62,15 @@ describe("AlertsCard", () => {
 		expect(screen.queryByText("No recent alerts.")).not.toBeInTheDocument();
 	});
 
+	it("each delivery is a link to the Alerts page, with its status said once through the shared badge (#6817)", async () => {
+		reads.alerts.mockResolvedValue({ alerting: true, deliveries: [delivery] });
+		const { container } = renderWithReads(<AlertsCard orgSlug="acme" />);
+		const row = await screen.findByRole("link", { name: /Deploy failed on payments/ });
+		expect(row).toHaveAttribute("href", "/acme/~/alerts");
+		expect(row.querySelectorAll(".vx-status")).toHaveLength(1);
+		expect(container.querySelectorAll(".vx-status")).toHaveLength(1);
+	});
+
 	it("pending: the skeleton — never the empty copy (B3)", () => {
 		const { container } = renderWithReads(<AlertsCard orgSlug="acme" />);
 		expect(container.querySelector("[aria-busy='true']")).not.toBeNull();

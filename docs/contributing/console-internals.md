@@ -25,7 +25,7 @@ Server data lives in **TanStack Query** (React Query) — projects, jobs, runner
 | `useCloudProviderStore` | Selected provider, cloud identity, and cached cloud-resource inventory |
 | `useProjectsStore` | Starred (favorite) projects on the overview |
 | `useJobsFilters` / `useRunnerFilters` | Filter selections for the jobs and runners lists |
-| `useCanvasStore` | The Design-a-Project architecture graph (nodes and edges) |
+| `useBoard` (`lib/canvas/store/`) | The architecture canvas: one board per project and environment, a document store (the design, positions, undo) and a view store (inspector, selection). Cards the design does not own come from their queries, not from the store |
 | `useElenchStore` | Elench assistant UI state |
 | `useNotificationsStore` | Read-notification ids |
 

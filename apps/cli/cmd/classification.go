@@ -6,10 +6,11 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
@@ -31,35 +32,34 @@ from the org's own taxonomy rather than from a key you copied out of "dimensions
 var classificationDimensionsCmd = &cobra.Command{
 	Use:   "dimensions",
 	Short: "List the org's classification dimensions and values",
+	Long: `List the active organization's classification dimensions: each axis, whether a
+resource may carry one value of it or several, the resource kinds it applies to, and the
+value slugs it allows. These are the keys and slugs "classification assign" takes.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
 		client := api.NewClient(token)
-		if interactiveTable(cmd) {
-			var dims []api.ClassificationDimension
-			runSpinner("Fetching dimensions...", func() {
-				dims, err = client.ListClassificationDimensions()
-			})
-			if err != nil {
-				failf("Failed to list dimensions: %v", err)
-			}
-			if len(dims) == 0 {
-				ui.Muted("No classification dimensions defined.")
-				return
-			}
-			_ = ui.ShowTable(dimensionColumns, dimensionRows(dims, ui.FormatTable), "dimensions")
-			return
-		}
-		if err := runClassificationDimensions(client, os.Stdout, outputFormat(cmd)); err != nil {
-			failf("Failed to list dimensions: %v", err)
+		if err := runListCommand(cmd, dimensionListView, client.ListClassificationDimensions); err != nil {
+			fail(err)
 		}
 	},
 }
 
+// dimensionListView is how `classification dimensions` is drawn.
+var dimensionListView = listView[api.ClassificationDimension]{
+	Spinner: "Fetching dimensions...",
+	Title:   "dimensions",
+	Empty:   "No classification dimensions defined. An admin defines them in the console.",
+	Columns: dimensionColumns,
+	Rows:    dimensionRows,
+}
+
 var dimensionColumns = []string{"Key", "Label", "Mode", "Applies to", "Values"}
 
+// dimensionRows projects the taxonomy into plain table rows.
 func dimensionRows(dims []api.ClassificationDimension, outFmt string) [][]string {
 	rows := make([][]string, len(dims))
 	for i, d := range dims {
@@ -79,19 +79,13 @@ func dimensionRows(dims []api.ClassificationDimension, outFmt string) [][]string
 	return rows
 }
 
+// runClassificationDimensions fetches and renders the taxonomy (non-interactive path).
 func runClassificationDimensions(c apiClient, out io.Writer, format string) error {
 	dims, err := c.ListClassificationDimensions()
 	if err != nil {
-		return err
+		return governanceError(err)
 	}
-	if len(dims) == 0 && format == ui.FormatTable {
-		fmt.Fprintln(out, ui.MutedStyle.Render("No classification dimensions defined."))
-		return nil
-	}
-	return ui.Render(out, format, ui.TableSpec{
-		Columns: dimensionColumns,
-		Rows:    dimensionRows(dims, format),
-	}, dims)
+	return renderList(out, format, dimensionListView, dims)
 }
 
 var classificationShowCmd = &cobra.Command{
@@ -102,33 +96,37 @@ omit them on a terminal and you are asked, with the kinds offered from the org's
 rather than from a string you copied out of "dimensions".`,
 	Args: cobra.RangeArgs(0, 2),
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
+		if err := runClassificationShowCmd(cmd, args); err != nil {
+			fail(governanceError(err))
 		}
-		client := api.NewClient(token)
-		kind, id, err := resolveClassificationTarget(client, args)
-		if err != nil {
-			fail(err)
-		}
-		if interactiveTable(cmd) {
-			var rows []api.ClassificationAssignment
-			runSpinner("Fetching classifications...", func() {
-				rows, err = client.GetResourceClassifications(kind, id)
-			})
-			if err != nil {
-				failf("Failed to fetch classifications: %v", err)
-			}
-			if len(rows) == 0 {
-				ui.Muted("Not classified.")
-				return
-			}
-			_ = ui.ShowTable(assignmentColumns, assignmentRows(rows), "classifications")
-			return
-		}
-		if err := runClassificationShow(client, os.Stdout, outputFormat(cmd), kind, id); err != nil {
-			failf("Failed to fetch classifications: %v", err)
-		}
+	},
+}
+
+// runClassificationShowCmd is `classification show`: it resolves the resource and prints the
+// values it carries.
+func runClassificationShowCmd(cmd *cobra.Command, args []string) error {
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	client := api.NewClient(token)
+	kind, id, err := resolveClassificationTarget(client, args)
+	if err != nil {
+		return err
+	}
+	return runListCommand(cmd, assignmentListView, func() ([]api.ClassificationAssignment, error) {
+		return client.GetResourceClassifications(kind, id)
+	})
+}
+
+// assignmentListView is how `classification show` is drawn.
+var assignmentListView = listView[api.ClassificationAssignment]{
+	Spinner: "Fetching classifications...",
+	Title:   "classifications",
+	Empty:   "Not classified. Label it with `alethia classification assign`.",
+	Columns: assignmentColumns,
+	Rows: func(rows []api.ClassificationAssignment, _ string) [][]string {
+		return assignmentRows(rows)
 	},
 }
 
@@ -164,10 +162,12 @@ func resolveClassificationTarget(c apiClient, args []string) (kind, id string, e
 		if id == "" {
 			missing = append(missing, strings.ToLower(idField.Title))
 		}
-		return "", "", fmt.Errorf(
+		e := refusal(clierr.CodeInputRequired, "alethia classification dimensions",
 			"no %s given: `alethia classification show %s %s` takes both, and "+
-				"`alethia classification dimensions` names the kinds the taxonomy targets (%w)",
+				"`alethia classification dimensions` names the kinds the taxonomy targets (%v)",
 			strings.Join(missing, " and "), kindField.Arg, idField.Arg, ferr)
+		e.Cause = ferr
+		return "", "", e
 	}
 
 	if kind == "" {
@@ -252,6 +252,7 @@ func classificationKinds(dims []api.ClassificationDimension) []string {
 
 var assignmentColumns = []string{"Dimension", "Value"}
 
+// assignmentRows projects a resource's values into plain table rows.
 func assignmentRows(rows []api.ClassificationAssignment) [][]string {
 	out := make([][]string, len(rows))
 	for i, a := range rows {
@@ -260,19 +261,13 @@ func assignmentRows(rows []api.ClassificationAssignment) [][]string {
 	return out
 }
 
+// runClassificationShow fetches and renders a resource's values (non-interactive path).
 func runClassificationShow(c apiClient, out io.Writer, format, kind, id string) error {
 	rows, err := c.GetResourceClassifications(kind, id)
 	if err != nil {
-		return err
+		return governanceError(err)
 	}
-	if len(rows) == 0 && format == ui.FormatTable {
-		fmt.Fprintln(out, ui.MutedStyle.Render("Not classified."))
-		return nil
-	}
-	return ui.Render(out, format, ui.TableSpec{
-		Columns: assignmentColumns,
-		Rows:    assignmentRows(rows),
-	}, rows)
+	return renderList(out, format, assignmentListView, rows)
 }
 
 var classificationAssignCmd = &cobra.Command{
@@ -281,23 +276,48 @@ var classificationAssignCmd = &cobra.Command{
 	Long: `Pin one of the org's classification values to a resource. The dimension key and the
 value slug are optional: omit them on a terminal and you are asked, from the taxonomy itself.
 
-Scripted, pass all four — the values are the ones "alethia classification dimensions" prints.`,
+Scripted, pass all four — the values are the ones "alethia classification dimensions" prints.
+Assigning a value the resource already carries changes nothing, so the command is safe to
+repeat. --dry-run checks the key and the slug against the taxonomy and assigns nothing.`,
 	Args: cobra.RangeArgs(2, 4),
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		client := api.NewClient(token)
-		kind, id := args[0], args[1]
-		dimensionKey, valueSlug, err := resolveClassification(client, kind, args[2:])
-		if err != nil {
-			fail(err)
-		}
-		if err := runClassificationAssign(client, os.Stdout, kind, id, dimensionKey, valueSlug); err != nil {
-			failf("Failed to assign classification: %v", err)
+		if err := runClassificationAssignCmd(cmd, args); err != nil {
+			fail(governanceError(err))
 		}
 	},
+}
+
+// runClassificationAssignCmd is `classification assign`: it resolves the dimension and the value
+// against the taxonomy and pins the value to the resource.
+func runClassificationAssignCmd(cmd *cobra.Command, args []string) error {
+	p := resultPrinter(cmd)
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	client := api.NewClient(token)
+	kind, id := args[0], args[1]
+	dimensionKey, valueSlug, err := resolveClassification(client, kind, args[2:])
+	if err != nil {
+		return err
+	}
+	return runClassificationAssign(client, p,
+		classificationChange{Kind: kind, ID: id, Dimension: dimensionKey, Value: valueSlug},
+		cmdmeta.DryRunRequested(cmd))
+}
+
+// classificationChange is one value pinned to, or cleared from, one resource. It is the `object`
+// of an assign or unassign result.
+type classificationChange struct {
+	Kind      string `json:"resource_kind"`
+	ID        string `json:"resource_id"`
+	Dimension string `json:"dimension_key,omitempty"`
+	Value     string `json:"value"`
+}
+
+// result is the mutation result of the change: the resource is the subject.
+func (c classificationChange) result(action ResultAction) MutationResult {
+	return MutationResult{ID: c.ID, Kind: govKindClassification, Action: action, Object: c}
 }
 
 // dimensionSlugs returns a dimension's value slugs, in the order the taxonomy defines them.
@@ -347,7 +367,7 @@ func resolveClassification(c apiClient, kind string, rest []string) (dimensionKe
 		return "", "", err
 	}
 	if len(dims) == 0 {
-		return "", "", fmt.Errorf(
+		return "", "", refusal(clierr.CodeConflict, "alethia classification dimensions",
 			"this organization has no classification dimensions — an admin defines them in the console before anything can be labelled")
 	}
 
@@ -368,7 +388,8 @@ func resolveClassification(c apiClient, kind string, rest []string) (dimensionKe
 	if len(rest) > 1 && strings.TrimSpace(rest[1]) != "" {
 		valueSlug = strings.TrimSpace(rest[1])
 		if !containsFold(dimensionSlugs(chosen), valueSlug) {
-			return "", "", fmt.Errorf("%q is not a value of the %q dimension (want one of: %s)",
+			return "", "", refusal(clierr.CodeValidationFailed, "alethia classification dimensions",
+				"%q is not a value of the %q dimension (want one of: %s)",
 				valueSlug, chosen.Key, strings.Join(dimensionSlugs(chosen), ", "))
 		}
 		return chosen.Key, valueSlug, nil
@@ -386,7 +407,7 @@ func findDimension(dims []api.ClassificationDimension, key string) (api.Classifi
 		}
 		keys[i] = d.Key
 	}
-	return api.ClassificationDimension{}, fmt.Errorf(
+	return api.ClassificationDimension{}, refusal(clierr.CodeNotFound, "alethia classification dimensions",
 		"no classification dimension %q in this organization (want one of: %s)",
 		key, strings.Join(keys, ", "))
 }
@@ -394,11 +415,11 @@ func findDimension(dims []api.ClassificationDimension, key string) (api.Classifi
 // pickDimension asks which axis to set.
 func pickDimension(dims []api.ClassificationDimension, kind string) (string, error) {
 	if len(dims) == 0 {
-		return "", fmt.Errorf(
+		return "", refusal(clierr.CodeNotFound, "alethia classification dimensions",
 			"no classification dimension targets %s — run `alethia classification dimensions` to see what each one applies to", kind)
 	}
 	if err := requireInteractiveForm(); err != nil {
-		return "", fmt.Errorf("no dimension key given: pass one as the argument (see `alethia classification dimensions`) (%w)", err)
+		return "", inputRequiredError(err, "no dimension key given: pass one as the argument (see `alethia classification dimensions`)")
 	}
 	f := mustGovField("alethia classification assign", fieldKeyClassDimension)
 	options := make([]huh.Option[int], len(dims))
@@ -421,11 +442,12 @@ func pickDimension(dims []api.ClassificationDimension, kind string) (string, err
 // pickDimensionValue asks which of a dimension's allowed values to pin.
 func pickDimensionValue(d api.ClassificationDimension) (string, error) {
 	if len(d.Values) == 0 {
-		return "", fmt.Errorf("the %q dimension has no allowed values to assign", d.Key)
+		return "", refusal(clierr.CodeConflict, "alethia classification dimensions",
+			"the %q dimension has no allowed values to assign", d.Key)
 	}
 	if err := requireInteractiveForm(); err != nil {
-		return "", fmt.Errorf("no value slug given: pass one of %s as the argument (%w)",
-			strings.Join(dimensionSlugs(d), ", "), err)
+		return "", inputRequiredError(err, "no value slug given: pass one of %s as the argument",
+			strings.Join(dimensionSlugs(d), ", "))
 	}
 	f := mustGovField("alethia classification assign", fieldKeyClassValue)
 	options := make([]huh.Option[int], len(d.Values))
@@ -441,12 +463,16 @@ func pickDimensionValue(d api.ClassificationDimension) (string, error) {
 	return d.Values[chosen].Value, nil
 }
 
-func runClassificationAssign(c apiClient, out io.Writer, kind, id, dimensionKey, valueSlug string) error {
-	if _, err := c.AssignClassification(kind, id, dimensionKey, valueSlug); err != nil {
+// runClassificationAssign pins one value to one resource and confirms it.
+func runClassificationAssign(c apiClient, p *Printer, change classificationChange, dryRun bool) error {
+	said := fmt.Sprintf("%s=%s to %s %s", change.Dimension, change.Value, change.Kind, change.ID)
+	if dryRun {
+		return printDryRun(p, change.result(ResultUpdated), "Would assign "+said)
+	}
+	if _, err := c.AssignClassification(change.Kind, change.ID, change.Dimension, change.Value); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Assigned %s=%s to %s %s", dimensionKey, valueSlug, kind, id)))
-	return nil
+	return printChange(p, change.result(ResultUpdated), "Assigned "+said)
 }
 
 var classificationUnassignYes bool
@@ -454,33 +480,47 @@ var classificationUnassignYes bool
 var classificationUnassignCmd = &cobra.Command{
 	Use:   "unassign <kind> <id> [value-slug]",
 	Short: "Clear a classification value from a resource",
-	Long: `Clear one classification value from a resource. The value slug is optional: omit it on
-a terminal and you are asked, from the values the resource ACTUALLY carries.
+	Long: `Clear one classification value from a resource. Policy that selects on the value
+stops matching the resource. Assign the value again to restore it.
 
-Clearing is destructive, so it asks before acting; scripted, pass the slug with --yes.`,
+The value slug is optional: omit it on a terminal and you are asked, from the values the
+resource ACTUALLY carries. The command asks before it clears; with nobody to ask, pass the
+slug with --yes. --dry-run names the value that would be cleared and clears nothing.`,
 	Args: cobra.RangeArgs(2, 3),
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
-			fail(err)
-		}
-		client := api.NewClient(token)
-		kind, id := args[0], args[1]
-		valueSlug, err := resolveAssignedValue(client, kind, id, args[2:])
-		if err != nil {
-			fail(err)
-		}
-		if !confirmDestructive(
-			classificationUnassignYes,
-			fmt.Sprintf("Clear %s from %s %s?", valueSlug, kind, id),
-			"Policy that selects on this classification stops matching the resource.",
-		) {
-			return
-		}
-		if err := runClassificationUnassign(client, os.Stdout, kind, id, valueSlug); err != nil {
-			failf("Failed to unassign classification: %v", err)
+		if err := runClassificationUnassignCmd(cmd, args); err != nil {
+			fail(governanceError(err))
 		}
 	},
+}
+
+// runClassificationUnassignCmd is `classification unassign`: it resolves the value, confirms,
+// and clears it.
+func runClassificationUnassignCmd(cmd *cobra.Command, args []string) error {
+	p := resultPrinter(cmd)
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	client := api.NewClient(token)
+	kind, id := args[0], args[1]
+	valueSlug, err := resolveAssignedValue(client, kind, id, args[2:])
+	if err != nil {
+		return err
+	}
+	change := classificationChange{Kind: kind, ID: id, Value: valueSlug}
+	if cmdmeta.DryRunRequested(cmd) {
+		return printDryRun(p, change.result(ResultDeleted),
+			fmt.Sprintf("Would clear %s from %s %s", valueSlug, kind, id))
+	}
+	ok, err := confirmChange(classificationUnassignYes,
+		replayLine("alethia", "classification", "unassign", kind, id, valueSlug),
+		fmt.Sprintf("Clear %s from %s %s?", valueSlug, kind, id),
+		"Policy that selects on this classification stops matching the resource.")
+	if err != nil || !ok {
+		return err
+	}
+	return runClassificationUnassign(client, p, change)
 }
 
 // resolveAssignedValue answers "which value?" for `unassign`.
@@ -499,11 +539,12 @@ func resolveAssignedValue(c apiClient, kind, id string, rest []string) (string, 
 		return "", err
 	}
 	if len(assigned) == 0 {
-		return "", fmt.Errorf("%s %s carries no classification values to clear", kind, id)
+		return "", refusal(clierr.CodeNotFound, replayLine("alethia", "classification", "show", kind, id),
+			"%s %s carries no classification values to clear", kind, id)
 	}
 	if err := requireInteractiveForm(); err != nil {
-		return "", fmt.Errorf("no value slug given: pass one of %s as the argument (%w)",
-			strings.Join(assignedSlugs(assigned), ", "), err)
+		return "", inputRequiredError(err, "no value slug given: pass one of %s as the argument",
+			strings.Join(assignedSlugs(assigned), ", "))
 	}
 	f := mustGovField("alethia classification unassign", fieldKeyClassValue)
 	options := make([]huh.Option[int], len(assigned))
@@ -528,12 +569,13 @@ func assignedSlugs(assigned []api.ClassificationAssignment) []string {
 	return out
 }
 
-func runClassificationUnassign(c apiClient, out io.Writer, kind, id, valueSlug string) error {
-	if err := c.UnassignClassification(kind, id, valueSlug); err != nil {
+// runClassificationUnassign clears one value from one resource and confirms it.
+func runClassificationUnassign(c apiClient, p *Printer, change classificationChange) error {
+	if err := c.UnassignClassification(change.Kind, change.ID, change.Value); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Cleared %s from %s %s", valueSlug, kind, id)))
-	return nil
+	return printChange(p, change.result(ResultDeleted),
+		fmt.Sprintf("Cleared %s from %s %s", change.Value, change.Kind, change.ID))
 }
 
 func init() {

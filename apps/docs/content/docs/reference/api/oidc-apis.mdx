@@ -99,11 +99,11 @@ The issuer mints tokens server-side for a cloud's token exchange; there is no pu
 | `typ` (header) | `JWT` |
 | `iss` | The issuer URL (`${APP_URL}/api/oidc`) |
 | `sub` | `alethia-connector` — a single stable, non-secret workload subject, never per-customer |
-| `aud` | The cloud's expected audience (for example `api://AzureADTokenExchange`, or the Alibaba OIDC client id) |
+| `aud` | The cloud's expected audience (for example `api://AzureADTokenExchange`) |
 | `iat` | Issued-at timestamp |
 | `exp` | Expiry — a maximum lifetime of 600 seconds |
 
-The `sub` claim must match the Azure federated-credential subject and the Alibaba RAM-role OIDC condition. The `aud` claim scopes the token to one cloud so it cannot be replayed at a different cloud.
+The `sub` claim must match the Azure federated-credential subject. The `aud` claim scopes the token to one cloud so it cannot be replayed at a different cloud.
 
 ## Related
 

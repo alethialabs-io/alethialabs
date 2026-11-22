@@ -17,13 +17,13 @@ managed fleet. Within `self`, the **provisioning** axis says who placed it:
 
 <Callout type="warn">
   **Deployed runners are available on AWS only.** `infra/templates/runner/` holds one template,
-  `aws`, so there is no runner template for GCP, Azure, Alibaba Cloud or Hetzner. The Console form
+  `aws`, so there is no runner template for GCP, Azure or Hetzner. The Console form
   offers AWS accounts alone, and both the Console and `alethia runner deploy` refuse a deploy for
   the other clouds at the moment you queue it.
 
   This limits **where the runner itself runs**, not what it provisions: one registered runner —
   the page you are reading — provisions every cloud Alethia supports. To run a runner in GCP,
-  Azure, Alibaba Cloud or Hetzner, register one there.
+  Azure or Hetzner, register one there.
 </Callout>
 
 <Callout type="info">
@@ -93,8 +93,6 @@ The runner will:
 | `ALETHIA_HELM_REGISTRY_ALLOW_PRIVATE` | No | Set to `1` to let Helm chart pulls reach a registry on a private network — a self-hosted Harbor or JFrog on RFC1918 space. Off by default, so a chart URL cannot be used to reach inside your network. Loopback and link-local (cloud metadata) addresses stay blocked either way. See [Chart repositories](/guides/connectors/chart-repositories) |
 | `INFRACOST_API_KEY` | No | Enables cost estimation |
 | `HCLOUD_TOKEN` | No | Hetzner API token — set it to run **self-managed** Hetzner jobs (token stays here, never in Alethia) |
-| `CIVO_TOKEN` | No | Civo API token — same self-managed token-cloud path |
-| `DIGITALOCEAN_ACCESS_TOKEN` | No | DigitalOcean API token — same self-managed token-cloud path |
 
 <Callout type="info">
   There are no `ALETHIA_STORAGE_*` variables. The runner holds **no object-storage credentials**:
@@ -113,15 +111,14 @@ bare metal):
 - It polls Alethia over HTTPS (outbound only — no inbound ports required).
 - `tofu` provisions resources reachable from the internal network.
 
-### Self-managed token clouds (DigitalOcean / Hetzner / Civo)
+### Self-managed Hetzner token
 
-These clouds have no role federation — they authenticate with a single API token. For true
+Hetzner has no role federation — it authenticates with a single API token. For true
 zero-trust, keep that token in your own runner instead of storing it in Alethia:
 
 - In the connect sheet, pick **"Self-hosted runner — token stays in your infra"** (the cloud
   identity is recorded with no token).
-- Set the matching env var on this runner — `HCLOUD_TOKEN`, `CIVO_TOKEN`, or
-  `DIGITALOCEAN_ACCESS_TOKEN`.
+- Set `HCLOUD_TOKEN` on this runner.
 - Those jobs are flagged `requires_self_runner`, so `claim_next_job` excludes managed runners from
   them — only this runner, which holds the token, runs them. Alethia stores nothing.
 

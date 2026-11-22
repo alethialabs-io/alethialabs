@@ -15,13 +15,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const selectWhere = vi.fn();
 const updateWhere = vi.fn(() => Promise.resolve());
+const insertValues = vi.fn();
 
 vi.mock("@/lib/db", () => ({
 	getServiceDb: () => ({
 		select: () => ({ from: () => ({ where: selectWhere }) }),
 		update: () => ({ set: () => ({ where: updateWhere })
 		}),
-		insert: () => ({ values: () => ({ returning: () => Promise.resolve([{ id: "row-1", token_prefix: "alethia_sat_abcd1234" }]) }) }),
+		insert: () => ({
+			values: (values: unknown) => {
+				insertValues(values);
+				return { returning: () => Promise.resolve([{ id: "row-1", token_prefix: "alethia_sat_abcd1234" }]) };
+			},
+		}),
 	}),
 }));
 
@@ -130,6 +136,8 @@ describe("resolution fails closed", () => {
 				// The stored hash must equal the SUT's own hash of the bearer, or the timing-safe
 				// comparison rejects it. Computed the same way the SUT does.
 				token_hash: (await import("node:crypto")).createHash("sha256").update("alethia_sat_live", "utf8").digest("hex"),
+				scopes: ["read", "design", "plan", "apply", "destroy"],
+				project_ids: null,
 			}),
 		);
 		const identity = await resolveServiceToken("alethia_sat_live");
@@ -138,6 +146,8 @@ describe("resolution fails closed", () => {
 			organizationId: "org-1",
 			name: "ci",
 			createdBy: "user-1",
+			scopes: ["read", "design", "plan", "apply", "destroy"],
+			projectIds: null,
 		});
 	});
 
@@ -180,5 +190,73 @@ describe("the prefix is a security feature", () => {
 		// recognises the STRING. Changing it silently un-protects every token already in the wild,
 		// and a credential that looks like random base64 is one nothing can pattern-match.
 		expect(SERVICE_TOKEN_PREFIX).toBe("alethia_sat_");
+	});
+});
+
+describe("a token's scope and project limit (AGT-L3)", () => {
+	/** A live row for the bearer `alethia_sat_live`, with the given limit columns. */
+	async function liveRow(limit: { scopes: unknown; project_ids: unknown }) {
+		const { createHash } = await import("node:crypto");
+		return {
+			id: "tok-1",
+			organization_id: "org-1",
+			name: "ci",
+			created_by: "user-1",
+			token_hash: createHash("sha256").update("alethia_sat_live", "utf8").digest("hex"),
+			...limit,
+		};
+	}
+
+	it("resolves a limited row with its scopes and project list", async () => {
+		const { resolveServiceToken } = await import("@/lib/cli/service-token");
+		selectWhere.mockReturnValue(rows(await liveRow({ scopes: ["read"], project_ids: ["p-a"] })));
+		const identity = await resolveServiceToken("alethia_sat_live");
+		expect(identity).toMatchObject({ scopes: ["read"], projectIds: ["p-a"] });
+	});
+
+	it("resolves NOTHING for a row whose limit cannot be read", async () => {
+		const { resolveServiceToken } = await import("@/lib/cli/service-token");
+		const unreadable = [
+			{ scopes: [], project_ids: null },
+			{ scopes: null, project_ids: null },
+			{ scopes: ["read", "admin"], project_ids: null },
+			{ scopes: ["read"], project_ids: [] },
+		];
+		const resolved: number[] = [];
+		for (const [i, limit] of unreadable.entries()) {
+			selectWhere.mockReturnValue(rows(await liveRow(limit)));
+			if ((await resolveServiceToken("alethia_sat_live")) !== null) resolved.push(i);
+		}
+		expect(resolved).toEqual([]);
+	});
+
+	it("mints with every scope over every project by default", async () => {
+		const { mintServiceToken } = await import("@/lib/cli/service-token");
+		await mintServiceToken({ organizationId: "org-1", name: "ci", createdBy: "u" });
+		expect(insertValues).toHaveBeenCalledWith(
+			expect.objectContaining({
+				scopes: ["read", "design", "plan", "apply", "destroy"],
+				project_ids: null,
+			}),
+		);
+	});
+
+	it("refuses to mint a token narrower than every scope over every project, and writes nothing", async () => {
+		const { mintServiceToken, NarrowServiceTokenError } = await import("@/lib/cli/service-token");
+		const narrower = [
+			{ scopes: ["read" as const], projectIds: null },
+			{ scopes: ["read" as const, "design" as const, "plan" as const, "apply" as const, "destroy" as const], projectIds: ["p-a"] },
+		];
+		const minted: number[] = [];
+		for (const [i, ceiling] of narrower.entries()) {
+			try {
+				await mintServiceToken({ organizationId: "org-1", name: "ci", createdBy: "u", ceiling });
+				minted.push(i);
+			} catch (e) {
+				if (!(e instanceof NarrowServiceTokenError)) throw e;
+			}
+		}
+		expect(minted).toEqual([]);
+		expect(insertValues).not.toHaveBeenCalled();
 	});
 });
