@@ -157,7 +157,7 @@ export function AuthShell({
           aria-label="Alethia Labs — home"
           className="vx-clamp vx-clamp--tight inline-flex items-center transition-opacity hover:opacity-80"
         >
-          <AlethiaLockup size={24} className="text-text-primary" />
+          <AlethiaLockup tag="labs" size={24} className="text-text-primary" />
         </Link>
 
         {switchPrompt && switchHref && switchLabel ? (

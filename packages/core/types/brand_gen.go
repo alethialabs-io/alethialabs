@@ -7,7 +7,7 @@
 // Source of truth: packages/brand/src/tokens.css (the values) and apps/console/scripts/lib/brand-projection.ts (the decisions).
 //
 // Every custom property declared in the stylesheet appears in BrandProjections below with
-// exactly one of exact / lossy / none. 65 exact, 19 lossy, 86 none — 170 tokens, no gaps.
+// exactly one of exact / lossy / none. 65 exact, 19 lossy, 89 none — 173 tokens, no gaps.
 // The generator refuses to emit if a declared token has no decision, so a token added to the
 // console fails CI until somebody says what the CLI does with it. A "none" entry is a real
 // answer, not an omission: a spinner has no easing curve and a CLI cannot set a font.
@@ -213,6 +213,9 @@ var BrandProjections = []BrandProjection{
 	{Token: "--text-ui-xl", Kind: BrandLossy, Target: "EmphasisHeading", Note: "17px — the largest heading a console page carries, a dialog or sheet title. It collapses onto the SAME constant as --text-ui-lg because the terminal's ladder has three rungs and the console's has seven: bold is bold, and EmphasisDisplay is reserved for the display voice so a sheet title cannot arrive shouting in uppercase."},
 	{Token: "--wrap-max", Kind: BrandNone, Target: "", Note: "1180px of maximum content width. The terminal's content width is the window's, reported by the tty and not ours to cap — a CLI that refused to use the width you gave it would be wrong."},
 	{Token: "--wrap-pad", Kind: BrandNone, Target: "", Note: "64px of page gutter, sized to clear the vertical rail's glyphs. Terminal padding is measured in cells and set per style; there is no page to gutter."},
+	{Token: "--mark-s", Kind: BrandNone, Target: "", Note: "the pixel height of the bracketed [ Alethia ] lockup in the web header. The CLI draws the mark as text in one row, so its size is the terminal's font size, not ours."},
+	{Token: "--mark-dur", Kind: BrandNone, Target: "", Note: "how long the header logo takes to fold into [·] on scroll. The terminal never folds the mark, so there is no animation to time."},
+	{Token: "--mark-ease", Kind: BrandNone, Target: "", Note: "same as --ease: the header fold's curve, and the terminal has no interpolated frame to shape."},
 }
 
 // BrandColor is a token's terminal ink: one sRGB hex per theme, which lipgloss binds to an

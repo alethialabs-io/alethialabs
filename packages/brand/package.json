@@ -20,6 +20,7 @@
     "./site-header": "./src/site/site-header.tsx",
     "./site-footer": "./src/site/site-footer.tsx",
     "./site-chrome": "./src/site/site-chrome.tsx",
+    "./site-command-block": "./src/site/command-block.tsx",
     "./site-primitives": "./src/site/primitives.tsx",
     "./github-stars": "./src/site/github-stars.ts",
     "./site-sections": "./src/site/page-sections.tsx"
