@@ -69,7 +69,7 @@ export function CountrySelect({
           >
             <span className="flex min-w-0 items-center gap-2">
               {Flag && (
-                <span className="flex h-4 w-6 shrink-0 overflow-hidden rounded-sm bg-foreground/10 [&_svg]:size-full">
+                <span className="flex h-4 w-6 shrink-0 overflow-hidden rounded-sm [&>svg]:block [&>svg]:size-full!">
                   <Flag title={countryName(value)} />
                 </span>
               )}
@@ -139,7 +139,7 @@ function CountryCommand({
                 onSelect={() => onPick(c.code)}
               >
                 {ItemFlag && (
-                  <span className="flex h-4 w-6 shrink-0 overflow-hidden rounded-sm bg-foreground/10 [&_svg]:size-full">
+                  <span className="flex h-4 w-6 shrink-0 overflow-hidden rounded-sm [&>svg]:block [&>svg]:size-full!">
                     <ItemFlag title={c.name} />
                   </span>
                 )}
