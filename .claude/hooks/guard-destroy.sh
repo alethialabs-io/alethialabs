@@ -1,54 +1,114 @@
 #!/usr/bin/env bash
-# PreToolUse(Bash) guard: nothing an agent runs becomes UNRECOVERABLE.
+# PreToolUse(Bash) guard: nothing an agent runs becomes UNRECOVERABLE — it is BACKED UP FIRST.
 #
-# The maintainer delegated everything to the agents except two things: spend beyond a budget
-# (.claude/hooks/guard-spend.sh) and irreversible deletion (this file). A hook blocks in every
+# The maintainer's ruling (2026-11-22): the harness stops refusing instructed actions. The one hard
+# refusal left is spend beyond the budget (.claude/hooks/guard-spend.sh). For deletion the rule is
+# "build mechanisms so you can interact with the whole gamma of alethia labs products and services
+# without actually sabotaging it" — so this hook takes a backup of whatever a destructive command
+# would destroy, and then lets the command run. A backup that FAILS refuses the command: an
+# unprotected destruction is the one thing this file exists to prevent. A hook blocks in every
 # permission mode, so this is the layer that holds when the classifier half (user settings) is
 # relaxed or wrong.
 #
-# TWO KINDS OF RULE
+# THREE KINDS OF RULE
 #
-#   REFUSE (exit 2) — the deletion cannot be undone from this machine:
-#     R-PUSH     a push to, or delete of, dev/staging/main in any refspec form; --mirror;
-#                --all/--branches with force; deleting a remote tag in any spelling (a delete
-#                whose target is not a KNOWN branch is treated as a tag); --prune together with
-#                --tags, --all or a tags refspec; --prune-tags; force-pushing --tags; pushing
-#                refs/safety/* anywhere (snapshots can hold untracked private files)
-#     R-GH       gh repo delete|archive|rename, gh repo edit --visibility, gh release
-#                delete|delete-asset, gh secret delete|remove, gh issue delete
-#     R-GHAPI    gh api DELETE|PUT|PATCH on rulesets, branch protection, releases, git/refs,
-#                packages, environments, hooks, actions/dependabot/codespaces secrets, tag
-#                protection, or the repo/org itself; POST to /transfer or a branch rename;
-#                a graphql mutation that deletes or rewrites one of those
-#     R-TFSTATE  removing or overwriting a terraform.tfstate* (rm/mv/cp-onto/truncate/shred/`>`),
-#                rm -r of a directory holding one, `git clean -x|-X` in a tree that holds one,
-#                `git worktree remove` (forced or not) of a tree holding one, `find … -delete` /
-#                `find -exec rm` that can reach one, `rsync --delete` onto a directory holding one,
+#   BACK UP, THEN ALLOW (exit 0) — into ~/.alethia/backups/<kind>/<UTC timestamp>/ (mode 700),
+#   with a MANIFEST of what ran, what was saved and how to restore it. `pnpm backups:ls` lists them.
+#   Each B-rule refuses as the R-rule of the same name when its backup fails or cannot be taken.
+#     B-PUSH     a push that can overwrite or delete a remote ref: any push to dev/staging/main, a
+#                force push (-f, --force-with-lease, a `+` refspec) or a delete of ANY branch or
+#                tag (a short name is looked up as both), --mirror, --all/--branches with force,
+#                --prune with --all/--tags, --prune-tags, --tags --force, a wildcard refspec. The
+#                refs the remote has are fetched into refs/safety/remote/<ts>/heads|tags/<name>
+#                (kind remote-refs keeps the list). The server rulesets on dev/staging/main remain
+#                the real control; this makes a push that got past them recoverable.
+#     B-GH       gh repo delete|archive (metadata, `git clone --mirror`, every issue, PR and
+#                release as JSON); gh repo rename and edit --visibility (metadata); gh release
+#                delete|delete-asset (release JSON, the assets, the tag ref for --cleanup-tag);
+#                gh issue delete (the issue and its comments).
+#     B-GHAPI    gh api DELETE|PUT|PATCH on rulesets, branch protection, releases, git/refs,
+#                packages, environments, hooks, tag protection, or the repo/org itself: a GET of
+#                the same path first (a 404 means nothing exists yet). A repo DELETE is mirrored as
+#                for gh repo delete. POST to /transfer or a branch rename: a GET of the target.
+#     B-TFSTATE  removing or overwriting terraform state — rm/mv/cp-onto/truncate/shred/`>` of a
+#                *.tfstate*, rm -r of a directory holding one, `git clean -x|-X` in a tree holding
+#                one, `git worktree remove` of a tree holding one, `find … -delete` / `-exec rm`
+#                that can reach one, `rsync --delete` onto one: the state files are copied out.
 #                tofu|terraform state rm|mv|push|replace-provider, init -migrate-state|-force-copy,
-#                workspace delete. infra/{gcp,azure,alibaba}-e2e and infra/sandbox keep LOCAL,
-#                gitignored state: no snapshot below can see an ignored file, so this refuses.
-#     R-DB       db:reset / db:migrate / db:reencrypt / drizzle-kit push|drop|migrate / the
-#                reset|migrate scripts against a NON-LOCAL ALETHIA_DATABASE_URL, or one the guard
-#                cannot read. apps/console/scripts/reset.mjs runs DROP SCHEMA public CASCADE with
-#                no localhost check of its own.
-#     R-DOCKER   docker volume prune; docker volume rm / docker rm -v naming an alethia volume or
-#                container; docker system prune --volumes
-#     R-CLOUD    cloud deletes outside a disposable target: hcloud delete|rebuild without
-#                --context alethia-e2e|alethia-sandbox; any aws/gcloud/az/aliyun delete verb;
-#                kubectl delete|drain|replace --force|apply --prune and helm uninstall outside a
-#                kind-* or *-e2e* context
-#     R-CRED     rm/mv/shred/truncate/`>` of ~/.aws ~/.ssh ~/.config/gcloud ~/.cloudflared
-#                ~/.kube ~/.config/hcloud, or of any directory that contains one
-#     R-GITDIR   rm of the repository's .git directory, or of any directory that contains it
-#                (the safety refs below live there, so this one has nothing to fall back on)
+#                workspace delete: the module's local state is copied, or when it has none,
+#                `state pull` (of that workspace) is written to the backup by the hook itself.
+#     B-DB       db:reset / db:migrate / db:reencrypt / drizzle-kit push|drop|migrate|up / the
+#                reset|migrate scripts against a NON-LOCAL ALETHIA_DATABASE_URL: pg_dump
+#                (custom format) of that database. Under `pnpm creds <profile> --` the dump runs
+#                under the same profile. A local URL runs as before, with no dump.
+#     B-DOCKER   docker volume rm of an alethia volume, docker volume prune, docker system prune
+#                --volumes, docker rm -v of an alethia container: each alethia volume it would
+#                remove is tarred through a throwaway container.
+#     B-CLOUD    hcloud server delete|rebuild in an alethia-* project that is not disposable: a
+#                snapshot image. aws ec2 delete-volume: an EBS snapshot. kubectl delete outside a
+#                kind-*/ *-e2e* context: the objects as YAML (manifests, not volume data). helm
+#                uninstall outside one: `helm get all`.
+#
+#   ALLOW with no backup — nothing to lose, or the provider keeps the backup: other cloud deletes
+#   (aws terminate/s3/kms/…, gcloud, az, aliyun), kubectl drain / replace --force / apply --prune,
+#   rds delete-db-* WITHOUT --skip-final-snapshot (RDS takes the final snapshot), secretsmanager
+#   delete-secret WITHOUT --force-delete-without-recovery (the recovery window is the backup),
+#   gh secret delete of a value a credential profile holds, hcloud deletes in alethia-e2e /
+#   alethia-sandbox, pushes that only fast-forward a feature branch.
+#
+#   REFUSE (exit 2) — nothing can be backed up, or the action is self-sabotage, not an instruction:
+#     R-PUSH     publishing a snapshot — a push whose source is refs/safety/* (other than
+#                refs/safety/remote/*, which are copies of refs the remote already had) or whose
+#                unpushed history holds a commit written by the snapshot identity, or a push to
+#                refs/safety/* — because a snapshot can hold untracked private files and this
+#                repository is public. A push whose tree is an unexpanded variable, when it needs
+#                a backup.
+#     R-GH       gh secret delete|remove of a secret no credential profile holds (GitHub never
+#                returns a secret's value, so it could never be put back: store it first with
+#                `pnpm creds --set`, then delete). A release or issue delete without a literal
+#                tag or number.
+#     R-GHAPI    the same secret rule for gh api DELETE …/secrets/<name>; a graphql mutation that
+#                deletes or rewrites repository state (a node id has no GET — use the REST
+#                endpoint, which is backed up); a graphql query read from a file; a protected path
+#                or method the guard cannot read (a variable).
+#     R-TFSTATE  a state-deleting command whose tree or module is an unexpanded variable.
+#     R-DB       a database command whose URL the guard cannot derive (none visible, a variable, an
+#                --env-file/dotenv the guard cannot read): prefix the literal URL or run it under
+#                `pnpm creds <profile> --`, and it is dumped first.
+#     R-DOCKER   a volume name the guard cannot read.
+#     R-CLOUD    hcloud outside an alethia-* context or with an HCLOUD_TOKEN prefix (scope: the
+#                default context on this Mac is ANOTHER company's production); hcloud volume
+#                delete (Hetzner has no volume snapshot API); aws rds delete-db-* with
+#                --skip-final-snapshot; aws secretsmanager delete-secret with
+#                --force-delete-without-recovery; a volume id, release name or object the guard
+#                cannot read.
+#     R-CRED     rm/mv/shred/truncate/`>` of ~/.aws ~/.ssh ~/.config/gcloud ~/.cloudflared ~/.kube
+#                ~/.config/hcloud, or of any directory that contains one. Kept on purpose: an agent
+#                is never instructed to destroy the credentials it works with, and a copy of them
+#                in a backup directory would be a second place for them to leak from.
+#     R-GITDIR   rm of the repository's .git directory, or of any directory that contains it. Kept
+#                on purpose: the refs/safety/ snapshots and remote-ref backups live there, so this
+#                is the one deletion that would destroy the backups themselves.
+#   Every B-rule also refuses when its backup fails (network, auth, a missing client tool, the time
+#   budget below): "R-<rule>: could not back up before …", and nothing runs.
 #
 #   SNAPSHOT, THEN ALLOW (exit 0) — local git destruction, made recoverable with no friction:
 #     S-TREE     git reset --hard · git clean (not -n) · git checkout (any form but -b/-B/--orphan)
-#                · git switch -f|--discard-changes · git restore · git rm -f · rm of a path inside
-#                a git work tree
+#                · git switch -f|--discard-changes · git restore · git rm -f
+#     S-RM       rm of a path inside a git work tree
 #     S-WTREE    git worktree remove --force <path>
 #     S-STASH    git stash drop|clear — pins the entries it would drop
 #     S-BRANCH   git branch -D / --delete --force — pins the tips it would drop
+#
+#   THE BACKUP'S OWN COMMANDS run inside the hook, with their output going to files in the backup
+#   directory, never to the transcript (a `state pull` or a pg_dump holds secrets; guard-secrets.sh
+#   refuses `state pull` as an AGENT command for that reason). They are bounded by one budget,
+#   BK_BUDGET (540 s), under the 600 s hook timeout set in .claude/settings.json and
+#   .codex/hooks.json: a hook the harness kills ALLOWS the command, so a backup that would take too
+#   long must be refused by the hook, never cut off by the harness. A command wrapped in
+#   `pnpm creds <profile> --` is judged as the command it runs, and a backup that needs the same
+#   access (state pull, pg_dump) runs under the same profile, writing its file from inside the
+#   child so the broker's redactor never rewrites the backup.
 #
 #   A snapshot captures the tree's tracked AND untracked non-ignored content: copy the real index
 #   to a temp GIT_INDEX_FILE (so unchanged files are not re-hashed), `git add -u` for the tracked
@@ -57,7 +117,8 @@
 #       refs/safety/<worktree-name>/<UTC timestamp>
 #   Objects and refs/safety/* live in the SHARED repository, so they outlive the worktree's own
 #   deletion. Nothing is stored when the tree already equals HEAD. session-cleanup.sh prunes
-#   refs/safety entries older than 30 days.
+#   refs/safety entries older than 30 days — the snapshots, and the refs/safety/remote/<ts>/…
+#   backups, whose timestamp sits in the same place. Nothing prunes ~/.alethia/backups/.
 #
 #   THE SNAPSHOT IS BOUNDED, so it can never stall a command, AND FAIR, so one big directory cannot
 #   starve a small real file. Tracked changes are ALWAYS captured, whatever their path. Untracked
@@ -78,6 +139,9 @@
 #   file group over the byte cap, each directory not scanned, and where a listing stopped.
 #
 #   RESTORE (also in .claude/skills/dev/SKILL.md → "Recovering from a destructive command"):
+#       pnpm backups:ls                                           # ~/.alethia/backups, newest first
+#       cat ~/.alethia/backups/<kind>/<ts>/MANIFEST               # what ran, what was saved, how back
+#       git push origin +refs/safety/remote/<ts>/heads/<b>:refs/heads/<b>   # a remote ref put back
 #       git for-each-ref --sort=-refname refs/safety/            # what is there
 #       git show --stat <ref>     ·    git diff <ref>^ <ref>       # what it saved
 #       git restore --source=<ref> --worktree -- <path>…          # put files back
@@ -93,10 +157,17 @@
 #   · anything inside a script file (`bash x.sh`), an alias, a function, or text built at run
 #     time (`eval`, `$(…)` that PRODUCES a command). Variables are not expanded except $HOME/~.
 #   · an rm whose target is an unexpanded variable is snapshotted as "the cwd's tree" (best
-#     effort) and allowed — `rm -rf "$tmp"` is too common to refuse. A git command whose TREE is
+#     effort, and no tfstate under it is copied) and allowed — `rm -rf "$tmp"` is too common to
+#     refuse. A git command whose TREE is
 #     an unexpanded variable (`git -C "$W" reset --hard`) is refused: it cannot be snapshotted.
 #   · ignored files (.env, node_modules, build output) are never in a snapshot; only tfstate,
-#     which has no other copy, is refused outright.
+#     which has no other copy, is copied out (B-TFSTATE).
+#   · ~/.alethia/backups and refs/safety/ are on THIS Mac: they survive an agent's mistake, not
+#     the loss of the machine. A backup is as complete as its API: a repo export is a record that
+#     GitHub cannot re-import, a kubectl export saves manifests and not volume data, and a GitHub
+#     secret's value is never readable (hence R-GH).
+#   · a backup whose target is too big for the time budget (a huge repo mirror, a large database)
+#     is refused, not taken in the background; take that one yourself and say so.
 #   · `git reflog expire`, `git gc --prune=now`, `git update-ref -d`, `git branch -M` overwriting
 #     a branch, `git filter-repo`: local history surgery, rare, not matched.
 #   · psql/SQL text run against a remote database; DB URLs set in a shell profile the hook
@@ -106,7 +177,9 @@
 #   · gh api calls whose path or method is in a variable are refused only when the path is
 #     recognisably protected.
 #
-# There is NO escape hatch here, on purpose: an irreversible action is the maintainer's to run.
+# There is NO escape hatch here, and none is needed: anything that can be backed up is allowed after
+# its backup, every refusal about a backup says what would let it through, and the two that do not
+# (R-CRED, R-GITDIR) are self-sabotage rather than an instruction anyone gives.
 #
 # CRASH DIRECTION IS FAIL-OPEN, deliberately: a crash (exit other than 0/2) is an allow, because no
 # hook sets `onFailure: "block"` and a guard bug must never brick every Bash call. The REFUSALS
@@ -130,7 +203,7 @@ refuse() { # <rule-id> <what> [why]
 			echo "  ${3}"
 		fi
 		echo ""
-		echo "  This cannot be undone from here, so it is not an agent's call: ask the maintainer."
+		echo "  (guard-destroy backs up what a command destroys, then allows it; it refuses only what it cannot back up. See its header.)"
 	} >&2
 	exit 2
 }
@@ -203,6 +276,50 @@ tree_has_tfstate() { # <top>
 is_tfstate_path() {
 	case "$1" in *.tfstate | *.tfstate.* | *terraform.tfstate*) return 0 ;; esac
 	return 1
+}
+
+# bk_tfstate <path>… — copy every terraform state file at or under each path (a file, or a
+# directory searched BK_TF_DEPTH (5) levels deep, one deeper than tree_has_tfstate looks; unlimited
+# when BK_TF_DEPTH is empty) to $BK/files/<absolute path>. `.terraform/` (backend configuration,
+# rebuilt by init) and node_modules are skipped. No state there: nothing to save, the command runs.
+BK_TF_DEPTH=5
+bk_tfstate() {
+	local p f n=0 dirs=() rc
+	: >"$BK/.list"
+	for p in "$@"; do
+		if [ -d "$p" ]; then
+			dirs+=("$p")
+		elif [ -f "$p" ]; then
+			printf '%s\n' "$p" >>"$BK/.list"
+		fi
+	done
+	if [ ${#dirs[@]} -gt 0 ]; then
+		# find exits 1 on an unreadable subdirectory, which is not a failure to copy what it found;
+		# running out of time is (bk_exec reports 142).
+		bk_exec "$BK/.found" find "${dirs[@]}" ${BK_TF_DEPTH:+-maxdepth "$BK_TF_DEPTH"} -type f \
+			\( -name '*.tfstate' -o -name '*.tfstate.*' \) -not -path '*/node_modules/*' -not -path '*/.terraform/*'
+		rc=$?
+		[ "$rc" = 0 ] || [ "$rc" = 1 ] || return 1
+		cat "$BK/.found" >>"$BK/.list"
+		rm -f "$BK/.found"
+	fi
+	while IFS= read -r f; do
+		[ -f "$f" ] || continue
+		if ! { mkdir -p "$BK/files${f%/*}" && cp -p "$f" "$BK/files$f"; } 2>/dev/null; then
+			BK_ERR="could not copy $f"
+			return 1
+		fi
+		printf '%s\n' "$f" >>"$BK/files.txt"
+		n=$((n + 1))
+	done <"$BK/.list"
+	rm -f "$BK/.list"
+	if [ "$n" -eq 0 ]; then
+		BK_EMPTY=1
+		BK_SAVED="no terraform state there"
+		return 0
+	fi
+	BK_SAVED="$n terraform state file(s) (files.txt)"
+	BK_RESTORE="cp -p $BK/files/<absolute path> <absolute path>"
 }
 
 # ── the snapshot ──────────────────────────────────────────────────────────────────────────────
@@ -405,6 +522,107 @@ pin() {
 	note "pinned $what → $STORED_REF"
 }
 
+# ── the backup: everything that is not a local git tree ───────────────────────────────────────
+# A backup lands in ~/.alethia/backups/<kind>/<UTC timestamp>/ (mode 700), with a MANIFEST saying
+# what ran, what was saved and how to put it back. `pnpm backups:ls` lists them. The hook's own
+# commands below run INSIDE the hook: their output goes to files there, never to the transcript.
+#
+# Every external command is bounded by BK_SECS_LEFT, a budget for the whole hook that stays under
+# the hook timeout in .claude/settings.json and .codex/hooks.json (600 s). A hook that is killed by
+# its timeout ALLOWS the command (crash direction is fail-open), so a backup that would outlive the
+# hook must be refused by the hook itself, never cut off by the harness.
+BK_BUDGET=540
+BK_START="$(date +%s)"
+
+# bk_ts — a fresh UTC timestamp, the same format as the snapshot refs.
+bk_ts() { date -u +%Y%m%dT%H%M%SZ; }
+
+# bk_mask <text> — sets MASKED: the text with any URL password replaced, so a connection string in
+# an error or a MANIFEST never carries one.
+bk_mask() {
+	MASKED="$(printf '%s' "$1" | sed -E 's#(://[^/@:[:space:]]*):[^/@[:space:]]+@#\1:***@#g')"
+}
+
+# bk_exec <stdout-file> <command…> — run one backup step with the time that is left. stdout goes to
+# the file (/dev/null when the step writes its own); stderr is kept only to explain a failure.
+bk_exec() {
+	local out="$1" left rc err
+	shift
+	left=$((BK_BUDGET - ($(date +%s) - BK_START)))
+	if [ "$left" -lt 5 ]; then
+		BK_ERR="the hook's ${BK_BUDGET}s backup budget ran out before \`$1\`"
+		return 1
+	fi
+	# from the command's own directory, so a relative path or gh's repository resolves as it will
+	perl -e 'my $d = shift @ARGV; chdir $d if length $d && -d $d; alarm shift @ARGV; exec @ARGV or exit 127' \
+		"${DIR:-}" "$left" "$@" >"$out" 2>"$BK/.stderr"
+	rc=$?
+	if [ "$rc" -ne 0 ]; then
+		err="$(tail -c 400 "$BK/.stderr" 2>/dev/null | tr '\n' ' ')"
+		case "$rc" in 127) err="not installed or not runnable. $err" ;; 142) err="timed out after ${left}s. $err" ;; esac
+		bk_mask "\`$1\` failed (exit $rc): $err"
+		BK_ERR="$MASKED"
+	fi
+	rm -f "$BK/.stderr"
+	return "$rc"
+}
+
+# bk_wrapped <stdout-file> <command…> — bk_exec, run the way the agent's command will run: with the
+# literal VAR=value prefixes it carried, and under `pnpm creds <profile> --` when it was wrapped in
+# the credential broker. Under the broker the child writes the file ITSELF, so the redactor (which
+# rewrites the child's stdout) never touches the backup's bytes.
+bk_wrapped() {
+	local out="$1" line envs=()
+	shift
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		cmdline_has_var "$line" && continue
+		line="${line//\"/}"
+		envs+=("${line//\'/}")
+	done <<<"$SEG_ENV"
+	if [ -n "$CREDS_PROFILE" ]; then
+		bk_exec /dev/null python3 "$CREDS_PY" "$CREDS_PROFILE" -- \
+			env "${envs[@]}" sh -c 'o="$1"; shift; exec "$@" >"$o"' sh "$out" "$@"
+	else
+		bk_exec "$out" env "${envs[@]}" "$@"
+	fi
+}
+
+# backup <B-RULE> <kind> <what> <fn> [args…] — make a backup directory, run <fn> to fill it, write
+# its MANIFEST, and let the command through. A failed backup REFUSES as R-<RULE>: an unprotected
+# destruction is exactly what this file exists to prevent. <fn> sets BK_SAVED (what it saved),
+# BK_RESTORE (how to put it back), BK_ERR (why it failed), or BK_EMPTY=1 when there was nothing to
+# save (the directory is then removed and the command allowed).
+backup() {
+	local id="$1" kind="$2" what="$3" fn="$4" dir ts
+	shift 4
+	ts="$(bk_ts)"
+	dir="$HOME/.alethia/backups/$kind/$ts"
+	[ -e "$dir" ] && dir="$dir-$$-$RANDOM"
+	if ! (umask 077 && mkdir -p "$dir") 2>/dev/null; then
+		refuse "R-${id#B-}" "could not create the backup directory $dir before \`$what\`." \
+			"Nothing was run. A destruction without its backup is the one thing this guard refuses."
+	fi
+	chmod 700 "$HOME/.alethia/backups" "$HOME/.alethia/backups/$kind" 2>/dev/null
+	# BK_TS names refs as well as the directory, so two backups in one second never share a name
+	BK="$dir" BK_TS="${dir##*/}" BK_ERR="" BK_SAVED="" BK_RESTORE="" BK_EMPTY=""
+	if ! "$fn" "$@"; then
+		rm -rf "$dir"
+		# @mut backup-fail
+		refuse "R-${id#B-}" "could not back up before \`$what\`${BK_ERR:+ — $BK_ERR}." \
+			"Nothing was run. Fix what the backup needs (network, auth, a client tool, or a smaller target) and run it again; the guard backs up first and then lets it through."
+	fi
+	if [ -n "$BK_EMPTY" ]; then
+		rm -rf "$dir"
+		note "nothing to back up before \`$what\` (${BK_SAVED:-the target holds nothing})."
+		return 0
+	fi
+	bk_mask "$(printf 'kind: %s\nwhen: %s\nrule: %s\nwhat: %s\ncwd: %s\nsaved: %s\nrestore: %s\ncommand:\n%s' \
+		"$kind" "$ts" "$id" "$what" "${DIR:-?}" "$BK_SAVED" "${BK_RESTORE:-see the files in this directory}" "$CMD")"
+	printf '%s\n' "$MASKED" >"$dir/MANIFEST" 2>/dev/null
+	note "backed up before \`$what\` → $dir — $BK_SAVED${BK_RESTORE:+   (restore: $BK_RESTORE)}"
+}
+
 # ── environment lookup (prefix > earlier `export` in the same command > the hook's env) ────────
 EXPORTS=""
 env_lookup() { # <NAME> — sets ENV_VAL and ENV_SRC (prefix|export|env|"")
@@ -433,7 +651,7 @@ env_lookup() { # <NAME> — sets ENV_VAL and ENV_SRC (prefix|export|env|"")
 	fi
 }
 
-# ── R-DB ──────────────────────────────────────────────────────────────────────────────────────
+# ── B-DB / R-DB ───────────────────────────────────────────────────────────────────────────────
 # db_host <url> — sets DB_HOST; fails when the URL is not a parseable literal.
 db_host() {
 	local u="$1" q h hp
@@ -478,27 +696,52 @@ rule_db() {
 	*) return 0 ;;
 	esac
 	env_lookup ALETHIA_DATABASE_URL
+	# Under the credential broker the URL is in the CHILD's environment, which the guard cannot
+	# see — but it can run pg_dump under the same broker, so the dump is of the same database.
+	if [ "$ENV_SRC" != prefix ] && [ -n "$CREDS_PROFILE" ]; then
+		backup B-DB db "$SEG" bk_db_dump ""
+		return 0
+	fi
 	if [ "$ENV_SRC" != prefix ]; then
 		case " $SEG " in *" --env-file"* | *" dotenv "*)
-			refuse R-DB "\`$SEG\` loads its database URL from a file the guard cannot read." \
-				"Prefix the command with an explicit local URL: ALETHIA_DATABASE_URL=postgres://…@localhost:5432/… <command>"
+			refuse R-DB "\`$SEG\` loads its database URL from a file the guard cannot read, so it cannot dump that database first." \
+				"Prefix the command with the literal URL (ALETHIA_DATABASE_URL=postgres://… <command>), or run it under the broker (pnpm creds <profile> -- <command>); the guard then pg_dumps that database to ~/.alethia/backups/db/ and lets it through."
 			;;
 		esac
 	fi
 	if [ -z "$ENV_VAL" ]; then
-		refuse R-DB "\`$SEG\` drops or rewrites a database, and no ALETHIA_DATABASE_URL is visible to the guard." \
-			"Prefix the command with an explicit local URL (localhost, 127.0.0.1, ::1, or the compose host db/postgres) so the target is known before it runs."
+		refuse R-DB "\`$SEG\` drops or rewrites a database, and no ALETHIA_DATABASE_URL is visible to the guard, so it cannot dump that database first." \
+			"Prefix the command with the literal URL, or run it under the broker (pnpm creds <profile> -- <command>). A local URL (localhost, 127.0.0.1, ::1, or the compose host db/postgres) runs as is; any other is pg_dumped first."
 	fi
 	if ! db_host "$ENV_VAL"; then
-		refuse R-DB "\`$SEG\` targets a database URL the guard cannot parse (a variable, a substitution, or not a URL)." \
-			"Prefix the command with a literal local URL."
+		refuse R-DB "\`$SEG\` targets a database URL the guard cannot parse (a variable, a substitution, or not a URL), so it cannot dump that database first." \
+			"Prefix the command with the literal URL, or run it under the broker (pnpm creds <profile> -- <command>)."
 	fi
-	db_host_is_local "$DB_HOST" ||
-		refuse R-DB "\`$SEG\` would run against the database at host '$DB_HOST', which is not local." \
-			"db:reset runs DROP SCHEMA public CASCADE; migrate/reencrypt rewrite live rows. A shared or production database is the maintainer's."
+	db_host_is_local "$DB_HOST" && return 0
+	backup B-DB db "$SEG" bk_db_dump "$ENV_VAL"
 }
 
-# ── R-PUSH ────────────────────────────────────────────────────────────────────────────────────
+# bk_db_dump <url|""> — pg_dump (custom format) the database the command targets. An empty URL
+# means "the one the broker puts in ALETHIA_DATABASE_URL"; the child refuses to dump when the broker
+# did not set it, rather than dumping whatever libpq's defaults point at.
+bk_db_dump() {
+	local url="$1"
+	if [ -n "$url" ]; then
+		bk_exec /dev/null pg_dump --format=custom --no-owner --file="$BK/db.dump" "$url" || return 1
+		db_host "$url"
+		BK_SAVED="pg_dump of the database at $DB_HOST (db.dump)"
+	else
+		bk_wrapped /dev/null sh -c '[ -n "$ALETHIA_DATABASE_URL" ] || { echo "the broker profile sets no ALETHIA_DATABASE_URL" >&2; exit 3; }; exec pg_dump --format=custom --no-owner --file="$1" "$ALETHIA_DATABASE_URL"' sh "$BK/db.dump" || return 1
+		BK_SAVED="pg_dump of the database in profile '$CREDS_PROFILE' (db.dump)"
+	fi
+	[ -s "$BK/db.dump" ] || {
+		BK_ERR="pg_dump wrote nothing"
+		return 1
+	}
+	BK_RESTORE="pg_restore --clean --if-exists --no-owner -d <url> $BK/db.dump"
+}
+
+# ── B-PUSH / R-PUSH ───────────────────────────────────────────────────────────────────────────
 current_branch() { # <dir> — sets BRANCH ("" when detached or unknown)
 	BRANCH=""
 	[ -n "$1" ] || return 1
@@ -507,30 +750,60 @@ current_branch() { # <dir> — sets BRANCH ("" when detached or unknown)
 
 # push_source_is_snapshot <src> — does pushing <src> publish snapshot content? True when <src>
 # resolves (by any spelling: a short name git expands, a raw sha, a branch) to a ref under
-# refs/safety/, or to a commit whose history — beyond what the remotes already have — holds a
-# commit written by the snapshot identity. A branch made from a snapshot is caught here too;
-# .githooks/pre-push repeats the history check on the exact range git is about to send.
+# refs/safety/ (except refs/safety/remote/, which are copies of refs the remote already had), or
+# to a commit whose history — beyond what the remotes already have — holds a commit written by the
+# snapshot identity. A branch made from a snapshot is caught here too; .githooks/pre-push repeats
+# the history check on the exact range git is about to send.
 push_source_is_snapshot() {
 	local src="$1" full sha
 	[ -n "$GDIR" ] && [ -n "$src" ] || return 1
 	full="$(git -C "$GDIR" rev-parse --symbolic-full-name "$src" 2>/dev/null)"
-	case "$full" in refs/safety/*) return 0 ;; esac
+	case "$full" in refs/safety/remote/*) ;; refs/safety/*) return 0 ;; esac
 	sha="$(git -C "$GDIR" rev-parse -q --verify "$src^{commit}" 2>/dev/null)" || return 1
 	git -C "$GDIR" log --format='%ae %ce' "$sha" --not --remotes 2>/dev/null | grep -qF "$SNAP_EMAIL"
 }
 
-# push_target_is_branch <name> <remote> — a local or remote-tracking branch exists and no tag does.
-push_target_is_branch() {
-	local name="$1" remote="${2:-origin}"
-	[ -n "$GDIR" ] || return 1
-	git -C "$GDIR" show-ref -q --verify "refs/tags/$name" 2>/dev/null && return 1
-	git -C "$GDIR" show-ref -q --verify "refs/heads/$name" 2>/dev/null && return 0
-	git -C "$GDIR" show-ref -q --verify "refs/remotes/$remote/$name" 2>/dev/null && return 0
-	return 1
+# push_backup_ref <dst> — add the remote ref(s) a push to <dst> could overwrite or delete to RREFS.
+# A short name is resolved by the REMOTE, where it may be a branch or a tag, so both are recorded.
+push_backup_ref() {
+	local d="$1"
+	case "$d" in
+	refs/*) RREFS+=("$d") ;;
+	heads/* | tags/*) RREFS+=("refs/$d") ;;
+	*) RREFS+=("refs/heads/$d" "refs/tags/$d") ;;
+	esac
 }
 
+# bk_remote_refs <dir> <remote> <ref-or-glob>… — copy every listed ref the remote HAS into the local
+# repository as refs/safety/remote/<ts>/heads/<branch> or …/tags/<tag>. The timestamp comes first
+# so session-cleanup.sh's 30-day prune (refs/safety/<name>/<ts>) reads its age the same way.
+bk_remote_refs() {
+	local dir="$1" remote="$2" sha ref specs=()
+	shift 2
+	bk_exec "$BK/ls-remote.txt" git -C "$dir" ls-remote "$remote" "$@" || return 1
+	while read -r sha ref; do
+		case "$ref" in
+		*'^{}') ;;
+		refs/heads/* | refs/tags/*) specs+=("+$ref:refs/safety/remote/$BK_TS/${ref#refs/}") ;;
+		esac
+	done <"$BK/ls-remote.txt"
+	if [ ${#specs[@]} -eq 0 ]; then
+		BK_EMPTY=1
+		BK_SAVED="the remote has none of: $*"
+		return 0
+	fi
+	bk_exec /dev/null git -C "$dir" fetch -q --no-tags --no-write-fetch-head "$remote" "${specs[@]}" || return 1
+	printf '%s\n' "${specs[@]}" >"$BK/refs.txt"
+	BK_SAVED="${#specs[@]} remote ref(s) under refs/safety/remote/$BK_TS/ (refs.txt)"
+	BK_RESTORE="git push $remote +refs/safety/remote/$BK_TS/heads/<branch>:refs/heads/<branch> (a protected branch also needs the ruleset's bypass)"
+}
+
+# rule_push — pushes are ALLOWED once every remote ref they can overwrite or delete is copied
+# under refs/safety/remote/. The server rulesets on dev/staging/main remain the real control; this
+# makes a push that got past them recoverable. What stays refused is publishing a snapshot.
 rule_push() {
-	local i a remote="" force=0 del=0 all=0 prune=0 tags=0 n=${#GARGS[@]} specs=() skip=0 s src dst
+	local i a remote="" force=0 del=0 all=0 prune=0 tags=0 mirror=0 n=${#GARGS[@]} specs=() skip=0 s src dst plus
+	RREFS=()
 	for ((i = 0; i < n; i++)); do
 		a="${GARGS[$i]}"
 		if [ "$skip" = 1 ]; then
@@ -538,7 +811,7 @@ rule_push() {
 			continue
 		fi
 		case "$a" in
-		--mirror) refuse R-PUSH "\`git push --mirror\` overwrites and deletes every ref on the remote, dev/staging/main included." ;;
+		--mirror) mirror=1 ;;
 		-f | --force | --force-with-lease* | --force-if-includes) force=1 ;;
 		-d | --delete) del=1 ;;
 		--all | --branches) all=1 ;;
@@ -546,7 +819,7 @@ rule_push() {
 		--tags) tags=1 ;;
 		--prune-tags)
 			# @mut prune-tags
-			refuse R-PUSH "\`--prune-tags\` deletes every remote tag that has no local copy."
+			RREFS+=('refs/tags/*')
 			;;
 		-o | --push-option | --repo | --receive-pack | --exec) skip=1 ;;
 		--) ;;
@@ -559,59 +832,61 @@ rule_push() {
 			;;
 		esac
 	done
-	if [ "$all" = 1 ] && [ "$force" = 1 ]; then
-		refuse R-PUSH "\`git push --all --force\` force-pushes every local branch, dev/staging/main included."
-	fi
-	if [ "$prune" = 1 ]; then
-		case " ${specs[*]} " in *refs/tags/*) tags=1 ;; esac
-		if [ "$tags" = 1 ] || [ "$all" = 1 ]; then
-			# @mut push-prune
-			refuse R-PUSH "\`git push --prune\` with tags or --all deletes every remote ref that has no local copy — tags and protected branches included."
+	# A snapshot holds whatever untracked files the tree had — local documents, .bak files — and
+	# this repository is PUBLIC. Snapshots never leave the machine.
+	for s in "${specs[@]}"; do
+		s="${s#+}"
+		src="${s%%:*}"
+		case "$s" in *:*) dst="${s##*:}" ;; *) dst="$s" ;; esac
+		case "$dst" in refs/safety/* | safety/*)
+			# @mut push-safety
+			refuse R-PUSH "\`git push\` to $dst would publish local snapshots, which can hold untracked private files."
+			;;
+		esac
+		case "$src" in refs/safety/remote/*) ;; refs/safety/* | safety/*)
+			refuse R-PUSH "\`git push\` of $src would publish a local snapshot, which can hold untracked private files." ;;
+		esac
+		if [ -n "$src" ] && push_source_is_snapshot "$src"; then
+			# @mut push-snapshot-source
+			refuse R-PUSH "\`git push\` of '$src' would publish a snapshot commit (a refs/safety ref under another name, or a history holding a commit written by the snapshot identity), which can carry untracked private files." \
+				"Restore files from a snapshot onto a normal commit instead (.claude/skills/dev/SKILL.md → Recovering from a destructive command)."
 		fi
+	done
+	[ "$mirror" = 1 ] && RREFS+=('refs/heads/*' 'refs/tags/*')
+	[ "$all" = 1 ] && [ "$force" = 1 ] && RREFS+=('refs/heads/*')
+	if [ "$prune" = 1 ]; then
+		[ "$all" = 1 ] && RREFS+=('refs/heads/*')
+		[ "$tags" = 1 ] && RREFS+=('refs/tags/*')
 	fi
 	if [ "$tags" = 1 ] && [ "$force" = 1 ]; then
 		# @mut tags-force
-		refuse R-PUSH "\`git push --tags --force\` moves published tags, which the release workflows build from."
+		RREFS+=('refs/tags/*')
 	fi
-	if [ ${#specs[@]} -eq 0 ]; then
-		[ "$all" = 1 ] && return 0
+	if [ ${#specs[@]} -eq 0 ] && [ "$all" = 0 ] && [ "$mirror" = 0 ] && [ "$tags" = 0 ]; then
 		# No refspec: git pushes the current branch (or, under push.default=upstream, to its
 		# upstream). Resolve that here rather than leave it to the pre-push hook.
-		[ -n "$GDIR" ] || refuse R-PUSH "cannot tell which branch a bare \`git push\` pushes (the tree is an unexpanded variable)."
+		[ -n "$GDIR" ] || refuse R-PUSH "cannot tell which branch a bare \`git push\` pushes (the tree is an unexpanded variable), so the remote branch cannot be backed up first." \
+			"Spell the path literally (git -C <path> push)."
 		current_branch "$GDIR"
 		if push_source_is_snapshot HEAD; then
 			# @mut push-snapshot-content
 			refuse R-PUSH "\`git push\` would publish a snapshot commit: this branch's unpushed history holds a commit written by guard-destroy's snapshot identity, which can carry untracked private files." \
 				"Restore files from a snapshot onto a normal commit instead (.claude/skills/dev/SKILL.md → Recovering from a destructive command)."
 		fi
-		if is_protected_branch "$BRANCH"; then
-			refuse R-PUSH "a bare \`git push\` from a tree on \`$BRANCH\` pushes \`$BRANCH\`." \
-				"Feature work goes to a feature branch and a PR into dev; promotions are PR merges (guard-merge.sh)."
-		fi
+		dst="$BRANCH"
 		case "$(git -C "$GDIR" config --get push.default 2>/dev/null)" in upstream | tracking)
 			dst="$(git -C "$GDIR" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null)"
 			dst="${dst#*/}"
-			is_protected_branch "$dst" &&
-				refuse R-PUSH "push.default=upstream sends this branch to \`$dst\`."
 			;;
 		esac
-		return 0
-	fi
-	# A snapshot holds whatever untracked files the tree had — local documents, .bak files — and
-	# this repository is PUBLIC. Snapshots never leave the machine.
-	case " ${specs[*]} " in *refs/safety*)
-		# @mut push-safety
-		refuse R-PUSH "\`git push\` of refs/safety/* would publish local snapshots, which can hold untracked private files."
-		;;
-	esac
-	for s in "${specs[@]}"; do
-		s="${s#+}"
-		src="${s%%:*}"
-		if [ -n "$src" ] && push_source_is_snapshot "$src"; then
-			# @mut push-snapshot-source
-			refuse R-PUSH "\`git push\` of '$src' would publish a snapshot commit (a refs/safety ref under another name, or a history holding a commit written by the snapshot identity), which can carry untracked private files." \
-				"Restore files from a snapshot onto a normal commit instead (.claude/skills/dev/SKILL.md → Recovering from a destructive command)."
+		if [ -n "$dst" ] && { [ "$force" = 1 ] || is_protected_branch "$dst"; }; then
+			push_backup_ref "refs/heads/$dst"
 		fi
+	fi
+	for s in "${specs[@]}"; do
+		plus=0
+		case "$s" in +*) plus=1 ;; esac
+		s="${s#+}"
 		case "$s" in
 		*:*)
 			src="${s%%:*}"
@@ -626,43 +901,29 @@ rule_push() {
 			current_branch "$GDIR"
 			dst="$BRANCH"
 		fi
-		case "$dst" in
-		refs/tags/*)
-			if [ "$del" = 1 ] || [ -z "$src" ]; then
-				refuse R-PUSH "\`git push\` would delete the remote tag ${dst#refs/tags/}." \
-					"Release tags drive the release workflows; a deleted tag is a deleted release input."
-			fi
+		[ -n "$dst" ] || continue
+		# A wildcard can reach dev/staging/main; with --prune it also deletes what it matches.
+		case "$dst" in *\**)
+			RREFS+=("$dst")
 			continue
 			;;
 		esac
-		# A delete by SHORT name: git resolves it against the remote's refs, and a tag is as
-		# likely as a branch. It is a branch only when this repository knows a branch of that
-		# name (local, or remote-tracking for that remote) and no tag of that name.
-		if { [ "$del" = 1 ] || [ -z "$src" ]; } && ! is_protected_branch "${dst#refs/heads/}"; then
-			case "$dst" in
-			refs/heads/*) ;;
-			*)
-				if ! push_target_is_branch "$dst" "$remote"; then
-					# @mut tag-short
-					refuse R-PUSH "\`git push\` would delete '$dst' on the remote, and it is not a branch this repository knows — it may be a tag." \
-						"Release tags drive the release workflows. To delete a remote BRANCH, spell it refs/heads/$dst."
-				fi
-				;;
-			esac
-		fi
-		dst="${dst#refs/heads/}"
-		dst="${dst#heads/}"
-		case "$dst" in *\**)
-			refuse R-PUSH "a wildcard refspec ($s) would push to dev/staging/main as well." ;;
-		esac
-		if is_protected_branch "$dst"; then
-			if [ "$del" = 1 ] || [ -z "$src" ]; then
-				refuse R-PUSH "\`git push\` would DELETE the remote \`$dst\` branch."
-			fi
-			refuse R-PUSH "\`git push\` would write the protected branch \`$dst\` directly." \
-				"dev, staging and main change only through merged PRs: feature → dev by the queue, promotions through guard-merge.sh."
+		if [ "$del" = 1 ] || [ -z "$src" ] || [ "$force" = 1 ] || [ "$plus" = 1 ]; then
+			# a delete or a forced update, of any ref: the remote's copy is what would be lost
+			push_backup_ref "$dst"
+		elif is_protected_branch "${dst#refs/heads/}"; then
+			push_backup_ref "$dst"
 		fi
 	done
+	[ ${#RREFS[@]} -gt 0 ] || return 0
+	[ -n "$GDIR" ] || refuse R-PUSH "cannot tell which repository \`git push\` runs in (the tree is an unexpanded variable), so the remote refs it overwrites cannot be backed up first." \
+		"Spell the path literally (git -C <path> push …)."
+	if [ -z "$remote" ]; then
+		current_branch "$GDIR"
+		remote="$(git -C "$GDIR" config --get "branch.$BRANCH.remote" 2>/dev/null)"
+		[ -n "$remote" ] || remote=origin
+	fi
+	backup B-PUSH remote-refs "git push ${GARGS[*]}" bk_remote_refs "$GDIR" "$remote" "${RREFS[@]}"
 }
 
 # ── git: snapshots, pins and the tfstate case of git clean ─────────────────────────────────────
@@ -723,12 +984,12 @@ rule_git() {
 		has_arg -n --dry-run '-[a-zA-Z]*n*' && return 0
 		if has_arg '-[a-zA-Z]*[xX]*'; then
 			if [ -z "$GDIR" ]; then
-				refuse R-TFSTATE "cannot tell which tree \`$label\` cleans, and -x/-X deletes ignored files such as terraform.tfstate."
+				refuse R-TFSTATE "cannot tell which tree \`$label\` cleans, and -x/-X deletes ignored files such as terraform.tfstate, which no snapshot can capture." \
+					"Spell the path literally; the guard then copies the tree's state to ~/.alethia/backups/tfstate/ first."
 			fi
 			if find_top "$GDIR" && tree_has_tfstate "$TOP"; then
 				case "$SEG" in *-e*tfstate*) ;; *)
-					refuse R-TFSTATE "\`$label\` deletes IGNORED files, and $TOP holds local terraform state (terraform.tfstate*) with no other copy." \
-						"Keep the state with an exclude:  $label -e '*.tfstate*'"
+					backup B-TFSTATE tfstate "$label" bk_tfstate "$TOP"
 					;;
 				esac
 			fi
@@ -765,16 +1026,15 @@ rule_git() {
 		xp "$target"
 		target="$X"
 		if cmdline_has_var "$target" || [ -z "$GDIR" ]; then
-			refuse R-TFSTATE "cannot tell which tree \`$label\` removes, so neither its local state nor its work can be checked first." \
+			refuse R-TFSTATE "cannot tell which tree \`$label\` removes, so neither its local state nor its work can be backed up first." \
 				"Spell the path literally."
 		fi
 		cmdline_abspath "$target" "$GDIR"
 		# Forced or not: plain `worktree remove` also deletes IGNORED files, and a snapshot can
-		# never see them. Local tfstate has no other copy, so the same refusal as `rm -r`.
+		# never see them. Local tfstate has no other copy, so it is copied out first, as for `rm -r`.
 		if [ -d "$ABSPATH" ] && tree_has_tfstate "$ABSPATH"; then
 			# @mut wt-tfstate
-			refuse R-TFSTATE "\`$label\` removes a worktree holding local terraform state (terraform.tfstate*), which no snapshot can capture." \
-				"Move the state out first, or have the maintainer remove the tree."
+			backup B-TFSTATE tfstate "$label" bk_tfstate "$ABSPATH"
 		fi
 		has_arg -f --force || return 0
 		snap S-WTREE "$ABSPATH" "$label"
@@ -889,10 +1149,13 @@ rule_rm() {
 			fi
 		fi
 		case "$P" in */.git) [ -d "$P" ] && refuse R-GITDIR "\`$prog $t\` removes a repository's .git directory." ;; esac
-		is_tfstate_path "$P" && refuse R-TFSTATE "\`$prog $t\` removes local terraform state, which has no other copy." \
-			"infra/*-e2e and infra/sandbox keep their state on this machine; losing it orphans real cloud resources."
-		if [ "$recursive" = 1 ] && [ -d "$P" ] && tree_has_tfstate "$P"; then
-			refuse R-TFSTATE "\`$prog -r $t\` removes a directory holding local terraform state (terraform.tfstate*)."
+		# Local state has no other copy (infra/*-e2e and infra/sandbox keep it on this machine, and
+		# losing it orphans real cloud resources), and a snapshot cannot see an ignored file.
+		if is_tfstate_path "$P"; then
+			# @mut rm-tfstate
+			backup B-TFSTATE tfstate "$prog $t" bk_tfstate "$P"
+		elif [ "$recursive" = 1 ] && [ -d "$P" ] && tree_has_tfstate "$P"; then
+			backup B-TFSTATE tfstate "$prog -r $t" bk_tfstate "$P"
 		fi
 		case "$P" in *[\*\?\[]*) P="${P%%[\*\?\[]*}" && P="${P%/*}" ;; esac
 		[ -e "$P" ] || continue
@@ -940,14 +1203,21 @@ rule_mv_cp() { # mv anything tfstate/credential; cp ONTO a tfstate
 		cmdline_abspath "$a" "${DIR:-/}"
 		P="$ABSPATH"
 		if [ "$prog" = mv ]; then
-			is_tfstate_path "$P" && refuse R-TFSTATE "\`mv $a\` moves or overwrites local terraform state."
+			if is_tfstate_path "$P"; then
+				# @mut mv-tfstate
+				backup B-TFSTATE tfstate "mv $a" bk_tfstate "$P"
+			fi
 			for c in "${CREDS[@]}"; do
 				path_overlaps "$P" "$c" && [ "$a" != "$last" ] && refuse R-CRED "\`mv $a\` moves a credential directory out of place."
 			done
 		fi
 	done
+	cmdline_has_var "$last" && return 0
 	cmdline_abspath "$last" "${DIR:-/}"
-	is_tfstate_path "$ABSPATH" && [ ${#args[@]} -ge 2 ] && refuse R-TFSTATE "\`$prog … $last\` overwrites local terraform state."
+	if is_tfstate_path "$ABSPATH" && [ ${#args[@]} -ge 2 ]; then
+		# @mut cp-onto-tfstate
+		backup B-TFSTATE tfstate "$prog … $last" bk_tfstate "$ABSPATH"
+	fi
 	return 0
 }
 
@@ -964,7 +1234,10 @@ rule_redirect() {
 		case "$t" in /dev/* | "&"*) continue ;; esac
 		cmdline_has_var "$t" && continue
 		cmdline_abspath "$t" "${DIR:-/}"
-		is_tfstate_path "$ABSPATH" && refuse R-TFSTATE "a redirection overwrites $t, local terraform state."
+		if is_tfstate_path "$ABSPATH"; then
+			# @mut redirect-tfstate
+			backup B-TFSTATE tfstate "> $t" bk_tfstate "$ABSPATH"
+		fi
 		local c
 		for c in "${CREDS[@]}"; do
 			case "$ABSPATH" in "$c"/*) refuse R-CRED "a redirection overwrites $t, inside $c." ;; esac
@@ -978,24 +1251,36 @@ rule_find_rsync() {
 	local prog="$1" a roots=() last=""
 	if [ "$prog" = find ]; then
 		case " $SEG " in *" -delete"* | *" -exec rm "* | *" -execdir rm "* | *"/rm "*) ;; *) return 0 ;; esac
-		case "$SEG" in *tfstate*)
-			# @mut find-tfstate
-			refuse R-TFSTATE "\`find … -delete\` names terraform state."
-			;;
-		esac
-		# with no name or path filter, everything under the roots goes
-		case " $SEG " in *" -name "* | *" -iname "* | *" -path "* | *" -ipath "* | *" -regex "* | *" -iregex "*) return 0 ;; esac
+		local named=0 paths=()
+		case "$SEG" in *tfstate*) named=1 ;; esac
+		# with a name or path filter that does not name state, the state is not what goes
+		if [ "$named" = 0 ]; then
+			case " $SEG " in *" -name "* | *" -iname "* | *" -path "* | *" -ipath "* | *" -regex "* | *" -iregex "*) return 0 ;; esac
+		fi
 		for a in "${TOK[@]:1}"; do
 			case "$a" in -* | "(" | "!") break ;; esac
 			roots+=("$a")
 		done
 		[ ${#roots[@]} -gt 0 ] || roots=(.)
 		for a in "${roots[@]}"; do
-			cmdline_has_var "$a" && continue
+			if cmdline_has_var "$a"; then
+				[ "$named" = 1 ] && refuse R-TFSTATE "\`find $a … -delete\` deletes terraform state under a directory the guard cannot name, so it cannot copy the state out first." \
+					"Spell the path literally."
+				continue
+			fi
 			cmdline_abspath "$a" "${DIR:-/}"
-			[ -d "$ABSPATH" ] && tree_has_tfstate "$ABSPATH" &&
-				refuse R-TFSTATE "\`find $a … -delete\` deletes everything under a directory holding local terraform state."
+			if [ "$named" = 1 ]; then
+				paths+=("$ABSPATH")
+			elif [ -d "$ABSPATH" ] && tree_has_tfstate "$ABSPATH"; then
+				paths+=("$ABSPATH")
+			fi
 		done
+		# a find that names state reaches it at any depth, so the copy does too
+		[ "$named" = 1 ] && BK_TF_DEPTH=""
+		if [ ${#paths[@]} -gt 0 ]; then
+			# @mut find-tfstate
+			backup B-TFSTATE tfstate "find … -delete" bk_tfstate "${paths[@]}"
+		fi
 		return 0
 	fi
 	# rsync
@@ -1008,63 +1293,134 @@ rule_find_rsync() {
 	cmdline_abspath "$last" "${DIR:-/}"
 	if is_tfstate_path "$ABSPATH" || { [ -d "$ABSPATH" ] && tree_has_tfstate "$ABSPATH"; }; then
 		# @mut rsync-tfstate
-		refuse R-TFSTATE "\`rsync --delete … $last\` can delete local terraform state in the destination."
+		backup B-TFSTATE tfstate "rsync --delete … $last" bk_tfstate "$ABSPATH"
 	fi
 	return 0
 }
 
 rule_tofu() {
-	local a nf=() i
+	local a nf=() chdir="" state="" what="" ws=""
 	for a in "${TOK[@]:1}"; do
-		case "$a" in -*) ;; *) nf+=("$a") ;; esac
+		case "$a" in
+		-chdir=*) chdir="${a#-chdir=}" ;;
+		-state=*) state="${a#-state=}" ;;
+		-*) ;;
+		*) nf+=("$a") ;;
+		esac
 	done
 	case "${nf[0]:-}" in
 	state)
-		case "${nf[1]:-}" in rm | mv | push | replace-provider)
-			refuse R-TFSTATE "\`${TOK[0]} state ${nf[1]}\` rewrites terraform state in place." \
-				"State surgery can orphan or double-own real cloud resources; it is a reviewed, human operation."
-			;;
-		esac
+		case "${nf[1]:-}" in rm | mv | push | replace-provider) what="${TOK[0]##*/} state ${nf[1]}" ;; esac
 		;;
 	init)
-		case " ${TOK[*]} " in *" -migrate-state"* | *" -force-copy"*)
-			refuse R-TFSTATE "\`${TOK[0]} init -migrate-state/-force-copy\` moves state between backends and can overwrite the destination." ;;
-		esac
+		case " ${TOK[*]} " in *" -migrate-state"* | *" -force-copy"*) what="${TOK[0]##*/} init -migrate-state/-force-copy" ;; esac
 		;;
 	workspace)
-		[ "${nf[1]:-}" = delete ] && refuse R-TFSTATE "\`${TOK[0]} workspace delete\` deletes a workspace's state."
+		if [ "${nf[1]:-}" = delete ]; then
+			what="${TOK[0]##*/} workspace delete"
+			ws="${nf[2]:-}"
+		fi
 		;;
 	esac
-	return 0
+	[ -n "$what" ] || return 0
+	local mod="${DIR:-}"
+	if [ -n "$chdir" ]; then
+		mod=""
+		if ! cmdline_has_var "$chdir"; then
+			case "$chdir" in
+			/*)
+				cmdline_abspath "$chdir" /
+				mod="$ABSPATH"
+				;;
+			*)
+				if [ -n "$DIR" ]; then
+					cmdline_abspath "$chdir" "$DIR"
+					mod="$ABSPATH"
+				fi
+				;;
+			esac
+		fi
+	fi
+	if [ -z "$mod" ] || cmdline_has_var "$ws$state"; then
+		refuse R-TFSTATE "cannot tell which module \`$what\` acts on (an unexpanded variable), so its state cannot be backed up first." \
+			"Spell -chdir= (and the workspace) literally; the guard then copies or pulls the state into ~/.alethia/backups/tfstate/ and lets it through."
+	fi
+	if [ -n "$state" ]; then
+		cmdline_abspath "$state" "$mod"
+		state="$ABSPATH"
+	fi
+	backup B-TFSTATE tfstate "$what" bk_tofu_state "${TOK[0]}" "$mod" "$ws" "$state"
+}
+
+# bk_tofu_state <prog> <module-dir> <workspace|""> <-state file|""> — copy the module's LOCAL state
+# (terraform.tfstate*, terraform.tfstate.d/, an explicit -state= file); when it has none, the
+# backend's: `<prog> state pull` into state-pull.tfstate, run inside the hook with its output going
+# straight to the file (guard-secrets refuses `state pull` as an agent command because it would
+# print secrets; here it never reaches a transcript). TF_WORKSPACE selects the workspace a
+# `workspace delete` would remove.
+bk_tofu_state() {
+	local prog="$1" mod="$2" ws="$3" state="$4" f local_state=()
+	while IFS= read -r f; do
+		[ -n "$f" ] && local_state+=("$f")
+	done < <(compgen -G "$mod/*.tfstate*")
+	[ -d "$mod/terraform.tfstate.d" ] && local_state+=("$mod/terraform.tfstate.d")
+	[ -n "$state" ] && local_state+=("$state")
+	bk_tfstate "${local_state[@]}" || return 1
+	[ -n "$BK_EMPTY" ] || return 0
+	BK_EMPTY=""
+	if [ -n "$ws" ]; then
+		bk_wrapped "$BK/state-pull.tfstate" env TF_WORKSPACE="$ws" "$prog" -chdir="$mod" state pull || return 1
+	else
+		bk_wrapped "$BK/state-pull.tfstate" "$prog" -chdir="$mod" state pull || return 1
+	fi
+	if [ ! -s "$BK/state-pull.tfstate" ]; then
+		BK_EMPTY=1
+		BK_SAVED="the backend holds no state for $mod${ws:+ (workspace $ws)}"
+		return 0
+	fi
+	BK_SAVED="\`$prog state pull\` of $mod${ws:+ (workspace $ws)} (state-pull.tfstate)"
+	BK_RESTORE="$prog -chdir=$mod state push -force $BK/state-pull.tfstate"
 }
 
 rule_docker() {
-	local sub="${TOK[1]:-}" verb="${TOK[2]:-}" a
+	local sub="${TOK[1]:-}" verb="${TOK[2]:-}" a vols=()
 	case "$sub" in
 	volume)
 		case "$verb" in
-		prune) refuse R-DOCKER "\`docker volume prune\` deletes every unused volume — the alethia database volumes included whenever the stack is stopped." ;;
+		prune)
+			backup B-DOCKER docker-volumes "docker volume prune" bk_docker_dangling
+			;;
 		rm | remove)
 			for a in "${TOK[@]:3}"; do
-				case "$a" in *alethia* | *'$'* | *'`'*)
-					refuse R-DOCKER "\`docker volume $verb $a\` deletes an alethia data volume (or one the guard cannot name)." \
-						"Reset only YOUR environment's database: pnpm env:up --fresh"
+				case "$a" in
+				-*) ;;
+				*'$'* | *'`'*)
+					refuse R-DOCKER "\`docker volume $verb $a\` names a volume the guard cannot read, so it cannot be backed up first." \
+						"Name the volume literally."
 					;;
+				*alethia*) vols+=("$a") ;;
 				esac
 			done
+			if [ ${#vols[@]} -gt 0 ]; then
+				backup B-DOCKER docker-volumes "docker volume $verb ${vols[*]}" bk_docker_volumes "${vols[@]}"
+			fi
 			;;
 		esac
 		;;
 	system)
 		[ "$verb" = prune ] && case " ${TOK[*]} " in *" --volumes"*)
-			refuse R-DOCKER "\`docker system prune --volumes\` deletes every unused volume." ;;
+			backup B-DOCKER docker-volumes "docker system prune --volumes" bk_docker_dangling
+			;;
 		esac
 		;;
 	rm | container)
 		[ "$sub" = container ] && [ "$verb" != rm ] && return 0
 		case " ${TOK[*]} " in *" -v"* | *" --volumes"* | *" -fv"*)
 			for a in "${TOK[@]:2}"; do
-				case "$a" in *alethia*) refuse R-DOCKER "\`docker rm -v $a\` removes an alethia container together with its volumes." ;; esac
+				case "$a" in *alethia*)
+					backup B-DOCKER docker-volumes "docker rm -v $a" bk_docker_container "$a"
+					;;
+				esac
 			done
 			;;
 		esac
@@ -1073,7 +1429,47 @@ rule_docker() {
 	return 0
 }
 
-# ── R-CLOUD ───────────────────────────────────────────────────────────────────────────────────
+# bk_docker_volumes <volume>… — tar each volume's contents into <volume>.tgz through a throwaway
+# container (the volume is mounted read-only).
+BK_DOCKER_IMAGE=alpine:3.20
+bk_docker_volumes() {
+	local v n=0
+	for v in "$@"; do
+		bk_exec /dev/null docker run --rm -v "$v:/v:ro" -v "$BK:/b" "$BK_DOCKER_IMAGE" tar czf "/b/$v.tgz" -C /v . || return 1
+		n=$((n + 1))
+	done
+	if [ "$n" -eq 0 ]; then
+		BK_EMPTY=1
+		BK_SAVED="no alethia volume would be removed"
+		return 0
+	fi
+	BK_SAVED="$n docker volume(s) as <volume>.tgz: $*"
+	BK_RESTORE="docker volume create <v> && docker run --rm -v <v>:/v -v $BK:/b $BK_DOCKER_IMAGE tar xzf /b/<v>.tgz -C /v"
+}
+
+# bk_docker_dangling — a prune removes every UNUSED volume; the alethia ones among them are saved.
+bk_docker_dangling() {
+	local v vols=()
+	bk_exec "$BK/.vols" docker volume ls -q --filter dangling=true || return 1
+	while IFS= read -r v; do
+		case "$v" in *alethia*) vols+=("$v") ;; esac
+	done <"$BK/.vols"
+	rm -f "$BK/.vols"
+	bk_docker_volumes "${vols[@]}"
+}
+
+# bk_docker_container <container> — `docker rm -v` removes the container's anonymous volumes.
+bk_docker_container() {
+	local v vols=()
+	bk_exec "$BK/.vols" docker inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{"\n"}}{{end}}{{end}}' "$1" || return 1
+	while IFS= read -r v; do
+		[ -n "$v" ] && vols+=("$v")
+	done <"$BK/.vols"
+	rm -f "$BK/.vols"
+	bk_docker_volumes "${vols[@]}"
+}
+
+# ── B-CLOUD / R-CLOUD ─────────────────────────────────────────────────────────────────────────
 nonflag_words() { # sets NF: the words after TOK[0] that are not flags or a known flag's value
 	local i n=${#TOK[@]} a skip=0
 	NF=()
@@ -1141,6 +1537,44 @@ kube_disposable() {
 	return 1
 }
 
+# flag_value <flag> — sets FV: the value of `<flag> v` or `<flag>=v` in TOK ("" when absent).
+flag_value() {
+	local i n=${#TOK[@]}
+	FV=""
+	for ((i = 1; i < n; i++)); do
+		case "${TOK[$i]}" in
+		"$1") FV="${TOK[$((i + 1))]:-}" ;;
+		"$1"=*) FV="${TOK[$i]#*=}" ;;
+		esac
+	done
+}
+
+# aws_globals — sets AWSG: the --profile/--region/--endpoint-url the command carries, so the hook's
+# own call reaches the same account and region.
+aws_globals() {
+	local f
+	AWSG=()
+	for f in --profile --region --endpoint-url; do
+		flag_value "$f"
+		[ -n "$FV" ] && AWSG+=("$f" "$FV")
+	done
+	return 0
+}
+
+# kube_globals — sets KUBEG: the context, kubeconfig and namespace flags, for the hook's own `get`.
+kube_globals() {
+	local i n=${#TOK[@]} a
+	KUBEG=()
+	for ((i = 1; i < n; i++)); do
+		a="${TOK[$i]}"
+		case "$a" in
+		--context | --kube-context | --kubeconfig | -n | --namespace) KUBEG+=("$a" "${TOK[$((i + 1))]:-}") ;;
+		--context=* | --kube-context=* | --kubeconfig=* | --namespace=* | -A | --all-namespaces) KUBEG+=("$a") ;;
+		esac
+	done
+	return 0
+}
+
 rule_cloud() {
 	local prog="$1"
 	nonflag_words
@@ -1148,84 +1582,305 @@ rule_cloud() {
 	hcloud)
 		case "${NF[1]:-}" in delete | rebuild | delete-*) ;; *) return 0 ;; esac
 		hcloud_context
-		[ "$HTOKEN" = 1 ] && refuse R-CLOUD "\`hcloud ${NF[0]} ${NF[1]}\` with an HCLOUD_TOKEN prefix — the guard cannot tell which project it deletes in."
-		hcloud_disposable "$HCTX" ||
-			refuse R-CLOUD "\`hcloud ${NF[0]} ${NF[1]}\` outside a disposable project (context '${HCTX:-<the global default>}')." \
-				"The default hcloud context on this Mac is ANOTHER company's production. Only --context alethia-e2e or alethia-sandbox is disposable."
+		hcloud_disposable "$HCTX" && [ "$HTOKEN" = 0 ] && return 0
+		# Scope, not recoverability: the default hcloud context on this Mac is ANOTHER company's
+		# production, and a token overrides whatever project a context names.
+		[ "$HTOKEN" = 1 ] && refuse R-CLOUD "\`hcloud ${NF[0]} ${NF[1]}\` with an HCLOUD_TOKEN prefix — the guard cannot tell which project it deletes in, and it may not be Alethia's."
+		case "$HCTX" in alethia-*) ;; *)
+			refuse R-CLOUD "\`hcloud ${NF[0]} ${NF[1]}\` outside an Alethia project (context '${HCTX:-<the global default>}')." \
+				"The default hcloud context on this Mac is ANOTHER company's production. Name an alethia-* context with --context."
+			;;
+		esac
+		case "${NF[0]}" in
+		server)
+			backup B-CLOUD hcloud "hcloud --context $HCTX server ${NF[1]} ${NF[2]:-}" bk_hcloud_server "$HCTX" "${NF[2]:-}"
+			;;
+		volume)
+			# @mut hcloud-volume
+			refuse R-CLOUD "\`hcloud --context $HCTX volume ${NF[1]}\` deletes a volume, and Hetzner has no volume snapshot API, so it cannot be backed up first." \
+				"Copy the data off the volume first (attach it, then pg_dump / tar it into ~/.alethia/backups/), or delete it in the Hetzner console yourself."
+			;;
+		esac
 		;;
 	aws)
 		local svc="${NF[0]:-}" op="${NF[1]:-}"
-		if [ "$svc" = s3 ]; then
-			case "$op" in rm | rb | mv) refuse R-CLOUD "\`aws s3 $op\` deletes objects or a bucket." ;; esac
-			[ "$op" = sync ] && case " ${TOK[*]} " in *" --delete"*) refuse R-CLOUD "\`aws s3 sync --delete\` deletes objects." ;; esac
-			return 0
-		fi
-		case "$op" in delete-* | terminate-* | remove-* | deregister-* | purge-* | batch-delete-* | schedule-key-deletion | disable-key)
-			refuse R-CLOUD "\`aws $svc $op\` deletes a cloud resource; there is no disposable AWS target on this machine." ;;
-		esac
-		;;
-	gcloud | az)
-		local w
-		for w in "${NF[@]}"; do
-			case "$w" in delete | purge | remove)
-				refuse R-CLOUD "\`$prog … $w\` deletes a cloud resource; there is no disposable $prog target on this machine." ;;
+		case "$svc $op" in
+		"ec2 delete-volume")
+			flag_value --volume-id
+			if [ -z "$FV" ] || cmdline_has_var "$FV"; then
+				refuse R-CLOUD "\`aws ec2 delete-volume\` without a literal --volume-id, so the volume cannot be snapshotted first."
+			fi
+			local vol="$FV"
+			aws_globals
+			backup B-CLOUD aws "aws ec2 delete-volume --volume-id $vol" bk_aws_volume "$vol"
+			;;
+		"rds delete-db-instance" | "rds delete-db-cluster")
+			case " ${TOK[*]} " in *" --skip-final-snapshot"*)
+				refuse R-CLOUD "\`aws rds $op --skip-final-snapshot\` deletes the database with no final snapshot." \
+					"Drop --skip-final-snapshot and pass --final-db-snapshot-identifier <name>: RDS then takes the backup itself, and the delete is allowed."
+				;;
 			esac
-		done
-		;;
-	aliyun)
-		case "${NF[1]:-}" in Delete* | Release* | Remove* | Terminate* | Unbind* | Detach*)
-			refuse R-CLOUD "\`aliyun ${NF[0]} ${NF[1]}\` deletes a cloud resource." ;;
+			;;
+		"secretsmanager delete-secret")
+			case " ${TOK[*]} " in *" --force-delete-without-recovery"*)
+				refuse R-CLOUD "\`aws secretsmanager delete-secret --force-delete-without-recovery\` deletes the secret with no recovery window." \
+					"Drop the flag (optionally --recovery-window-in-days 7..30): the secret is then restorable with \`aws secretsmanager restore-secret\`, and the delete is allowed."
+				;;
+			esac
+			;;
 		esac
 		;;
 	kubectl)
-		local sub="${NF[0]:-}"
-		case "$sub" in
-		delete | drain) ;;
-		replace) case " ${TOK[*]} " in *" --force"*) ;; *) return 0 ;; esac ;;
-		apply) case " ${TOK[*]} " in *" --prune"*) ;; *) return 0 ;; esac ;;
-		*) return 0 ;;
-		esac
+		[ "${NF[0]:-}" = delete ] || return 0
 		kube_context
-		kube_disposable "$KCTX" ||
-			refuse R-CLOUD "\`kubectl $sub\` in context '${KCTX:-<unknown>}', which is not a kind-* or *-e2e* cluster."
+		kube_disposable "$KCTX" && return 0
+		kube_globals
+		backup B-CLOUD kubernetes "kubectl delete in ${KCTX:-<unknown context>}" bk_kube_objects
 		;;
 	helm)
 		case "${NF[0]:-}" in uninstall | delete | del | un) ;; *) return 0 ;; esac
 		kube_context
-		kube_disposable "$KCTX" ||
-			refuse R-CLOUD "\`helm ${NF[0]}\` in context '${KCTX:-<unknown>}', which is not a kind-* or *-e2e* cluster."
+		kube_disposable "$KCTX" && return 0
+		[ -n "${NF[1]:-}" ] && ! cmdline_has_var "${NF[1]}" ||
+			refuse R-CLOUD "\`helm ${NF[0]}\` without a literal release name, so the release cannot be exported first."
+		kube_globals
+		backup B-CLOUD kubernetes "helm ${NF[0]} ${NF[1]} in ${KCTX:-<unknown context>}" bk_helm_release "${NF[1]}"
 		;;
 	esac
 	return 0
 }
 
-# ── R-GH / R-GHAPI ────────────────────────────────────────────────────────────────────────────
-GH_API_PROTECTED_RE='(^|/)(rulesets|protection|releases|packages|environments|hooks|actions/secrets|dependabot/secrets|codespaces/secrets|tags/protection)(/|$)'
-# git/refs is protected only for dev/staging/main and for tags: PATCHing a feature branch's ref
-# (rebasing a dependabot branch through the API) is the same as force-pushing a feature branch,
-# which R-PUSH allows. A ref path the guard cannot read (a variable) is refused.
-GH_API_REFS_RE='(^|/)git/refs(/heads/(dev|staging|main)/?$|/tags(/|$)|/?$)'
-GH_API_REFS_ANY_RE='(^|/)git/refs/'
+# bk_hcloud_server <context> <server> — a snapshot image of the server, taken before it goes.
+bk_hcloud_server() {
+	bk_exec "$BK/image.txt" hcloud --context "$1" server create-image --type snapshot \
+		--description "guard-destroy backup $BK_TS" "$2" || return 1
+	BK_SAVED="hcloud snapshot image of server $2 in $1 (image.txt)"
+	BK_RESTORE="hcloud --context $1 server create --image <image id from image.txt> …"
+}
 
+# bk_aws_volume <volume-id> — an EBS snapshot. The snapshot is point-in-time from this call, so the
+# delete may follow while it completes.
+bk_aws_volume() {
+	bk_exec "$BK/snapshot.json" aws "${AWSG[@]}" ec2 create-snapshot --volume-id "$1" \
+		--description "guard-destroy backup $BK_TS" --output json || return 1
+	BK_SAVED="EBS snapshot of $1 (snapshot.json)"
+	BK_RESTORE="aws ec2 create-volume --snapshot-id <SnapshotId from snapshot.json> --availability-zone <az>"
+}
+
+# bk_kube_objects — the objects a `kubectl delete` names, as YAML: the same arguments with `delete`
+# turned into `get -o yaml` and the delete-only flags dropped. This saves the manifests, not the
+# data on a PersistentVolume.
+bk_kube_objects() {
+	local a args=() verb=0 skip=0
+	for a in "${TOK[@]:1}"; do
+		if [ "$skip" = 1 ]; then
+			skip=0
+			continue
+		fi
+		case "$a" in
+		delete) if [ "$verb" = 0 ]; then
+			verb=1
+			args+=(get)
+			continue
+		fi ;;
+		--grace-period | --timeout | --cascade | --wait) skip=1 && continue ;;
+		--grace-period=* | --timeout=* | --cascade=* | --wait=* | --force | --now | -i | --interactive | --ignore-not-found* | --dry-run*) continue ;;
+		esac
+		args+=("$a")
+	done
+	bk_exec "$BK/objects.yaml" kubectl "${args[@]}" -o yaml || return 1
+	BK_SAVED="the objects as YAML (objects.yaml) — manifests only, not volume data"
+	BK_RESTORE="kubectl apply -f $BK/objects.yaml"
+}
+
+# bk_helm_release <release> — everything helm knows about the release (manifest, values, hooks).
+bk_helm_release() {
+	bk_exec "$BK/release.txt" helm get all "$1" "${KUBEG[@]}" || return 1
+	BK_SAVED="helm get all $1 (release.txt)"
+	BK_RESTORE="re-install from the chart with the values in release.txt"
+}
+
+# ── B-GH / B-GHAPI / R-GH / R-GHAPI ───────────────────────────────────────────────────────────
+# The paths whose writes are backed up with a GET first: rules and protection, releases,
+# packages, environments, hooks, secrets, tag protection, every git ref, and the repo/org itself.
+GH_API_PROTECTED_RE='(^|/)(rulesets|protection|releases|packages|environments|hooks|actions/secrets|dependabot/secrets|codespaces/secrets|tags/protection)(/|$)'
+GH_API_REFS_ANY_RE='(^|/)git/refs(/|$)'
 GH_API_ROOT_RE='^(repos/[^/]+/[^/]+|orgs/[^/]+)/?$'
 GH_API_POST_RE='(/transfer|/branches/[^/]+/rename)$'
 GH_GRAPHQL_RE='(deleteRef|updateRefs?|deleteBranchProtectionRule|updateBranchProtectionRule|deleteRepositoryRuleset|updateRepositoryRuleset|archiveRepository|updateRepository|transferRepository|deleteEnvironment|deleteRelease|deletePackageVersion|deleteIssue|deleteDiscussion)[[:space:]]*(\(|$)'
 
+# gh_first_arg <from-index> — sets GA: the first word of TOK at or after the index that is not a
+# flag (or a known flag's value).
+gh_first_arg() {
+	local i n=${#TOK[@]} a
+	GA=""
+	for ((i = $1; i < n; i++)); do
+		a="${TOK[$i]}"
+		case "$a" in
+		-R | --repo | -p | --pattern | -O | --output | -D | --dir | -e | --env | -o | --org | -a | --app | -c | --comment | -t | --title | -b | --body) i=$((i + 1)) ;;
+		-*) ;;
+		*)
+			GA="$a"
+			return 0
+			;;
+		esac
+	done
+	return 0
+}
+
+# gh_repo_flag — sets GHR: `-R <repo>` when the command named one with gh's global -R/--repo, so
+# the hook's own gh calls reach the same repository (bk_exec runs them from the command's directory
+# otherwise, where gh resolves the repository the same way the command would).
+gh_repo_flag() {
+	GHR=()
+	[ -n "$CMDLINE_GH_REPO" ] && GHR=(-R "$CMDLINE_GH_REPO")
+	return 0
+}
+
 rule_gh() {
 	local sub="${TOK[1]:-}" verb="${TOK[2]:-}"
+	gh_repo_flag
 	case "$sub" in
 	repo)
+		gh_first_arg 3
+		local r="${GA:-$CMDLINE_GH_REPO}"
 		case "$verb" in
-		delete | archive | rename) refuse R-GH "\`gh repo $verb\` — the repository is not an agent's to $verb." ;;
-		edit) case " ${TOK[*]} " in *" --visibility"*) refuse R-GH "\`gh repo edit --visibility\` changes who can see the repository." ;; esac ;;
+		delete | archive)
+			backup B-GH gh-repo "gh repo $verb ${r:-<this repository>}" bk_gh_repo "$r" full
+			;;
+		rename)
+			backup B-GH gh-repo "gh repo rename" bk_gh_repo "$CMDLINE_GH_REPO" meta
+			;;
+		edit) case " ${TOK[*]} " in *" --visibility"*)
+			backup B-GH gh-repo "gh repo edit --visibility" bk_gh_repo "$r" meta
+			;;
+		esac ;;
 		esac
 		;;
-	release) case "$verb" in delete | delete-asset) refuse R-GH "\`gh release $verb\` deletes a published release or its assets." ;; esac ;;
-	secret) case "$verb" in delete | remove) refuse R-GH "\`gh secret $verb\` deletes a secret; its value cannot be recovered." ;; esac ;;
-	issue) [ "$verb" = delete ] && refuse R-GH "\`gh issue delete\` deletes an issue and its history (close it instead)." ;;
+	release)
+		case "$verb" in delete | delete-asset)
+			gh_first_arg 3
+			[ -n "$GA" ] && ! cmdline_has_var "$GA" ||
+				refuse R-GH "\`gh release $verb\` without a literal tag, so the release cannot be downloaded first."
+			backup B-GH gh-release "gh release $verb $GA" bk_gh_release "$verb" "$GA"
+			;;
+		esac
+		;;
+	secret)
+		case "$verb" in delete | remove)
+			gh_first_arg 3
+			secret_held "$GA" ||
+				refuse R-GH "\`gh secret $verb ${GA:-<name>}\` deletes a secret whose value no credential profile holds, so it could never be put back." \
+					"Store the value first (the maintainer runs \`! pnpm creds --set <profile>\` for a keychain profile in scripts/creds/profiles.json or ~/.alethia/creds-profiles.json that lists ${GA:-the name}); the delete is then allowed."
+			;;
+		esac
+		;;
+	issue)
+		if [ "$verb" = delete ]; then
+			gh_first_arg 3
+			[ -n "$GA" ] && ! cmdline_has_var "$GA" ||
+				refuse R-GH "\`gh issue delete\` without a literal issue number, so the issue cannot be exported first."
+			backup B-GH gh-issue "gh issue delete $GA" bk_gh_issue "$GA"
+		fi
+		;;
 	api) rule_gh_api ;;
 	esac
 	return 0
+}
+
+# secret_held <NAME> — is the value of a GitHub secret named NAME recoverable from a credential
+# profile? True when a KEYCHAIN profile (repo scripts/creds/profiles.json or the machine-local
+# ~/.alethia/creds-profiles.json) lists NAME among its vars AND the Keychain holds it (checked
+# without -w, so the value is never read), or when an aws-secret profile lists NAME explicitly in
+# its keys. An aws-secret profile with keys "*" proves nothing about one name, so it does not count.
+secret_held() {
+	local name="$1" f p
+	[ -n "$name" ] && ! cmdline_has_var "$name" || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+	for f in "$HOOK_DIR/../../scripts/creds/profiles.json" "$HOME/.alethia/creds-profiles.json"; do
+		[ -f "$f" ] || continue
+		jq -e --arg n "$name" '.profiles // {} | to_entries[] | select(.value.source == "aws-secret" and (.value.keys | type) == "array" and (.value.keys | index($n)))' "$f" >/dev/null 2>&1 && return 0
+		while IFS= read -r p; do
+			[ -n "$p" ] || continue
+			security find-generic-password -s alethia-creds -a "$p/$name" >/dev/null 2>&1 && return 0
+		done < <(jq -r --arg n "$name" '.profiles // {} | to_entries[] | select(.value.source == "keychain" and ((.value.vars // []) | index($n))) | .key' "$f" 2>/dev/null)
+	done
+	return 1
+}
+
+# bk_gh_repo <owner/repo|""> <full|meta> — the repository's metadata; for `full`, also a
+# `git clone --mirror` (every branch, tag and ref) and a JSON export of every issue, PR and release.
+# The export is a record, not something GitHub can re-import.
+bk_gh_repo() {
+	local r="$1" mode="$2"
+	if [ -z "$r" ]; then
+		bk_exec "$BK/.name" gh repo view --json nameWithOwner -q .nameWithOwner || return 1
+		r="$(cat "$BK/.name")"
+		rm -f "$BK/.name"
+		[ -n "$r" ] || {
+			BK_ERR="could not tell which repository this is"
+			return 1
+		}
+	fi
+	bk_exec "$BK/repo.json" gh repo view "$r" --json nameWithOwner,description,visibility,isArchived,defaultBranchRef,homepageUrl,repositoryTopics,url || return 1
+	if [ "$mode" = meta ]; then
+		BK_SAVED="the settings of $r before the change (repo.json)"
+		BK_RESTORE="gh repo edit $r / gh repo rename, back to the values in repo.json"
+		return 0
+	fi
+	bk_exec /dev/null gh repo clone "$r" "$BK/mirror.git" -- --mirror -q || return 1
+	bk_exec "$BK/issues.json" gh issue list -R "$r" --state all --limit 100000 --json number,title,body,state,author,labels,assignees,createdAt,closedAt,comments,url || return 1
+	bk_exec "$BK/prs.json" gh pr list -R "$r" --state all --limit 100000 --json number,title,body,state,author,labels,headRefName,baseRefName,createdAt,closedAt,mergedAt,comments,url || return 1
+	bk_exec "$BK/releases.json" gh release list -R "$r" --limit 1000 --json tagName,name,isDraft,isPrerelease,createdAt,publishedAt || return 1
+	BK_SAVED="$r: git mirror (mirror.git), issues.json, prs.json, releases.json, repo.json"
+	BK_RESTORE="gh repo create $r --private && git -C $BK/mirror.git push --mirror https://github.com/$r.git (or gh repo unarchive $r)"
+}
+
+# bk_gh_release <delete|delete-asset> <tag> [asset] — the release's metadata and body, and its
+# assets (only the named one for delete-asset); for --cleanup-tag, also the tag's ref.
+bk_gh_release() {
+	local verb="$1" tag="$2" asset="" n
+	[ "$verb" = delete-asset ] && {
+		gh_first_arg 4
+		asset="$GA"
+	}
+	bk_exec "$BK/release.json" gh release view "$tag" "${GHR[@]}" --json tagName,name,body,isDraft,isPrerelease,targetCommitish,createdAt,publishedAt,url,assets || return 1
+	n="$(jq '.assets | length' "$BK/release.json" 2>/dev/null)"
+	if [ -n "$asset" ]; then
+		bk_exec /dev/null gh release download "$tag" "${GHR[@]}" -D "$BK/assets" -p "$asset" || return 1
+	elif [ "${n:-0}" != 0 ]; then
+		bk_exec /dev/null gh release download "$tag" "${GHR[@]}" -D "$BK/assets" || return 1
+	fi
+	case " ${TOK[*]} " in *" --cleanup-tag"*)
+		bk_exec "$BK/tag-ref.json" env ${CMDLINE_GH_REPO:+GH_REPO="$CMDLINE_GH_REPO"} gh api "repos/{owner}/{repo}/git/ref/tags/$tag" || return 1
+		;;
+	esac
+	BK_SAVED="release $tag: release.json (body and metadata)${n:+, $n asset(s) in assets/}"
+	BK_RESTORE="gh release create $tag --notes \"\$(jq -r .body $BK/release.json)\" $BK/assets/*"
+}
+
+# bk_gh_issue <number> — the issue, its body and every comment, as JSON.
+bk_gh_issue() {
+	bk_exec "$BK/issue.json" gh issue view "$1" "${GHR[@]}" --json number,title,body,state,author,labels,assignees,comments,createdAt,closedAt,url || return 1
+	BK_SAVED="issue $1 with its comments (issue.json)"
+	BK_RESTORE="a deleted issue cannot be undeleted; recreate it from issue.json"
+}
+
+# bk_gh_api_get <path> — the resource as it is now, from a GET of the same path. A 404 means there
+# is nothing yet (a PUT creating protection, say): nothing to save.
+bk_gh_api_get() {
+	if ! bk_exec "$BK/before.json" gh api "$1"; then
+		case "$BK_ERR" in *"HTTP 404"* | *"Not Found"*)
+			BK_EMPTY=1
+			BK_SAVED="$1 does not exist yet"
+			BK_ERR=""
+			return 0
+			;;
+		esac
+		return 1
+	fi
+	BK_SAVED="GET $1 before the write (before.json)"
+	BK_RESTORE="gh api -X PUT|PATCH|POST to the same path with the fields in before.json"
 }
 
 rule_gh_api() {
@@ -1274,41 +1929,87 @@ rule_gh_api() {
 	fi
 	method="$(printf '%s' "$method" | tr '[:lower:]' '[:upper:]')"
 	if [ "$path" = graphql ]; then
+		# A mutation's target is an opaque node id: there is no GET to back it up with.
 		if [ "$input" = 1 ]; then
 			# @mut graphql-file
 			refuse R-GHAPI "\`gh api graphql\` reads its query from a file or stdin, which the guard cannot read." \
 				"Pass the query inline with -f query='…' so the mutation is visible."
 		fi
-		[[ "$CMD" =~ $GH_GRAPHQL_RE ]] && refuse R-GHAPI "a graphql \`${BASH_REMATCH[1]}\` mutation deletes or rewrites repository state."
+		[[ "$CMD" =~ $GH_GRAPHQL_RE ]] && refuse R-GHAPI "a graphql \`${BASH_REMATCH[1]}\` mutation deletes or rewrites repository state, and a node id cannot be backed up first." \
+			"Use the REST endpoint or the gh subcommand for the same change (gh api -X DELETE repos/…, gh release delete, git push --delete): the guard backs those up and lets them through."
 		return 0
 	fi
 	xp "$path"
 	path="$X"
+	local protected=0
+	if [[ "$path" =~ $GH_API_PROTECTED_RE ]] || [[ "$path" =~ $GH_API_ROOT_RE ]] || [[ "$path" =~ $GH_API_REFS_ANY_RE ]]; then
+		protected=1
+	fi
 	case "$method" in
 	DELETE | PUT | PATCH)
-		if [[ "$path" =~ $GH_API_REFS_ANY_RE ]]; then
-			local ref="${path#*git/refs/}"
-			if [[ "$path" =~ $GH_API_REFS_RE ]] || cmdline_has_var "$ref"; then
-				refuse R-GHAPI "\`gh api -X $method $path\` rewrites or deletes a protected ref (dev/staging/main or a tag)."
-			fi
+		[ "$protected" = 1 ] || return 0
+		if cmdline_has_var "$path"; then
+			refuse R-GHAPI "\`gh api -X $method $path\` writes protected repository state at a path the guard cannot read, so it cannot be backed up first." \
+				"Spell the path literally."
+		fi
+		if [ "$method" = DELETE ] && [[ "$path" =~ (^|/)(actions|dependabot|codespaces)/secrets/([^/]+)$ ]]; then
+			local sname="${BASH_REMATCH[3]}"
+			secret_held "$sname" ||
+				refuse R-GHAPI "\`gh api -X DELETE $path\` deletes a secret whose value no credential profile holds, so it could never be put back." \
+					"Store the value first (\`! pnpm creds --set <profile>\`, a keychain profile listing $sname); the delete is then allowed."
 			return 0
 		fi
-		if [[ "$path" =~ $GH_API_PROTECTED_RE ]] || [[ "$path" =~ $GH_API_ROOT_RE ]]; then
-			refuse R-GHAPI "\`gh api -X $method $path\` writes protected repository state (rules, protection, releases, refs, packages, environments, hooks, secrets, or the repo itself)."
+		if [ "$method" = DELETE ] && [[ "$path" =~ $GH_API_ROOT_RE ]] && [[ "$path" == repos/* ]]; then
+			local rr="${path#repos/}"
+			backup B-GHAPI gh-repo "gh api -X DELETE $path" bk_gh_repo "${rr%/}" full
+			return 0
 		fi
+		backup B-GHAPI gh-api "gh api -X $method $path" bk_gh_api_get "$path"
 		;;
 	POST)
-		[[ "$path" =~ $GH_API_POST_RE ]] && refuse R-GHAPI "\`gh api -X POST $path\` transfers the repository or renames a branch."
+		if [[ "$path" =~ $GH_API_POST_RE ]]; then
+			backup B-GHAPI gh-api "gh api -X POST $path" bk_gh_api_get "${path%/*}"
+		fi
 		;;
 	GET | HEAD) ;;
 	*)
-		# A method the guard cannot read (a variable) on a protected path fails closed.
-		if [[ "$path" =~ $GH_API_PROTECTED_RE ]] || [[ "$path" =~ $GH_API_ROOT_RE ]]; then
-			refuse R-GHAPI "\`gh api\` with an unreadable method ($method) on the protected path $path."
+		# A method the guard cannot read (a variable) on a protected path: it cannot know what to
+		# back up, so it fails closed.
+		if [ "$protected" = 1 ]; then
+			refuse R-GHAPI "\`gh api\` with an unreadable method ($method) on the protected path $path." \
+				"Spell -X literally; the guard then backs the resource up and lets the call through."
 		fi
 		;;
 	esac
 	return 0
+}
+
+# creds_unwrap — `pnpm creds <profile> -- <command>` (or `python3 scripts/creds.py …`) runs
+# <command> with the profile's secrets in its environment. Judge <command> itself, and remember the
+# profile in CREDS_PROFILE so a backup that needs the same access (a state pull, a pg_dump) runs
+# under the same broker. The prefix assignments of the outer command are kept.
+CREDS_PROFILE=""
+CREDS_PY="${ALETHIA_CREDS_PY:-$HOOK_DIR/../../scripts/creds.py}"
+creds_unwrap() {
+	local outer_env="$SEG_ENV" profile="" i n=${#TOK[@]}
+	CREDS_PROFILE=""
+	case "${TOK[0]##*/} ${TOK[1]:-}" in
+	"pnpm creds") i=2 ;;
+	python3\ *creds.py | python\ *creds.py) i=2 ;;
+	*) return 0 ;;
+	esac
+	for (( ; i < n; i++)); do
+		case "${TOK[$i]}" in
+		--) break ;;
+		-*) return 0 ;;
+		*) [ -n "$profile" ] || profile="${TOK[$i]}" ;;
+		esac
+	done
+	[ "$i" -lt "$n" ] && [ -n "$profile" ] || return 0
+	case "$SEG" in *" -- "*) ;; *) return 0 ;; esac
+	cmdline_normalise "${SEG#* -- }"
+	SEG_ENV="$outer_env$SEG_ENV"
+	CREDS_PROFILE="$profile"
 }
 
 # ── main ──────────────────────────────────────────────────────────────────────────────────────
@@ -1326,6 +2027,7 @@ main() {
 	for raw in "${SEGS[@]}"; do
 		case "$raw" in *\>*) rule_redirect "$raw" ;; esac
 		cmdline_normalise "$raw"
+		creds_unwrap
 		if [ ${#TOK[@]} -eq 0 ]; then
 			[ -n "$SEG_ENV" ] && EXPORTS="$EXPORTS$SEG_ENV"
 			continue
@@ -1384,12 +2086,16 @@ main() {
 
 # ── self-test ─────────────────────────────────────────────────────────────────────────────────
 # `bash .claude/hooks/guard-destroy.sh --self-test`. Builds a real repository with a linked
-# worktree in a tmpdir, a fake $HOME, and stubs for kubectl, so it is hermetic. Counters are
-# incremented in THIS shell (never a pipeline or `$( )`), and the exit code is the test.
+# worktree and a local bare "origin" in a tmpdir, a fake $HOME (so every backup lands in the tmpdir),
+# a fake credential broker, and PATH stubs for gh, security, tofu, terraform, pg_dump, docker, hcloud,
+# aws, kubectl and helm, so it is hermetic: nothing reaches GitHub, a cloud, a database or the
+# Keychain. Counters are incremented in THIS shell (never a pipeline or `$( )`), and the exit code
+# is the test.
 #
 # `--mutation-test` copies the hook, disables each rule's call sites in turn (`refuse R-X` /
-# `snap S-X` / `pin S-X` → `true`), and requires the self-test to FAIL for every one. The rule
-# list is DERIVED from the file, so a new rule without a failing case fails the mutation test.
+# `backup B-X` / `snap S-X` / `pin S-X` → `true`), and requires the self-test to FAIL for every
+# one. The rule list is DERIVED from the file, so a new rule without a failing case fails the
+# mutation test. A disabled backup is caught because the self-test checks what each backup saved.
 self_test() {
 	local self="$1" tmp repo wt home stub pass=0 fail=0
 	tmp="$(mktemp -d)"
@@ -1408,18 +2114,127 @@ self_test() {
 	G -C "$repo" commit -m init
 	G -C "$repo" worktree add -b feat/a "$wt"
 	G -C "$repo" branch doomed
+	# The remote the push backups fetch from: a local bare repository holding the three protected
+	# branches, a feature branch and a release tag. Nothing in this test ever pushes to it — the hook
+	# only reads it.
+	G init --bare "$tmp/origin.git"
+	G -C "$repo" remote add origin "$tmp/origin.git"
+	G -C "$repo" branch main
+	G -C "$repo" branch staging
+	G -C "$repo" tag v1.0.0
+	G -C "$repo" push origin dev main staging feat/a v1.0.0
+
+	# Stubs for every program a backup runs, so nothing here reaches GitHub, AWS, Hetzner, a cluster,
+	# a database or the Keychain. Each logs its argv to $STUBLOG; a name containing "missing",
+	# "ghost", "broken", "unreachable", "fails" or "nobackend" makes it fail the way the real one would.
 	cat >"$stub/kubectl" <<'STUB'
 #!/usr/bin/env bash
+echo "kubectl $*" >>"$STUBLOG"
 [ "$1 $2" = "config current-context" ] && { echo "${STUB_KUBE_CONTEXT:-prod-cluster}"; exit 0; }
+case " $* " in *" get "*) case "$*" in *ghost*) echo 'Error from server (NotFound)' >&2; exit 1 ;; esac; echo 'kind: List'; exit 0 ;; esac
 exit 1
 STUB
-	chmod +x "$stub/kubectl"
+	cat >"$stub/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "gh $*" >>"$STUBLOG"
+args=" $* "
+case "$1 $2" in
+"repo view")
+	case "$args" in *" -q "*) echo o/r ;; *) echo '{"nameWithOwner":"o/r","visibility":"PUBLIC"}' ;; esac ;;
+"repo clone") mkdir -p "$4" && echo 'ref: refs/heads/dev' >"$4/HEAD" ;;
+"issue list" | "pr list" | "release list") echo '[]' ;;
+"issue view") echo "{\"number\":$3,\"comments\":[]}" ;;
+"release view")
+	case "$3" in *missing*) echo 'release not found' >&2; exit 1 ;; esac
+	echo "{\"tagName\":\"$3\",\"body\":\"notes\",\"assets\":[{\"name\":\"a.tgz\"}]}" ;;
+"release download")
+	d=""; p="a.tgz"
+	while [ $# -gt 0 ]; do case "$1" in -D) d="$2"; shift ;; -p) p="$2"; shift ;; esac; shift; done
+	mkdir -p "$d" && echo asset >"$d/$p" ;;
+api*)
+	case "$2" in *missing*) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;; *fails*) echo 'gh: Server Error (HTTP 500)' >&2; exit 1 ;; esac
+	echo "{\"path\":\"$2\",\"repo\":\"${GH_REPO:-}\"}" ;;
+*) exit 0 ;;
+esac
+STUB
+	cat >"$stub/security" <<'STUB'
+#!/usr/bin/env bash
+echo "security $*" >>"$STUBLOG"
+case "$*" in *" -w"* | *" -g"*) exit 9 ;; esac
+acct=""; while [ $# -gt 0 ]; do [ "$1" = -a ] && acct="$2"; shift; done
+case " ${STUB_KEYCHAIN:-} " in *" $acct "*) exit 0 ;; esac
+exit 44
+STUB
+	cat >"$stub/tofu" <<'STUB'
+#!/usr/bin/env bash
+echo "tofu $* ws=${TF_WORKSPACE:-}" >>"$STUBLOG"
+case "$*" in *"state pull"*)
+	case "$*" in *nobackend*) echo 'Error: Backend initialization required' >&2; exit 1 ;; *empty*) exit 0 ;; esac
+	printf '{"version":4,"serial":7,"workspace":"%s"}\n' "${TF_WORKSPACE:-default}" ;;
+esac
+STUB
+	cp "$stub/tofu" "$stub/terraform"
+	cat >"$stub/pg_dump" <<'STUB'
+#!/usr/bin/env bash
+echo "pg_dump $*" >>"$STUBLOG"
+f=""; for a in "$@"; do case "$a" in --file=*) f="${a#--file=}" ;; esac; done
+case "$*" in *unreachable*) echo 'pg_dump: error: connection to server failed' >&2; exit 1 ;; esac
+echo PGDMP >"$f"
+STUB
+	cat >"$stub/docker" <<'STUB'
+#!/usr/bin/env bash
+echo "docker $*" >>"$STUBLOG"
+case "$1 $2" in
+"volume ls") printf 'alethia_pgdata\nscratch\n' ;;
+inspect*) echo anonvol123 ;;
+run*)
+	case "$*" in *broken*) echo 'no such volume' >&2; exit 1 ;; esac
+	h=""; n=""
+	for a in "$@"; do case "$a" in *:/b) h="${a%:/b}" ;; /b/*.tgz) n="${a#/b/}" ;; esac; done
+	echo tar >"$h/$n" ;;
+esac
+STUB
+	cat >"$stub/hcloud" <<'STUB'
+#!/usr/bin/env bash
+echo "hcloud $*" >>"$STUBLOG"
+case "$*" in *create-image*) case "$*" in *ghost*) echo 'hcloud: server not found' >&2; exit 1 ;; esac; echo 'Image 42 created' ;; esac
+STUB
+	cat >"$stub/aws" <<'STUB'
+#!/usr/bin/env bash
+echo "aws $*" >>"$STUBLOG"
+case "$*" in *create-snapshot*) echo '{"SnapshotId":"snap-1"}' ;; esac
+STUB
+	cat >"$stub/helm" <<'STUB'
+#!/usr/bin/env bash
+echo "helm $*" >>"$STUBLOG"
+[ "$1 $2" = "get all" ] && echo 'MANIFEST:'
+STUB
+	# the credential broker: a profile name, `--`, and the command, run with a URL in its env
+	cat >"$stub/creds.py" <<'STUB'
+import os, sys
+a = sys.argv[1:]
+with open(os.environ["STUBLOG"], "a") as f:
+    f.write("creds " + " ".join(a) + "\n")
+i = a.index("--")
+os.environ["ALETHIA_DATABASE_URL"] = "postgres://u:secretpw@prod.example.com/a"
+os.execvp(a[i + 1], a[i + 1:])
+STUB
+	chmod +x "$stub"/*
+	mkdir -p "$home/.alethia"
+	cat >"$home/.alethia/creds-profiles.json" <<'JSON'
+{"profiles": {
+  "cf": {"source": "keychain", "vars": ["CLOUDFLARE_API_TOKEN"]},
+  "vault": {"source": "aws-secret", "secret_id": "x", "keys": ["STRIPE_API_KEY"]},
+  "everything": {"source": "aws-secret", "secret_id": "y", "keys": "*"}
+}}
+JSON
 
 	run() { # <cwd> <command> [env…] — sets RC
 		local cwd="$1" cmd="$2" payload
 		shift 2
 		payload="$(jq -n --arg c "$cmd" --arg d "$cwd" '{tool_name:"Bash",cwd:$d,tool_input:{command:$c}}')"
 		printf '%s' "$payload" | env HOME="$home" CLAUDE_PROJECT_DIR="$repo" PATH="$stub:$PATH" \
+			STUBLOG="$tmp/calls.log" ALETHIA_CREDS_PY="$stub/creds.py" STUB_KEYCHAIN= \
 			ALETHIA_DATABASE_URL= HCLOUD_CONTEXT= HCLOUD_TOKEN= "$@" bash "$self" >/dev/null 2>"$tmp/stderr"
 		RC=$?
 	}
@@ -1434,8 +2249,31 @@ STUB
 			echo "  ✗ want=$want got=$got : $cmd"
 		fi
 	}
-	# snapped <want-new-refs> <label> <cwd> <command> — the command is ALLOWED and leaves exactly
-	# N new refs under refs/safety/. NEW is the first of them (by name), for the content checks.
+	# bk <kind> <want-new-backups> <cwd> <command> [env…] — the command is ALLOWED and leaves exactly
+	# N new backup directories under ~/.alethia/backups/<kind>/. BK_NEW is the newest, for the
+	# content checks; the stub log of THIS run is in $tmp/calls.log.
+	bk() {
+		local kind="$1" want="$2" cwd="$3" cmd="$4" got d="$home/.alethia/backups/$1"
+		shift 4
+		ls -1 "$d" 2>/dev/null | sort >"$tmp/bk.before"
+		: >"$tmp/calls.log"
+		run "$cwd" "$cmd" "$@"
+		ls -1 "$d" 2>/dev/null | sort >"$tmp/bk.after"
+		got="$(comm -13 "$tmp/bk.before" "$tmp/bk.after" | wc -l | tr -d ' ')"
+		BK_NEW="$d/$(comm -13 "$tmp/bk.before" "$tmp/bk.after" | tail -1)"
+		if [ "$RC" = 0 ] && [ "$got" = "$want" ]; then pass=$((pass + 1)); else
+			fail=$((fail + 1)); [ -z "${SELFTEST_FAILFAST:-}" ] || exit 1
+			echo "  ✗ backup $kind: rc=$RC new backups=$got want $want : $cmd ($(head -c 300 "$tmp/stderr"))"
+		fi
+	}
+	# has <label> <file-under-BK_NEW> [grep-pattern] — the newest backup holds that file (with that text).
+	has() {
+		local label="$1" f="$BK_NEW/$2"
+		if [ -s "$f" ] && { [ -z "${3:-}" ] || grep -q -- "$3" "$f"; }; then pass=$((pass + 1)); else
+			fail=$((fail + 1)); [ -z "${SELFTEST_FAILFAST:-}" ] || exit 1
+			echo "  ✗ $label: $f${3:+ with '$3'}"
+		fi
+	}
 	snapped() {
 		local want="$1" label="$2" got
 		git -C "$repo" for-each-ref --format='%(refname)' refs/safety/ | sort >"$tmp/before"
@@ -1466,193 +2304,299 @@ STUB
 		fi
 	}
 
-	# ── R-PUSH ──
-	t block "$wt" 'git push origin main'
-	t block "$wt" 'git push origin staging'
-	t block "$wt" 'git push -f origin main'
-	t block "$wt" 'git push origin +main'
-	t block "$wt" 'git push origin HEAD:main'
-	t block "$wt" 'git push origin feat/a:refs/heads/dev'
-	t block "$wt" 'git push origin :main'
-	t block "$wt" 'git push --delete origin staging'
-	t block "$wt" 'git push --mirror origin'
-	t block "$wt" 'git push --all --force origin'
-	t block "$wt" 'git push origin :refs/tags/v1.2.3'
-	t block "$wt" "git -C $repo push"
-	t block "$repo" 'git push'
-	t block "$wt" 'git push origin "refs/heads/*:refs/heads/*"'
-	t block "$wt" 'sh -c "git push origin main"'
+	# ── B-PUSH: the remote refs a push overwrites or deletes are copied first ──
+	local mainsha
+	mainsha="$(git -C "$tmp/origin.git" rev-parse main)"
+	bk remote-refs 1 "$wt" 'git push origin main'
+	has 'a push to main records the remote main' refs.txt 'refs/heads/main:refs/safety/remote/'
+	check 'the remote main is now a local safety ref' test "$(git -C "$repo" rev-parse "refs/safety/remote/${BK_NEW##*/}/heads/main" 2>/dev/null)" = "$mainsha"
+	has 'the backup carries a MANIFEST' MANIFEST 'git push origin main'
+	bk remote-refs 1 "$wt" 'git push origin staging'
+	has 'staging' refs.txt 'heads/staging'
+	bk remote-refs 1 "$wt" 'git push -f origin main'
+	bk remote-refs 1 "$wt" 'git push origin +main'
+	bk remote-refs 1 "$wt" 'git push origin HEAD:main'
+	has 'HEAD:main is main' refs.txt 'heads/main'
+	bk remote-refs 1 "$wt" 'git push origin feat/a:refs/heads/dev'
+	has 'a refspec onto dev' refs.txt 'heads/dev'
+	bk remote-refs 1 "$wt" 'git push origin :main'
+	bk remote-refs 1 "$wt" 'git push --delete origin staging'
+	bk remote-refs 1 "$wt" 'git push --mirror origin'
+	has '--mirror records every branch' refs.txt 'heads/feat/a'
+	has '--mirror records every tag' refs.txt 'tags/v1.0.0'
+	bk remote-refs 1 "$wt" 'git push --all --force origin'
+	has '--all --force records every branch' refs.txt 'heads/staging'
+	bk remote-refs 1 "$wt" 'git push origin :refs/tags/v1.0.0'
+	has 'a tag delete records the tag' refs.txt 'tags/v1.0.0'
+	bk remote-refs 1 "$wt" "git -C $repo push"
+	has 'a bare push from dev records dev' refs.txt 'heads/dev'
+	bk remote-refs 1 "$repo" 'git push'
+	bk remote-refs 1 "$wt" 'git push origin "refs/heads/*:refs/heads/*"'
+	has 'a wildcard records what it matches' refs.txt 'heads/main'
+	bk remote-refs 1 "$wt" 'sh -c "git push origin main"'
 	t block "$wt" 'git -C "$W" push'
-	t allow "$wt" 'git push -u origin feat/a'
-	t allow "$wt" 'git push --force-with-lease origin feat/a'
-	t allow "$wt" 'git push'
-	t allow "$wt" 'git push origin HEAD'
-	t allow "$wt" 'git push origin v1.2.3'
+	t block "$wt" 'git -C "$W" push origin main'
+	bk remote-refs 0 "$wt" 'git push -u origin feat/a'
+	bk remote-refs 1 "$wt" 'git push --force-with-lease origin feat/a'
+	has 'a force-push to a feature branch records it' refs.txt 'heads/feat/a'
+	bk remote-refs 0 "$wt" 'git push'
+	bk remote-refs 0 "$wt" 'git push origin HEAD'
+	bk remote-refs 0 "$wt" 'git push origin v1.2.3'
 	# a variable assigned earlier in the SAME command is resolved, not treated as unknown
-	t allow "$tmp" "W=$wt; git -C \$W push"
-	t block "$tmp" "W=$repo; git -C \$W push"
-	t block "$tmp" "W=$repo && cd \$W && git push"
+	bk remote-refs 0 "$tmp" "W=$wt; git -C \$W push"
+	bk remote-refs 1 "$tmp" "W=$repo; git -C \$W push"
+	bk remote-refs 1 "$tmp" "W=$repo && cd \$W && git push"
+	# a remote that cannot be read: the backup fails, so the push is refused
+	t block "$wt" 'git push no-such-remote main'
 
-	# ── R-PUSH: tag deletes in every spelling, prune, and gh global flags (B1/B2) ──
-	G -C "$repo" tag v1.0.0
-	t block "$wt" 'git push --delete origin v1.0.0'
-	t block "$wt" 'git push origin :v1.0.0'
-	t block "$wt" 'git push origin --delete never-heard-of-it'
-	t block "$wt" 'git push origin --tags --prune'
-	t block "$wt" 'git push --prune origin "refs/tags/*:refs/tags/*"'
-	t block "$wt" 'git push --prune --all origin'
-	t block "$wt" 'git push --prune-tags origin'
-	t block "$wt" 'git push --tags --force origin'
-	t allow "$wt" 'git push origin --delete feat/a'
+	# ── B-PUSH: tag deletes in every spelling, prune, and the refs/safety boundary ──
+	bk remote-refs 1 "$wt" 'git push --delete origin v1.0.0'
+	has 'a short-name delete records the tag' refs.txt 'tags/v1.0.0'
+	bk remote-refs 1 "$wt" 'git push origin :v1.0.0'
+	bk remote-refs 0 "$wt" 'git push origin --delete never-heard-of-it'
+	bk remote-refs 1 "$wt" 'git push origin --tags --prune'
+	has '--tags --prune records the tags' refs.txt 'tags/v1.0.0'
+	bk remote-refs 1 "$wt" 'git push --prune origin "refs/tags/*:refs/tags/*"'
+	bk remote-refs 1 "$wt" 'git push --prune --all origin'
+	has '--prune --all records the branches' refs.txt 'heads/main'
+	bk remote-refs 1 "$wt" 'git push --prune-tags origin'
+	has '--prune-tags records the tags' refs.txt 'tags/v1.0.0'
+	bk remote-refs 1 "$wt" 'git push --tags --force origin'
+	has '--tags --force records the tags' refs.txt 'tags/v1.0.0'
+	bk remote-refs 1 "$wt" 'git push origin --delete feat/a'
 	t block "$wt" 'git push origin "refs/safety/*:refs/safety/*"'
+	t block "$wt" 'git push origin feat/a:refs/safety/x'
 	t block "$wt" 'git push origin refs/safety/wt-a/20261106T000000Z:refs/heads/feat/leak'
-	t allow "$wt" 'git push origin :refs/heads/feat/old'
-	t allow "$wt" 'git push --tags origin'
-	t block "$wt" 'git push --prune origin "refs/heads/feat/*:refs/heads/feat/*"'
+	bk remote-refs 0 "$wt" 'git push origin :refs/heads/feat/old'
+	bk remote-refs 0 "$wt" 'git push --tags origin'
+	bk remote-refs 1 "$wt" 'git push --prune origin "refs/heads/feat/*:refs/heads/feat/*"'
+	# putting a backed-up ref BACK is a push like any other (refs/safety/remote/ holds no snapshot)
+	local rref
+	rref="$(git -C "$repo" for-each-ref --format='%(refname)' 'refs/safety/remote/*/heads/main' | head -1)"
+	bk remote-refs 1 "$wt" "git push origin $rref:refs/heads/main"
 
-	# ── R-GH / R-GHAPI ──
-	t block "$wt" 'gh repo delete alethialabs-io/app --yes'
-	t block "$wt" 'gh repo archive'
-	t block "$wt" 'gh repo rename new-name'
-	t block "$wt" 'gh repo edit --visibility private'
-	t block "$wt" 'gh release delete v1.0.0 --yes'
-	t block "$wt" 'gh release delete-asset v1 file.tgz'
+	# ── B-GH / B-GHAPI ──
+	bk gh-repo 1 "$wt" 'gh repo delete alethialabs-io/app --yes'
+	has 'repo delete mirrors the repository' mirror.git/HEAD
+	has 'repo delete exports the issues' issues.json
+	has 'repo delete exports the PRs' prs.json
+	check 'the mirror is of the named repository' grep -q 'gh repo clone alethialabs-io/app .* --mirror' "$tmp/calls.log"
+	bk gh-repo 1 "$wt" 'gh repo archive'
+	check 'an unnamed repository is resolved first' grep -q 'gh repo clone o/r' "$tmp/calls.log"
+	bk gh-repo 1 "$wt" 'gh repo rename new-name'
+	has 'a rename records the settings' repo.json nameWithOwner
+	check 'a rename does not mirror' test ! -e "$BK_NEW/mirror.git"
+	bk gh-repo 1 "$wt" 'gh repo edit --visibility private'
+	has 'a visibility change records the settings' repo.json PUBLIC
+	bk gh-release 1 "$wt" 'gh release delete v1.0.0 --yes'
+	has 'release delete saves the body' release.json notes
+	has 'release delete downloads the assets' assets/a.tgz
+	bk gh-release 1 "$wt" 'gh release delete-asset v1 file.tgz'
+	has 'delete-asset downloads that asset' assets/file.tgz
+	bk gh-release 1 "$wt" 'gh release delete v1 --cleanup-tag --yes'
+	has '--cleanup-tag records the tag ref' tag-ref.json 'git/ref/tags/v1'
+	t block "$wt" 'gh release delete v-missing --yes'
+	t block "$wt" 'gh release delete $T --yes'
 	t block "$wt" 'gh secret delete HCLOUD_TOKEN'
-	t block "$wt" 'gh issue delete 12 --yes'
-	t block "$wt" 'gh api -X DELETE repos/o/r/rulesets/1'
-	t block "$wt" 'gh api --method PUT repos/o/r/branches/main/protection --input p.json'
-	t block "$wt" 'gh api -X PATCH repos/o/r -f name=renamed'
-	t block "$wt" 'gh api -XDELETE /repos/o/r/git/refs/heads/main'
-	t block "$wt" 'gh api -X DELETE repos/o/r/releases/42'
-	t block "$wt" 'gh api -X DELETE /orgs/o/packages/container/x'
-	t block "$wt" 'gh api -X DELETE repos/o/r/environments/production'
-	t block "$wt" 'gh api -X DELETE repos/o/r/hooks/7'
+	t block "$wt" 'gh secret delete CLOUDFLARE_API_TOKEN'
+	t allow "$wt" 'gh secret delete CLOUDFLARE_API_TOKEN' STUB_KEYCHAIN=cf/CLOUDFLARE_API_TOKEN
+	t allow "$wt" 'gh secret remove STRIPE_API_KEY'
+	t block "$wt" 'gh secret delete ANYTHING_IN_THE_VAULT'
+	bk gh-issue 1 "$wt" 'gh issue delete 12 --yes'
+	has 'issue delete exports the issue' issue.json '"number":12'
+	t block "$wt" 'gh issue delete $N --yes'
+	bk gh-api 1 "$wt" 'gh api -X DELETE repos/o/r/rulesets/1'
+	has 'a ruleset delete GETs it first' before.json 'repos/o/r/rulesets/1'
+	bk gh-api 1 "$wt" 'gh api --method PUT repos/o/r/branches/main/protection --input p.json'
+	bk gh-api 1 "$wt" 'gh api -X PATCH repos/o/r -f name=renamed'
+	has 'a repo PATCH GETs the repo' before.json '"path":"repos/o/r"'
+	bk gh-api 1 "$wt" 'gh api -XDELETE /repos/o/r/git/refs/heads/main'
+	has 'a ref delete records the ref' before.json 'git/refs/heads/main'
+	bk gh-api 1 "$wt" 'gh api -X DELETE repos/o/r/releases/42'
+	bk gh-api 1 "$wt" 'gh api -X DELETE /orgs/o/packages/container/x'
+	bk gh-api 1 "$wt" 'gh api -X DELETE repos/o/r/environments/production'
+	bk gh-api 1 "$wt" 'gh api -X DELETE repos/o/r/hooks/7'
 	t block "$wt" 'gh api -X DELETE repos/o/r/actions/secrets/FOO'
-	t block "$wt" 'gh api -X DELETE repos/o/r'
-	t block "$wt" 'gh api repos/o/r/transfer -f new_owner=x'
+	t allow "$wt" 'gh api -X DELETE repos/o/r/actions/secrets/STRIPE_API_KEY'
+	bk gh-repo 1 "$wt" 'gh api -X DELETE repos/o/r'
+	has 'a repo DELETE through the API mirrors it' mirror.git/HEAD
+	bk gh-api 1 "$wt" 'gh api repos/o/r/transfer -f new_owner=x'
+	has 'a transfer GETs the repo' before.json '"path":"repos/o/r"'
+	bk gh-api 1 "$wt" 'gh api -X POST repos/o/r/branches/dev/rename -f new_name=x'
+	has 'a branch rename GETs the branch' before.json 'branches/dev'
+	bk gh-api 0 "$wt" 'gh api -X PUT repos/o/r/environments/missing-env'
+	t block "$wt" 'gh api -X DELETE repos/o/r/rulesets/fails'
+	t block "$wt" 'gh api -X $M repos/o/r/rulesets/1'
 	t block "$wt" "gh api graphql -f query='mutation { deleteRef(input:{refId:\"x\"}) { clientMutationId } }'"
 	t block "$wt" 'gh api graphql --input q.json'
-	t allow "$wt" 'gh api repos/o/r/rulesets'
-	# gh's global flags before the subcommand (B1)
-	t block "$wt" 'gh -R o/r release delete v1 --yes'
+	bk gh-api 0 "$wt" 'gh api repos/o/r/rulesets'
+	# gh's global flags before the subcommand
+	bk gh-release 1 "$wt" 'gh -R o/r release delete v1 --yes'
+	check 'the backup reads the -R repository' grep -q 'gh release view v1 -R o/r' "$tmp/calls.log"
 	t block "$wt" 'gh --repo o/r secret delete FOO'
-	t block "$wt" 'gh --repo=o/r repo delete --yes'
-	t block "$wt" 'gh -Ro/r issue delete 5 --yes'
-	t block "$wt" 'gh --hostname github.com -R o/r api -X DELETE repos/o/r/rulesets/1'
-	t allow "$wt" 'gh -R o/r release list'
+	bk gh-repo 1 "$wt" 'gh --repo=o/r repo delete --yes'
+	check 'repo delete with --repo= mirrors that repository' grep -q 'gh repo clone o/r' "$tmp/calls.log"
+	bk gh-issue 1 "$wt" 'gh -Ro/r issue delete 5 --yes'
+	bk gh-api 1 "$wt" 'gh --hostname github.com -R o/r api -X DELETE repos/o/r/rulesets/1'
+	bk gh-release 0 "$wt" 'gh -R o/r release list'
 	t allow "$wt" 'gh --repo o/r pr view 12'
 	# a full URL is the same path; a graphql body from a file cannot be read
-	t block "$wt" 'gh api -X DELETE https://api.github.com/repos/o/r'
-	t block "$wt" 'gh api -X DELETE https://ghe.example.com/api/v3/repos/o/r/rulesets/2'
+	bk gh-repo 1 "$wt" 'gh api -X DELETE https://api.github.com/repos/o/r'
+	bk gh-api 1 "$wt" 'gh api -X DELETE https://ghe.example.com/api/v3/repos/o/r/rulesets/2'
+	has 'a GHES URL is read as its path' before.json 'repos/o/r/rulesets/2'
 	t block "$wt" 'gh api graphql -F query=@mutation.graphql'
 	t allow "$wt" 'gh api graphql -F owner=o -f query=query{viewer{login}}'
-	t allow "$wt" 'gh api -X PATCH repos/o/r/git/refs/heads/deps/npm-minor -f sha=abc -F force=true'
-	t allow "$wt" 'R=repos/o/r; gh api -X PATCH $R/git/refs/heads/deps/x -f sha=abc'
-	t block "$wt" 'R=repos/o/r; gh api -X PATCH $R/git/refs/heads/main -f sha=abc -F force=true'
-	t block "$wt" 'gh api -X DELETE repos/o/r/git/refs/tags/v1.0.0'
+	bk gh-api 1 "$wt" 'gh api -X PATCH repos/o/r/git/refs/heads/deps/npm-minor -f sha=abc -F force=true'
+	bk gh-api 1 "$wt" 'R=repos/o/r; gh api -X PATCH $R/git/refs/heads/deps/x -f sha=abc'
+	has 'a path built from an earlier assignment is resolved' before.json 'repos/o/r/git/refs/heads/deps/x'
+	bk gh-api 1 "$wt" 'gh api -X DELETE repos/o/r/git/refs/tags/v1.0.0'
 	t block "$wt" 'gh api -X PATCH repos/o/r/git/refs/heads/$B -f sha=abc'
-	t allow "$wt" 'gh api -X POST repos/o/r/issues/1/comments -f body=hi'
+	bk gh-api 0 "$wt" 'gh api -X POST repos/o/r/issues/1/comments -f body=hi'
 	t allow "$wt" "gh api graphql -f query='mutation { resolveReviewThread(input:{threadId:\"x\"}) { thread { id } } }'"
 	t allow "$wt" 'gh pr view 12'
 	t allow "$wt" 'gh release list'
 	t allow "$wt" 'gh secret list'
 
-	# ── R-TFSTATE ──
-	mkdir -p "$repo/infra/sandbox"
-	printf '{}' >"$repo/infra/sandbox/terraform.tfstate"
-	t block "$repo" 'git clean -fdx'
-	t block "$repo" 'git clean -fX'
-	t block "$repo" 'rm infra/sandbox/terraform.tfstate'
-	t block "$repo" 'rm -f infra/sandbox/terraform.tfstate.backup'
-	t block "$repo" 'rm -rf infra'
-	t block "$repo" 'mv infra/sandbox/terraform.tfstate /tmp/x'
-	t block "$repo" 'cp /tmp/empty.json infra/sandbox/terraform.tfstate'
-	t block "$repo" 'echo "{}" > infra/sandbox/terraform.tfstate'
-	t block "$repo" 'tofu -chdir=infra/sandbox state rm hcloud_server.sandbox'
-	t block "$repo" 'terraform state mv a b'
-	t block "$repo" 'tofu state push x.tfstate'
-	t block "$repo" 'tofu -chdir=infra/gcp-e2e init -migrate-state'
-	t block "$repo" 'tofu init -force-copy'
-	t block "$repo" 'tofu workspace delete old'
-	t allow "$repo" "git clean -fdx -e '*.tfstate*'"
-	t allow "$repo" 'cp infra/sandbox/terraform.tfstate /tmp/state-backup.json'
-	t allow "$repo" 'tofu -chdir=infra/sandbox state list'
-	t allow "$repo" 'tofu -chdir=infra/sandbox plan -out=tfplan'
+	# ── B-TFSTATE: local state is copied out before anything can delete it ──
+	mkdir -p "$repo/infra/sandbox" "$repo/infra/cp" "$repo/infra/gcp-e2e" "$repo/infra/empty" "$repo/infra/nobackend"
+	printf '{"serial":1}' >"$repo/infra/sandbox/terraform.tfstate"
+	local sbs="files$repo/infra/sandbox/terraform.tfstate"
+	bk tfstate 1 "$repo" 'git clean -fdx'
+	has 'git clean -x copies the state out' "$sbs" serial
+	bk tfstate 1 "$repo" 'git clean -fX'
+	bk tfstate 1 "$repo" 'rm infra/sandbox/terraform.tfstate'
+	has 'rm of a state file copies it' "$sbs" serial
+	bk tfstate 0 "$repo" 'rm -f infra/sandbox/terraform.tfstate.backup'
+	bk tfstate 1 "$repo" 'rm -rf infra'
+	has 'rm -r of a directory holding state copies it' "$sbs"
+	bk tfstate 1 "$repo" 'mv infra/sandbox/terraform.tfstate /tmp/x'
+	bk tfstate 1 "$repo" 'cp /tmp/empty.json infra/sandbox/terraform.tfstate'
+	bk tfstate 1 "$repo" 'echo "{}" > infra/sandbox/terraform.tfstate'
+	has 'a redirection onto state copies it first' "$sbs" serial
+	bk tfstate 1 "$repo" 'tofu -chdir=infra/sandbox state rm hcloud_server.sandbox'
+	has 'state rm on a local backend copies the local file' "$sbs"
+	check 'a local backend is not pulled' bash -c "! grep -q 'state pull' '$tmp/calls.log'"
+	bk tfstate 1 "$repo/infra/cp" 'terraform state mv a b'
+	has 'state mv on a remote backend pulls the state' state-pull.tfstate '"serial":7'
+	bk tfstate 1 "$repo/infra/cp" 'tofu state push x.tfstate'
+	bk tfstate 1 "$repo" 'tofu -chdir=infra/gcp-e2e init -migrate-state'
+	check 'the pull runs against the -chdir module' grep -q "chdir=$repo/infra/gcp-e2e state pull" "$tmp/calls.log"
+	bk tfstate 1 "$repo/infra/cp" 'tofu init -force-copy'
+	bk tfstate 1 "$repo/infra/cp" 'tofu workspace delete old'
+	has 'workspace delete pulls THAT workspace' state-pull.tfstate '"workspace":"old"'
+	bk tfstate 0 "$repo" 'tofu -chdir=infra/empty state rm x'
+	t block "$repo" 'tofu -chdir=infra/nobackend state rm x'
+	t block "$repo" 'tofu -chdir=$D state rm x'
+	bk tfstate 1 "$repo" 'pnpm creds tofu-sandbox -- tofu -chdir=infra/cp state rm x'
+	check 'a brokered command is backed up through the same broker' grep -q '^creds tofu-sandbox -- ' "$tmp/calls.log"
+	has 'the brokered pull reaches the file intact' state-pull.tfstate '"serial":7'
+	bk tfstate 0 "$repo" "git clean -fdx -e '*.tfstate*'"
+	bk tfstate 0 "$repo" 'cp infra/sandbox/terraform.tfstate /tmp/state-backup.json'
+	bk tfstate 0 "$repo" 'tofu -chdir=infra/sandbox state list'
+	bk tfstate 0 "$repo" 'tofu -chdir=infra/sandbox plan -out=tfplan'
 	t allow "$repo" 'tofu init -backend=false'
 	t allow "$repo" 'grep -rn tfstate infra/'
+	t block "$wt" 'git -C "$W" clean -fdx'
 	# bulk deleters (find / rsync) that can reach local state
-	t block "$repo" "find . -name '*.tfstate' -delete"
-	t block "$repo" 'find infra -type f -delete'
-	t block "$repo" 'find infra -exec rm {} +'
-	t block "$repo" 'rsync -a --delete /tmp/empty/ infra/'
-	t allow "$repo" "find . -name '*.log' -delete"
-	t allow "$repo" 'find /tmp/x -type f -delete'
-	t allow "$repo" 'rsync -a --delete /tmp/a/ /tmp/b/'
+	bk tfstate 1 "$repo" "find . -name '*.tfstate' -delete"
+	has 'a find naming state copies it at any depth' "$sbs"
+	bk tfstate 1 "$repo" 'find infra -type f -delete'
+	bk tfstate 1 "$repo" 'find infra -exec rm {} +'
+	bk tfstate 1 "$repo" 'rsync -a --delete /tmp/empty/ infra/'
+	t block "$repo" 'find $D -name "*.tfstate" -delete'
+	bk tfstate 0 "$repo" "find . -name '*.log' -delete"
+	bk tfstate 0 "$repo" 'find /tmp/x -type f -delete'
+	bk tfstate 0 "$repo" 'rsync -a --delete /tmp/a/ /tmp/b/'
 	t allow "$repo" 'find infra -name "*.tf"'
+	check 'every tfstate backup directory is private (700)' bash -c "[ \"\$(ls -ld '$home/.alethia/backups/tfstate' | cut -c1-10)\" = drwx------ ]"
 
-	# ── R-DB ──
+	# ── B-DB: a non-local database is pg_dumped first ──
 	t block "$wt" 'pnpm -F console db:reset'
 	t block "$wt" 'pnpm -C apps/console run db:migrate'
-	t block "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@prod.db.example.com:5432/a pnpm -F console db:reset'
-	t block "$wt" 'export ALETHIA_DATABASE_URL=postgres://u:p@ep-x.neon.tech/a && pnpm -F console db:migrate'
+	bk db 1 "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p4ss@prod.db.example.com:5432/a pnpm -F console db:reset'
+	has 'a remote reset is dumped first' db.dump PGDMP
+	check 'the MANIFEST never carries the password' bash -c "! grep -q p4ss '$BK_NEW/MANIFEST'"
+	bk db 1 "$wt" 'export ALETHIA_DATABASE_URL=postgres://u:p@ep-x.neon.tech/a && pnpm -F console db:migrate'
 	t block "$wt" 'ALETHIA_DATABASE_URL="$(aws secretsmanager get-secret-value --secret-id x)" pnpm -F console db:reset'
-	t block "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@localhost/a?host=prod.example.com pnpm -F console db:reset'
+	bk db 1 "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@localhost/a?host=prod.example.com pnpm -F console db:reset'
 	t block "$wt" 'cd apps/console && npx drizzle-kit push'
 	t block "$wt" 'node --env-file=.env apps/console/scripts/reset.mjs'
-	t block "$wt" 'pnpm -F console db:reencrypt' ALETHIA_DATABASE_URL=postgres://u:p@prod.example.com/a
-	t allow "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@localhost:5432/a pnpm -F console db:reset'
-	t allow "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@127.0.0.1:5432/a pnpm -C apps/console run db:migrate'
-	t allow "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@[::1]:5432/a pnpm -F console db:reset'
-	t allow "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@db:5432/a pnpm -F console db:migrate'
-	t allow "$wt" 'pnpm -F console db:migrate' ALETHIA_DATABASE_URL=postgres://u:p@localhost/a
+	bk db 1 "$wt" 'pnpm -F console db:reencrypt' ALETHIA_DATABASE_URL=postgres://u:p@prod.example.com/a
+	t block "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@unreachable.example.com/a pnpm -F console db:reset'
+	bk db 1 "$wt" 'pnpm creds prod-env -- pnpm -F console db:migrate'
+	has 'a brokered migrate is dumped through the broker' db.dump PGDMP
+	check 'the brokered dump ran under that profile' grep -q '^creds prod-env -- ' "$tmp/calls.log"
+	bk db 0 "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@localhost:5432/a pnpm -F console db:reset'
+	bk db 0 "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@127.0.0.1:5432/a pnpm -C apps/console run db:migrate'
+	bk db 0 "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@[::1]:5432/a pnpm -F console db:reset'
+	bk db 0 "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@db:5432/a pnpm -F console db:migrate'
+	bk db 0 "$wt" 'pnpm -F console db:migrate' ALETHIA_DATABASE_URL=postgres://u:p@localhost/a
 	t allow "$wt" 'pnpm -F console db:generate'
 	t allow "$wt" 'pnpm -F console test'
 	t allow "$wt" 'git commit -m "guard: refuse db:reset against a remote host"'
 	t allow "$wt" 'gh pr create --title "x" --body "covers pnpm -F console db:reset"'
 
-	# ── R-DOCKER ──
-	t block "$wt" 'docker volume rm alethia_pgdata'
-	t block "$wt" 'docker volume prune -f'
-	t block "$wt" 'docker system prune -a --volumes'
-	t block "$wt" 'docker rm -v alethia-postgres-1'
-	t allow "$wt" 'docker volume rm scratch_vol'
+	# ── B-DOCKER ──
+	bk docker-volumes 1 "$wt" 'docker volume rm alethia_pgdata'
+	has 'volume rm tars the volume' alethia_pgdata.tgz
+	bk docker-volumes 1 "$wt" 'docker volume prune -f'
+	has 'a prune saves the alethia volumes it would remove' alethia_pgdata.tgz
+	check 'a prune does not save the others' test ! -e "$BK_NEW/scratch.tgz"
+	bk docker-volumes 1 "$wt" 'docker system prune -a --volumes'
+	bk docker-volumes 1 "$wt" 'docker rm -v alethia-postgres-1'
+	has 'rm -v saves the container volumes' anonvol123.tgz
+	t block "$wt" 'docker volume rm $V'
+	t block "$wt" 'docker volume rm alethia_broken'
+	bk docker-volumes 0 "$wt" 'docker volume rm scratch_vol'
 	t allow "$wt" 'docker volume ls'
 	t allow "$wt" 'docker ps'
 	t allow "$wt" 'docker rm old-container'
 
-	# ── R-CLOUD ──
+	# ── B-CLOUD ──
 	t block "$wt" 'hcloud server delete box'
 	t block "$wt" 'hcloud --context tovr-prod server delete box'
 	t block "$wt" 'hcloud --context alethia-console-prod volume delete v'
 	t block "$wt" 'HCLOUD_TOKEN=abc hcloud --context alethia-e2e server delete box'
-	t block "$wt" 'hcloud server rebuild box --image x'
-	t allow "$wt" 'hcloud --context alethia-e2e server delete e2e-box'
-	t allow "$wt" 'hcloud --context=alethia-sandbox server delete sandbox'
-	t allow "$wt" 'HCLOUD_CONTEXT=alethia-e2e hcloud server delete e2e-box'
+	bk hcloud 1 "$wt" 'hcloud --context alethia-console-prod server delete box'
+	has 'a server delete takes a snapshot image first' image.txt 'Image 42'
+	bk hcloud 1 "$wt" 'hcloud --context alethia-console-prod server rebuild box --image x'
+	t block "$wt" 'hcloud --context alethia-console-prod server delete ghost'
+	bk hcloud 0 "$wt" 'hcloud --context alethia-console-prod firewall delete fw'
+	bk hcloud 0 "$wt" 'hcloud --context alethia-e2e server delete e2e-box'
+	bk hcloud 0 "$wt" 'hcloud --context=alethia-sandbox server delete sandbox'
+	bk hcloud 0 "$wt" 'HCLOUD_CONTEXT=alethia-e2e hcloud server delete e2e-box'
 	t allow "$wt" 'hcloud server list'
-	t block "$wt" 'aws ec2 terminate-instances --instance-ids i-1'
-	t block "$wt" 'aws --profile x s3 rm s3://bucket/key'
-	t block "$wt" 'aws s3 sync . s3://b --delete'
-	t block "$wt" 'aws rds delete-db-instance --db-instance-identifier x'
+	t allow "$wt" 'aws ec2 terminate-instances --instance-ids i-1'
+	t allow "$wt" 'aws --profile x s3 rm s3://bucket/key'
+	t allow "$wt" 'aws s3 sync . s3://b --delete'
+	t allow "$wt" 'aws rds delete-db-instance --db-instance-identifier x --final-db-snapshot-identifier x-final'
+	t block "$wt" 'aws rds delete-db-instance --db-instance-identifier x --skip-final-snapshot'
+	bk aws 1 "$wt" 'aws --region eu-central-1 ec2 delete-volume --volume-id vol-1'
+	has 'a volume delete takes an EBS snapshot first' snapshot.json snap-1
+	check 'the snapshot is taken in the same region' grep -q 'aws --region eu-central-1 ec2 create-snapshot --volume-id vol-1' "$tmp/calls.log"
+	t block "$wt" 'aws ec2 delete-volume --volume-id $V'
+	t block "$wt" 'aws secretsmanager delete-secret --secret-id x --force-delete-without-recovery'
+	t allow "$wt" 'aws secretsmanager delete-secret --secret-id x --recovery-window-in-days 7'
 	t allow "$wt" 'aws ec2 describe-instances'
 	t allow "$wt" 'aws s3 ls'
-	t block "$wt" 'gcloud compute instances delete vm-1 --zone x'
-	t allow "$wt" 'gcloud compute instances list'
-	t block "$wt" 'az group delete -n rg --yes'
-	t allow "$wt" 'az group list'
-	t block "$wt" 'aliyun ecs DeleteInstance --InstanceId i-1'
-	t allow "$wt" 'aliyun ecs DescribeInstances'
-	t allow "$wt" 'kubectl --context kind-alethia delete pod x'
-	t allow "$wt" 'kubectl --context=gke-alethia-e2e-1 delete ns x'
-	t block "$wt" 'kubectl --context prod delete ns x'
-	t block "$wt" 'kubectl delete ns x'
-	t allow "$wt" 'kubectl delete ns x' STUB_KUBE_CONTEXT=kind-dev
-	t block "$wt" 'kubectl drain node-1'
-	t block "$wt" 'kubectl apply -f x.yaml --prune -l app=x'
-	t allow "$wt" 'kubectl apply -f x.yaml'
+	t allow "$wt" 'gcloud compute instances delete vm-1 --zone x'
+	t allow "$wt" 'az group delete -n rg --yes'
+	t allow "$wt" 'aliyun ecs DeleteInstance --InstanceId i-1'
+	bk kubernetes 0 "$wt" 'kubectl --context kind-alethia delete pod x'
+	bk kubernetes 0 "$wt" 'kubectl --context=gke-alethia-e2e-1 delete ns x'
+	bk kubernetes 1 "$wt" 'kubectl --context prod delete ns x --grace-period 0 --force'
+	has 'a delete exports the objects first' objects.yaml 'kind: List'
+	check 'the export is a get of the same objects' grep -q 'kubectl --context prod get ns x -o yaml' "$tmp/calls.log"
+	bk kubernetes 1 "$wt" 'kubectl delete ns x'
+	bk kubernetes 0 "$wt" 'kubectl delete ns x' STUB_KUBE_CONTEXT=kind-dev
+	t block "$wt" 'kubectl --context prod delete ns ghost'
+	t allow "$wt" 'kubectl drain node-1'
+	t allow "$wt" 'kubectl apply -f x.yaml --prune -l app=x'
 	t allow "$wt" 'kubectl get pods'
-	t block "$wt" 'helm uninstall argo -n argocd'
-	t allow "$wt" 'helm uninstall argo --kube-context kind-x'
+	bk kubernetes 1 "$wt" 'helm uninstall argo -n argocd'
+	has 'helm uninstall saves the release' release.txt MANIFEST
+	t block "$wt" 'helm uninstall $R'
+	bk kubernetes 0 "$wt" 'helm uninstall argo --kube-context kind-x'
 
 	# ── R-CRED / R-GITDIR ──
 	t block "$wt" 'rm -rf ~/.ssh'
@@ -1678,10 +2622,10 @@ rm -rf ~/.ssh
 gh repo delete x
 EOF"
 	t block "$wt" "bash <<'EOF'
-git push origin main
+rm -rf ~/.ssh
 EOF"
 	t block "$wt" "cat <<EOF | sh
-gh repo delete x
+rm -rf ~/.ssh
 EOF"
 	t allow "$wt" 'gh issue comment 1 --body "Done.
 hcloud server delete was run by the maintainer.
@@ -1691,13 +2635,13 @@ git push origin main is refused."'
 	t allow "$wt" 'gh pr create --body "a \"quoted\" word
 hcloud server delete box
 done"'
-	t block "$wt" 'gh pr create --body "a \"quoted\" word" && git push origin main'
+	t block "$wt" 'gh pr create --body "a \"quoted\" word" && rm -rf ~/.ssh'
 	t block "$wt" "read x <<<word
-git push origin main"
+rm -rf ~/.ssh"
 	t block "$wt" "cat > /tmp/x <<EOF
 data
 EOF
-git push origin main"
+rm -rf ~/.ssh"
 
 	# ── inspection and the ordinary path ──
 	t allow "$wt" 'grep -n "git push origin main" CLAUDE.md'
@@ -1750,9 +2694,10 @@ git push origin main"
 	G -C "$repo" worktree add -b feat/tf "$tmp/wt-tf"
 	mkdir -p "$tmp/wt-tf/infra/sandbox"
 	printf '{}' >"$tmp/wt-tf/infra/sandbox/terraform.tfstate"
-	t block "$repo" "rm -rf $tmp/wt-tf"
-	t block "$repo" "git worktree remove --force $tmp/wt-tf"
-	t block "$repo" "git worktree remove $tmp/wt-tf"
+	bk tfstate 1 "$repo" "rm -rf $tmp/wt-tf"
+	has 'rm -rf of a worktree copies its state out' "files$tmp/wt-tf/infra/sandbox/terraform.tfstate"
+	bk tfstate 1 "$repo" "git worktree remove --force $tmp/wt-tf"
+	bk tfstate 1 "$repo" "git worktree remove $tmp/wt-tf"
 	t block "$repo" 'git worktree remove --force "$WT"'
 	rm -rf "$tmp/wt-tf/infra"
 
@@ -1919,10 +2864,10 @@ mutation_test() {
 	trap 'rm -rf "$dir"' EXIT
 	mkdir -p "$dir/lib"
 	cp "${self%/*}/lib/cmdline.sh" "$dir/lib/"
-	ids="$(grep -vE '^[[:space:]]*#' "$self" | grep -oE '(refuse|snapshot|snap|pin) [RS]-[A-Z]+' | awk '{print $2}' | sort -u)"
+	ids="$(grep -vE '^[[:space:]]*#' "$self" | grep -oE '(refuse|snapshot|snap|pin|backup) [RSB]-[A-Z]+' | awk '{print $2}' | sort -u)"
 	for id in $ids; do
 		copy="$dir/guard-destroy.sh"
-		sed -E "s/(refuse|snapshot|snap|pin) $id( |\$)/true $id\\2/g" "$self" >"$copy"
+		sed -E "s/(refuse|snapshot|snap|pin|backup) $id( |\$)/true $id\\2/g" "$self" >"$copy"
 		if SELFTEST_FAILFAST=1 HOOK_ROOT="$(cd "${self%/*}/../.." && pwd)" bash "$copy" --self-test >/dev/null 2>&1; then
 			survived=$((survived + 1))
 			echo "  ✗ mutant SURVIVED: disabling $id fails no self-test case"
