@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { env } from "next-runtime-env";
-import { isInternalAuthorized } from "@/lib/auth/internal-auth";
-import { getDeepHealth, httpStatusFor } from "@/lib/observability/health";
+import { isInternalAuthorized, isStatusProbeAuthorized } from "@/lib/auth/internal-auth";
+import { getDeepHealth, httpStatusFor, statusProbeView } from "@/lib/observability/health";
 
 // Uses node crypto (constant-time bearer check) + the postgres probe, so pin the Node runtime.
 export const runtime = "nodejs";
@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 /**
  * Health probe for load balancers, uptime monitors, the status page, and the (later) ops dashboard.
  *
- * Two modes off one route:
+ * Two modes off one route, and three audiences for the second:
  *  - `?shallow=1` (or `?probe=live`) — LIVENESS: process-up only, NO DB, NO loop registry read. Cheap
  *    200 for the LB liveness probe (restart-if-fails). Never touches Postgres, so a probe storm here is
  *    free. ALWAYS PUBLIC — a liveness probe must never carry a secret.
@@ -27,6 +27,11 @@ export const dynamic = "force-dynamic";
  *    routes). Anonymous readiness requests get the sanitized aggregate; the detail is fail-closed
  *    (never exposed when the secret is unset). The deep compute is cached (~5s), so hammering this
  *    never re-hits Postgres per request.
+ *  - default, with `Authorization: Bearer ${ALETHIA_STATUS_PROBE_TOKEN}` — the STATUS-PAGE view: the same
+ *    aggregate plus ONE BOOLEAN per component (`checks.db`, `checks.schema`, `checks.openfga`) and nothing
+ *    else (`statusProbeView`). It is what status.alethialabs.io's Worker reads (packages/status), and a
+ *    separate credential from the cron secret because it lives outside our infrastructure: a leak of it
+ *    discloses three booleans, not the topology. Fail-closed like the others.
  *
  * Note: the ops dashboard + DR runbook read the FULL document server-side by importing
  * `getDeepHealth()` directly (not over this HTTP route), so gating the HTTP detail doesn't affect them.
@@ -78,6 +83,11 @@ export async function GET(request: Request): Promise<Response> {
 	// … but the internal topology detail is only returned to a platform-internal (bearer) caller.
 	if (isInternalAuthorized(request)) {
 		return Response.json(health, { status });
+	}
+
+	// … the status page's Worker gets one boolean per component, and nothing more …
+	if (isStatusProbeAuthorized(request)) {
+		return Response.json(statusProbeView(health), { status });
 	}
 
 	// Anonymous / unauthenticated: sanitized aggregate only — same status code (so LB readiness probes

@@ -1,127 +1,82 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Static validation for infra/status — status.alethialabs.io as a Cloudflare Worker (#7148): D1, KV,
+# the Worker script and its bindings, the cron trigger, the DNS record and the route. Credential-free
+# by design: the stack is APPLIED MANUALLY by the maintainer (packages/status/README.md, "Deploying"),
+# because its token needs account-level Workers/KV/D1 scopes no CI job holds. So there is deliberately
+# NO apply job here, and no Cloudflare or state credential ever touches a run.
+#
+# The Worker's own tests run in ci.yml's `TypeScript` job with every other workspace package
+# (`turbo run test`). This workflow proves the bundle BUILDS, since the apply consumes it, and runs the
+# stack's mocked `tofu test` through iac-checks.
+
 name: Infra - Status
 
 on:
   pull_request:
     paths:
-      - 'infra/status/**'
+      - "infra/status/**"
+      - "packages/status/**"
+      - ".github/workflows/infra-status.yml"
+      - "infra/.trivyignore"
+      - "infra/.tflint.hcl"
+      - "infra/.trivy.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/status/**"
+      - "packages/status/**"
   workflow_dispatch:
 
-# A superseded run is not evidence about the head of the branch, and while it keeps a runner it is
-# denying one to the run that is. `ci.yml`, `addon-render-determinism.yml` and the four workflows
-# fixed on 2026-09-02 carry this; these nine did not.
-#
-# MEASURED 2026-09-03 over 500 runs / 6h24m: jobs spend 5,376 minutes WAITING for a runner against
-# 1,802 executing, and 77 of 500 runs (15 percent) were cancelled — started, took a slot, thrown
-# away. The currency is slots REQUESTED, so a superseded run costs the same as a useful one until
-# it dies.
-#
-# `github.ref` and NOT `github.event.pull_request.number || github.ref`: this workflow also fires on
-# `push`, where the number renders EMPTY and every push to `main` would collapse into one group,
-# cancelling a real deploy-path run. `cla.yml` records that trap; it is PR-only, so it can use the
-# number. `github.ref` is distinct for both events here.
+# `github.ref`, not the PR number: this also fires on `push`, where the number renders empty and every
+# push to `main` would share one group (infra-aws-oidc.yml records the same trap).
 concurrency:
   group: infra-status-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  pull-requests: write
 
 env:
   TF_DIR: infra/status
   TOFU_VERSION: "1.10.10"
-  ASM_SECRET_ID: alethia/prod/env
-  ASM_REGION: eu-central-1
-  # TF-vars are loaded from Secrets Manager at apply time (see the load step).
-  # DNS for status.* is added by hand (TF doesn't touch Cloudflare).
 
 jobs:
-  plan:
-    if: github.event_name == 'pull_request'
+  validate:
+    name: Bundle + validate + IaC checks (no backend, no secrets)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @repo/status...
+
+      # The bytes the maintainer's apply uploads. A Worker that does not bundle is caught here, not at
+      # `tofu plan` on a laptop.
+      - name: Build the Worker bundle
+        run: |
+          set -euo pipefail
+          pnpm -F @repo/status build
+          test -s packages/status/dist/worker.js
+
       - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
-      - name: OpenTofu Validate (no backend, no secrets)
+      # Against the REAL bundle just built, so the script's bundle precondition sees what an apply would.
+      - name: OpenTofu validate
         working-directory: ${{ env.TF_DIR }}
-        # PR plans are validate-only: no backend, no cloud/state secrets reach a
-        # PR job (the repo is contributor-facing). Real plan+apply run on main.
         run: |
           tofu init -backend=false
           tofu validate
 
-      - name: IaC checks (fmt + tflint + Trivy)
+      - name: IaC checks (fmt + tflint + Trivy + tofu test)
         uses: ./.github/actions/iac-checks
         with:
           working-directory: ${{ env.TF_DIR }}
-
-  apply:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    environment: production
-    permissions:
-      contents: read
-      id-token: write # assume the deploy role via GitHub OIDC — no stored AWS keys
-    steps:
-      - uses: actions/checkout@v7
-      - uses: opentofu/setup-opentofu@v2
-        with:
-          tofu_version: ${{ env.TOFU_VERSION }}
-
-      # Same least-priv OIDC role as cp-hetzner (infra/aws-oidc → alethia-cp-deployer);
-      # it grants S3 state on status/* too.
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ vars.CP_HETZNER_DEPLOYER_ROLE_ARN }}
-          aws-region: ${{ env.ASM_REGION }}
-
-      - name: Load TF-vars from Secrets Manager
-        run: |
-          set -euo pipefail
-          json="$(aws secretsmanager get-secret-value --secret-id "$ASM_SECRET_ID" --region "$ASM_REGION" --query SecretString --output text)"
-          load() {
-            local var="$1" key="$2" val
-            val="$(printf '%s' "$json" | jq -r --arg k "$key" '.[$k] // ""')"
-            echo "::add-mask::$val"
-            echo "$var=$val" >> "$GITHUB_ENV"
-          }
-          load TF_VAR_hcloud_token   HCLOUD_TOKEN
-          load TF_VAR_ssh_public_key DEPLOY_SSH_PUBLIC_KEY
-          load TF_VAR_acme_email     ACME_EMAIL
-
-      # ssh_allowed_cidrs has no default since #3292 — the open allowlist must not be reachable by
-      # leaving an input out. An SSH allowlist is not a secret, so it comes from a repository
-      # variable rather than the Secrets Manager blob above; that also means it is visible in this
-      # log, which is fine and is the point.
-      #
-      # The explicit emptiness check is here because the failure it replaces is unreadable: an unset
-      # `vars.*` renders as the empty string, and `TF_VAR_ssh_allowed_cidrs=` makes tofu report an
-      # HCL parse error against a list(string) rather than naming the missing input.
-      - name: Resolve the SSH allowlist
-        env:
-          STATUS_SSH_ALLOWED_CIDRS: ${{ vars.STATUS_SSH_ALLOWED_CIDRS }}
-        run: |
-          set -euo pipefail
-          if [ -z "${STATUS_SSH_ALLOWED_CIDRS:-}" ]; then
-            echo "::error::Repository variable STATUS_SSH_ALLOWED_CIDRS is unset. infra/status's ssh_allowed_cidrs has no default (#3292), so this apply has no SSH allowlist to apply. Set it to an HCL list of the ranges that reach the status box, e.g. [\"203.0.113.4/32\"]. Nothing in CI SSHes to this box, so it is a human-access list."
-            exit 1
-          fi
-          echo "TF_VAR_ssh_allowed_cidrs=${STATUS_SSH_ALLOWED_CIDRS}" >> "$GITHUB_ENV"
-
-      - name: OpenTofu Init
-        working-directory: ${{ env.TF_DIR }}
-        # AWS-native S3 backend — the OIDC role authenticates it; no static keys.
-        run: |
-          tofu init -upgrade \
-            -backend-config="bucket=alethia-tofu-state-270587882865" \
-            -backend-config="key=status/terraform.tfstate" \
-            -backend-config="region=eu-central-1" \
-            -backend-config="use_lockfile=true"
-
-      - name: OpenTofu Apply
-        working-directory: ${{ env.TF_DIR }}
-        run: tofu apply -auto-approve
