@@ -1,0 +1,42 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Restore-drill instance user-data, rendered by infra/backup-account/drill.tf. Deliberately thin and
+# stable: the drill's logic lives in the repository at ${github_branch}, so changing it needs no new
+# launch template version. The contract with BKP-L3 is ONE entrypoint:
+#
+#   scripts/ops/restore-drill-ec2.sh --env-file /etc/alethia/drill.env
+#
+# Never add `set -x`: the entrypoint handles a decryption key and restored personal data.
+set -euo pipefail
+
+# 1. The lifetime limit, before anything that can hang. Power-off terminates the instance
+#    (InstanceInitiatedShutdownBehavior=terminate), and so does leaving this script, whatever happens.
+shutdown -h +${max_lifetime_minutes}
+trap 'shutdown -h now' EXIT
+
+# 2. Tools. Docker compose v2 and age are Ubuntu 24.04 packages.
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -q
+apt-get install -y -q docker.io docker-compose-v2 git age jq curl unzip
+systemctl enable --now docker
+
+# 3. Non-secret settings for the entrypoint. Credentials come from the instance role (IMDSv2).
+install -d -m 0755 /etc/alethia
+cat >/etc/alethia/drill.env <<'EOF'
+BACKUP_S3_PROVIDER=AWS
+BACKUP_S3_REGION=${region}
+BACKUP_S3_ENDPOINT=${s3_endpoint}
+BACKUP_S3_BUCKET=${bucket}
+BACKUP_PREFIX=${backup_prefix}
+DRILL_EVIDENCE_PREFIX=${evidence_prefix}
+DRILL_AGE_IDENTITY_SECRET=${secret_name}
+EOF
+
+# 4. The drill, from the protected branch.
+git clone --depth 1 --branch "${github_branch}" "https://github.com/${github_repo}.git" /opt/alethia-drill
+cd /opt/alethia-drill
+rc=0
+./scripts/ops/restore-drill-ec2.sh --env-file /etc/alethia/drill.env || rc=$?
+echo "restore drill finished with exit code $rc; powering off"
