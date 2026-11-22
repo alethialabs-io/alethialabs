@@ -8,7 +8,7 @@
 
 import { test, expect } from "../fixtures/qa";
 import { pendingInvitationId } from "../helpers/db";
-import { emailOtpSignIn, organizationApi } from "../helpers/personas";
+import { emailOtpSignIn, organizationApi, tickOnboardingTerms } from "../helpers/personas";
 import type { Page } from "@playwright/test";
 
 /**
@@ -120,7 +120,9 @@ test.describe("Onboarding negatives — wizard validation", () => {
 	test("a reserved slug is rejected", async ({ page }) => {
 		await toOnboarding(page, "reserved");
 		await page.locator("#org-name").fill(`E2E Reserved ${Date.now()}`);
-		await page.getByRole("button", { name: /customize url/i }).click();
+		// The terms box is a field of the same form, and an unticked one is refused first.
+		await tickOnboardingTerms(page);
+		await page.getByRole("button", { name: /^customize$/i }).click();
 		// "docs" is a reserved console/sibling segment (lib/routing RESERVED_SLUGS). The field is
 		// addressed by its accessible name, not as "the last autocomplete=off input on the page".
 		const slugBox = page.getByRole("textbox", { name: "URL slug" });
@@ -135,10 +137,14 @@ test.describe("Onboarding negatives — wizard validation", () => {
 		await expect(page).toHaveURL(/\/onboarding/);
 	});
 
-	test("a blank org name keeps the create button disabled", async ({ page }) => {
+	test("a blank org name is refused under the name field", async ({ page }) => {
 		await toOnboarding(page, "blankname");
 		await page.locator("#org-name").fill("");
-		await expect(page.getByRole("button", { name: /create organization/i })).toBeDisabled();
+		// The button stays usable and says why on press, under the field (a disabled button with no
+		// reason was a dead end).
+		await page.getByRole("button", { name: /create organization/i }).click();
+		await expect(page.getByRole("alert").filter({ hasText: /give your organization a name/i })).toBeVisible();
+		await expect(page).toHaveURL(/\/onboarding/);
 	});
 });
 

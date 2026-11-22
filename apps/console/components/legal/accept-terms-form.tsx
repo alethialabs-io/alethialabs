@@ -5,110 +5,111 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { Fragment, useId } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@repo/ui/button";
 import { Checkbox } from "@repo/ui/checkbox";
-import { ACCEPTANCE_LABELS } from "@repo/legal/documents";
 import { acceptLegalDocuments } from "@/app/server/actions/legal";
-
-/** One document awaiting acceptance, as the page resolved it. */
-export interface PendingDocument {
-	id: string;
-	title: string;
-	version: string;
-	path: string;
-	/** True when the user has never accepted any version of this document (server-decided). */
-	firstAcceptance: boolean;
-}
-
-const schema = z.object({
-	/**
-	 * A single, unticked box. Not pre-ticked, and not implied by pressing the button: an acceptance
-	 * the user did not perform is not an acceptance, and a pre-ticked box is the textbook example of
-	 * consent that was never given.
-	 */
-	accepted: z.boolean().refine((v) => v, {
-		message: "Tick the box to accept the Terms.",
-	}),
-});
-
-type FormValues = z.infer<typeof schema>;
-
-/** Where the marketing site serving the legal documents lives. */
-const MARKETING_ORIGIN =
-	process.env.NEXT_PUBLIC_MARKETING_URL ?? "https://alethialabs.io";
+import {
+	ACCEPTANCE_LOCALE,
+	type AcceptanceDocument,
+	type CopySegment,
+	checkboxLabel,
+	gateHeading,
+	noticeLine,
+	requiredMessage,
+	TERMS_ACCEPTANCE_TEXT,
+} from "@/components/legal/terms-acceptance-copy";
+import { ROOT_SERVER_ERROR } from "@/lib/actions/form-errors";
 
 /**
- * The gate's heading and lede, chosen from what the server says about each pending document.
- *
- * A person who has never agreed to anything must not be told the Terms "have changed", or that
- * "nothing has been removed" — both describe a history they do not have (#5009). Only when EVERY
- * pending document is a first acceptance is this a first agreement; one document the user has
- * accepted before makes it an update, and the update copy is the honest one for it.
+ * Renders copy segments: plain text, or a link to a legal page that opens in a new tab. Text is a bare
+ * text node, never a wrapping element: the box's accessible name is computed from this label, and a
+ * wrapper per run drops the spaces at each run's edge ("theTerms of Service(version …)").
  */
-function gateCopy(documents: PendingDocument[]): { heading: string; body: string } {
-	if (documents.every((d) => d.firstAcceptance)) {
-		return {
-			heading: "Accept our Terms",
-			body: "Review and accept to continue.",
-		};
-	}
-	return {
-		heading: documents.length > 1 ? "Updated agreements" : "Our Terms have changed",
-		body: "Read and accept to continue. Your work is untouched — nothing has been removed and nothing expires while you decide.",
-	};
+function Segments({ segments }: { segments: readonly CopySegment[] }) {
+	return (
+		<>
+			{segments.map((segment, i) =>
+				segment.kind === "link" ? (
+					<a
+						key={`${segment.documentId}-${i}`}
+						className="underline underline-offset-4"
+						href={segment.href}
+						rel="noopener noreferrer"
+						target="_blank"
+					>
+						{segment.text}
+					</a>
+				) : (
+					<Fragment key={`text-${i}`}>{segment.text}</Fragment>
+				),
+			)}
+		</>
+	);
 }
 
 /**
- * The clickwrap itself.
+ * The `/accept-terms` clickwrap: shown after sign-in when a document the person must accept reaches
+ * a version they have not accepted. A new account accepts inline on onboarding instead (WIZ-W6), so
+ * in practice this is the RE-acceptance screen.
  *
  * Two properties matter more than the styling, and both are easy to lose in a redesign:
  *
  *  1. The box starts UNTICKED and the button is inert until it is ticked — a positive act, by the
  *     person, recorded at a moment.
- *  2. The document is LINKED at the exact version being accepted, and the version is shown. An
- *     acceptance of "the Terms" with no version is not evidence of anything.
+ *  2. Each document is LINKED, and its sealed version is printed INSIDE the label the person ticks.
+ *     An acceptance of "the Terms" with no version is not evidence of anything.
+ *
+ * Every word comes from `terms-acceptance-copy.ts`, the module onboarding renders from too, so the
+ * two surfaces cannot word the same agreement differently. Links go through `legalUrl`.
  */
 export function AcceptTermsForm({
 	documents,
 	next,
 }: {
-	documents: PendingDocument[];
+	documents: readonly AcceptanceDocument[];
 	next: string;
 }) {
 	const router = useRouter();
-	const [error, setError] = useState<string | null>(null);
-	const { control, handleSubmit, formState } = useForm<FormValues>({
+	const labelId = useId();
+	const schema = z.object({
+		/**
+		 * A single, unticked box. Not pre-ticked, and not implied by pressing the button: an acceptance
+		 * the user did not perform is not an acceptance.
+		 */
+		accepted: z.boolean().refine((v) => v, { message: requiredMessage(documents) }),
+	});
+	const form = useForm<{ accepted: boolean }>({
 		resolver: zodResolver(schema),
 		defaultValues: { accepted: false },
-		// The button must be inert until the box is ticked, and `isValid` only tracks that under
-		// onChange validation — with the default (onSubmit) it stays false until the first submit,
-		// which would leave the button disabled even after a correct tick.
-		mode: "onChange",
 	});
-	const { isSubmitting, isValid } = formState;
-	const copy = gateCopy(documents);
+	const { control, handleSubmit, formState } = form;
+	const { isSubmitting, errors } = formState;
+	// The button follows the box itself, not `isValid`: a recorded failure sets a root error, and a
+	// root error would leave `isValid` false until the box was unticked and ticked again.
+	const accepted = useWatch({ control, name: "accepted" });
+	const copy = gateHeading(documents);
+	const notice = noticeLine();
+	const failure = errors.root?.server?.message;
 
+	/** Records the acceptance, then continues to where the person was going. */
 	async function onSubmit() {
-		setError(null);
 		try {
 			await acceptLegalDocuments({
 				documentIds: documents.map((d) => d.id),
-				locale: "en",
-				// No context and no surface: WHY this acceptance happened (a first agreement or a
-				// re-acceptance) and where it was shown are decided by the server from the stored
-				// history, never asserted from here (#5009).
-				// The browser's own clock, recorded alongside the server's. A large gap between the two
-				// is itself a signal, and reconciling them later needs both.
+				locale: ACCEPTANCE_LOCALE,
+				// No context and no surface: WHY this acceptance happened and where it was shown are
+				// decided by the server from the stored history, never asserted from here (#5009).
+				// The browser's own clock, recorded alongside the server's.
 				clientTimestamp: new Date().toISOString(),
 			});
 			router.replace(next);
-		} catch (e) {
-			setError(
-				e instanceof Error ? e.message : "Could not record your acceptance.",
-			);
+		} catch {
+			// A thrown server error reaches a production build as a digest, never a sentence the
+			// person can use (A-07), so the form's own sentence is shown instead of its message.
+			form.setError(ROOT_SERVER_ERROR, { type: "server", message: TERMS_ACCEPTANCE_TEXT.recordFailed });
 		}
 	}
 
@@ -118,48 +119,43 @@ export function AcceptTermsForm({
 				<h1 className="font-grotesk text-display-sm font-semibold leading-[1.05] tracking-display text-text-primary">
 					{copy.heading}
 				</h1>
-				<p className="text-sm text-text-tertiary">{copy.body}</p>
+				<p className="text-ui-md text-text-tertiary">{copy.body}</p>
 			</div>
 
-			<ul className="flex flex-col gap-2 text-sm">
-				{documents.map((doc) => (
-					<li key={doc.id}>
-						<a
-							className="underline underline-offset-4"
-							href={`${MARKETING_ORIGIN}${doc.path}`}
-							rel="noopener noreferrer"
-							target="_blank"
-						>
-							{doc.title}
-						</a>{" "}
-						<span className="text-text-tertiary">
-							(version {doc.version})
-						</span>
-					</li>
-				))}
-			</ul>
+			<div className="flex flex-col gap-2">
+				<label className="flex items-start gap-3 text-ui-md">
+					<Controller
+						control={control}
+						name="accepted"
+						render={({ field }) => (
+							<Checkbox
+								ref={field.ref}
+								checked={field.value === true}
+								onCheckedChange={(v) => field.onChange(v === true)}
+								aria-labelledby={labelId}
+								className="mt-0.5"
+							/>
+						)}
+					/>
+					<span id={labelId}>
+						<Segments segments={checkboxLabel(documents)} />
+					</span>
+				</label>
+				{notice.length > 0 ? (
+					<p className="pl-7 text-ui-sm text-text-tertiary">
+						<Segments segments={notice} />
+					</p>
+				) : null}
+			</div>
 
-			<label className="flex items-start gap-3 text-sm">
-				<Controller
-					control={control}
-					name="accepted"
-					render={({ field }) => (
-						<Checkbox
-							checked={field.value === true}
-							onCheckedChange={(v) => field.onChange(v === true)}
-						/>
-					)}
-				/>
-				<span>
-					{ACCEPTANCE_LABELS.checkboxPrefix} the{" "}
-					{documents.map((d) => d.title).join(" and ")}.
-				</span>
-			</label>
+			{failure ? (
+				<p role="alert" className="text-ui-md text-destructive">
+					{failure}
+				</p>
+			) : null}
 
-			{error && <p className="text-sm text-destructive">{error}</p>}
-
-			<Button type="submit" disabled={!isValid || isSubmitting}>
-				{isSubmitting ? "Recording…" : ACCEPTANCE_LABELS.submit}
+			<Button type="submit" disabled={!accepted || isSubmitting} className="h-[46px] w-full text-sm">
+				{isSubmitting ? TERMS_ACCEPTANCE_TEXT.submitting : TERMS_ACCEPTANCE_TEXT.submit}
 			</Button>
 		</form>
 	);

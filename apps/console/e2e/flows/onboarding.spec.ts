@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Onboarding domain — happy paths + structure, end to end:
-//   signup → email-OTP (and its resend cooldown) → /onboarding plan pick (Hobby vs Pro trial)
-//   → the clickwrap gate → org overview; returning-user /login; the org switcher, a second
+//   signup → email-OTP (and its resend cooldown) → /onboarding: plan, org name, the Pro trial's
+//   payer facts and the inline terms box on ONE screen → the new-project screen /{org}/~/new
+//   (WIZ-W6); returning-user /login; the org switcher, a second
 //   organization and switching between them; the invitation accept round-trip; the CLI
 //   hand-off; signing out; and public-route auth gating.
 //
@@ -28,7 +29,13 @@ import { ACCEPTANCE_LABELS } from "@repo/legal/documents";
 import { scanA11y } from "../helpers/a11y";
 import { pendingInvitationId } from "../helpers/db";
 import { planMeta } from "@repo/plan-catalog";
-import { emailOtpSignIn, organizationApi, orgNameFor, signUpHobby } from "../helpers/personas";
+import {
+	emailOtpSignIn,
+	organizationApi,
+	orgNameFor,
+	signUpHobby,
+	tickOnboardingTerms,
+} from "../helpers/personas";
 import type { Page } from "@playwright/test";
 
 /** A unique, never-before-registered test email so each signup creates a fresh account. */
@@ -107,47 +114,23 @@ function isOrgOverview(url: URL): boolean {
 	return parts.length === 1 && !publicSeg.has(parts[0]);
 }
 
-/**
- * Waits for the "Create organization" hand-off to settle EITHER way — on the clickwrap gate or on
- * the org overview — and reports which. Waiting for both is what keeps a caller from deciding while
- * the navigation is still in flight: a fixed-timeout probe for the gate reads "not there yet" as
- * "not there".
- */
-async function settleOrgHandoff(page: Page, timeoutMs: number): Promise<"gate" | "overview"> {
-	await page.waitForURL((url) => url.pathname === "/accept-terms" || isOrgOverview(url), {
-		timeout: timeoutMs,
-	});
-	return new URL(page.url()).pathname === "/accept-terms" ? "gate" : "overview";
+/** True once the URL is the new-project screen onboarding hands a new org to: /{org}/~/new. */
+function isNewProjectScreen(url: URL): boolean {
+	const parts = url.pathname.split("/").filter(Boolean);
+	return parts.length === 3 && parts[1] === "~" && parts[2] === "new" && parts[0] !== "onboarding";
 }
 
 /**
- * Walks a fresh account from "Create organization" to its org overview, through the clickwrap gate
- * when it engages. The gate is data-dependent — it shows only where a legal document is awaiting
- * acceptance (app/server/actions/legal.ts · getPendingAcceptance) — so a journey that is NOT about
- * the gate must pass it either way. The gate's own behaviour is asserted by the clickwrap test.
- *
- * Walking past the gate asserts NOTHING about what it says or records. What a first signup is
- * shown is the clickwrap test's to assert, not this helper's.
+ * Waits for "Create organization" to hand off to the new-project screen (WIZ-W6), and checks it is
+ * the screen itself rather than a waypoint: its own heading, inside the console shell. A new account
+ * accepts the Terms on the onboarding form, so no `/accept-terms` stop sits between the two.
  */
-async function throughTermsToOverview(page: Page, timeoutMs: number): Promise<void> {
-	await settleOrgHandoff(page, timeoutMs);
-	// The URL alone cannot decide it: the hand-off can land on /{org} for a moment BEFORE the
-	// layout redirects to the gate, and run 35932135625 read that moment as "overview" and then
-	// stood on the gate. So wait for what only one side renders — the gate's submit button, or the
-	// in-shell breadcrumb the gate (outside the shell) never has — and decide on that.
-	const submit = page.getByRole("button", { name: ACCEPTANCE_LABELS.submit });
-	const shell = page.getByRole("navigation", { name: "breadcrumb" });
-	await expect(submit.or(shell).first()).toBeVisible({ timeout: timeoutMs });
-	if (await submit.isVisible()) {
-		await page
-			.getByText(new RegExp(ACCEPTANCE_LABELS.checkboxPrefix, "i"))
-			.first()
-			.click();
-		await expect(submit).toBeEnabled();
-		await submit.click();
-		await page.waitForURL((url) => isOrgOverview(url), { timeout: timeoutMs });
-		await expect(shell).toBeVisible({ timeout: timeoutMs });
-	}
+async function throughToNewProject(page: Page, timeoutMs: number): Promise<void> {
+	await page.waitForURL((url) => isNewProjectScreen(url), { timeout: timeoutMs });
+	await expect(page.getByRole("heading", { name: /provision the future/i })).toBeVisible({
+		timeout: timeoutMs,
+	});
+	await expect(page).not.toHaveURL(/\/accept-terms/);
 }
 
 // ── Public auth pages ────────────────────────────────────────────────────────────
@@ -223,48 +206,50 @@ test.describe("Onboarding — public auth pages", () => {
 test.describe("Onboarding — fresh signup + plan pick", () => {
 	test("onboarding wizard shows both self-serve plan tiles", async ({ page }) => {
 		await freshSignupToOnboarding(page, freshEmail("tiles"));
-		await expect(page.getByRole("button", { name: /personal projects/i })).toBeVisible();
-		await expect(page.getByRole("button", { name: /commercial projects/i })).toBeVisible();
+		// One labelled radio group (A-24), not two pressed-buttons.
+		const plans = page.getByRole("radiogroup", { name: "Plan" });
+		await expect(plans.getByRole("radio", { name: /personal projects/i })).toBeAttached();
+		await expect(plans.getByRole("radio", { name: /commercial projects/i })).toBeAttached();
 		// The Hobby tile is selected by default.
-		await expect(page.getByRole("button", { name: /personal projects/i })).toHaveAttribute(
-			"aria-pressed",
-			"true",
-		);
+		await expect(plans.getByRole("radio", { name: /personal projects/i })).toBeChecked();
 	});
 
 	test("onboarding lets you customize the org URL slug", async ({ page }) => {
 		await freshSignupToOnboarding(page, freshEmail("url"));
-		await page.getByRole("button", { name: /customize url/i }).click();
+		await page.getByRole("button", { name: /^customize$/i }).click();
 		// Toggling reveals the inline slug editor; the toggle now reads "Done".
 		await expect(page.getByRole("button", { name: /^done$/i })).toBeVisible();
 	});
 
-	test("full Hobby signup lands on the org overview", async ({ page }) => {
+	test("full Hobby signup lands on the new-project screen", async ({ page }) => {
 		await freshSignupToOnboarding(page, freshEmail("hobby"));
 		const orgName = `E2E Hobby ${Date.now()}`;
 		await page.locator("#org-name").fill(orgName);
-		await page.getByRole("button", { name: /personal projects/i }).click();
+		await page.getByText("Personal projects", { exact: true }).click();
+		await tickOnboardingTerms(page);
 		await page.getByRole("button", { name: /create organization/i }).click();
-		await throughTermsToOverview(page, 60_000);
-		await expect(page).not.toHaveURL(/\/onboarding/);
-		await expect(page.getByRole("link", { name: /create.*project/i }).first()).toBeVisible({
-			timeout: 15_000,
-		});
+		await throughToNewProject(page, 60_000);
 	});
 
-	test("full Pro-trial signup lands on the org overview", async ({ page }) => {
+	test("full Pro-trial signup lands on the new-project screen", async ({ page }) => {
 		await freshSignupToOnboarding(page, freshEmail("pro"));
 		// Stacks signup-OTP latency + a Stripe trial-subscription create — extra headroom.
 		test.setTimeout(300_000);
-		const proTile = page.getByRole("button", { name: /commercial projects/i });
+		const proTile = page.getByRole("radio", { name: /commercial projects/i });
 		test.skip(await proTile.isDisabled(), "Stripe not configured — Pro tile disabled");
 		await page.locator("#org-name").fill(`E2E Pro ${Date.now()}`);
-		await proTile.click();
+		await page.getByText("Commercial projects", { exact: true }).click();
 		// A fresh account still holds its one trial → card-less "Create organization".
 		await expect(page.getByText(/trial · no card required/i)).toBeVisible();
+		// The trial runs the purchase gate, so the payer facts are on this screen, deduced: the
+		// country is filled in, and an `@alethia.test` address suggests a business purchase, which
+		// asks only for the role.
+		await expect(page.getByRole("button", { name: "Select a country" })).toHaveCount(0);
+		await expect(page.getByRole("switch", { name: /buying for a company/i })).toBeChecked();
+		await page.getByRole("textbox", { name: /your role/i }).fill("Founder");
+		await tickOnboardingTerms(page);
 		await page.getByRole("button", { name: /create organization/i }).click();
-		await throughTermsToOverview(page, 60_000);
-		await expect(page).not.toHaveURL(/\/onboarding/);
+		await throughToNewProject(page, 60_000);
 	});
 });
 
@@ -402,53 +387,32 @@ test.describe("Onboarding — the code step", () => {
 // ── The clickwrap gate ────────────────────────────────────────────────────────────
 
 test.describe("Onboarding — the clickwrap gate", () => {
-	test("a fresh account is held at /accept-terms until it ticks the box", async ({ page }) => {
-		// A signup OTP plus onboarding plus the gate — well past the 30s default.
+	test("a fresh account cannot finish onboarding until it ticks the terms box", async ({ page }) => {
+		// A signup OTP plus onboarding — well past the 30s default.
 		test.setTimeout(240_000);
 		await freshSignupToOnboarding(page, freshEmail("terms"));
 		await page.locator("#org-name").fill(`E2E Terms ${Date.now()}`);
-		await page.getByRole("button", { name: /personal projects/i }).click();
+
+		// A fresh account has accepted nothing, so the box is on the onboarding form (WIZ-W6) — one
+		// field of it, under the others, with the version it records printed in its own label.
+		const box = page.getByRole("checkbox", { name: new RegExp(ACCEPTANCE_LABELS.checkboxPrefix, "i") });
+		await expect(box).toBeVisible();
+		await expect(box).toHaveAccessibleName(/\(version \d{4}-\d{2}-\d{2}\)/);
+		// The box starts UNTICKED. That IS the clickwrap; a pre-ticked box is consent never given.
+		await expect(box).not.toBeChecked();
+
+		// Submitting without it is refused on the form, and nothing moves.
 		await page.getByRole("button", { name: /create organization/i }).click();
+		await expect(page.getByRole("alert").filter({ hasText: /tick the box to accept/i })).toBeVisible();
+		await expect(page).toHaveURL(/\/onboarding/);
 
-		// Wait for the org hand-off to settle EITHER way before deciding, so the skip below can
-		// never fire merely because the navigation had not happened yet.
-		const landed = await settleOrgHandoff(page, 60_000);
-		// Data-dependent: the gate only engages where a legal document is actually awaiting
-		// acceptance (app/server/actions/legal.ts · getPendingAcceptance). On a deployment with
-		// none, there is nothing to measure — and saying so is the honest outcome, not a pass.
-		test.skip(
-			landed !== "gate",
-			"no legal document is pending acceptance on this deployment — the clickwrap gate does not engage",
-		);
-
-		// THE PRIVATE-ROUTE HALF. (private)/layout.tsx redirects every route under it back here
-		// until the current documents are accepted, so asking for one is the test of the gate —
-		// merely being on /accept-terms only says onboarding sent us here.
+		// Ticked, it finishes — and the private routes, which hold anyone who has not accepted the
+		// current Terms at /accept-terms, let the account straight in.
+		await box.click();
+		await page.getByRole("button", { name: /create organization/i }).click();
+		await throughToNewProject(page, 60_000);
 		await page.goto("/dashboard");
-		await expect(page).toHaveURL(/\/accept-terms/);
-
-		// A fresh account has never agreed to anything, so it is asked to ACCEPT the Terms — not told
-		// they "have changed", which describes a history it does not have (#5009). The server decides
-		// this per document from the stored acceptances (legal.ts · isFirstAcceptance), and records
-		// the acceptance below as `signup` from the same answer.
-		await expect(page.getByRole("heading", { name: "Accept our Terms" })).toBeVisible();
-		await expect(page.getByText(/nothing has been removed/i)).toHaveCount(0);
-
-		// The box starts UNTICKED and the button is inert until it is ticked. That IS the
-		// clickwrap; a pre-ticked box is consent that was never given.
-		const submit = page.getByRole("button", { name: ACCEPTANCE_LABELS.submit });
-		await expect(submit).toBeDisabled();
-		await expect(page.getByRole("checkbox")).not.toBeChecked();
-
-		await page
-			.getByText(new RegExp(ACCEPTANCE_LABELS.checkboxPrefix, "i"))
-			.first()
-			.click();
-		await expect(submit).toBeEnabled();
-		await submit.click();
-
-		// Accepting releases the gate — the account reaches the product.
-		await page.waitForURL((url) => url.pathname !== "/accept-terms", { timeout: 60_000 });
+		await page.waitForURL((url) => url.pathname !== "/dashboard", { timeout: 30_000 });
 		await expect(page).not.toHaveURL(/\/accept-terms/);
 	});
 });

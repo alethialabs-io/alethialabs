@@ -55,63 +55,38 @@ export async function signUpWithOtp(page: Page): Promise<{ email: string; orgSlu
 	await page.locator("input[data-input-otp]").first().fill(code);
 
 	// New accounts land on /onboarding (gated on onboardingCompletedAt). Hobby (community) is the
-	// default-selected plan; name the org and create it → the app drops us on /{slug}.
+	// default-selected plan; name the org, tick the inline terms box and create it → the app drops
+	// us on the new-project screen, /{slug}/~/new (WIZ-W6).
 	// A unique org name → unique slug, so repeat runs against a shared DB (and a setup + hero run
 	// in one invocation) never collide on the globally-unique org slug.
 	const orgName = `E2E ${email.split("@")[0]}`;
 	await page.waitForURL(/\/onboarding/, { timeout: 30_000 });
 	await page.locator("#org-name").fill(orgName);
-	await page.getByRole("button", { name: /create organization/i }).click();
 
-	// The clickwrap gate (#2372). Every route under (private) redirects here until the account has
-	// accepted the CURRENT Terms, so a brand-new account meets it between onboarding and the org —
-	// and the fixture walks it exactly as a person would rather than seeding an acceptance row,
-	// which would leave the gate itself never exercised in a browser.
+	// The terms acceptance (#2372) is one unticked box on the onboarding form for a new account
+	// (WIZ-W6) — walked exactly as a person would rather than seeding an acceptance row, which would
+	// leave the acceptance itself never exercised in a browser. The box starts UNTICKED; that is the
+	// whole point of a clickwrap, so the fixture asserts it rather than clicking straight through.
 	//
 	// Located by the exported constants, not literals, for the reason CONSENT_LABELS records above.
-	await acceptCurrentTerms(page);
+	const terms = page.getByRole("checkbox", { name: new RegExp(ACCEPTANCE_LABELS.checkboxPrefix, "i") });
+	await expect(terms).not.toBeChecked();
+	await terms.click();
+	await page.getByRole("button", { name: /create organization/i }).click();
 
-	// Onboarding hands off to /{slug} — a single path segment that is NOT one of the waypoints on
-	// the way there. All four exclusions are load-bearing, and two of them were learned the hard
-	// way: `/accept-terms` (the gate) and `/dashboard` (where accepting hands off to) are both
-	// single-segment paths, so a matcher that only excluded the auth routes resolved "accept-terms"
-	// or "dashboard" as the org slug — and the run then failed three steps later at `connect a
-	// cloud`, nowhere near the cause.
+	// Onboarding hands off to /{slug}/~/new. The first segment must NOT be one of the public routes:
+	// `/accept-terms` and `/dashboard` were learned the hard way, when a matcher that only excluded
+	// the auth routes resolved "accept-terms" or "dashboard" as the org slug — and the run then failed
+	// three steps later at `connect a cloud`, nowhere near the cause.
 	await page.waitForURL(
 		(url) =>
-			/^\/[^/]+$/.test(url.pathname) &&
-			!/^\/(signup|onboarding|login|accept-terms|dashboard)$/.test(url.pathname),
+			/^\/[^/]+\/~\/new$/.test(url.pathname) &&
+			!/^\/(signup|onboarding|login|accept-terms|dashboard)\//.test(url.pathname),
 		{ timeout: 30_000 },
 	);
 	const orgSlug = new URL(page.url()).pathname.replace(/^\//, "").replace(/\/.*$/, "");
 	expect(orgSlug, "resolved a non-empty org slug after onboarding").toBeTruthy();
 	return { email, orgSlug };
-}
-
-/**
- * Walks the post-auth clickwrap if it is showing, and returns once it is not.
- *
- * Tolerant of NOT being there on purpose: the gate only fires for an account that has not accepted
- * the current Terms, so a run against a pre-accepted persona must not hang waiting for a form that
- * will never appear. It waits briefly, and proceeds if the gate did not come up.
- */
-async function acceptCurrentTerms(page: Page): Promise<void> {
-	const accept = page.getByRole("button", { name: ACCEPTANCE_LABELS.submit });
-	try {
-		await accept.waitFor({ state: "visible", timeout: 15_000 });
-	} catch {
-		return; // already accepted — nothing to walk
-	}
-	// The box starts UNTICKED and the button is inert until it is ticked; that is the whole point of
-	// a clickwrap, so the fixture asserts it rather than clicking straight through.
-	await expect(accept).toBeDisabled();
-	await page
-		.getByText(new RegExp(ACCEPTANCE_LABELS.checkboxPrefix, "i"))
-		.first()
-		.click();
-	await expect(accept).toBeEnabled();
-	await accept.click();
-	await expect(accept).toBeHidden({ timeout: 30_000 });
 }
 
 /** Fixtures: an authenticated page already inside its fresh org, plus the resolved org slug. */
@@ -122,6 +97,10 @@ export const test = base.extend<{ authedPage: Page; orgSlug: string }>({
 	},
 	authedPage: async ({ page, orgSlug }, use) => {
 		expect(orgSlug).toBeTruthy();
+		// Onboarding hands a new org to the new-project screen (WIZ-W6); the specs on this fixture
+		// start from the org's home, as they did when onboarding landed there.
+		await page.goto(`/${orgSlug}`);
+		await page.waitForURL((url) => url.pathname === `/${orgSlug}`, { timeout: 30_000 });
 		await use(page);
 	},
 });
