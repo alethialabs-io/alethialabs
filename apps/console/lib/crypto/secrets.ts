@@ -23,7 +23,8 @@
 //   1. Deploy this code with the existing key as ALETHIA_CRED_ENCRYPTION_KEY and a chosen
 //      ALETHIA_CRED_ENCRYPTION_KID (e.g. "1"). Nothing else changes; legacy rows still decrypt.
 //   2. Run `pnpm -C apps/console run db:reencrypt` — stamps the active kid onto EVERY ciphertext
-//      (connector secrets, cloud-identity tokens, alert-channel secrets, inventory `sensitive`).
+//      (connector secrets, cloud-identity tokens, alert-channel secrets, inventory `sensitive`,
+//      and linked accounts' OAuth tokens in `account`).
 //      After this, no no-kid rows remain, so the meaning of "active key" is no longer load-bearing
 //      for legacy decryption.
 //   3. To rotate: move the current key to ALETHIA_CRED_ENCRYPTION_KEY_<oldkid>, set a NEW

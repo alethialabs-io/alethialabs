@@ -8,6 +8,10 @@
 //   2. cloud_identities.credentials.{token,s3_access_key,s3_secret_key}  (jsonb CloudCredentials)
 //   3. alert_channels.secret                      (jsonb EncryptedSecret)
 //   4. cloud inventory `sensitive` text columns   (JSON.stringify(EncryptedSecret), 15 tables)
+//   5. account.{access_token,refresh_token,id_token}  (Better Auth linked-account OAuth tokens,
+//      sealed by lib/auth/oauth-token-crypto.ts; the pass is scripts/encrypt-oauth-tokens.ts, which
+//      also seals any value still in the pre-encryption plaintext form, and writes each row with a
+//      compare-and-set so it is safe while the app serves)
 //
 // Idempotent (rows already at the active kid are skipped, so a second run changes 0), batched +
 // resumable (keyset pagination by id; a re-run resumes because settled rows are skipped). It decrypts
@@ -20,6 +24,7 @@
 
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { type EncryptCounts, encryptAccountTokens } from "@/scripts/encrypt-oauth-tokens";
 import {
 	getActiveKid,
 	isCredEncryptionConfigured,
@@ -292,6 +297,16 @@ async function passInventoryTable(
 	return counts;
 }
 
+/**
+ * Folds the account-token pass's tally into the shared shape. A `raced` row — the app rewrote its
+ * tokens between this pass's read and its compare-and-set write — is neither changed nor failed by
+ * this pass: the app sealed it on its own write. It is counted as skipped, reported on its own line,
+ * and confirmed by the next run.
+ */
+export function accountCountsAsReencrypt(c: EncryptCounts): ReencryptCounts {
+	return { scanned: c.scanned, changed: c.changed, skipped: c.skipped + c.raced, failed: c.failed };
+}
+
 /** Formats a tally line for the run summary. */
 function fmt(label: string, c: ReencryptCounts): string {
 	return `  ${label.padEnd(28)} scanned=${c.scanned} changed=${c.changed} skipped=${c.skipped} failed=${c.failed}`;
@@ -328,6 +343,15 @@ async function main(): Promise<void> {
 		const chan = await passAlertChannels(sql, batch);
 		console.log(fmt("alert_channels", chan));
 		addCounts(total, chan);
+
+		const accountTokens = await encryptAccountTokens(sql, batch);
+		console.log(fmt("account (OAuth tokens)", accountCountsAsReencrypt(accountTokens)));
+		if (accountTokens.raced > 0) {
+			console.log(
+				`    ${accountTokens.raced} account row(s) changed under the app during the pass; run again to confirm them`,
+			);
+		}
+		addCounts(total, accountCountsAsReencrypt(accountTokens));
 
 		for (const table of INVENTORY_TABLES) {
 			const c = await passInventoryTable(sql, table, batch);
