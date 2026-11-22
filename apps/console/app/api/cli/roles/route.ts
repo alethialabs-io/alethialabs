@@ -3,7 +3,6 @@
 
 import { typedKeys } from "@/lib/typed-object";
 import { and, eq, inArray } from "drizzle-orm";
-import { z } from "zod";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getEntitlements } from "@/lib/authz/entitlements";
@@ -23,12 +22,7 @@ import {
 	cliRoleResponse,
 	cliRolesResponse,
 } from "@/lib/validations/cli-contract";
-
-/** Body of POST /api/cli/roles — a named custom role plus its permission keys. */
-const createRoleBody = z.object({
-	name: z.string().min(1).max(120),
-	permission_keys: z.array(z.string()).default([]),
-});
+import { createRoleBody } from "@/lib/validations/cli-request-bodies";
 
 /** Every registered permission key — the allow-list custom roles are filtered to. */
 const ALL_KEYS = PERMISSIONS.map((p) => p.key);

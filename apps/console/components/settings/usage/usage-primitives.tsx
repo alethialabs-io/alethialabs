@@ -75,6 +75,16 @@ export function countQuota(used: number, limit: number | null): string {
  * one string and cannot be split without re-assembling the pair that helper exists to prevent —
  * had no way to match. Three cells in one row, two renderings of one shape of fact. So the
  * emphasis moved here, where there is only one of it: the whole quantity reads as one quantity.
+ *
+ * NOT A STAT CARD, decided (C-33). §6 bans stat-card strips — a row of loud display figures that
+ * each stand alone. A meter is a different thing: a quantity AGAINST ITS LIMIT (`used / allowance`),
+ * at the ordinary `text-ui-sm` reading size, with the fill that says how close to the limit it is
+ * and the line under it that says what happens there. "Plan & limits" is three such gauges in one
+ * frame because the three limits are what can stop or charge this organization right now; that is
+ * the section's whole job, and a list of label-and-value lines would drop the one thing a gauge
+ * adds — how near the edge each one is. Should a meter ever lose its bar or its denominator, it IS
+ * a stat card and this decision no longer covers it. The bar repeats the figure beside it, so it is
+ * hidden from assistive technology; the figure is what is read.
  */
 export function Meter({
 	label,
@@ -96,7 +106,7 @@ export function Meter({
 				</span>
 				<span className="text-ui-sm font-medium text-text-primary">{value}</span>
 			</div>
-			<div className="h-[5px] overflow-hidden rounded-full border border-border bg-surface-sunken">
+			<div aria-hidden className="h-[5px] overflow-hidden rounded-full border border-border bg-surface-sunken">
 				<div
 					className="h-full rounded-full bg-text-primary"
 					style={{ width: `${Math.min(100, Math.max(0, fill))}%` }}

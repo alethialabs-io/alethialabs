@@ -7,7 +7,6 @@ import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
 import { actorIdentityWhere } from "@/lib/runners/claim-identity";
-import { environmentStage, placementMode } from "@/lib/db/schema/enums";
 import { insertProjectWithDefaultFabric } from "@/lib/queries/projects";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
@@ -17,59 +16,9 @@ import {
 	type CreateClusterShape,
 } from "@/lib/cli/create-cluster-shape";
 import {
-	cliProjectNodeShapeRequest,
 	cliProjectResponse,
 } from "@/lib/validations/cli-contract";
-import { environmentMatrixSchema } from "@/lib/validations/project-form.schema";
-
-/** Default OpenTofu version when the caller doesn't pin one (matches the console form). */
-const DEFAULT_IAC_VERSION = "1.11.4";
-
-/** Body of POST /api/cli/projects — create a project (+ its default environment).
- *
- * `placement_mode` and `environments` were the two fields the CLI never sent, even though
- * `insertProjectWithDefaultFabric` has always accepted and validated them. The consequence was not a
- * missing feature but a cost one: with no matrix, EVERY environment the CLI created came out
- * `dedicated`, which is a cluster each. A four-cloud two-tier demo built from the terminal
- * provisioned eight clusters where the product's own placement story provisions four.
- *
- * `environments` reuses the console form's own validator (`environmentMatrixSchema`) rather than
- * restating it, so the shape the fan-out receives is the shape the fan-out was written against.
- *
- * `instance_type` / `node_size` (#5266) are the node shape, from the wire contract
- * (`cliProjectNodeShapeRequest`, which the Go client is strict-decoded against). They are mutually
- * exclusive: the Go resolver PREFERS `instance_types` over `node_size`, so a row carrying both would
- * provision the machine type and silently ignore the size the caller also asked for. A machine type
- * also needs a cloud, because it names one cloud's SKU — with no linked account there is nothing to
- * say it belongs to. */
-const createProjectBody = z
-	.object({
-		project_name: z.string().min(1).max(120),
-		region: z.string().min(1),
-		cloud_identity_id: z.string().uuid().optional(),
-		stage: z.enum(environmentStage.enumValues).default("development"),
-		iac_version: z.string().min(1).default(DEFAULT_IAC_VERSION),
-		placement_mode: z.enum(placementMode.enumValues).optional(),
-		environments: environmentMatrixSchema.optional(),
-		...cliProjectNodeShapeRequest.shape,
-	})
-	.superRefine((body, ctx) => {
-		if (body.instance_type !== undefined && body.node_size !== undefined) {
-			ctx.addIssue({
-				code: "custom",
-				path: ["node_size"],
-				message: "instance_type and node_size are mutually exclusive: pass one",
-			});
-		}
-		if (body.instance_type !== undefined && body.cloud_identity_id === undefined) {
-			ctx.addIssue({
-				code: "custom",
-				path: ["instance_type"],
-				message:
-					"instance_type names one cloud's machine type, so it needs cloud_identity_id; use node_size for a cloud-indifferent size",
-			});
-		}
-	});
+import { createProjectBody } from "@/lib/validations/cli-request-bodies";
 
 /** The node shape a parsed body asked for, or `null` when it named none — the only case in which
  * this route writes no cluster row. */

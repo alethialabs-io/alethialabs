@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -338,6 +339,9 @@ func keylessQuery(t *testing.T, ctx context.Context, kc string, p keylessDBParam
 // finding it in a real database knows where it came from.
 const keylessCanaryTable = "alethia_e2e_keyless_canary"
 
+// keylessDebugSeq numbers every ephemeral container this test injects, so no two execs share a name.
+var keylessDebugSeq atomic.Int64
+
 // keylessDebugExec runs argv in an ephemeral container attached to pod. Each call needs a distinct
 // container name — a pod's ephemeralContainers list is append-only and a repeated name is rejected.
 //
@@ -352,7 +356,7 @@ func keylessDebugExec(ctx context.Context, kc string, p keylessDBParams, pod, ta
 	args := []string{
 		"--kubeconfig", kc, "debug", "pod/" + pod, "-n", p.cfg.namespace,
 		"--image=" + p.cfg.clientImage,
-		"--container=" + keylessDebugContainerName(tag),
+		"--container=" + keylessDebugContainerName(tag, keylessDebugSeq.Add(1)),
 		"--quiet", "--attach", "--stdin=false", "--tty=false",
 		"--",
 	}

@@ -9,28 +9,13 @@ import { getEntitlements } from "@/lib/authz/entitlements";
 import { encryptSecret, isCredEncryptionConfigured } from "@/lib/crypto/secrets";
 import { getServiceDb } from "@/lib/db";
 import { alertChannels } from "@/lib/db/schema";
-import { alertChannelType } from "@/lib/db/schema/enums";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import {
 	cliChannelResponse,
 	cliChannelsResponse,
 } from "@/lib/validations/cli-contract";
-
-/** Body of POST /api/cli/channels — `config` carries email recipients and/or the
- * transport's destination (URL / signing secret / PagerDuty routing key). */
-const createChannelBody = z.object({
-	name: z.string().min(1).max(120),
-	type: z.enum(alertChannelType.enumValues),
-	config: z
-		.object({
-			recipients: z.array(z.string().email()).optional(),
-			url: z.string().url().optional(),
-			signing_secret: z.string().min(1).optional(),
-			routing_key: z.string().min(1).optional(),
-		})
-		.default({}),
-});
+import { createChannelBody } from "@/lib/validations/cli-request-bodies";
 
 type CreateChannelBody = z.infer<typeof createChannelBody>;
 

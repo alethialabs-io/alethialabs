@@ -12,7 +12,7 @@
 
 import { ORPCError } from "@orpc/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActionResult } from "@/lib/actions/result";
 import type { CaseWithThread } from "@/lib/queries/support";
@@ -138,6 +138,31 @@ describe("CaseDetail — pending, not-found and error are distinct (B3/B4)", () 
 		expect(screen.queryByText("Couldn't load this case")).toBeNull();
 	});
 
+	it("a FORBIDDEN refusal is told as a refusal, with no retry and no 'check your connection' (G-16)", () => {
+		renderView((qc) =>
+			qc.getQueryCache().build(qc, { queryKey: key }).setState({
+				status: "error",
+				error: new ORPCError("FORBIDDEN", { defined: true }),
+				fetchStatus: "idle",
+			}),
+		);
+		expect(document.body.querySelector('[data-state="refused"][data-refusal="forbidden"]')).not.toBeNull();
+		expect(screen.queryByRole("button", { name: /try again|retry/i })).toBeNull();
+		expect(screen.queryByText(/connection/i)).toBeNull();
+		expect(screen.queryByText("Couldn't load this case")).toBeNull();
+	});
+
+	it("the missing case's way back is the cases list, built by globalHref (G-25)", () => {
+		renderView((qc) =>
+			qc.getQueryCache().build(qc, { queryKey: key }).setState({
+				status: "error",
+				error: new ORPCError("NOT_FOUND", { defined: true }),
+				fetchStatus: "idle",
+			}),
+		);
+		expect(screen.getByRole("link", { name: "Back to cases" })).toHaveAttribute("href", "/acme/~/support/my-cases");
+	});
+
 	it("any other failure is an error with a retry, not a missing case", () => {
 		renderView((qc) =>
 			qc.getQueryCache().build(qc, { queryKey: key }).setState({
@@ -185,5 +210,42 @@ describe("CaseDetail — the read watermark", () => {
 		await new Promise((r) => setTimeout(r, 0));
 		expect(toast.error).not.toHaveBeenCalled();
 		expect(screen.getByRole("textbox", { name: "Reply" })).toBeInTheDocument();
+	});
+});
+
+describe("CaseDetail — the way back is not 'My cases' (G-22)", () => {
+	it("reads 'Back to cases', which is true for a support admin seeing the whole org's", () => {
+		renderView((qc) => qc.setQueryData(key, caseRead("open")));
+		expect(screen.getByRole("link", { name: "Back to cases" })).toHaveAttribute("href", "/acme/~/support/my-cases");
+		expect(screen.queryByText("My cases")).toBeNull();
+	});
+});
+
+describe("CaseDetail — an unsent reply survives the case closing (G-26)", () => {
+	afterEach(() => {
+		window.sessionStorage.clear();
+	});
+
+	it("keeps what was typed when the case closes, says so, and brings it back on reopen", async () => {
+		const qc = renderView((c) => c.setQueryData(key, caseRead("open")));
+		const reply = screen.getByRole("textbox", { name: "Reply" });
+		fireEvent.change(reply, { target: { value: "Here are the logs you asked for" } });
+
+		// Staff close the case while the reply is unsent: the composer gives way to the notice.
+		act(() => qc.setQueryData(key, caseRead("closed")));
+		expect(await screen.findByTestId("case-closed-notice")).toHaveTextContent(
+			"Your unsent reply is kept and comes back when you reopen the case.",
+		);
+
+		// Reopened: the composer is back with the reply in it.
+		act(() => qc.setQueryData(key, caseRead("open")));
+		await waitFor(() =>
+			expect(screen.getByRole("textbox", { name: "Reply" })).toHaveValue("Here are the logs you asked for"),
+		);
+	});
+
+	it("a closed case with no draft says nothing about one", () => {
+		renderView((qc) => qc.setQueryData(key, caseRead("closed")));
+		expect(screen.getByTestId("case-closed-notice")).not.toHaveTextContent("unsent reply");
 	});
 });

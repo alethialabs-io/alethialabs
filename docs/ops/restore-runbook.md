@@ -5,24 +5,26 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Off-box backup and restore runbook
 
-This runbook covers the production box's off-box backup, the scripted restore drill, and what a real
-recovery adds to the drill. It is the operator half of board unit REL-L7 (#6908) and the instrument
-behind two of the three parts of beta predicate **B7** ([`docs/beta/README.md`](../beta/README.md)).
+This runbook covers the production box's off-box backup to AWS, its credentials, the restore drill,
+and what a real recovery adds to the drill. It is the operator half of board units REL-L7 (#6908) and
+BKP-L1 (#7243), and the instrument behind two of the three parts of beta predicate **B7**
+([`docs/beta/README.md`](../beta/README.md)).
 
 | B7 part | Instrument | Passes when |
 |---|---|---|
 | Off-box backup | `deploy/prod/backup/backup.sh status` | the newest complete daily copy is less than 26 hours old (exit 0) |
 | Restore drill | `scripts/ops/restore-drill.sh` and the record it writes | the newest record in `docs/beta/evidence/b7/` has `verdict: pass`, `tombstonesReplayed: true`, a `durationSeconds`, and a `date` within 45 days |
 
-Nothing here runs by itself until the maintainer completes [the one-time setup](#one-time-setup-maintainer-dec-1).
-Everything that creates a resource, holds a credential or touches the production box is the
-maintainer's.
+Nothing here runs by itself until [the one-time setup](#one-time-setup-operator) is done.
+Everything that creates a resource, holds a credential or touches the production box is done by the
+maintainer, or by an operator session the maintainer has given those permissions.
 
 ## What is backed up, and where it goes
 
-Production is one box (`deploy/prod/README.md`). Postgres and SeaweedFS live on its data volume, and
-Hetzner's own server backups are the only other copy, held by the same provider. The off-box backup
-adds a copy at a **second provider**:
+Production is one box (`deploy/prod/README.md`). Postgres and SeaweedFS live on an attached Hetzner
+volume, and Hetzner's server backups do not include attached volumes. The off-box backup is therefore
+the only second copy of the database and of every customer's tofu state. It goes to a **second
+provider**: an S3 bucket in the AWS member account `alethia-backup`, region `eu-central-1`.
 
 | What | How | Why |
 |---|---|---|
@@ -30,27 +32,92 @@ adds a copy at a **second provider**:
 | SeaweedFS | every bucket (customer tofu state and plan artefacts), copied by an rclone container on the compose network, then `tar`, `gzip` and `age` | losing a customer's tofu state loses their infrastructure's record |
 | Erasure tombstones | `privacy_erasure_tombstone` as CSV, in every daily copy **and** hourly on its own | see [Tombstones](#tombstones-why-there-is-an-hourly-export) |
 
-Every file is encrypted to one or more age **public** keys before it leaves the box. The private keys
-are never on the box, so a compromised box can write a backup but cannot read one. The store's layout,
-under `<bucket>/<BACKUP_PREFIX>/`:
+Every file is encrypted to the age **public** keys in `BACKUP_AGE_RECIPIENTS` before it leaves the box.
+No private key is ever on the box, so the box can write a backup but cannot read one. The bucket adds a
+second layer, SSE-KMS with the account's own key, which controls who at AWS can read the ciphertext.
+
+The store's layout, under `<bucket>/<BACKUP_PREFIX>/`:
 
 ```text
 daily/<YYYYMMDDTHHMMSSZ>/postgres.dump.age
                          storage.tar.gz.age
                          tombstones.csv.age
                          manifest.json          written last: no manifest means not a backup
-weekly/<YYYY-Www>/…                             first complete daily of each ISO week
+weekly/<YYYY-Www>/…                             first complete daily of each ISO week, uploaded again
 latest.json                                     names the newest complete daily
 tombstones/latest.csv.age, tombstones/latest.json   rewritten every hour
 ```
 
-Retention is 14 dailies and 8 weeklies (`BACKUP_KEEP_DAILY`, `BACKUP_KEEP_WEEKLY`). It runs only after
-that night's copy is complete, so a failing night never deletes anything. A copy without a manifest
-that is newer than the oldest kept copy is left alone, because it may still be uploading.
-
 The nightly runs at 02:30 UTC (`alethia-backup.timer`); the tombstone export runs hourly
 (`alethia-backup-tombstones.timer`). A missed slot runs at the next boot (`Persistent=true`). One
 missed night is already a failing B7, because the window is 26 hours.
+
+## Retention: the bucket deletes, the box never does
+
+`BACKUP_RETENTION` picks who deletes old copies.
+
+| Mode | Who deletes | The box key needs | For |
+|---|---|---|---|
+| `bucket` | the bucket's lifecycle rules | put, get, list. **No delete.** | production, on AWS |
+| `script` (default when unset) | `backup.sh`, with `rclone purge`, after a complete night | put, get, list **and delete** | a self-hosted or other S3-compatible store with no lifecycle rules |
+
+In `bucket` mode `backup.sh` makes no delete call at all, and the box key could not make one anyway.
+Whoever controls the box can add copies but cannot remove or shorten the ones already there. The
+bucket (stack `infra/backup-account`, board unit BKP-S1) holds:
+
+- **Object Lock in COMPLIANCE mode, with a 15-day default retention.** Each object version cannot be
+  overwritten or deleted by anyone, including the account root, for 15 days after it is written.
+- **Lifecycle rules**: current versions under `daily/` expire after 15 days and under `weekly/` after
+  60 days; a noncurrent version is removed 16 days after it stopped being current. That is 14 dailies
+  and 8 weeklies, the same counts as `script` mode's defaults.
+- **Versioning**, which Object Lock requires. Rewriting `latest.json` or the hourly tombstone export
+  leaves the old version behind as noncurrent, and the noncurrent rule removes it.
+
+On a versioned bucket, expiry is two steps: the expiry adds a delete marker, and the noncurrent rule
+removes the data 16 days later. So a daily copy's bytes are physically gone about 31 days after it was
+written, and a weekly's about 76 days after. That is the figure to use when a privacy text says when
+deleted data leaves the backups.
+
+What changes from `script` mode: `script` never deletes after a failing night. In `bucket` mode a daily
+expires on age whatever happened since. That is acceptable only because the daily freshness check
+(BKP-L2) alarms within 26 hours, long before a copy is 15 days old, and the weeklies hold eight weeks.
+
+### Object Lock and the pinned rclone
+
+S3 refuses an upload into a bucket with Object Lock retention unless the request carries `Content-MD5`
+or an SDK checksum header. Every transfer goes through `rclone/rclone:1.68.2` (`BACKUP_RCLONE_IMAGE` in
+`deploy/prod/backup/lib.sh`). This is what that version's source establishes. Nothing has been tested
+against a real bucket yet: the first nightly is that test.
+
+- **Multipart uploads always carry `Content-MD5`.** rclone's chunk writer hashes each part's own bytes
+  and sets `ContentMD5` on every `UploadPart` (`backend/s3/s3.go` at tag `v1.68.2`, the `WriteChunk`
+  method of the multipart writer). The value comes from the bytes being sent, not from the source.
+- **Single-part uploads carry `Content-MD5` only when the source can report an MD5.**
+  `prepareUpload` sets `ContentMD5` from `src.Hash(MD5)`. A local file can report one, but rclone's
+  own documentation for this version ("Object-lock enabled S3 bucket" in `docs/content/s3.md`) says
+  single-part uploads into a lock-enabled bucket fail, and gives `--s3-upload-cutoff 0` as the fix.
+- The vendored AWS SDK (`aws-sdk-go-v2/service/s3` v1.58.3) predates the SDK's default request
+  checksums, so nothing else adds a checksum header.
+
+So in `bucket` mode `lib.sh` sets the remote's `upload_cutoff` to 0, and **every upload is multipart**.
+This needs no change to the pinned image, so the pin stays at 1.68.2. Multipart also makes rclone record
+each file's MD5 as object metadata, which `rclone check` and a download use to verify the file.
+
+Two more settings follow from the same source:
+
+- **`BACKUP_S3_SSE_KMS_KEY_ID` must name the bucket's KMS key.** rclone reads an ETag as an MD5 unless it
+  is told the bucket uses SSE-KMS, and under SSE-KMS the ETag is not an MD5. Without the setting, the
+  upload fails rclone's ETag check. Setting it also makes S3 encrypt with that key rather than the
+  AWS-managed one.
+- **The weekly copy is uploaded again from the box**, not copied server-side, so every object reaches
+  the store through the same upload path.
+
+A failure here is not silent. S3 refuses the request, rclone exits non-zero, the unit fails and is
+listed in `systemctl --failed`, and the next `backup.sh status` reports the copy stale.
+
+Later rclone versions change this code. v1.74.0 adds explicit Object Lock flags and its own MD5
+buffering for them, and those flags are not used here. Before bumping the pin, read the new version's
+source again.
 
 ## Tombstones: why there is an hourly export
 
@@ -74,70 +141,125 @@ A dump cannot carry the tombstones of erasures made **after** it was taken. So:
 The remaining gap is an erasure made after the last hourly export, so at most about an hour. If the
 failed box is still reachable, run `backup.sh tombstones` on it before restoring, and the gap closes.
 
-## One-time setup (maintainer, Dec 1)
+## The keys
 
-This is the "Provision off-box backup storage and its credentials" action of the beta plan. It needs
-this unit merged to `main` and deployed, so that `/opt/alethia/deploy/prod/backup/` exists on the box.
+| Key | Kind | Where it lives | Used for |
+|---|---|---|---|
+| primary | age identity | offline, in the maintainer's password manager | decrypting a copy in a real recovery |
+| breakglass | age identity | offline, in the password manager and in a second, separate place | the same, if the first is lost |
+| drill | age identity | the backup account's Secrets Manager, readable only by the drill instance role | the weekly automated drill (BKP-L3) |
+| `backup-writer` | IAM user access key | `/etc/alethia/backup.env` on the box, and the vault | the box's uploads: put, get, list, from the box's addresses only |
+| recovery credential | Identity Center session | nowhere: an admin opens it when needed | reading the bucket when the box is lost |
 
-1. **Choose the store.** An S3-compatible object store at a provider that is not Hetzner, in the EU.
-   Create one bucket for these backups only. Turn on object versioning if the provider offers it.
-2. **Create two keys scoped to that bucket.**
-   - The **box key**: read, write, list and delete. Retention deletes, so this key needs delete.
-   - The **drill key**: read and list only.
-3. **Create two age identities**, offline, on your own machine:
+All three age public keys go into `BACKUP_AGE_RECIPIENTS`, so any one identity decrypts any copy. The
+two offline identities are what keep recovery possible if the backup account itself is lost. The drill
+identity is online by design, so an admin of the backup account holds both the ciphertext and a key to
+it. The account's admin access is Identity Center only.
+
+## Prerequisites
+
+- On the production box: Docker (already there) and `age` (`apt-get install -y age`).
+- On the operator's machine: `age`, and AWS CLI v2 with an Identity Center profile for the
+  `alethia-backup` account's admin permission set. This runbook calls it `alethia-backup-admin`.
+
+## One-time setup (operator)
+
+This needs the backup scripts on `main` and deployed (BKP-0), so that `/opt/alethia/deploy/prod/backup/`
+exists on the box.
+
+1. **Create the member account `alethia-backup`** from the management account, and assign the Identity
+   Center admin permission set to it.
+2. **Apply the `infra/backup-account` stack** (BKP-S1) from its reviewed plan. Note its outputs: the
+   bucket name and the KMS key ARN.
+3. **Create the three age identities**, offline, on your own machine, outside any repository:
 
    ```sh
-   age-keygen -o alethia-backup-primary.agekey      # prints "Public key: age1…"
-   age-keygen -o alethia-backup-breakglass.agekey
+   deploy/prod/backup/ops/generate-age-identities.sh --out ~/alethia-backup-keys
    ```
 
-   Keep both private key files in your password manager. Keep the break-glass one in a second place.
+   It prints only the three public keys and the `BACKUP_AGE_RECIPIENTS` line. Keep the primary file in
+   the password manager, and the breakglass file there and in a second place too. Put the drill file's
+   contents into the Secrets Manager secret the stack created, then delete the local drill file.
    Losing every identity makes every backup unreadable; there is no recovery from that.
-4. **Put the two secret values in the vault** (`alethia/prod/env`): `BACKUP_S3_ACCESS_KEY_ID` and
-   `BACKUP_S3_SECRET_ACCESS_KEY` for the box key, so they outlive the box. The deploy does not read
-   them; the box reads its own file in step 6.
-5. **On the production box**, install age:
+4. **Mint the writer key** with the CLI, never with tofu, so it is not in any state file:
 
    ```sh
-   apt-get install -y age
+   aws sso login --profile alethia-backup-admin
+   (umask 077 && aws iam create-access-key --user-name backup-writer \
+     --profile alethia-backup-admin --output json > ./backup-writer-key.json)
    ```
 
-6. **Write `/etc/alethia/backup.env`** from `deploy/prod/backup/backup.env.example`: the store, the box
-   key, and both age **public** keys in `BACKUP_AGE_RECIPIENTS`, separated by a space. Then:
+5. **Put the key in the vault** (`alethia/prod/env`): `BACKUP_S3_ACCESS_KEY_ID` and
+   `BACKUP_S3_SECRET_ACCESS_KEY`, so they outlive the box. The deploy does not read them; the box gets
+   its own copy in step 7.
+6. **Prepare the values file** on your own machine, 0600, outside any repository: the keys of
+   `deploy/prod/backup/backup.env.example` with the bucket and KMS key ARN from step 2, the writer key
+   from step 4, and the `BACKUP_AGE_RECIPIENTS` line from step 3.
+7. **Run the box setup over SSH.** `deploy/prod/backup/ops/setup-box.sh` installs age if missing,
+   writes `/etc/alethia/backup.env` (root:root 0600), installs and enables the two timers, takes the
+   first copy and runs `backup.sh status`. It ends with `RESULT: PASS` or `RESULT: FAIL (<step>)`, and
+   is safe to run again. The values travel over the SSH connection on stdin:
 
    ```sh
-   chown root:root /etc/alethia/backup.env && chmod 600 /etc/alethia/backup.env
+   ssh root@<box> /opt/alethia/deploy/prod/backup/ops/setup-box.sh --values - --dry-run < values.env
+   ssh root@<box> /opt/alethia/deploy/prod/backup/ops/setup-box.sh --values - < values.env
    ```
 
-7. **Install and start the timers:**
+   The first copy is also the first real test of the Object Lock uploads. The temporary bucket copy is
+   written to `$BACKUP_WORKDIR` (default: the system temp directory), so that directory needs room for
+   one copy of the SeaweedFS buckets. Step by step: `deploy/prod/backup/ops/README.md`.
+8. **Delete** `backup-writer-key.json` and the values file. The secret is now only in the vault and on
+   the box. Move the drill identity into Secrets Manager (step 3) if you have not.
+9. If it printed `FAIL`, read the step it names and `journalctl -u alethia-backup.service -n 50` on
+   the box, fix the cause, and run step 7 again.
+10. **Run the first drill**, below, and commit its record.
 
-   ```sh
-   cd /opt/alethia/deploy/prod/backup
-   install -m 0644 alethia-backup.service alethia-backup.timer \
-     alethia-backup-tombstones.service alethia-backup-tombstones.timer /etc/systemd/system/
-   systemctl daemon-reload
-   systemctl enable --now alethia-backup.timer alethia-backup-tombstones.timer
-   ```
+## Rotating the writer key (yearly, or at once if the box is suspect)
 
-8. **Take the first copy now** and confirm it:
+An IAM user can hold two access keys, so rotation never leaves the box without one.
 
-   ```sh
-   systemctl start alethia-backup.service          # waits until it finishes
-   journalctl -u alethia-backup.service -n 50
-   set -a; . /etc/alethia/backup.env; set +a
-   /opt/alethia/deploy/prod/backup/backup.sh status   # exit 0 and "verdict":"pass"
-   ```
+1. Mint a second key exactly as in setup step 4.
+2. Replace both values in the vault, and on the box by running the box setup again with the new
+   values (setup step 7; add `--no-first-run` to skip the extra copy).
+3. Prove the new key writes: `systemctl start alethia-backup-tombstones.service`, then
+   `journalctl -u alethia-backup-tombstones.service -n 5` shows `tombstones exported off-box`.
+4. Deactivate the old key: `aws iam list-access-keys --user-name backup-writer --profile
+   alethia-backup-admin` shows both keys, then
+   `aws iam update-access-key --user-name backup-writer --access-key-id <old id> --status Inactive
+   --profile alethia-backup-admin`.
+5. After the next nightly, check `backup.sh status` passes. Then delete the old key with
+   `aws iam delete-access-key` and the same two arguments.
 
-   The temporary bucket copy is written to `$BACKUP_WORKDIR` (default: the system temp directory), so
-   that directory needs room for one copy of the SeaweedFS buckets.
+If the box may be compromised, skip the wait: deactivate the old key at step 4 right away. The copies
+already in the bucket are safe whatever that key did. It could not delete them or shorten their
+retention, and it cannot decrypt them.
 
-9. **Perform the first drill**, below, and commit its record.
+## The recovery credential
+
+The writer key is not used to read the bucket in a recovery: it lives on the box, which may be the
+thing that was lost. An Identity Center admin opens a session for the `alethia-backup` account when it
+is needed, and it expires by itself. To use it with the scripts:
+
+```sh
+aws sso login --profile alethia-backup-admin
+eval "$(aws configure export-credentials --profile alethia-backup-admin --format env)"
+export BACKUP_S3_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+  BACKUP_S3_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+  BACKUP_S3_SESSION_TOKEN="$AWS_SESSION_TOKEN"
+```
+
+Both `backup.sh status` and `scripts/ops/restore-drill.sh` take these from the environment. The
+environment wins over the drill's `--env-file`, and `lib.sh` passes the session token to rclone. The
+session lasts as long as the permission set's session duration. Set that to cover a restore, a few
+hours, before you need it.
 
 ## The restore drill
 
-The drill restores the newest copy onto a throwaway box, times it from an empty box to a console whose
-readiness body says `healthy`, and writes the B7 record. It costs about EUR 1. Run it once by Dec 1 and
-again at the release candidate. It must be newer than 45 days for B7 to pass.
+The drill restores the newest copy onto a throwaway machine. It times the run from an empty machine to a
+console whose readiness body says `healthy`, and writes the B7 record. Run it once at setup and again at
+the release candidate. The record must be newer than 45 days for B7 to pass. BKP-L3 automates it as a
+weekly run on a short-lived AWS spot instance with the drill identity. Until that lands, an operator
+runs it by hand as below. It runs on EC2 in the backup account, not on Hetzner.
 
 What the script refuses, with no flag to override any of it:
 
@@ -161,9 +283,10 @@ What it does to protect the restored data:
 
 Steps:
 
-1. Note the time, so the record can include the box's creation: `T0=$(date -u +%s)`.
-2. Create a throwaway server in the Hetzner project: x86 (the production images are `linux/amd64`),
-   `ubuntu-24.04`, with a firewall that allows SSH only. Size it like production (`cx33`).
+1. Note the time, so the record can include the machine's creation: `T0=$(date -u +%s)`.
+2. Launch one instance in the backup account, `eu-central-1`: x86 (the production images are
+   `linux/amd64`), Ubuntu 24.04, 4 vCPU and 8 GB or more, a security group with **no inbound rules**,
+   IMDSv2 required, shutdown behaviour **terminate**. Connect with Session Manager.
 3. On it, install Docker and age, and check out the repository at the commit you want to drill with:
 
    ```sh
@@ -172,8 +295,9 @@ Steps:
    git clone https://github.com/alethialabs-io/alethialabs /root/alethia && cd /root/alethia
    ```
 
-4. Copy two files to the box, each with mode 0600: a `backup.env` holding the store and the **drill**
-   (read-only) key, and one age identity file.
+4. Give it two things, each kept 0600: a `backup.env` holding the store settings (endpoint, region,
+   provider, bucket, prefix), and one age identity file. Export the
+   [recovery credential](#the-recovery-credential) in the shell; the drill only reads.
 5. Dry run. It checks the box and the listing, prints the plan and changes nothing:
 
    ```sh
@@ -184,36 +308,53 @@ Steps:
 
    ```sh
    scripts/ops/restore-drill.sh --target drill --execute \
-     --env-file /root/backup.env --age-identity /root/primary.agekey --started-at "$T0"
+     --env-file /root/backup.env --age-identity /root/drill.agekey --started-at "$T0"
    ```
 
    With no `--image-tag`, it restores with the console image that was running when the backup was
    taken (the manifest's `sourceCommit`). If that image predates `replay-tombstones.ts`, the script
    mounts this checkout's copy and runs it against the image's own erasure register.
 7. The script writes `docs/beta/evidence/b7/<date>-restore-drill.md` and a `.log` beside it, on pass
-   or fail. Copy both off the box and open a PR into `dev` with them.
-8. Delete the identity file and the `backup.env`, then **delete the server**. The box held restored
+   or fail. Copy both off the instance and open a PR into `dev` with them.
+8. Delete the identity file and the `backup.env`, then **terminate the instance**. It held restored
    production data.
 
 A failed drill also writes a record, with `verdict: fail` and the step that failed. It does not count
-for B7. Fix the cause and run the drill again on a new box.
+for B7. Fix the cause and run the drill again on a new instance.
 
 ## A real recovery (box lost)
 
 This part has not been drilled. The drill script refuses production-shaped targets on purpose, so a
 real recovery runs the same steps by hand:
 
-1. Provision the new box with `infra-cp-hetzner` (maintainer). Do **not** run the deploy yet: its
+1. Provision the new box with `infra/cp-hetzner` (maintainer). Do **not** run the deploy yet: its
    first `compose up` would migrate an empty database and start serving it.
-2. On the new box, check out the commit named in the manifest's `sourceCommit`. Write `/opt/alethia/.env`
+2. Open the [recovery credential](#the-recovery-credential), and read which copy is newest:
+   `backup.sh status` prints its stamp. Download that copy, check it and decrypt it with the primary
+   or breakglass identity:
+
+   ```sh
+   aws s3 cp --recursive --profile alethia-backup-admin \
+     "s3://<bucket>/alethia-prod/daily/<stamp>/" ./in/
+   aws s3 cp --recursive --profile alethia-backup-admin \
+     "s3://<bucket>/alethia-prod/tombstones/" ./in/tombstones/
+   # every sha256 must match manifest.json before anything is decrypted
+   sha256sum ./in/*.age; cat ./in/manifest.json
+   age -d -i alethia-backup-primary.agekey -o postgres.dump ./in/postgres.dump.age
+   ```
+
+3. On the new box, check out the commit named in the manifest's `sourceCommit`. Write `/opt/alethia/.env`
    with the values the deploy would write: the keys `scripts/ci/deploy-console-assemble-env.sh` emits,
    from the vault. The restored console needs production's real secrets, including the credential
    encryption key, or every stored credential stays unreadable.
-3. Start only `postgres` and `seaweedfs` with the production compose files. Follow the drill's steps
-   4 to 6 against project `alethia`: `pg_restore`, load the buckets, run `migrate`, merge and replay the
-   tombstones, and check that none is left.
-4. Run the deploy. Its `compose up` starts the console on the restored data.
-5. Run `backup.sh status` on the new box after the next nightly, and re-install the timers.
+4. Start only `postgres` and `seaweedfs` with the production compose files. Then do what the drill does
+   against project `alethia`: `pg_restore`, load the buckets, run `migrate`, merge and replay the
+   tombstones, and check that none is left. `scripts/ops/restore-drill.sh` is the reference for each
+   command.
+5. Run the deploy. Its `compose up` starts the console on the restored data.
+6. Run the box setup on the new box (setup steps 6 and 7), and add
+   the new box's addresses to the writer's allowed source addresses in `infra/backup-account`. Run
+   `backup.sh status` after the next nightly.
 
 ## Checking B7
 
@@ -224,9 +365,11 @@ real recovery runs the same steps by hand:
 
 ## Self-tests
 
-Both scripts have a hermetic `--self-test` that uses no Docker, network or credentials:
+Each script has a hermetic `--self-test` that uses no Docker, network or credentials:
 
 ```sh
-deploy/prod/backup/backup.sh --self-test     # retention, manifest readers, dotenv reader, dates, recipients
+deploy/prod/backup/backup.sh --self-test     # retention (both modes), off-box config, manifest, dotenv, dates, recipients
+deploy/prod/backup/ops/setup-box.sh --self-test               # values, the written file, dry run, idempotence
+deploy/prod/backup/ops/generate-age-identities.sh --self-test # files, modes, idempotence, no private key printed
 scripts/ops/restore-drill.sh --self-test     # every production guard and the dry run, against a fake docker
 ```

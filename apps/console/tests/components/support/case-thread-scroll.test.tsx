@@ -163,6 +163,16 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
+describe("CaseThread — announced (G-09)", () => {
+	it("is a polite log named as the case conversation, so a reply that lands is read out", async () => {
+		render(<CaseThread messages={thread(2)} />);
+		const log = screen.getByRole("log", { name: "Case conversation" });
+		expect(log).toHaveAttribute("aria-live", "polite");
+		expect(log).toHaveAttribute("aria-relevant", "additions");
+		expect(log).toBe(viewport());
+	});
+});
+
 describe("CaseThread — scrolling", () => {
 	it("opens at the newest message", async () => {
 		render(<CaseThread messages={thread(5)} />);
