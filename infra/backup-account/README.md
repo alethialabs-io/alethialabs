@@ -53,6 +53,15 @@ constants in `main.tf`, not variables, so a change is a reviewed diff that the p
 Expiring a current version leaves it noncurrent for 16 more days. A daily copy is therefore stored
 for about 31 days, not 15, and the cost table below allows for that.
 
+**Multipart uploads.** In bucket mode (`BACKUP_RETENTION=bucket`, BKP-L1), `backup.sh` sets rclone's
+`upload_cutoff=0`, so every object goes up as a multipart upload. It also asks S3 for SSE-KMS under the
+backup key explicitly, so `/etc/alethia/backup.env` needs `BACKUP_S3_SSE_KMS_KEY_ID` set to the key's
+ARN. `tofu output backup_env` prints it. For a multipart upload into an SSE-KMS bucket, S3 calls
+`kms:GenerateDataKey` for each part and `kms:Decrypt` to complete the upload, both on the writer's
+behalf. The writer holds exactly those two actions, on this key only and only through S3
+(`kms:ViaService`). The writer has no `s3:AbortMultipartUpload`, so the bucket's lifecycle aborts any
+upload still incomplete one day after it started.
+
 **No secret in the state.** The writer's access key is minted by `ops/03-mint-writer-key.sh` straight
 into the vault. The drill's age identity is put into its secret by hand. Neither exists as a resource,
 and `check.no_credential_or_secret_value_resource` reads every `*.tf` file here (bootstrap included)

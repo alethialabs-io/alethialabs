@@ -52,5 +52,7 @@ output "backup_env" {
     BACKUP_S3_REGION   = var.backup_region
     BACKUP_S3_BUCKET   = aws_s3_bucket.backup.bucket
     BACKUP_PREFIX      = var.backup_prefix
+    # backup.sh's bucket mode (BKP-L1) asks S3 for SSE-KMS under this key explicitly.
+    BACKUP_S3_SSE_KMS_KEY_ID = aws_kms_key.backup.arn
   }
 }

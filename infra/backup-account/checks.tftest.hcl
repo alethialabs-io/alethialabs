@@ -209,6 +209,38 @@ run "committed_posture_plans_the_protected_store" {
     error_message = "backup-writer's grants must name only this bucket and the stack's key."
   }
 
+  # Multipart uploads (backup.sh bucket mode, BKP-L1): S3 calls KMS GenerateDataKey for each part
+  # and Decrypt to complete the upload, both on the writer's behalf. Scoped to this key (by alias),
+  # this account and region, and to calls made through S3.
+  assert {
+    condition = length([
+      for s in jsondecode(aws_iam_user_policy.writer.policy).Statement : s
+      if s.Effect == "Allow"
+      && toset(flatten([s.Action])) == toset(["kms:GenerateDataKey", "kms:Decrypt"])
+      && try(s.Condition.StringEquals["kms:ViaService"], "") == "s3.eu-central-1.amazonaws.com"
+      && try(s.Condition["ForAnyValue:StringEquals"]["kms:ResourceAliases"], "") == "alias/alethia-prod-backup"
+      && flatten([s.Resource]) == ["arn:aws:kms:eu-central-1:111122223333:key/*"]
+    ]) == 1
+    error_message = "backup-writer must hold kms:GenerateDataKey + kms:Decrypt on the backup key only (alias-scoped, this account and region), and only through S3: multipart uploads need both."
+  }
+  assert {
+    condition     = !strcontains(aws_iam_user_policy.writer.policy, "s3:AbortMultipartUpload")
+    error_message = "backup-writer must not hold s3:AbortMultipartUpload; the bucket's lifecycle aborts abandoned uploads instead."
+  }
+  # The writer cannot abort, so the bucket does: an upload left incomplete is aborted after a day.
+  assert {
+    condition = contains([
+      for r in aws_s3_bucket_lifecycle_configuration.backup.rule :
+      one(r.abort_incomplete_multipart_upload).days_after_initiation
+      if r.status == "Enabled" && length(r.abort_incomplete_multipart_upload) == 1
+    ], 1)
+    error_message = "the bucket must abort incomplete multipart uploads 1 day after initiation (the writer has no AbortMultipartUpload)."
+  }
+  assert {
+    condition     = output.backup_env.BACKUP_S3_SSE_KMS_KEY_ID == "arn:aws:kms:eu-central-1:111122223333:key/00000000-0000-0000-0000-000000000000"
+    error_message = "backup_env must carry the backup key's ARN as BACKUP_S3_SSE_KMS_KEY_ID (backup.sh bucket mode needs it)."
+  }
+
   # The OIDC roles.
   assert {
     condition = alltrue([
