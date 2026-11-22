@@ -1,0 +1,170 @@
+---
+title: "Quickstart: Hetzner"
+description: Sign up, connect a Hetzner Cloud project, deploy a Kubernetes cluster to it, see the cluster running, and destroy it again.
+---
+
+# Quickstart: Hetzner
+
+This quickstart takes you from a new Alethia account to a running Kubernetes cluster in
+your Hetzner Cloud project, and then removes the cluster. It has six steps: sign up, connect, design, deploy, see the
+cluster running, and destroy. Plan for about an hour. Most of that time is the cloud creating the
+cluster.
+
+<Callout type="warn">
+The deploy step creates real resources in your Hetzner Cloud project, and Hetzner bills you for them while they
+exist. The last step destroys them. Do not skip it.
+</Callout>
+
+## Before you begin
+
+- A Hetzner Cloud project where you can create API tokens.
+- A web browser. You do not need the Alethia CLI for this quickstart.
+
+<Steps>
+
+### Sign up
+
+1. Open [alethialabs.io/signup](https://alethialabs.io/signup).
+2. Select **Continue with email**, or sign up with GitHub, Google, GitLab, or Bitbucket.
+   The email path sends a 6-digit code to your address. Enter it on the **Enter your code** screen.
+3. On **Create your organization**, keep the **Hobby** plan.
+   Hobby is free and is enough for this quickstart. The **Pro** tile says whether a trial is open to you.
+4. Enter a name in **Organization name**.
+5. Select **Create organization**.
+
+The console opens the **New project** screen. You come back to it in the design step.
+
+### Connect Hetzner
+
+1. Select **Connectors** in the sidebar.
+2. On the card for Hetzner, select **Connect**. A setup sheet opens.
+3. Select **Open Hetzner Console**. The Hetzner Cloud Console opens in your browser.
+4. In your Hetzner Cloud project, go to **Security → API Tokens → Generate API token**.
+5. Give the token **Read & Write** permission, and copy it.
+   Provisioning creates servers, networks, and volumes, so a read-only token cannot deploy.
+6. Paste the token into **API Token**.
+7. Select **Connect**. Alethia checks the token against the Hetzner Cloud API and stores it encrypted.
+8. When the sheet reports success, select **Done**.
+
+Hetzner Cloud has no identity federation, so Alethia connects with this token. The token can reach only the one Hetzner project it belongs to. For the details, see the [Hetzner connector guide](/guides/connectors/hetzner).
+
+### Design a project
+
+1. Select **Overview** in the sidebar, then select **Create**, then **Project**.
+   If the **New project** screen is already open, skip this step.
+2. Under **Start from**, select **Cluster only**. It needs no Git repository.
+3. Under **Cloud**, select **Hetzner**, then the account you connected.
+4. Under **Region**, keep the suggested region or select another one.
+   The hint next to the field says where the suggestion comes from.
+5. Enter a name in **Project name**.
+6. Select **Create project**.
+
+Alethia creates the project as a draft with one environment, `production`, and opens its
+**Architecture** canvas. Nothing is provisioned yet. The canvas shows a Talos Linux Kubernetes cluster on Hetzner Cloud servers. By default it
+has two worker nodes of type `cpx22`. You can change the size on the canvas before you deploy.
+For what the other starting points contain, see
+[Starter templates](/guides/design-project/starter-templates).
+
+### Deploy
+
+1. On the bar at the bottom of the canvas, select **Review plan**.
+   The **Review and deploy** panel opens.
+2. Under **Plan**, select **Run plan**. Alethia saves the design and queues a plan job.
+3. When the plan finishes, read the list of resources that it would create.
+4. Under **Deploy**, select **Deploy**.
+
+Alethia queues a deploy job, and a runner picks it up. If the job stays at **Waiting for a
+runner**, see [The job waits for a runner](/troubleshooting/deploy#the-job-waits-for-a-runner). Before the runner changes anything in
+your Hetzner Cloud project, it runs the [verify gate](/guides/jobs/plan-and-apply#verify-gate). A failed gate stops
+the deploy before any change is applied. To follow the job, select **View log** on the bar, or open
+**Jobs** in the sidebar.
+
+### See the cluster running
+
+1. When the deploy job succeeds, select **Clusters** in the sidebar.
+2. Select the row for your project. A detail sheet opens.
+3. Check the status. **Active** means every component is healthy.
+
+Under **Cluster access**, the sheet shows the cluster endpoint and the command that gets a
+short-lived kubeconfig:
+
+```bash
+alethia cluster kubeconfig <cluster-name>
+```
+
+The sheet shows the command with your cluster's name filled in. Hetzner clusters always get a static kubeconfig. There is no Hetzner command for a cloud login of your own. To install the CLI, see
+[Installation](/get-started/install-the-cli). For the kubeconfig options, see
+[Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
+
+Under **ArgoCD**, the sheet shows the ArgoCD URL and the command that reads the ArgoCD admin
+password.
+
+### Destroy the environment
+
+1. Select **Open Architecture** on the cluster sheet, or open the project's **Architecture** canvas.
+2. On the canvas toolbar, select **More** (the **…** button), then **Environment settings**.
+3. On the **Settings** tab, find **Danger zone**, and select **Destroy** next to
+   **Destroy environment**.
+4. Type the environment name, `production`, to confirm.
+5. Select **Destroy environment**.
+
+Alethia queues a destroy job. The environment's status changes to **Destroying**, then to
+**Destroyed**. When the destroy job succeeds, nothing that this quickstart created is left in
+your Hetzner Cloud project.
+
+</Steps>
+
+## Clean up the rest
+
+The destroy step removes the cloud resources. These items stay, and cost nothing:
+
+- **The project.** To delete it, open the project's **Settings**, then select **Delete** under
+  **Danger zone**. Deleting a project destroys no cloud resources, so always destroy the environments
+  first.
+- **The Hetzner connection.** To remove it, see [Disconnect an account](/guides/connectors/managing-connections#disconnect-an-account).
+- **What the setup created in your Hetzner Cloud project.** Alethia does not remove it for you. The
+  [Hetzner connector guide](/guides/connectors/hetzner) says what it is.
+
+## Do the same from a terminal
+
+The CLI declares the same project in an `alethia.yaml` file. Install the CLI first, from
+[Installation](/get-started/install-the-cli).
+
+```bash
+# Sign in. The browser opens to confirm the code.
+alethia login
+
+# Connect Hetzner.
+alethia connector hetzner
+
+# Write ./alethia.yaml for a project named demo.
+alethia init --project demo --region fsn1
+
+# Show the plan, then deploy after you confirm.
+alethia apply
+
+# List the cluster, then get a kubeconfig for it.
+alethia cluster list
+alethia cluster kubeconfig demo
+
+# Destroy the environment again. You type the project name to confirm.
+alethia project destroy --project demo
+```
+
+The command asks for the token in a masked prompt. In a script, pipe the token in with `--token-stdin`. When more than one cloud account is connected, `alethia init` asks which one to
+use. For every flag, see [`alethia init`](/reference/cli/init),
+[Plan & Apply](/reference/cli/plan-and-apply), and [Connector commands](/reference/cli/connector).
+
+## If something goes wrong
+
+- [Troubleshoot sign-in](/troubleshooting/sign-in)
+- [Troubleshoot connecting a cloud](/troubleshooting/connect)
+- [Troubleshoot a deploy](/troubleshooting/deploy)
+- [Troubleshoot a destroy](/troubleshooting/destroy)
+- [Limits](/reference/limits)
+
+## Next steps
+
+- [Design a project](/guides/design-project): add databases, caches, and services on the canvas.
+- [Deploy Online Boutique to three environments](/tutorials/online-boutique): one cluster, three environments, from the terminal.
+- [Concepts](/concepts): how provisioning, runners, and security work.

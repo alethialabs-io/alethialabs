@@ -6,6 +6,7 @@
 		"index",
 		"cli",
 		"api",
+		"limits",
 		"sandbox-configuration",
 		"control-catalog",
 		"standards",

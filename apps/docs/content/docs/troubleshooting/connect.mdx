@@ -1,0 +1,180 @@
+---
+title: Connect a cloud
+description: Fix a cloud connection that fails to verify, or verifies with limited permissions, on AWS, GCP, Azure, or Hetzner.
+---
+
+# Troubleshoot connecting a cloud
+
+When you select **Connect** on a setup sheet, the console checks the connection at once. No runner
+is involved. The result is one of three states:
+
+- **Connected**: Alethia can sign in and has the permissions it checks for.
+- **Limited permissions**: Alethia can sign in, but some permissions are missing. The connector
+  lists them.
+- **Verification failed**: Alethia cannot sign in. The account shows the reason.
+
+To read the reason, open **Connectors**, select **Manage** on the card, and open the account. After
+you fix the cause, select **Re-verify**. See
+[Re-verify a connection](/guides/connectors/managing-connections#re-verify-a-connection).
+
+From the CLI, a failed check prints `connection test failed` with the reason, and exits with code 13.
+The [connector commands](/reference/cli/connector#troubleshooting) have their own table of messages.
+
+## Every cloud
+
+### "aws CLI not found on PATH", "gcloud CLI not found on PATH", or "az CLI not found on PATH"
+
+**Cause:** `alethia connector aws`, `gcp`, or `azure` runs the cloud's own CLI on your machine, and
+it is not installed.
+
+**Fix:** install the cloud's CLI and sign in to it. Or run the setup in the cloud's browser shell
+from the console instead. For GCP, "gcloud is not authenticated" means you need to run
+`gcloud auth login` first.
+
+### "… is not available in this release."
+
+**Cause:** that cloud is not offered by this console.
+
+**Fix:** use AWS, GCP, Azure, or Hetzner.
+
+## AWS
+
+### Verification failed after the role ARN is pasted
+
+**Cause:** AWS refused to let Alethia assume the role. The reason AWS gives is shown as it is.
+Common causes are a role that was deleted, or a trust policy that does not name Alethia's issuer.
+
+**Fix:** run the setup command again in AWS CloudShell. It reuses the IAM OIDC identity provider if
+one exists. Then paste the new role ARN. An AWS account can have only one IAM OIDC identity provider
+for each issuer URL. See [AWS verification](/guides/connectors/aws#verification).
+
+### "Invalid format. Expected: arn:aws:iam::123456789012:role/RoleName"
+
+**Cause:** the value in **IAM Role ARN** is not a role ARN.
+
+**Fix:** copy the role ARN that the setup script prints. You can paste the whole output, and the
+field keeps only the ARN.
+
+### Limited permissions, with `ec2:DescribeRegions` or `ec2:DescribeVpcs` listed
+
+**Cause:** the role can be assumed, but it cannot run those read calls.
+
+**Fix:** add the permissions in [IAM role permissions](/guides/connectors/aws#iam-role-permissions)
+to the role, then select **Re-verify**.
+
+### "cloudformation deploy failed" or "stack did not produce a RoleArn output"
+
+**Cause:** `alethia connector aws` could not create the `AlethiaConnect` stack. The AWS message
+follows.
+
+**Fix:** check that the `aws` CLI is signed in to the right account, and that you can create IAM
+roles there. Then run the command again.
+
+## GCP
+
+### "GCP authentication failed"
+
+**Cause:** Alethia could not exchange its token through your Workload Identity Pool. The pool, its
+provider, or the service account binding is missing or different from what the setup created.
+
+**Fix:** run the setup command again in Cloud Shell, then select **Re-verify**. See
+[GCP verification](/guides/connectors/gcp#verification).
+
+### "Access to project … was denied"
+
+**Cause:** the service account that Alethia uses has no access to the project.
+
+**Fix:** check that **Project ID** and **Project number** name the project where you ran the setup.
+Then run the setup again.
+
+### Limited permissions, with "(API not enabled)" next to an API
+
+**Cause:** a Google Cloud API that provisioning needs is turned off in the project.
+
+**Fix:** turn on the API with `gcloud services enable`, then select **Re-verify**. See
+[Optional APIs you enable yourself](/guides/connectors/gcp#optional-apis-you-enable-yourself).
+
+### "This GCP connection uses the retired AWS-hub setup."
+
+**Cause:** the connection was made with an older setup that Alethia no longer supports.
+
+**Fix:** connect GCP again from **Connectors**.
+
+### "Project number must be digits only."
+
+**Cause:** **Project number** contains something other than digits.
+
+**Fix:** paste the project number that the setup script prints. It is not the project ID.
+
+## Azure
+
+### "No application with that Client ID exists in tenant …"
+
+**Cause:** **Client ID** does not name the managed identity. A subscription ID in this field is the
+usual mistake.
+
+**Fix:** paste the managed identity's client ID. To print it, run
+`az identity show --query clientId`.
+
+### "Tenant … was not found."
+
+**Cause:** **Tenant ID** is wrong.
+
+**Fix:** paste the tenant ID. To print it, run `az account show --query tenantId`.
+
+### "The managed identity has no federated credential matching this console's OIDC issuer."
+
+**Cause:** the managed identity does not trust this console. On a self-hosted console, this also
+happens after the console's URL changes.
+
+**Fix:** run the setup command again. It is safe to run more than once. Then select **Re-verify**.
+
+### "Access to subscription … was denied"
+
+**Cause:** the managed identity has no role on the subscription.
+
+**Fix:** assign the role that the setup assigns. See
+[Assign the least-privilege role](/guides/connectors/azure#assign-the-least-privilege-role).
+
+### "Invalid Tenant ID format. Expected a UUID."
+
+**Cause:** an ID field does not contain a UUID. The same message exists for **Client ID** and
+**Subscription ID**.
+
+**Fix:** paste the IDs that the setup script prints. To fill both ID fields at once, select
+**Paste all** and paste the whole output.
+
+## Hetzner
+
+### "Token rejected by hetzner"
+
+**Cause:** the token is wrong, was deleted, or has only **Read** permission.
+
+**Fix:** create a new token with **Read & Write** permission in the Hetzner Cloud Console, and
+paste it. See [Hetzner verification](/guides/connectors/hetzner#verification).
+
+### "Invalid API token format"
+
+**Cause:** the value is too short to be a Hetzner Cloud API token. It was probably cut off when you
+copied it.
+
+**Fix:** copy the whole token again. The Hetzner Cloud Console shows a token only once, so create a
+new one if you no longer have it.
+
+### "the token contains whitespace — copy it without line breaks"
+
+**Cause:** `alethia connector hetzner` found a space or a line break in the token.
+
+**Fix:** copy the token again as one line.
+
+### "no token given: pass --token, or pipe it with --token-stdin"
+
+**Cause:** `alethia connector hetzner` ran without a terminal, so it cannot ask for the token.
+
+**Fix:** pipe the token in, for example `alethia connector hetzner --no-input --token-stdin < token.txt`.
+
+### "Provide both the Hetzner S3 access key and secret key, or neither."
+
+**Cause:** only one of the two Object Storage keys was entered.
+
+**Fix:** enter both keys, or leave both empty.
