@@ -16,9 +16,9 @@
     "test": "vitest run --coverage"
   },
   "peerDependencies": {
-    "@better-auth/sso": "^1.7.1",
+    "@better-auth/sso": "1.7.25",
     "@openfga/sdk": "^0.8.0",
-    "better-auth": "^1.7.1",
+    "better-auth": "^1.7.25",
     "drizzle-orm": "^0.45.2",
     "jose": "^6.2.17",
     "samlify": "^2.0.0"
