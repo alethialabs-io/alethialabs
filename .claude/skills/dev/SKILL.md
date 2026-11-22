@@ -144,8 +144,8 @@ be the same machine. Browsers and their OS libraries install on first run, then 
   `known_hosts` surprise. That 0.50 EUR is what makes routine teardown safe.
 - **If the box is down, restore it: `pnpm env:box`, from the main checkout.** Agents may,
   by the maintainer's ruling on #4483 (2026-09-18) — and must reap it again when finished
-  (`pnpm env:reap --now`, or `pnpm env:timer`), because it bills while it exists. Only the
-  two wrappers are open; raw `tofu apply` is still refused by `.claude/hooks/guard-iac.sh`.
+  (`pnpm env:reap --now`, or `pnpm env:timer`), because it bills while it exists. Use the
+  wrappers, never raw `tofu` against `infra/sandbox`: they carry the checks below.
   Run it from the main checkout and nowhere else: from a worktree it would apply against
   empty state and build a **second** box, breaking `dev.alethialabs.io` —
   `require_main_checkout` in `scripts/env.sh` refuses that.

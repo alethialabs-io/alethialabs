@@ -23,22 +23,31 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
   `dev → staging` and `staging → main` PRs merge with
   `gh pr merge <n> --merge --match-head-commit <head sha>`, which `.claude/hooks/guard-merge.sh`
   admits only when every check and every release-gate leg passed for exactly that head.
-- **Never run `tofu apply`, `terraform apply`, or a destructive `plan -destroy` on your own
-  initiative.** The one exception is a specific named operation the maintainer has instructed,
-  under a plan they have reviewed.
+- **Infrastructure, production and paid services are yours when instructed — done properly.**
+  `tofu apply`, prod dispatches, cloud writes, Stripe, Vercel and Cloudflare are not refused
+  (maintainer, 2026-11-22). Do them the way an SRE would: `tofu plan -out=tfplan`, read and
+  summarise the plan, then `tofu apply tfplan` — never a bare `apply` against a plan nobody read.
+  Do not start such an operation on your own initiative; do it fully when told to.
+- **Use secrets, never print them.** Raw tokens go through the credential broker:
+  `pnpm creds <profile> -- <command>` (`pnpm creds --list`; `scripts/creds/profiles.json`). It
+  puts values in the child's environment only and redacts its output. A missing value is stored
+  by the maintainer with `! pnpm creds --set <profile>`. `.claude/hooks/guard-secrets.sh` refuses
+  what would print one (`printenv`, `bash -x`, `cat .env`, a vault read to stdout, a pasted key).
 - **Never run the app on this Mac.** See §3.
 - **Never generate a migration on a stale branch, or in two worktrees at once.** See §5.
 - **Escape hatches are the maintainer's, not yours**: `--no-verify`,
   `ALETHIA_ALLOW_MAIN_COMMIT`, `ALETHIA_ALLOW_FOREIGN_WT`, `ALETHIA_LOCAL_DEV`.
 
-**Spend and deletion — the two things that stay the maintainer's.** Everything else is delegated.
+**What still stops you: the spend budget, and irreversible deletion.** Everything else is delegated.
 *Spend* is metered by `.claude/hooks/guard-spend.sh` against **EUR 80 per rolling 7 days**, shared
 by every instance, in the ledger `~/.alethia/spend-ledger.jsonl` (`pnpm spend:status` prints the
 window). Each priced action (a box bring-up, an e2e dispatch or rerun, a disposable hcloud create)
 is charged before it runs — even if it then never runs — and a ledger that cannot be read or
-written refuses the charge rather than skipping it. One that would cross the budget is refused,
-and production dispatches,
-non-disposable cloud writes, live Stripe and `vercel --prod` are refused at any price. The budget
+written refuses the charge rather than skipping it. One that would cross the budget is refused —
+that is the only spend refusal. Production dispatches are free; a workflow it cannot price is
+charged a conservative EUR 1; the expensive cloud creates (clusters, instances, managed DBs) EUR 5
+each; other cloud writes are free. hcloud without an explicit disposable `--context` stays
+refused, because the default context on this Mac is another company's production. The budget
 is a constant in the hook, so raising it is a reviewed PR. *Deletion* is
 `.claude/hooks/guard-destroy.sh`: what cannot be undone (pushes to or deletes of protected
 branches, repo/release/secret deletion, local tfstate, a non-local database reset, cloud deletes
@@ -349,8 +358,8 @@ command-text parser, `.claude/hooks/lib/cmdline.sh`:
 | `.claude/hooks/guard-runtime.sh` | PreToolUse · Bash | Blocks local dev servers and destructive resets |
 | `.claude/hooks/guard-compose.sh` | PreToolUse · Bash | Blocks a raw `docker compose` bring-up |
 | `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base and head: `dev` may merge; a green `dev → staging` / `staging → main` promotion, or a green release-please PR into `main` whose author and files are release-please's, may merge with `--merge`; anything else into `staging`/`main`, and `--admin`, may not |
-| `.claude/hooks/guard-iac.sh` | PreToolUse · Bash | Refuses `tofu`/`terraform` apply, destroy and `plan -destroy` — including the flag-first forms a permission rule cannot match |
-| `.claude/hooks/guard-spend.sh` | PreToolUse · Bash | Prices each spend action into `~/.alethia/spend-ledger.jsonl` and refuses one that crosses EUR 80 per rolling 7 days; refuses production dispatches and non-disposable cloud writes outright |
+| `.claude/hooks/guard-spend.sh` | PreToolUse · Bash | Prices each spend action into `~/.alethia/spend-ledger.jsonl` and refuses one that crosses EUR 80 per rolling 7 days — its only refusal besides hcloud's wrong-account check and the ledger's own integrity |
+| `.claude/hooks/guard-secrets.sh` | PreToolUse · Bash | Refuses a command whose effect is to PRINT a secret (env dumps, shell tracing, vault reads to stdout, credential files, a literal key) and names the `pnpm creds` form instead |
 | `.claude/hooks/guard-destroy.sh` | PreToolUse · Bash | Refuses irreversible deletion; snapshots local git destruction to `refs/safety/` first, then allows it |
 | `.claude/hooks/check-migration-chain.sh` | PostToolUse · edits | Reports a forked drizzle snapshot chain at edit time, not at commit time |
 | `.claude/hooks/session-runtime.sh` | SessionStart | Runtime banner, and warns when the harness you are running is stale |
@@ -373,9 +382,10 @@ SessionEnd), and this must never be registered on `Stop`, which fires at the end
 that would prune worktrees out from under lanes that are still building in them.
 
 Beyond the hooks, `.claude/settings.json` carries a **permission policy**. `deny` is absolute
-— it beats any allow rule and any hook — and covers the things that cannot be undone:
-`tofu`/`terraform` apply and destroy, pushes to `main`/`staging`, `docker compose down -v`,
-and reads or edits of credential files. `allow` pre-approves the routine read-only commands
+— it beats any allow rule and any hook — and is narrow on purpose: wiping the shared compose
+volumes, and reads or edits of credential files (`~/.aws`, `~/.ssh`, `.env`, the prod secrets
+file), which back up the broker. Applies, destroys and protected-branch pushes are not denied
+here; protected branches are enforced server-side by the rulesets and locally by guard-destroy. `allow` pre-approves the routine read-only commands
 so the prompts you do see are meaningful.
 
 **A footgun worth knowing:** `guard-runtime.sh` matches **inside quotes**, deliberately — so

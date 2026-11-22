@@ -12,7 +12,7 @@ doctor() {
 	local required path
 	for required in .codex/config.toml .codex/hooks.json .codex/rules/default.rules .codex/README.md \
 		.agents/skills/README.md \
-		.claude/hooks/guard-spend.sh .claude/hooks/guard-destroy.sh .claude/hooks/lib/cmdline.sh \
+		.claude/hooks/guard-spend.sh .claude/hooks/guard-destroy.sh .claude/hooks/guard-secrets.sh .claude/hooks/lib/cmdline.sh \
 		.codex/hooks/common.sh .codex/hooks/pre-tool-use.sh .codex/hooks/guard-git-flow.sh \
 		.codex/hooks/pre-apply-patch.sh \
 		.codex/hooks/post-apply-patch.sh .codex/hooks/session-start.sh; do
@@ -59,7 +59,7 @@ expect_hook() {
 
 self_test() {
 	local guard
-	for guard in guard-worktree.sh guard-compose.sh guard-runtime.sh guard-merge.sh guard-iac.sh guard-spend.sh guard-destroy.sh; do
+	for guard in guard-worktree.sh guard-compose.sh guard-runtime.sh guard-merge.sh guard-spend.sh guard-destroy.sh guard-secrets.sh; do
 		bash "$ROOT/.claude/hooks/$guard" --self-test
 	done
 	bash "$ROOT/scripts/lib/wt-lease.sh" --self-test
@@ -67,12 +67,19 @@ self_test() {
 	expect_hook allow "pnpm check-types"
 	expect_hook deny "pnpm dev:up"
 	expect_hook deny "pnpm db:reset"
-	expect_hook deny "tofu -chdir=infra/cp-aws apply"
+	# Instructed infrastructure and production work is ALLOWED (maintainer, 2026-11-22): the
+	# harness keeps secrets out of the transcript, keeps deletions recoverable and meters spend.
+	expect_hook allow "tofu -chdir=infra/cp-aws apply"
+	expect_hook allow "gh workflow run deploy-console.yml"
+	# Still refused: pushes to protected branches and repo/release deletion (guard-destroy, until
+	# its backup-then-allow mechanism lands), the default hcloud context (another company's
+	# production), and printing a secret.
 	expect_hook deny "git push origin main"
 	expect_hook deny "gh repo delete alethialabs-io/app --yes"
 	expect_hook deny "gh -R alethialabs-io/app release delete v1 --yes"
-	expect_hook deny "gh workflow run deploy-console.yml"
 	expect_hook deny "hcloud server create --name x"
+	expect_hook deny "printenv"
+	expect_hook deny "aws secretsmanager get-secret-value --secret-id alethia/prod/env"
 	echo "✓ Codex hook adapter self-tests passed"
 }
 

@@ -26,8 +26,8 @@ push to `main`). PR jobs run **no cloud/state credentials** (static checks only:
 ### The e2e federation stacks
 
 The OIDC/WIF plane the T2 real-cloud nightly authenticates through. **Never applied by CI** — each
-one mints broad provisioning identity, so a maintainer applies it by hand with an admin identity
-(`tofu apply` on `infra/` identity stacks is maintainer-only). All of them keep state remotely and
+one mints broad provisioning identity, so it is applied by hand with an admin identity
+— by the maintainer, or by an agent on the maintainer's instruction, plan first. All of them keep state remotely and
 no static state keys exist. `aws-oidc`, `gcp-e2e`, `azure-e2e` and `alibaba-e2e` keep it in the same
 account/project/subscription as the identity they describe. `aws-e2e` is the deliberate exception:
 its state stays in the platform account's bucket, OUTSIDE the e2e account whose role holds `s3:*`

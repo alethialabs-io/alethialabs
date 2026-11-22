@@ -12,9 +12,9 @@ would collide, and on AWS it would diff on nothing.
 > state existed, because the broker has never been deployed; its expected plan shapes are
 > predictions, and it says so where they appear.
 
-Every plan in part one was generated and read before this file was written. `guard-iac.sh` refuses
-`tofu apply` from an agent session, so the applies themselves are the maintainer's — that guard is
-why this file exists instead of a green checkmark.
+Every plan in part one was generated and read before this file was written. When it was written an
+IaC guard refused `tofu apply` from an agent session, so the applies were the maintainer's. Since
+2026-11-22 an agent may run them on the maintainer's instruction, plan first.
 
 > **`backend_override.tf`** — `infra/gcp-e2e` and `infra/alibaba-e2e` keep state in a working-tree
 > `terraform.tfstate` while their real backends (`gcs`/`oss`) wait on `bootstrap/`. `tofu init
@@ -182,10 +182,10 @@ dedicated E2E assertion broker (`apps/e2e-issuer`), so the nightly's `cli-demo` 
 authenticate to each cloud the way a customer's console does, with a short-lived `alethia-connector`
 assertion, not a GitHub token.
 
-**Nothing here is applied by an agent, and nothing in CI applies these stacks.** `guard-iac.sh`
-refuses `tofu apply` in an agent session. No workflow applies any of these four stacks:
+**Nothing in CI applies these stacks.** An agent applies them only on the maintainer's
+instruction, from a plan it has shown. No workflow applies any of these four stacks:
 `infra-aws-oidc.yml` validates `aws-oidc` only, and no workflow reads the other three. Every apply
-below is the maintainer's, from a plan the maintainer has read.
+below runs from a plan that was read first.
 
 ### What is in the tree
 

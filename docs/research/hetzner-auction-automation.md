@@ -396,7 +396,7 @@ a forgotten resource is EUR 60–270/mo, recurring, until someone notices an inv
    so the existing "guards that report green" failure mode is far more expensive here.
 6. **A human approval step on the order path**, because §1.2's `412 PRECONDITION_FAILED` means Hetzner itself
    sometimes routes an order back to a human, and because an agent that can create recurring contracts is
-   exactly the class `.claude/hooks/guard-iac.sh` exists to refuse for IaC.
+   exactly the class the IaC guard (removed 2026-11-22) existed to refuse.
 
 Items 1, 2, 5 and 6 are all **new** — none of them can be got by reusing what exists.
 
