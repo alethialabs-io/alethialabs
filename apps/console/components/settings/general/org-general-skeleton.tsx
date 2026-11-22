@@ -54,7 +54,7 @@ function LineSkeleton({ className, bar }: { className: string; bar: string }) {
 
 /**
  * The org General page while its read is pending: Organization profile (five rows) with its Save
- * band, then the two-row Danger zone, which is the page's final layout. No title above it.
+ * band, then the three-row Danger zone, which is the page's final layout. No title above it.
  */
 export function OrgGeneralSkeleton() {
 	return (
@@ -100,6 +100,12 @@ export function OrgGeneralSkeleton() {
 					<SettingsDangerRow
 						title={ORG_DANGER_ROWS.transfer.title}
 						description={ORG_DANGER_ROWS.transfer.description}
+					>
+						<Skeleton className="h-8 w-20" />
+					</SettingsDangerRow>
+					<SettingsDangerRow
+						title={ORG_DANGER_ROWS.leave.title}
+						description={ORG_DANGER_ROWS.leave.description}
 					>
 						<Skeleton className="h-8 w-20" />
 					</SettingsDangerRow>

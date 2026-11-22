@@ -53,16 +53,23 @@ export const ORG_PROFILE_SAVE_NOTE = "Applies across the console";
 
 
 /**
- * The Danger zone's two rows. The delete row's description names the org between `before` and
+ * The Danger zone's three rows. The delete row's description names the org between `before` and
  * `after`, so it is two strings around the name rather than one. It says what the delete does NOT
  * do (destroy anything in the cloud) and what the server therefore refuses (`deleteOrganization`
- * answers `conflict` while an environment is live or in flight, #6752).
+ * answers `conflict` while an environment is live or in flight, #6752). The leave row states the
+ * rule the auth route applies to `/organization/leave`: the org's last active owner cannot leave
+ * (#5472, #7204).
  */
 export const ORG_DANGER_ROWS = {
 	transfer: {
 		title: "Transfer ownership",
 		description:
 			"Move this organization to another owner. They take over billing and the Owner role.",
+	},
+	leave: {
+		title: "Leave organization",
+		description:
+			"Remove yourself from this organization. You lose access to its Projects until someone invites you again. Its only active owner cannot leave.",
 	},
 	delete: {
 		title: "Delete organization",
