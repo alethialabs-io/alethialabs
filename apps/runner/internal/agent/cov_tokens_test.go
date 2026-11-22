@@ -38,6 +38,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 )
 
 // ─── shared harness ──────────────────────────────────────────────────────────────────────────
@@ -1048,8 +1050,8 @@ func tokStubUpstream(t *testing.T, handle func(raw net.Conn, upgrade func(net.Co
 	t.Helper()
 	cert, pool := tokUpstreamCert(t)
 	prev := upstreamTLSConfig
-	upstreamTLSConfig = func(serverName string) *tls.Config {
-		return &tls.Config{ServerName: serverName, RootCAs: pool, MinVersion: tls.VersionTLS12}
+	upstreamTLSConfig = func(_, serverName string) (*tls.Config, error) {
+		return &tls.Config{ServerName: serverName, RootCAs: pool, MinVersion: tls.VersionTLS12}, nil
 	}
 	t.Cleanup(func() { upstreamTLSConfig = prev })
 
@@ -1998,20 +2000,65 @@ func TestTok_PGErrText_WithoutAMessageField(t *testing.T) {
 }
 
 // TestTok_UpstreamTLSConfig_IsVerifiedAndModern pins what the production seam returns: the real
-// server name, certificate verification ON, and TLS 1.2 as the floor. A test may swap the trust
-// anchor; it must never be able to make production skip verification.
+// server name, certificate verification ON, TLS 1.2 as the floor, and the cloud's PINNED database CA
+// bundle as the trust anchor — not the platform store, which does not carry the Amazon RDS CAs
+// (aws keyless run 45010180640 failed every connection with "certificate signed by unknown
+// authority"). A test may swap the trust anchor; it must never be able to make production skip
+// verification.
 func TestTok_UpstreamTLSConfig_IsVerifiedAndModern(t *testing.T) {
-	cfg := upstreamTLSConfig("db.eu-west-1.rds.amazonaws.com")
-	if cfg.ServerName != "db.eu-west-1.rds.amazonaws.com" {
-		t.Errorf("ServerName = %q", cfg.ServerName)
+	for _, provider := range []string{"aws", "azure"} {
+		cfg, err := upstreamTLSConfig(provider, "db.eu-west-1.rds.amazonaws.com")
+		if err != nil {
+			t.Fatalf("%s: %v", provider, err)
+		}
+		if cfg.ServerName != "db.eu-west-1.rds.amazonaws.com" {
+			t.Errorf("%s: ServerName = %q", provider, cfg.ServerName)
+		}
+		if cfg.InsecureSkipVerify {
+			t.Errorf("%s: the upstream hop must always verify the database certificate", provider)
+		}
+		if cfg.MinVersion != tls.VersionTLS12 {
+			t.Errorf("%s: MinVersion = %#x, want TLS 1.2", provider, cfg.MinVersion)
+		}
+		if cfg.RootCAs == nil {
+			t.Fatalf("%s: RootCAs is nil — that is the platform store, which cannot verify a managed database", provider)
+		}
+		// Every CA in the pinned bundle must verify against the pool the proxy uses: the pool IS the
+		// bundle, so a certificate the managed database chains to is trusted.
+		bundle, _, ok := manifests.ManagedDBCABundle(provider)
+		if !ok {
+			t.Fatalf("%s: no pinned bundle", provider)
+		}
+		rest, n := []byte(bundle), 0
+		for {
+			var block *pem.Block
+			block, rest = pem.Decode(rest)
+			if block == nil {
+				break
+			}
+			ca, perr := x509.ParseCertificate(block.Bytes)
+			if perr != nil {
+				t.Fatalf("%s: bundle certificate %d: %v", provider, n, perr)
+			}
+			if _, verr := ca.Verify(x509.VerifyOptions{Roots: cfg.RootCAs}); verr != nil {
+				t.Errorf("%s: bundle certificate %q does not verify against the proxy's pool: %v", provider, ca.Subject.CommonName, verr)
+			}
+			n++
+		}
+		if n == 0 {
+			t.Fatalf("%s: the pinned bundle holds no certificate", provider)
+		}
 	}
-	if cfg.InsecureSkipVerify {
-		t.Error("the upstream hop must always verify the database certificate")
+}
+
+// TestTok_UpstreamTLSConfig_RefusesAProviderWithNoBundle pins the fail-closed half: a provider with
+// no pinned bundle gets an error, never a config that falls back to a weaker trust store — and the
+// sidecar refuses to start for it.
+func TestTok_UpstreamTLSConfig_RefusesAProviderWithNoBundle(t *testing.T) {
+	if _, err := upstreamTLSConfig("gcp", "x"); err == nil {
+		t.Error("gcp has no pinned bundle; the seam must refuse it")
 	}
-	if cfg.MinVersion != tls.VersionTLS12 {
-		t.Errorf("MinVersion = %#x, want TLS 1.2", cfg.MinVersion)
-	}
-	if cfg.RootCAs != nil {
-		t.Error("production must use the platform trust store, not a bundled pool")
+	if _, err := managedDBRootCAs("nope"); err == nil {
+		t.Error("an unknown provider must be refused")
 	}
 }

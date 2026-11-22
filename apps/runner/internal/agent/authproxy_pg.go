@@ -166,7 +166,11 @@ func pgDialUpstream(ctx context.Context, cfg authProxyConfig, params map[string]
 	if resp[0] != 'S' {
 		return nil, errors.New("upstream refused TLS; refusing to send a token over an unencrypted connection")
 	}
-	tlsConn := tls.Client(raw, upstreamTLSConfig(cfg.upstreamHost()))
+	tlsCfg, err := upstreamTLSConfig(cfg.Provider, cfg.upstreamHost())
+	if err != nil {
+		return nil, err
+	}
+	tlsConn := tls.Client(raw, tlsCfg)
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		return nil, fmt.Errorf("upstream TLS handshake: %w", err)
 	}
