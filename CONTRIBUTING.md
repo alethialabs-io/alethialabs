@@ -46,14 +46,28 @@ AGPL-only contribution would block us from shipping the commercial edition.
 
 ## Branching & release flow
 
-Three long-lived branches promote right-to-left; `main` is protected and only ever
-receives merges from `staging`.
+Feature work lands on `dev`; production is `main`, and `main` receives a dev commit through a
+**pinned promotion PR**: `.github/workflows/promote.yml` creates `release/<12-char sha>` at one
+green dev commit, never moves it, and opens `release/<sha> → main`. The `staging` hop is being
+retired (maintainer decision, 2026-11-22): it deployed nothing, and its standing PR — whose head
+was `dev` — restarted ~9 workflows on every queue merge (220 cancelled runs in one week) while its
+~50-minute release gate never finished before `dev` moved again.
 
 | Branch | Role | Merges from | Deploy |
 |---|---|---|---|
 | `dev` | integration — all feature/fix PRs land here | feature branches (non-draft PR + green CI, **via the Mergify queue**) | — (CI only) |
-| `staging` | release candidate | `dev` (PR + green CI) | — (built/tested; no deploy yet) |
-| `main` | production | `staging` **only** (PR + green CI, linear history) | auto → alethialabs.io (`deploy-console.yml`) |
+| `release/<sha>` | one promotion, pinned at one dev commit | created by `promote.yml`; never pushed to | — |
+| `main` | production | `release/<sha>` (PR + green CI + all release-gate legs); `staging` and `hotfix/*` are still admitted until `staging` is retired | auto → alethialabs.io (`deploy-console.yml`) |
+| `staging` | retired release candidate | `dev` (PR + green CI) | — (built/tested; never deployed) |
+
+- **Opening a promotion.** `promote.yml` runs twice on weekdays and on dispatch (optional `sha`,
+  `force`, `dry_run` inputs). It picks the newest dev commit that is *green* — a successful `CI`
+  run, on a `pull_request` or `push` event, for the same commit or the same git tree, which is what
+  a Mergify queue build of that batch is (`ci.yml` has no `push: dev` trigger, so a dev commit has
+  no run of its own). It does nothing while an older promotion PR is still running or is green and
+  waiting for its merge, and closes an older one that went red as superseded.
+  `scripts/ci/promote.mjs` holds the rules. The PR is written with the `alethia-labs-ci` GitHub
+  App token, because a PR opened with `GITHUB_TOKEN` never starts its checks.
 
 - **`main` is protected:** requires a PR, all CI status checks green, up-to-date branch,
   linear history; force-push/deletion blocked; admins included. No direct pushes — ever.
@@ -79,14 +93,10 @@ receives merges from `staging`.
   *Merge-signal health* workflow — the release gate is a promotion-path check and does not run on a `dev` PR at all
   unless you label it `release-gate:run`. See the promotion checklist below.
 
-- **A promotion PR (`dev → staging`, `staging → main`) lives as a DRAFT between promotions.**
-  Mark it ready when you are actually promoting, and draft it again after. **Marking it ready is
-  what fires the release gate** — `release-gate.yml`'s `legs` job requires
-  `pull_request.draft == false`, so a draft promotion PR has no gate result at all, and
-  `ready_for_review` is one of the events that starts one.
-
-  Its head is an integration branch, so every merge into `dev` is a `synchronize` on it — and its
-  diff is everything `dev` is ahead of `staging` by, which matches nearly every path filter in the
+- **Why the promotion head is pinned.** The old `dev → staging` promotion PR lived as a DRAFT
+  between promotions, because a draft does not fire the release gate. Its head was an integration
+  branch, so every merge into `dev` was a `synchronize` on it — and its
+  diff was everything `dev` was ahead of `staging` by, which matches nearly every path filter in the
   repo. Measured 2026-09-03 over 500 runs: one standing promotion PR was **22% of all CI runs**,
   firing ~9 runs across 9 workflows on every single merge, to re-validate a promotion nobody was
   promoting.
@@ -97,24 +107,27 @@ receives merges from `staging`.
   that waits twenty minutes holds a slot for twenty minutes. `workflow-health.yml` reports the
   demand daily (*CI demand*) so this is visible rather than rediscovered — see #4173.
 
-- **`staging` is protected too** (PR + green CI), lighter than `main`.
+- **`staging` is protected too** (PR + green CI), lighter than `main`, until it is retired.
 - **release-please** runs on `main` and opens the release PRs (CLI + runner version
   bumps); this flow is unchanged by the branch model.
-- A production release is a `staging → main` PR. Hotfixes still go through
-  `dev → staging → main` unless it's a true emergency (cherry-pick to `staging`).
+- A production release is a `release/<sha> → main` PR. Hotfixes still go through `dev` and a
+  promotion unless it's a true emergency (a `hotfix/*` PR into `main`, which is the maintainer's).
 
-### Promoting `staging → main` — the checklist
+### Promoting to `main` — the checklist
 
 **Agents run promotions when they are green** (maintainer ruling, 2026-11-06). The merge is
 `gh pr merge <n> --merge --match-head-commit <head sha>`, and `.claude/hooks/guard-merge.sh` admits it
-only for a `dev → staging` or `staging → main` PR whose `gh pr checks` shows nothing failed or
+only for a `release/<sha> → main` PR (opened by the `alethia-labs-ci` app, its head a dev commit
+named by the branch) — or, until `staging` is retired, a `dev → staging` or `staging → main` PR —
+whose `gh pr checks` shows nothing failed or
 pending and whose every `Release gate (<leg>)` from `.github/workflows/release-gate.yml` passed,
 for exactly that head. It refuses `--squash`, `--rebase`, `--auto`, `--admin`, `--delete-branch`
 and a command holding more than one merge. The checklist below is what "green" means.
 
 **Before the merge.**
 
-1. **Mark the promotion PR ready.** Nothing above `dev` is measured while it is a draft.
+1. **Let the promotion PR's checks finish.** Its head never moves, so they run once; a newer
+   promotion is not opened over it while they run.
 2. **Wait for all seven `Release gate (…)` contexts** — `hero`, `elench-ai`, `console`, `canvas`,
    `qa`, `audit`, `audit-interaction`. Each boots its own ephemeral console and drives one
    Playwright project against it; `release-gate.yml`'s own header budgets the set as a one-hour

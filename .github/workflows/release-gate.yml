@@ -3,8 +3,9 @@
 name: Release gate
 # THE BROWSER GATE IN FRONT OF EVERY PRODUCTION DEPLOY.
 #
-# Production deploys on a push to `main` (deploy-console.yml), and `main` only ever takes a PR from
-# `staging` (branch-flow-guard.yml).
+# Production deploys on a push to `main` (deploy-console.yml), and `main` takes a PR only from a
+# pinned `release/<sha>` promotion branch that promote.yml opened at a dev commit (or, until it is
+# retired, `staging`, a `hotfix/*` branch, or a release-please PR) — branch-flow-guard.yml.
 #
 # ⚠️ BUT WHAT MAKES THAT A GATE IS NOT A REQUIRED CHECK, AND THIS HEADER USED TO SAY IT WAS. The
 # sentence here read: "So a required check on PRs into `main` IS 'before every production
@@ -49,10 +50,12 @@ name: Release gate
 # day the baseline is captured while the suites are repaired lane by lane.
 #
 # WHEN IT RUNS, and why each clause is there:
-#   · a non-draft PR into main or staging — the promotion path. `draft == false` is load-bearing:
-#     the standing dev→staging promotion PR lives as a DRAFT between promotions and was 22% of all
-#     CI runs (CONTRIBUTING.md); a one-hour gate re-fired on every dev merge would be the single most
-#     expensive mistake this file could make.
+#   · a non-draft PR into main or staging — the promotion path. A promotion's head is now a
+#     `release/<sha>` branch that never moves (promote.yml), so the gate runs ONCE per promotion.
+#     `draft == false` stays load-bearing: the old standing dev→staging promotion PR had `dev` as its
+#     head, lived as a DRAFT between promotions and was 22% of all CI runs (CONTRIBUTING.md); a
+#     one-hour gate re-fired on every dev merge would be the single most expensive mistake this file
+#     could make.
 #   · a non-draft PR into dev carrying the `release-gate:run` (or `release-gate:all`) label — for a
 #     lane that wants per-PR gate feedback, and for capturing or re-recording the baseline.
 #   · workflow_dispatch, with an optional comma-separated `legs` input.

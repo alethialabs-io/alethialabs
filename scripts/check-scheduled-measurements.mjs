@@ -245,6 +245,13 @@ export const NOT_A_MEASUREMENT = {
 			"environment's branch policy.",
 		issue: "#6694",
 	},
+	"promote.yml": {
+		why:
+			"Its output is a branch and a pull request (a release/<sha> → main promotion), not an artifact: nothing " +
+			"in the tree reads a promote.yml upload back. It runs the DEFAULT branch's tree, which is what decides " +
+			"the promotion rules, and the commit it promotes is read from origin/dev, not from the checkout.",
+		issue: "#7196",
+	},
 	"template-proof-currency.yml": {
 		why:
 			"A currency check that reports in place: it reds, and upserts one issue, when a starter repo's HEAD has " +

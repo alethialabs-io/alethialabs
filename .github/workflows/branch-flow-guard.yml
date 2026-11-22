@@ -1,8 +1,16 @@
 name: Branch flow guard
 
-# Enforce the promotion flow: feature → dev → staging → main.
-# A PR into `main` may only come from `staging` (or a `hotfix/*` branch); a PR into `staging` only from
-# `dev` (or `hotfix/*`). Feature branches must target `dev` (which has no ruleset requiring this check).
+# Enforce the promotion flow: feature → dev → main, through a pinned `release/<sha>` branch.
+#
+# A PR into `main` may come from:
+#   · `release/<hex sha>` — a promotion opened by promote.yml, and ONLY when the head commit is on
+#     `dev` (the compare API says the head is `identical` to dev or `behind` it). The branch name is
+#     not the evidence; the ancestry is. A `release/…` branch carrying a commit dev does not have is
+#     refused — that is a hotfix wearing a promotion's name, and a hotfix has its own prefix.
+#   · `staging` — the retired hop, still admitted until protect-staging is retired (a later step);
+#   · `hotfix/*`, and release-please's own release PRs.
+# A PR into `staging` only from `dev` (or `hotfix/*`). Feature branches must target `dev` (which has
+# no ruleset requiring this check).
 # This job is wired as a REQUIRED status check on the main + staging rulesets (infra/github), so a
 # mis-targeted PR (e.g. an agent opening feature → main) gets a red required check and is un-mergeable.
 
@@ -27,7 +35,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: read # also what the compare API needs to ask whether a release/* head is on dev
 
 jobs:
   branch-flow-guard:
@@ -37,6 +45,9 @@ jobs:
         env:
           BASE: ${{ github.base_ref }}
           HEAD: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           # release-please opens its release PRs directly against main/staging
@@ -46,6 +57,20 @@ jobs:
           case "$HEAD" in
             release-please--*) echo "OK: release-please PR '$HEAD' → '$BASE' (exempt)."; exit 0 ;;
           esac
+          # A pinned promotion (promote.yml): release/<hex sha> → main, admitted only when the head
+          # commit is on dev. `identical` or `behind` from compare/dev...<head> means dev contains it.
+          if [ "$BASE" = main ] && [[ "$HEAD" =~ ^release/[0-9a-f]{7,40}$ ]]; then
+            status="$(gh api "repos/$REPO/compare/dev...$HEAD_SHA" --jq .status 2>/dev/null || echo unreadable)"
+            case "$status" in
+              identical | behind)
+                echo "OK: '$HEAD' ($HEAD_SHA) is on dev ($status) — a pinned dev → main promotion."
+                exit 0
+                ;;
+            esac
+            echo "::error::'$HEAD' → main is a promotion only when its head is a dev commit; compare dev...$HEAD_SHA says '$status'."
+            echo "::error::Open promotions with the Promote workflow (promote.yml); a change that is not on dev is a hotfix/* PR."
+            exit 1
+          fi
           case "$BASE" in
             main)    allowed="staging" ;;
             staging) allowed="dev" ;;
@@ -57,6 +82,10 @@ jobs:
             echo "OK: '$HEAD' → '$BASE' is an allowed promotion."
             exit 0
           fi
-          echo "::error::PRs into '$BASE' must come from '$allowed' (or a hotfix/* branch), not '$HEAD'."
-          echo "::error::The flow is feature → dev → staging → main. For feature work, target 'dev'."
+          if [ "$BASE" = main ]; then
+            echo "::error::PRs into 'main' must come from a release/<sha> promotion (promote.yml), 'staging', or a hotfix/* branch — not '$HEAD'."
+          else
+            echo "::error::PRs into '$BASE' must come from '$allowed' (or a hotfix/* branch), not '$HEAD'."
+          fi
+          echo "::error::The flow is feature → dev → main (via promote.yml). For feature work, target 'dev'."
           exit 1
