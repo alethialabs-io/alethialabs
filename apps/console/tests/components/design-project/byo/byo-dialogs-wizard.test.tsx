@@ -9,9 +9,9 @@
 //   · the return to the same URL — a reload, or the provider link coming back — restores the step
 //     and what was typed, and says so;
 //   · a server field refusal takes the person to the step that shows the field;
-//   · both definitions are complete and keep no credential-shaped key. They are declared in the
-//     dialog files rather than in a `*.wizard.ts`, so tests/lib/wizard/definitions.test.ts does not
-//     find them; this file asks them the same two questions.
+//   · neither definition keeps the Helm values or the tfvars in a draft. Completeness and the
+//     credential-shaped-key check are tests/lib/wizard/definitions.test.ts's, which finds both
+//     definitions by their `*.wizard.ts` names.
 //
 // "A reload" is an unmount and a fresh render over the same query string and the same tab storage,
 // which is all a reload leaves the page (`byo-wizard-harness.ts`).
@@ -58,20 +58,18 @@ vi.mock("@/components/repository-selector", () => ({
 }));
 
 import {
-	BYO_CHART_WIZARD_ID,
 	ByoChartDialog,
-	byoChartWizard,
 	HELM_VALUES_NOT_KEPT,
 } from "@/components/design-project/byo/byo-chart-dialog";
+import { BYO_CHART_WIZARD_ID, byoChartWizard } from "@/components/design-project/byo/byo-chart.wizard";
 import {
-	BYO_IAC_WIZARD_ID,
 	ByoIacDialog,
-	byoIacWizard,
 	EXAMPLE_IAC_PATH,
 	EXAMPLE_IAC_REPO_URL,
 	VARIABLES_NOT_KEPT,
 } from "@/components/design-project/byo/byo-iac-dialog";
-import { assertWizardComplete, draftTopLevelKeys, sensitiveDraftKeys } from "@/lib/wizard/define";
+import { BYO_IAC_WIZARD_ID, byoIacWizard } from "@/components/design-project/byo/byo-iac.wizard";
+import { draftTopLevelKeys } from "@/lib/wizard/define";
 import {
 	resetTestPage,
 	setTestSearch,
@@ -112,18 +110,6 @@ function renderIac(open: boolean, onOpenChange: (open: boolean) => void = () => 
 const next = () => screen.getByRole("button", { name: /^next$/i });
 
 describe("the BYO wizard definitions", () => {
-	it("byo-chart is complete and keeps no credential-shaped key", () => {
-		expect(() => assertWizardComplete(byoChartWizard)).not.toThrow();
-		const draft = byoChartWizard.draft;
-		expect(draft === null ? [] : sensitiveDraftKeys(draft.schema)).toEqual([]);
-	});
-
-	it("byo-iac is complete and keeps no credential-shaped key", () => {
-		expect(() => assertWizardComplete(byoIacWizard)).not.toThrow();
-		const draft = byoIacWizard.draft;
-		expect(draft === null ? [] : sensitiveDraftKeys(draft.schema)).toEqual([]);
-	});
-
 	it("opens under the ids a canvas `byo` seed names", () => {
 		expect([BYO_CHART_WIZARD_ID, BYO_IAC_WIZARD_ID]).toEqual(["byo-chart", "byo-iac"]);
 	});
