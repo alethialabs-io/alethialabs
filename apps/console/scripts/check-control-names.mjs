@@ -26,7 +26,7 @@
 //
 // ── WHAT IS CHECKED ──────────────────────────────────────────────────────────────────────────
 //
-// Scope: every `.tsx` under apps/console/components and apps/console/app. Three rules, each the
+// Scope: every `.tsx` under apps/console/components and apps/console/app. Four rules, each the
 // section name of the same id in apps/console/control-names-allowlist.yaml.
 //
 //   control_name   A CONTROL THAT NAMES ITSELF FROM ITS CONTENT, and whose content says nothing.
@@ -73,6 +73,23 @@
 //                  vanishes the moment the field has a value, which is the moment a screen-reader
 //                  user tabs back to check it.
 //
+//   overlay_title  AN OVERLAY WITH NO TITLE (#6829). A dialog is announced by its name the moment
+//                  focus moves into it; without one a screen reader says "dialog" and nothing else.
+//                  The SUBJECTS are not typed here: they are DERIVED on every run from
+//                  `packages/ui/src` — a component whose body renders a base-ui `<P.Popup>` is an
+//                  overlay's CONTENT, one whose body renders a base-ui `<P.Title>` is its TITLE, and
+//                  the two belong together when `P` is imported from the same `@base-ui/react/*`
+//                  module (its FAMILY). A content component is a subject only when its family HAS a
+//                  title component. Measured when the rule landed: `DialogContent`, `SheetContent`
+//                  and `AlertDialogContent`; `DialogTitle` and `SheetTitle` are one family (the
+//                  sheet is a base-ui dialog), so either titles either. The console's element is
+//                  resolved through its `@repo/ui/<module>` import, never by its spelling. It is
+//                  titled when ANY of: a non-empty `aria-label`/`aria-labelledby`/`title` on its own
+//                  tag; a title component of its family anywhere in its JSX subtree (behind a `?:`
+//                  or `&&` too, and an `sr-only` one counts — it is the accessible name either way);
+//                  or a component in its subtree that is DECLARED IN THE SAME FILE and whose body
+//                  renders such a title, followed through further same-file components.
+//
 // NOT checked, and stated so a green run is not read as more than it is:
 //
 //   `<Switch>` and `role="switch"` — `check:shared-surface`'s `switch_name` rule owns them
@@ -93,6 +110,23 @@
 //   `title` counts as a name, because the computation uses it; it is the weakest of the three and
 //                  the one a reviewer should question, but refusing it would be this file
 //                  disagreeing with the browser.
+//   AN OVERLAY TITLE THAT ARRIVES FROM ANOTHER FILE — a wrapper whose `<DialogContent>` renders
+//                  `{children}` or a `title` prop its callers fill. Over-reported, like a name
+//                  through a spread: one reviewed `reason:` row each. `@repo/ui`'s own composites
+//                  (`DetailSheet`, `CommandDialog`, `GroupedFilterSheet`) are not subjects at all:
+//                  they render the title from their `title` prop inside `packages/ui`, which is not
+//                  scanned, and a console caller that omits that prop is not seen.
+//   `PopoverContent` — a base-ui popover popup, but `@repo/ui`'s `PopoverTitle` is a plain `<h2>`,
+//                  not a `Popover.Title`, so the popover family has no title component and the
+//                  derivation (correctly) makes no subject of it: requiring a title the primitive
+//                  cannot wire to the popup's name would be a rule nobody can obey. The day
+//                  `PopoverTitle` renders `PopoverPrimitive.Title`, `PopoverContent` becomes a
+//                  subject with no change here (the self-test proves that). Menus, selects and
+//                  tooltips render a `Popup` and have no title component either, by design.
+//   An overlay imported from anywhere but `@repo/ui/<module>` (a local re-export, a primitive used
+//                  directly) — the console has none today; it would be unseen.
+//   WHETHER the title is rendered — `{false && <DialogTitle>…}` passes. A title that exists in the
+//                  subtree is what is checked, as with `control_name`'s `?:` arms.
 //   apps/console/{lib,hooks,emails,tests} — one `.tsx` context provider, none, email markup that
 //                  no screen reader drives as an app, and fixtures.
 //
@@ -113,7 +147,8 @@
 // false findings on the first draft, which is how a rule gets switched off instead of obeyed.
 //
 // HOW IT KNOWS IT LOOKED. A root that is missing or empty raises. The `@repo/ui` wrapper
-// derivation raises when it reads nothing, or when it does not map `TableRow` to `tr`. The ledger carries a `floors:`
+// derivation raises when it reads nothing, or when it does not map `TableRow` to `tr`; the overlay
+// derivation raises when it does not find `DialogContent` and `DialogTitle` in one family. The ledger carries a `floors:`
 // block — the minimum number of files scanned and of elements EXAMINED per rule — so a walker, an
 // extension list or a tag list that quietly stopped matching fails rather than printing ✓ over
 // nothing. And every run fires each rule's probe and anti-probe through the same analyser before
@@ -181,7 +216,7 @@ const ICON_NAME = /(?:Icon|Glyph)$|^(?:Spinner|Loader\w*)$/;
 const NAME_ATTRS = ["aria-label", "aria-labelledby", "title"];
 
 /** The rule ids, which are also the ledger's section names. */
-const RULE_IDS = ["control_name", "clickable_role", "field_label"];
+const RULE_IDS = ["control_name", "clickable_role", "field_label", "overlay_title"];
 
 const SAY = {
 	control_name:
@@ -190,6 +225,8 @@ const SAY = {
 		"is a non-interactive element with `onClick` and no `role` — announced as nothing and reached by no key. Make it a `<button>` (or `<Button variant=\"ghost\">`); if it must stay a div, give it `role`, `tabIndex` and a key handler.",
 	field_label:
 		"is a form field with no label. Wrap it in `<FormItem>`+`<FormLabel>`+`<FormControl>`, pair its `id` with a `<Label htmlFor>` in the same file, or give it `aria-label`. A `placeholder` is not a label.",
+	overlay_title:
+		"is an overlay with no title — a screen reader announces it as \"dialog\" and nothing else. Put its family's title component (`<DialogTitle>`, `<SheetTitle>`, `<AlertDialogTitle>`) inside it, `className=\"sr-only\"` if it must not show, or give it `aria-labelledby` pointing at visible text.",
 };
 
 // ── the analyser ─────────────────────────────────────────────────────────────────────────────
@@ -357,6 +394,154 @@ function wrapperImports(sf, wrappers) {
 }
 
 /**
+ * @typedef {{part: "content" | "title", family: string}} OverlayPart
+ */
+
+/**
+ * Which `@repo/ui` components are an overlay's CONTENT and which its TITLE — DERIVED from
+ * `packages/ui/src` on every run, never typed here. A top-level `function Name(…)` whose body renders
+ * `<P.Popup>` is content, one that renders `<P.Title>` is a title, where `P` is imported from an
+ * `@base-ui/react/*` module; that module is the part's FAMILY. Content whose family has no title
+ * component is dropped — there is nothing a caller could put inside it. Keyed `<module>:<export>`.
+ *
+ * It RAISES unless `dialog:DialogContent` and `dialog:DialogTitle` come out as one family — the cheap
+ * proof that it read the files it thinks it read, because a derivation over nothing is a console with
+ * no overlays, which reads as a clean one.
+ *
+ * @param {string} dir packages/ui/src
+ * @returns {Map<string, OverlayPart>}
+ */
+function deriveOverlays(dir) {
+	/** @type {Map<string, OverlayPart>} */
+	const found = new Map();
+	for (const name of fs.readdirSync(dir)) {
+		if (!name.endsWith(".tsx")) continue;
+		const mod = name.slice(0, -4);
+		const sf = ts.createSourceFile(name, fs.readFileSync(path.join(dir, name), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+		/** @type {Map<string, string>} local binding → base-ui module */
+		const prim = new Map();
+		for (const st of sf.statements) {
+			if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier) || !st.moduleSpecifier.text.startsWith("@base-ui/react/")) continue;
+			const nb = st.importClause?.namedBindings;
+			if (nb !== undefined && ts.isNamespaceImport(nb)) prim.set(nb.name.text, st.moduleSpecifier.text);
+			if (nb !== undefined && ts.isNamedImports(nb)) for (const s of nb.elements) prim.set(s.name.text, st.moduleSpecifier.text);
+		}
+		if (prim.size === 0) continue;
+		for (const st of sf.statements) {
+			if (!ts.isFunctionDeclaration(st) || st.name === undefined || !/^[A-Z]/.test(st.name.text) || st.body === undefined) continue;
+			/** @type {OverlayPart | null} */
+			let part = null;
+			const visit = (/** @type {import("typescript").Node} */ n) => {
+				const op = openingOf(n);
+				if (op !== null && ts.isPropertyAccessExpression(op.tagName) && ts.isIdentifier(op.tagName.expression)) {
+					const family = prim.get(op.tagName.expression.text);
+					const member = op.tagName.name.text;
+					if (family !== undefined && member === "Popup") part = { part: "content", family };
+					else if (family !== undefined && member === "Title" && part === null) part = { part: "title", family };
+				}
+				ts.forEachChild(n, visit);
+			};
+			visit(st.body);
+			if (part !== null) found.set(`${mod}:${st.name.text}`, part);
+		}
+	}
+	const titled = new Set([...found.values()].filter((p) => p.part === "title").map((p) => p.family));
+	/** @type {Map<string, OverlayPart>} */
+	const out = new Map([...found].filter(([, p]) => p.part === "title" || titled.has(p.family)));
+	const content = out.get("dialog:DialogContent");
+	const title = out.get("dialog:DialogTitle");
+	if (content?.part !== "content" || title?.part !== "title" || content.family !== title.family)
+		throw new Error(
+			`packages/ui/src: the overlay derivation read ${out.size} part(s); dialog:DialogContent → ${content?.part ?? "nothing"}, dialog:DialogTitle → ${title?.part ?? "nothing"}. ` +
+				"It must find both in one base-ui family, or it did not read what it thinks it read — and a derivation over nothing is an untitled dialog reported clean.",
+		);
+	return out;
+}
+
+/**
+ * The console file's `@repo/ui/*` imports that resolve to an overlay part: local name → part.
+ *
+ * @param {import("typescript").SourceFile} sf
+ * @param {Map<string, OverlayPart>} overlays
+ * @returns {Map<string, OverlayPart>}
+ */
+function overlayImports(sf, overlays) {
+	const out = new Map();
+	for (const st of sf.statements) {
+		if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
+		const m = /^@repo\/ui\/(.+)$/.exec(st.moduleSpecifier.text);
+		const nb = st.importClause?.namedBindings;
+		if (m === null || nb === undefined || !ts.isNamedImports(nb)) continue;
+		for (const el of nb.elements) {
+			const part = overlays.get(`${m[1]}:${(el.propertyName ?? el.name).text}`);
+			if (part !== undefined) out.set(el.name.text, part);
+		}
+	}
+	return out;
+}
+
+/**
+ * The capitalised components DECLARED in a file — `function Name` and `const Name = (…) => …` /
+ * `function (…)` — by name, each mapped to the node whose subtree is its body.
+ *
+ * @param {import("typescript").SourceFile} sf
+ * @returns {Map<string, import("typescript").Node>}
+ */
+function localComponents(sf) {
+	const out = new Map();
+	for (const st of sf.statements) {
+		if (ts.isFunctionDeclaration(st) && st.name !== undefined && /^[A-Z]/.test(st.name.text) && st.body !== undefined) out.set(st.name.text, st.body);
+		if (!ts.isVariableStatement(st)) continue;
+		for (const d of st.declarationList.declarations) {
+			if (!ts.isIdentifier(d.name) || !/^[A-Z]/.test(d.name.text) || d.initializer === undefined) continue;
+			if (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer)) out.set(d.name.text, d.initializer.body);
+		}
+	}
+	return out;
+}
+
+/**
+ * Whether an overlay CONTENT element is titled, by any of the three routes the header lists.
+ *
+ * @param {import("typescript").Node} node
+ * @param {Map<string, import("typescript").JsxAttribute>} attrs
+ * @param {string} family
+ * @param {Ctx} ctx
+ * @returns {boolean}
+ */
+function overlayTitled(node, attrs, family, ctx) {
+	if (!ctx.mutate.has("no-self-name") && selfNamed(attrs)) return true;
+	const seen = new Set();
+	const hasTitle = (/** @type {import("typescript").Node} */ root) => {
+		let found = false;
+		const visit = (/** @type {import("typescript").Node} */ n) => {
+			if (found) return;
+			const op = openingOf(n);
+			if (op !== null) {
+				const tag = tagOf(op);
+				const part = ctx.overlays.get(tag);
+				if (part?.part === "title" && part.family === family) {
+					found = true;
+					return;
+				}
+				const local = ctx.mutate.has("no-local-title") ? undefined : ctx.locals.get(tag);
+				if (local !== undefined && !seen.has(tag)) {
+					seen.add(tag);
+					if (hasTitle(local)) {
+						found = true;
+						return;
+					}
+				}
+			}
+			ts.forEachChild(n, visit);
+		};
+		visit(root);
+		return found;
+	};
+	return hasTitle(node);
+}
+
+/**
  * Whether an expression in JSX-child position could render text. Conservative in the NAMED
  * direction for anything it cannot see into (an identifier, a call, a template), because a
  * `{label}` is how most buttons are named and reporting it would bury every real finding.
@@ -516,9 +701,9 @@ function pairKey(attr) {
 }
 
 /**
- * @typedef {{icons: Set<string>, htmlFor: Set<string>, mutate: Set<string>, wrapped: Map<string, string>}} Ctx
+ * @typedef {{icons: Set<string>, htmlFor: Set<string>, mutate: Set<string>, wrapped: Map<string, string>, overlays: Map<string, OverlayPart>, locals: Map<string, import("typescript").Node>}} Ctx
  * @typedef {{rule: string, line: number, text: string}} Finding
- * @typedef {{control_name: number, clickable_role: number, field_label: number}} Examined
+ * @typedef {{control_name: number, clickable_role: number, field_label: number, overlay_title: number}} Examined
  */
 
 /**
@@ -532,9 +717,10 @@ function pairKey(attr) {
  * @param {string} [fileName]
  * @param {Set<string>} [mutate]
  * @param {Map<string, string>} [wrappers] the derived `@repo/ui` thin-wrapper map
+ * @param {Map<string, OverlayPart>} [overlays] the derived `@repo/ui` overlay-part map
  * @returns {{findings: Finding[], examined: Examined, parseErrors: string[]}}
  */
-function analyse(text, fileName = "fixture.tsx", mutate = new Set(), wrappers = WRAPPERS) {
+function analyse(text, fileName = "fixture.tsx", mutate = new Set(), wrappers = WRAPPERS, overlays = OVERLAYS) {
 	const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 	// `parseDiagnostics` is the parser's own list and is not on the public type; read it without a cast.
 	/** @type {{messageText: string | {messageText: string}, start?: number}[]} */
@@ -557,12 +743,19 @@ function analyse(text, fileName = "fixture.tsx", mutate = new Set(), wrappers = 
 	};
 	collect(sf);
 	/** @type {Ctx} */
-	const ctx = { icons: iconImports(sf), htmlFor, mutate, wrapped: mutate.has("no-wrappers") ? new Map() : wrapperImports(sf, wrappers) };
+	const ctx = {
+		icons: iconImports(sf),
+		htmlFor,
+		mutate,
+		wrapped: mutate.has("no-wrappers") ? new Map() : wrapperImports(sf, wrappers),
+		overlays: overlayImports(sf, overlays),
+		locals: localComponents(sf),
+	};
 
 	/** @type {Finding[]} */
 	const findings = [];
 	/** @type {Examined} */
-	const examined = { control_name: 0, clickable_role: 0, field_label: 0 };
+	const examined = { control_name: 0, clickable_role: 0, field_label: 0, overlay_title: 0 };
 	const report = (/** @type {string} */ rule, /** @type {import("typescript").Node} */ node, /** @type {import("typescript").JsxOpeningLikeElement} */ op) => {
 		if (mutate.has(`off:${rule}`)) return;
 		const src = op.getText().replace(/\s+/g, " ");
@@ -604,6 +797,13 @@ function analyse(text, fileName = "fixture.tsx", mutate = new Set(), wrappers = 
 			if (FIELD_TAGS.has(tag) && !(tag === "input" && NON_FIELD_INPUT_TYPES.has(staticValue(attrs.get("type")) ?? ""))) {
 				examined.field_label++;
 				if (!fieldLabelled(node, attrs, ctx)) report("field_label", node, op);
+			}
+
+			// overlay_title — resolved through the file's `@repo/ui` imports, never by spelling.
+			const overlay = ctx.overlays.get(tag);
+			if (overlay?.part === "content") {
+				examined.overlay_title++;
+				if (!overlayTitled(node, attrs, overlay.family, ctx)) report("overlay_title", node, op);
 			}
 		}
 		ts.forEachChild(node, visit);
@@ -667,7 +867,7 @@ function scanTree() {
 	/** @type {Map<string, Finding[]>} */
 	const byFile = new Map();
 	/** @type {Examined} */
-	const examined = { control_name: 0, clickable_role: 0, field_label: 0 };
+	const examined = { control_name: 0, clickable_role: 0, field_label: 0, overlay_title: 0 };
 	const problems = [];
 	let files = 0;
 	for (const root of ROOTS) {
@@ -856,6 +1056,8 @@ function writeCounters(text) {
  * so a broken derivation refuses the guard rather than shrinking what it reads.
  */
 const WRAPPERS = deriveWrappers(SHARED_UI);
+/** The overlay parts, derived from the same directory under the same rule. */
+const OVERLAYS = deriveOverlays(SHARED_UI);
 
 // ── probes, fired on every run, and the self-test ────────────────────────────────────────────
 
@@ -908,6 +1110,23 @@ const PROBES = {
 			{ rests: "no-form-label", src: `export const A = () => <FormItem><FormLabel>Name</FormLabel><FormControl><Input {...field} /></FormControl></FormItem>;` },
 			{ src: `export const A = () => <input type="hidden" name="x" value={v} />;` },
 			{ rests: "no-hidden", src: `export const A = () => <input ref={r} type="file" hidden onChange={f} />;` },
+		],
+	},
+	overlay_title: {
+		probe: `import { Dialog, DialogContent, DialogHeader } from "@repo/ui/dialog";\nexport const A = () => <Dialog><DialogContent><DialogHeader><p>Delete?</p></DialogHeader></DialogContent></Dialog>;`,
+		also: [
+			`import { SheetContent } from "@repo/ui/sheet";\nexport const A = () => <SheetContent side="right">{body}</SheetContent>;`,
+			`import { AlertDialogContent } from "@repo/ui/alert-dialog";\nimport { DialogTitle } from "@repo/ui/dialog";\nexport const A = () => <AlertDialogContent><DialogTitle>Wrong family</DialogTitle></AlertDialogContent>;`,
+			`import { DialogContent as Panel } from "@repo/ui/dialog";\nexport const A = () => <Panel aria-label="" />;`,
+			`import { DialogContent } from "@repo/ui/dialog";\nconst Head = () => <h2>Not a title</h2>;\nexport const A = () => <DialogContent><Head /></DialogContent>;`,
+		],
+		anti: [
+			{ src: `import { DialogContent, DialogTitle } from "@repo/ui/dialog";\nexport const A = () => <DialogContent><div>{open && <DialogTitle className="sr-only">Rename</DialogTitle>}</div></DialogContent>;` },
+			{ src: `import { SheetContent } from "@repo/ui/sheet";\nimport { DialogTitle } from "@repo/ui/dialog";\nexport const A = () => <SheetContent><DialogTitle>Same family</DialogTitle></SheetContent>;` },
+			{ rests: "no-self-name", src: `import { DialogContent } from "@repo/ui/dialog";\nexport const A = () => <DialogContent aria-labelledby={headingId}>{body}</DialogContent>;` },
+			{ rests: "no-local-title", src: `import { DialogContent, DialogTitle } from "@repo/ui/dialog";\nfunction Head() { return <Inner />; }\nconst Inner = () => <DialogTitle>Rename</DialogTitle>;\nexport const A = () => <DialogContent><Head /></DialogContent>;` },
+			{ src: `import { DialogContent } from "./local-dialog";\nexport const A = () => <DialogContent />;` },
+			{ src: `import { PopoverContent } from "@repo/ui/popover";\nexport const A = () => <PopoverContent>{body}</PopoverContent>;` },
 		],
 	},
 };
@@ -998,14 +1217,58 @@ function selfTest() {
 	t("a file that does not parse is reported, not read", analyse(`export const A = () => <Button>;`).parseErrors.length > 0);
 	t("the icon exemption reads the IMPORT, not a guess: `X` from elsewhere may be text", analyse(`import { X } from "./x";\nexport const A = () => <Button><X /></Button>;`).findings.length === 0);
 
+	// overlay_title — the derived subject set, and the facts a name-spelling rule would get wrong.
+	t(
+		"the overlay derivation makes subjects of DialogContent, SheetContent and AlertDialogContent, and not PopoverContent",
+		["dialog:DialogContent", "sheet:SheetContent", "alert-dialog:AlertDialogContent"].every((k) => OVERLAYS.get(k)?.part === "content") && !OVERLAYS.has("popover:PopoverContent"),
+	);
+	t("DialogTitle and SheetTitle are one family (the sheet is a base-ui dialog)", OVERLAYS.get("dialog:DialogTitle")?.family === OVERLAYS.get("sheet:SheetTitle")?.family);
+	const uiFixture = (/** @type {Record<string, string>} */ files) => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccn-ui-"));
+		try {
+			for (const [n, src] of Object.entries(files)) fs.writeFileSync(path.join(dir, n), src);
+			return deriveOverlays(dir);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	};
+	const dialogUi = `import { Dialog as P } from "@base-ui/react/dialog";\nfunction DialogContent() { return <P.Portal><P.Popup /></P.Portal>; }\nfunction DialogTitle() { return <P.Title />; }`;
+	t(
+		"a popover whose title IS wired to `Popover.Title` becomes a subject with no change to the rule",
+		uiFixture({
+			"dialog.tsx": dialogUi,
+			"popover.tsx": `import { Popover as Q } from "@base-ui/react/popover";\nfunction PopoverContent() { return <Q.Popup />; }\nfunction PopoverTitle() { return <Q.Title />; }`,
+		}).get("popover:PopoverContent")?.part === "content",
+	);
+	t("the overlay derivation REFUSES a directory with no DialogContent/DialogTitle pair", (() => {
+		try {
+			uiFixture({ "popover.tsx": `import { Popover as Q } from "@base-ui/react/popover";\nfunction PopoverContent() { return <Q.Popup />; }` });
+			return false;
+		} catch {
+			return true;
+		}
+	})());
+	t(
+		"overlay_title resolves the IMPORT: a DialogContent from a local module is not read, an aliased @repo/ui one is",
+		analyse(PROBES.overlay_title.anti[4].src).examined.overlay_title === 0 && analyse(PROBES.overlay_title.also[2]).examined.overlay_title === 1,
+	);
+	t(
+		"a same-file component cycle terminates and is a finding",
+		analyse(`import { DialogContent } from "@repo/ui/dialog";\nconst X = () => <Y />;\nconst Y = () => <X />;\nexport const A = () => <DialogContent><X /></DialogContent>;`).findings.length === 1,
+	);
+	t(
+		"a title OUTSIDE the content (a sibling under the root) does not title it",
+		analyse(`import { Dialog, DialogContent, DialogTitle } from "@repo/ui/dialog";\nexport const A = () => <Dialog><DialogTitle>X</DialogTitle><DialogContent>{b}</DialogContent></Dialog>;`).findings.length === 1,
+	);
+
 	// The ledger: every direction of drift fails.
 	const scan = (/** @type {number} */ n) => ({
 		byFile: new Map(n === 0 ? [] : [["apps/console/components/a.tsx", Array.from({ length: n }, (_, i) => ({ rule: "control_name", line: i + 1, text: "<Button>" }))]]),
-		examined: { control_name: 10, clickable_role: 10, field_label: 10 },
+		examined: { control_name: 10, clickable_role: 10, field_label: 10, overlay_title: 10 },
 		files: 10,
 	});
 	const ledger = (/** @type {string} */ body, b = 0, d = 1) =>
-		parseLedger(`baseline: ${b}\ndebt: ${d}\nfloors:\n  files: 5\n  control_name: 5\n  clickable_role: 5\n  field_label: 5\ncontrol_name:\n${body}`);
+		parseLedger(`baseline: ${b}\ndebt: ${d}\nfloors:\n  files: 5\n  control_name: 5\n  clickable_role: 5\n  field_label: 5\n  overlay_title: 5\ncontrol_name:\n${body}`);
 	const row = (/** @type {number} */ h) => `  - path: apps/console/components/a.tsx\n    hits: ${h}\n    lifts: "#5046 x"\n`;
 	t("ledger: exact hits pass", judge(scan(2), ledger(row(2))).length === 0);
 	t("ledger: MORE findings than hits fail", judge(scan(3), ledger(row(2))).length === 1);
@@ -1014,7 +1277,8 @@ function selfTest() {
 	t("ledger: an unrecorded finding fails", judge(scan(1), ledger("", 0, 0)).length === 1);
 	t("ledger: a hand-typed counter that disagrees with the rows fails", judge(scan(2), ledger(row(2), 0, 2)).length === 1);
 	t("ledger: files below the floor fail", judge({ ...scan(2), files: 4 }, ledger(row(2))).length === 1);
-	t("ledger: a rule examining below its floor fails", judge({ ...scan(2), examined: { control_name: 10, clickable_role: 4, field_label: 10 } }, ledger(row(2))).length === 1);
+	t("ledger: overlay_title examining below its floor fails", judge({ ...scan(2), examined: { control_name: 10, clickable_role: 10, field_label: 10, overlay_title: 4 } }, ledger(row(2))).length === 1);
+	t("ledger: a rule examining below its floor fails", judge({ ...scan(2), examined: { control_name: 10, clickable_role: 4, field_label: 10, overlay_title: 10 } }, ledger(row(2))).length === 1);
 	const throws = (/** @type {() => unknown} */ f) => {
 		try {
 			f();
@@ -1023,12 +1287,16 @@ function selfTest() {
 			return true;
 		}
 	};
-	t("ledger: an unknown section is a parse error", throws(() => ledger("", 0, 0).entries && parseLedger("baseline: 0\ndebt: 0\nfloors:\n  files: 1\n  control_name: 1\n  clickable_role: 1\n  field_label: 1\nswitch_name:\n")));
+	t("ledger: an unknown section is a parse error", throws(() => ledger("", 0, 0).entries && parseLedger("baseline: 0\ndebt: 0\nfloors:\n  files: 1\n  control_name: 1\n  clickable_role: 1\n  field_label: 1\n  overlay_title: 1\nswitch_name:\n")));
 	t("ledger: a row with neither reason nor lifts is a parse error", throws(() => ledger(`  - path: a.tsx\n    hits: 1\n`)));
 	t("ledger: a lifts without an issue number is a parse error", throws(() => ledger(`  - path: a.tsx\n    hits: 1\n    lifts: "later"\n`)));
 	t("ledger: a duplicate row is a parse error", throws(() => ledger(row(1) + row(1), 0, 2)));
 	t("ledger: a missing floor is a parse error", throws(() => parseLedger("baseline: 0\ndebt: 0\nfloors:\n  files: 1\n")));
-	t("--write derives the counters from the rows", writeCounters(`baseline: 9\ndebt: 9\nfloors:\n  files: 1\n  control_name: 1\n  clickable_role: 1\n  field_label: 1\ncontrol_name:\n${row(1)}`).includes("baseline: 0\ndebt: 1"));
+	t(
+		"ledger: a missing overlay_title floor alone is a parse error",
+		throws(() => parseLedger("baseline: 0\ndebt: 0\nfloors:\n  files: 1\n  control_name: 1\n  clickable_role: 1\n  field_label: 1\n")),
+	);
+	t("--write derives the counters from the rows", writeCounters(`baseline: 9\ndebt: 9\nfloors:\n  files: 1\n  control_name: 1\n  clickable_role: 1\n  field_label: 1\n  overlay_title: 1\ncontrol_name:\n${row(1)}`).includes("baseline: 0\ndebt: 1"));
 
 	process.stdout.write(failed === 0 ? "check-control-names self-test: all passed\n" : `check-control-names self-test: ${failed} FAILED\n`);
 	return failed;
