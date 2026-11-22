@@ -73,6 +73,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { validateReaperResult } from "./e2e/reaper-result.mjs";
+import { validateBackupStatus, runSelfTest as backupStatusSelfTest } from "./backup-status-result.mjs";
 
 const SNAPSHOT = "docs/testing/programme-snapshot.json";
 const LEDGER = "demos/proofs/provisioning-e2e-log.md";
@@ -767,6 +768,7 @@ export function deriveBoard(snapshot) {
 			gateState: () => "unknown",
 			observedGate: () => null,
 			reaperObservation: () => null,
+			backupStatusObservation: null,
 			derivedAt: null,
 			needsHuman: [],
 			// Empty, not "no contradictions". With no snapshot there is nothing to contradict the
@@ -924,6 +926,8 @@ export function deriveBoard(snapshot) {
 		observedGate: (cloud) => observations.get(cloud) ?? null,
 		/** The newest persisted real-reclaim result for one cloud, or null. */
 		reaperObservation: (cloud) => reaperObservations.get(cloud) ?? null,
+		/** The newest backup-status.yml result from `main` (B7's off-box backup), or null. */
+		backupStatusObservation: snapshot.backup_status_observation ?? null,
 		needsHuman: [...open.values()].filter((i) => (i.labels ?? []).includes("needs:human")),
 		/**
 		 * Every OPEN nightly-red issue, parsed out of its title, as `{cloud, dimension, number, date}`.
@@ -1871,7 +1875,14 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	// The beta predicates B1–B9 (docs/beta/README.md). Evaluated only when their inputs were read —
 	// `readInputs` always reads them, so the real run always renders the section; a fixture that
 	// passes none is testing something else. Their integrity failures join this file's own.
-	const betaView = beta === null ? null : deriveBeta({ ...beta, spine, reaper, at: board.derivedAt });
+	// B7's off-box backup reading. An unreadable observation is a notice, not a build failure, for the
+	// reaper's reason above: the part renders `? not measured` with its cause, and the next daily
+	// result replaces it.
+	const backupStatus = deriveBackupFreshness(board.backupStatusObservation, board.derivedAt);
+	if (backupStatus.integrityFailure !== null) {
+		console.error(`::notice::${backupStatus.integrityFailure} — B7's off-box backup part is not measured until a later result replaces it.`);
+	}
+	const betaView = beta === null ? null : deriveBeta({ ...beta, spine, reaper, backup: backupStatus, at: board.derivedAt });
 	if (betaView !== null) failures.push(...betaView.failures);
 
 	// Snapshot freshness. A broken cron produces NO signal, so staleness has to be an error eventually
@@ -2532,6 +2543,53 @@ export const EVIDENCE_DIRS = [
 /** Age limits, in days, measured back from the snapshot instant (docs/beta/README.md). */
 export const BETA_WINDOW_DAYS = { B2: 31, B4: 31, B7_DRILL: 45 };
 
+/** B7 off-box backup: the newest complete copy must be LESS than this many hours older than T. */
+export const BETA_B7_BACKUP_MAX_AGE_HOURS = 26;
+
+/**
+ * B7's "off-box backup" part, from the snapshot's `backup_status_observation` (BKP-L2, #7244).
+ *
+ * The observation is the newest result `.github/workflows/backup-status.yml` published from `main`,
+ * copied by programme-fetch.sh as `{run_id, event_name, head_branch, completed_at, result}`. The
+ * README's predicate is judged HERE, against the snapshot instant T, not read off the workflow's
+ * own verdict: a copy that was fresh when the 06:23 check ran can be more than 26 hours old at T,
+ * and T is what the predicate names. Pure — no wall clock — so the render stays byte-identical
+ * until the committed snapshot changes.
+ *
+ * @returns {{state: "met"|"unmet"|"unmeasured", why: string, integrityFailure: string|null}}
+ */
+export function deriveBackupFreshness(observation, snapshotAt) {
+	const said = (r, integrityFailure = null) => ({ ...r, integrityFailure });
+	if (observation === null || observation === undefined) {
+		return said(unmeasured("no backup-status.yml result in the snapshot (BKP-L2 runs it daily from `main`)"));
+	}
+	const run = `backup-status.yml run ${observation.run_id ?? "?"} at ${observation.completed_at ?? "?"}`;
+	if (observation.head_branch !== "main") {
+		return said(unmeasured(`${run} ran from \`${observation.head_branch}\`; only a run from \`main\` can read the store`), `backup-status observation is from branch ${observation.head_branch}, not main`);
+	}
+	const v = validateBackupStatus(observation.result);
+	if (!v.ok) return said(unmeasured(`${run} published a malformed result`), `backup-status observation is malformed: ${v.errors.join("; ")}`);
+	const r = observation.result;
+	if (r.runId !== String(observation.run_id)) return said(unmeasured(`${run} carries the result of run ${r.runId}`), "backup-status observation's run id disagrees with its result");
+	const at = instantMs(snapshotAt);
+	const completed = instantMs(observation.completed_at);
+	if (at === null || completed === null) return said(unmeasured(`${run}: there is no snapshot instant to measure the copy's age from`));
+	// The same grace, for the same reason, as the reaper's: derived_at is stamped at the top of a fetch
+	// that then walks many API calls, so a run finishing during the fetch is not a contradiction.
+	const GRACE_MS = 60 * 60_000;
+	if (completed > at + GRACE_MS) return said(unmeasured(`${run} cannot be reconciled with the snapshot`), "backup-status observation completed after its snapshot");
+	if (r.verdict === "not-configured") return said(unmeasured(`${run} measured nothing: ${r.reason}`));
+	if (r.verdict === "not-measured") return said(unmeasured(`${run} could not read the store: ${r.reason}`));
+	const finished = instantMs(r.finishedAt);
+	if (finished > at + GRACE_MS) return said(unmeasured(`${run} names a copy finished after the snapshot`), "backup-status observation names a copy finished after its snapshot");
+	const hours = Math.max(0, at - finished) / 3_600_000;
+	// Floored, so a met copy never prints as "26 h".
+	const age = `${Math.floor(hours * 10) / 10} h`;
+	return hours < BETA_B7_BACKUP_MAX_AGE_HOURS
+		? said(met(`newest complete copy \`${r.newest}\` finished ${r.finishedAt}, ${age} before ${snapshotAt} (${run})`))
+		: said(unmet(`newest complete copy \`${r.newest}\` finished ${r.finishedAt}, ${age} before ${snapshotAt} — not less than ${BETA_B7_BACKUP_MAX_AGE_HOURS} h (${run})`));
+}
+
 /** Unquote and type one YAML scalar of the small subset evidence records use. */
 function frontMatterScalar(raw) {
 	const v = raw.trim();
@@ -2750,7 +2808,7 @@ function foldStates(parts) {
  *   at: string | null,
  * }} input
  */
-export function deriveBeta({ spine, schema, tsCatalogText, records, bundles, paidMarketsText, launchText, legalSet, reaper, at }) {
+export function deriveBeta({ spine, schema, tsCatalogText, records, bundles, paidMarketsText, launchText, legalSet, reaper, backup = null, at }) {
 	const failures = [];
 	const clouds = spine.clouds;
 	const atMs = at === null ? null : instantMs(at);
@@ -2940,7 +2998,9 @@ export function deriveBeta({ spine, schema, tsCatalogText, records, bundles, pai
 
 	// ── B7: backup, drill, public hosts ──
 	{
-		const backup = unmeasured("no instrument reads the off-box backup listing yet (REL-L7 builds the job)");
+		// deriveBackupFreshness, computed in derive() from the snapshot; a fixture that passes none is
+		// testing something else and reads as unmeasured.
+		const offBox = backup === null ? unmeasured("no backup-status.yml result was passed in") : { state: backup.state, why: backup.why };
 		const d = newest((r) => r.predicate === "B7" && r.check === "restore-drill");
 		const drill = d === null
 			? unmet("no restore-drill record")
@@ -2952,7 +3012,7 @@ export function deriveBeta({ spine, schema, tsCatalogText, records, bundles, pai
 						? unmet(`newest pass ${recordRef(d)} is more than ${BETA_WINDOW_DAYS.B7_DRILL} days before ${atRef}`)
 						: met(`${recordRef(d)} · ${d.durationSeconds}s · tombstones replayed`);
 		const hosts = unmeasured("the post-deploy smoke result is not in the snapshot, and the installer and status hosts are not in the smoke yet (REL-L8)");
-		const parts = [part("off-box backup", backup), part("restore drill", drill), part("public hosts", hosts)];
+		const parts = [part("off-box backup", offBox), part("restore drill", drill), part("public hosts", hosts)];
 		out.B7 = { state: foldStates(parts), parts };
 	}
 
@@ -4925,6 +4985,46 @@ function runSelfTest() {
 		ok("beta fixture: a standing reaper result is not met", pick(sched, "B9").cells.south.state === "unmet");
 		const manual = deriveBeta(fx({ reaper: reaperObs("workflow_dispatch") }));
 		ok("beta fixture: a clean manual reaper dispatch does not count", pick(manual, "B9").parts.find((p) => p.label === "north reaper").state === "unmet");
+
+		// B7 off-box backup (BKP-L2): judged against T, from the snapshot's backup_status_observation.
+		ok("beta: the B7 backup threshold is the README's 26 hours", BETA_B7_BACKUP_MAX_AGE_HOURS === 26 && readme.includes("less than 26 hours older than *T*"));
+		ok("beta: the backup-status result format passes its own self-test", (() => {
+			try {
+				backupStatusSelfTest({ quiet: true });
+				return true;
+			} catch (e) {
+				console.error(String(e));
+				return false;
+			}
+		})());
+		const bsResult = (over = {}) => ({ schemaVersion: 1, check: "off-box-backup", verdict: "pass", reason: null, newest: "20261219T023000Z", finishedAt: "2026-12-19T02:41:07Z", ageSeconds: 13_313, maxAgeHours: 26, tombstonesExportedAt: null, checkedAt: "2026-12-19T06:23:00Z", runId: "77", event: "schedule", ...over });
+		const bsObs = (over = {}, result = {}) => ({ run_id: "77", event_name: "schedule", head_branch: "main", completed_at: "2026-12-19T06:24:00Z", result: bsResult(result), ...over });
+		const T = "2026-12-20T00:00:00Z";
+		const fresh = deriveBackupFreshness(bsObs(), T);
+		ok("B7 backup: a copy 21 h before T is met", fresh.state === "met" && fresh.integrityFailure === null && /21\.3 h/.test(fresh.why), fresh.why);
+		const atLimit = deriveBackupFreshness(bsObs({}, { finishedAt: "2026-12-18T22:00:00Z" }), T);
+		ok("B7 backup: exactly 26 h before T is NOT met (the README says less than)", atLimit.state === "unmet", atLimit.why);
+		const passedThenAged = deriveBackupFreshness(bsObs({ completed_at: "2026-12-17T06:24:00Z" }, { finishedAt: "2026-12-17T02:41:07Z", checkedAt: "2026-12-17T06:23:00Z" }), T);
+		ok("B7 backup: a pass from three days ago is not met at T — the age is measured at T, not at the check", passedThenAged.state === "unmet", passedThenAged.why);
+		ok("B7 backup: a fail verdict with an old copy is not met", deriveBackupFreshness(bsObs({}, { verdict: "fail", finishedAt: "2026-12-15T02:41:07Z", ageSeconds: 400_000 }), T).state === "unmet");
+		ok("B7 backup: no observation is not measured, never met", deriveBackupFreshness(null, T).state === "unmeasured");
+		const unconfigured = deriveBackupFreshness(bsObs({}, { verdict: "not-configured", reason: "repository variable(s) BACKUP_S3_BUCKET not set", newest: null, finishedAt: null, ageSeconds: null, maxAgeHours: null }), T);
+		ok("B7 backup: not-configured is not measured, with its reason", unconfigured.state === "unmeasured" && /BACKUP_S3_BUCKET/.test(unconfigured.why) && unconfigured.integrityFailure === null, unconfigured.why);
+		const unreadable = deriveBackupFreshness(bsObs({}, { verdict: "not-measured", reason: "latest.json could not be read", newest: null, finishedAt: null, ageSeconds: null, maxAgeHours: null }), T);
+		ok("B7 backup: an unreadable store is not measured — not 'no backup', not a pass", unreadable.state === "unmeasured" && /latest\.json/.test(unreadable.why));
+		const branch = deriveBackupFreshness(bsObs({ head_branch: "feat/x" }), T);
+		ok("B7 backup: a result from another branch is not evidence, and is named as an integrity notice", branch.state === "unmeasured" && branch.integrityFailure !== null);
+		const malformed = deriveBackupFreshness(bsObs({}, { bucket: "x" }), T);
+		ok("B7 backup: a malformed result is not measured with an integrity notice", malformed.state === "unmeasured" && malformed.integrityFailure !== null);
+		ok("B7 backup: a result whose run id disagrees with its run is refused", deriveBackupFreshness(bsObs({ run_id: "78" }), T).integrityFailure !== null);
+		ok("B7 backup: a run completed hours after T is refused", deriveBackupFreshness(bsObs({ completed_at: "2026-12-20T05:00:00Z" }), T).integrityFailure !== null);
+		ok("B7 backup: with no snapshot instant the age is not guessed", deriveBackupFreshness(bsObs(), null).state === "unmeasured");
+		const b7 = deriveBeta(fx({ backup: fresh }));
+		ok("beta fixture: the off-box backup part carries deriveBackupFreshness's verdict", pick(b7, "B7").parts.find((p) => p.label === "off-box backup").state === "met");
+		ok("beta fixture: ...and B7 stays unmet while the drill has no record", pick(b7, "B7").state === "unmet");
+		ok("beta fixture: no backup reading passed in leaves the part unmeasured", pick(clean, "B7").parts.find((p) => p.label === "off-box backup").state === "unmeasured");
+		const viaBoard = deriveBoard({ derived_at: T, backup_status_observation: bsObs() });
+		ok("board: backup_status_observation is read from the snapshot", viaBoard.backupStatusObservation?.run_id === "77" && deriveBoard(null).backupStatusObservation === null);
 
 		const rendered = renderBeta(sched);
 		ok("beta: the rendered section lists nine predicates and one row per scored cloud", (rendered.match(/^\| B\d \|/gm) ?? []).length === 9 && /\| \*\*north\*\* \|/.test(rendered) && /\| \*\*south\*\* \|/.test(rendered));

@@ -1,0 +1,237 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Off-box backup freshness (BKP-L2, #7244; beta predicate B7, "off-box backup").
+#
+# Once a day, from OFF the production box, ask the backup account whether last night's copy exists.
+# `deploy/prod/backup/backup.sh status` already answers that on the box, with the box's key; this
+# asks it again with a different identity, so a box that stopped backing up — or stopped existing —
+# cannot also be the thing that reports the backups are fine.
+#
+#   1. assume `backup-reader` (infra/backup-account/oidc.tf) over GitHub OIDC. It can read the
+#      pointer, the manifests and the tombstone pointer, and nothing else — never a data file.
+#   2. run `backup.sh status`: the newest COMPLETE copy and its age, against the 26-hour threshold
+#      the beta README sets for B7 (exit 0 fresh, 1 stale, 2 unreadable).
+#   3. publish the result as an artifact, `backup-status-result-<run id>`, holding only
+#      `backup-status.json` (scripts/backup-status-result.mjs decides its fields). The programme
+#      ledger's daily refresh (programme.yml → scripts/programme-fetch.sh) copies the newest one into
+#      the snapshot, and scripts/programme-rollup.mjs judges it against the snapshot instant.
+#   4. keep ONE tracking issue (label `tracker:backup-status`): opened — or the same issue reopened —
+#      and refreshed while the check is not passing, closed when it passes.
+#
+# CONFIGURATION is two repository variables, both outputs of infra/backup-account:
+#   BACKUP_READER_ROLE_ARN   ← reader_role_arn
+#   BACKUP_S3_BUCKET         ← bucket_name
+# and two optional ones with the stack's defaults: BACKUP_S3_REGION (eu-central-1), BACKUP_PREFIX
+# (alethia-prod). Nothing here hard-codes an account. While a required variable is unset the run
+# reports `not-configured`: a green run with a warning annotation and a step summary that names the
+# missing variables, and B7 renders "not measured" with that reason. It neither reds every morning
+# until the stack is applied nor passes about nothing.
+#
+# MAIN ONLY, by construction rather than by `if:`. backup-reader trusts exactly
+# `repo:<repo>:ref:refs/heads/main`, which a `schedule` run and a `workflow_dispatch` from main both
+# present. A dispatch from any other branch is recorded as `not-measured` without trying, and does
+# not touch the tracking issue. The checkout is unpinned on purpose: a schedule runs the default
+# branch's reviewed tree, which is what should hold a cloud identity
+# (scripts/check-scheduled-measurements.mjs).
+#
+# COST: zero. A handful of S3 GETs of small JSON files, inside the free tier; no instance, no spend.
+#
+# Never add `set -x` here: the status step holds a session credential.
+
+name: Backup status (off-box freshness)
+
+on:
+  schedule:
+    # 06:23 UTC: the nightly copy starts at 02:30 ±10 min and has hours to finish, and this lands
+    # before the programme ledger's 08:47 refresh so the same morning's reading reaches PROGRAMME.md.
+    # Off-minute per the repo's cron convention.
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-status
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    name: Read the newest off-box copy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # the OIDC token backup-reader is assumed with; this job holds no other write
+    outputs:
+      verdict: ${{ steps.result.outputs.verdict }}
+    env:
+      BACKUP_READER_ROLE_ARN: ${{ vars.BACKUP_READER_ROLE_ARN }}
+      BACKUP_S3_BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
+      BACKUP_S3_REGION: ${{ vars.BACKUP_S3_REGION || 'eu-central-1' }}
+      BACKUP_PREFIX: ${{ vars.BACKUP_PREFIX || 'alethia-prod' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Self-test the result format
+        run: node scripts/backup-status-result.mjs --self-test
+
+      - name: Is the monitor configured?
+        id: config
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "$BACKUP_READER_ROLE_ARN" ] || missing="$missing BACKUP_READER_ROLE_ARN"
+          [ -n "$BACKUP_S3_BUCKET" ] || missing="$missing BACKUP_S3_BUCKET"
+          missing="${missing# }"
+          echo "missing=$missing" >> "$GITHUB_OUTPUT"
+          if [ -n "$missing" ]; then
+            echo "::warning title=backup monitor not configured::repository variable(s) $missing not set — nothing was measured. Set them from infra/backup-account's outputs (reader_role_arn, bucket_name)."
+          fi
+
+      - name: Assume backup-reader
+        id: aws
+        if: steps.config.outputs.missing == '' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.BACKUP_READER_ROLE_ARN }}
+          role-session-name: backup-status-${{ github.run_id }}
+          role-duration-seconds: 900
+          aws-region: ${{ env.BACKUP_S3_REGION }}
+          mask-aws-account-id: true
+
+      # backup.sh is the box's own reader, run here with the reader's session. Its stdout is one JSON
+      # line; its stderr is discarded rather than logged, because an S3 error can quote the caller's
+      # ARN and this repository's logs are public.
+      - name: backup.sh status
+        id: status
+        if: steps.aws.outcome == 'success'
+        run: |
+          set -uo pipefail
+          rc=0
+          BACKUP_S3_PROVIDER=AWS \
+          BACKUP_S3_ENDPOINT="https://s3.${BACKUP_S3_REGION}.amazonaws.com" \
+          BACKUP_S3_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+          BACKUP_S3_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+          BACKUP_S3_SESSION_TOKEN="$AWS_SESSION_TOKEN" \
+            bash deploy/prod/backup/backup.sh status >"$RUNNER_TEMP/status.out" 2>/dev/null || rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "backup.sh status exited $rc"
+
+      - name: Compose the result
+        id: result
+        if: ${{ !cancelled() }}
+        env:
+          MISSING: ${{ steps.config.outputs.missing }}
+          ASSUMED: ${{ steps.aws.outcome }}
+          STATUS_RC: ${{ steps.status.outputs.rc }}
+          STATUS_FILE: ${{ steps.status.outputs.rc != '' && format('{0}/status.out', runner.temp) || '' }}
+        run: |
+          set -euo pipefail
+          verdict="$(node scripts/backup-status-result.mjs compose --out backup-status.json)"
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          {
+            echo '## Off-box backup freshness'
+            echo
+            echo "Verdict: **$verdict**"
+            echo
+            echo '```json'
+            cat backup-status.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the result
+        if: ${{ !cancelled() && steps.result.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: backup-status-result-${{ github.run_id }}
+          path: backup-status.json
+          if-no-files-found: error
+          retention-days: 30
+
+  tracker:
+    name: Upsert the backup status tracker
+    needs: measure
+    # A dispatch from another branch measured nothing by construction; it must not open an alarm.
+    if: ${{ !cancelled() && needs.measure.outputs.verdict != '' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write # the ONLY write this job holds
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      LABEL: tracker:backup-status
+      TITLE: "ops: the off-box backup freshness check is not passing (B7)"
+      VERDICT: ${{ needs.measure.outputs.verdict }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, reopen, update or close the tracking issue
+        run: |
+          set -euo pipefail
+          open="$(gh issue list --state open --label "$LABEL" --limit 100 --json number -q '.[].number')"
+          count="$(printf '%s' "$open" | grep -c . || true)"
+          if [ "${count:-0}" -gt 1 ]; then
+            echo "::error title=duplicate tracking issues::more than one open issue carries \`$LABEL\`: $(printf '%s' "$open" | tr '\n' ' ')— close all but one."
+            exit 1
+          fi
+          existing="$(printf '%s' "$open" | head -1)"
+          now="$(date -u +%Y-%m-%dT%H:%MZ)"
+
+          if [ "$VERDICT" = "pass" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "The newest off-box copy is fresh as of $now ($RUN_URL). Closing; the next run that does not pass reopens this issue."
+              echo "closed #$existing"
+            fi
+            exit 0
+          fi
+
+          # not-configured is reported where it already lives (the run's summary and B7's reason)
+          # rather than as an alarm, until something has been measured at least once: an issue that
+          # is open from the day the workflow lands until the stack is applied says nothing new. An
+          # issue that is ALREADY open is refreshed, so it never claims an older verdict.
+          if [ "$VERDICT" = "not-configured" ] && [ -z "$existing" ]; then
+            echo "not configured and no open tracker; nothing to update"
+            exit 0
+          fi
+
+          case "$VERDICT" in
+            fail) what="The newest complete off-box copy is older than the 26-hour threshold." ;;
+            not-measured) what="The check could not read the backup store, so nothing was measured. That is not the same as \"no backup\", and it is not a pass." ;;
+            not-configured) what="The monitor's repository variables are not set, so nothing was measured." ;;
+            *) what="Unexpected verdict." ;;
+          esac
+          # shellcheck disable=SC2016 # the backticks in the issue text are Markdown, not expansions
+          {
+            printf '**Verdict: `%s`** — %s\n\n' "$VERDICT" "$what"
+            printf 'The result (the stamp, age and threshold of the newest copy) is in the run summary: %s\n\n' "$RUN_URL"
+            printf 'What to do: `docs/ops/restore-runbook.md` ("Checking B7"); the workflow header in `.github/workflows/backup-status.yml` explains each verdict.\n\n'
+            printf '_Refreshed by `.github/workflows/backup-status.yml` on %s. It closes itself when the check passes, and this same issue is reopened if it stops passing again._\n' "$now"
+          } > body.md
+          if [ -z "$existing" ]; then
+            existing="$(gh api "repos/$GH_REPO/issues?state=closed&labels=$LABEL&sort=updated&direction=desc&per_page=1" --jq '.[0].number // ""')"
+            if [ -n "$existing" ]; then
+              gh issue reopen "$existing" --comment "Reopened by backup-status.yml at $now: the check returned \`$VERDICT\`."
+              echo "reopened #$existing"
+            fi
+          fi
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file body.md
+            echo "updated #$existing"
+          else
+            gh label create "$LABEL" --description "Upserted by backup-status.yml" --color BFD4F2 2>/dev/null || true
+            gh issue create --title "$TITLE" --label "wave:beta-release,$LABEL" --body-file body.md
+          fi
+
+      # The issue is the alarm a person reads; a red run is the one that reaches a notification. Both,
+      # for a measured failure and for a check that could not look. not-configured stays green (see
+      # the header).
+      - name: Fail the run when the check did not pass
+        if: needs.measure.outputs.verdict == 'fail' || needs.measure.outputs.verdict == 'not-measured'
+        run: |
+          echo "::error title=off-box backup::verdict ${VERDICT} — see the run summary and the tracker issue"
+          exit 1
