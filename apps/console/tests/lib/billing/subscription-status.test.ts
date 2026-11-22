@@ -40,6 +40,8 @@ const DELIBERATELY_DIFFERENT: Readonly<Record<string, string>> = {
 		"STORED_LIVE_STATUSES: our billing row's `billing_status`, where mapStatus folds `unpaid` into `past_due`.",
 	"lib/billing/queries.ts: active,trialing,past_due":
 		"LIVE_STATUSES: our billing row's `billing_status`, the statuses under which a subscription holds the row.",
+	"lib/org/deletion-teardown.ts: trialing,active,past_due":
+		"LIVE_SUBSCRIPTION: our billing row's `billing_status` values under which a deleted org's subscription is still charged (or will be, at a trial's end) and must be cancelled.",
 	"lib/db/schema/enums.ts: none,trialing,active,past_due,canceled":
 		"the `billing_status` enum itself: every value the row can hold, not a live set.",
 	"scripts/set-org-plan.mjs: none,trialing,active,past_due,canceled":

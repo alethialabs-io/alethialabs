@@ -7,7 +7,7 @@
 // the columns the staff queries read, mirroring the physical schema
 // (apps/console/lib/db/schema/{organizations,auth}.ts). No migrations are generated here.
 
-import { bigint, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { bigint, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /** Owning organization of a support case — name + slug for the staff list/detail. */
 export const organization = pgTable("organization", {
@@ -69,4 +69,46 @@ export const member = pgTable("member", {
 	userId: uuid().notNull(),
 	role: text().notNull(),
 	createdAt: timestamp({ withTimezone: true }),
+});
+
+/**
+ * The console-owned suppression list (apps/console/lib/db/schema/email.ts) — addresses that hard-
+ * bounced or complained. Read here so staff-driven customer email skips them exactly as the
+ * console's own senders do (lib/email.ts). Read-only; the SES webhook in the console writes it.
+ */
+export const emailSuppression = pgTable("email_suppression", {
+	email: text().primaryKey(),
+});
+
+/**
+ * The console-owned privacy case (apps/console/lib/db/schema/privacy.ts), for the staff privacy
+ * queue. READ-ONLY here: every decision on a case goes through the console's platform route
+ * (`/api/internal/platform/privacy`), which records it in the case's append-only ledger.
+ */
+export const privacyCase = pgTable("privacy_case", {
+	id: uuid().primaryKey().defaultRandom(),
+	reference: text().notNull().unique(),
+	kind: text().notNull(),
+	state: text().notNull(),
+	subjectUserId: uuid(),
+	organizationId: uuid(),
+	receivedAt: timestamp({ withTimezone: true }).notNull(),
+	dueAt: timestamp({ withTimezone: true }).notNull(),
+	extendedAt: timestamp({ withTimezone: true }),
+	identityVerifiedAt: timestamp({ withTimezone: true }),
+	legalHoldReason: text(),
+	decidedAt: timestamp({ withTimezone: true }),
+	refusalReason: text(),
+	scheduledFor: timestamp({ withTimezone: true }),
+	exportExpiresAt: timestamp({ withTimezone: true }),
+});
+
+/** A privacy case's append-only ledger (console-owned), for the queue's case history. */
+export const privacyCaseEvent = pgTable("privacy_case_event", {
+	id: uuid().primaryKey().defaultRandom(),
+	caseId: uuid().notNull(),
+	kind: text().notNull(),
+	at: timestamp({ withTimezone: true }).notNull(),
+	actorUserId: uuid(),
+	detail: jsonb().$type<{ summary: string }>().notNull(),
 });

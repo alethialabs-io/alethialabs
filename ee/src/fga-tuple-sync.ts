@@ -592,6 +592,43 @@ export class FgaTupleSync implements TupleSync {
 		}
 	}
 
+	/**
+	 * Deletes every tuple naming `user:<userId>` as its subject, across every type the model has a
+	 * user relation on: `org`, `team`, and each per-instance type. OpenFGA's Read needs at least an
+	 * object TYPE beside a user filter, which is why it is one walk per type rather than one read.
+	 * Called after an account erasure commits — the account's grant rows are erased in the same
+	 * transaction, so `backfill` will not write these back.
+	 */
+	async removeUserTuples(userId: string): Promise<void> {
+		const user = `user:${userId}`;
+		for (const type of ["org", "team", ...this.core.fga.instanceTypes]) {
+			await this.deleteTuples(await readAllTuples(this.client, { user, object: `${type}:` }));
+		}
+	}
+
+	/**
+	 * Deletes a deleted org's tuples: every tuple ON `org:<orgId>` (grants of every member and
+	 * team), every tuple on each of `teamIds`' team objects, and — for each per-instance object
+	 * whose `parent` tuple names the org — that object's tuples, the `parent` tuple included.
+	 */
+	async removeOrgTuples(orgId: string, teamIds: readonly string[]): Promise<void> {
+		const org = `org:${orgId}`;
+		await this.deleteTuples(await readAllTuples(this.client, { object: org }));
+		for (const teamId of teamIds) {
+			await this.deleteTuples(await readAllTuples(this.client, { object: `team:${teamId}` }));
+		}
+		for (const type of this.core.fga.instanceTypes) {
+			const parents = await readAllTuples(this.client, {
+				user: org,
+				relation: "parent",
+				object: `${type}:`,
+			});
+			for (const object of new Set(parents.map((t) => t.object))) {
+				await this.deleteTuples(await readAllTuples(this.client, { object }));
+			}
+		}
+	}
+
 	async backfill(): Promise<void> {
 		// 1. Write (or refresh) the authorization model.
 		await this.client.writeAuthorizationModel(this.core.fga.buildModel());

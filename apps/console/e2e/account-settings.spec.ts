@@ -9,24 +9,14 @@
 //   · the dialog reads the SESSION (email, provider badges, the dirty-gated Save), so a broken
 //     session read (`useViewer()`) shows up as a dialog full of "Not set" rather than as a green
 //     render;
-//   · "Request deletion" OPENS AN ERASURE REQUEST AND DELETES NOTHING (#4273, ruled 2026-09-18) —
-//     see the note at its call site. So the spec proves both halves: the control asks first and
-//     Cancel leaves no trace, and confirming opens a request with a `DSR-` reference while the
-//     account and its session survive. A second confirmation returns the SAME reference rather
-//     than opening a second case. If the erasure executor (#4854) ever lands behind this button,
-//     the "session survives" assertion is the one that has to move, and it will fail first.
-//
-// A confirmed press has TWO correct outcomes, and which one a run sees is decided by the deployment,
-// not by the test (#4875). A deployment with a privacy inbox — the hosted service, or any with
-// `PRIVACY_EMAIL` set — opens a case and emails it there. A self-managed deployment with no
-// `PRIVACY_EMAIL` opens nothing and says so, because a case nobody is told about is the defect. The
-// release gate's legs are self-managed and set no `PRIVACY_EMAIL`, so they see the second; a sandbox
-// env is hosted and sees the first. The test reads the outcome from the toast and holds each branch
-// to its own assertions. What it cannot catch is a deployment that SHOULD route and does not — that
-// is pinned by `tests/actions/privacy-self-serve.test.ts`, not here.
+//   · "Delete account" SCHEDULES the account's deletion 14 days out behind a TYPED confirmation (the
+//     maintainer's decision: an automatic erasure after a grace period; lib/privacy/self-deletion.ts).
+//     So the spec proves both halves: the control asks first, the confirm button stays disabled
+//     until the address is typed, and Cancel leaves the account and its session alone; confirming
+//     signs the account out everywhere, which is what makes "sign in again to cancel" true.
 //
 // Confirming is safe here and nowhere else: every test signs up its own throwaway account, so the
-// request it opens is about a user no other test uses. `audit/destructive.spec.ts` only ever
+// deletion it schedules is of a user no other test uses. `audit/destructive.spec.ts` only ever
 // cancels, and the production pass never opens this control at all (`prod-qa: skip`).
 //
 // `console` project, not `qa`: this spec drives its own email-OTP signup through
@@ -80,35 +70,33 @@ test.describe("Account settings dialog", () => {
 		await expect(save).toBeEnabled();
 	});
 
-	// ── Request deletion: an erasure REQUEST, never a deletion (#4273) ─────────────────────────
+	// ── Delete account: scheduled, 14 days out, behind a typed confirmation ───────────────────
 
-	test("Request deletion asks first, and Cancel opens nothing and ends no session", async ({
+	test("Delete account asks first with a typed confirmation, and Cancel deletes nothing and ends no session", async ({
 		authedPage: page,
 	}) => {
 		const dialog = await openAccountSettings(page);
 		const emailBefore = await dialog.locator("#account-email").inputValue();
 		expect(emailBefore).toMatch(/.+@.+/);
 
-		// The copy promises a request, not a deletion. The old copy said "permanently deleted",
-		// which is the claim the ruling forbids while nothing is deleted.
-		await expect(dialog.getByText(/opens an erasure request/i)).toBeVisible();
-		await expect(dialog.getByText(/permanently deleted/i)).toHaveCount(0);
+		// The copy states the grace period, and how to cancel.
+		await expect(dialog.getByText(/runs 14 days after you confirm/i)).toBeVisible();
 
-		await dialog.getByRole("button", { name: /^request deletion$/i }).click();
+		await dialog.getByRole("button", { name: /^delete account$/i }).click();
 
 		// Matched by the alert-dialog PRIMITIVE, never by role=dialog: the settings dialog is
 		// itself a role=dialog, so a role=dialog match could report the surface under test as
 		// the confirmation.
 		const confirmation = page.locator('[data-slot="alert-dialog-content"], [role="alertdialog"]').first();
 		await expect(confirmation).toBeVisible();
-		await expect(confirmation).toContainText(/request deletion of your account\?/i);
-		await expect(confirmation).toContainText(emailBefore);
-		await expect(confirmation).toContainText(/nothing is deleted now/i);
-		await expect(confirmation.getByRole("button", { name: /open erasure request/i })).toBeVisible();
+		await expect(confirmation).toContainText(/delete your account\?/i);
+		await expect(confirmation).toContainText(/deleted in 14 days/i);
+		// Typed: the destructive button is disabled until the address is typed.
+		const schedule = confirmation.getByRole("button", { name: /schedule deletion/i });
+		await expect(schedule).toBeDisabled();
 
 		await confirmation.getByRole("button", { name: /^cancel$/i }).click();
 		await expect(confirmation).toBeHidden();
-		await expect(page.getByText(/DSR-[0-9A-F]{8}/)).toHaveCount(0);
 
 		// And the ACCOUNT survives: a reload still finds an authenticated console.
 		await page.reload();
@@ -116,50 +104,20 @@ test.describe("Account settings dialog", () => {
 		await expect(page.getByRole("button", { name: /account menu/i })).toBeVisible();
 	});
 
-	test("confirming opens ONE erasure request, or none when no privacy contact is set, and the account survives it", async ({
+	test("confirming schedules the deletion and signs the account out everywhere", async ({
 		authedPage: page,
 	}) => {
-		const OPENED = /erasure request DSR-[0-9A-F]{8} opened\. nothing has been deleted yet — the request was sent to the privacy team/i;
-		const NO_CONTACT = /no request was opened: this deployment has no privacy contact configured/i;
+		const dialog = await openAccountSettings(page);
+		const email = await dialog.locator("#account-email").inputValue();
+		await dialog.getByRole("button", { name: /^delete account$/i }).click();
+		const confirmation = page.locator('[data-slot="alert-dialog-content"], [role="alertdialog"]').first();
+		await expect(confirmation).toBeVisible({ timeout: 15_000 });
+		await confirmation.getByRole("textbox").fill(email);
+		await confirmation.getByRole("button", { name: /schedule deletion/i }).click();
 
-		/** Opens the settings, presses Request deletion, confirms, and returns the toast's text. */
-		async function confirmRequest(expected: RegExp): Promise<string> {
-			const dialog = await openAccountSettings(page);
-			await dialog.getByRole("button", { name: /^request deletion$/i }).click();
-			const confirmation = page.locator('[data-slot="alert-dialog-content"], [role="alertdialog"]').first();
-			await expect(confirmation).toContainText(/sends it to the privacy team/i);
-			await confirmation.getByRole("button", { name: /open erasure request/i }).click();
-			const toast = page.getByText(expected).first();
-			await expect(toast).toBeVisible({ timeout: 15_000 });
-			return (await toast.textContent()) ?? "";
-		}
-
-		/** The account is intact: a reload still finds an authenticated console. */
-		async function expectSessionSurvives(): Promise<void> {
-			await page.reload();
-			await expect(page).not.toHaveURL(/\/login/);
-			await expect(page.getByRole("button", { name: /account menu/i })).toBeVisible();
-		}
-
-		// One regex that matches EITHER outcome, so the wait is on the toast and not on a guess.
-		const firstText = await confirmRequest(new RegExp(`${OPENED.source}|${NO_CONTACT.source}`, "i"));
-
-		if (NO_CONTACT.test(firstText)) {
-			// Nobody would be told, so nothing was opened: no reference was ever handed out.
-			expect(firstText).not.toMatch(/DSR-/);
-			await expectSessionSurvives();
-			// And a second press says the same thing — there is no case for it to find.
-			const again = await confirmRequest(NO_CONTACT);
-			expect(again).not.toMatch(/DSR-/);
-			return;
-		}
-
-		const first = firstText.match(/DSR-[0-9A-F]{8}/)?.[0];
-		expect(first, "the toast should quote the request's DSR- reference").toBeTruthy();
-		await expectSessionSurvives();
-
-		// A second press while the first is open returns the SAME case, not a second one.
-		const secondText = await confirmRequest(/you already have an open erasure request \(DSR-[0-9A-F]{8}\)/i);
-		expect(secondText.match(/DSR-[0-9A-F]{8}/)?.[0]).toBe(first);
+		// Every session was revoked: the browser lands on sign-in, and a reload stays there.
+		await expect(page).toHaveURL(/\/login/, { timeout: 15_000 });
+		await page.goto("/dashboard");
+		await expect(page).toHaveURL(/\/login/);
 	});
 });

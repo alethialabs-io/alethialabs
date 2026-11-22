@@ -43,6 +43,10 @@ const STATIC_RESERVED_SLUGS = [
 	"onboarding",
 	"signup",
 	"sso",
+	// The privacy and email pages a message links to: `/account/deletion` (cancel a scheduled
+	// account deletion) and `/email/unsubscribe` + `/email/preferences`.
+	"account",
+	"email",
 	// Next metadata convention routes are static top-level paths too. Keep these reserved so
 	// an organization cannot be minted with a slug that shadows the metadata asset.
 	"icon",

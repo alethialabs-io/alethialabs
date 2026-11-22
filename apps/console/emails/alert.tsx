@@ -13,6 +13,8 @@ interface AlertEmailProps {
 	context: AlertEventContext;
 	/** Human label for the event type, e.g. "Deploy failed". */
 	eventLabel: string;
+	/** A page where this recipient can stop this channel's alerts, when the sender minted one. */
+	unsubscribeUrl?: string;
 }
 
 /** A single field row in the detail block. */
@@ -35,12 +37,25 @@ function Detail({ label, value }: { label: string; value?: string }) {
 }
 
 /** Alert notification email — fired by an alert rule via the email channel. */
-export function AlertEmail({ context, eventLabel }: AlertEmailProps) {
+export function AlertEmail({ context, eventLabel, unsubscribeUrl }: AlertEmailProps) {
 	const severity = (context.severity ?? "warning").toUpperCase();
 	return (
 		<EmailLayout
 			preview={context.title}
-			legal={`You receive this because an Alethia alert rule routes ${eventLabel} to this address.`}
+			legal={
+				<>
+					You receive this because an Alethia alert rule routes {eventLabel} to this address.
+					{unsubscribeUrl ? (
+						<>
+							{" "}
+							<a href={unsubscribeUrl} style={{ color: colors.textTertiary }}>
+								Stop these alerts
+							</a>
+							.
+						</>
+					) : null}
+				</>
+			}
 		>
 			<Text style={text.eyebrow}>
 				{severity} · {eventLabel}

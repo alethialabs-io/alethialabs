@@ -460,11 +460,11 @@ test.describe("Account settings dialog (owner)", () => {
 			await expect(dialog.getByLabel(/display name/i)).toBeVisible({ timeout: 15_000 });
 			// The email input is read-only (immutable after registration).
 			await expect(dialog.getByLabel("Email", { exact: true })).toBeDisabled();
-			// The danger zone's control REQUESTS deletion — it opens an erasure request, and the
-			// copy says so (#4273). A "Delete account" name would promise what the click does not do.
-			await expect(
-				dialog.getByRole("button", { name: /^request deletion$/i }),
-			).toBeVisible();
+			// The danger zone's control schedules the account's deletion after a 14-day grace period,
+			// and the copy says so; "Download my data" sits beside it.
+			await expect(dialog.getByRole("button", { name: /^delete account$/i })).toBeVisible();
+			await expect(dialog.getByText(/runs 14 days after you confirm/i)).toBeVisible();
+			await expect(dialog.getByRole("button", { name: /download my data/i })).toBeVisible();
 		},
 	);
 });

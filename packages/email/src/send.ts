@@ -84,6 +84,24 @@ export interface SendEmailArgs {
 	/** Files to attach. When present the email is sent as raw MIME (multipart)
 	 * instead of the simple HTML path — used for invoice/receipt PDFs. */
 	attachments?: EmailAttachment[];
+	/** Extra message headers, e.g. {@link listUnsubscribeHeaders}. Carried by every
+	 * provider: SES (Simple and Raw), Resend and SMTP. */
+	headers?: Record<string, string>;
+}
+
+/**
+ * The RFC 2369 `List-Unsubscribe` header and its RFC 8058 one-click companion.
+ *
+ * `url` must be an https URL that unsubscribes the recipient when it receives a POST with the body
+ * `List-Unsubscribe=One-Click` — no sign-in, no confirmation page — because that is what a mail
+ * client sends when the person presses its own "Unsubscribe" button. A GET to the same URL must NOT
+ * unsubscribe: link scanners fetch every URL in a message.
+ */
+export function listUnsubscribeHeaders(url: string): Record<string, string> {
+	return {
+		"List-Unsubscribe": `<${url}>`,
+		"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+	};
 }
 
 /** The rendered, provider-agnostic message a transport sends. */
@@ -93,6 +111,7 @@ interface RenderedMessage {
 	cc?: string[];
 	subject: string;
 	html: string;
+	headers?: Record<string, string>;
 }
 
 /**
@@ -107,6 +126,7 @@ async function buildRawMime(args: {
 	cc?: string[];
 	subject: string;
 	html: string;
+	headers?: Record<string, string>;
 	attachments: EmailAttachment[];
 }): Promise<Uint8Array> {
 	const mail = new MailComposer({
@@ -115,6 +135,7 @@ async function buildRawMime(args: {
 		...(args.cc?.length ? { cc: args.cc } : {}),
 		subject: args.subject,
 		html: args.html,
+		...(args.headers ? { headers: args.headers } : {}),
 		attachments: args.attachments.map((a) => ({
 			filename: a.filename,
 			content: Buffer.from(a.content),
@@ -143,6 +164,7 @@ async function sendViaResend(
 		...(msg.cc?.length ? { cc: msg.cc } : {}),
 		subject: msg.subject,
 		html: msg.html,
+		...(msg.headers ? { headers: msg.headers } : {}),
 		...(attachments?.length
 			? {
 					attachments: attachments.map((a) => ({
@@ -170,6 +192,7 @@ async function sendViaSmtp(
 		...(msg.cc?.length ? { cc: msg.cc } : {}),
 		subject: msg.subject,
 		html: msg.html,
+		...(msg.headers ? { headers: msg.headers } : {}),
 		...(attachments?.length
 			? {
 					attachments: attachments.map((a) => ({
@@ -189,7 +212,7 @@ async function sendViaSes(
 	configurationSetName: string | undefined,
 	attachments: EmailAttachment[] | undefined,
 ): Promise<void> {
-	const { from, to, cc, subject, html } = msg;
+	const { from, to, cc, subject, html, headers } = msg;
 	// With attachments we must send raw MIME (SES Simple content can't carry
 	// files); without, the simpler Simple path keeps existing sends unchanged.
 	const command =
@@ -211,6 +234,7 @@ async function sendViaSes(
 								cc,
 								subject,
 								html,
+								headers,
 								attachments,
 							}),
 						},
@@ -229,6 +253,14 @@ async function sendViaSes(
 						Simple: {
 							Subject: { Data: subject, Charset: "UTF-8" },
 							Body: { Html: { Data: html, Charset: "UTF-8" } },
+							...(headers
+								? {
+										Headers: Object.entries(headers).map(([Name, Value]) => ({
+											Name,
+											Value,
+										})),
+									}
+								: {}),
 						},
 					},
 				});
@@ -251,6 +283,7 @@ export async function sendEmail({
 	configurationSetName,
 	devLog,
 	attachments,
+	headers,
 }: SendEmailArgs): Promise<void> {
 	const config = getEmailConfig();
 
@@ -265,7 +298,7 @@ export async function sendEmail({
 	}
 
 	const html = await render(react);
-	const msg: RenderedMessage = { from, to, cc, subject, html };
+	const msg: RenderedMessage = { from, to, cc, subject, html, headers };
 
 	try {
 		switch (config.provider) {

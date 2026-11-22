@@ -2721,6 +2721,12 @@ ALTER TABLE public.privacy_case ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.privacy_case_event ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.privacy_erasure_tombstone ENABLE ROW LEVEL SECURITY;
 
+-- email_preference holds what an ADDRESS asked for per mail category (an unsubscribe, a
+-- preference toggle). Service-role only for the same reason as the privacy tables: the
+-- one-click unsubscribe arrives with no session at all, and the preferences page reads the
+-- signed-in account's own address through a reviewed server action, never through the app role.
+ALTER TABLE public.email_preference ENABLE ROW LEVEL SECURITY;
+
 -- privacy_case_event is APPEND-ONLY, absolutely.
 --
 -- Unlike authz_activity_log there is no legitimate deleter: the ledger is the evidence that

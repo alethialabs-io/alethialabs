@@ -48,6 +48,7 @@ import { getOpenFgaConfig, isOpenFgaEnabled } from "@/lib/config/openfga";
 import { getServiceDb } from "@/lib/db";
 import { sendInviteEmail } from "@/lib/email/notify-email";
 import { isMember } from "@/lib/platform/provision";
+import { finishOrgDeletion, snapshotOrgForDeletion } from "@/lib/org/deletion-teardown";
 import { reservedOrgSlugRefusal } from "@/lib/routing";
 import { orgSlugShapeRefusal } from "@repo/org-slug";
 import {
@@ -170,6 +171,17 @@ export interface CoreContext {
    * can still short-circuit to an instance-wide grant.)
    */
   resolveOrgEntitlements: typeof resolveOrgEntitlements;
+  /**
+   * The two halves of an organization's deletion that Postgres's cascade cannot do
+   * (lib/org/deletion-teardown.ts): `snapshot` reads, BEFORE the delete, what the cascade would
+   * take with it (team ids, members to email, the live subscription); `finish` cancels the
+   * subscription and emails the members AFTER it. Injected so the organization plugin's delete
+   * hooks run them without ee/ importing core billing or email.
+   */
+  orgDeletion: {
+    snapshot: typeof snapshotOrgForDeletion;
+    finish: typeof finishOrgDeletion;
+  };
   fga: {
     buildModel: typeof buildAuthorizationModel;
     expandGrant: typeof expandGrant;
@@ -332,6 +344,7 @@ function loadEnterprise(): void {
       emitAlertEvent: emitAlertEventSafe,
       recordActivity,
       resolveOrgEntitlements,
+      orgDeletion: { snapshot: snapshotOrgForDeletion, finish: finishOrgDeletion },
       fga: {
         buildModel: buildAuthorizationModel,
         expandGrant,

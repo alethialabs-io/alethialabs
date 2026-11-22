@@ -18,13 +18,34 @@ export default function PrivacyRequestsPage() {
 	);
 
 	return (
-		<LegalShell title="Privacy requests" lastUpdated="July 29, 2026">
+		<LegalShell title="Privacy requests" lastUpdated="November 21, 2026">
 			<p>
 				Use this channel to request access, correction, deletion, restriction,
 				portability, or objection; withdraw consent; or ask a privacy question. You
-				can change analytics and replay consent immediately with the{" "}
+				can change analytics consent immediately with the{" "}
 				<strong>Privacy settings</strong> control in the site footer.
 			</p>
+
+			<h2>Do it yourself from your account</h2>
+			<p>
+				If you have an Alethia account, two requests need no email. In the console,
+				open <strong>Account settings</strong> from the account menu:
+			</p>
+			<ul>
+				<li>
+					<strong>Download my data</strong> emails you a link to a JSON file with
+					the personal data your account holds and a signed manifest listing every
+					part. The link works for 72 hours, and only while you are signed in.
+				</li>
+				<li>
+					<strong>Delete account</strong> deletes your account and the personal data
+					tied to it 14 days after you confirm. You are signed out, and signing in
+					again before then, or the link in the confirmation email, cancels the
+					deletion. Before it runs we tell you if something must be handled first,
+					such as an environment that is still running or a team you are the only
+					owner of.
+				</li>
+			</ul>
 
 			<h2>1. Send the request</h2>
 			<p>

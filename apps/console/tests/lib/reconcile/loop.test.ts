@@ -22,6 +22,12 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/elench/drafts-sweep", () => ({
 	sweepElenchDrafts: vi.fn(async () => ({ settled: 0, settleFailed: 0, discardedDeleted: 0, staleDeleted: 0 })),
 }));
+vi.mock("@/lib/privacy/sweep", () => ({
+	runPrivacySweep: vi.fn(async () => ({ reminded: 0, erased: 0, refused: 0, failed: 0, exportsExpired: 0 })),
+}));
+vi.mock("@/lib/retention/support-correspondence", () => ({
+	gcSupportCorrespondence: vi.fn(async () => ({ deleted: 0 })),
+}));
 vi.mock("@/lib/reconcile/gc", () => ({
 	gcJobLogs: vi.fn(async () => ({ deleted: 0 })),
 	gcFleetActions: vi.fn(async () => ({ deleted: 0 })),
@@ -35,6 +41,8 @@ import {
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
 import { sweepElenchDrafts } from "@/lib/elench/drafts-sweep";
+import { runPrivacySweep } from "@/lib/privacy/sweep";
+import { gcSupportCorrespondence } from "@/lib/retention/support-correspondence";
 import { sweepExpiredKubeconfigMints } from "@/lib/kubeconfig-mint/sweep";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
 import { sweepExpiredRateLimitBuckets } from "@/lib/rate-limit";
@@ -94,6 +102,8 @@ describe("tick — fan-out", () => {
 		expect(sweepExpiredKubeconfigMints).toHaveBeenCalledTimes(1);
 		expect(sweepExpiredRateLimitBuckets).toHaveBeenCalledTimes(1);
 		expect(sweepElenchDrafts).toHaveBeenCalledTimes(1);
+		expect(runPrivacySweep).toHaveBeenCalledTimes(1);
+		expect(gcSupportCorrespondence).toHaveBeenCalledTimes(1);
 		// Each ran under a heartbeat.
 		const tasks = getHeartbeats().map((h) => h.task).sort();
 		expect(tasks).toEqual([
@@ -104,7 +114,9 @@ describe("tick — fan-out", () => {
 			"gc-authz-activity",
 			"gc-fleet-actions",
 			"gc-job-logs",
+			"gc-support-correspondence",
 			"kubeconfig-mint-sweep",
+			"privacy-sweep",
 			"probe-schedule",
 			"rate-limit-sweep",
 			"release-ai-holds",
@@ -140,6 +152,9 @@ describe("tick — fan-out", () => {
 		expect(gcFleetActions).not.toHaveBeenCalled();
 		// Draft retention is counted in days: the sweep is daily.
 		expect(sweepElenchDrafts).not.toHaveBeenCalled();
+		// The privacy sweep (15m) and the support-correspondence GC (24h) are cold too.
+		expect(runPrivacySweep).not.toHaveBeenCalled();
+		expect(gcSupportCorrespondence).not.toHaveBeenCalled();
 	});
 
 	it("runs the drafts sweep again only once a day has passed", async () => {
