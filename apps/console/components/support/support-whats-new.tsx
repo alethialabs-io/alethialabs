@@ -45,14 +45,15 @@ export function SupportWhatsNew() {
 				/>
 				<div className="flex flex-wrap gap-3">
 					{/* Each is a site of its own (the news app, the docs app, the status page), so each
-					    opens in a new tab and says so — the console stays where it was (G-17). */}
+					    opens in a new tab and says so — the console stays where it was (G-17). `relative` keeps
+					    the sr-only note inside its link, so it cannot make the document scroll (audit R3). */}
 					{links.map(({ label, href, icon: Icon }) => (
 						<a
 							key={label}
 							href={href}
 							target="_blank"
 							rel="noopener noreferrer"
-							className="inline-flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium transition-colors hover:border-foreground/20 hover:bg-muted"
+							className="relative inline-flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium transition-colors hover:border-foreground/20 hover:bg-muted"
 						>
 							<Icon className="size-[15px] text-muted-foreground" />
 							{label}

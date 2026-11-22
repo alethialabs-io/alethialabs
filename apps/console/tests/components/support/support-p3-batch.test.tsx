@@ -70,7 +70,9 @@ describe("support hub links (G-17)", () => {
 
 	it("every what's-new link opens in a new tab and says so", () => {
 		const { container } = render(<SupportWhatsNew />);
-		expect(within(container).getAllByRole("link").length).toBe(3);
+		// News and Documentation always; the status chip only when a status URL is configured
+		// (support-whats-new.test.ts covers that branch).
+		expect(within(container).getAllByRole("link").length).toBeGreaterThanOrEqual(2);
 		expect(sameTabLinks(container)).toEqual([]);
 	});
 });

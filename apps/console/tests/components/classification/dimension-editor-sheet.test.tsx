@@ -133,7 +133,9 @@ describe("DimensionEditorSheet", () => {
 		it("picking a template makes Cancel ask first", async () => {
 			const user = userEvent.setup();
 			const onOpenChange = renderWithSpy();
-			await user.click(screen.getByRole("button", { name: "Environment" }));
+			// "Environment" is also an "Applies to" kind, so the template is found inside its group.
+			const templates = screen.getByRole("group", { name: "Start from a template" });
+			await user.click(within(templates).getByRole("button", { name: "Environment" }));
 			await user.click(screen.getByRole("button", { name: "Cancel" }));
 			expect(await screen.findByText("Discard your changes?")).toBeInTheDocument();
 			expect(onOpenChange).not.toHaveBeenCalled();

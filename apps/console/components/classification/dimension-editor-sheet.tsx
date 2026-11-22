@@ -308,11 +308,14 @@ export function DimensionEditorSheet({
 										optional
 									</span>
 								</div>
-								<div className="flex flex-wrap gap-1.5">
+								{/* Named as a group: a template and an "Applies to" kind can share a label
+								    ("Environment"), and the group is what tells them apart to a screen reader. */}
+								<div role="group" aria-label="Start from a template" className="flex flex-wrap gap-1.5">
 									{CLASSIFICATION_TEMPLATES.map((t) => (
 										<button
 											key={t.key}
 											type="button"
+											aria-pressed={templateKey === t.key}
 											onClick={() =>
 												templateKey === t.key ? clearTemplate() : applyTemplate(t)
 											}

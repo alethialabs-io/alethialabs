@@ -170,7 +170,9 @@ export function ValueEditor({
 					</DialogTitle>
 				</DialogHeader>
 
-				<form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+				{/* noValidate: the number field's native min/max would otherwise stop the submit with the
+				    browser's own bubble before the schema runs, so the field's message never showed (F-17). */}
+				<form noValidate onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
 					<div className="flex gap-3">
 						<div className="flex-1">
 							<label htmlFor={labelFieldId} className="mb-1.5 block text-xs font-medium">

@@ -94,13 +94,15 @@ export function SupportBrowseTopics() {
 						<div className="flex flex-col gap-2.5">
 							{topic.items.map((item) => (
 								// The documentation is its own site: it opens in a new tab, says so, and
-								// leaves the console where it was (G-17).
+								// leaves the console where it was (G-17). `relative` holds the absolutely
+								// positioned sr-only note inside the link; without it the note escaped <main>'s
+								// scroll box and made the whole document scroll (audit R3).
 								<a
 									key={item.href}
 									href={item.href}
 									target="_blank"
 									rel="noopener noreferrer"
-									className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+									className="relative inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
 								>
 									{item.label}
 									<ArrowUpRight aria-hidden className="size-3.5" />

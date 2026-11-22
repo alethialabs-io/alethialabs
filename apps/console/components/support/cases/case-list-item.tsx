@@ -45,7 +45,7 @@ export function CaseListItem({
 		>
 			{/* Unread indicator — a single dot, no colour, and the word for a screen reader (G-23). */}
 			<span
-				className="mt-1.5 flex size-2 shrink-0 items-center justify-center"
+				className="relative mt-1.5 flex size-2 shrink-0 items-center justify-center"
 				aria-hidden={!item.unread}
 			>
 				{item.unread && (
