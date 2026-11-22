@@ -16,7 +16,7 @@
 #
 # WHY NOT WRANGLER. Two owners for one script is the failure infra/e2e-issuer's header warns about.
 # `cloudflare_workers_script` takes the bundle as a file, so the only thing OpenTofu cannot do is
-# bundle TypeScript — `pnpm -F @repo/status build` does that, before the plan.
+# bundle TypeScript — `pnpm -C packages/status run build` does that, before the plan.
 #
 # PROD ONLY. There is no staging status page: a second page reporting an environment no customer
 # reads dilutes the one that matters.
@@ -107,7 +107,7 @@ resource "cloudflare_workers_script" "status" {
   lifecycle {
     precondition {
       condition     = local.bundle_exists && local.bundle_size > 0
-      error_message = "The Worker bundle at ${local.bundle_path} is missing or empty. Cloudflare accepts an empty script and then serves errors, so this fails at plan time instead. Run `pnpm -F @repo/status build` before `tofu plan`."
+      error_message = "The Worker bundle at ${local.bundle_path} is missing or empty. Cloudflare accepts an empty script and then serves errors, so this fails at plan time instead. Run `pnpm -C packages/status run build` before `tofu plan`."
     }
   }
 }

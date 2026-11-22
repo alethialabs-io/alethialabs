@@ -62,7 +62,7 @@ jobs:
       - name: Build the Worker bundle
         run: |
           set -euo pipefail
-          pnpm -F @repo/status build
+          pnpm -C packages/status run build
           test -s packages/status/dist/worker.js
 
       - uses: opentofu/setup-opentofu@v2

@@ -41,7 +41,7 @@ variable "hostname" {
 variable "worker_bundle_path" {
   description = <<-EOT
     Path to the BUILT Worker bundle (one ES module), relative to this directory. OpenTofu cannot bundle
-    TypeScript, so `pnpm -F @repo/status build` writes it first; the script's precondition fails the
+    TypeScript, so `pnpm -C packages/status run build` writes it first; the script's precondition fails the
     plan when it is missing or empty rather than letting an empty script reach Cloudflare.
   EOT
   type        = string

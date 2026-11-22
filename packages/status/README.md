@@ -76,9 +76,9 @@ ones, so one blip (a deploy, a container restart) never becomes an incident.
 ## Local development
 
 ```sh
-pnpm -F @repo/status test         # probes, state machine, schema, a real cycle on node:sqlite, render
-pnpm -F @repo/status check-types  # Worker types for src, Node types for the tests
-pnpm -F @repo/status build        # dist/worker.js — the bundle the apply uploads
+pnpm -C packages/status run test         # probes, state machine, schema, a real cycle on node:sqlite, render
+pnpm -C packages/status run check-types  # Worker types for src, Node types for the tests
+pnpm -C packages/status run build        # dist/worker.js — the bundle the apply uploads
 ```
 
 > **`src/render.ts` holds its CSS in a template literal, so it must contain no backtick anywhere —
@@ -105,7 +105,7 @@ Then, from a checkout of `main`:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm -F @repo/status build
+pnpm -C packages/status run build
 cd infra/status
 cp backend.hcl.example backend.hcl
 tofu init -backend-config=backend.hcl
