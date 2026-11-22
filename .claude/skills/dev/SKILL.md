@@ -235,6 +235,20 @@ and do not use it as a worktree base: its commit carries every untracked file it
 
 `session-cleanup.sh` deletes snapshots older than 30 days.
 
+### Backups of everything that is not a local tree
+
+For what lives elsewhere — a remote branch or tag, a GitHub repo, release or issue, terraform state,
+a database, a docker volume, a cloud server or volume, Kubernetes objects — `guard-destroy.sh`
+takes a backup first and then lets the command run; a backup that fails refuses it. Remote refs go
+to `refs/safety/remote/<ts>/heads|tags/<name>` (pruned with the snapshots after 30 days); the rest
+to `~/.alethia/backups/<kind>/<UTC ts>/`, each with a `MANIFEST` whose `restore:` line says how to
+put it back (nothing prunes that directory):
+
+```
+pnpm backups:ls [<kind>]                                   # newest first; never prints contents
+git push origin +refs/safety/remote/<ts>/heads/<b>:refs/heads/<b>   # a remote branch put back
+```
+
 ## Reference
 
 - `infra/sandbox/README.md` — the box, sizing, cost, and why it is x86 rather than ARM

@@ -71,12 +71,17 @@ self_test() {
 	# harness keeps secrets out of the transcript, keeps deletions recoverable and meters spend.
 	expect_hook allow "tofu -chdir=infra/cp-aws apply"
 	expect_hook allow "gh workflow run deploy-console.yml"
-	# Still refused: pushes to protected branches and repo/release deletion (guard-destroy, until
-	# its backup-then-allow mechanism lands), the default hcloud context (another company's
-	# production), and printing a secret.
-	expect_hook deny "git push origin main"
-	expect_hook deny "gh repo delete alethialabs-io/app --yes"
-	expect_hook deny "gh -R alethialabs-io/app release delete v1 --yes"
+	# Deletion is BACKED UP, then allowed (guard-destroy): a protected-branch push fetches the
+	# remote ref into refs/safety/remote/ first, and gh repo/release delete mirror and download
+	# first. Those backups would reach the real GitHub, so this adapter test does not run them —
+	# guard-destroy's own --self-test exercises each against stubs. What stays refused, and needs
+	# no network to say so: publishing a local snapshot, deleting a secret no credential profile
+	# holds, the irrecoverable cloud flags, credential directories, the default hcloud context
+	# (another company's production), and printing a secret.
+	expect_hook deny "git push origin refs/safety/wt-x/20261122T000000Z:refs/heads/leak"
+	expect_hook deny "gh secret delete AN_UNHELD_SECRET_NAME"
+	expect_hook deny "aws secretsmanager delete-secret --secret-id x --force-delete-without-recovery"
+	expect_hook deny "rm -rf ~/.ssh"
 	expect_hook deny "hcloud server create --name x"
 	expect_hook deny "printenv"
 	expect_hook deny "aws secretsmanager get-secret-value --secret-id alethia/prod/env"
