@@ -1293,6 +1293,74 @@ async function observeStaged(page: Page, entry: ControlEntry, trigger: Locator):
 	return restored && barGone ? "confirmed" : "missing";
 }
 
+/** How long a typed confirmation is given to render its field — `env.destroy` looks the environment up first. */
+const TYPED_FIELD_WAIT_MS = 10_000;
+
+/** How long a keystroke is given to reach the destructive button before its state is read. */
+const TYPED_SETTLE_MS = 300;
+
+/**
+ * A value that is NOT the subject but is as close to it as a slip of the hand: same length, last
+ * character changed. A prefix would also do; this one also fails a gate that compares lengths.
+ */
+function nearMiss(subject: string): string {
+	return `${subject.slice(0, -1)}${subject.endsWith("x") ? "y" : "x"}`;
+}
+
+/**
+ * Prove a `confirm: typed` dialog's gate: its destructive button enables ONLY once the subject's
+ * exact name is typed (#7210). Throws on the first step that does not hold.
+ *
+ * "Disabled when the dialog opens" is not that proof. `env.destroy`'s button is also disabled while
+ * the environment lookup loads, so that check passed with no typed field at all. Each step below
+ * closes one way the weaker check is satisfied by something that is not the gate:
+ *
+ *  1. The typed field is present (waited for — the loading state has no field), and it is the ONLY
+ *     field, so what is typed goes where the gate reads.
+ *  2. The subject is read off the field's own label — the monospace name both typed dialogs show
+ *     (`ConfirmAction`'s `TypedConfirmation`, `destroy-environment-dialog.tsx`'s `CascadeConfirm`).
+ *     A label that names none fails here: the instrument cannot type what it cannot read.
+ *  3. Before anything is typed, the button is disabled — a plain confirmation fails here.
+ *  4. A near miss typed, still disabled — a gate that opens on ANY input fails here.
+ *  5. The exact subject typed, ENABLED — a button disabled for some other reason (loading, a
+ *     permission, a gate nobody can satisfy) fails here, which step 3 alone could never see.
+ *
+ * Nothing is submitted: `fill` types without pressing Enter, and `confirmButton` arrives wrapped in
+ * {@link assertNeverPressed}. The caller then presses Cancel exactly as for every other dialog.
+ * The self-tests "a typed gate …" drive this function against planted dialogs in every direction.
+ */
+async function proveTypedGate(
+	dialog: Locator,
+	confirmButton: Locator,
+	id: string,
+	{ fieldWaitMs = TYPED_FIELD_WAIT_MS, settleMs = TYPED_SETTLE_MS }: { fieldWaitMs?: number; settleMs?: number } = {},
+): Promise<void> {
+	const fields = dialog.getByRole("textbox");
+	await expect(fields.first(), `${id}: \`confirm: typed\` — no typed field appeared in the dialog within ${fieldWaitMs}ms; a disabled button with nothing to type into is not a typed confirmation`).toBeVisible({
+		timeout: fieldWaitMs,
+	});
+	await expect(fields, `${id}: \`confirm: typed\` — the dialog has more than one field, so which one the gate reads is ambiguous`).toHaveCount(1);
+	const field = fields.first();
+	const subject = await field.evaluate((el) => {
+		const label = el instanceof HTMLInputElement ? el.labels?.[0] : undefined;
+		return label?.querySelector(".font-mono")?.textContent?.trim() ?? "";
+	});
+	expect(subject, `${id}: \`confirm: typed\` — the field's label names no subject (no monospace name inside the <label>), so there is nothing to type`).not.toBe("");
+
+	await dialog.page().waitForTimeout(settleMs);
+	expect(await confirmButton.isDisabled(), `${id}: \`confirm: typed\` — the destructive button is enabled before anything is typed`).toBe(true);
+
+	const wrong = nearMiss(subject);
+	await field.fill(wrong);
+	await dialog.page().waitForTimeout(settleMs);
+	expect(await confirmButton.isDisabled(), `${id}: \`confirm: typed\` — the destructive button enabled on "${wrong}", which is not the subject "${subject}"`).toBe(true);
+
+	await field.fill(subject);
+	await expect(confirmButton, `${id}: \`confirm: typed\` — "${subject}" was typed exactly and the destructive button stayed disabled; it is disabled for some reason other than the typed gate`).toBeEnabled({
+		timeout: 5_000,
+	});
+}
+
 /**
  * The dialog `dialog` resolves to NOW, as a locator that keeps naming that one element.
  *
@@ -1612,7 +1680,8 @@ for (const entry of CONTROLS) {
 		const dialogAppeared = opened !== null;
 
 		// `typed` is a dialog too — the destroy-class one, whose destructive button is disabled until
-		// the subject's name is typed (#6830). It is measured exactly as the other two, plus that.
+		// the subject's name is typed (#6830). It is measured exactly as the other two, plus the proof
+		// of that gate (`proveTypedGate`, #7210).
 		const expectsDialog = entry.confirm === "alert-dialog" || entry.confirm === "confirm-dialog" || entry.confirm === "typed";
 		let observed: Observed;
 
@@ -1628,10 +1697,11 @@ for (const entry of CONTROLS) {
 			if (entry.confirm_action) {
 				const confirmButton = assertNeverPressed(dialog.getByRole("button", { name: new RegExp(escapeRe(entry.confirm_action), "i") }).first(), entry.id);
 				await expect(confirmButton, `${entry.id}: the dialog should offer "${entry.confirm_action}"`).toBeVisible();
-				// Nothing has been typed, and nothing ever is: a typed confirmation whose button is
-				// already enabled is a plain one wearing the name, and the census cannot see that.
+				// Disabled-on-open cannot tell "disabled until typed" from "disabled while loading", so the
+				// gate is driven: nothing typed, a near miss, the exact name — then Cancel below, as for
+				// every dialog. The button is never pressed. The census cannot see any of this.
 				if (entry.confirm === "typed") {
-					await expect(confirmButton, `${entry.id}: \`confirm: typed\` — "${entry.confirm_action}" must stay disabled until the subject's name is typed`).toBeDisabled();
+					await proveTypedGate(dialog, confirmButton, entry.id);
 				}
 			}
 			if (entry.dialog_title) {
@@ -2316,6 +2386,100 @@ test("self-test — the control loop clicks through `clickForConfirmation`, and 
 	expect(loop, "the loop takes its own dialog snapshot, which no self-test drives").not.toMatch(/\bvisibleDialogs\(/);
 	expect(loop, "the loop looks the confirmation up itself, which no self-test drives").not.toMatch(/\bconfirmationDialog\(/);
 	expect(loop, "a document-order dialog lookup in the loop answers with the HOST").not.toMatch(/locator\(DIALOG_SELECTOR\)\.first\(\)/);
+});
+
+// ── the typed gate's self-tests (#7210) ──────────────────────────────────────────────────────────
+//
+// `proveTypedGate` driven against planted dialogs: one that holds the gate (passes) and four that
+// each break exactly one of its steps (each must FAIL — the rejection is the assertion). The plant
+// mirrors `ConfirmAction`'s typed body: a <label> naming the subject in a monospace span, one input,
+// a disabled submit. Like the seam tests above, `page.setContent` is the whole fixture.
+
+/** How the planted typed dialog's destructive button responds to what is typed. */
+type PlantedGate = "on-exact-name" | "always-enabled" | "on-any-input" | "never-enables" | "no-field";
+
+/** The subject the planted dialog asks for. */
+const PLANTED_SUBJECT = "audit-prod";
+
+/**
+ * A typed confirmation whose button follows `gate`. Its field mounts after `fieldAfterMs`, the way
+ * `env.destroy`'s waits for its lookup; until then the button is disabled and there is nothing to
+ * type into. A submit marks the form `data-submitted`, so "nothing was confirmed" is read, not assumed.
+ */
+function plantedTypedDialog(gate: PlantedGate, fieldAfterMs = 0): string {
+	return `
+		<div role="alertdialog" id="confirm" aria-label="Delete ${PLANTED_SUBJECT}?">
+			<h2>Delete ${PLANTED_SUBJECT}?</h2>
+			<form id="f"><div id="slot"></div>
+				<button type="button">Cancel</button>
+				<button type="submit" id="go" ${gate === "always-enabled" ? "" : "disabled"}>Delete environment</button>
+			</form>
+		</div>
+		<script>
+			const gate = ${JSON.stringify(gate)};
+			const subject = ${JSON.stringify(PLANTED_SUBJECT)};
+			const go = document.getElementById("go");
+			document.getElementById("f").addEventListener("submit", (e) => { e.preventDefault(); e.target.setAttribute("data-submitted", "yes"); });
+			const mount = () => {
+				if (gate === "no-field") return;
+				document.getElementById("slot").innerHTML =
+					'<label for="c">Type <span class="font-mono">' + subject + '</span> to confirm</label><input id="c" autocomplete="off">';
+				document.getElementById("c").addEventListener("input", (e) => {
+					const v = e.target.value;
+					go.disabled =
+						gate === "on-exact-name" ? v.trim() !== subject :
+						gate === "on-any-input" ? v === "" :
+						gate === "never-enables";
+				});
+			};
+			setTimeout(mount, ${fieldAfterMs});
+		</script>`;
+}
+
+/** Run `proveTypedGate` over the planted dialog, with the loop's own never-press wrapper. */
+async function drivePlantedGate(page: Page): Promise<void> {
+	const dialog = page.locator("#confirm");
+	const button = assertNeverPressed(dialog.getByRole("button", { name: /Delete environment/i }).first(), "self-test.typed");
+	await proveTypedGate(dialog, button, "self-test.typed", { fieldWaitMs: 2_000, settleMs: 100 });
+}
+
+test("self-test — a typed gate that holds PASSES, after its field loads, and nothing is submitted", async ({ page }) => {
+	await page.setContent(plantedTypedDialog("on-exact-name", 500));
+	await drivePlantedGate(page);
+	await expect(page.locator("#c"), "the exact subject is what was typed last").toHaveValue(PLANTED_SUBJECT);
+	await expect(page.locator("#f"), "the proof must never submit the destructive form").not.toHaveAttribute("data-submitted", "yes");
+});
+
+test("self-test — a typed entry whose button enables WITHOUT typing FAILS", async ({ page }) => {
+	await page.setContent(plantedTypedDialog("always-enabled"));
+	await expect(drivePlantedGate(page)).rejects.toThrow(/enabled before anything is typed/);
+});
+
+test("self-test — a typed gate that opens on a NEAR MISS fails", async ({ page }) => {
+	await page.setContent(plantedTypedDialog("on-any-input"));
+	await expect(drivePlantedGate(page)).rejects.toThrow(/enabled on "audit-prox"/);
+});
+
+test("self-test — a button that stays disabled after the EXACT name fails (disabled for another reason)", async ({ page }) => {
+	// The shape #7210 was filed for: disabled-on-open alone passed this dialog.
+	await page.setContent(plantedTypedDialog("never-enables"));
+	await expect(drivePlantedGate(page)).rejects.toThrow(/typed exactly and the destructive button stayed disabled/);
+});
+
+test("self-test — a disabled button with NO typed field fails, rather than passing as disabled-on-open", async ({ page }) => {
+	await page.setContent(plantedTypedDialog("no-field"));
+	await expect(drivePlantedGate(page)).rejects.toThrow(/no typed field appeared/);
+});
+
+test("self-test — the control loop proves a typed entry through `proveTypedGate`", async () => {
+	// The plants above prove the seam; this proves the loop still calls it. Same boundary as the
+	// `clickForConfirmation` test: it reads the loop body's TEXT.
+	const src = readFileSync(__filename, "utf8");
+	const start = src.indexOf("\nfor (const entry of CONTROLS) {");
+	expect(start, "the control loop moved — re-point this test at it").toBeGreaterThan(-1);
+	const loop = src.slice(start, src.indexOf("\n}\n", start));
+	expect(loop.match(/\bawait proveTypedGate\(dialog, confirmButton, entry\.id\)/g)?.length ?? 0, "a typed entry must be proved through the seam, exactly once").toBe(1);
+	expect(loop, "a bare disabled-on-open check is the weaker proof #7210 replaced").not.toMatch(/\btoBeDisabled\(/);
 });
 
 test("self-test — a reached control withheld as NOT RENDERED attaches its evidence", async ({ page }, testInfo) => {
