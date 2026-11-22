@@ -8,7 +8,6 @@
 
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { disableAddon, enableAddon } from "@/app/server/actions/addons";
 import { ActionRefusal } from "@/lib/actions/result";
 import { getAddOn } from "@/lib/addons/catalog";
@@ -32,9 +31,9 @@ import {
 import { cliEnvironmentError, cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { projectAddons, projects } from "@/lib/db/schema";
-import { addonMode } from "@/lib/db/schema/enums";
 import { cliAddonsResponse, cliOkResponse } from "@/lib/validations/cli-contract";
 import { loadStoredAddon, reconfigureInput } from "./reconfigure";
+import { disableAddonBody, enableAddonBody } from "@/lib/validations/cli-request-bodies";
 
 const ADDONS_LIST = "project-addons";
 
@@ -173,28 +172,6 @@ function updateWire(addonId: string, mode: "managed" | "gitops", version: string
 	};
 }
 
-/** Body of POST .../addons — enable or reconfigure one catalog add-on.
- *
- * `values` is intentionally an open record at the EDGE and narrowed immediately after: `enableAddon`
- * runs the add-on's own `def.configSchema.safeParse` on it, so each add-on's knobs are validated by
- * the definition that owns them rather than by a second schema here that would drift from the
- * catalog. `values_yaml` is the Advanced raw-Helm escape hatch, parsed and rejected as YAML by the
- * same action.
- *
- * One rule for every optional field (#5545, and #5525 for `version`): ABSENT keeps what is stored.
- * `values_yaml` and `version` are cleared by `null` or `""`; a `values` key is merged over the stored
- * knobs, and a key sent as `null` is reset to the add-on's default; `mode` absent keeps the stored
- * mode. `reconfigure.ts` applies it. A `version` pin is checked by `lib/addons/chart-version.ts`
- * inside `enableAddon` — one definition of a valid pin, refused with the same sentence the console
- * shows. */
-const enableAddonBody = z.object({
-	addon_id: z.string().min(1),
-	mode: z.enum(addonMode.enumValues).optional(),
-	values: z.record(z.string(), z.unknown()).optional(),
-	values_yaml: z.string().nullish(),
-	version: z.string().nullish(),
-});
-
 /**
  * Enables (or reconfigures) a catalog add-on in an environment.
  *
@@ -261,9 +238,6 @@ export async function POST(
 		return addonWriteError(err);
 	}
 }
-
-/** Body of DELETE .../addons — disable one add-on. */
-const disableAddonBody = z.object({ addon_id: z.string().min(1) });
 
 /** Disables a catalog add-on in an environment. */
 export async function DELETE(

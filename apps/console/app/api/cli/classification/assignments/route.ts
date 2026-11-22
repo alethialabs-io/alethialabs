@@ -13,7 +13,6 @@
 
 import { and, asc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
 import { recordActivity } from "@/lib/authz/activity";
 import { classifiableResourceInOrg } from "@/lib/classification/resource-org";
@@ -28,6 +27,7 @@ import {
 import type { ResourceKind } from "@/lib/db/schema/enums";
 import { resourceKindSchema } from "@/lib/validations/classification";
 import { cliClassificationAssignmentsResponse } from "@/lib/validations/cli-contract";
+import { assignBody } from "@/lib/validations/cli-request-bodies";
 
 type Db = ReturnType<typeof getServiceDb>;
 
@@ -110,13 +110,6 @@ export async function GET(req: Request) {
 		return NextResponse.json({ error: message }, { status: 500 });
 	}
 }
-
-const assignBody = z.object({
-	kind: resourceKindSchema,
-	id: z.string().uuid(),
-	dimension_key: z.string().min(1),
-	value_slug: z.string().min(1),
-});
 
 export async function POST(req: Request) {
 	const auth = await authorizeCli(req, "edit", { type: "org" });

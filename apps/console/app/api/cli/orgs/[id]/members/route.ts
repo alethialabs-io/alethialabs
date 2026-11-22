@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { eq } from "drizzle-orm";
-import { z } from "zod";
 import { actorHoldsAllKeys } from "@/lib/authz/ceiling";
 import { authorizeCli, authorizeCliOrg, ensureCliOrgAccess } from "@/lib/authz/guard";
 import { type OrgRole, toPdpRole } from "@/lib/authz/org-access-control";
@@ -16,6 +15,7 @@ import {
 	cliInvitationResponse,
 	cliMembersResponse,
 } from "@/lib/validations/cli-contract";
+import { inviteBody } from "@/lib/validations/cli-request-bodies";
 
 /** Pending-invitation lifetime — 7 days from creation. */
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -37,12 +37,6 @@ function roleKeys(role: OrgRole): readonly PermissionKey[] {
 	const keys = BUILT_IN_ROLES[role];
 	return keys === "*" ? PERMISSIONS.map((p) => p.key) : keys;
 }
-
-/** Body of POST /api/cli/orgs/:id/members — invite a user by email. */
-const inviteBody = z.object({
-	email: z.string().email(),
-	role: z.string().min(1),
-});
 
 /** Lists the members of organization `id` (member ⋈ user). */
 export async function GET(

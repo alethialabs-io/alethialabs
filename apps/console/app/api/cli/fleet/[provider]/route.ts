@@ -11,17 +11,7 @@ import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliFleetPoolResponse } from "@/lib/validations/cli-contract";
 import { isFleetOperatorDeployment, toFleetPoolWire } from "../route";
-
-/** Body of PUT /api/cli/fleet/:provider — the editable subset of a pool's config. A
- * pinned `version` and a release `channel` are mutually exclusive (a version pin wins). */
-const updateFleetBody = z.object({
-	warm_min: z.number().int().min(0).optional(),
-	max: z.number().int().min(0).optional(),
-	slots_per_runner: z.number().int().min(1).optional(),
-	enabled: z.boolean().optional(),
-	channel: z.string().min(1).nullable().optional(),
-	version: z.string().min(1).nullable().optional(),
-});
+import { updateFleetBody } from "@/lib/validations/cli-request-bodies";
 
 /** Builds the partial update patch (only provided fields), enforcing version/channel
  * mutual exclusivity (a version pin clears the channel). Mirrors fleet.ts toUpdatePatch. */

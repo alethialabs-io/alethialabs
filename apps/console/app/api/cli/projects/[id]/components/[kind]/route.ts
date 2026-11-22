@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { z } from "zod";
 import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { authorizeCli } from "@/lib/authz/guard";
 import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
@@ -27,13 +26,7 @@ import {
 	cliComponentResponse,
 	cliOkResponse,
 } from "@/lib/validations/cli-contract";
-
-/** Body of POST .../components/:kind — `fields` is the open `--set` field map, validated
- * server-side against the kind's drizzle-zod insert schema. */
-const addComponentBody = z.object({
-	name: z.string().min(1).optional(),
-	fields: z.record(z.string(), z.unknown()).default({}),
-});
+import { addComponentBody } from "@/lib/validations/cli-request-bodies";
 
 /** Adds (or, for singletons, upserts) a component of `kind` to a project.
  *
