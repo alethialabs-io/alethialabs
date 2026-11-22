@@ -167,6 +167,8 @@ test.describe("Connectors — connect-sheet validation", () => {
 		const token = sheet.getByLabel("API Token", { exact: true });
 		await expect(token).toBeVisible({ timeout: 30_000 });
 		await token.fill("too-short");
+		// The form says what is wrong when Connect is pressed (#6842), and sends nothing.
+		await sheet.getByRole("button", { name: "Connect", exact: true }).click();
 		await expect(sheet.getByText("Enter a valid Hetzner API token.")).toBeVisible();
 	});
 
