@@ -95,6 +95,13 @@ function salesGateView(sales: {
 	return sales.data?.open === false ? "closed" : "declare";
 }
 
+/**
+ * The closed view's copy when NO date is announced (#6132, D1-A) — the launch state's own closed
+ * sentence, never typed here. What the sheet renders is `salesClosedCopy()`, which reads today's
+ * launch state and says the date instead once one is announced; this constant is the closed half.
+ */
+export const SALES_CLOSED_COPY = salesClosedCopy({ status: "closed", lapsedAnnouncement: null });
+
 interface UpgradeOrgSheetProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
