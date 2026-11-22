@@ -137,10 +137,10 @@ controls:
     mutation: removeProject
     reach: [{ section: "Delete project" }]
     control: { role: button, name: "Delete project" }
-    # Destroy-class with a plain AlertDialog today; #7198 moves it to the typed `ConfirmAction`.
-    confirm: alert-dialog
+    # `ConfirmAction` at `severity: destroy` (#7198): Delete project stays disabled until the
+    # project's name is typed.
+    confirm: typed
     class: destroy
-    typed_by: "#7198"
     confirm_action: "Delete project"
     dialog_title: "Delete this project?"
     fixture: project
@@ -208,10 +208,10 @@ controls:
     reach: [{ menu: "More" }, { open: "Environment settings" }, { section: "Destroy environment" }]
     control: { role: button, name: "Destroy" }
     # Destroy-class; with nothing placed on its cluster the dialog is `SingleConfirm`
-    # (destroy-environment-dialog.tsx), which types nothing. #7198 adds the typed name.
-    confirm: confirm-dialog
+    # (destroy-environment-dialog.tsx): "Destroy environment" is a submit that stays disabled until
+    # the environment's name is typed (#7198), the same gate `CascadeConfirm` puts on the project name.
+    confirm: typed
     class: destroy
-    typed_by: "#7198"
     confirm_action: "Destroy environment"
     dialog_title: "Destroy this environment?"
     fixture: project

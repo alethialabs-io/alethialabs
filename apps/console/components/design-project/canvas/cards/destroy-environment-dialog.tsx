@@ -10,7 +10,6 @@ import { z } from "zod";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import {
 	AlertDialog,
-	AlertDialogAction,
 	AlertDialogCancel,
 	AlertDialogContent,
 	AlertDialogDescription,
@@ -59,7 +58,7 @@ interface DestroyEnvironmentDialogProps {
 /**
  * The confirmation in front of destroying an environment (#5261).
  *
- * With nothing placed on the environment's cluster it is the confirmation it always was. With live
+ * With nothing placed on the environment's cluster it asks for the environment's name. With live
  * tenants it lists every environment that will go — each tenant with its placement and status, then
  * the environment that owns the cluster — and offers the two ways forward the CLI offers: destroy the
  * children first (which cancels), or cascade, behind typing the project name.
@@ -90,6 +89,7 @@ export function DestroyEnvironmentDialog({
 					<SingleConfirm
 						phase={state.phase}
 						targetId={split?.target.environment_id ?? null}
+						targetName={split?.target.name ?? null}
 						onOpenChange={onOpenChange}
 						onDestroy={onDestroy}
 					/>
@@ -100,23 +100,67 @@ export function DestroyEnvironmentDialog({
 }
 
 /**
- * Nothing else is placed on this environment's cluster: today's confirmation. The destroy button is
- * offered only once the tree has ANSWERED: while it is being read a click cannot outrun the question,
- * and when the read failed there is no environment the tree named — and destroying "whatever the
- * server resolves" is how a stale environment id once reached the project's default environment.
+ * The typed-name gate both confirmations share: a form whose one field must hold `phrase` exactly
+ * (trimmed) before the destructive button is enabled. A destroy that cannot be taken back should
+ * never be one misplaced click away.
+ */
+function useTypedPhrase(phrase: string) {
+	const schema = useMemo(
+		() =>
+			z.object({
+				confirmation: z
+					.string()
+					.refine(
+						(v) => phrase !== "" && v.trim() === phrase,
+						`Type ${phrase} exactly to confirm`,
+					),
+			}),
+		[phrase],
+	);
+	const form = useForm<z.infer<typeof schema>>({
+		resolver: zodResolver(schema),
+		defaultValues: { confirmation: "" },
+		mode: "onChange",
+	});
+	const typed = useWatch({ control: form.control, name: "confirmation" });
+	const matches = schema.safeParse({ confirmation: typed }).success;
+	return { form, matches };
+}
+
+/**
+ * Nothing else is placed on this environment's cluster. The destroy button is offered only once
+ * the tree has ANSWERED: while it is being read a click cannot outrun the question, and when the
+ * read failed there is no environment the tree named — and destroying "whatever the server
+ * resolves" is how a stale environment id once reached the project's default environment. Once it
+ * has answered, the button stays disabled until the environment's name is typed (#7198), the same
+ * gate the cascade puts in front of the project name.
  */
 function SingleConfirm({
 	phase,
 	targetId,
+	targetName,
 	onOpenChange,
 	onDestroy,
 }: {
 	phase: DestroyTreeState["phase"];
 	/** The environment the tree named (its last node); null until it answers. */
 	targetId: string | null;
+	/** That environment's name — what the user types; null until the tree answers. */
+	targetName: string | null;
 	onOpenChange: (open: boolean) => void;
 	onDestroy: (options: DestroyOptions) => void;
 }) {
+	const phrase = targetName?.trim() ?? "";
+	const { form, matches } = useTypedPhrase(phrase);
+	const ready = phase === "ready" && targetId !== null && phrase !== "";
+
+	/** The typed name matched: close, then queue the destroy of the environment the tree named. */
+	function onSubmit() {
+		if (!ready || !targetId) return;
+		onOpenChange(false);
+		onDestroy({ cascade: false, environmentId: targetId });
+	}
+
 	return (
 		<>
 			<AlertDialogHeader>
@@ -137,28 +181,43 @@ function SingleConfirm({
 					and try again.
 				</p>
 			)}
-			<AlertDialogFooter>
-				<AlertDialogCancel>Cancel</AlertDialogCancel>
-				<AlertDialogAction
-					variant="destructive"
-					disabled={phase !== "ready" || !targetId}
-					onClick={() => {
-						if (!targetId) return;
-						onOpenChange(false);
-						onDestroy({ cascade: false, environmentId: targetId });
-					}}
-				>
-					Destroy environment
-				</AlertDialogAction>
-			</AlertDialogFooter>
+			<Form {...form}>
+				<form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4">
+					{ready && (
+						<FormField
+							control={form.control}
+							name="confirmation"
+							render={({ field }) => (
+								<FormItem>
+									<FormLabel className="text-ui-md font-normal">
+										<span>
+											Type the environment name,{" "}
+											<span className="font-mono font-medium">{phrase}</span>, to destroy it
+										</span>
+									</FormLabel>
+									<FormControl>
+										<Input autoComplete="off" spellCheck={false} {...field} />
+									</FormControl>
+									<FormMessage />
+								</FormItem>
+							)}
+						/>
+					)}
+					<AlertDialogFooter>
+						<AlertDialogCancel>Cancel</AlertDialogCancel>
+						<Button type="submit" variant="destructive" disabled={!ready || !matches}>
+							Destroy environment
+						</Button>
+					</AlertDialogFooter>
+				</form>
+			</Form>
 		</>
 	);
 }
 
 /**
  * Live tenants: the ordered list, any FAILED tenant called out, and the two choices. The cascade sits
- * behind typing `phrase` — a destroy that takes several environments with it should not be one
- * misplaced click away.
+ * behind typing `phrase` (`useTypedPhrase`).
  */
 function CascadeConfirm({
 	tenants,
@@ -180,22 +239,7 @@ function CascadeConfirm({
 	const total = tenants.length + 1;
 	const others = tenants.length;
 	const failed = tenants.filter((t) => t.status === "FAILED");
-	const schema = useMemo(
-		() =>
-			z.object({
-				confirmation: z
-					.string()
-					.refine((v) => v.trim() === phrase, `Type ${phrase} exactly to confirm`),
-			}),
-		[phrase],
-	);
-	const form = useForm<z.infer<typeof schema>>({
-		resolver: zodResolver(schema),
-		defaultValues: { confirmation: "" },
-		mode: "onChange",
-	});
-	const typed = useWatch({ control: form.control, name: "confirmation" });
-	const matches = schema.safeParse({ confirmation: typed }).success;
+	const { form, matches } = useTypedPhrase(phrase);
 
 	/** The typed name matched: close, then queue every environment in the tree. */
 	function onSubmit() {

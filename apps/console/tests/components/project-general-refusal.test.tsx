@@ -178,6 +178,37 @@ describe("ProjectGeneral — a rename that lands (F040, F015)", () => {
   });
 });
 
+/**
+ * Types the project's name into the delete confirmation, asserting first that Delete project is
+ * disabled until it is (#7198: delete is destroy-class, confirmed by the typed name).
+ */
+async function typeProjectName(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement) {
+  const confirm = within(dialog).getByRole("button", { name: /delete project/i });
+  expect(confirm).toBeDisabled();
+  await user.type(within(dialog).getByRole("textbox"), MY_APP.project_name);
+  await waitFor(() => expect(confirm).toBeEnabled());
+}
+
+describe("ProjectGeneral — the delete confirmation asks for the project's name", () => {
+  it("keeps Delete project disabled until the name is typed exactly, and sends nothing before", async () => {
+    const user = userEvent.setup();
+    renderProjectGeneral();
+
+    await user.click(screen.getByRole("button", { name: /^Delete project$/ }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(/destroy the environments first/i)).toBeInTheDocument();
+    const confirm = within(dialog).getByRole("button", { name: /delete project/i });
+    const input = within(dialog).getByRole("textbox");
+    expect(confirm).toBeDisabled();
+    await user.type(input, "My Ap");
+    expect(confirm).toBeDisabled();
+    await user.click(confirm);
+    expect(removeProject).not.toHaveBeenCalled();
+    await user.type(input, "p");
+    await waitFor(() => expect(confirm).toBeEnabled());
+  });
+});
+
 describe("ProjectGeneral — a delete the server refuses", () => {
   it("keeps the question open beside the reason, and the reason on the page once dismissed", async () => {
     removeProject.mockResolvedValue({ ok: false, error: { kind: "conflict", message: LIVE } });
@@ -186,6 +217,7 @@ describe("ProjectGeneral — a delete the server refuses", () => {
 
     await user.click(screen.getByRole("button", { name: /^Delete project$/ }));
     const dialog = await screen.findByRole("alertdialog");
+    await typeProjectName(user, dialog);
     await user.click(
       // The dialog's own confirm, not the trigger that opened it.
       within(dialog).getByRole("button", { name: /delete project/i }),
@@ -210,6 +242,7 @@ describe("ProjectGeneral — a delete the server refuses", () => {
 
     await user.click(screen.getByRole("button", { name: /^Delete project$/ }));
     const dialog = await screen.findByRole("alertdialog");
+    await typeProjectName(user, dialog);
     await user.click(within(dialog).getByRole("button", { name: /delete project/i }));
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/acme"));
