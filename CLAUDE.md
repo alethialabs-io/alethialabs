@@ -38,7 +38,7 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 - **Escape hatches are the maintainer's, not yours**: `--no-verify`,
   `ALETHIA_ALLOW_MAIN_COMMIT`, `ALETHIA_ALLOW_FOREIGN_WT`, `ALETHIA_LOCAL_DEV`.
 
-**What still stops you: the spend budget, and irreversible deletion.** Everything else is delegated.
+**What still stops you: the spend budget — and a deletion that cannot be backed up.** Everything else is delegated.
 *Spend* is metered by `.claude/hooks/guard-spend.sh` against **EUR 80 per rolling 7 days**, shared
 by every instance, in the ledger `~/.alethia/spend-ledger.jsonl` (`pnpm spend:status` prints the
 window). Each priced action (a box bring-up, an e2e dispatch or rerun, a disposable hcloud create)
@@ -49,9 +49,20 @@ charged a conservative EUR 1; the expensive cloud creates (clusters, instances, 
 each; other cloud writes are free. hcloud without an explicit disposable `--context` stays
 refused, because the default context on this Mac is another company's production. The budget
 is a constant in the hook, so raising it is a reviewed PR. *Deletion* is
-`.claude/hooks/guard-destroy.sh`: what cannot be undone (pushes to or deletes of protected
-branches, repo/release/secret deletion, local tfstate, a non-local database reset, cloud deletes
-outside disposable targets, credential directories) is refused; local git destruction
+`.claude/hooks/guard-destroy.sh`, and it **backs up first, then allows**. Pushes that overwrite or
+delete a remote ref (any push to dev/staging/main, force pushes, branch and tag deletes) fetch the
+remote's copy into `refs/safety/remote/<ts>/…` (the server rulesets stay the real control); `gh
+repo delete|archive` mirrors the repo and exports issues and PRs; `gh release delete` downloads it;
+protected `gh api` writes GET the resource first; tfstate deletion and `tofu state rm|mv|push`
+copy or `state pull` the state; a non-local `db:reset`/`db:migrate` is `pg_dump`ed (under the same
+`pnpm creds` profile when wrapped in one); alethia docker volumes are tarred; an hcloud server
+delete snapshots it, an EBS volume delete snapshots it, a `kubectl delete` exports the objects.
+Those backups land in `~/.alethia/backups/<kind>/<UTC ts>/` with a MANIFEST saying how to restore —
+`pnpm backups:ls` lists them. **A backup that fails refuses the command.** Still refused, because
+nothing can be backed up: a GitHub secret no `pnpm creds` profile holds, RDS
+`--skip-final-snapshot`, Secrets Manager `--force-delete-without-recovery`, an hcloud volume, a
+target the guard cannot read, publishing a snapshot; and, as self-sabotage rather than an
+instruction, credential directories and the repo's `.git`. Local git destruction
 (`reset --hard`, `clean`, `checkout`/`restore`, `stash drop`, `worktree remove --force`, an `rm` in
 a work tree) is **snapshotted first, then allowed**, under `refs/safety/<worktree>/<UTC timestamp>`
 — restore steps are in `.claude/skills/dev/SKILL.md`, and a snapshot is restored as files, never
@@ -360,7 +371,7 @@ command-text parser, `.claude/hooks/lib/cmdline.sh`:
 | `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base and head: `dev` may merge; a green `dev → staging` / `staging → main` promotion, or a green release-please PR into `main` whose author and files are release-please's, may merge with `--merge`; anything else into `staging`/`main`, and `--admin`, may not |
 | `.claude/hooks/guard-spend.sh` | PreToolUse · Bash | Prices each spend action into `~/.alethia/spend-ledger.jsonl` and refuses one that crosses EUR 80 per rolling 7 days — its only refusal besides hcloud's wrong-account check and the ledger's own integrity |
 | `.claude/hooks/guard-secrets.sh` | PreToolUse · Bash | Refuses a command whose effect is to PRINT a secret (env dumps, shell tracing, vault reads to stdout, credential files, a literal key) and names the `pnpm creds` form instead |
-| `.claude/hooks/guard-destroy.sh` | PreToolUse · Bash | Refuses irreversible deletion; snapshots local git destruction to `refs/safety/` first, then allows it |
+| `.claude/hooks/guard-destroy.sh` | PreToolUse · Bash | Backs up what a destructive command would destroy (remote refs, repos, releases, tfstate, databases, volumes, cloud resources) to `~/.alethia/backups/` or `refs/safety/`, then allows it; refuses only what it cannot back up |
 | `.claude/hooks/check-migration-chain.sh` | PostToolUse · edits | Reports a forked drizzle snapshot chain at edit time, not at commit time |
 | `.claude/hooks/session-runtime.sh` | SessionStart | Runtime banner, and warns when the harness you are running is stale |
 | `.claude/hooks/session-cleanup.sh` | SessionStart · SessionEnd | Fast-forwards the main checkout, then sweeps landed worktrees and branches |
@@ -385,7 +396,7 @@ Beyond the hooks, `.claude/settings.json` carries a **permission policy**. `deny
 — it beats any allow rule and any hook — and is narrow on purpose: wiping the shared compose
 volumes, and reads or edits of credential files (`~/.aws`, `~/.ssh`, `.env`, the prod secrets
 file), which back up the broker. Applies, destroys and protected-branch pushes are not denied
-here; protected branches are enforced server-side by the rulesets and locally by guard-destroy. `allow` pre-approves the routine read-only commands
+here; protected branches are enforced server-side by the rulesets, and guard-destroy backs up the remote ref before any push to one. `allow` pre-approves the routine read-only commands
 so the prompts you do see are meaningful.
 
 **A footgun worth knowing:** `guard-runtime.sh` matches **inside quotes**, deliberately — so

@@ -35,7 +35,8 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-destroy.sh\"",
-            "statusMessage": "Checking deletion guard"
+            "timeout": 600,
+            "statusMessage": "Checking deletion guard (backs up first)"
           },
           {
             "type": "command",

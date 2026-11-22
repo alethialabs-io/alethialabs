@@ -101,6 +101,7 @@
     "env:reap": "bash scripts/env.sh reap",
     "env:timer": "bash scripts/env.sh timer",
     "spend:status": "bash .claude/hooks/guard-spend.sh --status",
+    "backups:ls": "bash scripts/backups-ls.sh",
     "creds": "python3 scripts/creds.py",
     "wt": "bash scripts/worktree.sh",
     "wt:ls": "git worktree list",
