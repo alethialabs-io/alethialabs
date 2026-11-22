@@ -48,8 +48,8 @@ AGPL-only contribution would block us from shipping the commercial edition.
 
 Feature work lands on `dev`; production is `main`, and `main` receives a dev commit through a
 **pinned promotion PR**: `.github/workflows/promote.yml` creates `release/<12-char sha>` at one
-green dev commit, never moves it, and opens `release/<sha> → main`. The `staging` hop is being
-retired (maintainer decision, 2026-11-22): it deployed nothing, and its standing PR — whose head
+green dev commit, never moves it, and opens `release/<sha> → main`. The `staging` hop is retired
+(maintainer decision, 2026-11-22): it deployed nothing, and its standing PR — whose head
 was `dev` — restarted ~9 workflows on every queue merge (220 cancelled runs in one week) while its
 ~50-minute release gate never finished before `dev` moved again.
 
@@ -57,8 +57,8 @@ was `dev` — restarted ~9 workflows on every queue merge (220 cancelled runs in
 |---|---|---|---|
 | `dev` | integration — all feature/fix PRs land here | feature branches (non-draft PR + green CI, **via the Mergify queue**) | — (CI only) |
 | `release/<sha>` | one promotion, pinned at one dev commit | created by `promote.yml`; never pushed to | — |
-| `main` | production | `release/<sha>` (PR + green CI + all release-gate legs); `staging` and `hotfix/*` are still admitted until `staging` is retired | auto → alethialabs.io (`deploy-console.yml`) |
-| `staging` | retired release candidate | `dev` (PR + green CI) | — (built/tested; never deployed) |
+| `main` | production | `release/<sha>` (PR + green CI + all release-gate legs); a `hotfix/*` PR is also admitted, and is the maintainer's | auto → alethialabs.io (`deploy-console.yml`) |
+| `staging` | retired — the branch still exists, but nothing merges into it and no ruleset protects it | — | — |
 
 - **Opening a promotion.** `promote.yml` runs twice on weekdays and on dispatch (optional `sha`,
   `force`, `dry_run` inputs). It picks the newest dev commit that is *green* — a successful `CI`
@@ -107,7 +107,10 @@ was `dev` — restarted ~9 workflows on every queue merge (220 cancelled runs in
   that waits twenty minutes holds a slot for twenty minutes. `workflow-health.yml` reports the
   demand daily (*CI demand*) so this is visible rather than rediscovered — see #4173.
 
-- **`staging` is protected too** (PR + green CI), lighter than `main`, until it is retired.
+- **`staging` is no longer protected or promoted through.** Its `protect-staging` ruleset was removed
+  from `infra/github` with the hop (it stops binding once that stack is applied), `branch-flow-guard`
+  no longer runs on PRs into it, and `.claude/hooks/guard-merge.sh` refuses any merge into it. The
+  branch itself is kept.
 - **release-please** runs on `main` and opens the release PRs (CLI + runner version
   bumps); this flow is unchanged by the branch model.
 - A production release is a `release/<sha> → main` PR. Hotfixes still go through `dev` and a
@@ -118,8 +121,7 @@ was `dev` — restarted ~9 workflows on every queue merge (220 cancelled runs in
 **Agents run promotions when they are green** (maintainer ruling, 2026-11-06). The merge is
 `gh pr merge <n> --merge --match-head-commit <head sha>`, and `.claude/hooks/guard-merge.sh` admits it
 only for a `release/<sha> → main` PR (opened by the `alethia-labs-ci` app, its head a dev commit
-named by the branch) — or, until `staging` is retired, a `dev → staging` or `staging → main` PR —
-whose `gh pr checks` shows nothing failed or
+named by the branch) whose `gh pr checks` shows nothing failed or
 pending and whose every `Release gate (<leg>)` from `.github/workflows/release-gate.yml` passed,
 for exactly that head. It refuses `--squash`, `--rebase`, `--auto`, `--admin`, `--delete-branch`
 and a command holding more than one merge. The checklist below is what "green" means.

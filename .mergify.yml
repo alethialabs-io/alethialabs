@@ -9,25 +9,30 @@
 # wedged EVERY queued PR. Mergify validates each PR on its own branch (no `merge_group`), so that wedge is gone.
 #
 # Behaviour: every NON-DRAFT PR into `dev` is AUTO-queued (merge_protections_settings.auto_merge_conditions —
-# the current replacement for the deprecated `autoqueue`) and SQUASH-merged once the 9 protect-dev required
-# checks pass. No `@mergifyio queue`, no `gh pr merge` — just open a non-draft PR; keep WIP as a draft.
+# the current replacement for the deprecated `autoqueue`) and SQUASH-merged once the two required
+# contexts below pass: `CI required` and `contribution-legal`. No `@mergifyio queue`, no `gh pr merge` —
+# just open a non-draft PR; keep WIP as a draft.
 #
-# ── Why `capabilities-security` is listed here before branch protection requires it ──
-# It is a fail-closed security gate, but for a while NOTHING enforced it: absent from all three rulesets
-# AND from this file, so a PR that failed it merged anyway. The enforcement lived only in unapplied
-# `infra/github` HCL (#1625).
+# ── THE ORDER BETWEEN THIS FILE AND THE RULESET ──
+# When the required list changes, this file and `protect-dev` (infra/github) must change in a safe
+# order. A context the ruleset requires and this file does not wait for is the hazardous direction:
+# Mergify queues the PR, GitHub refuses the merge (protect-dev has no bypass actors), and the entry
+# sits in the train with nothing red. The reverse (this file stricter than the ruleset) is harmless —
+# Mergify simply waits. So a newly required context lands HERE first, and the ruleset apply follows.
+# scripts/ci/check-required-checks.mjs compares the two lists in-tree on every PR.
 #
-# The two halves must be fixed in THIS order. If branch protection required it while this file did not,
-# a PR that genuinely FAILS the gate would still satisfy the conditions below, get queued, and then be
-# rejected by GitHub at merge time — a stuck queue entry with no visible cause. The reverse (this file
-# stricter than branch protection) is harmless: the job is unfiltered, so it always reports.
-# So this lands and rides dev→staging→main FIRST; the ruleset apply follows.
+# For the 2026-11-22 switch to `CI required` the live ruleset may still name the eleven per-job
+# contexts until infra/github is applied. That is safe while they keep reporting: `CI required` is
+# green only when every one of those jobs concluded `success` or `skipped`, and GitHub counts a
+# skipped required check as passing. It stops being safe only if a job stops REPORTING (a matrix leg
+# that is never generated) — which is why ci.yml's `AFFECTED_ONLY_ARMED` stays "false" until that
+# apply has landed.
 
 queue_rules:
   - name: dev
     # ── WHY batch_size AT ALL ──
     # Unset, Mergify's default is 1: every queued PR gets its OWN full speculative branch and its own
-    # 11 required checks. Measured on 2026-09-02 at 14:08 UTC, with 20 PRs open: 25 of 34 active CI
+    # full set of required CI jobs. Measured on 2026-09-02 at 14:08 UTC, with 20 PRs open: 25 of 34 active CI
     # runs were speculative merge-queue branches against 9 real PR runs, and 64 speculative branches
     # had been created that day to land 38 merges. Three quarters of the CI budget re-validating the
     # queue one PR at a time is why a green, reviewed, conflict-free PR sat ~50 minutes at the front,
@@ -59,7 +64,8 @@ queue_rules:
     #
     # ── WHERE THIS TAKES EFFECT ──
     # Mergify reads its configuration from the DEFAULT branch (`main`). Merging this to `dev` changes
-    # nothing until it rides dev→staging→main, same as the review-thread gate above it.
+    # nothing until it reaches `main` through a pinned release/<sha> promotion, same as the
+    # review-thread gate below it.
     batch_size: 8
     batch_max_wait_time: "5 minutes"
     # queue_conditions decide which PRs THIS queue accepts — REQUIRED, or a PR can't be assigned to the queue
@@ -116,80 +122,44 @@ queue_rules:
       # comment and the list item parses as null.
       - "#review-threads-unresolved = 0"
     merge_conditions:
-      # The protect-dev required checks (quoted — names contain `·`, `(`, `)`, `/`).
-      # This list, the merge_protections list below and infra/github/variables.tf must agree;
-      # scripts/ci/check-required-checks.mjs compares them and fails the PR when they do not (#3180).
-      - "check-success=TypeScript (lint · types · test · docs)"
-      - "check-success=Go (build · vet · test · lint) (packages/core)"
-      - "check-success=Go (build · vet · test · lint) (apps/cli)"
-      - "check-success=Go (build · vet · test · lint) (apps/runner)"
-      - "check-success=Integration (real Postgres + RLS)"
-      - "check-success=Secret scan (gitleaks)"
-      - "check-success=Docs prose (Vale · Diátaxis + plain-language)"
-      - "check-success=Authz / open-core guards"
-      # The fail-closed capabilities/connector/keyless gate that replaced the dropped #982 CODEOWNERS
-      # review. Safe to require: the job is UNFILTERED (runs on every PR) and no-op-passes when no
-      # relevant path changed, so it always reports and cannot deadlock an unrelated PR.
-      # Listed here BEFORE it is required in branch protection, deliberately — see the note at the
-      # bottom of this file.
-      - "check-success=capabilities-security"
-      # THE CHECK WHOSE ABSENCE COST 26 DAYS OF PRODUCTION DEPLOYS (#2606).
+      # The protect-dev required checks. This list, the merge_protections list below and
+      # infra/github/variables.tf must agree; scripts/ci/check-required-checks.mjs compares them and
+      # fails the PR when they do not (#3180).
       #
-      # The console image was only ever built by deploy-console.yml, on a push to MAIN — i.e. AFTER
-      # the merge. So a 2026-07-30 cross-app import rode dev → staging → main behind ten green checks
-      # and then broke every production deploy until it was found. ci.yml cannot catch it: ci
-      # installs the FULL workspace, the image installs `--filter console...`, and the bug exists
-      # only in the pruned graph.
+      # ── `CI required` — ONE CONTEXT FOR EVERY REQUIRED CI JOB (2026-11-22) ──
+      # The aggregator job `ci-required` in .github/workflows/ci.yml. It `needs:` every required job
+      # of that workflow and is green only when each one concluded `success` or `skipped`; a failed
+      # or cancelled need turns it red, and it runs with `if: always()` so it always reports.
       #
-      # SAFE to require, and the reason matters because a required check that does not always report
-      # WEDGES the queue: the job (ci.yml's `build-console` since 2026-11-22, validate-console.yml
-      # before) carries no `paths:` filter and no PR-skipping job-level `if:` — it
-      # self-gates its STEPS on a dorny/paths-filter, so the job always runs and always reports,
-      # passing in seconds when no app path changed. One job, not a matrix, so there is exactly one
-      # context to name. (Measured: it reported `pass` in 9s on a PR touching only shell + workflow
-      # files.) A plain `check-success=` is therefore correct here — no `or:`/`check-skipped=`
-      # wrapper, which would be a dead condition.
+      # ITS `needs:` LIST IS NOW THE SOURCE OF TRUTH for which CI jobs gate a merge into dev — not
+      # this file. Adding a required job means adding it to that `needs:` list (and to the count the
+      # job checks); nothing here changes. It replaced eleven per-job contexts (TypeScript, the three
+      # Go legs, Integration, Secret scan, Docs prose, Authz / open-core guards,
+      # capabilities-security, Build console images, BYO users SQL). Why each of those jobs is
+      # required — #1625 for capabilities-security, #2606 for the console image build, #6484 for
+      # the BYO users SQL — is recorded at the job in ci.yml.
       #
-      # Listed here BEFORE branch protection requires it, deliberately, for the reason at the bottom
-      # of this file: the other order queues a PR that genuinely fails the gate and then has GitHub
-      # reject it at merge time, which is a stuck queue entry with no visible cause.
-      # infra/github/variables.tf ALREADY names it; that stack has never been applied (#1625's shape,
-      # a second time). Applying it is the maintainer's half — see #2606.
-      - "check-success=Build console images (no push)"
-      # THE CONTRIBUTION GATE, WHICH USED TO BE LEFT OUT OF THIS FILE ON PURPOSE (#3180).
+      # Why one context rather than eleven: `check-success=` reads a SKIPPED job as "not green" and
+      # a matrix leg that was never generated as "still pending", so a per-job list could never let
+      # a PR skip a job its diff cannot affect. The aggregator reads `skipped` as "not needed".
+      # A plain `check-success=` on purpose: the job always reports, so no `or:` wrapper.
+      - "check-success=CI required"
+      # THE CONTRIBUTION GATE — the one required context the aggregator CANNOT cover. It comes from
+      # cla.yml, a separate `pull_request_target` workflow, and `needs:` cannot reach across
+      # workflows. So it stays listed on its own.
       #
-      # The history is worth keeping, because the reason it was excluded was real. #1653 added the
-      # old `cla` context here and wedged the whole dev queue: Mergify's conditions gate the
-      # SPECULATIVE branch, whose draft PR carries a `mergify[bot]`-authored commit alongside the
-      # real ones, so the CLA was evaluated over a commit set including Mergify's own merge.
-      # Allowlisting mergify[bot] (#1667) did not reliably clear it either — those drafts kept
-      # resolving a STALE cla.yml, logging the pre-fix allowlist long after the fix was on `dev`, so
-      # the first run on each new draft failed and ejected the PR.
+      # It was once left out of this file on purpose (#3180). #1653 added the old `cla` context here
+      # and wedged the whole dev queue: Mergify's conditions gate the SPECULATIVE branch, whose draft
+      # PR carries a `mergify[bot]`-authored commit, so the CLA was evaluated over Mergify's own
+      # merge, and those drafts kept resolving a STALE cla.yml. Neither half can recur: cla.yml is
+      # `pull_request_target`, which resolves the workflow from the PR's BASE branch, and the gate
+      # keys on `github.event.pull_request.user.login` with `mergify[bot]` trusted, not on the
+      # commit set.
       #
-      # NEITHER HALF OF THAT CAUSE CAN RECUR, and both were fixed structurally rather than by
-      # exclusion. cla.yml is now a `pull_request_target` workflow, which by definition resolves the
-      # workflow file from the PR's BASE branch — so a speculative draft based on `dev` runs `dev`'s
-      # cla.yml and the stale-resolution half is gone by construction. And the gate no longer reads
-      # the commit set at all: it keys on `github.event.pull_request.user.login`, with
-      # `mergify[bot]` in the trusted list, so Mergify's own commit is not a subject.
-      #
-      # LEAVING IT OUT IS NOW THE HAZARD, which is the reverse of the 2026 position. It is in
-      # `required_status_checks` for protect-dev, protect-dev has NO bypass actors, and Mergify
-      # merges through the API like anyone else — so a condition the ruleset requires and this file
-      # does not wait for produces a PR that queues, reports nothing red, and is refused at merge
-      # time. That is a stuck entry with no visible cause, and it is exactly what the pending
-      # `infra/github` apply (#2606) would have triggered.
-      #
-      # Verified rather than assumed: it reported `pass` in 5s on #3179, an ordinary dev PR.
+      # LEAVING IT OUT IS NOW THE HAZARD. It is in `required_status_checks` for protect-dev, which
+      # has NO bypass actors, so a PR this file queued without waiting for it would be refused at
+      # merge time: a stuck entry with no visible cause.
       - "check-success=contribution-legal"
-      # THE BYO USERS SQL, APPLIED TO A REAL POSTGRES (#6484). The legs themselves are a matrix
-      # skipped at job level on every PR that does not touch the runner, which reports one check
-      # under the UNEXPANDED matrix name and never the per-leg names — so requiring a leg would wedge
-      # those PRs. This is the always-running aggregator in ci.yml (`byo-users-postgres-required`):
-      # one fixed name, green when every leg passed or when the runner did not change, red otherwise.
-      # A plain `check-success=` on purpose: no `or:`, and no template braces in the value — Mergify
-      # gives those a meaning inside conditions, and an invalid file stops the queue for everyone.
-      - "check-success=BYO users SQL — real Postgres"
     # SQUASH matches feature→dev convention (release/<sha> → main promotions stay a `--merge`, outside Mergify).
     merge_method: squash
 
@@ -202,22 +172,11 @@ merge_protections:
     if:
       - base = dev
     success_conditions:
-      - "check-success=TypeScript (lint · types · test · docs)"
-      - "check-success=Go (build · vet · test · lint) (packages/core)"
-      - "check-success=Go (build · vet · test · lint) (apps/cli)"
-      - "check-success=Go (build · vet · test · lint) (apps/runner)"
-      - "check-success=Integration (real Postgres + RLS)"
-      - "check-success=Secret scan (gitleaks)"
-      - "check-success=Docs prose (Vale · Diátaxis + plain-language)"
-      - "check-success=Authz / open-core guards"
-      - "check-success=capabilities-security"
-      # Same check, same reason — see the long note in the dev queue's merge_conditions above.
-      - "check-success=Build console images (no push)"
-      # Also the same reason: required by protect-dev, so this file has to wait for it or the merge
-      # is refused after the queue has already decided. See merge_conditions above.
+      # The aggregator — see the note in the dev queue's merge_conditions above.
+      - "check-success=CI required"
+      # Required by protect-dev and not coverable by the aggregator (a separate workflow), so this
+      # file has to wait for it or the merge is refused after the queue has already decided.
       - "check-success=contribution-legal"
-      # The BYO users aggregator — see merge_conditions above.
-      - "check-success=BYO users SQL — real Postgres"
 
 # Auto-queue: automatically queues + squash-merges a matching PR once the merge_protections
 # success_conditions above pass. The current, non-deprecated auto-merge mechanism (no @mergifyio command).
