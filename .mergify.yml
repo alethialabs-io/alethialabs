@@ -33,7 +33,7 @@ queue_rules:
     # queue one PR at a time is why a green, reviewed, conflict-free PR sat ~50 minutes at the front,
     # and why #3784 was open for seven hours.
     #
-    # A batch validates five PRs as ONE tree, so five land per cycle instead of one. It is the same
+    # A batch validates up to eight PRs as ONE tree, so up to eight land per cycle instead of one. It is the same
     # tree the queue would have produced anyway — batching changes how many checks pay for it, not
     # what is checked, and the speculative merge is still what catches lane-vs-lane defects that
     # per-PR CI is blind to (a symbol declared in two PRs, an import of a module another deleted).
@@ -43,12 +43,25 @@ queue_rules:
     # failure costs more CI than it would have serially. That trade is only worth taking while
     # batches are usually green: on 2026-09-02 every batch observed was green, and the failures that
     # did occur were caught on the PRs' own CI before they were ever queued. If red batches become
-    # common, LOWER this number rather than removing it — 5 → 2 keeps most of the win.
+    # common, LOWER this number rather than removing it — 8 → 3 keeps most of the win.
+    #
+    # ── 5 → 8, AND A WAIT (2026-11-22) ──
+    # Raised from 5 when CI runner slots became the bottleneck (the repo's own measurement that week:
+    # ~5,400 minutes queued against ~1,800 executing). A bigger batch is fewer speculative runs per
+    # merged PR — but only if batches FILL, and with Mergify's default `batch_max_wait_time` of
+    # 30 seconds a batch starts as soon as the timer set by its FIRST PR runs out, so under a trickle
+    # of arrivals most batches started with one or two PRs in them. Five minutes is the cost stated
+    # plainly: a PR that arrives alone in an idle queue waits up to five minutes longer before its
+    # batch starts. A batch that reaches eight starts at once; the wait is a ceiling, not a delay
+    # imposed between batches (Mergify docs: "This does not enforce a minimum delay between batches").
+    # Written "5 minutes" — Mergify's duration type documents the plural unit; abbreviations are
+    # accepted in principle, but an unparseable value invalidates the whole file and stops the queue.
     #
     # ── WHERE THIS TAKES EFFECT ──
     # Mergify reads its configuration from the DEFAULT branch (`main`). Merging this to `dev` changes
     # nothing until it rides dev→staging→main, same as the review-thread gate above it.
-    batch_size: 5
+    batch_size: 8
+    batch_max_wait_time: "5 minutes"
     # queue_conditions decide which PRs THIS queue accepts — REQUIRED, or a PR can't be assigned to the queue
     # (its absence returned `queue_rule_name: null` before). merge_conditions decide WHEN to merge.
     queue_conditions:
@@ -80,11 +93,24 @@ queue_rules:
       # pending, indefinitely, with no checks_timeout configured to break it. Dead or wedged, with
       # no third outcome.
       #
-      # queue_conditions is the only layer that is both binding on the REAL pull request and
-      # continuously re-evaluated: a PR that stops matching is REMOVED from the queue. That is what
-      # closes the #3444 case, where the review landed AFTER the PR was already queued —
-      # auto_merge_conditions alone only decides whether to enqueue, never to evict. An un-queued PR
-      # also holds no train slot, so open findings cannot stall anyone else's merge.
+      # queue_conditions is binding on the REAL pull request and continuously re-evaluated: a PR
+      # that stops matching is REMOVED from the queue (Mergify's merge-queue lifecycle docs). That
+      # is what closes the #3444 case, where the review landed AFTER the PR was already queued. An
+      # un-queued PR also holds no train slot, so open findings cannot stall anyone else's merge.
+      #
+      # ── "GATE ENTRY, BUT DO NOT EJECT A PR ALREADY IN A BATCH" — NOT EXPRESSIBLE (2026-11-22) ──
+      # Asked for, because an ejection splits a running batch and re-runs the rest. Mergify has no
+      # condition layer with that meaning, checked against its docs on 2026-11-22:
+      #   · queue_conditions — re-evaluated while queued; a mismatch dequeues (above).
+      #   · merge_conditions — dead for this condition (the temporary-merge argument above).
+      #   · auto_merge_conditions (merge_protections_settings, below) — NOT an entry-only layer
+      #     either. The docs do not say whether a mismatch dequeues, and the one dequeue observed
+      #     (a third-party Mergify comment, 2026-11-21) listed "Auto-merge conditions" INSIDE the
+      #     unsatisfied queue-condition tree — i.e. Mergify folds them into what it re-evaluates.
+      #   · there is no setting that freezes queue_conditions once a PR is queued.
+      # So the gate stays where it was, in both places, with the ejecting behaviour it always had.
+      # An EARLIER version of this comment said auto_merge_conditions "only decides whether to
+      # enqueue, never to evict"; nothing documented that, and the observation above contradicts it.
       #
       # ⚠️ THE QUOTES ARE LOAD-BEARING. Unquoted, `- #review-threads-unresolved = 0` is a YAML
       # comment and the list item parses as null.
@@ -116,7 +142,8 @@ queue_rules:
       # only in the pruned graph.
       #
       # SAFE to require, and the reason matters because a required check that does not always report
-      # WEDGES the queue: validate-console.yml carries no `paths:` filter and no job-level `if:` — it
+      # WEDGES the queue: the job (ci.yml's `build-console` since 2026-11-22, validate-console.yml
+      # before) carries no `paths:` filter and no PR-skipping job-level `if:` — it
       # self-gates its STEPS on a dorny/paths-filter, so the job always runs and always reports,
       # passing in seconds when no app path changed. One job, not a matrix, so there is exactly one
       # context to name. (Measured: it reported `pass` in 9s on a PR touching only shell + workflow
@@ -200,7 +227,8 @@ merge_protections_settings:
     - "-draft"
     # The outer half of the review-thread gate — same condition, same reason, see the long note in
     # queue_conditions above. This one stops the auto-queue being ATTEMPTED on a PR with open
-    # findings; queue_conditions is the one that EVICTS a PR whose findings arrive after it was
-    # already queued. Both are needed, and check-required-checks.mjs fails the build if the gate is
-    # in only one of them — or in merge_conditions/success_conditions, where it is dead.
+    # findings; queue_conditions is the documented one that EVICTS a PR whose findings arrive after
+    # it was already queued (whether a mismatch HERE also evicts is undocumented — see the
+    # "NOT EXPRESSIBLE" note above). Both are kept, and check-required-checks.mjs fails the build if
+    # the gate is in only one of them — or in merge_conditions/success_conditions, where it is dead.
     - "#review-threads-unresolved = 0"
