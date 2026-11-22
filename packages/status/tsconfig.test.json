@@ -5,7 +5,9 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["node"]
+    "types": ["node"],
+    // tests/brand.test.ts renders packages/brand's AlethiaLockup (a .tsx) to check the generated logo.
+    "jsx": "react-jsx"
   },
-  "include": ["src", "tests", "vitest.config.ts"]
+  "include": ["src", "tests", "scripts", "vitest.config.ts"]
 }

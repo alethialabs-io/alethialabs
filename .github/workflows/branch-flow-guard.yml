@@ -7,16 +7,16 @@ name: Branch flow guard
 #     `dev` (the compare API says the head is `identical` to dev or `behind` it). The branch name is
 #     not the evidence; the ancestry is. A `release/…` branch carrying a commit dev does not have is
 #     refused — that is a hotfix wearing a promotion's name, and a hotfix has its own prefix.
-#   · `staging` — the retired hop, still admitted until protect-staging is retired (a later step);
 #   · `hotfix/*`, and release-please's own release PRs.
-# A PR into `staging` only from `dev` (or `hotfix/*`). Feature branches must target `dev` (which has
-# no ruleset requiring this check).
-# This job is wired as a REQUIRED status check on the main + staging rulesets (infra/github), so a
-# mis-targeted PR (e.g. an agent opening feature → main) gets a red required check and is un-mergeable.
+# `staging` is NOT a source any more: the staging hop and its ruleset were retired on 2026-11-22, and
+# a PR into `staging` no longer runs this workflow at all. Feature branches must target `dev` (whose
+# ruleset does not require this check).
+# This job is wired as a REQUIRED status check on the main ruleset (infra/github), so a mis-targeted
+# PR (e.g. an agent opening feature → main) gets a red required check and is un-mergeable.
 
 on:
   pull_request:
-    branches: [main, staging]
+    branches: [main]
 
 # A superseded run is not evidence about the head of the branch, and while it keeps a runner it is
 # denying one to the run that is. `ci.yml` and `addon-render-determinism.yml` have carried this
@@ -24,8 +24,8 @@ on:
 # started landing PRs faster than a run takes to finish.
 #
 # MEASURED 2026-09-02 19:2xZ, with the dev queue draining: 48 runs queued against 2 in progress,
-# and the single largest group was 23 runs headed `dev` — the standing `dev → staging` promotion
-# PR #3562, which re-triggers every `pull_request` workflow on EVERY merge into dev. `CI` had
+# and the single largest group was 23 runs headed `dev` — the then-standing `dev → staging` promotion
+# PR #3562, which re-triggered every `pull_request` workflow on EVERY merge into dev. `CI` had
 # already cancelled its own superseded runs and showed 1; these seven each showed a full stack.
 #
 # Scoped to `github.ref`, so this only ever cancels an OLDER run of the SAME workflow on the SAME
@@ -50,7 +50,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # release-please opens its release PRs directly against main/staging
+          # release-please opens its release PRs directly against main
           # (release-please--branches--<base>--…) by design — they only bump the manifest + changelog
           # and cut the tag, so they're exempt from the promotion-source rule. Without this the guard
           # (a required check on protect-main) would make every release PR un-mergeable.
@@ -71,21 +71,16 @@ jobs:
             echo "::error::Open promotions with the Promote workflow (promote.yml); a change that is not on dev is a hotfix/* PR."
             exit 1
           fi
-          case "$BASE" in
-            main)    allowed="staging" ;;
-            staging) allowed="dev" ;;
-            *)       echo "guard not applicable to base '$BASE'"; exit 0 ;;
-          esac
-          is_hotfix=false
-          case "$HEAD" in hotfix/*) is_hotfix=true ;; esac
-          if [ "$HEAD" = "$allowed" ] || [ "$is_hotfix" = true ]; then
-            echo "OK: '$HEAD' → '$BASE' is an allowed promotion."
+          if [ "$BASE" != main ]; then
+            echo "guard not applicable to base '$BASE'"
             exit 0
           fi
-          if [ "$BASE" = main ]; then
-            echo "::error::PRs into 'main' must come from a release/<sha> promotion (promote.yml), 'staging', or a hotfix/* branch — not '$HEAD'."
-          else
-            echo "::error::PRs into '$BASE' must come from '$allowed' (or a hotfix/* branch), not '$HEAD'."
-          fi
+          case "$HEAD" in
+            hotfix/*)
+              echo "OK: '$HEAD' → main is a hotfix."
+              exit 0
+              ;;
+          esac
+          echo "::error::PRs into 'main' must come from a release/<sha> promotion (promote.yml) or a hotfix/* branch — not '$HEAD'."
           echo "::error::The flow is feature → dev → main (via promote.yml). For feature work, target 'dev'."
           exit 1

@@ -7,6 +7,7 @@
     "./lockup": "./src/lockup.tsx",
     "./tokens.css": "./src/tokens.css",
     "./icon": "./src/icon.tsx",
+    "./icon-svg": "./src/icon-svg.ts",
     "./apple-icon": "./src/apple-icon.tsx",
     "./opengraph-image": "./src/opengraph-image.tsx",
     "./ramp-srgb": "./src/ramp-srgb.ts",

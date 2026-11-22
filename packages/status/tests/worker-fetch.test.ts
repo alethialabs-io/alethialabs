@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { faviconSvg } from "@repo/brand/icon-svg";
 import { describe, expect, it } from "vitest";
 import worker, { parseSnapshot, SNAPSHOT_KEY, type StoredSnapshot } from "../src/worker";
 import { FakeD1, FakeKV } from "./helpers/fake-bindings";
@@ -52,7 +53,7 @@ describe("fetch()", () => {
 	it("serves the favicon, robots and sitemap from the Worker itself", async () => {
 		const icon = await get("/favicon.svg");
 		expect(icon.res.headers.get("content-type")).toContain("image/svg+xml");
-		expect(icon.body).toContain("<svg");
+		expect(icon.body).toBe(faviconSvg());
 		expect((await get("/robots.txt")).body).toContain("Sitemap: https://status.alethialabs.io/sitemap.xml");
 		expect((await get("/sitemap.xml")).body).toContain("<loc>https://status.alethialabs.io/</loc>");
 	});

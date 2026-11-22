@@ -25,68 +25,49 @@ variable "integration_branch" {
   default     = "dev"
 }
 
+# Read ONLY when `dev` is first created. The staging hop is retired (promotions go dev → main through
+# release/<sha>, promote.yml), but this default is deliberately left alone: a change to
+# `github_branch.dev`'s `source_branch` forces a REPLACEMENT — delete and recreate the dev branch — so
+# main.tf also makes that resource ignore changes to it. Do not "tidy" this to "main".
 variable "rc_branch" {
-  description = "Release-candidate branch the integration branch forks from."
+  description = "Branch the integration branch was originally created from (read only at creation)."
   type        = string
   default     = "staging"
 }
 
 variable "required_status_checks" {
-  description = "CI check contexts (ci.yml job names) that must pass before merge."
+  description = "Check contexts that must pass before merge. Filtered per ruleset in main.tf."
   type        = list(string)
   # Matrix jobs report their status-check context WITH the matrix suffix, e.g.
-  # "Go (build · vet · test · lint) (apps/cli)" — the bare name is never reported, so
-  # requiring it would wedge every merge. List each matrix leg explicitly.
+  # "Release gate (hero)" — the bare name is never reported, so requiring it would wedge every
+  # merge. List each matrix leg explicitly.
   default = [
-    "TypeScript (lint · types · test · docs)",
-    "Integration (real Postgres + RLS)",
-    "Go (build · vet · test · lint) (apps/cli)",
-    "Go (build · vet · test · lint) (packages/core)",
-    "Go (build · vet · test · lint) (apps/runner)",
-    "Authz / open-core guards",
-    "Secret scan (gitleaks)",
-    # The docs-prose job ALWAYS runs (steps self-gate on the `docs` path filter), so it reports its
-    # check on every PR — safe to require without wedging non-docs PRs. Blocks only on error-level
-    # Vale alerts (wrong product terminology). See .github/workflows/ci.yml → docs-prose.
-    "Docs prose (Vale · Diátaxis + plain-language)",
-    # Enforces feature → dev → staging → main: fails a PR into main/staging from a disallowed source
-    # branch → mis-targeted PRs (e.g. feature → main) are un-mergeable. See .github/workflows/branch-flow-guard.yml.
+    # ci.yml's aggregator job (`ci-required`). It `needs:` every required job of that workflow and
+    # is green only when each one concluded `success` or `skipped`; red on a failure or a cancel,
+    # and it runs with `if: always()`, so it reports on every PR. ITS `needs:` LIST IS THE SOURCE OF
+    # TRUTH for which CI jobs gate a merge — adding a required CI job is an edit there, not here.
+    # It replaced eleven per-job contexts on 2026-11-22 (TypeScript, the three Go legs, Integration,
+    # Secret scan, Docs prose, Authz / open-core guards, capabilities-security, Build console
+    # images, BYO users SQL); why each job is required is recorded at the job in ci.yml.
+    "CI required",
+    # Enforces feature → dev → main through a pinned release/<sha> promotion: fails a PR into main
+    # from a disallowed source branch → mis-targeted PRs (e.g. feature → main) are un-mergeable.
+    # See .github/workflows/branch-flow-guard.yml. It runs only on PRs into main, so main.tf filters
+    # it out of dev.
     "branch-flow-guard",
-    # The automated capabilities-security gate (replaces the dropped #982 CODEOWNERS review — a sole-owner
-    # human gate would deadlock the no-approval Mergify queue). Runs on EVERY PR and no-op-passes (green)
-    # when no capabilities/connector/keyless path changed; fail-closes on the deterministic
-    # alethia-security-review invariants when those paths DID change. See
-    # the `capabilities-security` job in .github/workflows/ci.yml (its own workflow until 2026-11-22; the
-    # context is the job name, which did not change). SAFE to require: it always reports (no job-level
-    # filter on a PR), so it never wedges an unrelated PR the way a path-filtered required check would.
-    "capabilities-security",
     # Pre-registration: blocks outside contributions while the recipient entity and CLA are not
     # active. After registration this same workflow is replaced by the versioned CLA signing gate.
-    # It always reports for pull requests, including founder/bot and promotion PRs.
+    # It always reports for pull requests, including founder/bot and promotion PRs. It comes from
+    # cla.yml, a separate `pull_request_target` workflow, so the CI aggregator above cannot cover it
+    # (`needs:` cannot reach across workflows) and it is listed on its own.
     "contribution-legal",
-    # Builds apps/console/Dockerfile (both targets), Dockerfile.community and the other box images
-    # on the PR. This is the check whose ABSENCE let a 2026-07-30 cross-app import ride dev → staging
-    # → main behind ten green checks and then break every production deploy for 26 days: the console
-    # image was only ever built by deploy-console.yml, on a push to main, i.e. after the merge.
-    # ci.yml cannot catch it — it installs the FULL workspace, while the image installs
-    # `--filter console...`, and the bug only exists in the pruned graph.
-    # SAFE to require: the job is unfiltered and self-gates its steps on a paths-filter, so it always
-    # reports (green in seconds when no app path changed) and never wedges an unrelated PR.
-    # One job, not a matrix, so there is exactly one context to name here.
-    "Build console images (no push)",
-    # The BYO users SQL applied to a real Postgres (#6484). NOT a matrix leg, despite the comment at
-    # the top of this list: the legs (`byo-users-postgres` in ci.yml) are skipped at job level on any
-    # PR that does not touch the runner, and a skipped matrix reports only its unexpanded template
-    # name, so requiring a leg would wedge those PRs. This is the always-running aggregator job
-    # (`byo-users-postgres-required`), which reports this one fixed name on every PR.
-    "BYO users SQL — real Postgres",
     # THE BROWSER RELEASE GATE (.github/workflows/release-gate.yml). Production deploys on a push to
-    # main, and main only takes PRs from staging, so requiring these on main is "before every
-    # production deployment". A matrix — one context per leg, listed literally as the comment at the
-    # top of this list demands — because the legs finish at different times and a promotion should
-    # read which one is red. They are filtered OUT of dev and staging in main.tf: the gate never runs
-    # on a dev PR (Mergify would wedge on a context that never reports), and on staging it runs but
-    # is observed rather than required until the ratchet has a history there.
+    # main, and main only takes promotions (release/<sha>), release-please PRs and hotfixes, so
+    # requiring these on main is "before every production deployment". A matrix — one context per
+    # leg, listed literally as the comment at the top of this list demands — because the legs finish
+    # at different times and a promotion should read which one is red. They are filtered OUT of dev
+    # in main.tf: the gate runs on a dev PR only when it is labelled for it, so on every other dev PR
+    # the context never reports and Mergify would wedge on it.
     "Release gate (hero)",
     "Release gate (elench-ai)",
     "Release gate (console)",
@@ -95,7 +76,7 @@ variable "required_status_checks" {
     "Release gate (audit)",
     # The one gate leg that ACTIVATES controls: it opens every destructive control the registry
     # records, asserts the declared confirmation and presses Cancel (#4266). Required on main like
-    # its siblings and filtered out of dev/staging in main.tf, for the same reason they are.
+    # its siblings and filtered out of dev in main.tf, for the same reason they are.
     "Release gate (audit-interaction)",
   ]
 }

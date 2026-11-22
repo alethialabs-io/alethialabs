@@ -1,33 +1,39 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Repo governance as code: the dev→staging→main branch model, protection rulesets,
+# Repo governance as code: the feature → dev → main branch model (dev reaches main through a
+# pinned release/<sha> promotion, promote.yml — the staging hop is retired), protection rulesets,
 # and the deployer-role Actions variables. Replaces the manual `gh` steps in
 # deploy/prod/README.md. Solo maintainer → CI-gated with NO required human approval
 # (you can't approve your own PR); a second reviewer can be required later by bumping
 # required_approving_review_count.
 
-# Integration branch (feature PRs land here) forked off the RC branch.
+# Integration branch (feature PRs land here), originally forked off the old RC branch `staging`.
 resource "github_branch" "dev" {
   repository    = var.repository
   branch        = var.integration_branch
   source_branch = var.rc_branch
+
+  # `source_branch` matters only at creation, and the provider REPLACES the branch (delete + recreate,
+  # i.e. dev reset to the source's tip) when it changes. With the staging hop retired, nothing may
+  # ever let a plan propose that for `dev` — not a tidy-up of `rc_branch`, not the `staging` branch
+  # being deleted. So a change to it is ignored outright.
+  lifecycle {
+    ignore_changes = [source_branch]
+  }
 }
 
 locals {
-  # dev requires the same CI as main/staging MINUS branch-flow-guard: that check only runs on PRs into
-  # main/staging (its `on: pull_request: branches: [main, staging]`), so requiring it on a dev PR would
-  # wedge the merge — the check would be "expected" but never report.
+  # dev requires the same checks as main MINUS branch-flow-guard and the seven release-gate legs.
+  # branch-flow-guard runs only on PRs into main (its `on: pull_request: branches: [main]`), and the
+  # gate legs run on a dev PR only when it carries a `release-gate:*` label (release-gate.yml's job
+  # `if:`), so requiring either on dev would wedge the merge — "expected" but never reported.
   dev_required_status_checks = [for c in var.required_status_checks : c if c != "branch-flow-guard" && c != "Release gate (hero)" && c != "Release gate (elench-ai)" && c != "Release gate (console)" && c != "Release gate (canvas)" && c != "Release gate (qa)" && c != "Release gate (audit)" && c != "Release gate (audit-interaction)"]
-  # staging takes the same list MINUS the release gate: the gate RUNS on a PR into staging (so the
-  # ratchet has a history before a promotion reaches main) but is required only on main, where the
-  # deploy is. Requiring it here too is deleting these clauses once it has earned it.
-  staging_required_status_checks = [for c in var.required_status_checks : c if c != "Release gate (hero)" && c != "Release gate (elench-ai)" && c != "Release gate (console)" && c != "Release gate (canvas)" && c != "Release gate (qa)" && c != "Release gate (audit)" && c != "Release gate (audit-interaction)"]
 }
 
 # ── dev — integration branch. PR + green CI, NO approval; queued by MERGIFY. ──
 # Closes the gate into the shared integration branch: feature PRs can't land red or via direct push.
-# The maintainer reviews the integrated dev (dev.alethialabs.io) and promotes dev → staging → main.
+# Promotions go dev → main through a pinned release/<sha> PR (promote.yml); see protect-main below.
 #
 # The merge QUEUE (the fix for the stale-green race, where two PRs each green against a now-stale dev broke
 # the branch) is now driven by MERGIFY, not GitHub's native merge queue — see `.mergify.yml`. Mergify
@@ -72,7 +78,7 @@ resource "github_repository_ruleset" "dev" {
       # Mergify, so the queue_conditions gate is bypassable by exactly the actor it constrains.
       # This rule is the half that is not.
       #
-      # protect-dev ONLY. staging and main receive human promotions of the whole integrated branch,
+      # protect-dev ONLY. main receives promotions of the whole integrated branch,
       # where one stray inline comment would block a release; the review discipline this enforces
       # happens on feature PRs.
       #
@@ -106,9 +112,10 @@ resource "github_repository_ruleset" "dev" {
 }
 
 # ── main — production. PR + green CI; no force-push/deletion. ──
-# NOTE: linear history is intentionally NOT required. `staging → main` is promoted as a normal MERGE
-# commit so main shares staging's/dev's history — required_linear_history=true forced squash promotions,
-# and each squash then diverged main's graph from dev/staging, making the NEXT promotion falsely conflict
+# NOTE: linear history is intentionally NOT required. A promotion into main (release/<sha> → main today,
+# staging → main before 2026-11-22) lands as a normal MERGE commit so main shares dev's history —
+# required_linear_history=true forced squash promotions, and each squash then diverged main's graph
+# from dev, making the NEXT promotion falsely conflict
 # (hit twice: the umami #110 and the consolidated-release #126, both needing a hotfix-off-main). Allowing
 # merge commits keeps the branches convergent so promotions merge cleanly.
 resource "github_repository_ruleset" "main" {
@@ -153,41 +160,6 @@ resource "github_repository_ruleset" "main" {
   # created (2026-07-03) until 2026-08-05, and the README advertised 21.6% Go coverage against a
   # real 61.2%. The jobs now publish to the unprotected orphan `badges` branch and no longer
   # swallow the push failure. Do not add a bypass actor here to "fix" a badge.
-}
-
-# ── staging — release candidate. PR + green CI (lighter; allows hotfix merges). ──
-resource "github_repository_ruleset" "staging" {
-  name        = "protect-staging"
-  repository  = var.repository
-  target      = "branch"
-  enforcement = "active"
-
-  conditions {
-    ref_name {
-      include = ["refs/heads/staging"]
-      exclude = []
-    }
-  }
-
-  rules {
-    deletion         = true
-    non_fast_forward = true
-
-    pull_request {
-      required_approving_review_count = 0
-      dismiss_stale_reviews_on_push   = true
-    }
-
-    required_status_checks {
-      strict_required_status_checks_policy = false
-      dynamic "required_check" {
-        for_each = local.staging_required_status_checks
-        content {
-          context = required_check.value
-        }
-      }
-    }
-  }
 }
 
 # ── Deployer-role ARNs as Actions variables (consumed by the OIDC workflows) ──

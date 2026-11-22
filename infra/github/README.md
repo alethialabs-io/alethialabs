@@ -6,27 +6,32 @@ SPDX-License-Identifier: AGPL-3.0-only
 # github (repo-as-code)
 
 Repo governance as OpenTofu (provider `integrations/github`): the `dev` branch, the
-`main`/`staging` protection **rulesets**, and the deployer-role **Actions variables**.
+`main`/`dev` protection **rulesets**, and the deployer-role **Actions variables**.
 This is the source of truth — the `gh api` snippets in `deploy/prod/README.md` are a
 manual fallback only.
 
 - **`main`**: PR required, **0 approvals** (solo repo — CI is the gate), all CI checks
   green, no force-push/deletion, admins included. **Merge commits allowed** (NOT linear
-  history) — `staging → main` promotes as a merge so main stays convergent with dev/staging;
-  requiring linear history forced squash promotions that diverged the graph and made the next
-  promotion falsely conflict.
-- **`staging`**: PR + CI (lighter — allows hotfix merges).
-- **`dev`** (`protect-dev`): created off `staging`; feature PRs target it. **PR + green CI, 0 approvals,
+  history) — a promotion (`release/<sha>` → main, opened by `promote.yml`) lands as a merge so main
+  stays convergent with dev; requiring linear history forced squash promotions that diverged the
+  graph and made the next promotion falsely conflict.
+- **`staging`**: no longer protected here. The staging hop is retired (2026-11-22) and its
+  `protect-staging` ruleset was removed from this stack; the `staging` git branch itself is left in
+  place. `github_branch.dev` still names it as `source_branch` (via `rc_branch`), which only matters
+  when `dev` is created — `lifecycle.ignore_changes = [source_branch]` keeps any plan from replacing
+  `dev` over it.
+- **`dev`** (`protect-dev`): originally created off `staging`; feature PRs target it. **PR + green CI, 0 approvals,
   MERGIFY QUEUE.** No force-push/deletion. Mergify builds speculative branches on the projected `dev`
   tip, reruns the required checks, and squash-merges in FIFO order. It does **not** emit GitHub's native
   `merge_group` event: a queue build is a `pull_request` CI run on the draft PR Mergify opens from a
   `mergify/merge-queue/*` branch. The `provision-e2e` (T1) job runs on those builds, and
-  `scripts/merge-signal-health.sh` grades the observe-only signals over them (#2759). Promoting one
-  to required means naming it here in `required_status_checks` AND in both `.mergify.yml` lists —
-  and only after its job always reports, because Mergify's `check-success=` does not accept a
-  skipped job. Promotions (`dev → staging → main`) are merged by agents once green — every check
-  and every release-gate leg passed — through `.claude/hooks/guard-merge.sh` (maintainer ruling
-  2026-11-06).
+  `scripts/merge-signal-health.sh` grades the observe-only signals over them (#2759). The required
+  CI is ONE context, `CI required` — ci.yml's aggregator job, whose `needs:` list decides which CI
+  jobs gate a merge — plus `contribution-legal` (cla.yml, a separate workflow the aggregator cannot
+  reach). Making another ci.yml job required is an edit to that `needs:` list, not to this stack
+  or `.mergify.yml`. Promotions (`release/<sha>` → main) are merged by agents once green — every
+  check and every release-gate leg passed — through `.claude/hooks/guard-merge.sh` (maintainer
+  ruling 2026-11-06).
   - **Repo settings prerequisite** (not TF-managed — the repo resource isn't in this stack): the queue
     needs `allow_auto_merge` **on** so `--auto` can enqueue. It is set once, by the maintainer: add a
     `github_repository` resource carrying `allow_auto_merge` and `allow_update_branch` to this stack
