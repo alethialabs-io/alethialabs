@@ -291,6 +291,18 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 		},
 	],
 	[
+		"second-owner-row",
+		{
+			// `org.leave` (#7204): the org's last ACTIVE owner sees Leave disabled with the reason, and
+			// the audit's owner is otherwise the org's only one — a disabled trigger is not a control
+			// the spec can open. A second active owner ROW makes it live; nobody signs in as it.
+			writes: "one active `member` row with the `owner` role (+ its `user`) — so the audit's owner is not the last active owner",
+			seed: async (scope) => {
+				await seedOrgMember(scope.owner, { label: `audit-co-owner-${unique()}`, name: "Audit Co-owner", role: "owner" });
+			},
+		},
+	],
+	[
 		"pending-invitation",
 		{
 			writes: "one pending `invitation` row — the only row kind whose menu is labelled \"Manage invitation\"",

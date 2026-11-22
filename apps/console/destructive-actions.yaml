@@ -98,7 +98,7 @@
 # that a script could count all along. Nothing compared them, which is exactly why it went unnoticed
 # — it is prose, and prose is not measured. Now it is.
 #
-#   census: 51 controls — 51 confirmed
+#   census: 52 controls — 52 confirmed
 
 version: 1
 
@@ -130,6 +130,25 @@ controls:
     status: confirmed
     prod-qa: skip
     reason: irreversible — deletes the QA org itself
+
+  - id: org.leave
+    route: /[org]/~/settings/general
+    surface: apps/console/components/settings/general/org-general.tsx
+    mutation: authClient.organization.leave
+    # The trigger is ONE button named "Leave organization" (`aria-label`, org-general.tsx), beside
+    # Delete in the danger zone. `ConfirmAction` at `severity: confirm`, an alert dialog: leaving
+    # removes the caller's own membership, not a resource, so it is not destroy-class (#7204).
+    control: { role: button, name: "Leave organization" }
+    confirm: alert-dialog
+    confirm_action: "Leave organization"
+    dialog_title: "Leave <org>?"
+    # The org's last ACTIVE owner sees Leave disabled with the reason, and the audit's owner is the
+    # org's only one — so the fixture seeds a second active owner row, which makes the control live.
+    fixture: second-owner-row
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: leaving removes the QA account from the QA org
 
   - id: project.delete
     route: /[org]/[project]/settings/general
