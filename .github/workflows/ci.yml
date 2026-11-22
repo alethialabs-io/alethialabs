@@ -1099,6 +1099,15 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-secure-context-apis.mjs --self-test
+      # Every console shortcut is a row in apps/console/lib/shortcuts/ and `useShortcut` is the one
+      # page-level keydown listener (#7007). A second listener answers keys without the registry's
+      # rules — Tab unbound, global chords hold a modifier, narrower scope wins (#6928).
+      - name: The console has one page-level key listener (the shortcut registry)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:single-keydown
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-single-keydown.mjs --self-test
       # The allowlist's `baseline:` and `debt:` are entry counts over its own rows, and the file is
       # shared by every conformance lane of #3613. Typed by hand they had two failure shapes: two
       # lanes writing DIFFERENT values conflict and the resolution is arithmetic (recount, then
