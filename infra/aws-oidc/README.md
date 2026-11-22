@@ -11,7 +11,7 @@ from those workflows — they assume a scoped role via OIDC instead.
 
 | Role | Assumed by | Grants (only) |
 |---|---|---|
-| `alethia-cp-deployer` | `infra-cp-hetzner.yml`, `infra-status.yml` | S3 state on `hetzner/*` + `status/*`; read/write the `alethia/prod/env` secret (read TF-var inputs, write `TUNNEL_TOKEN`/`DEPLOY_HOST`) |
+| `alethia-cp-deployer` | `infra-cp-hetzner.yml` (`infra-status.yml` assumed it until #7148 made that stack maintainer-applied) | S3 state on `hetzner/*` + `status/*`; read/write the `alethia/prod/env` secret (read TF-var inputs, write `TUNNEL_TOKEN`/`DEPLOY_HOST`) |
 | `alethia-deploy-reader` | `deploy-console.yml` | **read** the `alethia/prod/env` secret only |
 | `alethia-runner-release-deployer` | `release-runner.yml`, `deploy-fleet-aws.yml` | ECR push to the runner repo (created here since #3438) + `ecs:UpdateService` on the one service |
 | `alethia-e2e-nightly` | `e2e-nightly.yml` (schedule/dispatch **only**) | Provision + tear down an ephemeral AWS EKS estate — see below |

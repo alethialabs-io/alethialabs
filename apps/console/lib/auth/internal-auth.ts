@@ -47,6 +47,17 @@ export function isInternalAuthorized(req: Request): boolean {
 }
 
 /**
+ * True when the request carries the STATUS-PROBE credential (`ALETHIA_STATUS_PROBE_TOKEN`) — the public
+ * status page's Worker (packages/status), which reads one boolean per component off `/api/health`.
+ * Fail-closed + constant-time. DELIBERATELY a distinct secret from `ALETHIA_CRON_SECRET`: it lives
+ * outside our infrastructure (a Cloudflare Worker secret and that stack's OpenTofu state), so it must
+ * unlock nothing but the booleans — never the cron sweeps or the full topology the cron secret does.
+ */
+export function isStatusProbeAuthorized(req: Request): boolean {
+	return bearerMatches(req, process.env.ALETHIA_STATUS_PROBE_TOKEN);
+}
+
+/**
  * True when the request carries the platform-PROVISIONING secret (`PLATFORM_PROVISION_SECRET`) — the
  * staff app's onboarding calls (create an org, set an org's plan). Fail-closed + constant-time.
  * DELIBERATELY a distinct secret from `ALETHIA_CRON_SECRET`: these routes mint orgs and grant

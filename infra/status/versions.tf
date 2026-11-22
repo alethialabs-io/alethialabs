@@ -4,13 +4,16 @@
 terraform {
   required_version = ">= 1.10"
   required_providers {
-    hcloud = {
-      source  = "hetznercloud/hcloud"
-      version = "~> 1.49"
+    cloudflare = {
+      source = "cloudflare/cloudflare"
+      # v5, matching infra/e2e-issuer: the same zone, the same account, the same resource names
+      # (cloudflare_dns_record, cloudflare_workers_script with a `bindings` list). The attribute set
+      # this stack relies on was read from the provider schema with `tofu providers schema -json`.
+      version = "~> 5.25"
     }
   }
 }
 
-provider "hcloud" {
-  token = var.hcloud_token
-}
+# No `api_token` argument, on purpose (the infra/e2e-issuer convention): the provider reads
+# CLOUDFLARE_API_TOKEN from the environment, so the token is in neither the plan nor the state.
+provider "cloudflare" {}
