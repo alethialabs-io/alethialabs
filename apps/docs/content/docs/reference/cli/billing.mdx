@@ -104,8 +104,10 @@ no input of its own.
 
 ## `alethia fleet set`
 
-Updates the warm pool for one cloud. Only the flags you pass are changed; the rest keep their
-stored value. A pinned `--version` and a release `--channel` are **mutually exclusive** — a version
+Creates or updates the warm pool for one cloud. For an existing pool, only the flags you pass are
+changed; the rest keep their stored value. For a cloud with no pool yet, the command creates one: the
+flags you pass are applied, and every other setting takes its default — warm-min `1`, max `10`, slots
+`1`, enabled. A pinned `--version` and a release `--channel` are **mutually exclusive** — a version
 pin clears the channel.
 
 The provider is optional at a terminal: omit it and you choose from the clouds Alethia knows —
