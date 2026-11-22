@@ -243,7 +243,9 @@ export function parseMergifyCheckBlocks(yamlText) {
  *
  * `#review-threads-unresolved = 0` keeps a PR with unresolved review threads out of the merge
  * queue. In `queue_conditions` / `auto_merge_conditions` it is evaluated against the REAL pull
- * request and is continuously re-enforced, so a PR whose review lands after it queued is EVICTED.
+ * request and is continuously re-enforced, so a PR whose review lands after it queued is EVICTED
+ * (documented for queue_conditions; .mergify.yml records why auto_merge_conditions is not an
+ * entry-only alternative either).
  * In `merge_conditions` / `success_conditions` it is evaluated against Mergify's TEMPORARY MERGE —
  * a fresh pull request carrying no review threads — where it reads 0 = 0 and is true forever: a
  * gate that looks installed and gates nothing.
@@ -377,7 +379,7 @@ export function compareThreadGate(conditionBlocks) {
 		failures.push(
 			`.mergify.yml: \`${THREAD_GATE}\` is in \`${present}\` but not \`${missing}\`. The two halves do ` +
 				`different jobs and one alone is not half a gate: auto_merge_conditions decides whether to ENQUEUE, ` +
-				`queue_conditions is the only one that EVICTS a PR whose findings arrive after it was already queued ` +
+				`queue_conditions is the documented one that EVICTS a PR whose findings arrive after it was already queued ` +
 				`(#3444 lost that race by four minutes). Put it in both, or in neither.`,
 		);
 	}

@@ -60,7 +60,7 @@ name: Release gate
 #     lane that wants per-PR gate feedback, and for capturing or re-recording the baseline.
 #   · workflow_dispatch, with an optional comma-separated `legs` input.
 # Never `merge_group` (Mergify replaced it), never `paths:` (a filtered-out required workflow reports
-# nothing and wedges every PR — validate-console.yml's header has the incident).
+# nothing and wedges every PR — ci.yml's `build-console` job comment has the incident).
 #
 # THAT LIST IS ENFORCED BY EVERY JOB'S OWN `if:`, BEFORE A CHECKOUT. `on:` cannot filter by base
 # branch AND label at once, so an ordinary feature PR into dev, and a `labeled` event for any label
