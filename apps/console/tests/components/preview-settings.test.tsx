@@ -13,6 +13,8 @@ import {
 	PreviewSettingsPage,
 } from "@/components/settings/preview/preview-settings";
 import { PreviewSettingsSkeleton } from "@/components/settings/preview/preview-settings-skeleton";
+import { MANAGE_DENIED_REASON, MANAGE_PENDING_REASON } from "@/components/errors/manage-gate";
+import { FABRIC } from "@/lib/copy/vocabulary";
 import { orpc } from "@/lib/rpc/client";
 import type { PreviewSettingsRead } from "@/lib/rpc/procedures/settings";
 import { failRead, seededClient, withQueryClient } from "../support/general-settings";
@@ -90,11 +92,17 @@ const CREDS = [
 	{ id: "33333333-3333-4333-8333-333333333333", purpose: "applications", method: "pat" },
 ] as const;
 
-function renderPanel(initialConfig = null, fabrics: (typeof FABRICS)[number][] = [...FABRICS]) {
+function renderPanel(
+	initialConfig = null,
+	fabrics: (typeof FABRICS)[number][] = [...FABRICS],
+	// `null` stands for "no answer yet": an `undefined` argument would take this default instead.
+	canManage: boolean | null = true,
+) {
 	return render(
 		withQueryClient(
 			<PreviewSettings
 				projectId="proj-1"
+				canManage={canManage ?? undefined}
 				initialConfig={initialConfig}
 				fabrics={fabrics}
 				gitCredentials={[...CREDS]}
@@ -246,6 +254,7 @@ describe("PreviewSettingsPage — four renders (#6128)", () => {
 		const client = linkedClient();
 		const read: PreviewSettingsRead = {
 			projectId: "proj-1",
+			canManage: true,
 			config: null,
 			fabrics: [...FABRICS],
 			gitCredentials: [...CREDS],
@@ -291,11 +300,70 @@ describe("Preview settings — the skeleton has the form's shape (#6335, RUBRIC 
 		expect(rowLabels(skeleton.container)).toEqual(formRows);
 	});
 
-	it("keeps the Placement note whatever the project's fabrics, so that row has one height", () => {
+	it("keeps the Placement note whatever the project's Fabrics, so that row has one height", () => {
 		const some = renderPanel(null, [...FABRICS]);
-		expect(screen.getByText(/keep Default fabric/)).toBeInTheDocument();
+		expect(screen.getByText(/keep Project default/)).toBeInTheDocument();
 		some.unmount();
 		renderPanel(null, []);
-		expect(screen.getByText(/No project fabrics found/)).toBeInTheDocument();
+		expect(screen.getByText(/This project has no Fabric yet/)).toBeInTheDocument();
+	});
+});
+
+// R6 F-32: "Fabric" is the console's word (lib/copy/vocabulary.ts), never printed bare in lower case,
+// and its definition is on the page beside it.
+describe("Preview settings — the Fabric vocabulary", () => {
+	it("prints no lower-case 'fabric', and carries the definition", () => {
+		const { container } = renderPanel(null, []);
+		const text = container.textContent ?? "";
+		expect(text.match(/\bfabrics?\b/g) ?? []).toEqual([]);
+		expect(text).toContain(FABRIC.definition.slice(1));
+		expect(screen.getByRole("combobox", { name: "Placement Fabric" })).toBeInTheDocument();
+	});
+});
+
+// R6 F-11: the read says whether the viewer may save. One who may not sees the form read-only and
+// Save disabled with the reason; nothing is sent.
+describe("Preview settings — what the viewer may change", () => {
+	/** The text of every element the control's `aria-describedby` names. */
+	function reasonsOf(el: HTMLElement): string {
+		return (el.getAttribute("aria-describedby") ?? "")
+			.split(/\s+/)
+			.map((id) => document.getElementById(id)?.textContent ?? "")
+			.join(" ");
+	}
+
+	it("a viewer who may not save: every control is read-only and Save says why", () => {
+		renderPanel(null, [...FABRICS], false);
+		expect(screen.getByRole("switch", { name: /enable preview/i })).toHaveAttribute("aria-disabled", "true");
+		expect(screen.getByRole("textbox", { name: "Apps path" })).toBeDisabled();
+		expect(screen.getByRole("combobox", { name: "Placement mode" })).toBeDisabled();
+		const save = screen.getByRole("button", { name: /save changes/i });
+		expect(save).toBeDisabled();
+		expect(reasonsOf(save)).toContain(MANAGE_DENIED_REASON);
+	});
+
+	it("no answer yet: read-only, with the checking reason rather than a refusal", () => {
+		renderPanel(null, [...FABRICS], null);
+		expect(reasonsOf(screen.getByRole("button", { name: /save changes/i }))).toContain(MANAGE_PENDING_REASON);
+	});
+
+	it("puts a field error under its control, announced and described", async () => {
+		savePreviewConfig.mockResolvedValue({
+			ok: false,
+			error: {
+				kind: "validation",
+				message: "Use a relative path",
+				fields: { "config.apps_path": ["Use a relative path"] },
+			},
+		});
+		const user = userEvent.setup();
+		renderPanel();
+		await user.click(screen.getByRole("button", { name: "Select repo" }));
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent("Use a relative path");
+		const input = screen.getByRole("textbox", { name: "Apps path" });
+		expect(input).toHaveAttribute("aria-describedby", alert.id);
+		expect(input).toHaveAttribute("aria-invalid", "true");
 	});
 });

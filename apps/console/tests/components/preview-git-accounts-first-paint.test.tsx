@@ -38,7 +38,7 @@ const { PreviewSettingsPage } = await import("@/components/settings/preview/prev
 const { orpc } = await import("@/lib/rpc/client");
 const { seededClient, withQueryClient } = await import("../support/general-settings");
 
-const READ = { projectId: "proj-1", config: null, fabrics: [], gitCredentials: [] };
+const READ = { projectId: "proj-1", canManage: true, config: null, fabrics: [], gitCredentials: [] };
 
 /** The page body over a client holding both keys the route prefetches. */
 function pageOver(linked: ("github" | "gitlab" | "bitbucket")[]) {

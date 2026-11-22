@@ -1,15 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Skeleton } from "@repo/ui/skeleton";
+import { ProjectGeneralSkeleton } from "@/components/settings/general/general-states";
 
-/** Skeleton for the Settings content column (the section-nav is provided by the layout). */
+/**
+ * Skeleton for the project settings index. Every section (General, Access, Activity, Preview
+ * environments) draws its own; this one covers only `/{org}/{project}/settings`, which redirects to
+ * General — so it is General's shape rather than a generic block that matches no page.
+ */
 export default function SettingsLoading() {
-	return (
-		<div className="space-y-4">
-			<Skeleton className="h-6 w-40" />
-			<Skeleton className="h-4 w-64" />
-			<Skeleton className="h-40 w-full rounded-lg" />
-		</div>
-	);
+	return <ProjectGeneralSkeleton />;
 }

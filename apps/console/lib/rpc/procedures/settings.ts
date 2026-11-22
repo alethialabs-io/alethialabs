@@ -21,8 +21,9 @@ import "server-only";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { ActionRefusal } from "@/lib/actions/result";
+import { getPdp } from "@/lib/authz";
 import { authorize } from "@/lib/authz/guard";
-import type { Actor } from "@/lib/authz/types";
+import type { Actor, ResourceRef } from "@/lib/authz/types";
 import { withActorScope } from "@/lib/db";
 import {
 	projectFabrics,
@@ -56,11 +57,20 @@ export async function readOrgGeneral(actor: Actor): Promise<OrgGeneralRead> {
 	return { scope: "organization", settings };
 }
 
-/** The editable general fields of a project (project → Settings → General). */
+/**
+ * The editable general fields of a project (project → Settings → General), with what the viewer may
+ * do to them. The two decisions are the questions the writes themselves ask — `renameProject` and
+ * `savePreviewConfig` authorize `project:edit`, `removeProject` authorizes `project:destroy` — so a
+ * control the page disables is one the server would refuse (R6 F-11, `components/errors/manage-gate.ts`).
+ */
 export interface ProjectGeneral {
 	id: string;
 	project_name: string;
 	slug: string | null;
+	/** Whether the viewer may rename the project and change its preview settings (`project:edit`). */
+	canManage: boolean;
+	/** Whether the viewer may delete the project (`project:destroy`). */
+	canDelete: boolean;
 }
 
 /**
@@ -71,6 +81,10 @@ export interface ProjectGeneral {
  * The slug resolves inside the addressed org EXPLICITLY (`org_id = actor.orgId`, under RLS as
  * well), and then the PDP's `view` on the project decides — so a project grant narrower than the org
  * is honoured, and a same-slug project in the caller's personal scope is never the answer.
+ *
+ * The edit and delete decisions are asked with `can()` (through `bulkCheck`), not `enforce()`: a
+ * viewer who may only look is not recorded as denied for opening the page. A PDP that fails here
+ * fails the read — the page then shows its error with a retry, never controls it guessed about.
  */
 async function readProjectGeneral(
 	actor: Actor,
@@ -90,7 +104,12 @@ async function readProjectGeneral(
 	});
 	if (!row) return null;
 	await authorize("view", { type: "project", id: row.id });
-	return row;
+	const project: ResourceRef = { type: "project", id: row.id };
+	const [edit, destroy] = await getPdp().bulkCheck(actor, [
+		{ action: "edit", resource: project },
+		{ action: "destroy", resource: project },
+	]);
+	return { ...row, canManage: edit?.allowed === true, canDelete: destroy?.allowed === true };
 }
 
 /** The project's preview-generator config row (`project_preview_config`), as stored. */
@@ -114,6 +133,8 @@ export interface PreviewGitCredentialOption {
 /** Everything the project's Preview environments settings page shows. */
 export interface PreviewSettingsRead {
 	projectId: string;
+	/** Whether the viewer may save these settings (`project:edit`, what `savePreviewConfig` asks). */
+	canManage: boolean;
 	/** The preview generator's config, or null when previews were never configured. */
 	config: PreviewConfigRow | null;
 	fabrics: PreviewFabricOption[];
@@ -155,7 +176,13 @@ async function readPreviewSettings(
 			})
 			.from(projectGitCredentials)
 			.where(eq(projectGitCredentials.project_id, project.id));
-		return { projectId: project.id, config: config ?? null, fabrics, gitCredentials };
+		return {
+			projectId: project.id,
+			canManage: project.canManage,
+			config: config ?? null,
+			fabrics,
+			gitCredentials,
+		};
 	});
 }
 

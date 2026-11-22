@@ -47,6 +47,18 @@ vi.mock("@/lib/db", () => ({
 		fn(chain(() => rows.scoped.shift() ?? [])),
 }));
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
+// The edit and delete decisions: `bulkCheck` answers each check from `pdp.allow`, keyed by action.
+const { pdp } = vi.hoisted(() => ({
+	pdp: { allow: new Set<string>(), checks: new Array<unknown>() },
+}));
+vi.mock("@/lib/authz", () => ({
+	getPdp: () => ({
+		bulkCheck: async (_actor: unknown, checks: { action: string; resource: unknown }[]) => {
+			pdp.checks.push(...checks);
+			return checks.map((c) => ({ allowed: pdp.allow.has(c.action) }));
+		},
+	}),
+}));
 
 import { authorize } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
@@ -68,6 +80,8 @@ beforeEach(() => {
 	rows.org = [];
 	rows.scoped = [];
 	rows.wheres = [];
+	pdp.allow = new Set(["edit", "destroy"]);
+	pdp.checks = [];
 });
 
 describe("settings.org", () => {
@@ -136,8 +150,36 @@ describe("settings.project", () => {
 
 	it("answers the project the slug names, after the PDP's view on it", async () => {
 		rows.scoped = [[ROW]];
-		expect(await client(actor("org-1")).project({ project: "my-app" })).toEqual(ROW);
+		expect(await client(actor("org-1")).project({ project: "my-app" })).toEqual({
+			...ROW,
+			canManage: true,
+			canDelete: true,
+		});
 		expect(authorize).toHaveBeenCalledWith("view", { type: "project", id: ROW.id });
+	});
+
+	// R6 F-11: the read carries the viewer's write side, asked with the questions the writes ask —
+	// `renameProject` authorizes `project:edit`, `removeProject` `project:destroy` — on THIS project.
+	it("carries the edit and delete decisions, each its own question on this project", async () => {
+		rows.scoped = [[ROW]];
+		pdp.allow = new Set(["edit"]);
+		expect(await client(actor("org-1")).project({ project: "my-app" })).toMatchObject({
+			canManage: true,
+			canDelete: false,
+		});
+		expect(pdp.checks).toEqual([
+			{ action: "edit", resource: { type: "project", id: ROW.id } },
+			{ action: "destroy", resource: { type: "project", id: ROW.id } },
+		]);
+	});
+
+	it("answers a viewer who may only look with both decisions false, not a refusal", async () => {
+		rows.scoped = [[ROW]];
+		pdp.allow = new Set();
+		expect(await client(actor("org-1")).project({ project: "my-app" })).toMatchObject({
+			canManage: false,
+			canDelete: false,
+		});
 	});
 
 	// Review blocker on #6216: RLS admits two arms (`org_id = current_org OR org_id = current_owner`),
@@ -158,6 +200,7 @@ describe("settings.project", () => {
 	it("answers null for a slug that names no project in the org — the page's 404", async () => {
 		expect(await client(actor("org-1")).project({ project: "gone" })).toBeNull();
 		expect(authorize).not.toHaveBeenCalled();
+		expect(pdp.checks).toEqual([]);
 	});
 
 	it("is FORBIDDEN for a project the PDP will not show", async () => {
@@ -187,11 +230,18 @@ describe("settings.preview", () => {
 		rows.scoped = [[ROW], [CONFIG], [FABRIC], [CRED]];
 		expect(await client(actor("org-1")).preview({ project: "shop" })).toEqual({
 			projectId: ROW.id,
+			canManage: true,
 			config: CONFIG,
 			fabrics: [FABRIC],
 			gitCredentials: [CRED],
 		});
 		expect(authorize).toHaveBeenCalledWith("view", { type: "project", id: ROW.id });
+	});
+
+	it("carries whether the viewer may save — `project:edit`, what `savePreviewConfig` asks", async () => {
+		rows.scoped = [[ROW], [CONFIG], [FABRIC], [CRED]];
+		pdp.allow = new Set(["destroy"]);
+		expect(await client(actor("org-1")).preview({ project: "shop" })).toMatchObject({ canManage: false });
 	});
 
 	it("answers a never-configured project with a null config, not an error", async () => {
