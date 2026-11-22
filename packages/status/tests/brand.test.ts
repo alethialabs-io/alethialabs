@@ -29,7 +29,7 @@ function geometry(svg: string): string[] {
 describe("brand.generated.ts", () => {
 	it("is exactly what scripts/gen-brand.ts writes from packages/brand today", () => {
 		const committed = readFileSync(join(__dirname, "..", "src", "brand.generated.ts"), "utf8");
-		expect(committed, "stale: run `pnpm -F @repo/status gen:brand`").toBe(generatedModule());
+		expect(committed, "stale: run `pnpm -C packages/status run gen:brand`").toBe(generatedModule());
 	});
 
 	it("holds the main site header's lockup, rendered by AlethiaLockup itself", () => {
