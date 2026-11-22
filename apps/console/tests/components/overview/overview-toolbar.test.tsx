@@ -159,7 +159,8 @@ describe("OverviewToolbar — the filter standard (B-24)", () => {
 	it("draws the facet controls in the bar, with no funnel popover", () => {
 		renderToolbar(PRISTINE);
 		expect(screen.getByRole("button", { name: /Repository/ })).toBeInTheDocument();
-		expect(screen.getByText("All clouds")).toBeInTheDocument();
+		// The shared cloud filter is a combobox whose summary is its input placeholder.
+		expect(screen.getByPlaceholderText("All clouds")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Filter and sort" })).toBeNull();
 	});
 
