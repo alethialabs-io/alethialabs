@@ -26,11 +26,15 @@ on:
 # PR #3562, which re-triggers every `pull_request` workflow on EVERY merge into dev. `CI` had
 # already cancelled its own superseded runs and showed 1; these seven each showed a full stack.
 #
-# Scoped to `github.ref`, so this only ever cancels an OLDER run of the SAME workflow on the SAME
-# PR or branch — the ordinary "I pushed again" case. It cannot cancel a run for a different ref.
+# Scoped to the PR's `github.ref`, so this only ever cancels an OLDER run of the SAME workflow on the
+# SAME PR — the ordinary "I pushed again" case. It cannot cancel a run for a different ref.
+# CONCURRENCY HYGIENE (2026-11-22): cancellation is for SUPERSEDED PR runs only. A push or a dispatch
+# keys its group on its own commit, so it neither cancels nor is cancelled — not by a newer push
+# (a pending run in a group is replaced by the next one, which is also a cancellation), and not by a
+# run of a different event on the same ref.
 concurrency:
-  group: validate-runner-${{ github.ref }}
-  cancel-in-progress: true
+  group: validate-runner-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-runner:

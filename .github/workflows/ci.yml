@@ -29,7 +29,9 @@ on:
     #   · a job with NO `if:` AT ALL fires on every trigger, so six jobs that ran weekly on the
     #     Monday cron would have started running nightly against `main` (schedule only fires on the
     #     default branch): `typescript`, `integration`, `guards`, `go`, `secrets` and
-    #     `addon-charts-render`. Each now carries `if: github.event.schedule != '0 3 * * *'`.
+    #     `addon-charts-render`. Each now carries `if: github.event.schedule != '0 3 * * *'` —
+    #     and since `typescript` was split (2026-11-22), so do its three parts `ts-lint-types`,
+    #     `ts-test` and `ts-build`.
     #
     # Two are deliberately NOT excluded, and the reason is not "it was missed":
     #   · `detect-changes` — `ui-audit` declares `needs: [detect-changes]`, and a job whose `needs`
@@ -53,9 +55,22 @@ on:
         required: false
         default: "5"
 
+# CANCELLATION IS FOR SUPERSEDED PR RUNS ONLY (2026-11-22).
+#
+# This was `ci-${{ github.ref }}` with `cancel-in-progress: true`, and three different events share
+# `refs/heads/main`: a push, the Monday 06:00 cron and the nightly 03:00 cron. So a merge to main
+# cancelled a running mutation/UI-audit cron, and a cron cancelled the push run whose coverage-badge
+# jobs publish from main. Measured over 2026-11-15→22: CI's median run was 56 minutes and 31% of its
+# runs were cancelled.
+#
+# Now: a `pull_request` run is keyed on the PR's ref and cancels its own predecessor (the "I pushed
+# again" case, unchanged). Every other event is keyed on its event name AND its commit, so a push, a
+# cron or a dispatch never cancels anything and is never cancelled — including by a newer push,
+# because a still-PENDING run in a shared group is replaced by the next one, which is a cancellation
+# too.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -140,8 +155,21 @@ jobs:
             echo "runner=false" >> "$GITHUB_OUTPUT"
           fi
 
-  typescript:
-    name: TypeScript (lint · types · test · docs)
+  # ── THE TYPESCRIPT CHECK, SPLIT INTO THREE PARALLEL PARTS (2026-11-22) ─────────────────────────
+  #
+  # This was ONE job running lint+types, then the unit suites and their coverage ratchets, then the
+  # production build smoke, in sequence: 24–32 minutes, and the critical path of every CI run
+  # (median 56 minutes over 2026-11-15→22). The three parts share nothing but the install, so they
+  # now run side by side as `ts-lint-types`, `ts-test` and `ts-build`, and the `typescript` job
+  # below — which keeps the EXACT required context name `TypeScript (lint · types · test · docs)`
+  # (infra/github/variables.tf, .mergify.yml's merge_conditions and merge_protections) — needs all
+  # three and fails unless every one succeeded. No required context changed name.
+  #
+  # A SIDE EFFECT THAT IS AN IMPROVEMENT, stated so nobody "restores" the old order: in one job a
+  # lint failure skipped the unit suites and the build, so the author learned about one failure per
+  # push. Now each part reports its own verdict on every run.
+  ts-lint-types:
+    name: TypeScript — lint · types
     runs-on: ubuntu-latest
     # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
     # 03:00 cron added for the console UI audit would have signed this one up for a nightly
@@ -161,12 +189,17 @@ jobs:
       # re-ran check-types/lint/test/build for EVERY package cold. Keyed per-sha with an os restore fallback,
       # so a PR restores the previous run's cache and Turbo only re-executes the packages that actually
       # changed (it replays cached logs for the rest). This is the single biggest CI-time win.
+      #
+      # ONE KEY PER PART since the split: each part runs different turbo tasks, and three jobs saving
+      # one key race — the first save wins and the other two parts' outputs are never cached. The
+      # bare `turbo-<os>-` fallback still restores the pre-split cache on a part's first run.
       - name: Cache Turbo
         uses: actions/cache@v6
         with:
           path: .turbo/cache
-          key: turbo-${{ runner.os }}-${{ github.sha }}
+          key: turbo-${{ runner.os }}-lint-${{ github.sha }}
           restore-keys: |
+            turbo-${{ runner.os }}-lint-
             turbo-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       # Turbo fans these out across EVERY workspace project that defines the script
@@ -174,34 +207,57 @@ jobs:
       # so new apps/packages are covered automatically — no hardcoded list to drift.
       - name: Type-check + lint (all workspace projects)
         run: pnpm exec turbo run check-types lint
+
+  ts-test:
+    name: TypeScript — unit tests · coverage ratchets
+    runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # Persist Turbo's local cache across runs. Before this, only the pnpm store was cached, so every run
+      # re-ran check-types/lint/test/build for EVERY package cold. Keyed per-sha with an os restore fallback,
+      # so a PR restores the previous run's cache and Turbo only re-executes the packages that actually
+      # changed (it replays cached logs for the rest). This is the single biggest CI-time win.
+      #
+      # ONE KEY PER PART since the split: each part runs different turbo tasks, and three jobs saving
+      # one key race — the first save wins and the other two parts' outputs are never cached. The
+      # bare `turbo-<os>-` fallback still restores the pre-split cache on a part's first run.
+      - name: Cache Turbo
+        uses: actions/cache@v6
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-test-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-test-
+            turbo-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      # UNFILTERED, and that is load-bearing for the ratchets below: `test.dependsOn: ["^build"]`
+      # reaches @alethia/ee through apps/console's optionalDependencies, so this builds ee/dist and
+      # the suites run in enterprise scope — the `ee_dist: true` the floors record.
+      # scripts/check-floors-reproducible.mjs reads THIS job (the one that carries the ratchet steps)
+      # to prove it.
       - name: Unit tests
         id: unit
         run: pnpm exec turbo run test
       # Coverage is merged into the self-hosted README badge by the `coverage-badge` job
       # (push-to-main); no third-party service. See scripts/coverage-badge.mjs + TESTING.md.
-      - name: App build smoke (console · marketing · docs)
-        run: pnpm exec turbo run build --filter=console --filter=marketing --filter=docs
-        env:
-          BETTER_AUTH_SECRET: build-time-placeholder
-          BETTER_AUTH_URL: http://localhost:3000
-          ALETHIA_DATABASE_URL: postgres://build:build@localhost:5432/build
-          ALETHIA_APP_DATABASE_URL: postgres://build:build@localhost:5432/build
-          ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
-          ALETHIA_STORAGE_ACCESS_KEY_ID: build
-          ALETHIA_STORAGE_SECRET_ACCESS_KEY: build
-
-      # PLACED AFTER THE BUILD SMOKE, DELIBERATELY.
       #
-      # These steps carry no `if:`, and a job stops at its first failing step — so sitting them
-      # BEFORE `App build smoke` meant a TRUE ratchet failure on apps/console would skip the other
-      # two ratchets AND the production build. That build is the only check in this job that
-      # catches what tsc and eslint structurally cannot: a module imported from both a server and a
-      # client component type-checks, lints and unit-tests clean, then 500s the page at runtime.
-      # Losing it to a coverage regression trades a real signal for a lesser one.
-      #
-      # Putting them last closes that with no conditions at all — everything that can inform the
-      # author has already run by the time the ratchet is able to fail. See #2662 for the general
-      # case: `guards` is 64 steps with zero `if:`, so its first failure skips the other 63.
+      # THE RATCHETS LIVE IN THIS JOB BECAUSE THEY READ ITS ARTEFACT. They used to sit after the
+      # build smoke in a single job, so that a true ratchet failure could not skip the build — the
+      # only check that catches a module imported from both a server and a client component, which
+      # type-checks, lints and unit-tests clean and then 500s the page at runtime. The split gives
+      # that for free: `ts-build` is its own job, and nothing here can skip it.
       #
       # Per-directory statement-coverage RATCHET: coverage may rise, never fall. Reads the
       # coverage-final.json each project's vitest run wrote above — or that turbo REPLAYED from
@@ -296,10 +352,203 @@ jobs:
       - name: Coverage ratchet — packages/cloud-catalog
         if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
         run: node scripts/ts-coverage.mjs --project packages/cloud-catalog
+
+  ts-build:
+    name: TypeScript — app build smoke
+    runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # Persist Turbo's local cache across runs. Before this, only the pnpm store was cached, so every run
+      # re-ran check-types/lint/test/build for EVERY package cold. Keyed per-sha with an os restore fallback,
+      # so a PR restores the previous run's cache and Turbo only re-executes the packages that actually
+      # changed (it replays cached logs for the rest). This is the single biggest CI-time win.
+      #
+      # ONE KEY PER PART since the split: each part runs different turbo tasks, and three jobs saving
+      # one key race — the first save wins and the other two parts' outputs are never cached. The
+      # bare `turbo-<os>-` fallback still restores the pre-split cache on a part's first run.
+      - name: Cache Turbo
+        uses: actions/cache@v6
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-build-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-build-
+            turbo-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
       # Build smoke for the split-affected apps — catches transpilePackages /
       # standalone breakage on PRs. Build-only placeholder env so the console's
       # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
       # nothing is contacted — postgres-js + the S3 client connect lazily).
+      - name: App build smoke (console · marketing · docs)
+        run: pnpm exec turbo run build --filter=console --filter=marketing --filter=docs
+        env:
+          BETTER_AUTH_SECRET: build-time-placeholder
+          BETTER_AUTH_URL: http://localhost:3000
+          ALETHIA_DATABASE_URL: postgres://build:build@localhost:5432/build
+          ALETHIA_APP_DATABASE_URL: postgres://build:build@localhost:5432/build
+          ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
+          ALETHIA_STORAGE_ACCESS_KEY_ID: build
+          ALETHIA_STORAGE_SECRET_ACCESS_KEY: build
+
+  # THE REQUIRED CONTEXT. Its `name:` is what infra/github/variables.tf and .mergify.yml require, and
+  # it must not change: renaming it leaves every ruleset and the queue waiting on a check that no
+  # longer reports. It does no work of its own — it is green only when all three parts are.
+  #
+  # `!cancelled()` and not the implicit `success()`: with `success()` a failed part would SKIP this
+  # job, and a skipped required check reads as neither red nor green — the queue would sit on it.
+  # This way a failed part turns this context RED, which is the verdict the old single job gave.
+  # The 03:00 conjunct mirrors the parts, which do not run on the UI-audit nightly either.
+  typescript:
+    name: TypeScript (lint · types · test · docs)
+    needs: [ts-lint-types, ts-test, ts-build]
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every TypeScript part passed
+        env:
+          LINT_TYPES: ${{ needs.ts-lint-types.result }}
+          UNIT_TESTS: ${{ needs.ts-test.result }}
+          BUILD_SMOKE: ${{ needs.ts-build.result }}
+        run: |
+          set -u
+          bad=0
+          for part in "lint · types=$LINT_TYPES" "unit tests · coverage ratchets=$UNIT_TESTS" "app build smoke=$BUILD_SMOKE"; do
+            label=${part%%=*}
+            result=${part#*=}
+            if [ "$result" = "success" ]; then
+              echo "ok: TypeScript — $label"
+            else
+              echo "::error::TypeScript — $label concluded '$result'. Open that job for the failure; this one only aggregates."
+              bad=1
+            fi
+          done
+          exit "$bad"
+
+  # ── THE RELEASE-GATE LEDGER'S BAR: ZERO `failed`, AND EVERY `{fixme}` CITES AN OPEN ISSUE (#5417) ──
+  #
+  # MOVED HERE FROM release-gate.yml ON 2026-11-22, with its name unchanged. That workflow no longer
+  # runs on an ordinary feature PR into dev (see its header), and this job's first question must
+  # still be asked on every PR — so it rides in the workflow that does run on every PR.
+  #
+  # The gate's legs measure a run against apps/console/e2e/gate-baseline.json; this job measures the
+  # LEDGER itself, so it needs no browser and takes seconds. Two questions, each asked by a different
+  # step:
+  #
+  #   · ZERO `failed` ENTRIES. The ratchet cannot ask this. A test the ledger records as `failed`
+  #     that still fails is "no regression" to `scripts/e2e-ratchet.mjs`, and a PR that edits a spec
+  #     may re-record that spec's slice (check-gate-baseline-slice-ownership.mjs rule R1) — so a new
+  #     `failed` entry, or a `passed` one turned `failed`, passed every other guard. Asked on EVERY
+  #     PR, drafts included (ci.yml has no `ready_for_review` trigger, so a draft filter would leave
+  #     a PR opened as a draft unasked until its next push): it reads only the tree, so it cannot red
+  #     a PR for a change made elsewhere.
+  #   · EVERY `{fixme}` CITES AN OPEN ISSUE — scripts/check-gate-fixme-issues.mjs, the instrument the
+  #     daily gate-fixme-currency.yml will also run once it reaches main (a schedule runs from the
+  #     default branch, so as of 2026-10-04 it never has); exit 1 (a closed issue) and exit 2 (an unanswered
+  #     question) are both red. It reads ISSUE STATE, which changes outside the diff, so on a dev PR
+  #     it is asked only when the PR changes the ledger or the code that decides what a fixme is.
+  #     A fixme can only be added by changing the ledger, so that PR is asked. A promotion PR and a
+  #     dispatch are asked unconditionally: those ship the ledger as it stands.
+  #
+  # NOT A REQUIRED CHECK: no ruleset and nothing in `.mergify.yml` names this job's context (unlike
+  # the seven release-gate legs, which protect-main requires). Its red is visible on the PR; nothing
+  # enforces it. Not on a push or a cron: those carry no PR diff, and a push to main already passed
+  # this on the PR that landed it.
+  gate-ledger:
+    name: Gate ledger — zero failed, every fixme cites an open issue
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # `issues: read` is what `gh issue view --json state` needs; nothing else here calls the API.
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      # Depth 2: on a `pull_request` HEAD is the merge commit, and its first parent is the base tip,
+      # so `HEAD^1..HEAD` is exactly what this PR changes.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # `census()` is the ratchet's own counter, imported rather than re-implemented, and it THROWS on
+      # an entry that is none of passed|failed|{fixme}|{skip} — an uncountable entry is red, not zero.
+      - name: Zero `failed` entries in gate-baseline.json
+        run: |
+          node --input-type=module - <<'EOF'
+          import fs from "node:fs";
+          import { census, DEFAULT_BASELINE } from "./scripts/e2e-ratchet.mjs";
+          const doc = JSON.parse(fs.readFileSync(DEFAULT_BASELINE, "utf8"));
+          const c = census(doc);
+          if (c.tests === 0) {
+            console.log(`::error file=${DEFAULT_BASELINE}::the ledger records no tests at all — there is nothing to call zero-failed`);
+            process.exit(1);
+          }
+          if (c.failed === 0) {
+            console.log(`${DEFAULT_BASELINE}: ${c.tests} tests, 0 failed (${c.fixme} fixme, ${c.dataSkip} data-skip).`);
+            process.exit(0);
+          }
+          for (const [project, specs] of Object.entries(doc.projects)) {
+            for (const [spec, tests] of Object.entries(specs)) {
+              for (const [title, outcome] of Object.entries(tests)) {
+                if (outcome === "failed") console.log(`::error file=${DEFAULT_BASELINE}::${project} · ${spec} · "${title}" is recorded failed`);
+              }
+            }
+          }
+          console.log(`${c.failed} failed entr${c.failed === 1 ? "y" : "ies"} in ${DEFAULT_BASELINE}. The bar is zero (TESTING.md): fix the test, or mark it test.fixme(true, "BUG: <what> #<open issue>") and re-record its slice.`);
+          process.exit(1);
+          EOF
+      - name: Self-test the fixme currency check
+        run: node scripts/check-gate-fixme-issues.mjs --self-test
+      # Fails CLOSED: a `git diff` that cannot answer (exit 2+) asks the question rather than skip it.
+      - id: scope
+        name: Does this run ask GitHub about the fixmes?
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -uo pipefail
+          if [ "$EVENT" != "pull_request" ] || [ "$BASE_REF" = "main" ] || [ "$BASE_REF" = "staging" ]; then
+            echo "asked: a ${EVENT} into '${BASE_REF:-n/a}' ships the ledger as it stands"
+            echo "ask=yes" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The step runs under `bash -e`, and `set -uo pipefail` does not clear `-e`: a bare
+          # `git diff --quiet` exiting 1 ("this PR changes the ledger") would end the step red here,
+          # before the `case` reads it. `|| rc=$?` captures the code without tripping `-e`.
+          rc=0
+          git diff --quiet HEAD^1 HEAD -- apps/console/e2e/gate-baseline.json scripts/check-gate-fixme-issues.mjs scripts/e2e-ratchet.mjs || rc=$?
+          case "$rc" in
+            0)
+              echo "not asked: this dev PR changes neither the ledger nor the code that reads its fixmes; every promotion PR asks (the daily gate-fixme-currency.yml runs only once it reaches main)"
+              echo "### Fixme currency: not asked on this PR — it does not change the ledger. Every promotion PR asks; the daily cron runs only once gate-fixme-currency.yml reaches main." >> "$GITHUB_STEP_SUMMARY"
+              echo "ask=no" >> "$GITHUB_OUTPUT" ;;
+            1)
+              echo "asked: this PR changes the ledger or the code that reads its fixmes"
+              echo "ask=yes" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::warning::git diff exited ${rc} — asking anyway"
+              echo "ask=yes" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Every {fixme} in gate-baseline.json cites an OPEN issue
+        if: ${{ steps.scope.outputs.ask == 'yes' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-gate-fixme-issues.mjs
 
   integration:
     name: Integration (real Postgres + RLS)
@@ -1871,8 +2120,9 @@ jobs:
       - name: Go coverage ratchet (arithmetic · fail-open set · merge-safe layout)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/go-coverage.sh --self-test
-      # The TypeScript half of the same design — three steps inside `TypeScript (lint · types ·
-      # test · docs)`, a REQUIRED check with NO path filter, so it gates every PR in the
+      # The TypeScript half of the same design — the ratchet steps of `ts-test`, a part of the
+      # REQUIRED `TypeScript (lint · types · test · docs)` check with NO path filter (that context
+      # is the aggregator and fails when `ts-test` does), so it gates every PR in the
       # repository and a false failure stops the merge queue for everyone. Five properties are
       # pinned here, because each is a way it could wedge the repo:
       #   · the arithmetic is integer cross-multiplication, never a percentage — including the
