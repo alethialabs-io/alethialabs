@@ -162,6 +162,38 @@ export const AUTH_CLIENT_DESTRUCTIVE = new Set([
 /** Statuses the registry's field contract defines. */
 const STATUSES = new Set(["confirmed", "missing", "inert"]);
 
+/**
+ * The confirmation shapes the registry's field contract defines. `typed` is the destroy-class one
+ * (#6830): a dialog whose destructive button stays disabled until the subject's name is typed —
+ * `ConfirmAction` at `severity: destroy`, or a form that refines on the typed name.
+ */
+export const CONFIRMS = new Set(["alert-dialog", "confirm-dialog", "popover", "undo", "staged", "typed", "none"]);
+
+/** The classes an entry may be tagged with. One today; an unknown tag is refused, never ignored. */
+const CLASSES = new Set(["destroy"]);
+
+/**
+ * The DESTROY CLASS, as the console spec names it (beta 2027-01-31, console-route-finish §4.3:
+ * "delete organization, delete project, destroy environment, delete environment, destroy runner,
+ * cascade destroy. Everything else is `confirm`"). Every one of these must carry `class: destroy`.
+ *
+ * The tag is HAND-ASSIGNED, and that is the guard's stated bound: an entry nobody tagged is not
+ * asked for a typed confirmation. This list exists so the cheapest escape — deleting the tag from
+ * an entry whose dialog is not typed yet — fails instead of passing. More entries may carry the
+ * tag; these six may not lose it. It is the spec's ruling, so widening it is a spec change first.
+ */
+export const DESTROY_CLASS_REQUIRED = [
+	"org.delete",
+	"project.delete",
+	"env.delete",
+	"env.destroy",
+	"env.destroy.cascade",
+	"runners.destroy",
+];
+
+/** A board reference: `#` and a number. */
+const ISSUE_REF = /^#\d+$/;
+
 /** The production-sweep classifications `.claude/skills/console-prod-qa/SKILL.md` knows how to act on. */
 const PROD_QA = new Set(["open-cancel", "own-rows-only", "skip"]);
 
@@ -505,10 +537,10 @@ export function collectSites(io, roots = SCAN_ROOTS) {
 /**
  * The census. Pure over its inputs so the self-test drives it with fixtures rather than the tree.
  *
- * @param {{registry: ReturnType<typeof parseRegistry>, sites: Site[], refusals?: string[], floor?: number, read?: (p: string) => string|null}} args
+ * @param {{registry: ReturnType<typeof parseRegistry>, sites: Site[], refusals?: string[], floor?: number, read?: (p: string) => string|null, required?: string[]}} args
  * @returns {string[]} problems; empty is a pass
  */
-export function census({ registry, sites, refusals = [], floor = SITE_FLOOR, read }) {
+export function census({ registry, sites, refusals = [], floor = SITE_FLOOR, read, required = DESTROY_CLASS_REQUIRED }) {
 	/** @type {string[]} */
 	const problems = [...refusals];
 
@@ -549,6 +581,8 @@ export function census({ registry, sites, refusals = [], floor = SITE_FLOOR, rea
 			);
 		}
 
+		problems.push(...confirmClassProblems(id, c));
+
 		const mutation = String(c.mutation ?? "");
 		if (!mutation.trim()) {
 			// An `inert` control genuinely HAS no mutation — that emptiness IS the recorded
@@ -564,8 +598,39 @@ export function census({ registry, sites, refusals = [], floor = SITE_FLOOR, rea
 		}
 	}
 
+	// ── the destroy class may grow, never shrink below the spec's six (see DESTROY_CLASS_REQUIRED).
+	for (const id of required) {
+		const c = byId.get(id);
+		if (!c) {
+			problems.push(
+				`${id}: the spec names it destroy-class and the registry has no entry with that id. ` +
+					"A renamed entry takes its tag with it — rename it here too; a deleted control is a spec change first.",
+			);
+		} else if (String(c.class ?? "") !== "destroy") {
+			problems.push(
+				`${id}: the spec names it destroy-class and the entry is not tagged \`class: destroy\`. ` +
+					"Removing the tag is the one way to make a missing typed confirmation pass, so it is refused; record `typed_by` instead.",
+			);
+		}
+	}
+
 	// ── direction 2: LEDGER → TREE. The silent one.
 	if (read) {
+		// An `allow:` exemption is a ledger entry too, and it outlives its subject exactly as a
+		// control does: `discardChanges` stayed exempted at a store #7168 deleted, suppressing
+		// nothing and claiming the opposite. So each one must name a file that exists, a mutation
+		// that occurs in it, and (below) a call site the scan actually found.
+		for (const a of registry.allow) {
+			const mutation = String(a.mutation ?? "");
+			const surface = String(a.surface ?? "");
+			if (!mutation || !surface) continue; // reported in direction 1
+			const source = read(surface);
+			if (source === null) {
+				problems.push(`allow ${mutation} @ ${surface}: the file does not exist — the exemption outlived its subject. Delete it, or re-point it.`);
+			} else if (!mutationOccursIn(mutation, source)) {
+				problems.push(`allow ${mutation} @ ${surface}: \`${mutation}\` does not occur there — the exemption outlived its subject. Delete it, or re-point it.`);
+			}
+		}
 		for (const c of registry.controls) {
 			const id = String(c.id ?? "");
 			const mutation = String(c.mutation ?? "");
@@ -621,6 +686,14 @@ export function census({ registry, sites, refusals = [], floor = SITE_FLOOR, rea
 		}
 		if (!allowed.has(mutation)) allowed.set(mutation, new Set());
 		allowed.get(mutation)?.add(surface);
+		// An exemption that matches no call site exempts nothing — and reads as though it did. Asked
+		// only when the census is over a real scan (`read` given), because a shape-only fixture run
+		// passes no sites at all.
+		if (read && !sites.some((s) => s.file === surface && (s.mutation === mutation || s.local === mutation))) {
+			problems.push(
+				`allow ${mutation} @ ${surface}: the scan finds no call site it exempts. An exemption that suppresses nothing reads as one that does — delete it.`,
+			);
+		}
 	}
 
 	for (const site of sites) {
@@ -653,6 +726,63 @@ export function census({ registry, sites, refusals = [], floor = SITE_FLOOR, rea
 		);
 	}
 
+	return problems;
+}
+
+/**
+ * The confirmation shape and the destroy class of one entry (#6830).
+ *
+ *   · `confirm` is one of {@link CONFIRMS}. It was unchecked, and the live spec branches on it: a
+ *     misspelt `confirm-dailog` would fall through to its `none`/`popover` arm and read the dialog
+ *     it opened as stale evidence.
+ *   · `class`, when present, is one of {@link CLASSES}.
+ *   · `class: destroy` REQUIRES `confirm: typed` — or a `typed_by: "#<n>"` naming the board unit that
+ *     makes it typed. That is recorded debt, not an exemption, and it fails in BOTH directions:
+ *     `typed_by` on an entry that is already typed, or on one that is not destroy-class, is a
+ *     ledger line that outlived its subject.
+ *   · `confirm: typed` REQUIRES `confirm_action`: the destructive button is the thing the live spec
+ *     asserts is DISABLED before anything is typed, and a typed entry without one asserts nothing.
+ *
+ * BOUND, stated: this reads what the entry DECLARES. Whether the dialog really refuses until the
+ * name is typed is the live spec's to prove (`e2e/audit/destructive.spec.ts`), and a destructive
+ * control nobody tagged is not asked at all — the tag is hand-assigned.
+ *
+ * @param {string} id
+ * @param {Record<string, any>} c
+ * @returns {string[]}
+ */
+export function confirmClassProblems(id, c) {
+	/** @type {string[]} */
+	const problems = [];
+	const confirm = String(c.confirm ?? "");
+	const klass = c.class === undefined ? "" : String(c.class);
+	const typedBy = c.typed_by === undefined ? "" : String(c.typed_by).trim();
+
+	if (!CONFIRMS.has(confirm)) {
+		problems.push(`${id}: confirm "${confirm}" is not one of ${[...CONFIRMS].join(" | ")}`);
+	}
+	if (klass && !CLASSES.has(klass)) {
+		problems.push(`${id}: class "${klass}" is not one of ${[...CLASSES].join(" | ")} — an unknown tag is refused, not ignored`);
+	}
+	if (confirm === "typed" && !String(c.confirm_action ?? "").trim()) {
+		problems.push(`${id}: \`confirm: typed\` with no \`confirm_action\` — the spec asserts that button is disabled until the name is typed, and has nothing to assert.`);
+	}
+	if (klass === "destroy" && confirm !== "typed") {
+		if (!typedBy) {
+			problems.push(
+				`${id}: \`class: destroy\` confirms with "${confirm}". A destroy-class control asks for its subject's name to be typed: ` +
+					"move it to `ConfirmAction` at `severity: destroy` and declare `confirm: typed`, or record the board unit that will as `typed_by: \"#<n>\"`.",
+			);
+		} else if (!ISSUE_REF.test(typedBy)) {
+			problems.push(`${id}: typed_by "${typedBy}" is not a board reference (\`#<n>\`)`);
+		}
+	}
+	if (typedBy && confirm === "typed") {
+		problems.push(`${id}: \`typed_by\` on an entry that already declares \`confirm: typed\` — the debt is paid; delete the line.`);
+	}
+	if (typedBy && klass !== "destroy") {
+		problems.push(`${id}: \`typed_by\` on an entry that is not \`class: destroy\` — it records debt only the destroy class owes; delete the line.`);
+	}
 	return problems;
 }
 
@@ -807,9 +937,9 @@ function selfTest() {
 		"version: 1",
 		"",
 		"allow:",
-		"  - mutation: discardChanges",
-		"    surface: apps/console/lib/stores/use-canvas-store.ts",
-		"    reason: the client half; the server half is the registered mutation",
+		"  - mutation: cancelJob",
+		"    surface: apps/console/lib/query/use-jobs-query.ts",
+		"    reason: the query-hook delegate; the control is recorded where it is clicked",
 		"",
 		"controls:",
 		"  - id: project.delete",
@@ -831,8 +961,13 @@ function selfTest() {
 	].join("\n");
 
 	const surfaceFile = "apps/console/components/settings/project-general.tsx";
-	/** @param {string} src */
-	const readerFor = (src) => (/** @type {string} */ p) => (p === surfaceFile ? src : null);
+	const allowFile = "apps/console/lib/query/use-jobs-query.ts";
+	const allowSource = 'import { cancelJob } from "@/app/server/actions/jobs";\nexport const useCancelJob = () => cancelJob(1);';
+	/** @param {string} src @param {string|null} [allowSrc] */
+	const readerFor =
+		(src, allowSrc = allowSource) =>
+		(/** @type {string} */ p) =>
+			p === surfaceFile ? src : p === allowFile ? allowSrc : null;
 
 	// ── the reader
 	try {
@@ -873,10 +1008,95 @@ function selfTest() {
 
 	// ── the baseline passes
 	const registry = parseRegistry(baseYaml);
-	const { sites } = scanSource(surfaceFile, baseSource);
-	check("the baseline finds the call site", sites.length === 1 && sites[0].mutation === "deleteProject");
-	const basePass = census({ registry, sites, floor: 1, read: readerFor(baseSource) });
+	const { sites: surfaceSites } = scanSource(surfaceFile, baseSource);
+	check("the baseline finds the call site", surfaceSites.length === 1 && surfaceSites[0].mutation === "deleteProject");
+	const { sites: allowSites } = scanSource(allowFile, allowSource);
+	check("…and the exempted delegate's call site", allowSites.length === 1 && allowSites[0].mutation === "cancelJob");
+	const sites = [...surfaceSites, ...allowSites];
+	const basePass = census({ registry, sites, floor: 1, read: readerFor(baseSource), required: [] });
 	check("the baseline is clean", basePass.length === 0, basePass.join(" · "));
+
+	// ── the `allow:` ledger fails in BOTH directions (#6830). The regression is the real one: the
+	// `discardChanges` exemption outlived the store #7168 deleted and nothing noticed.
+	check(
+		"an `allow:` entry whose file is GONE fails",
+		census({ registry, sites: surfaceSites, floor: 1, read: readerFor(baseSource, null), required: [] }).some((p) => p.includes("the file does not exist")),
+	);
+	check(
+		"an `allow:` entry whose mutation no longer occurs in its file fails",
+		census({ registry, sites: surfaceSites, floor: 1, read: readerFor(baseSource, "export const useCancelJob = () => null;"), required: [] }).some((p) =>
+			p.includes("does not occur there"),
+		),
+	);
+	check(
+		"an `allow:` entry that exempts no call site the scan found fails",
+		census({ registry, sites: surfaceSites, floor: 1, read: readerFor(baseSource), required: [] }).some((p) => p.includes("finds no call site it exempts")),
+	);
+
+	// ── the destroy class and `confirm: typed` (#6830). Each case flips ONE field of a passing row.
+	{
+		const row = (/** @type {string[]} */ extra) =>
+			[
+				"version: 1",
+				"controls:",
+				"  - id: org.delete",
+				"    surface: s.tsx",
+				"    mutation: x",
+				"    status: confirmed",
+				"    prod-qa: skip",
+				"    reason: r",
+				'    confirm_action: "Delete organization"',
+				...extra.map((l) => `    ${l}`),
+			].join("\n");
+		/** @param {string[]} extra @param {string[]} [required] */
+		const destroyProblems = (extra, required = ["org.delete"]) =>
+			census({ registry: parseRegistry(row(extra)), sites: [], floor: 0, required }).filter((p) => !p.includes("floor"));
+		const typedOk = destroyProblems(["confirm: typed", "class: destroy"]);
+		check("a destroy-class entry declaring `confirm: typed` passes", typedOk.length === 0, typedOk.join(" · "));
+		const debtOk = destroyProblems(["confirm: alert-dialog", "class: destroy", 'typed_by: "#6824"']);
+		check("…and so does one recording the unit that types it", debtOk.length === 0, debtOk.join(" · "));
+		check(
+			"a destroy-class entry that is NOT typed and records no unit FAILS",
+			destroyProblems(["confirm: alert-dialog", "class: destroy"]).some((p) => p.includes("asks for its subject's name to be typed")),
+		);
+		check(
+			"a `typed_by` that is not a board reference FAILS",
+			destroyProblems(["confirm: popover", "class: destroy", "typed_by: soon"]).some((p) => p.includes("is not a board reference")),
+		);
+		check(
+			"a `typed_by` on an entry already typed FAILS — the debt outlived its subject",
+			destroyProblems(["confirm: typed", "class: destroy", 'typed_by: "#1"']).some((p) => p.includes("the debt is paid")),
+		);
+		check(
+			"a `typed_by` on an entry that is not destroy-class FAILS",
+			destroyProblems(["confirm: alert-dialog", 'typed_by: "#1"'], []).some((p) => p.includes("not `class: destroy`")),
+		);
+		check(
+			"a spec-named destroy entry with its tag REMOVED fails, so deletion is not the cheap escape",
+			destroyProblems(["confirm: alert-dialog"]).some((p) => p.includes("is not tagged `class: destroy`")),
+		);
+		check(
+			"a spec-named destroy entry that is MISSING from the registry fails",
+			destroyProblems(["confirm: typed", "class: destroy"], ["org.delete", "project.delete"]).some((p) => p.startsWith("project.delete: the spec names it destroy-class")),
+		);
+		check(
+			"an unknown class FAILS rather than being ignored",
+			destroyProblems(["confirm: typed", "class: destroy-ish"], []).some((p) => p.includes('class "destroy-ish" is not one of')),
+		);
+		check(
+			"an unknown confirm FAILS rather than falling through to the `none` arm",
+			destroyProblems(["confirm: confirm-dailog"], []).some((p) => p.includes('confirm "confirm-dailog" is not one of')),
+		);
+		check(
+			"a `confirm: typed` entry with no `confirm_action` FAILS — the spec would have no button to find disabled",
+			census({
+				registry: parseRegistry("version: 1\ncontrols:\n  - id: a\n    surface: s.tsx\n    mutation: x\n    status: confirmed\n    prod-qa: own-rows-only\n    confirm: typed\n"),
+				sites: [],
+				floor: 0,
+				required: [],
+			}).some((p) => p.includes("with no `confirm_action`")),
+		);
+	}
 
 	// ── direction 1: an unlisted destructive call site FAILS
 	const strayFile = "apps/console/components/settings/danger.tsx";

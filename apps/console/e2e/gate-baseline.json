@@ -714,9 +714,9 @@
 		},
 		"audit-interaction": {
 			"audit/destructive.spec.ts": {
-				"org.delete — declares alert-dialog (confirmed)": "passed",
+				"org.delete — declares typed (confirmed)": "passed",
 				"project.delete — declares alert-dialog (confirmed)": "passed",
-				"env.delete — declares confirm-dialog (confirmed)": "passed",
+				"env.delete — declares typed (confirmed)": "passed",
 				"promotion.reject — declares confirm-dialog (confirmed)": "passed",
 				"promotion.cancel — declares confirm-dialog (confirmed)": "passed",
 				"env.destroy — declares confirm-dialog (confirmed)": "passed",

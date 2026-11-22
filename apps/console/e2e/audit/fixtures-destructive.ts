@@ -1124,6 +1124,14 @@ export const UNSEEDABLE: ReadonlyMap<string, string> = new Map([
 			"page and in the Usage count of the org every other entry runs in. ⚠ The registry's `confirmed` rests on the " +
 			"component test (tests/components/clusters/missing-cluster-actions.test.tsx), not on a run this gate performs.",
 	],
+	[
+		"connected-git-link",
+		"a git link is the owner's Better Auth `account` row for the provider, holding its OAuth access token, and the console " +
+			"hands that token to the provider when a user asks for repositories (lib/auth/provider-token.ts, " +
+			"app/server/actions/identities.ts). There is no provider-side app for the audit to authorise, so the row would carry " +
+			"an invented token, read by every git surface in the org every other entry runs in. Until #6830 this entry borrowed " +
+			"`connected-cloud-identity`, which links no git provider, so it could never have shown its control.",
+	],
 ]);
 
 // ── the arithmetic ──────────────────────────────────────────────────────────────────────────────
@@ -1227,7 +1235,7 @@ export function fixtureCoverage(
  * How many CONTROLS each coverage class accounts for.
  *
  * The fixture count is the wrong denominator for the reader's question. `connected-cloud-identity`
- * is one fixture and five controls; `none` is one fixture and two. "33 of 35 fixtures unseeded" and
+ * is one fixture and four controls; `none` is one fixture and two. "33 of 35 fixtures unseeded" and
  * "40 of 47 controls unmeasurable" are the same fact said two ways, and the second is the one the
  * gate reports.
  */

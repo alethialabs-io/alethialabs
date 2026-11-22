@@ -43,7 +43,11 @@
 #   reach           optional opener chain the spec walks first: {menu: "<name>"} | {section: "<title>"}
 #                   | {select: "<row>"} | {open: "<control>"}
 #   control         the trigger, by accessible role + name (never a CSS class)
-#   confirm         alert-dialog | confirm-dialog | popover | undo | staged | none
+#   confirm         alert-dialog | confirm-dialog | typed | popover | undo | staged | none — the census
+#                   refuses any other value
+#                   `typed`: a dialog whose `confirm_action` stays DISABLED until the subject's name
+#                   is typed (`ConfirmAction` at `severity: destroy`, or a form refining on the typed
+#                   name). The spec asserts the button is there and disabled, and never types. (#6830)
 #                   `staged`: the click only stages the change in an edit draft, and a save bar
 #                   decides it. `staged: {save, discard, table}` names that bar's two buttons
 #                   and the table its save updates in place; the spec asserts Save appears (never
@@ -59,6 +63,15 @@
 #   status          confirmed (a confirmation exists) | missing (fires on a bare click — `issue`
 #                   REQUIRED) | inert (the control does nothing at all — `issue` REQUIRED)
 #   issue           the board unit that flips a `missing`/`inert` entry
+#   class           OPTIONAL — `destroy` is the only value. The destroy class is the console spec's
+#                   (console-route-finish §4.3): delete organization, delete project, delete
+#                   environment, destroy environment, cascade destroy, destroy runner. A `destroy`
+#                   entry must declare `confirm: typed`. The tag is hand-assigned, so an untagged
+#                   control is not asked — which is why the census also refuses those six ids
+#                   (DESTROY_CLASS_REQUIRED) without the tag: removing it is not a way to pass. (#6830)
+#   typed_by        a `class: destroy` entry that is not typed yet names the board unit that types
+#                   it, `"#<n>"`. Debt recorded, not an exemption, and it fails in both directions:
+#                   refused on an entry already `typed`, and on one that is not destroy-class.
 #   prod-qa         open-cancel | own-rows-only | skip — REQUIRED on every entry; the census
 #                   refuses an absent or unknown value, because an unclassified control is one the
 #                   production sweep has no ruling for
@@ -91,14 +104,10 @@ version: 1
 
 allow:
   # Call sites the census may see that are NOT a destructive control a person clicks. Each needs a
-  # reason; an empty reason is refused.
-  - mutation: discardChanges
-    surface: apps/console/lib/stores/use-canvas-store.ts
-    reason: the client-side half of canvas.discard-staged; the server half (discardStagedDesignAction) is the registered mutation
-
-  - mutation: cancelJob
-    surface: apps/console/lib/query/use-jobs-query.ts
-    reason: the query-hook delegate for jobs.cancel; the control is the job page's Cancel button, recorded there
+  # reason; an empty reason is refused. Each must also name a file that exists, a mutation that
+  # occurs in it and a call site the scan finds — an exemption that suppresses nothing is refused
+  # (#6830). Empty today: `discardChanges` named the store #7168 deleted, and `cancelJob` named a
+  # query hook that no longer calls it (the job page reaches it through `useActionMutation`).
 
 controls:
   # ── organisation & project ─────────────────────────────────────────────────────────────────
@@ -106,9 +115,14 @@ controls:
     route: /[org]/~/settings/general
     surface: apps/console/components/settings/general/org-general.tsx
     mutation: deleteOrganization
-    reach: [{ section: "Delete organization" }]
+    # NO reach step. The `{section: "Delete organization"}` step only scrolled to the danger row, and
+    # it was a second serial 8 s wait in front of the trigger's own: it was not taken once on
+    # /[org]/~/settings/general (#7081's gate) and passed on the rerun. The trigger is ONE button
+    # named "Delete organization" (`aria-label`, org-general.tsx), and the click scrolls to it.
     control: { role: button, name: "Delete organization" }
-    confirm: alert-dialog
+    # `ConfirmAction` at `severity: destroy` (#7091): Delete stays disabled until the org's name is typed.
+    confirm: typed
+    class: destroy
     confirm_action: "Delete organization"
     dialog_title: "Delete this organization?"
     fixture: none
@@ -123,7 +137,10 @@ controls:
     mutation: removeProject
     reach: [{ section: "Delete project" }]
     control: { role: button, name: "Delete project" }
+    # Destroy-class with a plain AlertDialog today; #7198 moves it to the typed `ConfirmAction`.
     confirm: alert-dialog
+    class: destroy
+    typed_by: "#7198"
     confirm_action: "Delete project"
     dialog_title: "Delete this project?"
     fixture: project
@@ -135,9 +152,15 @@ controls:
     route: /[org]/[project]/environments
     surface: apps/console/components/environments/environments-view.tsx
     mutation: deleteEnvironment
-    reach: [{ menu: "Environment actions" }]
+    # The ROW's menu. Since #6819 each row's trigger is named `Environment actions for <name>`
+    # (environment-columns.tsx), and Delete renders only for a non-default environment, so a bare
+    # "Environment actions" opened the default row's menu, which has none. `audit-staging` is the
+    # non-default environment `project-with-two-environments` seeds (e2e/audit/fixtures-destructive.ts).
+    reach: [{ menu: "Environment actions for audit-staging" }]
     control: { role: menuitem, name: "Delete" }
-    confirm: confirm-dialog
+    # `ConfirmAction` at `severity: destroy` (environments-view.tsx): typed environment name.
+    confirm: typed
+    class: destroy
     confirm_action: "Delete environment"
     dialog_title: "Delete <name>?"
     fixture: project-with-two-environments
@@ -184,7 +207,11 @@ controls:
     # inspector, and the project node is not rendered on the board).
     reach: [{ menu: "More" }, { open: "Environment settings" }, { section: "Destroy environment" }]
     control: { role: button, name: "Destroy" }
+    # Destroy-class; with nothing placed on its cluster the dialog is `SingleConfirm`
+    # (destroy-environment-dialog.tsx), which types nothing. #7198 adds the typed name.
     confirm: confirm-dialog
+    class: destroy
+    typed_by: "#7198"
     confirm_action: "Destroy environment"
     dialog_title: "Destroy this environment?"
     fixture: project
@@ -223,7 +250,9 @@ controls:
     mutation: destroyEnvironmentAction
     reach: [{ menu: "More" }, { open: "Environment settings" }, { section: "Destroy environment" }]
     control: { role: button, name: "Destroy" }
-    confirm: confirm-dialog
+    # `CascadeConfirm`: "Destroy all" is a submit that stays disabled until the project name is typed.
+    confirm: typed
+    class: destroy
     confirm_action: "Destroy all"
     cancel_action: "Destroy children first"
     dialog_title: "Destroy <n> environments?"
@@ -321,107 +350,115 @@ controls:
     reason: needs an installed add-on on a provisioned environment
 
   # ── connectors ─────────────────────────────────────────────────────────────────────────────
-  - id: connectors.disconnect
-    route: /[org]/~/connectors
-    surface: apps/console/components/connectors/connectors-page.tsx
-    mutation: deleteProviderToken
-    reach: [{ menu: "connector actions" }]
-    control: { role: menuitem, name: "Disconnect" }
-    confirm: alert-dialog
-    confirm_action: "Disconnect"
-    dialog_title: "Disconnect <name>?"
-    fixture: connected-cloud-identity
-    persona: owner
-    status: confirmed
-    prod-qa: skip
-    reason: a production connector is a real credential; the dialog also covers git unlink and API-key delete
-
-  # ── alerts ─────────────────────────────────────────────────────────────────────────────────
-
+  #
   # The disconnect dialog is ONE control that dispatches by kind: `disconnectConnector`
   # (connectors-page.tsx) sends a git link to `deleteProviderToken`, an api_key credential to
   # `deleteConnectorCredential`, and every cloud account to `disconnectCloudAccount` (#6124 — the
   # four per-cloud disconnect actions became one, which reads the provider from the stored row).
-  # The per-cloud entries stay siblings because the live spec drives the dialog once per seeded
-  # cloud card, and each card is its own reach.
+  # The dialog is `ConnectorsDisconnectDialog` (connectors-disconnect-dialog.tsx), on `ConfirmAction`.
+  #
+  # REAL CONTROLS (#6830). These six used to reach for `{menu: "connector actions"}` and a
+  # `menuitem` named "Disconnect"; `components/connectors/` renders no menu at all, so every one was
+  # withheld on every gate run and the typed disconnect dialog #7070 shipped was never opened. The
+  # path a person takes: the connector's **Manage <connector>** button (connectors-action.tsx — on
+  # the card and on the table row alike) opens the detail sheet; there a cloud account carries its
+  # own icon button `Disconnect <account>` (connector-detail-sheet.tsx), and a git link or an api_key
+  # connector carries one footer button `Disconnect <connector>`.
+  #
+  # The control names are the FIXTURE's names, literally: `connected-cloud-identity` writes one
+  # account per cloud named `Audit <PROVIDER> account` (e2e/audit/fixtures-destructive.ts), and the
+  # connector names are the catalog's (lib/db/seed/connectors.generated.sql). A template prefix
+  # ("Disconnect <name>") would match only "Disconnect", which every one of these shares.
+  #
+  # Not destroy-class (the spec's §4.3 list does not name it). The dialog asks for the account's name
+  # to be typed only when a project uses the account; with none it is a plain confirmation, so these
+  # declare `alert-dialog` — the confirm button is asserted present either way.
+
+  - id: connectors.disconnect
+    route: /[org]/~/connectors
+    surface: apps/console/components/connectors/connectors-page.tsx
+    mutation: deleteProviderToken
+    reach: [{ open: "Manage GitHub" }]
+    control: { role: button, name: "Disconnect GitHub" }
+    confirm: alert-dialog
+    confirm_action: "Disconnect"
+    dialog_title: "Disconnect GitHub?"
+    fixture: connected-git-link
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: a production connector is a real credential; the dialog also covers git unlink and API-key delete
 
   - id: connectors.disconnect.aws
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
     mutation: disconnectCloudAccount
-    reach: [{ menu: "connector actions" }]
-    control: { role: menuitem, name: "Disconnect" }
+    reach: [{ open: "Manage Amazon Web Services" }]
+    control: { role: button, name: "Disconnect Audit AWS account" }
     confirm: alert-dialog
     confirm_action: "Disconnect"
-    dialog_title: "Disconnect <name>?"
+    dialog_title: "Disconnect Amazon Web Services?"
     fixture: connected-cloud-identity
     persona: owner
     status: confirmed
     prod-qa: skip
     reason: a production connector is a real credential; the dialog also covers git unlink and API-key delete
-
-  # ── alerts ─────────────────────────────────────────────────────────────────────────────────
 
   - id: connectors.disconnect.gcp
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
     mutation: disconnectCloudAccount
-    reach: [{ menu: "connector actions" }]
-    control: { role: menuitem, name: "Disconnect" }
+    reach: [{ open: "Manage Google Cloud" }]
+    control: { role: button, name: "Disconnect Audit GCP account" }
     confirm: alert-dialog
     confirm_action: "Disconnect"
-    dialog_title: "Disconnect <name>?"
+    dialog_title: "Disconnect Google Cloud?"
     fixture: connected-cloud-identity
     persona: owner
     status: confirmed
     prod-qa: skip
     reason: a production connector is a real credential; the dialog also covers git unlink and API-key delete
-
-  # ── alerts ─────────────────────────────────────────────────────────────────────────────────
 
   - id: connectors.disconnect.azure
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
     mutation: disconnectCloudAccount
-    reach: [{ menu: "connector actions" }]
-    control: { role: menuitem, name: "Disconnect" }
+    reach: [{ open: "Manage Microsoft Azure" }]
+    control: { role: button, name: "Disconnect Audit AZURE account" }
     confirm: alert-dialog
     confirm_action: "Disconnect"
-    dialog_title: "Disconnect <name>?"
+    dialog_title: "Disconnect Microsoft Azure?"
     fixture: connected-cloud-identity
     persona: owner
     status: confirmed
     prod-qa: skip
     reason: a production connector is a real credential; the dialog also covers git unlink and API-key delete
 
-  # ── alerts ─────────────────────────────────────────────────────────────────────────────────
-
+  # `.extra` is the EXTRA_CLOUDS path (use-cloud-connect.tsx); the fixture's `hetzner` row covers it.
   - id: connectors.disconnect.extra
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
     mutation: disconnectCloudAccount
-    reach: [{ menu: "connector actions" }]
-    control: { role: menuitem, name: "Disconnect" }
+    reach: [{ open: "Manage Hetzner Cloud" }]
+    control: { role: button, name: "Disconnect Audit HETZNER account" }
     confirm: alert-dialog
     confirm_action: "Disconnect"
-    dialog_title: "Disconnect <name>?"
+    dialog_title: "Disconnect Hetzner Cloud?"
     fixture: connected-cloud-identity
     persona: owner
     status: confirmed
     prod-qa: skip
     reason: a production connector is a real credential; the dialog also covers git unlink and API-key delete
-
-  # ── alerts ─────────────────────────────────────────────────────────────────────────────────
 
   - id: connectors.disconnect.api-key
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
     mutation: deleteConnectorCredential
-    reach: [{ menu: "connector actions" }]
-    control: { role: menuitem, name: "Disconnect" }
+    reach: [{ open: "Manage Cloudflare" }]
+    control: { role: button, name: "Disconnect Cloudflare" }
     confirm: alert-dialog
     confirm_action: "Disconnect"
-    dialog_title: "Disconnect <name>?"
+    dialog_title: "Disconnect Cloudflare?"
     fixture: connected-api-key-connector
     persona: owner
     status: confirmed
@@ -821,7 +858,11 @@ controls:
     mutation: destroyRunnerAction
     mutation_surface: apps/console/lib/query/use-runners-query.ts
     control: { role: button, name: "Destroy" }
+    # Destroy-class, still a popover (audit C-20). #6827 owns runner-actions.tsx; moving it to
+    # `ConfirmAction` at `severity: destroy` flips this to `confirm: typed` and drops `typed_by`.
     confirm: popover
+    class: destroy
+    typed_by: "#6827"
     confirm_action: "Destroy"
     fixture: deployed-runner-with-cloud-resources
     persona: owner
