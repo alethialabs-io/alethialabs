@@ -924,10 +924,14 @@ func TestKeylessAppsRepoReset_AgainstALocalRemote(t *testing.T) {
 // name and from each other.
 func TestKeylessDebugContainerNameCannotCollideWithTheService(t *testing.T) {
 	seen := map[string]bool{}
-	for _, tag := range []string{"probe", "dwell"} {
-		name := keylessDebugContainerName(tag)
+	// Two execs with the same step — the first query and the post-dwell query — must still differ.
+	for i, tag := range []string{"probe", "dwell", "probe"} {
+		name := keylessDebugContainerName(tag, int64(i+1))
 		if name == "keyless-probe" || strings.HasPrefix(name, "keyless-") {
 			t.Fatalf("debug container %q can collide with the product's own container names", name)
+		}
+		if len(name) > 63 {
+			t.Fatalf("debug container %q exceeds the 63-character name limit", name)
 		}
 		if seen[name] {
 			t.Fatalf("debug container %q repeats; a pod's ephemeral containers must be distinct", name)
