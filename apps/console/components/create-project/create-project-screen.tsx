@@ -504,6 +504,7 @@ export function CreateProjectScreen({
 				<FieldRow label="Project name" htmlFor="project_name">
 					<Input
 						id="project_name"
+						aria-label="Project name"
 						autoComplete="off"
 						placeholder="my-project"
 						aria-invalid={nameError !== null}

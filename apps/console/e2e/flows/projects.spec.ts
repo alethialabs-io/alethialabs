@@ -261,12 +261,13 @@ test.describe("Projects — the template path", () => {
 		await name.fill(uniq);
 
 		// The region is read off the Select's TRIGGER (base-ui gives it `role="combobox"`): the
-		// option list carries every region code too.
+		// option list carries every region code too. The trigger's text is the label run into the
+		// code ("Frankfurteu-central-1"), so the patterns have no leading word boundary.
 		const region = owner.page.getByRole("combobox", { name: "Region" });
 		await cloudChoice(owner.page, "AWS").click({ timeout: 30_000 });
-		await expect(region).toHaveText(/\b(us|eu|ap|sa)-[a-z]+-\d\b/, { timeout: 15_000 });
+		await expect(region).toHaveText(/(us|eu|ap|sa)-[a-z]+-\d\b/, { timeout: 15_000 });
 		await cloudChoice(owner.page, "GCP").click();
-		await expect(region).toHaveText(/\b(us|europe|asia|southamerica)-[a-z]+\d\b/, { timeout: 15_000 });
+		await expect(region).toHaveText(/(us|europe|asia|southamerica)-[a-z]+\d\b/, { timeout: 15_000 });
 
 		const create = owner.page.getByRole("button", { name: /create project/i });
 		await expect(create).toBeEnabled();
