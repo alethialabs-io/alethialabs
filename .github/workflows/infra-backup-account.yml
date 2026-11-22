@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Static validation for infra/backup-account (the dedicated alethia-backup AWS account: the
+# Object-Lock backup bucket, its KMS key, the backup-writer user, the backup-reader / drill-launcher
+# OIDC roles, the restore-drill launch template and the budget) and its bootstrap. Credential-free by
+# design: both stacks create IAM, so they are APPLIED BY AN OPERATOR (infra/backup-account/ops/),
+# the same as infra/email-ses-account. There is deliberately NO apply job and no `id-token`
+# permission — the run only fmt/validates/tests/lints/scans, so no cloud or state credential ever
+# touches it (safe on contributor PRs).
+
+name: Infra - backup account
+
+on:
+  pull_request:
+    paths:
+      - "infra/backup-account/**"
+      - "infra/.trivyignore"
+      - "infra/.tflint.hcl"
+      - "infra/.trivy.yaml"
+      - ".github/workflows/infra-backup-account.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/backup-account/**"
+
+# `github.ref`, not the PR number: this also fires on `push`, where the number renders empty and
+# every push to main would collapse into one group (see infra-aws-oidc.yml).
+concurrency:
+  group: infra-backup-account-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TF_DIR: infra/backup-account
+  TOFU_VERSION: "1.10.10"
+
+jobs:
+  validate:
+    name: Validate + test + IaC checks (no backend, no secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: OpenTofu validate (bootstrap)
+        working-directory: ${{ env.TF_DIR }}/bootstrap
+        run: |
+          tofu init -backend=false
+          tofu validate
+
+      # The test file replaces the provider with a credential-free one and overrides the one data
+      # source that would call AWS (STS), so `tofu test` plans offline. It proves the committed
+      # posture (Object Lock COMPLIANCE 15 d, a writer with no delete, no access-key resource, a
+      # prevent_destroy key, a TLS-only bucket policy), every refusal, and the checks that read live
+      # values.
+      - name: OpenTofu validate + test
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          tofu init -backend=false
+          tofu validate
+          tofu test
+
+      # The operator scripts in ops/ are run by hand against real accounts; nothing here runs them.
+      # shellcheck is what keeps them honest between uses.
+      - name: shellcheck (operator scripts)
+        working-directory: ${{ env.TF_DIR }}/ops
+        run: shellcheck -x ./*.sh
+
+      - name: IaC checks (fmt + tflint + Trivy)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: ${{ env.TF_DIR }}

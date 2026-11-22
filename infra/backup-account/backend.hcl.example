@@ -1,0 +1,12 @@
+# AWS-native S3 backend for infra/backup-account. Copy to backend.hcl (gitignored):
+#
+#   cp backend.hcl.example backend.hcl
+#   AWS_PROFILE=alethia-sso tofu init -backend-config=backend.hcl
+#
+# The Alethia platform account's existing state bucket (the one infra/aws-oidc, infra/aws-e2e and
+# infra/email-ses-account use), under a NEW key.
+
+bucket       = "alethia-tofu-state-270587882865"
+key          = "backup-account/terraform.tfstate"
+region       = "eu-central-1"
+use_lockfile = true
