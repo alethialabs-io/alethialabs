@@ -60,15 +60,16 @@ function useKnown(): Known {
 
 /** The route skeleton: the toolbar, then the body (see the file header for which body). */
 export function ClassificationSkeleton() {
-	const { canEdit } = useKnown();
 	return (
 		<div aria-busy>
 			<div aria-hidden className="mb-4 flex items-center gap-2.5">
 				<Skeleton className="h-9 w-[240px] rounded-sm" />
-				<Skeleton className="h-3 w-24" />
+				<Skeleton className="h-5 w-7 rounded-sm" />
 				<div className="flex-1" />
 				<Skeleton className="size-9 rounded-sm" />
-				{canEdit && <Skeleton className="h-8 w-32" />}
+				{/* "New dimension" is on screen for every viewer (disabled with its reason for one
+				    who cannot edit), so its place is drawn for every viewer. */}
+				<Skeleton className="h-8 w-32" />
 			</div>
 			<ClassificationBodySkeleton />
 		</div>

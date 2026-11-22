@@ -104,6 +104,11 @@ function withFormFieldKeys<T>(
 	return { ok: false, error: { ...result.error, fields } };
 }
 
+/** Whether two staged value lists hold the same values in the same order. */
+function sameStaged(a: readonly SeedValue[], b: readonly SeedValue[]): boolean {
+	return a.length === b.length && a.every((v, i) => v.value === b[i]?.value && v.label === b[i]?.label);
+}
+
 /** Create / edit a dimension. Controlled via `open` / `onOpenChange`. */
 export function DimensionEditorSheet({
 	dimension,
@@ -251,8 +256,13 @@ export function DimensionEditorSheet({
 		save.mutate(data);
 	};
 
-	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing.
-	const unsaved = useUnsavedGuard(form);
+	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing. The
+	// sheet's own state counts as much as the form's: a template picked (whose fields the form was
+	// RESET to, so the form alone reads pristine) and values staged or removed are work that closing
+	// would drop just the same (F-15).
+	const stagedChanged =
+		templateKey !== (openTemplate?.key ?? null) || !sameStaged(staged, openTemplate?.values ?? []);
+	const unsaved = useUnsavedGuard(form.formState.isDirty || stagedChanged);
 	const dirty = unsaved.dirty;
 	/** Closing asks first when there is something to lose; a pristine sheet just closes. */
 	function requestOpenChange(next: boolean) {

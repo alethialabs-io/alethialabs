@@ -24,6 +24,7 @@ import { Switch } from "@repo/ui/switch";
 import { Check, ShieldCheck } from "lucide-react";
 import { useEffect, useId } from "react";
 import { useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import type { ValueDTO } from "@/app/server/actions/classification/dimensions";
 import { FormRootError } from "@/components/forms/form-root-error";
 import {
@@ -33,9 +34,37 @@ import {
 import type { ActionResult } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { classificationReadKeys } from "@/lib/query/use-classification-query";
-import { type ValueInput, valueInputSchema } from "@/lib/validations/classification";
+import {
+	enforcementSchema,
+	slugSchema,
+	type ValueInput,
+	valueInputSchema,
+} from "@/lib/validations/classification";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { InfoHint, Spinner } from "./classification-ui";
+
+/** The minimum-approvals message: the one thing the number field can be wrong about. */
+const MIN_APPROVALS_MESSAGE = "Enter a whole number from 1 to 10.";
+
+/**
+ * The shared value rule with the dialog's own words where zod's default would show ("Too small:
+ * expected string to have >=1 characters"). Every other rule — the slug's format, the lengths — is
+ * the shared schema's, so the server and this form still refuse the same input.
+ */
+const valueFormSchema = valueInputSchema.extend({
+	label: z.string().trim().min(1, "Enter a label.").max(80, "Keep the label to 80 characters."),
+	value: z.string().min(1, "Enter a slug, or type a label to derive one.").pipe(slugSchema),
+	enforcement: enforcementSchema
+		.extend({
+			min_approvals: z
+				.number({ error: MIN_APPROVALS_MESSAGE })
+				.int(MIN_APPROVALS_MESSAGE)
+				.min(1, MIN_APPROVALS_MESSAGE)
+				.max(10, MIN_APPROVALS_MESSAGE),
+		})
+		.nullable()
+		.optional(),
+});
 
 /** The fields the editor renders from. */
 const WATCHED = ["label", "enforcement"] as const;
@@ -69,8 +98,11 @@ export function ValueEditor({
 	const labelFieldId = useId();
 	const slugFieldId = useId();
 	const minApprovalsId = useId();
+	const labelErrorId = useId();
+	const slugErrorId = useId();
+	const minApprovalsErrorId = useId();
 	const form = useForm<ValueInput>({
-		resolver: zodResolver(valueInputSchema),
+		resolver: zodResolver(valueFormSchema),
 		defaultValues: {
 			value: value?.value ?? "",
 			label: value?.label ?? "",
@@ -124,6 +156,7 @@ export function ValueEditor({
 		save.mutate({ ...data, value: data.value || slugifyOrEmpty(data.label) });
 	};
 	const dirty = form.formState.isDirty;
+	const minApprovalsError = form.formState.errors.enforcement?.min_approvals?.message;
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -147,6 +180,8 @@ export function ValueEditor({
 								id={labelFieldId}
 								autoFocus
 								placeholder="Production"
+								aria-invalid={form.formState.errors.label ? true : undefined}
+								aria-describedby={form.formState.errors.label ? labelErrorId : undefined}
 								{...form.register("label")}
 								onChange={(e) => {
 									form.setValue("label", e.target.value, { shouldDirty: true });
@@ -156,7 +191,7 @@ export function ValueEditor({
 								}}
 							/>
 							{form.formState.errors.label?.message && (
-								<p className="mt-1 text-ui-xs text-destructive">{form.formState.errors.label.message}</p>
+								<p id={labelErrorId} className="mt-1 text-ui-xs text-destructive">{form.formState.errors.label.message}</p>
 							)}
 						</div>
 						<div className="flex-1">
@@ -166,11 +201,13 @@ export function ValueEditor({
 							<Input
 								id={slugFieldId}
 								placeholder="prod"
+								aria-invalid={form.formState.errors.value ? true : undefined}
+								aria-describedby={form.formState.errors.value ? slugErrorId : undefined}
 								className="font-mono text-xs"
 								{...form.register("value")}
 							/>
 							{form.formState.errors.value?.message && (
-								<p className="mt-1 text-ui-xs text-destructive">{form.formState.errors.value.message}</p>
+								<p id={slugErrorId} className="mt-1 text-ui-xs text-destructive">{form.formState.errors.value.message}</p>
 							)}
 						</div>
 					</div>
@@ -237,20 +274,29 @@ export function ValueEditor({
 									/>
 								</div>
 								{enforcement.require_approval && (
-									<div className="flex items-center justify-between gap-4">
-										<label htmlFor={minApprovalsId} className="text-ui-sm">
-											Minimum approvals
-										</label>
-										<Input
-											id={minApprovalsId}
-											type="number"
-											min={1}
-											max={10}
-											className="h-8 w-16 text-center text-ui-sm"
-											{...form.register("enforcement.min_approvals", {
-												valueAsNumber: true,
-											})}
-										/>
+									<div>
+										<div className="flex items-center justify-between gap-4">
+											<label htmlFor={minApprovalsId} className="text-ui-sm">
+												Minimum approvals
+											</label>
+											<Input
+												id={minApprovalsId}
+												type="number"
+												min={1}
+												max={10}
+												className="h-8 w-16 text-center text-ui-sm"
+												aria-invalid={minApprovalsError ? true : undefined}
+												aria-describedby={minApprovalsError ? minApprovalsErrorId : undefined}
+												{...form.register("enforcement.min_approvals", {
+													valueAsNumber: true,
+												})}
+											/>
+										</div>
+										{minApprovalsError && (
+											<p id={minApprovalsErrorId} className="mt-1 text-right text-ui-xs text-destructive">
+												{minApprovalsError}
+											</p>
+										)}
 									</div>
 								)}
 							</div>

@@ -9,8 +9,7 @@
 
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
-import { SectionHeading } from "@repo/ui/section-heading";
-import { Sheet, SheetContent } from "@repo/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@repo/ui/sheet";
 import { Skeleton } from "@repo/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { Boxes, X } from "lucide-react";
@@ -53,16 +52,13 @@ export function ValueDrillDrawer({
 									<div className="mb-[7px] font-mono text-ui-3xs uppercase tracking-[0.14em] text-text-tertiary">
 										{dimensionLabel} · value
 									</div>
-									{/* A SHEET title, which packages/brand/src/tokens.css names as the
-									    --text-ui-xl role — the rung this drawer wrote as Tailwind's 18px
-									    text-lg. The slot override takes the rung; the tag and the layout
-									    come from the shared component. */}
-									<SectionHeading
-										level={3}
-										title={value.label}
-										className="[&_[data-slot=section-heading-title]]:text-ui-xl [&_[data-slot=section-heading-title]]:font-semibold"
-									/>
-									<div className="mt-1.5 text-ui-sm text-text-secondary">
+									{/* The sheet's own title, so the dialog is named by it (a SectionHeading
+									    inside the sheet was a heading, not the dialog's name). The size is the
+									    --text-ui-xl rung packages/brand/src/tokens.css gives a sheet title. */}
+									<SheetTitle className="font-display text-ui-xl font-semibold text-text-primary">
+										{value.label}
+									</SheetTitle>
+									<SheetDescription className="mt-1.5 text-ui-sm text-text-secondary">
 										{isPending
 											? "Loading…"
 											: isError
@@ -70,7 +66,7 @@ export function ValueDrillDrawer({
 												: total === 0
 													? "No resources"
 													: `${total} resource${total === 1 ? "" : "s"} across ${(data ?? []).length} kind${(data ?? []).length === 1 ? "" : "s"}`}
-									</div>
+									</SheetDescription>
 								</div>
 								<button
 									type="button"

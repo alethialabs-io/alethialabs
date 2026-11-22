@@ -104,7 +104,15 @@ export function CaseThread({ messages }: { messages: PublicMessage[] }) {
 			<MessageScroller>
 				{/* Bounded and padded by the classes the loading form draws too (`case-detail-parts.ts`
 				    says why the bound is what it is). */}
-				<MessageScrollerViewport aria-label="Case conversation" className={CASE_THREAD_VIEWPORT}>
+				{/* A `log`: a reply that lands while the case is open is announced to a screen reader
+				    (politely, as additions), not only drawn (G-09). */}
+				<MessageScrollerViewport
+					role="log"
+					aria-live="polite"
+					aria-relevant="additions"
+					aria-label="Case conversation"
+					className={CASE_THREAD_VIEWPORT}
+				>
 					<MessageScrollerContent className={CASE_THREAD_CONTENT}>
 						{messages.length === 0 ? (
 							<EmptyState

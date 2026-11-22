@@ -106,4 +106,47 @@ describe("DimensionEditorSheet", () => {
 		await user.type(box, "a");
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 	});
+
+	// F-15: a template picked (the form is RESET to its fields, so the form alone reads pristine) and
+	// values staged are work too — closing asks before dropping them.
+	describe("dirty tracking covers the template and the staged values (F-15)", () => {
+		/** Renders the sheet open in create mode with a spy on `onOpenChange`. */
+		function renderWithSpy() {
+			const onOpenChange = vi.fn();
+			const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+			render(
+				<QueryClientProvider client={qc}>
+					<DimensionEditorSheet open onOpenChange={onOpenChange} />
+				</QueryClientProvider>,
+			);
+			return onOpenChange;
+		}
+
+		it("a pristine sheet closes without asking", async () => {
+			const user = userEvent.setup();
+			const onOpenChange = renderWithSpy();
+			await user.click(screen.getByRole("button", { name: "Cancel" }));
+			expect(onOpenChange).toHaveBeenCalledWith(false);
+			expect(screen.queryByText("Discard your changes?")).toBeNull();
+		});
+
+		it("picking a template makes Cancel ask first", async () => {
+			const user = userEvent.setup();
+			const onOpenChange = renderWithSpy();
+			await user.click(screen.getByRole("button", { name: "Environment" }));
+			await user.click(screen.getByRole("button", { name: "Cancel" }));
+			expect(await screen.findByText("Discard your changes?")).toBeInTheDocument();
+			expect(onOpenChange).not.toHaveBeenCalled();
+		});
+
+		it("a staged value alone makes Cancel ask first", async () => {
+			const user = userEvent.setup();
+			const onOpenChange = renderWithSpy();
+			await user.type(screen.getByLabelText("New value label"), "Blue{Enter}");
+			expect(screen.getByText("1 staged")).toBeInTheDocument();
+			await user.click(screen.getByRole("button", { name: "Cancel" }));
+			expect(await screen.findByText("Discard your changes?")).toBeInTheDocument();
+			expect(onOpenChange).not.toHaveBeenCalled();
+		});
+	});
 });

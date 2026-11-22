@@ -70,3 +70,35 @@ describe("ValueEditor — watched fields drive the dialog", () => {
 		expect(screen.getByRole("switch", { name: "Require verify pass" })).toBeInTheDocument();
 	});
 });
+
+// F-17: the dialog says what is wrong in its own words, beside the field, and the minimum approvals
+// has a message of its own instead of failing silently.
+describe("ValueEditor — field messages (F-17)", () => {
+	it("an emptied slug says to enter one, never zod's default", async () => {
+		const user = userEvent.setup();
+		renderEditor();
+		await user.type(screen.getByLabelText("Label"), "Production");
+		const slug = screen.getByLabelText("Slug");
+		await user.clear(slug);
+		await user.click(screen.getByRole("button", { name: /Save value/ }));
+
+		expect(await screen.findByText("Enter a slug, or type a label to derive one.")).toBeInTheDocument();
+		expect(screen.queryByText(/Too small/)).toBeNull();
+		expect(slug).toHaveAttribute("aria-invalid", "true");
+	});
+
+	it("a minimum approvals out of range has its own message, tied to the field", async () => {
+		const user = userEvent.setup();
+		renderEditor();
+		await user.type(screen.getByLabelText("Label"), "Production");
+		await user.click(screen.getByRole("switch", { name: "Enforce promotion gates" }));
+		const minimum = screen.getByLabelText("Minimum approvals");
+		await user.clear(minimum);
+		await user.type(minimum, "12");
+		await user.click(screen.getByRole("button", { name: /Save value/ }));
+
+		const message = await screen.findByText("Enter a whole number from 1 to 10.");
+		expect(minimum).toHaveAttribute("aria-invalid", "true");
+		expect(minimum.getAttribute("aria-describedby")).toBe(message.id);
+	});
+});

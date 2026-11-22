@@ -3,13 +3,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The dimensions rail — the left column of the master/detail. Selectable, and (with edit
-// rights) drag-to-reorder, which persists `position`. Each row shows the label, a single/multi
+// rights) reorderable — by drag, or by each row's move-up / move-down arrows from the keyboard —
+// which persists `position`. Each row shows the label, a single/multi
 // badge, the key, and a values + usage summary.
 
 import { cn } from "@repo/ui/utils";
 import { GripVertical } from "lucide-react";
 import { useRef } from "react";
 import type { DimensionDTO } from "@/app/server/actions/classification/dimensions";
+import { MoveButtons, movedBy } from "./move-buttons";
 
 /** Reorders `ids` by moving `dragId` to `targetId`'s slot. */
 function moved(ids: string[], dragId: string, targetId: string): string[] {
@@ -48,7 +50,7 @@ export function DimensionRail({
 					{dims.length}
 				</span>
 			</div>
-			{dims.map((d) => {
+			{dims.map((d, i) => {
 				const selected = d.id === selectedId;
 				return (
 					<div
@@ -64,21 +66,8 @@ export function DimensionRail({
 							}
 							dragId.current = null;
 						}}
-						// A selectable row: a button to a screen reader, reached by Tab and chosen with
-						// Enter/Space like one. (Drag-to-reorder stays pointer-only.)
-						role="button"
-						tabIndex={0}
-						aria-pressed={selected}
-						onClick={() => onSelect(d.id)}
-						onKeyDown={(e) => {
-							if (e.target !== e.currentTarget) return;
-							if (e.key === "Enter" || e.key === " ") {
-								e.preventDefault();
-								onSelect(d.id);
-							}
-						}}
 						className={cn(
-							"flex cursor-pointer items-center gap-2 rounded-[3px] px-2 py-2 transition-colors hover:bg-surface-muted",
+							"flex items-center gap-2 rounded-[3px] px-2 py-2 transition-colors hover:bg-surface-muted",
 							selected && "bg-surface-muted",
 						)}
 					>
@@ -88,37 +77,57 @@ export function DimensionRail({
 								aria-hidden
 							/>
 						)}
-						<div className="min-w-0 flex-1">
-							<div className="flex items-center gap-[7px]">
-								<span
-									className={cn(
-										"truncate text-ui-md",
-										selected
-											? "font-semibold text-text-primary"
-											: "font-medium text-text-secondary",
-									)}
-								>
-									{d.label}
-								</span>
-								<span
-									title={d.multi ? "Multiple values per resource" : "One value per resource"}
-									className="shrink-0 rounded-[2px] border px-1 font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary"
-								>
-									{d.multi ? "M" : "1"}
-								</span>
+						{/* The row's selection is a real button, so the move arrows beside it are its
+						    siblings rather than controls nested inside another control. */}
+						<button
+							type="button"
+							aria-pressed={selected}
+							onClick={() => onSelect(d.id)}
+							className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-[2px] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						>
+							<div className="min-w-0 flex-1">
+								<div className="flex items-center gap-[7px]">
+									<span
+										className={cn(
+											"truncate text-ui-md",
+											selected
+												? "font-semibold text-text-primary"
+												: "font-medium text-text-secondary",
+										)}
+									>
+										{d.label}
+									</span>
+									<span
+										title={d.multi ? "Multiple values per resource" : "One value per resource"}
+										className="shrink-0 rounded-[2px] border px-1 font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary"
+									>
+										{d.multi ? "M" : "1"}
+									</span>
+								</div>
+								<div className="truncate font-mono text-ui-2xs text-text-tertiary">
+									{d.key}
+								</div>
 							</div>
-							<div className="truncate font-mono text-ui-2xs text-text-tertiary">
-								{d.key}
+							<div className="shrink-0 text-right">
+								<div className="font-mono text-ui-xs text-text-secondary">
+									{d.values.length}
+								</div>
+								<div className="font-mono text-ui-3xs text-text-tertiary">
+									{d.resourceCount} tagged
+								</div>
 							</div>
-						</div>
-						<div className="shrink-0 text-right">
-							<div className="font-mono text-ui-xs text-text-secondary">
-								{d.values.length}
-							</div>
-							<div className="font-mono text-ui-3xs text-text-tertiary">
-								{d.resourceCount} tagged
-							</div>
-						</div>
+						</button>
+						{reorderable && (
+							<MoveButtons
+								label={d.label}
+								onMoveUp={i > 0 ? () => onReorder(movedBy(dims.map((x) => x.id), d.id, -1)) : undefined}
+								onMoveDown={
+									i < dims.length - 1
+										? () => onReorder(movedBy(dims.map((x) => x.id), d.id, 1))
+										: undefined
+								}
+							/>
+						)}
 					</div>
 				);
 			})}
