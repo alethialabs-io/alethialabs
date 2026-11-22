@@ -2,7 +2,7 @@
 # PreToolUse(Bash) guard: agents spend money only inside a budget the maintainer set.
 #
 # The maintainer delegated everything except two things: spend beyond a budget (this file) and
-# irreversible deletion (.claude/hooks/guard-destroy.sh). The envelope is EUR 30 per ROLLING 7
+# irreversible deletion (.claude/hooks/guard-destroy.sh). The envelope is EUR 80 per ROLLING 7
 # days, across every instance on this machine. It is a constant below, with NO env-var override:
 # escape hatches are the maintainer's, and raising the budget is a reviewed PR.
 #
@@ -106,7 +106,7 @@
 #   · cloud consoles, the Stripe/Vercel MCP tools, anything that is not a Bash command.
 #   · the price is an ESTIMATE taken before the run; the ledger is not reconciled with invoices.
 
-SPEND_BUDGET_EUR_7D=30
+SPEND_BUDGET_EUR_7D=80
 SPEND_WINDOW_SEC=604800
 
 _self="${BASH_SOURCE[0]}"
@@ -1038,8 +1038,8 @@ STUB
 	c 1850 'gh workflow run e2e-nightly.yml -f keyless_db=postgres -f full_bar=true'
 	c 50 'gh workflow run e2e-nightly.yml -f keyless_db='
 	c 1550 'gh workflow run e2e-nightly.yml -f fabric_demo=true'
-	# two heavy inputs on one provider: 0.50 + 2 × 15 = 30.50, over the budget on its own
-	t block 'gh workflow run e2e-nightly.yml -f fabric_demo=true -f secrets_xacct=true'
+	# two heavy inputs on one provider: 0.50 + 2 × 15 = 30.50 — each input is priced, not just the first
+	c 3050 'gh workflow run e2e-nightly.yml -f fabric_demo=true -f secrets_xacct=true'
 	c 1550 'gh workflow run "E2E Nightly (T2 · real cloud)" -f xacct_registry=true'
 	c 10 'gh workflow run e2e-ai-nightly.yml'
 	c 200 'gh workflow run byo-users-managed-mysql.yml'
@@ -1095,17 +1095,20 @@ STUB
 	t block 'gh run rerun'
 	grep -q 'rerun <no id>' "$tmp/stderr" && pass=$((pass + 1)) || bad "a rerun with no id is refused by name: $(cat "$tmp/stderr")"
 	t block 'gh run rerun --failed'
-	# cli_demo_grid reaches four providers: 0.50 + 15 × 4 = 60.50, over the budget on its own
-	t block 'gh workflow run e2e-nightly.yml -f dimension=cli-demo -f cli_demo_grid=true'
+	# cli_demo_grid reaches four providers: 0.50 + 15 × 4 = 60.50
+	c 6050 'gh workflow run e2e-nightly.yml -f dimension=cli-demo -f cli_demo_grid=true'
+	# a second heavy input across the four: 0.50 + 2 × 15 × 4 = 120.50, over the budget on its own
+	t block 'gh workflow run e2e-nightly.yml -f dimension=cli-demo -f cli_demo_grid=true -f fabric_demo=true'
+	grep -q 'EUR 0.00 + EUR 120.50 = EUR 120.50' "$tmp/stderr" && pass=$((pass + 1)) || bad "a command over the budget on its own is refused by the budget: $(cat "$tmp/stderr")"
 
 	# ── the budget: a rolling window, and only the window ──
 	now="$(date +%s)"
-	printf '{"ts":%s,"cents":2950}\n{"ts":%s,"cents":5000}\n' "$now" $((now - 8 * 86400)) >"$ledger"
+	printf '{"ts":%s,"cents":7950}\n{"ts":%s,"cents":5000}\n' "$now" $((now - 8 * 86400)) >"$ledger"
 	t block 'pnpm env:box'
-	grep -q 'EUR 29.50 + EUR 1.00 = EUR 30.50' "$tmp/stderr" && pass=$((pass + 1)) || bad "the refusal names the total and the budget: $(cat "$tmp/stderr")"
+	grep -q 'EUR 79.50 + EUR 1.00 = EUR 80.50' "$tmp/stderr" && pass=$((pass + 1)) || bad "the refusal names the total and the budget: $(cat "$tmp/stderr")"
 	run 'gh workflow run e2e-ai-nightly.yml'
-	[ "$RC" = 0 ] && [ "$(cents_in_ledger)" = 7960 ] && pass=$((pass + 1)) || bad "a charge inside the budget is allowed and appended (rc=$RC, ledger=$(cents_in_ledger))"
-	printf '{"ts":%s,"cents":2990}\n' "$now" >"$ledger"
+	[ "$RC" = 0 ] && [ "$(cents_in_ledger)" = 12960 ] && pass=$((pass + 1)) || bad "a charge inside the budget is allowed and appended (rc=$RC, ledger=$(cents_in_ledger))"
+	printf '{"ts":%s,"cents":7990}\n' "$now" >"$ledger"
 	run 'gh workflow run e2e-ai-nightly.yml'
 	[ "$RC" = 0 ] && pass=$((pass + 1)) || bad "exactly reaching the budget is allowed"
 	: >"$ledger"
@@ -1256,7 +1259,7 @@ pnpm env:box"
 
 	# ── B3: the ledger fails CLOSED for a charge ──
 	now="$(date +%s)"
-	printf '{"ts":%s,"cents":2950}\n' "$now" >"$ledger"
+	printf '{"ts":%s,"cents":7950}\n' "$now" >"$ledger"
 	chmod 000 "$ledger"
 	t block 'pnpm env:box'
 	grep -q 'cannot be written' "$tmp/stderr" && pass=$((pass + 1)) || bad "an unwritable ledger is named: $(cat "$tmp/stderr")"
