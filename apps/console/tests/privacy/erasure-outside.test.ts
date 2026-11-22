@@ -93,8 +93,28 @@ describe("deleteStripeCustomerIfUnretained", () => {
 	});
 });
 
+describe("deleteStripeCustomerIfUnretained without Stripe", () => {
+	it("leaves the customer for a person when the deployment has no Stripe key", async () => {
+		getOrgBilling.mockResolvedValue(BILLING);
+		configured.mockReturnValue(false);
+		sdb.answer([{ n: 0 }], [{ n: 0 }]);
+		expect((await deleteStripeCustomerIfUnretained(USER, USER)).outcome).toBe("not_configured");
+		expect(customersDel).not.toHaveBeenCalled();
+	});
+
+	it("records a failure when the billing read itself throws", async () => {
+		getOrgBilling.mockRejectedValue(new Error("db down"));
+		await eraseOutsidePostgres("case-1", USER, null);
+		const summaries = sdb.calls
+			.filter((c) => c.table === privacyCaseEvent)
+			.map((c) => (c.values as { detail: { summary: string } }).detail.summary);
+		expect(summaries[1]).toContain("FAILED");
+	});
+});
+
 describe("describeStripeOutcome", () => {
 	it("never writes the customer id into the ledger line", () => {
+		expect(describeStripeOutcome({ outcome: "none" })).toContain("no Stripe customer");
 		for (const r of [
 			{ outcome: "deleted", customerId: "cus_123" },
 			{ outcome: "retained", customerId: "cus_123", invoices: 1, orders: 1 },

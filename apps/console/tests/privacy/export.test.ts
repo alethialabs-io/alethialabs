@@ -64,6 +64,13 @@ describe("assembleExport", () => {
 		}
 	});
 
+	it("does not verify a signed manifest against a key that is not a key", () => {
+		const { privateKey } = generateKeyPairSync("ed25519");
+		const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+		const { manifest } = envelope(assembleExport(FILES, NOW, { pem, id: "key-2026" }).bytes);
+		expect(verifyManifest(manifest, "not a pem")).toBe(false);
+	});
+
 	it("says honestly that it is unsigned when the deployment has no key", () => {
 		const { manifest } = envelope(assembleExport(FILES, NOW, null).bytes);
 		expect(manifest.signature).toBeNull();
@@ -117,6 +124,14 @@ describe("readExportForDownload", () => {
 		expect(storageGet).not.toHaveBeenCalled();
 	});
 
+	it("answers expired when the archive is already gone from storage", async () => {
+		sdb.answer([row]);
+		storageGet.mockResolvedValue(null);
+		expect(
+			await readExportForDownload({ reference: row.reference, token: TOKEN, userId: "user-1", now: NOW }),
+		).toEqual({ outcome: "expired" });
+	});
+
 	it("refuses an expired link even before the sweep has deleted the archive", async () => {
 		sdb.answer([{ ...row, exportExpiresAt: new Date(NOW.getTime() - 1) }]);
 		expect(
@@ -130,7 +145,7 @@ describe("sweepExpiredExports", () => {
 	it("deletes each expired archive and clears its key and token, keeping the manifest", async () => {
 		sdb.calls.length = 0;
 		storageDel.mockReset();
-		sdb.answer([{ id: "case-1", objectKey: "case-1.json" }]);
+		sdb.answer([{ id: "case-1", objectKey: "case-1.json" }, { id: "case-2", objectKey: null }]);
 		expect(await sweepExpiredExports(NOW)).toEqual({ deleted: 1 });
 		expect(storageDel).toHaveBeenCalledWith(PRIVACY_EXPORT_BUCKET, "case-1.json");
 		const update = sdb.calls.find((c) => c.op === "update" && c.table === privacyCase);

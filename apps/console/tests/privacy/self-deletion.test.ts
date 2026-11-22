@@ -45,6 +45,7 @@ import {
 	cancelScheduledErasure,
 	deletionBlockers,
 	ERASURE_GRACE_DAYS,
+	scheduledErasureByToken,
 	scheduleSelfErasure,
 	sweepScheduledErasures,
 } from "@/lib/privacy/self-deletion";
@@ -282,5 +283,76 @@ describe("sweepScheduledErasures", () => {
 		);
 		// The reminder carries no cancel link: the stored token is a hash and cannot be re-sent.
 		expect(sendAccountDeletionEmail.mock.calls[0]?.[0].cancelToken).toBeUndefined();
+	});
+});
+
+describe("the remaining paths", () => {
+	it("schedules an erasure case that was already open, rather than opening a second", async () => {
+		sdb.answer(
+			[{ id: "case-old", reference: "DSR-00000009", scheduledFor: null, identityVerifiedAt: null }],
+			[{ orgId: USER, role: "owner" }],
+			[],
+		);
+		const out = await scheduleSelfErasure(SUBJECT, NOW);
+		expect(out).toMatchObject({ outcome: "scheduled", reference: "DSR-00000009" });
+		expect(on(privacyCase, "insert")).toEqual([]);
+		expect(on(privacyCase, "update")[0]?.set).toMatchObject({ identityVerifiedAt: NOW, state: "in_review" });
+	});
+
+	it("refuses when the new case row cannot be written", async () => {
+		sdb.answer([], [{ orgId: USER, role: "owner" }], [], []);
+		await expect(scheduleSelfErasure(SUBJECT, NOW)).rejects.toThrow(/Could not open/);
+	});
+
+	it("cancels without an email when the account has no address any more", async () => {
+		sdb.answer([{ id: "case-1", reference: "DSR-00000001", subjectUserId: USER }], [], []);
+		expect((await cancelScheduledErasure({ userId: USER }, "link", NOW)).outcome).toBe("cancelled");
+		expect(sendAccountDeletionEmail).not.toHaveBeenCalled();
+	});
+
+	it("still cancels when the cancelled email fails to send", async () => {
+		sendAccountDeletionEmail.mockRejectedValue(new Error("ses down"));
+		sdb.answer([{ id: "case-1", reference: "DSR-00000001", subjectUserId: USER }], [], [{ email: "ada@example.io" }]);
+		expect((await cancelScheduledErasure({ userId: USER }, "sign_in", NOW)).outcome).toBe("cancelled");
+	});
+
+	it("finds a scheduled deletion by its token, and nothing for an unscheduled one", async () => {
+		const scheduledFor = new Date("2026-12-05T00:00:00.000Z");
+		sdb.answer([{ reference: "DSR-00000001", scheduledFor }]);
+		expect(await scheduledErasureByToken("t".repeat(43))).toEqual({ reference: "DSR-00000001", scheduledFor });
+		sdb.answer([{ reference: "DSR-00000001", scheduledFor: null }]);
+		expect(await scheduledErasureByToken("t".repeat(43))).toBeNull();
+	});
+
+	it("re-arms a reminder whose email failed, and skips one with no address", async () => {
+		const runsAt = new Date("2026-11-25T00:00:00.000Z");
+		const row = { id: "case-1", reference: "DSR-00000001", subjectUserId: USER, scheduledFor: runsAt };
+		sendAccountDeletionEmail.mockRejectedValueOnce(new Error("ses down"));
+		sdb.answer([{ id: "case-1" }], [row], [{ email: "ada@example.io" }], [], []);
+		expect((await sweepScheduledErasures(NOW)).reminded).toBe(0);
+		expect(on(privacyCase, "update")[1]?.set).toEqual({ reminderSentAt: null });
+
+		sdb.calls.length = 0;
+		sdb.answer([{ id: "case-1" }], [row], [], []);
+		expect((await sweepScheduledErasures(NOW)).reminded).toBe(0);
+		expect(sendAccountDeletionEmail).toHaveBeenCalledTimes(1);
+	});
+
+	it("records a scheduled erasure that faults, and keeps it for the privacy team", async () => {
+		performErasure.mockRejectedValue(new Error("db down"));
+		const due = { id: "case-1", reference: "DSR-00000001", subjectUserId: USER, scheduledFor: null };
+		sdb.answer([], [{ id: "case-1", scheduledFor: new Date("2026-11-20T00:00:00.000Z") }], [due], []);
+		const out = await sweepScheduledErasures(NOW);
+		expect(out.failed).toBe(1);
+		const note = on(privacyCaseEvent, "insert").at(-1)?.values as { detail: { summary: string } };
+		expect(note.detail.summary).toContain("failed with an error");
+	});
+
+	it("counts an erasure that ran even when its confirmation email fails", async () => {
+		performErasure.mockResolvedValue({ outcome: "erased", tables: [], rowsErased: 1, rowsPseudonymized: 0, tablesRetained: 0 });
+		sendAccountDeletionEmail.mockRejectedValue(new Error("ses down"));
+		const due = { id: "case-1", reference: "DSR-00000001", subjectUserId: USER, scheduledFor: null };
+		sdb.answer([], [{ id: "case-1", scheduledFor: new Date("2026-11-20T00:00:00.000Z") }], [due], [{ email: "ada@example.io" }]);
+		expect((await sweepScheduledErasures(NOW)).erased).toBe(1);
 	});
 });

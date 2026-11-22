@@ -27,7 +27,7 @@ import { POST } from "@/app/api/internal/platform/privacy/route";
 import { privacyCase, privacyCaseEvent } from "@/lib/db/schema";
 import { runStaffPrivacyAction } from "@/lib/privacy/staff-queue";
 
-const STAFF = "55555555-5555-5555-5555-555555555555";
+const STAFF = "55555555-5555-4555-8555-555555555555";
 const NOW = new Date("2026-11-21T10:00:00.000Z");
 const CASE = {
 	id: "case-1",
@@ -115,6 +115,102 @@ describe("runStaffPrivacyAction", () => {
 		const insert = sdb.calls.find((c) => c.op === "insert" && c.table === privacyCase);
 		expect(insert?.values).toMatchObject({ kind: "erasure", subjectUserId: CASE.subjectUserId, organizationId: null });
 		expect(insert?.values).not.toHaveProperty("identityVerifiedAt");
+	});
+});
+
+describe("runStaffPrivacyAction — the remaining decisions and dead ends", () => {
+	it("extends, holds and refuses with the staff member's reason", async () => {
+		sdb.answer([CASE]);
+		const ext = await runStaffPrivacyAction(
+			{ action: "extend", reference: CASE.reference, reason: "Many systems to search", staffUserId: STAFF },
+			NOW,
+		);
+		expect(ext).toEqual({ ok: true, message: expect.stringContaining("2027-02-19") });
+		sdb.answer([CASE]);
+		const hold = await runStaffPrivacyAction(
+			{ action: "hold", reference: CASE.reference, reason: "Chargeback dispute open", staffUserId: STAFF },
+			NOW,
+		);
+		expect(hold.ok).toBe(true);
+		sdb.answer([CASE]);
+		const refuse = await runStaffPrivacyAction(
+			{
+				action: "refuse",
+				reference: CASE.reference,
+				reason: "Manifestly unfounded; you may complain to the CPDP.",
+				staffUserId: STAFF,
+			},
+			NOW,
+		);
+		expect(refuse).toEqual({ ok: true, message: "Refused, with the reason recorded." });
+	});
+
+	it("says so when no case has the reference", async () => {
+		sdb.answer([]);
+		expect(await runStaffPrivacyAction({ action: "verify", reference: CASE.reference, staffUserId: STAFF }, NOW)).toEqual({
+			ok: false,
+			message: `No request has the reference ${CASE.reference}.`,
+		});
+	});
+
+	it("reports the legal hold that paused an erasure", async () => {
+		sdb.answer([CASE]);
+		performErasure.mockResolvedValue({ outcome: "paused_by_legal_hold", reason: "dispute" });
+		expect(await runStaffPrivacyAction({ action: "fulfil", reference: CASE.reference, staffUserId: STAFF }, NOW)).toEqual({
+			ok: false,
+			message: "Paused by the legal hold: dispute",
+		});
+	});
+
+	it("cannot export for a case with no account, or an account that is gone", async () => {
+		sdb.answer([{ ...CASE, kind: "export", subjectUserId: null }]);
+		expect((await runStaffPrivacyAction({ action: "fulfil", reference: CASE.reference, staffUserId: STAFF }, NOW)).ok).toBe(false);
+		sdb.answer([{ ...CASE, kind: "export" }], []);
+		expect(await runStaffPrivacyAction({ action: "fulfil", reference: CASE.reference, staffUserId: STAFF }, NOW)).toEqual({
+			ok: false,
+			message: "The account no longer exists.",
+		});
+		expect(deliverExport).not.toHaveBeenCalled();
+	});
+
+	it("opens a case for an address no account has, and lets a fault propagate", async () => {
+		sdb.answer([], [{ id: "case-new" }]);
+		const opened = await runStaffPrivacyAction(
+			{ action: "open", kind: "access", email: "nobody@example.io", staffUserId: STAFF },
+			NOW,
+		);
+		expect(opened.message).toMatch(/No account has that address/);
+		sdb.answer([CASE]);
+		performErasure.mockRejectedValue(new TypeError("boom"));
+		await expect(
+			runStaffPrivacyAction({ action: "fulfil", reference: CASE.reference, staffUserId: STAFF }, NOW),
+		).rejects.toThrow("boom");
+	});
+
+	it("routes a valid decision through the route and answers 200 with the result", async () => {
+		authorized.mockReturnValue(true);
+		sdb.answer([{ ...CASE, identityVerifiedAt: null }]);
+		const res = await POST(
+			new Request("https://console.example.io/api/internal/platform/privacy", {
+				method: "POST",
+				body: JSON.stringify({ action: "verify", reference: CASE.reference, staffUserId: STAFF }),
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true, message: "Identity verified." });
+	});
+
+	it("answers 500 when the action faults", async () => {
+		authorized.mockReturnValue(true);
+		sdb.answer([CASE]);
+		performErasure.mockRejectedValue(new TypeError("boom"));
+		const res = await POST(
+			new Request("https://console.example.io/api/internal/platform/privacy", {
+				method: "POST",
+				body: JSON.stringify({ action: "fulfil", reference: CASE.reference, staffUserId: STAFF }),
+			}),
+		);
+		expect(res.status).toBe(500);
 	});
 });
 
