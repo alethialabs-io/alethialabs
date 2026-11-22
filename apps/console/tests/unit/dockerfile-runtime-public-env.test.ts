@@ -62,8 +62,8 @@ const OTHER_RUNTIME_SOURCE: Record<string, OtherSource> = {
 	NEXT_PUBLIC_POSTHOG_HOST: { kind: "deploy-env", why: "emitted from the vault (empty = EU default)" },
 	NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: { kind: "deploy-env", why: "emitted from the vault" },
 	NEXT_PUBLIC_STATUS_URL: {
-		kind: "code-default",
-		why: "unset ⇒ lib/legal.ts falls back to https://status.alethialabs.io",
+		kind: "deploy-env",
+		why: "emitted from the vault (#7148); empty ⇒ every status link is hidden (lib/legal.ts statusUrl)",
 	},
 	NEXT_PUBLIC_FEEDBACK_REPO_URL: {
 		kind: "code-default",

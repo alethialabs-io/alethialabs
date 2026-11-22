@@ -1,23 +1,22 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 
-output "server_ipv4" {
-  description = "Public IPv4 of the status box."
-  value       = hcloud_server.status.ipv4_address
+output "status_url" {
+  description = "The public status page — the value for NEXT_PUBLIC_STATUS_URL in alethia/prod/env."
+  value       = local.status_url
 }
 
-output "server_ipv6" {
-  description = "Public IPv6 of the status box."
-  value       = hcloud_server.status.ipv6_address
+output "summary_api_url" {
+  description = "The versioned public JSON (packages/status/src/state.ts SUMMARY_VERSION)."
+  value       = "${local.status_url}/api/summary.json"
 }
 
-# Reminder of the Cloudflare records to add by hand (DNS-only / grey cloud so
-# Caddy's ACME HTTP-01 challenge reaches the box). DNS is intentionally not
-# managed by this OpenTofu config.
-output "dns_records_to_add" {
-  description = "Cloudflare records to create manually in the alethialabs.io zone."
-  value       = <<-EOT
-    status  A     ${hcloud_server.status.ipv4_address}   (DNS only / grey cloud)
-    status  AAAA  ${hcloud_server.status.ipv6_address}   (DNS only / grey cloud, optional)
-  EOT
+output "d1_database_id" {
+  description = "The history database, for `wrangler d1 execute --remote` when inspecting it by hand."
+  value       = cloudflare_d1_database.status.id
+}
+
+output "script_name" {
+  description = "The Worker's name in the Cloudflare dashboard (logs, cron runs)."
+  value       = cloudflare_workers_script.status.script_name
 }
