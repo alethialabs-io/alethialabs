@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { count, eq } from "drizzle-orm";
-import { z } from "zod";
 import { authorizeCli, ensureCliOrgAccess } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { team, teamMember } from "@/lib/db/schema";
@@ -13,9 +12,7 @@ import {
 	cliTeamsResponse,
 } from "@/lib/validations/cli-contract";
 import { teamPlanRefusal, teamRoleRefusal } from "./team-access";
-
-/** Body of POST /api/cli/orgs/:id/teams — create a team. */
-const createTeamBody = z.object({ name: z.string().min(1) });
+import { createTeamBody } from "@/lib/validations/cli-request-bodies";
 
 /** Lists organization `id`'s teams, each with its team_member count. */
 export async function GET(

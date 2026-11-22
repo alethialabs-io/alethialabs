@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { desc, eq } from "drizzle-orm";
-import { z } from "zod";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getPdp } from "@/lib/authz";
 import { authorizeCli } from "@/lib/authz/guard";
@@ -30,6 +29,7 @@ import {
 	cliGrantsResponse,
 } from "@/lib/validations/cli-contract";
 import { log } from "@/lib/observability/log";
+import { createGrantBody } from "@/lib/validations/cli-request-bodies";
 
 const VALID_KEYS: ReadonlySet<string> = new Set(PERMISSIONS.map((p) => p.key));
 
@@ -65,25 +65,6 @@ async function callerCanGrant(
 	}
 	return true;
 }
-
-/** Body of POST /api/cli/grants — bind a principal to EXACTLY one of a role or a
- * single permission, at a resource scope, as allow or deny. resource_id omitted =
- * org-wide.
- *
- * `resource_type` stays `z.string()` HERE and is parsed by `parseGrantResource` in the handler,
- * not turned into a `z.enum`. A parse failure on this schema answers with a flat "Invalid request
- * body" that names no field, and #4734 turns on the refusal NAMING the accepted set — an admin who
- * wrote `projects` has to be able to see what the kinds are. The org-kind-with-an-id refusal is
- * returned from the same parse, for the same reason. */
-const createGrantBody = z.object({
-	principal_type: z.enum(["user", "team"]),
-	principal_id: z.uuid(),
-	effect: z.enum(["allow", "deny"]).default("allow"),
-	role_id: z.uuid().nullable().optional(),
-	permission_key: z.string().nullable().optional(),
-	resource_type: z.string().min(1).default("org"),
-	resource_id: z.uuid().nullable().optional(),
-});
 
 /** Shape of a grant on the CLI wire (the grant row + its bound role's name). */
 function toGrantWire(

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, desc, eq, sql } from "drizzle-orm";
-import { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
 import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import {
@@ -14,57 +13,17 @@ import {
 } from "@/lib/cli/paging";
 import { getServiceDb } from "@/lib/db";
 import { projectEnvironments, projectFabrics } from "@/lib/db/schema";
-import {
-	environmentLifecycle,
-	environmentStage,
-	placementMode,
-} from "@/lib/db/schema/enums";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
-import {
-	environmentNameSchema,
-	namespaceSchema,
-} from "@/lib/validations/names";
 import {
 	cliEnvironmentResponse,
 	cliEnvironmentsResponse,
 } from "@/lib/validations/cli-contract";
 import { claimPlacementNamespace } from "@/lib/projects/placement-namespace-claim";
 import { effectivePlacementNamespace } from "@/lib/validations/placement-namespace";
+import { addEnvironmentBody } from "@/lib/validations/cli-request-bodies";
 
 const ENVIRONMENTS_LIST = "project-environments";
-
-/** Body of POST /api/cli/projects/:id/environments — add an environment.
- *
- * `placement_mode` and its companions are the fix for a silent cost bomb. This route inserted with
- * `fabric_id` unset, and `project_environments.placement_mode` defaults to `dedicated` — so
- * `project env add staging` did not fail, it quietly became a WHOLE NEW CLUSTER with its own tofu
- * state key. The isolation ladder the product leads with (namespace → vcluster → dedicated) was
- * unreachable from the CLI, and the cheap rungs are the interesting ones. */
-const addEnvironmentBody = z.object({
-	/** Validated AND normalized by the shared rule (lib/validations/names.ts), which is the same
-	 *  one `project create --env` and the console's own `addEnvironment` action now use. Parsing
-	 *  yields the stored slug, so this route cannot forget the normalization step — and it now
-	 *  refuses a name a console route would permanently shadow (`project env add settings` used to
-	 *  create an environment whose URL was unreachable forever). */
-	name: environmentNameSchema,
-	stage: z.enum(environmentStage.enumValues).default("development"),
-	region: z.string().min(1).optional(),
-	/** Defaults to `namespace`: an environment ADDED to an existing project is the cheap-rung case,
-	 *  and the expensive one should be the word you typed rather than the one you got. */
-	placement_mode: z.enum(placementMode.enumValues).default("namespace"),
-	/** The Fabric to place onto, by name. Ignored for `dedicated` (which owns a new Fabric).
-	 *  Defaults to the project's default Fabric — "the second tier is free" only works if a shared
-	 *  placement lands on the Fabric that already exists. */
-	fabric: z.string().min(1).optional(),
-	/** ArgoCD destination namespace for a shared placement. NULL → derived from the env name.
-	 *  Kubernetes' own grammar, exactly. The pattern here required a leading letter and constrained
-	 *  nothing at the end, so it ACCEPTED `dev-` — which Kubernetes refuses, making the failure
-	 *  arrive at apply time naming a namespace rather than a name — and refused `1dev`, which
-	 *  Kubernetes accepts. */
-	namespace: namespaceSchema.optional(),
-	lifecycle: z.enum(environmentLifecycle.enumValues).optional(),
-});
 
 /** A Fabric in this project, by name. `(project_id, name)` is unique, so at most one. */
 async function findFabricByName(

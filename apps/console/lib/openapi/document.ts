@@ -11,15 +11,15 @@ import {
 	isCliApiPath,
 } from "@/lib/cli/version";
 import { SERVICE_TOKEN_PREFIX } from "@/lib/cli/service-token";
+import { contractExportName } from "@/lib/openapi/contract-schemas";
 import {
 	type OpenApiOperation,
 	OPERATION_TAGS,
-	OPERATIONS,
 	type OperationPermission,
 	type OperationResponse,
 	PROJECT_ID_DESCRIPTION,
-} from "@/lib/openapi/operations";
-import * as contract from "@/lib/validations/cli-contract";
+} from "@/lib/openapi/operation-kit";
+import { OPERATIONS } from "@/lib/openapi/operations";
 
 /**
  * Builds the public OpenAPI 3.1 document (agent surface, unit L12) served at `/api/openapi.json`.
@@ -73,9 +73,12 @@ interface OperationObject {
 	parameters: ParameterObject[];
 	requestBody?: { required: true; content: { "application/json": { schema: JsonSchema } } };
 	responses: Record<string, ResponseObject>;
-	/** The permission the route asks the policy decision point, `resource:action`. */
+	/**
+	 * The permission the route asks the policy decision point, `resource:action`; per value of the
+	 * deciding body field where the body chooses it; `none` where only a valid credential is needed.
+	 */
 	"x-alethia-permission": string | Record<string, string>;
-	/** The token scopes the operation needs; per `job_type` for `queueJob`. */
+	/** The token scopes the operation needs; per value of the deciding body field where it chooses. */
 	"x-alethia-scopes": string[] | Record<string, string[]>;
 }
 
@@ -119,18 +122,18 @@ function ref(name: string): JsonSchema {
 }
 
 /**
- * The component name of a wire-contract schema: its export name in cli-contract.ts with the `cli`
- * prefix and `Wire` suffix dropped (`cliJobResponse` → `JobResponse`, `jobWire` → `Job`). Throws for
- * a schema the contract does not export, because the document must never carry a response shape the
- * contract does not define.
+ * The component name of a wire-contract schema: its export name in its contract module
+ * (lib/openapi/contract-schemas.ts) with the `cli` prefix and `Wire` suffix dropped
+ * (`cliJobResponse` → `JobResponse`, `jobWire` → `Job`). Throws for a schema no contract module
+ * exports, because the document must never carry a response shape the contract does not define.
  */
 export function contractComponentName(schema: z.ZodType): string {
-	for (const [exportName, value] of Object.entries(contract)) {
-		if (value !== schema) continue;
-		const bare = exportName.replace(/^cli(?=[A-Z])/, "").replace(/Wire$/, "");
-		return bare.charAt(0).toUpperCase() + bare.slice(1);
+	const exportName = contractExportName(schema);
+	if (exportName === undefined) {
+		throw new Error("a documented response schema is not exported by a wire-contract module");
 	}
-	throw new Error("a documented response schema is not exported by lib/validations/cli-contract.ts");
+	const bare = exportName.replace(/^cli(?=[A-Z])/, "").replace(/Wire$/, "");
+	return bare.charAt(0).toUpperCase() + bare.slice(1);
 }
 
 /** The component name of an operation's request body: `queueJob` → `QueueJobRequest`. */
@@ -182,18 +185,25 @@ function permissionKey(permission: OperationPermission): string {
 	return `${permission.resource}:${permission.action}`;
 }
 
-/** The scopes an operation needs (per job type for `queueJob`) and its permission, for the document. */
+/**
+ * The scopes an operation needs and its permission, for the document: one pair; one per value of
+ * the body field that chooses the permission (`job_type`, `tier`); or none at all for an operation
+ * that needs only a valid credential.
+ */
 function authorization(operation: OpenApiOperation): Pick<
 	OperationObject,
 	"security" | "x-alethia-permission" | "x-alethia-scopes"
 > {
 	const { permission } = operation;
-	if ("perJobType" in permission) {
+	if ("credentialOnly" in permission) {
+		return { security: [{ bearerAuth: [] }], "x-alethia-permission": "none", "x-alethia-scopes": [] };
+	}
+	if ("perField" in permission) {
 		const scopes: Record<string, string[]> = {};
 		const permissions: Record<string, string> = {};
-		for (const [jobType, each] of Object.entries(permission.perJobType)) {
-			scopes[jobType] = [...requiredScopes(each.action, each.resource)];
-			permissions[jobType] = permissionKey(each);
+		for (const [value, each] of Object.entries(permission.perField.cases)) {
+			scopes[value] = [...requiredScopes(each.action, each.resource)];
+			permissions[value] = permissionKey(each);
 		}
 		return { security: [{ bearerAuth: [] }], "x-alethia-permission": permissions, "x-alethia-scopes": scopes };
 	}
@@ -210,8 +220,11 @@ export function pathParameterNames(path: string): string[] {
 	return [...path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]);
 }
 
-/** What each path parameter means. */
-function pathParameterDescription(path: string, name: string): string {
+/** What each path parameter means: the operation's own word for it, else the shared defaults. */
+function pathParameterDescription(operation: OpenApiOperation, name: string): string {
+	const own = operation.pathParameters?.[name];
+	if (own !== undefined) return own;
+	const { path } = operation;
 	if (name === "id" && path.startsWith("/api/cli/projects/")) return PROJECT_ID_DESCRIPTION;
 	if (name === "id") return "The job id.";
 	if (name === "kind") return "The component kind, e.g. `network`, `cluster` or `databases`.";
@@ -242,6 +255,15 @@ function headerParameters(operation: OpenApiOperation): ParameterObject[] {
 			schema: { type: "string" },
 		});
 	}
+	for (const header of operation.headers ?? []) {
+		headers.push({
+			name: header.name,
+			in: "header",
+			required: header.required === true,
+			description: header.description,
+			schema: { type: "string" },
+		});
+	}
 	if (operation.ifMatch) {
 		headers.push({
 			name: "If-Match",
@@ -269,7 +291,7 @@ function responseObject(operation: OpenApiOperation, response: OperationResponse
 	if (isCliApiPath(operation.path)) object.headers = cliResponseHeaders();
 	if (response.schema) {
 		object.content = { "application/json": { schema: ref(contractComponentName(response.schema)) } };
-	} else if (!response.uncontracted) {
+	} else if (!response.uncontracted && !response.empty) {
 		object.content = { "application/json": { schema: ref(ERROR_COMPONENT) } };
 	}
 	return object;
@@ -299,7 +321,7 @@ function operationObject(operation: OpenApiOperation): OperationObject {
 				name,
 				in: "path",
 				required: true,
-				description: pathParameterDescription(operation.path, name),
+				description: pathParameterDescription(operation, name),
 				schema: { type: "string" },
 			}),
 		),
@@ -349,7 +371,7 @@ function operationObject(operation: OpenApiOperation): OperationObject {
 
 /** The document's introduction: authentication, scopes, request ids and the version handshake. */
 const DESCRIPTION = [
-	"The Alethia control plane's public HTTP API: the routes the `alethia` CLI and outside agents use to create and design projects and to plan, deploy and destroy them. Every response schema here is generated from the wire contract the server checks each answer against before sending it.",
+	"The Alethia control plane's public HTTP API: the routes the `alethia` CLI and outside agents use to create and design projects, to plan, deploy and destroy them, and to administer the organization around them. Every response schema here is generated from the wire contract the server checks each answer against before sending it; an answer outside that contract says so in its description.",
 	"",
 	"## Authentication",
 	"",
@@ -362,7 +384,7 @@ const DESCRIPTION = [
 	"",
 	"## Scopes",
 	"",
-	"Five scopes name the agent lifecycle on a project: `read`, `design`, `plan`, `apply` and `destroy`. Each operation lists the scopes it needs in its security requirement and in `x-alethia-scopes`; administration of the organization needs all five.",
+	"Five scopes name the agent lifecycle on a project: `read`, `design`, `plan`, `apply` and `destroy`. Each operation lists the scopes it needs in its security requirement and in `x-alethia-scopes`, and the permission it asks in `x-alethia-permission`; administration of the organization (members, tokens, connectors, runners, alerts and the like) needs all five. Where a body field chooses the permission (`job_type` when queueing a job, `tier` when minting a kubeconfig), both are listed per value. The repository listings, which read nothing of the organization's, need a valid credential and no scope.",
 	"",
 	"Today every service token carries all five scopes over every project of its organization. A request to mint a token with fewer scopes or limited to named projects is refused with `code: \"narrow_tokens_unavailable\"`.",
 	"",

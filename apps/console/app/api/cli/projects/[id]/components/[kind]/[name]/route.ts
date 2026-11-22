@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { z } from "zod";
 import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { authorizeCli } from "@/lib/authz/guard";
 import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
@@ -26,12 +25,7 @@ import {
 	cliComponentResponse,
 	cliOkResponse,
 } from "@/lib/validations/cli-contract";
-
-/** Body of PATCH .../components/:kind/:name — the fields to change, and nothing else. `strict` so a
- * `name` (a rename) or any other key is a 400 rather than silently ignored. */
-const updateComponentBody = z
-	.object({ fields: z.record(z.string(), z.unknown()) })
-	.strict();
+import { updateComponentBody } from "@/lib/validations/cli-request-bodies";
 
 /** Updates the settable fields of a named (multi) component in one environment — what `alethia
  * apply` calls for a component whose declared fields differ from the server's. Same authorization,

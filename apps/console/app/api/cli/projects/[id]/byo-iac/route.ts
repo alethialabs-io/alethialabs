@@ -8,7 +8,6 @@
 
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { attachIacSource, detachIacSource } from "@/app/server/actions/byo-iac";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
@@ -22,14 +21,11 @@ import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { projectIacSources, projects } from "@/lib/db/schema";
 import {
-	isNotReservedTfvarKey,
-	RESERVED_TFVAR_MESSAGE,
-} from "@/lib/validations/byo-iac";
-import {
 	cliByoChartAttachResponse,
 	cliIacSourceResponse,
 	cliOkResponse,
 } from "@/lib/validations/cli-contract";
+import { attachIacBody } from "@/lib/validations/cli-request-bodies";
 
 export async function GET(
 	req: Request,
@@ -115,32 +111,6 @@ export async function GET(
 		return NextResponse.json({ error: message }, { status: 500 });
 	}
 }
-
-/**
- * Body of POST .../byo-iac — attach (or replace) the environment's BYO IaC source.
- *
- * snake_case matches `iacSourceAttachSchema`'s own field names, so this body IS that shape plus
- * nothing. `attachIacSource` re-parses it with that schema, which is what normalises the path
- * ("/foo/" → "foo") and enforces the scalar-only tfvars rule — a nested object or an array in
- * `var_values` is refused there rather than being written and failing at apply.
- */
-const attachIacBody = z.object({
-	repo_url: z.string().trim().min(1),
-	ref: z.string().trim().min(1).nullish(),
-	path: z.string().trim().optional(),
-	git_credential_id: z.string().uuid().nullish(),
-	// The reserved platform namespace, checked HERE and not only in the action. attachIacSource
-	// validates with the throwing `.parse()`, and byoWriteError classifies an escaped ZodError by
-	// regex over its message — which for this rule fell through to a 500 carrying a raw Zod dump.
-	// A rule the CLI can trip needs a 400 that names the field, not a server fault.
-	var_values: z
-		.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
-		.refine(
-			(v) => Object.keys(v).every(isNotReservedTfvarKey),
-			RESERVED_TFVAR_MESSAGE,
-		)
-		.optional(),
-});
 
 /** Attaches the environment's BYO IaC source. */
 export async function POST(

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { z } from "zod";
 import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { authorizeCli } from "@/lib/authz/guard";
 import { cliJson } from "@/lib/cli/respond";
@@ -11,22 +10,7 @@ import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { cliRunnerRegistrationResponse } from "@/lib/validations/cli-contract";
 import { createHash, randomBytes } from "crypto";
 import { NextResponse } from "next/server";
-
-/**
- * Body of POST /api/cli/runners/register.
- *
- * `metadata` is deliberately NOT accepted. `runners.metadata` is
- * `jsonb().$type<RunnerMetadata>()` — a known shape whose fields (`deploy_config`,
- * `cloud_instance_id`) are server-managed: the fleet scaler correlates a DB runner to its VM
- * through `cloud_instance_id`, and `deploy_config` records what a DEPLOY_RUNNER job was given.
- * This route used to forward `metadata` straight from an untyped `req.json()` into that column, so a
- * caller could write arbitrary JSON into a typed field and set values the fleet controller reads. No
- * client has ever sent it (there was no CLI method until now), so dropping it breaks nothing.
- */
-const registerRunnerBody = z.object({
-	name: z.string().min(1).max(120),
-	cloud_identity_id: z.string().uuid().optional(),
-});
+import { registerRunnerBody } from "@/lib/validations/cli-request-bodies";
 
 /**
  * Registers a SELF-OPERATED, user-brought runner and returns its bearer token once.
