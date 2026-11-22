@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it } from "vitest";
-import { parseReleases, parseRss, releaseSummary, releaseTitle } from "../lib/home/feeds";
+import { parseReleases, parseRss, releaseSummary, releaseTitle, releaseUrl } from "../src/news/feeds";
 
 describe("releaseTitle", () => {
 	it("capitalises a release-please component and keeps the version", () => {
@@ -70,8 +70,8 @@ describe("parseReleases", () => {
 
 describe("parseRss", () => {
 	const xml = `<?xml version="1.0"?><rss><channel>
-		<item><title><![CDATA[Older &amp; wiser]]></title><link>https://alethialabs.io/blog/older</link><pubDate>Mon, 01 Sep 2026 10:00:00 GMT</pubDate><description>First</description></item>
-		<item><title>Newer</title><link>https://alethialabs.io/blog/newer</link><pubDate>Tue, 18 Nov 2026 10:00:00 GMT</pubDate><description>Second</description></item>
+		<item><title><![CDATA[Older &amp; wiser]]></title><link>https://alethialabs.io/news/older</link><pubDate>Mon, 01 Sep 2026 10:00:00 GMT</pubDate><description>First</description></item>
+		<item><title>Newer</title><link>https://alethialabs.io/news/newer/</link><pubDate>Tue, 18 Nov 2026 10:00:00 GMT</pubDate><category>Changelog</category><description>Second</description></item>
 		<item><title>No link</title><pubDate>Tue, 18 Nov 2026 10:00:00 GMT</pubDate></item>
 	</channel></rss>`;
 
@@ -83,5 +83,23 @@ describe("parseRss", () => {
 
 	it("honours the limit", () => {
 		expect(parseRss(xml, 1)).toHaveLength(1);
+	});
+
+	it("derives the cover seed: the slug from the link, the kind from the category", () => {
+		const [newer, older] = parseRss(xml, 4);
+		expect(newer).toMatchObject({ slug: "newer", kind: "changelog" });
+		// No <category>: the schema's default kind.
+		expect(older).toMatchObject({ slug: "older", kind: "engineering" });
+	});
+});
+
+describe("releaseUrl", () => {
+	it("links a runner version to this repo's release-please tag", () => {
+		expect(releaseUrl("runner", "0.10.1")).toBe("https://github.com/alethialabs-io/alethialabs/releases/tag/runner-v0.10.1");
+	});
+
+	it("links a CLI version to the public CLI repo's clean tag, with or without a leading v", () => {
+		expect(releaseUrl("cli", "0.10.0")).toBe("https://github.com/alethialabs-io/alethia-cli/releases/tag/v0.10.0");
+		expect(releaseUrl("cli", "v0.10.0")).toBe("https://github.com/alethialabs-io/alethia-cli/releases/tag/v0.10.0");
 	});
 });

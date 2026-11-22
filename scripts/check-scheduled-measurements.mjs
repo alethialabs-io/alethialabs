@@ -179,6 +179,14 @@ export const NOT_A_MEASUREMENT = {
 			"branch's. Grepping for a PR-opening step would be a far weaker proxy than an artifact name.",
 		issue: "#4397",
 	},
+	"news-changelog-draft.yml": {
+		why:
+			"Its output is a draft pull request carrying a draft changelog entry, not an artifact, and nothing " +
+			"derives a verdict from it: a person rewrites the entry before anything is published. Like " +
+			"programme.yml it checks out ref: dev, so the script that runs is dev's even on the default " +
+			"branch's timer, and it reads main's history explicitly with git fetch.",
+		issue: "#7156",
+	},
 	"workflow-health.yml": {
 		why:
 			"Its output is an upserted issue, not an artifact. Grepping for `gh issue create` would read as " +

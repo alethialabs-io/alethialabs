@@ -10,15 +10,16 @@ const SITE = "https://alethialabs.io";
 export const dynamic = "force-static";
 
 /**
- * RSS 2.0 for every post on /news, all kinds, each tagged with its kind as a category. Releases
- * are not in it: they have their own feed at /news/changelog.xml, and the marketing home page
- * reads this one as its "latest posts" list. Subscribers of the old /blog/feed.xml reach it
+ * RSS 2.0 for every post on /news, all kinds (curated changelog entries included), each tagged with
+ * its kind as a category. The changelog alone is /news/changelog.xml. The marketing home page reads
+ * this feed as its "From News" list, and draws each post's cover from the link's slug and the
+ * category (@repo/brand/news-feeds), so the category must stay the kind's label. Subscribers of the old /blog/feed.xml reach it
  * through Caddy's permanent redirect.
  */
 export function GET() {
 	const feed = new Feed({
 		title: "Alethia News",
-		description: "Announcements and engineering deep dives from Alethia Labs.",
+		description: "Announcements, the changelog and engineering deep dives from Alethia Labs.",
 		id: `${SITE}/news`,
 		link: `${SITE}/news`,
 		language: "en",
