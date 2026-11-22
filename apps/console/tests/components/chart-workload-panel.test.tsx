@@ -235,7 +235,12 @@ describe("ChartWorkloadPanel — the overlay is staged, not saved (#6834)", () =
 
 	it("without a project it is read-only, says so, and stages nothing", async () => {
 		const user = userEvent.setup();
-		render(<ChartWorkloadPanel nodeId="cw-w1" />);
+		// The card is on the board, but no BYO-chart context names a project to stage it for.
+		render(
+			<BoardSourcesProvider others={others} iacOutputs={NO_OUTPUTS}>
+				<ChartWorkloadPanel nodeId="cw-w1" />
+			</BoardSourcesProvider>,
+		);
 		expect(screen.getByRole("status")).toHaveTextContent("Read-only");
 		expect(screen.getByLabelText("Replicas")).toBeDisabled();
 		await user.tab();
