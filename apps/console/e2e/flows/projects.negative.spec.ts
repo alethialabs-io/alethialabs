@@ -306,7 +306,12 @@ test.describe("Projects — delete guard on a live environment", () => {
 		await owner.page.getByRole("button", { name: /^Delete project$/ }).click();
 		const dialog = owner.page.getByRole("alertdialog");
 		await expect(dialog.getByText(/delete this project\?/i)).toBeVisible();
-		await dialog.getByRole("button", { name: /delete project/i }).click();
+		// Delete is destroy-class (#7198): the confirm stays disabled until the name is typed.
+		const confirm = dialog.getByRole("button", { name: /delete project/i });
+		await expect(confirm).toBeDisabled();
+		await dialog.getByRole("textbox").fill(name);
+		await expect(confirm).toBeEnabled();
+		await confirm.click();
 		// Before the wait below: the toast is gone in ~4s.
 		await expectErrorToast(owner.page);
 		// Long enough that a delete which SUCCEEDED would certainly have navigated by now: passing

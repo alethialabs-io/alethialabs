@@ -6,7 +6,7 @@
 // The server refuses that destroy unless it cascades (#5259), but a production build redacts a
 // server action's error text, so the refusal naming the tenants reaches the browser as a digest.
 // These pin that the card READS the destroy tree before offering to destroy, and what it then
-// shows in each of the three states: nothing placed (today's confirm), live tenants (the ordered
+// shows in each of the three states: nothing placed (the environment's name typed), live tenants (the ordered
 // list and two choices), a FAILED tenant (called out) — plus the cascade path itself and the
 // "waiting on" read of a destroy the claim is holding back.
 
@@ -112,21 +112,46 @@ describe("a tree that could not be read", () => {
 	});
 });
 
-describe("no live tenants — today's confirm, unchanged", () => {
-	it("reads the tree first, then destroys without cascading", async () => {
+describe("no live tenants — the environment's name is typed first (#7198)", () => {
+	it("reads the tree first, then destroys without cascading once the name is typed", async () => {
 		const c = control([node({ name: "prod", placement_mode: "dedicated", owns_fabric: true })]);
 		renderCard(c);
 		const dialog = await openDialog(c);
 		expect(within(dialog).getByText("Destroy this environment?")).toBeInTheDocument();
 		const confirm = within(dialog).getByRole("button", { name: "Destroy environment" });
-		await waitFor(() => expect(confirm).toBeEnabled());
 		expect(within(dialog).queryByRole("list")).not.toBeInTheDocument();
-		fireEvent.click(confirm);
+		const user = userEvent.setup();
+		await user.type(await within(dialog).findByRole("textbox"), "prod");
+		await waitFor(() => expect(confirm).toBeEnabled());
+		await user.click(confirm);
 		// The destroy names the environment the tree read, never one resolved again on the way.
-		expect(c.destroy).toHaveBeenCalledWith({ cascade: false, environmentId: "env-prod" });
+		await waitFor(() =>
+			expect(c.destroy).toHaveBeenCalledWith({ cascade: false, environmentId: "env-prod" }),
+		);
+		expect(c.destroy).toHaveBeenCalledTimes(1);
 	});
 
-	it("holds the destroy button while the tree is still being read", async () => {
+	it("keeps Destroy environment disabled until the name is typed exactly, and destroys nothing before", async () => {
+		const c = control([node({ name: "prod", placement_mode: "dedicated", owns_fabric: true })]);
+		renderCard(c);
+		const dialog = await openDialog(c);
+		const label = await within(dialog).findByText(/type the environment name/i);
+		expect(label).toHaveTextContent("prod");
+		const confirm = within(dialog).getByRole("button", { name: "Destroy environment" });
+		expect(confirm).toBeDisabled();
+		const user = userEvent.setup();
+		await user.type(within(dialog).getByRole("textbox"), "pro");
+		expect(confirm).toBeDisabled();
+		fireEvent.click(confirm);
+		expect(c.destroy).not.toHaveBeenCalled();
+		// The project's name is not the environment's: the cascade asks for that, this does not.
+		await user.clear(within(dialog).getByRole("textbox"));
+		await user.type(within(dialog).getByRole("textbox"), "shop");
+		expect(confirm).toBeDisabled();
+		expect(c.destroy).not.toHaveBeenCalled();
+	});
+
+	it("holds the destroy button while the tree is still being read, and asks for the name once it answers", async () => {
 		let resolve: (t: DestroyTreeNode[]) => void = () => {};
 		const c: DestroyEnvironmentControl = {
 			projectName: "shop",
@@ -137,8 +162,13 @@ describe("no live tenants — today's confirm, unchanged", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Destroy" }));
 		const dialog = await screen.findByRole("alertdialog");
 		expect(within(dialog).getByRole("button", { name: "Destroy environment" })).toBeDisabled();
+		expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
 		await act(async () => resolve([node({ name: "prod" })]));
-		expect(within(dialog).getByRole("button", { name: "Destroy environment" })).toBeEnabled();
+		expect(within(dialog).getByRole("button", { name: "Destroy environment" })).toBeDisabled();
+		await userEvent.setup().type(within(dialog).getByRole("textbox"), "prod");
+		await waitFor(() =>
+			expect(within(dialog).getByRole("button", { name: "Destroy environment" })).toBeEnabled(),
+		);
 	});
 });
 

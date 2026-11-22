@@ -58,11 +58,16 @@ const nameForm = z.object({ name: projectNameSchema });
 type NameForm = z.input<typeof nameForm>;
 
 /**
- * What the delete confirmation says before anything is sent: the rule the server applies
- * (`removeProject` refuses while an environment is live or in flight), then what it does not touch.
+ * What the delete confirmation says before anything is sent: what goes, and the rule the server
+ * applies (`removeProject` refuses while an environment is live or in flight).
  */
-const DELETE_RULE =
-  "This permanently deletes the project and its environments, design, and promotion history. Provisioned cloud resources are not touched — destroy the environments first. This cannot be undone.";
+const DELETE_RULE = "This permanently deletes the project. This cannot be undone.";
+
+/** What the typed delete confirmation lists above the name field. */
+const DELETE_CONSEQUENCES = [
+  "Its environments, design, and promotion history are removed.",
+  "Provisioned cloud resources are not touched — destroy the environments first.",
+] as const;
 
 /**
  * The project General settings page body. Four renders, never confused (RUBRIC B4): the form, a
@@ -252,8 +257,9 @@ function ProjectGeneralForm({
         </SettingsPanel>
       </SettingsSection>
 
-      {/* The console's one confirmation (CON-SM2). It stays open while the delete runs, closes
-          itself on success, and stays up beside the toast when the server refuses. */}
+      {/* The console's one confirmation (CON-SM2), at the destroy severity (#7198): Delete project
+          stays disabled until the project's name is typed. It stays open while the delete runs,
+          closes itself on success, and stays up beside the toast when the server refuses. */}
       <ConfirmAction
         open={confirmingDelete}
         onOpenChange={setConfirmingDelete}
@@ -261,7 +267,11 @@ function ProjectGeneralForm({
         description={DELETE_RULE}
         confirmLabel="Delete project"
         pendingLabel="Deleting…"
-        severity={{ level: "confirm" }}
+        severity={{
+          level: "destroy",
+          subject: project.project_name,
+          consequences: DELETE_CONSEQUENCES,
+        }}
         mutation={remove}
         variables={confirmingDelete ? { projectId: project.id } : null}
       />
