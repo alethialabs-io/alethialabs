@@ -1,0 +1,41 @@
+---
+title: "September: your project as a file"
+description: Describe a project in alethia.yaml and apply it, start from scratch with alethia init and alethia up, and stop copying ids between commands.
+date: 2026-09-30
+author: Alethia Labs
+tags: [changelog, cli, console]
+kind: changelog
+summary: Describe a project in alethia.yaml and apply it, start from scratch with alethia init and alethia up, and stop copying ids between commands.
+versions:
+  cli: 0.7.0
+  runner: 0.7.0
+---
+
+**Your project as a file.** `alethia.yaml` describes a project, and `alethia apply` makes the cloud
+match it. `alethia init` writes the file for you, and `alethia up` runs the whole path from an empty
+directory to a running environment. No ids or tuples to copy from the console.
+
+## New
+
+- **Commands ask instead of demanding ids.** Projects, clusters, connectors, runners, jobs, add-ons
+  and the governance commands now prompt you to pick from a list when you leave out an argument.
+  Every value can still be passed as a flag for scripts.
+- **Self-update.** `alethia` updates itself, and knows how it was installed, so a Homebrew install is
+  not overwritten by a downloaded binary.
+- **Runner names.** `plan` and `apply` take a runner's name, and `apply` finds its own latest plan.
+- **Templates hand over a starter repository.** Picking a template in Configure gives you its starter
+  repository to fork.
+
+## Improved
+
+- The CLI sign-in page in the console shows exactly what you are approving.
+- The console uses one type scale and one date and number format on every page, and drops page
+  titles that repeated the sidebar.
+- The job view keeps the log on screen while you read the details beside it.
+- Project names are unique within an organization.
+
+## Fixed
+
+- Hetzner refused some node names that the form accepted. The form now checks them first.
+- A row menu in the members table closed by itself when the list refreshed.
+- `-o csv` printed the formatted value a person reads. It now prints the raw value a script needs.

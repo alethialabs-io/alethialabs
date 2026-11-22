@@ -1,36 +1,40 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { getReleases } from "@/lib/releases";
+import { changelogEntries } from "@/lib/changelog";
+import { postSummary } from "@/lib/news";
+import { getPublishedPosts } from "@/lib/posts";
 import { Feed } from "feed";
 
 const SITE = "https://alethialabs.io";
 
-// Regenerated at most hourly, matching the release fetch's own cache (lib/releases.ts).
-export const revalidate = 3600;
+export const dynamic = "force-static";
 
 /**
- * RSS 2.0 for the changelog rows on /news: one item per CLI or runner release on GitHub, linking to
- * the release page. When GitHub cannot be read the feed is valid and empty rather than an error.
+ * RSS 2.0 for the changelog: one item per curated `kind: changelog` entry, linking to the entry's
+ * own page. Built from the MDX at build time, like /news/feed.xml — GitHub release notes are not
+ * in it.
  */
-export async function GET() {
+export function GET() {
 	const feed = new Feed({
 		title: "Alethia Changelog",
-		description: "Releases of the Alethia CLI and runner.",
-		id: `${SITE}/news/changelog.xml`,
-		link: `${SITE}/news?kind=changelog`,
+		description: "What changed in the Alethia console, CLI and runner.",
+		id: `${SITE}/news/changelog`,
+		link: `${SITE}/news/changelog`,
 		language: "en",
 		copyright: `© ${new Date().getFullYear()} Alethia Labs`,
 		feedLinks: { rss: `${SITE}/news/changelog.xml` },
 	});
 
-	for (const release of await getReleases()) {
+	for (const entry of changelogEntries(getPublishedPosts())) {
 		feed.addItem({
-			title: release.title,
-			id: release.url,
-			link: release.url,
-			description: release.summary || release.title,
-			date: new Date(release.date),
+			title: entry.title,
+			id: `${SITE}${entry.permalink}`,
+			link: `${SITE}${entry.permalink}`,
+			description: postSummary(entry),
+			date: new Date(entry.date),
+			author: [{ name: entry.author }],
+			category: [{ name: "Changelog" }],
 		});
 	}
 

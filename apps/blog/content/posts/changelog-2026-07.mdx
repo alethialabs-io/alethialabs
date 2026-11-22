@@ -1,0 +1,42 @@
+---
+title: "July: keyless provisioning on managed runners, and most of the console in the CLI"
+description: Managed runners now provision without long-lived cloud keys, and the CLI gained commands for drift, cost, promotions, add-ons and your own charts.
+date: 2026-07-31
+author: Alethia Labs
+tags: [changelog, runner, cli, console]
+kind: changelog
+summary: Managed runners now provision without long-lived cloud keys, and the CLI gained commands for drift, cost, promotions, add-ons and your own charts.
+versions:
+  cli: 0.4.0
+  runner: 0.3.0
+---
+
+**Managed runners no longer hold long-lived cloud keys.** On AWS, GCP and Azure, a managed runner now
+gets a short-lived token for the one job it is running, and the token is refreshed during a long
+apply. There is no access key to rotate or to leak.
+
+## New
+
+- **More of the console in the CLI.** New command groups for drift and cost, promotions and
+  delivery pipelines, environment protection and probes, and the project sources you attach
+  (add-ons, Helm charts and your own IaC).
+- **ArgoCD in the terminal.** `alethia cluster get` and `cluster list` show each cluster's GitOps
+  sync and health.
+- **More ways to install the CLI.** Scoop on Windows, and deb, rpm and apk packages on Linux, as well
+  as Homebrew.
+- **Project search on the server.** The projects page searches and filters on the server, and
+  shows projects as cards or as a table.
+
+## Improved
+
+- The Evidence page groups receipts by project and links each check to its documentation.
+- When a cluster does not become ready, the runner says why: which nodes are `NotReady`, or that the
+  cluster rejected its credentials, instead of blaming the network.
+- The Deploy tab shows the warnings from your deploy manifest.
+
+## Fixed
+
+- An apply that failed half-way could leave resources that blocked the environment for good. The
+  runner now finds and repairs them.
+- Lists that failed to load showed "nothing here yet". They now show an error and a way to retry.
+- Opening a project that does not exist shows a "not found" page instead of an error.

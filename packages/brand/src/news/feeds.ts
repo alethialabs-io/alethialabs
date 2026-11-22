@@ -1,17 +1,41 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { SITE_URL } from "../site";
-
 /**
- * The two feeds the home page reads: the latest GitHub releases (the changelog) and the latest
- * blog posts (the blog's own RSS). Both are fetched on the server, cached for an hour, and fail
- * soft: a feed that cannot be read returns an empty list and its section is not rendered — the
- * home page never shows an error or a placeholder for a feed that is down.
+ * The one reader for the two public feeds the sites show: this repo's GitHub releases and News's
+ * own RSS (`/news/feed.xml`). Promoted here from two twins — `apps/marketing/lib/home/feeds.ts`
+ * and `apps/blog/lib/releases.ts` carried the same parsing, and an app may not import a sibling
+ * app. The marketing home page reads both feeds; News links its changelog version chips through
+ * `releaseUrl`.
+ *
+ * Both readers fetch on the server, cache for an hour, and fail soft: a feed that cannot be read
+ * returns an empty list and its section is not rendered — a page never shows an error or a
+ * placeholder for a feed that is down.
  */
 
 const REPO = "alethialabs-io/alethialabs";
 const REVALIDATE_SECONDS = 3600;
+
+/** Where News lives; the RSS reader fetches `${NEWS_ORIGIN}/news/feed.xml`. */
+const NEWS_ORIGIN = process.env.NEXT_PUBLIC_SITE_URL ?? "https://alethialabs.io";
+
+/** Every release of this repo, on GitHub. */
+export const RELEASES_URL = `https://github.com/${REPO}/releases`;
+
+/** The components a changelog entry can name a version of. */
+export type ReleaseComponent = "cli" | "runner";
+
+/**
+ * The release page for one component version. The runner releases on this repo under
+ * release-please's `runner-vX.Y.Z` tag; the CLI publishes on its own public repo under a clean
+ * `vX.Y.Z` tag (release-cli.yml), which is where users install it from.
+ */
+export function releaseUrl(component: ReleaseComponent, version: string): string {
+	const v = version.replace(/^v/, "");
+	return component === "cli"
+		? `https://github.com/alethialabs-io/alethia-cli/releases/tag/v${v}`
+		: `https://github.com/${REPO}/releases/tag/runner-v${v}`;
+}
 
 /** Release-please components whose display name is not just the id capitalised. */
 const COMPONENT_NAMES: Record<string, string> = { cli: "CLI" };
@@ -28,13 +52,17 @@ export interface ReleaseItem {
 	url: string;
 }
 
-/** One blog post, as the home page shows it. */
+/** One News post, as the home page shows it. */
 export interface PostItem {
 	title: string;
 	/** ISO date the post was published. */
 	date: string;
 	description: string;
 	url: string;
+	/** The last path segment of the post's URL: the seed of its generated cover. */
+	slug: string;
+	/** The post's kind, lower-cased from the feed's category ("Engineering" → "engineering"). */
+	kind: string;
 }
 
 /** Whether `value` is a non-null object, so its fields can be read without a cast. */
@@ -123,8 +151,9 @@ function tag(item: string, name: string): string {
 }
 
 /**
- * Parses an RSS 2.0 document into posts, newest first. Only the fields the blog's own feed
- * writes are read (title, link, description, pubDate); an item missing title or link is skipped.
+ * Parses an RSS 2.0 document into posts, newest first. Only the fields News's own feed writes are
+ * read (title, link, description, pubDate, the first category); an item missing title or link is
+ * skipped, and one with no category reads as engineering, the schema's default kind.
  */
 export function parseRss(xml: string, limit: number): PostItem[] {
 	const posts: PostItem[] = [];
@@ -134,7 +163,9 @@ export function parseRss(xml: string, limit: number): PostItem[] {
 		const url = tag(item, "link");
 		const published = Date.parse(tag(item, "pubDate"));
 		if (!title || !url || Number.isNaN(published)) continue;
-		posts.push({ title, url, date: new Date(published).toISOString(), description: tag(item, "description") });
+		const slug = url.replace(/[?#].*$/, "").replace(/\/+$/, "").split("/").pop() ?? "";
+		const kind = tag(item, "category").toLowerCase() || "engineering";
+		posts.push({ title, url, slug, kind, date: new Date(published).toISOString(), description: tag(item, "description") });
 	}
 	return posts.sort((a, b) => b.date.localeCompare(a.date)).slice(0, limit);
 }
@@ -153,10 +184,10 @@ export async function getLatestReleases(limit = 3): Promise<ReleaseItem[]> {
 	}
 }
 
-/** The latest `limit` blog posts from the blog's RSS feed, or [] when the feed cannot be read. */
+/** The latest `limit` posts from News's RSS feed, or [] when the feed cannot be read. */
 export async function getLatestPosts(limit = 4): Promise<PostItem[]> {
 	try {
-		const res = await fetch(`${SITE_URL}/news/feed.xml`, { next: { revalidate: REVALIDATE_SECONDS } });
+		const res = await fetch(`${NEWS_ORIGIN}/news/feed.xml`, { next: { revalidate: REVALIDATE_SECONDS } });
 		if (!res.ok) return [];
 		return parseRss(await res.text(), limit);
 	} catch {
