@@ -11,7 +11,7 @@ import { MARKETING_RESERVED_SEGMENTS } from "@/lib/marketing-zone";
 /** Reserved org segment for the personal (no organization) scope. */
 export const PERSONAL_ORG_SLUG = "~";
 
-/** Console route shadows + sibling apps (docs/blog) that aren't owned by the marketing
+/** Console route shadows + sibling apps (docs/news) that aren't owned by the marketing
  * zone. The marketing-owned segments (`pricing`, `enterprise`, `contact`, the legal
  * pages, `mkt-assets`, …) are NOT listed here — they're derived from
  * marketing-zones.json (see RESERVED_SLUGS) so they can never drift from the routing. */
@@ -24,6 +24,9 @@ const STATIC_RESERVED_SLUGS = [
 	"cli",
 	"invites",
 	"_next",
+	// The news app is served at /news. /blog stays reserved too: Caddy still owns it, as the 308
+	// redirect that keeps old links and feed subscriptions resolving to /news.
+	"news",
 	"blog",
 	"docs",
 	// PostHog reverse-proxy path (next.config.ts rewrites /ingest/* → eu.i.posthog.com). The rewrites

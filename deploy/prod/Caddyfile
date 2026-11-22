@@ -12,7 +12,17 @@
 	handle /docs* {
 		reverse_proxy docs:3000
 	}
-	handle /blog* {
+	# News, formerly the blog: the app's basePath is /news. Every old /blog URL, including the feed at
+	# /blog/feed.xml, answers a permanent 308 to the same path under /news with its query string, so
+	# links and feed subscribers keep working. The anchored regex matches the /blog segment only, so
+	# /blogroll would not be caught. Every Caddyfile that fronts the app carries this same redirect.
+	@blog_legacy path_regexp blog_legacy ^/blog(/.*)?$
+	handle @blog_legacy {
+		# `*` is required: a first argument starting with "/" is read as a path MATCHER, not the target.
+		redir * /news{re.blog_legacy.1}{?query} 308
+	}
+	@news path /news /news/*
+	handle @news {
 		reverse_proxy blog:3000
 	}
 	# Marketing zone (hosted-only — OSS ships none). To serve the marketing app behind

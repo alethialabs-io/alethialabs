@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://alethialabs.io/blog/feed.xml
+Sitemap: https://alethialabs.io/news/feed.xml

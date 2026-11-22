@@ -21,12 +21,3 @@ export function getPost(slug: string): Post | undefined {
 	if (post.draft && isProd) return undefined;
 	return post;
 }
-
-/** ISO date → "June 21, 2026". */
-export function formatDate(iso: string): string {
-	return new Date(iso).toLocaleDateString("en-US", {
-		year: "numeric",
-		month: "long",
-		day: "numeric",
-	});
-}

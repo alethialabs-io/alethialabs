@@ -6,7 +6,7 @@ import { SectionHeading } from "@repo/ui/section-heading";
 
 /**
  * A chip in the "See what's new" band. Every destination is a real, deployed surface — the
- * docs app (`/docs`) and blog app (`/blog`) served on this origin, and the hosted status page
+ * docs app (`/docs`) and the news app (`/news`, formerly `/blog`) served on this origin, and the hosted status page
  * (the same links used by the sidebar profile menu) — so none of these dead-link.
  */
 const LINKS: {
@@ -15,7 +15,7 @@ const LINKS: {
 	icon: typeof BookOpen;
 	external?: boolean;
 }[] = [
-	{ label: "Engineering blog", href: "/blog", icon: Newspaper },
+	{ label: "News", href: "/news", icon: Newspaper },
 	{ label: "Documentation", href: "/docs", icon: BookOpen },
 	{
 		label: "Platform status",

@@ -151,6 +151,9 @@ importers:
       '@repo/brand':
         specifier: workspace:*
         version: link:../../packages/brand
+      '@repo/format':
+        specifier: workspace:*
+        version: link:../../packages/format
       '@repo/ui':
         specifier: workspace:*
         version: link:../../packages/ui
