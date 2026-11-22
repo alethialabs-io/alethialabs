@@ -1,0 +1,40 @@
+---
+title: "August: the CLI without a browser"
+description: Service-account tokens let the CLI run in CI, and you can export, diff and apply a project's design from the terminal.
+date: 2026-08-31
+author: Alethia Labs
+tags: [changelog, cli, console]
+kind: changelog
+summary: Service-account tokens let the CLI run in CI, and you can export, diff and apply a project's design from the terminal.
+versions:
+  cli: 0.6.1
+  runner: 0.6.0
+---
+
+**Run `alethia` without a browser.** Service-account tokens let the CLI sign in from CI or any other
+machine where nobody can click "approve". Create one, set it in the environment, and every command
+works as it does on your laptop.
+
+## New
+
+- **Designs as files.** Export a project's design, diff it against the live one, and apply it.
+- **Evidence receipts in the terminal.** `alethia verify receipt` shows the signed receipt for a
+  verification run.
+- **More from the terminal.** Register a runner, enable and disable add-ons, attach and scan your own
+  charts and IaC, set component placement, and connect a Hetzner account.
+
+## Improved
+
+- Destructive commands take an explicit `--yes`, and every prompt respects `--no-input`, so a script
+  never hangs waiting for an answer.
+- Components can be authored per environment, and removing one from an environment no longer touches
+  the same component in another.
+- Every public page shares one header and footer.
+
+## Fixed
+
+- `alethia project get <name>` could return a different project on each call when names were
+  similar. It now resolves to one project.
+- The organization overview showed usage as fractions of a minute, and its gauge disagreed with the
+  number beside it.
+- `alethia project get` failed for any project with a cluster admin.

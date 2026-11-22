@@ -135,7 +135,7 @@ wf_class() {
 		posthog-error-issues.yml | gate-fixme-currency.yml | template-proof-currency.yml | programme.yml | \
 		go-floors-rerecord.yml | e2e-issuer-health.yml | e2e-orphan-reaper.yml | hcloud-zone-probe.yml | \
 		branch-flow-guard.yml | capabilities-security.yml | cla.yml | close-on-dev-merge.yml | byo-admission-kind.yml | \
-		spend-report.yml)
+		spend-report.yml | news-changelog-draft.yml)
 		echo free
 		;;
 	deploy-*.yml | release-cli.yml | release-runner.yml | release-please.yml | publish-cli-release-metadata.yml | \

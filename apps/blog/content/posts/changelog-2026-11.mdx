@@ -1,0 +1,39 @@
+---
+title: "November: safer deletes and re-runs"
+description: The console refuses to delete what is still running and says why, destroy jobs cannot be re-run by accident, and status shows what the console actually observed.
+date: 2026-11-18
+author: Alethia Labs
+tags: [changelog, console, cli]
+kind: changelog
+summary: The console refuses to delete what is still running and says why, destroy jobs cannot be re-run by accident, and status shows what the console actually observed.
+versions:
+  cli: 0.10.0
+  runner: 0.10.1
+---
+
+**Deletes that cannot catch you out.** You can no longer delete an environment or an organization
+while an environment in it is live or still being changed. The console says what is in the way, and
+the delete dialogs state the rule before you try.
+
+## New
+
+- **Re-runs ask first.** A destroy job cannot be re-run, and re-running a plan or a deploy asks you
+  to confirm.
+- **Runners pick only jobs they can run.** A runner skips a job that needs a capability it does not
+  have, and leaves it for one that does, instead of failing it.
+
+## Improved
+
+- Cluster and environment status shows what the console last observed, not what it expected.
+- When your session ends, one dialog explains why, and signing in again takes you back to where you
+  were.
+- Settings rows stack when the panel is narrow, and the mobile menu button names your organization.
+- Shift+Tab moves focus backwards again; the console no longer uses it as a shortcut.
+
+## Fixed
+
+- A draining runner could flip back to online on its next heartbeat and pick up new work.
+
+- Editing an alert policy could keep the draft of a different policy.
+- Changing only a role's permissions was not saved as a change.
+- Menus and popovers now match the width of the control that opens them.

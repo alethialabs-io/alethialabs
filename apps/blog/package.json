@@ -9,7 +9,8 @@
 		"types:check": "velite && tsc --noEmit",
 		"check-types": "velite && tsc --noEmit",
 		"postinstall": "velite --silent || true",
-		"lint": "eslint"
+		"lint": "eslint",
+		"test": "vitest run"
 	},
 	"dependencies": {
 		"@repo/brand": "workspace:*",
@@ -32,6 +33,7 @@
 		"postcss": "^8.5.33",
 		"tailwindcss": "^4.3.5",
 		"typescript": "^5.9.3",
-		"velite": "^0.4.0"
+		"velite": "^0.4.0",
+		"vitest": "^4.1.12"
 	}
 }

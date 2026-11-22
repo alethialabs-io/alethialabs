@@ -36,6 +36,12 @@ const config: NextConfig = {
 	outputFileTracingIncludes: {
 		"/**/*": ["../../node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/**"],
 	},
+	// A post's optional real cover (velite `cover:`) is either in public/static or on the assets
+	// host under /news/. Nothing else may be optimised through this app's image route.
+	images: {
+		remotePatterns: [{ protocol: "https", hostname: "assets.alethialabs.io", pathname: "/news/**" }],
+		localPatterns: [{ pathname: "/news/static/**" }],
+	},
 	reactStrictMode: true,
 	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
 	transpilePackages: ["@repo/brand", "@repo/format", "@repo/ui"],
