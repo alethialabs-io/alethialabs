@@ -16,7 +16,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShellEdition } from "@/components/shell/shell-edition";
 import type { Viewer } from "@/lib/auth/viewer";
 
@@ -173,6 +173,10 @@ describe("the account menu — signing out", () => {
 });
 
 describe("the account menu — by instance edition", () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
 	it("makes no statement about the platform's status on any edition", async () => {
 		await openMenu(HOSTED);
 		expect(screen.queryByText(/all systems/i)).toBeNull();
@@ -180,6 +184,8 @@ describe("the account menu — by instance edition", () => {
 	});
 
 	it("on the hosted service: the feedback dialog, the status page and the home page", async () => {
+		// The status link appears only when a deployment configures a status page that exists.
+		vi.stubEnv("NEXT_PUBLIC_STATUS_URL", "https://status.alethialabs.io");
 		await openMenu(HOSTED);
 		expect(screen.getByRole("menuitem", { name: "Feedback" })).toBeInTheDocument();
 		expect(screen.queryByRole("menuitem", { name: "Report an issue" })).toBeNull();
@@ -188,6 +194,13 @@ describe("the account menu — by instance edition", () => {
 			"https://status.alethialabs.io",
 		);
 		expect(screen.getByRole("menuitem", { name: "Home page" })).toHaveAttribute("href", "/home");
+	});
+
+	it("on the hosted service with no status page configured: no Status link to a page that does not exist", async () => {
+		vi.stubEnv("NEXT_PUBLIC_STATUS_URL", "");
+		await openMenu(HOSTED);
+		expect(screen.queryByRole("menuitem", { name: "Status" })).toBeNull();
+		expect(screen.getByRole("menuitem", { name: "Feedback" })).toBeInTheDocument();
 	});
 
 	it("on a self-managed instance: an issue tracker, and no status page or home page of ours", async () => {

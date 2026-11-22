@@ -18,10 +18,15 @@ import {
 import { requestEmailCode } from "@/app/server/actions/auth";
 import { track } from "@/lib/analytics/track";
 import { safeNext } from "@/lib/auth/safe-next";
-import { useAuthPrefsStore } from "@/lib/stores/use-auth-prefs-store";
+import { useAuthPrefsStore, type AuthMethod } from "@/lib/stores/use-auth-prefs-store";
 import { arrayIncludes } from "@/lib/type-guards";
 import { AuthCard } from "@/components/auth/auth-shell";
-import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
+import {
+	OAUTH_PROVIDERS,
+	arrangeSignInMethods,
+	type AuthProvider,
+} from "@/components/auth/sign-in-methods";
+import { ProviderIcon, PROVIDER_LABELS } from "@repo/ui/provider-icon";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import {
@@ -41,17 +46,9 @@ import { useHydrated } from "@repo/ui/use-hydrated";
 import { isOrgSlug } from "@repo/org-slug";
 import { hardNavigate } from "@/components/shell/hard-navigate";
 
-type AuthProvider = "github" | "gitlab" | "bitbucket" | "google";
 type Step = "providers" | "email" | "code" | "no-account";
 
 export type AuthMode = "login" | "signup";
-
-/** Leads the grid at full width — for a Kubernetes control plane it is GitHub. */
-const PRIMARY_PROVIDER = "github" satisfies AuthProvider;
-/** The rest, three-up beneath it. */
-const SECONDARY_PROVIDERS: AuthProvider[] = ["google", "gitlab", "bitbucket"];
-/** Everything the `?provider=` hint is allowed to name. */
-const oauthProviders: AuthProvider[] = [PRIMARY_PROVIDER, ...SECONDARY_PROVIDERS];
 
 /** Per-mode copy. Logic is identical — email-OTP (type "sign-in") creates the
  * user on first verify, so signup and login share the same code paths. */
@@ -339,19 +336,27 @@ function SignupChallenge({
 const CHALLENGE_UNAVAILABLE_MESSAGE =
 	"The security check couldn’t load. Allow challenges.cloudflare.com, or sign in with a provider above.";
 
-/** One OAuth provider tile — spinner while its own sign-in is in flight. */
+/**
+ * One OAuth provider tile — spinner while its own sign-in is in flight.
+ *
+ * `compact` is the three-up row. Each of its tiles is a third of the card, which is about 60px
+ * wide at a 320px viewport: no label fits beside the icon there, so below 400px the label goes
+ * screen-reader-only and the tile is its icon. `min-w-0` + `truncate` is the backstop for the
+ * widths in between — the Button is `whitespace-nowrap`, so without them a long label does not
+ * wrap or shrink, it paints past the border.
+ */
 function ProviderButton({
 	provider,
 	isLoading,
 	loadingProvider,
-	lastUsed,
+	compact = false,
 	onSelect,
 }: {
 	provider: AuthProvider;
 	isLoading: boolean;
 	loadingProvider: string | null;
-	/** Mark this tile as the method that carried the last sign-in through. */
-	lastUsed?: boolean;
+	/** Rendered in the three-up row rather than on its own full-width line. */
+	compact?: boolean;
 	onSelect: (provider: AuthProvider) => void;
 }) {
 	return (
@@ -360,34 +365,83 @@ function ProviderButton({
 			variant="outline"
 			onClick={() => onSelect(provider)}
 			disabled={isLoading}
-			aria-label={
-				lastUsed ? `${lookup(PROVIDER_LABELS, provider)} (last used)` : undefined
+			// The three-up tiles take tighter padding and gap: at the card's desktop width a tile is
+			// ~105px, and the default 16px sides left "Bitbucket" ~47px of the ~60px it needs.
+			className={
+				compact
+					? "h-[46px] w-full min-w-0 gap-[6px] border-border-strong px-2 text-ui-md hover:border-ring hover:bg-surface-muted"
+					: "h-[46px] w-full min-w-0 gap-[9px] border-border-strong text-ui-md hover:border-ring hover:bg-surface-muted"
 			}
-			className="h-[46px] w-full gap-[9px] border-border-strong text-ui-md hover:border-ring hover:bg-surface-muted"
 		>
 			{loadingProvider === provider ? (
 				<Loader2 className="size-[17px] animate-spin" />
 			) : (
 				<ProviderIcon provider={provider} size={17} decorative mono={false} />
 			)}
-			{lookup(PROVIDER_LABELS, provider)}
-			{/* The pill is aria-hidden and the BUTTON names itself instead. Letting the pill text join the
-			    name by itself was the first attempt and it announced "GitHubLast used":
-			    the accessible name concatenates descendant text and knows nothing about
-			    `ml-1`, and a JSX {" "} between them does not survive the render (checked
-			    in the DOM — the text node is simply absent). An explicit label is the
-			    only version whose spacing is not a guess.
+			<span className={compact ? "min-w-0 truncate max-[399px]:sr-only" : "min-w-0 truncate"}>
+				{lookup(PROVIDER_LABELS, provider)}
+			</span>
+		</Button>
+	);
+}
 
-			    Visually unchanged: `vx-badge-mono` carries font, tracking and colour but
-			    no border or padding, so those come in here. */}
-			{lastUsed ? (
-				<span
-					aria-hidden="true"
-					className="vx-badge-mono ml-1 border border-border-strong px-1.5 py-px"
-				>
-					Last used
+/**
+ * The remembered method, leading the provider step as the full-width primary button.
+ *
+ * The "Last used" badge used to sit INLINE after the label, inside a Button that is
+ * `whitespace-nowrap`. On the three-up row a tile is ~100px wide at the card's full width, and
+ * icon + "Bitbucket" + badge needed roughly twice that — nowrap forbids wrapping and nothing let
+ * the content shrink, so the badge painted out past the tile's border. The badge now sits on the
+ * button's top edge, out of the label's flow, so the two cannot collide at any width; the label
+ * drops "Continue with" below 400px and truncates as a last resort.
+ *
+ * The badge is aria-hidden and the BUTTON names itself — "<Method> (last used)". Letting the
+ * badge text join the name by itself announced "GitHubLast used": the accessible name
+ * concatenates descendant text and knows nothing about spacing.
+ */
+function LeadMethodButton({
+	method,
+	isLoading,
+	loadingProvider,
+	onSelect,
+}: {
+	method: AuthMethod;
+	isLoading: boolean;
+	loadingProvider: string | null;
+	onSelect: (method: AuthMethod) => void;
+}) {
+	const name = method === "email" ? "email" : lookup(PROVIDER_LABELS, method);
+	const spinning = loadingProvider === method;
+	return (
+		<Button
+			type="button"
+			onClick={() => onSelect(method)}
+			disabled={isLoading}
+			variant="outline"
+			aria-label={`Continue with ${name} (last used)`}
+			className="relative h-[46px] w-full min-w-0 gap-[9px] border-ring bg-surface-muted text-ui-md hover:bg-surface-muted"
+		>
+			{spinning ? (
+				<Loader2 className="size-[17px] animate-spin" />
+			) : method === "email" ? (
+				<KeyRound className="size-4 opacity-80" />
+			) : (
+				<ProviderIcon provider={method} size={17} decorative mono={false} />
+			)}
+			<span className="min-w-0 truncate">
+				{/* "Continue with Bitbucket" does not fit a 320px viewport's card; the
+				    provider's name alone does. Email keeps the phrase — it fits. */}
+				<span className={method === "email" ? undefined : "max-[399px]:hidden"}>
+					Continue with{" "}
 				</span>
-			) : null}
+				{name}
+			</span>
+			<span
+				aria-hidden="true"
+				className="vx-badge-mono pointer-events-none absolute -top-[7px] right-3 border bg-background px-1.5 py-px leading-none"
+			>
+				Last used
+			</span>
 		</Button>
 	);
 }
@@ -430,7 +484,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 	// "signing in with" it, and the effect below starts the hand-off.
 	const [hintedProvider] = useState<AuthProvider | null>(() => {
 		const hinted = searchParams.get("provider");
-		return hinted && arrayIncludes(oauthProviders, hinted) ? hinted : null;
+		return hinted && arrayIncludes(OAUTH_PROVIDERS, hinted) ? hinted : null;
 	});
 
 	const [step, setStep] = useState<Step>(prefillEmail ? "email" : "providers");
@@ -1039,7 +1093,22 @@ export function AuthForm({ mode }: AuthFormProps) {
 		);
 	}
 
-	// Step 1 — provider list.
+	// Step 1 — provider list, arranged around the remembered method (sign-in-methods.ts).
+	const layout = arrangeSignInMethods(lastMethod);
+	/** Opens the email step from either email button. */
+	const openEmailStep = () => {
+		setStep("email");
+		setError(null);
+	};
+	const orDivider = (
+		<div className="flex items-center gap-3.5 py-2">
+			<span className="h-px flex-1 bg-border" />
+			<span className="font-mono text-ui-2xs uppercase tracking-[0.18em] text-text-disabled">
+				or
+			</span>
+			<span className="h-px flex-1 bg-border" />
+		</div>
+	);
 	return (
 		<AuthCard key={step}>
 			<div className="mb-6 flex flex-col gap-2.5">
@@ -1055,59 +1124,66 @@ export function AuthForm({ mode }: AuthFormProps) {
 			<div className="space-y-[9px]">
 				{errorBanner}
 
+				{layout.lead !== null ? (
+					// The "Last used" badge straddles the lead's top border; mt-2 keeps it off
+					// whatever sits above (the heading block or an error banner).
+					<div className="mt-2">
+					<LeadMethodButton
+						method={layout.lead}
+						isLoading={isLoading}
+						loadingProvider={loadingProvider}
+						onSelect={(method) => {
+							if (method === "email") openEmailStep();
+							else void handleOAuthLogin(method);
+						}}
+					/>
+					</div>
+				) : null}
+
+				{layout.lead === "email" ? orDivider : null}
+
 				{/* A flat 2x2 of four equal tiles said "we have no idea which one you
 				    want". For a Kubernetes control plane it is overwhelmingly GitHub, so
-				    it leads at full width and the other three share a row. The e2e specs
-				    select by accessible name, so nothing here is position-dependent. */}
-				<ProviderButton
-					provider={PRIMARY_PROVIDER}
-					isLoading={isLoading}
-					loadingProvider={loadingProvider}
-					lastUsed={lastMethod === PRIMARY_PROVIDER}
-					onSelect={handleOAuthLogin}
-				/>
+				    on a fresh browser it leads at full width and the other three share a
+				    row. A remembered provider takes the lead instead (above), and the
+				    three it leaves share the row. The e2e specs select by accessible
+				    name, so nothing here is position-dependent. */}
+				{layout.wide !== null ? (
+					<ProviderButton
+						provider={layout.wide}
+						isLoading={isLoading}
+						loadingProvider={loadingProvider}
+						onSelect={handleOAuthLogin}
+					/>
+				) : null}
 				<div className="grid grid-cols-3 gap-[9px]">
-					{SECONDARY_PROVIDERS.map((provider) => (
+					{layout.grid.map((provider) => (
 						<ProviderButton
 							key={provider}
 							provider={provider}
 							isLoading={isLoading}
 							loadingProvider={loadingProvider}
-							lastUsed={lastMethod === provider}
+							compact
 							onSelect={handleOAuthLogin}
 						/>
 					))}
 				</div>
 
-				<div className="flex items-center gap-3.5 py-2">
-					<span className="h-px flex-1 bg-border" />
-					<span className="font-mono text-ui-2xs uppercase tracking-[0.18em] text-text-disabled">
-						or
-					</span>
-					<span className="h-px flex-1 bg-border" />
-				</div>
-
-				<Button
-					type="button"
-					variant="outline"
-					onClick={() => {
-						setStep("email");
-						setError(null);
-					}}
-					disabled={isLoading}
-					className="group h-[46px] w-full gap-[9px] border-border-strong text-ui-md hover:border-ring hover:bg-surface-muted"
-				>
-					<KeyRound className="size-4 opacity-80" />
-					Continue with email
-					{lastMethod === "email" ? (
-						<span
-							aria-hidden="true"
-							className="vx-badge-mono ml-1 border border-border-strong px-1.5 py-px"
+				{layout.emailBelow ? (
+					<>
+						{orDivider}
+						<Button
+							type="button"
+							variant="outline"
+							onClick={openEmailStep}
+							disabled={isLoading}
+							className="group h-[46px] w-full gap-[9px] border-border-strong text-ui-md hover:border-ring hover:bg-surface-muted"
 						>
-							Last used
-						</span>
-					) : null}
-				</Button>
+							<KeyRound className="size-4 opacity-80" />
+							Continue with email
+						</Button>
+					</>
+				) : null}
 
 				{/* SSO (A-13). It was a disabled "Soon" tile while SP-initiated sign-in already
 				    shipped at /sso/<slug>; it now opens a field for the organization's name and

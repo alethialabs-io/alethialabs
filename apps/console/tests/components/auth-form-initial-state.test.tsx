@@ -42,8 +42,9 @@ describe("AuthForm — the ?provider= hint", () => {
 		h.social.mockReturnValue(new Promise(() => {}));
 		render(<AuthForm mode="login" />);
 
-		// The hand-off remembers the provider, so its tile may name itself "(last used)".
-		expect(screen.getByRole("button", { name: /^GitHub/ })).toBeDisabled();
+		// The hand-off remembers the provider, so it leads as "Continue with GitHub (last used)"
+		// rather than the plain "GitHub" tile — match the provider, not the tile's exact name.
+		expect(screen.getByRole("button", { name: /\bGitHub\b/ })).toBeDisabled();
 		await waitFor(() => expect(h.social).toHaveBeenCalledTimes(1));
 		expect(h.social.mock.calls[0]?.[0]).toMatchObject({ provider: "github" });
 	});

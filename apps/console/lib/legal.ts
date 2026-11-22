@@ -18,14 +18,12 @@ export function legalUrl(path: `/${string}`): string {
 	return `${base}${path}`;
 }
 
-// The status page is hosted-brand content too, and it was hard-coded into the auth
-// shell. A self-hosted console has no alethialabs.io status page to point at, and
-// linking one asserts an uptime commitment that operator never made.
-const DEFAULT_STATUS_URL = "https://status.alethialabs.io";
-
-/** Public status page, honoring NEXT_PUBLIC_STATUS_URL. Empty disables the link. */
+// The status page link — and the "All systems operational" line the auth shell draws beside it —
+// appears only when a deployment points NEXT_PUBLIC_STATUS_URL at a status page that exists.
+// There is no default: the old one was https://status.alethialabs.io, a host with no DNS record,
+// so every sign-in page linked a page that did not exist and asserted an uptime nobody measured.
+/** Public status page from NEXT_PUBLIC_STATUS_URL, or null (no link) when it is unset or empty. */
 export function statusUrl(): string | null {
 	const configured = env("NEXT_PUBLIC_STATUS_URL");
-	if (configured === "") return null;
-	return configured ?? DEFAULT_STATUS_URL;
+	return configured === undefined || configured === "" ? null : configured;
 }
