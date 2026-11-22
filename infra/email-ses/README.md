@@ -134,8 +134,11 @@ perms verify needs); admin creds work too.
 
 ## 6. SMTP credentials for Gmail "Send mail as" (reply *as* the addresses)
 
-Inbound to `support@`/`sales@`/… is handled by Cloudflare Email Routing
-(`infra/cp-hetzner/email-routing.tf`). To *reply as* them, add them in Gmail as
+> Superseded on 2026-11-22 (#7261): company mail is Google Workspace (`infra/cp-hetzner/mail.tf`),
+> and Gmail sends as these addresses natively with Google DKIM. The steps below describe the
+> retired Cloudflare-forwarding setup.
+
+Inbound to `support@`/`sales@`/… was handled by Cloudflare Email Routing. To *reply as* them, add them in Gmail as
 "Send mail as" aliases that relay through **SES SMTP** — automated by
 [`scripts/gmail-inbox/`](../../scripts/gmail-inbox/README.md). SMTP needs a username +
 password minted from the least-priv `alethia-ses-smtp-gmail` IAM user (created by

@@ -62,6 +62,6 @@ first — never a static key.
 
 ## Not managed here — inbound email
 
-Cloudflare **Email Routing** is zone-global (one config per domain) and is owned by whichever cp is
-live (`cp-hetzner/email-routing.tf`, gated). It is intentionally **not** duplicated here to avoid
-colliding on the shared zone.
+Company mail is Google Workspace (#7261). Its apex DNS records (MX, SPF, DKIM, site verification)
+are zone-global and are owned by `cp-hetzner/mail.tf`. They are intentionally **not** duplicated
+here, so that two stacks do not collide on the shared zone.

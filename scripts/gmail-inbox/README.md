@@ -12,8 +12,8 @@ as"** aliases that relay through **SES SMTP** so replies go out *as*
 
 It's the Gmail half of the email setup. The other halves:
 
-- **Inbound** — `infra/cp-hetzner/email-routing.tf` (Cloudflare Email Routing) forwards
-  `support@/sales@/legal@/security@/feedback@/dmarc@/borislav@` → this Gmail.
+- **Inbound** — was Cloudflare Email Routing forwarding the apex addresses to this Gmail. Retired
+  on 2026-11-22: company mail is Google Workspace (`infra/cp-hetzner/mail.tf`, #7261).
 - **Outbound identity** — `infra/email-ses` (apex `alethialabs.io` SES identity + the
   `alethia-ses-smtp-gmail` IAM user) made the SMTP relay possible. **Both are being retired**
   (`infra/email-ses/RETIRE.md`): that account never had SES production access, and the relay never

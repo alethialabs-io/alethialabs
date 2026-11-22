@@ -216,8 +216,8 @@ AWS_PROFILE=alethia-email-admin aws sesv2 get-email-identity --region eu-central
   --email-identity alethialabs.io --query 'DkimAttributes.Tokens' --output text
 ```
 
-Keep `_dmarc`, the apex SPF record and the Cloudflare Email Routing MX records
-(`infra/cp-hetzner/email-routing.tf`).
+Keep `_dmarc` and the apex Google Workspace records (MX, SPF, `google._domainkey`, site
+verification), which `infra/cp-hetzner/mail.tf` owns. Cloudflare Email Routing is retired (#7261).
 
 `scripts/gmail-inbox/` relayed Gmail "Send mail as" through this account's apex identity and the
 `alethia-ses-smtp-gmail` user. That relay never went into service (the user's only key was never
