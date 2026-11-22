@@ -85,11 +85,10 @@ function harness() {
 /** Creates a user with one GitHub link through Better Auth's own adapter path. */
 async function linkedUser(h: ReturnType<typeof harness>, tokens: { access: string; refresh: string }) {
 	const ctx = await h.auth.$context;
-	const user = await ctx.internalAdapter.createUser({
-		email: "dev@example.com",
-		name: "Dev",
-		emailVerified: true,
-	});
+	const user = await ctx.internalAdapter.createUser(
+		{ email: "dev@example.com", name: "Dev", emailVerified: true },
+		{ method: "email-otp" },
+	);
 	const acct = await ctx.internalAdapter.createAccount({
 		userId: user.id,
 		providerId: "github",
