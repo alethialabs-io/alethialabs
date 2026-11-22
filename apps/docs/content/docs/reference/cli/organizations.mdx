@@ -100,9 +100,11 @@ alethia org settings
 alethia org settings -o json
 ```
 
-Renders a field/value card: **name**, **slug**, **description**, **region** (the org's default
-provisioning region), **default env**, and **`terraform`** (the default OpenTofu version). When the
-caller has no real org (personal scope) it prints `null` under `-o json`, and otherwise says
+Renders a field/value card: **name**, **slug**, and **description**. The command is read-only; you
+change these settings in the console. Under `-o json` it prints the whole record, which still
+carries the `region`, `default_env`, and `terraform_version` keys so existing scripts keep working.
+These three keys are deprecated: nothing reads them, the console no longer sets them, and the table
+and `-o csv` don't show them. Stop relying on them in scripts. When the caller has no real org (personal scope) it prints `null` under `-o json`, and otherwise says
 `Not in an organization (community mode).` on stderr. Backing call: `GET /cli/org-settings`.
 
 ## `alethia members list`
