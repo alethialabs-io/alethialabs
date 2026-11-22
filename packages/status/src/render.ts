@@ -12,6 +12,10 @@
  * `packages/brand/src/tokens.css` remains the source of truth — if the two ever disagree, that file
  * wins.
  *
+ * The one exception is the logo. The header lockup, its CSS and the favicon are NOT hand-written:
+ * `scripts/gen-brand.ts` renders them from packages/brand into `brand.generated.ts`, and
+ * tests/brand.test.ts fails if that module drifts — so this page draws exactly the main site's logo.
+ *
  * THE RULE THAT LOOKS LIKE A BUG
  *
  * There is no hue on this page — not even red for an outage. The Alethia system is fully grayscale,
@@ -20,7 +24,7 @@
  * centre is down. Each row also prints the word, so nothing depends on telling two greys apart.
  */
 
-import { FAVICON_SVG, MARK_SVG } from "./brand";
+import { FAVICON_SVG, LOCKUP_CSS, LOCKUP_HTML } from "./brand.generated";
 import type { Health } from "./probes";
 import type { Summary } from "./state";
 
@@ -51,6 +55,10 @@ const CSS = `
   --border:oklch(1 0 0 / 0.10);--border-strong:oklch(1 0 0 / 0.17);
   --bar-up:oklch(0.556 0 0);
   --radius:4px;
+  /* The lockup CSS (LOCKUP_CSS) reads --font-grotesk, --font-geist-sans and --font-mono, the names the
+     Next apps get from next/font. All three must be set: one undefined var() voids the whole
+     font-family declaration and the wordmark would fall back to the body face. */
+  --font-geist-sans:Geist;
   --font-sans:Geist,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,sans-serif;
   --font-mono:Geist Mono,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,monospace;
   --font-grotesk:Space Grotesk,Geist,-apple-system,sans-serif;
@@ -78,10 +86,9 @@ header{border-bottom:1px solid var(--border)}
 /* Longhands, not the padding shorthand: this element also carries .wrap, whose own shorthand would
    be overridden wholesale and take the horizontal gutter with it. */
 .head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-top:18px;padding-bottom:18px}
-.brand{display:inline-flex;align-items:center;gap:9px;text-decoration:none}
-.mark{width:20px;height:20px;color:var(--text-1)}
-.word{font-weight:600;font-size:15px;letter-spacing:-0.02em}
-.labs{font-family:var(--font-mono);font-size:9px;letter-spacing:0.26em;text-transform:uppercase;color:var(--text-3)}
+/* The lockup's own rules come from packages/brand (LOCKUP_CSS, appended below); this only places it,
+   as the main site's header link does: no underline, the ink colour inherited. */
+.brand{display:flex;color:var(--text-1);text-decoration:none}
 .eyebrow{font-family:var(--font-mono);font-weight:500;font-size:11px;letter-spacing:0.16em;
   text-transform:uppercase;color:var(--text-3)}
 
@@ -410,12 +417,12 @@ export function renderPage(s: Summary): string {
 <link rel="alternate" type="application/json" href="${BASE_PATH}api/summary.json" title="Alethia status API">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="${FONTS}">
-<style>${CSS}</style>
+<style>${CSS}${LOCKUP_CSS}</style>
 <script type="application/ld+json">${esc(JSON.stringify(structuredData(s)))}</script>
 </head>
 <body>
 <header><div class="wrap head">
-  <a class="brand" href="https://alethialabs.io">${MARK_SVG}<span class="word">Alethia</span><span class="labs">Labs</span></a>
+  <a class="brand" href="https://alethialabs.io" aria-label="Alethia Labs home">${LOCKUP_HTML}</a>
   <span class="eyebrow">Status</span>
 </div></header>
 

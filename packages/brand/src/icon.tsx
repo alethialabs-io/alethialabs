@@ -1,17 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { BRAND_BLACK, BRAND_INK } from "./ramp-srgb";
+import { ICON_MARK_SIZE, ICON_MARK_SVG, ICON_RADIUS, ICON_SIZE } from "./icon-svg";
+import { BRAND_BLACK } from "./ramp-srgb";
 
 import { ImageResponse } from "next/og";
 
-export const size = { width: 32, height: 32 };
+export const size = { width: ICON_SIZE, height: ICON_SIZE };
 export const contentType = "image/png";
 
-/** The bracketed-point mark, light on dark, as an inline SVG data URI. */
-const MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none"><path d="M11 6 H6.5 V26 H11" stroke="${BRAND_INK}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 6 H25.5 V26 H21" stroke="${BRAND_INK}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16" cy="16" r="2.9" fill="${BRAND_INK}"/></svg>`;
-
-/** Favicon — dark rounded square + light bracketed mark. */
+/** Favicon — dark rounded square + light bracketed mark. Its geometry lives in `icon-svg.ts`, shared with the status Worker. */
 export default function Icon() {
 	return new ImageResponse(
 		(
@@ -23,15 +21,15 @@ export default function Icon() {
 					alignItems: "center",
 					justifyContent: "center",
 					background: BRAND_BLACK,
-					borderRadius: 7,
+					borderRadius: ICON_RADIUS,
 				}}
 			>
 				{/* eslint-disable-next-line @next/next/no-img-element */}
 				<img
-					width={25}
-					height={25}
+					width={ICON_MARK_SIZE}
+					height={ICON_MARK_SIZE}
 					alt=""
-					src={`data:image/svg+xml;utf8,${encodeURIComponent(MARK)}`}
+					src={`data:image/svg+xml;utf8,${encodeURIComponent(ICON_MARK_SVG)}`}
 				/>
 			</div>
 		),
