@@ -282,7 +282,7 @@ describe("ConnectorCard — a cloud that takes no new connection", () => {
 
 // ── Pick mode (#4625) ────────────────────────────────────────────────────────────────────────
 //
-// The create-project cloud picker renders THIS card with `selectable`, and the pick used to be a
+// A cloud picker renders THIS card with `selectable`, and the pick used to be a
 // bare `<div onClick>`: no role, no `tabIndex`, no key handling, and an `aria-hidden` check
 // indicator. Choosing a cloud — the first required step of creating a project — was therefore
 // impossible from a keyboard.
@@ -310,7 +310,7 @@ describe("ConnectorCard — pick mode", () => {
 		});
 	}
 
-	/** Renders the card the way `create-project/cloud-picker.tsx` does. */
+	/** Renders the card in pick mode: `selectable`, with a selection state and a select handler. */
 	function renderPick(
 		over: {
 			selected?: boolean;
@@ -422,7 +422,7 @@ describe("ConnectorCard — pick mode", () => {
 		expect(screen.getByRole("button", { name: "Connect AWS" })).toBeInTheDocument();
 	});
 
-	// `selectable` is off everywhere but the picker, and the connectors page must render exactly
+	// `selectable` is off by default, and the connectors page must render exactly
 	// what it rendered before: one Manage button, no pick control, no tab stop.
 	it("adds nothing to the connectors-page card", () => {
 		const { container } = render(

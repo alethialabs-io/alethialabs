@@ -17,7 +17,6 @@
 import { type FormEvent, useEffect, useRef } from "react";
 import { Controller, FormProvider, useFieldArray, useWatch } from "react-hook-form";
 import { Boxes, Plus, Trash2 } from "lucide-react";
-import { z } from "zod";
 import { Button } from "@repo/ui/button";
 import {
 	Dialog,
@@ -49,7 +48,6 @@ import { RepositorySelector } from "@/components/repository-selector";
 import { attachIacSourceAction } from "@/app/server/actions/byo-iac";
 import type { FieldErrors } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import { byoWizardId } from "@/lib/projects/canvas-handoff";
 import { WIZARD_PARAM } from "@/lib/query/view-url-params";
 import { orpc } from "@/lib/rpc/client";
 import {
@@ -57,9 +55,15 @@ import {
 	iacSourceFormSchema,
 	toIacVarValues,
 } from "@/lib/validations/byo-iac";
-import { defineWizard } from "@/lib/wizard/define";
-import { useWizardEnvironment, type WizardOpener, wizardOpener } from "@/lib/wizard/location";
+import { useWizardEnvironment, wizardOpener } from "@/lib/wizard/location";
+import { useOpenRequest } from "@/lib/wizard/use-open-request";
 import { useWizardEngine } from "@/lib/wizard/use-wizard";
+import {
+	BYO_IAC_WIZARD_ID,
+	type ByoIacWizardOutput,
+	type ByoIacWizardValues,
+	byoIacWizard,
+} from "@/components/design-project/byo/byo-iac.wizard";
 
 interface ByoIacDialogProps {
 	/** The canvas asks for the dialog. The URL (`?wizard=byo-iac`) is what keeps it open. */
@@ -86,58 +90,9 @@ export const EXAMPLE_IAC_REPO_URL = "https://github.com/alethialabs-io/alethia-e
 export const EXAMPLE_IAC_PATH = "iac/drift/aws";
 
 // ── THE WIZARD ───────────────────────────────────────────────────────────────────────────────────
-
-/** The wizard's URL and draft namespace (`?wizard=byo-iac`): the id a `byo` canvas seed opens. */
-export const BYO_IAC_WIZARD_ID = byoWizardId("iac");
-
-/** The wizard's values, as typed. */
-export type ByoIacWizardValues = z.input<typeof iacSourceFormSchema>;
-
-/** The wizard's values once the attach form's rules have parsed them. */
-export type ByoIacWizardOutput = z.output<typeof iacSourceFormSchema>;
-
-/**
- * The attach-an-IaC-source wizard. The draft keeps the repository, path and ref, and NOT the
- * variables: a tfvar value is free text, and the module's variables are retyped faster than a
- * stored one could be trusted to hold no credential. The Variables step says so after a restore.
- */
-export const byoIacWizard = defineWizard<ByoIacWizardValues, ByoIacWizardOutput>({
-	id: BYO_IAC_WIZARD_ID,
-	presentation: "overlay",
-	schema: iacSourceFormSchema,
-	steps: [
-		{
-			id: "repository",
-			label: "Repository",
-			fields: ["repo_url"],
-			schema: iacSourceFormSchema.pick({ repo_url: true }),
-			// Linking a git provider leaves the console and returns to this URL.
-			gate: { kind: "external", returnParams: [] },
-		},
-		{
-			id: "path-ref",
-			label: "Path & ref",
-			fields: ["path", "ref"],
-			schema: iacSourceFormSchema.pick({ path: true, ref: true }),
-		},
-		{
-			id: "variables",
-			label: "Variables",
-			fields: ["variables"],
-			schema: iacSourceFormSchema.pick({ variables: true }),
-		},
-		{ id: "review", label: "Review", fields: [], schema: z.object({}) },
-	],
-	draft: {
-		version: 1,
-		ttlMinutes: 24 * 60,
-		schema: z.object({
-			repo_url: z.string().optional(),
-			path: z.string().optional(),
-			ref: z.string().optional(),
-		}),
-	},
-});
+//
+// The definition — steps, rules and draft — is `byo-iac.wizard.ts`. What is below is how this
+// dialog shows it.
 
 /** A fresh source: nothing typed, no variables. */
 const DEFAULT_VALUES: ByoIacWizardValues = { repo_url: "", path: "", ref: "", variables: [] };
@@ -206,30 +161,6 @@ function variableRowMessages(variables: ByoIacWizardValues["variables"]): Readon
 	return messages;
 }
 
-/**
- * Keeps the canvas's request and the URL in step; the URL decides. A request that rises opens
- * `?wizard=<id>` (and drops the canvas's one-shot `?attachIac=1`, which would otherwise be read
- * again and strip the URL the dialog just opened). A URL that opens or closes on its own — Back, a
- * link, the return from a git provider — is reported to the canvas so its request matches.
- */
-function useOverlayRequest(
-	requested: boolean,
-	onRequestedChange: (open: boolean) => void,
-	opener: WizardOpener,
-	openUrl: () => void,
-): void {
-	const seen = useRef({ requested: false, url: false });
-	useEffect(() => {
-		const before = seen.current;
-		seen.current = { requested, url: opener.open };
-		if (requested && !before.requested && !opener.open) {
-			openUrl();
-			return;
-		}
-		if (opener.open !== before.url && opener.open !== requested) onRequestedChange(opener.open);
-	});
-}
-
 /** The "attach an IaC source" dialog: open while the URL names it, its wizard mounted only while open. */
 export function ByoIacDialog({
 	open,
@@ -240,7 +171,9 @@ export function ByoIacDialog({
 }: ByoIacDialogProps) {
 	const env = useWizardEnvironment();
 	const opener = wizardOpener(env.location, BYO_IAC_WIZARD_ID);
-	useOverlayRequest(open, onOpenChange, opener, () =>
+	// Opening drops the canvas's one-shot `?attachIac=1`, which would otherwise be read again and
+	// strip the URL the dialog just opened.
+	useOpenRequest(open, onOpenChange, opener, () =>
 		env.location.push({ [WIZARD_PARAM]: BYO_IAC_WIZARD_ID, attachIac: null }),
 	);
 
