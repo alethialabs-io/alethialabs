@@ -101,9 +101,10 @@ name: Release gate
 # choose what measures it. A dev PR MAY narrow, because on that path the seven legs cost ~76
 # runner-minutes per push (measured, run 34351806933) and CI capacity, not authoring, is this wave's
 # ceiling. Narrowing there is safe for a reason that is written down rather than assumed: the seven
-# `Release gate (<leg>)` contexts are filtered OUT of `protect-dev` and `protect-staging` in
-# infra/github/main.tf and are named nowhere in .mergify.yml, so a leg that does not run on a dev PR
-# leaves no required context unreported and no queue entry waiting. See the `legs` job for the rules.
+# `Release gate (<leg>)` contexts are filtered OUT of `protect-dev` in infra/github/main.tf (the
+# only other ruleset, protect-main, is the one that requires them) and are named nowhere in
+# .mergify.yml, so a leg that does not run on a dev PR leaves no required context unreported and no
+# queue entry waiting. See the `legs` job for the rules.
 #
 # That is a statement about the DECLARATION, which is the half this repo can read from the tree.
 # What GitHub actually enforces is a separate question and a separate instrument —
@@ -618,7 +619,7 @@ jobs:
             for (const r of decision.rows) md.push(`| \`${r.file}\` | ${r.legs} | ${r.why} |`);
           }
           if (skipped.length > 0) {
-            md.push("", "A skipped leg reports no `Release gate (<leg>)` context. `infra/github/main.tf` declares those contexts required on `main` alone — it filters them out of `protect-dev` and `protect-staging`, and `.mergify.yml` names none of them — and a promotion PR never reaches this branch of the rules. (What GitHub enforces is `check-required-checks.mjs --live`'s question, not this one; the narrowing is sound under either answer.)");
+            md.push("", "A skipped leg reports no `Release gate (<leg>)` context. `infra/github/main.tf` declares those contexts required on `main` alone — it filters them out of `protect-dev`, and `.mergify.yml` names none of them — and a promotion PR never reaches this branch of the rules. (What GitHub enforces is `check-required-checks.mjs --live`'s question, not this one; the narrowing is sound under either answer.)");
           }
           summarise(md);
           EOF

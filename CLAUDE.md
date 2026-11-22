@@ -21,7 +21,7 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 - **Never push to `dev`, `staging` or `main`, and never open a feature PR into `staging` or
   `main`.** Feature work goes to `dev`. **Promotions are agents' work when green**: the
   `release/<sha>` → `main` PR that `.github/workflows/promote.yml` opens at a pinned green dev
-  commit (staging is being retired) merges with
+  commit (the `staging` hop is retired — nothing merges into `staging` any more) merges with
   `gh pr merge <n> --merge --match-head-commit <head sha>`, which `.claude/hooks/guard-merge.sh`
   admits only when every check and every release-gate leg passed for exactly that head.
 - **Infrastructure, production and paid services are yours when instructed — done properly.**
@@ -173,7 +173,8 @@ type-check, lint, unit tests, git, read-only Docker.
 
 Open a **non-draft PR into `dev`**. Mergify (`.mergify.yml`) auto-queues every non-draft,
 conflict-free dev PR **with no unresolved review threads**, and squash-merges it once the
-**required checks** pass, validating each PR on its own branch — so you never merge against a
+**required checks** pass (`CI required` — ci.yml's aggregator, whose `needs:` list is the set of
+CI jobs that gate — plus `contribution-legal`), validating each PR on its own branch — so you never merge against a
 `dev` that moved under you. Keep WIP as a draft. On a conflict, rebase onto `origin/dev` and push;
 it re-queues itself.
 
@@ -194,13 +195,14 @@ otherwise hit:
 - **Only INLINE comments create threads.** A top-level PR comment does not, so a review posted as
   one summary comment gates nothing. That is a silent failure of the gate, not of the PR.
 
-Until the gate has ridden `dev → staging → main` (Mergify reads its config only from the default
-branch), the only thing that actually holds a PR back is opening it as a **draft**.
+A change to that gate binds only once a promotion has carried it to `main` (Mergify reads its config
+only from the default branch); until then, the only thing that actually holds a PR back is opening it
+as a **draft**.
 
 Letting Mergify land it is the default and almost always right. Merging a **dev**-targeted PR
 yourself is permitted when you have a reason. **A promotion merge** (`release/<sha> → main`, opened
-by `.github/workflows/promote.yml` at one green dev commit and never moved; the retired
-`dev → staging` and `staging → main` hops are still admitted) **goes through
+by `.github/workflows/promote.yml` at one green dev commit and never moved — the `dev → staging` and
+`staging → main` hops are retired and refused) **goes through
 `.claude/hooks/guard-merge.sh`**:
 `gh pr merge <n> --merge --match-head-commit <head sha>` (the guard refuses without it and prints the
 exact command), never `--squash`, `--rebase`, `--auto` or `--delete-branch`, one merge per command,
@@ -208,7 +210,7 @@ and only once `gh pr checks <n>` shows nothing failed or pending and every `Rele
 named in `.github/workflows/release-gate.yml` passed. A release-please PR into `main` (head
 `release-please--branches--main--components--<c>`, author `app/alethia-labs-ci`, changing only the
 files `release-please-config.json` says it writes) merges the same way under the same checks. Any other
-merge into `staging`/`main` is the maintainer's, and `--admin`, which bypasses the queue entirely,
+merge into `main` is the maintainer's, and `--admin`, which bypasses the queue entirely,
 is never yours. Never merge a red PR.
 
 **Claiming board work:** don't hand-pick. Read **`.claude/COORDINATION.md`** and run
@@ -371,7 +373,7 @@ command-text parser, `.claude/hooks/lib/cmdline.sh`:
 | `.claude/hooks/guard-worktree.sh` | PreToolUse · Bash + edits | Lease enforcement + no commits **or rebases** in the main checkout |
 | `.claude/hooks/guard-runtime.sh` | PreToolUse · Bash | Blocks local dev servers and destructive resets |
 | `.claude/hooks/guard-compose.sh` | PreToolUse · Bash | Blocks a raw `docker compose` bring-up |
-| `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base and head: `dev` may merge; a green `release/<sha> → main` promotion (the app's PR, head on dev), a green `dev → staging` / `staging → main` promotion, or a green release-please PR into `main` whose author and files are release-please's, may merge with `--merge`; anything else into `staging`/`main`, and `--admin`, may not |
+| `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base and head: `dev` may merge; a green `release/<sha> → main` promotion (the app's PR, head on dev) or a green release-please PR into `main` whose author and files are release-please's may merge with `--merge`; anything else into `main`, any merge into the retired `staging`, and `--admin`, may not |
 | `.claude/hooks/guard-spend.sh` | PreToolUse · Bash | Prices each spend action into `~/.alethia/spend-ledger.jsonl` and refuses one that crosses EUR 80 per rolling 7 days — its only refusal besides hcloud's wrong-account check and the ledger's own integrity |
 | `.claude/hooks/guard-secrets.sh` | PreToolUse · Bash | Refuses a command whose effect is to PRINT a secret (env dumps, shell tracing, vault reads to stdout, credential files, a literal key) and names the `pnpm creds` form instead |
 | `.claude/hooks/guard-destroy.sh` | PreToolUse · Bash | Backs up what a destructive command would destroy (remote refs, repos, releases, tfstate, databases, volumes, cloud resources) to `~/.alethia/backups/` or `refs/safety/`, then allows it; refuses only what it cannot back up |

@@ -121,13 +121,21 @@ jobs:
   #      so no required context changes shape; it only does less work.
   #
   #   2. JOB-LEVEL SKIPS — DORMANT until `AFFECTED_ONLY_ARMED` below reads "true". A skipped job
-  #      reports `skipped`, a matrix leg that is not generated reports NOTHING, and `.mergify.yml`'s
-  #      `check-success=` accepts neither — so arming this while Mergify still names the per-job
-  #      contexts would hold every PR forever with nothing red. The order is: the `CI required`
-  #      aggregator reaches `main`; `.mergify.yml` and `infra/github` switch to requiring it (that
-  #      PR's body carries the exact edits); then a reviewed one-line PR flips this constant. It is
-  #      a constant in this file and not a repository variable so that the switch is a diff someone
-  #      reviewed, and so that nothing outside the tree can arm it on its own.
+  #      reports `skipped` and a matrix leg that is not generated reports NOTHING. `CI required`
+  #      accepts both (a skipped need is "not needed"); a per-job `check-success=` in `.mergify.yml`
+  #      accepts neither, and a ruleset that names a per-job context waits forever on a leg that
+  #      never reports. So BEFORE this constant may read "true", ALL THREE of these must hold:
+  #        a. `.mergify.yml` ON `main` requires `CI required` and none of the per-job contexts it
+  #           covers (Mergify reads its configuration only from `main`);
+  #        b. the LIVE `protect-dev` ruleset requires `CI required` and none of those per-job
+  #           contexts — i.e. infra/github has been APPLIED and
+  #           `node scripts/ci/check-required-checks.mjs --live` reports protect-dev agreeing with
+  #           the HCL. (protect-main changes in the same apply; a PR into `main` is never selective,
+  #           so it skips nothing either way.)
+  #        c. `CI required` has been observed green on a real dev PR after (a) and (b).
+  #      Then a reviewed one-line PR flips this constant. It is a constant in this file and not a
+  #      repository variable so that the switch is a diff someone reviewed, and so that nothing
+  #      outside the tree can arm it on its own.
   #
   # WHAT THE SKIP SETS ARE, AND WHAT THEY ARE NOT. The sets were derived on 2026-11-22 from a grep
   # of what each language's tests actually READ — and this repo's tests cross-read heavily: Go
@@ -169,6 +177,9 @@ jobs:
       contents: read
       pull-requests: read
     env:
+      # Stays "false" until conditions a–c under "AFFECTED-ONLY" (2. JOB-LEVEL SKIPS) above all hold:
+      # `.mergify.yml` on main requires `CI required`, the live protect-dev ruleset does too (applied,
+      # `check-required-checks.mjs --live` agreeing), and `CI required` has been seen green after both.
       AFFECTED_ONLY_ARMED: "false"
     outputs:
       agent: ${{ steps.plan.outputs.agent }}
@@ -486,9 +497,9 @@ jobs:
   # production build smoke, in sequence: 24–32 minutes, and the critical path of every CI run
   # (median 56 minutes over 2026-11-15→22). The three parts share nothing but the install, so they
   # now run side by side as `ts-lint-types`, `ts-test` and `ts-build`, and the `typescript` job
-  # below — which keeps the EXACT required context name `TypeScript (lint · types · test · docs)`
-  # (infra/github/variables.tf, .mergify.yml's merge_conditions and merge_protections) — needs all
-  # three and fails unless every one succeeded. No required context changed name.
+  # below — which keeps the EXACT context name `TypeScript (lint · types · test · docs)` (required by
+  # name until 2026-11-22, and since then one of the `needs:` of `CI required`) — needs all three
+  # and fails unless every one succeeded. No context changed name.
   #
   # A SIDE EFFECT THAT IS AN IMPROVEMENT, stated so nobody "restores" the old order: in one job a
   # lint failure skipped the unit suites and the build, so the author learned about one failure per
@@ -786,9 +797,11 @@ jobs:
           ALETHIA_STORAGE_ACCESS_KEY_ID: build
           ALETHIA_STORAGE_SECRET_ACCESS_KEY: build
 
-  # THE REQUIRED CONTEXT. Its `name:` is what infra/github/variables.tf and .mergify.yml require, and
-  # it must not change: renaming it leaves every ruleset and the queue waiting on a check that no
-  # longer reports. It does no work of its own — it is green only when all three parts are.
+  # THE TYPESCRIPT VERDICT, as one of the `needs:` of `CI required` (the context the rulesets and the
+  # queue require). Its `name:` was itself required until 2026-11-22, and a LIVE ruleset may still
+  # name it until infra/github is applied — so it must not change before then: renaming it would
+  # leave that ruleset waiting on a check that no longer reports. It does no work of its own — it is
+  # green only when all three parts are.
   #
   # `!cancelled()` and not the implicit `success()`: with `success()` a failed part would SKIP this
   # job, and a skipped required check reads as neither red nor green — the queue would sit on it.
@@ -1211,9 +1224,10 @@ jobs:
     # route through the live half of apps/console/docs/ui-conformance/RUBRIC.md (R1-R7, T5-T7) and
     # it WILL be red until the conformance lanes land — the baseline is captured separately (#3634),
     # and a suite that becomes a merge gate before anyone has read its findings is how #2417's
-    # 320-test suite nearly went in. It is not in .mergify.yml's merge_conditions and not in the
-    # protect-dev ruleset; scripts/ci/check-required-checks.mjs compares those two, so this job
-    # joining a required check can only ever be a deliberate edit to both.
+    # 320-test suite nearly went in. It is not one of the `needs:` of `CI required` (the job that
+    # decides which CI jobs gate a merge), and its context is named neither in .mergify.yml nor in
+    # the protect-dev ruleset. Making it a gate is a deliberate edit to that `needs:` list —
+    # scripts/ci/check-required-checks.mjs compares the two named lists, and does NOT read `needs:`.
     #
     # WHEN: nightly at 03:00 UTC, and on demand. NOT on every console PR any more (#4173).
     #
@@ -1829,9 +1843,9 @@ jobs:
       #
       # IT IS REQUIRED FROM THE MOMENT IT LANDED, AND THERE IS NO SOAK. #3781's body proposed
       # promoting it "once it has ridden a few PRs", but this job is `Authz / open-core guards`,
-      # which `infra/github/variables.tf` lists as a required status check on `protect-dev` and
-      # `.mergify.yml` requires by name — and the step carries no `continue-on-error`, so it has
-      # blocked merges since it merged. The soak was never a state this step could be in.
+      # which was required by name on `protect-dev` and in `.mergify.yml` when this step landed and
+      # is now one of the `needs:` of `CI required`, the context both require — and the step
+      # carries no `continue-on-error`, so it has blocked merges since it merged. The soak was never a state this step could be in.
       #
       # Left required deliberately rather than made real with `continue-on-error: true`: a gate
       # that reports green while finding something is the defect class this repo has shipped most
@@ -3539,7 +3553,8 @@ jobs:
           done
 
   # THE ONE CONTEXT THAT MAKES `byo-users-postgres` REQUIRABLE (#6484). Required by name in
-  # .mergify.yml (both blocks) and in infra/github/variables.tf.
+  # .mergify.yml and infra/github/variables.tf until 2026-11-22; since then one of the `needs:` of
+  # `CI required`, the context those two require.
   #
   # The matrix above cannot be required directly. Skipped at job level — every PR that does not
   # touch the runner — it reports ONE check under its UNEXPANDED name,
@@ -3694,9 +3709,9 @@ jobs:
   # The always-reporting aggregator of `byo-users-mysql`, built exactly as `byo-users-postgres-required`
   # above (read its comment): a FIXED name with no `${{ }}`, run with `!cancelled()`, green only when
   # the legs were expected and passed or were not expected and were skipped. It is NOT required yet —
-  # nothing in .mergify.yml or infra/github/variables.tf names it — so a fault in it cannot hold a PR;
-  # requiring it is a separate change that adds "BYO users SQL — real MySQL" to both, as #6484 did for
-  # Postgres.
+  # it is not one of the `needs:` of `CI required`, and nothing in .mergify.yml or
+  # infra/github/variables.tf names it — so a fault in it cannot hold a PR; requiring it is a separate
+  # change that adds `byo-users-mysql-required` to `CI required`'s `needs:` (and its count).
   byo-users-mysql-required:
     name: BYO users SQL — real MySQL
     needs: [detect-changes, byo-users-mysql]
@@ -4556,9 +4571,10 @@ jobs:
   # `as unknown as` casts, and keyless-only (no static credentials). It does NOT enforce the
   # `Record<string, unknown>`-on-known-shape-JSONB convention — see the script header for why.
   #
-  # Its context is the job `name:` — `capabilities-security` — which is what infra/github/variables.tf
-  # and .mergify.yml require; the workflow it lives in is not part of a check-run's name, so moving it
-  # here changes no required context. It runs on every PR (the old workflow's only trigger) and the
+  # Its context is the job `name:` — `capabilities-security` — which infra/github/variables.tf and
+  # .mergify.yml required by name until 2026-11-22 (#1625 is why it is required at all); it is now
+  # one of the `needs:` of `CI required`. The workflow it lives in is not part of a check-run's
+  # name, so moving it here changed no required context. It runs on every PR (the old workflow's only trigger) and the
   # script NO-OP-PASSES when no relevant path changed, so it always reports; it fails only when those
   # paths changed AND an invariant is violated. Which files count as "relevant" is the whole gate, and
   # it is guarded by the script's own `--self-test`, run in the `guards` job (#1789).
@@ -4603,8 +4619,10 @@ jobs:
   # #2509), so this both works without one AND regression-tests that guard on every PR.
   #
   # ── WHY THE JOB ALWAYS RUNS AND GATES ITS STEPS INSTEAD ──
-  # It is a REQUIRED context, and `.mergify.yml`'s `check-success=` does not accept `skipped`, so a
-  # job-level skip would hold every PR that does not touch the images. So the job always runs on a PR
+  # It was a REQUIRED context by name, and `.mergify.yml`'s `check-success=` does not accept
+  # `skipped`, so a job-level skip would have held every PR that does not touch the images. Since
+  # 2026-11-22 it is one of the `needs:` of `CI required`, which does accept `skipped` — but a live
+  # ruleset may name this context until infra/github is applied, so the shape stays. The job always runs on a PR
   # and self-gates its STEPS on `detect-changes`' `console_images` output, reporting green in seconds
   # when nothing relevant changed — the same shape `docs-prose` uses. `!cancelled()` and the `!=
   # 'false'` step test make a failed detect job BUILD rather than pass vacuously. ONE job, not a
@@ -4662,24 +4680,29 @@ jobs:
           build docs             apps/docs/Dockerfile
           build blog             apps/blog/Dockerfile
 
-  # ── CI required — THE ONE CONTEXT THE RULESETS AND THE QUEUE ARE MEANT TO REQUIRE (2026-11-22) ──
+  # ── CI required — THE ONE CI CONTEXT THE RULESETS AND THE QUEUE REQUIRE (2026-11-22) ──
   #
   # Every required job of THIS workflow, in one verdict: green when each need concluded `success` or
   # `skipped`, red on `failure` or `cancelled`. Requiring this one name instead of eleven is what lets
   # a required job be SKIPPED on a PR that cannot affect it (see `detect-changes`, AFFECTED-ONLY): a
-  # skipped job here reads as "not needed", where `.mergify.yml`'s per-job `check-success=` reads it
-  # as "not green" and a missing matrix leg as "still pending".
+  # skipped job here reads as "not needed", where a per-job `check-success=` in `.mergify.yml` reads
+  # it as "not green" and a missing matrix leg as "still pending".
   #
-  # ⚠️ NOT REQUIRED YET. As of this job's introduction nothing names it — not infra/github/variables.tf,
-  # not .mergify.yml — and the per-job contexts it summarises keep their names and keep reporting, so
-  # the transition is additive. The flip (require `CI required`, drop the per-job contexts it covers)
-  # must wait until this job is on `main`, because Mergify reads its configuration only from there and
-  # a condition naming a context that never reports holds every PR. The job-level skips stay DORMANT
-  # until after that flip (`AFFECTED_ONLY_ARMED` in `detect-changes`).
+  # THE `needs:` LIST BELOW IS THE SOURCE OF TRUTH for which CI jobs gate a merge. `.mergify.yml`
+  # (both blocks) and infra/github/variables.tf name only this context (plus `contribution-legal`,
+  # below), so adding a required job is an edit HERE — the list and the count the step checks — and
+  # nowhere else. scripts/ci/check-required-checks.mjs compares the two named lists; it does not
+  # read this one.
+  #
+  # THE ROLLOUT. Introduced additively (#7267), required from the follow-up that switched
+  # `.mergify.yml` and infra/github to it. Mergify acts on that only once it is on `main`, and the
+  # LIVE rulesets only once infra/github is applied; until the apply they may still name the per-job
+  # contexts, which keep their names and keep reporting, so the overlap is safe. The job-level skips
+  # stay DORMANT until both have happened (`AFFECTED_ONLY_ARMED` in `detect-changes` lists exactly
+  # what must be true first).
   #
   # WHAT IT CANNOT COVER: `contribution-legal`, which comes from cla.yml — a `pull_request_target`
-  # workflow — and `needs:` cannot reach across workflows. The flip keeps that context required on
-  # its own.
+  # workflow — and `needs:` cannot reach across workflows. It stays required on its own.
   #
   # WHY `detect-changes` MUST SUCCEED, not merely "success or skipped": every other need runs with
   # `!cancelled()`, so a failed detect job runs them in FULL rather than skipping them — but a
