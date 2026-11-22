@@ -99,21 +99,10 @@ jobs:
           load TF_VAR_cloudflare_account_id CLOUDFLARE_ACCOUNT_ID
           load TF_VAR_ssh_public_key        DEPLOY_SSH_PUBLIC_KEY
 
-          # OPTIONAL key: exported only when PRESENT in the secret; absent, the variables.tf default
-          # ("") holds. APEX_MX_RECORD_ID imports a
-          # hand-made apex `MX 1 smtp.google.com` record (#7261, mail-imports.tf); absent, the apply
-          # creates that record instead. The retired Email Routing keys (MANAGE_EMAIL_ROUTING,
-          # EMAIL_FORWARD_TO, EMAIL_ROUTING_ADDRESS_ID, EMAIL_ROUTING_RULE_IDS) are deliberately no
-          # longer read — and tofu ignores an undeclared TF_VAR_ in silence, so a stale key cannot
-          # bring the routing back.
-          load_opt() {
-            local var="$1" key="$2" val
-            printf '%s' "$json" | jq -e --arg k "$key" 'has($k)' >/dev/null || return 0
-            val="$(printf '%s' "$json" | jq -r --arg k "$key" '.[$k] | if type == "string" then . else tojson end')"
-            echo "::add-mask::$val"
-            echo "$var=$val" >> "$GITHUB_ENV"
-          }
-          load_opt TF_VAR_mail_mx_record_id APEX_MX_RECORD_ID
+          # The retired Email Routing keys (MANAGE_EMAIL_ROUTING, EMAIL_FORWARD_TO,
+          # EMAIL_ROUTING_ADDRESS_ID, EMAIL_ROUTING_RULE_IDS) are deliberately not read (#7261):
+          # their variables no longer exist, and tofu ignores an undeclared TF_VAR_ in silence, so a
+          # stale key in the secret cannot bring the routing back.
 
       - name: OpenTofu Init
         working-directory: ${{ env.TF_DIR }}
@@ -128,8 +117,7 @@ jobs:
       - name: OpenTofu Apply
         working-directory: ${{ env.TF_DIR }}
         # The five variables this root declares without a default arrive as TF_VAR_* from the
-        # Secrets Manager step above, plus the OPTIONAL mail_mx_record_id when its key exists
-        # (#7261); every other one carries a default. Nothing is passed from
+        # Secrets Manager step above; every other one carries a default. Nothing is passed from
         # a repo Actions variable — if you add one, confirm the variable is declared in
         # infra/cp-hetzner/variables.tf, because tofu ignores an undeclared TF_VAR_ in silence.
         run: tofu apply -auto-approve

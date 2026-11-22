@@ -29,19 +29,6 @@ variable "domain" {
   default     = "alethialabs.io"
 }
 
-variable "mail_mx_record_id" {
-  # Optional. Loaded from the APEX_MX_RECORD_ID key of alethia/prod/env ONLY when that key exists
-  # (infra-cp-hetzner.yml); absent, the default holds. Read by mail-imports.tf.
-  description = <<-EOT
-    Cloudflare id of a LIVE apex `MX 1 smtp.google.com` record, to import it into
-    cloudflare_record.mail_mx_google (#7261). Leave "" when no such record exists: the apply then
-    creates it. Set it when the MX was added by hand before the apply, or the create collides with
-    the live record and fails. Inert once the record is in state.
-  EOT
-  type        = string
-  default     = ""
-}
-
 variable "ssh_public_key" {
   description = "SSH public key authorized on the server (CI deploy key)."
   type        = string

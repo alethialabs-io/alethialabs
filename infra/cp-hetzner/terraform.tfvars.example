@@ -7,9 +7,6 @@ cloudflare_zone_id    = "YOUR_CLOUDFLARE_ZONE_ID"
 cloudflare_account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
 domain                = "alethialabs.io"
 
-# Optional: id of a live apex `MX 1 smtp.google.com` record to import (see mail-imports.tf).
-# mail_mx_record_id = ""
-
 # Public half of the CI deploy key (private half = GH secret HETZNER_SSH_KEY).
 ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
 

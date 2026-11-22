@@ -15,12 +15,16 @@
 # SPF. Its records are owned by those stacks. _dmarc is not declared here either (unchanged by the
 # move, and not part of #7261's scope).
 #
-# WHAT REPLACED email-routing.tf. The Cloudflare Email Routing declarations are retired — see the
-# `removed` blocks at the bottom. Cloudflare Email Routing itself must be DISABLED for the zone (an
-# operator step, README): while it is enabled, Cloudflare re-adds its own locked
-# route{1,2,3}.mx.cloudflare.net apex MX records whenever the routing re-syncs, which would put two
-# competing MX sets on the apex. Nothing in this stack can delete those records: they are created by
-# Cloudflare, are read-only through the DNS API, and are not in this stack's state.
+# EMAIL ROUTING IS DISABLED, and this stack keeps it that way by not declaring it. Cloudflare Email
+# Routing for the zone was disabled out of band on 2026-11-22 (21:59Z). While it was enabled,
+# Cloudflare kept its own locked route{1,2,3}.mx.cloudflare.net records on the apex and refused to add
+# any other MX, and a routing re-sync put those records back after they had been removed by hand.
+# Nothing in this stack declares cloudflare_email_routing_settings (whose create is the API call that
+# ENABLES routing), a routing rule, a catch-all or a destination address. WHAT ENFORCES THAT is only
+# this absence and review: `tofu validate` accepts a cloudflare_email_routing_settings declared next
+# to the `removed` blocks below (checked with 1.12.3). Do not add one for this zone — inbound to the
+# console uses a subdomain (MAIL-S1 #7246, README), and its design must first prove it leaves the
+# apex MX alone.
 
 # MX 1 smtp.google.com — Google's single-host MX for Workspace (the 5-host aspmx set is legacy).
 resource "cloudflare_record" "mail_mx_google" {
@@ -71,16 +75,13 @@ resource "cloudflare_record" "mail_google_site_verification" {
 #
 # Those declarations were gated behind manage_email_routing, which the apply workflow could only
 # switch on from a MANAGE_EMAIL_ROUTING key in alethia/prod/env — absent when checked on 2026-11-22 —
-# so none of the 11 objects is expected to be in state and each block below is expected to be a
-# no-op. They exist for the case that cannot
-# be ruled out from the repository: a LOCAL apply that adopted them. Without these blocks that state
-# would plan a destroy — and the settings resource's destroy disables Email Routing through the API
-# at an unreviewed moment, from an unattended `-auto-approve`. `destroy = false` makes OpenTofu
-# FORGET such an object instead: it leaves state, and Cloudflare is not called. Retiring Email
-# Routing in Cloudflare is then a deliberate operator step (README), not a side effect of an apply.
+# so none of the 11 objects is expected to be in state, and each block below is expected to be a
+# no-op. They cover the case the repository cannot rule out: a LOCAL apply that adopted them.
+# `destroy = false` makes OpenTofu FORGET such an object instead of destroying it, so no apply makes
+# a Cloudflare call for it. (Routing is already disabled, so a destroy would have nothing left to
+# switch off; forgetting is still the choice that cannot surprise anyone.)
 #
-# Keep these until the stack has been applied once after this change; after that they are inert and
-# may be deleted.
+# Keep these until the stack has been applied once after this change; after that they are inert.
 
 removed {
   from = cloudflare_email_routing_settings.zone
