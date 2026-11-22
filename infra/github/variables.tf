@@ -56,8 +56,9 @@ variable "required_status_checks" {
     # human gate would deadlock the no-approval Mergify queue). Runs on EVERY PR and no-op-passes (green)
     # when no capabilities/connector/keyless path changed; fail-closes on the deterministic
     # alethia-security-review invariants when those paths DID change. See
-    # .github/workflows/capabilities-security.yml. SAFE to require: it always reports (unfiltered job), so
-    # it never wedges an unrelated PR the way a path-filtered required check would.
+    # the `capabilities-security` job in .github/workflows/ci.yml (its own workflow until 2026-11-22; the
+    # context is the job name, which did not change). SAFE to require: it always reports (no job-level
+    # filter on a PR), so it never wedges an unrelated PR the way a path-filtered required check would.
     "capabilities-security",
     # Pre-registration: blocks outside contributions while the recipient entity and CLA are not
     # active. After registration this same workflow is replaced by the versioned CLA signing gate.

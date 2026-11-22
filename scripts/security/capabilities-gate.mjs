@@ -57,7 +57,7 @@
 //   D. No static credentials in code (AWS access-key ids, embedded PEM private keys) on the keyless
 //      surface — belt-and-suspenders alongside the repo-wide gitleaks job, scoped + fail-closed here.
 //
-// Run: `node scripts/security/capabilities-gate.mjs` (wired into .github/workflows/capabilities-security.yml).
+// Run: `node scripts/security/capabilities-gate.mjs` (wired into ci.yml's `capabilities-security` job).
 // Self-test: `node scripts/security/capabilities-gate.mjs --self-test` (wired into ci.yml's `guards` job).
 
 import { execSync } from "node:child_process";

@@ -4,6 +4,10 @@
 # Continuous integration — validates every PR + push to main. The CD/release/infra
 # workflows are separate. (The enterprise package @alethia/ee is verified at standup,
 # not here — community CI checks the open-source build.)
+#
+# Since 2026-11-22 it also carries the two checks that had a workflow each — `capabilities-security`
+# and `Build console images (no push)` — under their unchanged job names, and the `CI required` job
+# that aggregates every required job here into one context (see its own comment for the rollout).
 
 name: CI
 
@@ -39,6 +43,12 @@ on:
     #   · `docs-prose` — it exists to ALWAYS report its status check (see its own comment), and on
     #     a schedule event every one of its steps is gated off by the `docs` filter, so it costs one
     #     idle runner rather than a Vale run.
+    #
+    # Three jobs added on 2026-11-22 never needed the conjunct: `capabilities-security` and
+    # `build-console` (folded in from their own workflows) gate on a PR/dispatch event, and
+    # `ci-required` is `if: always()` by design — on this cron it aggregates skipped needs and
+    # costs one idle runner, the same trade `docs-prose` makes. (The TypeScript parts, `integration`,
+    # `go` and `addon-charts-render` now also `need` `detect-changes`; they keep their own conjunct.)
     - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
@@ -76,84 +86,399 @@ permissions:
   contents: read
 
 jobs:
-  # Which surfaces does this PR touch? The heavy browser E2Es below stay OFF most PRs (Actions
-  # minutes), but a PR that changes a surface an E2E covers turns that E2E into a PR gate — because
-  # the alternative is what keeps happening: a suite that only runs post-merge lets a break ship
-  # green. A whole Lexical composer rewrite shipped that way (→ `agent`); the "Org evidence" heading
-  # the hero path waited for was deleted in an Evidence redesign and rotted for weeks (→ `console`,
-  # below). Cheap (~15s) and dependency-free.
+  # Which surfaces does this PR touch? Two jobs' worth of answers, from one job:
+  #
+  #   · THE FOUR ORIGINAL OUTPUTS — `agent`, `console`, `docs`, `runner` — keep their exact meaning:
+  #     'true'/'false' on a `pull_request`, and 'false' on every other event (each consumer below
+  #     already ORs in the events it wants to run on). The heavy browser E2Es stay OFF most PRs
+  #     (Actions minutes), but a PR that changes a surface an E2E covers turns that E2E into a PR
+  #     gate — because the alternative is what kept happening: a suite that only runs post-merge
+  #     lets a break ship green. A whole Lexical composer rewrite shipped that way (→ `agent`); the
+  #     "Org evidence" heading the hero path waited for was deleted in an Evidence redesign and
+  #     rotted for weeks (→ `console`).
+  #
+  #   · THE AFFECTED-ONLY PLAN (2026-11-22) — which required jobs a PR's diff can skip, and how far
+  #     the TypeScript parts may narrow their turbo run. See "AFFECTED-ONLY" below.
+  #
+  # Replaced a hand-written `git diff | grep -E` with dorny/paths-filter — the same pinned major
+  # validate-console's build job and deploy-console.yml already used. On a `pull_request` it lists
+  # the PR's files through the API, which is the PR's OWN changes (the three-dot, merge-base set the
+  # old grep computed by hand), so there is no checkout at all now. The old regexes were PREFIX
+  # matches, and the globs below keep that: `components/agent` matched `components/agent-rail/…`
+  # too, so it is written `agent*` and `agent*/**`.
+  #
+  # ── AFFECTED-ONLY ───────────────────────────────────────────────────────────────────────────
+  #
+  # `selective` is true only on an ordinary PR: event `pull_request`, head NOT a Mergify queue
+  # branch (`mergify/merge-queue/*` — the queue build is where cross-PR breakage is caught, so it
+  # runs everything), base NOT `main`/`staging` (a promotion ships what it carries). A push, a
+  # `merge_group`, a cron and a dispatch are never selective: they run everything, as before.
+  #
+  # Two levers hang off it, and they are armed SEPARATELY on purpose:
+  #
+  #   1. TURBO NARROWING — live as of this change. `ts-lint-types` and `ts-build` hand turbo
+  #      `--filter=…[HEAD^1]` when `ts_filter` is `affected`. The job still RUNS and still reports,
+  #      so no required context changes shape; it only does less work.
+  #
+  #   2. JOB-LEVEL SKIPS — DORMANT until `AFFECTED_ONLY_ARMED` below reads "true". A skipped job
+  #      reports `skipped`, a matrix leg that is not generated reports NOTHING, and `.mergify.yml`'s
+  #      `check-success=` accepts neither — so arming this while Mergify still names the per-job
+  #      contexts would hold every PR forever with nothing red. The order is: the `CI required`
+  #      aggregator reaches `main`; `.mergify.yml` and `infra/github` switch to requiring it (that
+  #      PR's body carries the exact edits); then a reviewed one-line PR flips this constant. It is
+  #      a constant in this file and not a repository variable so that the switch is a diff someone
+  #      reviewed, and so that nothing outside the tree can arm it on its own.
+  #
+  # WHAT THE SKIP SETS ARE, AND WHAT THEY ARE NOT. The sets were derived on 2026-11-22 from a grep
+  # of what each language's tests actually READ — and this repo's tests cross-read heavily: Go
+  # tests read apps/console sources, apps/docs pages, packages/format fixtures, infra/templates and
+  # .github/workflows; console unit tests read Go sources in packages/core and fixtures in apps/cli.
+  # So every set below is an ALLOW-TO-SKIP list (a change confined to it may skip; anything else,
+  # including a directory nobody listed, runs in full), never an allow-to-run list. A new
+  # cross-read added later is not seen by this job — that is the bound, stated.
+  #
+  #   · Go `[]`          — every changed file is a `.md`, or under a TS-only app/package no Go
+  #                        source names (marketing, admin, blog, ee, and the @repo/* packages other
+  #                        than format).
+  #   · Go `[apps/cli]`  — the above plus apps/cli, apps/docs (the CLI tests read the docs pages)
+  #                        and packages/format (the CLI tests read its conformance cases). apps/cli
+  #                        is the only leg nothing else depends on: apps/runner's go.mod requires
+  #                        packages/core, apps/cli's requires both, and packages/core's tests read
+  #                        apps/runner sources — so any other Go-relevant change runs all three.
+  #   · `ts_skip`        — every changed file is `.md`/`.mdx`. That is turbo.json's OWN declared
+  #                        non-input set for `lint`, `check-types` and `test`, so a skip here is
+  #                        the same claim the turbo cache already makes — not a new one. It skips
+  #                        `ts-lint-types`, `ts-test`, `integration` and `addon-charts-render`;
+  #                        `ts-build` still runs (narrowed), because the docs build renders `.mdx`.
+  #   · `ts_filter`      — `affected` when every changed file is inside a TypeScript workspace
+  #                        package (or is `.md`/`.mdx`) and no root config changed; `full`
+  #                        otherwise. A change outside every package — packages/core, scripts/,
+  #                        infra/, the lockfile, turbo.json, this file — runs unfiltered, because
+  #                        turbo cannot attribute it to a package and the console's tests read
+  #                        several of those directories directly.
+  #
+  # FAIL-SAFE DIRECTION. Every consumer treats an EMPTY output as "run in full", and the consumers
+  # carry `!cancelled()`, so a failed detect job runs everything rather than skipping it. The
+  # `CI required` aggregator separately fails when this job did not succeed.
   detect-changes:
     name: Detect PR surface changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # `pull-requests: read` — dorny/paths-filter lists a PR's files through the pulls API.
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      AFFECTED_ONLY_ARMED: "false"
     outputs:
-      agent: ${{ steps.filter.outputs.agent }}
-      console: ${{ steps.filter.outputs.console }}
-      docs: ${{ steps.filter.outputs.docs }}
-      runner: ${{ steps.filter.outputs.runner }}
+      agent: ${{ steps.plan.outputs.agent }}
+      console: ${{ steps.plan.outputs.console }}
+      docs: ${{ steps.plan.outputs.docs }}
+      runner: ${{ steps.plan.outputs.runner }}
+      ts: ${{ steps.plan.outputs.ts }}
+      go_cli: ${{ steps.plan.outputs.go_cli }}
+      go_runner: ${{ steps.plan.outputs.go_runner }}
+      go_core: ${{ steps.plan.outputs.go_core }}
+      infra: ${{ steps.plan.outputs.infra }}
+      harness: ${{ steps.plan.outputs.harness }}
+      console_images: ${{ steps.plan.outputs.console_images }}
+      selective: ${{ steps.plan.outputs.selective }}
+      skip_unaffected: ${{ steps.plan.outputs.skip_unaffected }}
+      ts_filter: ${{ steps.plan.outputs.ts_filter }}
+      ts_skip: ${{ steps.plan.outputs.ts_skip }}
+      go_matrix: ${{ steps.plan.outputs.go_matrix }}
     steps:
-      - uses: actions/checkout@v7
+      # SURFACES — "did ANY changed file match". Only on a `pull_request`: every other event runs
+      # everything, and the four original outputs must stay 'false' there (see the job comment).
+      - uses: dorny/paths-filter@v4
+        id: filter
+        if: github.event_name == 'pull_request'
         with:
-          fetch-depth: 0
-      - id: filter
+          filters: |
+            # `agent` — the narrow Elench/agent surface the Elench AI E2E drives.
+            agent:
+              - 'apps/console/components/agent*'
+              - 'apps/console/components/agent*/**'
+              - 'apps/console/components/ui/message-scroller*'
+              - 'apps/console/components/ui/message-scroller*/**'
+              - 'apps/console/lib/ai*'
+              - 'apps/console/lib/ai*/**'
+              - 'apps/console/lib/stores/use-elench*'
+              - 'apps/console/lib/stores/use-elench*/**'
+              - 'apps/console/lib/stores/use-artifact*'
+              - 'apps/console/lib/stores/use-artifact*/**'
+              - 'apps/console/lib/stores/use-widget-grid*'
+              - 'apps/console/lib/stores/use-widget-grid*/**'
+              - 'apps/console/app/api/agent*'
+              - 'apps/console/app/api/agent*/**'
+              - 'apps/console/app/server/actions/agent*'
+              - 'apps/console/app/server/actions/agent*/**'
+              - 'apps/console/app/server/actions/artifacts*'
+              - 'apps/console/app/server/actions/artifacts*/**'
+              - 'apps/console/app/server/actions/mentions*'
+              - 'apps/console/app/server/actions/mentions*/**'
+              - 'apps/console/e2e/elench*'
+              - 'apps/console/e2e/elench*/**'
+            # `console` — the hero happy-path threads through nearly the whole console (auth → org →
+            # connectors → canvas → evidence → clusters), so the filter is DELIBERATELY broad: any
+            # console or shared-UI change can break it. The Evidence break proves narrow is a trap.
+            # ⚠️ The npm SCOPE is `@repo/*` but the DIRECTORY is `packages/<name>` — there has never
+            # been a `packages/@repo/`, and an arm written that way once matched nothing and let the
+            # `[ ]` bracket mark rename every control's accessible name unobjected. The list is the
+            # console's own @repo dependencies, by path.
+            console:
+              - 'apps/console/**'
+              - 'packages/ui/**'
+              - 'packages/brand/**'
+              - 'packages/assets/**'
+              - 'packages/email/**'
+              - 'packages/org-slug/**'
+              - 'packages/plan-catalog/**'
+              - 'packages/platform/**'
+              - 'packages/privacy/**'
+              - 'packages/support/**'
+            # `docs` — the Vale prose lint. The whole docs app, so a .vale.ini / style / vocab change
+            # re-runs it too; and demos/proofs/templates/ai/, because a new AI-template proof bundle
+            # changes the cost figure the starter-templates page must quote (#5302).
+            docs:
+              - 'apps/docs/**'
+              - 'demos/proofs/templates/ai/**'
+            # `runner` — the inputs to the runner BINARY + its Docker image (the 2026-07-22
+            # fleet-churn incident: an arm64 binary in the amd64 image). The Dockerfiles, the
+            # runner/cli Go, the shared Go the runner compiles in (packages/core, go.work*), and this
+            # workflow, so an edit to the guard job re-validates it.
+            runner:
+              - 'apps/runner/**'
+              - 'apps/cli/**'
+              - 'packages/core/**'
+              - 'go.work*'
+              - '.github/workflows/ci.yml'
+            # Informational surfaces (job outputs, for anything that wants to key on them).
+            ts:
+              - 'apps/console/**'
+              - 'apps/marketing/**'
+              - 'apps/admin/**'
+              - 'apps/docs/**'
+              - 'apps/blog/**'
+              - 'apps/e2e-issuer/**'
+              - 'ee/**'
+              - 'packages/!(core)/**'
+              - 'scripts/spend-report/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'turbo.json'
+              - 'patches/**'
+            go_cli:
+              - 'apps/cli/**'
+            go_runner:
+              - 'apps/runner/**'
+            go_core:
+              - 'packages/core/**'
+              - 'test/e2e/**'
+              - 'go.work*'
+            infra:
+              - 'infra/**'
+            harness:
+              - '.claude/**'
+              - '.codex/**'
+              - '.agents/**'
+              - '.githooks/**'
+              - 'CLAUDE.md'
+              - 'AGENTS.md'
+            # Root config that every TypeScript package inherits — a change here runs turbo
+            # unfiltered, because turbo attributes no package to it.
+            ts_root:
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'turbo.json'
+              - 'patches/**'
+              - '.github/workflows/ci.yml'
+            # The box images `build-console` proves (formerly validate-console.yml's own filter: the
+            # path set deploy-console.yml's `changes` job uses for its `apps` group, plus the
+            # lockfile, plus the workflow that holds the build steps so an edit to them self-tests).
+            console_images:
+              - 'apps/console/**'
+              - 'apps/marketing/**'
+              - 'apps/admin/**'
+              - 'apps/docs/**'
+              - 'apps/blog/**'
+              - 'packages/**'
+              - 'ee/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.github/workflows/ci.yml'
+      # CONFINEMENT — "is there a changed file OUTSIDE this set". With `predicate-quantifier: every`
+      # a file matches a filter only when it matches EVERY pattern, so `'**'` plus negations reads
+      # "some changed file is none of these". `false` therefore means the whole diff is confined to
+      # the negated set. Its own step because the quantifier is per step, not per filter.
+      - uses: dorny/paths-filter@v4
+        id: outside
+        if: github.event_name == 'pull_request'
+        with:
+          predicate-quantifier: every
+          filters: |
+            not_prose:
+              - '**'
+              - '!**/*.md'
+              - '!**/*.mdx'
+            not_go_free:
+              - '**'
+              - '!**/*.md'
+              - '!apps/marketing/**'
+              - '!apps/admin/**'
+              - '!apps/blog/**'
+              - '!ee/**'
+              - '!packages/assets/**'
+              - '!packages/brand/**'
+              - '!packages/cloud-catalog/**'
+              - '!packages/email/**'
+              - '!packages/enterprise-api/**'
+              - '!packages/eslint-config/**'
+              - '!packages/legal/**'
+              - '!packages/org-slug/**'
+              - '!packages/plan-catalog/**'
+              - '!packages/platform/**'
+              - '!packages/privacy/**'
+              - '!packages/status/**'
+              - '!packages/support/**'
+              - '!packages/typescript-config/**'
+              - '!packages/ui/**'
+              - '!packages/workload-identity/**'
+            not_go_cli_only:
+              - '**'
+              - '!**/*.md'
+              - '!apps/cli/**'
+              - '!apps/docs/**'
+              - '!packages/format/**'
+              - '!apps/marketing/**'
+              - '!apps/admin/**'
+              - '!apps/blog/**'
+              - '!ee/**'
+              - '!packages/assets/**'
+              - '!packages/brand/**'
+              - '!packages/cloud-catalog/**'
+              - '!packages/email/**'
+              - '!packages/enterprise-api/**'
+              - '!packages/eslint-config/**'
+              - '!packages/legal/**'
+              - '!packages/org-slug/**'
+              - '!packages/plan-catalog/**'
+              - '!packages/platform/**'
+              - '!packages/privacy/**'
+              - '!packages/status/**'
+              - '!packages/support/**'
+              - '!packages/typescript-config/**'
+              - '!packages/ui/**'
+              - '!packages/workload-identity/**'
+            not_ts_scoped:
+              - '**'
+              - '!**/*.md'
+              - '!**/*.mdx'
+              - '!apps/console/**'
+              - '!apps/marketing/**'
+              - '!apps/admin/**'
+              - '!apps/docs/**'
+              - '!apps/blog/**'
+              - '!apps/cli/**'
+              - '!apps/e2e-issuer/**'
+              - '!ee/**'
+              - '!packages/assets/**'
+              - '!packages/brand/**'
+              - '!packages/cloud-catalog/**'
+              - '!packages/email/**'
+              - '!packages/enterprise-api/**'
+              - '!packages/eslint-config/**'
+              - '!packages/format/**'
+              - '!packages/legal/**'
+              - '!packages/org-slug/**'
+              - '!packages/plan-catalog/**'
+              - '!packages/platform/**'
+              - '!packages/privacy/**'
+              - '!packages/status/**'
+              - '!packages/support/**'
+              - '!packages/typescript-config/**'
+              - '!packages/ui/**'
+              - '!packages/workload-identity/**'
+              - '!scripts/spend-report/**'
+      - id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+          F_AGENT: ${{ steps.filter.outputs.agent }}
+          F_CONSOLE: ${{ steps.filter.outputs.console }}
+          F_DOCS: ${{ steps.filter.outputs.docs }}
+          F_RUNNER: ${{ steps.filter.outputs.runner }}
+          F_TS: ${{ steps.filter.outputs.ts }}
+          F_GO_CLI: ${{ steps.filter.outputs.go_cli }}
+          F_GO_RUNNER: ${{ steps.filter.outputs.go_runner }}
+          F_GO_CORE: ${{ steps.filter.outputs.go_core }}
+          F_INFRA: ${{ steps.filter.outputs.infra }}
+          F_HARNESS: ${{ steps.filter.outputs.harness }}
+          F_TS_ROOT: ${{ steps.filter.outputs.ts_root }}
+          F_CONSOLE_IMAGES: ${{ steps.filter.outputs.console_images }}
+          O_NOT_PROSE: ${{ steps.outside.outputs.not_prose }}
+          O_NOT_GO_FREE: ${{ steps.outside.outputs.not_go_free }}
+          O_NOT_GO_CLI_ONLY: ${{ steps.outside.outputs.not_go_cli_only }}
+          O_NOT_TS_SCOPED: ${{ steps.outside.outputs.not_ts_scoped }}
         run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "agent=false" >> "$GITHUB_OUTPUT"
-            echo "console=false" >> "$GITHUB_OUTPUT"
-            echo "docs=false" >> "$GITHUB_OUTPUT"
-            echo "runner=false" >> "$GITHUB_OUTPUT"; exit 0
+          set -eu
+          out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; echo "$1=$2"; }
+          # 'true' only when the filter said exactly 'true'; anything else (unset on a non-PR event) is 'false'.
+          b() { if [ "${1:-}" = true ]; then echo true; else echo false; fi; }
+
+          out agent "$(b "${F_AGENT:-}")"
+          out console "$(b "${F_CONSOLE:-}")"
+          out docs "$(b "${F_DOCS:-}")"
+          out runner "$(b "${F_RUNNER:-}")"
+          out go_cli "$(b "${F_GO_CLI:-}")"
+          out go_runner "$(b "${F_GO_RUNNER:-}")"
+          out go_core "$(b "${F_GO_CORE:-}")"
+          out infra "$(b "${F_INFRA:-}")"
+          out harness "$(b "${F_HARNESS:-}")"
+
+          selective=false
+          if [ "$EVENT_NAME" = pull_request ] \
+            && [ "${HEAD_REF#mergify/merge-queue/}" = "$HEAD_REF" ] \
+            && [ "$BASE_REF" != main ] && [ "$BASE_REF" != staging ]; then
+            selective=true
           fi
-          # THREE-dot (merge-base): the PR's OWN changes only. Two-dot (`git diff base head`)
-          # false-positives every filter the moment this branch falls behind base — it then lists
-          # every file the base advanced past, so an unrelated PR would run the E2Es. (That is a
-          # pre-existing bug this job carried; it over-ran, never under-ran, so it hid.)
-          changed=$(git diff --name-only \
-            "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}")
-          # `agent` — the narrow Elench/agent surface the Elench AI E2E drives.
-          if echo "$changed" | grep -qE '^apps/console/(components/(agent|ui/message-scroller)|lib/(ai|stores/use-(elench|artifact|widget-grid))|app/api/agent|app/server/actions/(agent|artifacts|mentions)|e2e/elench)'; then
-            echo "agent=true" >> "$GITHUB_OUTPUT"
+          out selective "$selective"
+
+          # Off an ordinary PR, every surface counts as changed.
+          if [ "$EVENT_NAME" != pull_request ]; then
+            out ts true
+            out console_images true
           else
-            echo "agent=false" >> "$GITHUB_OUTPUT"
+            out ts "$(b "${F_TS:-}")"
+            out console_images "$(b "${F_CONSOLE_IMAGES:-}")"
           fi
-          # `console` — the hero happy-path threads through nearly the whole console (auth → org →
-          # connectors → canvas → evidence → clusters), so the filter is DELIBERATELY broad: any
-          # console or shared-UI change can break it. The Evidence break proves narrow is a trap —
-          # a page nobody thought of as "hero-related" broke the sellable flow. Better to run the
-          # hero on a console PR that turns out not to touch it than to miss the one that does.
-          # ⚠️ `packages/@repo/` matched NOTHING and silently halved this filter. The npm SCOPE is
-          # `@repo/*`, but the DIRECTORY is `packages/<name>` — there has never been a
-          # `packages/@repo/`. So the "shared-UI" arm was dead from the day it was written, and a
-          # change confined to packages/ui or packages/brand skipped the hero gate entirely. That is
-          # exactly how the `[ ]` bracket mark reached the base button variant and renamed every
-          # control's accessible name from "Add" to "[Add]" without this job objecting. The list
-          # below is the console's own @repo dependencies, by path.
-          if echo "$changed" | grep -qE '^(apps/console/|packages/(ui|brand|assets|email|org-slug|plan-catalog|platform|privacy|support)/)'; then
-            echo "console=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "console=false" >> "$GITHUB_OUTPUT"
+
+          skip=false
+          if [ "$selective" = true ] && [ "$AFFECTED_ONLY_ARMED" = true ]; then skip=true; fi
+          out skip_unaffected "$skip"
+
+          ts_filter=full
+          if [ "$selective" = true ] && [ "$(b "${F_TS_ROOT:-}")" = false ] && [ "$(b "${O_NOT_TS_SCOPED:-true}")" = false ]; then
+            ts_filter=affected
           fi
-          # `docs` — the Vale prose lint. Gate on the whole docs app so a change to the
-          # .vale.ini / Alethia style / vocab re-runs the lint too, not just content edits.
-          # demos/proofs/templates/ai/ too: a new AI-template proof bundle changes the cost figure
-          # the starter-templates page must quote (#5302), and a PR that only adds the bundle would
-          # otherwise never run the check that notices the page is now stale.
-          if echo "$changed" | grep -qE '^(apps/docs/|demos/proofs/templates/ai/)'; then
-            echo "docs=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "docs=false" >> "$GITHUB_OUTPUT"
+          out ts_filter "$ts_filter"
+
+          ts_skip=false
+          if [ "$skip" = true ] && [ "$(b "${O_NOT_PROSE:-true}")" = false ]; then ts_skip=true; fi
+          out ts_skip "$ts_skip"
+
+          go_matrix='["apps/cli","apps/runner","packages/core"]'
+          if [ "$skip" = true ]; then
+            if [ "$(b "${O_NOT_GO_FREE:-true}")" = false ]; then
+              go_matrix='[]'
+            elif [ "$(b "${O_NOT_GO_CLI_ONLY:-true}")" = false ]; then
+              go_matrix='["apps/cli"]'
+            fi
           fi
-          # `runner` — the inputs to the runner BINARY + its Docker image. The 2026-07-22 fleet-churn
-          # incident came from apps/runner/Dockerfile.base shipping an arm64 binary in the amd64 image;
-          # gate the amd64-ELF-arch guard on any change that could rebuild that binary/image (the
-          # Dockerfiles, the runner/cli Go, and the shared Go the runner compiles in — packages/core +
-          # go.work). A plain `go build` can't reproduce a Dockerfile ARG regression, so the guard
-          # builds the real image — only run it when one of these actually changed. Also fire on a
-          # change to THIS workflow, so an edit to the guard job itself re-validates it (and so its
-          # introducing PR exercises it).
-          if echo "$changed" | grep -qE '^(apps/runner/|apps/cli/|packages/core/|go\.work|\.github/workflows/ci\.yml$)'; then
-            echo "runner=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "runner=false" >> "$GITHUB_OUTPUT"
-          fi
+          out go_matrix "$go_matrix"
 
   # ── THE TYPESCRIPT CHECK, SPLIT INTO THREE PARALLEL PARTS (2026-11-22) ─────────────────────────
   #
@@ -175,9 +500,17 @@ jobs:
     # 03:00 cron added for the console UI audit would have signed this one up for a nightly
     # run it never asked for — the same trap the cron block records for `mutation`, which
     # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
-    if: github.event.schedule != '0 3 * * *'
+    # AFFECTED-ONLY (see `detect-changes`): skipped only when the job-level skips are ARMED and the
+    # whole diff is `.md`/`.mdx` — turbo.json's own declared non-inputs for this task. `!cancelled()`
+    # so a failed detect job runs this in full rather than skipping it.
+    needs: [detect-changes]
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.ts_skip != 'true' }}
     steps:
+      # Depth 2: the PR's merge commit AND its first parent (the base), which is what `[HEAD^1]`
+      # below diffs against. Turbo treats a checkout too shallow to answer as "everything changed".
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -205,8 +538,25 @@ jobs:
       # Turbo fans these out across EVERY workspace project that defines the script
       # (console, marketing, docs, blog, @alethia/ee, @repo/{ui,brand,plan-catalog}),
       # so new apps/packages are covered automatically — no hardcoded list to drift.
-      - name: Type-check + lint (all workspace projects)
-        run: pnpm exec turbo run check-types lint
+      #
+      # NARROWED ON AN ORDINARY PR (`ts_filter == affected`, see `detect-changes`): `...[HEAD^1]` is
+      # every package the PR changed PLUS every package that depends on one, which is the whole set
+      # whose types or lint can move — both tasks depend only on a package's own sources and, through
+      # `^check-types`/`^lint`, its dependencies'. On a pull_request checkout HEAD is the merge commit
+      # and HEAD^1 the base it was merged onto, so the diff is exactly the PR's own changes.
+      # Everything else — a push, the queue build, a dispatch, a root-config change — runs unfiltered.
+      - name: Type-check + lint (affected workspace projects on a PR; all of them otherwise)
+        env:
+          TS_FILTER: ${{ needs.detect-changes.outputs.ts_filter }}
+        run: |
+          set -euo pipefail
+          if [ "$TS_FILTER" = affected ]; then
+            echo "affected-only: turbo --filter=...[HEAD^1]"
+            pnpm exec turbo run check-types lint --filter='...[HEAD^1]'
+          else
+            echo "full run (ts_filter='${TS_FILTER}')"
+            pnpm exec turbo run check-types lint
+          fi
 
   ts-test:
     name: TypeScript — unit tests · coverage ratchets
@@ -215,7 +565,11 @@ jobs:
     # 03:00 cron added for the console UI audit would have signed this one up for a nightly
     # run it never asked for — the same trap the cron block records for `mutation`, which
     # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
-    if: github.event.schedule != '0 3 * * *'
+    # AFFECTED-ONLY (see `detect-changes`): skipped only when the job-level skips are ARMED and the
+    # whole diff is `.md`/`.mdx` — turbo.json's own declared non-inputs for this task. `!cancelled()`
+    # so a failed detect job runs this in full rather than skipping it.
+    needs: [detect-changes]
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.ts_skip != 'true' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -242,6 +596,15 @@ jobs:
             turbo-${{ runner.os }}-test-
             turbo-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
+      # UNFILTERED EVEN ON AN ORDINARY PR, unlike `ts-lint-types` and `ts-build` (2026-11-22). Two
+      # reasons, either sufficient: (1) the console's unit tests READ files outside every package
+      # graph edge turbo can see — Go sources in packages/core, fixtures in apps/cli, scripts/ — so
+      # `...[HEAD^1]` would not re-run a test whose fixture changed in a package it does not depend
+      # on; and (2) the ratchets below compare against floors recorded with ee/dist present, which
+      # only a run that reaches an @alethia/ee dependent produces (scripts/check-floors-reproducible.mjs
+      # reads this line for exactly that). The turbo cache still skips the packages whose inputs are
+      # unchanged.
+      #
       # UNFILTERED, and that is load-bearing for the ratchets below: `test.dependsOn: ["^build"]`
       # reaches @alethia/ee through apps/console's optionalDependencies, so this builds ee/dist and
       # the suites run in enterprise scope — the `ee_dist: true` the floors record.
@@ -360,9 +723,16 @@ jobs:
     # 03:00 cron added for the console UI audit would have signed this one up for a nightly
     # run it never asked for — the same trap the cron block records for `mutation`, which
     # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
-    if: github.event.schedule != '0 3 * * *'
+    # NEVER skipped by AFFECTED-ONLY — the docs build renders `.mdx`, so a prose-only diff can still
+    # break it. Narrowed instead (see the build step). `!cancelled()` keeps a failed detect job from
+    # skipping it.
+    needs: [detect-changes]
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' }}
     steps:
+      # Depth 2 for `[HEAD^1]` — see `ts-lint-types`.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -391,9 +761,23 @@ jobs:
       # standalone breakage on PRs. Build-only placeholder env so the console's
       # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
       # nothing is contacted — postgres-js + the S3 client connect lazily).
-      - name: App build smoke (console · marketing · docs)
-        run: pnpm exec turbo run build --filter=console --filter=marketing --filter=docs
+      #
+      # NARROWED ON AN ORDINARY PR: `<app>...[HEAD^1]` selects the app only when it OR one of its
+      # dependencies changed in this PR (turbo's documented meaning of a trailing `...` with a git
+      # range). A build depends only on what it imports, so an app none of whose inputs moved is
+      # not rebuilt. Unfiltered (all three) on every other event and on a root-config change.
+      - name: App build smoke (console · marketing · docs — those a PR affects; all three otherwise)
+        run: |
+          set -euo pipefail
+          if [ "$TS_FILTER" = affected ]; then
+            echo "affected-only: each app built only if it or a dependency changed since HEAD^1"
+            pnpm exec turbo run build --filter='console...[HEAD^1]' --filter='marketing...[HEAD^1]' --filter='docs...[HEAD^1]'
+          else
+            echo "full run (ts_filter='${TS_FILTER}')"
+            pnpm exec turbo run build --filter=console --filter=marketing --filter=docs
+          fi
         env:
+          TS_FILTER: ${{ needs.detect-changes.outputs.ts_filter }}
           BETTER_AUTH_SECRET: build-time-placeholder
           BETTER_AUTH_URL: http://localhost:3000
           ALETHIA_DATABASE_URL: postgres://build:build@localhost:5432/build
@@ -412,7 +796,7 @@ jobs:
   # The 03:00 conjunct mirrors the parts, which do not run on the UI-audit nightly either.
   typescript:
     name: TypeScript (lint · types · test · docs)
-    needs: [ts-lint-types, ts-test, ts-build]
+    needs: [detect-changes, ts-lint-types, ts-test, ts-build]
     if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -422,14 +806,22 @@ jobs:
           LINT_TYPES: ${{ needs.ts-lint-types.result }}
           UNIT_TESTS: ${{ needs.ts-test.result }}
           BUILD_SMOKE: ${{ needs.ts-build.result }}
+          # 'true' only when detect-changes planned the two skippable parts away (armed AFFECTED-ONLY
+          # and a prose-only diff). Then — and only then — `skipped` is their expected verdict.
+          # `ts-build` is never planned away, so it must always succeed.
+          TS_SKIP: ${{ needs.detect-changes.outputs.ts_skip }}
         run: |
           set -u
           bad=0
-          for part in "lint · types=$LINT_TYPES" "unit tests · coverage ratchets=$UNIT_TESTS" "app build smoke=$BUILD_SMOKE"; do
+          for part in "lint · types=$LINT_TYPES=skippable" "unit tests · coverage ratchets=$UNIT_TESTS=skippable" "app build smoke=$BUILD_SMOKE=required"; do
             label=${part%%=*}
-            result=${part#*=}
+            rest=${part#*=}
+            result=${rest%%=*}
+            kind=${rest#*=}
             if [ "$result" = "success" ]; then
               echo "ok: TypeScript — $label"
+            elif [ "$result" = "skipped" ] && [ "$kind" = skippable ] && [ "${TS_SKIP:-}" = true ]; then
+              echo "ok: TypeScript — $label skipped by design (prose-only diff, affected-only armed)"
             else
               echo "::error::TypeScript — $label concluded '$result'. Open that job for the failure; this one only aggregates."
               bad=1
@@ -557,7 +949,9 @@ jobs:
     # 03:00 cron added for the console UI audit would have signed this one up for a nightly
     # run it never asked for — the same trap the cron block records for `mutation`, which
     # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
-    if: github.event.schedule != '0 3 * * *'
+    # AFFECTED-ONLY: skipped only when armed and the whole diff is `.md`/`.mdx` (see `detect-changes`).
+    needs: [detect-changes]
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.ts_skip != 'true' }}
     # A throwaway Postgres mirroring the dev stack (compose uses postgres:17-alpine with the
     # same superuser/db). db:migrate then creates the least-priv `alethia_app` role + RLS, so
     # the suite exercises the real SQL query builders and the multi-tenant isolation boundary.
@@ -2800,11 +3194,16 @@ jobs:
     # 03:00 cron added for the console UI audit would have signed this one up for a nightly
     # run it never asked for — the same trap the cron block records for `mutation`, which
     # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
-    if: github.event.schedule != '0 3 * * *'
+    # AFFECTED-ONLY: the matrix comes from `detect-changes`. It is all three modules on every event
+    # unless the job-level skips are ARMED; armed, an ordinary PR gets `[]` (job skipped) or
+    # `["apps/cli"]` when its diff is confined to the sets `detect-changes` documents. An empty
+    # output — a failed detect job — falls back to all three, and `!cancelled()` lets it run.
+    needs: [detect-changes]
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.go_matrix != '[]' }}
     strategy:
       fail-fast: false
       matrix:
-        module: [apps/cli, apps/runner, packages/core]
+        module: ${{ fromJSON(needs.detect-changes.outputs.go_matrix || '["apps/cli","apps/runner","packages/core"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -4038,7 +4437,9 @@ jobs:
     # 03:00 cron added for the console UI audit would have signed this one up for a nightly
     # run it never asked for — the same trap the cron block records for `mutation`, which
     # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
-    if: github.event.schedule != '0 3 * * *'
+    # AFFECTED-ONLY: skipped only when armed and the whole diff is `.md`/`.mdx` (see `detect-changes`).
+    needs: [detect-changes]
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.ts_skip != 'true' }}
     # Its own job because it needs helm on PATH and fetches real charts — neither belongs in the
     # console's vitest run. It renders the DEFAULT values of every marketplace add-on against its
     # pinned chart and requires exit 0.
@@ -4145,3 +4546,185 @@ jobs:
       - name: No docs changes
         if: needs.detect-changes.outputs.docs != 'true'
         run: echo "No apps/docs changes in this PR — prose lint not required."
+
+  # ── capabilities-security — FOLDED IN FROM capabilities-security.yml (2026-11-22), name unchanged ──
+  #
+  # The AUTOMATED, fail-closed required check that replaces the dropped #982 CODEOWNERS review (a
+  # sole-owner human gate would deadlock the no-approval Mergify queue). It enforces the deterministic
+  # `alethia-security-review` invariants on the capabilities / connector / keyless surface: RLS
+  # registration of new tenant tables, the cross-provider-leak filter, no unsafe `as any` /
+  # `as unknown as` casts, and keyless-only (no static credentials). It does NOT enforce the
+  # `Record<string, unknown>`-on-known-shape-JSONB convention — see the script header for why.
+  #
+  # Its context is the job `name:` — `capabilities-security` — which is what infra/github/variables.tf
+  # and .mergify.yml require; the workflow it lives in is not part of a check-run's name, so moving it
+  # here changes no required context. It runs on every PR (the old workflow's only trigger) and the
+  # script NO-OP-PASSES when no relevant path changed, so it always reports; it fails only when those
+  # paths changed AND an invariant is violated. Which files count as "relevant" is the whole gate, and
+  # it is guarded by the script's own `--self-test`, run in the `guards` job (#1789).
+  #
+  # Not on a push, a cron or a dispatch: the script diffs the PR base, which only a PR has.
+  capabilities-security:
+    name: capabilities-security
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history so the gate can diff base..head to find the PR's changed files.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Capabilities security gate
+        env:
+          # The PR base commit — the gate diffs GATE_BASE_SHA...HEAD to detect changed paths.
+          GATE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/security/capabilities-gate.mjs
+
+  # ── Build console images (no push) — FOLDED IN FROM validate-console.yml (2026-11-22), name unchanged ──
+  #
+  # Actually BUILD the box images on a PR that touches them. deploy-console.yml is the only other
+  # workflow that builds apps/console/Dockerfile, and it triggers on a push to MAIN — so before this
+  # check existed the image build was exercised for the first time AFTER the promotion had landed.
+  #
+  # That is not hypothetical. #1711 (2026-07-30) put a MARKETING test under apps/console reaching
+  # across with `../../../marketing/proxy`. apps/console/tsconfig.json includes `**/*.ts`, so the test
+  # joined the console's type-check program and dragged apps/marketing/proxy.ts in with it — and
+  # apps/console/Dockerfile installs `--filter console... --filter @alethia/ee`, which does not include
+  # marketing, so `next/server` did not resolve inside the image: TS2307. CI stayed green the whole
+  # time because this workflow's other jobs run a FULL `pnpm install`, where marketing's `next` is
+  # present. Same code, different install graph. Production shipped nothing for 26 days (#2606).
+  #
+  # The counterpart to validate-runner.yml, which closed exactly this gap for the runner image.
+  # Build-only: nothing is pushed, no registry login, and deliberately NO secrets — the console
+  # build's source-map upload is non-fatal on a missing or dead key (apps/console/next.config.ts,
+  # #2509), so this both works without one AND regression-tests that guard on every PR.
+  #
+  # ── WHY THE JOB ALWAYS RUNS AND GATES ITS STEPS INSTEAD ──
+  # It is a REQUIRED context, and `.mergify.yml`'s `check-success=` does not accept `skipped`, so a
+  # job-level skip would hold every PR that does not touch the images. So the job always runs on a PR
+  # and self-gates its STEPS on `detect-changes`' `console_images` output, reporting green in seconds
+  # when nothing relevant changed — the same shape `docs-prose` uses. `!cancelled()` and the `!=
+  # 'false'` step test make a failed detect job BUILD rather than pass vacuously. ONE job, not a
+  # matrix: a matrix reports one context per leg and each would have to be required separately.
+  #
+  # On a PR and a dispatch only, as before — not on a push to main (deploy-console.yml builds there)
+  # and not on a cron.
+  build-console:
+    name: Build console images (no push)
+    needs: [detect-changes]
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Nothing to build
+        if: needs.detect-changes.outputs.console_images == 'false'
+        run: echo "No console-affecting paths changed — nothing to build."
+
+      - uses: actions/checkout@v7
+        if: needs.detect-changes.outputs.console_images != 'false'
+
+      - uses: docker/setup-buildx-action@v4
+        if: needs.detect-changes.outputs.console_images != 'false'
+
+      # The console image is built for BOTH targets. They share the Dockerfile's `build` stage,
+      # which is where the failure actually lives, but deploy-console.yml builds them as separate
+      # images, so they are proved separately here. Dockerfile.community repeats the same pruned
+      # `--filter console...` install and therefore has the same failure mode.
+      #
+      # `--load` is deliberately absent: nothing needs the image locally, and skipping the export
+      # saves both time and disk. A failed build still fails the step.
+      - name: Build the box images (no push)
+        if: needs.detect-changes.outputs.console_images != 'false'
+        env:
+          VERSION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          build() {
+            local name="$1" file="$2" target="${3:-}"
+            echo "::group::build ${name}"
+            if [ -n "$target" ]; then
+              docker build -f "$file" --target "$target" --build-arg VERSION="$VERSION" -t "validate-${name}:pr" .
+            else
+              docker build -f "$file" --build-arg VERSION="$VERSION" -t "validate-${name}:pr" .
+            fi
+            echo "::endgroup::"
+            # Reclaim before the next image: seven Next.js images do not fit on a hosted runner.
+            docker image rm "validate-${name}:pr" >/dev/null 2>&1 || true
+          }
+
+          build console-runner   apps/console/Dockerfile           runner
+          build console-migrate  apps/console/Dockerfile           migrate
+          build console-community apps/console/Dockerfile.community
+          build marketing        apps/marketing/Dockerfile
+          build admin            apps/admin/Dockerfile
+          build docs             apps/docs/Dockerfile
+          build blog             apps/blog/Dockerfile
+
+  # ── CI required — THE ONE CONTEXT THE RULESETS AND THE QUEUE ARE MEANT TO REQUIRE (2026-11-22) ──
+  #
+  # Every required job of THIS workflow, in one verdict: green when each need concluded `success` or
+  # `skipped`, red on `failure` or `cancelled`. Requiring this one name instead of eleven is what lets
+  # a required job be SKIPPED on a PR that cannot affect it (see `detect-changes`, AFFECTED-ONLY): a
+  # skipped job here reads as "not needed", where `.mergify.yml`'s per-job `check-success=` reads it
+  # as "not green" and a missing matrix leg as "still pending".
+  #
+  # ⚠️ NOT REQUIRED YET. As of this job's introduction nothing names it — not infra/github/variables.tf,
+  # not .mergify.yml — and the per-job contexts it summarises keep their names and keep reporting, so
+  # the transition is additive. The flip (require `CI required`, drop the per-job contexts it covers)
+  # must wait until this job is on `main`, because Mergify reads its configuration only from there and
+  # a condition naming a context that never reports holds every PR. The job-level skips stay DORMANT
+  # until after that flip (`AFFECTED_ONLY_ARMED` in `detect-changes`).
+  #
+  # WHAT IT CANNOT COVER: `contribution-legal`, which comes from cla.yml — a `pull_request_target`
+  # workflow — and `needs:` cannot reach across workflows. The flip keeps that context required on
+  # its own.
+  #
+  # WHY `detect-changes` MUST SUCCEED, not merely "success or skipped": every other need runs with
+  # `!cancelled()`, so a failed detect job runs them in FULL rather than skipping them — but a
+  # skipped need is accepted here, so a broken planner must be red in its own right or it could, in
+  # principle, plan a skip and fail afterwards with nobody told.
+  #
+  # `if: always()` — the implicit `success()` would SKIP this job whenever a need failed, and a skipped
+  # required context is exactly the not-red-not-green state this job exists to remove. On the 03:00
+  # UI-audit cron most needs are skipped by their own `if:`, so this costs one idle runner there.
+  ci-required:
+    name: CI required
+    if: always()
+    needs:
+      - detect-changes
+      - typescript
+      - integration
+      - go
+      - guards
+      - secrets
+      - docs-prose
+      - capabilities-security
+      - build-console
+      - byo-users-postgres-required
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every required job succeeded or was skipped by design
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          bad=0
+          while IFS=$'\t' read -r job result; do
+            case "$job:$result" in
+              detect-changes:success) echo "ok: $job" ;;
+              detect-changes:*) echo "::error::detect-changes concluded '$result' — the affected-only plan is unknown"; bad=1 ;;
+              *:success) echo "ok: $job" ;;
+              *:skipped) echo "ok: $job (skipped)" ;;
+              *) echo "::error::$job concluded '$result'. Open that job for the failure; this one only aggregates."; bad=1 ;;
+            esac
+          done < <(jq -r 'to_entries[] | [.key, .value.result] | @tsv' <<<"$NEEDS")
+          # A parse that read nothing must not pass: ten needs are declared above.
+          n=$(jq 'length' <<<"$NEEDS")
+          if [ "$n" -ne 10 ]; then
+            echo "::error::expected 10 needs, read $n — this job's list and its count disagree"
+            bad=1
+          fi
+          exit "$bad"
