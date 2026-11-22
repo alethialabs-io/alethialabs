@@ -23,8 +23,8 @@ export const CONTRACT_MODULES: ReadonlyArray<{
 
 /** The export name of a contract schema, or undefined when no contract module exports it. */
 export function contractExportName(schema: unknown): string | undefined {
-	for (const module of CONTRACT_MODULES) {
-		for (const [name, value] of module.exports) if (value === schema) return name;
+	for (const contractModule of CONTRACT_MODULES) {
+		for (const [name, value] of contractModule.exports) if (value === schema) return name;
 	}
 	return undefined;
 }
