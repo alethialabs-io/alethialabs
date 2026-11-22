@@ -10,7 +10,7 @@
 // the board hands it to `BoardSourcesProvider` (`withBoardSources` below), exactly as the canvas
 // hands it its query data.
 
-import { createElement, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import { board as outside, flagsOf, type Board } from "@/lib/canvas/store/board";
@@ -89,15 +89,15 @@ export function withBoardSources(
 		identities?: readonly CloudIdentityOption[];
 	} = {},
 ): ReactNode {
-	const sources = createElement(BoardSourcesProvider, {
-		others: options.others ?? [],
-		iacOutputs: options.iacOutputs ?? [],
-		children,
-	});
+	const sources = (
+		<BoardSourcesProvider others={options.others ?? []} iacOutputs={options.iacOutputs ?? []}>
+			{children}
+		</BoardSourcesProvider>
+	);
 	if (options.scope === undefined) return sources;
-	return createElement(CanvasStoreProvider, {
-		scope: options.scope,
-		identities: options.identities ?? [],
-		children: sources,
-	});
+	return (
+		<CanvasStoreProvider scope={options.scope} identities={options.identities ?? []}>
+			{sources}
+		</CanvasStoreProvider>
+	);
 }

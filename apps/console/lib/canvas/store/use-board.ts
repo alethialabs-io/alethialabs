@@ -141,7 +141,8 @@ export function useCoreIdentity(): string | null {
 export function useEffectiveIdentity(id: string | null): CloudIdentityOption | null {
 	const identities = useIdentities();
 	const designNodes = useDesignNodes();
-	const outOfBand = id !== null && nodeIndex(useOthers()).has(id);
+	const others = useOthers();
+	const outOfBand = id !== null && nodeIndex(others).has(id);
 	return useMemo(() => {
 		if (id === null) return null;
 		return effectiveIdentity(designNodes, outOfBand ? PROJECT_NODE_ID : id, identities);
