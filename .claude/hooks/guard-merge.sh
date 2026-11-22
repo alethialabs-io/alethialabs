@@ -9,12 +9,13 @@
 # THE POLICY (maintainer ruling 2026-11-06: agents run the promotions when they are green):
 #   base=dev                      allow   Mergify normally lands it; merging your own dev PR is permitted
 #   base=main,    head=release/<hex sha>
-#                                 allow   a PINNED PROMOTION (promote.yml) — as below, plus the three after it
-#   base=staging, head=dev        allow   a PROMOTION — only as below, and only when green (the
-#   base=main,    head=staging    allow   retired staging hop, kept until protect-staging is retired)
+#                                 allow   a PINNED PROMOTION (promote.yml) — only when green, as
+#                                         below, plus the three after it
 #   base=main,    head=release-please--branches--main--components--<c>
 #                                 allow   a RELEASE PR — the same conditions, plus the three below
-#   any other staging/main merge  block   a hotfix or a skipped hop is the maintainer's
+#   any other base, or any other head into main
+#                                 block   a hotfix is the maintainer's. That includes `staging`, in
+#                                         either direction: the staging hop was retired on 2026-11-22
 #   --admin                       block   bypasses the merge queue and the rules, whatever the base
 #   more than one `gh pr merge`   block   one command, one merge, one verdict
 #   unresolvable                  block   fail CLOSED — see below
@@ -35,12 +36,11 @@
 #     with the exact command to run.
 #   · the merge is `--merge` (a merge commit), never --squash/--rebase: a squashed promotion
 #     loses the ancestry, so the NEXT promotion conflicts with everything this one carried.
-#   · not `--auto`: auto-merge fires later, on whatever the base branch REQUIRES at that time.
-#     protect-staging requires none of the release-gate legs (protect-main requires all seven),
-#     and this hook can only vouch for the state it read — so for staging "green now" would not
-#     be what lands, and for main the rule keeps one behaviour for both hops.
-#   · not `-d/--delete-branch`: the head of a promotion IS dev or staging. The rulesets stop the
-#     remote delete, but gh also deletes the LOCAL branch when run from a tree on it.
+#   · not `--auto`: auto-merge fires later, on whatever the base branch REQUIRES at that time, and
+#     this hook can only vouch for the state it read — "green now" must be what lands.
+#   · not `-d/--delete-branch`: the head of a promotion is the pinned `release/<sha>` branch, which
+#     names what was promoted; this hook vouches for a merge, not for a branch deletion (and gh also
+#     deletes the LOCAL branch when run from a tree on it).
 #
 # A PINNED PROMOTION (maintainer decision 2026-11-22: drop the staging hop, promote dev → main from a
 # pinned green dev SHA) is the PR promote.yml opens from `release/<sha>`, a branch created at one dev
@@ -82,7 +82,7 @@
 # exported before `claude` starts. Promotions no longer need it.
 #
 # BOUNDARY: it matches `gh pr merge` in the command text. A merge through `gh api` (PUT
-# …/pulls/<n>/merge), the GitHub UI, or a script is not seen here; the staging/main rulesets
+# …/pulls/<n>/merge), the GitHub UI, or a script is not seen here; the dev/main rulesets
 # are the server-side layer.
 
 _self="${BASH_SOURCE[0]}"
@@ -94,12 +94,11 @@ deny() {
 	echo "BLOCKED: $1" >&2
 	echo "" >&2
 	echo "  Branch flow is feature → dev → main, through a pinned release/<sha> PR opened by promote.yml." >&2
-	echo "  Feature work targets \`dev\`. Promotions (release/<sha> → main; the retired dev → staging and" >&2
-	echo "  staging → main) are agents' work WHEN GREEN:" >&2
+	echo "  Feature work targets \`dev\`. Promotions (release/<sha> → main) are agents' work WHEN GREEN:" >&2
 	echo "    gh pr merge <n> --merge --match-head-commit <head sha>" >&2
 	echo "  — every check passed and every release-gate leg passed, for exactly that head." >&2
 	echo "  A release-please PR into main merges the same way, when its author and files are release-please's." >&2
-	echo "  Anything else into staging/main is the maintainer's: ask the maintainer." >&2
+	echo "  Anything else into main is the maintainer's, and the staging hop is retired: ask the maintainer." >&2
 	exit 2
 }
 
@@ -110,7 +109,7 @@ RELEASE_HEAD_RE='^release-please--branches--main--components--'
 # @mut-sub release-re-end s/\$'/'/
 RELEASE_HEAD_RE+='[a-z0-9-]+$'
 RELEASE_AUTHOR='app/alethia-labs-ci'
-# The pinned promotion head (promote.yml). Only the END anchor is a mutant: the `main:release/*` case
+# The pinned promotion head (promote.yml). Only the END anchor is a mutant: the `release/*` case
 # that reaches this test has already fixed the start, so dropping `^` changes nothing observable.
 PINNED_HEAD_RE='^release/'
 # @mut-sub pinned-re-end s/\$'/'/
@@ -149,7 +148,7 @@ main() {
 	fi
 	[ -n "$CMD" ] || exit 0
 
-	# Maintainer override for a non-promotion merge into staging/main. Must be EXPORTED before
+	# Maintainer override for a non-promotion merge into main (or any non-dev base). Must be EXPORTED before
 	# `claude` starts — a PreToolUse hook is spawned before the Bash tool runs.
 	[ "${ALETHIA_ALLOW_PROMOTION:-}" = "1" ] && exit 0
 
@@ -238,33 +237,35 @@ main() {
 	case "$base" in
 	dev) exit 0 ;;
 	"") deny "could not resolve the base branch of PR #$pr${repo:+ in $repo} (offline, or not a PR in that repo)." ;;
-	staging | main) ;;
+	main) ;;
+	staging)
+		# @mut merge-staging-retired
+		deny "PR #$pr targets \`staging\`. The staging hop was retired on 2026-11-22 — promotions go dev → main through a pinned release/<sha> PR (promote.yml)."
+		;;
 	*)
 		# An unrecognised base is not necessarily wrong, but it is not `dev` either — and the
-		# only bases that should exist here are dev/staging/main.
+		# only bases that should exist here are dev/main.
 		deny "PR #$pr targets \`$base\`, which is not \`dev\`."
 		;;
 	esac
 
-	# ── a staging/main base: only a promotion or a release PR, only green ─────────────────────
+	# ── a main base: only a pinned promotion or a release PR, only green ──────────────────────
 	local kind
-	case "$base:$head" in
-	staging:dev | main:staging) kind=promotion ;;
-	main:release/*)
+	case "$head" in
+	release/*)
 		kind="pinned promotion"
 		if ! [[ "$head" =~ $PINNED_HEAD_RE ]]; then
 			# @mut pinned-branch
 			deny "PR #$pr merges \`$head\` into \`main\`. A promotion head is release/<hex sha> exactly, as promote.yml names it."
 		fi
 		;;
-	main:*)
+	*)
 		kind=release
 		if ! [[ "$head" =~ $RELEASE_HEAD_RE ]]; then
 			# @mut release-branch
-			deny "PR #$pr merges \`${head:-?}\` into \`main\`. Only a release/<sha> promotion, staging → main and a release-please PR (head release-please--branches--main--components--<c>) may."
+			deny "PR #$pr merges \`${head:-?}\` into \`main\`. Only a release/<sha> promotion and a release-please PR (head release-please--branches--main--components--<c>) may."
 		fi
 		;;
-	*) deny "PR #$pr merges \`${head:-?}\` into \`$base\`. Only dev → staging and staging → main are promotions." ;;
 	esac
 	require_merge_flags
 	if [ "$kind" = "pinned promotion" ]; then
@@ -292,7 +293,7 @@ require_merge_flags() {
 	fi
 	if [ "$delbranch" = 1 ]; then
 		# @mut merge-delete-branch
-		deny "\`--delete-branch\` on $kind PR #$pr would delete \`$head\` — for a promotion, the integration branch itself."
+		deny "\`--delete-branch\` on $kind PR #$pr would delete \`$head\` — this hook vouches for the merge, not for deleting its head branch."
 	fi
 	[ -n "$sha" ] || deny "could not read the head commit of $kind PR #$pr, so the checks cannot be tied to what lands."
 	local exact="gh pr merge $pr${repo:+ -R $repo} --merge --match-head-commit $sha"
@@ -462,6 +463,7 @@ JSON
 1622	[$C,$G,$Q,{"name":"Release gate (\${{ matrix.project }})","bucket":"fail","workflow":"Release gate"}]
 1623	[$C,$G,{"name":"Release gate (\${{ matrix.project }})","bucket":"skipping","workflow":"Release gate"}]
 1624	[$C,$G,$Q,{"name":"Release gate (canvas)","bucket":"skipping","workflow":"Release gate"}]
+1625	[$C,$G,$Q]
 1700	[$C,$G,$Q]
 1800	[$C,$S,$G,$Q]
 1801	[$C,$G,$Q]
@@ -489,6 +491,7 @@ JSON
 1907	[$C,$G,$Q]
 1908	[$C,$G]
 1909	[$C,$G,$Q]
+1911	[$C,$G,$Q]
 EOF
 	# Release PRs: `gh pr view N --json author,files,changedFiles` prints that PR's row (1813: the
 	# lookup fails). A is the release automation, M/L a release PR's two ordinary files.
@@ -522,6 +525,21 @@ EOF
 1907	{$A,"changedFiles":2,"files":[$M,$L]}
 1908	{$A,"changedFiles":2,"files":[$M,$L]}
 1909	{$A,"changedFiles":2,"files":[$M,$L]}
+1610	{$A,"changedFiles":2,"files":[$M,$L]}
+1612	{$A,"changedFiles":2,"files":[$M,$L]}
+1613	{$A,"changedFiles":2,"files":[$M,$L]}
+1614	{$A,"changedFiles":2,"files":[$M,$L]}
+1615	{$A,"changedFiles":2,"files":[$M,$L]}
+1616	{$A,"changedFiles":2,"files":[$M,$L]}
+1618	{$A,"changedFiles":2,"files":[$M,$L]}
+1619	{$A,"changedFiles":2,"files":[$M,$L]}
+1620	{$A,"changedFiles":2,"files":[$M,$L]}
+1621	{$A,"changedFiles":2,"files":[$M,$L]}
+1622	{$A,"changedFiles":2,"files":[$M,$L]}
+1623	{$A,"changedFiles":2,"files":[$M,$L]}
+1624	{$A,"changedFiles":2,"files":[$M,$L]}
+1700	{$A,"changedFiles":2,"files":[$M,$L]}
+1911	{$A,"changedFiles":2,"files":[$M,$L]}
 EOF
 	# Pinned promotions: `gh api …/compare/dev...<sha> --jq .status` prints the status for that head
 	# (aaa1904: the lookup fails). The path must name the repository the merge does.
@@ -535,6 +553,21 @@ aaa1906	behind
 aaa1907	ahead
 aaa1908	behind
 aaa1909	identical
+aaa1610	behind
+aaa1612	behind
+aaa1613	behind
+aaa1614	behind
+aaa1615	behind
+aaa1616	behind
+aaa1618	behind
+aaa1619	behind
+aaa1620	behind
+aaa1621	behind
+aaa1622	behind
+aaa1623	behind
+aaa1624	behind
+aaa1700	behind
+aaa1911	behind
 EOF
 	# `gh pr view N --json …` prints "<base> <head> <sha>"; `gh pr checks N --json …` prints that
 	# PR's checks (1616: the lookup fails). PR 1700 exists ONLY in o/other, so it is found only
@@ -572,15 +605,16 @@ if [ "\$2" = view ]; then
 	1535) echo "dev feat/x 1535aaa" ;;
 	1600) echo "staging feat/x 1600aaa" ;;
 	1601) echo "main feat/x 1601aaa" ;;
-	1610 | 1612 | 1613 | 1614 | 1615 | 1616 | 1618 | 1619 | 1620 | 1621 | 1622 | 1623 | 1624) echo "staging dev aaa\$n" ;;
+	1610 | 1612 | 1613 | 1614 | 1615 | 1616 | 1618 | 1619 | 1620 | 1621 | 1622 | 1623 | 1624) echo "main release/aaa\$n aaa\$n" ;;
 	1611) echo "main staging aaa1611" ;;
+	1625) echo "staging dev aaa1625" ;;
 	1900 | 1901 | 1903 | 1904 | 1905 | 1907 | 1908 | 1909) echo "main release/aaa\$n aaa\$n" ;;
 	1902) echo "main release/bbb1902 aaa1902" ;;
 	1906) echo "main release/aaa1906/x aaa1906" ;;
 	1910) echo "main release/AAA1910 aaa1910" ;;
 	1911) echo "staging release/aaa1911 aaa1911" ;;
 	1617) echo "main dev aaa1617" ;;
-	1700) echo "staging dev aaa1700" ;;
+	1700) echo "main release/aaa1700 aaa1700" ;;
 	*) exit 1 ;;
 	esac
 	exit 0
@@ -624,15 +658,20 @@ STUB
 	t allow 'gh pr merge 1535'
 	t allow 'gh pr merge 1535 --squash'
 	t allow 'gh pr merge --squash 1535'
-	t block 'gh pr merge 1600'               # staging, not from dev: not a promotion
-	t block 'gh pr merge 1601 --merge'       # main, not from staging
+	t block 'gh pr merge 1600'               # staging: the hop is retired
+	t block 'gh pr merge 1601 --merge'       # main, not a promotion
 	t block 'gh pr merge 1535 --admin'       # bypasses the queue even on dev
 	t block 'gh pr merge 999'                # unresolvable → fail closed
 	t block 'gh pr merge'                    # no PR number → fail closed
 
-	# ── promotions ──
+	# ── promotions: the merge shape and "green", on pinned release/<sha> → main PRs ──
 	t allow 'gh pr merge 1610 --merge --match-head-commit aaa1610'  # green (a skipped non-gate job is fine)
-	t allow 'gh pr merge --merge 1611 --match-head-commit=aaa1611'  # staging → main, green
+	t allow 'gh pr merge --merge 1610 --match-head-commit=aaa1610'  # the `=` form of --match-head-commit
+	# The retired staging hop (2026-11-22), in both directions, with every check green.
+	t block 'gh pr merge --merge 1611 --match-head-commit=aaa1611'  # staging → main
+	says 'Only a release/<sha> promotion and a release-please PR' 'staging → main is refused as a head'
+	t block 'gh pr merge 1625 --merge --match-head-commit aaa1625'  # dev → staging
+	says 'staging hop was retired' 'dev → staging is refused as a base'
 	t allow 'gh pr merge https://github.com/o/r/pull/1610 --merge --match-head-commit aaa1610'
 	t block 'gh pr merge 1610 --merge'       # no --match-head-commit: refused WITH the command to run
 	says 'must name the head its checks were verified for' 'a missing --match-head-commit is its own refusal'
@@ -644,7 +683,7 @@ STUB
 	t block 'gh pr merge 1610 --merge --rebase --match-head-commit aaa1610'
 	t block 'gh pr merge 1610 --merge --auto --match-head-commit aaa1610'
 	t block 'gh pr merge 1610 --merge --admin --match-head-commit aaa1610'
-	t block 'gh pr merge 1610 --merge -d --match-head-commit aaa1610'   # would delete dev locally
+	t block 'gh pr merge 1610 --merge -d --match-head-commit aaa1610'   # would delete the release branch
 	says 'delete-branch' 'the delete-branch refusal says why'
 	t block 'gh pr merge 1610 --merge --delete-branch --match-head-commit aaa1610'
 	t block 'gh pr merge 1612 --merge --match-head-commit aaa1612'   # a failed check
@@ -653,7 +692,7 @@ STUB
 	says 'Release gate (qa)' 'the missing leg is named'
 	t block 'gh pr merge 1615 --merge --match-head-commit aaa1615'   # a release-gate leg SKIPPED is not a pass
 	t block 'gh pr merge 1616 --merge --match-head-commit aaa1616'   # the checks lookup failed → fail closed
-	t block 'gh pr merge 1617 --merge --match-head-commit aaa1617'   # dev → main skips staging
+	t block 'gh pr merge 1617 --merge --match-head-commit aaa1617'   # dev itself as the head: a promotion is release/<sha>
 	t block 'gh pr merge 1618 --merge --match-head-commit aaa1618'   # no checks at all
 	t block 'gh pr merge 1619 --merge --match-head-commit aaa1619'   # an extra gate leg the head names, failing
 	t block 'gh pr merge 1620 --merge --match-head-commit aaa1620'   # a cancelled check
@@ -669,7 +708,7 @@ STUB
 	t block 'gh pr merge 1801 --merge --match-head-commit aaa1801'   # a look-alike author
 	says "was not opened by \`app/alethia-labs-ci\`" 'the wrong author is named'
 	t block 'gh pr merge 1802 --merge --match-head-commit aaa1802'   # the branch only STARTS right
-	says 'staging → main and a release-please PR (head release-please' 'a look-alike branch is refused as a branch'
+	says 'Only a release/<sha> promotion and a release-please PR (head release-please' 'a look-alike branch is refused as a branch'
 	t block 'gh pr merge 1803 --merge --match-head-commit aaa1803'   # the branch only ENDS right
 	t block 'gh pr merge 1804 --merge --match-head-commit aaa1804'   # release branch for another base
 	t block 'gh pr merge 1805 --merge --match-head-commit aaa1805'   # also changes a code file
@@ -711,7 +750,8 @@ STUB
 	t block 'gh pr merge 1906 --merge --match-head-commit aaa1906'   # release/<sha>/x is not the shape
 	says 'release/<hex sha> exactly' 'a look-alike promotion branch is refused as a branch'
 	t block 'gh pr merge 1910 --merge --match-head-commit aaa1910'   # upper-case hex is not what promote.yml writes
-	t block 'gh pr merge 1911 --merge --match-head-commit aaa1911'   # a release/ head into staging
+	t block 'gh pr merge 1911 --merge --match-head-commit aaa1911'   # a release/ head into staging, otherwise admissible
+	says 'staging hop was retired' 'a promotion-shaped PR into staging is refused for its base'
 	t block 'gh pr merge 1900 --merge'                               # no --match-head-commit
 	says 'gh pr merge 1900 --merge --match-head-commit aaa1900' 'the pinned refusal names the exact command'
 	t block 'gh pr merge 1900 --squash --match-head-commit aaa1900'
