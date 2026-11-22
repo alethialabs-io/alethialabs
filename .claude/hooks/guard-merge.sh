@@ -8,8 +8,10 @@
 #
 # THE POLICY (maintainer ruling 2026-11-06: agents run the promotions when they are green):
 #   base=dev                      allow   Mergify normally lands it; merging your own dev PR is permitted
-#   base=staging, head=dev        allow   a PROMOTION — only as below, and only when green
-#   base=main,    head=staging    allow   a PROMOTION — the same conditions
+#   base=main,    head=release/<hex sha>
+#                                 allow   a PINNED PROMOTION (promote.yml) — as below, plus the three after it
+#   base=staging, head=dev        allow   a PROMOTION — only as below, and only when green (the
+#   base=main,    head=staging    allow   retired staging hop, kept until protect-staging is retired)
 #   base=main,    head=release-please--branches--main--components--<c>
 #                                 allow   a RELEASE PR — the same conditions, plus the three below
 #   any other staging/main merge  block   a hotfix or a skipped hop is the maintainer's
@@ -39,6 +41,17 @@
 #     be what lands, and for main the rule keeps one behaviour for both hops.
 #   · not `-d/--delete-branch`: the head of a promotion IS dev or staging. The rulesets stop the
 #     remote delete, but gh also deletes the LOCAL branch when run from a tree on it.
+#
+# A PINNED PROMOTION (maintainer decision 2026-11-22: drop the staging hop, promote dev → main from a
+# pinned green dev SHA) is the PR promote.yml opens from `release/<sha>`, a branch created at one dev
+# commit and never moved. It merges under every promotion condition above, and only when, read from
+# the API rather than from anything the command says:
+#   · the head branch matches ^release/[0-9a-f]{7,40}$ — whole — AND that hex is a prefix of the PR's
+#     head commit, so the name cannot point at one commit while the branch carries another;
+#   · the PR's author login is `app/alethia-labs-ci` — promote.yml writes the PR with that app's
+#     token (it has to: a GITHUB_TOKEN PR never starts its checks);
+#   · the head commit is ON DEV: `compare/dev...<head>` answers `identical` or `behind`. A branch
+#     named like a promotion that carries a commit dev does not have is a hotfix, and is refused.
 #
 # A RELEASE PR (maintainer ruling 2026-11-11: "get it all to main, I authorize the merges") is the
 # release-please PR that bumps one component's version on `main`. It merges under every promotion
@@ -80,8 +93,9 @@ case "$_self" in */*) HOOK_DIR="${_self%/*}" ;; *) HOOK_DIR="." ;; esac
 deny() {
 	echo "BLOCKED: $1" >&2
 	echo "" >&2
-	echo "  Branch flow is feature → dev → staging → main. Feature work targets \`dev\`." >&2
-	echo "  Promotions (dev → staging, staging → main) are agents' work WHEN GREEN:" >&2
+	echo "  Branch flow is feature → dev → main, through a pinned release/<sha> PR opened by promote.yml." >&2
+	echo "  Feature work targets \`dev\`. Promotions (release/<sha> → main; the retired dev → staging and" >&2
+	echo "  staging → main) are agents' work WHEN GREEN:" >&2
 	echo "    gh pr merge <n> --merge --match-head-commit <head sha>" >&2
 	echo "  — every check passed and every release-gate leg passed, for exactly that head." >&2
 	echo "  A release-please PR into main merges the same way, when its author and files are release-please's." >&2
@@ -96,6 +110,11 @@ RELEASE_HEAD_RE='^release-please--branches--main--components--'
 # @mut-sub release-re-end s/\$'/'/
 RELEASE_HEAD_RE+='[a-z0-9-]+$'
 RELEASE_AUTHOR='app/alethia-labs-ci'
+# The pinned promotion head (promote.yml). Only the END anchor is a mutant: the `main:release/*` case
+# that reaches this test has already fixed the start, so dropping `^` changes nothing observable.
+PINNED_HEAD_RE='^release/'
+# @mut-sub pinned-re-end s/\$'/'/
+PINNED_HEAD_RE+='[0-9a-f]{7,40}$'
 
 # merge_args_from_words <raw segment> — set margs from the segment's quote-aware words: skip to
 # the `gh`, past gh's global flags, past `pr merge`. Leaves margs alone when that shape is not found.
@@ -231,16 +250,27 @@ main() {
 	local kind
 	case "$base:$head" in
 	staging:dev | main:staging) kind=promotion ;;
+	main:release/*)
+		kind="pinned promotion"
+		if ! [[ "$head" =~ $PINNED_HEAD_RE ]]; then
+			# @mut pinned-branch
+			deny "PR #$pr merges \`$head\` into \`main\`. A promotion head is release/<hex sha> exactly, as promote.yml names it."
+		fi
+		;;
 	main:*)
 		kind=release
 		if ! [[ "$head" =~ $RELEASE_HEAD_RE ]]; then
 			# @mut release-branch
-			deny "PR #$pr merges \`${head:-?}\` into \`main\`. Only staging → main and a release-please PR (head release-please--branches--main--components--<c>) may."
+			deny "PR #$pr merges \`${head:-?}\` into \`main\`. Only a release/<sha> promotion, staging → main and a release-please PR (head release-please--branches--main--components--<c>) may."
 		fi
 		;;
 	*) deny "PR #$pr merges \`${head:-?}\` into \`$base\`. Only dev → staging and staging → main are promotions." ;;
 	esac
 	require_merge_flags
+	if [ "$kind" = "pinned promotion" ]; then
+		# @mut pinned-rule
+		require_pinned_promotion
+	fi
 	if [ "$kind" = release ]; then
 		# @mut release-rule
 		require_release_pr
@@ -274,6 +304,33 @@ require_merge_flags() {
 		# @mut merge-mhc-mismatch
 		deny "$kind PR #$pr: --match-head-commit $mhc is not its head ($sha) — the head moved, and the new one is what the checks below describe. Re-check, then run:  $exact"
 	fi
+}
+
+# require_pinned_promotion — a release/<sha> head names its own commit, was opened by the promotion
+# workflow's app, and that commit is on dev (reads main's locals).
+require_pinned_promotion() {
+	local short="${head#release/}" author status path
+	if [ "${sha#"$short"}" = "$sha" ]; then
+		# @mut pinned-sha
+		deny "promotion PR #$pr: its branch names $short but its head is $sha — a release branch must point at the commit it is named for."
+	fi
+	author="$(gh pr view "$pr" "${rargs[@]}" --json author 2>/dev/null | jq -r '.author.login // empty' 2>/dev/null)"
+	if [ "$author" != "$RELEASE_AUTHOR" ]; then
+		# @mut pinned-author
+		deny "promotion PR #$pr was not opened by \`$RELEASE_AUTHOR\` (it was by \`${author:-?}\`) — open promotions with the Promote workflow (promote.yml)."
+	fi
+	# gh fills `{owner}/{repo}` from the current checkout; a -R/--repo on the merge names it instead.
+	path='repos/{owner}/{repo}'
+	[ -z "$repo" ] || path="repos/$repo"
+	path="$path/compare/dev...$sha"
+	status="$(gh api "$path" --jq .status 2>/dev/null)"
+	case "$status" in
+	identical | behind) ;;
+	*)
+		# @mut pinned-on-dev
+		deny "promotion PR #$pr: its head $sha is not a dev commit (compare dev...head says \`${status:-unreadable}\`). A change that is not on dev is a hotfix, which is the maintainer's."
+		;;
+	esac
 }
 
 # release_allowlist — print the files a release PR may change, derived from
@@ -422,6 +479,16 @@ JSON
 1813	[$C,$G,$Q]
 1814	[$C,$G,$Q]
 1815	[$C,$G]
+1900	[$C,$S,$G,$Q]
+1901	[$C,$G,$Q]
+1902	[$C,$G,$Q]
+1903	[$C,$G,$Q]
+1904	[$C,$G,$Q]
+1905	[{"name":"CI / Build","bucket":"fail","workflow":"CI"},$G,$Q]
+1906	[$C,$G,$Q]
+1907	[$C,$G,$Q]
+1908	[$C,$G]
+1909	[$C,$G,$Q]
 EOF
 	# Release PRs: `gh pr view N --json author,files,changedFiles` prints that PR's row (1813: the
 	# lookup fails). A is the release automation, M/L a release PR's two ordinary files.
@@ -445,12 +512,44 @@ EOF
 1812	{$A,"changedFiles":2,"files":[$M,{"path":"apps/cli/sub/CHANGELOG.md","changeType":"MODIFIED"}]}
 1814	{$A,"changedFiles":2,"files":[$M,{"path":"release-please-config.json","changeType":"MODIFIED"}]}
 1815	{$A,"changedFiles":2,"files":[$M,$L]}
+1900	{$A,"changedFiles":2,"files":[$M,$L]}
+1901	{"author":{"is_bot":false,"login":"alethia-labs-ci"},"changedFiles":2,"files":[$M,$L]}
+1902	{$A,"changedFiles":2,"files":[$M,$L]}
+1903	{$A,"changedFiles":2,"files":[$M,$L]}
+1904	{$A,"changedFiles":2,"files":[$M,$L]}
+1905	{$A,"changedFiles":2,"files":[$M,$L]}
+1906	{$A,"changedFiles":2,"files":[$M,$L]}
+1907	{$A,"changedFiles":2,"files":[$M,$L]}
+1908	{$A,"changedFiles":2,"files":[$M,$L]}
+1909	{$A,"changedFiles":2,"files":[$M,$L]}
+EOF
+	# Pinned promotions: `gh api …/compare/dev...<sha> --jq .status` prints the status for that head
+	# (aaa1904: the lookup fails). The path must name the repository the merge does.
+	cat >"$stub/compare.tsv" <<EOF
+aaa1900	behind
+aaa1901	behind
+aaa1902	behind
+aaa1903	diverged
+aaa1905	behind
+aaa1906	behind
+aaa1907	ahead
+aaa1908	behind
+aaa1909	identical
 EOF
 	# `gh pr view N --json …` prints "<base> <head> <sha>"; `gh pr checks N --json …` prints that
 	# PR's checks (1616: the lookup fails). PR 1700 exists ONLY in o/other, so it is found only
 	# when the repository flag reaches the lookup.
 	cat >"$stub/bin/gh" <<STUB
 #!/usr/bin/env bash
+if [ "\$1" = api ]; then
+	case "\$2" in
+	'repos/{owner}/{repo}/compare/dev...'* | repos/o/other/compare/dev...*) ;;
+	*) exit 1 ;;
+	esac
+	line="\$(grep "^\${2##*...}	" "$stub/compare.tsv")" || exit 1
+	printf '%s\n' "\${line#*	}"
+	exit 0
+fi
 n=""
 other=0
 for a in "\$@"; do case "\$a" in [0-9]*) n="\$a" ;; o/other) other=1 ;; esac; done
@@ -475,6 +574,11 @@ if [ "\$2" = view ]; then
 	1601) echo "main feat/x 1601aaa" ;;
 	1610 | 1612 | 1613 | 1614 | 1615 | 1616 | 1618 | 1619 | 1620 | 1621 | 1622 | 1623 | 1624) echo "staging dev aaa\$n" ;;
 	1611) echo "main staging aaa1611" ;;
+	1900 | 1901 | 1903 | 1904 | 1905 | 1907 | 1908 | 1909) echo "main release/aaa\$n aaa\$n" ;;
+	1902) echo "main release/bbb1902 aaa1902" ;;
+	1906) echo "main release/aaa1906/x aaa1906" ;;
+	1910) echo "main release/AAA1910 aaa1910" ;;
+	1911) echo "staging release/aaa1911 aaa1911" ;;
 	1617) echo "main dev aaa1617" ;;
 	1700) echo "staging dev aaa1700" ;;
 	*) exit 1 ;;
@@ -565,7 +669,7 @@ STUB
 	t block 'gh pr merge 1801 --merge --match-head-commit aaa1801'   # a look-alike author
 	says "was not opened by \`app/alethia-labs-ci\`" 'the wrong author is named'
 	t block 'gh pr merge 1802 --merge --match-head-commit aaa1802'   # the branch only STARTS right
-	says 'Only staging → main and a release-please PR' 'a look-alike branch is refused as a branch'
+	says 'staging → main and a release-please PR (head release-please' 'a look-alike branch is refused as a branch'
 	t block 'gh pr merge 1803 --merge --match-head-commit aaa1803'   # the branch only ENDS right
 	t block 'gh pr merge 1804 --merge --match-head-commit aaa1804'   # release branch for another base
 	t block 'gh pr merge 1805 --merge --match-head-commit aaa1805'   # also changes a code file
@@ -590,6 +694,31 @@ STUB
 	t block 'gh pr merge 1800 --merge --admin --match-head-commit aaa1800'
 	t block 'gh pr merge 1800 --merge --delete-branch --match-head-commit aaa1800'
 	t block 'gh pr merge 1800 --merge --match-head-commit aaa1800 && gh pr merge 1811 --merge --match-head-commit aaa1811'
+
+	# ── pinned release/<sha> → main promotions (maintainer decision 2026-11-22) ──
+	t allow 'gh pr merge 1900 --merge --match-head-commit aaa1900'   # green, the app's PR, head on dev (behind)
+	t allow 'gh pr merge 1909 --merge --match-head-commit aaa1909'   # head IS dev's tip (identical)
+	t block 'gh pr merge 1901 --merge --match-head-commit aaa1901'   # a look-alike author
+	says 'open promotions with the Promote workflow' 'the wrong promotion author is named'
+	t block 'gh pr merge 1902 --merge --match-head-commit aaa1902'   # branch names another commit
+	says 'must point at the commit it is named for' 'a branch/head mismatch is named'
+	t block 'gh pr merge 1903 --merge --match-head-commit aaa1903'   # head diverged from dev
+	says 'is not a dev commit' 'a head off dev is named'
+	t block 'gh pr merge 1907 --merge --match-head-commit aaa1907'   # head AHEAD of dev: not on dev
+	t block 'gh pr merge 1904 --merge --match-head-commit aaa1904'   # the compare lookup failed → fail closed
+	t block 'gh pr merge 1905 --merge --match-head-commit aaa1905'   # a failed check
+	t block 'gh pr merge 1908 --merge --match-head-commit aaa1908'   # a release-gate leg never reported
+	t block 'gh pr merge 1906 --merge --match-head-commit aaa1906'   # release/<sha>/x is not the shape
+	says 'release/<hex sha> exactly' 'a look-alike promotion branch is refused as a branch'
+	t block 'gh pr merge 1910 --merge --match-head-commit aaa1910'   # upper-case hex is not what promote.yml writes
+	t block 'gh pr merge 1911 --merge --match-head-commit aaa1911'   # a release/ head into staging
+	t block 'gh pr merge 1900 --merge'                               # no --match-head-commit
+	says 'gh pr merge 1900 --merge --match-head-commit aaa1900' 'the pinned refusal names the exact command'
+	t block 'gh pr merge 1900 --squash --match-head-commit aaa1900'
+	t block 'gh pr merge 1900 --merge --auto --match-head-commit aaa1900'
+	t block 'gh pr merge 1900 --merge --admin --match-head-commit aaa1900'
+	t block 'gh pr merge 1900 --merge --delete-branch --match-head-commit aaa1900'
+	t block 'gh -R o/r pr merge 1900 --merge --match-head-commit aaa1900'   # compare must ask the named repo
 
 	# ── gh's global flags before the subcommand, and the repository they name ──
 	t block 'gh -R o/r pr merge 1601 --merge'

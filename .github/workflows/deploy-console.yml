@@ -102,7 +102,8 @@ jobs:
       # WHICH REF EACH HALF READS — and why that is the whole design (#4476). This receipt asks two
       # questions, and they are questions about two different commits:
       #
-      #   MEASUREMENT — the check-runs at `pr.head.sha`, the head of the staging→main promotion PR.
+      #   MEASUREMENT — the check-runs at `pr.head.sha`, the head of the promotion PR into main (a
+      #                 pinned `release/<sha>` branch since promote.yml; `staging` before it).
       #   EXPECTATION — the leg table at `pr.head.sha` TOO, fetched over the contents API. A
       #                 `pull_request` run resolves its workflow from the PR's HEAD (CONTRIBUTING.md
       #                 states this under the promotion checklist), so the legs that could possibly
@@ -272,13 +273,13 @@ jobs:
               // A leg named ONLY by the deployed tree never had a run to find, and "promote again"
               // is the one instruction that cannot fix it: `deployed` is the post-promotion tree, so
               // a leg only it names reached `main` outside the promotion being graded — a hotfix
-              // merged straight into `main`, say. The next promotion's head is the same `staging`,
-              // which still does not name the leg, so re-promoting REPRODUCES this refusal — one
+              // merged straight into `main`, say. The next promotion's head is cut from the same
+              // `dev`, which still does not name the leg, so re-promoting REPRODUCES this refusal — one
               // full promotion cycle spent to learn that. The action that actually clears it moves
               // the leg onto the head.
               const from = graded.includes(leg)
                 ? `${GATE} at the graded head ${head} names this leg`
-                : `${GATE} names this leg only in the deployed tree ${sha}, not at the graded head ${head}, so the gate could not have produced it. It reached \`main\` outside the promotion this receipt grades, which means PROMOTING AGAIN REPRODUCES THIS — the next head is that same \`staging\`, still without the leg. Back-merge \`main\` into \`staging\` (or land the leg on \`dev\` and promote it forward) so the head carries the leg and the gate reports it`;
+                : `${GATE} names this leg only in the deployed tree ${sha}, not at the graded head ${head}, so the gate could not have produced it. It reached \`main\` outside the promotion this receipt grades, which means PROMOTING AGAIN REPRODUCES THIS — the next head is cut from the same \`dev\`, still without the leg. Land the leg on \`dev\` (or back-merge \`main\` into \`dev\`) and promote it forward, so the head carries the leg and the gate reports it`;
               console.error(`::error::${name} never reported on #${pr.number} (head ${head}). ${from}. Nothing measured it.`);
               bad++;
             } else if (got.conclusion !== "success") {

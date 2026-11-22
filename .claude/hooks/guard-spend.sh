@@ -159,7 +159,7 @@ wf_class() {
 		echo free
 		;;
 	deploy-*.yml | release-cli.yml | release-runner.yml | release-please.yml | publish-cli-release-metadata.yml | \
-		mirror-cli.yml | infra-*.yml)
+		mirror-cli.yml | infra-*.yml | promote.yml)
 		echo prod
 		;;
 	e2e-nightly.yml) echo nightly ;;
