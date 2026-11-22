@@ -7,9 +7,14 @@
 //
 // TWO CALLERS, TWO QUESTIONS, ONE WALK.
 //
-//   node scripts/ci/check-console-surface.mjs --json    → the surface, for release-gate.yml
+//   node scripts/ci/check-console-surface.mjs --json    → the surface only (no caller today; see below)
 //   node scripts/ci/check-console-surface.mjs           → the surface AND the ledger, for CI
 //   node scripts/ci/check-console-surface.mjs --self-test
+//
+// ⚠ THE `--json` CALLER IS GONE (2026-11-22). release-gate.yml's `require-label` step was its only
+// reader, and it was removed when that workflow stopped running on unlabelled dev PRs. The mode is
+// kept, with its fail-closed derivation, for the next caller that needs the surface without the
+// ledger; the history below is why those two answers are separate.
 //
 // `.github/workflows/release-gate.yml`'s label check asks "is this changed path something a leg
 // measures", and the console's compiled-from set is half its answer. It used to carry this walk
