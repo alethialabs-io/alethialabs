@@ -542,7 +542,8 @@ test.describe("Projects — delete (non-live)", () => {
 		// The registry entry `project.delete` in `destructive-actions.yaml`: control
 		// `{ role: button, name: "Delete project" }` — the trigger reads "Delete" but carries
 		// `aria-label="Delete project"` (#4463) — an alert-dialog titled "Delete this project?", and
-		// a confirm action also named "Delete project".
+		// a confirm action also named "Delete project", which stays disabled until the project's
+		// name is typed (`confirm: typed`, #7198).
 		//
 		// WAIT FOR HYDRATION before clicking; a visible trigger is not enough. The page is reached on
 		// `domcontentloaded`, so the server-rendered "Delete" button is visible and clickable before
@@ -560,7 +561,11 @@ test.describe("Projects — delete (non-live)", () => {
 		await owner.page.getByRole("button", { name: /^Delete project$/ }).click();
 		const dialog = owner.page.getByRole("alertdialog");
 		await expect(dialog.getByText(/delete this project\?/i)).toBeVisible();
-		await dialog.getByRole("button", { name: /delete project/i }).click();
+		const confirm = dialog.getByRole("button", { name: /delete project/i });
+		await expect(confirm).toBeDisabled();
+		await dialog.getByRole("textbox").fill(project.name);
+		await expect(confirm).toBeEnabled();
+		await confirm.click();
 		// Back on the org overview, off the project entirely.
 		await owner.page.waitForURL(new RegExp(`/${owner.orgSlug}(\\?|/?$)`), { timeout: 20_000 });
 		await expect(owner.page).not.toHaveURL(/\/settings\/general/);
