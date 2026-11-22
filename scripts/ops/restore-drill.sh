@@ -14,7 +14,8 @@
 #    1  downloads a daily copy (latest by default) and the newest hourly tombstone export
 #    2  verifies every file against the manifest's sha256, and decrypts with your age identity
 #    3  starts Postgres + SeaweedFS as compose project `alethia-drill`, on a network with NO egress
-#    4  pg_restore's the dump; loads every bucket back into SeaweedFS
+#    4  pg_restore's the dump, and refuses to go on unless it restored at least one table; loads
+#       every bucket back into SeaweedFS
 #    5  runs the console's migrate one-shot (the image the backup was taken from, by default)
 #    6  merges the newest tombstones in, and replays every one (apps/console/scripts/ops/
 #       replay-tombstones.ts) — then refuses to go on unless none is left unreplayed
@@ -38,6 +39,8 @@
 #   --no-record           do not write a record
 #   --started-at EPOCH    the clock starts here instead of now (must be within the last 24h)
 #   --health-timeout S    seconds to wait for a healthy console (default 600)
+#   --observer WHO        who ran it, for the record: maintainer (default), agent or cohort. The
+#                         weekly automated drill (scripts/ops/restore-drill-ec2.sh) passes agent.
 #   --keep                leave the drill stack running afterwards (it holds restored personal data:
 #                         take it down and delete the box when you are done)
 #
@@ -78,6 +81,8 @@ WRITE_RECORD=1
 STARTED_AT=""
 HEALTH_TIMEOUT=600
 KEEP=0
+OBSERVER="maintainer"
+TABLES_RESTORED=""
 
 WORK=""
 STACK_UP=0
@@ -94,7 +99,7 @@ HEALTH_BODY=""
 # Prints usage (the header comment).
 #######################################
 usage() {
-	sed -n '5,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	sed -n '5,53p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 #######################################
@@ -150,6 +155,7 @@ parse_args() {
 			--started-at) STARTED_AT="${2:-}"; shift 2 ;;
 			--health-timeout) HEALTH_TIMEOUT="${2:-}"; shift 2 ;;
 			--keep) KEEP=1; shift ;;
+			--observer) OBSERVER="${2:-}"; shift 2 ;;
 			-h | --help) usage; exit 0 ;;
 			*) usage >&2; die "unknown argument: $1" 64 ;;
 		esac
@@ -157,6 +163,8 @@ parse_args() {
 	[ -z "$BACKUP_STAMP" ] || [[ "$BACKUP_STAMP" =~ $BACKUP_STAMP_RE ]] || die "--backup must be a stamp like 20261201T023000Z" 64
 	[ -z "$IMAGE_TAG" ] || [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]] || die "--image-tag must be a full 40-character commit SHA" 64
 	[[ "$HEALTH_TIMEOUT" =~ ^[0-9]+$ ]] || die "--health-timeout must be whole seconds" 64
+	# The record's observer enum (docs/beta/evidence-schema.json).
+	case "$OBSERVER" in agent | maintainer | cohort) ;; *) die "--observer must be agent, maintainer or cohort" 64 ;; esac
 	if [ -n "$STARTED_AT" ]; then
 		local now
 		now="$(date -u +%s)"
@@ -259,7 +267,7 @@ write_record() {
 		printf 'buildSha: "%s"\n' "$IMAGE_TAG"
 		printf 'verdict: %s\n' "$verdict"
 		printf 'instrument: %s\n' "$INSTRUMENT"
-		printf 'observer: maintainer\n'
+		printf 'observer: %s\n' "$OBSERVER"
 		printf 'check: restore-drill\n'
 		printf 'tombstonesReplayed: %s\n' "$TOMBSTONES_REPLAYED"
 		[ -z "$duration" ] || printf 'durationSeconds: %s\n' "$duration"
@@ -273,6 +281,7 @@ write_record() {
 		printf '# B7 restore drill — %s\n\n' "$date_day"
 		printf -- '- Backup restored: daily `%s` (manifest finishedAt %s)\n' "$BACKUP_STAMP" "${MANIFEST_FINISHED:-unknown}"
 		printf -- '- Console image: `%s`\n' "$IMAGE_TAG"
+		printf -- '- Tables restored from the dump: %s\n' "${TABLES_RESTORED:-not reached}"
 		printf -- '- Newest tombstone export merged: %s\n' "${TOMB_EXPORTED_AT:-none found}"
 		printf -- '- Tombstone replay: `%s`\n' "${REPLAY_SUMMARY:-not reached}"
 		printf -- '- Readiness body: `%s`\n' "${HEALTH_BODY:-not reached}"
@@ -283,6 +292,13 @@ write_record() {
 		printf 'Steps, in order, are in [`%s`](%s). Commit both files.\n' "$log_rel" "$log_rel"
 	} >"$path"
 	log "record written: $path"
+}
+
+#######################################
+# Succeeds when a psql table count is a positive whole number. Pure, so --self-test holds it.
+#######################################
+restored_tables_ok() {
+	[[ "${1:-}" =~ ^[0-9]+$ ]] && [ "$1" -gt 0 ]
 }
 
 #######################################
@@ -396,6 +412,11 @@ run_drill() {
 	dc exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-privileges --exit-on-error' \
 		<"$WORK/plain/postgres.dump"
 	rm -f "$WORK/plain/postgres.dump"
+	# Counted BEFORE migrate, which would create the schema on an empty database and hide a dump
+	# that restored nothing. A count, never a row: the record carries no personal data.
+	TABLES_RESTORED="$(drill_psql -A -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'" | tr -d '[:space:]')"
+	restored_tables_ok "$TABLES_RESTORED" || die "the dump restored no tables (count: '${TABLES_RESTORED:-none}')"
+	step restore "restored $TABLES_RESTORED tables"
 	step restore "loading buckets into seaweedfs"
 	local net ak sk
 	net="$(container_network "$(compose_container "$DRILL_PROJECT" seaweedfs)")"
@@ -535,6 +556,17 @@ self_test() {
 	expect "a malformed --backup is refused" 64 "--backup must be a stamp" -- --target drill --backup latest-ish
 	expect "a short --image-tag is refused" 64 "full 40-character" -- --target drill --image-tag abc123
 	expect "--started-at in the future is refused" 64 "--started-at" -- --target drill --started-at 9999999999
+	expect "an --observer outside the record's enum is refused" 64 "--observer must be" -- --target drill --observer robot
+	expect "--observer agent dry-runs" 0 "DRY RUN" -- --target drill --env-file "$tmp/backup.env" --observer agent
+
+	# The restored-table check, in-process: a count of zero, nothing, or psql noise is a failed restore.
+	local c
+	for c in 1 57; do
+		if restored_tables_ok "$c"; then printf 'ok    table count %s passes\n' "$c"; else printf 'FAIL  table count %s should pass\n' "$c"; fails=$((fails + 1)); fi
+	done
+	for c in 0 "" "ERROR" "-3"; do
+		if restored_tables_ok "$c"; then printf "FAIL  table count '%s' should fail\n" "$c"; fails=$((fails + 1)); else printf "ok    table count '%s' fails\n" "$c"; fi
+	done
 
 	if [ "$fails" -ne 0 ]; then
 		printf '\n%s self-test assertion(s) failed\n' "$fails"

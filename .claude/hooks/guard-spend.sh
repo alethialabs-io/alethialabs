@@ -56,6 +56,10 @@
 #   C-BYOMYSQL   200   `gh workflow run byo-users-managed-mysql.yml` — one Aurora MySQL db.t4g.medium
 #                      and one RDS MySQL db.t4g.micro for about an hour, created and deleted by the
 #                      run (#6536). Under USD 0.10 in fact; priced high on purpose.
+#   C-DRILL      100   `gh workflow run restore-drill.yml` — one spot instance in the alethia-backup AWS
+#                      account for about an hour (60 GB gp3, one public IPv4), terminated by the run
+#                      and by its own maximum lifetime (infra/backup-account/README.md "Cost": under
+#                      USD 1 a run). Priced at the conservative EUR 1.
 #   C-LOCALE2E  1500   scripts/e2e/{provisioning,keyless-db,registry,secrets}-e2e.sh run locally:
 #                      the same real-cloud applies as one heavy nightly leg.
 #   C-HCLOUD     100   `hcloud --context alethia-e2e|alethia-sandbox <resource> create` — the
@@ -77,7 +81,8 @@
 #                      cloud command (reads AND other writes) is free.
 #   C-RERUN            `gh run rerun <id>` — the run's workflow is looked up over the REST API and
 #                      priced from the same table: free → 0, prod → 0, e2e-ai → 10,
-#                      byo-users-managed-mysql → 200, not in the table → 100 (C-UNKNOWN). An
+#                      byo-users-managed-mysql → 200, restore-drill → 100, not in the table → 100
+#                      (C-UNKNOWN). An
 #                      e2e-nightly rerun is charged per "Provision" job it runs again (all of them;
 #                      only the failed ones with --failed; the one named with --job): 50 for a
 #                      SCHEDULED run (the floor is the only scheduled dimension) and 1550 for a
@@ -148,6 +153,7 @@ REAP_PLIST="$HOME/Library/LaunchAgents/io.alethialabs.sandbox-reap.plist"
 #   nightly  priced from its inputs (C-NIGHTLY)
 #   ai       C-AI
 #   byomysql C-BYOMYSQL
+#   drill    C-DRILL
 wf_class() {
 	case "$1" in
 	ci.yml | release-gate.yml | codeql.yml | validate-runner.yml | workflow-health.yml | \
@@ -165,6 +171,7 @@ wf_class() {
 	e2e-nightly.yml) echo nightly ;;
 	e2e-ai-nightly.yml) echo ai ;;
 	byo-users-managed-mysql.yml) echo byomysql ;;
+	restore-drill.yml) echo drill ;;
 	*) echo unknown ;;
 	esac
 }
@@ -528,6 +535,10 @@ rule_workflow() {
 		charge C-BYOMYSQL 200 "gh workflow run $file"
 		return 0
 	fi
+	if [ "$class" = drill ]; then
+		charge C-DRILL 100 "gh workflow run $file"
+		return 0
+	fi
 	# nightly
 	local heavy=0 keyless=0 providers=1 names="" maxcfg=0
 	for a in "${inputs[@]}"; do
@@ -662,6 +673,10 @@ rule_rerun() {
 		charge C-RERUN 200 "gh run rerun $id ($wf)"
 		return 0
 		;;
+	drill)
+		charge C-RERUN 100 "gh run rerun $id ($wf)"
+		return 0
+		;;
 	esac
 	# nightly: one charge per Provision job the rerun runs again
 	gh_lookup jobs run view "$id" ${RERUN_REPO:+-R "$RERUN_REPO"} --json jobs \
@@ -712,6 +727,7 @@ rule_gh() {
 			nightly) charge C-NIGHTLY 50 "gh api …/workflows/$f/dispatches (floor)" ;;
 			ai) charge C-AI 10 "gh api …/workflows/$f/dispatches" ;;
 			byomysql) charge C-BYOMYSQL 200 "gh api …/workflows/$f/dispatches" ;;
+			drill) charge C-DRILL 100 "gh api …/workflows/$f/dispatches" ;;
 			esac
 			charge C-UNKNOWN 100 "gh api …/workflows/$f/dispatches (inputs unread, or workflow not in the table)"
 		fi

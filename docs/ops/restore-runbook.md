@@ -257,9 +257,51 @@ hours, before you need it.
 
 The drill restores the newest copy onto a throwaway machine. It times the run from an empty machine to a
 console whose readiness body says `healthy`, and writes the B7 record. Run it once at setup and again at
-the release candidate. The record must be newer than 45 days for B7 to pass. BKP-L3 automates it as a
-weekly run on a short-lived AWS spot instance with the drill identity. Until that lands, an operator
-runs it by hand as below. It runs on EC2 in the backup account, not on Hetzner.
+the release candidate. The record must be newer than 45 days for B7 to pass. It runs on EC2 in the
+backup account, not on Hetzner. Normally `.github/workflows/restore-drill.yml` runs it every week
+(below). The manual steps further down are for a drill with a specific copy or commit, or for when the
+workflow cannot run.
+
+### The weekly automated drill
+
+`.github/workflows/restore-drill.yml` runs on Mondays at 06:41 UTC, and on a manual dispatch from
+`main`. It needs three repository **variables** (not secrets), all taken from
+`tofu output` in `infra/backup-account`:
+
+| Variable | Output |
+|---|---|
+| `BACKUP_DRILL_LAUNCHER_ROLE_ARN` | `drill_launcher_role_arn` |
+| `BACKUP_DRILL_LAUNCH_TEMPLATE_ID` | `drill_launch_template_id` |
+| `BACKUP_BUCKET` | `bucket_name` |
+
+`BACKUP_AWS_REGION` (default `eu-central-1`) and `BACKUP_DRILL_MAX_WAIT_MINUTES` (default 240, from 30
+to 270; keep it at or above `drill_max_lifetime_minutes`) are optional. While any of the three is unset, the run
+is green and its summary says "not configured". The drill identity must also be in its Secrets
+Manager secret (setup step 3).
+
+What one run does:
+
+1. Assumes `drill-launcher` over OIDC and starts **one** spot instance from the launch template,
+   overriding nothing. The instance schedules its own power-off at the template's maximum lifetime
+   before it does anything else. Powering off terminates it.
+2. On the instance, `scripts/ops/restore-drill-ec2.sh` takes the instance role's credentials from
+   the metadata service and fetches the drill identity from Secrets Manager itself. The identity
+   never passes through the workflow. It runs `scripts/ops/restore-drill.sh --target drill
+   --execute` with the clock started at boot, then uploads the record, its log and a `result.json`
+   to `evidence/<instance id>/` in the bucket, and powers off.
+3. The workflow waits for the power-off, then **always** terminates the instance, even after a
+   failure or a cancelled run. It downloads the evidence.
+4. On a pass, it opens a PR into `dev` (branch `chore/restore-drill-evidence`) that adds the record and
+   log under `docs/beta/evidence/b7/`. Merge it like any other PR.
+5. Any other outcome turns the run red and opens or updates one issue, **Restore drill failing**. The
+   next pass closes it. The possible outcomes are `fail` (the record says which step), `missing` (no
+   result; read the instance's system log in the EC2 console), `timeout` or `launch-failed` (spot
+   capacity, quota or the role).
+
+`scripts/ops/restore-drill-launch.sh` holds every step of the workflow. On a pull request the workflow
+runs only the three scripts' self-tests and launches nothing.
+
+### What the drill script refuses and protects
 
 What the script refuses, with no flag to override any of it:
 
@@ -280,6 +322,8 @@ What it does to protect the restored data:
   the drill stack and its volumes are removed after the record is written.
 - The record and its log carry counts, timings, the backup stamp and the readiness body. They carry no
   personal data.
+
+### By hand
 
 Steps:
 
@@ -372,4 +416,6 @@ deploy/prod/backup/backup.sh --self-test     # retention (both modes), off-box c
 deploy/prod/backup/ops/setup-box.sh --self-test               # values, the written file, dry run, idempotence
 deploy/prod/backup/ops/generate-age-identities.sh --self-test # files, modes, idempotence, no private key printed
 scripts/ops/restore-drill.sh --self-test     # every production guard and the dry run, against a fake docker
+scripts/ops/restore-drill-ec2.sh --self-test     # the instance side: identity fetch, evidence upload, no leak
+scripts/ops/restore-drill-launch.sh --self-test  # the workflow side: preflight, launch, wait, terminate, collect, report
 ```

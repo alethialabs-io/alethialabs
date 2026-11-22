@@ -179,6 +179,15 @@ export const NOT_A_MEASUREMENT = {
 			"branch's. Grepping for a PR-opening step would be a far weaker proxy than an artifact name.",
 		issue: "#4397",
 	},
+	"restore-drill.yml": {
+		why:
+			"Its output is a pull request adding a B7 record under docs/beta/evidence/b7/, plus one tracking " +
+			"issue, not an artifact: scripts/programme-rollup.mjs reads the COMMITTED record, so a stale " +
+			"instrument shows up as a B7 record older than its freshness window. It holds id-token: write and " +
+			"launches an instance in the backup account, so it runs the reviewed default-branch tree (the " +
+			"drill-launcher role trusts only main) and is never pinned to dev.",
+		issue: "#7245",
+	},
 	"news-changelog-draft.yml": {
 		why:
 			"Its output is a draft pull request carrying a draft changelog entry, not an artifact, and nothing " +
