@@ -8,10 +8,31 @@
 // (mirroring provisionPrimaryOrg) rather than via authClient.organization.*.
 
 import { and, count, eq, ne } from "drizzle-orm";
-import { completeOnboarding, getPrimaryOrg } from "@/lib/auth/onboarding";
+import { unstable_rethrow } from "next/navigation";
+import { z } from "zod";
+import { startProTrial } from "@/app/server/actions/billing";
+import { acceptLegalDocuments, declarePayer } from "@/app/server/actions/legal";
+import { setActiveOrganization } from "@/app/server/actions/workspace";
+import {
+	ACCEPTANCE_LOCALE,
+	ACCEPTED_DOCUMENTS,
+	requiredMessage,
+} from "@/components/legal/terms-acceptance-copy";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, FieldRefusal, type ActionResult } from "@/lib/actions/result";
+import { UnauthorizedError } from "@/lib/auth/errors";
+import {
+	completeOnboarding,
+	getPrimaryOrg,
+	resolveOnboarding,
+} from "@/lib/auth/onboarding";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { getEntitlements } from "@/lib/authz/entitlements";
+import {
+	hasAcceptedCurrentDocuments,
+	PaidConversionNotAllowedError,
+} from "@/lib/billing/eligibility";
 import { getServiceDb } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -20,6 +41,7 @@ import {
 	organization,
 	projects,
 } from "@/lib/db/schema";
+import { log } from "@/lib/observability/log";
 import { RESERVED_SLUGS } from "@/lib/routing";
 import { orgSlugShapeRefusal } from "@repo/org-slug";
 
@@ -59,7 +81,7 @@ export async function configureOnboardingOrg(input: {
 	const name = input.name.trim();
 	const slug = input.slug.trim().toLowerCase();
 	if (name.length < 2) {
-		return { ok: false, error: "Give your organization a name." };
+		return { ok: false, error: NAME_REFUSAL };
 	}
 	// The one org-slug rule (@repo/org-slug), which names which half failed: a 64-character slug
 	// told "use lowercase letters" has nothing to fix.
@@ -85,6 +107,214 @@ export async function configureOnboardingOrg(input: {
 		.where(eq(organization.id, org.id));
 
 	return { ok: true, slug };
+}
+
+/** The one refusal of {@link configureOnboardingOrg} that is about the NAME; every other is about the slug. */
+const NAME_REFUSAL = "Give your organization a name.";
+
+/** What onboarding submits: the org, the plan, the terms the person ticked, and — for Pro — the payer. */
+const finishOnboardingInput = z.object({
+	name: z.string().max(200),
+	slug: z.string().max(200),
+	plan: z.enum(["community", "team"]),
+	/**
+	 * The documents the checkbox the person ticked named, each at the version it printed. Empty when no
+	 * box was shown. The server decides what must be accepted; this only lets it refuse an acceptance
+	 * of a version the page did not show (a document sealed while the page was open).
+	 */
+	acceptedDocuments: z
+		.array(z.object({ id: z.string().min(1).max(64), version: z.string().min(1).max(64) }))
+		.max(16),
+	/** The browser's own clock, recorded beside the server's with the acceptance. Untrusted. */
+	clientTimestamp: z.string().datetime().nullable(),
+	/** The payer facts the purchase gate reads before the trial starts. Required for `team`. */
+	payer: z
+		.object({
+			capacity: z.enum(["consumer", "organization"]),
+			billingCountry: z.string().trim().length(2),
+			authorityAttestation: z.string().trim().max(200).nullable(),
+		})
+		.nullable(),
+});
+
+/** What the onboarding form sends to {@link finishOnboarding}. */
+export type FinishOnboardingInput = z.input<typeof finishOnboardingInput>;
+
+/** What a finished onboarding hands back: the org's slug, for the destination `/{slug}/~/new`. */
+export interface FinishOnboardingResult {
+	slug: string;
+}
+
+/** Said when the org already has a payment that has not been confirmed. */
+const IN_FLIGHT_REFUSAL =
+	"A subscription payment for this organization is still being confirmed. Reload this page in a minute.";
+
+/** Said when a trial could not start for a reason that is not the purchase gate's. */
+const TRIAL_FAILED =
+	"We couldn't start your Pro trial. Your organization is saved — choose Hobby to continue, or try again.";
+
+/** Said when the box was not ticked, or ticked for a version that is no longer current. */
+const TERMS_CHANGED =
+	"Our Terms changed while this page was open. Reload the page to read the current version.";
+
+/**
+ * Finishes post-signup setup in ONE server call (WIZ-W6, #6929): names the primary org, records the
+ * terms acceptance the inline checkbox gave, and — on Pro — declares the payer and starts the
+ * card-less trial, then marks setup complete. Through the mutation contract, so every refusal reaches
+ * the form as a value, under the field it is about.
+ *
+ * WHY ONE CALL, IN THIS ORDER. The form used to make four calls of its own and mark completion last
+ * from the browser, so a reload between them showed the plan chooser again. Here:
+ *   1. `resolveOnboarding` first. A setup the server already considers finished (`complete`, or a
+ *      live plan with only the completion write missing) is finished again, idempotently, and starts
+ *      nothing — a second tab, or Back after finishing, cannot start a second trial.
+ *   2. Every check that writes nothing (the terms box, the payer facts) before the first write.
+ *   3. The org's name and slug, then the acceptance through `acceptLegalDocuments`, exactly as the
+ *      `/accept-terms` page records it.
+ *   4. Pro: the payer facts go on the org's billing row through `declarePayer` — the same writer the
+ *      upgrade sheet uses — and only then `startProTrial`, so the purchase gate it runs reads the
+ *      facts just declared. A refused or failed trial leaves setup NOT complete and says why; the
+ *      org stays named, the acceptance stays recorded, and choosing Hobby finishes.
+ *   5. Completion last. If that write is lost after a trial started, `resolveOnboarding` reads the
+ *      live plan on the next load and finishes it (`settled`).
+ *
+ * The session's active org is set here, server-side, instead of from a mount effect in the form;
+ * the trial and the payer facts name the org explicitly, so neither depends on it.
+ */
+export async function finishOnboarding(
+	raw: FinishOnboardingInput,
+): Promise<ActionResult<FinishOnboardingResult>> {
+	return defineAction({ input: finishOnboardingInput, run: ({ input }) => runFinishOnboarding(input) })(
+		raw,
+	);
+}
+
+/** The body of {@link finishOnboarding}, on parsed input. */
+async function runFinishOnboarding(
+	input: z.output<typeof finishOnboardingInput>,
+): Promise<FinishOnboardingResult> {
+	const userId = await getOwner();
+	if (!userId) throw new UnauthorizedError();
+
+	const state = await resolveOnboarding(userId);
+	switch (state.kind) {
+		case "complete": {
+			const org = await getPrimaryOrg(userId);
+			return { slug: org?.slug ?? "" };
+		}
+		case "settled":
+			await completeOnboarding(userId);
+			return { slug: state.org.slug };
+		case "in-flight":
+			throw new ActionRefusal("conflict", IN_FLIGHT_REFUSAL);
+		case "no-org":
+			throw new ActionRefusal(
+				"not-found",
+				"Your organization could not be set up. Reload the page to try again.",
+			);
+		case "unknown":
+			throw new Error("onboarding state could not be read");
+		case "not-started":
+			break;
+	}
+	const org = state.org;
+	if (org.role !== "owner") {
+		throw new ActionRefusal("conflict", "Only the organization's owner can finish its setup.");
+	}
+
+	// The terms box: required whenever the current documents are not all accepted, and only for the
+	// versions the page printed. Asked before any write, so an unticked box changes nothing.
+	const termsPending = !(await hasAcceptedCurrentDocuments(userId));
+	if (termsPending) {
+		const shown = new Map(input.acceptedDocuments.map((d) => [d.id, d.version]));
+		if (shown.size === 0) {
+			throw new FieldRefusal(
+				{ acceptTerms: [requiredMessage(ACCEPTED_DOCUMENTS.map(asAcceptanceDocument))] },
+				"Accept the Terms to continue.",
+			);
+		}
+		if (ACCEPTED_DOCUMENTS.some((d) => shown.get(d.id) !== d.version)) {
+			throw new FieldRefusal({ acceptTerms: [TERMS_CHANGED] }, TERMS_CHANGED);
+		}
+	}
+
+	const payer = input.plan === "team" ? checkedPayer(input.payer) : null;
+
+	const identity = await configureOnboardingOrg({ name: input.name, slug: input.slug });
+	if (!identity.ok) {
+		const field = identity.error === NAME_REFUSAL ? "name" : "slug";
+		throw new FieldRefusal({ [field]: [identity.error] }, identity.error);
+	}
+
+	if (termsPending) {
+		await acceptLegalDocuments({
+			documentIds: ACCEPTED_DOCUMENTS.map((d) => d.id),
+			locale: ACCEPTANCE_LOCALE,
+			clientTimestamp: input.clientTimestamp,
+		});
+	}
+
+	await setActiveOrganization(org.id);
+
+	if (payer) {
+		await declarePayer(payer, { orgId: org.id });
+		await startTrialOrRefuse(org.id);
+	}
+
+	await completeOnboarding(userId);
+	return { slug: identity.slug };
+}
+
+/**
+ * The payer facts a Pro trial needs, checked before anything is written: present, a two-letter
+ * country, and an attestation exactly when the payer is an organization. Each refusal names the
+ * form field it is about.
+ */
+function checkedPayer(
+	payer: z.output<typeof finishOnboardingInput>["payer"],
+): { capacity: "consumer" | "organization"; billingCountry: string; authorityAttestation: string | null } {
+	if (!payer) {
+		throw new FieldRefusal(
+			{ billingCountry: ["Select the country this organization is billed in."] },
+			"Select the country this organization is billed in.",
+		);
+	}
+	const role = payer.authorityAttestation ?? "";
+	if (payer.capacity === "organization" && role.length < 2) {
+		throw new FieldRefusal(
+			{ role: ["Say what your role is — a purchase for a company needs someone who can act for it."] },
+			"Say what your role is.",
+		);
+	}
+	return {
+		capacity: payer.capacity,
+		billingCountry: payer.billingCountry.toUpperCase(),
+		authorityAttestation: payer.capacity === "organization" ? role : null,
+	};
+}
+
+/**
+ * Starts the card-less trial on `orgId`, turning a refusal into one the form can show. The purchase
+ * gate's refusal is shown in its own words (it names what to do); anything else is logged with a
+ * reference and shown as one sentence that says the org is saved.
+ */
+async function startTrialOrRefuse(orgId: string): Promise<void> {
+	try {
+		await startProTrial({ orgId });
+	} catch (err) {
+		unstable_rethrow(err);
+		if (err instanceof PaidConversionNotAllowedError) {
+			throw new ActionRefusal("conflict", err.message);
+		}
+		const ref = crypto.randomUUID().slice(0, 8);
+		log.error(`[onboarding] trial did not start ref=${ref}`, { ref, err });
+		throw new ActionRefusal("conflict", `${TRIAL_FAILED} Reference: ${ref}`);
+	}
+}
+
+/** A sealed document as the copy module's `AcceptanceDocument` shape, for its required message. */
+function asAcceptanceDocument(doc: (typeof ACCEPTED_DOCUMENTS)[number]) {
+	return { id: doc.id, title: doc.title, version: doc.version, path: doc.path, firstAcceptance: true };
 }
 
 /**

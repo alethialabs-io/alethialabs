@@ -35,11 +35,13 @@ test.describe("Hero happy-path", () => {
 		page,
 	}) => {
 		// 1. Onboarding / sign-in → a brand-new org (the live demo of the auth+onboarding surface).
+		//    Onboarding hands a new org straight to the new-project screen (WIZ-W6).
 		const { orgSlug } = await signUpWithOtp(page);
-		expect(page.url()).toContain(`/${orgSlug}`);
+		expect(page.url()).toContain(`/${orgSlug}/~/new`);
 
 		// 2. Org overview — the first-run "Get started" setup guide is the sellable onboarding surface.
 		//    Opening it proves the org exists and surfaces the "Connect a cloud" step.
+		await page.goto(`/${orgSlug}`);
 		await page.getByRole("button", { name: /setup guide/i }).click();
 		// .first(): the "connect a cloud" copy appears in several components; the visible one here is
 		// the setup-guide step title. Pin to the first match to stay strict-mode-safe if others mount.
