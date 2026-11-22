@@ -21,7 +21,7 @@
 // `next` it was given), replacing this page in history so Back does not return to a finished form.
 
 import { ArrowRight, Building2, Check, User } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { Fragment, type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Controller, type UseFormReturn, useFormState } from "react-hook-form";
 import { useRouter } from "next/navigation";
 import type { PayerCapacity } from "@repo/legal/commerce";
@@ -623,7 +623,11 @@ function PayerFacts({
 	);
 }
 
-/** Renders copy segments: plain text, or a link to a legal page that opens in a new tab. */
+/**
+ * Renders copy segments: plain text, or a link to a legal page that opens in a new tab. Text is a bare
+ * text node, never a wrapping element: the box's accessible name is computed from this label, and a
+ * wrapper per run drops the spaces at each run's edge ("theTerms of Service(version …)").
+ */
 function Segments({ segments }: { segments: readonly CopySegment[] }) {
 	return (
 		<>
@@ -639,7 +643,7 @@ function Segments({ segments }: { segments: readonly CopySegment[] }) {
 						{segment.text}
 					</a>
 				) : (
-					<span key={`text-${i}`}>{segment.text}</span>
+					<Fragment key={`text-${i}`}>{segment.text}</Fragment>
 				),
 			)}
 		</>

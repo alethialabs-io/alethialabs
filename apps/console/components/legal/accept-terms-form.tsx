@@ -5,7 +5,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
-import { useId } from "react";
+import { Fragment, useId } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@repo/ui/button";
@@ -23,7 +23,11 @@ import {
 } from "@/components/legal/terms-acceptance-copy";
 import { ROOT_SERVER_ERROR } from "@/lib/actions/form-errors";
 
-/** Renders copy segments: plain text, or a link to a legal page that opens in a new tab. */
+/**
+ * Renders copy segments: plain text, or a link to a legal page that opens in a new tab. Text is a bare
+ * text node, never a wrapping element: the box's accessible name is computed from this label, and a
+ * wrapper per run drops the spaces at each run's edge ("theTerms of Service(version …)").
+ */
 function Segments({ segments }: { segments: readonly CopySegment[] }) {
 	return (
 		<>
@@ -39,7 +43,7 @@ function Segments({ segments }: { segments: readonly CopySegment[] }) {
 						{segment.text}
 					</a>
 				) : (
-					<span key={`text-${i}`}>{segment.text}</span>
+					<Fragment key={`text-${i}`}>{segment.text}</Fragment>
 				),
 			)}
 		</>
