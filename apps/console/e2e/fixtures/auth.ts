@@ -97,6 +97,10 @@ export const test = base.extend<{ authedPage: Page; orgSlug: string }>({
 	},
 	authedPage: async ({ page, orgSlug }, use) => {
 		expect(orgSlug).toBeTruthy();
+		// Onboarding hands a new org to the new-project screen (WIZ-W6); the specs on this fixture
+		// start from the org's home, as they did when onboarding landed there.
+		await page.goto(`/${orgSlug}`);
+		await page.waitForURL((url) => url.pathname === `/${orgSlug}`, { timeout: 30_000 });
 		await use(page);
 	},
 });
