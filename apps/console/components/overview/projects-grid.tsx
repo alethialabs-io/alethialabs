@@ -9,7 +9,7 @@
 import type { UseQueryResult } from "@tanstack/react-query";
 import { Boxes, Plus } from "lucide-react";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
@@ -31,6 +31,13 @@ import { cloudNotOfferedReason } from "./project-cloud";
 import { ProjectCard } from "./project-card";
 import { ProjectRow } from "./project-row";
 import { ProjectTableHeader, ProjectsSkeleton } from "./projects-skeleton";
+
+/**
+ * How many projects the grid draws before it offers "Show more", and how many more each press adds.
+ * The read answers every project of the organization (R6 B-30); drawing them all at once is what
+ * made a large organization's overview slow to paint, so the grid draws them a page at a time.
+ */
+export const PROJECTS_RENDER_STEP = 48;
 
 /** Where a new project is created. */
 function newProjectHref(orgSlug: string): string {
@@ -72,6 +79,9 @@ export function ProjectsGrid({
 		const rest = projects.filter((project) => !favoriteIds.includes(project.id));
 		return [...starred, ...rest];
 	}, [projects, favoriteIds]);
+	const [shownCount, setShownCount] = useState(PROJECTS_RENDER_STEP);
+	const shown = ordered.slice(0, shownCount);
+	const hiddenCount = ordered.length - shown.length;
 
 	if (grid.data === undefined) {
 		const refusal = grid.isError ? readRefusalOf(grid.error) : null;
@@ -139,7 +149,7 @@ export function ProjectsGrid({
 						<Table>
 							<ProjectTableHeader />
 							<TableBody>
-								{ordered.map((project) => (
+								{shown.map((project) => (
 									<ProjectRow
 										key={project.id}
 										project={project}
@@ -155,7 +165,7 @@ export function ProjectsGrid({
 					</div>
 				) : (
 					<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(238px,1fr))]">
-						{ordered.map((project) => (
+						{shown.map((project) => (
 							<ProjectCard
 								key={project.id}
 								project={project}
@@ -168,6 +178,17 @@ export function ProjectsGrid({
 						))}
 					</div>
 				)}
+				{hiddenCount > 0 ? (
+					<div className="mt-3 flex justify-center">
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => setShownCount((count) => count + PROJECTS_RENDER_STEP)}
+						>
+							Show {Math.min(hiddenCount, PROJECTS_RENDER_STEP)} more of {hiddenCount}
+						</Button>
+					</div>
+				) : null}
 			</div>
 		</div>
 	);

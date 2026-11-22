@@ -132,6 +132,53 @@ describe("OverviewToolbar — search and filter controls", () => {
 	it("each control has an accessible name", async () => {
 		await openCreateMenu();
 		expect(screen.getByRole("textbox", { name: "Search projects" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Filter and sort" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Sort by Activity" })).toBeInTheDocument();
+	});
+});
+
+// R6 B-24: the overview's filters are the console filter standard's controls — the shared cloud
+// filter, a Repository facet and the mono Reset — not a bespoke funnel popover of its own.
+describe("OverviewToolbar — the filter standard (B-24)", () => {
+	/** Renders the toolbar with `state` and a small facet universe. */
+	function renderToolbar(state: OverviewState, onChange = vi.fn()) {
+		renderWithReads(
+			<OverviewToolbar
+				orgSlug="acme"
+				state={state}
+				facets={{
+					clouds: [{ value: "aws", count: 2 }],
+					repos: [{ url: "https://github.com/acme/web", label: "acme/web", count: 1 }],
+				}}
+				createProjectReason={null}
+				onChange={onChange}
+			/>,
+		);
+		return onChange;
+	}
+
+	it("draws the facet controls in the bar, with no funnel popover", () => {
+		renderToolbar(PRISTINE);
+		expect(screen.getByRole("button", { name: /Repository/ })).toBeInTheDocument();
+		expect(screen.getByText("All clouds")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Filter and sort" })).toBeNull();
+	});
+
+	it("Reset appears with a selection, counts it, and clears the filters but not the sort", async () => {
+		const onChange = renderToolbar({ ...PRISTINE, clouds: ["aws"], repos: ["https://github.com/acme/web"], sort: "name" });
+		const reset = screen.getByRole("button", { name: "Reset · 2" });
+		await userEvent.click(reset);
+		expect(onChange).toHaveBeenCalledWith({ q: "", clouds: [], repos: [] });
+	});
+
+	it("no Reset while nothing is filtered", () => {
+		renderToolbar({ ...PRISTINE, sort: "name" });
+		expect(screen.queryByRole("button", { name: /^Reset/ })).toBeNull();
+	});
+
+	it("the sort menu sets the order", async () => {
+		const onChange = renderToolbar(PRISTINE);
+		await userEvent.click(screen.getByRole("button", { name: "Sort by Activity" }));
+		await userEvent.click(await screen.findByRole("menuitemradio", { name: "Name" }));
+		expect(onChange).toHaveBeenCalledWith({ sort: "name" });
 	});
 });

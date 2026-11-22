@@ -144,7 +144,7 @@ test.describe("Onboarding — public auth pages", () => {
 
 	test("login page renders the returning-user hero", async ({ page }) => {
 		await page.goto("/login");
-		await expect(page.getByRole("heading", { name: /log in to alethia/i })).toBeVisible();
+		await expect(page.getByRole("heading", { name: /sign in to alethia/i })).toBeVisible();
 	});
 
 	test("signup offers OAuth providers (GitHub, Google)", async ({ page }) => {
@@ -322,7 +322,7 @@ test.describe("Onboarding — auth gating", () => {
 	test("/onboarding while logged out redirects to /login", async ({ page }) => {
 		await page.goto("/onboarding");
 		await page.waitForURL(/\/login/, { timeout: 15_000 });
-		await expect(page.getByRole("heading", { name: /log in to alethia/i })).toBeVisible();
+		await expect(page.getByRole("heading", { name: /sign in to alethia/i })).toBeVisible();
 	});
 
 	test("/invites/accept with a token while logged out redirects to /login (carrying next)", async ({
@@ -617,7 +617,7 @@ test.describe("Onboarding — the CLI hand-off", () => {
 		await owner.page.goto(
 			"/cli/login?device_code=11111111-2222-4333-8444-555555555555&user_code=BCDF-GHJK",
 		);
-		await expect(owner.page.getByRole("heading", { name: /cli authentication/i })).toBeVisible();
+		await expect(owner.page.getByRole("heading", { name: /approve cli sign-in/i })).toBeVisible();
 		// The code plate is what the reader character-matches against their terminal.
 		await expect(owner.page.locator('[aria-label="Device confirmation code"]')).toContainText(
 			"BCDF-GHJK",
@@ -650,7 +650,7 @@ test.describe("Onboarding — signing out", () => {
 		// Sign-out loads the console root as a new document, which clears the stale cookie
 		// (/api/session/reset) and lands on /login rather than trapping the visitor.
 		await page.waitForURL(/\/login/, { timeout: 60_000 });
-		await expect(page.getByRole("heading", { name: /log in to alethia/i })).toBeVisible();
+		await expect(page.getByRole("heading", { name: /sign in to alethia/i })).toBeVisible();
 
 		// And the org that was reachable a moment ago no longer is.
 		await page.goto(`/${orgSlug}`);

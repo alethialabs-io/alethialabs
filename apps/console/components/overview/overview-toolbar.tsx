@@ -2,41 +2,33 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Overview toolbar — a tight search that claims the row, a single funnel button whose popover
-// collapses the cloud + repository filters and the sort order (Activity / Name), then the
-// card/table view toggle and a Create menu. All state is owned by the page (URL search params) —
-// the console filter standard's blessed URL→RSC variant — so this component only emits `onChange`.
+// Overview toolbar — the console filter standard, as the clusters and environments bars draw it:
+// the search, the shared CloudFilter, a Repository FacetFilter and the mono Reset; then the sort
+// order (Activity / Name), the card/table view toggle and a Create menu. It used to fold the two
+// facets and the sort into one bespoke funnel popover, so the overview's filters looked and worked
+// unlike every other list's (R6 B-24). All state is owned by the page (URL search params) — the
+// console filter standard's blessed URL→RSC variant — so this component only emits `onChange`.
+// Every facet count was tallied over the unfiltered universe by the grid's read.
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Activity,
-  ArrowDownAZ,
-  ArrowLeft,
-  Check,
-  ChevronRight,
-  Cloud,
-  Filter,
-  GitBranch,
-  Plus,
-} from "lucide-react";
+import { ArrowDownUp, GitBranch, Plus } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
-import { FilterBar } from "@repo/ui/filter-bar";
+import { FacetFilter } from "@repo/ui/facet-filter";
+import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
-import { Input } from "@repo/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
-import { ProviderIcon } from "@repo/ui/provider-icon";
-import { Separator } from "@repo/ui/separator";
-import { cn } from "@repo/ui/utils";
 import { ViewToggle } from "@repo/ui/view-toggle";
+import { CloudFilter } from "@/components/filters/cloud-filter";
 import type { ProjectListResult } from "@/app/server/actions/projects";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
 import type { OverviewState } from "@/components/overview/overview-state";
@@ -95,6 +87,7 @@ export function OverviewToolbar({
     <FilterBar
       end={
         <div className="flex items-center gap-2.5">
+          <SortMenu sort={state.sort} onChange={onChange} />
           <ViewToggle
             value={state.view}
             onChange={(view) => onChange({ view })}
@@ -110,339 +103,85 @@ export function OverviewToolbar({
         ariaLabel="Search projects"
         className="min-w-[200px] flex-1"
       />
-      <FilterMenu state={state} facets={facets} onChange={onChange} />
+      <CloudFilter
+        value={state.clouds}
+        onChange={(clouds) => onChange({ clouds })}
+        options={facets.clouds.map((c) => ({
+          value: c.value,
+          label: providerLabel(c.value),
+          count: c.count,
+        }))}
+      />
+      <FacetFilter
+        label="Repository"
+        icon={GitBranch}
+        searchPlaceholder="Search repositories…"
+        options={facets.repos.map((r) => ({
+          value: r.url,
+          label: r.label,
+          count: r.count,
+        }))}
+        value={state.repos}
+        onChange={(repos) => onChange({ repos })}
+      />
+      <FilterBarReset
+        count={countActiveFilters(
+          { q: state.q, clouds: state.clouds, repos: state.repos },
+          FILTER_DEFAULTS,
+        )}
+        onReset={() => onChange({ q: "", clouds: [], repos: [] })}
+      />
     </FilterBar>
   );
 }
 
+/** What each sort order is called, on its menu item and on the trigger. */
+const SORT_LABELS: Record<OverviewState["sort"], string> = {
+  activity: "Activity",
+  name: "Name",
+};
+
+/** Narrows a menu value to one of the grid's two sort orders. */
+function isSortOrder(value: unknown): value is OverviewState["sort"] {
+  return value === "activity" || value === "name";
+}
+
 /**
- * The single funnel popover: repository + cloud facets (each expands into its own search on click,
- * so the popover stays uncluttered) and the sort order as a right-checked list. The trigger carries
- * a count badge of the active facet selections.
+ * The sort order, as a menu of radio items. Sorting is not a filter, so it sits beside the view
+ * toggle rather than among the facets, and Reset does not count it.
  */
-function FilterMenu({
-  state,
-  facets,
+function SortMenu({
+  sort,
   onChange,
 }: {
-  state: OverviewState;
-  facets: ProjectListResult["facets"];
+  sort: OverviewState["sort"];
   onChange: (next: Partial<OverviewState>) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [panel, setPanel] = useState<"root" | "cloud" | "repo">("root");
-  const [search, setSearch] = useState("");
-
-  // Open/close the popover, resetting back to the root panel on close.
-  const onOpenChange = (next: boolean) => {
-    setOpen(next);
-    if (!next) {
-      setPanel("root");
-      setSearch("");
-    }
-  };
-
-  const badge = state.clouds.length + state.repos.length;
-  const resetCount = countActiveFilters(
-    { q: state.q, clouds: state.clouds, repos: state.repos },
-    FILTER_DEFAULTS,
-  );
-
-  const toggle = (list: string[], value: string): string[] =>
-    list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
-
-  const q = search.trim().toLowerCase();
-  const clouds = facets.clouds.filter((c) =>
-    providerLabel(c.value).toLowerCase().includes(q),
-  );
-  const repos = facets.repos.filter((r) => r.label.toLowerCase().includes(q));
-
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger
+    <DropdownMenu>
+      <DropdownMenuTrigger
         render={
-          <Button
-            variant="outline"
-            size="icon"
-            className="relative"
-            aria-label="Filter and sort"
-          >
-            <Filter aria-hidden className="size-4" />
-            {badge > 0 && (
-              <span className="absolute -right-1.5 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full border-2 border-background bg-foreground px-1 font-mono text-ui-3xs font-semibold text-background">
-                {badge}
-              </span>
-            )}
+          <Button variant="outline" size="sm" className="gap-1.5" aria-label={`Sort by ${SORT_LABELS[sort]}`}>
+            <ArrowDownUp aria-hidden className="size-3.5" />
+            {SORT_LABELS[sort]}
           </Button>
         }
       />
-      <PopoverContent align="end" className="w-72 p-2">
-        {panel === "root" && (
-          <div className="flex flex-col">
-            <Eyebrow>Filter by</Eyebrow>
-            <FacetRow
-              icon={<GitBranch className="size-3.5" />}
-              label="Repository"
-              count={state.repos.length}
-              disabled={facets.repos.length === 0}
-              onClick={() => {
-                setSearch("");
-                setPanel("repo");
-              }}
-            />
-            <FacetRow
-              icon={<Cloud className="size-3.5" />}
-              label="Cloud"
-              count={state.clouds.length}
-              disabled={facets.clouds.length === 0}
-              onClick={() => {
-                setSearch("");
-                setPanel("cloud");
-              }}
-            />
-
-            <Separator className="my-2" />
-
-            <Eyebrow>Sort by</Eyebrow>
-            <SortRow
-              icon={<Activity className="size-3.5" />}
-              label="Activity"
-              active={state.sort === "activity"}
-              onClick={() => onChange({ sort: "activity" })}
-            />
-            <SortRow
-              icon={<ArrowDownAZ className="size-3.5" />}
-              label="Name"
-              active={state.sort === "name"}
-              onClick={() => onChange({ sort: "name" })}
-            />
-
-            {resetCount > 0 && (
-              <div className="mt-1 flex justify-end pt-1">
-                <button
-                  type="button"
-                  onClick={() => onChange({ q: "", clouds: [], repos: [] })}
-                  className="font-mono text-ui-2xs text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  Reset · {resetCount}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {panel === "cloud" && (
-          <FacetPanel
-            title="Cloud"
-            placeholder="Search clouds…"
-            search={search}
-            onSearch={setSearch}
-            onBack={() => setPanel("root")}
-            empty={clouds.length === 0}
-          >
-            {clouds.map((c) => (
-              <FacetOption
-                key={c.value}
-                selected={state.clouds.includes(c.value)}
-                onClick={() =>
-                  onChange({ clouds: toggle(state.clouds, c.value) })
-                }
-                leading={
-                  <ProviderIcon provider={c.value} size={14} mono={false} />
-                }
-                label={providerLabel(c.value)}
-                hint={String(c.count)}
-              />
-            ))}
-          </FacetPanel>
-        )}
-
-        {panel === "repo" && (
-          <FacetPanel
-            title="Repository"
-            placeholder="Search repositories…"
-            search={search}
-            onSearch={setSearch}
-            onBack={() => setPanel("root")}
-            empty={repos.length === 0}
-          >
-            {repos.map((r) => (
-              <FacetOption
-                key={r.url}
-                selected={state.repos.includes(r.url)}
-                onClick={() => onChange({ repos: toggle(state.repos, r.url) })}
-                leading={
-                  <GitBranch className="size-3.5 text-muted-foreground" />
-                }
-                label={r.label}
-                mono
-                hint={String(r.count)}
-              />
-            ))}
-          </FacetPanel>
-        )}
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-/** A mono uppercase section marker inside the filter popover. */
-function Eyebrow({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="px-1.5 pb-1 pt-1 font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">
-      {children}
-    </div>
-  );
-}
-
-/** A root-panel facet row that drills into its own searchable selector. */
-function FacetRow({
-  icon,
-  label,
-  count,
-  disabled,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  count: number;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="flex h-8 items-center gap-2 rounded-sm px-1.5 text-ui-md text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
-    >
-      <span className="text-muted-foreground">{icon}</span>
-      <span className="flex-1 text-left">{label}</span>
-      {count > 0 && (
-        <span className="font-mono text-ui-2xs text-muted-foreground">
-          {count}
-        </span>
-      )}
-      <ChevronRight className="size-3.5 text-muted-foreground" />
-    </button>
-  );
-}
-
-/** A sort option — right-checked (radio semantics), matching the console picker convention. */
-function SortRow({
-  icon,
-  label,
-  active,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className="flex h-8 items-center gap-2 rounded-sm px-1.5 text-ui-md text-foreground transition-colors hover:bg-muted"
-    >
-      <span className="text-muted-foreground">{icon}</span>
-      <span className="flex-1 text-left">{label}</span>
-      <Check className={cn("size-3.5", active ? "opacity-100" : "opacity-0")} />
-    </button>
-  );
-}
-
-/** Level-2 chrome: a back header, a search box, and the scrollable option list. */
-function FacetPanel({
-  title,
-  placeholder,
-  search,
-  onSearch,
-  onBack,
-  empty,
-  children,
-}: {
-  title: string;
-  placeholder: string;
-  search: string;
-  onSearch: (v: string) => void;
-  onBack: () => void;
-  empty: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col">
-      <button
-        type="button"
-        onClick={onBack}
-        className="mb-1 flex h-7 items-center gap-1.5 rounded-sm px-1 text-ui-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeft className="size-3.5" />
-        {title}
-      </button>
-      <Input
-        aria-label={placeholder.replace(/…$/, "")}
-        value={search}
-        onChange={(e) => onSearch(e.target.value)}
-        placeholder={placeholder}
-        className="mb-1.5 h-8"
-        autoFocus
-      />
-      <div className="max-h-56 overflow-y-auto">
-        {empty ? (
-          <p className="px-1.5 py-4 text-center text-ui-sm text-muted-foreground">
-            No matches.
-          </p>
-        ) : (
-          children
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** A selectable facet option with a right-aligned check when active. */
-function FacetOption({
-  selected,
-  onClick,
-  leading,
-  label,
-  hint,
-  mono,
-}: {
-  selected: boolean;
-  onClick: () => void;
-  leading: React.ReactNode;
-  label: string;
-  hint?: string;
-  mono?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-center gap-2 rounded-sm px-1.5 py-1.5 text-left text-ui-md text-foreground transition-colors hover:bg-muted"
-    >
-      <span className="grid size-4 shrink-0 place-items-center">{leading}</span>
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate",
-          mono && "font-mono text-ui-sm",
-        )}
-      >
-        {label}
-      </span>
-      {hint && (
-        <span className="font-mono text-ui-2xs text-muted-foreground">
-          {hint}
-        </span>
-      )}
-      <Check
-        className={cn("size-3.5", selected ? "opacity-100" : "opacity-0")}
-      />
-    </button>
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuLabel className="font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">
+          Sort by
+        </DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={sort}
+          onValueChange={(value: unknown) => {
+            if (isSortOrder(value)) onChange({ sort: value });
+          }}
+        >
+          <DropdownMenuRadioItem value="activity">{SORT_LABELS.activity}</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="name">{SORT_LABELS.name}</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

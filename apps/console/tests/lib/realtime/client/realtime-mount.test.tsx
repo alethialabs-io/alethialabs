@@ -141,6 +141,15 @@ describe("RealtimeMount", () => {
 		expect(screen.getByRole("status")).toHaveTextContent("");
 	});
 
+	// S-10: toasts are bottom-centre, and the notice used to be fixed bottom-centre on the same rung,
+	// so the two drew over each other. It now hangs under the shell header instead.
+	it("the notice sits under the shell header, clear of the bottom-centre toasts", () => {
+		render(<RealtimeMount />);
+		const region = screen.getByRole("status");
+		expect(region.className).toContain("top-[calc(var(--shell-header-h)+0.5rem)]");
+		expect(region.className).not.toMatch(/\bbottom-/);
+	});
+
 	it("a session ended by another source silences the paused notice behind the dialog", async () => {
 		vi.useFakeTimers();
 		render(<RealtimeMount />);

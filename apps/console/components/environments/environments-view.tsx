@@ -452,7 +452,12 @@ function EnvironmentsBody({
 			{promotions.length > 0 && (
 				<section>
 					<SectionHeading className="mb-3" level={2} title="Promotions" count={promotions.length} />
-					<PromotionsHistory promotions={promotions} envName={envName} onView={openDetail} />
+					<PromotionsHistory
+						promotions={promotions}
+						envName={envName}
+						activeId={activePromotion?.id ?? null}
+						onView={openDetail}
+					/>
 				</section>
 			)}
 

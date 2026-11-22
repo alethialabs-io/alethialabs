@@ -489,7 +489,10 @@ export default function CliLoginPage() {
 	return (
 		<>
 			<div className="mb-6 text-center">
-				<p className="vx-eyebrow">Device authorization</p>
+				{/* "Sign in" everywhere (R6 A-21): the heading is the route's own title, `layout.tsx`'s
+				    "Approve CLI sign-in", where it used to read "CLI Authentication" under a "Device
+				    authorization" eyebrow — three names for one screen. */}
+				<p className="vx-eyebrow">Alethia CLI</p>
 				{/* `text-display-xs` — the display rung for type rendered inside a shell,
 				    24/22/20px. It replaces this file's own `text-[22px]`, which was one of the five
 				    console sites sitting in the gap between the UI ladder's 17px top and the display
@@ -497,7 +500,7 @@ export default function CliLoginPage() {
 				    it to packages/brand/src/tokens.css's `@theme`, where it resolves today — four
 				    other console files already read it. */}
 				<h1 className="mt-2 font-grotesk text-display-xs font-semibold tracking-[-0.03em] text-text-primary">
-					CLI Authentication
+					Approve CLI sign-in
 				</h1>
 			</div>
 			{/* The same body `loading.tsx` draws. `useSearchParams` forces a client bailout, and

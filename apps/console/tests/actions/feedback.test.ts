@@ -5,6 +5,10 @@
 // and the sendEmail boundary; keep deploymentMode(), the zod schema, and the email
 // subject/template real. Asserts the hosted-only + auth guards, the validation contract,
 // and the exact envelope (from/to/subject/devLog) handed to the configured provider.
+//
+// The action runs through the mutation contract (R6 G-27), so every refusal is a RESULT the dialog
+// routes — `not-found` off the hosted service, `unauthenticated` with no session, `validation`
+// with the field — never a throw.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -50,49 +54,50 @@ afterEach(() => {
 describe("submitFeedback", () => {
 	it("refuses on a self-managed deployment before touching auth or email", async () => {
 		process.env.ALETHIA_DEPLOYMENT_MODE = "self-managed";
-		await expect(submitFeedback(validInput)).rejects.toThrow(
-			/only available on the hosted service/,
-		);
+		expect(await submitFeedback(validInput)).toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Feedback is only available on the hosted service." },
+		});
 		expect(auth.api.getSession).not.toHaveBeenCalled();
 		expect(sendEmail).not.toHaveBeenCalled();
 	});
 
 	it("rejects an unauthenticated request and never emails", async () => {
 		vi.mocked(auth.api.getSession).mockResolvedValue(null as never);
-		await expect(submitFeedback(validInput)).rejects.toThrow(/Unauthorized/);
+		expect(await submitFeedback(validInput)).toEqual({ ok: false, error: { kind: "unauthenticated" } });
 		expect(sendEmail).not.toHaveBeenCalled();
 	});
 
 	it("rejects a session with no user", async () => {
 		vi.mocked(auth.api.getSession).mockResolvedValue({ user: null } as never);
-		await expect(submitFeedback(validInput)).rejects.toThrow(/Unauthorized/);
+		expect(await submitFeedback(validInput)).toEqual({ ok: false, error: { kind: "unauthenticated" } });
 		expect(sendEmail).not.toHaveBeenCalled();
 	});
 
-	it("validates input and rejects an out-of-range rating before emailing", async () => {
-		await expect(
-			submitFeedback({ topic: "bug", rating: 9, message: "x" } as never),
-		).rejects.toThrow();
+	it("validates input and refuses an out-of-range rating under its field, before emailing", async () => {
+		const result = await submitFeedback({ topic: "bug", rating: 9, message: "x" } as never);
+		expect(result.ok ? null : result.error.kind).toBe("validation");
+		expect(result.ok || result.error.kind !== "validation" ? [] : Object.keys(result.error.fields)).toEqual(["rating"]);
 		expect(sendEmail).not.toHaveBeenCalled();
 	});
 
 	it("validates input and rejects an empty message", async () => {
-		await expect(
-			submitFeedback({ topic: "bug", rating: 3, message: "" } as never),
-		).rejects.toThrow();
+		const result = await submitFeedback({ topic: "bug", rating: 3, message: "" } as never);
+		expect(result.ok || result.error.kind !== "validation" ? null : result.error.fields.message).toEqual([
+			"Tell us a little more",
+		]);
 		expect(sendEmail).not.toHaveBeenCalled();
 	});
 
 	it("validates input and rejects an unknown topic", async () => {
-		await expect(
-			submitFeedback({ topic: "spam", rating: 3, message: "hi" } as never),
-		).rejects.toThrow();
+		const result = await submitFeedback({ topic: "spam", rating: 3, message: "hi" } as never);
+		expect(result.ok ? null : result.error.kind).toBe("validation");
 		expect(sendEmail).not.toHaveBeenCalled();
 	});
 
 	it("emails the default inbox with the topic-derived subject and submitter devLog", async () => {
 		const res = await submitFeedback(validInput);
-		expect(res).toEqual({ ok: true });
+		expect(res).toEqual({ ok: true, data: null });
 
 		expect(sendEmail).toHaveBeenCalledTimes(1);
 		const arg = vi.mocked(sendEmail).mock.calls[0][0];
