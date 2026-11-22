@@ -5,13 +5,13 @@ import Link from "next/link";
 import { KIND_FILTERS, type NewsKind } from "@/lib/news";
 
 /**
- * The kind chips above the /news list. Each is a link to `?kind=…` (All drops the param), so the
- * filter is server-rendered, shareable and works without JavaScript; the active chip carries
- * `aria-current`.
+ * The kind chips above the /news grid. Each is a link to `?kind=…` (All drops the param, and every
+ * chip drops `?page=`), so the filter is server-rendered, shareable and works without JavaScript;
+ * the active chip carries `aria-current`.
  */
 export function NewsFilters({ active }: { active: NewsKind | null }) {
 	return (
-		<nav aria-label="Filter news" className="mt-7 mb-3.5 flex flex-wrap gap-1.5">
+		<nav aria-label="Filter news" className="flex flex-wrap gap-1.5">
 			{KIND_FILTERS.map(({ kind, label }) => {
 				const current = kind === active;
 				return (

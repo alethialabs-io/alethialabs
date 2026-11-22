@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { SiteShell } from "@repo/brand/site-shell";
-import { getLatestPosts, getLatestReleases } from "@/lib/home/feeds";
-import { Film, FromTheBlog, Latest, Statement } from "./home-sections";
+import { getLatestPosts, getLatestReleases } from "@repo/brand/news-feeds";
+import { Film, FromNews, Latest, Statement } from "./home-sections";
 
 /**
  * The home page, in the editorial order the maintainer chose (modelled on anthropic.com's
  * structure, not its content): a statement, the film, the latest three releases from the
- * changelog, four posts from the blog. The two feeds are fetched in parallel and cached for an
+ * changelog, four posts from News. The two feeds are fetched in parallel and cached for an
  * hour; either one failing only removes its own section.
  */
 export async function MarketingHome({ homeHref = "/" }: { homeHref?: "/" | "/home" }) {
@@ -18,7 +18,7 @@ export async function MarketingHome({ homeHref = "/" }: { homeHref?: "/" | "/hom
 			<Statement />
 			<Film />
 			<Latest releases={releases} />
-			<FromTheBlog posts={posts} />
+			<FromNews posts={posts} />
 		</SiteShell>
 	);
 }

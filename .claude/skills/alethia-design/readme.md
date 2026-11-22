@@ -61,7 +61,7 @@ How Alethia Labs writes: terse, declarative, and technically confident in its ow
 - **Status without color:** the defining rule. State reads through **dot fill + shape + a mono label**, never hue — solid (active), haloed (processing), ring (idle), hollow-center (failed), faint (disabled), blinking (live). See `StatusBadge`.
 - **Type:** three voices. **Space Grotesk** (display / headlines / wordmark, tracking −0.02 to −0.04em), **Geist** (UI + body, 14px base), **Geist Mono** (terminal, data readouts, the uppercase eyebrow label, the LABS tag). Tokens: `tokens/typography.css`.
 - **Logo:** the interim **bracketed point** `[ · ]` — a focal dot inside square brackets, drawn in `currentColor` so it inherits the ink. Lockup: mark + **Alethia** (Space Grotesk) + **LABS** (tracked mono). The symbol remains on clearance hold; owned-surface display is allowed, public downloads and partner authorization are not.
-- **Backgrounds:** flat ink surfaces. The one decorative motif is a faint **blueprint grid** (44px) radially masked behind the hero — no gradients, no photos, no illustration. Never bluish-purple gradients.
+- **Backgrounds:** flat ink surfaces. The one decorative motif is a faint **blueprint grid** (44px) radially masked behind the hero — no gradients, no photos, no illustration (News covers, below, are the single recorded exception). Never bluish-purple gradients.
 - **Borders carry structure.** Hairline `1px` borders (`--border`) define every surface; `--border-strong` for inputs/emphasis; dashed borders mark "not yet connected" affordances.
 - **Shadows are a whisper.** Five low-opacity neutral steps; elevation reads from borders, not drop-shadow drama. Resting cards use `--shadow-sm`. Tokens: `tokens/effects.css`.
 - **Corner radii:** `xs 0 · sm 2 · md 3 · lg 4 · xl 6 · full`. Controls are square or nearly square; rounded app tiles are the deliberate exception.
@@ -69,7 +69,8 @@ How Alethia Labs writes: terse, declarative, and technically confident in its ow
 - **Cards:** surface fill, hairline border, `--shadow-sm`, `radius-lg`. `interactive` cards shift border + background on hover; no lift/scale.
 - **Motion:** restrained, mechanical. Durations 80–480ms, easing `cubic-bezier(0.2,0,0,1)`. Hover = background/border/color shift; press = `translateY(0.5px)`. The only loops are the terminal caret and the partner marquee. Respects `prefers-reduced-motion`.
 - **Focus:** 3px translucent ring (`--ring-color`). **Transparency & blur:** sticky headers use `color-mix` canvas + `blur(8–10px)`; scrims 55–70% black.
-- **Imagery:** none by default; provider/integration marks keep their original color. Conversion blue is the only Alethia-owned hue and never colors the brand mark or status.
+- **Imagery:** none by default; provider/integration marks keep their original color, and they are the only color on a page. There is **no Alethia-owned hue** — not even a conversion blue (see Color above).
+- **News covers (the one exception to "no illustration"):** a News post may carry **generated grayscale cover art** — `@repo/brand/cover`, drawn on the 44px blueprint grid in the theme's ink, seeded from the post's slug and kind, so it is deterministic and needs no asset. A **photo** is allowed only as a post's optional `cover:` and only **rendered grayscale** (CSS `filter: grayscale`); never a colour photo, never stock illustration.
 
 ---
 

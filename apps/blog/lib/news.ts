@@ -3,28 +3,33 @@
 
 import { formatDate } from "@repo/format";
 import type { Post } from "@/lib/posts";
-import type { ReleaseItem } from "@/lib/releases";
 
 /** The tier a news item belongs to; the union comes from the velite schema's `kind` enum. */
 export type NewsKind = Post["kind"];
 
-/** The singular label shown on a row and on the featured card. */
+/** The fields the index logic reads, so it can be tested without a velite build. */
+export type NewsItem = Pick<Post, "slug" | "kind" | "date" | "featured">;
+
+/** The singular label shown on a card, the hero and the post page. */
 export const KIND_LABELS: Record<NewsKind, string> = {
 	announcement: "Announcement",
+	product: "Product",
 	changelog: "Changelog",
 	engineering: "Engineering",
 	company: "Company",
 };
 
 /**
- * The filter chips, in order. `null` is "All". Company has no chip until there is a company post
- * to show; `?kind=company` still filters, because every kind is a valid filter value.
+ * The filter chips, in order. `null` is "All". Every kind has a chip, so a reader can see that a
+ * tier exists even while it is empty; the empty state says so.
  */
 export const KIND_FILTERS: { kind: NewsKind | null; label: string }[] = [
 	{ kind: null, label: "All" },
 	{ kind: "announcement", label: "Announcements" },
-	{ kind: "changelog", label: "Changelog" },
+	{ kind: "product", label: "Product" },
 	{ kind: "engineering", label: "Engineering" },
+	{ kind: "changelog", label: "Changelog" },
+	{ kind: "company", label: "Company" },
 ];
 
 /** Narrows a string to a `NewsKind` without a cast. */
@@ -41,60 +46,76 @@ export function parseKindFilter(value: string | string[] | undefined): NewsKind 
 	return typeof value === "string" && isNewsKind(value) ? value : null;
 }
 
-/** One row of the /news list: a post on this site or a release on GitHub. */
-export interface NewsEntry {
-	/** Stable React key. */
-	key: string;
-	/** ISO date or timestamp, used for ordering. */
-	date: string;
-	kind: NewsKind;
-	title: string;
-	/** For a post, a path under this app's basePath; for a release, the absolute GitHub URL. */
-	href: string;
-	/** True for a release: it opens GitHub in a new tab. */
-	external: boolean;
+/** How many cards one "page" of the grid adds. */
+export const PAGE_SIZE = 9;
+
+/**
+ * Reads the `?page=` search param as a positive integer; anything else is page 1. The grid shows
+ * pages 1..n cumulatively ("Load more" links to n + 1), so a shared link reopens the same list.
+ */
+export function parsePage(value: string | string[] | undefined): number {
+	if (typeof value !== "string" || !/^\d{1,4}$/.test(value)) return 1;
+	return Math.max(1, Number(value));
+}
+
+/** The first `page * size` items, and whether any are left for "Load more". */
+export function paginate<T>(items: T[], page: number, size = PAGE_SIZE): { shown: T[]; hasMore: boolean } {
+	const end = page * size;
+	return { shown: items.slice(0, end), hasMore: items.length > end };
 }
 
 /** The card text for a post: the summary, else the excerpt, else the description. */
-export function postSummary(post: Post): string {
+export function postSummary(post: Pick<Post, "summary" | "excerpt" | "description">): string {
 	return post.summary ?? post.excerpt ?? post.description;
 }
 
 /**
- * The featured story: the newest post marked `featured: true`, else the newest announcement,
- * else nothing (the page then opens on the list). `posts` must already be newest first, as
- * `getPublishedPosts` returns them.
+ * The hero story: the newest post marked `featured: true`, else the newest announcement, else
+ * the newest post that is not a changelog entry, else nothing. `posts` must already be newest
+ * first, as `getPublishedPosts` returns them.
  */
-export function pickFeatured(posts: Post[]): Post | undefined {
-	return posts.find((p) => p.featured) ?? posts.find((p) => p.kind === "announcement");
+export function pickFeatured<T extends NewsItem>(posts: T[]): T | undefined {
+	return (
+		posts.find((p) => p.featured) ??
+		posts.find((p) => p.kind === "announcement") ??
+		posts.find((p) => p.kind !== "changelog")
+	);
 }
 
 /**
- * Posts and releases as one list, newest first, narrowed to `kind` when one is given. A release
- * row reads "Runner v0.10.1 — <first change>", or just the title when the notes list no change.
+ * The top of /news: the hero, then up to `count` secondary stories — other featured posts first,
+ * then the newest of the rest. Changelog entries never take a featured slot: they have their own
+ * page, and they appear in the grid below.
  */
-export function buildEntries(posts: Post[], releases: ReleaseItem[], kind: NewsKind | null): NewsEntry[] {
-	const entries: NewsEntry[] = [
-		...posts.map((post): NewsEntry => ({
-			key: `post:${post.slug}`,
-			date: post.date,
-			kind: post.kind,
-			title: post.title,
-			href: `/${post.slug}`,
-			external: false,
-		})),
-		...releases.map((release): NewsEntry => ({
-			key: `release:${release.url}`,
-			date: release.date,
-			kind: "changelog",
-			title: release.summary ? `${release.title} — ${release.summary}` : release.title,
-			href: release.url,
-			external: true,
-		})),
-	];
-	return entries
-		.filter((entry) => kind === null || entry.kind === kind)
-		.sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+export function pickFeaturedSet<T extends NewsItem>(posts: T[], count = 3): { hero: T | undefined; secondary: T[] } {
+	const hero = pickFeatured(posts);
+	const rest = posts.filter((p) => p !== hero && p.kind !== "changelog");
+	const secondary = [...rest.filter((p) => p.featured), ...rest.filter((p) => !p.featured)].slice(0, count);
+	return { hero, secondary };
+}
+
+/**
+ * The grid under the filter chips. Unfiltered, it leaves out what the hero and the secondary row
+ * already show; filtered by kind, it is every post of that kind, newest first.
+ */
+export function gridPosts<T extends NewsItem>(posts: T[], kind: NewsKind | null, featured: T[]): T[] {
+	if (kind !== null) return posts.filter((p) => p.kind === kind);
+	return posts.filter((p) => !featured.includes(p));
+}
+
+/**
+ * Up to `count` related posts for a post page: the same kind first, then the newest others,
+ * never the post itself.
+ */
+export function relatedPosts<T extends NewsItem>(post: T, posts: T[], count = 3): T[] {
+	const others = posts.filter((p) => p.slug !== post.slug);
+	return [...others.filter((p) => p.kind === post.kind), ...others.filter((p) => p.kind !== post.kind)].slice(0, count);
+}
+
+/** Where a post's real cover image lives, or undefined when it uses generated art. */
+export function coverSrc(cover: string | undefined): string | undefined {
+	if (!cover) return undefined;
+	return cover.startsWith("/") ? cover : `https://assets.alethialabs.io/news/${cover}`;
 }
 
 /**

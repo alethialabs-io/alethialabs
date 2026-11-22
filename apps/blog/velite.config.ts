@@ -15,13 +15,33 @@ const posts = defineCollection({
 			date: s.isodate(),
 			author: s.string(),
 			tags: s.array(s.string()).default([]),
-			cover: s.string().optional(),
+			// An optional real image, rendered GRAYSCALE (alethia-design: photos only in grayscale).
+			// Either an in-repo file under public/static, written with the basePath
+			// ("/news/static/launch.jpg"), or a path on the assets host, relative to
+			// https://assets.alethialabs.io/news/ ("2026/launch.jpg"). Without one, the post gets
+			// generated cover art (@repo/brand/cover), seeded from its slug and kind.
+			cover: s
+				.string()
+				.regex(/^(?!.*\.\.)(?:\/news\/static\/|(?![a-z][a-z0-9+.-]*:|\/))[\w./-]+\.(?:avif|jpe?g|png|webp)$/i, {
+					message: 'cover must be "/news/static/<file>" or a path relative to https://assets.alethialabs.io/news/',
+				})
+				.optional(),
 			excerpt: s.string().optional(),
-			// Which tier of news this is: drives the /news filter and the featured fallback. Most
-			// posts are deep dives, so that is the default. `changelog` exists for a hand-written
-			// roll-up; the automatic changelog rows come from GitHub releases (lib/releases.ts).
-			kind: s.enum(["announcement", "changelog", "engineering", "company"]).default("engineering"),
-			// Pins the post to the /news featured slot; the newest featured post wins.
+			// Which tier of news this is: drives the /news filter chips, the cover motif and the
+			// featured fallback. Most posts are deep dives, so that is the default. `changelog` is a
+			// curated, dated roll-up (headline, then New / Improved / Fixed) and is the ONLY source of
+			// the changelog: raw GitHub release rows are not shown on News.
+			kind: s.enum(["announcement", "product", "changelog", "engineering", "company"]).default("engineering"),
+			// For a changelog entry: the CLI and runner versions it covers, shown as chips linking to
+			// their GitHub releases.
+			versions: s
+				.object({
+					cli: s.string().regex(/^v?\d+\.\d+\.\d+$/).optional(),
+					runner: s.string().regex(/^v?\d+\.\d+\.\d+$/).optional(),
+				})
+				.optional(),
+			// Pins the post to the /news hero; the newest featured post wins, and other featured
+			// posts lead the secondary row.
 			featured: s.boolean().default(false),
 			// Card text for the index and the feed; falls back to `excerpt`, then `description`.
 			summary: s.string().max(280).optional(),

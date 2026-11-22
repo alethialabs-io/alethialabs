@@ -5,18 +5,17 @@ import { disp, eyebrow, mono, Wrap } from "@repo/brand/site-primitives";
 import { cloudListLabel } from "@repo/cloud-catalog";
 import { formatDate } from "@repo/format";
 import { Badge } from "@repo/ui/badge";
-import type { PostItem, ReleaseItem } from "@/lib/home/feeds";
+import { NewsCover } from "@repo/brand/cover";
+import { RELEASES_URL, type PostItem, type ReleaseItem } from "@repo/brand/news-feeds";
 
 /**
  * The home page, editorial: one statement, the film, the latest releases, four posts. Nothing
  * else — the header carries the actions and the footer carries the rest of the site.
  *
  * Every section here is a server component with no client JavaScript. The feed sections render
- * nothing when their feed is empty (GitHub or the blog unreachable), so the page degrades to
+ * nothing when their feed is empty (GitHub or News unreachable), so the page degrades to
  * statement + film instead of showing an error.
  */
-
-const RELEASES_URL = "https://github.com/alethialabs-io/alethialabs/releases";
 
 /** Dates are pinned to UTC so a server render and a client hydration can never disagree. */
 function day(iso: string): string {
@@ -148,54 +147,25 @@ export function Latest({ releases }: { releases: ReleaseItem[] }) {
 }
 
 /**
- * A typographic cover for a post: a quiet geometric motif in the brand's ink, no photograph.
- * Drawn as inline SVG so it costs no request and scales without blur. The motif is the post's
- * position in the row (0–3), so the four tiles on the page never repeat one.
+ * The four newest News posts, each a generated grayscale cover (@repo/brand/cover, the same art
+ * News draws for the post), a date and a title.
  */
-function Cover({ motif }: { motif: number }) {
-	const ink = "var(--text-primary)";
-	return (
-		<svg viewBox="0 0 320 200" role="presentation" aria-hidden="true" style={{ width: "100%", height: "auto", display: "block", background: "var(--surface-sunken)" }}>
-			{motif === 0 &&
-				Array.from({ length: 11 }, (_, i) => (
-					<line key={i} x1={20 + i * 28} x2={20 + i * 28} y1={170} y2={170 - (30 + ((i * 37) % 90))} stroke={ink} strokeOpacity={0.35} strokeWidth={1.2} />
-				))}
-			{motif === 1 &&
-				Array.from({ length: 6 }, (_, i) => (
-					<rect key={i} x={160 - (18 + i * 18)} y={100 - (12 + i * 12)} width={2 * (18 + i * 18)} height={2 * (12 + i * 12)} fill="none" stroke={ink} strokeOpacity={0.12 + i * 0.06} />
-				))}
-			{motif === 2 &&
-				Array.from({ length: 9 * 14 }, (_, i) => (
-					<circle key={i} cx={34 + (i % 14) * 19} cy={28 + Math.floor(i / 14) * 18} r={1.4} fill={ink} fillOpacity={(i * 7) % 11 === 0 ? 0.85 : 0.18} />
-				))}
-			{motif === 3 && (
-				<g fill="none" stroke={ink} strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} strokeOpacity={0.7}>
-					<path d="M140 70 H124 V130 H140" />
-					<path d="M180 70 H196 V130 H180" />
-					<circle cx={160} cy={100} r={5} fill={ink} stroke="none" fillOpacity={0.9} />
-				</g>
-			)}
-		</svg>
-	);
-}
-
-/** Four posts from the blog, each a cover, a date and a title. */
-export function FromTheBlog({ posts }: { posts: PostItem[] }) {
+export function FromNews({ posts }: { posts: PostItem[] }) {
 	if (posts.length === 0) return null;
 	return (
 		<section className="pb-24 max-[640px]:pb-14">
 			<Wrap>
 				<div className="flex items-baseline justify-between" style={{ borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)", padding: "12px 0", marginBottom: 20 }}>
-					<h2 style={{ ...disp, fontSize: 15, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>From the blog</h2>
+					<h2 style={{ ...disp, fontSize: 15, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>From News</h2>
 					<a href="/news" className="text-text-secondary hover:text-text-primary" style={{ fontSize: 13.5, textDecoration: "none" }}>
-						All posts →
+						All news →
 					</a>
 				</div>
 				<div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-					{posts.map((p, i) => (
+					{posts.map((p) => (
 						<a key={p.url} href={p.url} className="group flex flex-col gap-3" style={{ textDecoration: "none", minWidth: 0 }}>
-							<div style={{ border: "1px solid var(--border)", overflow: "hidden" }}>
-								<Cover motif={i % 4} />
+							<div className="aspect-[4/3]" style={{ border: "1px solid var(--border)", overflow: "hidden" }}>
+								<NewsCover slug={p.slug} kind={p.kind} aspect="card" />
 							</div>
 							<span style={{ ...mono, ...eyebrow, fontSize: 10.5 }}>{day(p.date)}</span>
 							<span className="text-text-primary group-hover:underline" style={{ ...disp, fontSize: 17, fontWeight: 600, lineHeight: 1.25, letterSpacing: "var(--tracking-display)", textUnderlineOffset: 4 }}>
