@@ -84,6 +84,9 @@ function CountrySelect({
   options: countryList,
   onChange,
 }: CountrySelectProps) {
+  const selectedLabel =
+    countryList.find((option) => option.value === selectedCountry)?.label ??
+    selectedCountry;
   return (
     <Popover>
       <PopoverTrigger
@@ -94,10 +97,11 @@ function CountrySelect({
             size="default"
             className="flex h-9 gap-1 rounded-none border-r-0 px-3 focus:z-10"
             disabled={disabled}
+            aria-label={`Country calling code: ${selectedLabel}`}
           >
             <FlagComponent
               country={selectedCountry}
-              countryName={selectedCountry}
+              countryName={selectedLabel}
             />
             <ChevronsUpDown
               className={cn(
@@ -191,10 +195,24 @@ function PhoneCountryCommand({
 function FlagComponent({ country, countryName }: RPNInput.FlagProps) {
   const Flag = flags[country];
   return (
-    <span className="flex h-4 w-6 overflow-hidden rounded-sm bg-foreground/10 [&_svg]:size-full">
+    <span
+      className={cn(
+        "flex h-4 w-6 shrink-0 overflow-hidden rounded-sm [&>svg]:block [&>svg]:size-full!",
+        !Flag && "bg-muted",
+      )}
+    >
+      {/* `size-full!` is important on purpose: the Button and CommandItem rule
+          `[&_svg:not([class*='size-'])]:size-4` outranks a plain `[&>svg]` selector, which
+          drew the 3:2 flag 16×16 inside this 24×16 box with grey showing right and below.
+          The flag components take only `title`, so the class cannot go on the svg. */}
       {Flag && <Flag title={countryName} />}
     </span>
   );
 }
 
-export { PhoneInput };
+/** Whether `code` is an ISO alpha-2 country the phone field supports — narrows it for `defaultCountry`. */
+function isPhoneCountry(code: string): code is RPNInput.Country {
+  return RPNInput.isSupportedCountry(code);
+}
+
+export { PhoneInput, isPhoneCountry };

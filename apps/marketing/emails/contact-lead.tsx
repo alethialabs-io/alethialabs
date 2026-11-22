@@ -6,18 +6,44 @@ import { EmailLayout } from "@repo/email/components/layout";
 import { footerLegalLink } from "@repo/email/components/footer";
 import { colors, fonts, radii, text } from "@repo/email/components/theme";
 import { countryName } from "@repo/ui/countries";
+import { CONTACT_TOPIC_LABELS, type ContactTopic } from "@/lib/validations/contact.schema";
 
-/** Inbox subject for a new lead — type + who it's from. */
-export const subject = (type: "sales" | "enterprise", who: string) =>
-	`New ${type} lead — ${who}`;
+/**
+ * Inbox subject for a new lead: the topic first, then who it is from — so the
+ * inbox reads "Services project — Jordan Rivera, acme.com" and can be sorted
+ * by conversation without opening anything.
+ *
+ * `name` is whatever a public form was sent, so every run of whitespace —
+ * newlines included — collapses to one space before it reaches a header.
+ */
+export function contactLeadSubject(topic: ContactTopic, name: string, company?: string): string {
+	const cleanName = name.replace(/\s+/g, " ").trim();
+	const who = company ? `${cleanName}, ${company}` : cleanName;
+	return `${CONTACT_TOPIC_LABELS[topic]} — ${who}`;
+}
+
+/**
+ * The company a lead's website names, for the subject line when the optional Company field was
+ * left empty: the host without `www.`, or nothing when there is no usable website. A company email
+ * domain is not reliably the company, so it is never used.
+ */
+export function leadCompany(website?: string): string | undefined {
+	if (!website) return undefined;
+	try {
+		return new URL(website).hostname.replace(/^www\./, "") || undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 export interface ContactLeadEmailProps {
-	type?: "sales" | "enterprise";
+	topic?: ContactTopic;
 	name?: string;
 	email?: string;
 	phone?: string;
 	/** ISO 3166-1 alpha-2 company country code (e.g. "US"). */
 	country?: string;
+	company?: string;
 	website?: string;
 	companySize?: string;
 	interest?: string;
@@ -64,23 +90,25 @@ function DetailRow({ label, value }: { label: string; value?: string }) {
 
 /**
  * Internal notification sent to the sales inbox when someone submits the
- * Talk-to-sales / Enterprise-trial form. Summarizes the submission and links
+ * contact form. Summarizes the submission, topic first, and links
  * back to the lead so a human can follow up.
  */
 export function ContactLeadEmail({
-	type = "sales",
+	topic = "demo",
 	name = "Jordan Rivera",
 	email = "jordan@acme.com",
 	phone,
 	country,
+	company,
 	website,
 	companySize = "51–200",
 	interest = "Enterprise governance",
 	message,
 }: ContactLeadEmailProps) {
+	const topicLabel = CONTACT_TOPIC_LABELS[topic];
 	return (
 		<EmailLayout
-			preview={`New ${type} lead from ${name} (${email}).`}
+			preview={`${topicLabel} — new lead from ${name} (${email}).`}
 			legal={
 				<>
 					Sent by the alethialabs.io contact form. Reply directly to{" "}
@@ -96,10 +124,10 @@ export function ContactLeadEmail({
 			}
 		>
 			<Text className="a-text-3" style={text.eyebrow}>
-				{type === "enterprise" ? "Enterprise · Trial" : "Contact · Sales"}
+				Contact · {topicLabel}
 			</Text>
 			<Heading as="h2" className="a-text" style={text.heading}>
-				New {type} lead.
+				{topicLabel}.
 			</Heading>
 			<Text className="a-text-2" style={text.body}>
 				<strong
@@ -108,8 +136,7 @@ export function ContactLeadEmail({
 				>
 					{name}
 				</strong>{" "}
-				submitted the {type === "enterprise" ? "Enterprise trial" : "sales"}{" "}
-				form. Details below.
+				wrote in through the contact form. Details below.
 			</Text>
 
 			<Section
@@ -122,10 +149,12 @@ export function ContactLeadEmail({
 					margin: "4px 0 24px",
 				}}
 			>
+				<DetailRow label="Topic" value={topicLabel} />
 				<DetailRow label="Name" value={name} />
 				<DetailRow label="Email" value={email} />
 				<DetailRow label="Country" value={countryName(country)} />
 				<DetailRow label="Phone" value={phone} />
+				<DetailRow label="Company" value={company} />
 				<DetailRow label="Website" value={website} />
 				<DetailRow label="Company size" value={companySize} />
 				<DetailRow label="Interest" value={interest} />
@@ -136,11 +165,12 @@ export function ContactLeadEmail({
 }
 
 ContactLeadEmail.PreviewProps = {
-	type: "sales",
+	topic: "demo",
 	name: "Jordan Rivera",
 	email: "jordan@acme.com",
 	phone: "+15550142000",
 	country: "US",
+	company: "Acme",
 	website: "https://acme.com",
 	companySize: "201–500",
 	interest: "Enterprise governance",
