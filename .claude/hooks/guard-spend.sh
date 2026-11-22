@@ -930,6 +930,7 @@ case "$*" in
 *actions/runs/110*) echo '{"message":"Not Found","status":"404"}'; echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
 *actions/runs/111*) exit 0 ;;
 *actions/runs/112*) echo ".github/workflows/byo-users-managed-mysql.yml workflow_dispatch" ;;
+*actions/runs/113*) echo ".github/workflows/restore-drill.yml schedule" ;;
 *actions/runs/106*) echo '{"message":"Not Found","documentation_url":"x","status":"404"}'; echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
 "run view 104 "*)
 	printf '1\tsuccess\tResolve dimension\n5551\tfailure\tProvision + verify + teardown (real cloud) (hetzner)\n'
@@ -1003,6 +1004,10 @@ STUB
 	c 200 'gh workflow run byo-users-managed-mysql.yml --ref feat/x'
 	c 200 'gh workflow run "BYO users — managed MySQL (AWS)"'
 	c 200 'gh run rerun 112'
+	# the weekly restore drill: one spot instance, C-DRILL
+	c 100 'gh workflow run restore-drill.yml'
+	c 100 'gh workflow run restore-drill.yml --ref main'
+	c 100 'gh run rerun 113'
 	# what the guard cannot price is charged C-UNKNOWN, never refused
 	c 100 'gh workflow run not-in-the-table.yml'
 	c 100 'gh workflow run 123456'
@@ -1012,11 +1017,13 @@ STUB
 	c 150 'gh workflow run e2e-nightly.yml --json'
 	c 110 'gh workflow run e2e-ai-nightly.yml --json'
 	c 300 'gh workflow run byo-users-managed-mysql.yml --json'
+	c 200 'gh workflow run restore-drill.yml --json'
 	c 1650 'gh workflow run e2e-nightly.yml --json -f full_bar=true'
 	# a raw gh api dispatch: the workflow's no-input price + C-UNKNOWN; free/prod stay free
 	c 150 'gh api -X POST repos/o/r/actions/workflows/e2e-nightly.yml/dispatches -f ref=dev'
 	c 110 'gh api -X POST repos/o/r/actions/workflows/e2e-ai-nightly.yml/dispatches -f ref=dev'
 	c 300 'gh api -X POST repos/o/r/actions/workflows/byo-users-managed-mysql.yml/dispatches -f ref=dev'
+	c 200 'gh api -X POST repos/o/r/actions/workflows/restore-drill.yml/dispatches -f ref=main'
 	c 100 'gh api -X POST repos/o/r/actions/workflows/not-in-the-table.yml/dispatches -f ref=dev'
 	c 100 'gh api -X POST /repos/o/r/actions/workflows/123456/dispatches -f ref=dev'
 	# expensive cloud creates: C-CLOUDCREATE each
