@@ -113,8 +113,9 @@ describe("the console's /api/health and the status Worker agree", () => {
 		const expected: { [S in HealthStatus]: Verdict["health"] } = { healthy: "up", degraded: "degraded", unhealthy: "down" };
 		for (const status of Object.values(ALL_STATUSES)) {
 			const v = assertConsole(await probe({ status, db: status !== "unhealthy", schema: true, openfga: null }));
-			expect(v.health, status).toBe(expected[status]);
-			expect(v.reason ?? "", status).not.toMatch(/unexpected|unreadable/);
+			// The status rides inside the asserted value, so a failure names which one broke.
+			expect({ status, health: v.health }).toEqual({ status, health: expected[status] });
+			expect(`${status}: ${v.reason ?? ""}`).not.toMatch(/unexpected|unreadable/);
 		}
 	});
 
