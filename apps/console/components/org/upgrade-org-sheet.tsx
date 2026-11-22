@@ -23,6 +23,11 @@
 // anywhere (`billing.salesOpen`, which honours the release gate's test-mode waiver), and opens on
 // "Pro isn't on sale yet" when it is not. A failed answer falls through to the declaration: the
 // gate behind it is still the authority, so the worst case is today's refusal, never a sale.
+//
+// WHAT THE CLOSED VIEW SAYS IS THE LAUNCH STATE'S (#6906, REL-L3). The server answers only whether
+// a sale can be taken here; `paidLaunchState()` says whether a date has been promised, and the
+// sentence for each comes from `salesClosedCopy` (components/billing/launch-copy.ts) — the same
+// words the public pricing page shows. Announced: "Pro is available from 15 Feb 2027". Closed: "Pro isn't on sale yet".
 
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight } from "lucide-react";
@@ -54,6 +59,7 @@ import {
 } from "@/components/org/org-purchase-ui";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { CurrencyToggle } from "@/components/billing/currency-toggle";
+import { salesClosedCopy } from "@/components/billing/launch-copy";
 import { authClient } from "@/lib/auth/client";
 import { useViewer } from "@/components/providers/viewer-provider";
 import { track } from "@/lib/analytics/track";
@@ -88,12 +94,6 @@ function salesGateView(sales: {
 	if (sales.isPending) return "checking";
 	return sales.data?.open === false ? "closed" : "declare";
 }
-
-/** The closed view's copy (#6132, D1-A) — the free tier named by the catalog, never typed here. */
-export const SALES_CLOSED_COPY = {
-	heading: "Pro isn't on sale yet",
-	body: `We can't take payment for Pro in any country yet. ${planMeta("community").name} stays free, with no time limit.`,
-} as const;
 
 interface UpgradeOrgSheetProps {
 	open: boolean;
@@ -143,6 +143,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 		orpc.billing.salesOpen.queryOptions({ enabled: open, staleTime: Infinity, retry: 1 }),
 	);
 	const gate = salesGateView(sales);
+	const closedCopy = gate === "closed" ? salesClosedCopy() : null;
 
 	// A refusal describes the declaration that produced it. Once the payer changes a fact it is a
 	// sentence about an answer they no longer give (F031) — it names the previous country — so any
@@ -332,11 +333,11 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 					Upgrade this organization to Pro and invite your teammates.
 				</SheetDescription>
 
-				{view === "declare" && gate === "closed" ? (
+				{view === "declare" && closedCopy ? (
 					<PurchaseLayout
 						meta={meta}
-						heading={SALES_CLOSED_COPY.heading}
-						subheading={SALES_CLOSED_COPY.body}
+						heading={closedCopy.heading}
+						subheading={closedCopy.body}
 						onClose={() => handleOpenChange(false)}
 					>
 						<div className="mt-auto flex flex-col gap-2">

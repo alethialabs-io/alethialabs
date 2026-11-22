@@ -10,12 +10,17 @@
 // A failed read falls through to the declaration — the gate behind it is still the authority.
 //
 // F031: a refusal names the declaration it judged. Changing a declared fact must drop it.
+//
+// #6906 (REL-L3): what the closed view says is the launch state's — `paidLaunchState()` decides
+// between "Pro isn't on sale yet" (closed) and "Pro is available from <date>" (announced); an open
+// market is the declaration. One test per state below.
 
 import { createTanstackQueryUtils } from "@orpc/tanstack-query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { LaunchState } from "@repo/legal/launch";
 
 const { salesOpen, declarePayer, payerConversionStatus, createSubscriptionIntent } = vi.hoisted(() => ({
 	salesOpen: vi.fn<() => Promise<{ open: boolean }>>(),
@@ -23,6 +28,17 @@ const { salesOpen, declarePayer, payerConversionStatus, createSubscriptionIntent
 	payerConversionStatus: vi.fn(),
 	createSubscriptionIntent: vi.fn(),
 }));
+
+// The launch state the sheet reads. Today's real state is closed; a test that needs a promised date
+// swaps `paid` and the beforeEach puts it back.
+const launch = vi.hoisted(() => {
+	const holder: { paid: LaunchState } = { paid: { status: "closed", lapsedAnnouncement: null } };
+	return holder;
+});
+vi.mock(import("@repo/legal/launch"), async (importOriginal) => {
+	const real = await importOriginal();
+	return { ...real, paidLaunchState: () => ({ ...real.paidLaunchState(), paid: launch.paid }) };
+});
 
 vi.mock("@/lib/rpc/client", () => ({
 	orpc: createTanstackQueryUtils({ billing: { salesOpen: () => salesOpen() } }),
@@ -69,7 +85,12 @@ vi.mock("@repo/ui/country-select", () => ({
 	),
 }));
 
-import { SALES_CLOSED_COPY, UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
+import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
+
+const SALES_CLOSED_COPY = {
+	heading: "Pro isn't on sale yet",
+	body: "We can't take payment for Pro in any country yet. Hobby stays free, with no time limit.",
+};
 
 const REFUSAL = "Alethia is not yet able to sell to customers in this country in this capacity.";
 
@@ -85,6 +106,7 @@ function renderOpen() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	launch.paid = { status: "closed", lapsedAnnouncement: null };
 	declarePayer.mockResolvedValue(undefined);
 	payerConversionStatus.mockResolvedValue({ allowed: false, reason: "market_closed", message: REFUSAL });
 });
@@ -108,7 +130,25 @@ describe("UpgradeOrgSheet — Pro not on sale anywhere (F030)", () => {
 		expect(salesOpen).toHaveBeenCalledTimes(1);
 	});
 
-	it("asks the payer when Pro is on sale (the release gate's waiver answers open)", async () => {
+	it("announced: names the promised date instead, still with no declaration form", async () => {
+		launch.paid = { status: "announced", from: "2099-02-15" };
+		salesOpen.mockResolvedValue({ open: false });
+		renderOpen();
+
+		expect(
+			await screen.findByRole("heading", { name: "Pro is available from 15 Feb 2099" }),
+		).toBeVisible();
+		expect(
+			screen.getByText(
+				"We can't take payment for Pro yet. Paid plans are available from 15 Feb 2099; Hobby stays free, with no time limit.",
+			),
+		).toBeVisible();
+		expect(screen.queryByRole("heading", { name: SALES_CLOSED_COPY.heading })).toBeNull();
+		expect(screen.queryByText("Who is this purchase for?")).toBeNull();
+		expect(screen.getByRole("link", { name: /Contact sales/ })).toBeVisible();
+	});
+
+	it("open: asks the payer when Pro is on sale (the release gate's waiver answers open)", async () => {
 		salesOpen.mockResolvedValue({ open: true });
 		renderOpen();
 

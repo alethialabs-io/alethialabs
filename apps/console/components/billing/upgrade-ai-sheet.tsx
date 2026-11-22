@@ -11,7 +11,15 @@
 // workspace) surfaces a friendly inline error. When the deployment hasn't minted the Stripe AI
 // prices yet (`paidTiersEnabled` false) the paid tiers render disabled with a "Coming soon"
 // badge — the UI ships now and lights up automatically at go-live.
+//
+// AND THE LAUNCH STATE COMES FIRST (#6906, REL-L3). AI Plus and AI Max are sold behind the same
+// gate as Pro, so when the server says nothing is on sale (`billing.salesOpen`, which honours the
+// release gate's test-mode waiver) the paid tiers render disabled with the launch state's own
+// sentence — "Paid plans available from 15 Feb 2027" or "Not on sale yet" — from the shared
+// `salesClosedCopy`, not "Coming soon". A failed read falls through to the old behaviour: the
+// eligibility gate behind the intent is still the authority.
 
+import { useQuery } from "@tanstack/react-query";
 import { Check } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -29,11 +37,13 @@ import {
 	type CollectedBilling,
 } from "@/components/billing/billing-checkout-form";
 import { CurrencyToggle } from "@/components/billing/currency-toggle";
+import { salesClosedCopy } from "@/components/billing/launch-copy";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { useViewer } from "@/components/providers/viewer-provider";
 import { track } from "@/lib/analytics/track";
 import type { PaidAiTier } from "@/lib/billing/config";
 import { billingIntentErrorMessage } from "@/lib/billing/intent-error";
+import { orpc } from "@/lib/rpc/client";
 import {
 	type AiPlanCatalogEntry,
 	aiPlanMeta,
@@ -87,6 +97,13 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 	const [selected, setSelected] = useState<SupportedCurrency | undefined>(undefined);
 	const [currency, setCurrency] = useState<SupportedCurrency>("usd");
 	const [error, setError] = useState<string | null>(null);
+
+	// Is anything on sale? The same read, with the same caching, as the org upgrade sheet: the
+	// answer moves with a deploy, not with anything a viewer does.
+	const sales = useQuery(
+		orpc.billing.salesOpen.queryOptions({ enabled: open, staleTime: Infinity, retry: 1 }),
+	);
+	const notOnSale = sales.data?.open === false ? salesClosedCopy().notice : null;
 
 	// Load the canonical AI summary when the sheet opens — the current tier drives the
 	// "Current"/"Upgrade" affordances and `paidTiersEnabled` drives the "Coming soon" gate.
@@ -212,6 +229,7 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 							summary={summary}
 							currentTier={currentTier}
 							paidTiersEnabled={paidTiersEnabled}
+							notOnSale={notOnSale}
 							onChoose={choose}
 						/>
 					) : (
@@ -239,17 +257,21 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 }
 
 /** The plan chooser — one card per PAID tier (the free tier is where you already are, so
- *  it never renders), gated behind `paidTiersEnabled` ("Coming soon" until the Stripe
- *  prices are minted). Exactly one primary button: the recommended selectable tier. */
+ *  it never renders), gated behind the launch state (`notOnSale`) and then `paidTiersEnabled`
+ *  ("Coming soon" until the Stripe prices are minted). Exactly one primary button: the
+ *  recommended selectable tier. */
 function ChooserView({
 	summary,
 	currentTier,
 	paidTiersEnabled,
+	notOnSale,
 	onChoose,
 }: {
 	summary: AiUsageSummary | null;
 	currentTier: string;
 	paidTiersEnabled: boolean;
+	/** The launch state's notice when nothing is on sale, else `null`. */
+	notOnSale: string | null;
 	onChoose: (tier: PaidAiTier) => void;
 }) {
 	if (!summary) {
@@ -261,8 +283,9 @@ function ChooserView({
 			</div>
 		);
 	}
+	const purchasable = paidTiersEnabled && notOnSale === null;
 	const selectableIds = PAID_AI_PLANS.filter(
-		(entry) => entry.id !== currentTier && paidTiersEnabled,
+		(entry) => entry.id !== currentTier && purchasable,
 	).map((entry) => entry.id);
 	// One primary CTA per view: the recommended selectable tier (else the first selectable).
 	const primaryId =
@@ -274,14 +297,15 @@ function ChooserView({
 			{PAID_AI_PLANS.map((entry) => {
 				const paid = paidTierOf(entry);
 				const isCurrent = entry.id === currentTier;
-				const comingSoon = !paidTiersEnabled;
-				const selectable = paid !== null && !isCurrent && paidTiersEnabled;
+				const comingSoon = notOnSale === null && !paidTiersEnabled;
+				const selectable = paid !== null && !isCurrent && purchasable;
 				return (
 					<TierCard
 						key={entry.id}
 						entry={entry}
 						isCurrent={isCurrent}
 						comingSoon={comingSoon}
+						notOnSale={notOnSale}
 						selectable={selectable}
 						primary={entry.id === primaryId}
 						onChoose={() => paid && onChoose(paid)}
@@ -301,6 +325,7 @@ function TierCard({
 	entry,
 	isCurrent,
 	comingSoon,
+	notOnSale,
 	selectable,
 	primary,
 	onChoose,
@@ -308,6 +333,8 @@ function TierCard({
 	entry: AiPlanCatalogEntry;
 	isCurrent: boolean;
 	comingSoon: boolean;
+	/** The launch state's notice when nothing is on sale — the disabled button says it. */
+	notOnSale: string | null;
 	selectable: boolean;
 	/** Whether this card carries the view's single primary CTA (the recommended tier). */
 	primary: boolean;
@@ -334,7 +361,7 @@ function TierCard({
 								Current
 							</Badge>
 						)}
-						{!isCurrent && entry.recommended && !comingSoon && (
+						{!isCurrent && entry.recommended && !comingSoon && notOnSale === null && (
 							<Badge variant="secondary" className="font-mono text-ui-3xs uppercase">
 								Recommended
 							</Badge>
@@ -378,9 +405,11 @@ function TierCard({
 			>
 				{isCurrent
 					? "Your current plan"
-					: comingSoon
-						? "Coming soon"
-						: `Upgrade to ${entry.name}`}
+					: notOnSale !== null
+						? notOnSale
+						: comingSoon
+							? "Coming soon"
+							: `Upgrade to ${entry.name}`}
 			</Button>
 		</div>
 	);
