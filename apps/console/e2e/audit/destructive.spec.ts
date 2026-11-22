@@ -112,6 +112,10 @@ interface ControlEntry {
 	reach?: { menu?: string; section?: string; select?: string; open?: string; tab?: string }[];
 	control?: { role?: string; name?: string };
 	confirm?: string;
+	/** `destroy` for the spec's destroy class; the census requires `confirm: typed` on it (#6830). */
+	class?: string;
+	/** The board unit that makes a destroy-class entry typed, while it is not yet. */
+	typed_by?: string;
 	confirm_action?: string;
 	/** The dialog's way out when it is not named Cancel/No/Keep — pressed exactly as Cancel is. */
 	cancel_action?: string;
@@ -238,33 +242,13 @@ const UNREACHED: ReadonlyMap<string, string> = new Map([
 			"canvas holds a staged change, which is a STATE the `project` fixture does not create.",
 	],
 
-	// ── the six connector entries: a menu that does not exist, and a role that is wrong ──────────
+	// ── the six connector entries: none left ─────────────────────────────────────────────────────
 	//
-	// All six declare `reach: {menu: "connector actions"}` and `control: {role: menuitem, name:
-	// "Disconnect"}`. Measured: `components/connectors/` contains NO `DropdownMenu`, no
-	// `role="menuitem"` and no context menu of any kind. The real controls are two BUTTONS in the
-	// detail sheet — the connector-level `Disconnect {integration.name}`
-	// (`connector-detail-sheet.tsx:194`) and the per-account icon button
-	// `aria-label={`Disconnect ${acc.name}`}` (`:390`) — reached by opening the connector's card.
-	// `triggerCandidates` looks up `getByRole("menuitem", …)`, which matches nothing on this page,
-	// so the verdict is withheld however many identities are seeded.
-	...(
-		[
-			"connectors.disconnect",
-			"connectors.disconnect.aws",
-			"connectors.disconnect.gcp",
-			"connectors.disconnect.azure",
-			"connectors.disconnect.extra",
-			"connectors.disconnect.api-key",
-		] as const
-	).map((id): [string, string] => [
-		id,
-		"the entry declares {menu: \"connector actions\"} and {role: menuitem, name: \"Disconnect\"}; " +
-			"`components/connectors/` renders no menu and no menuitem at all. The real control is a BUTTON named " +
-			"`Disconnect <name>` inside the connector detail sheet (connector-detail-sheet.tsx:194 for the " +
-			"connector-level one, :390 for the per-account one), reached by opening the connector's card. The fixture " +
-			"is seeded; the entry names a control the DOM does not have.",
-	]),
+	// All six reached for {menu: "connector actions"} and a `menuitem` named "Disconnect", which
+	// `components/connectors/` never rendered. #6830 pointed them at the real path — the connector's
+	// "Manage <connector>" button, then the sheet's `Disconnect <account>` / `Disconnect <connector>`
+	// button — and deleted their lines. The git one now declares `connected-git-link`, which is
+	// UNSEEDABLE (fixtures-destructive.ts) rather than borrowing the cloud fixture.
 
 	// ── the agent entries: none left ─────────────────────────────────────────────────────────────
 	//
@@ -275,15 +259,6 @@ const UNREACHED: ReadonlyMap<string, string> = new Map([
 	// or the audit thread then "Open widget grid"), and deleted their lines. Direction 1 of
 	// `owedFindings` is now what fails a chain that stops short again.
 
-	[
-		"env.delete",
-		'the entry declares {menu: "Environment actions"} and {role: menuitem, name: "Delete"}. Since #6819 every ' +
-			"row of the environments table has a menu named `Environment actions for <environment>` " +
-			"(`environment-columns.tsx`), and the item renders on `!env.is_default`. The reach names no row, so it " +
-			"opens the FIRST menu — the default environment's, the first row — which has no Delete; the seeded " +
-			"`audit-staging` row's menu, which has one, is never opened. The entry's reach is what cannot narrow: it " +
-			'needs the row, `{menu: "Environment actions for audit-staging"}`.',
-	],
 	[
 		"roles.delete",
 		'the entry declares {role: button, name: "Delete role"}; the trigger\'s accessible name is just ' +
@@ -1636,7 +1611,9 @@ for (const entry of CONTROLS) {
 		const opened = await clickForConfirmation(page, trigger);
 		const dialogAppeared = opened !== null;
 
-		const expectsDialog = entry.confirm === "alert-dialog" || entry.confirm === "confirm-dialog";
+		// `typed` is a dialog too — the destroy-class one, whose destructive button is disabled until
+		// the subject's name is typed (#6830). It is measured exactly as the other two, plus that.
+		const expectsDialog = entry.confirm === "alert-dialog" || entry.confirm === "confirm-dialog" || entry.confirm === "typed";
 		let observed: Observed;
 
 		if (expectsDialog) {
@@ -1651,6 +1628,11 @@ for (const entry of CONTROLS) {
 			if (entry.confirm_action) {
 				const confirmButton = assertNeverPressed(dialog.getByRole("button", { name: new RegExp(escapeRe(entry.confirm_action), "i") }).first(), entry.id);
 				await expect(confirmButton, `${entry.id}: the dialog should offer "${entry.confirm_action}"`).toBeVisible();
+				// Nothing has been typed, and nothing ever is: a typed confirmation whose button is
+				// already enabled is a plain one wearing the name, and the census cannot see that.
+				if (entry.confirm === "typed") {
+					await expect(confirmButton, `${entry.id}: \`confirm: typed\` — "${entry.confirm_action}" must stay disabled until the subject's name is typed`).toBeDisabled();
+				}
 			}
 			if (entry.dialog_title) {
 				const literal = entry.dialog_title.split("<")[0].trim();
