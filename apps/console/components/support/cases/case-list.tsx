@@ -18,6 +18,7 @@ import { LifeBuoy, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
 import { RegionError } from "@/components/errors/region-error";
+import { RegionRefusal } from "@/components/errors/region-refusal";
 import {
 	CASE_LIST_PARAM_NAMES,
 	caseFacetOptions,
@@ -31,6 +32,7 @@ import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import type { CaseListItem as CaseListItemData } from "@/lib/queries/support";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { orpc } from "@/lib/rpc/client";
+import { readRefusalOf } from "@/lib/rpc/refusal";
 import { useSupportFilters } from "@/lib/stores/use-support-filters";
 import {
 	SUPPORT_CASE_TYPE_LABELS,
@@ -94,6 +96,8 @@ export function CaseList({
 	);
 	const { refetch, isPending, isPlaceholderData } = result;
 	const isError = result.isError && result.data === undefined;
+	// A refused read answers the same every time: it is told as a refusal, with no retry (G-16).
+	const refusal = isError ? readRefusalOf(result.error) : null;
 	// A module-level empty array, not an inline `= []` default: a fresh literal on every
 	// render would give the memos below a new dependency identity each time and defeat them.
 	const rows = result.data ?? NO_ROWS;
@@ -147,11 +151,13 @@ export function CaseList({
 			{isPending ? (
 				// Pending is not empty (B3): rows-shaped placeholders, never "No cases yet".
 				<CaseListSkeletonRows />
+			) : refusal ? (
+				<RegionRefusal refusal={refusal} subject="these support cases" />
 			) : isError ? (
 				// A fetch failure must not render as "no cases yet".
 				<RegionError
-					title="Couldn't load your cases"
-					description="Something went wrong fetching your support cases. Check your connection and try again."
+					title={seeAll ? "Couldn't load the cases" : "Couldn't load your cases"}
+					description="Something went wrong fetching the support cases. Try again in a moment."
 					onRetry={() => refetch()}
 				/>
 			) : visible.length === 0 ? (

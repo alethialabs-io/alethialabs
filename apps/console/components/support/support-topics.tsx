@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Badge } from "@repo/ui/badge";
+import { ArrowUpRight } from "lucide-react";
 import { SectionHeading } from "@repo/ui/section-heading";
 
 /**
@@ -92,12 +93,20 @@ export function SupportBrowseTopics() {
 						<SectionHeading level={3} title={topic.title} className="mb-4" />
 						<div className="flex flex-col gap-2.5">
 							{topic.items.map((item) => (
+								// The documentation is its own site: it opens in a new tab, says so, and
+								// leaves the console where it was (G-17). `relative` holds the absolutely
+								// positioned sr-only note inside the link; without it the note escaped <main>'s
+								// scroll box and made the whole document scroll (audit R3).
 								<a
 									key={item.href}
 									href={item.href}
-									className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+									target="_blank"
+									rel="noopener noreferrer"
+									className="relative inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
 								>
 									{item.label}
+									<ArrowUpRight aria-hidden className="size-3.5" />
+									<span className="sr-only">(opens in a new tab)</span>
 								</a>
 							))}
 						</div>

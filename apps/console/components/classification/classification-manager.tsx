@@ -4,8 +4,11 @@
 
 // Settings · Classification — author the org's classification taxonomy (dimensions = axes ×
 // their allowed values) and see how it is actually used. A master/detail: the dimension rail
-// selects, the detail edits values (drag-reorder, usage drill). Search is server-side.
-// Read-only without `org:edit`. The section title lives in the settings sidebar, so this page
+// selects, the detail edits values (drag- or arrow-reorder, usage drill). Search is server-side.
+// The search and the selected dimension are URL state (`?search=`, `?selected=`), so a link or a
+// refresh reproduces the view (F-28). Read-only without `org:edit`: the create button stays on
+// screen, disabled with its reason, and the blank slate says who sets the taxonomy up (F-27). The
+// section title lives in the settings sidebar, so this page
 // leads straight into a toolbar (no in-page header). Reads are the `classification.*` GET
 // procedures (the route prefetches the taxonomy, the edit decision and the first dimension's
 // coverage, so the page paints with them); every write goes through `useActionMutation` — pending
@@ -23,11 +26,14 @@ import {
 	AlertDialogTitle,
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
+import { CountPill } from "@repo/ui/count-pill";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { TooltipProvider } from "@repo/ui/tooltip";
 import { BookOpen, Plus } from "lucide-react";
-import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import type {
 	DimensionDTO,
 	ValueDTO,
@@ -40,6 +46,7 @@ import {
 	reorderValues,
 	updateDimension,
 } from "@/app/server/actions/classification/dimensions";
+import { MANAGE_DENIED_REASON, MANAGE_PENDING_REASON } from "@/components/errors/manage-gate";
 import { RegionError } from "@/components/errors/region-error";
 import { SettingsSearch } from "@/components/settings/settings-ui";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
@@ -50,6 +57,12 @@ import {
 	useCanEditClassification,
 	useDimensionsQuery,
 } from "@/lib/query/use-classification-query";
+import {
+	hrefWithParamPatch,
+	type ParamPatch,
+	selectionFromUrl,
+	selectionPatch,
+} from "@/lib/query/view-url-params";
 import { orpc } from "@/lib/rpc/client";
 import { readRefusalOf } from "@/lib/rpc/refusal";
 import {
@@ -73,6 +86,9 @@ type Sheet =
 type DeleteTarget =
 	| { kind: "dimension" | "value"; id: string; title: string; message: string }
 	| null;
+
+/** The param carrying the taxonomy search. */
+const SEARCH_PARAM = "search";
 
 /** Reorders a cached taxonomy by `ids` (an optimistic patch; `ids` is the full new order). */
 function reorderedDims(current: unknown, ids: string[]): unknown {
@@ -100,18 +116,71 @@ function reorderedValues(current: unknown, dimId: string, ids: string[]): unknow
 
 /** The Settings · Classification page body. */
 export function ClassificationManager() {
-	const [searchInput, setSearchInput] = useState("");
-	const search = useDebouncedValue(searchInput.trim());
+	const searchParams = useSearchParams();
+	const urlSearch = (searchParams.get(SEARCH_PARAM) ?? "").trim();
+	const urlSelectedId = selectionFromUrl(searchParams);
+
+	/**
+	 * Applies a param patch to the address bar, in place. `history.replaceState`, not
+	 * `router.replace`: the router's version is a navigation that re-renders the server route for a
+	 * change only this component reads; Next keeps `useSearchParams` in step with the native call.
+	 */
+	const patchUrl = (patch: ParamPatch) =>
+		window.history.replaceState(
+			null,
+			"",
+			hrefWithParamPatch(window.location.pathname, window.location.search, patch),
+		);
+
+	// The box starts from the link's search, and a search the link carried lands at once; only
+	// typing is debounced (`urlRead`, #5861).
+	const [searchInput, setSearchInput] = useState(urlSearch);
+	const search = useDebouncedValue(searchInput.trim(), 250, { urlRead: true });
 	const searching = search.length > 0;
+
+	// A navigation moved the URL's search (a link to this page with another `?search=`): the box
+	// follows it (adjusted during render, React's "storing information from previous renders"). Our
+	// own write sets the URL to the settled search it just wrote, so that change is recognised and
+	// never overwrites what is being typed.
+	const [seenUrlSearch, setSeenUrlSearch] = useState(urlSearch);
+	if (urlSearch !== seenUrlSearch) {
+		setSeenUrlSearch(urlSearch);
+		if (urlSearch !== search) setSearchInput(urlSearch);
+	}
+
+	// The settled search is written to the URL, and a selection made under the old search is dropped
+	// with it (a selected row only means something under the search it was chosen in). Written only
+	// when the settled search CHANGES, so a URL that a navigation moved is never written over.
+	const writtenSearch = useRef(search);
+	useEffect(() => {
+		if (writtenSearch.current === search) return;
+		writtenSearch.current = search;
+		if (search === urlSearch) return;
+		window.history.replaceState(
+			null,
+			"",
+			hrefWithParamPatch(window.location.pathname, window.location.search, {
+				[SEARCH_PARAM]: search || null,
+				...selectionPatch(null),
+			}),
+		);
+	}, [search, urlSearch]);
 
 	const dimensionsQuery = useDimensionsQuery(search);
 	const { data: dimensions, isPending, isFetching } = dimensionsQuery;
-	const { data: canEdit = false } = useCanEditClassification();
+	const canEditQuery = useCanEditClassification();
+	const canEdit = canEditQuery.data ?? false;
+	// Why the create button is disabled, or null when it is not: the edit decision has not answered
+	// yet, or it answered no.
+	const createReason = canEditQuery.isPending
+		? MANAGE_PENDING_REASON
+		: canEdit
+			? null
+			: MANAGE_DENIED_REASON;
 	// The unsearched taxonomy's key: what a reorder patches optimistically (reordering is only
 	// offered while not searching).
 	const baseKey = orpc.classification.dimensions.queryKey({ input: dimensionsInput() });
 
-	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [sheet, setSheet] = useState<Sheet>(null);
 	const [valueEditor, setValueEditor] = useState<{
 		dimensionId: string;
@@ -125,7 +194,7 @@ export function ClassificationManager() {
 	const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
 
 	const dims = dimensions ?? [];
-	const selectedDim = dims.find((d) => d.id === selectedId) ?? dims[0] ?? null;
+	const selectedDim = dims.find((d) => d.id === urlSelectedId) ?? dims[0] ?? null;
 	const reorderable = canEdit && !searching;
 
 	// Every write below goes through the mutation contract: pending while in flight, one toast
@@ -165,13 +234,19 @@ export function ClassificationManager() {
 		if (!reorderVals.isPending) reorderVals.mutate({ dimId, ids });
 	};
 
-	/** Quick-add a value to a dimension (awaited so the row can show pending). */
-	const onAddValue = async (dim: DimensionDTO, label: string) => {
-		if (addValue.isPending) return;
-		// A refusal is already toasted by the contract; the row only needs to know it settled.
-		await addValue
+	/**
+	 * Quick-add a value to a dimension (awaited so the row can show pending). Resolves true once the
+	 * value exists and false when it was refused, so the row keeps what was typed on a refusal (F-14).
+	 */
+	const onAddValue = async (dim: DimensionDTO, label: string): Promise<boolean> => {
+		if (addValue.isPending) return false;
+		// A refusal is already toasted by the contract; the row only needs to know how it settled.
+		return addValue
 			.mutateAsync({ dimensionId: dim.id, value: slugifyOrEmpty(label), label, position: dim.values.length })
-			.catch(() => undefined);
+			.then(
+				() => true,
+				() => false,
+			);
 	};
 
 	/** Flip a dimension's single/multi mode (awaited so the switch can show pending). */
@@ -215,11 +290,18 @@ export function ClassificationManager() {
 						<Spinner size={13} />
 					</span>
 				) : (
-					<span className="font-mono text-ui-xs text-text-tertiary">
-						{searching
-							? `${dims.length} match${dims.length === 1 ? "" : "es"}`
-							: `${dims.length} dimension${dims.length === 1 ? "" : "s"}`}
-					</span>
+					// The result count is the filter standard's count pill, never prose (F-28). Nothing
+					// while the first read is pending: no number is not the number 0.
+					isPending ? null : (
+						<span>
+							<CountPill count={dims.length} />
+							<span className="sr-only">
+								{searching
+									? ` match${dims.length === 1 ? "" : "es"}`
+									: ` dimension${dims.length === 1 ? "" : "s"}`}
+							</span>
+						</span>
+					)
 				)}
 				<div className="flex-1" />
 				<a
@@ -232,7 +314,8 @@ export function ClassificationManager() {
 					<BookOpen className="size-4" />
 					<span className="sr-only">What is classification?</span>
 				</a>
-				{canEdit && (
+				{/* On screen for everyone; disabled WITH its reason for a viewer who cannot edit. */}
+				<DisabledReason reason={createReason}>
 					<Button
 						size="sm"
 						className="gap-1.5"
@@ -241,7 +324,7 @@ export function ClassificationManager() {
 						<Plus className="size-3.5" />
 						New dimension
 					</Button>
-				)}
+				</DisabledReason>
 			</div>
 
 			{dimensionsQuery.isError && dimensions === undefined ? (
@@ -273,7 +356,7 @@ export function ClassificationManager() {
 					<DimensionRail
 						dims={dims}
 						selectedId={selectedDim?.id ?? null}
-						onSelect={setSelectedId}
+						onSelect={(id) => patchUrl(selectionPatch(id))}
 						reorderable={reorderable}
 						onReorder={onReorderDims}
 					/>
@@ -395,11 +478,17 @@ function TaxonomyBlankSlate({
 				{/* 19px was this file's own answer to a rung the console typesets at 15px
 				    everywhere else. The shared component owns the size now; the block below keeps
 				    the spacing the heading used to carry. */}
-				<SectionHeading className="mb-[7px]" level={2} title="Start your taxonomy" />
+				<SectionHeading
+					className="mb-[7px]"
+					level={2}
+					title={canEdit ? "Start your taxonomy" : "No classification yet"}
+				/>
+				{/* A viewer who cannot edit is not invited to begin from templates they are not
+				    shown (F-27): they are told what this is and who sets it up. */}
 				<p className="m-0 mb-[22px] text-ui-md leading-relaxed text-text-secondary">
-					A classification is a set of named axes (dimensions) and their allowed
-					values. Begin from a common template — you can adjust everything before
-					creating — or author one from scratch.
+					{canEdit
+						? "A classification is a set of named axes (dimensions) and their allowed values. Begin from a common template — you can adjust everything before creating — or author one from scratch."
+						: "A classification is a set of named axes (dimensions) and their allowed values. An owner or admin of this organization sets them up; once they do, they appear here with how each is used."}
 				</p>
 			</div>
 			{canEdit && (

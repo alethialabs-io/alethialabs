@@ -14,6 +14,7 @@ import { Switch } from "@repo/ui/switch";
 import { cn } from "@repo/ui/utils";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, GripVertical, Pencil, Plus, Trash2, X } from "lucide-react";
+import { MoveButtons, movedBy } from "./move-buttons";
 import { useRef, useState } from "react";
 import type { DimensionDTO, ValueDTO } from "@/app/server/actions/classification/dimensions";
 import { orpc } from "@/lib/rpc/client";
@@ -37,6 +38,8 @@ function ValueRow({
 	reorderable,
 	onDragStart,
 	onDrop,
+	onMoveUp,
+	onMoveDown,
 	onDrill,
 	onEdit,
 	onDelete,
@@ -47,6 +50,9 @@ function ValueRow({
 	reorderable: boolean;
 	onDragStart: () => void;
 	onDrop: () => void;
+	/** Moves the value one place: -1 up, +1 down. Absent at that end of the list. */
+	onMoveUp?: () => void;
+	onMoveDown?: () => void;
 	onDrill: () => void;
 	onEdit: () => void;
 	onDelete: () => void;
@@ -91,6 +97,9 @@ function ValueRow({
 			</div>
 			{canEdit && (
 				<div className="flex shrink-0 items-center gap-1">
+					{reorderable && (
+						<MoveButtons label={value.label} onMoveUp={onMoveUp} onMoveDown={onMoveDown} />
+					)}
 					<button
 						type="button"
 						onClick={onEdit}
@@ -194,8 +203,12 @@ function CoverageByKind({ dim }: { dim: DimensionDTO }) {
 	);
 }
 
-/** The inline add-value row with its own pending state. */
-function AddValue({ onAdd }: { onAdd: (label: string) => Promise<void> }) {
+/**
+ * The inline add-value row with its own pending state. What was typed is cleared only once the
+ * value exists: a refused add (already toasted by the mutation contract) leaves the text in the box
+ * to correct and send again (F-14).
+ */
+function AddValue({ onAdd }: { onAdd: (label: string) => Promise<boolean> }) {
 	const [label, setLabel] = useState("");
 	const [pending, setPending] = useState(false);
 
@@ -204,8 +217,7 @@ function AddValue({ onAdd }: { onAdd: (label: string) => Promise<void> }) {
 		if (!v || pending) return;
 		setPending(true);
 		try {
-			await onAdd(v);
-			setLabel("");
+			if (await onAdd(v)) setLabel("");
 		} finally {
 			setPending(false);
 		}
@@ -289,7 +301,8 @@ export function DimensionDetail({
 	onDeleteDimension: () => void;
 	onToggleMulti: () => Promise<void>;
 	onReorderValues: (ids: string[]) => void;
-	onAddValue: (label: string) => Promise<void>;
+	/** Resolves true once the value exists, false when it was refused. */
+	onAddValue: (label: string) => Promise<boolean>;
 	onEditValue: (value: ValueDTO) => void;
 	onDeleteValue: (value: ValueDTO) => void;
 	onDrill: (value: ValueDTO) => void;
@@ -377,7 +390,7 @@ export function DimensionDetail({
 					</span>
 					<div className="flex-1" />
 					{canReorder && (
-						<span className="text-ui-xs text-text-tertiary">drag to reorder</span>
+						<span className="text-ui-xs text-text-tertiary">drag or use the arrows to reorder</span>
 					)}
 				</div>
 
@@ -386,7 +399,7 @@ export function DimensionDetail({
 						No values yet — add one below.
 					</div>
 				) : (
-					dim.values.map((v) => (
+					dim.values.map((v, i) => (
 						<ValueRow
 							key={v.id}
 							value={v}
@@ -404,6 +417,16 @@ export function DimensionDetail({
 								}
 								dragId.current = null;
 							}}
+							onMoveUp={
+								i > 0
+									? () => onReorderValues(movedBy(dim.values.map((x) => x.id), v.id, -1))
+									: undefined
+							}
+							onMoveDown={
+								i < dim.values.length - 1
+									? () => onReorderValues(movedBy(dim.values.map((x) => x.id), v.id, 1))
+									: undefined
+							}
 							onDrill={() => onDrill(v)}
 							onEdit={() => onEditValue(v)}
 							onDelete={() => onDeleteValue(v)}

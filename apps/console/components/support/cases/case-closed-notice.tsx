@@ -13,8 +13,13 @@ import type { ComponentProps, ReactNode } from "react";
  */
 export function CaseClosedNotice({
 	action,
+	draftKept = false,
 	...props
-}: { action: ReactNode } & Omit<ComponentProps<typeof Alert>, "children">) {
+}: {
+	action: ReactNode;
+	/** An unsent reply is kept for this case (`case-draft.ts`): say it is not lost. */
+	draftKept?: boolean;
+} & Omit<ComponentProps<typeof Alert>, "children">) {
 	return (
 		<Alert role="status" {...props}>
 			<Lock />
@@ -23,6 +28,7 @@ export function CaseClosedNotice({
 				<p>
 					It no longer takes replies. Reopen it to continue the conversation, or open a new case
 					for a different issue.
+					{draftKept ? " Your unsent reply is kept and comes back when you reopen the case." : null}
 				</p>
 				{action}
 			</AlertDescription>

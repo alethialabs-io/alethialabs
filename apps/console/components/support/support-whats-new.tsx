@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Activity, BookOpen, Newspaper } from "lucide-react";
+import { Activity, ArrowUpRight, BookOpen, Newspaper } from "lucide-react";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { statusUrl } from "@/lib/legal";
 
@@ -10,6 +10,7 @@ interface WhatsNewLink {
 	label: string;
 	href: string;
 	icon: typeof BookOpen;
+	/** Off this origin. Rendering does not branch on it: every chip opens in a new tab (G-17). */
 	external?: boolean;
 }
 
@@ -43,17 +44,21 @@ export function SupportWhatsNew() {
 					description="Stay up to date with the latest platform updates, releases, and announcements."
 				/>
 				<div className="flex flex-wrap gap-3">
-					{links.map(({ label, href, icon: Icon, external }) => (
+					{/* Each is a site of its own (the news app, the docs app, the status page), so each
+					    opens in a new tab and says so — the console stays where it was (G-17). `relative` keeps
+					    the sr-only note inside its link, so it cannot make the document scroll (audit R3). */}
+					{links.map(({ label, href, icon: Icon }) => (
 						<a
 							key={label}
 							href={href}
-							{...(external
-								? { target: "_blank", rel: "noopener noreferrer" }
-								: {})}
-							className="inline-flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium transition-colors hover:border-foreground/20 hover:bg-muted"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="relative inline-flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium transition-colors hover:border-foreground/20 hover:bg-muted"
 						>
 							<Icon className="size-[15px] text-muted-foreground" />
 							{label}
+							<ArrowUpRight aria-hidden className="size-3.5 text-muted-foreground" />
+							<span className="sr-only">(opens in a new tab)</span>
 						</a>
 					))}
 				</div>

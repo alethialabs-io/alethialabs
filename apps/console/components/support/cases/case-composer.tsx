@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@repo/ui/button";
 import { Textarea } from "@repo/ui/textarea";
 import { Loader2, SendHorizontal } from "lucide-react";
+import { useEffect } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { postCaseMessage } from "@/app/server/actions/support";
@@ -14,6 +15,7 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import type { CaseWithThread, PublicMessage } from "@/lib/queries/support";
 import { randomUuid } from "@/lib/random-id";
 import { postMessageSchema } from "@/lib/validations/support";
+import { readCaseDraft, writeCaseDraft } from "./case-draft";
 import { caseKey, supportCaseKeys } from "./case-queries";
 
 /**
@@ -40,6 +42,10 @@ function isCaseRead(value: unknown): value is CaseWithThread {
  * back if the action fails), Send is disabled while it is in flight (the double-submit guard), a
  * validation refusal lands under the field rather than in a toast, and on settle every key that
  * shows the case is invalidated — the thread, the "My cases" buckets and the bell.
+ *
+ * What is typed is kept as the case's draft (`case-draft.ts`) until it is sent, so a case closed
+ * while the reply is being written — which swaps this composer for the closed notice — does not take
+ * the text with it: reopening the case brings the composer back with the reply in it (G-26).
  */
 export function CaseComposer({ caseId }: { caseId: string }) {
 	const form = useForm<ReplyForm>({
@@ -85,6 +91,15 @@ export function CaseComposer({ caseId }: { caseId: string }) {
 		if (send.isPending) return;
 		send.mutate({ caseId, body: values.body.trim() });
 	});
+
+	// The kept draft is read after mount (storage is the browser's, so the server's HTML has the
+	// empty box), and every change is written back; the send's `reset` clears it.
+	useEffect(() => {
+		const draft = readCaseDraft(caseId);
+		if (draft !== "") form.reset({ body: draft }, { keepDefaultValues: true });
+		const subscription = form.watch((values) => writeCaseDraft(caseId, values.body ?? ""));
+		return () => subscription.unsubscribe();
+	}, [caseId, form]);
 
 	const body = useWatch({ control: form.control, name: "body" });
 	const messageId = `case-reply-message-${caseId}`;

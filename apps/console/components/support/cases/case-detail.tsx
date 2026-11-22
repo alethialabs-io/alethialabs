@@ -4,17 +4,18 @@
 
 import { formatBytes } from "@repo/format";
 import { Button } from "@repo/ui/button";
-import { EmptyState } from "@repo/ui/empty";
 import { SectionHeading } from "@repo/ui/section-heading";
-import { isDefinedError } from "@orpc/client";
+import { useHydrated } from "@repo/ui/use-hydrated";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, Paperclip, SearchX } from "lucide-react";
+import { ArrowLeft, Download, Paperclip } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
 import { markCaseRead } from "@/app/server/actions/support";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { RegionError } from "@/components/errors/region-error";
+import { RegionRefusal } from "@/components/errors/region-refusal";
 import { orpc } from "@/lib/rpc/client";
+import { readRefusalOf } from "@/lib/rpc/refusal";
 import {
 	SUPPORT_CASE_TYPE_LABELS,
 	SUPPORT_CATEGORY_LABELS,
@@ -29,6 +30,8 @@ import {
 	CASE_THREAD,
 } from "./case-detail-parts";
 import { CaseDetailSkeleton } from "./case-detail-skeleton";
+import { readCaseDraft } from "./case-draft";
+import { CASE_NOT_FOUND_COPY, CaseNotFound, casesListHref } from "./case-not-found";
 import { useCaseQuery } from "./case-queries";
 import { CASE_RESOURCE_KIND, formatCaseNumber } from "./case-query";
 import { CaseSeverityBadge } from "./case-severity-badge";
@@ -77,6 +80,9 @@ export function CaseDetail({
 	});
 	const { mutate: mark } = markRead;
 	const hasCase = data !== undefined;
+	// Storage is the browser's: read only once hydrated, so the server's HTML and the hydrating
+	// render agree.
+	const hydrated = useHydrated();
 	useEffect(() => {
 		if (hasCase) mark({ id: caseId });
 	}, [hasCase, messageCount, caseId, mark]);
@@ -84,27 +90,16 @@ export function CaseDetail({
 	if (data === undefined) {
 		if (!result.isError) return <CaseDetailSkeleton />;
 		// A case that is not visible is a not-found, never an error and never an empty thread.
-		// (The route answers this on the server; this is the case that went away while open.)
-		if (isDefinedError(result.error) && result.error.code === "NOT_FOUND") {
-			return (
-				<EmptyState
-					className="rounded-md border"
-					level={2}
-					icon={<SearchX />}
-					title="Case not found"
-					description="This support case doesn't exist, or you don't have access to it."
-					action={
-						<Button size="sm" nativeButton={false} render={<Link href={`/${orgSlug}/~/support/my-cases`} />}>
-							My cases
-						</Button>
-					}
-				/>
-			);
-		}
+		// (The route answers this on the server; this is the case that went away while open.) A
+		// refused read is told as a refusal, without a retry that would get the same answer (G-16);
+		// only a real failure offers one.
+		const refusal = readRefusalOf(result.error);
+		if (refusal === "not-found") return <CaseNotFound orgSlug={orgSlug} />;
+		if (refusal) return <RegionRefusal refusal={refusal} subject="this support case" />;
 		return (
 			<RegionError
 				title="Couldn't load this case"
-				description="Something went wrong fetching the case. Check your connection and try again."
+				description="Something went wrong fetching the case. Try again in a moment."
 				onRetry={() => refetch()}
 			/>
 		);
@@ -122,10 +117,11 @@ export function CaseDetail({
 					size="sm"
 					className="-ml-2 h-7 w-fit text-muted-foreground"
 					nativeButton={false}
-					render={<Link href={`/${orgSlug}/~/support/my-cases`} />}
+					render={<Link href={casesListHref(orgSlug)} />}
 				>
 					<ArrowLeft className="size-4" />
-					My cases
+					{/* Not "My cases": a support admin's list is the whole organization's (G-22). */}
+					{CASE_NOT_FOUND_COPY.back}
 				</Button>
 
 				<div className="space-y-2">
@@ -197,6 +193,7 @@ export function CaseDetail({
 			{isClosed ? (
 				<CaseClosedNotice
 					data-testid="case-closed-notice"
+					draftKept={hydrated && readCaseDraft(caseId) !== ""}
 					action={<CaseActions caseId={caseId} status={supportCase.status} variant="reopen" />}
 				/>
 			) : (

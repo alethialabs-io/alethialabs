@@ -37,7 +37,7 @@
 # (occurrences covered — exact, both directions), and ONE of `reason:` / `lifts:`.
 
 baseline: 5
-debt: 1
+debt: 0
 
 floors:
   # The minimum the scan must have READ, so a walker, a root or a tag list that quietly stopped
@@ -74,9 +74,6 @@ field_label:
     reason: Each field's label is runners/field-help.tsx's `FieldLabel`, given `htmlFor={xId}` here while the input carries `id={xId}` — a `<Label htmlFor>` rendered in ANOTHER file, which this check cannot follow. The pairs are useId() values declared in this file.
 
 overlay_title:
-  - path: apps/console/components/classification/value-drill-drawer.tsx
-    hits: 1
-    lifts: "#6828 the drawer names itself with a SectionHeading, which is not the sheet's title — swap it for a SheetTitle (classification is in that batch's scope)."
   - path: apps/console/components/connectors/connectors-page.tsx
     hits: 1
     reason: The api_key sheet's title is cloud-connect/use-cloud-connect.tsx's `ConnectSheetHeader`, which renders a real `<SheetTitle>{title}</SheetTitle>` — a title in ANOTHER file, which this check cannot follow.
