@@ -135,6 +135,17 @@ export const ERASURE_RULES: readonly ErasureRule[] = [
 			"the service role, which RLS does not filter, so every one of them goes (ADR 0001 §9).",
 	},
 	{
+		table: "grants",
+		subjectColumn: "principal_id",
+		disposition: "erase",
+		reason:
+			"The account's own access grants, in every organization. An erased account must not be " +
+			"authorized for anything, and the OpenFGA tuples mirrored from these rows are removed " +
+			"after the erasure commits — while a grant row survived, the boot-time backfill would " +
+			"write those tuples straight back. A team's grants name the team, not the subject, and " +
+			"are untouched.",
+	},
+	{
 		table: "oauth_access_token",
 		subjectColumn: "user_id",
 		disposition: "erase",

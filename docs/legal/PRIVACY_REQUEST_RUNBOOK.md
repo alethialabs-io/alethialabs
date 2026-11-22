@@ -6,12 +6,33 @@ Public intake: `/privacy/requests`
 
 Target response: one month from receipt
 
+Staff queue: `/privacy` in the staff console (`apps/admin`). Every case is listed
+there with its deadline and an overdue flag; verifying, extending, holding,
+refusing and fulfilling a case all happen there and are recorded in the case's
+own ledger and in the operator audit log.
+
+## Self-serve requests
+
+Two requests need no email and no staff action:
+
+- **Download my data** (Account settings). The console opens an export case,
+  builds a JSON archive with a signed manifest, and emails the account a link
+  that works for 72 hours, only while signed in to that account.
+- **Delete account** (Account settings). The console checks for live
+  environments, cloud connections, projects, teams the account alone owns that
+  have other members, and paid subscriptions, and refuses with the reason while
+  any remain. Otherwise it schedules the erasure 14 days out, emails a cancel
+  link, and signs the account out everywhere. A reminder goes out 7 days before.
+  Signing in again or the link cancels it; otherwise the privacy sweep erases the
+  account on the day. If the erasure is refused on the day, the case stays open
+  in the staff queue.
+
 ## Intake
 
-1. Create an entry in the restricted privacy-request register with an internal
-   id, receipt date, requester, request type, jurisdiction, systems, owner,
-   deadline, verification status, actions, exceptions, response date and
-   evidence location.
+1. Open the case from the staff queue ("Open a case from an email"), which
+   records the receipt date, kind, deadline and the hash of the address. Keep
+   the requester's correspondence and identity evidence in the restricted
+   privacy-request register, never on the case.
 2. Acknowledge promptly. Never copy the request or identity evidence into Git,
    issue trackers, analytics, or ordinary chat.
 3. Triage whether Alethia is controller. If a business customer is controller,

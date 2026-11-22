@@ -18,4 +18,10 @@ export interface PlatformAuditInput {
 	slug?: string | null;
 	stripeCustomerId?: string | null;
 	stripeSubscriptionId?: string | null;
+	/** A staff privacy-queue decision: the case it was about. Never the subject's address. */
+	privacyReference?: string | null;
+	/** The decision taken on that case (verify, extend, hold, refuse, fulfil, open). */
+	privacyAction?: string | null;
+	/** For an `open`, the kind of request opened. */
+	privacyKind?: string | null;
 }

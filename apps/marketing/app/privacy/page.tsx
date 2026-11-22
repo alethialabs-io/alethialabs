@@ -139,9 +139,13 @@ export default function PrivacyPage() {
 			<h2>5. Retention</h2>
 			<ul>
 				<li>
-					Account, organization, and project records: while the account is
-					active, then deleted or anonymized after closure unless law or a
-					dispute requires longer retention.
+					Account records: while the account is active. When you delete your
+					account, it is deleted 14 days after you confirm unless you cancel by
+					signing in again; invoices, orders and accepted terms are then kept
+					without your name or address for as long as law or a dispute requires,
+					and support threads you took part in stay with the other party, with
+					your name and your messages removed. Organization and project records:
+					until the organization or project is deleted.
 				</li>
 				<li>Provisioning job logs: 30 days by default.</li>
 				<li>Fleet-action records: 90 days by default.</li>
@@ -185,8 +189,10 @@ export default function PrivacyPage() {
 				Depending on applicable law, you may request access, correction,
 				deletion, restriction, portability, or objection; withdraw consent; and
 				complain to a supervisory authority. We may need to verify identity and
-				may retain data where an exemption or legal duty applies. Start a
-				request at <Link href="/privacy/requests">Privacy requests</Link>.
+				may retain data where an exemption or legal duty applies. If you have an
+				account, you can download a copy of your data and delete your account
+				yourself from Account settings in the console. Start any other request
+				at <Link href="/privacy/requests">Privacy requests</Link>.
 			</p>
 			<p>
 				In Bulgaria, the supervisory authority is the{" "}

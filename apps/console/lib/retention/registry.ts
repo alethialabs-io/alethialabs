@@ -81,6 +81,10 @@ export const RETENTION_DEFAULT_DAYS = {
 	// ADR 0001 §9 / Q2: an Elench draft nobody writes, and a discarded one (its 24 h Undo window).
 	elenchDrafts: 30,
 	elenchDraftsDiscarded: 1,
+	/** Three years after a support case closes — the privacy policy's "up to 3 years". */
+	supportCorrespondence: 3 * 365,
+	/** A data export's download link and stored archive. */
+	privacyExports: 3,
 } as const;
 
 /**
@@ -163,6 +167,34 @@ export const RETENTION_REGISTRY: readonly RetentionEntry[] = [
 			"Enforced by the same elench-drafts-sweep task: a discarded draft is deleted 24 hours " +
 			"after it was discarded. The task runs daily, so a discarded draft can stay up to about " +
 			"two days.",
+	},
+	{
+		id: "support-correspondence",
+		subject: "Support and contractual correspondence: support cases, their messages and attachments",
+		table: "support_cases",
+		windowDays: RETENTION_DEFAULT_DAYS.supportCorrespondence,
+		mechanism: "reconcile-task",
+		gcFunction: null,
+		evidence:
+			"Enforced by the gc-support-correspondence task (lib/retention/support-correspondence.ts), " +
+			"run daily by the reconcile loop: a support case CLOSED more than three years ago is deleted " +
+			"with its messages, read markers and attachment rows (ON DELETE CASCADE), and its attachment " +
+			"files are deleted from object storage first. A case that is resolved but not closed has not " +
+			"started its window. Contractual correspondence outside the support tool (email) is not held " +
+			"by this product.",
+	},
+	{
+		id: "privacy-exports",
+		subject: "Data exports a person downloads from their account settings",
+		table: "privacy_case",
+		windowDays: RETENTION_DEFAULT_DAYS.privacyExports,
+		mechanism: "reconcile-task",
+		gcFunction: null,
+		evidence:
+			"Enforced by the privacy-sweep task (lib/privacy/sweep.ts): when an export's 72-hour link " +
+			"expires, its archive is deleted from object storage and its key and link token are cleared " +
+			"from the case. The download route also refuses an expired link on its own. The signed " +
+			"manifest — what was sent, with no personal data — stays on the case as its record.",
 	},
 	{
 		id: "legal-acceptance",

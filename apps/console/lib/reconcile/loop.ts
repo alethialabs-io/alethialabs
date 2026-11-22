@@ -24,6 +24,8 @@ import { releaseStrandedAiHolds } from "@/lib/reconcile/ai-holds";
 import { gcAuthzActivityLog, gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
 import { getHeartbeats, isDue, runTask } from "@/lib/reconcile/heartbeat";
 import { reapExpiredEphemeralEnvs } from "@/lib/reconcile/reap";
+import { runPrivacySweep } from "@/lib/privacy/sweep";
+import { gcSupportCorrespondence } from "@/lib/retention/support-correspondence";
 
 const llog = log.child({ component: "reconcile" });
 
@@ -63,6 +65,11 @@ const INTERVALS = {
 	// pass keeps a discarded draft at most about two days. The silent claims it settles are a
 	// backstop: every draft action settles its own row or scope first (lib/elench/drafts-sweep.ts).
 	"elench-drafts-sweep": 24 * 60 * 60_000,
+	// 15m — a self-serve account deletion is due on a DATE, and its reminder a week before; a
+	// quarter-hour gap is invisible at that scale. Export links expire in hours (lib/privacy/sweep.ts).
+	"privacy-sweep": 15 * 60_000,
+	// 24h — the window is three years (lib/retention/support-correspondence.ts).
+	"gc-support-correspondence": 24 * 60 * 60_000,
 } as const;
 
 declare global {
@@ -148,6 +155,15 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		// past 24h and drafts unwritten for 30 days. Never deletes a `sending` row.
 		if (isDue("elench-drafts-sweep", INTERVALS["elench-drafts-sweep"], now)) {
 			await runTask("elench-drafts-sweep", () => sweepElenchDrafts(db));
+		}
+		// The privacy sweep: reminders and erasures of scheduled self-serve account deletions (14-day
+		// grace period), and expired data-export downloads. Each row is claimed before it is acted on.
+		if (isDue("privacy-sweep", INTERVALS["privacy-sweep"], now)) {
+			await runTask("privacy-sweep", () => runPrivacySweep(now));
+		}
+		// Support correspondence retention: delete support cases closed more than three years ago.
+		if (isDue("gc-support-correspondence", INTERVALS["gc-support-correspondence"], now)) {
+			await runTask("gc-support-correspondence", () => gcSupportCorrespondence(db, now));
 		}
 
 		// Bubble any reconciler currently in a FAILED STATE up to the loop heartbeat (runTask already

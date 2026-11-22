@@ -191,6 +191,11 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
   const slugHooks = orgSlugHooks(core.reservedOrgSlugRefusal, core.orgSlugShapeRefusal);
   const setupHooks = newOrgSetupHooks(core.newOrgSetup);
   const tupleSync = fgaClient ? new FgaTupleSync(core, fgaClient) : undefined;
+  // An organization's deletion snapshot, from its `before` hook to its `after` hook (one request).
+  const pendingOrgDeletions = new Map<
+    string,
+    Awaited<ReturnType<CoreContext["orgDeletion"]["snapshot"]>>
+  >();
 
   // Per-org entitlement resolution, and the answer both entitlement gates in this file read (team
   // creation and single sign-on registration; the invitation gate asks core a billing question
@@ -463,6 +468,29 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
               resource_type: "member",
               resource_id: user.id,
             });
+          },
+          // Deleting an organization: Postgres cascades its rows, but not what lives outside it.
+          // `before` captures what the cascade would erase (team ids, the members to tell, the live
+          // subscription); `after` removes the org's OpenFGA tuples, cancels its subscription and
+          // emails its members (core's lib/org/deletion-teardown.ts). Each step after the delete
+          // is best-effort — the org is already gone — and a failure is logged, never thrown.
+          beforeDeleteOrganization: async ({ organization: org, user }) => {
+            pendingOrgDeletions.set(org.id, await core.orgDeletion.snapshot(org.id, user.id));
+          },
+          afterDeleteOrganization: async ({ organization: org }) => {
+            const snapshot = pendingOrgDeletions.get(org.id);
+            pendingOrgDeletions.delete(org.id);
+            if (!snapshot) return;
+            await tupleSync
+              ?.removeOrgTuples(org.id, snapshot.teamIds)
+              .catch((err: unknown) =>
+                console.error(`[authz] removing the tuples of deleted org ${org.id} failed`, err),
+              );
+            await core.orgDeletion
+              .finish(snapshot)
+              .catch((err: unknown) =>
+                console.error(`[org] finishing the deletion of org ${org.id} failed`, err),
+              );
           },
           // Team membership → OpenFGA group tuples (team:T#member@user:U), so
           // team-scoped grants reach members. Postgres resolves team_member at

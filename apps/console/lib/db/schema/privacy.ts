@@ -106,6 +106,23 @@ export const privacyCase = pgTable(
 		 */
 		exportExpiresAt: timestamp({ withTimezone: true }),
 
+		// ── Self-serve deletion with a grace period ──────────────────────────────────────────────
+		/**
+		 * When a self-serve erasure runs by itself. Set only on a case the subject opened from their
+		 * own session and confirmed; null for every case a person fulfils by hand. The privacy sweep
+		 * (`lib/privacy/self-deletion.ts`) fulfils a case whose time has come, and signing in or the
+		 * emailed cancel link withdraws it before then.
+		 */
+		scheduledFor: timestamp({ withTimezone: true }),
+		/** When the halfway reminder was sent, so the sweep sends it once. */
+		reminderSentAt: timestamp({ withTimezone: true }),
+		/**
+		 * SHA-256 of the one secret link token the subject was emailed for this case: the cancel link
+		 * of a scheduled erasure, or the download link of an export. Hashed so a database read does
+		 * not hand out a working link.
+		 */
+		linkTokenSha256: text(),
+
 		createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
@@ -115,6 +132,8 @@ export const privacyCase = pgTable(
 		// The overdue query — "what is due and not decided?" — is the one that has to be fast, because
 		// it is the one that runs on a schedule and produces the alert.
 		index("privacy_case_due_idx").on(t.dueAt),
+		// The privacy sweep asks "which scheduled erasures are due?" every pass.
+		index("privacy_case_scheduled_idx").on(t.scheduledFor),
 	],
 );
 

@@ -48,6 +48,18 @@ export interface TupleSync {
 	removeTeamMember(teamId: string, userId: string): Promise<void>;
 	/** Re-expand every grant referencing a role (after its permissions changed). */
 	resyncRole(roleId: string): Promise<void>;
+	/**
+	 * Remove EVERY tuple whose subject is `user:<userId>`, in every org — the account erasure's
+	 * half of the store. Only for an account that is gone: a member leaving one org is
+	 * `revokeMemberGrant`, which is scoped to that org.
+	 */
+	removeUserTuples(userId: string): Promise<void>;
+	/**
+	 * Remove the tuples of a DELETED organization: everything granted on `org:<orgId>`, the
+	 * membership tuples of its teams, and the per-instance objects whose `parent` is the org. The
+	 * team ids are passed in because the team rows are already gone when the org's delete hook runs.
+	 */
+	removeOrgTuples(orgId: string, teamIds: readonly string[]): Promise<void>;
 	/** Write the model + backfill all tuples from Postgres (idempotent). */
 	backfill(): Promise<void>;
 }
@@ -62,6 +74,8 @@ const NOOP: TupleSync = {
 	async syncTeamMember() {},
 	async removeTeamMember() {},
 	async resyncRole() {},
+	async removeUserTuples() {},
+	async removeOrgTuples() {},
 	async backfill() {},
 };
 
