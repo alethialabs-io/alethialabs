@@ -472,10 +472,10 @@ const OUT_OF_SCOPE_PATHS = [
 	"apps/docs/content/docs/guides/connectors/aws.mdx",
 	"apps/docs/content/docs/guides/design-project/keyless-database-auth.mdx",
 	// Was apps/marketing/components/landing/home/sections/keyless.tsx, deleted by #2079's
-	// homepage rebuild. The entry outlived the file and passed silently for months, because
-	// expectOutOfScope() read a missing file as "" and an empty file is trivially out of
-	// scope. Repointed to where that prose actually lives now.
-	"apps/marketing/components/landing/home/verify-receipt.tsx",
+	// homepage rebuild, then verify-receipt.tsx, deleted by the editorial home (#7119). The
+	// keyless-and-receipt prose now lives in the home's statement section, so the fixture
+	// follows it: marketing prose ABOUT the surface, which must not pull the page into scope.
+	"apps/marketing/components/landing/home/home-sections.tsx",
 	// Prose carve-out, by file SHAPE: named for the surface (`oidc`, `connector`), outside every prose
 	// tree, and prose or an illustrative example all the same. An example key pasted into one of these
 	// must not wedge a required check on a docs-only change.

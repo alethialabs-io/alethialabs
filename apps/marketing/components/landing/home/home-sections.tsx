@@ -187,7 +187,7 @@ export function FromTheBlog({ posts }: { posts: PostItem[] }) {
 			<Wrap>
 				<div className="flex items-baseline justify-between" style={{ borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)", padding: "12px 0", marginBottom: 20 }}>
 					<h2 style={{ ...disp, fontSize: 15, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>From the blog</h2>
-					<a href="/blog" className="text-text-secondary hover:text-text-primary" style={{ fontSize: 13.5, textDecoration: "none" }}>
+					<a href="/news" className="text-text-secondary hover:text-text-primary" style={{ fontSize: 13.5, textDecoration: "none" }}>
 						All posts →
 					</a>
 				</div>
