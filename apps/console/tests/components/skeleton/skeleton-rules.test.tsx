@@ -31,6 +31,7 @@ import { describe, expect, it } from "vitest";
 
 import ProjectArchitectureLoading from "@/app/(private)/[org]/[project]/architecture/loading";
 import ProjectLoading from "@/app/(private)/[org]/[project]/loading";
+import { BoardPreview } from "@/components/design-project/canvas/board-preview";
 import { CanvasSkeleton } from "@/components/design-project/canvas/canvas-skeleton";
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 
@@ -175,6 +176,25 @@ describe("the bare project and the Architecture route draw the same skeleton", (
 	it("is marked busy once in the bare project's skeleton too", () => {
 		const { container } = render(<ProjectLoading />);
 		expect(container.querySelectorAll("[aria-busy]")).toHaveLength(1);
+	});
+});
+
+describe("BoardPreview without the page's data (#7212)", () => {
+	it("is one SkeletonRoot around the board's skeleton, busy once, in either placement", () => {
+		const offenders: string[] = [];
+		for (const overlay of [false, true]) {
+			const { container, unmount } = render(<BoardPreview overlay={overlay} />);
+			const roots = container.querySelectorAll('[data-slot="skeleton-root"]');
+			if (roots.length !== 1) offenders.push(`overlay=${overlay}: ${roots.length} roots`);
+			if (container.firstElementChild !== roots[0]) offenders.push(`overlay=${overlay}: root not first`);
+			if (!roots[0]?.querySelector('[data-slot="canvas-skeleton"]')) {
+				offenders.push(`overlay=${overlay}: no canvas skeleton`);
+			}
+			const busy = container.querySelectorAll("[aria-busy]").length;
+			if (busy !== 1) offenders.push(`overlay=${overlay}: ${busy} busy elements`);
+			unmount();
+		}
+		expect(offenders).toEqual([]);
 	});
 });
 

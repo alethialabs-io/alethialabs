@@ -11,8 +11,7 @@ import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
  * wrapper `architecture/loading.tsx` renders, so nothing moves when the redirect lands (B2). Same
  * reasoning as `settings/loading.tsx`, which is General's shape because settings redirects there.
  *
- * `CanvasSkeleton` still marks itself busy as well; that second statement belongs to the canvas
- * component and goes when it is drawn inside `SkeletonRoot` everywhere.
+ * `SkeletonRoot` is the one busy region: `CanvasSkeleton` is a part and marks nothing itself.
  */
 export default function ProjectLoading() {
 	return (

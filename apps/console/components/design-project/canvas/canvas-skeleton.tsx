@@ -22,8 +22,8 @@ import { cn } from "@repo/ui/utils";
  *
  * It is a PART, not a skeleton root: it declares no `aria-busy`, `role` or name of its own (skeleton
  * rule 1, `docs/ui-conformance/RUBRIC.md`). The caller draws it inside `SkeletonRoot`, which is the
- * one statement that the region is pending — both route `loading.tsx` files do. `BoardPreview`'s
- * no-data fallback draws it bare; the workbench always provides the data, so no page reaches it.
+ * one statement that the region is pending — both route `loading.tsx` files and `BoardPreview`'s
+ * no-data fallback do.
  */
 export function CanvasSkeleton({ overlay = false }: { overlay?: boolean }) {
 	return (
