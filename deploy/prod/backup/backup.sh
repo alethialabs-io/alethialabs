@@ -7,8 +7,8 @@
 #   backup.sh run          nightly: logical Postgres dump + a copy of every SeaweedFS bucket (tofu
 #                          state and plan artefacts) + the erasure tombstones, each encrypted with
 #                          age to the public recipients in BACKUP_AGE_RECIPIENTS, uploaded to an
-#                          S3-compatible store at a second provider; then retention (14 dailies,
-#                          8 weeklies by default).
+#                          S3-compatible store at a second provider; then retention: 14 dailies and
+#                          8 weeklies, deleted here (BACKUP_RETENTION=script) or by the bucket (=bucket).
 #   backup.sh tombstones   hourly: the erasure tombstones alone, to tombstones/latest.*. See below.
 #   backup.sh status       B7's listing: the newest COMPLETE copy and its age. Exit 0 when it is
 #                          younger than BACKUP_MAX_AGE_HOURS (26), 1 when older, 2 when unreadable.
@@ -32,10 +32,18 @@
 #
 # THE LAYOUT OFF-BOX, under <bucket>/<BACKUP_PREFIX>/
 #   daily/<stamp>/{postgres.dump.age, storage.tar.gz.age, tombstones.csv.age, manifest.json}
-#   weekly/<YYYY-Www>/…        the first complete daily of each ISO week, copied server-side
+#   weekly/<YYYY-Www>/…        the first complete daily of each ISO week, uploaded a second time
 #   latest.json                names the newest complete daily; written after its manifest
 #   tombstones/latest.csv.age  + tombstones/latest.json, rewritten every hour
 # A daily directory without manifest.json did not finish and is never read as a backup.
+#
+# RETENTION (BACKUP_RETENTION, see retention_mode in lib.sh)
+#   script     the default: after a complete night, `rclone purge` removes the copies beyond
+#              BACKUP_KEEP_DAILY / BACKUP_KEEP_WEEKLY. The box key needs delete.
+#   bucket     production: this script never deletes, overwrites only the two pointers, and makes
+#              every upload multipart so an Object Lock bucket accepts it. Expiry is the bucket's
+#              lifecycle rules; immutability is its Object Lock default retention. The box key has
+#              no delete, so whoever holds the box cannot shorten the history.
 #
 # Never add `set -x`: this script holds storage keys.
 
@@ -50,6 +58,7 @@ ALETHIA_COMPOSE_PROJECT="${ALETHIA_COMPOSE_PROJECT:-alethia}"
 BACKUP_PREFIX="${BACKUP_PREFIX:-alethia-prod}"
 BACKUP_KEEP_DAILY="${BACKUP_KEEP_DAILY:-14}"
 BACKUP_KEEP_WEEKLY="${BACKUP_KEEP_WEEKLY:-8}"
+BACKUP_RETENTION="${BACKUP_RETENTION:-script}"
 BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-26}"
 BACKUP_LOCK="${BACKUP_LOCK:-/run/lock/alethia-backup.lock}"
 
@@ -142,6 +151,7 @@ cmd_tombstones() {
 cmd_run() {
 	require_cmd docker age tar gzip
 	require_env BACKUP_AGE_RECIPIENTS
+	retention_mode >/dev/null # a mistyped mode stops here, before the dump
 	take_lock
 	WORK="$(secret_dir "${BACKUP_WORKDIR:-}")"
 	local envf pg sw net stamp started finished week source_commit pg_major rows
@@ -219,9 +229,7 @@ cmd_run() {
 	local dest
 	dest="$(offbox_path "daily/$stamp")"
 	log "uploading to the off-box store"
-	rclone_run - "$envf" "$WORK" copy /work/out "$dest" --exclude "$BACKUP_FILE_MANIFEST"
-	rclone_run - "$envf" "$WORK" check /work/out "$dest" --one-way --exclude "$BACKUP_FILE_MANIFEST"
-	rclone_run - "$envf" "$WORK" copyto "/work/out/$BACKUP_FILE_MANIFEST" "$dest/$BACKUP_FILE_MANIFEST"
+	upload_copy "$envf" "$dest"
 	printf '{\n  "schemaVersion": 1,\n  "stamp": "%s",\n  "finishedAt": "%s"\n}\n' "$stamp" "$finished" >"$WORK/latest.json"
 	rclone_run - "$envf" "$WORK" copyto /work/latest.json "$(offbox_path latest.json)"
 	# The hourly pointer too, so a restore right after this run reads tombstones at least this new.
@@ -232,13 +240,40 @@ cmd_run() {
 	rclone_run - "$envf" "$WORK" copyto /work/tomb-latest.json "$(offbox_path tombstones/latest.json)"
 	log "daily copy $stamp complete"
 
-	# 6. Weekly: the first complete daily of each ISO week, copied server-side.
+	# 6. Weekly: the first complete daily of each ISO week, uploaded again from the same local files
+	#    in the same order (data, check, manifest last), so a weekly is never half there and looking
+	#    whole. Not a server-side copy: every object enters the store through the one upload path
+	#    that an Object Lock bucket is known to accept.
 	if [ -z "$(rclone_run - "$envf" "$WORK" lsf "$(offbox_path "weekly/$week/")" 2>/dev/null | grep -Fx "$BACKUP_FILE_MANIFEST" || true)" ]; then
-		rclone_run - "$envf" "$WORK" copy "$dest" "$(offbox_path "weekly/$week")"
+		upload_copy "$envf" "$(offbox_path "weekly/$week")"
 		log "weekly copy $week made from $stamp"
 	fi
 
 	# 7. Retention. Only after this run's copy is complete, so a failing night never deletes.
+	apply_retention "$envf"
+}
+
+#######################################
+# Uploads $WORK/out to DEST: the data files, `rclone check` that they landed, then the manifest.
+#######################################
+upload_copy() {
+	local envf="$1" dest="$2"
+	rclone_run - "$envf" "$WORK" copy /work/out "$dest" --exclude "$BACKUP_FILE_MANIFEST"
+	rclone_run - "$envf" "$WORK" check /work/out "$dest" --one-way --exclude "$BACKUP_FILE_MANIFEST"
+	rclone_run - "$envf" "$WORK" copyto "/work/out/$BACKUP_FILE_MANIFEST" "$dest/$BACKUP_FILE_MANIFEST"
+}
+
+#######################################
+# Script mode: prunes dailies and weeklies beyond the keep counts. Bucket mode: deletes nothing and
+# makes no store call at all; the bucket's lifecycle rules expire old copies.
+#######################################
+apply_retention() {
+	local envf="$1" mode
+	mode="$(retention_mode)" || exit 1
+	if [ "$mode" = bucket ]; then
+		log "retention: BACKUP_RETENTION=bucket, so the bucket's lifecycle rules expire old copies; nothing deleted here"
+		return 0
+	fi
 	prune daily "$BACKUP_KEEP_DAILY" "$envf"
 	prune weekly "$BACKUP_KEEP_WEEKLY" "$envf"
 }
@@ -353,6 +388,8 @@ cmd_self_test() {
 	check "retention never names a malformed stamp" "$got" ""
 	got="$(printf '%s\n' '20261201T020000Z complete' '20261202T020000Z complete' | retention_select 14 | tr '\n' ' ')"
 	check "retention deletes nothing under the window" "$got" ""
+	got="$(retention_select 1 </dev/null | tr '\n' ' ')"
+	check "retention on an empty listing deletes nothing and does not fail" "$got" ""
 	if (retention_select 0 </dev/null >/dev/null 2>&1); then got=accepted; else got=refused; fi
 	check "retention refuses keep=0 (it would delete everything)" "$got" refused
 
@@ -415,6 +452,14 @@ cmd_self_test() {
 	check "an ssh key is refused as a recipient" "$got" refused
 	if (BACKUP_AGE_RECIPIENTS="" age_recipient_args >/dev/null 2>&1); then got=accepted; else got=refused; fi
 	check "no recipient is refused" "$got" refused
+	# Production encrypts to three: the maintainer's offline key, the recovery key, and the drill key.
+	local r2 r3
+	r2="age1$(printf 'q%.0s' {1..58})" # the shape the check reads; not a real key
+	r3="age1$(printf 'z%.0s' {1..58})"
+	got="$(BACKUP_AGE_RECIPIENTS="$want $r2  $r3" age_recipient_args | tr '\n' ' ')"
+	check "three recipients become three -r pairs, in order" "$got" "-r $want -r $r2 -r $r3 "
+	if (BACKUP_AGE_RECIPIENTS="$want ${r2}x $r3" age_recipient_args >/dev/null 2>&1); then got=accepted; else got=refused; fi
+	check "one malformed key among three refuses the whole list" "$got" refused
 
 	# The offbox env file is private.
 	got="$(BACKUP_S3_ENDPOINT=https://s3.example.invalid BACKUP_S3_BUCKET=b BACKUP_S3_ACCESS_KEY_ID=k \
@@ -424,6 +469,55 @@ cmd_self_test() {
 	if (unset BACKUP_S3_SECRET_ACCESS_KEY; BACKUP_S3_ENDPOINT=x BACKUP_S3_BUCKET=b BACKUP_S3_ACCESS_KEY_ID=k \
 		offbox_env_file "$tmp" >/dev/null 2>&1); then got=accepted; else got=refused; fi
 	check "a missing off-box secret is refused" "$got" refused
+
+	# Retention mode: script by default, bucket on request, and nothing else.
+	check "retention mode defaults to script" "$(unset BACKUP_RETENTION; retention_mode)" script
+	check "retention mode bucket" "$(BACKUP_RETENTION=bucket retention_mode)" bucket
+	if (BACKUP_RETENTION=Bucket retention_mode >/dev/null 2>&1); then got=accepted; else got=refused; fi
+	check "a mistyped retention mode is refused, never read as script" "$got" refused
+
+	# What the off-box remote is told, per mode. The values are fakes; only the shape is read.
+	local s3env=(BACKUP_S3_ENDPOINT=https://s3.example.invalid BACKUP_S3_BUCKET=b BACKUP_S3_ACCESS_KEY_ID=k
+		BACKUP_S3_SECRET_ACCESS_KEY=s)
+	envhas() { # envhas <file> <exact line> -> yes|no
+		if grep -Fxq "$2" "$1"; then printf yes; else printf no; fi
+	}
+	offbox_env_child() { # offbox_env_child <VAR=value…>: offbox_env_file in a fresh bash, no set -e
+		# shellcheck disable=SC2016 # $1 and $2 are the child's positional arguments
+		env "$@" bash -c '. "$1"; offbox_env_file "$2"' _ "$HERE/lib.sh" "$tmp"
+	}
+	got="$(offbox_env_child -u BACKUP_RETENTION -u BACKUP_S3_SSE_KMS_KEY_ID -u BACKUP_S3_SESSION_TOKEN "${s3env[@]}")"
+	check "script mode keeps rclone's default upload cutoff" "$(grep -c '^RCLONE_CONFIG_OFFBOX_UPLOAD_CUTOFF=' "$got")" 0
+	check "no KMS key named, no SSE header" "$(grep -c '^RCLONE_CONFIG_OFFBOX_SERVER_SIDE_ENCRYPTION=' "$got")" 0
+	check "no session token, no token line" "$(grep -c '^RCLONE_CONFIG_OFFBOX_SESSION_TOKEN=' "$got")" 0
+	got="$(offbox_env_child "${s3env[@]}" BACKUP_RETENTION=bucket \
+		BACKUP_S3_SSE_KMS_KEY_ID=arn:aws:kms:eu-central-1:111111111111:key/example BACKUP_S3_SESSION_TOKEN=t)"
+	check "bucket mode makes every upload multipart (Content-MD5 on each part)" \
+		"$(envhas "$got" RCLONE_CONFIG_OFFBOX_UPLOAD_CUTOFF=0)" yes
+	check "a named KMS key sets aws:kms" "$(envhas "$got" RCLONE_CONFIG_OFFBOX_SERVER_SIDE_ENCRYPTION=aws:kms)" yes
+	check "a named KMS key is passed as that key" \
+		"$(envhas "$got" RCLONE_CONFIG_OFFBOX_SSE_KMS_KEY_ID=arn:aws:kms:eu-central-1:111111111111:key/example)" yes
+	check "a session token is passed" "$(envhas "$got" RCLONE_CONFIG_OFFBOX_SESSION_TOKEN=t)" yes
+	if (offbox_env_child "${s3env[@]}" BACKUP_RETENTION=nope >/dev/null 2>&1); then got=accepted; else got=refused; fi
+	check "a mistyped retention mode stops the off-box config too" "$got" refused
+
+	# Retention dispatch, against a recording stand-in for rclone: script mode purges the copies past
+	# the keep count; bucket mode makes no store call at all, so it cannot delete.
+	rclone_run() { # the stand-in: record the call, answer listings
+		printf '%s\n' "$*" >>"$tmp/rclone.calls"
+		case "$*" in
+			*"lsf --dirs-only OFFBOX:b/p/daily/") printf '20261201T023000Z/\n20261202T023000Z/\n20261203T023000Z/\n' ;;
+			*"lsf OFFBOX:b/p/daily/"*) printf '%s\n' "$BACKUP_FILE_MANIFEST" ;;
+		esac
+	}
+	: >"$tmp/rclone.calls"
+	BACKUP_RETENTION=script BACKUP_KEEP_DAILY=1 BACKUP_S3_BUCKET=b BACKUP_PREFIX=p apply_retention "$tmp/x.env" 2>/dev/null
+	check "script mode purges the dailies past the keep count" \
+		"$(grep '^- .* purge ' "$tmp/rclone.calls" | sed 's/.* purge //' | sort | tr '\n' ' ')" \
+		"OFFBOX:b/p/daily/20261201T023000Z OFFBOX:b/p/daily/20261202T023000Z "
+	: >"$tmp/rclone.calls"
+	BACKUP_RETENTION=bucket BACKUP_KEEP_DAILY=1 BACKUP_S3_BUCKET=b BACKUP_PREFIX=p apply_retention "$tmp/x.env" 2>/dev/null
+	check "bucket mode makes no store call during retention" "$(wc -l <"$tmp/rclone.calls" | tr -d ' ')" 0
 
 	if [ "$fails" -ne 0 ]; then
 		printf '\n%s self-test assertion(s) failed\n' "$fails"
