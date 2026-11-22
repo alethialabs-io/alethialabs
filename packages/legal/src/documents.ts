@@ -62,7 +62,7 @@ export const LEGAL_DOCUMENTS: readonly LegalDocumentVersion[] = [
 		locales: ["en"],
 		acceptanceRequired: false,
 		contentHash:
-			"32ed71b557f531a4fe8c250aad4ba8498038057b82d6406d3442f09c9eef7b45",
+			"103f7ff7669fedeffa2a5336e5227670706987e4b112fa1a094cf2c560597de0",
 		source: "apps/marketing/app/privacy/page.tsx",
 	},
 	{
