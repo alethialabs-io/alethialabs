@@ -23,7 +23,9 @@ import { __resetLoopHeartbeats } from "@/lib/observability/heartbeats";
 
 const savedOtel = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 const savedSecret = process.env.ALETHIA_CRON_SECRET;
+const savedProbe = process.env.ALETHIA_STATUS_PROBE_TOKEN;
 const SECRET = "test-internal-secret";
+const PROBE = "test-status-probe-token";
 
 /** A deep-readiness request carrying the platform-internal bearer. */
 function authedDeep(): Request {
@@ -39,12 +41,15 @@ beforeEach(() => {
 	execute.mockResolvedValue([{ "?column?": 1 }]);
 	delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 	process.env.ALETHIA_CRON_SECRET = SECRET;
+	process.env.ALETHIA_STATUS_PROBE_TOKEN = PROBE;
 });
 afterEach(() => {
 	if (savedOtel === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 	else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = savedOtel;
 	if (savedSecret === undefined) delete process.env.ALETHIA_CRON_SECRET;
 	else process.env.ALETHIA_CRON_SECRET = savedSecret;
+	if (savedProbe === undefined) delete process.env.ALETHIA_STATUS_PROBE_TOKEN;
+	else process.env.ALETHIA_STATUS_PROBE_TOKEN = savedProbe;
 });
 
 describe("GET /api/health — liveness (always public)", () => {
@@ -109,6 +114,57 @@ describe("GET /api/health — deep detail requires the internal bearer", () => {
 		const body = await res.json();
 		expect(body).toEqual({ status: "healthy", mode: "readiness", ts: expect.any(String) });
 		expect(body.loops).toBeUndefined();
+	});
+});
+
+// The status page's credential (#7148). status.alethialabs.io's Worker holds ALETHIA_STATUS_PROBE_TOKEN
+// OUTSIDE our infrastructure, so it unlocks one boolean per component and nothing more — never the
+// cron-secret document. Same constant-time, fail-closed bearer check as every internal route.
+describe("GET /api/health — the status-probe credential", () => {
+	/** A readiness request with the given bearer. */
+	function bearer(token: string): Request {
+		return new Request("http://local/api/health", { headers: { authorization: `Bearer ${token}` } });
+	}
+
+	it("returns the aggregate plus three booleans, and NOTHING else", async () => {
+		execute.mockResolvedValue([{ notify_queue_usage: 0, schema_ok: true }]);
+		const res = await GET(bearer(PROBE));
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body).toEqual({
+			status: "healthy",
+			mode: "status",
+			ts: expect.any(String),
+			checks: { db: true, schema: true, openfga: null },
+		});
+	});
+
+	it("keeps the unhealthy 503 — and still names which check failed", async () => {
+		execute.mockResolvedValue([{ notify_queue_usage: 0, schema_ok: false }]);
+		const res = await GET(bearer(PROBE));
+		expect(res.status).toBe(503);
+		expect((await res.json()).checks).toEqual({ db: true, schema: false, openfga: null });
+	});
+
+	it("does not unlock the full document — the cron secret still does", async () => {
+		const probe = await (await GET(bearer(PROBE))).json();
+		expect(probe.loops).toBeUndefined();
+		expect(probe.db).toBeUndefined();
+		__resetHealthCache();
+		const internal = await (await GET(bearer(SECRET))).json();
+		expect(internal.db.reachable).toBe(true);
+		expect(internal.checks).toBeUndefined();
+	});
+
+	it("a wrong token gets only the anonymous aggregate", async () => {
+		const body = await (await GET(bearer("not-the-probe-token"))).json();
+		expect(body).toEqual({ status: "healthy", mode: "readiness", ts: expect.any(String) });
+	});
+
+	it("fail-closed: with the token UNSET, even an empty bearer gets only the aggregate", async () => {
+		delete process.env.ALETHIA_STATUS_PROBE_TOKEN;
+		const body = await (await GET(bearer(""))).json();
+		expect(body).toEqual({ status: "healthy", mode: "readiness", ts: expect.any(String) });
 	});
 });
 

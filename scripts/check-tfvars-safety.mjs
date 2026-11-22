@@ -64,8 +64,9 @@
 //
 // WHAT THIS DOES NOT COVER, said out loud so the silence is not mistaken for a clean sweep:
 //   · A permissive value HARDCODED in a resource rather than defaulted in a variable.
-//     `infra/status/main.tf:35,41` opens 80 and 443 to the world that way, which is what a status
-//     page is for. Deciding that case needs the per-attribute knowledge rejected above.
+//     The Gatus box `infra/status` once opened 80 and 443 to the world that way, which is what a
+//     status page is for (that stack is a Cloudflare Worker now, #7148, with no firewall at all).
+//     Deciding that case needs the per-attribute knowledge rejected above.
 //   · Everything under `infra/templates/**`. Those are the runner's PROJECT templates, not operator
 //     stacks; they carry no `versions.tf`, so `findStacks` never reaches them, and their defaults
 //     (`cluster_endpoint_public_access_cidrs`, `gke_master_authorized_cidr_blocks`) are overridden
