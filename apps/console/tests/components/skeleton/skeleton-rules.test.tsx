@@ -26,8 +26,10 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { render, screen } from "@testing-library/react";
+import { isValidElement } from "react";
 import { describe, expect, it } from "vitest";
 
+import ProjectLoading from "@/app/(private)/[org]/[project]/loading";
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 
 const CONSOLE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -42,12 +44,10 @@ const OWED_ASYNC: Record<string, string> = {
 };
 
 /**
- * Spinner `loading.tsx` files. No open issue's `scope:` line named the one entry when this was
- * written, so it carries the unit that found it.
+ * Spinner `loading.tsx` files. Empty since #7010 replaced the last one; the ledger stays so a new
+ * spinner has to be listed against an issue to pass.
  */
-const OWED_SPINNER: Record<string, string> = {
-	"app/(private)/[org]/[project]/loading.tsx": "#6759",
-};
+const OWED_SPINNER: Record<string, string> = {};
 
 /** Every `loading.tsx` under `dir`, recursively. */
 function walk(dir: string): string[] {
@@ -129,6 +129,21 @@ describe("loading.tsx", () => {
 	it("lists no spinner that has already been replaced", () => {
 		const found = matching(isSpinner);
 		expect(Object.keys(OWED_SPINNER).filter((f) => !found.includes(f))).toEqual([]);
+	});
+});
+
+describe("the bare project's loading.tsx (#7010)", () => {
+	it("is synchronous: it returns an element, not a promise", () => {
+		expect(isValidElement(ProjectLoading())).toBe(true);
+	});
+
+	it("is one SkeletonRoot drawing the board it redirects to, with no spinner", () => {
+		const { container } = render(<ProjectLoading />);
+		const roots = container.querySelectorAll('[data-slot="skeleton-root"]');
+		expect(roots).toHaveLength(1);
+		expect(container.firstElementChild).toBe(roots[0]);
+		expect(roots[0]?.querySelector('[data-slot="canvas-skeleton"]')).not.toBeNull();
+		expect(container.querySelector(".animate-spin")).toBeNull();
 	});
 });
 
