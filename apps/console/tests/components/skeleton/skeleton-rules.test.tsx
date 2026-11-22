@@ -29,7 +29,10 @@ import { render, screen } from "@testing-library/react";
 import { isValidElement } from "react";
 import { describe, expect, it } from "vitest";
 
+import ProjectArchitectureLoading from "@/app/(private)/[org]/[project]/architecture/loading";
 import ProjectLoading from "@/app/(private)/[org]/[project]/loading";
+import { BoardPreview } from "@/components/design-project/canvas/board-preview";
+import { CanvasSkeleton } from "@/components/design-project/canvas/canvas-skeleton";
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 
 const CONSOLE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -144,6 +147,69 @@ describe("the bare project's loading.tsx (#7010)", () => {
 		expect(container.firstElementChild).toBe(roots[0]);
 		expect(roots[0]?.querySelector('[data-slot="canvas-skeleton"]')).not.toBeNull();
 		expect(container.querySelector(".animate-spin")).toBeNull();
+	});
+});
+
+describe("the Architecture route's loading.tsx (#7212)", () => {
+	it("is synchronous: it returns an element, not a promise", () => {
+		expect(isValidElement(ProjectArchitectureLoading())).toBe(true);
+	});
+
+	it("is one SkeletonRoot drawing the board, and the only element that says busy", () => {
+		const { container } = render(<ProjectArchitectureLoading />);
+		const roots = container.querySelectorAll('[data-slot="skeleton-root"]');
+		expect(roots).toHaveLength(1);
+		expect(container.firstElementChild).toBe(roots[0]);
+		expect(roots[0]?.querySelector('[data-slot="canvas-skeleton"]')).not.toBeNull();
+		expect(container.querySelectorAll("[aria-busy]")).toHaveLength(1);
+		expect(container.querySelector(".animate-spin")).toBeNull();
+	});
+});
+
+describe("the bare project and the Architecture route draw the same skeleton", () => {
+	it("render identical markup, so nothing moves when the redirect lands", () => {
+		const bare = render(<ProjectLoading />).container.innerHTML;
+		const architecture = render(<ProjectArchitectureLoading />).container.innerHTML;
+		expect(architecture).toBe(bare);
+	});
+
+	it("is marked busy once in the bare project's skeleton too", () => {
+		const { container } = render(<ProjectLoading />);
+		expect(container.querySelectorAll("[aria-busy]")).toHaveLength(1);
+	});
+});
+
+describe("BoardPreview without the page's data (#7212)", () => {
+	it("is one SkeletonRoot around the board's skeleton, busy once, in either placement", () => {
+		const offenders: string[] = [];
+		for (const overlay of [false, true]) {
+			const { container, unmount } = render(<BoardPreview overlay={overlay} />);
+			const roots = container.querySelectorAll('[data-slot="skeleton-root"]');
+			if (roots.length !== 1) offenders.push(`overlay=${overlay}: ${roots.length} roots`);
+			if (container.firstElementChild !== roots[0]) offenders.push(`overlay=${overlay}: root not first`);
+			if (!roots[0]?.querySelector('[data-slot="canvas-skeleton"]')) {
+				offenders.push(`overlay=${overlay}: no canvas skeleton`);
+			}
+			const busy = container.querySelectorAll("[aria-busy]").length;
+			if (busy !== 1) offenders.push(`overlay=${overlay}: ${busy} busy elements`);
+			unmount();
+		}
+		expect(offenders).toEqual([]);
+	});
+});
+
+describe("CanvasSkeleton is a part, not a root (rule 1)", () => {
+	it("declares no busy state, role or name of its own, in either placement", () => {
+		const offenders: string[] = [];
+		for (const overlay of [false, true]) {
+			const { container, unmount } = render(<CanvasSkeleton overlay={overlay} />);
+			const part = container.querySelector('[data-slot="canvas-skeleton"]');
+			for (const attr of ["aria-busy", "role", "aria-label", "aria-hidden"]) {
+				if (part?.hasAttribute(attr)) offenders.push(`overlay=${overlay}: ${attr}`);
+			}
+			unmount();
+		}
+		expect(offenders).toEqual([]);
 	});
 });
 

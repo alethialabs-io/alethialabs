@@ -34,6 +34,7 @@ import { environmentStatusInput } from "@/lib/query/use-environment-status-query
 import { orpc } from "@/lib/rpc/client";
 import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
 import { buildDefaultFormValues, type SourceProjectData } from "../source-project";
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { CanvasSkeleton } from "./canvas-skeleton";
 import { BoardGuideView, type CloudChoices } from "./empty/board-guide-view";
 import { EnvironmentStatusScope } from "./environment-status-scope";
@@ -163,14 +164,22 @@ export function BoardPreviewProvider({
  *
  * With the page's data (`BoardPreviewProvider`) it is the BOARD — the design's cards, the
  * environment's last job and cost, the toolbar, or the blank-board guide — drawn without React Flow.
- * Without it (a caller that never provided any), it is the skeleton, as before.
+ * Without it (a caller that never provided any), it is the skeleton inside `SkeletonRoot`.
  *
  * `overlay` is for inside the canvas, which already reads the environment status; on its own the
  * preview opens that same read (prefetched under the same key, so it renders with the page).
  */
 export function BoardPreview({ overlay = false }: { overlay?: boolean }) {
 	const data = useContext(BoardPreviewContext);
-	if (!data) return <CanvasSkeleton overlay={overlay} />;
+	if (!data) {
+		// The skeleton is a part; `SkeletonRoot` is its one busy region. The root takes the box the
+		// skeleton would have taken (over the board, or filling the parent) so nothing moves.
+		return (
+			<SkeletonRoot className={overlay ? "absolute inset-0 z-[var(--z-raised)]" : "h-full w-full"}>
+				<CanvasSkeleton overlay={overlay} />
+			</SkeletonRoot>
+		);
+	}
 	if (overlay) return <StaticBoard data={data} overlay />;
 	return (
 		<EnvironmentStatusScope projectId={data.projectId} environmentId={data.environmentId}>

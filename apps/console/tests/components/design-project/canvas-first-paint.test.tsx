@@ -180,6 +180,9 @@ function renderCanvas() {
 	);
 }
 
+/** The board's skeleton: a part with no role or name of its own, so it is found by its slot. */
+const SKELETON = '[data-slot="canvas-skeleton"]';
+
 /** Seeds the store as the workbench does once THIS environment's design is in. */
 function seed(nodes: ReturnType<typeof design>, scope = "proj-1:env-1") {
 	board.load({ nodes });
@@ -193,22 +196,22 @@ beforeEach(() => {
 
 describe("the board before its design is in (F009)", () => {
 	it("shows the skeleton, not an empty canvas, while the store holds no seed", () => {
-		renderCanvas();
-		expect(screen.getByRole("status", { name: /loading the board/i })).toBeInTheDocument();
+		const { container } = renderCanvas();
+		expect(container.querySelector(SKELETON)).not.toBeNull();
 		// And not the blank-board guide: an unseeded store is not an empty design.
 		expect(screen.queryByText(/nothing designed yet/i)).not.toBeInTheDocument();
 	});
 
 	it("keeps the skeleton while the store holds ANOTHER environment's design", () => {
 		seed(design([ORDERS]), "proj-1:env-other");
-		renderCanvas();
-		expect(screen.getByRole("status", { name: /loading the board/i })).toBeInTheDocument();
+		const { container } = renderCanvas();
+		expect(container.querySelector(SKELETON)).not.toBeNull();
 	});
 
 	it("drops the skeleton the moment this environment's design is seeded", async () => {
-		renderCanvas();
+		const { container } = renderCanvas();
 		act(() => seed(design([ORDERS])));
-		expect(screen.queryByRole("status", { name: /loading the board/i })).not.toBeInTheDocument();
+		expect(container.querySelector(SKELETON)).toBeNull();
 	});
 });
 

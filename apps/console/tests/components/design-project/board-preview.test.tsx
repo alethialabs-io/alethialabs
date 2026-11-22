@@ -184,8 +184,8 @@ describe("BoardPreview — the server render is the board (B1)", () => {
 	});
 
 	it("without the page's data it is the skeleton, as before", () => {
-		render(withQueryClient(<BoardPreview />));
-		expect(screen.getByRole("status", { name: /loading the board/i })).toBeInTheDocument();
+		const { container } = render(withQueryClient(<BoardPreview />));
+		expect(container.querySelector('[data-slot="canvas-skeleton"]')).not.toBeNull();
 	});
 });
 
