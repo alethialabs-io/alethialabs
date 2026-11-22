@@ -931,6 +931,20 @@ func keylessClientArgv(engine, user, dbName string, port int, sql string) []stri
 	}
 }
 
+// keylessClientError reports whether the client's output is a failure rather than a result, and
+// returns the failing line. psql prints "psql: error: …" or "ERROR:  …"/"FATAL:  …"; the mysql client
+// prints "ERROR 1045 (28000): …". A connection the proxy refused upstream looks exactly like this.
+func keylessClientError(out string) (string, bool) {
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "psql: error") || strings.HasPrefix(line, "ERROR:") ||
+			strings.HasPrefix(line, "FATAL:") || strings.HasPrefix(line, "ERROR ") {
+			return line, true
+		}
+	}
+	return "", false
+}
+
 // parseProbeValue pulls the canary out of the client's stdout. Both clients print the selected value
 // on its own line; everything else (NOTICE lines, CREATE TABLE acknowledgements) is discarded.
 //

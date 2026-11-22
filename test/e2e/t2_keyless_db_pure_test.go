@@ -935,3 +935,23 @@ func TestKeylessDebugContainerNameCannotCollideWithTheService(t *testing.T) {
 		seen[name] = true
 	}
 }
+
+// TestKeylessClientErrorIsAFailureNotAValue pins the 2026-11-22 instrument fault: kubectl debug exits
+// 0 when the client inside failed, so the refusal was compared as if it were the canary.
+func TestKeylessClientErrorIsAFailureNotAValue(t *testing.T) {
+	failures := []string{
+		`psql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  alethia db-authproxy could not authenticate upstream`,
+		"ERROR:  permission denied for table alethia_e2e_keyless_canary",
+		"ERROR 1045 (28000): alethia db-authproxy could not authenticate upstream",
+	}
+	for _, out := range failures {
+		if _, failed := keylessClientError("NOTICE:  x\n" + out + "\n"); !failed {
+			t.Errorf("not recognised as a client failure: %q", out)
+		}
+	}
+	for _, out := range []string{"CREATE TABLE\nINSERT 0 1\n0123456789abcdef0123456789abcdef\n", "Query OK\nabc\n"} {
+		if line, failed := keylessClientError(out); failed {
+			t.Errorf("a normal result read as a failure (%q): %q", line, out)
+		}
+	}
+}
