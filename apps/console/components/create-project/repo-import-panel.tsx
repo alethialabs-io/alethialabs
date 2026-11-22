@@ -2,109 +2,87 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ArrowRight, Loader2 } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
-
 import type { Repository } from "@/app/server/actions/git/types";
 import { startRepoScan } from "@/app/server/actions/scanner";
 import { RepositorySelector } from "@/components/repository-selector";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import type { GitProviderAvailability } from "@/lib/connectors/git-providers";
 import { orpc } from "@/lib/rpc/client";
-import { cn } from "@repo/ui/utils";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
+import { Spinner } from "@repo/ui/spinner";
 
-import { IMPORT_CARD_CLASS, ImportCardHeading } from "./chooser-parts";
 import { useLinkedGitProviders } from "./use-create-project-reads";
 
 interface RepoImportPanelProps {
-	/** Optional wrapper class so the front door can slot the panel into its layout. */
-	className?: string;
+	/** The picked repository's URL; `""` when none is picked. Held by the create form (and its draft). */
+	repoUrl: string;
+	/** The picked repository's branch; `""` for the default branch. */
+	gitRef: string;
+	/** A repository was picked (or cleared): its URL and default branch. */
+	onRepository: (repoUrl: string, ref: string) => void;
+	/** The scan was queued: its job id, which the create screen puts in `?scan=`. */
+	onScanned: (jobId: string) => void;
 	/** Which git providers this instance can link (server-computed); unconfigured ones render disabled. */
 	providerAvailability: GitProviderAvailability;
 }
 
 /**
- * The first-class "Import a repository" on-ramp for `~/new`: pick a git repo, queue a scan, then
- * hand off to the Configure screen at `?scan=<jobId>`, which follows the scan live. Reuses
- * {@link RepositorySelector} (git-provider → repo pick) and {@link startRepoScan} (queues an
- * ANALYZE_REPO job). No agent involved: this exposes the north-star motion as a button.
+ * The "Import a repository" starting point on the create screen: pick a git repository, queue a
+ * scan, and hand the job id back, so the screen follows the scan in place (`?scan=<jobId>`). Reuses
+ * {@link RepositorySelector} and {@link startRepoScan}.
  *
- * ONE LAYOUT THROUGH LOAD (F034). The selector is handed the caller's linked providers, which the
- * route prefetched on the server, so its first render — the server render included — is already the
- * provider + repository row (or, with nothing linked, the Link panel). It used to render the Link
- * panel first, swap to a skeleton, then to the row. Only when the prefetch did not land does the
- * selector read the list itself, from its loading row.
+ * The selector is handed the caller's linked providers, which the route prefetched, so its first
+ * render is already the repository row (or, with nothing linked, the Link panel), not a swap (F034).
  */
-export function RepoImportPanel({ className, providerAvailability }: RepoImportPanelProps) {
-	const router = useRouter();
-	const pathname = usePathname();
-	const [repoUrl, setRepoUrl] = useState<string | undefined>(undefined);
-	// The repo's default branch, passed as the scan ref so the runner clones the right head.
-	const [ref, setRef] = useState<string | undefined>(undefined);
+export function RepoImportPanel({
+	repoUrl,
+	gitRef,
+	onRepository,
+	onScanned,
+	providerAvailability,
+}: RepoImportPanelProps) {
 	const linked = useLinkedGitProviders();
-	// The scan through the mutation contract: pending state, a double-submit guard, a readable
-	// refusal (an AI budget or a job quota) instead of a digest. A new job joins the shell's job feed
-	// and the jobs list, so those keys refresh with it.
+	// The scan through the mutation contract: pending state, a double-submit guard, a readable refusal
+	// (an AI budget or a job quota). A new job joins the shell's job feed and the jobs list.
 	const scan = useActionMutation(startRepoScan, {
 		invalidates: [orpc.workspace.recentJobs.key(), orpc.workspace.jobs.key(), orpc.jobs.page.key()],
-		onSuccess: ({ jobId }) => router.push(`${pathname}?scan=${jobId}`),
+		onSuccess: ({ jobId }) => onScanned(jobId),
 	});
-	// Busy from the click until Configure replaces this screen — a success is a navigation in flight.
-	const scanning = scan.isPending || scan.isSuccess;
 
-	/** Records the picked repo's URL + default branch (the scan ref). */
+	/** Records the picked repository's URL and default branch (the scan ref). */
 	const onRepositorySelect = (repo: Repository) => {
-		setRepoUrl(repo.url);
-		setRef(repo.default_branch || undefined);
+		onRepository(repo.url, repo.default_branch || "");
 	};
 
-	/** Queues the scan and hands off to the `?scan=` Configure screen on the same page. */
+	/** Queues the scan of the picked repository. */
 	const onScan = () => {
-		if (!repoUrl || scanning) return;
-		scan.mutate({ repoUrl, ...(ref ? { ref } : {}) });
+		if (!repoUrl || scan.isPending) return;
+		scan.mutate({ repoUrl, ...(gitRef ? { ref: gitRef } : {}) });
 	};
 
 	return (
-		<section className={cn("space-y-0", className)}>
-			<div className={IMPORT_CARD_CLASS}>
-				<ImportCardHeading />
-				<div className="space-y-3 px-4 pb-4">
-					<RepositorySelector
-						value={repoUrl}
-						onChange={(v) => setRepoUrl(v || undefined)}
-						onRepositorySelect={onRepositorySelect}
-						label=""
-						placeholder="Select a repository to import…"
-						providerAvailability={providerAvailability}
-						linkedProviders={linked.data}
-					/>
-					<div className="flex items-center justify-between gap-3">
-						<span className="truncate font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
-							{repoUrl
-								? ref
-									? `branch · ${ref}`
-									: "default branch"
-								: "no repository selected"}
-						</span>
-						<Button
-							type="button"
-							onClick={onScan}
-							disabled={!repoUrl || scanning}
-						>
-							{scanning ? (
-								<Loader2 className="size-4 animate-spin" />
-							) : (
-								<>
-									Scan repository
-									<ArrowRight className="size-4" />
-								</>
-							)}
-						</Button>
-					</div>
-				</div>
+		<div className="space-y-3">
+			<RepositorySelector
+				value={repoUrl || undefined}
+				onChange={(value) => onRepository(value, "")}
+				onRepositorySelect={onRepositorySelect}
+				label=""
+				placeholder="Select a repository to import…"
+				providerAvailability={providerAvailability}
+				linkedProviders={linked.data}
+			/>
+			<div className="flex items-center justify-between gap-3">
+				<span className="truncate font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
+					{repoUrl ? (gitRef ? `branch · ${gitRef}` : "default branch") : "no repository selected"}
+				</span>
+				<DisabledReason reason={repoUrl ? null : "Pick a repository first."}>
+					<Button type="button" variant="outline" onClick={onScan} disabled={scan.isPending}>
+						{scan.isPending ? <Spinner /> : null}
+						Scan repository
+					</Button>
+				</DisabledReason>
 			</div>
-		</section>
+		</div>
 	);
 }

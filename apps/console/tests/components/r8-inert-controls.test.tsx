@@ -151,7 +151,7 @@ describe("CreateProjectForm — Design with the agent", () => {
 		const user = userEvent.setup();
 		render(
 			<QueryClientProvider client={new QueryClient()}>
-				<CreateProjectForm orgSlug="acme" canCollaborate providerAvailability={NONE} />
+				<CreateProjectForm orgSlug="acme" canCollaborate />
 			</QueryClientProvider>,
 		);
 		await user.type(screen.getByRole("textbox"), "An EKS cluster");

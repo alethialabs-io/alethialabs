@@ -195,7 +195,7 @@ const UNSWEPT = [
 	"components/alerts/throttle-field.tsx",
 	"components/billing/billing-checkout-form.tsx",
 	"components/connectors/provider-config-fields.tsx",
-	"components/create-project/environment-placement.tsx",
+	"components/create-project/cloud-field.tsx",
 	"components/create-project/region-select.tsx",
 	"components/data-table.tsx",
 	"components/design-project/byo/byo-iac-dialog.tsx",
