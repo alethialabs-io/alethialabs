@@ -50,6 +50,7 @@ import { NotificationsPopover } from "./notifications-popover";
 import { isHostedService } from "./shell-edition";
 import { useShellEdition } from "./shell-edition-provider";
 import { signOutOfConsole } from "./sign-out";
+import { VersionLabel } from "./version-label";
 import { useConsent } from "@repo/privacy/consent-provider";
 
 /** What the profile bar says in place of the person's name while a sign-out is under way. */
@@ -62,7 +63,8 @@ const SIGN_OUT_FAILED = "Couldn't sign you out. You are still signed in. Try aga
  * The pinned bottom bar of the sidebar: avatar + username, a three-dot button that opens
  * the account menu, and the notifications bell. The popover carries the account header
  * (with a gear → settings), the menu list (Feedback, an inline theme toggle, the
- * help/docs links, Sign out), an optional "Upgrade to Pro" CTA, and a link to the status page.
+ * help/docs links, Sign out), an optional "Upgrade to Pro" CTA, a link to the status page, and the
+ * version line (`VersionLabel`: stage, platform release name, running build).
  *
  * What differs by edition is read from the instance edition the shell was given
  * (`useShellEdition`), and from nowhere else: the in-app feedback dialog and the upgrade CTA are
@@ -340,6 +342,10 @@ export function SidebarProfile() {
               />
             </>
           )}
+
+          {/* Which release this is: the stage, the platform release name, the running build. */}
+          <DropdownMenuSeparator />
+          <VersionLabel />
         </DropdownMenuContent>
       </DropdownMenu>
 
