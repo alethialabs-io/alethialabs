@@ -54,18 +54,17 @@ test.describe("Hero happy-path", () => {
 		await page.getByRole("textbox", { name: "Search connectors", exact: true }).fill("AWS");
 		await expect(page.getByText("AWS").first()).toBeVisible();
 
-		// 4. Design a project. The two-step create flow: on `~/new` pick a source, then Configure it.
-		//    The "Blank project" card needs no cloud identity (an empty project, cloud chosen later on
-		//    the canvas) — which keeps this step hermetic and lands us on the design canvas.
+		// 4. Design a project. `~/new` is one screen: pick the "Blank" starting point, name it,
+		//    create. Blank needs no cloud identity (an empty project, cloud chosen later on the
+		//    canvas) — which keeps this step hermetic and lands us on the design canvas.
 		await page.goto(`/${orgSlug}/~/new`);
 		await expect(
 			page.getByRole("heading", { name: /provision the future/i }),
 		).toBeVisible();
-		// Step 1 → step 2: the Blank scratch card routes to the Configure screen.
-		await page.getByRole("button", { name: /blank project/i }).click();
-		await expect(
-			page.getByRole("heading", { name: /configure your project/i }),
-		).toBeVisible();
+		await page
+			.locator("label")
+			.filter({ has: page.getByRole("radio", { name: "Blank", exact: true }) })
+			.click({ timeout: 45_000 });
 		await page.locator("#project_name").fill("hero-e2e");
 		await page.getByRole("button", { name: /create project/i }).click();
 

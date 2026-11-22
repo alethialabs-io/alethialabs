@@ -50,7 +50,11 @@ const TERMINAL_WITHOUT_DIGEST = new Set(["FAILED", "CANCELLED"]);
  *
  * `jobId` null (a scratch on-ramp) reads nothing and answers null.
  */
-export function useScanResult(jobId: string | null): { result: ScanResult | null; retry: () => void } {
+export function useScanResult(jobId: string | null): {
+	result: ScanResult | null;
+	retry: () => void;
+	reread: () => void;
+} {
 	const valid = jobId !== null && isScanJobId(jobId);
 	const input = { jobId: jobId ?? "" };
 	const status = useQuery({ ...orpc.projects.scanStatus.queryOptions({ input }), enabled: valid });
@@ -69,23 +73,29 @@ export function useScanResult(jobId: string | null): { result: ScanResult | null
 		if (status.isError) void status.refetch();
 		if (proposal.isError) void proposal.refetch();
 	};
+	// The proposal again, once: after a cloud account is connected, a scan that answered NEEDS_SETUP
+	// can now be placed. Resetting drops the answer, so the observer above is enabled again.
+	const reread = () => {
+		void queryClient.resetQueries({ queryKey: proposalOptions.queryKey });
+	};
 
-	if (jobId === null) return { result: null, retry };
-	if (!valid) return { result: { status: "NOT_FOUND" }, retry };
-	if (status.isError || proposal.isError) return { result: { status: "ERROR" }, retry };
+	if (jobId === null) return { result: null, retry, reread };
+	if (!valid) return { result: { status: "NOT_FOUND" }, retry, reread };
+	if (status.isError || proposal.isError) return { result: { status: "ERROR" }, retry, reread };
 	const s = status.data;
-	if (!s) return { result: { status: "PENDING", jobStatus: null }, retry };
-	if (s.status === "NOT_FOUND") return { result: { status: "NOT_FOUND" }, retry };
+	if (!s) return { result: { status: "PENDING", jobStatus: null }, retry, reread };
+	if (s.status === "NOT_FOUND") return { result: { status: "NOT_FOUND" }, retry, reread };
 	if (s.status === "PENDING") {
 		return {
 			result: TERMINAL_WITHOUT_DIGEST.has(s.jobStatus)
 				? { status: "FAILED", jobStatus: s.jobStatus }
 				: { status: "PENDING", jobStatus: s.jobStatus },
 			retry,
+			reread,
 		};
 	}
 	// Scanned: the proposal is being inferred until it lands.
-	return { result: proposal.data ?? { status: "PENDING", jobStatus: "SUCCESS" }, retry };
+	return { result: proposal.data ?? { status: "PENDING", jobStatus: "SUCCESS" }, retry, reread };
 }
 
 /**

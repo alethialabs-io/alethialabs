@@ -128,13 +128,12 @@ test.describe("Architecture canvas", () => {
 		const orgSlug = new URL(page.url()).pathname.replace(/^\//, "").replace(/\/.*$/, "");
 		expect(orgSlug, "resolved an org slug from the stored session").toBeTruthy();
 
-		// The two-step create flow: on `~/new` the "Blank project" card routes to Configure, which needs
-		// only a NAME (no cloud identity) — keeping this hermetic. A unique name per test gives each its
-		// own project, so they stay independent. Creating lands on `/{org}/{project}/architecture`, i.e.
-		// the canvas in EDIT mode (a real project + environment), which is what the toolbar's Run menu,
-		// the cost chip and the Activity card are gated on.
-		await page.goto(`/${orgSlug}/~/new`);
-		await page.getByRole("button", { name: /blank project/i }).click();
+		// The one-screen create, opened on the "Blank" starting point, which needs only a NAME (no
+		// cloud identity) — keeping this hermetic. A unique name per test gives each its own project,
+		// so they stay independent. Creating lands on `/{org}/{project}/architecture`, i.e. the canvas
+		// in EDIT mode (a real project + environment), which is what the toolbar's Run menu, the cost
+		// chip and the Activity card are gated on.
+		await page.goto(`/${orgSlug}/~/new?source=blank`);
 		await page
 			.locator("#project_name")
 			.fill(`canvas-e2e-${testInfo.workerIndex}-${Date.now()}`);

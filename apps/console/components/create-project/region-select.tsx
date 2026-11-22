@@ -42,7 +42,7 @@ export function RegionSelect({
 
 	return (
 		<Select value={value} onValueChange={onChange} disabled={disabled}>
-			<SelectTrigger className="w-full max-w-[280px]">
+			<SelectTrigger className="w-full max-w-[280px]" aria-label="Region">
 				<SelectValue placeholder="Select a region" />
 			</SelectTrigger>
 			<SelectContent>
