@@ -11,11 +11,6 @@ export interface SesConfig {
 	secretAccessKey?: string;
 }
 
-/** Resend HTTP transport. It is temporary hosted-production infrastructure, not a permanent default. */
-export interface ResendConfig {
-	apiKey: string;
-}
-
 /** Generic SMTP transport (via nodemailer) — the universal self-host path, so a
  * self-hoster can bring any provider (Postmark, Mailgun, SES-SMTP, …). */
 export interface SmtpConfig {
@@ -29,7 +24,15 @@ export interface SmtpConfig {
 
 /** Selected transactional-email transport. `null` (no provider configured) →
  * emails are logged to the console instead of sent. */
-export type EmailProvider = "resend" | "smtp" | "ses";
+export type EmailProvider = "smtp" | "ses";
+
+/** Every value `EMAIL_PROVIDER` may take. Anything else is refused, not ignored. */
+const EMAIL_PROVIDERS: readonly EmailProvider[] = ["smtp", "ses"];
+
+/** Narrows an `EMAIL_PROVIDER` value to a supported transport. */
+function isEmailProvider(value: string): value is EmailProvider {
+	return EMAIL_PROVIDERS.some((p) => p === value);
+}
 
 /** Per-stream from-addresses. Streams are isolated on dedicated sending
  * subdomains so a reputation hit on one never poisons another. */
@@ -51,8 +54,6 @@ export interface EmailConfigSets {
 export interface EmailConfig {
 	/** Resolved transport; null → emails are logged (dev), not sent. */
 	provider: EmailProvider | null;
-	/** Resend config — present iff `provider === "resend"`. */
-	resend?: ResendConfig;
 	/** SMTP config — present iff `provider === "smtp"`. */
 	smtp?: SmtpConfig;
 	/** SES config — present iff `provider === "ses"`. */
@@ -73,8 +74,10 @@ function envBool(name: string): boolean | undefined {
 
 /**
  * Transactional email config (pluggable transport). The provider is chosen by
- * `EMAIL_PROVIDER` (resend | smtp | ses) when set, else inferred from whichever
- * provider's credentials are present (Resend → SMTP → SES). With none, emails
+ * `EMAIL_PROVIDER` (smtp | ses) when set, else inferred from whichever
+ * provider's credentials are present (SMTP → SES). Any other `EMAIL_PROVIDER`
+ * value throws — Resend was removed, and a stale `resend` must not degrade
+ * silently to the log fallback. With none, emails
  * are logged to the console (dev) so a fresh self-hoster works with zero email
  * setup. Sender addresses are split by stream (auth.* vs mail.*) — see
  * docs/self-hosting/email.
@@ -83,8 +86,8 @@ export function getEmailConfig(): EmailConfig {
 	if (cached) return cached;
 
 	// The fallback domain must be one the provider has VERIFIED. This used to default to
-	// `no-reply@auth.alethialabs.io`, and a provider that verifies domains individually — Resend
-	// does — rejects a subdomain whose parent is verified. So the fallback was a footgun: it looks
+	// `no-reply@auth.alethialabs.io`, and a provider that verifies domains individually (Resend,
+	// the transport this package used to carry, did) rejects a subdomain whose parent is verified. So the fallback was a footgun: it looks
 	// like a safe default and bounces every message, at send time, after everything upstream has
 	// reported success. The apex is the address actually verified.
 	const authFrom = env("AUTH_EMAIL_FROM") || "Alethia <no-reply@alethialabs.io>";
@@ -92,11 +95,6 @@ export function getEmailConfig(): EmailConfig {
 	const generalFrom = env("EMAIL_FROM") || authFrom;
 
 	// Build each provider's config from whatever creds are present.
-	const resendKey = env("RESEND_API_KEY");
-	const resend: ResendConfig | undefined = resendKey
-		? { apiKey: resendKey }
-		: undefined;
-
 	const smtpHost = env("SMTP_HOST");
 	const smtpPort = Number(env("SMTP_PORT")) || 587;
 	const smtp: SmtpConfig | undefined = smtpHost
@@ -119,16 +117,34 @@ export function getEmailConfig(): EmailConfig {
 		: undefined;
 
 	// Resolve the transport: an explicit EMAIL_PROVIDER wins (but only if its
-	// creds are actually present), else infer by precedence Resend → SMTP → SES.
-	const explicit = env("EMAIL_PROVIDER")?.toLowerCase();
+	// creds are actually present), else infer by precedence SMTP → SES.
+	const explicit = env("EMAIL_PROVIDER")?.toLowerCase() || undefined;
+	// An unsupported name is refused in EVERY deployment mode. `resend` is the one this exists
+	// for: the transport was removed, and an operator who upgrades with EMAIL_PROVIDER=resend
+	// still set would otherwise get the log fallback — sign-in codes printed instead of sent,
+	// with nothing red anywhere.
+	if (explicit !== undefined && !isEmailProvider(explicit)) {
+		throw new Error(
+			`EMAIL_PROVIDER=${explicit} is not a supported transport (use ${EMAIL_PROVIDERS.join(" or ")}).` +
+				(explicit === "resend"
+					? " Resend support was removed; configure SMTP or SES."
+					: ""),
+		);
+	}
 	let provider: EmailProvider | null = null;
-	if (explicit === "resend" && resend) provider = "resend";
-	else if (explicit === "smtp" && smtp) provider = "smtp";
+	if (explicit === "smtp" && smtp) provider = "smtp";
 	else if (explicit === "ses" && ses) provider = "ses";
 	else if (!explicit) {
-		if (resend) provider = "resend";
-		else if (smtp) provider = "smtp";
+		if (smtp) provider = "smtp";
 		else if (ses) provider = "ses";
+	}
+
+	// The same upgrade trap without EMAIL_PROVIDER: a Resend key used to be inferred as the
+	// transport. With nothing else configured it would now fall through to the log fallback.
+	if (!provider && !explicit && env("RESEND_API_KEY")) {
+		throw new Error(
+			"RESEND_API_KEY is set but Resend support was removed; configure SMTP or SES (see docs/self-hosting/email).",
+		);
 	}
 
 	// Hosted deployments must not degrade transactional mail to the development log fallback.
@@ -172,7 +188,6 @@ export function getEmailConfig(): EmailConfig {
 
 	cached = {
 		provider,
-		resend,
 		smtp,
 		ses,
 		from: { auth: authFrom, general: generalFrom },

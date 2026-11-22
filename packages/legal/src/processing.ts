@@ -67,21 +67,6 @@ export const PROCESSING_PARTIES: readonly ProcessingParty[] = [
 		evidenceId: "ops:edge:2026-08-12",
 	},
 	{
-		id: "resend",
-		name: "Resend, Inc.",
-		purposes: [
-			{
-				name: "Temporary transactional email delivery",
-				lawfulBasis: "contract",
-				consentRequired: false,
-			},
-		],
-		role: "subprocessor",
-		status: "active",
-		region: "United States",
-		evidenceId: "ops:email:2026-08-12",
-	},
-	{
 		id: "posthog",
 		name: "PostHog, Inc.",
 		purposes: [
@@ -131,15 +116,20 @@ export const PROCESSING_PARTIES: readonly ProcessingParty[] = [
 		name: "Amazon Web Services EMEA SARL",
 		purposes: [
 			{
-				name: "Planned transactional email delivery",
+				name: "Transactional email delivery (sign-in codes, account, billing and support email) and bounce and complaint notifications",
 				lawfulBasis: "contract",
 				consentRequired: false,
 			},
 		],
 		role: "subprocessor",
-		status: "inactive",
-		region: "European Union",
-		evidenceId: "ops:email:ses-rejected:2026-08-12",
+		// ACTIVE since hosted production moved to Amazon SES in the dedicated alethia-email account
+		// (infra/email-ses-account), which replaced Resend. The deploy defaults EMAIL_PROVIDER to ses
+		// and refuses resend (scripts/ci/check-email-provider-keys.sh). The Resend entry was removed
+		// with the transport rather than marked inactive: inactive parties are not rendered, and a
+		// processor that receives nothing does not belong in the register.
+		status: "active",
+		region: "Germany (eu-central-1, Frankfurt)",
+		evidenceId: "ops:email:ses-alethia-email:2026-11-21",
 	},
 	{
 		id: "grafana-prometheus",

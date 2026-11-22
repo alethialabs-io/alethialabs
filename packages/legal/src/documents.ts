@@ -54,13 +54,15 @@ export const LEGAL_DOCUMENTS: readonly LegalDocumentVersion[] = [
 	{
 		id: "privacy",
 		title: "Privacy Policy",
-		version: "2026-08-12",
-		effectiveDate: "2026-08-12",
+		// Bumped when transactional email moved from Resend to Amazon SES (eu-central-1): section 3
+		// names the email processor, so the text a reader is told about changed.
+		version: "2026-11-21",
+		effectiveDate: "2026-11-21",
 		path: "/privacy",
 		locales: ["en"],
 		acceptanceRequired: false,
 		contentHash:
-			"ce8bc10300de7ed09712681012120d6db120b9ea62faf61bf4f25ce52cb0d93e",
+			"32ed71b557f531a4fe8c250aad4ba8498038057b82d6406d3442f09c9eef7b45",
 		source: "apps/marketing/app/privacy/page.tsx",
 	},
 	{

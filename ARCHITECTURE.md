@@ -110,7 +110,7 @@ Code used by more than one app is **promoted here, never duplicated**. The npm s
 | `packages/legal` | versioned company identity, legal-document metadata, and processing registry |
 | `packages/plan-catalog` | plan display catalog, shared by console billing and marketing pricing |
 | `packages/assets` | static files only, synced into each app's `public/` at dev/build |
-| `packages/email` | Resend, SMTP, and SES transports plus react-email building blocks (templates stay per-app) |
+| `packages/email` | SMTP and SES transports plus react-email building blocks (templates stay per-app) |
 | `packages/platform` | schema/enums/types **owned by `apps/admin`**, re-exported into console |
 | `packages/support` | support-case schema, storage, validations, emails |
 | `packages/eslint-config`, `packages/typescript-config` | shared presets |

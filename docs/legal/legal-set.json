@@ -22,9 +22,9 @@
 			"source": "apps/marketing/app/privacy/page.tsx",
 			"status": "current",
 			"sealed": true,
-			"version": "2026-08-12",
-			"displayedDate": "2026-08-12",
-			"contentHash": "ce8bc10300de7ed09712681012120d6db120b9ea62faf61bf4f25ce52cb0d93e",
+			"version": "2026-11-21",
+			"displayedDate": "2026-11-21",
+			"contentHash": "32ed71b557f531a4fe8c250aad4ba8498038057b82d6406d3442f09c9eef7b45",
 			"owner": "LEG-L1"
 		},
 		{
@@ -100,8 +100,8 @@
 			"source": "apps/marketing/app/legal/subprocessors/page.tsx",
 			"status": "current",
 			"sealed": false,
-			"version": "2026-08-12",
-			"displayedDate": "2026-08-12",
+			"version": "2026-11-21",
+			"displayedDate": "2026-11-21",
 			"contentHash": null,
 			"owner": "LEG-L1"
 		},
@@ -178,8 +178,8 @@
 			"source": "docs/legal/GDPR_ACCOUNTABILITY.md",
 			"status": "current",
 			"sealed": false,
-			"version": "2026-08-12",
-			"displayedDate": "2026-08-12",
+			"version": "2026-11-21",
+			"displayedDate": "2026-11-21",
 			"contentHash": null,
 			"owner": "LEG-L1"
 		},
@@ -819,22 +819,32 @@
 			"document": "privacy",
 			"kind": "subprocessor",
 			"status": "outside-repo",
-			"quote": "Transactional email is currently delivered through Resend.",
+			"quote": "Transactional email is delivered through Amazon Web Services (Amazon SES) in its Frankfurt, Germany region (eu-central-1).",
 			"evidence": [
 				{
-					"path": "packages/email/src/config.ts",
-					"pattern": "EMAIL_PROVIDER",
-					"shows": "The transport is chosen at run time; the code can send through Resend, SES or SMTP."
+					"path": "scripts/ci/deploy-console-assemble-env.sh",
+					"pattern": "MAIL_PROVIDER=\"\\$\\{MAIL_PROVIDER:-ses\\}\"",
+					"shows": "The hosted deploy sends through SES unless the vault names another transport."
+				},
+				{
+					"path": "scripts/ci/check-email-provider-keys.sh",
+					"pattern": "resend\\)\\n    echo \"::error::EMAIL_PROVIDER=resend",
+					"shows": "The deploy refuses a vault that still names Resend."
+				},
+				{
+					"path": "infra/email-ses-account/main.tf",
+					"pattern": "dedicated `alethia-email` account \\(eu-central-1\\)",
+					"shows": "The SES account the hosted service sends from is in eu-central-1."
 				},
 				{
 					"path": "packages/legal/src/processing.ts",
-					"pattern": "id: \"aws-ses\",(?:(?!\\n\\t\\},)[\\s\\S])*?status: \"inactive\"",
-					"shows": "The processing register records SES as inactive."
+					"pattern": "id: \"aws-ses\",(?:(?!\\n\\t\\},)[\\s\\S])*?status: \"active\"",
+					"shows": "The processing register records SES as active, so the subprocessors page lists it."
 				}
 			],
-			"requires": "The value of EMAIL_PROVIDER in the production vault. The repository holds only the example file, which defaults to resend; infra/email-ses-account/README.md records that a second AWS account now has SES production access, so the statement stops being true the day the vault value changes.",
+			"requires": "The value of EMAIL_PROVIDER in the production vault. Unset and ses both mean SES, and the deploy refuses resend; but the vault may name smtp, the rollback transport, and while it does the statement is false.",
 			"owner": "LEG-L1",
-			"verifiedOn": "2026-11-17"
+			"verifiedOn": "2026-11-21"
 		},
 		{
 			"id": "terms-acceptance.checkbox-wording",

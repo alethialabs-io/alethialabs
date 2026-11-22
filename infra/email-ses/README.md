@@ -10,9 +10,9 @@ AWS SES for transactional email — codified. The defaults are the values the ho
 > **Status: a self-hosting reference, not a deployment target of ours.** AWS denied SES
 > production access for the platform account (both `eu-central-1` and `us-east-1`, "final
 > decision"). Hosted alethialabs.io email is **`infra/email-ses-account`**, in the dedicated
-> `alethia-email` account, with Resend as the fallback. This stack is kept for self-hosters who run
+> `alethia-email` account. This stack is kept for self-hosters who run
 > SES in their **own** account and have production access; the email transport is pluggable
-> (Resend / SMTP / SES), see docs → Self-Hosting → Email. CI only validates it. The resources it
+> (SMTP / SES), see docs → Self-Hosting → Email. CI only validates it. The resources it
 > created in the platform account are retired by hand: **[`RETIRE.md`](RETIRE.md)**.
 >
 > The account, bucket, role and domain names below are the values the hosted instance used. A

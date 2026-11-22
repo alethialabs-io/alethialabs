@@ -53,8 +53,9 @@ Set (live values):
 | `STRIPE_PRICE_METER_TEAM` | from step 1 |
 | `STRIPE_TAX_ENABLED` | `true` only once Stripe Tax origin + registrations are set up |
 
-The approved transactional email provider must also be live. Hosted production currently uses
-Resend (`EMAIL_PROVIDER=resend`, `RESEND_API_KEY`); re-verify this at commerce activation time.
+The approved transactional email provider must also be live. Hosted production uses AWS SES from
+the `alethia-email` account (`EMAIL_PROVIDER=ses`, the `ALETHIA_SES_*` keys;
+`infra/email-ses-account/README.md`); re-verify this at commerce activation time.
 
 Redeploy the console so it picks up the new env.
 

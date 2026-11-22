@@ -10,7 +10,8 @@ Hosted transactional email through AWS SES, from a dedicated AWS account: **`ale
 account (270587882865).
 
 AWS denied SES production access in the platform account, so `infra/email-ses` was never used by
-hosted prod, and prod sends through Resend. The `alethia-email` account has production access
+hosted prod. Hosted prod sends through **this** account (`EMAIL_PROVIDER=ses`, the deploy's default
+since the Resend transport was removed). The `alethia-email` account has production access
 (50,000 messages a day, 14 a second). The domain identity `alethialabs.io` is verified there with
 Easy DKIM, and the account-level suppression list covers bounces and complaints. That was done by
 hand. This stack adds everything else the app needs to send through it.
@@ -22,7 +23,7 @@ hand. This stack adds everything else the app needs to send through it.
 | `identity.tf` | **Reads** the existing `alethialabs.io` identity. The plan fails if it is missing, not a domain, or not verified for sending. |
 | `config-sets.tf` | `alethia-auth` and `alethia-general`, each sending BOUNCE, COMPLAINT, DELIVERY, REJECT and RENDERING_FAILURE events to SNS. The same names and event types as `infra/email-ses`. |
 | `sns.tf`, `kms.tf` | `alethia-ses-events`, with an HTTPS subscription to `https://alethialabs.io/api/webhooks/ses`. `alethia-ses-alarms`, with one email subscription per address. Both are encrypted with one customer-managed KMS key. |
-| `cloudwatch.tf` | The bounce-rate (0.05) and complaint-rate (0.001) alarms, as `infra/email-ses`. |
+| `cloudwatch.tf` | The bounce-rate (0.05) and complaint-rate (0.001) alarms, as `infra/email-ses`, and `alethia-ses-events-delivery-failed`: any `NumberOfNotificationsFailed` on the events topic in an hour (an undelivered bounce never reaches the app's suppression list). All three notify `alethia-ses-alarms`. There is no per-set reject / rendering-failure alarm: the sets publish events to SNS only, and a per-set CloudWatch metric would need a CloudWatch event destination on each set. |
 | `account.tf` | Account VDM, as `infra/email-ses`, and the account suppression list (BOUNCE + COMPLAINT). The suppression list is already set; this records it. |
 | `sender.tf` | `alethia-ses-sender`: an IAM user that may only `ses:SendEmail` / `ses:SendRawEmail` as the identity and through the two configuration sets. **Its access key is not created here.** |
 | `checks.tf` / `checks.tftest.hcl` | Invariants, and a credential-free test that the committed posture plans as claimed and that each refusal fires. CI runs it in `.github/workflows/infra-email-ses-account.yml`. |
@@ -61,7 +62,7 @@ on Hetzner, so there is no instance role to inherit. The three options:
 
 | | What it would take | Why not |
 |---|---|---|
-| OIDC federation from the console's own issuer (`lib/oidc/issuer.ts`) | An IAM OIDC provider in the email account for `https://alethialabs.io/api/oidc` with a dedicated audience, a role, and a credential provider in `@repo/email` that mints an assertion and calls `AssumeRoleWithWebIdentity` | Only the **console** holds the issuer. **Marketing and admin** also send through `@repo/email`, from the same `.env`, and would need a second path or stay on Resend. It also puts STS, and STS's fetch of the JWKS from `alethialabs.io` through Cloudflare, into the sign-in path. It is the right end state, and it is a code change in `@repo/email`, not an infra one. |
+| OIDC federation from the console's own issuer (`lib/oidc/issuer.ts`) | An IAM OIDC provider in the email account for `https://alethialabs.io/api/oidc` with a dedicated audience, a role, and a credential provider in `@repo/email` that mints an assertion and calls `AssumeRoleWithWebIdentity` | Only the **console** holds the issuer. **Marketing and admin** also send through `@repo/email`, from the same `.env`, and would need a second path. It also puts STS, and STS's fetch of the JWKS from `alethialabs.io` through Cloudflare, into the sign-in path. It is the right end state, and it is a code change in `@repo/email`, not an infra one. |
 | IAM Roles Anywhere | A trust anchor and a CA, a client certificate and key on the box, and `aws_signing_helper` in three images | AWS Private CA is a large monthly fee. A self-run CA's key would be one more long-lived secret in the same vault, so this gains nothing over a key there. Certificate expiry becomes a new way for sign-in email to stop. |
 | **An IAM user's access key (chosen)** | One user, one inline policy, a key in `alethia/prod/env` | One new static secret, held with every other prod secret. It can do one thing: send as `alethialabs.io` through the two configuration sets. It never enters the state. It can be deactivated in one command, and rotated without downtime (step 9). |
 
@@ -83,18 +84,20 @@ configured, it refuses every message with 503. The production deploy defaults th
 `arn:aws:sns:eu-central-1:604925221417:alethia-ses-events`. `checks.tftest.hcl` pins the same
 literal, and `check.events_topic_is_the_one_the_console_accepts` fires if the real ARN differs.
 
-**The transport is selected in the vault.** `scripts/ci/deploy-console-assemble-env.sh` used to pin
-`EMAIL_PROVIDER=resend`. It now emits the vault's `EMAIL_PROVIDER` (unset means `resend`) and the
-`ALETHIA_SES_*` keys. So switching to SES, and back, is a vault edit and a redeploy, not a PR.
-`scripts/ci/check-email-provider-keys.sh` refuses `ses` without its five keys, and any value other
-than `resend` or `ses`. It runs in the deploy's `preflight` job, before any image is built, and again
-in the deploy step. `RESEND_API_KEY` stays required while SES is selected, because it is the
-rollback.
+**The transport is selected in the vault.** `scripts/ci/deploy-console-assemble-env.sh` emits the
+vault's `EMAIL_PROVIDER` (unset means `ses`), the `ALETHIA_SES_*` keys and the `SMTP_*` keys. So
+moving between SES and an SMTP relay is a vault edit and a redeploy, not a PR.
+`scripts/ci/check-email-provider-keys.sh` refuses `ses` (or unset) without its five keys, `smtp`
+without `SMTP_HOST`, `SMTP_USER` and `SMTP_PASS`, and any other value, `resend` by name: that
+transport was removed from `@repo/email`, which itself throws on `EMAIL_PROVIDER=resend` rather than
+falling back to logging. It runs in the deploy's `preflight` job, before any image is built, and
+again in the deploy step.
 
 ## Runbook
 
-Each step says what it changes and how to undo it. Steps 1 to 5 change nothing that hosted prod
-sends with.
+Each step says what it changes and how to undo it. Steps 1 to 7 are the one-time bring-up, kept as
+the record of how the account was wired and for a rebuild. At the time they ran, hosted prod sent
+through Resend, so steps 1 to 5 changed nothing that it sent with. Resend has since been removed.
 
 ### 0. Preflight (read-only)
 
@@ -109,7 +112,7 @@ The second command prints the SSO role ARN, **path included**, for the bootstrap
 ### 1. Ship the console change to production
 
 Merge this PR and let it reach `main` the usual way. The production deploy then runs a console that
-accepts the new topic ARN, still sending through Resend. Check that the route is reachable from the
+accepts the new topic ARN, still sending through the transport it had then. Check that the route is reachable from the
 internet:
 
 ```bash
@@ -205,8 +208,9 @@ AWS_PROFILE=alethia-sso EXT_FILE="$f" ./scripts/bootstrap-secrets.sh
 
 Keep `$f` for step 6, then delete it: `rm -P "$f"` on macOS, or `shred -u "$f"` on Linux.
 
-- **Changes:** five new keys in `alethia/prod/env`. `EMAIL_PROVIDER` is not touched, so the next
-  deploy still sends through Resend. It also emits these keys, which the app ignores under `resend`.
+- **Changes:** five new keys in `alethia/prod/env`. At bring-up `EMAIL_PROVIDER` was not touched
+  here, so the next deploy kept the transport it had. Today an unset `EMAIL_PROVIDER` already
+  means `ses`, so on a rebuild these keys go live with the next deploy.
 - **Roll back:** `AWS_PROFILE=alethia-email-admin aws iam delete-access-key --user-name alethia-ses-sender --access-key-id <id>`,
   and remove the five keys from the vault.
 
@@ -248,7 +252,7 @@ send bounce@simulator.amazonses.com alethia-general      # the bounce simulator
 - **The scope:** the same key must be refused anything else. For example,
   `aws sesv2 list-email-identities` with the same environment as `send` returns `AccessDenied`.
 
-### 7. Switch hosted prod to SES
+### 7. Select SES for hosted prod
 
 ```bash
 g="$(mktemp)"; echo EMAIL_PROVIDER=ses > "$g"
@@ -256,7 +260,8 @@ AWS_PROFILE=alethia-sso EXT_FILE="$g" ./scripts/bootstrap-secrets.sh; rm -f "$g"
 gh workflow run deploy-console.yml --ref main
 ```
 
-That is a vault edit and a redeploy. The deploy's `preflight` job refuses the run before any build if
+That is a vault edit and a redeploy. An unset `EMAIL_PROVIDER` also means `ses`; writing it makes
+the choice visible in the vault. The deploy's `preflight` job refuses the run before any build if
 one of the five SES keys is missing. The box's `.env` then carries:
 
 ```
@@ -275,21 +280,37 @@ ALETHIA_SES_EVENTS_TOPIC_ARNS=arn:aws:sns:eu-central-1:604925221417:alethia-ses-
   from the vault's `AUTH_EMAIL_FROM` (default `no-reply@alethialabs.io`), and the headers show
   `dkim=pass header.d=alethialabs.io`. The VDM dashboard counts the send under `alethia-auth`.
   Also send one product email, for example an organization invite, to check `alethia-general`.
-  Console, marketing and admin all switch at once, because they read the same `.env`.
+  Console, marketing and admin all switch at once, because they read the same `.env`. The weekly
+  spend report (`scripts/spend-report`) reads the same SES keys from the vault and sends through
+  `alethia-general`.
 
-### 8. Roll back to Resend
+### 8. Rollback
+
+There is no second hosted provider standing by any more. Two ways back, in order of speed:
+
+**An SMTP relay (a vault edit, no PR).** Any authenticated SMTP relay works, including SES's own
+SMTP endpoint (`email-smtp.eu-central-1.amazonaws.com`, port 587) when the problem is the API path
+or this key rather than the account. SES SMTP needs separate SMTP credentials, derived from an IAM
+key; see the SES documentation on obtaining SMTP credentials. Put the relay into the vault through
+a mode-600 file, never on the command line:
 
 ```bash
-g="$(mktemp)"; echo EMAIL_PROVIDER=resend > "$g"
-AWS_PROFILE=alethia-sso EXT_FILE="$g" ./scripts/bootstrap-secrets.sh; rm -f "$g"
+umask 077
+g="$(mktemp)"
+printf '%s\n' EMAIL_PROVIDER=smtp SMTP_HOST=<relay host> SMTP_PORT=587 > "$g"
+# Append SMTP_USER=… and SMTP_PASS=… to "$g" with an editor, not with echo.
+AWS_PROFILE=alethia-sso EXT_FILE="$g" ./scripts/bootstrap-secrets.sh; rm -P "$g"
 gh workflow run deploy-console.yml --ref main
 ```
 
-`RESEND_API_KEY` is still in the vault, because the deploy requires it either way. The SES keys can
-stay in the vault: the app ignores them under `resend`.
+The preflight refuses `smtp` without `SMTP_HOST`, `SMTP_USER` and `SMTP_PASS`. The SES keys can stay
+in the vault: the app ignores them under `smtp`. The relay's sender domain must be verified with it,
+or every message is rejected at the relay after the deploy reports success. The configuration sets,
+the events webhook and the suppression feed are SES-only, so under `smtp` bounces stop reaching
+`email_suppression` until you switch back.
 
-If you cannot wait for a deploy, edit `EMAIL_PROVIDER=resend` into `/opt/alethia/.env` on the box,
-and recreate the three services that send mail:
+If you cannot wait for a deploy, make the same edit in `/opt/alethia/.env` on the box and recreate
+the three services that send mail:
 
 ```bash
 cd /opt/alethia
@@ -299,11 +320,18 @@ docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml \
 
 The next deploy rewrites `.env` from the vault, so change the vault as well.
 
+**There is no Resend rollback.** The Resend account was closed on 2026-11-21 and its DNS records
+(`send.` MX and SPF, `resend._domainkey`) were deleted the same day, so reverting the PR that removed
+the transport would restore code with nothing to send through. SMTP is the only rollback.
+
+To return to SES after either, set `EMAIL_PROVIDER=ses` (or remove the key) and redeploy: step 7.
+
 ### 9. Rotate or revoke the key
 
 - **Revoke now**, if it leaked:
   `AWS_PROFILE=alethia-email-admin aws iam update-access-key --user-name alethia-ses-sender --access-key-id <id> --status Inactive`.
-  Every SES send fails from that moment, so roll back to Resend (step 8) in the same sitting.
+  Every SES send fails from that moment, so switch to an SMTP relay (step 8) in the same sitting,
+  or mint a new key (step 5) and redeploy.
 - **Rotate without downtime:** an IAM user can hold two keys. Mint the second one with step 5. That
   overwrites the two key values in the vault. Redeploy, check that a sign-in code arrives, then
   deactivate and delete the old key.
