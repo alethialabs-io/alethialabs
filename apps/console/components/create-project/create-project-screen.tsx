@@ -374,7 +374,11 @@ export function CreateProjectScreen({
 			? `A project named "${values.name.trim()}" already exists in this organization.`
 			: null;
 	const nameError = errors.name?.message ?? taken;
-	const blocker = (source === "import" ? importBlocker(scanJobId, scan) : null) ?? taken;
+	// The taken name is said once, under the field; the button's reason points there rather than
+	// repeating the sentence.
+	const blocker =
+		(source === "import" ? importBlocker(scanJobId, scan) : null) ??
+		(taken === null ? null : "Choose another project name.");
 
 	/** Moves the URL's scan param: a new scan, or none (`null`). */
 	const setScan = (jobId: string | null) => {

@@ -259,6 +259,7 @@ describe("CreateProjectScreen — creating", () => {
 		const create = await createButton();
 		expect(screen.getByText(/already exists in this organization/)).toBeInTheDocument();
 		expect(create).toBeDisabled();
+		expect(create).toHaveAccessibleDescription("Choose another project name.");
 	});
 });
 
