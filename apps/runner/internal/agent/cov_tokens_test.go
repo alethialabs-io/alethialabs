@@ -27,7 +27,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"math/big"
 	"net"
 	"net/http"
@@ -39,6 +38,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 )
 
 // ─── shared harness ──────────────────────────────────────────────────────────────────────────
