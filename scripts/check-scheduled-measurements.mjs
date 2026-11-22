@@ -156,6 +156,18 @@ export const SCHEDULED_MEASUREMENTS = {
 			"is the thing that decision exists to prevent.",
 		issue: "#2385",
 	},
+	"backup-status.yml": {
+		publishes: "backup-status-result-",
+		consumedBy: ["scripts/programme-fetch.sh"],
+		producedBy: ["scripts/backup-status-result.mjs", "deploy/prod/backup/backup.sh"],
+		markers: [{ file: "deploy/prod/backup/backup.sh", contains: '{"check":"off-box-backup"' }],
+		runsTree: "default",
+		why:
+			"Holds id-token: write and assumes backup-reader in the backup account, whose trust names " +
+			"refs/heads/main exactly. A schedule runs the default branch's reviewed tree, which is the only " +
+			"tree that role accepts and the one that should hold it.",
+		issue: "#7244",
+	},
 };
 
 /**
