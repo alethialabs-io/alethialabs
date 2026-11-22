@@ -33,6 +33,7 @@ filing.
 | Noto Sans | Fallback/localized typography | SIL OFL 1.1 |
 | Lucide | Interface icons | ISC |
 | Base UI, Radix, shadcn-derived code | Component primitives | Upstream permissive licences; local modifications remain recorded in Git |
+| Founder portrait (`packages/assets/static/mkt-assets/about/borislav-borisov.jpg`) | `/about` | Commissioned studio photograph (Canon, 2026-02-23), paid for by the founder, who holds the rights to use it; cropped and resized in-house, shown in grayscale by CSS. No GPS metadata. |
 
 ## Logo evidence
 
