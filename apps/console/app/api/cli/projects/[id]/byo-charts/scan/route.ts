@@ -7,15 +7,13 @@
 // you already attached whenever its repository moves.
 
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { scanByoChart } from "@/app/server/actions/byo-charts";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
 import { byoWriteError, resolveByoScope } from "@/lib/cli/byo-write";
 import { cliJson } from "@/lib/cli/respond";
 import { cliByoScanResponse } from "@/lib/validations/cli-contract";
-
-const scanChartBody = z.object({ id: z.string().trim().min(1) });
+import { scanChartBody } from "@/lib/validations/cli-request-bodies";
 
 export async function POST(
 	req: Request,

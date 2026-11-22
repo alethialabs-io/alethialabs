@@ -17,6 +17,7 @@ import type {
 import { getAuthConfig, getAuthRateLimit, getGitlabBaseUrl } from "@/lib/config/auth";
 import { getAuthPlugins } from "@/lib/auth/plugins";
 import { mcpResourceFromBaseUrl } from "@/lib/auth/mcp-resource";
+import { withEncryptedOAuthTokens } from "@/lib/auth/oauth-token-crypto";
 import { MCP_PROVIDER_SCOPES } from "@/lib/auth/mcp-scopes";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { provisionPrimaryOrg } from "@/lib/auth/onboarding";
@@ -268,39 +269,44 @@ export const auth = betterAuth({
 	secret: cfg.secret,
 	baseURL: cfg.baseURL,
 	trustedOrigins: [cfg.baseURL],
-	database: drizzleAdapter(getServiceDb(), {
-		provider: "pg",
-		// organization/member/invitation + ssoProvider are mapped for the enterprise
-		// organization + SSO plugins (getAuthPlugins); inert in community (the plugins
-		// aren't loaded).
-		schema: {
-			user,
-			session,
-			account,
-			verification,
-			organization,
-			member,
-			invitation,
-			team,
-			teamMember,
-			ssoProvider,
-			// MCP OAuth authorization-server tables. 1.7's mcp() IS oauthProvider(), whose schema
-			// is registered UNCONDITIONALLY — every model must appear here even for features we
-			// never use, or the adapter throws "the model \"x\" was not found in the schema
-			// object" the first time the plugin touches it. `jwks` belongs to jwt(), which
-			// oauth-provider requires.
-			oauthClient,
-			oauthResource,
-			oauthClientResource,
-			oauthRefreshToken,
-			oauthAccessToken,
-			oauthConsent,
-			oauthClientAssertion,
-			jwks,
-			// Built-in rate limiter's backing store (rateLimit: storage "database").
-			rateLimit,
-		},
-	}),
+	// Linked accounts' OAuth tokens are encrypted at rest with the credential keyring; the wrapper
+	// seals them on write and opens them on read, so Better Auth only handles plaintext
+	// (lib/auth/oauth-token-crypto.ts).
+	database: withEncryptedOAuthTokens(
+		drizzleAdapter(getServiceDb(), {
+			provider: "pg",
+			// organization/member/invitation + ssoProvider are mapped for the enterprise
+			// organization + SSO plugins (getAuthPlugins); inert in community (the plugins
+			// aren't loaded).
+			schema: {
+				user,
+				session,
+				account,
+				verification,
+				organization,
+				member,
+				invitation,
+				team,
+				teamMember,
+				ssoProvider,
+				// MCP OAuth authorization-server tables. 1.7's mcp() IS oauthProvider(), whose schema
+				// is registered UNCONDITIONALLY — every model must appear here even for features we
+				// never use, or the adapter throws "the model \"x\" was not found in the schema
+				// object" the first time the plugin touches it. `jwks` belongs to jwt(), which
+				// oauth-provider requires.
+				oauthClient,
+				oauthResource,
+				oauthClientResource,
+				oauthRefreshToken,
+				oauthAccessToken,
+				oauthConsent,
+				oauthClientAssertion,
+				jwks,
+				// Built-in rate limiter's backing store (rateLimit: storage "database").
+				rateLimit,
+			},
+		}),
+	),
 	// DB-backed brute-force throttle for /api/auth/* (sign-in / email-OTP). Replica-
 	// consistent; Better Auth's own store, separate from lib/rate-limit.ts. See getAuthRateLimit().
 	rateLimit: getAuthRateLimit(),

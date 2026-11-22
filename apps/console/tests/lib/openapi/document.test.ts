@@ -115,11 +115,45 @@ describe("the OpenAPI document is well-formed", () => {
 		expect(operations()).toHaveLength(OPERATIONS.length);
 	});
 
-	it("covers the jobs and projects routes", () => {
+	it("covers the jobs, projects and other /api/cli routes", () => {
 		const ids = new Set(operations().map((each) => each.operation.operationId));
-		for (const id of ["listJobs", "queueJob", "getJob", "listJobLogs", "cancelJob", "createProject", "applyDesign"]) {
+		for (const id of [
+			"listJobs",
+			"queueJob",
+			"getJob",
+			"listJobLogs",
+			"cancelJob",
+			"createProject",
+			"applyDesign",
+			"whoami",
+			"listMembers",
+			"mintServiceToken",
+			"listRunners",
+			"connectCloudIdentity",
+			"requestKubeconfig",
+			"createAlertRule",
+		]) {
 			expect(ids).toContain(id);
 		}
+	});
+
+	it("describes every path parameter in words of its own", () => {
+		const offenders = operations().flatMap(({ path, method, operation }) =>
+			operation.parameters
+				.filter((p) => p.in === "path")
+				.filter((p) => p.description === p.name || (p.description === "The job id." && !path.includes("/jobs/")))
+				.map((p) => `${method} ${path}: ${p.name}`),
+		);
+		expect(offenders).toEqual([]);
+	});
+
+	it("describes only path parameters the template names", () => {
+		const offenders = OPERATIONS.flatMap((operation) =>
+			Object.keys(operation.pathParameters ?? {})
+				.filter((name) => !pathParameterNames(operation.path).includes(name))
+				.map((name) => `${operation.method} ${operation.path}: ${name}`),
+		);
+		expect(offenders).toEqual([]);
 	});
 });
 
@@ -140,6 +174,19 @@ describe("the OpenAPI document is honest about authentication", () => {
 			DESTROY: ["destroy"],
 			DESTROY_RUNNER: ["read", "design", "plan", "apply", "destroy"],
 		});
+		expect(scopes("whoami")).toEqual(["read"]);
+		expect(scopes("mintServiceToken")).toEqual(["read", "design", "plan", "apply", "destroy"]);
+		expect(scopes("requestKubeconfig")).toEqual({ readonly: ["read"], admin: ["read", "design", "plan", "apply", "destroy"] });
+	});
+
+	it("says an operation that needs only a credential asks no permission and needs no scope", () => {
+		const repositories = operations().filter((each) => each.path.startsWith("/api/cli/repositories/"));
+		expect(repositories.length).toBe(3);
+		for (const { operation } of repositories) {
+			expect(operation["x-alethia-permission"]).toBe("none");
+			expect(operation["x-alethia-scopes"]).toEqual([]);
+			expect(operation.security).toEqual([{ bearerAuth: [] }]);
+		}
 	});
 
 	it("puts the request id, minimum-version header and 426 on /api/cli answers only", () => {

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { desc, eq } from "drizzle-orm";
-import { z } from "zod";
 import { AGENT_SCOPES } from "@/lib/approvals/types";
 import { authorizeCli } from "@/lib/authz/guard";
 import type { ScopeCeiling } from "@/lib/authz/types";
@@ -14,6 +13,7 @@ import {
 import { getServiceDb } from "@/lib/db";
 import { cliServiceTokens } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
+import { createTokenSchema } from "@/lib/validations/cli-request-bodies";
 
 /**
  * Service-account tokens for the active organization.
@@ -33,17 +33,6 @@ import { NextResponse } from "next/server";
  * is an administrative act, and listing them tells an attacker which pipelines exist and when each
  * was last used, which is reconnaissance rather than trivia.
  */
-
-const createTokenSchema = z.object({
-	name: z.string().trim().min(1, "a token needs a name").max(120),
-	/** Days until expiry. Omitted ⇒ non-expiring, which the caller chooses explicitly. */
-	expires_in_days: z.number().int().positive().max(3650).optional(),
-	/** The verbs the token may use. Omitted ⇒ every scope. An unknown scope is a 400. */
-	scopes: z.array(z.enum(AGENT_SCOPES)).min(1).optional(),
-	/** The projects the token may touch. Omitted ⇒ every project of the org. */
-	project_ids: z.array(z.uuid()).min(1).optional(),
-});
-
 
 /** Lists the active org's service tokens: names, prefixes, limits and timestamps, never a secret. */
 export async function GET(req: Request) {

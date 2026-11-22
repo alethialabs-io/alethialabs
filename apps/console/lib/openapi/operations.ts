@@ -2,8 +2,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { z } from "zod";
-import type { Action, Resource } from "@/lib/authz/registry";
-import { ROUTE_BODIES } from "@/lib/openapi/route-bodies";
+import {
+	badRequest,
+	conflict,
+	forbidden,
+	notFound,
+	type OpenApiOperation,
+	ok,
+	pageQuery,
+	envQuery,
+	serverError,
+	uncontracted,
+	type OperationResponse,
+} from "@/lib/openapi/operation-kit";
+import { ORGANIZATION_OPERATIONS } from "@/lib/openapi/operations-organization";
+import { PLATFORM_OPERATIONS } from "@/lib/openapi/operations-platform";
 import {
 	cliAddonsResponse,
 	cliByoChartAttachResponse,
@@ -32,6 +45,19 @@ import {
 	cliStagedChangesResponse,
 	jobWire,
 } from "@/lib/validations/cli-contract";
+import {
+	addComponentBody,
+	addEnvironmentBody,
+	attachChartBody,
+	attachIacBody,
+	bumpBody,
+	createProjectBody,
+	detachChartBody,
+	disableAddonBody,
+	enableAddonBody,
+	scanChartBody,
+	updateComponentBody,
+} from "@/lib/validations/cli-request-bodies";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 
 /**
@@ -42,84 +68,23 @@ import { projectFormSchema } from "@/lib/validations/project-form.schema";
  * document derives the token scope through `requiredScopes`), which query parameters it reads,
  * which validator its body goes through, and which wire-contract schema each answer is checked
  * against by `cliJson`. It never restates a shape: every schema below is the one the route itself
- * uses, imported from the wire contract (`lib/validations/cli-contract.ts`), the console form, or —
- * for a route-local validator — the drift-tested copy in `route-bodies.ts`.
+ * uses, imported from the wire contract (`lib/validations/cli-contract.ts`), the console form, or
+ * the route's own body validator (`lib/validations/cli-request-bodies.ts`, which the route imports
+ * too).
+ *
+ * Jobs and projects are here; the other `/api/cli` families are in `operations-organization.ts` and
+ * `operations-platform.ts`, and {@link OPERATIONS} is all three.
  *
  * `tests/lib/openapi/drift.test.ts` parses every route file under the documented directories and
  * fails when a route or method exists with no entry here, an entry names a route that does not
- * exist, or an entry's permission, query parameters, body validator or response schemas differ
- * from what the route's code does.
+ * exist, or an entry's permission, query parameters, headers, body validator or response schemas
+ * differ from what the route's code does.
  */
-
-/** An HTTP method a route module exports, in OpenAPI's lowercase spelling. */
-export type HttpMethod = "get" | "post" | "put" | "patch" | "delete";
-
-/** A query parameter an operation reads. */
-export interface QueryParameter {
-	readonly name: string;
-	readonly description: string;
-	readonly schema: z.ZodType;
-}
-
-/** One answer an operation gives. */
-export interface OperationResponse {
-	readonly status: number;
-	readonly description: string;
-	/**
-	 * The wire-contract schema `cliJson` checks this answer against. Absent for an error answer
-	 * (the shared error body) and for a success answer the route builds without `cliJson`, which
-	 * `uncontracted` then has to say.
-	 */
-	readonly schema?: z.ZodType;
-	/**
-	 * True for a success answer that is NOT checked against the wire contract — the route builds it
-	 * with `NextResponse.json`. The document says so rather than inventing a schema for it.
-	 */
-	readonly uncontracted?: boolean;
-}
-
-/** The permission an operation asks, as the route hands it to `authorizeCli`. */
-export interface OperationPermission {
-	readonly action: Action;
-	readonly resource: Resource;
-}
-
-/** One documented operation. */
-export interface OpenApiOperation {
-	readonly method: HttpMethod;
-	/** The OpenAPI path template. The route file is this path with `{x}` written `[x]`. */
-	readonly path: string;
-	readonly operationId: string;
-	readonly tag: OperationTag;
-	readonly summary: string;
-	readonly description?: string;
-	/**
-	 * The permission, or — for `POST /api/jobs`, which resolves its own caller and lets the server
-	 * action ask the PDP — the permission per `job_type`.
-	 */
-	readonly permission: OperationPermission | { readonly perJobType: Readonly<Record<string, OperationPermission>> };
-	readonly query?: readonly QueryParameter[];
-	/** The request body's validator. */
-	readonly body?: z.ZodType;
-	/** True when the route honours `If-Match: <revision>` (the component's `updated_at`). */
-	readonly ifMatch?: boolean;
-	readonly responses: readonly OperationResponse[];
-}
-
-/** The tags, in the order the document lists them. */
-export const OPERATION_TAGS = {
-	Jobs: "Plan, deploy and destroy jobs: queue one, follow it, read its logs, cancel it.",
-	Projects:
-		"Projects and what is in them: environments, components, add-ons, BYO charts and IaC, the design document, and read models (cost, drift, probes, promotions, protection, staged changes).",
-} as const;
-
-/** One of {@link OPERATION_TAGS}. */
-export type OperationTag = keyof typeof OPERATION_TAGS;
 
 /**
  * The body of `POST /api/jobs`. That route reads these fields off the parsed JSON without a
- * validator, so there is no schema of its own to import; the drift test holds this list of keys to
- * the set of fields the route reads.
+ * validator, so there is no schema of its own to import; the operation says so (`bodyUnvalidated`)
+ * and the drift test holds this list of keys to the set of fields the route reads.
  */
 export const queueJobBody = z.object({
 	job_type: z
@@ -155,45 +120,6 @@ export const queueJobBody = z.object({
 		.describe("DESTROY_RUNNER only: `runner_id` names the runner to destroy. Every other field is ignored."),
 });
 
-/** `?env=` on a project route. */
-const envQuery: QueryParameter = {
-	name: "env",
-	description: "The environment, by id or name. Omitted: the project's default environment.",
-	schema: z.string(),
-};
-
-/** `?limit=` and `?cursor=` on a cursor-paged list (lib/cli/paging.ts). */
-const pageQuery: readonly QueryParameter[] = [
-	{
-		name: "limit",
-		description: "Page size, a positive integer. Default 50; values above 200 are served as 200. `page.limit` echoes what was served.",
-		schema: z.string().regex(/^\d+$/),
-	},
-	{
-		name: "cursor",
-		description: "The `page.next_cursor` of the previous page. Empty or omitted: the first page. A cursor is bound to its list and organization.",
-		schema: z.string(),
-	},
-];
-
-/** The project path parameter's meaning, shared by every project route. */
-export const PROJECT_ID_DESCRIPTION = "The project, by id, name or slug, within the caller's organization.";
-
-/** Shared error answers. */
-const badRequest: OperationResponse = { status: 400, description: "The request is malformed; `error` names what is wrong." };
-const notFound: OperationResponse = {
-	status: 404,
-	description: "Not found, or not visible to this caller. The two are answered the same way.",
-};
-const forbidden: OperationResponse = { status: 403, description: "The caller may not do this." };
-const conflict: OperationResponse = { status: 409, description: "The resource's current state refuses the request." };
-const serverError: OperationResponse = { status: 500, description: "The server failed." };
-
-/** A 200 or 201 checked against `schema`. */
-function ok(schema: z.ZodType, description: string, status = 200): OperationResponse {
-	return { status, description, schema };
-}
-
 /** The 409 a component write answers when it was refused rather than failed (#5551). */
 const componentRefused: OperationResponse = {
 	status: 409,
@@ -202,8 +128,8 @@ const componentRefused: OperationResponse = {
 	schema: cliComponentConflictResponse,
 };
 
-/** Every documented operation. */
-export const OPERATIONS: readonly OpenApiOperation[] = [
+/** The jobs and projects operations. */
+const JOB_AND_PROJECT_OPERATIONS: readonly OpenApiOperation[] = [
 	// ── Jobs ──────────────────────────────────────────────────────────────────────────────────────
 	{
 		method: "get",
@@ -239,14 +165,18 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		description:
 			"Queues a job through the same server actions the console uses, so the job carries the same configuration snapshot. A DESTROY that queued more than one job (a cascade) lists them in `cascade_jobs`; `job` is always the target's own job. A refused apply or destroy answers 403 with `code` one of `approval_required`, `approval_invalid` or `not_permitted`.",
 		permission: {
-			perJobType: {
-				PLAN: { action: "plan", resource: "project" },
-				DEPLOY: { action: "deploy", resource: "project" },
-				DESTROY: { action: "destroy", resource: "project" },
-				DESTROY_RUNNER: { action: "destroy", resource: "runner" },
+			perField: {
+				field: "job_type",
+				cases: {
+					PLAN: { action: "plan", resource: "project" },
+					DEPLOY: { action: "deploy", resource: "project" },
+					DESTROY: { action: "destroy", resource: "project" },
+					DESTROY_RUNNER: { action: "destroy", resource: "runner" },
+				},
 			},
 		},
 		body: queueJobBody,
+		bodyUnvalidated: true,
 		responses: [
 			ok(cliJobResponse, "The queued job.", 201),
 			badRequest,
@@ -296,11 +226,7 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		description: "Cancels a QUEUED, CLAIMED or PROCESSING job; the runner is signalled when the job was claimed.",
 		permission: { action: "edit", resource: "job" },
 		responses: [
-			{
-				status: 200,
-				description: "Cancelled. The body is `{\"success\": true}`; it is not part of the checked wire contract.",
-				uncontracted: true,
-			},
+			uncontracted("Cancelled. The body is `{\"success\": true}`; it is not part of the checked wire contract."),
 			{ status: 400, description: "The job is not in a status that can be cancelled." },
 			forbidden,
 			notFound,
@@ -319,7 +245,7 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		description:
 			"Creates a project in the caller's organization with its default Fabric and environments, as the console does. `instance_type` and `node_size` are mutually exclusive, and `instance_type` needs `cloud_identity_id`.",
 		permission: { action: "create", resource: "project" },
-		body: ROUTE_BODIES.createProject.schema,
+		body: createProjectBody,
 		responses: [ok(cliProjectResponse, "The created project.", 201), badRequest, serverError],
 	},
 	{
@@ -357,7 +283,7 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		summary: "Add an environment",
 		description: "`placement_mode` defaults to `namespace`, placed on the project's default Fabric; `dedicated` owns a new Fabric and therefore a cluster.",
 		permission: { action: "edit", resource: "project" },
-		body: ROUTE_BODIES.addEnvironment.schema,
+		body: addEnvironmentBody,
 		responses: [ok(cliEnvironmentResponse, "The added environment.", 201), badRequest, notFound, serverError],
 	},
 	{
@@ -381,7 +307,7 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 			"Adds a component of `kind`, or updates a singleton kind in place. `fields` is validated against the kind's own schema. `If-Match` applies to a singleton update only.",
 		permission: { action: "edit", resource: "project" },
 		query: [envQuery],
-		body: ROUTE_BODIES.addComponent.schema,
+		body: addComponentBody,
 		ifMatch: true,
 		responses: [ok(cliComponentResponse, "The component.", 201), badRequest, notFound, componentRefused, serverError],
 	},
@@ -404,7 +330,7 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		description: "Changes only the fields sent. Any key other than `fields` is a 400.",
 		permission: { action: "edit", resource: "project" },
 		query: [envQuery],
-		body: ROUTE_BODIES.updateComponent.schema,
+		body: updateComponentBody,
 		ifMatch: true,
 		responses: [ok(cliComponentResponse, "The updated component."), badRequest, notFound, componentRefused, serverError],
 	},
@@ -437,7 +363,7 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		summary: "Enable or configure an add-on",
 		permission: { action: "edit", resource: "project" },
 		query: [envQuery],
-		body: ROUTE_BODIES.enableAddon.schema,
+		body: enableAddonBody,
 		responses: [ok(cliOkResponse, "Enabled.", 201), badRequest, forbidden, notFound, conflict, serverError],
 	},
 	{
@@ -448,7 +374,7 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		summary: "Disable an add-on",
 		permission: { action: "edit", resource: "project" },
 		query: [envQuery],
-		body: ROUTE_BODIES.disableAddon.schema,
+		body: disableAddonBody,
 		responses: [ok(cliOkResponse, "Disabled."), badRequest, forbidden, notFound, conflict, serverError],
 	},
 	{
@@ -460,7 +386,7 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		description: "`status` says whether a pull request was opened, merged, declined or refused; `file`, `field` and `version` are the manual instruction a refusal falls back to.",
 		permission: { action: "edit", resource: "project" },
 		query: [envQuery],
-		body: ROUTE_BODIES.bumpAddon.schema,
+		body: bumpBody,
 		responses: [ok(cliGitopsBumpResponse, "The bump's outcome."), badRequest, forbidden, notFound, serverError],
 	},
 	{
@@ -481,7 +407,7 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		summary: "Attach or update a Helm chart",
 		permission: { action: "edit", resource: "project" },
 		query: [envQuery],
-		body: ROUTE_BODIES.attachChart.schema,
+		body: attachChartBody,
 		responses: [ok(cliByoChartAttachResponse, "The chart's resolved id.", 201), badRequest, notFound, serverError],
 	},
 	{
@@ -492,7 +418,7 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		summary: "Detach a Helm chart",
 		permission: { action: "edit", resource: "project" },
 		query: [envQuery],
-		body: ROUTE_BODIES.detachChart.schema,
+		body: detachChartBody,
 		responses: [ok(cliOkResponse, "Detached."), badRequest, notFound, serverError],
 	},
 	{
@@ -503,7 +429,7 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		summary: "Scan an attached Helm chart",
 		permission: { action: "edit", resource: "project" },
 		query: [envQuery],
-		body: ROUTE_BODIES.scanChart.schema,
+		body: scanChartBody,
 		responses: [ok(cliByoScanResponse, "The queued scan job."), badRequest, notFound, serverError],
 	},
 	{
@@ -524,7 +450,7 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		summary: "Attach or replace the IaC source",
 		permission: { action: "edit", resource: "project" },
 		query: [envQuery],
-		body: ROUTE_BODIES.attachIac.schema,
+		body: attachIacBody,
 		responses: [ok(cliByoChartAttachResponse, "Attached; `id` is the source's id.", 201), badRequest, notFound, serverError],
 	},
 	{
@@ -628,4 +554,11 @@ export const OPERATIONS: readonly OpenApiOperation[] = [
 		query: [envQuery, ...pageQuery],
 		responses: [ok(cliStagedChangesResponse, "One page of staged changes."), badRequest, notFound, serverError],
 	},
+];
+
+/** Every documented operation. */
+export const OPERATIONS: readonly OpenApiOperation[] = [
+	...JOB_AND_PROJECT_OPERATIONS,
+	...ORGANIZATION_OPERATIONS,
+	...PLATFORM_OPERATIONS,
 ];

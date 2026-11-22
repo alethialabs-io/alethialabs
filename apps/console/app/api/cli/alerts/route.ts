@@ -2,27 +2,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { z } from "zod";
 import { invalidateOrgRules } from "@/lib/alerts/rule-cache";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { getServiceDb } from "@/lib/db";
 import { alertChannels, alertRuleChannels, alertRules } from "@/lib/db/schema";
-import { alertSeverity } from "@/lib/db/schema/enums";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import {
 	cliAlertRuleResponse,
 	cliAlertRulesResponse,
 } from "@/lib/validations/cli-contract";
-
-/** Body of POST /api/cli/alerts — bind a set of event-key patterns to channels. */
-const createAlertBody = z.object({
-	name: z.string().min(1).max(120),
-	event_patterns: z.array(z.string().min(1)).min(1),
-	channel_ids: z.array(z.uuid()).min(1),
-	severity: z.enum(alertSeverity.enumValues).default("warning"),
-});
+import { createAlertBody } from "@/lib/validations/cli-request-bodies";
 
 /** Shape of an alert rule on the CLI wire (the rule row + its channel bindings). */
 function toAlertRuleWire(

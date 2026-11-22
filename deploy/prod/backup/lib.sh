@@ -12,7 +12,9 @@
 # Never add `set -x` to anything that sources this file. Both callers handle storage keys.
 
 # The rclone image that does every object-store transfer. Pinned: a floating tag would let the
-# nightly change behaviour between two runs with nothing in this repository changing.
+# nightly change behaviour between two runs with nothing in this repository changing. Before
+# bumping it, re-read what the runbook's "Object Lock and the pinned rclone" section establishes
+# from this version's source: the Object Lock uploads depend on it.
 BACKUP_RCLONE_IMAGE="${BACKUP_RCLONE_IMAGE:-rclone/rclone:1.68.2}"
 
 # Stamps sort lexicographically in time order, which is what retention and "newest" rely on.
@@ -172,12 +174,30 @@ age_recipient_args() {
 }
 
 #######################################
+# Validates BACKUP_RETENTION and prints the mode: `script` (the default) or `bucket`.
+#   script  backup.sh deletes old copies itself (`rclone purge`), so the box key needs delete. For a
+#           store with no lifecycle rules, e.g. a self-hosted S3-compatible one.
+#   bucket  backup.sh never deletes anything. The bucket's lifecycle rules expire old copies and its
+#           Object Lock default retention keeps them immutable meanwhile; the box key has no delete.
+#           Production runs this mode against AWS S3.
+# Anything else stops the run before a byte is written: a typo must not fall back to deleting.
+#######################################
+retention_mode() {
+	case "${BACKUP_RETENTION:-script}" in
+		script) printf 'script' ;;
+		bucket) printf 'bucket' ;;
+		*) die "BACKUP_RETENTION must be 'script' or 'bucket'" ;;
+	esac
+}
+
+#######################################
 # Writes the off-box remote's rclone configuration into DIR/offbox.env (0600) and prints its path.
 # rclone reads a remote named OFFBOX from RCLONE_CONFIG_OFFBOX_*; no config file is ever written.
 #######################################
 offbox_env_file() {
-	local f="$1/offbox.env"
+	local f="$1/offbox.env" mode
 	require_env BACKUP_S3_ENDPOINT BACKUP_S3_BUCKET BACKUP_S3_ACCESS_KEY_ID BACKUP_S3_SECRET_ACCESS_KEY
+	mode="$(retention_mode)" || exit 1
 	(
 		umask 077
 		{
@@ -187,6 +207,28 @@ offbox_env_file() {
 			printf 'RCLONE_CONFIG_OFFBOX_REGION=%s\n' "${BACKUP_S3_REGION:-}"
 			printf 'RCLONE_CONFIG_OFFBOX_ACCESS_KEY_ID=%s\n' "$BACKUP_S3_ACCESS_KEY_ID"
 			printf 'RCLONE_CONFIG_OFFBOX_SECRET_ACCESS_KEY=%s\n' "$BACKUP_S3_SECRET_ACCESS_KEY"
+			# Temporary credentials (an STS session: an OIDC role, an instance role, an Identity Center
+			# recovery session) carry a third part. A static IAM user key has none.
+			if [ -n "${BACKUP_S3_SESSION_TOKEN:-}" ]; then
+				printf 'RCLONE_CONFIG_OFFBOX_SESSION_TOKEN=%s\n' "$BACKUP_S3_SESSION_TOKEN"
+			fi
+			# A bucket encrypted with a KMS key: rclone must be told, both so S3 uses THAT key (a bare
+			# "aws:kms" header would pick the AWS-managed key instead) and so rclone stops reading the
+			# ETag as an MD5, which under SSE-KMS it is not (rclone backend/s3/s3.go, etagIsNotMD5).
+			# Without this, uploads fail rclone's post-transfer hash check.
+			if [ -n "${BACKUP_S3_SSE_KMS_KEY_ID:-}" ]; then
+				printf 'RCLONE_CONFIG_OFFBOX_SERVER_SIDE_ENCRYPTION=aws:kms\n'
+				printf 'RCLONE_CONFIG_OFFBOX_SSE_KMS_KEY_ID=%s\n' "$BACKUP_S3_SSE_KMS_KEY_ID"
+			fi
+			# Bucket mode means an Object Lock bucket, and S3 refuses an upload into one that carries
+			# neither Content-MD5 nor an SDK checksum header. Every upload goes multipart: rclone sets
+			# Content-MD5 on each UploadPart from the bytes it sends, whatever the source can hash, and
+			# records the whole file's MD5 as metadata so `rclone check` and a download can verify it.
+			# This is rclone's own documented workaround for Object Lock buckets at the pinned version.
+			# See docs/ops/restore-runbook.md, "Object Lock and the pinned rclone".
+			if [ "$mode" = bucket ]; then
+				printf 'RCLONE_CONFIG_OFFBOX_UPLOAD_CUTOFF=0\n'
+			fi
 			# Never try to create the bucket: the backup key should not be allowed to, and a typo'd
 			# bucket name should fail loudly instead of quietly creating a second, unwatched one.
 			printf 'RCLONE_S3_NO_CHECK_BUCKET=true\n'
@@ -251,7 +293,9 @@ container_source_commit() {
 retention_select() {
 	local keep="$1"
 	[[ "$keep" =~ ^[0-9]+$ ]] && [ "$keep" -ge 1 ] || die "retention keep count must be a positive integer"
-	grep -E '^[0-9]{8}T[0-9]{6}Z (complete|incomplete)$' | sort -r | awk -v keep="$keep" '
+	# `|| true`: a listing with no well-formed line is nothing to delete, not a failure that stops
+	# the caller under pipefail.
+	{ grep -E '^[0-9]{8}T[0-9]{6}Z (complete|incomplete)$' || true; } | sort -r | awk -v keep="$keep" '
 		{ if (kept >= keep) { print $1; next } if ($2 == "complete") kept++ }
 	'
 }

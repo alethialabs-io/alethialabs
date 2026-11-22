@@ -1,0 +1,428 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import { z } from "zod";
+import {
+	badRequest,
+	forbidden,
+	notFound,
+	type OpenApiOperation,
+	type OperationResponse,
+	ok,
+	type QueryParameter,
+	serverError,
+	uncontracted,
+} from "@/lib/openapi/operation-kit";
+import {
+	cliActivityResponse,
+	cliAgentResponse,
+	cliAgentsResponse,
+	cliBillingResponse,
+	cliClassificationAssignmentsResponse,
+	cliClassificationDimensionsResponse,
+	cliGrantResponse,
+	cliGrantsResponse,
+	cliInvitationResponse,
+	cliMembersResponse,
+	cliOkResponse,
+	cliOrgSettingsResponse,
+	cliOrgsResponse,
+	cliRoleResponse,
+	cliRolesResponse,
+	cliSigningKeysResponse,
+	cliSsoProviderResponse,
+	cliSsoProvidersResponse,
+	cliTeamResponse,
+	cliTeamsResponse,
+	cliUsageResponse,
+	whoamiWire,
+} from "@/lib/validations/cli-contract";
+import {
+	assignBody,
+	createGrantBody,
+	createRoleBody,
+	createTeamBody,
+	createTokenSchema,
+	inviteBody,
+} from "@/lib/validations/cli-request-bodies";
+
+/**
+ * The account and organization-administration operations of the public OpenAPI document: who the
+ * caller is, the organizations they belong to, members, teams, roles, grants, SSO providers,
+ * service tokens, and classification. Part of `OPERATIONS` (lib/openapi/operations.ts); read that
+ * file for what an entry states and how the drift test holds it to the route.
+ */
+
+/** The 402 a route answers when the organization's plan or licence does not include the feature. */
+function planRequired(what: string): OperationResponse {
+	return { status: 402, description: `${what} The organization's plan or licence does not include it.` };
+}
+
+/** The organization path parameter of the `/api/cli/orgs/{id}/…` routes. */
+const ORG_ID = {
+	id: "The organization, by id. A service token may name only the organization it is pinned to; a signed-in person, any organization they are an active member of, where the same permission is asked again.",
+};
+
+/** `?kind=` and `?id=` on the classification assignment routes. */
+const classificationTarget: readonly QueryParameter[] = [
+	{ name: "kind", description: "The resource's kind, e.g. `project`, `environment` or `cluster`.", schema: z.string() },
+	{ name: "id", description: "The resource's id.", schema: z.string() },
+];
+
+/** Every account and organization-administration operation. */
+export const ORGANIZATION_OPERATIONS: readonly OpenApiOperation[] = [
+	// ── Account ───────────────────────────────────────────────────────────────────────────────────
+	{
+		method: "get",
+		path: "/api/cli/whoami",
+		operationId: "whoami",
+		tag: "Account",
+		summary: "Who am I",
+		description:
+			"The caller's user, the active organization (null in the personal scope) and that organization's default runner (null when none). The active organization is the one `X-Alethia-Org` selects, or the credential's own.",
+		permission: { action: "view", resource: "org" },
+		responses: [ok(whoamiWire, "The caller's identity."), notFound, serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/orgs",
+		operationId: "listOrgs",
+		tag: "Account",
+		summary: "List my organizations",
+		description:
+			"A signed-in person sees every organization they belong to, with their role and the plan; `is_active` marks the active one. A service token sees only the organization it is pinned to.",
+		permission: { action: "view", resource: "org" },
+		responses: [ok(cliOrgsResponse, "The caller's organizations."), serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/org-settings",
+		operationId: "getOrgSettings",
+		tag: "Account",
+		summary: "Get the organization's settings",
+		description: "Name, slug and description, and the default region, environment and IaC version. `settings` is null in the personal scope.",
+		permission: { action: "view", resource: "org" },
+		responses: [ok(cliOrgSettingsResponse, "The active organization's settings."), serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/billing",
+		operationId: "getBilling",
+		tag: "Account",
+		summary: "Get the billing state",
+		description: "The plan and its status, the purchased seats, and the trial and current-period boundaries. No payment details. The personal scope reads as the community plan.",
+		permission: { action: "view", resource: "org" },
+		responses: [ok(cliBillingResponse, "The active organization's billing state."), serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/usage",
+		operationId: "getUsage",
+		tag: "Account",
+		summary: "Get current usage",
+		description: "Seats used against the purchased cap, managed-runner minutes this period, the project count, and AI credits used this week against the plan's weekly grant.",
+		permission: { action: "view", resource: "org" },
+		responses: [ok(cliUsageResponse, "The active organization's usage."), serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/activity",
+		operationId: "listActivity",
+		tag: "Account",
+		summary: "Read the activity log",
+		description: "The organization's recorded authorization decisions, newest first, with the person who acted.",
+		permission: { action: "view_activity", resource: "activity" },
+		query: [
+			{
+				name: "limit",
+				description: "How many entries. Default 50; clamped to between 1 and 500.",
+				schema: z.string().regex(/^\d+$/),
+			},
+		],
+		responses: [ok(cliActivityResponse, "The newest activity entries."), serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/signing-keys",
+		operationId: "listSigningKeys",
+		tag: "Account",
+		summary: "List receipt-signing public keys",
+		description:
+			"The public keys an evidence receipt's `key_id` may be verified against: the organization's retained key history and the key the runner signs with today. Public key material only.",
+		permission: { action: "view", resource: "org" },
+		responses: [ok(cliSigningKeysResponse, "The trusted public keys."), serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/agents",
+		operationId: "listAgents",
+		tag: "Account",
+		summary: "List agent identities",
+		description: "The caller's and the organization's agent identities. One bound to a project the caller may not view is left out.",
+		permission: { action: "view", resource: "org" },
+		responses: [ok(cliAgentsResponse, "The agent identities."), serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/agents/{id}",
+		operationId: "getAgent",
+		tag: "Account",
+		summary: "Get an agent identity",
+		permission: { action: "view", resource: "org" },
+		pathParameters: { id: "The agent identity id." },
+		responses: [ok(cliAgentResponse, "The agent identity."), notFound, serverError],
+	},
+
+	// ── Access ────────────────────────────────────────────────────────────────────────────────────
+	{
+		method: "get",
+		path: "/api/cli/orgs/{id}/members",
+		operationId: "listMembers",
+		tag: "Access",
+		summary: "List members",
+		permission: { action: "view", resource: "member" },
+		pathParameters: ORG_ID,
+		responses: [ok(cliMembersResponse, "The organization's members."), serverError],
+	},
+	{
+		method: "post",
+		path: "/api/cli/orgs/{id}/members",
+		operationId: "inviteMember",
+		tag: "Access",
+		summary: "Invite a member",
+		description:
+			"Invites a person by email. `role` is one role the console's invite dialog offers (`member` is accepted for `viewer`); `owner` cannot be invited, and a role with more access than the inviter's own is refused with 403.",
+		permission: { action: "manage_members", resource: "member" },
+		pathParameters: ORG_ID,
+		body: inviteBody,
+		responses: [ok(cliInvitationResponse, "The pending invitation.", 201), badRequest, forbidden, serverError],
+	},
+	{
+		method: "delete",
+		path: "/api/cli/orgs/{id}/members/{memberId}",
+		operationId: "removeMember",
+		tag: "Access",
+		summary: "Remove a member",
+		description:
+			"Removes the member and their grants, their team memberships in this organization, and the invitations they sent that are still pending. An owner cannot be removed (400).",
+		permission: { action: "manage_members", resource: "member" },
+		pathParameters: { ...ORG_ID, memberId: "The member id." },
+		responses: [ok(cliOkResponse, "Removed."), { status: 400, description: "The member is an owner." }, notFound, serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/orgs/{id}/teams",
+		operationId: "listTeams",
+		tag: "Access",
+		summary: "List teams",
+		permission: { action: "view", resource: "member" },
+		pathParameters: ORG_ID,
+		responses: [ok(cliTeamsResponse, "The organization's teams with their member counts."), serverError],
+	},
+	{
+		method: "post",
+		path: "/api/cli/orgs/{id}/teams",
+		operationId: "createTeam",
+		tag: "Access",
+		summary: "Create a team",
+		description: "The caller's membership role must allow creating teams (owners and admins), and the organization's plan must include teams; either refusal is a 403.",
+		permission: { action: "manage_members", resource: "member" },
+		pathParameters: ORG_ID,
+		body: createTeamBody,
+		responses: [ok(cliTeamResponse, "The created team.", 201), badRequest, forbidden, serverError],
+	},
+	{
+		method: "delete",
+		path: "/api/cli/orgs/{id}/teams/{teamId}",
+		operationId: "deleteTeam",
+		tag: "Access",
+		summary: "Delete a team",
+		description: "The caller's membership role must allow deleting teams (owners and admins). The team's memberships go with it.",
+		permission: { action: "manage_members", resource: "member" },
+		pathParameters: { ...ORG_ID, teamId: "The team id." },
+		responses: [ok(cliOkResponse, "Deleted."), forbidden, notFound, serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/roles",
+		operationId: "listRoles",
+		tag: "Access",
+		summary: "List roles",
+		description: "The built-in roles, with their permission keys, followed by the organization's custom roles.",
+		permission: { action: "view", resource: "member" },
+		responses: [ok(cliRolesResponse, "The roles."), serverError],
+	},
+	{
+		method: "post",
+		path: "/api/cli/roles",
+		operationId: "createRole",
+		tag: "Access",
+		summary: "Create a custom role",
+		description: "Unknown permission keys are dropped, not refused.",
+		permission: { action: "manage_members", resource: "member" },
+		body: createRoleBody,
+		responses: [ok(cliRoleResponse, "The created role.", 201), badRequest, planRequired("Custom roles need an Enterprise licence."), serverError],
+	},
+	{
+		method: "delete",
+		path: "/api/cli/roles/{id}",
+		operationId: "deleteRole",
+		tag: "Access",
+		summary: "Delete a custom role",
+		description: "Grants on the role are deleted with it. A built-in role is never deleted; naming one changes nothing.",
+		permission: { action: "manage_members", resource: "member" },
+		pathParameters: { id: "The custom role id." },
+		responses: [ok(cliOkResponse, "Deleted, or there was nothing to delete."), planRequired("Custom roles need an Enterprise licence."), serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/grants",
+		operationId: "listGrants",
+		tag: "Access",
+		summary: "List access grants",
+		permission: { action: "view", resource: "member" },
+		responses: [ok(cliGrantsResponse, "The organization's grants, newest first."), serverError],
+	},
+	{
+		method: "post",
+		path: "/api/cli/grants",
+		operationId: "createGrant",
+		tag: "Access",
+		summary: "Assign an access grant",
+		description:
+			"Binds a user or team to exactly one of a role or a single permission, at the organization or one resource, as allow or deny. An allow grant may not exceed the caller's own permissions (403). A principal without an active membership, or a role, team or resource that is not this organization's, is refused with 400.",
+		permission: { action: "manage_members", resource: "member" },
+		body: createGrantBody,
+		responses: [
+			ok(cliGrantResponse, "The created grant.", 201),
+			badRequest,
+			planRequired("Access management needs an Enterprise licence."),
+			{ status: 403, description: "The grant would exceed the caller's own permissions." },
+			serverError,
+		],
+	},
+	{
+		method: "delete",
+		path: "/api/cli/grants/{id}",
+		operationId: "revokeGrant",
+		tag: "Access",
+		summary: "Revoke an access grant",
+		permission: { action: "manage_members", resource: "member" },
+		pathParameters: { id: "The grant id." },
+		responses: [ok(cliOkResponse, "Revoked, or there was nothing to revoke."), planRequired("Access management needs an Enterprise licence."), serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/sso",
+		operationId: "listSsoProviders",
+		tag: "Access",
+		summary: "List SSO identity providers",
+		description: "Read-only. A build without the enterprise SSO plugin has none.",
+		permission: { action: "view", resource: "org" },
+		responses: [ok(cliSsoProvidersResponse, "The organization's SSO providers."), serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/sso/{id}",
+		operationId: "getSsoProvider",
+		tag: "Access",
+		summary: "Get an SSO identity provider",
+		permission: { action: "view", resource: "org" },
+		pathParameters: { id: "The SSO provider id." },
+		responses: [ok(cliSsoProviderResponse, "The SSO provider."), notFound, serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/tokens",
+		operationId: "listServiceTokens",
+		tag: "Access",
+		summary: "List service tokens",
+		description: "Names, prefixes, limits and timestamps; revoked tokens are listed too. No route ever returns a token's secret after it is minted.",
+		permission: { action: "manage_tokens", resource: "org" },
+		responses: [
+			uncontracted(
+				"`{\"tokens\": [...]}`, each with `id`, `name`, `token_prefix`, `created_at`, `expires_at`, `last_used_at`, `revoked_at`, `scopes` and `project_ids`. Not part of the checked wire contract.",
+			),
+		],
+	},
+	{
+		method: "post",
+		path: "/api/cli/tokens",
+		operationId: "mintServiceToken",
+		tag: "Access",
+		summary: "Mint a service token",
+		description:
+			"The token acts as the person who minted it, pinned to this organization, with all five scopes over every project. A request naming fewer `scopes` or any `project_ids` is refused with 400 and `code: \"narrow_tokens_unavailable\"`.",
+		permission: { action: "manage_tokens", resource: "org" },
+		body: createTokenSchema,
+		responses: [
+			uncontracted(
+				"`id`, `name`, `token_prefix`, `expires_at`, `scopes`, `project_ids`, `warning`, and `token`: the secret, returned this once and never again. Not part of the checked wire contract.",
+				201,
+			),
+			badRequest,
+		],
+	},
+	{
+		method: "delete",
+		path: "/api/cli/tokens/{id}",
+		operationId: "revokeServiceToken",
+		tag: "Access",
+		summary: "Revoke a service token",
+		description: "Takes effect on the token's next request. The record is kept, marked revoked.",
+		permission: { action: "manage_tokens", resource: "org" },
+		pathParameters: { id: "The service token id." },
+		responses: [
+			uncontracted("`{\"revoked\": true, \"id\": ...}`. Not part of the checked wire contract."),
+			{ status: 404, description: "No active token with this id in the organization: unknown, another organization's, or already revoked." },
+		],
+	},
+
+	// ── Classification ────────────────────────────────────────────────────────────────────────────
+	{
+		method: "get",
+		path: "/api/cli/classification/dimensions",
+		operationId: "listClassificationDimensions",
+		tag: "Classification",
+		summary: "List the classification taxonomy",
+		description: "Each dimension with its values and the resource kinds it applies to.",
+		permission: { action: "view", resource: "org" },
+		responses: [ok(cliClassificationDimensionsResponse, "The organization's dimensions."), serverError],
+	},
+	{
+		method: "get",
+		path: "/api/cli/classification/assignments",
+		operationId: "listClassificationAssignments",
+		tag: "Classification",
+		summary: "List a resource's classification values",
+		description: "A resource the caller may not view answers as one with no values.",
+		permission: { action: "view", resource: "org" },
+		query: classificationTarget,
+		responses: [ok(cliClassificationAssignmentsResponse, "The resource's values."), badRequest, serverError],
+	},
+	{
+		method: "post",
+		path: "/api/cli/classification/assignments",
+		operationId: "assignClassificationValue",
+		tag: "Classification",
+		summary: "Assign a classification value",
+		description: "The value is named by dimension key and value slug. On a single-valued dimension it replaces the current value.",
+		permission: { action: "edit", resource: "org" },
+		body: assignBody,
+		responses: [ok(cliClassificationAssignmentsResponse, "The resource's values after the change."), badRequest, notFound, serverError],
+	},
+	{
+		method: "delete",
+		path: "/api/cli/classification/assignments",
+		operationId: "unassignClassificationValue",
+		tag: "Classification",
+		summary: "Remove a classification value",
+		description: "A resource the caller may not edit answers as one with no values, and nothing is changed.",
+		permission: { action: "edit", resource: "org" },
+		query: [
+			...classificationTarget,
+			{ name: "value_slug", description: "The value to remove, by slug.", schema: z.string() },
+		],
+		responses: [ok(cliClassificationAssignmentsResponse, "The resource's values after the change."), badRequest, serverError],
+	},
+];

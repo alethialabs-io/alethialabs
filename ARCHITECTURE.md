@@ -163,7 +163,7 @@ authz/open-core guards, and gitleaks.
 Mergify (`.mergify.yml`) queues dev PRs on **9 required checks**: TypeScript, the three Go
 modules, Integration (real Postgres + RLS), Secret scan, Docs prose, Authz / open-core
 guards, and capabilities-security — the fail-closed capabilities/connector/keyless gate that
-replaced the dropped CODEOWNERS review (`.github/workflows/capabilities-security.yml`).
+replaced the dropped CODEOWNERS review (the `capabilities-security` job in `.github/workflows/ci.yml`).
 
 Deploys: `deploy-console.yml` builds the self-host images to GHCR and rolls the Hetzner
 Compose deployment behind Cloudflare Tunnel; release-please drives the CLI (GoReleaser +

@@ -7,7 +7,6 @@
 
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { attachByoChart, detachByoChart } from "@/app/server/actions/byo-charts";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
@@ -32,6 +31,7 @@ import {
 	cliByoChartsResponse,
 	cliOkResponse,
 } from "@/lib/validations/cli-contract";
+import { attachChartBody, detachChartBody } from "@/lib/validations/cli-request-bodies";
 
 const BYO_CHARTS_LIST = "project-byo-charts";
 
@@ -141,25 +141,6 @@ export async function GET(
 	}
 }
 
-/**
- * Body of POST .../byo-charts — attach or update one BYO Helm chart.
- *
- * snake_case on the wire, matching every other CLI route and `byoChartWire` above, then mapped to
- * `attachByoChart`'s camelCase input. The mapping is naming only: `byoChartAttachSchema.parse` inside
- * the action is what decides validity — the repo-URL shape, the git-chart-needs-a-path refinement,
- * and the YAML-mapping check — so there is still exactly one definition of a valid chart.
- */
-const attachChartBody = z.object({
-	id: z.string().trim().min(1),
-	repo_url: z.string().trim().min(1),
-	chart_path: z.string().trim().optional(),
-	ref: z.string().trim().optional(),
-	namespace: z.string().trim().optional(),
-	values_yaml: z.string().nullish(),
-	git_credential_id: z.string().min(1).nullish(),
-	values: z.record(z.string(), z.unknown()).optional(),
-});
-
 /** Attaches (or updates) a BYO Helm chart in an environment. */
 export async function POST(
 	req: Request,
@@ -202,9 +183,6 @@ export async function POST(
 		return byoWriteError(err);
 	}
 }
-
-/** Body of DELETE .../byo-charts — detach one chart by id. */
-const detachChartBody = z.object({ id: z.string().trim().min(1) });
 
 /** Detaches a BYO Helm chart from an environment. */
 export async function DELETE(

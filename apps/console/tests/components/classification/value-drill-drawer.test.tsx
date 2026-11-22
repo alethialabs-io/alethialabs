@@ -74,3 +74,12 @@ describe("ValueDrillDrawer fetch-error state", () => {
 		expect(getValueResourceBreakdown).toHaveBeenCalledWith({ valueId: "v1" });
 	});
 });
+
+// The sheet is named by its own title (the overlay_title rule, #6829): the value's label.
+describe("ValueDrillDrawer name", () => {
+	it("is a dialog named by the value's label", async () => {
+		getValueResourceBreakdown.mockResolvedValue([]);
+		render(<ValueDrillDrawer value={VALUE} dimensionLabel="Environment" onClose={() => {}} />);
+		expect(await screen.findByRole("dialog", { name: "Production" })).toBeInTheDocument();
+	});
+});

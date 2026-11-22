@@ -18,6 +18,7 @@ import { resolveCliWriteEnvironment } from "@/lib/cli/resolve-project";
 import { cliEnvironmentError, cliJson } from "@/lib/cli/respond";
 import { cliGitopsBumpResponse } from "@/lib/validations/cli-contract";
 import { log } from "@/lib/observability/log";
+import { bumpBody } from "@/lib/validations/cli-request-bodies";
 
 /**
  * Maps a failure to a status. An authorization refusal is 403. Anything else is ours (500), and its
@@ -32,12 +33,6 @@ function bumpError(err: unknown): NextResponse {
 	log.error("addons/bump: request failed", { err_name: err instanceof Error ? err.name : typeof err });
 	return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
 }
-
-/** Body of POST .../addons/bump. */
-const bumpBody = z.object({
-	addon_id: z.string().min(1).max(128),
-	again: z.boolean().optional(),
-});
 
 /** The wire form of a bump result: every key present, the arms' fields null where they do not apply. */
 function toWire(r: GitopsBumpResult): z.infer<typeof cliGitopsBumpResponse> {

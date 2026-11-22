@@ -509,7 +509,8 @@ var (
 // ── the closed sets, mirrored from the route ────────────────────────────────────────────────────
 
 // grantPrincipalTypes and grantEffects mirror `createGrantBody` in
-// apps/console/app/api/cli/grants/route.ts, where both are `z.enum`. Validating them here is the
+// apps/console/lib/validations/cli-request-bodies.ts (the validator POST /api/cli/grants
+// imports), where both are `z.enum`. Validating them here is the
 // provable-subset rule: a value outside the enum is refused by the server for certain, so refusing
 // it in the CLI cannot hide a grant the caller could otherwise have made — while the server's
 // answer is a bare "Invalid request body" that never says which field was wrong.

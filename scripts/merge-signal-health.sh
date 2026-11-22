@@ -300,7 +300,7 @@ READY TO PROMOTE:$promote_lines
   dev and on every queue build. A job-level \`if:\` that skips it (T1 is queue-only; the browser E2Es
   are path-gated) leaves the context \`skipped\`, which Mergify's \`check-success=\` does not accept:
   merge_protections are evaluated on the PR itself, so the PR is never auto-queued. Move the gate
-  from the job to its STEPS (as validate-console.yml does) so the job always runs and passes fast
+  from the job to its STEPS (as ci.yml's build-console job does) so the job always runs and passes fast
   when it has nothing to do — then promote."
 else
   summary+="

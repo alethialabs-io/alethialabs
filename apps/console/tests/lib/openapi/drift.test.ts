@@ -5,10 +5,10 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import type { z } from "zod";
-import { type OpenApiOperation, OPERATIONS, queueJobBody } from "@/lib/openapi/operations";
-import { ROUTE_BODIES, ROUTE_BODIES_SOURCE } from "@/lib/openapi/route-bodies";
-import * as contract from "@/lib/validations/cli-contract";
+import { z } from "zod";
+import { CONTRACT_MODULES, contractExportName } from "@/lib/openapi/contract-schemas";
+import type { OpenApiOperation, OperationPermission } from "@/lib/openapi/operation-kit";
+import { OPERATIONS } from "@/lib/openapi/operations";
 
 /**
  * The OpenAPI document follows the routes. This test READS THE ROUTE FILES — it parses each with
@@ -17,26 +17,32 @@ import * as contract from "@/lib/validations/cli-contract";
  *
  * - a route file under a documented directory exports a method with no operation, and is not in
  *   the runner ledger below; or an operation names a route or method that does not exist;
- * - the `(action, resource)` an operation declares is not the one the handler hands `authorizeCli`;
- * - the query parameters an operation declares are not the ones the handler reads;
- * - the body validator an operation declares is not the one the handler `safeParse`s — and, for a
- *   route-local validator, the copy in route-bodies.ts does not print identically to the route's;
+ * - the `(action, resource)` an operation declares is not the one the handler hands `authorizeCli`
+ *   (or `authorizeCliQuiet`, or the cloud-account routes' `enforceProviderPermission`), or a second
+ *   check of the path's organization asks a different one; an operation declared to need only a
+ *   credential asks a permission; an operation whose permission a body field chooses declares other
+ *   values or actions than the code maps;
+ * - the query parameters or request headers an operation declares are not the ones the handler reads;
+ * - the body validator an operation declares is not the one the handler `safeParse`s, or the handler
+ *   validates with a schema of its own instead of an importable one; or, for a body the route reads
+ *   without a validator, the documented fields are not the ones it reads;
  * - the wire-contract schema and status of each `cliJson` answer the handler gives is not one the
  *   operation declares, or a success answer the handler builds without `cliJson` is not declared
- *   as uncontracted;
+ *   as uncontracted (or, with no body at all, as empty);
  * - an error status the handler writes is missing from the operation.
  *
  * WHAT IT CANNOT SEE, stated so nobody reads it as more: an answer built in a helper function in
- * another module (`cliEnvironmentError`, `byoWriteError`, the guard's own 401 and 403) is not read,
- * so those statuses are declared by hand; and a validator's refinements are compared as code, not
- * as behaviour.
+ * another module (`cliEnvironmentError`, `byoWriteError`, `mintError`, the providers' `errorResponse`,
+ * the guard's own 401 and 403) is not read, so those statuses are declared by hand; and a
+ * validator's refinements are not compared at all — the document generates from the very schema the
+ * route runs, so there is nothing to compare.
  */
 
 /** apps/console. */
 const CONSOLE = join(__dirname, "..", "..", "..");
 
-/** The directories whose routes are the public API this document describes. */
-const DOCUMENTED_ROOTS = ["app/api/jobs", "app/api/cli/jobs", "app/api/cli/projects", "app/api/approvals"];
+/** The directories whose routes are the public API this document describes: every `/api/cli` route. */
+const DOCUMENTED_ROOTS = ["app/api/jobs", "app/api/cli", "app/api/approvals"];
 
 /**
  * Routes under a documented directory that are NOT public API: the runner's own channel, which a
@@ -66,7 +72,33 @@ const RUNNER_ROUTES: Readonly<Record<string, readonly string[]>> = {
 const QUERY_HELPERS: Readonly<Record<string, { readonly module: string; readonly reads: readonly string[] }>> = {
 	parsePageOpts: { module: "lib/cli/paging.ts", reads: ["cursor", "limit"] },
 	resolveByoScope: { module: "lib/cli/byo-write.ts", reads: ["env"] },
+	parseTarget: { module: "app/api/cli/classification/assignments/route.ts", reads: ["id", "kind"] },
 };
+
+/**
+ * The calls that ask an operation's permission, each with the `(action, resource)` at arguments 1
+ * and 2. `authorizeCliQuiet` is `authorizeCli` without the activity row; `enforceProviderPermission`
+ * is the cloud-account routes', which authenticate through `resolveCliProvider` first.
+ */
+const PERMISSION_CALLS = ["authorizeCli", "authorizeCliQuiet", "enforceProviderPermission"];
+
+/**
+ * The calls that check the organization a path names, with the `(action, resource)` at arguments 3
+ * and 4. Each must ask the same permission the operation declares.
+ */
+const ORG_CHECK_CALLS = ["ensureCliOrgAccess", "authorizeCliOrg"];
+
+/**
+ * For an operation whose permission a body field chooses through a mapping function: the function,
+ * which the handler must call and whose `switch` the declared cases must equal. (`job_type` on
+ * `POST /api/jobs` is checked separately: that route resolves its caller itself.)
+ */
+const FIELD_MAPPERS: Readonly<Record<string, { readonly module: string; readonly fn: string }>> = {
+	tier: { module: "lib/kubeconfig-mint/clouds.ts", fn: "actionForTier" },
+};
+
+/** Request headers every operation accepts or that a flag declares, which the header test ignores. */
+const SHARED_HEADERS = new Set(["x-alethia-org", "if-match"]);
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 
@@ -192,28 +224,30 @@ function importOf(file: string, name: string): string | undefined {
 	return undefined;
 }
 
-/** The initializer of a top-level `const name = …` in a file, or undefined. */
-function topLevelConst(file: string, name: string): ts.Expression | undefined {
-	for (const statement of source(file).statements) {
-		if (!ts.isVariableStatement(statement)) continue;
-		for (const decl of statement.declarationList.declarations) {
-			if (ts.isIdentifier(decl.name) && decl.name.text === name) return decl.initializer;
-		}
-	}
-	return undefined;
-}
-
-const printer = ts.createPrinter({ removeComments: true });
-
-/** An expression printed without comments or original formatting. */
-function printed(file: string, node: ts.Node): string {
-	return printer.printNode(ts.EmitHint.Expression, node, source(file));
-}
-
-/** The cli-contract export name of a schema, or a marker when the contract does not export it. */
+/** The contract export name of a schema, or a marker when no contract module exports it. */
 function contractExport(schema: z.ZodType | undefined): string {
-	for (const [name, value] of Object.entries(contract)) if (value === schema) return name;
-	return "(not exported by cli-contract)";
+	return contractExportName(schema) ?? "(not exported by a contract module)";
+}
+
+/** The module specifiers of the wire contract. */
+const CONTRACT_SPECIFIERS = new Set(CONTRACT_MODULES.map((m) => m.specifier));
+
+/** The `(action, resource)` a call asks, as `action:resource`, from the given argument positions. */
+function askedBy(call: ts.CallExpression, at: number): string {
+	return `${stringOf(call.arguments[at]) ?? "?"}:${stringOf(propertyOf(call.arguments[at + 1], "type")) ?? "?"}`;
+}
+
+/** `action:resource`. */
+function keyOf(permission: OperationPermission): string {
+	return `${permission.action}:${permission.resource}`;
+}
+
+/** The values a body field accepts, from the body's input JSON Schema. */
+function fieldValues(body: z.ZodType | undefined, field: string): string[] {
+	if (!body) return [];
+	const property = z.toJSONSchema(body, { io: "input", unrepresentable: "any" }).properties?.[field];
+	if (typeof property !== "object" || !Array.isArray(property.enum)) return [];
+	return property.enum.flatMap((v) => (typeof v === "string" ? [v] : []));
 }
 
 /** `"post app/api/x/route.ts"`, for messages. */
@@ -262,24 +296,54 @@ describe("each documented operation matches its handler", () => {
 	it("asks the permission it declares", () => {
 		const offenders: string[] = [];
 		for (const operation of OPERATIONS) {
-			const calls = callsTo(handlerOf(operation), "authorizeCli");
-			if ("perJobType" in operation.permission) {
-				if (calls.length > 0) offenders.push(`${label(operation)}: calls authorizeCli but is declared per job type`);
+			const handler = handlerOf(operation);
+			const calls = PERMISSION_CALLS.flatMap((name) => callsTo(handler, name));
+			const { permission } = operation;
+			if ("credentialOnly" in permission) {
+				if (calls.length > 0) offenders.push(`${label(operation)}: asks a permission but is declared credential-only`);
+				if (callsTo(handler, "verifyCliToken").length !== 1) offenders.push(`${label(operation)}: does not verify the credential`);
 				continue;
 			}
-			const asked = calls.map((call) => `${stringOf(call.arguments[1])}:${stringOf(propertyOf(call.arguments[2], "type"))}`);
-			const declared = `${operation.permission.action}:${operation.permission.resource}`;
-			if (asked.length !== 1 || asked[0] !== declared) {
-				offenders.push(`${label(operation)}: declares ${declared}, asks ${asked.join(", ") || "nothing"}`);
+			if ("perField" in permission) {
+				const { field, cases } = permission.perField;
+				if (field === "job_type") {
+					if (calls.length > 0) offenders.push(`${label(operation)}: asks a permission but is declared per job type`);
+					continue;
+				}
+				const resources = new Set<string>(Object.values(cases).map((c) => c.resource));
+				const asked = calls.map((call) => stringOf(propertyOf(call.arguments[2], "type")));
+				if (calls.length !== 1 || resources.size !== 1 || !resources.has(asked[0] ?? "?")) {
+					offenders.push(`${label(operation)}: declares per ${field} on ${[...resources]}, asks on ${asked.join(", ") || "nothing"}`);
+				}
+				continue;
+			}
+			const asked = calls.map((call) => askedBy(call, 1));
+			if (asked.length !== 1 || asked[0] !== keyOf(permission)) {
+				offenders.push(`${label(operation)}: declares ${keyOf(permission)}, asks ${asked.join(", ") || "nothing"}`);
+			}
+		}
+		expect(offenders).toEqual([]);
+	});
+
+	it("checks the path's organization with the permission it declares", () => {
+		const offenders: string[] = [];
+		for (const operation of OPERATIONS) {
+			const { permission } = operation;
+			// POST /api/jobs resolves its own caller and checks membership itself; only an operation
+			// with one declared permission has one to compare against.
+			if (!("action" in permission)) continue;
+			for (const call of ORG_CHECK_CALLS.flatMap((name) => callsTo(handlerOf(operation), name))) {
+				const asked = askedBy(call, 3);
+				if (asked !== keyOf(permission)) offenders.push(`${label(operation)}: checks the organization with ${asked}, declares ${keyOf(permission)}`);
 			}
 		}
 		expect(offenders).toEqual([]);
 	});
 
 	it("declares per job type exactly the job types the route accepts", () => {
-		const queue = OPERATIONS.find((o) => "perJobType" in o.permission);
+		const queue = OPERATIONS.find((o) => "perField" in o.permission && o.permission.perField.field === "job_type");
 		expect(queue).toBeDefined();
-		if (!queue || !("perJobType" in queue.permission)) return;
+		if (!queue || !("perField" in queue.permission)) return;
 		const file = routeFileOf(queue.path);
 		const alias = source(file).statements.find(
 			(s): s is ts.TypeAliasDeclaration => ts.isTypeAliasDeclaration(s) && s.name.text === "CreatableJobType",
@@ -288,8 +352,41 @@ describe("each documented operation matches its handler", () => {
 			alias && ts.isUnionTypeNode(alias.type)
 				? alias.type.types.flatMap((t) => (ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal) ? [t.literal.text] : []))
 				: [];
-		expect([...accepted].sort()).toEqual(Object.keys(queue.permission.perJobType).sort());
-		expect([...queueJobBody.shape.job_type.options].sort()).toEqual([...accepted].sort());
+		expect([...accepted].sort()).toEqual(Object.keys(queue.permission.perField.cases).sort());
+		expect(fieldValues(queue.body, "job_type").sort()).toEqual([...accepted].sort());
+	});
+
+	it("declares per body field exactly the values and actions the code maps", () => {
+		const offenders: string[] = [];
+		for (const operation of OPERATIONS) {
+			if (!("perField" in operation.permission)) continue;
+			const { field, cases } = operation.permission.perField;
+			if (field === "job_type") continue;
+			const mapper = FIELD_MAPPERS[field];
+			if (!mapper) {
+				offenders.push(`${label(operation)}: no mapper ledgered for ${field}`);
+				continue;
+			}
+			if (callsTo(handlerOf(operation), mapper.fn).length === 0) offenders.push(`${label(operation)}: does not call ${mapper.fn}`);
+			const fn = source(mapper.module).statements.find(
+				(st): st is ts.FunctionDeclaration => ts.isFunctionDeclaration(st) && st.name?.text === mapper.fn,
+			);
+			const mapped: Record<string, string> = {};
+			for (const clause of fn ? descendants(fn).filter(ts.isCaseClause) : []) {
+				const value = stringOf(clause.expression);
+				const ret = clause.statements.find(ts.isReturnStatement);
+				const action = stringOf(ret?.expression);
+				if (value && action) mapped[value] = action;
+			}
+			const declared = Object.fromEntries(Object.entries(cases).map(([value, c]) => [value, c.action]));
+			if (JSON.stringify(Object.entries(mapped).sort()) !== JSON.stringify(Object.entries(declared).sort())) {
+				offenders.push(`${label(operation)}: declares ${JSON.stringify(declared)}, ${mapper.fn} maps ${JSON.stringify(mapped)}`);
+			}
+			if (JSON.stringify(fieldValues(operation.body, field).sort()) !== JSON.stringify(Object.keys(cases).sort())) {
+				offenders.push(`${label(operation)}: the body's ${field} accepts [${fieldValues(operation.body, field)}]`);
+			}
+		}
+		expect(offenders).toEqual([]);
 	});
 
 	it("reads the query parameters it declares", () => {
@@ -341,6 +438,29 @@ describe("each documented operation matches its handler", () => {
 		expect(offenders).toEqual([]);
 	});
 
+	it("reads the request headers it declares", () => {
+		const offenders: string[] = [];
+		for (const operation of OPERATIONS) {
+			const read = new Set<string>();
+			for (const n of descendants(handlerOf(operation))) {
+				if (
+					ts.isCallExpression(n) &&
+					ts.isPropertyAccessExpression(n.expression) &&
+					n.expression.name.text === "get" &&
+					n.expression.expression.getText().endsWith("headers")
+				) {
+					const name = stringOf(n.arguments[0])?.toLowerCase();
+					if (name && !SHARED_HEADERS.has(name)) read.add(name);
+				}
+			}
+			const declared = (operation.headers ?? []).map((h) => h.name.toLowerCase()).sort();
+			if (JSON.stringify([...read].sort()) !== JSON.stringify(declared)) {
+				offenders.push(`${label(operation)}: declares [${declared}], reads [${[...read].sort()}]`);
+			}
+		}
+		expect(offenders).toEqual([]);
+	});
+
 	it("honours If-Match exactly where it declares it", () => {
 		const offenders = OPERATIONS.filter((operation) => {
 			const reads = callsTo(handlerOf(operation), "parseIfMatch").length > 0;
@@ -361,8 +481,8 @@ describe("each documented operation matches its handler", () => {
 					? [n.expression.expression.text]
 					: [],
 			);
-			if (operation.body === queueJobBody) {
-				if (validators.length > 0) offenders.push(`${label(operation)}: has a validator now; import it`);
+			if (operation.bodyUnvalidated) {
+				if (validators.length > 0) offenders.push(`${label(operation)}: has a validator now; document that one`);
 				continue;
 			}
 			if (validators.length === 0) {
@@ -380,30 +500,35 @@ describe("each documented operation matches its handler", () => {
 				if (imported[name] !== operation.body) offenders.push(`${label(operation)}: route validates with ${spec}#${name}`);
 				continue;
 			}
-			const copy = Object.values(ROUTE_BODIES).find((entry) => entry.route === file && entry.name === name);
-			if (!copy || copy.schema !== operation.body) {
-				offenders.push(`${label(operation)}: route validates with its local ${name}, which route-bodies.ts must copy`);
-			}
+			offenders.push(
+				`${label(operation)}: validates with ${name}, declared in the route file; move it to an importable module (lib/validations/cli-request-bodies.ts) and import it from both`,
+			);
 		}
 		expect(offenders).toEqual([]);
 	});
 
-	it("documents the queue body's fields as the fields POST /api/jobs reads", () => {
-		const queue = OPERATIONS.find((o) => o.body === queueJobBody);
-		expect(queue).toBeDefined();
-		if (!queue) return;
-		const read = new Set<string>();
-		for (const n of descendants(handlerOf(queue))) {
-			// const { a, b } = body;
-			if (ts.isVariableDeclaration(n) && ts.isObjectBindingPattern(n.name) && n.initializer?.getText() === "body") {
-				for (const element of n.name.elements) if (ts.isIdentifier(element.name)) read.add(element.name.text);
+	it("documents an unvalidated body's fields as the fields the handler reads", () => {
+		const unvalidated = OPERATIONS.filter((o) => o.bodyUnvalidated);
+		expect(unvalidated.length).toBeGreaterThan(0);
+		const offenders: string[] = [];
+		for (const operation of unvalidated) {
+			const read = new Set<string>();
+			for (const n of descendants(handlerOf(operation))) {
+				// const { a, b } = body;
+				if (ts.isVariableDeclaration(n) && ts.isObjectBindingPattern(n.name) && n.initializer?.getText() === "body") {
+					for (const element of n.name.elements) if (ts.isIdentifier(element.name)) read.add(element.name.text);
+				}
+				// body?.a / body.a
+				if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "body") {
+					read.add(n.name.text);
+				}
 			}
-			// body?.a / body.a
-			if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "body") {
-				read.add(n.name.text);
+			const documented = operation.body instanceof z.ZodObject ? Object.keys(operation.body.shape) : [];
+			if (JSON.stringify([...read].sort()) !== JSON.stringify(documented.sort())) {
+				offenders.push(`${label(operation)}: documents [${documented.sort()}], reads [${[...read].sort()}]`);
 			}
 		}
-		expect([...read].sort()).toEqual(Object.keys(queueJobBody.shape).sort());
+		expect(offenders).toEqual([]);
 	});
 
 	it("answers with the contract schemas and statuses it declares", () => {
@@ -414,8 +539,8 @@ describe("each documented operation matches its handler", () => {
 			const answered = new Set<string>();
 			for (const call of callsTo(handler, "cliJson")) {
 				const arg = call.arguments[0];
-				const fromContract = arg && ts.isIdentifier(arg) && importOf(file, arg.text) === "@/lib/validations/cli-contract";
-				const name = fromContract ? arg.text : `(not from cli-contract: ${arg?.getText() ?? "?"})`;
+				const fromContract = arg && ts.isIdentifier(arg) && CONTRACT_SPECIFIERS.has(importOf(file, arg.text) ?? "");
+				const name = fromContract ? arg.text : `(not from a contract module: ${arg?.getText() ?? "?"})`;
 				answered.add(`${statusOf(call.arguments[2]) ?? 200} ${name}`);
 			}
 			for (const n of descendants(handler)) {
@@ -430,11 +555,16 @@ describe("each documented operation matches its handler", () => {
 					const status = statusOf(n.arguments[1]);
 					if (status !== undefined && status < 400) answered.add(`${status} uncontracted`);
 				}
+				// new NextResponse(null, { status: 304 }) — an answer with no body.
+				if (ts.isNewExpression(n) && n.expression.getText() === "NextResponse") {
+					const status = statusOf(n.arguments?.[1]);
+					if (status !== undefined && status < 400) answered.add(`${status} empty`);
+				}
 			}
 			const declared = new Set(
 				operation.responses
-					.filter((r) => r.schema || r.uncontracted)
-					.map((r) => `${r.status} ${r.schema ? contractExport(r.schema) : "uncontracted"}`),
+					.filter((r) => r.schema || r.uncontracted || r.empty)
+					.map((r) => `${r.status} ${r.schema ? contractExport(r.schema) : r.empty ? "empty" : "uncontracted"}`),
 			);
 			const left = [...answered].filter((a) => !declared.has(a));
 			const right = [...declared].filter((d) => !answered.has(d));
@@ -459,49 +589,5 @@ describe("each documented operation matches its handler", () => {
 			if (missing.length) offenders.push(`${label(operation)}: writes ${missing.join(", ")} undeclared`);
 		}
 		expect(offenders).toEqual([]);
-	});
-});
-
-describe("every copied validator is the route's own", () => {
-	/** Identifiers a node references. */
-	function identifiers(node: ts.Node): Set<string> {
-		return new Set(descendants(node).flatMap((n) => (ts.isIdentifier(n) ? [n.text] : [])));
-	}
-
-	it("prints identically to the route's, with the same imports and local constants", () => {
-		const offenders: string[] = [];
-		for (const entry of Object.values(ROUTE_BODIES)) {
-			const original = topLevelConst(entry.route, entry.name);
-			const copy = topLevelConst(ROUTE_BODIES_SOURCE, entry.name);
-			if (!original || !copy) {
-				offenders.push(`${entry.route}#${entry.name}: ${original ? "copy" : "route const"} not found`);
-				continue;
-			}
-			if (printed(entry.route, original) !== printed(ROUTE_BODIES_SOURCE, copy)) {
-				offenders.push(`${entry.route}#${entry.name}: the copy differs from the route`);
-			}
-			for (const id of identifiers(original)) {
-				const routeImport = importOf(entry.route, id);
-				const local = topLevelConst(entry.route, id);
-				if (routeImport !== undefined && importOf(ROUTE_BODIES_SOURCE, id) !== routeImport) {
-					offenders.push(`${entry.route}#${entry.name}: ${id} must be imported from ${routeImport}`);
-				}
-				if (local !== undefined && id !== entry.name) {
-					const copied = topLevelConst(ROUTE_BODIES_SOURCE, id);
-					if (!copied || printed(entry.route, local) !== printed(ROUTE_BODIES_SOURCE, copied)) {
-						offenders.push(`${entry.route}#${entry.name}: local constant ${id} differs or is not copied`);
-					}
-				}
-			}
-		}
-		expect(offenders).toEqual([]);
-	});
-
-	it("is used by an operation", () => {
-		const used = new Set(OPERATIONS.map((o) => o.body));
-		const unused = Object.entries(ROUTE_BODIES)
-			.filter(([, entry]) => !used.has(entry.schema))
-			.map(([key]) => key);
-		expect(unused).toEqual([]);
 	});
 });

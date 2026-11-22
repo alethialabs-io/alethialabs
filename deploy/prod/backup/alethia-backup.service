@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Nightly off-box backup (REL-L7, #6908). Installed by docs/ops/restore-runbook.md, "Install the
-# backup job". The scripts live in the deployed checkout, so a deploy updates them.
+# Nightly off-box backup (REL-L7, #6908). Installed by ops/setup-box.sh (docs/ops/restore-runbook.md,
+# "One-time setup"). The scripts live in the deployed checkout, so a deploy updates them.
 [Unit]
 Description=Alethia off-box backup (Postgres dump, SeaweedFS buckets, erasure tombstones)
 Wants=network-online.target

@@ -909,9 +909,12 @@ func keylessProbeSQL(engine, table, canary string) string {
 // rejected it as a duplicate — the product was wired and working, the instrument failed.
 const keylessDebugContainerPrefix = "alethia-e2e-debug-"
 
-// keylessDebugContainerName is the ephemeral container name for one probe step (`tag`).
-func keylessDebugContainerName(tag string) string {
-	return keylessDebugContainerPrefix + tag
+// keylessDebugContainerName is the ephemeral container name for one probe exec: the step (`tag`) and
+// its sequence number. A pod's ephemeralContainers list is append-only, so every exec needs a name
+// no earlier exec used — the 2026-11-22 aws run (45030099973) proved the session and the rotation,
+// then failed the post-dwell query because it reused "alethia-e2e-debug-probe".
+func keylessDebugContainerName(tag string, seq int64) string {
+	return fmt.Sprintf("%s%s-%d", keylessDebugContainerPrefix, tag, seq)
 }
 
 // keylessClientArgv builds the client invocation for the ephemeral probe container. No password is
