@@ -1,6 +1,6 @@
 ---
 title: Authentication
-description: Device Authorization Grant flow for people, service-account tokens for pipelines, token storage, and automatic refresh.
+description: Device Authorization Grant flow for people, service-account tokens for pipelines, credential storage in the system keychain, and automatic refresh.
 ---
 
 # Authentication
@@ -27,7 +27,45 @@ alethia login
 3. Check that the code on screen is the one your terminal printed, then approve. Nothing is typed
    back into the terminal.
 4. The CLI, which has been waiting with a spinner, receives an access and refresh token pair and
-   saves it to `~/.config/alethia/credentials.json`.
+   stores it in the system keychain. It then prints one line that says where the credential was
+   stored. See [Credential storage](#credential-storage).
+
+The URL, the code and every notice go to stderr. The result goes to stdout: one sentence, or one JSON
+object with `--output json`.
+
+```bash
+alethia login --output json
+```
+
+```json
+{
+  "id": "alethialabs.io",
+  "kind": "session",
+  "action": "created",
+  "job": null,
+  "dry_run": false,
+  "object": { "user": "you@example.com", "origin": "https://alethialabs.io", "stored_in": "keychain" }
+}
+```
+
+| Flag | What it does |
+| --- | --- |
+| `--force`, `-f` | Sign in again even when a session is already stored |
+| `--web-origin` | Sign in to this control plane and remember its URL, for a self-hosted or development control plane |
+| `--no-browser` | Print the sign-in URL without opening a browser, so you can open it on another machine |
+| `--insecure-storage` | Store the credential in the owner-only file instead of the system keychain |
+
+```bash
+alethia login --web-origin https://alethia.example.com   # a self-hosted control plane
+alethia login --no-browser                                # open the printed URL yourself
+```
+
+`alethia login` refuses while `ALETHIA_TOKEN` or `--token` is set, and exits with status 7. Every
+command would continue to use the supplied token, so the sign-in would change nothing. Remove the
+variable first.
+
+If you refuse the sign-in in the browser, the command exits with status 5. If the code expires or the
+wait times out, it exits with status 4. In each case nothing is stored.
 
 ## Refusing a login you did not start
 
@@ -53,8 +91,9 @@ Re-authenticates even if a valid token already exists. Useful when switching acc
 
 On a terminal you do not need the flag. If you are already signed in, `alethia login` names the account
 and asks whether to keep that session or sign in again. **Keep this session** is the first option, so
-pressing Enter changes nothing. With `--no-input`, or with no terminal, the command asks nothing: it
-prints the account, keeps the session and exits 0. Pass `--force` to sign in again from a script.
+pressing Enter changes nothing. With `--no-input`, with no terminal, or when an agent runs the command,
+it asks nothing: it names the account, keeps the session, reports `"action": "unchanged"` and exits 0.
+Pass `--force` to sign in again from a script.
 
 A first sign-in asks no question. The control-plane URL is not asked for here: pass `--web-origin`, or
 use `alethia init` for the guided first-run setup.
@@ -65,11 +104,73 @@ use `alethia init` for the guided first-run setup.
 alethia logout
 ```
 
-Removes `~/.config/alethia/credentials.json` and the kubeconfig credential cache, for every
+Removes the stored credential for the current control plane from both places it can be: the system
+keychain and the credentials file. It also deletes the kubeconfig credential cache, for every
 organization. After that, an exec kubeconfig from `alethia cluster kubeconfig` fails until you run
-`alethia login` again. If the CLI cannot delete the cache, `alethia logout` prints the reason and
-exits with a non-zero status. See
-[Revoke access](/guides/get-a-kubeconfig#revoke-access).
+`alethia login` again. See [Revoke access](/guides/get-a-kubeconfig#revoke-access).
+
+`alethia logout` tries every removal before it reports a failure. If it cannot delete the keychain
+entry, the file or the cache, it prints the reason on stderr and exits with a non-zero status. If you
+are not signed in, it changes nothing and exits 0.
+
+`alethia logout` does not unset `ALETHIA_TOKEN`. A token from the environment is never stored, so
+there is nothing to remove. The command warns you that the variable is still set.
+
+```bash
+alethia logout --output json
+```
+
+```json
+{
+  "id": "alethialabs.io",
+  "kind": "session",
+  "action": "deleted",
+  "job": null,
+  "dry_run": false,
+  "object": { "origin": "https://alethialabs.io", "keychain": true, "file": false, "kubeconfig_cache": true }
+}
+```
+
+## Check the credential in use
+
+```bash
+alethia auth status
+```
+
+Shows the credential that the next command would send: the account, the control plane, where the
+credential is stored and when the access token expires. The credential itself is never printed.
+
+`alethia auth status` reads the stored credential and sends no request. Use `alethia whoami` when
+you want the control plane to confirm the identity. `alethia whoami` shows the same storage and
+expiry lines.
+
+```bash
+alethia auth status --output json
+```
+
+```json
+{
+  "user": "you@example.com",
+  "origin": "https://alethialabs.io",
+  "source": "keychain",
+  "stored_in": "the system keychain",
+  "expires_at": "2027-01-31T10:15:00Z",
+  "renews_automatically": true
+}
+```
+
+`source` is one of four values:
+
+| `source` | Where the credential comes from |
+| --- | --- |
+| `flag` | The `--token` flag. Not stored. |
+| `env` | The `ALETHIA_TOKEN` environment variable. Not stored. |
+| `keychain` | The system keychain |
+| `file` | The owner-only credentials file. `path` gives its location. |
+
+For `flag` and `env`, `user` is absent, because a supplied token does not name an account that the
+CLI can read. `expires_at` is `null` when the token does not state its own expiry, as a
+service-account token does not. With no credential, the command exits with status 4.
 
 ## Token Lifecycle
 
@@ -81,6 +182,9 @@ exits with a non-zero status. See
 Before each API call, alethia checks the access token's expiry and refreshes it automatically when it
 is within a minute of expiring — see [Refresh](/reference/standards/device-code#refresh). You never
 notice it.
+
+If the control plane refuses a stored access token during a command, the CLI renews the credential
+once and sends the request again. A token from `ALETHIA_TOKEN` or `--token` is never renewed.
 
 ## Identity & Active Org
 
@@ -210,7 +314,7 @@ an unattended pipeline is a higher bar than deploying infrastructure by hand.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ALETHIA_WEB_ORIGIN` | Production URL (baked at build) | Override the Alethia API URL |
-| `ALETHIA_TOKEN` | unset | A service-account token for non-interactive use. When set, the CLI uses it and never reads or writes the credentials file. |
+| `ALETHIA_TOKEN` | unset | A service-account token for non-interactive use. When set, the CLI uses it before any stored credential, and never writes it to the system keychain or to a file. |
 
 ```bash
 export ALETHIA_WEB_ORIGIN=http://localhost:3000
@@ -221,17 +325,35 @@ The `--token` flag does the same thing as `$ALETHIA_TOKEN` and takes precedence 
 environment variable in CI: a flag value lands in the process table and in shell history, where an
 environment variable does not.
 
-## Token Storage
+## Credential storage
+
+`alethia login` stores the credential in the credential store of the operating system:
+
+| System | Store |
+| --- | --- |
+| macOS | Keychain |
+| Linux | The Secret Service, for example GNOME Keyring or KWallet |
+| Windows | Credential Manager |
+
+The entry is filed under the service `alethia`, with the host of the control plane as the account.
+
+Some hosts have no credential store: a container, a CI runner, or a Linux host with no desktop
+session. On those hosts the CLI stores the credential in a file that only your user can read:
 
 ```
 ~/.config/alethia/credentials.json
 ```
 
+The CLI also uses the file when the credential store does not answer within 3 seconds, and when you
+pass `--insecure-storage`. In each case `alethia login` prints one line on stderr that says which of
+the two it used. The file has mode `0600` and its directory has mode `0700`.
+
 ```json
 {
   "access_token": "eyJ...",
   "refresh_token": "eyJ...",
-  "user_email": "you@example.com"
+  "user_email": "you@example.com",
+  "origin": "https://alethialabs.io"
 }
 ```
 
@@ -240,5 +362,32 @@ stored. The active-org context is kept separately in `~/.config/alethia/config.j
 [Configuration](/reference/cli/configuration)).
 
 <Callout type="warn">
-This file contains authentication tokens. It is not encrypted — protect it with filesystem permissions.
+The credentials file is not encrypted. Filesystem permissions are its only protection. Prefer the
+system keychain where one is available.
 </Callout>
+
+### The order the CLI looks for a credential
+
+1. The `--token` flag
+2. The `ALETHIA_TOKEN` environment variable
+3. The system keychain
+4. The credentials file
+
+The first one found is used. A supplied token always wins over a stored sign-in.
+
+### One credential for each control plane
+
+A stored credential records the control plane that issued it, and the CLI uses it for that control
+plane only. If you change `web-origin`, the CLI does not send the old credential to the new URL. It
+reports that you are not signed in, and you run `alethia login` again. The system keychain holds one
+entry for each control plane. The credentials file holds one credential.
+
+### Moving from the file to the keychain
+
+An earlier version of the CLI stored every credential in the file. This version reads that file
+without changing it. The next time you sign in, or the next time the CLI renews the access token, it
+writes the credential to the system keychain, reads the entry back, and compares it with what it
+wrote. Only then does it remove the file, and it prints one line that says the credential moved. If
+the keychain entry does not read back, the file stays.
+
+A credential stored with `--insecure-storage` stays in the file.

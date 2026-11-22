@@ -9,19 +9,17 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 
-const { enableMut, disableMut } = vi.hoisted(() => ({
-	enableMut: { mutateAsync: vi.fn(), isPending: false },
+const { disableMut } = vi.hoisted(() => ({
 	disableMut: { mutateAsync: vi.fn(), isPending: false },
 }));
 vi.mock("@/lib/query/use-addons-query", () => ({
-	useEnableAddon: () => enableMut,
 	useDisableAddon: () => disableMut,
 	useRequestGitopsBump: () => ({ mutate: () => {}, isPending: false }),
 	useAddonsQuery: vi.fn(),
 }));
 
 import { AddonConfigForm } from "@/components/addons/addon-config-card";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { setBoardNodes } from "@/tests/fixtures/canvas/board";
 
 /** A minimal marketplace item; `requires` varies per test. */
 function makeItem(requires: AddonMarketItem["requires"]): AddonMarketItem {
@@ -84,8 +82,8 @@ describe("AddonConfigForm requirements", () => {
 describe("AddonConfigForm compat hint", () => {
 	/** The sheet reads the cluster's version straight from the canvas store. */
 	function setCluster(version: string | null) {
-		useCanvasStore.setState({
-			nodes: version
+		setBoardNodes(
+			version
 				? [
 						{
 							id: "cluster",
@@ -100,7 +98,7 @@ describe("AddonConfigForm compat hint", () => {
 						},
 					]
 				: [],
-		});
+		);
 	}
 
 	const kyverno = { ...makeItem([]), id: "kyverno", name: "Kyverno" };

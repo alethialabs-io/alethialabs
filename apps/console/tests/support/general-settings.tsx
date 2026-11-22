@@ -34,6 +34,8 @@ export const MY_APP: ProjectGeneralRow = {
 	id: "5f0c4b8e-2d1a-4c3b-9e7f-0a1b2c3d4e5f",
 	project_name: "My App",
 	slug: "my-app",
+	canManage: true,
+	canDelete: true,
 };
 
 /** A client that never refetches on its own, so what a test seeds is what the page renders. */

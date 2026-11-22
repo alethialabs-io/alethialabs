@@ -1,0 +1,248 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$comment": "SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io> SPDX-License-Identifier: AGPL-3.0-only. The front matter of one beta evidence record. docs/beta/README.md defines the predicates B1-B9, which predicates take a record, and the directory each record lives in.",
+	"title": "Beta evidence record",
+	"description": "The YAML front matter of one evidence record, parsed to JSON. One record is one observation: one predicate, one cloud (or all), one moment, one build, one verdict.",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["schemaVersion", "predicate", "cloud", "date", "buildSha", "verdict", "instrument"],
+	"properties": {
+		"schemaVersion": {
+			"description": "The version of this format. A change that breaks an existing record adds a new version.",
+			"const": 1
+		},
+		"predicate": {
+			"description": "The beta predicate this record is evidence for.",
+			"enum": ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9"]
+		},
+		"cloud": {
+			"description": "The cloud observed, or `all` for a predicate that is not per cloud. The four slugs are B1's offered set and must change with it.",
+			"enum": ["aws", "gcp", "azure", "hetzner", "all"]
+		},
+		"date": {
+			"description": "When the observation was made, in UTC (RFC 3339, ending in Z). Freshness windows are measured from this value.",
+			"type": "string",
+			"format": "date-time",
+			"pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?Z$"
+		},
+		"buildSha": {
+			"description": "The full 40-character commit SHA of the build under test.",
+			"type": "string",
+			"pattern": "^[0-9a-f]{40}$"
+		},
+		"verdict": {
+			"description": "pass, fail, or not-measured. Only pass can make a predicate true.",
+			"enum": ["pass", "fail", "not-measured"]
+		},
+		"instrument": {
+			"description": "What made the observation: a repository path (a skill, script or workflow), or `manual` for a hand observation that the body describes step by step.",
+			"type": "string",
+			"minLength": 1
+		},
+		"evidence": {
+			"description": "Where the observation can be checked: repository paths or https URLs. Required on a pass.",
+			"type": "array",
+			"items": { "type": "string", "minLength": 1 },
+			"uniqueItems": true
+		},
+		"observer": {
+			"description": "Who made the observation.",
+			"enum": ["agent", "maintainer", "cohort"]
+		},
+		"aspect": {
+			"description": "A narrower part of the predicate this record covers, as a lower-case slug. Example: `managed-runner` for the B2 runner records.",
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*$"
+		},
+		"freshAccount": {
+			"description": "B2: the path started from an account created for this run.",
+			"type": "boolean"
+		},
+		"steps": {
+			"description": "B2: the golden-path steps that completed.",
+			"type": "array",
+			"items": { "enum": ["sign-up", "connect", "design", "deploy", "running-cluster", "destroy"] },
+			"uniqueItems": true
+		},
+		"path": {
+			"description": "B3: which path the record covers.",
+			"enum": ["cli", "agent"]
+		},
+		"substrate": {
+			"description": "B3 agent path: whether the run reached a real cloud or the stub runner.",
+			"enum": ["real", "stub"]
+		},
+		"approvedBy": {
+			"description": "B3 agent path: who gave the human approval. An agent cannot approve its own change.",
+			"enum": ["maintainer", "cohort"]
+		},
+		"events": {
+			"description": "B5: the live billing events observed.",
+			"type": "array",
+			"items": { "enum": ["purchase", "failed-renewal", "cancel", "refund", "tax-invoice"] },
+			"uniqueItems": true
+		},
+		"check": {
+			"description": "B7: which operations check this record covers.",
+			"enum": ["restore-drill"]
+		},
+		"durationSeconds": {
+			"description": "B7 restore drill: wall-clock time from an empty box to a serving console.",
+			"type": "integer",
+			"minimum": 0
+		},
+		"tombstonesReplayed": {
+			"description": "B7 restore drill: erasure tombstones were replayed before the restored console served.",
+			"type": "boolean"
+		},
+		"edition": {
+			"description": "B8: the edition whose own predicates this record reports.",
+			"enum": ["hosted", "enterprise", "self-hosted"]
+		}
+	},
+	"allOf": [
+		{
+			"$comment": "A pass names where it can be checked.",
+			"if": { "properties": { "verdict": { "const": "pass" } }, "required": ["verdict"] },
+			"then": { "required": ["evidence"], "properties": { "evidence": { "type": "array", "minItems": 1 } } }
+		},
+		{
+			"$comment": "Per-cloud predicates name one cloud.",
+			"if": { "properties": { "predicate": { "enum": ["B2", "B3", "B4"] } }, "required": ["predicate"] },
+			"then": { "properties": { "cloud": { "enum": ["aws", "gcp", "azure", "hetzner"] } } }
+		},
+		{
+			"$comment": "Predicates that are not per cloud use all.",
+			"if": { "properties": { "predicate": { "enum": ["B1", "B5", "B6", "B7", "B8"] } }, "required": ["predicate"] },
+			"then": { "properties": { "cloud": { "const": "all" } } }
+		},
+		{
+			"$comment": "B2 states the account and the steps; a pass needs a fresh account and all six steps. A managed-runner aspect record is taken during the same run and carries neither.",
+			"if": {
+				"properties": { "predicate": { "const": "B2" } },
+				"required": ["predicate"],
+				"not": { "required": ["aspect"] }
+			},
+			"then": {
+				"required": ["freshAccount", "steps"],
+				"if": { "properties": { "verdict": { "const": "pass" } } },
+				"then": {
+					"properties": {
+						"freshAccount": { "const": true },
+						"steps": {
+							"type": "array",
+							"allOf": [
+								{ "contains": { "const": "sign-up" } },
+								{ "contains": { "const": "connect" } },
+								{ "contains": { "const": "design" } },
+								{ "contains": { "const": "deploy" } },
+								{ "contains": { "const": "running-cluster" } },
+								{ "contains": { "const": "destroy" } }
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"$comment": "B3 names its path.",
+			"if": { "properties": { "predicate": { "const": "B3" } }, "required": ["predicate"] },
+			"then": { "required": ["path"] }
+		},
+		{
+			"$comment": "The B3 agent path states its substrate and who approved. Decision M35: real on hetzner, stubbed on the other three, stated as such; so a hetzner pass must be real.",
+			"if": {
+				"properties": { "predicate": { "const": "B3" }, "path": { "const": "agent" } },
+				"required": ["predicate", "path"]
+			},
+			"then": {
+				"required": ["substrate", "approvedBy"],
+				"if": {
+					"properties": { "cloud": { "const": "hetzner" }, "verdict": { "const": "pass" } },
+					"required": ["cloud", "verdict"]
+				},
+				"then": { "properties": { "substrate": { "const": "real" } } }
+			}
+		},
+		{
+			"$comment": "substrate and approvedBy belong to the B3 agent path only.",
+			"if": {
+				"anyOf": [{ "required": ["substrate"] }, { "required": ["approvedBy"] }]
+			},
+			"then": {
+				"properties": { "predicate": { "const": "B3" }, "path": { "const": "agent" } },
+				"required": ["predicate", "path"]
+			}
+		},
+		{
+			"$comment": "B5 lists its events; a pass needs all five.",
+			"if": { "properties": { "predicate": { "const": "B5" } }, "required": ["predicate"] },
+			"then": {
+				"required": ["events"],
+				"if": { "properties": { "verdict": { "const": "pass" } } },
+				"then": {
+					"properties": {
+						"events": {
+							"type": "array",
+							"allOf": [
+								{ "contains": { "const": "purchase" } },
+								{ "contains": { "const": "failed-renewal" } },
+								{ "contains": { "const": "cancel" } },
+								{ "contains": { "const": "refund" } },
+								{ "contains": { "const": "tax-invoice" } }
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"$comment": "B7 records are restore drills; a pass replayed the tombstones and states its duration.",
+			"if": { "properties": { "predicate": { "const": "B7" } }, "required": ["predicate"] },
+			"then": {
+				"required": ["check", "tombstonesReplayed"],
+				"if": { "properties": { "verdict": { "const": "pass" } } },
+				"then": {
+					"required": ["durationSeconds"],
+					"properties": { "tombstonesReplayed": { "const": true } }
+				}
+			}
+		},
+		{
+			"$comment": "B8 names its edition.",
+			"if": { "properties": { "predicate": { "const": "B8" } }, "required": ["predicate"] },
+			"then": { "required": ["edition"] }
+		},
+		{
+			"$comment": "Fields that belong to one predicate are refused on another.",
+			"allOf": [
+				{
+					"if": { "anyOf": [{ "required": ["freshAccount"] }, { "required": ["steps"] }] },
+					"then": { "properties": { "predicate": { "const": "B2" } } }
+				},
+				{
+					"if": { "required": ["path"] },
+					"then": { "properties": { "predicate": { "const": "B3" } } }
+				},
+				{
+					"if": { "required": ["events"] },
+					"then": { "properties": { "predicate": { "const": "B5" } } }
+				},
+				{
+					"if": {
+						"anyOf": [
+							{ "required": ["check"] },
+							{ "required": ["durationSeconds"] },
+							{ "required": ["tombstonesReplayed"] }
+						]
+					},
+					"then": { "properties": { "predicate": { "const": "B7" } } }
+				},
+				{
+					"if": { "required": ["edition"] },
+					"then": { "properties": { "predicate": { "const": "B8" } } }
+				}
+			]
+		}
+	]
+}

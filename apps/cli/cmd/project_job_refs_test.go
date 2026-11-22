@@ -134,7 +134,7 @@ func TestPlanJobToApply_NoPlanForThisProject(t *testing.T) {
 	if err == nil {
 		t.Fatalf("no PLAN for this project must be refused, resolved %q", got.ID)
 	}
-	if !strings.Contains(err.Error(), "alethia project plan") {
+	if !strings.Contains(err.Error(), "alethia project preview") {
 		t.Errorf("the refusal must name the command that produces one: %v", err)
 	}
 }
@@ -238,9 +238,6 @@ func TestProjApply_RunnerNameReachesTheQueuedJob(t *testing.T) {
 	if h.run("project", "apply", "--project", "web", "--runner", "primary", "--output", "json") {
 		t.Fatal("project apply --runner exited fatally")
 	}
-	if projectApplyRunnerID != "r1" {
-		t.Errorf("--runner primary resolved to %q, want the runner's id r1", projectApplyRunnerID)
-	}
 	post, ok := s.lastPost()
 	if !ok {
 		t.Fatal("no job was queued")
@@ -259,8 +256,12 @@ func TestProjPlan_RunnerNameReachesTheQueuedJob(t *testing.T) {
 	if h.run("project", "plan", "--project", "web", "--runner", "primary", "--output", "json") {
 		t.Fatal("project plan --runner exited fatally")
 	}
-	if projectPlanRunnerID != "r1" {
-		t.Errorf("--runner primary resolved to %q, want the runner's id r1", projectPlanRunnerID)
+	post, ok := s.lastPost()
+	if !ok {
+		t.Fatal("no job was queued")
+	}
+	if got := post.Body["assigned_runner_id"]; got != "r1" {
+		t.Errorf("the queued job carries assigned_runner_id %v, want r1", got)
 	}
 }
 

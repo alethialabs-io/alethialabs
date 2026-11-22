@@ -273,11 +273,18 @@ func TestRunFleetSet(t *testing.T) {
 	f := &fakeClient{updatedPool: &api.FleetPool{Provider: "aws", WarmMin: 3, Max: 10, Enabled: true}}
 	warmMin := 3
 	update := api.FleetPoolUpdate{WarmMin: &warmMin}
-	if err := runFleetSet(f, &buf, "aws", update); err != nil {
+	result, err := runFleetSet(f, "aws", update)
+	if err != nil {
 		t.Fatalf("runFleetSet: %v", err)
 	}
 	if f.setPoolProv != "aws" || f.setPoolUpdate.WarmMin == nil || *f.setPoolUpdate.WarmMin != 3 {
 		t.Errorf("update not recorded: %+v", f.setPoolUpdate)
+	}
+	if result.ID != "aws" || result.Kind != fleetPoolKind || result.Action != ResultUpdated {
+		t.Errorf("result = %+v", result)
+	}
+	if err := printFleetSet(testPrinter(&buf, "table"), result); err != nil {
+		t.Fatalf("printFleetSet: %v", err)
 	}
 	if !strings.Contains(buf.String(), "Updated aws pool") {
 		t.Errorf("expected success line: %s", buf.String())
@@ -285,8 +292,7 @@ func TestRunFleetSet(t *testing.T) {
 }
 
 func TestRunFleetSetError(t *testing.T) {
-	var buf bytes.Buffer
-	if err := runFleetSet(&fakeClient{err: errBoom}, &buf, "aws", api.FleetPoolUpdate{}); err == nil {
+	if _, err := runFleetSet(&fakeClient{err: errBoom}, "aws", api.FleetPoolUpdate{}); err == nil {
 		t.Error("expected error propagated")
 	}
 }

@@ -28,7 +28,7 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 | --- | --- |
 | Web Control Plane | Next.js 16, React 19, TypeScript 5.9, Postgres + Drizzle, Better Auth, Tailwind CSS 4, shadcn/ui |
 | CLI | Go 1.27, Cobra, Charmbracelet TUI (bubbletea, huh, lipgloss) |
-| Runner | Go 1.27, OpenTofu exec, multi-cloud SDKs (AWS, GCP, Azure, Alibaba) |
+| Runner | Go 1.27, OpenTofu exec, multi-cloud SDKs (AWS, GCP, Azure) |
 | Documentation | Next.js 16, Fumadocs, MDX |
 | Infrastructure | OpenTofu (per-cloud project templates), Hetzner control plane + runner fleet, ArgoCD |
 | Monorepo | pnpm workspaces, Turborepo, Go workspaces |
@@ -57,7 +57,7 @@ packages/
   eslint-config/     — ESLint configurations
   typescript-config/ — Shared tsconfig
 infra/
-  templates/         — Project IaC templates (AWS, GCP, Azure, Alibaba)
+  templates/         — Project IaC templates (AWS, GCP, Azure, Hetzner)
   connector/         — Cloud account bootstrap scripts
   cp-hetzner/        — Control-plane infrastructure
   sandbox/           — The developer sandbox box
@@ -164,7 +164,7 @@ Run the whole platform (console · docs · Postgres · object storage · runner)
 docker-compose bundle on any cloud VM:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh \
+curl -fsSL https://get.alethialabs.io/self-host \
   | DOMAIN=alethia.example.com ACME_EMAIL=you@example.com sh
 ```
 

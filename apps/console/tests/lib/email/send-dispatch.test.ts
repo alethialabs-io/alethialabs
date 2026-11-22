@@ -7,7 +7,7 @@
 // rendered exactly once for a configured provider and NOT at all when none is
 // configured (log-only), and the dev-swallow / prod-throw error semantics. The
 // concrete transport + error assertions use the SES path because its SDK is CJS and
-// mocks reliably (the ESM-only resend/nodemailer packages are externalized by
+// mocks reliably (the ESM-only nodemailer package is externalized by
 // Vitest across the package boundary, so mocking them from here is unreliable).
 // Each case re-imports send.ts after vi.resetModules() so its cached client and the
 // config singleton re-read the current process.env.
@@ -126,6 +126,7 @@ describe("sendEmail — dispatch & error semantics", () => {
 	});
 
 	it("rethrows a send failure in production, tagged with the provider", async () => {
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
 		vi.stubEnv("NODE_ENV", "production");
 		process.env.ALETHIA_SES_REGION = "eu-central-1";
 		h.sesSend.mockRejectedValue(new Error("sandbox rejected recipient"));
@@ -133,5 +134,59 @@ describe("sendEmail — dispatch & error semantics", () => {
 		await expect(sendEmail(base)).rejects.toThrow(
 			/via ses: sandbox rejected recipient/,
 		);
+		error.mockRestore();
+	});
+
+	it("writes ONE structured error line for a failed SES send, without the recipient or subject", async () => {
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		vi.stubEnv("NODE_ENV", "production");
+		process.env.ALETHIA_SES_REGION = "eu-central-1";
+		// The shape an AWS SDK v3 service exception has: a named Error with $metadata.
+		const rejected = Object.assign(
+			new Error(
+				"Email address is not verified. The following identities failed the check in region EU-CENTRAL-1: b@acme.io",
+			),
+			{ name: "MessageRejected", $metadata: { httpStatusCode: 400 } },
+		);
+		h.sesSend.mockRejectedValue(rejected);
+		const sendEmail = await loadSend();
+		await expect(
+			sendEmail({
+				...base,
+				subject: "Your code 123456",
+				configurationSetName: "alethia-auth",
+			}),
+		).rejects.toThrow();
+
+		expect(error).toHaveBeenCalledTimes(1);
+		const line = String(error.mock.calls[0]?.[0]);
+		expect(JSON.parse(line)).toMatchObject({
+			level: "error",
+			event: "email.send_failed",
+			provider: "ses",
+			configuration_set: "alethia-auth",
+			err: {
+				type: "MessageRejected",
+				http_status: 400,
+				message: expect.stringContaining("[email]"),
+			},
+		});
+		expect(line).not.toContain("b@acme.io");
+		expect(line).not.toContain("123456");
+		error.mockRestore();
+	});
+
+	it("writes the structured line in development too, where the send is swallowed", async () => {
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		process.env.ALETHIA_SES_REGION = "eu-central-1";
+		h.sesSend.mockRejectedValue(new Error("throttled"));
+		const sendEmail = await loadSend();
+		await sendEmail(base);
+		expect(error).toHaveBeenCalledWith(
+			expect.stringContaining('"event":"email.send_failed"'),
+		);
+		error.mockRestore();
+		warn.mockRestore();
 	});
 });

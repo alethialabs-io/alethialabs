@@ -49,6 +49,7 @@ import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
 import { type Money, money } from "@repo/format";
 import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
 import { currencyFromRequest } from "@/lib/billing/currency";
+import { personTrialAvailable, releaseTrial, reserveTrial, trialSalesOpen } from "@/lib/billing/trial";
 import { isManualGrantExpired, resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getOrgInvoice, listOrgInvoices } from "@/lib/billing/invoices";
@@ -1596,14 +1597,20 @@ async function startAiSubscription(
  * Starts a 30-day Pro trial for the active org WITHOUT collecting a payment method —
  * zero-friction onboarding. The subscription begins in `trialing` immediately (no
  * invoice, no card); at trial end Stripe CANCELS it if no card was added by then
- * (`missing_payment_method: "cancel"` → the org reverts to community/free; the user can
- * add a card from billing before then to continue). "cancel" is also the only end
+ * (`missing_payment_method: "cancel"` → the org reverts to Hobby (`community`) with its data kept;
+ * lib/billing/trial/end.ts). "cancel" is also the only end
  * behavior Stripe allows on a card-less trial that includes a metered item (the
  * runner-minutes meter). Syncs the billing row synchronously so the `organizations`
  * entitlement is live for the whole trial. Owner-gated; hosted-only; refuses when the org's
  * row already stands for a plan (`orgRowBlocksNewPlan`: a live or `past_due` subscription, or a
  * live off-Stripe grant). No automatic_tax here — there's no
  * address/invoice yet; tax is computed when the customer later adds payment.
+ *
+ * THE SAME GATE AS A PURCHASE (decision M12, #6907): `gatePaidConversion` runs first, so a trial is
+ * refused for exactly the reasons a purchase is — terms, declared capacity, billing country, market.
+ * Then the trial's own ceilings (lib/billing/trial): one per organization, and the per-person and
+ * per-network ceilings from lib/abuse/limits.ts. They are reserved before the Stripe call and given
+ * back if no subscription was created.
  */
 export async function startProTrial(opts?: {
 	currency?: SupportedCurrency;
@@ -1631,10 +1638,14 @@ export async function startProTrial(opts?: {
 	if (actor.orgId === actor.userId) {
 		throw new Error("Create an organization before starting a trial.");
 	}
+	// Decision M12 (#6907): the trial passes the purchase gate, and is refused for the same reasons.
+	await gatePaidConversion(actor);
 	// One trial per ACCOUNT (not per org) — so spinning up extra orgs grants no extra
-	// trials. The ledger lives on the user row; getProOffer reads the same flag.
+	// trials. The ledger lives on the user row; getProOffer reads the same flag. The per-person
+	// ceiling below (lib/billing/trial) carries the same rule past the account: it is keyed on the
+	// email address, so a deleted and re-created account does not get a second trial.
 	const [u] = await getServiceDb()
-		.select({ proTrialConsumedAt: user.proTrialConsumedAt })
+		.select({ proTrialConsumedAt: user.proTrialConsumedAt, email: user.email })
 		.from(user)
 		.where(eq(user.id, actor.userId))
 		.limit(1);
@@ -1657,12 +1668,27 @@ export async function startProTrial(opts?: {
 	const openSetup = await openSetupRefusal(actor);
 	if (openSetup) throw new Error(openSetup);
 
+	// The ceilings (one per organization, per person, per network), spent all together or not at all.
+	const reservation = await reserveTrial({ orgId: actor.orgId, email: u?.email });
+	// Given back only while Stripe has created nothing: once the trial exists it stays counted.
+	const minted = { done: false };
 	// The org-plan lease alone (ADR 0004 D3): the trial never took the advisory key, so it has none to keep.
 	// It waits for an intent or a Checkout of the same org, and they wait for it.
-	const run = await runUnderPurchaseLease(`org-plan:${actor.orgId}`, (lease) =>
-		startOrgTrial(actor, opts?.currency, lease),
-	);
-	if (!run.ran) throw new Error(run.lost ? PURCHASE_STOPPED : PURCHASE_IN_PROGRESS);
+	let run: LeaseRun<void>;
+	try {
+		run = await runUnderPurchaseLease(`org-plan:${actor.orgId}`, (lease) =>
+			startOrgTrial(actor, opts?.currency, lease, () => {
+				minted.done = true;
+			}),
+		);
+	} catch (err) {
+		if (!minted.done) await releaseTrial(reservation);
+		throw err;
+	}
+	if (!run.ran) {
+		if (!minted.done) await releaseTrial(reservation);
+		throw new Error(run.lost ? PURCHASE_STOPPED : PURCHASE_IN_PROGRESS);
+	}
 }
 
 /**
@@ -1676,6 +1702,7 @@ async function startOrgTrial(
 	actor: { orgId: string; userId: string },
 	requestedCurrency: SupportedCurrency | undefined,
 	lease: PurchaseLease,
+	onMinted: () => void,
 ): Promise<void> {
 	const fence = fenceFor(lease);
 	await fence();
@@ -1698,6 +1725,7 @@ async function startOrgTrial(
 		// Names this HOLDER, as the other two mints' keys do.
 		{ idempotencyKey: `trial-${lease.key}-${lease.holder}` },
 	);
+	onMinted();
 
 	// Activate the entitlement deterministically (don't wait for the webhook).
 	await syncSubscriptionToBilling(sub);
@@ -1743,13 +1771,18 @@ export interface ProOffer {
  */
 export async function getProOffer(): Promise<ProOffer> {
 	if (!isStripeConfigured()) return { kind: "none" };
+	// Decision M12 (#6907): no trial is offered where no purchase could be made — the launch state's
+	// trial is the paid state, so while every market is closed the CTA is not shown.
+	if (!trialSalesOpen()) return { kind: "none" };
 	const actor = await currentActor();
 	const [u] = await getServiceDb()
-		.select({ proTrialConsumedAt: user.proTrialConsumedAt })
+		.select({ proTrialConsumedAt: user.proTrialConsumedAt, email: user.email })
 		.from(user)
 		.where(eq(user.id, actor.userId))
 		.limit(1);
 	if (u?.proTrialConsumedAt) return { kind: "none" };
+	// The per-person ceiling (lib/abuse/limits.ts `trial_per_person`): "the trial offer is not shown".
+	if (!(await personTrialAvailable(u?.email))) return { kind: "none" };
 	// Belt-and-suspenders over the flag: if the account already owns a live (active/
 	// trialing) org, the one-per-account trial is effectively spent — don't re-offer it
 	// (guards against a flag that was never stamped on a legacy trial).

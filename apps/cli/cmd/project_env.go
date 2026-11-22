@@ -6,9 +6,10 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
@@ -17,10 +18,10 @@ import (
 
 var projectEnvCmd = &cobra.Command{
 	Use:   "env",
-	Short: "Manage a project's environments",
-	Long: `A project owns N independently-provisionable environments (development, staging,
-production, …). List a project's environments or add a new one. The project is named with
---project (its name or id); omit it on a terminal and you are asked.`,
+	Short: "List and add a project's environments",
+	Long: `A project owns any number of environments (development, staging, production, …), each
+deployed and destroyed on its own. Use this group to list a project's environments or add one.
+The project is named with --project (its name or id); omit it on a terminal and you are asked.`,
 }
 
 // currentProject resolves the project a command operates on from the --project flag, which
@@ -35,7 +36,8 @@ func currentProject(cmd *cobra.Command) (string, error) {
 	if p, _ := cmd.Flags().GetString("project"); strings.TrimSpace(p) != "" {
 		return strings.TrimSpace(p), nil
 	}
-	return "", fmt.Errorf("--project is required (pass the project name or id)")
+	return "", refusal(clierr.CodeInputRequired, "alethia project list",
+		"--project is required (pass the project name or id)")
 }
 
 // projectFromFlag is currentProject with a question attached: omitted on a terminal, the
@@ -55,9 +57,30 @@ func projectFromFlag(cmd *cobra.Command, token string) (string, error) {
 	return promptProjectRef(token)
 }
 
+// envListLong is the help of `project env list`.
+const envListLong = `List a project's environments: each one's stage, how it is placed, the namespace and cluster it lands on, its status and its region.
+
+Use it to see what a project is made of, or to find an environment's name before a command that
+takes --env.`
+
+// envAddLong is the help of `project env add`.
+const envAddLong = `Add an environment to a project and place it onto a cluster.
+
+Use it to give a project another tier, for example a development environment beside production.
+The placement decides the cost: "namespace" and "vcluster" share a cluster that already exists,
+"dedicated" provisions a new one. Adding an environment creates its record only; deploy it with
+"alethia project deploy --env".
+
+Pass the name, --stage and --placement-mode, or omit them on a terminal to be asked. The
+questions and the flags are the same four fields, and the equivalent command is printed back so
+it can be committed to a script. --dry-run checks the input and prints the request without
+sending it.`
+
 var projectEnvListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List a project's environments",
+	Long:  envListLong,
+	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -72,20 +95,25 @@ var projectEnvListCmd = &cobra.Command{
 			var envs []api.Environment
 			runSpinner("Fetching environments...", func() { envs, err = client.ListEnvironments(project) })
 			if err != nil {
-				failf("Failed to list environments: %v", err)
+				fail(fmt.Errorf("failed to list environments: %w", err))
 			}
 			if len(envs) == 0 {
-				ui.Muted("No environments found.")
+				printer.Note(noEnvironmentsNote(project))
 				return
 			}
 			// FormatTable: the interactive browser is a person looking at a screen, never a pipe.
 			_ = ui.ShowTable(envListColumns, envRows(envs, ui.FormatTable), "environments")
 			return
 		}
-		if err := runProjectEnvList(client, os.Stdout, outputFormat(cmd), project); err != nil {
-			failf("Failed to list environments: %v", err)
+		if err := runProjectEnvList(client, printer.Out, outputFormat(cmd), project); err != nil {
+			fail(fmt.Errorf("failed to list environments: %w", err))
 		}
 	},
+}
+
+// noEnvironmentsNote is what an empty environment list says, with the command that adds one.
+func noEnvironmentsNote(project string) string {
+	return "No environments in this project. Add one with `alethia project env add --project " + shellQuote(project) + "`."
 }
 
 // Placement, Namespace and Fabric sit next to each other deliberately: read across a row and
@@ -130,8 +158,7 @@ func runProjectEnvList(c apiClient, out io.Writer, format, project string) error
 	if err != nil {
 		return err
 	}
-	if len(envs) == 0 && format == ui.FormatTable {
-		fmt.Fprintln(out, ui.MutedStyle.Render("No environments found."))
+	if len(envs) == 0 && emptyListNote(printer, format, noEnvironmentsNote(project)) {
 		return nil
 	}
 	return ui.Render(out, format, ui.TableSpec{
@@ -295,7 +322,7 @@ func promptEnvironmentSpec(a *envAnswers, isFirst bool) error {
 	}
 	*a = normaliseEnvAnswers(*a)
 	if a.Name == "" {
-		return fmt.Errorf("an environment needs a name")
+		return refusal(clierr.CodeValidationFailed, "", "an environment needs a name")
 	}
 	return validateEnvAnswers(*a)
 }
@@ -333,12 +360,8 @@ var (
 var projectEnvAddCmd = &cobra.Command{
 	Use:   "add [name]",
 	Short: "Add an environment to a project",
-	Long: `Add an environment to a project and place it onto a Fabric.
-
-Pass the name, --stage and --placement-mode, or omit them on a terminal to be asked. The
-questions and the flags are the same four fields, and the equivalent command is printed
-back so it can be committed to a script.`,
-	Args: cobra.MaximumNArgs(1),
+	Long:  envAddLong,
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -369,14 +392,16 @@ back so it can be committed to a script.`,
 			asked = true
 		}
 		if answers.Name == "" {
-			failf("an environment name is required (pass it as the argument)")
+			fail(refusal(clierr.CodeInputRequired, "",
+				"an environment name is required: pass it as the argument"))
 		}
 		answers = normaliseEnvAnswers(answers)
 		if err := validateEnvAnswers(answers); err != nil {
 			fail(err)
 		}
 
-		if err := runProjectEnvAdd(api.NewClient(token), os.Stdout, api.AddEnvironmentParams{
+		outFmt := outputFormat(cmd)
+		if err := runProjectEnvAdd(api.NewClient(token), printerFor(cmd), api.AddEnvironmentParams{
 			Project:   project,
 			Name:      answers.Name,
 			Stage:     answers.Stage,
@@ -385,10 +410,10 @@ back so it can be committed to a script.`,
 			Fabric:    projectEnvFabric,
 			Namespace: answers.Namespace,
 			Lifecycle: projectEnvLifecycle,
-		}); err != nil {
-			failf("Failed to add environment: %v", err)
+		}, cmdmeta.DryRunRequested(cmd)); err != nil {
+			fail(fmt.Errorf("failed to add environment: %w", err))
 		}
-		printReplay(os.Stdout, outputFormat(cmd), asked, envAddReplayArgs(project, answers, projectEnvRegion, projectEnvFabric, projectEnvLifecycle)...)
+		printReplay(printer.Err, outFmt, asked, envAddReplayArgs(project, answers, projectEnvRegion, projectEnvFabric, projectEnvLifecycle)...)
 	},
 }
 
@@ -412,30 +437,60 @@ func envAddReplayArgs(project string, a envAnswers, region, fabric, lifecycle st
 	return args
 }
 
-// runProjectEnvAdd adds an environment and confirms it. The confirmation names the PLACEMENT, because
+// envAddRequest is what `project env add` sends, as the dry run reports it.
+type envAddRequest struct {
+	Project   string `json:"project"`
+	Name      string `json:"name"`
+	Stage     string `json:"stage,omitempty"`
+	Region    string `json:"region,omitempty"`
+	Placement string `json:"placement_mode,omitempty"`
+	Fabric    string `json:"fabric,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Lifecycle string `json:"lifecycle,omitempty"`
+}
+
+// runProjectEnvAdd adds an environment and reports it. The confirmation names the PLACEMENT, because
 // that is the field with a cost: a `dedicated` environment is a whole new cluster with its own state
-// key, and until this flag existed every CLI-added environment silently became one.
-func runProjectEnvAdd(c apiClient, out io.Writer, params api.AddEnvironmentParams) error {
-	env, err := c.AddEnvironment(params)
-	if err != nil {
-		return err
-	}
+// key, and until this flag existed every CLI-added environment silently became one. On a dry run
+// nothing is sent and the result carries the request.
+func runProjectEnvAdd(c apiClient, p *Printer, params api.AddEnvironmentParams, dryRun bool) error {
 	placement := params.Placement
 	if placement == "" {
 		placement = string(placementNamespace)
 	}
-	fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Added environment %s (%s, %s placement)", env.Name, env.Stage, placement)))
-	return nil
+	if dryRun {
+		request := envAddRequest{
+			Project: params.Project, Name: params.Name, Stage: params.Stage, Region: params.Region,
+			Placement: params.Placement, Fabric: params.Fabric, Namespace: params.Namespace,
+			Lifecycle: params.Lifecycle,
+		}
+		return p.Result(MutationResult{
+			ID: params.Name, Kind: "environment", Action: ResultCreated, DryRun: true,
+			Object: map[string]envAddRequest{"request": request},
+		}, func(w io.Writer) {
+			fmt.Fprintln(w, ui.MutedStyle.Render(fmt.Sprintf(
+				"Would add environment %s (%s, %s placement). Nothing was sent.", params.Name, params.Stage, placement)))
+		})
+	}
+	env, err := c.AddEnvironment(params)
+	if err != nil {
+		return err
+	}
+	return p.Result(MutationResult{ID: env.ID, Kind: "environment", Action: ResultCreated, Object: env},
+		func(w io.Writer) {
+			fmt.Fprintln(w, ui.FormatSuccess(fmt.Sprintf("Added environment %s (%s, %s placement)", env.Name, env.Stage, placement)))
+		})
 }
 
 func init() {
 	projectEnvCmd.PersistentFlags().String("project", "", "Project name or id (asked for on a terminal when omitted)")
+	addDryRunFlag(projectEnvAddCmd)
 	projectEnvAddCmd.Flags().StringVar(&projectEnvStage, "stage", string(stageDevelopment), "Environment stage ("+oneOf(environmentStages())+")")
 	projectEnvAddCmd.Flags().StringVar(&projectEnvRegion, "region", "", "Region (inherits the project's region when omitted)")
 	projectEnvAddCmd.Flags().StringVar(&projectEnvPlacement, "placement-mode", "", "Placement onto a Fabric: "+oneOf(placementModes())+" (default namespace — `dedicated` provisions a NEW cluster)")
-	projectEnvAddCmd.Flags().StringVar(&projectEnvFabric, "fabric", "", "Fabric to place onto, by name (default: the Fabric the project's default environment is on)")
+	projectEnvAddCmd.Flags().StringVar(&projectEnvFabric, "fabric", "", "Cluster (Fabric) to place onto, by name (default: the one the project's default environment is on)")
 	projectEnvAddCmd.Flags().StringVar(&projectEnvNamespace, "namespace", "", "ArgoCD destination namespace for a shared placement (default: derived from the name)")
-	projectEnvAddCmd.Flags().StringVar(&projectEnvLifecycle, "lifecycle", "", "persistent|ephemeral (default persistent)")
+	projectEnvAddCmd.Flags().StringVar(&projectEnvLifecycle, "lifecycle", "", "Whether the environment is kept or temporary: persistent|ephemeral (default persistent)")
 	projectEnvCmd.AddCommand(projectEnvListCmd)
 	projectEnvCmd.AddCommand(projectEnvAddCmd)
 	projectCmd.AddCommand(projectEnvCmd)

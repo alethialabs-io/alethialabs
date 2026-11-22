@@ -5,8 +5,6 @@ package cmd
 
 import (
 	"fmt"
-	"io"
-	"os"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -16,23 +14,19 @@ import (
 
 var cloudCmd = &cobra.Command{
 	Use:   "cloud",
-	Short: "Inspect discovered cloud resources",
-	Long: `Alethia inventories the networking (VPCs/VNets, subnets) and regions it discovers in a
-connected cloud account. Show that inventory for a cloud identity.`,
+	Short: "Inspect what Alethia discovered in a connected cloud account",
+	Long: `Alethia inventories the networks, subnets and regions of every connected cloud
+account. These commands show that inventory.`,
 }
 
+// cloudInventoryCmd shows one account's inventory. Its Long names the offered clouds, so it is
+// written by applyCloudHelp.
 var cloudInventoryCmd = &cobra.Command{
 	Use:   "inventory [provider|cloud-identity-id]",
-	Short: "Show the discovered networking + regions for a connected cloud account",
-	Long: `Show the networking (VPCs/VNets, subnets) and regions Alethia discovered in a
-connected cloud account.
-
-Name the account by its PROVIDER — ` + "`alethia cloud inventory aws`" + ` — or omit the
-argument entirely for a picker. The opaque cloud-identity id is still accepted, so an id a
-script already holds keeps working, but nothing makes you copy one out of another command's
-output any more.`,
-	Args: cobra.MaximumNArgs(1),
+	Short: "Show the networks, subnets and regions discovered in a connected cloud account",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		p := resultPrinter(cmd)
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
@@ -48,8 +42,8 @@ output any more.`,
 			fail(err)
 		}
 
-		if err := runCloudInventory(client, os.Stdout, outputFormat(cmd), identityID); err != nil {
-			failf("Failed to get cloud inventory: %v", err)
+		if err := runCloudInventory(client, p, identityID); err != nil {
+			fail(err)
 		}
 	},
 }
@@ -75,30 +69,38 @@ func subnetRows(subnets []api.CloudSubnet, outFmt string) [][]string {
 	return rows
 }
 
-// runCloudInventory fetches and renders a cloud identity's discovered inventory. json emits the
-// whole object; table renders the networks + subnets tables and a regions line; csv emits the
-// networks rows (the primary set).
-func runCloudInventory(c apiClient, out io.Writer, format, cloudIdentityID string) error {
+// runCloudInventory fetches a cloud identity's discovered inventory and writes it on the Printer's
+// stdout. json emits the whole object; table renders the networks and subnets tables and a regions
+// line; csv emits the networks rows (the primary set).
+//
+// An account with nothing discovered yet says so on stderr in the table format, so stdout stays
+// empty for a pipeline.
+func runCloudInventory(c apiClient, p *Printer, cloudIdentityID string) error {
 	inv, err := c.GetCloudInventory(cloudIdentityID)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get cloud inventory: %w", err)
 	}
+	out, format := p.Out, p.Format
 	if format == ui.FormatJSON {
-		return ui.Render(out, format, ui.TableSpec{}, inv)
-	}
-	if len(inv.Networks) == 0 && len(inv.Subnets) == 0 && len(inv.Regions) == 0 {
-		fmt.Fprintln(out, ui.MutedStyle.Render("No cloud inventory discovered yet."))
-		return nil
+		return ui.RenderJSON(out, inv)
 	}
 	if format == ui.FormatCSV {
 		return ui.Render(out, format, ui.TableSpec{Columns: networkColumns, Rows: networkRows(inv.Networks, format)}, inv.Networks)
 	}
+	if len(inv.Networks) == 0 && len(inv.Subnets) == 0 && len(inv.Regions) == 0 {
+		p.Note("No cloud inventory discovered yet.")
+		return nil
+	}
 	// Table: networks, then subnets, then a regions line.
 	fmt.Fprintln(out, ui.MutedStyle.Render("Networks"))
-	_ = ui.Render(out, format, ui.TableSpec{Columns: networkColumns, Rows: networkRows(inv.Networks, format)}, inv.Networks)
+	if err := ui.Render(out, format, ui.TableSpec{Columns: networkColumns, Rows: networkRows(inv.Networks, format)}, inv.Networks); err != nil {
+		return err
+	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, ui.MutedStyle.Render("Subnets"))
-	_ = ui.Render(out, format, ui.TableSpec{Columns: subnetColumns, Rows: subnetRows(inv.Subnets, format)}, inv.Subnets)
+	if err := ui.Render(out, format, ui.TableSpec{Columns: subnetColumns, Rows: subnetRows(inv.Subnets, format)}, inv.Subnets); err != nil {
+		return err
+	}
 	if len(inv.Regions) > 0 {
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, "Regions: "+strings.Join(inv.Regions, ", "))

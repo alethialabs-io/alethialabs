@@ -8,7 +8,10 @@ import { NODE_REGISTRY } from "../graph/node-registry";
 import { configName } from "../graph/node-config";
 import type { AiActionParsed } from "@/lib/ai/proposal";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useMemo } from "react";
+import { useStore } from "zustand";
+import { useActiveCanvas } from "@/lib/canvas/store/active-canvas";
+import type { CanvasNode } from "../graph/types";
 
 /**
  * What Accept is actually going to do.
@@ -21,8 +24,10 @@ import { useCanvasStore } from "@/lib/stores/use-canvas-store";
  * new one — because "set min_capacity to 8" means nothing without knowing it was 0.5.
  */
 export function ProposalDiff({ actions }: { actions: AiActionParsed[] }) {
-	const nodes = useCanvasStore((s) => s.nodes);
-	const identities = useCanvasStore((s) => s.identities);
+	// The panel is not drawn inside the workbench: the board on screen is read from `active-canvas`.
+	const { board, identities, others } = useActiveCanvas();
+	const designNodes = useStore(board.document, (s) => s.designNodes);
+	const nodes = useMemo(() => [...designNodes, ...others], [designNodes, others]);
 
 	const nameOf = (nodeId: string) => {
 		const node = nodes.find((n) => n.id === nodeId);
@@ -77,7 +82,7 @@ function ActionLine({
 	identityLabel,
 }: {
 	action: AiActionParsed;
-	nodes: ReturnType<typeof useCanvasStore.getState>["nodes"];
+	nodes: CanvasNode[];
 	nameOf: (id: string) => string;
 	identityLabel: (id: string | null | undefined) => string;
 }) {

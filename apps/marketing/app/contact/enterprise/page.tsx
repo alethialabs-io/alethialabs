@@ -1,55 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { Metadata } from "next";
-import { SiteShell } from "@repo/brand/site-shell";
-import { ContactSection } from "@/components/contact/contact-page";
+import { CONTACT_METADATA, ContactPage } from "@/components/contact/contact-page";
+import { parseContactTopic } from "@/lib/validations/contact.schema";
 
-export const metadata: Metadata = {
-	title: "Set up your Enterprise trial · Alethia",
-	description:
-		"Start an Alethia Enterprise trial — SSO over OIDC or SAML, custom roles and granular IAM, exportable audit, and a self-managed option you can run inside your own perimeter.",
-};
+export const metadata = CONTACT_METADATA;
 
-/** Public "Enterprise trial" page. Shares the landing Header/Footer chrome. */
-export default async function ContactEnterprisePage() {
-	return (
-		<SiteShell>
-				<ContactSection
-					type="enterprise"
-					submitLabel="Request your trial"
-					rail={{
-						tag: "Enterprise · Get started",
-						title: "Set up your Enterprise trial.",
-						sub: "See for yourself how Alethia Enterprise tightens governance and speeds up your workflow — SSO, custom roles, audit, and a self-managed option.",
-						points: [
-							[
-								"key",
-								"SSO / SAML",
-								"Wire your identity provider over OIDC or SAML. Members are provisioned just-in-time on first sign-in; SCIM is not built yet.",
-							],
-							[
-								"sliders",
-								"Custom roles & granular IAM",
-								"Compose allow and deny down to a single project, evaluated by OpenFGA over Postgres RBAC.",
-							],
-							[
-								"audit",
-								"Audit you can export",
-								"Every authorization decision is recorded, append-only, and streamable to your SIEM.",
-							],
-							[
-								"building",
-								"Self-managed option",
-								"Run the whole control plane inside your perimeter, single-tenant. Runners can sit on-premises or air-gapped.",
-							],
-						],
-						foot: "We'll help you stand it up and onboard your team.",
-					}}
-					crossLabel="Want a guided walkthrough?"
-					crossHref="/contact/sales"
-					crossSub="Talk to sales for a custom demo against your stack."
-				/>
-		</SiteShell>
-	);
+/**
+ * The old "Enterprise trial" address, kept working for every link already out
+ * there. It is the contact page with the topic preset to an Enterprise trial;
+ * an explicit `?topic=` still wins.
+ */
+export default async function ContactEnterpriseRoute({
+	searchParams,
+}: {
+	searchParams: Promise<{ topic?: string | string[] }>;
+}) {
+	const { topic } = await searchParams;
+	return <ContactPage topic={parseContactTopic(topic, "enterprise")} />;
 }

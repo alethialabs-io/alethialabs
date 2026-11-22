@@ -13,11 +13,12 @@ import { SHELL_HEADER } from "@/components/shell/shell-metrics";
 import { useActiveWorkspaceOrg } from "@/lib/stores/use-workspace-store";
 import { Button } from "@repo/ui/button";
 import { AskAiButton } from "./ask-ai-button";
+import { CRUMB_BOX } from "./crumb-strip";
 
 /**
  * The main-column topbar: project / env quick-switchers on the left, the route breadcrumb
- * centered as plain text (hidden when empty, e.g. on the org overview), and the CLI
- * download on the right.
+ * centered as plain text, and the CLI download on the right. Below `md` the breadcrumb is not in
+ * this row: it is a strip under the header that names the current page (`./crumb-strip.ts`).
  *
  * ── WHY THIS IS A GRID AND NOT A FLEX ROW ────────────────────────────────────────────────────
  *
@@ -43,8 +44,9 @@ import { AskAiButton } from "./ask-ai-button";
  * moves by +45 / +18 / −58 px depending on the route — which is the whole trade, and it is paid
  * only at the width that was broken.
  *
- * The breadcrumb keeps `empty:hidden`, so the bare org overview still reserves no space: an
- * empty middle track is zero wide.
+ * The breadcrumb keeps `empty:hidden`, so a route with no trail reserves no space: an empty middle
+ * track is zero wide. Every route under `[org]` has a trail (the bare overview's is "Overview"),
+ * which is what lets the strip below `md` take a fixed height from `<main>`.
  *
  * ── THE MENU BUTTON CARRIES THE ORG (#6135, F028) ────────────────────────────────────────────
  *
@@ -60,7 +62,7 @@ import { AskAiButton } from "./ask-ai-button";
 export function Topbar({ onOpenSidebar }: { onOpenSidebar: () => void }) {
 	const org = useActiveWorkspaceOrg();
 	return (
-		<header className={`grid ${SHELL_HEADER} shrink-0 grid-cols-[minmax(max-content,1fr)_auto_minmax(max-content,1fr)] items-center gap-1 border-b bg-background px-2 sm:px-4`}>
+		<header className={`relative grid ${SHELL_HEADER} shrink-0 grid-cols-[minmax(max-content,1fr)_auto_minmax(max-content,1fr)] items-center gap-1 border-b bg-background px-2 sm:px-4`}>
 			<div className="flex items-center gap-1">
 				<Button
 					variant="ghost"
@@ -85,10 +87,10 @@ export function Topbar({ onOpenSidebar }: { onOpenSidebar: () => void }) {
 				<EnvSwitcher />
 			</div>
 
-			{/* Centered breadcrumb — plain text, collapses to nothing on the bare overview. It
-			    truncates inside its own track instead of growing across the clusters. */}
+			{/* Centered breadcrumb — plain text. It truncates inside its own track instead of growing
+			    across the clusters. Below `md` the same box is the strip under the header. */}
 			<div className="flex min-w-0 justify-center">
-				<div className="hidden min-w-0 items-center empty:hidden md:flex">
+				<div data-slot="topbar-crumbs" className={CRUMB_BOX}>
 					<HeaderBreadcrumbs />
 				</div>
 			</div>

@@ -162,7 +162,7 @@ export function AccountSettingsDialog({
 			<Dialog open={open} onOpenChange={onOpenChange}>
 				<DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
 					<DialogHeader>
-						<DialogTitle>Account Settings</DialogTitle>
+						<DialogTitle>Account settings</DialogTitle>
 						<DialogDescription>
 							Manage your account information and preferences.
 						</DialogDescription>
@@ -171,10 +171,9 @@ export function AccountSettingsDialog({
 					{/* Account overview */}
 					<div className="flex items-start gap-4">
 						<Avatar className="h-16 w-16 border border-border/50">
-							<AvatarImage
-								src={user?.image || "/generic-user-avatar.png"}
-								alt="User avatar"
-							/>
+							{/* No placeholder image: a person with no picture gets the initial below, rather
+							    than a request for an asset the console does not ship (S-11). */}
+							{user?.image ? <AvatarImage src={user.image} alt="User avatar" /> : null}
 							<AvatarFallback className="bg-muted text-lg text-muted-foreground">
 								{user?.email?.charAt(0).toUpperCase() || "U"}
 							</AvatarFallback>
@@ -183,7 +182,7 @@ export function AccountSettingsDialog({
 							<div className="space-y-1">
 								<Label className="flex items-center gap-1.5 text-ui-xs font-medium uppercase tracking-wider text-muted-foreground">
 									<User className="h-3 w-3" />
-									Full Name
+									Display name
 								</Label>
 								<p className="text-sm font-medium text-foreground">
 									{user?.name || "Not set"}
@@ -218,7 +217,7 @@ export function AccountSettingsDialog({
 							<div className="space-y-1">
 								<Label className="flex items-center gap-1.5 text-ui-xs font-medium uppercase tracking-wider text-muted-foreground">
 									<Calendar className="h-3 w-3" />
-									Member Since
+									Member since
 								</Label>
 								<p className="text-sm font-medium text-foreground">
 									{user?.createdAt ? formatDate(user.createdAt) : "Unknown"}
@@ -234,7 +233,7 @@ export function AccountSettingsDialog({
 						<div className="grid gap-4 sm:max-w-sm">
 							<div className="space-y-2">
 								<Label htmlFor="account-name" className="text-xs">
-									Display Name
+									Display name
 								</Label>
 								<Input
 									id="account-name"
@@ -268,7 +267,7 @@ export function AccountSettingsDialog({
 							className="h-9 text-xs font-medium"
 							disabled={isSubmitting || !isDirty}
 						>
-							{isSubmitting ? "Saving…" : "Save Changes"}
+							{isSubmitting ? "Saving…" : "Save changes"}
 						</Button>
 					</form>
 

@@ -14,7 +14,7 @@ import { CanvasCommandPalette } from "@/components/design-project/canvas/canvas-
 import { CanvasControls } from "@/components/design-project/canvas/canvas-controls";
 import { CanvasMoreMenu } from "@/components/design-project/canvas/canvas-more-menu";
 import { NOTHING_TO_FIT } from "@/components/design-project/canvas/use-has-drawn-nodes";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
 
 const flow = vi.hoisted(() => ({ drawn: 0, fitView: vi.fn() }));
 
@@ -22,15 +22,21 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@xyflow/react")>();
 	return {
 		...actual,
-		useReactFlow: () => ({ fitView: flow.fitView, zoomIn: vi.fn(), zoomOut: vi.fn() }),
-		// The selector is the product's own; only the lookup it reads is the test's.
-		useStore: <T,>(selector: (s: { nodeLookup: Map<string, unknown> }) => T): T =>
-			selector({ nodeLookup: new Map(Array.from({ length: flow.drawn }, (_, i) => [`n${i}`, {}])) }),
+		useReactFlow: () => ({ fitView: flow.fitView, zoomIn: vi.fn(), zoomOut: vi.fn(), zoomTo: vi.fn() }),
+		// The selectors are the product's own; only the lookup and the viewport they read are the
+		// test's (the zoom controls print the zoom level, the third member of `transform`).
+		useStore: <T,>(
+			selector: (s: { nodeLookup: Map<string, unknown>; transform: [number, number, number] }) => T,
+		): T =>
+			selector({
+				nodeLookup: new Map(Array.from({ length: flow.drawn }, (_, i) => [`n${i}`, {}])),
+				transform: [0, 0, 1],
+			}),
 	};
 });
 
 beforeEach(() => {
-	useCanvasStore.getState().reset();
+	board.reset();
 	flow.fitView.mockClear();
 });
 

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ArrowLeft, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Boxes, GitBranch } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
@@ -21,40 +21,39 @@ import {
 	CommandSeparator,
 } from "@repo/ui/command";
 import { groupResults, rankItems } from "@repo/ui/command-search";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
 import {
-	addableKindsFor,
-	NODE_REGISTRY,
-	PALETTE_GROUP_ORDER,
-	ROADMAP_ITEMS,
-	variantOptionsFor,
-} from "./graph/node-registry";
+	addCatalogue,
+	type AddCatalogueFlags,
+	type AddCatalogueGroup,
+	type AddCatalogueRow,
+} from "@/lib/canvas/store/add-catalogue";
+import { getProvider } from "@/lib/cloud-providers";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { useAllNodes, useBoardActions, useEffectiveProvider } from "@/lib/canvas/store/use-board";
+import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
+import { NODE_REGISTRY, variantOptionsFor } from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";
+import { GOVERNED_REASON, GOVERNED_ROW_REASON, notOnCloud } from "./toolbar/reasons";
 import { useClusterK8sVersion } from "./use-cluster-k8s-version";
 
 interface NodePaletteProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	identities: CloudIdentityOption[];
-	/** Cluster add-ons for this environment (edit mode only) — surfaced as an "Add-ons" group.
-	 * Picking one opens its config sheet (add-ons live on the canvas, not as graph nodes). */
+	/** Cluster add-ons for this environment — listed as an "Add-ons" group. Picking one opens its
+	 * card on the rail (add-ons live on the canvas, not as design nodes). */
 	addonItems?: AddonMarketItem[];
 	onConfigureAddon?: (item: AddonMarketItem) => void;
-	/** W5 click-to-place — where a newly-added node lands (viewport centre). Supplied by the canvas
-	 * (which owns the React Flow context); omitted (e.g. in a unit test) → the store's cascade fallback. */
+	/** Opens the "bring your own Helm chart" flow. Absent when the feature is off: no row. */
+	onAttachChart?: () => void;
+	/** Opens the "bring your own IaC" flow. Absent when the feature is off: no row. */
+	onAttachIac?: () => void;
+	/** A bring-your-own IaC module governs the environment: every row is listed, and none can be
+	 * picked. */
+	governed?: boolean;
+	/** Where a newly-added node lands. Supplied by the canvas (which owns the React Flow context);
+	 * omitted (e.g. in a unit test) → the store's cascade fallback. */
 	dropPosition?: () => { x: number; y: number };
-}
-
-/** One selectable service in the Add palette. `kind` is the canvas node; entries with
- * no `kind` are surfaced as roadmap items (no Terraform module yet). */
-interface ServiceEntry {
-	id: string;
-	label: string;
-	subtitle: string;
-	icon: LucideIcon;
-	kind?: NodeKind;
-	comingSoon?: boolean;
 }
 
 /** One palette row: its group, the ONE string its search matches, and what it shows and runs. */
@@ -63,7 +62,10 @@ interface PaletteRow {
 	group: string;
 	/** What the shared ranker matches (the row's label and its secondary text). */
 	searchText: string;
+	/** Cannot be picked, and the row itself says why (a "Soon" mark). */
 	disabled?: boolean;
+	/** Cannot be picked, for this reason, which the row shows as text. */
+	disabledReason?: string | null;
 	onSelect: () => void;
 	content: ReactNode;
 }
@@ -72,51 +74,44 @@ interface PaletteRow {
 const rowSearchText = (row: PaletteRow): string => row.searchText;
 
 /** Whether a row cannot be chosen, for the shared ranker. */
-const rowIsDisabled = (row: PaletteRow): boolean => Boolean(row.disabled);
+const rowIsDisabled = (row: PaletteRow): boolean => Boolean(row.disabled || row.disabledReason);
 
-/** Builds the grouped Add-palette catalog from the node registry for the given addable
- * kinds: each kind's `palette` metadata places it in a `PALETTE_GROUP_ORDER` group, and
- * the `ROADMAP_ITEMS` ("Soon" rows) are appended to their group. Groups left empty by
- * per-provider filtering are dropped. */
-function serviceGroupsFor(
-	kinds: NodeKind[],
-): { title: string; items: ServiceEntry[] }[] {
-	return PALETTE_GROUP_ORDER.map((title) => ({
-		title,
-		items: [
-			...kinds
-				.filter((kind) => NODE_REGISTRY[kind].palette?.group === title)
-				.map((kind): ServiceEntry => {
-					const def = NODE_REGISTRY[kind];
-					return {
-						id: kind,
-						label: def.label,
-						subtitle: def.palette?.subtitle ?? "",
-						icon: def.icon,
-						kind,
-					};
-				}),
-			...ROADMAP_ITEMS.filter((item) => item.group === title).map(
-				(item): ServiceEntry => ({
-					id: item.id,
-					label: item.label,
-					subtitle: item.subtitle,
-					icon: item.icon,
-					comingSoon: true,
-				}),
-			),
-		],
-	})).filter((group) => group.items.length > 0);
+/** What a search for a bring-your-own source also matches, beside its label. */
+const SOURCE_KEYWORDS: Record<"byo-chart" | "byo-iac", string> = {
+	"byo-chart": "bring your own helm chart byo gitops argocd repository",
+	"byo-iac": "bring your own iac opentofu tofu terraform module byo repository",
+};
+
+/** True when `row` is in `groups` under the same heading: it can be added on this board. */
+function isOffered(groups: AddCatalogueGroup[], title: string, row: AddCatalogueRow): boolean {
+	return groups.some(
+		(group) =>
+			group.title === title &&
+			group.rows.some((other) => other.type === row.type && other.id === row.id),
+	);
 }
 
 /**
- * The Add-service command palette: a searchable, grouped menu over every provisionable
- * service. Selecting one drops its node on the canvas, CLOSES the palette, and leaves that node's
- * card open on the workspace rail. Kinds with variants (e.g. Database → engine) route through a
- * second step first. Singletons already on the canvas are disabled; roadmap items (no module yet)
- * show "Soon".
+ * The add picker: a searchable, grouped menu over everything that can be added to this board.
+ * Selecting a service drops its node on the canvas, CLOSES the picker, and leaves that node
+ * selected with its card open on the rail. Kinds with variants (e.g. Database → engine) route
+ * through a second step first.
  *
- * The palette used to stay open on an inline "Configure service" step (W5) instead of closing, and
+ * WHAT IT LISTS comes from one function, `addCatalogue(provider, flags, governed)`
+ * (`lib/canvas/store/add-catalogue.ts`), which the command palette reads too — the two used to
+ * build their own lists and disagreed: this one had add-ons and roadmap rows, that one had the
+ * bring-your-own sources, and neither had both. There is no list of clouds or of kinds in this
+ * file.
+ *
+ * A row that cannot be added is LISTED, disabled, with the reason in the row. The picker asks the
+ * catalogue twice: once for this board (its cloud, its flags, whether a bring-your-own IaC module
+ * governs it) and once for a board with no cloud and no module, which is everything that exists.
+ * A row in the second answer and not in the first is one this board cannot take, and it says which
+ * of the two reasons applies. Before this a kind the cloud cannot back was simply absent, which
+ * reads as "the product does not have that" rather than "not on this cloud". A singleton that is
+ * already placed and a roadmap row ("Soon") are disabled the same way.
+ *
+ * The picker used to stay open on an inline "Configure service" step (W5) instead of closing, and
  * that is the shape #4589 removed. Two things were wrong with it, and only the second is a test
  * problem. The wave's claim — written on `cards/workspace-rail.tsx` and asserted in
  * `e2e/architecture-canvas.spec.ts` — is that NOTHING on this page opens a modal over the board; an add
@@ -126,9 +121,9 @@ function serviceGroupsFor(
  * CHANGE: the helper returned with the dialog still mounted, and its overlay then intercepted every
  * later click on the board — six gate tests timing out at their full 180s budget.
  *
- * So there is no second step here any more. The store's `addNode`/`addNodeWithConfig` already put
- * the new node's card on the rail (`card: { kind: "inspector", nodeId }`), which is where its
- * config now lives — one editor, not two, and the board stays clickable behind it.
+ * So there is no second step here any more. The store's `addNode`/`addNodeWithConfig` already
+ * select the new node and put its card on the rail, which is where its config now lives — one
+ * editor, not two, and the board stays clickable behind it.
  */
 export function NodePalette({
 	open,
@@ -136,11 +131,13 @@ export function NodePalette({
 	identities,
 	addonItems,
 	onConfigureAddon,
+	onAttachChart,
+	onAttachIac,
+	governed = false,
 	dropPosition,
 }: NodePaletteProps) {
-	const addNode = useCanvasStore((s) => s.addNode);
-	const addNodeWithConfig = useCanvasStore((s) => s.addNodeWithConfig);
-	const nodes = useCanvasStore((s) => s.nodes);
+	const { addNode, addNodeWithConfig } = useBoardActions();
+	const nodes = useAllNodes();
 	// Which tab a kind's card opens on. Adding a service records "settings" for that kind: the
 	// inline step this palette used to show WAS that form, and picking a service is a statement that
 	// you intend to configure it. Written through the preference the tabs already keep, rather than a
@@ -150,11 +147,8 @@ export function NodePalette({
 	// version resolves to the catalog default (#5314) — except on BYO-IaC, where the module decides
 	// it and the badge says so (#5365); no cluster yet is an honest `not_evaluable`.
 	const clusterK8s = useClusterK8sVersion();
-	// The project root's effective provider gates which kinds are addable (e.g. Hetzner
-	// has no topic/nosql) — same filter as the ⌘K menu and the canvas controls.
-	const coreProvider = useCanvasStore((s) =>
-		s.getEffectiveProvider(PROJECT_NODE_ID),
-	);
+	// The project root's effective provider decides which kinds this board can take.
+	const coreProvider = useEffectiveProvider(PROJECT_NODE_ID);
 	// When set, the palette shows the variant step for this kind (e.g. pick a DB engine). The ONLY
 	// nested step left: it is part of naming WHICH service you are adding, so it still precedes the
 	// add. Everything after the add happens on the rail.
@@ -187,15 +181,15 @@ export function NodePalette({
 		handleOpenChange(false);
 	};
 
-	const add = (entry: ServiceEntry) => {
-		if (entry.comingSoon || !entry.kind) return;
-		if (NODE_REGISTRY[entry.kind].variants) {
-			setStep(entry.kind);
+	/** Add a node of `kind`, through its variant step when the kind has one. */
+	const add = (kind: NodeKind) => {
+		if (NODE_REGISTRY[kind].variants) {
+			setStep(kind);
 			return;
 		}
-		// `addNode` opens the new node's card on the rail; the palette closes behind it.
-		addNode(entry.kind, dropPosition?.());
-		handOffToRail(entry.kind);
+		// `addNode` selects the new node and opens its card on the rail; the palette closes behind it.
+		addNode(kind, dropPosition?.());
+		handOffToRail(kind);
 	};
 
 	/** Commit a variant choice: add the node pre-filled for it, then hand off to its rail card. */
@@ -208,7 +202,23 @@ export function NodePalette({
 
 	const noCloud = identities.length === 0;
 	const variantDef = variantKind ? NODE_REGISTRY[variantKind] : null;
-	const serviceGroups = serviceGroupsFor(addableKindsFor(coreProvider));
+
+	// The catalogue, asked twice (see the component's doc comment).
+	const flags: AddCatalogueFlags = {
+		byoHelm: onAttachChart !== undefined,
+		byoIac: onAttachIac !== undefined,
+		addons:
+			onConfigureAddon && addonItems
+				? addonItems.map((a) => ({ id: a.id, name: a.name, subtitle: a.summary }))
+				: undefined,
+	};
+	const offered = addCatalogue(coreProvider, flags, governed);
+	const everything = addCatalogue(null, flags, false);
+	const whyNot = governed
+		? GOVERNED_ROW_REASON
+		: coreProvider
+			? notOnCloud(getProvider(coreProvider).name)
+			: null;
 
 	/** The variant step's options for `variantKind`, provider-filtered (e.g. Hetzner's in-cluster
 	 * charts back PostgreSQL/Valkey only) — same gate as the inspector's engine radio. */
@@ -236,98 +246,153 @@ export function NodePalette({
 				})
 			: [];
 
-	const serviceRows: PaletteRow[] = serviceGroups.flatMap((group) =>
-		group.items.map((entry): PaletteRow => {
-			const Icon = entry.icon;
-			const onCanvas =
-				!!entry.kind &&
-				NODE_REGISTRY[entry.kind].cardinality === "singleton" &&
-				nodes.some((n) => n.data.kind === entry.kind);
-			return {
-				id: entry.id,
-				group: group.title,
-				searchText: `${entry.label} ${entry.subtitle}`,
-				disabled: entry.comingSoon || onCanvas,
-				onSelect: () => add(entry),
-				content: (
-					<>
-						<Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-						<div className="min-w-0 flex-1">
-							<div className="text-sm font-medium">{entry.label}</div>
-							<div className="truncate text-xs text-muted-foreground">
-								{entry.subtitle}
-							</div>
-						</div>
-						{entry.comingSoon ? (
+	/** The icon, name and second line every row shares. */
+	const body = (icon: ReactNode, label: string, subtitle: string): ReactNode => (
+		<>
+			{icon}
+			<div className="min-w-0 flex-1">
+				<div className="text-sm font-medium">{label}</div>
+				<div className="truncate text-xs text-muted-foreground">{subtitle}</div>
+			</div>
+		</>
+	);
+
+	/** One catalogue row as a palette row; `unavailable` is why this board cannot take it. */
+	const paletteRow = (
+		group: string,
+		entry: AddCatalogueRow,
+		unavailable: string | null,
+	): PaletteRow | null => {
+		switch (entry.type) {
+			case "kind": {
+				const Icon = entry.icon;
+				const onCanvas = entry.singleton && nodes.some((n) => n.data.kind === entry.kind);
+				return {
+					id: entry.id,
+					group,
+					searchText: `${entry.label} ${entry.subtitle}`,
+					disabledReason:
+						unavailable ??
+						(onCanvas ? "Already on the board. An environment has one." : null),
+					onSelect: () => add(entry.kind),
+					content: body(
+						<Icon className="h-4 w-4 shrink-0 text-muted-foreground" />,
+						entry.label,
+						entry.subtitle,
+					),
+				};
+			}
+			case "roadmap": {
+				const Icon = entry.icon;
+				return {
+					id: entry.id,
+					group,
+					searchText: `${entry.label} ${entry.subtitle}`,
+					disabled: true,
+					onSelect: () => {},
+					content: (
+						<>
+							{body(
+								<Icon className="h-4 w-4 shrink-0 text-muted-foreground" />,
+								entry.label,
+								entry.subtitle,
+							)}
 							<span className="font-mono text-ui-2xs uppercase text-muted-foreground">
 								Soon
 							</span>
-						) : onCanvas ? (
-							<span className="font-mono text-ui-2xs text-muted-foreground">
-								on canvas
-							</span>
-						) : null}
-					</>
-				),
-			};
+						</>
+					),
+				};
+			}
+			case "addon": {
+				const a = addonItems?.find((item) => item.id === entry.id);
+				if (!a || !onConfigureAddon) return null;
+				return {
+					id: `addon-${a.id}`,
+					group,
+					// A deprecated add-on stays findable (an environment may already have it), but its row
+					// names the replacement, so a new install is steered there before the card opens (#6543).
+					searchText: `add-on ${a.name} ${a.summary} ${a.category}${a.deprecated ? ` deprecated ${a.deprecated.replacementName}` : ""}`,
+					disabledReason: unavailable,
+					onSelect: () => {
+						onConfigureAddon(a);
+						handleOpenChange(false);
+					},
+					content: (
+						<>
+							{body(
+								<AddonIcon
+									icon={a.icon}
+									className="h-4 w-4 shrink-0 text-muted-foreground"
+								/>,
+								a.name,
+								a.deprecated && !a.install
+									? `Deprecated. Use ${a.deprecated.replacementName} instead.`
+									: a.summary,
+							)}
+							{/* Compat sits BEFORE the install slot and only when it wants attention — an add-on
+							    whose recorded window fits this cluster shows nothing at all. */}
+							<AddonCompatBadge
+								addonId={a.id}
+								k8sVersion={clusterK8s.version}
+								versionUnknownReason={clusterK8s.reason}
+							/>
+							{a.install ? (
+								<AddonStatusBadge
+									status={a.install.status}
+									health={a.install.health}
+								/>
+							) : a.deprecated ? (
+								<span className="font-mono text-ui-2xs uppercase text-muted-foreground">
+									Deprecated
+								</span>
+							) : (
+								<span className="font-mono text-ui-2xs uppercase text-muted-foreground">
+									Free
+								</span>
+							)}
+						</>
+					),
+				};
+			}
+			case "source": {
+				const attach = entry.id === "byo-chart" ? onAttachChart : onAttachIac;
+				if (!attach) return null;
+				const Icon = entry.id === "byo-chart" ? GitBranch : Boxes;
+				return {
+					id: entry.id,
+					group,
+					searchText: `${entry.label} ${entry.subtitle} ${SOURCE_KEYWORDS[entry.id]}`,
+					disabledReason: unavailable,
+					onSelect: () => {
+						attach();
+						handleOpenChange(false);
+					},
+					content: body(
+						<Icon className="h-4 w-4 shrink-0 text-muted-foreground" />,
+						entry.label,
+						entry.subtitle,
+					),
+				};
+			}
+		}
+	};
+
+	const serviceRows: PaletteRow[] = everything.flatMap((group) =>
+		group.rows.flatMap((entry) => {
+			const row = paletteRow(
+				group.title,
+				entry,
+				isOffered(offered, group.title, entry) ? null : whyNot,
+			);
+			return row ? [row] : [];
 		}),
 	);
-	if (onConfigureAddon && addonItems) {
-		for (const a of addonItems) {
-			serviceRows.push({
-				id: `addon-${a.id}`,
-				group: "Add-ons",
-				// A deprecated add-on stays findable (an environment may already have it), but its row
-				// names the replacement, so a new install is steered there before the card opens (#6543).
-				searchText: `add-on ${a.name} ${a.summary} ${a.category}${a.deprecated ? ` deprecated ${a.deprecated.replacementName}` : ""}`,
-				onSelect: () => {
-					onConfigureAddon(a);
-					handleOpenChange(false);
-				},
-				content: (
-					<>
-						<AddonIcon
-							icon={a.icon}
-							className="h-4 w-4 shrink-0 text-muted-foreground"
-						/>
-						<div className="min-w-0 flex-1">
-							<div className="text-sm font-medium">{a.name}</div>
-							<div className="truncate text-xs text-muted-foreground">
-								{a.deprecated && !a.install
-									? `Deprecated. Use ${a.deprecated.replacementName} instead.`
-									: a.summary}
-							</div>
-						</div>
-						{/* Compat sits BEFORE the install slot and only when it wants attention — an add-on
-						    whose recorded window fits this cluster shows nothing at all. */}
-						<AddonCompatBadge
-							addonId={a.id}
-							k8sVersion={clusterK8s.version}
-							versionUnknownReason={clusterK8s.reason}
-						/>
-						{a.install ? (
-							<AddonStatusBadge
-								status={a.install.status}
-								health={a.install.health}
-							/>
-						) : a.deprecated ? (
-							<span className="font-mono text-ui-2xs uppercase text-muted-foreground">
-								Deprecated
-							</span>
-						) : (
-							<span className="font-mono text-ui-2xs uppercase text-muted-foreground">
-								Free
-							</span>
-						)}
-					</>
-				),
-			});
-		}
-	}
 
 	// Whichever step is showing, ranked by the shared ranker.
-	// While a search is typed, a disabled row ("Soon", already on the canvas) ranks after every row
-	// that can be added. An empty search keeps PALETTE_GROUP_ORDER exactly, whatever is placed.
+	// While a search is typed, a disabled row ("Soon", already on the canvas, not on this cloud)
+	// ranks after every row that can be added. An empty search keeps the catalogue's order exactly,
+	// whatever is placed.
 	const results = rankItems(
 		variantDef ? variantRows : serviceRows,
 		search,
@@ -358,6 +423,7 @@ export function NodePalette({
 		<CommandItem
 			key={row.id}
 			disabled={row.disabled}
+			disabledReason={row.disabledReason}
 			onSelect={row.onSelect}
 			className={className}
 		>
@@ -405,7 +471,12 @@ export function NodePalette({
 					<CommandInput placeholder="Search services — database, redis, bucket, queue…" />
 					<CommandList className="max-h-[60vh]">
 						<CommandEmpty>No service matches.</CommandEmpty>
-						{noCloud && (
+						{governed && (
+							<p role="note" className="px-3 py-2 text-xs text-muted-foreground">
+								{GOVERNED_REASON}
+							</p>
+						)}
+						{!governed && noCloud && (
 							<p className="px-3 py-2 text-xs text-muted-foreground">
 								Tip: connect a cloud account to provision these for real — you can still
 								design now.

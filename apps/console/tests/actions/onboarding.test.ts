@@ -10,9 +10,20 @@ vi.mock("@/lib/auth/owner", () => ({ getOwner: vi.fn() }));
 vi.mock("@/lib/auth/onboarding", () => ({
 	getPrimaryOrg: vi.fn(),
 	completeOnboarding: vi.fn(),
+	resolveOnboarding: vi.fn(),
 }));
 vi.mock("@/lib/authz/guard", () => ({ currentActor: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+// The module also holds `finishOnboarding`, which calls into billing, legal and the workspace scope.
+// Those have their own suites (tests/lib/auth/onboarding-finish.test.ts drives finishOnboarding);
+// here they are stubbed so loading the module does not load them.
+vi.mock("@/app/server/actions/billing", () => ({ startProTrial: vi.fn() }));
+vi.mock("@/app/server/actions/legal", () => ({ acceptLegalDocuments: vi.fn(), declarePayer: vi.fn() }));
+vi.mock("@/app/server/actions/workspace", () => ({ setActiveOrganization: vi.fn() }));
+vi.mock("@/lib/billing/eligibility", () => ({
+	hasAcceptedCurrentDocuments: vi.fn(),
+	PaidConversionNotAllowedError: class extends Error {},
+}));
 
 import {
 	configureOnboardingOrg,

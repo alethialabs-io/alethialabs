@@ -5,11 +5,11 @@
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { ConnectorIcon, isThirdPartyMark } from "@/components/connectors/connector-icon";
-import { connectorState } from "@/components/connectors/connectors-query";
-import { Button } from "@repo/ui/button";
+import { ConnectorAction } from "@/components/connectors/connectors-action";
+import { NOT_OFFERED_SHORT, connectorState } from "@/components/connectors/connectors-query";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
-import { Check, Loader2, RefreshCw } from "lucide-react";
+import { Check } from "lucide-react";
 import { useId } from "react";
 
 interface ConnectorCardProps {
@@ -28,11 +28,17 @@ interface ConnectorCardProps {
 	 * says "not enabled on this instance" instead of offering a doomed connect.
 	 */
 	platformConfigured?: boolean;
+	/**
+	 * False for a cloud this deployment takes no new connection for (`acceptsNewConnections`). Such
+	 * a card is on the board only because the organization already has an account on it: it keeps
+	 * Manage, offers no Connect, and says why in place of its description. Defaults to true.
+	 */
+	offered?: boolean;
 	isConnecting?: boolean;
 	/**
-	 * Pick mode (create-project cloud picker): a connected, healthy card becomes a radio-style pick
-	 * target — the whole card selects instead of offering Manage. Backward-compatible: off by default,
-	 * so the connectors page renders identically.
+	 * Pick mode, for a caller that lets the person choose a cloud with these cards: a connected,
+	 * healthy card becomes a pick target — the whole card selects instead of offering Manage. Off by
+	 * default, which is how the connectors page renders it.
 	 */
 	selectable?: boolean;
 	selected?: boolean;
@@ -42,7 +48,8 @@ interface ConnectorCardProps {
 /**
  * One connector tile — matches the grayscale `.conn` card in the connectors design:
  * a logo, name + description, a fill/outline status dot, a mono meta row (account
- * count · auth method), and a Manage/Connect action gated by `canManage`.
+ * count · auth method), and the connector's action (`ConnectorAction`): a viewer who may not manage
+ * connections sees a control that would change something disabled, with the reason.
  */
 export function ConnectorCard({
 	integration,
@@ -51,6 +58,7 @@ export function ConnectorCard({
 	onManage,
 	onReverify,
 	platformConfigured = true,
+	offered = true,
 	isConnecting,
 	selectable = false,
 	selected = false,
@@ -81,6 +89,7 @@ export function ConnectorCard({
 	const isCloud = integration.category === "cloud";
 	// A managed cloud missing platform creds, or a git provider with no registered OAuth app: a
 	// connect can only fail, so the tile is honest about it (self-hosters: see the docs to enable).
+	// Read here only to keep such a tile out of pick mode; what it offers is `ConnectorAction`'s.
 	const platformUnavailable = state.health === "unavailable";
 	const needsReconnection =
 		integration.token_health === "expired" ||
@@ -91,6 +100,7 @@ export function ConnectorCard({
 	// A connected, healthy card is a pick target in pick mode (the whole card selects).
 	const isPick =
 		selectable &&
+		offered &&
 		isConnected &&
 		!isComingSoon &&
 		!platformUnavailable &&
@@ -106,8 +116,8 @@ export function ConnectorCard({
 		// Choosing a cloud is the FIRST REQUIRED STEP of creating a project, so a keyboard or
 		// screen-reader user could not create one at all (WCAG 2.1.1). The four pick attributes
 		// below sit behind the existing `isPick` predicate deliberately — `isPick` is a
-		// six-condition question and a second copy of it in `create-project/cloud-picker.tsx`
-		// would be the copy that never gets the fix.
+		// six-condition question and a second copy of it in a caller would be the copy that never
+		// gets the fix.
 		//
 		// WHY `role="button"` AND NOT `radio`. A radio needs a `radiogroup` parent, and the picker's
 		// container is a `group` — deliberately, because a radio may own no interactive descendants
@@ -130,7 +140,7 @@ export function ConnectorCard({
 		// computed the name "AWS AWS Amazon Web Services. 1 accountConnected" — one run-on string
 		// with the status welded to the account count. Naming the control explicitly and pointing
 		// the description at the two nodes that carry the copy and the state gives them back as a
-		// description. Same remedy, and the same reason, as `create-project/start-from-scratch-cards.tsx`.
+		// description.
 		<div
 			onClick={isPick ? onSelect : undefined}
 			role={isPick ? "button" : undefined}
@@ -210,7 +220,7 @@ export function ConnectorCard({
 						id={descId}
 						className={cn("mt-0.5 line-clamp-2 text-xs leading-snug", secondaryInk)}
 					>
-						{integration.description}
+						{offered ? integration.description : NOT_OFFERED_SHORT}
 					</p>
 				</div>
 				{/* status dot — filled when connected, outline otherwise */}
@@ -248,18 +258,7 @@ export function ConnectorCard({
 					</span>
 				</div>
 
-				{isComingSoon ? null : platformUnavailable ? (
-					<span
-						title={
-							isGit
-								? "This git provider has no OAuth app configured on this instance. See the docs to enable it."
-								: "This cloud needs Alethia platform credentials, which aren't configured on this instance. See the docs to enable managed cloud connections."
-						}
-						className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground"
-					>
-						Unavailable
-					</span>
-				) : isPick ? (
+				{isPick ? (
 					// Pick mode: a radio-style indicator; the whole card is the control. It stays
 					// `aria-hidden` on purpose — the card's `aria-pressed` already says whether this
 					// cloud is chosen, and a second announcement of the same state is noise.
@@ -274,82 +273,20 @@ export function ConnectorCard({
 					>
 						<Check className="size-3" />
 					</span>
-				) : isConnected && needsReconnection && canManage ? (
-					<Button
-						size="sm"
-						className="h-7 px-2.5 text-xs"
-						// The board renders one of these per connector and the visible word is the
-						// same on every one of them — 29 buttons reading "Connect", one "Manage" per
-						// connected connector. That is not only a Playwright strict-mode problem: a
-						// screen-reader user tabbing the grid hears "Connect, button" 29 times with
-						// nothing to tell them apart, because the name sits in the CARD, not in the
-						// control. `aria-label` puts the connector's name INTO the control's
-						// accessible name; the visible word is unchanged and stays a prefix of it,
-						// so WCAG 2.5.3 (Label in Name) still holds for voice control.
-						aria-label={`Reconnect ${integration.name}`}
-						disabled={isConnecting}
-						onClick={onConnect}
-					>
-						{isConnecting ? (
-							<Loader2 className="mr-1 size-3.5 animate-spin" />
-						) : (
-							<RefreshCw className="mr-1 size-3.5" />
-						)}
-						Reconnect
-					</Button>
-				) : isConnected ? (
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-7 px-2.5 text-xs"
-						aria-label={`Manage ${integration.name}`}
-						onClick={onManage}
-					>
-						Manage
-					</Button>
-				) : cloudTesting ? (
-					<Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-				) : cloudFailed && canManage ? (
-					// Manage sits alongside Re-verify deliberately: re-verifying a connection whose stored
-					// credentials are simply WRONG will fail forever, so the sheet — where the account can be
-					// corrected or removed — has to be reachable from here. Without it a bad connect wedged.
-					<div className="flex items-center gap-1">
-						<Button
-							variant="ghost"
-							size="sm"
-							className="h-7 px-2.5 text-xs"
-							aria-label={`Manage ${integration.name}`}
-							onClick={onManage}
-						>
-							Manage
-						</Button>
-						<Button
-							size="sm"
-							className="h-7 px-2.5 text-xs"
-							aria-label={`Re-verify ${integration.name}`}
-							disabled={isConnecting}
-							onClick={onReverify}
-						>
-							{isConnecting ? (
-								<Loader2 className="mr-1 size-3.5 animate-spin" />
-							) : (
-								<RefreshCw className="mr-1 size-3.5" />
-							)}
-							Re-verify
-						</Button>
-					</div>
-				) : canManage ? (
-					<Button
-						size="sm"
-						className="h-7 px-2.5 text-xs"
-						aria-label={`Connect ${integration.name}`}
-						disabled={isConnecting}
-						onClick={onConnect}
-					>
-						{isConnecting && <Loader2 className="mr-1 size-3.5 animate-spin" />}
-						Connect
-					</Button>
-				) : null}
+				) : (
+					// Connect / Manage / Reconnect / Re-verify, or nothing: one ladder, shared with
+					// the table row (`connectors-action.tsx`).
+					<ConnectorAction
+						integration={integration}
+						state={state}
+						canManage={canManage}
+						offered={offered}
+						isConnecting={isConnecting}
+						onConnect={onConnect}
+						onManage={onManage}
+						onReverify={onReverify}
+					/>
+				)}
 			</div>
 		</div>
 	);

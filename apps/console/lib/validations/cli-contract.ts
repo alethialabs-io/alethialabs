@@ -174,6 +174,9 @@ export const jobWire = createSelectSchema(jobs, {
 	// Internal claim routing (#6458) — the runner capabilities a job needs, derived by a trigger and
 	// read only by claim_next_job, never on the CLI wire.
 	required_capabilities: true,
+	// The apply approval a DEPLOY/DESTROY consumed (AGT-S2). Not on the frozen CLI wire until the
+	// approval-aware CLI (AGT-L7) decides to carry it; the Go strict decoder would refuse it today.
+	approval_id: true,
 });
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */

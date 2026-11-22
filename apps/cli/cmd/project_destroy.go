@@ -9,17 +9,20 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
 )
 
 var (
 	projectDestroyProjectRef string
 	projectDestroyProjectID  string
+	projectDestroyRunnerRef  string
 	projectDestroyRunnerID   string
 	projectDestroyEnv        string
-	projectDestroyWait       bool
+	projectDestroyWait       waitFlags
 	// projectDestroyYes is the --yes opt-in: skip the confirmation prompt (and make
 	// the command usable with --no-input).
 	projectDestroyYes bool
@@ -37,102 +40,109 @@ type destroyTreeClient interface {
 
 var projectDestroyCmd = &cobra.Command{
 	Use:   "destroy",
-	Short: "Destroy a project's infrastructure",
-	Long: `Queues a DESTROY job to tear down all cloud resources for a project environment. This cannot be undone.
+	Short: "Destroy a project environment's infrastructure",
+	Long: `Queue a DESTROY job that tears down every cloud resource of one environment of a project. This cannot be undone.
+
+Use it when an environment is finished with. On a terminal you confirm by typing the project's
+name; a script or an agent passes --yes, and without it the command refuses and exits 9. Add
+--wait to stay until the job finishes and --timeout to bound that wait. --dry-run checks every
+input and prints the request without sending it.
 
 An environment placed as "dedicated" owns its cluster. While other environments (namespace or
 vcluster placements) are still placed on that cluster, destroying it is refused, naming them:
 destroy them first, or pass --cascade. --cascade prints every environment it will destroy, in
 order — the tenants first, the cluster's owner last — and asks before it queues anything.`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		token, err := getAuthToken()
-		if err != nil {
+		if err := runProjectDestroy(cmd); err != nil {
 			fail(err)
-		}
-
-		projectDestroyProjectID, err = projectIDForJob(api.NewClient(token), token, projectDestroyProjectRef, projectDestroyProjectID)
-		if err != nil {
-			fail(err)
-		}
-
-		apiClient := api.NewClient(token)
-
-		// Resolved BEFORE the confirmation, so the question is asked about a real environment and
-		// --cascade can show what that environment's destroy takes with it.
-		envID, err := resolveEnvironmentID(apiClient, projectDestroyProjectID, projectDestroyEnv)
-		if err != nil {
-			fail(err)
-		}
-
-		title := "Are you sure you want to destroy this project?"
-		description := "This will tear down all cloud resources. It cannot be undone."
-		if projectDestroyCascade {
-			order, err := destroyTreeSummary(apiClient, projectDestroyProjectID, envID)
-			if err != nil {
-				fail(err)
-			}
-			// Printed, not only put in the dialog: with --yes there is no dialog, and the log of a
-			// scripted teardown should still say what it tore down.
-			fmt.Println(order)
-			title = "Destroy all of these environments?"
-			description = order + "\nThis will tear down their cloud resources. It cannot be undone."
-		}
-
-		if !confirmDestructive(projectDestroyYes, title, description) {
-			return
-		}
-
-		// The runner picker cannot be answered with prompting disabled, and the
-		// assignment is optional — an empty id is the picker's own "Any available"
-		// default — so a scripted teardown simply leaves the job unassigned.
-		if projectDestroyRunnerID == "" && canPromptForm() {
-			projectDestroyRunnerID, err = selectRunner(token, "")
-			if err != nil {
-				fail(err)
-			}
-		}
-
-		params := api.QueueJobParams{
-			JobType:         "DESTROY",
-			ConfigurationID: projectDestroyProjectID,
-			EnvironmentID:   envID,
-			Cascade:         projectDestroyCascade,
-		}
-		if projectDestroyRunnerID != "" {
-			params.AssignedRunnerID = projectDestroyRunnerID
-		}
-
-		resp, err := apiClient.QueueJobFull(params)
-		if err != nil {
-			fail(destroyQueueError(err, projectDestroyCascade))
-			return
-		}
-
-		queued := queuedDestroyJobs(resp)
-		for _, j := range queued {
-			ui.JobQueued("DESTROY", j.JobID)
-		}
-
-		if projectDestroyWait {
-			if err := waitForDestroyJobs(apiClient, projectDestroyProjectID, queued); err != nil {
-				ui.Error(err.Error())
-				exitFunc(1)
-			}
 		}
 	},
 }
 
-// destroyTreeSummary fetches the destroy tree of envID and renders it as one line:
-// "Will destroy, in order: dev-1 (namespace), staging (vcluster), prod (dedicated, owns the cluster)".
-func destroyTreeSummary(client destroyTreeClient, projectID, envID string) (string, error) {
+// destroyClient is what `project destroy` reads before it queues: the references, the destroy
+// tree and the project's name.
+type destroyClient interface {
+	projectJobResolver
+	projectJobClient
+	destroyTreeClient
+}
+
+// runProjectDestroy resolves, confirms and queues one DESTROY, or a cascade of them.
+func runProjectDestroy(cmd *cobra.Command) error {
+	token, err := getAuthToken()
+	if err != nil {
+		return err
+	}
+	return destroyProject(cmd, api.NewClient(token), token)
+}
+
+// destroyProject is runProjectDestroy after authentication.
+func destroyProject(cmd *cobra.Command, client destroyClient, token string) error {
+	params, err := resolveProjectJobParams(client, token, projectJobInputs{
+		JobType:    string(types.JobTypeDestroy),
+		ProjectRef: projectDestroyProjectRef, ProjectID: projectDestroyProjectID,
+		RunnerRef: projectDestroyRunnerRef, RunnerID: projectDestroyRunnerID,
+		Env: projectDestroyEnv,
+	})
+	if err != nil {
+		return err
+	}
+	params.Cascade = projectDestroyCascade
+	run := projectJobRun{Params: params, Wait: projectDestroyWait, DryRun: cmdmeta.DryRunRequested(cmd)}
+
+	title := "Destroy this project environment?"
+	description := "This tears down all of its cloud resources. It cannot be undone."
+	if projectDestroyCascade {
+		// Read BEFORE the confirmation, so the question is asked about the real set of
+		// environments this destroy takes with it.
+		if run.Tree, err = destroyTree(client, params.ConfigurationID, params.EnvironmentID); err != nil {
+			return err
+		}
+		order := renderDestroyTree(run.Tree)
+		// Printed, not only put in the dialog: with --yes there is no dialog, and the log of a
+		// scripted teardown should still say what it tore down.
+		fmt.Fprintln(printer.Err, order)
+		title = "Destroy all of these environments?"
+		description = order + "\nThis tears down their cloud resources. It cannot be undone."
+	}
+
+	if !run.DryRun {
+		ok, err := confirmDestructiveByName(projectDestroyYes, title, description, func() string {
+			return projectConfirmName(client, params.ConfigurationID)
+		})
+		if err != nil || !ok {
+			return err
+		}
+	}
+
+	return destroyQueueError(finishProjectJob(cmd, client, run), projectDestroyCascade)
+}
+
+// projectConfirmName is what the person types to confirm a destroy: the project's name, or its id
+// when the project list cannot supply a name.
+func projectConfirmName(c projectLister, id string) string {
+	configs, _ := c.GetConfigurations()
+	for _, cfg := range configs {
+		if cfg.ID == id && cfg.ProjectName != "" {
+			return cfg.ProjectName
+		}
+	}
+	return id
+}
+
+// destroyTree fetches the destroy tree of envID, refusing an empty one: there would be nothing to
+// show the person who is about to confirm.
+func destroyTree(client destroyTreeClient, projectID, envID string) ([]api.DestroyTreeNode, error) {
 	tree, err := client.GetDestroyTree(projectID, envID)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("read what this destroy takes with it: %w", err)
 	}
 	if len(tree) == 0 {
-		return "", errors.New("the control plane returned an empty destroy tree")
+		return nil, refusal(clierr.CodeInternal, "",
+			"the control plane returned an empty destroy tree, so there is nothing to confirm")
 	}
-	return renderDestroyTree(tree), nil
+	return tree, nil
 }
 
 // renderDestroyTree renders a destroy tree in destroy order. Each environment is named with its
@@ -158,58 +168,25 @@ func renderDestroyTree(tree []api.DestroyTreeNode) string {
 
 // destroyQueueError adds the way out to a refused destroy. The server's 409 already names every
 // tenant; the CLI adds the flag that cascades, which the server cannot know is called --cascade.
+// The error keeps the class the control plane's answer gave it.
 func destroyQueueError(err error, cascade bool) error {
 	var apiErr *api.APIError
 	if !cascade && errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict &&
 		strings.Contains(apiErr.Message, "cascade") {
-		return fmt.Errorf("%w\nRe-run with --cascade to see every environment it would destroy and confirm", err)
+		e := *clierr.From(err)
+		e.Hint = "re-run with --cascade to see every environment it would destroy, and confirm"
+		return &e
 	}
 	return err
-}
-
-// queuedDestroyJobs is every job one destroy queued, in destroy order. A plain destroy queued one —
-// the response's `job`; a cascade lists them all in `cascade_jobs`, owner last.
-func queuedDestroyJobs(resp *api.QueueJobResponse) []api.CascadeJob {
-	if len(resp.CascadeJobs) > 0 {
-		return resp.CascadeJobs
-	}
-	if resp.Job == nil {
-		return nil
-	}
-	return []api.CascadeJob{{JobID: resp.Job.ID}}
-}
-
-// waitForDestroyJobs waits for every queued job, in destroy order. The owner's DESTROY is held by
-// the control plane until its tenants are gone, so when a TENANT's destroy fails the owner's job
-// does not fail — it stays QUEUED, waiting. This says so, and names the two ways out, rather than
-// polling a job that will not start.
-func waitForDestroyJobs(poller jobPoller, projectID string, queued []api.CascadeJob) error {
-	for i, j := range queued {
-		if err := waitForJob(poller, j.JobID); err != nil {
-			rest := queued[i+1:]
-			if len(rest) == 0 {
-				return err
-			}
-			owner := rest[len(rest)-1]
-			name := j.Name
-			if name == "" {
-				name = "job " + j.JobID
-			}
-			return fmt.Errorf(
-				"the destroy of %s did not succeed (%v). %s's DESTROY (job %s) stays QUEUED and will not start while %s is still placed on its cluster: fix it and destroy %s again (alethia project destroy --project %s --env %s), or cancel the waiting job (alethia jobs cancel %s)",
-				name, err, owner.Name, owner.JobID, name, name, projectID, name, owner.JobID,
-			)
-		}
-	}
-	return nil
 }
 
 func init() {
 	addYesFlag(projectDestroyCmd, &projectDestroyYes)
 	projectCmd.AddCommand(projectDestroyCmd)
 	jobProjectFlags(projectDestroyCmd, &projectDestroyProjectRef, &projectDestroyProjectID, "destroy")
-	projectDestroyCmd.Flags().StringVar(&projectDestroyRunnerID, "runner-id", "", "Assign to a specific runner")
-	projectDestroyCmd.Flags().StringVar(&projectDestroyEnv, "env", "", "Target environment name (default: the project's default environment)")
-	projectDestroyCmd.Flags().BoolVarP(&projectDestroyWait, "wait", "w", false, "Wait for job completion (with --cascade, for every job)")
+	jobRunnerFlags(projectDestroyCmd, &projectDestroyRunnerRef, &projectDestroyRunnerID)
+	projectDestroyCmd.Flags().StringVar(&projectDestroyEnv, "env", "", jobEnvFlagUsage)
+	addProjectWaitFlags(projectDestroyCmd, &projectDestroyWait)
+	addDryRunFlag(projectDestroyCmd)
 	projectDestroyCmd.Flags().BoolVar(&projectDestroyCascade, "cascade", false, "Also destroy the environments placed on this environment's cluster, tenants first; prints them all and confirms first")
 }

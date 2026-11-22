@@ -6,22 +6,16 @@
 // Environments management view (add / duplicate / delete), project General settings (rename) and
 // the project delete flow. Negative / guard / validation paths live in projects.negative.spec.ts.
 //
-// WHAT `/{org}/~/new` IS NOW, because this file used to describe a page that no longer exists.
-// It was one manual form — numbered "Project / Template / Cloud" blocks, a "Create empty project"
-// button beside a "Create project" one — and 12 of this file's 20 tests were driving it. It is
-// TWO STEPS now (`app/(private)/[org]/~/new/page.tsx` branches on the query string):
+// WHAT `/{org}/~/new` IS NOW (#6843). It was a two-step flow — a chooser, then a "Configure your
+// project" screen reached by `?scratch=<kind>` or `?scan=<jobId>` — and before that one manual form.
+// It is ONE SCREEN now: the "Provision the future." composer that hands its prompt to the Elench
+// modal, then the create form — "Start from" (Import a repository, Standard, AI workloads, Blank,
+// Cluster only, and the BYO options behind their flags, as one radio group), Cloud and Region (only
+// for a starting point that creates a cluster), and Name. Every value is filled in where it can be
+// worked out. An older `?scratch=<kind>` link still opens on that starting point; `?scan=<jobId>`
+// follows the scan in place. Create makes a DRAFT and lands on the canvas with a `?seed=`.
 //
-//   step 1, bare `~/new`      the front door: an "Provision the future." composer that hands its
-//                             prompt to the Elench modal, "Import Git Repository" (the repo
-//                             picker, or the GitHub/GitLab/Bitbucket link buttons when no git
-//                             account is linked), and "Start from scratch" — four tiles.
-//   step 2, `?scratch=<kind>` Configure: name, cloud + region, environments → creates a DRAFT and
-//        or `?scan=<jobId>`   opens its canvas. The cloud is REQUIRED for the template and import
-//                             paths and not for blank/BYO, which is what makes a name-only create
-//                             hermetic here.
-//
-// There is no "Create empty project" button any more, and no template tiles: the standard template
-// is a scratch tile that hands off to Configure, which picks the preset itself.
+// Blank asks for no cloud, which is what makes a name-only create hermetic here.
 //
 // Run (self-check):
 //   REUSE_AUTH=1 E2E_BASE_URL=http://localhost:3100 DEV_CONSOLE_LOG=/tmp/alethia-qa-console.log \
@@ -31,6 +25,7 @@
 // Isolation: seeds are uniquely named (`e2e-*-${Date.now()}`) and scoped to the persona org. We do
 // NOT call cleanupOrg (sibling QA agents share this persona org during the parallel run).
 
+import type { Page } from "@playwright/test";
 import { test, expect } from "../fixtures/qa";
 import { scanA11y } from "../helpers/a11y";
 import { db } from "../helpers/db";
@@ -47,12 +42,12 @@ function ownerId(s: { userId?: string; orgId?: string }): Owner {
 }
 
 /**
- * The connector NAMES the cloud picker renders, which are the catalog's display names and not the
- * slugs — the tiles read "Amazon Web Services" and "Google Cloud", never "aws" / "gcp".
- * `seedCloudIdentity` takes the slug. Both come from `lib/db/seed/connectors.generated.sql`.
+ * The cloud choice named `name` ("AWS", "GCP"), by the label around its radio. The radio is visually
+ * hidden; a person clicks the label, and so does this.
  */
-const AWS_CONNECTOR = "Amazon Web Services";
-const GCP_CONNECTOR = "Google Cloud";
+function cloudChoice(page: Page, name: string) {
+	return page.locator("label").filter({ has: page.getByRole("radio", { name, exact: true }) });
+}
 
 /**
  * The cloud identity a project was created against, by display name. The pick's OUTCOME: the
@@ -84,9 +79,11 @@ test.describe("Projects — the create front door (/~/new)", () => {
 		await expect(
 			owner.page.getByRole("button", { name: "Design with the agent" }),
 		).toBeVisible();
-		// The two source columns.
-		await expect(owner.page.getByText("Import Git Repository")).toBeVisible();
-		await expect(owner.page.getByText("Start from scratch")).toBeVisible();
+		// Both ways to start: importing a repository, and the starting points beside it.
+		await expect(owner.page.getByRole("radio", { name: "Import a repository", exact: true })).toBeVisible({
+			timeout: 45_000,
+		});
+		await expect(owner.page.getByRole("radio", { name: "Standard", exact: true })).toBeChecked();
 		// The retired manual form is asserted ABSENT rather than left unmentioned: its controls are
 		// what this file used to drive, and a front door that grew them back would otherwise be
 		// indistinguishable from one that never had them.
@@ -110,25 +107,26 @@ test.describe("Projects — the create front door (/~/new)", () => {
 
 	test("Import Git Repository offers GitHub, GitLab and Bitbucket linking", async ({ owner }) => {
 		await owner.page.goto(`/${owner.orgSlug}/~/new`);
-		await expect(
-			owner.page.getByRole("heading", { name: "Import a repository" }),
-		).toBeVisible({ timeout: 15_000 });
+		await owner.page
+			.locator("label")
+			.filter({ has: owner.page.getByRole("radio", { name: "Import a repository", exact: true }) })
+			.click({ timeout: 45_000 });
 		// The QA personas sign up with an emailed code and link no git account, so the panel renders
 		// its unlinked branch. These are PRESENCE assertions and nothing clicks them: each one calls
 		// `authClient.linkSocial`, which navigates the browser to the provider's OAuth consent screen
 		// — off-origin, unauthenticated, and the end of the run.
 		//
-		// The explicit timeouts are not decoration. The heading is server-rendered and paints with
-		// the route; the branch below it does NOT — `RepositorySelector` renders a skeleton until
-		// `getLinkedProviders()` (a server action round-trip) resolves. So the default 5 s
-		// per-assertion budget starts AFTER the heading is already up, against a call that has not
-		// been made yet, and a slow leg would read as "the console stopped offering git import".
+		// The explicit timeouts are not decoration: `RepositorySelector` may still be reading the
+		// linked providers when the option is picked, and a slow leg would otherwise read as "the
+		// console stopped offering git import".
 		await expect(owner.page.getByText(/no git accounts linked/i)).toBeVisible({
 			timeout: 30_000,
 		});
+		// "Connect", not "Link" (#6816): the selector and the connectors board start the same OAuth
+		// link and now share one verb (`GIT_CONNECT_VERB`, components/connectors/connectors-link-error.ts).
 		for (const provider of ["GitHub", "GitLab", "Bitbucket"]) {
 			await expect(
-				owner.page.getByRole("button", { name: `Link ${provider}` }),
+				owner.page.getByRole("button", { name: `Connect ${provider}` }),
 			).toBeVisible({ timeout: 30_000 });
 		}
 	});
@@ -139,44 +137,43 @@ test.describe("Projects — the create front door (/~/new)", () => {
 			owner.page.getByRole("heading", { name: /provision the future/i }),
 		).toBeVisible({ timeout: 15_000 });
 		// `exact` is the point of the assertion. Before #4269 a tile's accessible name was its
-		// title, its two-line description and its "New" pill run together, so it changed with the
-		// marketing copy and no exact name existed to ask for. The two ungated tiles are asserted;
-		// BYO Helm / BYO IaC ride server flags and are not guaranteed on every leg.
-		await expect(
-			owner.page.getByRole("button", { name: "Start from a template", exact: true }),
-		).toBeVisible();
-		await expect(
-			owner.page.getByRole("button", { name: "Blank project", exact: true }),
-		).toBeVisible();
+		// title and its description run together, so it changed with the copy and no exact name
+		// existed to ask for. Each starting point is a radio named by its title alone, its
+		// description attached as the description. The ungated ones are asserted; BYO Helm / BYO IaC
+		// ride server flags and are not guaranteed on every leg.
+		for (const title of ["Import a repository", "Standard", "AI workloads", "Blank", "Cluster only"]) {
+			await expect(owner.page.getByRole("radio", { name: title, exact: true })).toBeVisible({
+				timeout: 45_000,
+			});
+		}
 	});
 
 	test("the front door has no serious a11y violations", async ({ owner }) => {
 		await owner.page.goto(`/${owner.orgSlug}/~/new`);
 		await owner.page.getByRole("heading", { name: /provision the future/i }).waitFor();
+		await owner.page.getByRole("button", { name: "Create project" }).waitFor({ timeout: 45_000 });
 		const violations = await scanA11y(owner.page);
 		// axe is optional locally (no-ops to []); only fail when it actually finds serious issues.
 		expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
 	});
 });
 
-// Every test below loads the Configure step, and that step calls `getCloudConnectSetup()` — the
-// same per-provider health probe + pending-identity insert that makes `~/connectors` slow, which
-// `connectors.spec.ts` already raises its whole file's timeout for. Same reason, same remedy.
+// Every test below loads the create form, and the form's server half calls `getCloudConnectSetup()`
+// — the same per-provider health probe + pending-identity insert that makes `~/connectors` slow,
+// which `connectors.spec.ts` already raises its whole file's timeout for. Same reason, same remedy.
 test.describe("Projects — start from scratch → Configure", () => {
 	test.describe.configure({ timeout: 120_000 });
 
-	test("the Blank tile hands off to Configure with a blank source rail", async ({ owner }) => {
+	test("the Blank starting point asks for no cloud", async ({ owner }) => {
 		await owner.page.goto(`/${owner.orgSlug}/~/new`);
 		await owner.page
-			.getByRole("button", { name: "Blank project", exact: true })
-			.click({ timeout: 20_000 });
-		await owner.page.waitForURL(/\/~\/new\?scratch=blank(&|$)/, { timeout: 30_000 });
-		await expect(
-			owner.page.getByRole("heading", { name: "Configure your project" }),
-		).toBeVisible({ timeout: 45_000 });
-		// The left rail names the source it came from, which is the only thing on the screen that
-		// distinguishes the blank path from the template one.
-		await expect(owner.page.getByText("an empty canvas")).toBeVisible();
+			.locator("label")
+			.filter({ has: owner.page.getByRole("radio", { name: "Blank", exact: true }) })
+			.click({ timeout: 45_000 });
+		await expect(owner.page.getByRole("radio", { name: "Blank", exact: true })).toBeChecked();
+		// A blank project has no cluster yet, so the Cloud and Region rows are not asked.
+		await expect(owner.page.getByRole("radio", { name: "AWS", exact: true })).toHaveCount(0);
+		await expect(owner.page.getByLabel(/project name/i)).toBeVisible();
 	});
 
 	test("the project name field derives a live slug preview", async ({ owner }) => {
@@ -189,15 +186,16 @@ test.describe("Projects — start from scratch → Configure", () => {
 		await expect(owner.page.getByText("my-shiny-app")).toBeVisible();
 	});
 
-	test("Back to source returns to the front door", async ({ owner }) => {
+	test("an older ?scratch= link opens on its starting point, with a name already filled in", async ({
+		owner,
+	}) => {
 		await owner.page.goto(`/${owner.orgSlug}/~/new?scratch=blank`);
-		await expect(
-			owner.page.getByRole("heading", { name: "Configure your project" }),
-		).toBeVisible({ timeout: 45_000 });
-		await owner.page.getByRole("button", { name: "Back to source" }).click();
-		await expect(
-			owner.page.getByRole("heading", { name: /provision the future/i }),
-		).toBeVisible({ timeout: 30_000 });
+		await expect(owner.page.getByRole("radio", { name: "Blank", exact: true })).toBeChecked({
+			timeout: 45_000,
+		});
+		// The name is worked out (`my-first-project` / `my-project`, made free against the org's
+		// names), never left empty for the person to invent.
+		await expect(owner.page.getByLabel(/project name/i)).not.toHaveValue("");
 	});
 
 	test("a name-only create on the Blank path opens the new project's canvas", async ({
@@ -208,11 +206,10 @@ test.describe("Projects — start from scratch → Configure", () => {
 		const name = owner.page.getByLabel(/project name/i);
 		await expect(name).toBeVisible({ timeout: 45_000 });
 		await name.fill(uniq);
-		// No cloud is selected and none is needed: `requiresCloud` is false for the blank path, so
-		// the button is live on a name alone. This is the replacement for the old "Create empty
-		// project" test, and it is the same promise.
+		// No cloud is asked and none is needed for a blank project, so the button is live on a name
+		// alone. This is the replacement for the old "Create empty project" test, and the same promise.
 		await owner.page.getByRole("button", { name: /create project/i }).click();
-		// Lands on the new project (a bare project URL redirects to /architecture).
+		// Lands on the new project's canvas, with the seed the canvas starts from.
 		await owner.page.waitForURL(
 			new RegExp(`/${owner.orgSlug}/[^/~][^/]*(/architecture)?(\\?|$)`),
 			{ timeout: 60_000 },
@@ -224,71 +221,37 @@ test.describe("Projects — start from scratch → Configure", () => {
 test.describe("Projects — the template path", () => {
 	test.describe.configure({ timeout: 120_000 });
 
-	test("the Template tile hands off to Configure with a cloud step", async ({ owner }) => {
-		await owner.page.goto(`/${owner.orgSlug}/~/new`);
-		await owner.page
-			.getByRole("button", { name: "Start from a template", exact: true })
-			.click({ timeout: 20_000 });
-		await owner.page.waitForURL(/\/~\/new\?scratch=template(&|$)/, { timeout: 30_000 });
-		await expect(
-			owner.page.getByRole("heading", { name: "Configure your project" }),
-		).toBeVisible({ timeout: 45_000 });
-		// THE ASSERTIONS ARE THE TEMPLATE PATH'S OWN, and this is a correction: the pair of them
-		// used to be "Standard template" plus the "Cloud & region" heading, described as "the step
-		// the template path adds over the blank one". It is not a step it adds — `configure-project`
-		// renders `<Section n="02" title="Cloud & region">` UNCONDITIONALLY, for blank, byo-helm,
-		// byo-iac and import alike; only `requiresCloud` differs between the paths, and it gates the
-		// Notice and the Create button's label, not that heading. Swapping `?scratch=template` for
-		// `?scratch=blank` on the click above left the test green, so it could not tell the
-		// hand-off it names from the one the sibling test covers.
-		//
-		// `SCRATCH_META` is what actually differs, and the left rail renders it: the blank test
-		// keys on "an empty canvas", so this one keys on the template's label AND one-liner and
-		// asserts the blank marker ABSENT. The cloud REQUIREMENT is the other real difference, but
-		// its only visible forms — the "Connect a cloud account…" notice and the disabled "Connect
-		// a cloud to continue" button — appear only on an org with no connected cloud, and this
-		// file's persona org is shared with sibling QA workers that seed cloud identities into it
-		// and never clean up. It is not a precondition this spec can establish.
-		await expect(owner.page.getByText("Standard template")).toBeVisible();
-		await expect(owner.page.getByText("start from a template")).toBeVisible();
-		await expect(owner.page.getByText("an empty canvas")).toHaveCount(0);
-		// #4110: the Template section IS a step only this path adds — the picker renders for
-		// `?scratch=template` alone, so this heading is the hand-off's second own marker.
-		await expect(owner.page.getByRole("heading", { name: "Template", exact: true })).toBeVisible();
+	test("the Standard starting point asks for a cloud and a region", async ({ owner }) => {
+		await owner.page.goto(`/${owner.orgSlug}/~/new?scratch=template`);
+		await expect(owner.page.getByRole("radio", { name: "Standard", exact: true })).toBeChecked({
+			timeout: 45_000,
+		});
+		// The four clouds this release offers, and no other.
+		for (const cloud of ["AWS", "GCP", "Azure", "Hetzner"]) {
+			await expect(owner.page.getByRole("radio", { name: cloud, exact: true })).toHaveCount(1);
+		}
+		await expect(owner.page.getByRole("radio", { name: /alibaba/i })).toHaveCount(0);
+		await expect(owner.page.getByRole("combobox", { name: "Region" })).toBeVisible();
 	});
 
-	test("each cloud tile is a named group, and a seeded account reads Connected", async ({
-		owner,
-	}) => {
+	test("each cloud is a named choice, and a seeded account reads Connected", async ({ owner }) => {
 		await seedCloudIdentity(ownerId(owner), { provider: "aws" });
 		await owner.page.goto(`/${owner.orgSlug}/~/new?scratch=template`);
-		await expect(
-			owner.page.getByRole("heading", { name: "Configure your project" }),
-		).toBeVisible({ timeout: 45_000 });
-		// #4269's product half: a pick-mode connector tile was a bare `<div onClick>` with no role
-		// and no name, so nothing but `getByText("AWS")` reached it — and that matches the status
-		// copy and the region row too. Each tile is a named `group` now.
-		const aws = owner.page.getByRole("group", { name: AWS_CONNECTOR });
-		await expect(aws).toBeVisible({ timeout: 30_000 });
-		await expect(aws.getByText("Connected")).toBeVisible();
+		// Each cloud is a radio named by the cloud, its connection state attached as its description,
+		// so "Connected" is said about THIS cloud rather than found anywhere on the page.
+		const aws = owner.page.getByRole("radio", { name: "AWS", exact: true });
+		await expect(aws).toHaveCount(1, { timeout: 45_000 });
+		await expect(aws).toHaveAccessibleDescription(/Connected/);
 	});
 
 	test("a template create on a connected cloud opens the new project's canvas", async ({
 		owner,
 	}) => {
-		// TWO CLOUDS, AND THE PICK IS MEASURED — this test used to seed one AWS identity, click the
-		// AWS tile and assert the Create button was enabled. `deriveInitial()` pre-selects the FIRST
-		// connected cloud identity, so `identityId` was already non-null on first render: the button
-		// was enabled and the create succeeded whatever the click did. Regressing `CloudPicker`'s
-		// `onSelect` to a no-op, or dropping `ConnectorCard`'s `onClick={isPick ? onSelect : …}`,
-		// left it green. Nothing measured the pick path at all.
-		//
-		// So: seed AWS *and* GCP, click each tile in turn, and assert the REGION follows — `onCloud`
-		// sets `DEFAULT_REGION[provider]`, so the region row reads eu-west-1 after the AWS tile and
-		// europe-west1 after the GCP one. Whichever of the two the form pre-selected, one of those
-		// two assertions is a real state change, and a click that does nothing fails it. The create
-		// then lands on GCP, and the created ROW is checked: `cloud_identity_id` must be the GCP
-		// identity, not the AWS one the form opened on.
+		// TWO CLOUDS, AND THE PICK IS MEASURED. The form selects a connected account without a click,
+		// so a create that kept whatever it opened on would pass on a single cloud. Seed AWS *and*
+		// GCP, pick each in turn, and assert the REGION follows the cloud (each cloud's region codes
+		// have their own shape: `eu-west-1` against `europe-west1`). The create then lands on GCP,
+		// and the created ROW is checked: `cloud_identity_id` must be the GCP identity.
 		const aws = await seedCloudIdentity(ownerId(owner), { provider: "aws" });
 		const gcp = await seedCloudIdentity(ownerId(owner), { provider: "gcp" });
 		await owner.page.goto(`/${owner.orgSlug}/~/new?scratch=template`);
@@ -297,32 +260,24 @@ test.describe("Projects — the template path", () => {
 		await expect(name).toBeVisible({ timeout: 45_000 });
 		await name.fill(uniq);
 
-		await owner.page
-			.getByRole("group", { name: AWS_CONNECTOR })
-			.getByText("Connected", { exact: true })
-			.click({ timeout: 30_000 });
 		// The region is read off the Select's TRIGGER (base-ui gives it `role="combobox"`): the
-		// option list carries every region code too, so a page-wide `getByText` resolves two.
-		const regionTrigger = (code: string) =>
-			owner.page.getByRole("combobox").filter({ hasText: code });
-		await expect(regionTrigger("eu-west-1")).toBeVisible({ timeout: 15_000 });
-		await owner.page
-			.getByRole("group", { name: GCP_CONNECTOR })
-			.getByText("Connected", { exact: true })
-			.click();
-		await expect(regionTrigger("europe-west1")).toBeVisible({ timeout: 15_000 });
-		await expect(owner.page.getByText("eu-west-1")).toHaveCount(0);
+		// option list carries every region code too. The trigger's text is the label run into the
+		// code ("Frankfurteu-central-1"), so the patterns have no leading word boundary.
+		const region = owner.page.getByRole("combobox", { name: "Region" });
+		await cloudChoice(owner.page, "AWS").click({ timeout: 30_000 });
+		await expect(region).toHaveText(/(us|eu|ap|sa)-[a-z]+-\d\b/, { timeout: 15_000 });
+		await cloudChoice(owner.page, "GCP").click();
+		await expect(region).toHaveText(/(us|europe|asia|southamerica)-[a-z]+\d\b/, { timeout: 15_000 });
 
 		const create = owner.page.getByRole("button", { name: /create project/i });
 		await expect(create).toBeEnabled();
 		await create.click();
+		// The canvas opens with the template seed for the cloud that was picked (the canvas removes
+		// the param once it has applied it, so the arrival is where it is read).
 		await owner.page.waitForURL(
-			new RegExp(`/${owner.orgSlug}/[^/~][^/]*(/architecture)?(\\?|$)`),
+			new RegExp(`/${owner.orgSlug}/[^/~][^/]*/architecture\\?seed=v1\\.template\\.standard\\.gcp`),
 			{ timeout: 60_000 },
 		);
-		await expect(owner.page).not.toHaveURL(/\/~\/new/);
-		// The outcome the pick is FOR. A create that quietly kept the pre-selected identity would
-		// pass every assertion above the fold and put the project on the wrong cloud.
 		expect(await projectCloudIdentity(owner.orgId!, uniq)).toBe(gcp.id);
 		expect(await projectCloudIdentity(owner.orgId!, uniq)).not.toBe(aws.id);
 	});
@@ -426,16 +381,16 @@ test.describe("Projects — Environments view", () => {
 	});
 
 	/**
-	 * The per-row delete control. `environment-card.tsx` gives it `title="Delete"` and nothing else,
-	 * so its accessible name carries no environment — every non-default row on the page offers an
-	 * identically-named button. That is a real testid gap (filed in the PR for #4269, not worked
-	 * around by editing app code from here); a seeded project has exactly ONE environment, so after
-	 * adding one there is exactly one deletable row and the name is unambiguous. Each test that uses
-	 * this asserts the count first, so a page that grows a second one fails by saying so rather than
-	 * by Playwright's strict-mode error.
+	 * Opens one environment's row menu (`Environment actions for <name>`, `environment-columns.tsx`)
+	 * and returns its Delete item. The menu names its environment, so there is no identically-named
+	 * control to pick between (the gap #4269 recorded against the old icon button). Duplicate is in
+	 * every row's menu, so it is waited on first: an absent Delete is then read from an OPEN menu,
+	 * not from one that never opened.
 	 */
-	function deleteControls(page: import("@playwright/test").Page) {
-		return page.getByRole("button", { name: "Delete", exact: true });
+	async function deleteItemOf(page: import("@playwright/test").Page, envName: string) {
+		await page.getByRole("button", { name: `Environment actions for ${envName}` }).click();
+		await expect(page.getByRole("menuitem", { name: "Duplicate" })).toBeVisible({ timeout: 10_000 });
+		return page.getByRole("menuitem", { name: "Delete", exact: true });
 	}
 
 	test("lists the default environment with a Default tag and no delete control", async ({
@@ -450,10 +405,10 @@ test.describe("Projects — Environments view", () => {
 			timeout: 15_000,
 		});
 		await expect(owner.page.getByText(/^default$/i).first()).toBeVisible();
-		// The default env is undeletable, and `environment-card.tsx` renders NO delete button for
-		// it. This assertion used to be `/delete production/i`, a name no control on this page has
-		// ever had — it could only ever be 0, so it passed whatever the page did.
-		await expect(deleteControls(owner.page)).toHaveCount(0);
+		// The default env is undeletable: its row menu has NO Delete item. This assertion used to be
+		// `/delete production/i`, a name no control on this page has ever had — it could only ever be
+		// 0, so it passed whatever the page did.
+		await expect(await deleteItemOf(owner.page, "production")).toHaveCount(0);
 	});
 
 	test("New Environment (empty) creates an environment that then lists", async ({ owner }) => {
@@ -505,13 +460,12 @@ test.describe("Projects — Environments view", () => {
 			timeout: 20_000,
 		});
 
-		// Exactly one deletable row: the one just added. Asserted before it is clicked, so an extra
-		// row states itself instead of surfacing as a strict-mode violation on the line below.
-		await expect(deleteControls(owner.page)).toHaveCount(1);
-		await deleteControls(owner.page).click();
-		// The confirm's TITLE names the environment — that is where the row's identity is, since the
-		// trigger's name is the bare word "Delete". Deleting an environment is confirmed by typing
-		// its name, and the button does nothing until it has been.
+		// The row just added is deletable: its menu has the Delete item the default's does not.
+		const deleteItem = await deleteItemOf(owner.page, envName);
+		await expect(deleteItem).toHaveCount(1);
+		await deleteItem.click();
+		// The confirm's TITLE names the environment too. Deleting an environment is confirmed by
+		// typing its name, and the button does nothing until it has been.
 		const confirm = owner.page.getByRole("alertdialog");
 		await expect(confirm.getByText(new RegExp(`delete ${envName}`, "i"))).toBeVisible();
 		const deleteButton = confirm.getByRole("button", { name: /delete environment/i });
@@ -588,7 +542,8 @@ test.describe("Projects — delete (non-live)", () => {
 		// The registry entry `project.delete` in `destructive-actions.yaml`: control
 		// `{ role: button, name: "Delete project" }` — the trigger reads "Delete" but carries
 		// `aria-label="Delete project"` (#4463) — an alert-dialog titled "Delete this project?", and
-		// a confirm action also named "Delete project".
+		// a confirm action also named "Delete project", which stays disabled until the project's
+		// name is typed (`confirm: typed`, #7198).
 		//
 		// WAIT FOR HYDRATION before clicking; a visible trigger is not enough. The page is reached on
 		// `domcontentloaded`, so the server-rendered "Delete" button is visible and clickable before
@@ -606,7 +561,11 @@ test.describe("Projects — delete (non-live)", () => {
 		await owner.page.getByRole("button", { name: /^Delete project$/ }).click();
 		const dialog = owner.page.getByRole("alertdialog");
 		await expect(dialog.getByText(/delete this project\?/i)).toBeVisible();
-		await dialog.getByRole("button", { name: /delete project/i }).click();
+		const confirm = dialog.getByRole("button", { name: /delete project/i });
+		await expect(confirm).toBeDisabled();
+		await dialog.getByRole("textbox").fill(project.name);
+		await expect(confirm).toBeEnabled();
+		await confirm.click();
 		// Back on the org overview, off the project entirely.
 		await owner.page.waitForURL(new RegExp(`/${owner.orgSlug}(\\?|/?$)`), { timeout: 20_000 });
 		await expect(owner.page).not.toHaveURL(/\/settings\/general/);

@@ -116,11 +116,17 @@ func TestRunOrgListJSON(t *testing.T) {
 
 func TestRunOrgListEmpty(t *testing.T) {
 	var buf bytes.Buffer
+	// An empty list has no table: the empty state is said on stderr and stdout stays empty.
+	p, _, said := splitPrinter("table")
+	withPrinter(t, p)
 	if err := runOrgList(&fakeClient{orgs: nil}, &buf, "table"); err != nil {
 		t.Fatalf("runOrgList empty: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No organizations") {
-		t.Errorf("expected empty notice: %s", buf.String())
+	if !strings.Contains(said.String(), "No organizations") {
+		t.Errorf("expected the empty notice on stderr, got: %s", said.String())
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an empty list wrote on stdout: %q", buf.String())
 	}
 }
 
@@ -149,7 +155,7 @@ func TestRunOrgSwitchPersists(t *testing.T) {
 	defer func() { noInputMode = prev }()
 
 	var buf bytes.Buffer
-	if err := runOrgSwitch(&fakeClient{orgs: sampleOrgs()}, &buf, "beta"); err != nil {
+	if err := runOrgSwitch(&fakeClient{orgs: sampleOrgs()}, testPrinter(&buf, "table"), "beta"); err != nil {
 		t.Fatalf("runOrgSwitch: %v", err)
 	}
 	cfg := types.LoadCliConfig()
@@ -163,14 +169,14 @@ func TestRunOrgSwitchPersists(t *testing.T) {
 
 func TestRunOrgSwitchUnknownTarget(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runOrgSwitch(&fakeClient{orgs: sampleOrgs()}, &buf, "ghost"); err == nil {
+	if err := runOrgSwitch(&fakeClient{orgs: sampleOrgs()}, testPrinter(&buf, "table"), "ghost"); err == nil {
 		t.Error("expected error for unknown org")
 	}
 }
 
 func TestRunOrgSwitchNoOrgs(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runOrgSwitch(&fakeClient{orgs: nil}, &buf, "x"); err == nil {
+	if err := runOrgSwitch(&fakeClient{orgs: nil}, testPrinter(&buf, "table"), "x"); err == nil {
 		t.Error("expected error when no orgs")
 	}
 }
@@ -195,18 +201,24 @@ func TestRunMembersList(t *testing.T) {
 
 func TestRunMembersListEmpty(t *testing.T) {
 	var buf bytes.Buffer
+	// An empty list has no table: the empty state is said on stderr and stdout stays empty.
+	p, _, said := splitPrinter("table")
+	withPrinter(t, p)
 	if err := runMembersList(&fakeClient{members: nil}, &buf, "table", "o1"); err != nil {
 		t.Fatalf("runMembersList empty: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No members") {
-		t.Errorf("expected empty notice")
+	if !strings.Contains(said.String(), "No members") {
+		t.Errorf("expected the empty notice on stderr, got: %s", said.String())
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an empty list wrote on stdout: %q", buf.String())
 	}
 }
 
 func TestRunMembersAdd(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runMembersAdd(f, &buf, "o1", "new@x.com", "member"); err != nil {
+	if err := runMembersAdd(f, testPrinter(&buf, "table"), "o1", "new@x.com", "member", false); err != nil {
 		t.Fatalf("runMembersAdd: %v", err)
 	}
 	if f.invitedEmail != "new@x.com" || f.invitedRole != "member" {
@@ -220,7 +232,7 @@ func TestRunMembersAdd(t *testing.T) {
 func TestRunMembersRemove(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runMembersRemove(f, &buf, "o1", "m9"); err != nil {
+	if err := runMembersRemove(f, testPrinter(&buf, "table"), "o1", orgRef{ID: "m9"}); err != nil {
 		t.Fatalf("runMembersRemove: %v", err)
 	}
 	if f.removedMember != "m9" {
@@ -244,7 +256,7 @@ func TestRunTeamsList(t *testing.T) {
 func TestRunTeamsCreate(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runTeamsCreate(f, &buf, "o1", "SRE"); err != nil {
+	if err := runTeamsCreate(f, testPrinter(&buf, "table"), "o1", "SRE", false); err != nil {
 		t.Fatalf("runTeamsCreate: %v", err)
 	}
 	if f.createdName != "SRE" {
@@ -258,7 +270,7 @@ func TestRunTeamsCreate(t *testing.T) {
 func TestRunTeamsDelete(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runTeamsDelete(f, &buf, "o1", "t9"); err != nil {
+	if err := runTeamsDelete(f, testPrinter(&buf, "table"), "o1", orgRef{ID: "t9"}); err != nil {
 		t.Fatalf("runTeamsDelete: %v", err)
 	}
 	if f.deletedTeam != "t9" {
@@ -301,19 +313,25 @@ func TestRunChannelsListJSON(t *testing.T) {
 
 func TestRunChannelsListEmpty(t *testing.T) {
 	var buf bytes.Buffer
+	// An empty list has no table: the empty state is said on stderr and stdout stays empty.
+	p, _, said := splitPrinter("table")
+	withPrinter(t, p)
 	if err := runChannelsList(&fakeClient{channels: nil}, &buf, "table"); err != nil {
 		t.Fatalf("runChannelsList empty: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No notification channels") {
-		t.Errorf("expected empty notice: %s", buf.String())
+	if !strings.Contains(said.String(), "No notification channels") {
+		t.Errorf("expected the empty notice on stderr, got: %s", said.String())
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an empty list wrote on stdout: %q", buf.String())
 	}
 }
 
 func TestRunChannelsCreate(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	cfg := map[string]interface{}{"url": "https://hooks.example.com"}
-	if err := runChannelsCreate(f, &buf, "ops", "slack", cfg); err != nil {
+	draft := channelDraft{Name: "ops", Type: "slack", URL: "https://hooks.example.com"}
+	if err := runChannelsCreate(f, testPrinter(&buf, "table"), draft, false); err != nil {
 		t.Fatalf("runChannelsCreate: %v", err)
 	}
 	if f.createdName != "ops" || f.createdChType != "slack" {
@@ -330,7 +348,7 @@ func TestRunChannelsCreate(t *testing.T) {
 func TestRunChannelsVerify(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runChannelsVerify(f, &buf, "c9"); err != nil {
+	if err := runChannelsVerify(f, testPrinter(&buf, "table"), "c9"); err != nil {
 		t.Fatalf("runChannelsVerify: %v", err)
 	}
 	if f.verifiedChID != "c9" {
@@ -344,7 +362,7 @@ func TestRunChannelsVerify(t *testing.T) {
 func TestRunChannelsDelete(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runChannelsDelete(f, &buf, "c9"); err != nil {
+	if err := runChannelsDelete(f, testPrinter(&buf, "table"), govRef{ID: "c9", Name: "ops"}); err != nil {
 		t.Fatalf("runChannelsDelete: %v", err)
 	}
 	if f.deletedChannel != "c9" {
@@ -382,18 +400,24 @@ func TestRunAlertsList(t *testing.T) {
 
 func TestRunAlertsListEmpty(t *testing.T) {
 	var buf bytes.Buffer
+	// An empty list has no table: the empty state is said on stderr and stdout stays empty.
+	p, _, said := splitPrinter("table")
+	withPrinter(t, p)
 	if err := runAlertsList(&fakeClient{alertRules: nil}, &buf, "table"); err != nil {
 		t.Fatalf("runAlertsList empty: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No alert rules") {
-		t.Errorf("expected empty notice: %s", buf.String())
+	if !strings.Contains(said.String(), "No alert rules") {
+		t.Errorf("expected the empty notice on stderr, got: %s", said.String())
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an empty list wrote on stdout: %q", buf.String())
 	}
 }
 
 func TestRunAlertsCreate(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runAlertsCreate(f, &buf, "failures", []string{"system.job.failed"}, []string{"c1"}, "critical"); err != nil {
+	if err := runAlertsCreate(f, testPrinter(&buf, "table"), alertDraft{Name: "failures", Events: []string{"system.job.failed"}, ChannelIDs: []string{"c1"}, Severity: "critical"}, false); err != nil {
 		t.Fatalf("runAlertsCreate: %v", err)
 	}
 	if f.createdRuleN != "failures" || f.createdRuleSev != "critical" {
@@ -413,7 +437,7 @@ func TestRunAlertsCreate(t *testing.T) {
 func TestRunAlertsDelete(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runAlertsDelete(f, &buf, "a9"); err != nil {
+	if err := runAlertsDelete(f, testPrinter(&buf, "table"), govRef{ID: "a9", Name: "failures"}); err != nil {
 		t.Fatalf("runAlertsDelete: %v", err)
 	}
 	if f.deletedRule != "a9" {
@@ -499,11 +523,17 @@ func TestRunRolesListJSON(t *testing.T) {
 
 func TestRunRolesListEmpty(t *testing.T) {
 	var buf bytes.Buffer
+	// An empty list has no table: the empty state is said on stderr and stdout stays empty.
+	p, _, said := splitPrinter("table")
+	withPrinter(t, p)
 	if err := runRolesList(&fakeClient{roles: nil}, &buf, "table"); err != nil {
 		t.Fatalf("runRolesList empty: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No roles") {
-		t.Errorf("expected empty notice: %s", buf.String())
+	if !strings.Contains(said.String(), "No roles") {
+		t.Errorf("expected the empty notice on stderr, got: %s", said.String())
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an empty list wrote on stdout: %q", buf.String())
 	}
 }
 
@@ -517,7 +547,7 @@ func TestRunRolesListError(t *testing.T) {
 func TestRunRolesCreate(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runRolesCreate(f, &buf, "deployers", []string{"project:deploy"}); err != nil {
+	if err := runRolesCreate(f, testPrinter(&buf, "table"), "deployers", []string{"project:deploy"}, false); err != nil {
 		t.Fatalf("runRolesCreate: %v", err)
 	}
 	if f.createdRoleN != "deployers" || len(f.createdRoleKey) != 1 || f.createdRoleKey[0] != "project:deploy" {
@@ -531,7 +561,7 @@ func TestRunRolesCreate(t *testing.T) {
 func TestRunRolesDelete(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runRolesDelete(f, &buf, "r9"); err != nil {
+	if err := runRolesDelete(f, testPrinter(&buf, "table"), orgRef{ID: "r9"}); err != nil {
 		t.Fatalf("runRolesDelete: %v", err)
 	}
 	if f.deletedRole != "r9" {
@@ -562,11 +592,17 @@ func TestRunGrantsList(t *testing.T) {
 
 func TestRunGrantsListEmpty(t *testing.T) {
 	var buf bytes.Buffer
+	// An empty list has no table: the empty state is said on stderr and stdout stays empty.
+	p, _, said := splitPrinter("table")
+	withPrinter(t, p)
 	if err := runGrantsList(&fakeClient{grants: nil}, &buf, "table"); err != nil {
 		t.Fatalf("runGrantsList empty: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No access grants") {
-		t.Errorf("expected empty notice: %s", buf.String())
+	if !strings.Contains(said.String(), "No access grants") {
+		t.Errorf("expected the empty notice on stderr, got: %s", said.String())
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an empty list wrote on stdout: %q", buf.String())
 	}
 }
 
@@ -581,7 +617,7 @@ func TestRunGrantsAdd(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
 	params := api.AddGrantParams{PrincipalType: "user", PrincipalID: "u1", Effect: "allow", PermissionKey: "project:deploy", ResourceType: "org"}
-	if err := runGrantsAdd(f, &buf, params); err != nil {
+	if err := runGrantsAdd(f, testPrinter(&buf, "table"), params, false); err != nil {
 		t.Fatalf("runGrantsAdd: %v", err)
 	}
 	if f.addedGrant.PrincipalID != "u1" || f.addedGrant.PermissionKey != "project:deploy" {
@@ -596,7 +632,7 @@ func TestRunGrantsAddRole(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{createdGr: &api.Grant{ID: "g9", Effect: "allow", Role: "deployers", ResourceType: "org"}}
 	params := api.AddGrantParams{PrincipalType: "team", PrincipalID: "t1", Effect: "allow", RoleID: "r2", ResourceType: "org"}
-	if err := runGrantsAdd(f, &buf, params); err != nil {
+	if err := runGrantsAdd(f, testPrinter(&buf, "table"), params, false); err != nil {
 		t.Fatalf("runGrantsAdd role: %v", err)
 	}
 	if !strings.Contains(buf.String(), "deployers") {
@@ -607,7 +643,7 @@ func TestRunGrantsAddRole(t *testing.T) {
 func TestRunGrantsRemove(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runGrantsRemove(f, &buf, "g9"); err != nil {
+	if err := runGrantsRemove(f, testPrinter(&buf, "table"), orgRef{ID: "g9"}); err != nil {
 		t.Fatalf("runGrantsRemove: %v", err)
 	}
 	if f.removedGrant != "g9" {
@@ -638,11 +674,17 @@ func TestRunSsoList(t *testing.T) {
 
 func TestRunSsoListEmpty(t *testing.T) {
 	var buf bytes.Buffer
+	// An empty list has no table: the empty state is said on stderr and stdout stays empty.
+	p, _, said := splitPrinter("table")
+	withPrinter(t, p)
 	if err := runSsoList(&fakeClient{ssoProvs: nil}, &buf, "table"); err != nil {
 		t.Fatalf("runSsoList empty: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No SSO providers") {
-		t.Errorf("expected empty notice: %s", buf.String())
+	if !strings.Contains(said.String(), "No SSO providers") {
+		t.Errorf("expected the empty notice on stderr, got: %s", said.String())
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an empty list wrote on stdout: %q", buf.String())
 	}
 }
 
@@ -796,9 +838,9 @@ func TestRenderClusters(t *testing.T) {
 }
 
 func TestRenderCloudIdentities(t *testing.T) {
-	var buf bytes.Buffer
+	p, buf, _ := cloudsTestPrinter("table")
 	ids := []api.CloudIdentity{{Provider: "aws", Label: "prod-account", CreatedAt: ""}}
-	if err := renderCloudIdentities(&buf, "table", ids); err != nil {
+	if err := renderCloudIdentities(p, ids); err != nil {
 		t.Fatalf("renderCloudIdentities: %v", err)
 	}
 	if !strings.Contains(buf.String(), "AWS") || !strings.Contains(buf.String(), "prod-account") {

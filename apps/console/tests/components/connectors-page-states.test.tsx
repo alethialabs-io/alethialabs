@@ -113,7 +113,7 @@ describe("ConnectorsPage — the four renders of its read", () => {
 	it("pending: the board-shaped skeleton, never the empty state", () => {
 		board.state = { ...settled, isPending: true };
 		const { container } = renderBoard();
-		expect(container.querySelector('[data-slot="connectors-skeleton"]')).not.toBeNull();
+		expect(container.querySelector('[data-skeleton="connectors"]')).not.toBeNull();
 		expect(screen.queryByText("No connectors match")).toBeNull();
 	});
 
@@ -123,13 +123,14 @@ describe("ConnectorsPage — the four renders of its read", () => {
 		expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load connectors");
 		expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
 		expect(screen.queryByText("No connectors match")).toBeNull();
-		expect(container.querySelector('[data-slot="connectors-skeleton"]')).toBeNull();
+		expect(container.querySelector('[data-skeleton="connectors"]')).toBeNull();
 	});
 
 	it("refused: its own state, distinct from the failure", () => {
 		board.state = { ...settled, isError: true, error: new ORPCError("FORBIDDEN", { defined: true }) };
-		renderBoard();
-		expect(screen.getByText("Sign in again to see connectors")).toBeInTheDocument();
+		const { container } = renderBoard();
+		expect(screen.getByText("You don't have access to connectors")).toBeInTheDocument();
+		expect(container.querySelector('[data-state="refused"]')).toHaveAttribute("data-refusal", "forbidden");
 		expect(screen.queryByRole("alert")).toBeNull();
 		expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
 	});
@@ -198,14 +199,16 @@ describe("ConnectorsPage — the read route's own plain-JSON answers", () => {
 	it("a plain 401 (session expired) renders the refused state, not the region error", () => {
 		board.state = { ...settled, isError: true, error: unauthorized };
 		renderBoard();
-		expect(screen.getByText("Sign in again to see connectors")).toBeInTheDocument();
+		expect(screen.getByText("Your session has ended")).toBeInTheDocument();
+		expect(screen.getByText("Sign in again to see connectors.")).toBeInTheDocument();
 		expectNoRegionErrorOrRetry();
 	});
 
-	it("a plain 403 renders the refused state", () => {
+	it("a plain 403 renders the refused state, and does not tell the viewer to sign in", () => {
 		board.state = { ...settled, isError: true, error: forbidden };
 		renderBoard();
-		expect(screen.getByText("Sign in again to see connectors")).toBeInTheDocument();
+		expect(screen.getByText("You don't have access to connectors")).toBeInTheDocument();
+		expect(screen.queryByText(/sign in/i)).toBeNull();
 		expectNoRegionErrorOrRetry();
 	});
 
@@ -214,13 +217,14 @@ describe("ConnectorsPage — the read route's own plain-JSON answers", () => {
 		renderBoard();
 		expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load connectors");
 		expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
-		expect(screen.queryByText("Sign in again to see connectors")).toBeNull();
+		expect(screen.queryByText("Your session has ended")).toBeNull();
+		expect(screen.queryByText("You don't have access to connectors")).toBeNull();
 	});
 
 	it("a typed FORBIDDEN is still refused", () => {
 		board.state = { ...settled, isError: true, error: new ORPCError("FORBIDDEN", { defined: true }) };
 		renderBoard();
-		expect(screen.getByText("Sign in again to see connectors")).toBeInTheDocument();
+		expect(screen.getByText("You don't have access to connectors")).toBeInTheDocument();
 		expectNoRegionErrorOrRetry();
 	});
 
@@ -228,7 +232,14 @@ describe("ConnectorsPage — the read route's own plain-JSON answers", () => {
 		board.state = { ...settled, isError: true, error: unauthorized, data: boardData };
 		renderBoard();
 		expect(screen.getAllByText("Datadog").length).toBeGreaterThan(0);
-		expect(screen.getByText("Sign in again to refresh — showing earlier data")).toBeInTheDocument();
+		expect(screen.getByText("Your session has ended — showing earlier data")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+	});
+
+	it("a refresh refused for the viewer's role says access changed, not that the session ended", () => {
+		board.state = { ...settled, isError: true, error: forbidden, data: boardData };
+		renderBoard();
+		expect(screen.getByText("Your access to connectors changed — showing earlier data")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
 	});
 });

@@ -121,8 +121,8 @@ export default async function BrandPage() {
 						<LogoField label="Company lockup · light field">
 							<AlethiaLockup size={38} className="text-black" />
 						</LogoField>
-						<LogoField label="Platform lockup · dark field" dark>
-							<AlethiaLockup tag="platform" size={30} className="text-white" />
+						<LogoField label="Product lockup · dark field" dark>
+							<AlethiaLockup tag="none" size={30} className="text-white" />
 						</LogoField>
 						<LogoField label="Product mark · clear space" dark>
 							<div className="border border-dashed border-white/25 p-8">

@@ -71,7 +71,7 @@ func TestPickIdentityByProvider(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := pickIdentity(identities, []string{tc.arg})
+			got, err := pickIdentity(identities, tc.arg)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("pickIdentity(%q) should error, got %+v", tc.arg, got)

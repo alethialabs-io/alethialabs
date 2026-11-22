@@ -38,7 +38,7 @@ const { PreviewSettingsPage } = await import("@/components/settings/preview/prev
 const { orpc } = await import("@/lib/rpc/client");
 const { seededClient, withQueryClient } = await import("../support/general-settings");
 
-const READ = { projectId: "proj-1", config: null, fabrics: [], gitCredentials: [] };
+const READ = { projectId: "proj-1", canManage: true, config: null, fabrics: [], gitCredentials: [] };
 
 /** The page body over a client holding both keys the route prefetches. */
 function pageOver(linked: ("github" | "gitlab" | "bitbucket")[]) {
@@ -63,7 +63,7 @@ describe("Preview settings — the git-accounts block is in the first paint (#63
 	it("nothing linked: the FIRST render is the Link panel, and the picker asks nothing", () => {
 		render(pageOver([]));
 		expect(screen.getByText("No Git accounts linked")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: /Link GitHub/ })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /Connect GitHub/ })).toBeInTheDocument();
 		expect(getLinkedProviders).not.toHaveBeenCalled();
 	});
 
@@ -77,6 +77,6 @@ describe("Preview settings — the git-accounts block is in the first paint (#63
 	it("the SERVER render already carries the block", () => {
 		const html = renderToString(pageOver([]));
 		expect(html).toContain("No Git accounts linked");
-		expect(html).toContain("Link GitHub");
+		expect(html).toContain("Connect GitHub");
 	});
 });

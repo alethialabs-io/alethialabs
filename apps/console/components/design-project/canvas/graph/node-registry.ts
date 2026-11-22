@@ -62,7 +62,7 @@ export type SchemaKey =
 	| "services"
 	// Chart / add-on / external nodes are OUT-OF-BAND (project_addons, project_iac_sources) and are
 	// never written into ProjectFormData — this key exists only to satisfy the exhaustive registry;
-	// the graph⇄form mappers never read it. See OUT_OF_BAND_KINDS in use-canvas-store.ts.
+	// the graph⇄form mappers never read it. See OUT_OF_BAND in lib/canvas/store/derive.ts.
 	| "charts";
 
 /** Display order of the Add-palette groups (mirrors the provisionable service types). */

@@ -35,10 +35,16 @@ import { cn } from "@repo/ui/utils";
 import { ANY_CLOUD } from "@/lib/queries/runners";
 import { useRunnersPageQuery } from "@/lib/query/use-runners-page-query";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
+import { PAGE_PARAM, hrefWithParamPatch, pageFromUrl, pagePatch } from "@/lib/query/view-url-params";
+import { Button } from "@repo/ui/button";
 import { Server } from "lucide-react";
-import { useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useMemo } from "react";
 
 const PAGE_SIZE = 9;
+
+/** The view params the grid's page number depends on: a filter change goes back to page 1. */
+const RUNNERS_RESET_PARAMS: readonly string[] = [PAGE_PARAM];
 
 /**
  * The runners page body, rendered only for a viewer the server has already found entitled
@@ -50,7 +56,13 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 	// search → normalize → the TanStack key → the SERVER's filtered read. The narrowing and the
 	// facet tally used to happen in this component over the whole universe (#4890).
 	const filters = useRunnerFilters((s) => s.filters);
-	const urlRead = useFilterUrlSync(useRunnerFilters, DEFAULT_RUNNER_FILTERS);
+	const resetFilters = useRunnerFilters((s) => s.reset);
+	const urlRead = useFilterUrlSync(useRunnerFilters, DEFAULT_RUNNER_FILTERS, undefined, {
+		resetParams: RUNNERS_RESET_PARAMS,
+	});
+	const router = useRouter();
+	const pathname = usePathname();
+	const searchParams = useSearchParams();
 	// Seeded from the URL, so a pasted `?search=…&versions=…` asks for the key the route
 	// prefetched first — not `{versions}` alone, which it did not (#4980 review).
 	const search = useDebouncedValue(filters.search, 300, { urlRead });
@@ -66,13 +78,15 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 		isPlaceholderData,
 		refetch,
 	} = useRunnersPageQuery(query);
-	// The page belongs to the query it was picked under: a different result set starts at page 1.
-	// Keyed by the query rather than reset by an effect, so the render that shows a new result set
-	// is already on page 1 — the effect showed it on the OLD page for a commit first.
-	const [paged, setPaged] = useState({ query, page: 1 });
-	const page = paged.query === query ? paged.page : 1;
-	/** Picks a page of the result set on screen. */
-	const setPage = (next: number) => setPaged({ query, page: next });
+	// The page is view state in the URL (`?page=`, lib/query/view-url-params.ts), so a link, a
+	// refresh and Back all come back to the same page. It belongs to the filters it was picked
+	// under: `useFilterUrlSync` drops it on any write that changes a filter (`resetParams`), so a
+	// different result set starts at page 1.
+	const page = pageFromUrl(searchParams);
+	/** Shows a page of the result set on screen, by writing it into the URL. */
+	const setPage = (next: number) => {
+		router.replace(hrefWithParamPatch(pathname, searchParams.toString(), pagePatch(next)), { scroll: false });
+	};
 	// The grid is BUSY while what it shows may not answer the URL and the bar: before the link
 	// has been read into the store, before the first answer, while the rows are the previous
 	// query's placeholder, and while a typed search is still inside its debounce. Exposed as
@@ -81,6 +95,7 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 	// the placeholder half only: dimming the first paint of every visit would flash a page that
 	// is correct.
 	const busy = !urlRead || isLoading || isPlaceholderData || filters.search !== search;
+	const refused = isError && isForbidden(error);
 
 	// The SERVER's rows, each with the job in flight on it (joined on the server, #6123).
 	const filtered = useMemo(() => runnersPage?.rows ?? [], [runnersPage]);
@@ -139,22 +154,31 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 				    bordered `rounded-full` span for the pill, the latter under a comment claiming
 				    it WAS "the count pill (the standard)". A second copy of a primitive is how two
 				    list pages come to disagree about what a count looks like. */}
-				<SectionHeading
-					title="Runners"
-					count={isLoading ? null : (runnersPage?.resultCount ?? 0)}
-					actions={<AddRunnerButton />}
-				/>
+				{refused ? (
+					// An expected refusal is its own render, IN PLACE of the column: no count, no
+					// "Add runner" and no filter bar over rows this viewer cannot read. Retrying it would
+					// answer the same (RUBRIC B4).
+					<>
+						<SectionHeading title="Runners" />
+						<RegionRefusal refusal="forbidden" subject="runners" className="py-12" />
+					</>
+				) : (
+					<>
+						<SectionHeading
+							title="Runners"
+							count={isLoading ? null : (runnersPage?.resultCount ?? 0)}
+							actions={<AddRunnerButton />}
+						/>
 
-				<RunnersToolbar
-					cloudOptions={facets.clouds}
-					regionOptions={facets.regions}
-					versionOptions={facets.versions}
-				/>
+						<RunnersToolbar
+							cloudOptions={facets.clouds}
+							regionOptions={facets.regions}
+							versionOptions={facets.versions}
+						/>
+					</>
+				)}
 
-				{isError && isForbidden(error) ? (
-					// An expected refusal is its own render: retrying it would answer the same (RUBRIC B4).
-					<RegionRefusal refusal="forbidden" subject="runners" className="py-12" />
-				) : isError ? (
+				{refused ? null : isError ? (
 					// A fetch failure must not render as "no runners".
 					<RegionError
 						title="Couldn't load runners"
@@ -170,7 +194,16 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 				) : total === 0 ? (
 					<EmptyRunners />
 				) : filtered.length === 0 ? (
-					<EmptyState title="No runners match your filters." className="py-12" />
+					<EmptyState
+						title="No runners match your filters."
+						description="Change the search or the filters above, or clear them to see every runner."
+						action={
+							<Button size="sm" variant="outline" onClick={resetFilters}>
+								Clear filters
+							</Button>
+						}
+						className="py-12"
+					/>
 				) : (
 					/* The filter standard's `isPlaceholderData` dim: these cards are the PREVIOUS
 					   query's answer, kept so the grid does not blank on a filter change and

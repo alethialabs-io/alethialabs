@@ -1,0 +1,63 @@
+---
+title: Codex
+description: Add the Alethia MCP server to the Codex CLI, sign in with OAuth, and let Codex run the alethia CLI in agent mode.
+---
+
+# Codex
+
+The Codex CLI can read Alethia through the MCP server and act through the `alethia` CLI.
+
+## Before you start
+
+- Your console origin: the address you sign in to Alethia at. `alethia auth status` prints it as
+  `web origin`. The MCP endpoint is that origin plus `/api/mcp`.
+
+## Add the MCP server
+
+<Steps>
+
+### Add the server
+
+Run this in your terminal, with your own origin:
+
+```bash
+codex mcp add alethia --url https://<your-console-origin>/api/mcp
+```
+
+This writes an `[mcp_servers.alethia]` entry to `~/.codex/config.toml`. You can also write the entry
+by hand:
+
+```toml
+[mcp_servers.alethia]
+url = "https://<your-console-origin>/api/mcp"
+```
+
+### Sign in
+
+```bash
+codex mcp login alethia
+```
+
+Your browser opens the Alethia sign-in page. Sign in, and approve access if the page asks.
+
+### Check the tools
+
+Start Codex and run `/mcp` to list the Alethia tools. The [tool reference](/agents/tools) describes
+each one.
+
+</Steps>
+
+<Callout type="info">
+  The server speaks only the current generation of the MCP protocol and expects a Client ID Metadata
+  Document from the client. If the connection fails, see
+  [Connect a client](/guides/assistant/mcp#connect-a-client).
+</Callout>
+
+## Let Codex use the CLI
+
+The CLI switches to agent mode when `CODEX_SANDBOX` is set in its environment: no prompts, no colour,
+and JSON output. If it is not set, add `ALETHIA_AGENT=yes` to the environment or `--agent yes` to the
+command.
+
+The Codex sandbox can block network access. The CLI needs to reach your console origin, so allow it
+for the commands that call Alethia. See [the CLI for agents](/agents/cli).

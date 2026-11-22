@@ -1,15 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { CanvasSkeleton } from "@/components/design-project/canvas/canvas-skeleton";
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
+
 /**
- * Neutral loader for the project segment (the bare project only redirects to Architecture, and the
- * env/usage/settings views load quickly). The Architecture route has its own canvas skeleton; the
- * jobs/clusters routes their own grids.
+ * Skeleton for the bare project, `/{org}/{project}`. That page only redirects to Architecture, and
+ * every other view under the project draws its own `loading.tsx`, so this one paints only on the
+ * way to the board — it is the board's shape: the same `CanvasSkeleton` inside the same full-bleed
+ * wrapper `architecture/loading.tsx` renders, so nothing moves when the redirect lands (B2). Same
+ * reasoning as `settings/loading.tsx`, which is General's shape because settings redirects there.
+ *
+ * `SkeletonRoot` is the one busy region: `CanvasSkeleton` is a part and marks nothing itself.
  */
 export default function ProjectLoading() {
 	return (
-		<div className="flex min-h-[50vh] items-center justify-center">
-			<div className="h-6 w-6 animate-spin rounded-full border-2 border-foreground border-t-transparent" />
-		</div>
+		<SkeletonRoot className="h-full overflow-hidden">
+			<CanvasSkeleton />
+		</SkeletonRoot>
 	);
 }

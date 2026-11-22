@@ -4,6 +4,12 @@
 import "server-only";
 import { and, eq, gte, sql, sum } from "drizzle-orm";
 import {
+	type FreeAiPauseCause,
+	type FreeAiPoolState,
+	freeAiPoolState,
+	readFreeAiPoolUsed,
+} from "@/lib/abuse/free-ai-pool";
+import {
 	AI_SESSION_WINDOW_MS,
 	type AiPlanContext,
 	aiTierSpec,
@@ -50,7 +56,11 @@ export const METERED_RESERVE_CREDITS = 100;
 export class AiBudgetError extends Error {
 	constructor(
 		message: string,
-		readonly reason: "not_enabled" | "session" | "weekly" | "out",
+		/**
+		 * `paused`: the platform paused free AI — the operator's kill switch, or every free org together
+		 * reached the global daily ceiling (lib/abuse/free-ai-pool.ts). Paid AI tiers are never paused.
+		 */
+		readonly reason: "not_enabled" | "session" | "weekly" | "out" | "paused",
 		/** ISO time the blocking window clears (null when only buying credits helps). */
 		readonly resetAt: string | null,
 		/** Whether upgrading the AI plan would lift the block. */
@@ -270,6 +280,17 @@ export async function assertAiAllowed(
 	// FIXED-cost kinds (scan): reserve the nominal cost up front — allowed only if it fits.
 	if (kind === "scan") {
 		const cost = creditsFor(kind);
+		// The free AI pool (REL-L11): a free-tier org's INCLUDED spend stops while the platform has
+		// paused free AI. Purchased top-ups still apply below, exactly as when the org's own included
+		// window is spent. Read on the pool: no transaction is open on this path.
+		const pool: FreeAiPoolState =
+			tier === "ai_free" ? await freeAiPoolState() : { open: true };
+		if (!pool.open) {
+			if (!hardCap && (await purchasedBalance(orgId)) >= cost) {
+				return { source: "purchased", credits: cost };
+			}
+			throw pausedError(pool.cause, pool.resetAt);
+		}
 		const orgSessionOk = sessionUsed + cost <= spec.sessionCredits;
 		const orgWeekOk = weekUsed + cost <= spec.weeklyCredits;
 		const userSessionOk =
@@ -343,10 +364,13 @@ type AiHoldCharge = Extract<AiCharge, { settle: true }>;
  *  - `not_enabled`: the org's AI tier has AI off.
  *  - `personal`: this seat's sub-cap binds while the org still has included headroom.
  *  - `org`: the org's included window is spent and no purchased top-up may cover it.
+ *  - `paused`: a free-tier org, while the platform has paused free AI (the kill switch or the global
+ *    daily ceiling, lib/abuse/free-ai-pool.ts), and no purchased top-up may cover the turn.
  */
 export type AiBudgetRefusal =
 	| { reason: "not_enabled" }
-	| { reason: "personal" | "org"; weeklyHit: boolean; weekResetIso: string };
+	| { reason: "personal" | "org"; weeklyHit: boolean; weekResetIso: string }
+	| { reason: "paused"; cause: FreeAiPauseCause; resetAt: string | null };
 
 /** What {@link reserveAiHold} decided: a hold reserved on `tx`, or a refusal with nothing written. */
 export type AiHoldDecision =
@@ -406,6 +430,17 @@ export async function reserveAiHold(
 	}
 
 	const now = preread?.now ?? Date.now();
+	// The free AI pool (REL-L11), for a free-tier org only. Its count is read on THIS transaction,
+	// inside a savepoint: a pooled read here would be the deadlock described above, and a failed read
+	// on `tx` itself would abort the caller's transaction — the savepoint rolls back alone, and the
+	// pool fails open (and alerts) instead. A cached count reads nothing.
+	const pool: FreeAiPoolState =
+		tier === "ai_free"
+			? await freeAiPoolState({
+					now,
+					read: (since) => tx.transaction((sp) => readFreeAiPoolUsed(sp, since)),
+				})
+			: { open: true };
 	const sessionSince = new Date(now - AI_SESSION_WINDOW_MS);
 	const weekStart = bucketStart(now, WEEK_MS);
 	const weekResetIso = new Date(weekStart.getTime() + WEEK_MS).toISOString();
@@ -478,6 +513,18 @@ export async function reserveAiHold(
 		};
 	};
 
+	// Free AI is paused platform-wide: no included spend for a free-tier org, whatever its own
+	// windows say. Purchased top-ups still cover the turn unless the org's hard cap says pause.
+	if (!pool.open) {
+		if (!hardCap && (await purchasedAvailable()) > 0) {
+			return reserve("purchased");
+		}
+		return {
+			outcome: "refused",
+			refusal: { reason: "paused", cause: pool.cause, resetAt: pool.resetAt },
+		};
+	}
+
 	if (orgSessionOk && orgWeekOk && userSessionOk && userWeekOk) {
 		return reserve("included");
 	}
@@ -512,6 +559,7 @@ export async function aiBudgetRefusalError(
 	refusal: AiBudgetRefusal,
 ): Promise<AiBudgetError> {
 	if (refusal.reason === "not_enabled") return notEnabledError();
+	if (refusal.reason === "paused") return pausedError(refusal.cause, refusal.resetAt);
 	if (refusal.reason === "personal") {
 		return personalCapError(
 			refusal.weeklyHit,
@@ -532,6 +580,25 @@ function notEnabledError(): AiBudgetError {
 		"AI features are not enabled for this workspace.",
 		"not_enabled",
 		null,
+		true,
+	);
+}
+
+/**
+ * The error for a free-tier turn while the platform has paused free AI, stating which pause it is.
+ * Upgradable: a paid AI tier is never paused. `resetAt` is next 00:00 UTC for the ceiling and null
+ * for the operator's switch, which lifts only when the operator lifts it.
+ */
+function pausedError(
+	cause: FreeAiPauseCause,
+	resetAt: string | null,
+): AiBudgetError {
+	return new AiBudgetError(
+		cause === "ceiling"
+			? "Free AI is paused for today: free workspaces together have used the platform's daily free AI allowance. It reopens at 00:00 UTC. Paid AI plans and purchased credits are not affected."
+			: "Free AI is paused by the platform operator. Paid AI plans and purchased credits are not affected.",
+		"paused",
+		resetAt,
 		true,
 	);
 }

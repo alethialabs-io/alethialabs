@@ -18,13 +18,13 @@ import (
 // point of the picker arms below is that the flag was NOT supplied.
 func miscResetDeployFlags() {
 	deployCloudIdentityID, deployRunnerName, deployRegion, deployAssignedID = "", "", "", ""
-	deployRunnerWait = false
+	deployRunnerWait = waitFlags{}
 }
 
 // miscResetDestroyFlags does the same for `runner destroy`.
 func miscResetDestroyFlags() {
 	destroyRunnerID, destroyRunnerAssignedID = "", ""
-	destroyRunnerWait = false
+	destroyRunnerWait = waitFlags{}
 }
 
 // TestMisc_RunnerDeploy pins `runner deploy`: fully-flagged it creates the runner and
@@ -141,7 +141,7 @@ func TestMisc_RunnerDestroy(t *testing.T) {
 		miscResetDestroyFlags()
 		run := miscAdminEnv(t, miscAdminOpts{})
 		miscAlwaysConfirm(t, true)
-		if err := run("runner", "destroy", "--runner-id", "r1", "--assigned-runner-id", "r2", "--output", "json"); err != nil {
+		if err := run("runner", "destroy", "--runner-id", "r3", "--assigned-runner-id", "r1", "--output", "json"); err != nil {
 			t.Error(err)
 		}
 	})
@@ -192,7 +192,7 @@ func TestMisc_RunnerDestroy(t *testing.T) {
 		miscResetDestroyFlags()
 		run := miscAdminEnv(t, miscAdminOpts{})
 		miscAlwaysConfirm(t, true)
-		if err := run("runner", "destroy", "--runner-id", "r1", "--assigned-runner-id", "r2", "--wait", "--output", "json"); err != nil {
+		if err := run("runner", "destroy", "--runner-id", "r3", "--assigned-runner-id", "r1", "--wait", "--output", "json"); err != nil {
 			t.Error(err)
 		}
 	})
@@ -201,7 +201,7 @@ func TestMisc_RunnerDestroy(t *testing.T) {
 		miscResetDestroyFlags()
 		miscAlwaysConfirm(t, true)
 		exits := miscFatalRunner(miscAdminEnv(t, miscAdminOpts{jobStatus: "FAILED"}))
-		if !exits("runner", "destroy", "--runner-id", "r1", "--assigned-runner-id", "r2", "--wait", "--output", "json") {
+		if !exits("runner", "destroy", "--runner-id", "r3", "--assigned-runner-id", "r1", "--wait", "--output", "json") {
 			t.Error("expected a failed teardown job to exit non-zero")
 		}
 	})
@@ -210,7 +210,7 @@ func TestMisc_RunnerDestroy(t *testing.T) {
 		miscResetDestroyFlags()
 		miscAlwaysConfirm(t, true)
 		exits := miscFatalRunner(miscAdminEnv(t, miscAdminOpts{failOn: "/api/jobs"}))
-		if !exits("runner", "destroy", "--runner-id", "r1", "--assigned-runner-id", "r2", "--output", "json") {
+		if !exits("runner", "destroy", "--runner-id", "r3", "--assigned-runner-id", "r1", "--output", "json") {
 			t.Error("expected a refused queue to be fatal")
 		}
 	})

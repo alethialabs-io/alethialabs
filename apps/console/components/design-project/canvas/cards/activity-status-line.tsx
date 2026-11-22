@@ -6,7 +6,7 @@ import { StatusBadge } from "@repo/ui/status-badge";
 import { ClockSlot } from "@/components/overview/clock-slot";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { ago, JOB_LABEL, JOB_STATUS } from "@/lib/canvas/job-display";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
 import { useDestroyHold, waitingOnLabel } from "./destroy-hold";
 import type { DestroyTreeNode } from "./destroy-tree-view";
 
@@ -29,7 +29,7 @@ export function ActivityStatusLine({
 	loadDestroyTree?: () => Promise<DestroyTreeNode[]>;
 } = {}) {
 	const env = useEnvironmentStatus();
-	const openCard = useCanvasStore((s) => s.openCard);
+	const board = useBoard();
 	const waiting = waitingOnLabel(useDestroyHold(loadDestroyTree));
 
 	const active = env.activeJob;
@@ -52,7 +52,7 @@ export function ActivityStatusLine({
 	return (
 		<button
 			type="button"
-			onClick={() => openCard({ kind: "activity" })}
+			onClick={() => board.view.getState().openCard({ kind: "activity" })}
 			// The visible text is the job, so it is the accessible name unless one is given —
 			// "DEPLOY · Running · 2m" says what it shows, never what pressing it does.
 			aria-label="Open the activity log"

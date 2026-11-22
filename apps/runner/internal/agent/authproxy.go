@@ -35,6 +35,7 @@ package agent
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -44,17 +45,42 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 )
 
 // upstreamTLSConfig builds the client TLS configuration for the upstream database hop — the real
-// server name, verified against the platform trust store, TLS 1.2 or better. Both engine halves go
-// through it.
+// server name, verified against the cloud's PINNED database CA bundle
+// (packages/core/manifests/dbca, the same bundle the bootstrap Jobs verify against), TLS 1.2 or
+// better. Both engine halves go through it.
+//
+// Not the platform trust store: the Amazon RDS CAs are not in it. The 2026-11-22 aws keyless run
+// (45010180640) failed every connection with "x509: certificate signed by unknown authority" for
+// exactly that reason, while the policy, the IAM user and the token were all correct.
 //
 // It is a package-level var solely so a test can substitute the TRUST ANCHOR (RootCAs) and drive the
 // legs that only run after a successful handshake — the token exchange and the splice — against a
 // stub database. Verification itself is never disabled, and nothing reassigns this outside tests.
-var upstreamTLSConfig = func(serverName string) *tls.Config {
-	return &tls.Config{ServerName: serverName, MinVersion: tls.VersionTLS12}
+var upstreamTLSConfig = func(provider, serverName string) (*tls.Config, error) {
+	pool, err := managedDBRootCAs(provider)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{ServerName: serverName, MinVersion: tls.VersionTLS12, RootCAs: pool}, nil
+}
+
+// managedDBRootCAs parses the pinned CA bundle for provider into a pool. An unknown provider or a
+// bundle that yields no certificate is an error: the proxy never connects with a weaker trust store.
+func managedDBRootCAs(provider string) (*x509.CertPool, error) {
+	bundle, source, ok := manifests.ManagedDBCABundle(provider)
+	if !ok {
+		return nil, fmt.Errorf("db-authproxy: no pinned database CA bundle for provider %q", provider)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(bundle)) {
+		return nil, fmt.Errorf("db-authproxy: %s contains no usable certificate", source)
+	}
+	return pool, nil
 }
 
 const (
@@ -198,6 +224,11 @@ func (c authProxyConfig) validate() error {
 		return errors.New("db-authproxy: --provider is required (aws|azure)")
 	default:
 		return fmt.Errorf("db-authproxy: unsupported provider %q (want aws|azure)", c.Provider)
+	}
+	// The upstream hop verifies against the cloud's pinned CA bundle; a sidecar that could not load
+	// it would listen and then fail every connection, so it dies here instead.
+	if _, err := managedDBRootCAs(c.Provider); err != nil {
+		return err
 	}
 	switch c.Engine {
 	case authProxyEnginePostgres, authProxyEngineMySQL:

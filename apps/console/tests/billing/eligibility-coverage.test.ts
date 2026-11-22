@@ -52,9 +52,6 @@ const GATE_CALLS = ["gatePaidConversion(", "assertPaidConversionAllowed("];
  * user CANCEL because their market is closed would trap them in a subscription.
  */
 const EXEMPT: Record<string, string> = {
-	startProTrial:
-		"the cardless trial takes NO money — no card, no charge, and gating it would put a paywall in " +
-		"front of the free trial the product promises. Its own invariants are tested in trial-invariants.test.ts.",
 	cancelSubscription:
 		"cancelling takes no money and must never be refused — a closed market must not trap a customer " +
 		"in a subscription they want to end.",
@@ -134,9 +131,9 @@ describe("every paid conversion routes through the eligibility module", () => {
 		expect(ungated).toEqual([]);
 	});
 
-	// The six known conversions, named. The structural check above would still pass if someone
+	// The six known conversions, and the trial behind the same gate, named. The structural check above would still pass if someone
 	// renamed them all out of existence; this says which ones must keep existing and keep the gate.
-	it("keeps the gate on each of the six known conversion paths", () => {
+	it("keeps the gate on each of the six known conversion paths and on the trial", () => {
 		for (const name of [
 			"createCheckoutSession",
 			"createSubscriptionIntent",
@@ -144,6 +141,9 @@ describe("every paid conversion routes through the eligibility module", () => {
 			"createNewOrgSubscriptionIntent",
 			"createCreditPackIntent",
 			"changeSubscriptionPlan",
+			// The card-less trial takes no money, but decision M12 (#6907) puts it behind the same gate
+			// as a purchase, so it is refused for the same reasons.
+			"startProTrial",
 		]) {
 			const body = actions.get(name);
 			if (!body) throw new Error(`${name} has disappeared from billing.ts`);

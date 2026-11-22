@@ -8,35 +8,46 @@
 // `designNodes`, which a drag does not replace — so a card being moved re-renders the cards that
 // read positions and none of the ones that read config, validation or the pending changes.
 //
-// Nothing here reads server data. The cards the design does not own come from their queries in
-// `use-board-sources.ts` and are passed in as `others`.
+// Nothing here holds server data. The cards the design does not own come from their queries in
+// `use-board-sources.ts`, and reach these hooks either as an `others` argument or from the
+// `BoardSourcesProvider` the canvas mounts (`useOthers`).
 
 import { useMemo } from "react";
 import { useStore } from "zustand";
+import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type {
 	CanvasEdge,
 	CanvasNode,
+	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
-import { useBoard } from "./canvas-store-provider";
+import type { CollectionPositions } from "@/lib/canvas/collections";
+import type { CloudProviderSlug } from "@/lib/cloud-providers";
+import { boardActions, type BoardActions } from "./board-actions";
+import { useBoard, useIdentities, useOthers } from "./canvas-store-provider";
 import {
+	coreIdentity,
 	deployGate,
 	deriveEdges,
 	diffFields,
 	diffNodes,
+	effectiveIdentity,
+	effectiveProvider,
 	planReviewState,
 	type DeployGate,
 	type PlanReviewState,
 } from "./derive";
-import type {
-	BoardSeed,
-	FieldChange,
-	FieldFocus,
-	InspectorTab,
-	PendingChange,
-	Positions,
-	ReviewedPlan,
-	StagedOperation,
-	Subject,
+import {
+	PROJECT_NODE_ID,
+	type BoardSeed,
+	type FieldChange,
+	type FieldFocus,
+	type InspectorTab,
+	type PendingChange,
+	type Positions,
+	type ReviewedPlan,
+	type StagedOperation,
+	type Subject,
+	type WorkspaceCard,
 } from "./types";
 
 const indexCache = new WeakMap<CanvasNode[], Map<string, CanvasNode>>();
@@ -85,6 +96,85 @@ export function useBoardNodes(others: CanvasNode[]): CanvasNode[] {
 export function useBoardEdges(others: CanvasNode[]): CanvasEdge[] {
 	const designNodes = useDesignNodes();
 	return useMemo(() => deriveEdges([...designNodes, ...others]), [designNodes, others]);
+}
+
+/** Every node on the board: the design joined with the out-of-band cards in scope. */
+export function useAllNodes(): CanvasNode[] {
+	return useBoardNodes(useOthers());
+}
+
+/** Every edge on the board, the out-of-band cards' included. */
+export function useAllEdges(): CanvasEdge[] {
+	return useBoardEdges(useOthers());
+}
+
+/**
+ * One node by id, whoever owns it: a design node from the document, else an out-of-band card from
+ * its query. Without its position, so a card being dragged does not re-render what reads this.
+ */
+export function useAnyNode(id: string): CanvasNode | undefined {
+	const design = useNode(id);
+	const others = useOthers();
+	return design ?? nodeIndex(others).get(id);
+}
+
+/**
+ * The cloud a node deploys to: its own placement, else the project root's. An out-of-band card
+ * has no placement of its own, so it reads as the project's cloud.
+ */
+export function useEffectiveProvider(id: string): CloudProviderSlug | null {
+	const outOfBand = nodeIndex(useOthers()).has(id);
+	return useStore(useBoard().document, (s) =>
+		effectiveProvider(s.designNodes, outOfBand ? PROJECT_NODE_ID : id),
+	);
+}
+
+/** The project root's chosen identity, the stack's CORE; null until one is picked. */
+export function useCoreIdentity(): string | null {
+	return useStore(useBoard().document, (s) => coreIdentity(s.designNodes));
+}
+
+/**
+ * The identity a node resolves to (its own, else the core), from the page's identity list. An
+ * out-of-band card has no identity of its own, so it resolves to the core.
+ */
+export function useEffectiveIdentity(id: string | null): CloudIdentityOption | null {
+	const identities = useIdentities();
+	const designNodes = useDesignNodes();
+	const others = useOthers();
+	const outOfBand = id !== null && nodeIndex(others).has(id);
+	return useMemo(() => {
+		if (id === null) return null;
+		return effectiveIdentity(designNodes, outOfBand ? PROJECT_NODE_ID : id, identities);
+	}, [designNodes, id, outOfBand, identities]);
+}
+
+/** The legacy rail card that shows the inspector's subject, or null when the rail is closed. */
+export function useCard(): WorkspaceCard | null {
+	return useStore(useBoard().view, (s) => s.card);
+}
+
+/** Whether the board draws its connections. */
+export function useShowConnections(): boolean {
+	return useStore(useBoard().view, (s) => s.showConnections);
+}
+
+/** The kinds the board is hiding. */
+export function useHiddenKinds(): NodeKind[] {
+	return useStore(useBoard().view, (s) => s.hiddenKinds);
+}
+
+/** Where each collapsed collection card sits. */
+export function useCollectionPositions(): CollectionPositions {
+	return useStore(useBoard().document, (s) => s.collectionPositions);
+}
+
+/** The board's commands, with the out-of-band cards and the identity list in scope bound in. */
+export function useBoardActions(): BoardActions {
+	const current = useBoard();
+	const others = useOthers();
+	const identities = useIdentities();
+	return useMemo(() => boardActions(current, others, identities), [current, others, identities]);
 }
 
 /** The design changes pending against the saved design, one row per node. */

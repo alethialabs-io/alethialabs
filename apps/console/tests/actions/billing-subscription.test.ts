@@ -241,6 +241,15 @@ vi.mock("@/lib/billing/eligibility", () => ({
 		}
 	},
 }));
+// The trial's ceilings (REL-L19) count in the bucket table; their decision and store are tested under
+// tests/lib/billing/trial. Here they admit every start, and the offer is open, so the trial cases
+// below keep asserting the Stripe orchestration they were written for.
+vi.mock("@/lib/billing/trial", () => ({
+	trialSalesOpen: vi.fn(() => true),
+	personTrialAvailable: vi.fn(async () => true),
+	reserveTrial: vi.fn(async () => ({ slots: [] })),
+	releaseTrial: vi.fn(async () => undefined),
+}));
 vi.mock("@/lib/billing/config", () => ({
 	deploymentMode: vi.fn(() => "self-managed"),
 	getStripeConfig: vi.fn(() => ({ appUrl: "https://app.test" })),
@@ -258,6 +267,7 @@ vi.mock("@/lib/billing/config", () => ({
 }));
 
 import { assertOrgPaidConversionAllowed } from "@/lib/billing/eligibility";
+import { personTrialAvailable, releaseTrial, reserveTrial, trialSalesOpen } from "@/lib/billing/trial";
 import { withPurchaseLease } from "@/lib/billing/purchase-lease";
 import { withPurchaseLock } from "@/lib/billing/purchase-lock";
 import {
@@ -1127,6 +1137,56 @@ describe("startProTrial", () => {
 		await expect(startProTrial()).rejects.toThrow(/already has an active subscription/);
 		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
 	});
+
+	// Decision M12 (#6907): the trial passes the purchase gate, and is refused for the same reasons.
+	it("is refused by the paid-conversion gate for the reason a purchase is, before any ceiling or Stripe call", async () => {
+		vi.mocked(assertOrgPaidConversionAllowed).mockRejectedValueOnce(
+			new Error("Alethia is not yet able to sell to customers in this country"),
+		);
+		await expect(startProTrial()).rejects.toThrow(/not yet able to sell/);
+		expect(assertOrgPaidConversionAllowed).toHaveBeenCalledWith("user-1", "org-1");
+		expect(reserveTrial).not.toHaveBeenCalled();
+		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("reserves the ceilings for the org and the person before the mint", async () => {
+		db.queue.push([{ proTrialConsumedAt: null, email: "ada@example.test" }]);
+		db.queue.push([]);
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", status: "none" } as never);
+		stripe.subscriptions.create.mockResolvedValue({ id: "sub_trial" } as never);
+		db.queue.push([]);
+		await startProTrial();
+		expect(reserveTrial).toHaveBeenCalledWith({ orgId: "org-1", email: "ada@example.test" });
+		expect(releaseTrial).not.toHaveBeenCalled();
+	});
+
+	it("starts no trial when a ceiling is full", async () => {
+		db.queue.push([{ proTrialConsumedAt: null }]);
+		db.queue.push([]);
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", status: "none" } as never);
+		vi.mocked(reserveTrial).mockRejectedValueOnce(new Error("Too many Pro trials have been started from your network"));
+		await expect(startProTrial()).rejects.toThrow(/from your network/);
+		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("gives the reservation back when Stripe creates nothing", async () => {
+		db.queue.push([{ proTrialConsumedAt: null }]);
+		db.queue.push([]);
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", status: "none" } as never);
+		stripe.subscriptions.create.mockRejectedValue(new Error("stripe down"));
+		await expect(startProTrial()).rejects.toThrow(/stripe down/);
+		expect(releaseTrial).toHaveBeenCalledWith({ slots: [] });
+	});
+
+	it("keeps the reservation once Stripe created the trial, whatever fails after", async () => {
+		db.queue.push([{ proTrialConsumedAt: null }]);
+		db.queue.push([]);
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", status: "none" } as never);
+		stripe.subscriptions.create.mockResolvedValue({ id: "sub_trial" } as never);
+		vi.mocked(syncSubscriptionToBilling).mockRejectedValueOnce(new Error("sync failed"));
+		await expect(startProTrial()).rejects.toThrow(/sync failed/);
+		expect(releaseTrial).not.toHaveBeenCalled();
+	});
 });
 
 // ── getProOffer ──────────────────────────────────────────────────────────────
@@ -1152,6 +1212,20 @@ describe("getProOffer", () => {
 		db.queue.push([{ proTrialConsumedAt: null }]);
 		db.queue.push([{ status: "trialing" }]);
 		expect(await getProOffer()).toEqual({ kind: "none" });
+	});
+
+	// Decision M12: no trial is offered where no purchase could be made.
+	it("returns none while the launch state has no open market, without reading the account", async () => {
+		vi.mocked(trialSalesOpen).mockReturnValueOnce(false);
+		expect(await getProOffer()).toEqual({ kind: "none" });
+		expect(currentActor).not.toHaveBeenCalled();
+	});
+
+	it("returns none once the person's trial ceiling is reached", async () => {
+		db.queue.push([{ proTrialConsumedAt: null, email: "ada@example.test" }]);
+		vi.mocked(personTrialAvailable).mockResolvedValueOnce(false);
+		expect(await getProOffer()).toEqual({ kind: "none" });
+		expect(personTrialAvailable).toHaveBeenCalledWith("ada@example.test");
 	});
 });
 

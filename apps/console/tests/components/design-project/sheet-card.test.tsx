@@ -2,23 +2,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The chrome every rail card shares. What matters is what it is NOT: a dialog. No overlay, no
-// portal, no focus trap — the board behind it stays live. And the three decisions it fixes for
-// every card: a heading through SectionHeading, a body that scrolls on its own, a pinned footer.
+// portal, no focus trap — the board behind it stays live. On the rail it is the inspector's frame;
+// inside a frame that is already on screen it is a section.
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SheetCard } from "@/components/design-project/canvas/cards/sheet-card";
+import { InspectorEmbed } from "@/components/design-project/canvas/inspector-shell/inspector-frame";
 
 describe("SheetCard", () => {
-	it("renders eyebrow, heading, description, body and footer with no overlay or dialog role", () => {
+	it("renders eyebrow, heading, description and body with no overlay or dialog role", () => {
 		render(
 			<SheetCard
 				title="Environment settings"
 				eyebrow="Environment"
 				description="Cluster, VPC and secrets."
 				onClose={vi.fn()}
-				footer={<button type="button">Save</button>}
 			>
 				<p>body</p>
 			</SheetCard>,
@@ -27,7 +27,6 @@ describe("SheetCard", () => {
 		expect(screen.getByText("Environment")).toBeInTheDocument();
 		expect(screen.getByText("Cluster, VPC and secrets.")).toBeInTheDocument();
 		expect(screen.getByText("body")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(document.querySelector("[data-slot=sheet-overlay]")).toBeNull();
 	});
@@ -43,14 +42,17 @@ describe("SheetCard", () => {
 		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 
-	it("a header override replaces the standard header entirely", () => {
+	it("inside a frame that is already on screen it is a section: no second header, no second close", () => {
 		render(
-			<SheetCard title="ignored" onClose={vi.fn()} header={<div>custom header</div>}>
-				<p>body</p>
-			</SheetCard>,
+			<InspectorEmbed>
+				<SheetCard title="Activity" description="What has run here." onClose={vi.fn()}>
+					<p>body</p>
+				</SheetCard>
+			</InspectorEmbed>,
 		);
-		expect(screen.getByText("custom header")).toBeInTheDocument();
-		expect(screen.queryByRole("heading", { name: "ignored" })).not.toBeInTheDocument();
+		expect(screen.getByRole("heading", { level: 3, name: "Activity" })).toBeInTheDocument();
+		expect(screen.getByText("What has run here.")).toBeInTheDocument();
+		expect(screen.getByText("body")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
 	});
 });

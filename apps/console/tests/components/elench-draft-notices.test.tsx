@@ -123,6 +123,9 @@ vi.mock("sonner", () => ({
 // The account menu's own neighbours, which the sign-out confirm does not depend on.
 const auth = vi.hoisted(() => ({ signOut: vi.fn(async () => undefined) }));
 vi.mock("@/lib/auth/client", () => ({ authClient: auth }));
+// A sign-out that succeeds leaves with a full document load (#6924), which jsdom does not implement.
+const leave = vi.hoisted(() => ({ hardNavigate: vi.fn() }));
+vi.mock("@/components/shell/hard-navigate", () => leave);
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => true }));
 vi.mock("@/components/theme-menu", () => ({ InlineThemeSwitcher: () => null }));
 vi.mock("@/components/org/upgrade-sheet-provider", () => ({ useUpgradeSheet: () => ({ openUpgrade: vi.fn() }) }));
@@ -801,7 +804,8 @@ describe("S11 › every refused send says why", () => {
 		[400, "The request's messages are malformed.", "Elench could not read this message."],
 		[401, "Unauthorized", "You are signed out. Sign in again in this tab to send it."],
 		[413, "too long", "Message too long"],
-		[503, "AI is not configured", "AI is not configured"],
+		// The card's words where the instance edition is not known, as here (#6924): no variable to set.
+		[503, "AI is not configured", "The assistant is not available"],
 		[402, JSON.stringify({ error: "AI limit reached.", reason: "out" }), "AI limit reached."],
 	];
 	for (const [status, body, said] of statuses)
@@ -1000,7 +1004,7 @@ describe("S11 › the credential notice, the unsaved toasts and leaving", () => 
 		render(<SidebarProfile />);
 		fireEvent.click(screen.getByRole("button", { name: "Account menu" }));
 		await flush();
-		fireEvent.click(screen.getByRole("menuitem", { name: /Log Out/ }));
+		fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
 		await flush();
 		expect(auth.signOut).not.toHaveBeenCalled();
 		expect(screen.getByText("1 message is not saved to your account yet and will be lost.")).toBeTruthy();
@@ -1016,9 +1020,10 @@ describe("S11 › the credential notice, the unsaved toasts and leaving", () => 
 		render(<SidebarProfile />);
 		fireEvent.click(screen.getByRole("button", { name: "Account menu" }));
 		await flush();
-		fireEvent.click(screen.getByRole("menuitem", { name: /Log Out/ }));
+		fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
 		await flush();
 		expect(auth.signOut).toHaveBeenCalledTimes(1);
+		expect(leave.hardNavigate).toHaveBeenCalledWith("/");
 		expect(screen.queryByText(/not saved to your account yet and will be lost/)).toBeNull();
 	});
 });

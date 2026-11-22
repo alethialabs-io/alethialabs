@@ -1,6 +1,6 @@
 ---
 title: Plan & Apply
-description: Queue plan, deploy, and destroy jobs from the CLI.
+description: Describe a project in alethia.yaml, preview the changes with plan, and create and deploy it with apply.
 ---
 
 # Plan & Apply
@@ -75,6 +75,7 @@ alethia apply                          # ./alethia.yaml, asks before applying
 alethia apply --yes --no-input         # in a pipeline
 alethia apply --runner my-box          # deploy with a named runner
 alethia apply --env dev-1              # create everything, deploy only dev-1
+alethia apply --yes --timeout 45m      # wait at most 45 minutes for the deploys
 ```
 
 ```
@@ -96,13 +97,71 @@ Apply these changes? Yes
 ✓ boutique is up.
 ```
 
-`apply` is idempotent. Re-run it on a project that already matches the file and it creates
-nothing, marks each environment `=`, and deploys again. It **never deletes**: an environment on the
-server that the file does not mention is listed as left alone, not torn down. What it cannot
-reconcile — an existing environment whose stage, placement or lifecycle differs from the file — is
-shown and refused before a single write. A refusal exits with code `2`, the code `alethia plan` gives
-the same file (see [Exit codes](#exit-codes)); any other error exits `1`. `alethia up` runs the same
-apply, so it exits the same way.
+The plan and the last line are the command's output, on stdout. Everything between them is
+progress, on stderr. So a script that reads stdout gets the plan and the result and nothing else.
+
+Running `apply` again is safe. On a project that already matches the file it creates nothing,
+marks each environment `=`, and deploys again. What it cannot reconcile is shown and refused before
+a single write: an existing environment whose stage, placement or lifecycle differs from the file.
+`alethia up` runs the same apply, so it behaves and exits the same way.
+
+### What the file leaves out is never removed
+
+`apply` creates and updates. It does not remove anything. An environment, a component or an add-on
+that is on the server and not in the file is **unmanaged**: `plan` and `apply` list it and leave it
+as it is.
+
+```
+  staging is on the server and not in the file — left alone (unmanaged)
+  Not in the file means unmanaged: apply leaves it as it is and never removes it.
+```
+
+To remove an environment, destroy it with
+[`alethia project destroy`](/reference/cli/project). To remove a component, use
+[`alethia project component remove`](/reference/cli/project). Deleting its lines from the file does
+neither.
+
+### Waiting for the deploys
+
+`apply` queues one deploy for each environment, in file order, and waits for each one before it
+queues the next. The first environment owns the cluster, so the others cannot be deployed before it.
+
+- `--no-wait` queues the first deploys and returns. Every job is named in the result.
+  `--wait=false` means the same.
+- `--timeout` sets how long the whole wait may take, for example `--timeout 45m`. When the time
+  passes, `apply` stops waiting and exits `12`. The deploy that is running keeps running. The error
+  names its job, the command that follows it, and the environments that were not deployed yet.
+  Run `alethia apply` again when that deploy has finished.
+- Press Ctrl+C to stop waiting. The deploy keeps running and `apply` exits `130`.
+
+A deploy can wait on a person. When a deploy is held until someone approves it, `apply` says so
+and prints the console page where the job is approved:
+
+```
+⚠ DEPLOY job 4f3c2b1a-… is waiting for a person to approve it. It does not start until someone approves it at https://alethialabs.io/acme/~/jobs/4f3c2b1a-…
+```
+
+While it waits, `apply` continues by itself as soon as the job is approved. With `--no-wait` it
+returns, and the result marks the job with `awaiting_approval` and `approval_url`.
+
+A deploy that stays queued for two minutes because no runner has claimed it is also reported, with
+the command that shows which runners are online.
+
+### Exit codes of `apply`
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Done. Without `--no-wait`, every deploy finished. |
+| `1` | The file does not exist or is not valid. |
+| `2` | The file cannot be applied as written. This is the code `alethia plan` gives the same file; see [Exit codes](#exit-codes). |
+| `9` | Nobody could confirm, and `--yes` was not passed. |
+| `12` | `--timeout` passed. The deploy is still running. |
+| `13` | A deploy finished and failed, or was cancelled. `alethia jobs logs` with the job's id shows why. |
+| `130` | You stopped the wait with Ctrl+C. |
+
+Any other code is one of the CLI's general exit codes: for example `4` when you are not signed
+in, `7` when the server refuses a change because of a conflict, and `11` when the control plane
+cannot be reached.
 
 An environment's `lifecycle` is set once, when the environment is created. Nothing changes it after
 that: not `apply`, and not the console. A file that leaves `lifecycle` out means `persistent`. If the
@@ -243,24 +302,30 @@ section sets. `plan` and `apply` treat it **key by key**, not as one value:
 [Setting template knobs](/reference/cli/project#setting-template-knobs) explains how to find them.
 
 `apply` changes the component's **settings**. It does not tell you whether the next deploy replaces
-the cloud resource. To see that, read the OpenTofu plan of the deploy: `alethia project plan`.
+the cloud resource. To see that, read the OpenTofu plan of the deploy: `alethia project preview`.
 
-The runner: `--runner` takes a name or an id. Omitted, the only online runner is used without a
-question; with several online you are asked on a terminal, and under `--no-input` the job is left
-for the server to place.
+The runner: `--runner` takes a name or an id. Omitted, `apply` uses the only online runner that
+takes jobs for the project's cloud, without a question. With several you are asked on a terminal,
+and under `--no-input` the job is left for the server to place. A runner that does not take the
+project's cloud is refused, whether you name it or pick it: it would never claim the deploy.
 
 {/* fieldspec: alethia apply */}
 
-| Field        | What it is                                                                                    | Set without the form |
-| ------------ | --------------------------------------------------------------------------------------------- | -------------------- |
-| Manifest     | The alethia.yaml to apply (default: ./alethia.yaml)                                           | `--file`             |
-| Runner       | Runner to deploy with, by NAME or id. Omitted: the only online runner, or asked on a terminal | `--runner`           |
-| Environments | Only deploy these environments (repeatable; default: every environment in the file)           | `--env`              |
-| Confirm      | Apply without asking (required with --no-input)                                               | `--yes`              |
-| Wait         | Queue the deploys and return instead of waiting for them                                      | `--no-wait`          |
+| Field        | What it is                                                                                                                 | Set without the form |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| Manifest     | The alethia.yaml to apply (default: ./alethia.yaml)                                                                        | `--file`             |
+| Runner       | Runner to deploy with, by NAME or id. Omitted: the only online runner that takes this cloud's jobs, or asked on a terminal | `--runner`           |
+| Environments | Only deploy these environments (repeatable; default: every environment in the file)                                        | `--env`              |
+| Confirm      | Apply without asking (required with --no-input)                                                                            | `--yes`              |
+| Wait         | Queue the deploys and return instead of waiting for them                                                                   | `--no-wait`          |
+| Timeout      | Stop waiting after this long, for example 30m (the deploys keep running; exits 12). Omitted or 0: wait without a limit     | `--timeout`          |
 
-`--output json` prints the plan and the result as typed objects instead of the lines above. In the
-plan, a component with the action `update` carries a `changes` array, one entry per changed field:
+`--wait` is the flag every command that queues a job has. `apply` waits by default, so it is on
+unless you turn it off: `--wait=false` is the same as `--no-wait`.
+
+With `--output json`, `alethia plan` prints the plan and `alethia apply` prints the result as one
+object each. In the plan, a component with the action `update` carries a `changes` array, one entry
+per changed field:
 
 ```json
 {
@@ -274,8 +339,60 @@ plan, a component with the action `update` carries a `changes` array, one entry 
 
 `from` is `null` when the server has no value for the field. A `create` or `unchanged` component has
 no `changes` key. A component that exists also carries `revision`, the server's `updated_at` that the
-plan read, which `apply` sends back with the change. In the result, an `errors` array lists each change the server refused, as
-`{ "environment", "component", "error" }`.
+plan read, which `apply` sends back with the change.
+
+The result of `apply` has the shape every command that changes something returns. Its `object` is
+what this apply did:
+
+```json
+{
+  "id": "4b1d2c9e-7f3a-4e55-9c1d-2a6f0b8e1c37",
+  "kind": "project",
+  "action": "created",
+  "job": { "id": "8a1d0e77-2b4c-4f6e-9d1a-3c5e7f9b1d2f", "type": "DEPLOY" },
+  "dry_run": false,
+  "object": {
+    "project_id": "4b1d2c9e-7f3a-4e55-9c1d-2a6f0b8e1c37",
+    "created": ["project boutique", "prod cluster", "dev-1 repositories", "dev-1 databases/orders"],
+    "jobs": [
+      {
+        "id": "4f3c2b1a-9d8e-4c7b-a6f5-1e2d3c4b5a69",
+        "type": "DEPLOY",
+        "status": "SUCCESS",
+        "environment": "prod",
+        "awaiting_approval": false,
+        "warnings": []
+      },
+      {
+        "id": "8a1d0e77-2b4c-4f6e-9d1a-3c5e7f9b1d2f",
+        "type": "DEPLOY",
+        "status": "SUCCESS",
+        "environment": "dev-1",
+        "awaiting_approval": false,
+        "warnings": []
+      }
+    ]
+  }
+}
+```
+
+- `action` is `created` when this run created the project, `updated` when it wrote anything into a
+  project that existed, `queued` when it only queued deploys, and `unchanged` when it did nothing.
+- `job` is the last deploy that was queued. `object.jobs` lists every one, in the order they ran.
+- `warnings` are the warnings a finished deploy recorded, the same list
+  [`alethia jobs get`](/reference/cli/jobs) shows. It is always an array.
+- `object.errors` is present when the server refused a change. Each entry is
+  `{ "environment", "component", "error" }`. That environment is not deployed, the others are, and
+  `apply` exits with the code of the first refusal.
+
+When `apply` fails after it has written something, stdout still carries this object, with what was
+created and the jobs that were queued. The error is on stderr, as one JSON object on the last line.
+
+<Callout type="warn">
+  **Changed for scripts.** Before this release, `apply --output json` printed the inner object on its
+  own, each job had `job_id` in place of `id`, and progress lines were on stdout in table form. Read
+  `.object.jobs[].id` now. `alethia up --output json` prints the same result.
+</Callout>
 
 ## Add-ons
 
@@ -494,8 +611,13 @@ alethia plan --detailed-exitcode
 | Manifest           | The alethia.yaml to plan (default: ./alethia.yaml)                                                                   | `--file`              |
 | Detailed exit code | Exit 0 with no changes, 2 with changes, 3 with problems (1 is an error). Default: 0 unless the plan has problems (2) | `--detailed-exitcode` |
 
-The per-environment OpenTofu plan runs inside every deploy. To queue one on its own — for a
-pipeline that gates on it — use `alethia project plan` below.
+The per-environment OpenTofu plan runs inside every deploy. To queue one on its own, for a
+pipeline that gates on it, use [`alethia project preview`](/reference/cli/project).
+
+A plan never contains a removal. What is on the server and not in the file is listed as unmanaged:
+see [What the file leaves out is never removed](#what-the-file-leaves-out-is-never-removed). In
+`--output json`, those environments are in `unmanaged` and those add-ons in each environment's
+`unmanaged_addons`.
 
 ### Exit codes
 
@@ -509,7 +631,7 @@ By default, `plan` answers one question: does `apply` accept this file?
 | Code | Meaning |
 | --- | --- |
 | `0` | `apply` accepts the file. There can be changes. |
-| `1` | Error. The file could not be read or validated, or the server could not be reached. |
+| `1` | The file does not exist or is not valid. |
 | `2` | The plan has problems. `apply` refuses the file. |
 
 A plan with changes and no problems exits `0`, so a pipeline that runs `plan` and then `apply`
@@ -521,20 +643,23 @@ Terraform convention. Problems win over changes, because a plan with both cannot
 | Code | Meaning |
 | --- | --- |
 | `0` | No changes and no problems. |
-| `1` | Error. |
+| `1` | The file does not exist or is not valid. |
 | `2` | Changes, and no problems. |
 | `3` | The plan has problems. `apply` refuses the file. |
 
-`alethia apply` exits `2` when it refuses a file for its problems and `1` on any other error.
+In both tables, any other code is one of the CLI's general exit codes and means that `plan` could
+not ask: for example `4` when you are not signed in, and `11` when the control plane cannot be
+reached. A pipeline that treats every code other than `0` and `2` as a failure handles all of
+them.
 
-`plan` prints the whole plan first in every case. The code comes last. In table form, the refusal
-follows the plan on stdout. With `--output json`, stdout carries only the plan document and the
-refusal goes to stderr. `--output csv` behaves the same way: the refusal goes to stderr and the exit
-code is the same. The plan has no table shape, so csv prints no rows for it; read the plan with
-`--output json`.
+`alethia apply` exits `2` when it refuses a file for its problems.
 
-`alethia apply --output json` also sends the refusal to stderr. Before #5600 it printed the refusal
-on stdout.
+`plan` prints the whole plan first in every case, on stdout. The code comes last. The refusal goes
+to stderr in every format, so stdout carries only the plan. With `--output json`, the refusal is one
+JSON object with the code `plan_refused`. The plan has no table shape, so `--output csv` prints no
+rows for it; read the plan with `--output json`.
+
+`alethia apply` sends the refusal to stderr in the same way.
 
 ### Problems in `--output json`
 
@@ -611,7 +736,7 @@ set -e
 case "$code" in
   0) echo "the file matches the server" ;;
   2) echo "the file differs from the server" ;;
-  *) exit "$code" ;;   # 1 error, 3 problems
+  *) exit "$code" ;;   # 3 problems; anything else is an error
 esac
 ```
 
@@ -664,102 +789,29 @@ setting, so review the file before you commit it. See
 add-on's Advanced values override, and why. A value that is not in the file keeps what is stored,
 so `plan` shows no change for it and `apply` never clears it.
 
-## The `project` job commands
+## One environment at a time
 
-These `project` subcommands queue infrastructure operations that [Runners](/concepts/runner) execute. They
-implement the Plan-Review-Apply workflow from the terminal, one environment at a time. The same
-workflow in the console is [Plan and apply in the console](/guides/jobs/plan-and-apply).
+`plan` and `apply` work on the whole file. To queue one job for one environment, use the `project`
+commands. They are described on the [project page](/reference/cli/project):
 
-## `alethia project plan`
-
-Queue an [OpenTofu](/reference/glossary) plan job — the Runner runs `tofu plan`.
-
-```bash
-alethia project plan                                                        # asks which project, then which runner
-alethia project plan --project boutique --env prod --runner eu-box --wait   # scripted: names all three, blocks on the job
-```
-
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--project` | No | Project to plan, by **name** or id. Omitted on a terminal, a picker asks. |
-| `--project-id` | No | Project id. Prefer `--project`, which also takes the id. Passing both is refused. |
-| `--env` | No | Environment name to plan. Omitted, the project's default environment. |
-| `--runner` | No | Runner to execute the job, by **name** or id. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
-| `--runner-id` | No | Runner id. Prefer `--runner`, which also takes the name. Passing both is refused. |
-| `-w`, `--wait` | No | Block until the job completes |
-
-On success, prints the job ID. Stream the plan output with
-`alethia jobs logs --latest --project boutique --follow` — nothing has to be copied between the two
-commands. Narrow it to the project you just planned: an unnarrowed `alethia jobs logs --latest`
-takes the most recent job **the organization** has, which may be somebody else's.
-
-## `alethia project apply`
-
-Queue a deployment (apply) job.
-
-```bash
-alethia project apply                                                      # asks which project, then which runner
-alethia project apply --project boutique --env prod --latest-plan --wait   # scripted: applies the plan just reviewed
-```
-
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--project` | No | Project to deploy, by **name** or id. Omitted on a terminal, a picker asks. |
-| `--project-id` | No | Project id. Prefer `--project`, which also takes the id. Passing both is refused. |
-| `--env` | No | Environment name to deploy. Omitted, the project's default environment. |
-| `--runner` | No | Runner to execute the job, by **name** or id. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
-| `--runner-id` | No | Runner id. Prefer `--runner`, which also takes the name. Passing both is refused. |
-| `--latest-plan` | No | Apply the project's most recent `PLAN` job. Prefer this to `--plan-job-id`. |
-| `--plan-job-id` | No | Bind the apply to the plan a prior PLAN job produced, by that job's id. |
-| `-w`, `--wait` | No | Block until the job completes |
-
-Either flag makes the apply use the exact plan you reviewed. If the project's configuration
-changed since that plan was generated, the job fails with a
-[config hash mismatch](/guides/jobs/plan-and-apply#config-hash-validation).
-
-`--latest-plan` resolves that plan from the project itself, so no id moves between two commands:
-plan, review, then apply. It prints the job it chose before it queues anything. It resolves `PLAN`
-jobs only — the project's most recent job is as likely to be the `DEPLOY` that followed the plan —
-and it needs `--project`, because without one the match is every `PLAN` job in the organization.
-
-It takes the most recent `PLAN` **whatever its status** and refuses when that is not `SUCCESS`,
-naming the job and its status. Skipping past a plan that is still running would apply an older one
-you never asked for, which is the reviewed-plan guarantee inverted.
-
-`--plan-job-id` stays for a plan you already hold the id of. Passing both is refused rather than
-resolved by precedence: they name the same thing.
-
-**Narrow any `alethia jobs get --latest` you read the plan back with.** That command resolves over
-every job the organization has, not over the ones you queued, so an unnarrowed lookup can show you
-another project's plan. Write it as
-`alethia jobs get --latest --project boutique --type PLAN`, as
-[Scripting Examples](#scripting-examples) does.
-
-A DEPLOY job runs the fail-closed [verify gate](/guides/jobs/plan-and-apply#verify-gate) before
-`tofu apply`. Follow it with `alethia jobs logs --latest --project boutique --type DEPLOY --follow`.
+- `alethia project preview` queues the OpenTofu plan of one environment.
+- `alethia project deploy` deploys one environment, and can deploy the plan you reviewed.
+- `alethia project destroy` tears one environment down.
 
 ## `alethia project destroy`
 
-Destroy a Project's provisioned infrastructure.
+Queue a DESTROY job for one environment. The Runner runs `tofu destroy` and tears down every
+resource of that environment; the console guide's
+[destroy workflow](/guides/jobs/plan-and-apply#destroy-workflow) says what is kept and what is lost.
+`alethia apply` never does this: removing an environment from `alethia.yaml` leaves it running.
 
 ```bash
-alethia project destroy                                                  # asks which project, then confirms
-alethia project destroy --project boutique --env prod --wait --yes       # scripted: no confirmation prompt
+alethia project destroy --project boutique --env dev-1                   # asks you to type the project's name
 alethia project destroy --project boutique --env prod --cascade --wait   # prod and every environment on its cluster
 ```
 
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--project` | No | Project to destroy, by **name** or id. Omitted on a terminal, a picker asks. |
-| `--project-id` | No | Project id. Prefer `--project`, which also takes the id. Passing both is refused. |
-| `--env` | No | Environment name to destroy. Omitted, the project's default environment. |
-| `--runner-id` | No | Runner to execute the job, **by id only** — `destroy` has no `--runner` sibling yet. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
-| `-y`, `--yes` | No | Skip the confirmation prompt. Required with `--no-input`. |
-| `--cascade` | No | Also destroy every environment placed on this environment's cluster, those environments first. Prints the full list, in order, and confirms before it queues anything. |
-| `-w`, `--wait` | No | Block until the job completes. With `--cascade`, until every job completes. |
-
-Queues a DESTROY job. The Runner runs `tofu destroy` to tear down all resources — see the console
-guide's [destroy workflow](/guides/jobs/plan-and-apply#destroy-workflow) for what is kept and what is lost.
+The flags, the confirmation and the result are on the
+[project page](/reference/cli/project).
 
 ### Destroying an environment that other environments run on
 
@@ -789,36 +841,9 @@ Runner can start it, until no live environment is left on its cluster. If the de
 destroy the failed environment again, or cancel the waiting job with
 [`alethia jobs cancel`](/reference/cli/jobs).
 
-`--project` and `--project-id` name the same field, so passing both is an error rather than a
-precedence rule. The command they are being passed to is `destroy`: quietly preferring one of them
-would let a wrong belief about which project is being torn down survive until it had been.
-
-`plan` and `apply` take the runner by **name** as well, through `--runner`. `destroy` does not, for
-now — it takes `--runner-id` alone, so this is the one place in the three commands where a runner
-still has to be named by id. Read it out of `alethia runner list`, or leave it unset and choose from
-the picker.
-
 <Callout type="info">
 To tear down a deployed **Runner** (not a Project), use [`alethia runner destroy`](/reference/cli/runners).
 </Callout>
-
-## Interactive Selection
-
-`plan`, `apply` and `destroy` each ask for what you did not name, so none of the three needs an id
-typed at it:
-
-1. With neither `--project` nor `--project-id`, a picker lists the projects and you choose one.
-2. With the runner unnamed, a second picker lists your runners, marking each one online, draining or
-   offline. **Any available** is its first option, so pressing Enter leaves the job for the server
-   to place.
-
-Neither picker is shown under `--no-input` or when stdin is not a terminal. There, name the project
-with `--project` and the runner with `--runner` — both take the name, so a script never has to hold
-an id — or leave the runner unset for the server to place. A name no runner has is refused locally,
-listing the names that do exist; a name two runners share is refused naming both ids, rather than
-picking one for you.
-
-See [TUI Components](https://github.com/alethialabs-io/alethialabs/blob/dev/docs/contributing/cli-tui.md) for details on the interactive selectors.
 
 ## Scripting Examples
 
@@ -831,9 +856,9 @@ alethia apply --yes --no-input
 
 # Plan one environment, review, apply that exact plan. No id moves between the commands.
 # --latest is resolved over the whole org, so narrow the review step to this project and job type.
-alethia project plan --project boutique --env prod --runner eu-box --wait
+alethia project preview --project boutique --env prod --runner eu-box --wait
 alethia jobs get --latest --project boutique --type PLAN
-alethia project apply --project boutique --env prod --latest-plan --wait
+alethia project deploy --project boutique --env prod --latest-plan --wait --yes
 
 # Destroy with wait
 alethia project destroy --project boutique --env prod --wait

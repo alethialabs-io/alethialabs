@@ -4,6 +4,7 @@
 
 import { Search } from "lucide-react";
 import { usePathname } from "next/navigation";
+import { getShortcut, SHORTCUT_PALETTE_TOGGLE } from "@/lib/shortcuts/registry";
 import { useCommandPalette } from "@/lib/stores/use-command-palette";
 import {
 	type DrillId,
@@ -11,9 +12,10 @@ import {
 	type SidebarNavGroups,
 } from "./nav-config";
 import { NavRow } from "./nav-row";
+import { ariaKeyShortcuts, ShortcutHint } from "./shortcut-hint";
 
 /**
- * The main sidebar view: a stubbed "Find…" box plus the nav groups (top, connect, and a
+ * The main sidebar view: the "Find…" box plus the nav groups (top, connect, and a
  * pinned-bottom group). The groups are built by the shell — org-wide or project-scoped — and
  * passed in. Drill triggers either navigate (route-owned) or call `onOpenDrill` to slide a
  * sub-view in.
@@ -29,16 +31,18 @@ export function SidebarNav({
 
 	return (
 		<div className="flex h-full flex-col">
-			{/* Find box — opens the global command palette (also ⌘K / F). */}
+			{/* Find box — opens the global command palette. Its key hint and its `aria-keyshortcuts`
+			    are both read from the palette's row in the shortcut registry. */}
 			<div className="px-3 pb-2 pt-3">
 				<button
 					type="button"
 					onClick={() => useCommandPalette.getState().setOpen(true)}
+					aria-keyshortcuts={ariaKeyShortcuts(getShortcut(SHORTCUT_PALETTE_TOGGLE).chord)}
 					className="flex h-9 w-full items-center gap-2.5 rounded-md border bg-muted/30 px-2.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
 				>
 					<Search className="h-[15px] w-[15px] shrink-0" />
 					<span className="flex-1 text-left text-ui-md">Find…</span>
-					<span className="shrink-0 rounded border px-1.5 font-mono text-ui-2xs">F</span>
+					<ShortcutHint id={SHORTCUT_PALETTE_TOGGLE} />
 				</button>
 			</div>
 

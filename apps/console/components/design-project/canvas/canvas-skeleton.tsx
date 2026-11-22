@@ -19,14 +19,16 @@ import { cn } from "@repo/ui/utils";
  * caller that never provided the data.
  *
  * `overlay` positions it over a mounted board; without it, it fills its parent.
+ *
+ * It is a PART, not a skeleton root: it declares no `aria-busy`, `role` or name of its own (skeleton
+ * rule 1, `docs/ui-conformance/RUBRIC.md`). The caller draws it inside `SkeletonRoot`, which is the
+ * one statement that the region is pending — both route `loading.tsx` files and `BoardPreview`'s
+ * no-data fallback do.
  */
 export function CanvasSkeleton({ overlay = false }: { overlay?: boolean }) {
 	return (
 		<div
 			data-slot="canvas-skeleton"
-			role="status"
-			aria-busy="true"
-			aria-label="Loading the board"
 			className={cn(
 				"overflow-hidden bg-background",
 				overlay

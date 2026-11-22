@@ -8,7 +8,7 @@
 // `cloud_identity_id` and diverge from the core. A divergent node just gets its own cached entry —
 // one extra fetch, cached and deduped by the query cache.
 //
-// ⚠ `getEffectiveIdentity` and `getEffectiveProvider` resolve by INDEPENDENT paths
+// ⚠ `effectiveIdentity` and `effectiveProvider` (`lib/canvas/store/derive.ts`) resolve by INDEPENDENT paths
 // (`cloud_identity_id ?? core` vs `provider ?? project.provider`) and can disagree — a node can
 // carry a provider with no identity. Keying on the identity should make a mismatch unreachable, but
 // `capability-options.ts` keeps its provider-mismatch guard anyway: the failure it prevents (an AWS
@@ -20,7 +20,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { orpc } from "@/lib/rpc/client";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useStore } from "zustand";
+import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
+import { nodeIndex, useEffectiveIdentity } from "@/lib/canvas/store/use-board";
 import { nodeOfKind } from "../graph/types";
 import { NO_CAPABILITIES, type CapabilityBag } from "./config-schema";
 
@@ -54,16 +57,11 @@ export function useCapabilities(identityId: string | null, region: string | null
  * the static catalog, which is exactly the pre-capabilities behaviour, so nothing flashes empty.
  */
 export function useNodeCapabilities(nodeId: string | null): CapabilityBag {
-	const identity = useCanvasStore((s) =>
-		nodeId ? s.getEffectiveIdentity(nodeId) : null,
-	);
+	const identity = useEffectiveIdentity(nodeId);
 	// Region is a PROJECT-level field on the canvas, and it scopes the region-sensitive axes.
 	// `nodeOfKind` is the sanctioned narrowing seam — the node union has no common `region`.
-	const region = useCanvasStore((s) => {
-		const project = nodeOfKind(
-			s.nodes.find((n) => n.id === PROJECT_NODE_ID),
-			"project",
-		);
+	const region = useStore(useBoard().document, (s) => {
+		const project = nodeOfKind(nodeIndex(s.designNodes).get(PROJECT_NODE_ID), "project");
 		return project?.data.config.region || null;
 	});
 

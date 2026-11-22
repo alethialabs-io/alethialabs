@@ -5,11 +5,10 @@
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { ConnectorIcon, isThirdPartyMark } from "@/components/connectors/connector-icon";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
-import { connectorState } from "@/components/connectors/connectors-query";
-import { Button } from "@repo/ui/button";
+import { ConnectorAction } from "@/components/connectors/connectors-action";
+import { NOT_OFFERED_SHORT, connectorState } from "@/components/connectors/connectors-query";
 import { TableCell, TableRow } from "@repo/ui/table";
 import { cn } from "@repo/ui/utils";
-import { Loader2, RefreshCw } from "lucide-react";
 
 interface ConnectorRowProps {
 	integration: ConnectorWithConnection;
@@ -26,6 +25,8 @@ interface ConnectorRowProps {
 	 * cloud missing platform creds, or a git provider with no registered OAuth app.
 	 */
 	platformConfigured?: boolean;
+	/** False for a cloud that takes no new connection here. See `ConnectorCard`'s `offered`. */
+	offered?: boolean;
 	isConnecting?: boolean;
 }
 
@@ -41,6 +42,7 @@ export function ConnectorRow({
 	onManage,
 	onReverify,
 	platformConfigured = true,
+	offered = true,
 	isConnecting,
 }: ConnectorRowProps) {
 	const isConnected = integration.connected;
@@ -51,14 +53,6 @@ export function ConnectorRow({
 	const isComingSoon = state.health === "coming_soon";
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
-	// A managed cloud missing platform creds, or a git provider with no registered OAuth app: a
-	// connect can only fail, so the row is honest about it instead of offering a doomed connect.
-	const platformUnavailable = state.health === "unavailable";
-	const needsReconnection =
-		integration.token_health === "expired" ||
-		integration.token_health === "refresh_failed";
-	const cloudFailed = integration.cloud_health === "failed";
-	const cloudTesting = integration.cloud_health === "testing";
 	const accountCount = integration.accounts?.length ?? 0;
 	// A coming-soon row steps its description and status down one ink tier, and its state
 	// label already says "Coming soon" in words. It is NOT a blanket `opacity-50` on the row:
@@ -98,9 +92,9 @@ export function ConnectorRow({
 						</div>
 						<div
 							className={cn("truncate text-xs", secondaryInk)}
-							title={integration.description}
+							title={offered ? integration.description : NOT_OFFERED_SHORT}
 						>
-							{integration.description}
+							{offered ? integration.description : NOT_OFFERED_SHORT}
 						</div>
 					</div>
 				</div>
@@ -146,87 +140,19 @@ export function ConnectorRow({
 			</TableCell>
 
 			<TableCell className="text-right">
-				{isComingSoon ? null : platformUnavailable ? (
-					<span
-						title={
-							isGit
-								? "This git provider has no OAuth app configured on this instance. See the docs to enable it."
-								: "This cloud needs Alethia platform credentials, which aren't configured on this instance. See the docs to enable managed cloud connections."
-						}
-						className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground"
-					>
-						Unavailable
-					</span>
-				) : isConnected && needsReconnection && canManage ? (
-					<Button
-						size="sm"
-						className="h-7 px-2.5 text-xs"
-						// Same accessible naming as `connector-card.tsx` — the two views are one
-						// affordance rendered twice, so a name added to one and not the other would
-						// make the board's addressability depend on which layout you happen to be in.
-						aria-label={`Reconnect ${integration.name}`}
-						disabled={isConnecting}
-						onClick={onConnect}
-					>
-						{isConnecting ? (
-							<Loader2 className="mr-1 size-3.5 animate-spin" />
-						) : (
-							<RefreshCw className="mr-1 size-3.5" />
-						)}
-						Reconnect
-					</Button>
-				) : isConnected ? (
-					<Button
-						variant="ghost"
-						size="sm"
-						className="h-7 px-2.5 text-xs"
-						aria-label={`Manage ${integration.name}`}
-						onClick={onManage}
-					>
-						Manage
-					</Button>
-				) : cloudTesting ? (
-					<Loader2 className="ml-auto size-3.5 animate-spin text-muted-foreground" />
-				) : cloudFailed && canManage ? (
-					// Manage alongside Re-verify — re-verifying wrong stored credentials fails forever, so
-					// the sheet (correct / remove the account) must be reachable. See connector-card.tsx.
-					<div className="flex items-center justify-end gap-1">
-						<Button
-							variant="ghost"
-							size="sm"
-							className="h-7 px-2.5 text-xs"
-							aria-label={`Manage ${integration.name}`}
-							onClick={onManage}
-						>
-							Manage
-						</Button>
-						<Button
-							size="sm"
-							className="h-7 px-2.5 text-xs"
-							aria-label={`Re-verify ${integration.name}`}
-							disabled={isConnecting}
-							onClick={onReverify}
-						>
-							{isConnecting ? (
-								<Loader2 className="mr-1 size-3.5 animate-spin" />
-							) : (
-								<RefreshCw className="mr-1 size-3.5" />
-							)}
-							Re-verify
-						</Button>
-					</div>
-				) : canManage ? (
-					<Button
-						size="sm"
-						className="h-7 px-2.5 text-xs"
-						aria-label={`Connect ${integration.name}`}
-						disabled={isConnecting}
-						onClick={onConnect}
-					>
-						{isConnecting && <Loader2 className="mr-1 size-3.5 animate-spin" />}
-						Connect
-					</Button>
-				) : null}
+				{/* The same ladder as the card (`connectors-action.tsx`): the two views are one
+				    affordance rendered twice, so what a connector offers cannot depend on the layout. */}
+				<ConnectorAction
+					integration={integration}
+					state={state}
+					canManage={canManage}
+					offered={offered}
+					isConnecting={isConnecting}
+					onConnect={onConnect}
+					onManage={onManage}
+					onReverify={onReverify}
+					className="justify-end"
+				/>
 			</TableCell>
 		</TableRow>
 	);

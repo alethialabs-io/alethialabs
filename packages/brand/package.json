@@ -20,13 +20,17 @@
     "./site-header": "./src/site/site-header.tsx",
     "./site-footer": "./src/site/site-footer.tsx",
     "./site-chrome": "./src/site/site-chrome.tsx",
+    "./site-command-block": "./src/site/command-block.tsx",
     "./site-primitives": "./src/site/primitives.tsx",
     "./github-stars": "./src/site/github-stars.ts",
-    "./site-sections": "./src/site/page-sections.tsx"
+    "./site-sections": "./src/site/page-sections.tsx",
+    "./cover": "./src/cover/news-cover.tsx",
+    "./news-feeds": "./src/news/feeds.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
   },
   "peerDependencies": {
     "next": ">=15",
@@ -36,12 +40,14 @@
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
+    "@types/node": "^20.19.43",
     "@types/react": "19.3.0",
     "eslint": "^9.39.5",
-    "next": "16.4.5",
+    "next": "16.4.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^4.1.12"
   },
   "dependencies": {
     "@repo/legal": "workspace:*",

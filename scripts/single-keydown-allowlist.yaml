@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Exceptions to the one-keydown-listener rule — read by scripts/check-single-keydown.mjs (#6928).
+#
+# The console has ONE page-level keyboard listener: `useShortcut` in
+# apps/console/lib/shortcuts/use-shortcut.ts, reading the registry beside it. That directory is
+# exempt by LOCATION, not by an entry here. Everything else answers a shortcut by registering a row
+# (`registerShortcuts`) and calling `useShortcut(id, handler)`; a key handled by one element stays
+# an `onKeyDown` prop on that element, which the guard does not read.
+#
+# An entry here is a DECISION — this file genuinely needs its own key listener — never "not moved
+# yet". Each names the file, the rule it excuses (`key-listener`, `key-handler-property`,
+# `key-event-name` or `key-library`) and why. The list is checked in BOTH directions: a finding
+# with no entry fails, and an entry whose file no longer produces that finding fails as stale.
+#
+# Empty on 2026-11-22: the wave spec counted three files with their own listener before the
+# registry landed (#7007); a sweep of the console and packages/*/src found none left.
+#
+# Shape (one entry):
+#   entries:
+#     - file: apps/console/components/x/y.tsx
+#       rule: key-listener
+#       reason: why this surface cannot go through the registry
+entries: []

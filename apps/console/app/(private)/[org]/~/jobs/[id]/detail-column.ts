@@ -66,3 +66,13 @@ export const JOB_VIEWPORT_HEIGHT = "h-[calc(100dvh-53px)]";
  * title, so a section added here is a row added there.
  */
 export const JOB_DETAIL_SECTIONS = ["Job details", "Config snapshot", "Execution metadata"] as const;
+
+/**
+ * The strip above the log: the line count on the left, the stream's state on the right.
+ *
+ * Its HEIGHT is the part that matters, and it is fixed: the strip is drawn for every job in every
+ * stream state — connecting, live, disconnected, complete — so the log under it starts at the same
+ * place whatever the stream is doing. Shared with `loading.tsx` for the reason the column is: the
+ * skeleton draws the same strip, so the log's top edge does not move when the page replaces it.
+ */
+export const JOB_LOG_STRIP = "flex h-9 shrink-0 items-center justify-between gap-4 border-b border-border/40 px-6";

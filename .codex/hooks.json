@@ -21,7 +21,7 @@
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/pre-tool-use.sh\"",
-            "timeout": 30,
+            "timeout": 600,
             "statusMessage": "Checking Alethia command guards"
           }
         ]

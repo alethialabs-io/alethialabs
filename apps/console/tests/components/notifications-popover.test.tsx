@@ -33,7 +33,7 @@ const EMPTY_SUPPORT = {
 
 beforeEach(() => {
 	localStorage.clear();
-	useNotificationsStore.setState({ readJobIds: [], readSupportCaseIds: [] });
+	useNotificationsStore.setState({ readJobIds: [], supportAcks: [] });
 	useRecentJobsQuery.mockReset();
 	useSupportNotifications.mockReset();
 	useSupportNotifications.mockReturnValue(EMPTY_SUPPORT);
@@ -48,7 +48,7 @@ describe("NotificationsPopover", () => {
 			],
 		});
 		render(<NotificationsPopover />);
-		await userEvent.click(screen.getByRole("button", { name: "Notifications" }));
+		await userEvent.click(screen.getByRole("button", { name: /^Notifications/ }));
 
 		expect(screen.getByText(/Deploy — success/i)).toBeInTheDocument();
 		expect(screen.queryByText(/Connection Test/i)).not.toBeInTheDocument();
@@ -59,7 +59,7 @@ describe("NotificationsPopover", () => {
 			data: [makeJob({ id: "j1", status: "FAILED" })],
 		});
 		render(<NotificationsPopover />);
-		await userEvent.click(screen.getByRole("button", { name: "Notifications" }));
+		await userEvent.click(screen.getByRole("button", { name: /^Notifications/ }));
 		expect(screen.getByText("1 unread")).toBeInTheDocument();
 	});
 
@@ -68,7 +68,7 @@ describe("NotificationsPopover", () => {
 			data: [makeJob({ id: "j1", status: "PROCESSING" })],
 		});
 		render(<NotificationsPopover />);
-		await userEvent.click(screen.getByRole("button", { name: "Notifications" }));
+		await userEvent.click(screen.getByRole("button", { name: /^Notifications/ }));
 		expect(screen.getByText("All caught up")).toBeInTheDocument();
 	});
 
@@ -77,7 +77,7 @@ describe("NotificationsPopover", () => {
 			data: [makeJob({ id: "j1", status: "SUCCESS" })],
 		});
 		render(<NotificationsPopover />);
-		await userEvent.click(screen.getByRole("button", { name: "Notifications" }));
+		await userEvent.click(screen.getByRole("button", { name: /^Notifications/ }));
 
 		const link = screen.getByRole("link", { name: /Deploy/i });
 		expect(link).toHaveAttribute("href", "/acme/~/jobs/j1");
@@ -91,15 +91,40 @@ describe("NotificationsPopover", () => {
 			data: [makeJob({ id: "j1", status: "SUCCESS" })],
 		});
 		render(<NotificationsPopover />);
-		await userEvent.click(screen.getByRole("button", { name: "Notifications" }));
+		await userEvent.click(screen.getByRole("button", { name: /^Notifications/ }));
 		await userEvent.click(screen.getByText("Mark all read"));
 		expect(screen.getByText("All caught up")).toBeInTheDocument();
+	});
+
+	// S-13: the unread dot is drawn, so the count rides in the bell's accessible name.
+	it("names the bell with its unread count, and plainly when there is none", () => {
+		useRecentJobsQuery.mockReturnValue({
+			data: [
+				makeJob({ id: "j1", status: "FAILED" }),
+				makeJob({ id: "j2", status: "SUCCESS" }),
+			],
+		});
+		const { unmount } = render(<NotificationsPopover />);
+		expect(screen.getByRole("button", { name: "Notifications, 2 unread" })).toBeInTheDocument();
+		unmount();
+		useRecentJobsQuery.mockReturnValue({ data: [] });
+		render(<NotificationsPopover />);
+		expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument();
+	});
+
+	it("Mark all read is a plain button, not a submit", async () => {
+		useRecentJobsQuery.mockReturnValue({
+			data: [makeJob({ id: "j1", status: "SUCCESS" })],
+		});
+		render(<NotificationsPopover />);
+		await userEvent.click(screen.getByRole("button", { name: /^Notifications/ }));
+		expect(screen.getByRole("button", { name: "Mark all read" })).toHaveAttribute("type", "button");
 	});
 
 	it("renders the empty state when there are no notifiable jobs", async () => {
 		useRecentJobsQuery.mockReturnValue({ data: [] });
 		render(<NotificationsPopover />);
-		await userEvent.click(screen.getByRole("button", { name: "Notifications" }));
+		await userEvent.click(screen.getByRole("button", { name: /^Notifications/ }));
 		expect(screen.getByText("You're all caught up")).toBeInTheDocument();
 	});
 });
@@ -111,7 +136,7 @@ describe("NotificationsPopover — the four read states", () => {
 	/** Opens the bell. */
 	async function open(): Promise<void> {
 		render(<NotificationsPopover />);
-		await userEvent.click(screen.getByRole("button", { name: "Notifications" }));
+		await userEvent.click(screen.getByRole("button", { name: /^Notifications/ }));
 	}
 
 	it("a failed job feed renders an error with a retry, never the empty state", async () => {

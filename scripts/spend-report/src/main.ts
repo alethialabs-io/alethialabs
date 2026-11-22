@@ -34,6 +34,31 @@ function setEnv(name: string, value: string): void {
 	process.env[name] = value;
 }
 
+/** The SES values the send needs from the vault — the alethia-email account's sender (the same keys
+ * the hosted deploy emits; scripts/ci/check-email-provider-keys.sh). */
+interface SesSendEnv {
+	ALETHIA_SES_REGION: string;
+	ALETHIA_SES_ACCESS_KEY_ID: string;
+	ALETHIA_SES_SECRET_ACCESS_KEY: string;
+	ALETHIA_SES_GENERAL_CONFIG_SET: string;
+}
+
+/** Picks the SES send keys out of the vault, throwing with every missing name at once. */
+function sesSendEnv(vault: Record<string, string>): SesSendEnv {
+	const pick = (k: keyof SesSendEnv): string => vault[k] ?? "";
+	const out: SesSendEnv = {
+		ALETHIA_SES_REGION: pick("ALETHIA_SES_REGION"),
+		ALETHIA_SES_ACCESS_KEY_ID: pick("ALETHIA_SES_ACCESS_KEY_ID"),
+		ALETHIA_SES_SECRET_ACCESS_KEY: pick("ALETHIA_SES_SECRET_ACCESS_KEY"),
+		ALETHIA_SES_GENERAL_CONFIG_SET: pick("ALETHIA_SES_GENERAL_CONFIG_SET"),
+	};
+	const missing = Object.entries(out)
+		.filter(([, v]) => v === "")
+		.map(([k]) => k);
+	if (missing.length > 0) throw new Error(`${missing.join(", ")} missing or empty in the vault`);
+	return out;
+}
+
 /** Splits a comma-separated env var. */
 function list(name: string, fallback: string[]): string[] {
 	const v = env(name);
@@ -114,24 +139,32 @@ async function main(): Promise<number> {
 
 	// ── The send. Everything below FAILS the run. ──
 	try {
-		if (!awsReady) throw new Error(`the Resend key lives in AWS Secrets Manager and AWS is not readable: ${awsReason}`);
+		if (!awsReady) throw new Error(`the SES sender key lives in AWS Secrets Manager and AWS is not readable: ${awsReason}`);
 		const vault = await readVault(env("ASM_SECRET_ID") ?? "alethia/prod/env", env("ASM_REGION") ?? "eu-central-1");
-		const key = vault.RESEND_API_KEY;
-		if (!key) throw new Error("RESEND_API_KEY is missing or empty in the vault");
-		// Masked before anything else could print it.
-		process.stdout.write(`::add-mask::${key}\n`);
+		const ses = sesSendEnv(vault);
+		// Masked before anything else could print them.
+		process.stdout.write(`::add-mask::${ses.ALETHIA_SES_ACCESS_KEY_ID}\n`);
+		process.stdout.write(`::add-mask::${ses.ALETHIA_SES_SECRET_ACCESS_KEY}\n`);
 		// @repo/email's sendEmail LOGS AND RETURNS instead of throwing unless NODE_ENV=production, and
 		// logs instead of sending when no provider resolves. Both would turn a failed send into a green
 		// run, so the provider is pinned and production is asserted, not assumed.
 		if (process.env.NODE_ENV !== "production") throw new Error("NODE_ENV must be production for a real send (sendEmail swallows failures otherwise)");
-		setEnv("RESEND_API_KEY", key);
-		setEnv("EMAIL_PROVIDER", "resend");
+		for (const [k, v] of Object.entries(ses)) setEnv(k, v);
+		setEnv("EMAIL_PROVIDER", "ses");
 		setEnv("ALETHIA_DEPLOYMENT_MODE", "hosted");
 		const from = vault.EMAIL_FROM ?? vault.AUTH_EMAIL_FROM ?? "Alethia <no-reply@alethialabs.io>";
 		const { sendEmail } = await import("@repo/email/send");
 		const { getEmailConfig } = await import("@repo/email/config");
-		if (getEmailConfig().provider !== "resend") throw new Error("the email provider did not resolve to resend");
-		await sendEmail({ from, to, subject: subjectLine(report), react: createElement(SpendReportEmail, { report }) });
+		const emailConfig = getEmailConfig();
+		if (emailConfig.provider !== "ses") throw new Error("the email provider did not resolve to ses");
+		await sendEmail({
+			from,
+			to,
+			subject: subjectLine(report),
+			react: createElement(SpendReportEmail, { report }),
+			// The general stream's set, so a bounce of this report reaches the same suppression list.
+			configurationSetName: emailConfig.configSet.general,
+		});
 		process.stdout.write(`\nSent "${subjectLine(report)}" to ${to}.\n`);
 		summary(`\nSent to ${to}.`);
 		return 0;

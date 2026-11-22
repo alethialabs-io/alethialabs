@@ -24,12 +24,9 @@ DEPLOY_HOST
 # Public company phone. Legally required on the Bulgarian company-information surface (#2375).
 ALETHIA_PUBLIC_PHONE
 
-# Transactional email. The vault selects the transport (EMAIL_PROVIDER, unset = resend), and
-# packages/email/src/config.ts THROWS in hosted mode when the selected provider has no
-# credentials — so an empty key breaks email-OTP sign-in rather than degrading quietly. The Resend
-# key is required even while SES is selected, because Resend is the rollback.
-#
-# The SES keys are NOT listed: they are required only when EMAIL_PROVIDER=ses, and this list is
-# unconditional. scripts/ci/check-email-provider-keys.sh is that conditional gate, run by the
-# preflight and again by the deploy (infra/email-ses-account/README.md).
-RESEND_API_KEY
+# Transactional email has NO unconditional key. The vault selects the transport (EMAIL_PROVIDER,
+# unset = ses) and each transport needs its own keys, which this unconditional list cannot express.
+# scripts/ci/check-email-provider-keys.sh is that conditional gate, run by the preflight and again
+# by the deploy (infra/email-ses-account/README.md). packages/email/src/config.ts also THROWS in
+# hosted mode when the selected provider has no credentials, so a gap breaks email-OTP sign-in
+# loudly rather than degrading quietly.

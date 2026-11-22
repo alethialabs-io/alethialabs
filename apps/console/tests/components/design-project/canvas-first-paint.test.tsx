@@ -4,7 +4,7 @@
 // #6119 — the board never paints an empty canvas while its data is on the way (F009), and a board
 // with nothing designed on it says what to do next (F037).
 //
-// F009: the store is seeded asynchronously (`switchDraftScope` restores a draft before the seed), so
+// F009: the store is seeded asynchronously (the board opens its draft slot before the seed), so
 // the board's first frames held no nodes — an empty dotted plane for seconds. Until the store holds
 // THIS environment's design, the board shows the route's own skeleton over itself.
 // F037: a blank project ("Cluster" preselected) draws nothing — the project, cluster and network are
@@ -153,7 +153,7 @@ vi.mock("@/components/design-project/byo/iac-source-canvas-context", () => ({
 }));
 
 import { DesignProjectCanvas } from "@/components/design-project/canvas/design-project-canvas";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
 import { formToGraph } from "@/components/design-project/canvas/graph/form-to-graph";
 import { buildDefaultFormValues } from "@/components/design-project/source-project";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
@@ -180,35 +180,38 @@ function renderCanvas() {
 	);
 }
 
+/** The board's skeleton: a part with no role or name of its own, so it is found by its slot. */
+const SKELETON = '[data-slot="canvas-skeleton"]';
+
 /** Seeds the store as the workbench does once THIS environment's design is in. */
 function seed(nodes: ReturnType<typeof design>, scope = "proj-1:env-1") {
-	useCanvasStore.getState().setGraph({ nodes });
-	useCanvasStore.setState({ seed: { scope, revision: "r1" } });
+	board.load({ nodes });
+	board.document.setState({ seed: { scope, revision: "r1" } });
 }
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	useCanvasStore.getState().reset();
+	board.reset();
 });
 
 describe("the board before its design is in (F009)", () => {
 	it("shows the skeleton, not an empty canvas, while the store holds no seed", () => {
-		renderCanvas();
-		expect(screen.getByRole("status", { name: /loading the board/i })).toBeInTheDocument();
+		const { container } = renderCanvas();
+		expect(container.querySelector(SKELETON)).not.toBeNull();
 		// And not the blank-board guide: an unseeded store is not an empty design.
 		expect(screen.queryByText(/nothing designed yet/i)).not.toBeInTheDocument();
 	});
 
 	it("keeps the skeleton while the store holds ANOTHER environment's design", () => {
 		seed(design([ORDERS]), "proj-1:env-other");
-		renderCanvas();
-		expect(screen.getByRole("status", { name: /loading the board/i })).toBeInTheDocument();
+		const { container } = renderCanvas();
+		expect(container.querySelector(SKELETON)).not.toBeNull();
 	});
 
 	it("drops the skeleton the moment this environment's design is seeded", async () => {
-		renderCanvas();
+		const { container } = renderCanvas();
 		act(() => seed(design([ORDERS])));
-		expect(screen.queryByRole("status", { name: /loading the board/i })).not.toBeInTheDocument();
+		expect(container.querySelector(SKELETON)).toBeNull();
 	});
 });
 

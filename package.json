@@ -40,6 +40,7 @@
     "check:closing-keyword-parsers": "node scripts/check-closing-keyword-parsers.mjs",
     "check:shared-surface": "node scripts/check-shared-surface.mjs",
     "check:secure-context-apis": "node scripts/check-secure-context-apis.mjs",
+    "check:single-keydown": "node scripts/check-single-keydown.mjs",
     "check:cli-surface": "node scripts/check-cli-surface.mjs",
     "check:go-arch-filenames": "node scripts/check-go-arch-filenames.mjs",
     "check:console-test-inputs": "node scripts/check-console-test-inputs.mjs",
@@ -100,6 +101,8 @@
     "env:reap": "bash scripts/env.sh reap",
     "env:timer": "bash scripts/env.sh timer",
     "spend:status": "bash .claude/hooks/guard-spend.sh --status",
+    "backups:ls": "bash scripts/backups-ls.sh",
+    "creds": "python3 scripts/creds.py",
     "wt": "bash scripts/worktree.sh",
     "wt:ls": "git worktree list",
     "wt:prune": "bash scripts/worktree.sh --prune",
@@ -112,8 +115,8 @@
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
-    "prettier": "^3.9.10",
-    "turbo": "^2.11.10",
+    "prettier": "^3.10.1",
+    "turbo": "^2.11.13",
     "typescript": "5.9.3"
   },
   "packageManager": "pnpm@9.15.0",

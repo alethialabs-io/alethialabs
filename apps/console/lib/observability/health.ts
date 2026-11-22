@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The deep readiness model behind /api/health — the "know the platform is alive" read side. It reports
-// DB reachability, EACH supervised background loop's liveness (from lib/observability/heartbeats.ts), and
-// OTel-collector reachability when configured, and rolls them into one aggregate status the LB + uptime
-// probes + the (later) ops dashboard + the DR runbook all read off one typed shape.
+// DB reachability, whether that DB actually holds the console's schema, OpenFGA reachability when it is
+// the configured policy engine, EACH supervised background loop's liveness (from
+// lib/observability/heartbeats.ts), and OTel-collector reachability when configured, and rolls them into
+// one aggregate status the LB + uptime probes + the public status page (packages/status) + the (later)
+// ops dashboard + the DR runbook all read off one typed shape.
 //
 // It is TTL-cached (compute-once, serve-cached, coalesced in-flight) so a probe storm hitting it every
 // second never re-runs the DB round-trip / OTel fetch per request — the cache turns N probes/window into
@@ -13,6 +15,7 @@
 // (alerting is the reconcile watcher's job) — it's a pure read.
 
 import { sql } from "drizzle-orm";
+import { getOpenFgaConfig, isOpenFgaEnabled } from "@/lib/config/openfga";
 import { getServiceDb } from "@/lib/db";
 import {
 	ageMsOf,
@@ -29,6 +32,13 @@ const RECONCILE_LOOP_ID = "reconcile";
 const DB_PROBE_TIMEOUT_MS = 2_000;
 /** How long the best-effort OTel reachability fetch may take. */
 const OTEL_PROBE_TIMEOUT_MS = 1_500;
+/** How long the OpenFGA `/healthz` fetch may take before the engine is declared unreachable. */
+const OPENFGA_PROBE_TIMEOUT_MS = 1_500;
+/**
+ * The table the schema check looks for. The baseline migration creates it and every tenant row hangs off
+ * it, so a database without it is one the console cannot serve from — however happily it answers `SELECT 1`.
+ */
+const SCHEMA_SENTINEL_TABLE = "public.organization";
 /** Deep-health cache window — a probe storm within this serves the cached compute (no DB re-hit). */
 export const HEALTH_CACHE_TTL_MS = 5_000;
 
@@ -43,6 +53,24 @@ export interface DbHealth {
 	 * full queue makes every notifying commit FAIL. A number, null when it could not be read.
 	 */
 	notifyQueueUsage: number | null;
+	error?: string;
+}
+
+/**
+ * Schema sub-check: does the reachable database hold the console's tables? Read on the SAME round-trip as
+ * the connectivity probe. A restored-but-empty cluster passes `SELECT 1` and fails this — the outage the
+ * public status page's Database row exists to report (packages/status/src/probes.ts).
+ */
+export interface SchemaHealth {
+	/** true = the sentinel table exists; false = it does not; null = not established (DB unreachable, or no answer). */
+	ok: boolean | null;
+}
+
+/** OpenFGA sub-check. Only meaningful when OpenFGA is the configured policy engine. */
+export interface OpenFgaHealth {
+	configured: boolean;
+	/** null when not configured; true/false when probed. */
+	reachable: boolean | null;
 	error?: string;
 }
 
@@ -89,7 +117,10 @@ export interface OtelHealth {
 	error?: string;
 }
 
-/** Aggregate readiness: healthy = all ok, degraded = a loop is stuck (still serves), unhealthy = DB down. */
+/**
+ * Aggregate readiness: healthy = all ok; degraded = a loop is stuck or OpenFGA is unreachable (still serves
+ * HTTP); unhealthy = the DB is down or holds no schema.
+ */
 export type HealthStatus = "healthy" | "degraded" | "unhealthy";
 
 /** The full deep-health document. */
@@ -98,8 +129,28 @@ export interface DeepHealth {
 	ts: string;
 	version: string;
 	db: DbHealth;
+	schema: SchemaHealth;
+	openfga: OpenFgaHealth;
 	loops: LoopHealthReport[];
 	otel: OtelHealth;
+}
+
+/**
+ * The status-page view of a deep-health document: the aggregate plus one boolean per component, and
+ * nothing else — no latencies, no error strings, no loop names, no endpoints. This is what a caller holding
+ * the status-probe credential (`ALETHIA_STATUS_PROBE_TOKEN`) receives; it is the contract
+ * packages/status/src/probes.ts parses.
+ */
+export interface StatusProbeView {
+	status: HealthStatus;
+	mode: "status";
+	ts: string;
+	checks: {
+		db: boolean;
+		schema: boolean;
+		/** null = OpenFGA is not the configured engine (authorization is the Postgres PDP). */
+		openfga: boolean | null;
+	};
 }
 
 /** Reject a promise if it hasn't settled within `ms` (so a hung DB can't stall the whole probe). */
@@ -119,6 +170,20 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 	});
 }
 
+/** The probe's one row as an object, or null when the driver returned no row. */
+function firstRow(rows: unknown): object | null {
+	if (!Array.isArray(rows) || rows.length === 0) return null;
+	const row: unknown = rows[0];
+	return typeof row === "object" && row !== null ? row : null;
+}
+
+/** The schema sentinel from the probe's one row: true/false when it says, null when it carries no boolean. */
+function schemaOf(rows: unknown): SchemaHealth {
+	const row = firstRow(rows);
+	if (!row || !("schema_ok" in row)) return { ok: null };
+	return { ok: typeof row.schema_ok === "boolean" ? row.schema_ok : null };
+}
+
 /** The NOTIFY-queue fraction from the probe's one row, or null when the row does not carry a number. */
 function queueUsageOf(rows: unknown): number | null {
 	if (!Array.isArray(rows) || rows.length === 0) return null;
@@ -128,27 +193,62 @@ function queueUsageOf(rows: unknown): number | null {
 	return Number.isFinite(value) ? value : null;
 }
 
-/** Probe DB connectivity with a bounded query. Never throws — a failure is a reported sub-check. */
-async function probeDb(): Promise<DbHealth> {
+/**
+ * Probe DB connectivity AND the schema with one bounded query. Never throws — a failure is a reported
+ * sub-check. `to_regclass` returns NULL (not an error) for a missing table, so an empty cluster answers the
+ * query and reports `schema_ok = false` rather than looking unreachable.
+ */
+async function probeDb(): Promise<{ db: DbHealth; schema: SchemaHealth }> {
 	const startedAt = Date.now();
 	try {
 		const rows = await withTimeout(
-			getServiceDb().execute(sql`select pg_notification_queue_usage() as notify_queue_usage`),
+			getServiceDb().execute(
+				sql`select pg_notification_queue_usage() as notify_queue_usage, to_regclass(${SCHEMA_SENTINEL_TABLE}) is not null as schema_ok`,
+			),
 			DB_PROBE_TIMEOUT_MS,
 			"db",
 		);
 		return {
-			reachable: true,
-			latencyMs: Date.now() - startedAt,
-			notifyQueueUsage: queueUsageOf(rows),
+			db: { reachable: true, latencyMs: Date.now() - startedAt, notifyQueueUsage: queueUsageOf(rows) },
+			schema: schemaOf(rows),
 		};
 	} catch (err) {
 		return {
-			reachable: false,
-			latencyMs: null,
-			notifyQueueUsage: null,
-			error: err instanceof Error ? err.message : String(err),
+			db: {
+				reachable: false,
+				latencyMs: null,
+				notifyQueueUsage: null,
+				error: err instanceof Error ? err.message : String(err),
+			},
+			schema: { ok: null },
 		};
+	}
+}
+
+/** True when an OpenFGA `/healthz` body says the server is serving. */
+function isServing(body: unknown): boolean {
+	return typeof body === "object" && body !== null && "status" in body && body.status === "SERVING";
+}
+
+/**
+ * OpenFGA reachability, when it is the configured policy engine: `GET <apiUrl>/healthz` must answer 2xx
+ * with `{"status":"SERVING"}`. Unconfigured ⇒ `{configured:false}` (the Postgres PDP decides, and the DB
+ * check already covers it). Never throws.
+ */
+async function probeOpenFga(): Promise<OpenFgaHealth> {
+	if (!isOpenFgaEnabled()) return { configured: false, reachable: null };
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), OPENFGA_PROBE_TIMEOUT_MS);
+	try {
+		const base = getOpenFgaConfig().apiUrl.replace(/\/+$/, "");
+		const res = await fetch(`${base}/healthz`, { method: "GET", signal: controller.signal });
+		const body: unknown = await res.json().catch(() => null);
+		if (res.ok && isServing(body)) return { configured: true, reachable: true };
+		return { configured: true, reachable: false, error: `healthz answered HTTP ${res.status}` };
+	} catch (err) {
+		return { configured: true, reachable: false, error: err instanceof Error ? err.message : String(err) };
+	} finally {
+		clearTimeout(timer);
 	}
 }
 
@@ -209,9 +309,18 @@ function loopReports(now: Date): LoopHealthReport[] {
 	});
 }
 
-/** Roll the sub-checks into one aggregate: DB down ⇒ unhealthy; any loop degraded ⇒ degraded; else healthy. */
-function aggregate(db: DbHealth, loops: LoopHealthReport[]): HealthStatus {
-	if (!db.reachable) return "unhealthy";
+/**
+ * Roll the sub-checks into one aggregate: DB down or schema missing ⇒ unhealthy (the instance cannot serve);
+ * OpenFGA unreachable or any loop degraded ⇒ degraded; else healthy. An unestablished schema (`ok: null`)
+ * does not move the aggregate — only a definite "the table is not there" does.
+ *
+ * OpenFGA is `degraded`, not `unhealthy`, deliberately: `unhealthy` is a 503, and every instance shares
+ * the one OpenFGA server, so a blip there would 503 the whole fleet out of the load balancer at once. The
+ * status page still reports it as its own Authorization row.
+ */
+function aggregate(db: DbHealth, schema: SchemaHealth, openfga: OpenFgaHealth, loops: LoopHealthReport[]): HealthStatus {
+	if (!db.reachable || schema.ok === false) return "unhealthy";
+	if (openfga.configured && openfga.reachable === false) return "degraded";
 	if (loops.some((l) => l.status === "degraded")) return "degraded";
 	return "healthy";
 }
@@ -225,13 +334,15 @@ function aggregate(db: DbHealth, loops: LoopHealthReport[]): HealthStatus {
  */
 async function buildDeepHealth(now: Date): Promise<DeepHealth> {
 	try {
-		const [db, otel] = await Promise.all([probeDb(), probeOtel()]);
+		const [{ db, schema }, openfga, otel] = await Promise.all([probeDb(), probeOpenFga(), probeOtel()]);
 		const loops = loopReports(now);
 		return {
-			status: aggregate(db, loops),
+			status: aggregate(db, schema, openfga, loops),
 			ts: now.toISOString(),
 			version: process.env.ALETHIA_VERSION ?? "dev",
 			db,
+			schema,
+			openfga,
 			loops,
 			otel,
 		};
@@ -246,6 +357,8 @@ async function buildDeepHealth(now: Date): Promise<DeepHealth> {
 				notifyQueueUsage: null,
 				error: `health computation failed: ${err instanceof Error ? err.message : String(err)}`,
 			},
+			schema: { ok: null },
+			openfga: { configured: false, reachable: null },
 			loops: [],
 			otel: { configured: false, reachable: null },
 		};
@@ -287,6 +400,24 @@ export function httpStatusFor(health: DeepHealth, strict = false): number {
 	if (health.status === "unhealthy") return 503;
 	if (health.status === "degraded" && strict) return 503;
 	return 200;
+}
+
+/**
+ * Project a deep-health document onto the status-page view: one boolean per component. `schema` is true
+ * only when the sentinel table was positively seen; an unestablished schema reads false, because the page
+ * must never green a component nobody measured.
+ */
+export function statusProbeView(health: DeepHealth): StatusProbeView {
+	return {
+		status: health.status,
+		mode: "status",
+		ts: health.ts,
+		checks: {
+			db: health.db.reachable,
+			schema: health.schema.ok === true,
+			openfga: health.openfga.configured ? health.openfga.reachable === true : null,
+		},
+	};
 }
 
 /** Reset the TTL cache — test-only. */

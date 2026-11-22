@@ -29,7 +29,7 @@ func TestRunProjectCreateTable(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{createdProj: sampleProject()}
 	params := api.CreateProjectParams{ProjectName: "api", Region: "eu-west-1", CloudIdentityID: "ci1"}
-	if err := runProjectCreate(f, &buf, "table", params); err != nil {
+	if err := runProjectCreate(f, testPrinter(&buf, "table"), params, false); err != nil {
 		t.Fatalf("runProjectCreate: %v", err)
 	}
 	if f.createdProjP.ProjectName != "api" || f.createdProjP.CloudIdentityID != "ci1" {
@@ -46,7 +46,7 @@ func TestRunProjectCreateNoProvider(t *testing.T) {
 	var buf bytes.Buffer
 	p := sampleProject()
 	p.CloudProvider = ""
-	if err := runProjectCreate(&fakeClient{createdProj: p}, &buf, "table", api.CreateProjectParams{}); err != nil {
+	if err := runProjectCreate(&fakeClient{createdProj: p}, testPrinter(&buf, "table"), api.CreateProjectParams{}, false); err != nil {
 		t.Fatalf("runProjectCreate: %v", err)
 	}
 	// No provider renders the dash glyph, not "AWS".
@@ -57,21 +57,32 @@ func TestRunProjectCreateNoProvider(t *testing.T) {
 
 func TestRunProjectCreateJSON(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runProjectCreate(&fakeClient{createdProj: sampleProject()}, &buf, "json", api.CreateProjectParams{}); err != nil {
+	if err := runProjectCreate(&fakeClient{createdProj: sampleProject()}, testPrinter(&buf, "json"), api.CreateProjectParams{}, false); err != nil {
 		t.Fatalf("runProjectCreate json: %v", err)
 	}
-	var got api.Project
+	// One mutation result: the project's id and what happened to it at the top, the project as
+	// the control plane returned it under `object`.
+	var got struct {
+		ID     string      `json:"id"`
+		Kind   string      `json:"kind"`
+		Action string      `json:"action"`
+		DryRun bool        `json:"dry_run"`
+		Object api.Project `json:"object"`
+	}
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, buf.String())
 	}
-	if got.ID != "p1" || got.Slug != "api" {
-		t.Errorf("unexpected project json: %+v", got)
+	if got.ID != "p1" || got.Kind != "project" || got.Action != "created" || got.DryRun {
+		t.Errorf("unexpected result envelope: %+v", got)
+	}
+	if got.Object.ID != "p1" || got.Object.Slug != "api" {
+		t.Errorf("unexpected project json: %+v", got.Object)
 	}
 }
 
 func TestRunProjectCreateError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runProjectCreate(&fakeClient{err: errBoom}, &buf, "table", api.CreateProjectParams{}); err == nil {
+	if err := runProjectCreate(&fakeClient{err: errBoom}, testPrinter(&buf, "table"), api.CreateProjectParams{}, false); err == nil {
 		t.Error("expected error propagated")
 	}
 }
@@ -181,11 +192,19 @@ func TestRunProjectEnvListJSON(t *testing.T) {
 
 func TestRunProjectEnvListEmpty(t *testing.T) {
 	var buf bytes.Buffer
+	p, _, errOut := splitPrinter("table")
+	withPrinter(t, p)
 	if err := runProjectEnvList(&fakeClient{environments: nil}, &buf, "table", "api"); err != nil {
 		t.Fatalf("empty: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No environments") {
-		t.Errorf("expected empty notice: %s", buf.String())
+	// On stderr, with the command that adds one; stdout has no result to carry.
+	for _, want := range []string{"No environments", "alethia project env add --project api"} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("the empty notice is missing %q: %s", want, errOut.String())
+		}
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an empty list wrote on stdout: %q", buf.String())
 	}
 }
 
@@ -199,7 +218,7 @@ func TestRunProjectEnvListError(t *testing.T) {
 func TestRunProjectEnvAdd(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runProjectEnvAdd(f, &buf, api.AddEnvironmentParams{Project: "api", Name: "staging", Stage: "staging", Region: "us-east-1"}); err != nil {
+	if err := runProjectEnvAdd(f, testPrinter(&buf, "table"), api.AddEnvironmentParams{Project: "api", Name: "staging", Stage: "staging", Region: "us-east-1"}, false); err != nil {
 		t.Fatalf("runProjectEnvAdd: %v", err)
 	}
 	if f.addedEnvName != "staging" || f.addedEnvStage != "staging" || f.addedEnvRegion != "us-east-1" {
@@ -212,7 +231,7 @@ func TestRunProjectEnvAdd(t *testing.T) {
 
 func TestRunProjectEnvAddError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runProjectEnvAdd(&fakeClient{err: errBoom}, &buf, api.AddEnvironmentParams{Project: "api", Name: "x", Stage: "development"}); err == nil {
+	if err := runProjectEnvAdd(&fakeClient{err: errBoom}, testPrinter(&buf, "table"), api.AddEnvironmentParams{Project: "api", Name: "x", Stage: "development"}, false); err == nil {
 		t.Error("expected error propagated")
 	}
 }
@@ -397,11 +416,28 @@ func TestRunComponentListJSON(t *testing.T) {
 
 func TestRunComponentListEmpty(t *testing.T) {
 	var buf bytes.Buffer
+	p, _, errOut := splitPrinter("table")
+	withPrinter(t, p)
 	if err := runComponentList(&fakeClient{components: nil}, &buf, "table", "api", "", ""); err != nil {
 		t.Fatalf("empty: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No components") {
-		t.Errorf("expected empty notice: %s", buf.String())
+	for _, want := range []string{"No components", "alethia project component add --project api"} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("the empty notice is missing %q: %s", want, errOut.String())
+		}
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an empty list wrote on stdout: %q", buf.String())
+	}
+
+	// json has no sentence to say "nothing": it is an empty document, and stderr stays quiet.
+	buf.Reset()
+	errOut.Reset()
+	if err := runComponentList(&fakeClient{components: nil}, &buf, "json", "api", "", ""); err != nil {
+		t.Fatalf("empty json: %v", err)
+	}
+	if errOut.Len() != 0 || !json.Valid(buf.Bytes()) {
+		t.Errorf("an empty json list must be a document and nothing else: stdout %q stderr %q", buf.String(), errOut.String())
 	}
 }
 
@@ -514,7 +550,7 @@ func TestRunComponentAdd(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
 	fields := map[string]interface{}{"engine": "postgres"}
-	if err := runComponentAdd(f, &buf, "api", "databases", "main", "", fields); err != nil {
+	if err := runComponentAdd(f, testPrinter(&buf, "table"), componentRequest{Project: "api", Kind: "databases", Name: "main", Env: "", Fields: fields}, false); err != nil {
 		t.Fatalf("runComponentAdd: %v", err)
 	}
 	if f.addCompKind != "databases" || f.addCompName != "main" {
@@ -530,14 +566,14 @@ func TestRunComponentAdd(t *testing.T) {
 
 func TestRunComponentAddMissingKind(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runComponentAdd(&fakeClient{}, &buf, "api", "", "", "", nil); err == nil {
+	if err := runComponentAdd(&fakeClient{}, testPrinter(&buf, "table"), componentRequest{Project: "api", Kind: "", Name: "", Env: "", Fields: nil}, false); err == nil {
 		t.Error("expected error when kind is empty")
 	}
 }
 
 func TestRunComponentAddError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runComponentAdd(&fakeClient{err: errBoom}, &buf, "api", "databases", "main", "", nil); err == nil {
+	if err := runComponentAdd(&fakeClient{err: errBoom}, testPrinter(&buf, "table"), componentRequest{Project: "api", Kind: "databases", Name: "main", Env: "", Fields: nil}, false); err == nil {
 		t.Error("expected error propagated")
 	}
 }
@@ -548,7 +584,7 @@ func TestRunComponentRemoveSingleton(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
 	// A name is passed but must be cleared for a singleton kind.
-	if err := runComponentRemove(f, componentVocabulary{doc: testKindsDocument()}, &buf, "api", "network", "ignored", ""); err != nil {
+	if err := runComponentRemove(f, componentVocabulary{doc: testKindsDocument()}, testPrinter(&buf, "table"), componentRequest{Project: "api", Kind: "network", Name: "ignored", Env: ""}, false); err != nil {
 		t.Fatalf("runComponentRemove: %v", err)
 	}
 	if f.rmCompName != "" {
@@ -562,20 +598,20 @@ func TestRunComponentRemoveSingleton(t *testing.T) {
 func TestRunComponentRemoveNamed(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runComponentRemove(f, componentVocabulary{doc: testKindsDocument()}, &buf, "api", "databases", "main", ""); err != nil {
+	if err := runComponentRemove(f, componentVocabulary{doc: testKindsDocument()}, testPrinter(&buf, "table"), componentRequest{Project: "api", Kind: "databases", Name: "main", Env: ""}, false); err != nil {
 		t.Fatalf("runComponentRemove: %v", err)
 	}
 	if f.rmCompName != "main" {
 		t.Errorf("named component name should be kept, got %q", f.rmCompName)
 	}
-	if !strings.Contains(buf.String(), "Component removed") {
+	if !strings.Contains(buf.String(), "Removed databases main") {
 		t.Errorf("expected success line: %s", buf.String())
 	}
 }
 
 func TestRunComponentRemoveError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runComponentRemove(&fakeClient{err: errBoom}, componentVocabulary{doc: testKindsDocument()}, &buf, "api", "databases", "main", ""); err == nil {
+	if err := runComponentRemove(&fakeClient{err: errBoom}, componentVocabulary{doc: testKindsDocument()}, testPrinter(&buf, "table"), componentRequest{Project: "api", Kind: "databases", Name: "main", Env: ""}, false); err == nil {
 		t.Error("expected error propagated")
 	}
 }
@@ -607,7 +643,7 @@ func TestComponentEnvIsThreadedThrough(t *testing.T) {
 	t.Run("add forwards the environment", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runComponentAdd(f, &buf, "api", "repositories", "", "staging", map[string]interface{}{"apps_path": "overlays/staging"}); err != nil {
+		if err := runComponentAdd(f, testPrinter(&buf, "table"), componentRequest{Project: "api", Kind: "repositories", Name: "", Env: "staging", Fields: map[string]interface{}{"apps_path": "overlays/staging"}}, false); err != nil {
 			t.Fatalf("runComponentAdd: %v", err)
 		}
 		if f.addCompEnv != "staging" {
@@ -623,7 +659,7 @@ func TestComponentEnvIsThreadedThrough(t *testing.T) {
 	t.Run("remove forwards the environment", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runComponentRemove(f, componentVocabulary{doc: testKindsDocument()}, &buf, "api", "cluster", "", "dev"); err != nil {
+		if err := runComponentRemove(f, componentVocabulary{doc: testKindsDocument()}, testPrinter(&buf, "table"), componentRequest{Project: "api", Kind: "cluster", Name: "", Env: "dev"}, false); err != nil {
 			t.Fatalf("runComponentRemove: %v", err)
 		}
 		if f.rmCompEnv != "dev" {
@@ -651,7 +687,7 @@ func TestComponentEnvIsThreadedThrough(t *testing.T) {
 	t.Run("empty stays empty", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runComponentAdd(f, &buf, "api", "cluster", "", "", nil); err != nil {
+		if err := runComponentAdd(f, testPrinter(&buf, "table"), componentRequest{Project: "api", Kind: "cluster", Name: "", Env: "", Fields: nil}, false); err != nil {
 			t.Fatalf("runComponentAdd: %v", err)
 		}
 		if f.addCompEnv != "" {
@@ -707,7 +743,7 @@ func TestProjectEnvAddCarriesPlacement(t *testing.T) {
 		Namespace: "boutique-staging",
 		Lifecycle: "persistent",
 	}
-	if err := runProjectEnvAdd(f, &buf, params); err != nil {
+	if err := runProjectEnvAdd(f, testPrinter(&buf, "table"), params, false); err != nil {
 		t.Fatalf("runProjectEnvAdd: %v", err)
 	}
 	if !reflect.DeepEqual(f.addedEnvParams, params) {
@@ -723,7 +759,7 @@ func TestProjectEnvAddCarriesPlacement(t *testing.T) {
 // empty string — a caller reading "( , placement)" learns nothing about what they just bought.
 func TestProjectEnvAddNamesTheDefaultPlacement(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runProjectEnvAdd(&fakeClient{}, &buf, api.AddEnvironmentParams{Project: "p", Name: "e"}); err != nil {
+	if err := runProjectEnvAdd(&fakeClient{}, testPrinter(&buf, "table"), api.AddEnvironmentParams{Project: "p", Name: "e"}, false); err != nil {
 		t.Fatalf("runProjectEnvAdd: %v", err)
 	}
 	if !strings.Contains(buf.String(), "namespace placement") {

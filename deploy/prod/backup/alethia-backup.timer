@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# 02:30 UTC daily. B7 asks for a complete copy younger than 26 hours, so one missed night is
+# already a failing predicate: Persistent= runs a missed slot at the next boot.
+[Unit]
+Description=Nightly Alethia off-box backup
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

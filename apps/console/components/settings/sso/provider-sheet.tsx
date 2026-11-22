@@ -127,7 +127,8 @@ export async function registerSsoProvider(
 			error: authActionError({ status: res.status, message: messageOf(data) ?? "Couldn't register the provider" }),
 		};
 	} catch {
-		return { ok: false, error: { kind: "unexpected", ref: "sso-register-network" } };
+		// No server answer: the registration may or may not have landed (R6 E-07).
+		return { ok: false, error: { kind: "network", sent: true } };
 	}
 }
 

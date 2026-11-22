@@ -37,6 +37,7 @@ import {
 	updateDimension,
 } from "@/app/server/actions/classification/dimensions";
 import { DiscardPrompt, useUnsavedGuard } from "@/components/confirm/use-unsaved-guard";
+import { FormRootError } from "@/components/forms/form-root-error";
 import type { ActionResult, FieldErrors } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { classificationReadKeys } from "@/lib/query/use-classification-query";
@@ -71,6 +72,38 @@ function templateFormValues(t: ClassificationTemplate): DimensionInput {
 /** The fields the sheet renders from. */
 const WATCHED = ["multi", "applies_to", "label"] as const;
 
+/** The fields that show a message of their own; every other server message goes to the root. */
+const DIMENSION_FIELDS = ["key", "label", "description"] as const;
+
+/**
+ * Rewrites the field keys of a template create's validation result into the form's own names.
+ *
+ * That action takes `{ dimension, values }`, so the server names its fields `dimension.key` and
+ * `values.2.value` — keys no field of this form has. A `dimension.*` message is moved under the
+ * field it is about, and a `values.N.*` message names the staged value it is about, so the root
+ * error says which one to fix. Any other result passes through unchanged.
+ */
+function withFormFieldKeys<T>(
+	result: ActionResult<T>,
+	staged: readonly SeedValue[],
+): ActionResult<T> {
+	if (result.ok || result.error.kind !== "validation") return result;
+	const fields: FieldErrors = {};
+	for (const [key, messages] of Object.entries(result.error.fields)) {
+		if (!messages) continue;
+		const value = /^values\.(\d+)\./.exec(key);
+		if (key.startsWith("dimension.")) {
+			fields[key.slice("dimension.".length)] = messages;
+		} else if (value) {
+			const label = staged[Number(value[1])]?.label ?? "A staged value";
+			fields[key] = messages.map((m) => `“${label}”: ${m}`);
+		} else {
+			fields[key] = messages;
+		}
+	}
+	return { ok: false, error: { ...result.error, fields } };
+}
+
 /** Create / edit a dimension. Controlled via `open` / `onOpenChange`. */
 export function DimensionEditorSheet({
 	dimension,
@@ -93,6 +126,7 @@ export function DimensionEditorSheet({
 	const labelFieldId = useId();
 	const keyFieldId = useId();
 	const descriptionFieldId = useId();
+	const addErrorId = useId();
 
 	const form = useForm<DimensionInput>({
 		resolver: zodResolver(dimensionInputSchema),
@@ -161,10 +195,18 @@ export function DimensionEditorSheet({
 	};
 	const KIND_ENTRIES = typedEntries(RESOURCE_KIND_LABELS);
 
+	// Why the typed value was not staged; cleared as soon as the text changes.
+	const [addError, setAddError] = useState<string | null>(null);
 	const addStaged = () => {
 		const label = addLabel.trim();
 		if (!label) return;
 		const value = slugifyOrEmpty(label);
+		// A label with no letter or digit ("!!!") has no slug, and a value without one is refused
+		// on Save — say so here, beside the box, instead of staging a value that cannot be saved.
+		if (!value) {
+			setAddError("A value needs at least one letter or number.");
+			return;
+		}
 		if (staged.some((s) => s.value === value)) {
 			setAddLabel("");
 			return;
@@ -174,9 +216,14 @@ export function DimensionEditorSheet({
 	};
 
 	/** The edit, the template create (dimension + staged values) or the plain create. */
-	function saveDimension(data: DimensionInput): Promise<ActionResult<unknown>> {
+	async function saveDimension(data: DimensionInput): Promise<ActionResult<unknown>> {
 		if (dimension) return updateDimension({ ...data, id: dimension.id });
-		if (staged.length > 0) return createDimensionWithValues({ dimension: data, values: staged });
+		if (staged.length > 0) {
+			return withFormFieldKeys(
+				await createDimensionWithValues({ dimension: data, values: staged }),
+				staged,
+			);
+		}
 		return createDimension(data);
 	}
 
@@ -188,12 +235,11 @@ export function DimensionEditorSheet({
 				? `Created “${form.getValues("label")}” with ${staged.length} values.`
 				: "Dimension created.";
 		},
-		onValidationError: (fields: FieldErrors) => {
-			for (const name of ["key", "label", "description"] as const) {
-				const message = fields[name]?.[0];
-				if (message) form.setError(name, { type: "server", message });
-			}
-		},
+		// Each message under the field it is about; a message about anything the sheet does not
+		// render as a field (a staged value, the form as a whole) in the root error above the
+		// footer. The old handler mapped three names and dropped the rest, so Save did nothing
+		// (#6825, F-13).
+		form: { instance: form, fields: DIMENSION_FIELDS },
 		onSuccess: () => {
 			form.reset(form.getValues());
 			onOpenChange(false);
@@ -329,6 +375,11 @@ export function DimensionEditorSheet({
 								placeholder="What this axis means."
 								{...form.register("description")}
 							/>
+							{/* It is in DIMENSION_FIELDS, so a message about it lands here — a field
+							    whose error had nowhere to render was the same silence as an unmapped one. */}
+							{form.formState.errors.description?.message && (
+								<p className="mt-1 text-ui-xs text-destructive">{form.formState.errors.description.message}</p>
+							)}
 						</div>
 
 						<div className="flex items-center justify-between gap-4 rounded-md border p-3">
@@ -418,7 +469,12 @@ export function DimensionEditorSheet({
 									<Input
 										aria-label="New value label"
 										value={addLabel}
-										onChange={(e) => setAddLabel(e.target.value)}
+										aria-invalid={addError ? true : undefined}
+										aria-describedby={addError ? addErrorId : undefined}
+										onChange={(e) => {
+											setAddLabel(e.target.value);
+											setAddError(null);
+										}}
 										onKeyDown={(e) => {
 											if (e.key === "Enter") {
 												e.preventDefault();
@@ -440,6 +496,11 @@ export function DimensionEditorSheet({
 										Add
 									</Button>
 								</div>
+								{addError && (
+									<p id={addErrorId} role="alert" className="mt-1 text-ui-xs text-destructive">
+										{addError}
+									</p>
+								)}
 								<p className="mt-2 text-ui-xs text-text-tertiary">
 									You can edit and reorder values after creating.
 								</p>
@@ -447,6 +508,10 @@ export function DimensionEditorSheet({
 						)}
 					</div>
 
+					{/* What the server said about no field the sheet renders — a staged value, the
+					    form as a whole. Beside the button that was pressed, so Save never fails
+					    silently. */}
+					<FormRootError form={form} className="mx-5 mb-4" />
 					<SheetFooter className="flex-row justify-end gap-2 border-t p-4">
 						<Button
 							type="button"

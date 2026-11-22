@@ -48,19 +48,21 @@ export const LEGAL_DOCUMENTS: readonly LegalDocumentVersion[] = [
 		locales: ["en"],
 		acceptanceRequired: true,
 		contentHash:
-			"3683a200589f3764906256446a625f94230c46c6c42844efd2ad23fbd7a79261",
+			"154044e64831a16ac461e94b51eee0428f9f58bf2f73b70deb780251a4558286",
 		source: "apps/marketing/app/terms/page.tsx",
 	},
 	{
 		id: "privacy",
 		title: "Privacy Policy",
-		version: "2026-08-12",
-		effectiveDate: "2026-08-12",
+		// Bumped when transactional email moved from Resend to Amazon SES (eu-central-1): section 3
+		// names the email processor, so the text a reader is told about changed.
+		version: "2026-11-21",
+		effectiveDate: "2026-11-21",
 		path: "/privacy",
 		locales: ["en"],
 		acceptanceRequired: false,
 		contentHash:
-			"ce8bc10300de7ed09712681012120d6db120b9ea62faf61bf4f25ce52cb0d93e",
+			"103f7ff7669fedeffa2a5336e5227670706987e4b112fa1a094cf2c560597de0",
 		source: "apps/marketing/app/privacy/page.tsx",
 	},
 	{
@@ -72,7 +74,7 @@ export const LEGAL_DOCUMENTS: readonly LegalDocumentVersion[] = [
 		locales: ["en"],
 		acceptanceRequired: false,
 		contentHash:
-			"d50c62eeca64f1dc066c9d1c35c4f2f72a060cf70379e0484669fdf0e4dbac00",
+			"4281a0b6539953390d67beebf34ed615e5272ed9c0b211adba6e01cbb449dae1",
 		source: "apps/marketing/app/cookies/page.tsx",
 	},
 	{
@@ -84,7 +86,7 @@ export const LEGAL_DOCUMENTS: readonly LegalDocumentVersion[] = [
 		locales: ["en", "bg-BG"],
 		acceptanceRequired: false,
 		contentHash:
-			"e7b9229a65873c1e2eb3f4bc88213b8582afb1220e473fb1b211b6c0ddb1b291",
+			"bad66ea9d9064452e50f981e12a2107a449137bdd3e118f215ea24b935d08402",
 		source: "apps/marketing/app/imprint/page.tsx",
 	},
 ];

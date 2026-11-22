@@ -44,8 +44,8 @@
 //
 // ── WHERE IT RUNS ─────────────────────────────────────────────────────────────────────────────────
 //
-// On PRs, in the release gate's `Gate ledger` job (`.github/workflows/release-gate.yml`, #5417),
-// which runs on every non-draft PR and on `workflow_dispatch`:
+// On PRs, in the `Gate ledger` job (`.github/workflows/ci.yml` since 2026-11-22, when it moved out of
+// release-gate.yml, #5417), which runs on every PR and on `workflow_dispatch`:
 //
 //   · `--self-test` runs on every one of those runs.
 //   · The live check (the one that asks GitHub) runs unconditionally on a PR into `main` or `staging`

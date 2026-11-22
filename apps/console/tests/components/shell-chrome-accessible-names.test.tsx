@@ -94,6 +94,7 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 }));
 
 const { AppSidebar } = await import("@/components/shell/app-sidebar");
+const { ShellEditionProvider } = await import("@/components/shell/shell-edition-provider");
 const { Topbar } = await import("@/components/shell/topbar");
 const { orpc } = await import("@/lib/rpc/client");
 
@@ -128,7 +129,7 @@ describe("shell chrome — accessible names", () => {
 	});
 
 	it("names every button in the topbar inside a project, with the env switcher mounted", async () => {
-		pathname.current = "/acme/atlas/environments";
+		pathname.current = "/acme/atlas/architecture";
 		environments.current = [
 			{ id: "env_1", project_id: "p_atlas", name: "production", stage: "production", is_default: true },
 		];
@@ -139,25 +140,34 @@ describe("shell chrome — accessible names", () => {
 		expect(unnamedControls(container)).toEqual([]);
 	});
 
-	// Both flags change WHAT the sidebar renders — `selfRunners` builds a different nav (whose
-	// "Soon" rows are disabled buttons) and `isHosted` gates the Upgrade CTA, the feedback entry
-	// and the issues link. Sweeping one combination would leave the self-managed shape unswept,
-	// which is the deployment the other half of this PR exists to unbreak.
+	// Both inputs change WHAT the sidebar renders — `selfRunners` builds a different nav (whose
+	// "Soon" rows are disabled buttons) and the instance edition's deployment gates the Upgrade CTA,
+	// the feedback entry and the issues link (#6924: read from the edition the shell is given, no
+	// longer a prop). Sweeping one combination would leave the self-managed shape unswept, which is
+	// the deployment the other half of this PR exists to unbreak.
 	it.each([
-		[true, true],
-		[true, false],
-		[false, true],
-		[false, false],
-	])("names every button in the sidebar (isHosted=%s, selfRunners=%s)", (isHosted, selfRunners) => {
+		["hosted", true],
+		["hosted", false],
+		["self-managed", true],
+		["self-managed", false],
+	] as const)("names every button in the sidebar (deployment=%s, selfRunners=%s)", (deployment, selfRunners) => {
 		const { container } = render(
-			<AppSidebar isHosted={isHosted} selfRunners={selfRunners} />,
+			<ShellEditionProvider
+				edition={{
+					deployment,
+					edition: "community",
+					offering: deployment === "hosted" ? "hosted" : "self-hosted",
+				}}
+			>
+				<AppSidebar selfRunners={selfRunners} />
+			</ShellEditionProvider>,
 		);
 		expect(container.querySelectorAll(NAME_REQUIRED).length).toBeGreaterThan(0);
 		expect(unnamedControls(container)).toEqual([]);
 	});
 
 	it("puts the switcher's purpose ahead of the current selection", async () => {
-		pathname.current = "/acme/atlas/environments";
+		pathname.current = "/acme/atlas/architecture";
 		environments.current = [
 			{ id: "env_1", project_id: "p_atlas", name: "production", stage: "production", is_default: true },
 		];
@@ -174,7 +184,7 @@ describe("shell chrome — accessible names", () => {
 	});
 
 	it("keeps the org switcher a split control: the org body and a separately named chevron", () => {
-		render(<AppSidebar isHosted selfRunners />);
+		render(<AppSidebar selfRunners />);
 		// The body navigates to the org, so it is a LINK: `@repo/ui/button` announces any `render`
 		// element with an href as one (#5444 — before it, base-ui stamped role=button on the anchor).
 		// Only the chevron opens the picker, and it is the half that carries the author-supplied name.

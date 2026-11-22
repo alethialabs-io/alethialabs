@@ -73,6 +73,11 @@ func applyWriteManifest(t *testing.T, body string) string {
 func applyResetFlags() {
 	applyBinder.Reset()
 	planBinder.Reset()
+	// --wait is registered beside the spec's flags, so the binder does not reset it.
+	if f := applyCmd.Flags().Lookup(applyFlagWait); f != nil {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	}
 }
 
 func applyEnv(t *testing.T, s *projServer) projHarness {
@@ -278,7 +283,7 @@ func TestApply_CreatesThenDeploysInFileOrder(t *testing.T) {
 	s := &projServer{envs: applyDemoEnvs()}
 	h := applyEnv(t, s)
 	path := applyWriteManifest(t, applyDemoManifest)
-	read := projCaptureStdout(t)
+	read := applyCaptureBoth(t)
 	if h.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-input") {
 		t.Error("apply exited fatally")
 	}
@@ -382,10 +387,7 @@ func TestApply_JSONOutputIsTheResult(t *testing.T) {
 		t.Error("apply exited fatally")
 	}
 	out := read()
-	var got ApplyResult
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
-		t.Fatalf("apply --output json is not the typed result: %v\n%s", err, out)
-	}
+	got := applyResultOf(t, out)
 	if got.ProjectID != "p1" || len(got.Jobs) != 2 || len(got.Created) != 4 {
 		t.Errorf("unexpected result: %+v", got)
 	}
@@ -421,7 +423,7 @@ func TestApply_RunnerRule(t *testing.T) {
 		{ID: "r3", Name: "old", Status: "OFFLINE"},
 	}}
 	// The only online runner is picked without a question.
-	if id, err := applyRunner(one, "tok", ""); err != nil || id != "r1" {
+	if id, err := applyRunner(one, "tok", "", ""); err != nil || id != "r1" {
 		t.Errorf("one online runner: got %q, %v", id, err)
 	}
 	// Two online and nobody to ask: unassigned, for the server to place.
@@ -429,14 +431,14 @@ func TestApply_RunnerRule(t *testing.T) {
 		{ID: "r1", Name: "primary", Status: "ONLINE"},
 		{ID: "r2", Name: "edge", Status: "ONLINE"},
 	}}
-	if id, err := applyRunner(two, "tok", ""); err != nil || id != "" {
+	if id, err := applyRunner(two, "tok", "", ""); err != nil || id != "" {
 		t.Errorf("two online runners under --no-input: got %q, %v", id, err)
 	}
 	// A name resolves; an unknown name is refused naming the known ones.
-	if id, err := applyRunner(two, "tok", "edge"); err != nil || id != "r2" {
+	if id, err := applyRunner(two, "tok", "edge", ""); err != nil || id != "r2" {
 		t.Errorf("by name: got %q, %v", id, err)
 	}
-	if _, err := applyRunner(two, "tok", "nope"); err == nil || !strings.Contains(err.Error(), "primary") {
+	if _, err := applyRunner(two, "tok", "nope", ""); err == nil || !strings.Contains(err.Error(), "primary") {
 		t.Errorf("an unknown runner must be refused naming the known ones: %v", err)
 	}
 }
@@ -542,10 +544,7 @@ func TestApply_ReconcilesAnExistingProjectByAddingWhatIsMissing(t *testing.T) {
 	if h.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input", "--output", "json") {
 		t.Error("apply exited fatally")
 	}
-	var got ApplyResult
-	if err := json.Unmarshal([]byte(read()), &got); err != nil {
-		t.Fatal(err)
-	}
+	got := applyResultOf(t, read())
 	if got.ProjectID != "p1" || len(got.Created) != 1 || !strings.Contains(got.Created[0], "databases/carts") {
 		t.Errorf("only carts is new: %+v", got)
 	}
@@ -556,7 +555,7 @@ func TestApply_ReconcilesAnExistingProjectByAddingWhatIsMissing(t *testing.T) {
 		{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
 	}}
 	h2 := applyEnv(t, s2)
-	read2 := projCaptureStdout(t)
+	read2 := applyCaptureBoth(t)
 	// The fake never LISTS dev-1 after the add, but the add's own response carries its id (e9) — and
 	// that id, not the name, is what dev-1's components and deploy are addressed by (#5583). A name
 	// is resolved by the server as name OR stage, so it could land in another environment. (The
@@ -657,7 +656,7 @@ func TestApply_UpdatesAnExistingSingleton(t *testing.T) {
 	}
 	h := applyEnv(t, s)
 	path := applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: production\n    components:\n      cluster:\n        node_max_size: 4\n")
-	read := projCaptureStdout(t)
+	read := applyCaptureBoth(t)
 	if h.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input") {
 		t.Error("apply exited fatally")
 	}
@@ -977,9 +976,8 @@ func TestApply_JSONIsParseableOnTheWaitingPath(t *testing.T) {
 		t.Error("apply exited fatally")
 	}
 	out := read()
-	var got ApplyResult
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
-		t.Fatalf("the waiting path's output is not parseable json: %v\n%s", err, out)
+	if got := applyResultOf(t, out); len(got.Jobs) != 2 || got.Jobs[0].Status != jobStatusSuccess {
+		t.Errorf("the waiting path's result does not carry its finished jobs: %+v", got.Jobs)
 	}
 	for _, prose := range []string{"Waiting for job", "Status:", "Job completed"} {
 		if strings.Contains(out, prose) {

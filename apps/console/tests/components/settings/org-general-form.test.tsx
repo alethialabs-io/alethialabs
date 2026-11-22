@@ -63,7 +63,7 @@ function CONTEXT(role: string): WorkspaceContext {
 	};
 }
 
-/** Both Save buttons (Organization profile, Defaults). */
+/** The Save buttons on the page (the Organization profile panel's one, since #7147). */
 function saveButtons() {
 	return screen.getAllByRole("button", { name: /^(Save changes|Saving…)$/ });
 }
@@ -78,7 +78,7 @@ beforeEach(() => {
 });
 
 describe("F012/F024 — one form standard: pristine is not saveable", () => {
-	it("paints the loaded values on first render, with both Saves disabled", () => {
+	it("paints the loaded values on first render, with Save disabled", () => {
 		renderOrgGeneral();
 		// First paint IS the form: the read was hydrated, nothing is fetched (B1).
 		expect(screen.getByRole("textbox", { name: "Organization name" })).toHaveValue("Acme");
@@ -101,7 +101,29 @@ describe("F012/F024 — one form standard: pristine is not saveable", () => {
 		const names = [...container.querySelectorAll("input[name], textarea[name]")].map((el) =>
 			el.getAttribute("name"),
 		);
-		expect(names).toEqual(["name", "slug", "description", "terraformVersion"]);
+		expect(names).toEqual(["name", "slug", "description"]);
+	});
+});
+
+describe("#7147 — no Defaults section", () => {
+	it("renders the profile and the danger zone, and no data region, default environment or Terraform version", () => {
+		renderOrgGeneral();
+		const headings = screen.getAllByRole("heading").map((h) => h.textContent);
+		expect(headings).toEqual(["Organization profile", "Danger zone"]);
+		expect(screen.queryByText("Data region")).toBeNull();
+		expect(screen.queryByText("Default Project environment")).toBeNull();
+		expect(screen.queryByText("Terraform version")).toBeNull();
+		expect(screen.queryByRole("combobox")).toBeNull();
+		expect(saveButtons()).toHaveLength(1);
+	});
+
+	it("saves only the profile's fields", async () => {
+		const user = userEvent.setup();
+		renderOrgGeneral();
+		await user.type(screen.getByRole("textbox", { name: "Description" }), "x");
+		await user.click(saveButtons()[0]);
+		await waitFor(() => expect(saveOrgGeneral).toHaveBeenCalledTimes(1));
+		expect(Object.keys(saveOrgGeneral.mock.calls[0][0]).sort()).toEqual(["description", "name", "slug"]);
 	});
 });
 
@@ -126,8 +148,8 @@ describe("F013 — validation is inline, never raw validator text in a toast", (
 			ok: false,
 			error: {
 				kind: "validation",
-				message: "Use a release number such as 1.9.5.",
-				fields: { terraformVersion: ["Use a release number such as 1.9.5."] },
+				message: "Use at most 280 characters.",
+				fields: { description: ["Use at most 280 characters."] },
 			},
 		});
 		const user = userEvent.setup();
@@ -135,7 +157,7 @@ describe("F013 — validation is inline, never raw validator text in a toast", (
 		await user.type(screen.getByRole("textbox", { name: "Description" }), "x");
 		await user.click(saveButtons()[0]);
 
-		expect(await screen.findByRole("alert")).toHaveTextContent("Use a release number such as 1.9.5.");
+		expect(await screen.findByRole("alert")).toHaveTextContent("Use at most 280 characters.");
 		expect(toastError).not.toHaveBeenCalled();
 	});
 
@@ -311,7 +333,30 @@ describe("F050 — four renders, never confused", () => {
 	});
 });
 
+/**
+ * Answers the typed delete confirmation (CON-SM2 `destroy`): the organization's name, then Delete.
+ * Delete is disabled until the name matches, which the first case below pins.
+ */
+async function confirmDelete(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement): Promise<void> {
+	await user.type(within(dialog).getByRole("textbox"), "Acme");
+	await user.click(within(dialog).getByRole("button", { name: "Delete organization" }));
+}
+
 describe("delete organization", () => {
+	it("keeps Delete disabled until the organization's name is typed (R6 E-03 follow-up)", async () => {
+		const user = userEvent.setup();
+		renderOrgGeneral();
+		await user.click(screen.getByRole("button", { name: "Delete organization" }));
+		const dialog = await screen.findByRole("alertdialog");
+		const confirm = within(dialog).getByRole("button", { name: "Delete organization" });
+		expect(confirm).toBeDisabled();
+		await user.type(within(dialog).getByRole("textbox"), "Acm");
+		expect(confirm).toBeDisabled();
+		await user.type(within(dialog).getByRole("textbox"), "e");
+		expect(confirm).toBeEnabled();
+		expect(deleteOrganization).not.toHaveBeenCalled();
+	});
+
 	it("the confirmation states the live-environment rule before anything is sent (#6800)", async () => {
 		const user = userEvent.setup();
 		renderOrgGeneral();
@@ -321,7 +366,7 @@ describe("delete organization", () => {
 		expect(dialog).toHaveTextContent(
 			"An organization with a live or in-flight environment cannot be deleted: destroy those environments first.",
 		);
-		expect(dialog).toHaveTextContent("destroys nothing in the cloud");
+		expect(dialog).toHaveTextContent("Nothing is destroyed in your cloud accounts.");
 		expect(deleteOrganization).not.toHaveBeenCalled();
 	});
 
@@ -333,7 +378,7 @@ describe("delete organization", () => {
 		renderOrgGeneral();
 		await user.click(screen.getByRole("button", { name: "Delete organization" }));
 		const dialog = await screen.findByRole("alertdialog");
-		await user.click(within(dialog).getByRole("button", { name: "Delete organization" }));
+		await confirmDelete(user, dialog);
 
 		await waitFor(() => expect(toastError).toHaveBeenCalledWith(refusal));
 		expect(toastSuccess).not.toHaveBeenCalled();
@@ -345,7 +390,7 @@ describe("delete organization", () => {
 		renderOrgGeneral();
 		await user.click(screen.getByRole("button", { name: "Delete organization" }));
 		const dialog = await screen.findByRole("alertdialog");
-		await user.click(within(dialog).getByRole("button", { name: "Delete organization" }));
+		await confirmDelete(user, dialog);
 
 		await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
 		expect(deleteOrganization).toHaveBeenCalledTimes(1);
@@ -359,7 +404,7 @@ describe("delete organization", () => {
 		renderOrgGeneral(undefined, client);
 		await user.click(screen.getByRole("button", { name: "Delete organization" }));
 		const dialog = await screen.findByRole("alertdialog");
-		await user.click(within(dialog).getByRole("button", { name: "Delete organization" }));
+		await confirmDelete(user, dialog);
 		await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
 		expect(client.getQueryState(orpc.workspace.context.queryKey())?.isInvalidated).toBe(false);
 		expect(client.getQueryState(orpc.settings.org.queryKey())?.isInvalidated).toBe(false);
@@ -374,7 +419,7 @@ describe("delete organization", () => {
 		renderOrgGeneral();
 		await user.click(screen.getByRole("button", { name: "Delete organization" }));
 		const dialog = await screen.findByRole("alertdialog");
-		await user.click(within(dialog).getByRole("button", { name: "Delete organization" }));
+		await confirmDelete(user, dialog);
 
 		await waitFor(() => expect(toastError).toHaveBeenCalledWith("You don't have permission to do that."));
 		expect(push).not.toHaveBeenCalled();

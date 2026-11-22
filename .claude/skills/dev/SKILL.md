@@ -144,8 +144,8 @@ be the same machine. Browsers and their OS libraries install on first run, then 
   `known_hosts` surprise. That 0.50 EUR is what makes routine teardown safe.
 - **If the box is down, restore it: `pnpm env:box`, from the main checkout.** Agents may,
   by the maintainer's ruling on #4483 (2026-09-18) — and must reap it again when finished
-  (`pnpm env:reap --now`, or `pnpm env:timer`), because it bills while it exists. Only the
-  two wrappers are open; raw `tofu apply` is still refused by `.claude/hooks/guard-iac.sh`.
+  (`pnpm env:reap --now`, or `pnpm env:timer`), because it bills while it exists. Use the
+  wrappers, never raw `tofu` against `infra/sandbox`: they carry the checks below.
   Run it from the main checkout and nowhere else: from a worktree it would apply against
   empty state and build a **second** box, breaking `dev.alethialabs.io` —
   `require_main_checkout` in `scripts/env.sh` refuses that.
@@ -191,7 +191,7 @@ PreToolUse hook spawned before the command runs.
 ## Spend: what the box and the e2e runs cost you
 
 `.claude/hooks/guard-spend.sh` charges every priced action to `~/.alethia/spend-ledger.jsonl`
-before it runs, against **EUR 30 per rolling 7 days** shared by every instance on this machine:
+before it runs, against **EUR 80 per rolling 7 days** shared by every instance on this machine:
 `pnpm env:box` is EUR 1, an `e2e-nightly.yml` floor dispatch EUR 0.50 plus EUR 15 per heavy input
 per provider, `e2e-ai-nightly.yml` EUR 0.10, and `gh run rerun` the price of the jobs it reruns.
 `pnpm spend:status` prints the window and what is left. A charge is taken even when the command
@@ -234,6 +234,20 @@ and do not use it as a worktree base: its commit carries every untracked file it
 `-branch-<name>` pin is the original commit, not a snapshot, so the last two lines are safe.
 
 `session-cleanup.sh` deletes snapshots older than 30 days.
+
+### Backups of everything that is not a local tree
+
+For what lives elsewhere — a remote branch or tag, a GitHub repo, release or issue, terraform state,
+a database, a docker volume, a cloud server or volume, Kubernetes objects — `guard-destroy.sh`
+takes a backup first and then lets the command run; a backup that fails refuses it. Remote refs go
+to `refs/safety/remote/<ts>/heads|tags/<name>` (pruned with the snapshots after 30 days); the rest
+to `~/.alethia/backups/<kind>/<UTC ts>/`, each with a `MANIFEST` whose `restore:` line says how to
+put it back (nothing prunes that directory):
+
+```
+pnpm backups:ls [<kind>]                                   # newest first; never prints contents
+git push origin +refs/safety/remote/<ts>/heads/<b>:refs/heads/<b>   # a remote branch put back
+```
 
 ## Reference
 

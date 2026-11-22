@@ -3,7 +3,6 @@
 
 import type { ReactNode } from "react";
 
-import { getGitHubStars } from "./github-stars";
 import { Chrome } from "./site-chrome";
 import { SiteFooter } from "./site-footer";
 import { Header } from "./site-header";
@@ -19,22 +18,21 @@ import { Header } from "./site-header";
  * component rather than a `layout.tsx`: `apps/blog` is a separate zone and can
  * only share the chrome by importing it.
  *
- * The star count is fetched here, once, instead of in each of the five pages
- * that used to do it themselves. It is cached hourly and degrades to `null`.
+ * It no longer fetches the GitHub star count: the header stopped showing one when
+ * the GitHub link moved to the footer and the Open source page, which fetches
+ * its own.
  */
-export async function SiteShell({
+export function SiteShell({
 	children,
 	homeHref = "/",
 }: {
 	children: ReactNode;
 	homeHref?: "/" | "/home";
 }) {
-	const stars = await getGitHubStars();
-
 	return (
 		<div className="min-h-screen bg-background text-foreground selection:bg-primary selection:text-primary-foreground">
 			<Chrome />
-			<Header stars={stars} homeHref={homeHref} />
+			<Header homeHref={homeHref} />
 			<main>{children}</main>
 			<SiteFooter />
 		</div>

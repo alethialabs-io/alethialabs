@@ -6,7 +6,6 @@ import { render } from "@react-email/components";
 import { createTransport, type Transporter } from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer";
 import type { ReactElement } from "react";
-import { Resend } from "resend";
 import {
 	getEmailConfig,
 	type EmailConfig,
@@ -15,7 +14,6 @@ import {
 } from "./config";
 
 let cachedSesClient: SESv2Client | undefined;
-let cachedResend: Resend | undefined;
 let cachedSmtp: Transporter | undefined;
 
 /** Builds (once) the SES client. Explicit creds when given, else the AWS chain. */
@@ -33,13 +31,6 @@ function sesClient(ses: SesConfig): SESv2Client {
 			: {}),
 	});
 	return cachedSesClient;
-}
-
-/** Builds (once) the Resend HTTP client. */
-function resendClient(apiKey: string): Resend {
-	if (cachedResend) return cachedResend;
-	cachedResend = new Resend(apiKey);
-	return cachedResend;
 }
 
 /** Builds (once) the nodemailer SMTP transport. */
@@ -76,8 +67,8 @@ export interface SendEmailArgs {
 	/** react-email element, rendered to HTML. */
 	react: ReactElement;
 	/** SES configuration set for this stream — attributes events to SNS and the
-	 * stream's reputation. SES only; ignored by Resend/SMTP (which isolate
-	 * streams by sending subdomain). Optional (getEmailConfig().configSet.*). */
+	 * stream's reputation. SES only; ignored by SMTP (which isolates streams
+	 * by sending subdomain). Optional (getEmailConfig().configSet.*). */
 	configurationSetName?: string;
 	/** Extra context logged in the dev (no-provider) fallback, e.g. an OTP code. */
 	devLog?: string;
@@ -99,7 +90,7 @@ interface RenderedMessage {
  * Builds a full MIME message (multipart/mixed) with the rendered HTML plus any
  * attachments, using nodemailer's MailComposer. SES v2 only carries attachments
  * through `Content.Raw`, so this is the raw-MIME path; the no-attachment path
- * stays on `Content.Simple`. (Resend/SMTP take attachments natively.)
+ * stays on `Content.Simple`. (SMTP takes attachments natively.)
  */
 async function buildRawMime(args: {
 	from: string;
@@ -129,33 +120,6 @@ async function buildRawMime(args: {
 			else resolve(new Uint8Array(message));
 		});
 	});
-}
-
-/** Sends the rendered email via Resend's HTTP API. */
-async function sendViaResend(
-	config: EmailConfig,
-	msg: RenderedMessage,
-	attachments: EmailAttachment[] | undefined,
-): Promise<void> {
-	const { data, error } = await resendClient(config.resend!.apiKey).emails.send({
-		from: msg.from,
-		to: msg.to,
-		...(msg.cc?.length ? { cc: msg.cc } : {}),
-		subject: msg.subject,
-		html: msg.html,
-		...(attachments?.length
-			? {
-					attachments: attachments.map((a) => ({
-						filename: a.filename,
-						content: Buffer.from(a.content),
-						...(a.contentType ? { contentType: a.contentType } : {}),
-					})),
-				}
-			: {}),
-	});
-	// The Resend SDK resolves with an { error } shape instead of throwing.
-	if (error) throw new Error(error.message);
-	if (!data) throw new Error("Resend returned no message id");
 }
 
 /** Sends the rendered email via a generic SMTP server (nodemailer). */
@@ -235,9 +199,67 @@ async function sendViaSes(
 	await sesClient(config.ses!).send(command);
 }
 
+/** Matches an email address, so a provider error that echoes a recipient is logged without it. */
+const EMAIL_ADDRESS = /[^\s@<>"'(),;:]+@[^\s@<>"'(),;:]+\.[^\s@<>"'(),;:]+/g;
+
 /**
- * Sends one transactional email via the configured provider (Resend, SMTP, or
- * SES), rendering the react-email template to HTML. When no provider is
+ * Writes one structured (JSON) error line for a failed send, in every environment.
+ *
+ * Before this, a failed SES send surfaced only as the Error thrown to the caller — and most callers
+ * run inside a Better Auth background task or a fire-and-forget notifier that swallows it, so a
+ * rejected send left no line anyone could alert on. The line names the transport, the stream's
+ * configuration set and the provider's own error name/code (an AWS SDK error carries `name`, e.g.
+ * `MessageRejected`, and `$metadata.httpStatusCode`). It deliberately carries no recipient and no
+ * subject (a subject can hold a sign-in code), and email addresses in the provider's message are
+ * replaced, because SES echoes unverified identities back in it.
+ *
+ * packages/email has no error-reporting hook, so this is a log line, not a Sentry event.
+ */
+function logSendFailure(
+	provider: string,
+	configurationSetName: string | undefined,
+	err: unknown,
+): void {
+	const httpStatus =
+		typeof err === "object" &&
+		err !== null &&
+		"$metadata" in err &&
+		typeof err.$metadata === "object" &&
+		err.$metadata !== null &&
+		"httpStatusCode" in err.$metadata &&
+		typeof err.$metadata.httpStatusCode === "number"
+			? err.$metadata.httpStatusCode
+			: undefined;
+	const code =
+		typeof err === "object" &&
+		err !== null &&
+		"code" in err &&
+		(typeof err.code === "string" || typeof err.code === "number")
+			? err.code
+			: undefined;
+	console.error(
+		JSON.stringify({
+			level: "error",
+			time: new Date().toISOString(),
+			msg: "email send failed",
+			event: "email.send_failed",
+			provider,
+			...(configurationSetName ? { configuration_set: configurationSetName } : {}),
+			err: {
+				type: err instanceof Error ? err.name : typeof err,
+				message: (err instanceof Error ? err.message : String(err)).replace(
+					EMAIL_ADDRESS,
+					"[email]",
+				),
+				...(code !== undefined ? { code } : {}),
+				...(httpStatus !== undefined ? { http_status: httpStatus } : {}),
+			},
+		}),
+	);
+}
+
+/**
+ * Sends one transactional email via the configured provider (SMTP or SES), rendering the react-email template to HTML. When no provider is
  * configured (local/dev) it logs instead of sending, so a fresh self-hoster
  * works with zero email setup. Shared by every stream (auth, product) — callers
  * pass the stream's from-address.
@@ -269,9 +291,6 @@ export async function sendEmail({
 
 	try {
 		switch (config.provider) {
-			case "resend":
-				await sendViaResend(config, msg, attachments);
-				break;
 			case "smtp":
 				await sendViaSmtp(config, msg, attachments);
 				break;
@@ -281,6 +300,7 @@ export async function sendEmail({
 		}
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
+		logSendFailure(config.provider, configurationSetName, err);
 		// In dev, don't lose the email when a send fails (e.g. SES sandbox rejects
 		// unverified recipients, or a bad key) — log it (incl. the OTP via devLog)
 		// so the code is still retrievable from `pnpm dev:logs`. Prod surfaces it.

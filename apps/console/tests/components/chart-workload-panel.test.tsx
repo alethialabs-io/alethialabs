@@ -1,54 +1,45 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// W5 Path A (Lane 3) — the described chart-workload inspector panel. It renders the READ-ONLY
-// description from the real read model (image / kind / rendered env keys) and the editable overlay
-// (the reused W3 BindingsField + a Save action). These pin that the panel mounts against the real
-// ChartWorkloadNodeConfig shape and shows the read-mostly surface.
+// W5 Path A (Lane 3) — the inspector on a described chart workload. Its Status view is the
+// READ-ONLY description from the real read model (image / kind / rendered env keys); its Settings
+// view is the editable overlay (the reused W3 BindingsField, replicas, env, value paths).
+//
+// The overlay is STAGED (#6834): an edit becomes a staged operation in the document when the field
+// is left and when the panel goes away, and there is no Save button. These pin that, against the
+// real ChartWorkloadNodeConfig shape.
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { queryWrapper } from "@/tests/helpers/query-wrapper";
-
-// The persist action pulls in the server DB/authz chain — mock it so the panel mounts in jsdom. It is
-// on the mutation contract (#6119): one action per Save, answering an `ActionResult`.
-const { saveOverlay, toast } = vi.hoisted(() => ({
-	saveOverlay: vi.fn(),
-	toast: { success: vi.fn(), error: vi.fn() },
-}));
-vi.mock("@/app/server/actions/byo-charts", () => ({
-	saveChartWorkloadOverlayAction: (input: unknown) => saveOverlay(input),
-}));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
-vi.mock("@/lib/rpc/client", async () => {
-	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
-	return { orpc: fakeOrpc({}).orpc };
-});
-vi.mock("sonner", () => ({ toast }));
-
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { beforeEach, describe, expect, it } from "vitest";
+import { ByoChartCanvasProvider } from "@/components/design-project/byo/byo-chart-canvas-context";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { ServiceBinding } from "@/components/design-project/canvas/inspector/bindings-field";
 import { ChartWorkloadPanel } from "@/components/design-project/canvas/inspector/chart-workload-panel";
-import { ByoChartCanvasProvider } from "@/components/design-project/byo/byo-chart-canvas-context";
+import { board } from "@/lib/canvas/store/board";
+import { BoardSourcesProvider } from "@/lib/canvas/store/canvas-store-provider";
 
-/** The panel inside a query client and the board's BYO-chart context (edit mode). */
-function inBoard(): (props: { children: ReactNode }) => ReactNode {
-	const Query = queryWrapper();
-	const ctx = { projectId: "proj-1", environmentId: "env-1" };
-	return function Board({ children }: { children: ReactNode }) {
-		return (
-			<Query>
-				<ByoChartCanvasProvider value={ctx}>{children}</ByoChartCanvasProvider>
-			</Query>
-		);
-	};
+/** The cards the design does not own, as the canvas hands them from their queries. */
+let others: CanvasNode[] = [];
+const NO_OUTPUTS: string[] = [];
+
+/** The panel inside the board's BYO-chart context (a project to stage the overlay for). */
+function InBoard({ children }: { children: ReactNode }) {
+	return (
+		<ByoChartCanvasProvider value={{ projectId: "proj-1", environmentId: "env-1" }}>
+			<BoardSourcesProvider others={others} iacOutputs={NO_OUTPUTS}>
+				{children}
+			</BoardSourcesProvider>
+		</ByoChartCanvasProvider>
+	);
 }
 
-/** A described-workload node seeded straight into the store (as the loader would build it). */
-function workloadNode(bindings: ServiceBinding[] = []): CanvasNode {
+/** A described-workload node, as `outOfBandNodes` builds it from the workloads read. */
+function workloadNode(
+	bindings: ServiceBinding[] = [],
+	config: { replicas?: number } = {},
+): CanvasNode {
 	return {
 		id: "cw-w1",
 		type: "chart_workload",
@@ -68,7 +59,7 @@ function workloadNode(bindings: ServiceBinding[] = []): CanvasNode {
 					replicas: 3,
 				},
 				bindings,
-				config: {},
+				config,
 				valuePaths: {},
 			},
 			cloud_identity_id: null,
@@ -77,93 +68,182 @@ function workloadNode(bindings: ServiceBinding[] = []): CanvasNode {
 	} as unknown as CanvasNode;
 }
 
+/** The operations staged in the document. */
+const staged = () => board.document.getState().operations;
+
 beforeEach(() => {
-	saveOverlay.mockReset();
-	saveOverlay.mockResolvedValue({ ok: true, data: { workloadId: "w1" } });
-	toast.success.mockReset();
-	toast.error.mockReset();
-	useCanvasStore.getState().reset();
-	useCanvasStore.setState({ nodes: [workloadNode()] });
+	board.reset();
+	others = [workloadNode()];
 });
 
 describe("ChartWorkloadPanel", () => {
-	it("renders the read-only description from the real read model", () => {
-		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: queryWrapper() });
-		// Name + the not-owned "Chart workload" eyebrow.
-		expect(screen.getByText("web")).toBeInTheDocument();
+	it("opens on the editable overlay, in the inspector's frame", () => {
+		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
+		expect(screen.getByRole("heading", { name: "web" })).toBeInTheDocument();
 		expect(screen.getByText("Chart workload")).toBeInTheDocument();
-		// The rendered description (read-only).
-		expect(screen.getByText("ghcr.io/acme/web:1.2.3")).toBeInTheDocument();
-		// Env is shown as KEY NAMES only.
-		expect(screen.getByText("LOG_LEVEL")).toBeInTheDocument();
-		expect(screen.getByText("DB_URL")).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "Bindings" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "Value paths" })).toBeInTheDocument();
+		expect(screen.getByText("Bind a resource")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
 	});
 
-	it("surfaces the editable overlay (bindings + save)", () => {
-		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: queryWrapper() });
-		expect(screen.getByText("Bindings")).toBeInTheDocument();
-		expect(screen.getByText("Value paths")).toBeInTheDocument();
-		// The reused W3 binding editor's add affordance.
-		expect(screen.getByText("Bind a resource")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: /save overlay/i })).toBeInTheDocument();
+	it("has no commit button: the changes bar is where the overlay is applied", () => {
+		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
+		expect(screen.queryByRole("button", { name: /save/i })).not.toBeInTheDocument();
+	});
+
+	it("shows the read-only description from the real read model on Status", async () => {
+		const user = userEvent.setup();
+		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
+		await user.click(screen.getByRole("tab", { name: "Status" }));
+		expect(screen.getByText("ghcr.io/acme/web:1.2.3")).toBeInTheDocument();
+		expect(screen.getByText("LOG_LEVEL")).toBeInTheDocument();
+		expect(screen.getByText("DB_URL")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Replicas")).not.toBeInTheDocument();
 	});
 
 	it("offers the `database` facet, which only the chart lane resolves (#6467)", () => {
-		useCanvasStore.setState({
-			nodes: [workloadNode([{ target: { kind: "database", name: "orders" }, inject: [{ env: "DB_NAME", from: "database" }] }])],
-		});
-		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: queryWrapper() });
+		others = [
+			workloadNode([
+				{
+					target: { kind: "database", name: "orders" },
+					inject: [{ env: "DB_NAME", from: "database" }],
+				},
+			]),
+		];
+		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
 		expect(screen.getByText("database name")).toBeInTheDocument();
 	});
 
 	it("returns nothing for an unknown node id", () => {
-		const { container } = render(<ChartWorkloadPanel nodeId="cw-missing" />, {
-			wrapper: queryWrapper(),
-		});
+		const { container } = render(<ChartWorkloadPanel nodeId="cw-missing" />, { wrapper: InBoard });
 		expect(container).toBeEmptyDOMElement();
 	});
 });
 
-describe("ChartWorkloadPanel — Save is one write on the mutation contract (#6119)", () => {
-	it("sends only the part that changed, and confirms it", async () => {
+describe("ChartWorkloadPanel — the overlay is staged, not saved (#6834)", () => {
+	it("stages only the part that changed when the field is left", async () => {
 		const user = userEvent.setup();
-		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: inBoard() });
+		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
 		await user.type(screen.getByLabelText("Replicas"), "2");
-		await user.click(screen.getByRole("button", { name: /save overlay/i }));
+		expect(staged()).toEqual([]);
+		await user.tab();
 
-		await waitFor(() => expect(saveOverlay).toHaveBeenCalledTimes(1));
-		expect(saveOverlay.mock.calls[0][0]).toEqual({
-			projectId: "proj-1",
-			workloadId: "w1",
-			config: { replicas: 2 },
-		});
-		await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Workload overlay saved."));
+		expect(staged()).toEqual([
+			{
+				id: "chart-workload:w1",
+				target: "chart-workload",
+				verb: "overlay",
+				targetId: "w1",
+				summary: "Chart workload web: replicas and env",
+				input: { projectId: "proj-1", workloadId: "w1", config: { replicas: 2 } },
+			},
+		]);
+		expect(screen.getByRole("status")).toHaveTextContent("Overlay staged.");
 	});
 
-	it("says a refusal under the Save button and toasts nothing", async () => {
-		saveOverlay.mockResolvedValue({
-			ok: false,
-			error: { kind: "not-found", message: "Chart workload not found" },
-		});
+	it("stages what was typed when the panel goes away without the field being left", async () => {
 		const user = userEvent.setup();
-		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: inBoard() });
-		await user.type(screen.getByLabelText("Replicas"), "2");
-		await user.click(screen.getByRole("button", { name: /save overlay/i }));
+		const { unmount } = render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
+		await user.type(screen.getByLabelText("Replicas"), "4");
+		act(() => unmount());
 
-		expect(await screen.findByRole("alert")).toHaveTextContent("Chart workload not found");
-		expect(toast.error).not.toHaveBeenCalled();
+		expect(staged().map((o) => o.input)).toEqual([
+			{ projectId: "proj-1", workloadId: "w1", config: { replicas: 4 } },
+		]);
 	});
 
-	it("holds Save disabled while the write is in flight", async () => {
-		let settle: (v: unknown) => void = () => {};
-		saveOverlay.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+	it("staging is one undo step, and undoing it takes the overlay off the changeset", async () => {
 		const user = userEvent.setup();
-		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: inBoard() });
+		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
 		await user.type(screen.getByLabelText("Replicas"), "2");
-		await user.click(screen.getByRole("button", { name: /save overlay/i }));
+		await user.tab();
+		expect(staged()).toHaveLength(1);
 
-		await waitFor(() => expect(screen.getByRole("button", { name: /saving/i })).toBeDisabled());
-		expect(saveOverlay).toHaveBeenCalledTimes(1);
-		settle({ ok: true, data: { workloadId: "w1" } });
+		act(() => {
+			board.document.getState().undo();
+		});
+		expect(staged()).toEqual([]);
+	});
+
+	it("a field put back to what is saved takes the overlay off the changeset", async () => {
+		const user = userEvent.setup();
+		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
+		const replicas = screen.getByLabelText("Replicas");
+		await user.type(replicas, "2");
+		await user.tab();
+		expect(staged()).toHaveLength(1);
+
+		await user.clear(replicas);
+		await user.tab();
+		expect(staged()).toEqual([]);
+	});
+
+	it("Discard puts the form back to what is saved and unstages the overlay", async () => {
+		const user = userEvent.setup();
+		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
+		await user.type(screen.getByLabelText("Replicas"), "2");
+		await user.tab();
+		await user.click(screen.getByRole("button", { name: "Discard" }));
+
+		expect(staged()).toEqual([]);
+		expect(screen.getByLabelText("Replicas")).toHaveValue(null);
+		expect(screen.queryByRole("status")).not.toBeInTheDocument();
+	});
+
+	it("says why a value may not be staged, under the field, and stages nothing", async () => {
+		const user = userEvent.setup();
+		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
+		await user.type(screen.getByLabelText("Replicas"), "-1");
+		await user.tab();
+
+		expect(screen.getByText("Replicas is a whole number, 0 or more.")).toBeInTheDocument();
+		expect(screen.getByLabelText("Replicas")).toHaveAttribute("aria-invalid", "true");
+		expect(staged()).toEqual([]);
+	});
+
+	it("reopens on what is staged, laid over what is saved", async () => {
+		const user = userEvent.setup();
+		const first = render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
+		await user.type(screen.getByLabelText("Replicas"), "5");
+		await user.tab();
+		act(() => first.unmount());
+
+		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
+		expect(screen.getByLabelText("Replicas")).toHaveValue(5);
+		expect(screen.getByRole("status")).toHaveTextContent("Overlay staged.");
+	});
+
+	it("adding an env row stages nothing until the row has a name", async () => {
+		const user = userEvent.setup();
+		render(<ChartWorkloadPanel nodeId="cw-w1" />, { wrapper: InBoard });
+		await user.click(screen.getByRole("button", { name: "Add env var" }));
+		await user.tab();
+		expect(staged()).toEqual([]);
+
+		await user.type(screen.getByLabelText("Environment variable name"), "LOG_LEVEL");
+		await user.type(screen.getByLabelText("Environment variable value"), "debug");
+		await user.tab();
+		expect(staged().map((o) => o.input)).toEqual([
+			{
+				projectId: "proj-1",
+				workloadId: "w1",
+				config: { env: [{ name: "LOG_LEVEL", value: "debug" }] },
+			},
+		]);
+	});
+
+	it("without a project it is read-only, says so, and stages nothing", async () => {
+		const user = userEvent.setup();
+		// The card is on the board, but no BYO-chart context names a project to stage it for.
+		render(
+			<BoardSourcesProvider others={others} iacOutputs={NO_OUTPUTS}>
+				<ChartWorkloadPanel nodeId="cw-w1" />
+			</BoardSourcesProvider>,
+		);
+		expect(screen.getByRole("status")).toHaveTextContent("Read-only");
+		expect(screen.getByLabelText("Replicas")).toBeDisabled();
+		await user.tab();
+		expect(staged()).toEqual([]);
 	});
 });

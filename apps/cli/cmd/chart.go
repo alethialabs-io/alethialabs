@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -16,15 +15,27 @@ import (
 var chartCmd = &cobra.Command{
 	Use:     "chart",
 	Aliases: []string{"charts"},
-	Short:   "Inspect a project's BYO Helm charts",
-	Long: `BYO charts are your OWN Helm charts (pulled from a connected git repo) deployed into an
-environment via ArgoCD, alongside the marketplace add-ons. List the charts attached to an
-environment (defaults to the project's default environment; pass --env for another).`,
+	Short:   "Attach, scan and inspect a project's BYO Helm charts",
+	Long: `BYO charts are your own Helm charts, from a git repository or an OCI registry, deployed into
+an environment by ArgoCD beside the marketplace add-ons.
+
+Attach one with "alethia chart attach", scan it with "alethia chart scan" (an unscanned chart is
+refused at deploy), list them with "alethia chart list", and detach one with "alethia chart
+detach". --project and --env work on every subcommand; the environment defaults to the project's
+default.`,
 }
 
 var chartListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List the BYO Helm charts attached to a project environment",
+	Args:  cobra.NoArgs,
+	Long: `Lists the BYO Helm charts attached to one environment: each chart's id, repository, path, ref,
+status and scan state. The ids are the ones "alethia chart scan" and "alethia chart detach" take.
+
+Use it to check that a chart is scanned before a deploy. Name the project with --project; omit it
+on a terminal and you are asked which. With nobody to ask, it is required (exit 9).
+
+--output json prints the whole view, and --output csv the chart rows.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -32,7 +43,7 @@ var chartListCmd = &cobra.Command{
 		}
 		// Format first, then the picker: interactiveTable is both the "may I draw a rich table"
 		// question and the "may I open a form on stdout" one, and they have the same answer.
-		outFmt := outputFormat(cmd)
+		p := printerFor(cmd)
 		rich := interactiveTable(cmd)
 		project, err := byoProject(cmd, token, rich)
 		if err != nil {
@@ -46,17 +57,17 @@ var chartListCmd = &cobra.Command{
 				view, err = client.GetProjectByoCharts(project, env)
 			})
 			if err != nil {
-				failf("Failed to list charts: %v", err)
+				fail(fmt.Errorf("list charts: %w", err))
 			}
 			if view == nil || len(view.Charts) == 0 {
-				ui.Muted("No BYO charts attached.")
+				fmt.Fprintln(p.Out, ui.MutedStyle.Render("No BYO charts attached."))
 				return
 			}
 			_ = ui.ShowTable(chartColumns, chartRows(view.Charts, ui.FormatTable), "charts")
 			return
 		}
-		if err := runChartList(client, os.Stdout, outFmt, project, env); err != nil {
-			failf("Failed to list charts: %v", err)
+		if err := runChartList(client, p.Out, p.Format, project, env); err != nil {
+			fail(fmt.Errorf("list charts: %w", err))
 		}
 	},
 }

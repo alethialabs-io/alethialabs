@@ -3,15 +3,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Controller, useFormContext, useWatch } from "react-hook-form";
+import type { SubmitCaseWizardValues } from "@/components/support/submit/submit-case.wizard";
+import { FieldMessage } from "@/components/support/field-message";
 import {
 	SUPPORT_CASE_TYPE_LABELS,
 	SUPPORT_CATEGORY_LABELS,
 	SUPPORT_SEVERITY_LABELS,
-	type SubmitCaseInput,
 } from "@/lib/validations/support";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
-import { SectionHeading } from "@repo/ui/section-heading";
 import {
 	Select,
 	SelectContent,
@@ -19,7 +19,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@repo/ui/select";
-import { FieldMessage } from "@/components/support/field-message";
 
 interface StepContactProps {
 	/** Attachment count, surfaced in the review summary. */
@@ -42,17 +41,11 @@ export function StepContact({ attachmentCount }: StepContactProps) {
 		control,
 		register,
 		formState: { errors },
-	} = useFormContext<SubmitCaseInput>();
-	const values = useWatch<SubmitCaseInput>({ control });
+	} = useFormContext<SubmitCaseWizardValues>();
+	const values = useWatch<SubmitCaseWizardValues>({ control });
 
 	return (
 		<div className="space-y-5">
-			<SectionHeading
-				level={2}
-				title="How should we reach you?"
-				description="We'll send case updates to this address."
-			/>
-
 			<div className="space-y-2">
 				<Label htmlFor="support-notify-email">Notification email</Label>
 				<Input
@@ -77,7 +70,7 @@ export function StepContact({ attachmentCount }: StepContactProps) {
 					name="contact.channel"
 					render={({ field }) => (
 						<Select value={field.value} onValueChange={field.onChange}>
-							<SelectTrigger id="support-channel" className="w-full max-w-md">
+							<SelectTrigger id="support-channel" ref={field.ref} className="w-full max-w-md">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -98,25 +91,14 @@ export function StepContact({ attachmentCount }: StepContactProps) {
 					/>
 					<SummaryRow
 						label="Area"
-						value={
-							values.category
-								? SUPPORT_CATEGORY_LABELS[values.category]
-								: "—"
-						}
+						value={values.category ? SUPPORT_CATEGORY_LABELS[values.category] : "—"}
 					/>
 					<SummaryRow
 						label="Severity"
-						value={
-							values.severity
-								? SUPPORT_SEVERITY_LABELS[values.severity]
-								: "—"
-						}
+						value={values.severity ? SUPPORT_SEVERITY_LABELS[values.severity] : "—"}
 					/>
 					<SummaryRow label="Subject" value={values.subject || "—"} />
-					<SummaryRow
-						label="Attachments"
-						value={String(attachmentCount)}
-					/>
+					<SummaryRow label="Attachments" value={String(attachmentCount)} />
 				</div>
 			</div>
 		</div>

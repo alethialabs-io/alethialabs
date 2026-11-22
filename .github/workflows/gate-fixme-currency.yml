@@ -19,9 +19,9 @@
 #   2  the instrument could not answer (unreadable state, unparseable fixme, unreadable ledger) → red.
 #      "I did not check" must never render as "fine".
 #
-# THIS WORKFLOW has no pull_request trigger, but the check DOES run on PRs: the release gate's
-# `Gate ledger` job (.github/workflows/release-gate.yml, #5417) runs the same script on every
-# non-draft PR. There `--self-test` always runs; the live check runs unconditionally on a PR into
+# THIS WORKFLOW has no pull_request trigger, but the check DOES run on PRs: the `Gate ledger` job
+# (.github/workflows/ci.yml since 2026-11-22; release-gate.yml before that, #5417) runs the same
+# script on every PR. There `--self-test` always runs; the live check runs unconditionally on a PR into
 # main or staging and on a dispatch, and on a PR into dev only when the PR changes
 # apps/console/e2e/gate-baseline.json, scripts/check-gate-fixme-issues.mjs or scripts/e2e-ratchet.mjs
 # — an issue closing is a state change in GitHub, not in the diff, so asking on every dev PR would

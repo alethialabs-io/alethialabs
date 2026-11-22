@@ -4,10 +4,10 @@
 import { AlethiaLockup } from "@repo/brand/lockup";
 import type { BaseLayoutProps, LinkItemType } from "fumadocs-ui/layouts/shared";
 
-// A single "Blog" top-nav link to the separate blog app. `external` renders a plain
-// anchor so it bypasses this app's `/docs` basePath (the blog is its own app at /blog).
+// A single "News" top-nav link to the separate news app (apps/blog). `external` renders a plain
+// anchor so it bypasses this app's `/docs` basePath (news is its own app at /news).
 export const linkItems: LinkItemType[] = [
-	{ type: "main", text: "Blog", url: "/blog", external: true },
+	{ type: "main", text: "News", url: "/news", external: true },
 ];
 
 // The mark was hand-inlined here as a raw <svg>, a third copy of a component this

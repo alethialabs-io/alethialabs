@@ -33,6 +33,8 @@ interface AuthCallResult {
  */
 export function authActionError(error: AuthCallError): ActionError {
 	const message = error.message?.trim() || "That change was refused.";
+	// Status 0 is the fetch client's report of a request that got no HTTP answer at all.
+	if (error.status === 0) return { kind: "network", sent: true };
 	if (error.status === 401) return { kind: "unauthenticated" };
 	if (error.status === 403) return { kind: "forbidden", message };
 	if (error.status === 404) return { kind: "not-found", message };
@@ -42,7 +44,11 @@ export function authActionError(error: AuthCallError): ActionError {
 
 /**
  * Runs one Better Auth client call and answers in the console's `ActionResult` shape. A call that
- * throws (the network dropped) is `unexpected`, never a success.
+ * throws got no server answer — the connection dropped, or a proxy answered instead of the app — so
+ * it is `network` with `sent: true`: the request may have left the browser, and whether it took
+ * effect is unknown. The mutation contract tells the person exactly that, and refetches what the
+ * page shows so it matches what the server holds. It is never a success, and never "something went
+ * wrong on our side" with a reference that names no server event (R6 E-07).
  */
 export async function viaAuth(call: () => Promise<AuthCallResult>): Promise<ActionResult<null>> {
 	try {
@@ -50,6 +56,6 @@ export async function viaAuth(call: () => Promise<AuthCallResult>): Promise<Acti
 		if (error) return { ok: false, error: authActionError(error) };
 		return { ok: true, data: null };
 	} catch {
-		return { ok: false, error: { kind: "unexpected", ref: "auth-network" } };
+		return { ok: false, error: { kind: "network", sent: true } };
 	}
 }

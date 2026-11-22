@@ -2,48 +2,64 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The panel behind a DESCRIBED chart-workload card (W5 Path A — Option B).
+// The inspector on a DESCRIBED chart workload (W5 Path A — Option B).
 //
 // It is deliberately READ-MOSTLY, which is what keeps it distinct from the first-class `service`
-// panel (the two-model invariant). The `rendered` description — image, kind, ports, env KEY NAMES,
-// resources, replicas — comes straight from `helm template` and is OVERWRITTEN on every re-scan, so
-// it is shown read-only: editing it would be editing the chart, not this overlay. What the user CAN
-// edit is the overlay the chart's own `values` don't already pin: the W3 bindings (reusing the exact
-// service binding editor), the v1 `replicas`/`env`, and the value-path override that says where each
-// knob writes into the chart's values. The overlay is persisted through Lane 2's (#664) server
-// actions (`setChartWorkloadBindings` / `setChartWorkloadConfig` / `setChartWorkloadValuePaths`);
-// Lane 2 also infers value-paths for new bindings and composes the overlay into the chart's Helm
-// values at deploy (keyless secret-refs for credential facets).
+// subject (the two-model invariant). The `rendered` description — image, kind, ports, env KEY
+// NAMES, resources, replicas — comes straight from `helm template` and is OVERWRITTEN on every
+// re-scan, so it is the Status view and nothing in it is editable: editing it would be editing the
+// chart. What the person CAN edit is the overlay the chart's own `values` do not already pin: the
+// W3 bindings (the exact service binding editor), `replicas` and `env`, and the value-path
+// override that says where each knob writes into the chart's values.
+//
+// The overlay is STAGED, not saved (#6834). This panel used to hold a `useState` draft and its own
+// Save button — the one config surface on the rail that did not go through the changes bar, and
+// one a click on the empty board discarded. An edit now becomes a staged operation in the document
+// when the field is left, when a row is removed or a binding changes, and when the panel goes
+// away; the operation runs `saveChartWorkloadOverlayAction` when it is applied.
 
-import { useEffect, useState } from "react";
 import { Package, Plus, X } from "lucide-react";
+import { useCallback, useEffect, useRef } from "react";
+import { useFieldArray, useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { saveChartWorkloadOverlayAction } from "@/app/server/actions/byo-charts";
-import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import { orpc } from "@/lib/rpc/client";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
-import type {
-	ChartValuePathMap,
-	ChartWorkloadConfig,
-	ServiceBinding,
-	ServiceEnvVar,
-} from "@/types/jsonb.types";
+import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
+import type { InspectorTab } from "@/lib/canvas/store/types";
+import { useInspectorTab, useOperations } from "@/lib/canvas/store/use-board";
+import { serviceBindingSchema } from "@/lib/validations/project-form.schema";
+import type { ChartValuePathMap, ChartWorkloadConfig } from "@/types/jsonb.types";
 import { type CanvasNode, nodeOfKind } from "../graph/types";
+import { InspectorFrame } from "../inspector-shell/inspector-frame";
+import {
+	workloadOperationId,
+	workloadOverlayInputSchema,
+	type WorkloadOverlayInput,
+} from "../inspector-shell/staged-operations";
+import { resolveTab, useCloseInspector, useSubjectNode } from "../inspector-shell/subject";
 import { BindingsField } from "./bindings-field";
 
-/** The user-editable overlay this panel stages. */
+/** The overlay as the form holds it: rows where the stored shape has a map, text where it has a number. */
+const overlayFormSchema = z.object({
+	bindings: z.array(serviceBindingSchema),
+	replicas: z.string().regex(/^\d*$/, "Replicas is a whole number, 0 or more."),
+	env: z.array(z.object({ name: z.string(), value: z.string() })),
+	valuePaths: z.array(z.object({ key: z.string(), path: z.string() })),
+});
+type OverlayForm = z.infer<typeof overlayFormSchema>;
+
+/** The user-editable overlay of one workload, in the shape it is stored and sent. */
 interface Overlay {
-	bindings: ServiceBinding[];
+	bindings: OverlayForm["bindings"];
 	config: ChartWorkloadConfig;
 	valuePaths: ChartValuePathMap;
 }
 
-/** Value-paths are an object; the editor needs stable ordered rows, so it edits a [key, path] list. */
-type PathRow = [key: string, path: string];
+const TABS: readonly InspectorTab[] = ["configure", "status"];
 
-/** Snapshot the node's persisted overlay into the local draft shape. */
+/** The workload's saved overlay. */
 function overlayOf(config: CanvasNode<"chart_workload">["data"]["config"]): Overlay {
 	return {
 		bindings: config.bindings ?? [],
@@ -52,136 +68,224 @@ function overlayOf(config: CanvasNode<"chart_workload">["data"]["config"]): Over
 	};
 }
 
-/** The read-mostly config + bind panel for one described chart workload. */
+/** An overlay with what is already staged for it laid over what is saved. */
+function withStaged(base: Overlay, staged: WorkloadOverlayInput | null): Overlay {
+	if (!staged) return base;
+	return {
+		bindings: staged.bindings ?? base.bindings,
+		config: staged.config ?? base.config,
+		valuePaths: staged.valuePaths ?? base.valuePaths,
+	};
+}
+
+/** An overlay as form values. */
+function toForm(overlay: Overlay): OverlayForm {
+	return {
+		bindings: overlay.bindings,
+		replicas: overlay.config.replicas === undefined ? "" : String(overlay.config.replicas),
+		env: overlay.config.env ?? [],
+		valuePaths: Object.entries(overlay.valuePaths).map(([key, path]) => ({ key, path })),
+	};
+}
+
+/**
+ * Valid form values as an overlay. A row with no name is not written: it is a row the person has
+ * not filled in yet, not an instruction to store an unnamed variable. An overlay that had no `env`
+ * and still has no rows keeps no `env`, so an untouched form equals what is saved.
+ */
+function fromForm(values: OverlayForm, base: Overlay): Overlay {
+	const env = values.env.filter((row) => row.name.trim() !== "");
+	const config: ChartWorkloadConfig = {};
+	if (values.replicas !== "") config.replicas = Number(values.replicas);
+	if (env.length > 0 || base.config.env !== undefined) config.env = env;
+	return {
+		bindings: values.bindings,
+		config,
+		valuePaths: Object.fromEntries(
+			values.valuePaths.filter((row) => row.key.trim() !== "").map((row) => [row.key, row.path]),
+		),
+	};
+}
+
+/** True when two values are the same JSON. */
+function same(a: unknown, b: unknown): boolean {
+	return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** The parts of `next` that differ from `base`, named as the overlay action names them. */
+function changedParts(
+	base: Overlay,
+	next: Overlay,
+): Pick<WorkloadOverlayInput, "bindings" | "config" | "valuePaths"> {
+	return {
+		...(same(next.bindings, base.bindings) ? {} : { bindings: next.bindings }),
+		...(same(next.config, base.config) ? {} : { config: next.config }),
+		...(same(next.valuePaths, base.valuePaths) ? {} : { valuePaths: next.valuePaths }),
+	};
+}
+
+/** What a staged overlay changes, in words, for the review list. */
+function summaryOf(name: string, parts: ReturnType<typeof changedParts>): string {
+	const named = [
+		parts.bindings ? "bindings" : null,
+		parts.config ? "replicas and env" : null,
+		parts.valuePaths ? "value paths" : null,
+	].filter((part) => part !== null);
+	return `Chart workload ${name}: ${named.join(", ")}`;
+}
+
+/** The inspector on one described chart workload. Draws nothing for an id that names none. */
 export function ChartWorkloadPanel({ nodeId }: { nodeId: string }) {
-	const raw = useCanvasStore((s) => s.nodes.find((n) => n.id === nodeId));
-	const node = nodeOfKind(raw, "chart_workload");
-	const openInspector = useCanvasStore((s) => s.openInspector);
+	const node = nodeOfKind(useSubjectNode(nodeId), "chart_workload");
+	if (!node) return null;
+	return <WorkloadSubject node={node} />;
+}
+
+/** The subject itself, mounted only once its node is known so the form seeds from real values. */
+function WorkloadSubject({ node }: { node: CanvasNode<"chart_workload"> }) {
+	const board = useBoard();
+	const close = useCloseInspector();
 	const ctx = useByoChartCanvas();
-	const [draft, setDraft] = useState<Overlay | null>(null);
-	// Why the server refused the overlay (a field it would not take), said under the Save button.
-	const [refusal, setRefusal] = useState<string | null>(null);
-	// One Save is one action (the changed parts only, written in turn), on the mutation contract: pending while in
-	// flight, the refusal said here, and the board's charts and described workloads re-read after.
-	const saveOverlay = useActionMutation(saveChartWorkloadOverlayAction, {
-		invalidates: [orpc.canvas.byoCharts.key(), orpc.canvas.chartWorkloads.key()],
-		onValidationError: (fields) =>
-			setRefusal(Object.values(fields).flatMap((m) => m ?? []).join(" ") || "Check the overlay."),
-		onRefusal: (error) => setRefusal(error.message),
-		successMessage: "Workload overlay saved.",
-	});
-	const saving = saveOverlay.isPending;
-
-	// Seed (and re-seed on a different node) the editable draft from the persisted overlay. Keyed on
-	// nodeId only, so a background re-scan refresh never clobbers in-flight unsaved edits.
-	useEffect(() => {
-		setDraft(node ? overlayOf(node.data.config) : null);
-	}, [nodeId, node]);
-
-	if (!node || !draft) return null;
+	const requested = useInspectorTab();
+	const tab = resolveTab(requested, TABS);
 	const config = node.data.config;
-	const r = config.rendered;
+	const rendered = config.rendered;
+	const operationId = workloadOperationId(config.id);
+	const operation = useOperations().find((o) => o.id === operationId) ?? null;
+	const stagedInput = operation ? workloadOverlayInputSchema.safeParse(operation.input) : null;
+	const staged = stagedInput?.success ? stagedInput.data : null;
 
-	const dirty = JSON.stringify(draft) !== JSON.stringify(overlayOf(config));
-	const pathRows: PathRow[] = Object.entries(draft.valuePaths);
+	const base = overlayOf(config);
+	// Seeded once: the component is keyed on its subject, and a background re-scan that refreshes
+	// the node must not replace what is being typed.
+	const form = useForm<OverlayForm>({ defaultValues: toForm(withStaged(base, staged)) });
+	const env = useFieldArray({ control: form.control, name: "env" });
+	const paths = useFieldArray({ control: form.control, name: "valuePaths" });
+	const values = useWatch({ control: form.control });
+	const bindings = useWatch({ control: form.control, name: "bindings" });
+	const checked = overlayFormSchema.safeParse(values);
+	const issue = checked.success ? null : (checked.error.issues[0] ?? null);
+	const replicasIssue = issue?.path[0] === "replicas" ? issue.message : null;
+	const bindingsIssue = issue?.path[0] === "bindings" ? issue.message : null;
 
-	const setPathRows = (rows: PathRow[]) =>
-		setDraft({
-			...draft,
-			valuePaths: Object.fromEntries(rows.filter(([k]) => k.trim() !== "")),
-		});
-	const env = draft.config.env ?? [];
-	const setEnv = (next: ServiceEnvVar[]) =>
-		setDraft({ ...draft, config: { ...draft.config, env: next } });
-
-	/** Save only the parts of the overlay that changed — once: a press while saving is dropped. */
-	const save = () => {
-		if (!ctx || saving) return;
-		const base = overlayOf(config);
-		const changed = (a: unknown, b: unknown) => JSON.stringify(a) !== JSON.stringify(b);
-		setRefusal(null);
-		saveOverlay.mutate({
+	/** Stage the overlay as it stands, or take it off the changeset when it equals what is saved. */
+	const commit = useCallback(() => {
+		if (!ctx) return;
+		const parsed = overlayFormSchema.safeParse(form.getValues());
+		// An overlay that does not validate is not staged; the field says why.
+		if (!parsed.success) return;
+		const saved = overlayOf(node.data.config);
+		const parts = changedParts(saved, fromForm(parsed.data, saved));
+		const document = board.document.getState();
+		const current = document.operations.find((o) => o.id === operationId);
+		if (Object.keys(parts).length === 0) {
+			document.unstageOperation(operationId);
+			return;
+		}
+		const input: WorkloadOverlayInput = {
 			projectId: ctx.projectId,
-			workloadId: config.id,
-			...(changed(draft.bindings, base.bindings) ? { bindings: draft.bindings } : {}),
-			...(changed(draft.config, base.config) ? { config: draft.config } : {}),
-			...(changed(draft.valuePaths, base.valuePaths) ? { valuePaths: draft.valuePaths } : {}),
+			workloadId: node.data.config.id,
+			...parts,
+		};
+		// Staging is an undo step; staging what is already staged would be an empty one.
+		if (current && same(current.input, input)) return;
+		document.stageOperation({
+			id: operationId,
+			target: "chart-workload",
+			verb: "overlay",
+			targetId: node.data.config.id,
+			summary: summaryOf(node.data.config.name, parts),
+			input,
 		});
+	}, [board, ctx, form, node, operationId]);
+
+	// A panel that goes away — another card is selected, the board is clicked, Escape — commits
+	// what it holds. The ref keeps the cleanup on the latest `commit` without re-running it.
+	const latestCommit = useRef(commit);
+	useEffect(() => {
+		latestCommit.current = commit;
+	}, [commit]);
+	useEffect(() => () => latestCommit.current(), []);
+
+	/** Put the form back to what is saved and take the overlay off the changeset. */
+	const discard = () => {
+		form.reset(toForm(base));
+		board.document.getState().unstageOperation(operationId);
 	};
 
-	return (
-		<div className="flex h-full flex-col">
-			{/* Header — dashed icon plate echoes the node's `external` (not-owned) treatment. */}
-			<div className="flex items-start gap-3 border-b border-border p-4">
-				<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-none border border-dashed text-muted-foreground">
-					<Package className="h-4 w-4" />
-				</span>
-				<div className="min-w-0 flex-1 space-y-1">
-					<div className="truncate text-sm font-semibold">{config.name}</div>
-					<div className="flex flex-wrap items-center gap-2">
-						<span className="vx-eyebrow rounded-none border border-border px-1.5 py-0.5">
-							Chart workload
-						</span>
-						<span className="font-mono text-ui-2xs text-muted-foreground">
-							{config.kind} · {config.chartId}
-						</span>
-					</div>
-				</div>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					className="h-7 w-7 shrink-0"
-					onClick={() => openInspector(null)}
-					aria-label="Close"
-				>
-					<X className="h-4 w-4" />
-				</Button>
-			</div>
+	const readOnly = !ctx;
 
-			<div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pb-10 pt-4 text-sm">
-				{/* Read-only description — mirrors the chart, overwritten each scan. */}
-				<section className="space-y-2">
-					<span className="vx-eyebrow">Described from the chart</span>
-					<p className="text-ui-xs leading-relaxed text-muted-foreground">
-						Read-only — extracted from <span className="font-mono">helm template</span> and
-						refreshed on every scan. The chart stays the deploy unit; these rows only describe
-						what it runs.
-					</p>
-					<dl className="grid grid-cols-[5.5rem_1fr] gap-y-1.5 border border-border bg-surface-sunken px-3 py-2.5 text-xs">
-						<dt className="text-muted-foreground">Image</dt>
-						<dd className="truncate font-mono" title={r.image}>
-							{r.image || "—"}
-						</dd>
-						<dt className="text-muted-foreground">Kind</dt>
-						<dd className="font-mono">{config.kind}</dd>
-						<dt className="text-muted-foreground">Replicas</dt>
-						<dd className="font-mono">{r.replicas != null ? r.replicas : "—"}</dd>
-						{r.ports.length > 0 && (
+	return (
+		<InspectorFrame
+			icon={<Package className="h-4 w-4" />}
+			external
+			eyebrow="Chart workload"
+			title={config.name}
+			summary={
+				<span className="font-mono">
+					{config.kind} · {config.chartId}
+				</span>
+			}
+			tabs={TABS}
+			tab={tab}
+			onTabChange={(next) => board.view.getState().setTab(next)}
+			notice={
+				readOnly ? (
+					"Read-only: this board has no project to stage the overlay for."
+				) : operation ? (
+					<span className="flex items-center justify-between gap-3">
+						<span>
+							Overlay staged. It is written to the chart&apos;s values when you apply your
+							changes.
+						</span>
+						<Button type="button" variant="ghost" size="xs" onClick={discard}>
+							Discard
+						</Button>
+					</span>
+				) : undefined
+			}
+			onClose={close}
+		>
+			{tab === "status" ? (
+				<section className="space-y-3 text-sm">
+					<SectionHeading
+						level={3}
+						title="Described from the chart"
+						description={
 							<>
-								<dt className="text-muted-foreground">Ports</dt>
-								<dd className="font-mono">
-									{r.ports
-										.map((p) => `${p.container_port}${p.protocol ? `/${p.protocol}` : ""}`)
-										.join(" · ")}
-								</dd>
+								Read-only: extracted from <span className="font-mono">helm template</span> and
+								refreshed on every scan. The chart stays the deploy unit; these rows only
+								describe what it runs.
 							</>
+						}
+					/>
+					<dl className="space-y-1.5 border border-border bg-surface-sunken px-3 py-2.5 text-xs">
+						<DescribedRow label="Image" value={rendered.image || "—"} />
+						<DescribedRow label="Kind" value={config.kind} />
+						<DescribedRow
+							label="Replicas"
+							value={rendered.replicas != null ? String(rendered.replicas) : "—"}
+						/>
+						{rendered.ports.length > 0 && (
+							<DescribedRow
+								label="Ports"
+								value={rendered.ports
+									.map((p) => `${p.container_port}${p.protocol ? `/${p.protocol}` : ""}`)
+									.join(" · ")}
+							/>
 						)}
-						{r.resources && (
-							<>
-								<dt className="text-muted-foreground">Resources</dt>
-								<dd className="font-mono text-ui-xs">
-									{r.resources.requests.cpu}/{r.resources.requests.memory} →{" "}
-									{r.resources.limits.cpu}/{r.resources.limits.memory}
-								</dd>
-							</>
+						{rendered.resources && (
+							<DescribedRow
+								label="Resources"
+								value={`${rendered.resources.requests.cpu}/${rendered.resources.requests.memory} → ${rendered.resources.limits.cpu}/${rendered.resources.limits.memory}`}
+							/>
 						)}
 					</dl>
-					{r.env_keys.length > 0 && (
+					{rendered.env_keys.length > 0 && (
 						<div className="space-y-1">
 							<span className="vx-eyebrow text-ui-3xs">Rendered env · keys only</span>
 							<div className="flex flex-wrap gap-1">
-								{r.env_keys.map((k) => (
+								{rendered.env_keys.map((k) => (
 									<span
 										key={k}
 										className="border border-border px-1.5 py-0.5 font-mono text-ui-2xs text-muted-foreground"
@@ -193,196 +297,167 @@ export function ChartWorkloadPanel({ nodeId }: { nodeId: string }) {
 						</div>
 					)}
 				</section>
-
-				{/* Bindings — the W3 editor, reused verbatim (the read model uses serviceBindingSchema). */}
-				<section className="space-y-2 border-t border-border/60 pt-4">
-					<span className="vx-eyebrow">Bindings</span>
-					<BindingsField
-						value={draft.bindings}
-						onChange={(next) => setDraft({ ...draft, bindings: next })}
-						// The BYO chart lane resolves the `database` facet (a per-binding MySQL user's own
-						// database); the service lane does not, so only this panel offers it (#6467).
-						allowDatabaseFacet
-					/>
-				</section>
-
-				{/* Editable overlay (v1): replicas + env. Written into the chart's values on deploy (Lane 2). */}
-				<section className="space-y-2 border-t border-border/60 pt-4">
-					<span className="vx-eyebrow">Overrides</span>
-					<div className="space-y-1">
-						<span className="vx-eyebrow text-ui-3xs">Replicas</span>
-						<Input
-							aria-label="Replicas"
-							type="number"
-							min={0}
-							value={draft.config.replicas ?? ""}
-							placeholder={r.replicas != null ? String(r.replicas) : "from chart"}
-							className="h-8 w-28 font-mono text-xs"
-							onChange={(e) =>
-								setDraft({
-									...draft,
-									config: {
-										...draft.config,
-										replicas:
-											e.target.value === "" ? undefined : Number(e.target.value),
-									},
-								})
-							}
-						/>
-					</div>
-					<EnvEditor value={env} onChange={setEnv} />
-				</section>
-
-				{/* Value-path override — where each knob writes into the chart's Helm values (Lane 2 infers
-				    these; this is the manual override affordance). */}
-				<section className="space-y-2 border-t border-border/60 pt-4">
-					<span className="vx-eyebrow">Value paths</span>
-					<p className="font-mono text-ui-xs leading-relaxed text-muted-foreground">
-						Where a knob writes into the chart&rsquo;s values (e.g.{" "}
-						<span className="text-foreground">replicas → replicaCount</span>). Auto-inferred on
-						scan; override here when the chart&rsquo;s shape is non-standard.
-					</p>
-					<PathEditor rows={pathRows} onChange={setPathRows} />
-				</section>
-			</div>
-
-			{refusal && (
-				<p role="alert" className="border-t border-border px-4 pt-3 text-ui-xs text-destructive">
-					{refusal}
-				</p>
-			)}
-
-			{/* Commit bar — the overlay is out-of-band, so it never enters the Pending Changes diff; it's
-			    saved straight to the row. */}
-			<div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
-				<span className="text-ui-xs text-muted-foreground">
-					{ctx
-						? dirty
-							? "Unsaved overlay changes"
-							: "Overlay in sync"
-						: "Read-only (no project context)"}
-				</span>
-				<Button
-					type="button"
-					size="sm"
-					disabled={!ctx || !dirty || saving}
-					onClick={save}
+			) : (
+				<form
+					className="space-y-5 text-sm"
+					onBlur={commit}
+					onSubmit={(e) => {
+						e.preventDefault();
+						commit();
+					}}
 				>
-					{saving ? "Saving…" : "Save overlay"}
-				</Button>
-			</div>
+					<fieldset disabled={readOnly} className="space-y-5">
+						{/* Bindings: the W3 editor, reused as it is. */}
+						<section className="space-y-2">
+							<SectionHeading level={3} title="Bindings" />
+							<BindingsField
+								value={bindings}
+								onChange={(next) => {
+									form.setValue("bindings", next, { shouldDirty: true });
+									commit();
+								}}
+								// The BYO chart lane resolves the `database` facet (a per-binding MySQL user's
+								// own database); the service lane does not, so only this panel offers it (#6467).
+								allowDatabaseFacet
+							/>
+							{bindingsIssue && (
+								<p className="text-xs font-medium text-foreground">{bindingsIssue}</p>
+							)}
+						</section>
+
+						{/* Replicas and env: written into the chart's values on deploy. */}
+						<section className="space-y-2">
+							<SectionHeading level={3} title="Overrides" />
+							<div className="space-y-1">
+								<span className="vx-eyebrow text-ui-3xs">Replicas</span>
+								<Input
+									aria-label="Replicas"
+									type="number"
+									min={0}
+									placeholder={rendered.replicas != null ? String(rendered.replicas) : "from chart"}
+									aria-invalid={replicasIssue ? true : undefined}
+									className="h-8 w-28 font-mono text-xs"
+									{...form.register("replicas")}
+								/>
+								{replicasIssue && (
+									<p className="text-xs font-medium text-foreground">{replicasIssue}</p>
+								)}
+							</div>
+							<div className="space-y-1.5">
+								<span className="vx-eyebrow text-ui-3xs">Env</span>
+								{env.fields.map((row, i) => (
+									<div key={row.id} className="flex items-center gap-1.5">
+										<Input
+											aria-label="Environment variable name"
+											placeholder="NAME"
+											className="h-8 flex-1 font-mono text-xs"
+											{...form.register(`env.${i}.name`)}
+										/>
+										<Input
+											aria-label="Environment variable value"
+											placeholder="value"
+											className="h-8 flex-1 font-mono text-xs"
+											{...form.register(`env.${i}.value`)}
+										/>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+											aria-label="Remove env var"
+											onClick={() => {
+												env.remove(i);
+												queueMicrotask(commit);
+											}}
+										>
+											<X className="h-3.5 w-3.5" />
+										</Button>
+									</div>
+								))}
+								<AddRowButton label="Add env var" onClick={() => env.append({ name: "", value: "" })} />
+							</div>
+						</section>
+
+						{/* Where each knob writes into the chart's Helm values. Inferred at scan; this is
+						    the manual override. */}
+						<section className="space-y-2">
+							<SectionHeading
+								level={3}
+								title="Value paths"
+								description={
+									<>
+										Where a knob writes into the chart&rsquo;s values (for example{" "}
+										<span className="font-mono text-foreground">replicas → replicaCount</span>).
+										Inferred on scan; override here when the chart&rsquo;s shape is non-standard.
+									</>
+								}
+							/>
+							<div className="space-y-1.5">
+								{paths.fields.map((row, i) => (
+									<div key={row.id} className="flex items-center gap-1.5">
+										<Input
+											aria-label="Knob"
+											placeholder="knob"
+											className="h-8 flex-1 font-mono text-xs"
+											{...form.register(`valuePaths.${i}.key`)}
+										/>
+										<span className="shrink-0 font-mono text-xs text-muted-foreground">→</span>
+										<Input
+											aria-label="Values path"
+											placeholder="dot.path.in.values"
+											className="h-8 flex-1 font-mono text-xs"
+											{...form.register(`valuePaths.${i}.path`)}
+										/>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+											aria-label="Remove value path"
+											onClick={() => {
+												paths.remove(i);
+												queueMicrotask(commit);
+											}}
+										>
+											<X className="h-3.5 w-3.5" />
+										</Button>
+									</div>
+								))}
+								<AddRowButton
+									label="Add value path"
+									onClick={() => paths.append({ key: "", path: "" })}
+								/>
+							</div>
+						</section>
+					</fieldset>
+				</form>
+			)}
+		</InspectorFrame>
+	);
+}
+
+/** One row of the read-only description. */
+function DescribedRow({ label, value }: { label: string; value: string }) {
+	return (
+		<div className="flex gap-3">
+			<dt className="w-20 shrink-0 text-muted-foreground">{label}</dt>
+			<dd className="min-w-0 truncate font-mono" title={value}>
+				{value}
+			</dd>
 		</div>
 	);
 }
 
-/** A minimal name→value env editor (the workload's editable env overlay). */
-function EnvEditor({
-	value,
-	onChange,
-}: {
-	value: ServiceEnvVar[];
-	onChange: (next: ServiceEnvVar[]) => void;
-}) {
+/** The dashed "add a row" control under a list of rows. */
+function AddRowButton({ label, onClick }: { label: string; onClick: () => void }) {
 	return (
-		<div className="space-y-1.5">
-			<span className="vx-eyebrow text-ui-3xs">Env</span>
-			{value.map((row, i) => (
-				// Positional rows — the index is their identity.
-				<div key={i} className="flex items-center gap-1.5">
-					<Input
-						aria-label="Environment variable name"
-						value={row.name}
-						placeholder="NAME"
-						className="h-8 flex-1 font-mono text-xs"
-						onChange={(e) =>
-							onChange(value.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))
-						}
-					/>
-					<Input
-						aria-label="Environment variable value"
-						value={row.value}
-						placeholder="value"
-						className="h-8 flex-1 font-mono text-xs"
-						onChange={(e) =>
-							onChange(value.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))
-						}
-					/>
-					<Button
-						type="button"
-						variant="ghost"
-						size="icon"
-						className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
-						aria-label="Remove env var"
-						onClick={() => onChange(value.filter((_, j) => j !== i))}
-					>
-						<X className="h-3.5 w-3.5" />
-					</Button>
-				</div>
-			))}
-			<button
-				type="button"
-				onClick={() => onChange([...value, { name: "", value: "" }])}
-				className="flex items-center gap-1.5 rounded-sm border border-dashed border-border-strong px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
-			>
-				<Plus className="h-3.5 w-3.5" />
-				Add env var
-			</button>
-		</div>
-	);
-}
-
-/** A minimal knob→dot-path editor for the value-path override. */
-function PathEditor({
-	rows,
-	onChange,
-}: {
-	rows: PathRow[];
-	onChange: (next: PathRow[]) => void;
-}) {
-	return (
-		<div className="space-y-1.5">
-			{rows.map(([key, path], i) => (
-				// Positional rows — the index is their identity.
-				<div key={i} className="flex items-center gap-1.5">
-					<Input
-						aria-label="Knob"
-						value={key}
-						placeholder="knob"
-						className="h-8 flex-1 font-mono text-xs"
-						onChange={(e) =>
-							onChange(rows.map((x, j) => (j === i ? [e.target.value, x[1]] : x)))
-						}
-					/>
-					<span className="shrink-0 font-mono text-xs text-muted-foreground">→</span>
-					<Input
-						aria-label="Values path"
-						value={path}
-						placeholder="dot.path.in.values"
-						className="h-8 flex-1 font-mono text-xs"
-						onChange={(e) =>
-							onChange(rows.map((x, j) => (j === i ? [x[0], e.target.value] : x)))
-						}
-					/>
-					<Button
-						type="button"
-						variant="ghost"
-						size="icon"
-						className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
-						aria-label="Remove value path"
-						onClick={() => onChange(rows.filter((_, j) => j !== i))}
-					>
-						<X className="h-3.5 w-3.5" />
-					</Button>
-				</div>
-			))}
-			<button
-				type="button"
-				onClick={() => onChange([...rows, ["", ""]])}
-				className="flex items-center gap-1.5 rounded-sm border border-dashed border-border-strong px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
-			>
-				<Plus className="h-3.5 w-3.5" />
-				Add value path
-			</button>
-		</div>
+		<button
+			type="button"
+			onClick={onClick}
+			className="flex items-center gap-1.5 rounded-sm border border-dashed border-border-strong px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground focus-visible:outline-1 focus-visible:outline-ring"
+		>
+			<Plus className="h-3.5 w-3.5" aria-hidden="true" />
+			{label}
+		</button>
 	);
 }

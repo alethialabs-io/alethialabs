@@ -12,7 +12,7 @@ import type {
 	CanvasNode,
 	NodeConfigMap,
 } from "@/components/design-project/canvas/graph/types";
-import { PROJECT_NODE_ID } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
 
 /** The project root, with no cloud identity chosen. */
 export function projectNode(): CanvasNode {

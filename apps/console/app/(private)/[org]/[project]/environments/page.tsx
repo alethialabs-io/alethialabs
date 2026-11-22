@@ -4,9 +4,11 @@
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
 import { prefetchClassificationOfList } from "@/components/classification/prefetch-classification";
+import { environmentsQueryFromUrl } from "@/components/environments/environments-query";
 import { EnvironmentsView } from "@/components/environments/environments-view";
 import { resolveProjectOr404 } from "@/lib/projects/resolve-project-or-404";
 import { getQueryClient } from "@/lib/query/client";
+import { paramReader } from "@/lib/query/filter-url-codec";
 import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
@@ -19,13 +21,16 @@ export async function generateMetadata() {
 
 /**
  * `/{org}/{project}/environments` — the project's Environments management view (in place of the
- * canvas). Lists every environment; create / duplicate / delete / promote are handled in the client
- * view.
+ * canvas). Lists the project's environments; create / duplicate / delete / promote are handled in
+ * the client view.
  *
  * THE ADR 0005 SLICE (#6120), as the jobs route (#6113): the page's one read,
- * `environments.overview`, is prefetched IN-PROCESS through the read router with exactly the key
+ * `environments.overview`, is prefetched IN-PROCESS through the read router with exactly the keys
  * the client asks for, and the dehydrated cache is handed to the client — so the first paint
- * carries the environments and the client issues no request on mount. Each environment card's
+ * carries the environments and the client issues no request on mount. Two keys, as every list on
+ * the filter standard: the pristine read (`{ project }`), which the client renders before its
+ * filter store has read the link, and the read for the link's filters, the key it settles on once
+ * it has — the same key twice for a pristine link, which TanStack dedupes. Each environment card's
  * classification control is prefetched the same way once the environments are known (#6334): the
  * edit decision, the taxonomy and every card's chips in the view's one batched read, so the
  * "Classify" pickers are in the first paint. `loading.tsx` covers the
@@ -37,8 +42,10 @@ export async function generateMetadata() {
  */
 export default async function ProjectEnvironmentsPage({
 	params,
+	searchParams,
 }: {
 	params: Promise<{ org: string; project: string }>;
+	searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
 	const { org, project } = await params;
 	// Null is the project 404; a lost session or a real failure never reaches this line.
@@ -46,7 +53,10 @@ export default async function ProjectEnvironmentsPage({
 
 	const queryClient = getQueryClient();
 	const overview = serverOrpc().environments.overview.queryOptions({ input: { project } });
-	await queryClient.prefetchQuery(overview);
+	const filtered = serverOrpc().environments.overview.queryOptions({
+		input: environmentsQueryFromUrl(project, paramReader(await searchParams)),
+	});
+	await Promise.all([queryClient.prefetchQuery(overview), queryClient.prefetchQuery(filtered)]);
 	const envs = queryClient.getQueryData(overview.queryKey)?.envs;
 	if (envs !== undefined) {
 		await prefetchClassificationOfList(

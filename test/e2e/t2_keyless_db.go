@@ -903,6 +903,17 @@ func keylessProbeSQL(engine, table, canary string) string {
 		table, table, canary, table)
 }
 
+// keylessDebugContainerPrefix names the ephemeral containers the probe injects. It must not be a
+// prefix the PRODUCT renders: the 2026-11-20 aws keyless run (44749574208) named its debug
+// container "keyless-probe", the same name as the service's own container, and the API server
+// rejected it as a duplicate — the product was wired and working, the instrument failed.
+const keylessDebugContainerPrefix = "alethia-e2e-debug-"
+
+// keylessDebugContainerName is the ephemeral container name for one probe step (`tag`).
+func keylessDebugContainerName(tag string) string {
+	return keylessDebugContainerPrefix + tag
+}
+
 // keylessClientArgv builds the client invocation for the ephemeral probe container. No password is
 // passed and none is available: the proxy on 127.0.0.1 accepts the local connection and authenticates
 // upstream itself, which is the property under test.
@@ -918,6 +929,20 @@ func keylessClientArgv(engine, user, dbName string, port int, sql string) []stri
 		"--username=" + user, "--dbname=" + dbName,
 		"--no-password", "--tuples-only", "--no-align", "--command=" + sql,
 	}
+}
+
+// keylessClientError reports whether the client's output is a failure rather than a result, and
+// returns the failing line. psql prints "psql: error: …" or "ERROR:  …"/"FATAL:  …"; the mysql client
+// prints "ERROR 1045 (28000): …". A connection the proxy refused upstream looks exactly like this.
+func keylessClientError(out string) (string, bool) {
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "psql: error") || strings.HasPrefix(line, "ERROR:") ||
+			strings.HasPrefix(line, "FATAL:") || strings.HasPrefix(line, "ERROR ") {
+			return line, true
+		}
+	}
+	return "", false
 }
 
 // parseProbeValue pulls the canary out of the client's stdout. Both clients print the selected value

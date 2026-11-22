@@ -1,27 +1,17 @@
+"use client";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import Link from "next/link";
-import { ErrorState } from "@/components/errors/error-state";
-import { Button } from "@repo/ui/button";
+import { useParams } from "next/navigation";
+import { JobNotFoundState } from "@/components/jobs/job-not-found-state";
 
 /**
  * The job route's own 404 (#6121): an address whose id cannot be a job, which `page.tsx` refuses
- * before any read. It renders inside the shell, so the compact `ErrorState`. A job that exists but
- * is not visible to the reader renders the page's own "Job not found." — the same sentence, so an
- * absent job and an invisible one read the same.
+ * before any read. It is the SAME state the page draws for a job that is absent or not visible to
+ * the reader (R6 D-25) — one sentence and one way back, to this organization's jobs. A `not-found`
+ * file receives no params, so the organization is read from the address.
  */
 export default function JobNotFound() {
-	return (
-		<ErrorState
-			code="404"
-			title="Job not found."
-			description="This job has been deleted, or it belongs to an organisation you are not a member of."
-			actions={
-				<Button size="sm" nativeButton={false} render={<Link href="/" />}>
-					Go home
-				</Button>
-			}
-		/>
-	);
+	const { org } = useParams<{ org: string }>();
+	return <JobNotFoundState orgSlug={org} />;
 }

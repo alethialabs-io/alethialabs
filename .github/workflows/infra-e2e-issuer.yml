@@ -28,9 +28,13 @@ on:
 
 # `github.ref`, not the PR number: this also fires on `push`, where the number renders empty and every
 # push to `main` would share one group (infra-aws-oidc.yml records the same trap).
+# CONCURRENCY HYGIENE (2026-11-22): `cancel-in-progress` is true only for `pull_request`, so a push to
+# the deploy branch (an apply) is never cancelled mid-flight; push runs on one ref still SERIALISE,
+# and a newer push replaces a still-PENDING one, which is the apply that would have been superseded
+# anyway. `github.event_name` is in the group so a dispatch never shares a group with a push.
 concurrency:
-  group: infra-e2e-issuer-${{ github.ref }}
-  cancel-in-progress: true
+  group: infra-e2e-issuer-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

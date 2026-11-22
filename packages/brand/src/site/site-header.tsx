@@ -3,204 +3,167 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useEffect, useId, useRef, useState } from "react";
+import type { CSSProperties, FocusEvent, KeyboardEvent } from "react";
+import { SiteLink } from "./site-link";
 import { usePathname } from "next/navigation";
-import { Menu } from "lucide-react";
+import { ArrowUpRight, Menu } from "lucide-react";
 import { Button } from "@repo/ui/button";
-import { Sheet, SheetContent, SheetTrigger } from "@repo/ui/sheet";
-import { ProviderIcon } from "@repo/ui/provider-icon";
-import { AlethiaLockup } from "../lockup";
-import {
-  disp,
-  Icon,
-  type IconKey,
-  mono,
-  Wrap,
-} from "./primitives";
-
-const GITHUB_URL = "https://github.com/alethialabs-io/alethialabs";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@repo/ui/sheet";
+import { AnimatedMark } from "./animated-mark";
+import { Icon, Wrap } from "./primitives";
 
 interface MenuLink {
-  ic: IconKey;
   name: string;
-  desc: string;
   href: string;
-  badge?: boolean;
   external?: boolean;
 }
-/**
- * The products. There are three, and this list holds three.
+
+/*
+ * The header's whole information architecture, as data. Desktop and the mobile
+ * sheet both render from these lists, so the two can never disagree about what
+ * the site has in it.
  *
- * It used to hold twelve across four groups — Project designer, Runners, Jobs,
- * Alerts, AI agent, Repo scanner, MCP server, Organizations, SSO, RBAC. Those are
- * FEATURES of the three products below, not products, and listing them here made
- * the menu a feature dump that told a visitor nothing about what Alethia sells.
- * Governance already has its own nav item (/enterprise); everything else is one
- * level down in the docs where it belongs.
+ * Left: four plain links. Right: Company ▾, Contact, and the CTA. There is no
+ * Resources menu any more — the blog becomes News, and the changelog will merge
+ * into it, so a menu holding them would re-link what the left row already says.
  */
-const PRODUCT_MENU: MenuLink[] = [
-  {
-    ic: "grid",
-    name: "Console",
-    desc: "The control plane — configure infrastructure visually, watch it apply",
-    href: "/docs/get-started/the-console",
-  },
-  {
-    ic: "terminal",
-    name: "alethia CLI",
-    desc: "Plan, apply, and operate from your shell",
-    href: "/docs/get-started/the-cli",
-  },
-  {
-    ic: "shield",
-    name: "Elench",
-    desc: "The gate between plan and apply — every apply leaves a signed receipt",
-    href: "/docs/concepts/elench",
-  },
+const LEFT_LINKS: MenuLink[] = [
+  { name: "News", href: "/news" },
+  // Docs is its own surface, so it opens in a new tab like any off-site link.
+  { name: "Docs", href: "/docs", external: true },
+  { name: "Enterprise", href: "/enterprise" },
+  { name: "Pricing", href: "/pricing" },
 ];
 
-const RESOURCE_MENU: MenuLink[] = [
-  {
-    ic: "book",
-    name: "Docs",
-    desc: "Guides, concepts, and the full CLI reference",
-    href: "/docs",
-    badge: true,
-  },
-  {
-    ic: "layers",
-    name: "Open source",
-    desc: "AGPL core — self-host on any cloud",
-    href: "/open-source",
-  },
-  {
-    ic: "pen",
-    name: "Blog",
-    desc: "Engineering notes and product updates",
-    href: "/blog",
-  },
-  {
-    ic: "list",
-    name: "Changelog",
-    desc: "What shipped, every week",
-    href: `${GITHUB_URL}/releases`,
-    external: true,
-  },
+const COMPANY_MENU: MenuLink[] = [
+  { name: "About", href: "/about" },
+  { name: "Services", href: "/services" },
+  { name: "Open source", href: "/open-source" },
+  { name: "Security", href: "/security" },
+  { name: "Legal", href: "/legal" },
 ];
 
-/** Formats a raw star count compactly (2400 → "2.4k", 950 → "950"). */
-function formatStars(n: number): string {
-  if (n < 1000) return String(n);
-  const k = n / 1000;
-  return (k >= 10 ? Math.round(k) : Math.round(k * 10) / 10) + "k";
-}
+const CONTACT_LINK: MenuLink = { name: "Contact", href: "/contact" };
 
-/** Single mega-menu entry row (icon tile + name + description). */
-/** One row in a mega-menu. Hover is CSS, not React state: the previous version
- * tracked it with `useState` per item, so moving the pointer across the Product
- * menu re-rendered a component twelve times for a background colour. */
-function MenuItem({ ic, name, desc, badge, href, external }: MenuLink) {
+const NAV_LINK_STYLE: CSSProperties = {
+  padding: "7px 12px",
+  fontSize: 13.5,
+  color: "var(--text-tertiary)",
+  borderRadius: "var(--radius-sm)",
+  textDecoration: "none",
+};
+
+/** The small "opens elsewhere" arrow, plus words for a screen reader. */
+function ExternalMark() {
   return (
-    <Link
-      href={href}
-      target={external ? "_blank" : undefined}
-      rel={external ? "noreferrer" : undefined}
-      className="vx-clamp vx-clamp--tight hover:bg-[var(--surface-muted)]"
-      style={{
-        display: "flex",
-        gap: 12,
-        padding: "10px 11px",
-        borderRadius: "var(--radius-md)",
-        background: "transparent",
-        textDecoration: "none",
-        transition: "background var(--dur-1) var(--ease)",
-      }}
-    >
-      <span
-        style={{
-          display: "grid",
-          placeItems: "center",
-          width: 34,
-          height: 34,
-          flexShrink: 0,
-          borderRadius: "var(--radius-sm)",
-          border: "1px solid var(--border)",
-          background: "var(--surface-sunken)",
-          color: "var(--text-primary)",
-        }}
-      >
-        <Icon k={ic} size={16} />
-      </span>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span
-            style={{
-              fontSize: 13.5,
-              fontWeight: 500,
-              color: "var(--text-primary)",
-              ...disp,
-            }}
-          >
-            {name}
-          </span>
-          {badge && (
-            <span
-              style={{
-                ...mono,
-                fontSize: 8.5,
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
-                color: "var(--text-tertiary)",
-                border: "1px solid var(--border-strong)",
-                borderRadius: "var(--radius-xs)",
-                padding: "1px 5px",
-              }}
-            >
-              Start here
-            </span>
-          )}
-        </div>
-        <p
-          style={{
-            fontSize: 11.5,
-            color: "var(--text-tertiary)",
-            margin: "3px 0 0",
-            lineHeight: 1.4,
-          }}
-        >
-          {desc}
-        </p>
-      </div>
-    </Link>
+    <>
+      <ArrowUpRight aria-hidden size={12} strokeWidth={1.8} style={{ opacity: 0.7 }} />
+      <span className="sr-only"> (opens in a new tab)</span>
+    </>
   );
 }
 
-/** Hover-open dropdown wrapper for a nav item. */
+/** One text-only row inside a dropdown: the name, and an arrow if it leaves the site. */
+function MenuRow({ name, href, external }: MenuLink) {
+  return (
+    <SiteLink
+      href={href}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noreferrer" : undefined}
+      className="text-text-secondary hover:text-text-primary focus-visible:text-text-primary"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "7px 10px",
+        fontSize: 13.5,
+        borderRadius: "var(--radius-sm)",
+        textDecoration: "none",
+        whiteSpace: "nowrap",
+        transition: "color var(--dur-1) var(--ease)",
+      }}
+    >
+      {name}
+      {external && <ExternalMark />}
+    </SiteLink>
+  );
+}
+
+/**
+ * A nav item that opens a small text-only dropdown.
+ *
+ * It opens on hover, on focus (tabbing onto the trigger opens it, so the rows are
+ * the next Tab stops) and on click, and closes on pointer leave, on focus leaving
+ * the whole item, and on Escape — which also hands focus back to the trigger. The
+ * previous menu opened on hover only, so a keyboard could not reach its links.
+ */
 function NavMenu({
   label,
   id,
   open,
   setOpen,
-  width,
-  children,
+  align = "left",
+  items,
 }: {
   label: string;
   id: string;
   open: string | null;
   setOpen: (v: string | null) => void;
-  width: number;
-  children: React.ReactNode;
+  align?: "left" | "right";
+  items: MenuLink[];
 }) {
   const active = open === id;
+  const panelId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  // Set by Escape just before it hands focus back to the trigger. Without it, that
+  // focus move bubbles to the wrapper's onFocus and reopens the menu Escape closed.
+  const skipNextFocusOpen = useRef(false);
+
+  /** Closes the menu once focus moves to something outside it. */
+  const onBlur = (e: FocusEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget)) setOpen(null);
+  };
+
+  /** Opens the menu when focus enters it, except for the focus Escape returns. */
+  const onFocus = () => {
+    if (skipNextFocusOpen.current) {
+      skipNextFocusOpen.current = false;
+      return;
+    }
+    setOpen(id);
+  };
+
+  /** Escape closes the menu and returns focus to its trigger. */
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Escape" || !active) return;
+    e.stopPropagation();
+    setOpen(null);
+    if (triggerRef.current && document.activeElement !== triggerRef.current) {
+      skipNextFocusOpen.current = true;
+      triggerRef.current.focus();
+    }
+  };
+
   return (
     <div
       onMouseEnter={() => setOpen(id)}
       onMouseLeave={() => setOpen(null)}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      onKeyDown={onKeyDown}
       style={{ position: "relative" }}
     >
       <button
+        ref={triggerRef}
         type="button"
+        aria-expanded={active}
+        aria-controls={panelId}
+        // Click OPENS rather than toggles: focus already opened it a moment
+        // earlier, so a toggle would close the menu on the very click that
+        // was meant to open it.
+        onClick={() => setOpen(id)}
+        className="vx-clamp vx-clamp--tight"
         style={{
           display: "flex",
           alignItems: "center",
@@ -227,99 +190,84 @@ function NavMenu({
           <Icon k="chev" size={13} sw={2} />
         </span>
       </button>
-      {active && (
-        <div
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            width,
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius-lg)",
-            background: "var(--surface)",
-            boxShadow: "var(--shadow-lg)",
-            padding: 14,
-            // An overlay opened FROM the header, so it takes the overlay rung — not the
-            // frame's. At the old literal 60 it TIED with .vx-frame and won only on DOM
-            // order; now it outranks the whole chrome by number.
-            zIndex: "var(--z-overlay)",
-            marginTop: 1,
-          }}
-        >
-          {children}
-        </div>
-      )}
+      <div
+        id={panelId}
+        hidden={!active}
+        style={{
+          position: "absolute",
+          top: "100%",
+          // The right-hand menu hangs from its right edge so it never runs off the page.
+          left: align === "left" ? 0 : undefined,
+          right: align === "right" ? 0 : undefined,
+          minWidth: 180,
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-lg)",
+          background: "var(--surface)",
+          boxShadow: "var(--shadow-lg)",
+          padding: 6,
+          // An overlay opened FROM the header, so it takes the overlay rung — not the
+          // frame's. At the old literal 60 it TIED with .vx-frame and won only on DOM
+          // order; now it outranks the whole chrome by number.
+          zIndex: "var(--z-overlay)",
+          marginTop: 1,
+        }}
+      >
+        {items.map((it) => (
+          <MenuRow key={it.name} {...it} />
+        ))}
+      </div>
     </div>
-  );
-}
-
-/** GitHub link with an optional live star count. */
-function GitHubLink({ stars }: { stars?: number | null }) {
-  return (
-    <a
-      href={GITHUB_URL}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="ah-hide-sm"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        fontSize: 13,
-        color: "var(--text-tertiary)",
-        textDecoration: "none",
-      }}
-    >
-      <ProviderIcon provider="github" size={16} />
-      {stars != null && (
-        <span style={{ ...mono, fontSize: 12 }}>{formatStars(stars)}</span>
-      )}
-    </a>
   );
 }
 
 /** A top-level nav link. `aria-current="page"` is the accessible signal that this
  * is the page you are on, and the clamp reads the same attribute — so the visual
- * held state and the announced one can never disagree. */
-function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+ * held state and the announced one can never disagree. An external link opens in
+ * a new tab, carries the arrow mark, and is never marked current. */
+function NavLink({ item }: { item: MenuLink }) {
   const pathname = usePathname();
-  const current = pathname === href || pathname.startsWith(`${href}/`);
+  const current =
+    !item.external && (pathname === item.href || pathname.startsWith(`${item.href}/`));
   return (
-    <Link
-      href={href}
+    <SiteLink
+      href={item.href}
+      target={item.external ? "_blank" : undefined}
+      rel={item.external ? "noreferrer" : undefined}
       aria-current={current ? "page" : undefined}
       className="vx-clamp vx-clamp--tight"
       style={{
         ...NAV_LINK_STYLE,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
         color: current ? "var(--text-primary)" : NAV_LINK_STYLE.color,
       }}
     >
-      {children}
-    </Link>
+      {item.name}
+      {item.external && <ExternalMark />}
+    </SiteLink>
   );
 }
 
-const NAV_LINK_STYLE: React.CSSProperties = {
-  padding: "7px 12px",
-  fontSize: 13.5,
-  color: "var(--text-tertiary)",
-  borderRadius: "var(--radius-sm)",
-  textDecoration: "none",
-};
-
-type BillingPlan = "community" | "team" | "enterprise";
-
 interface NavContext {
   status: "anon" | "authed";
-  plan?: BillingPlan;
   /** Console path to the active org (`/{slug}`). */
   dashboardPath?: string;
-  /** Console path to the active org's billing settings (the upgrade surface). */
-  upgradePath?: string;
+}
+
+/** Narrows the untyped `/api/nav-context` body to the one thing the header reads. */
+function readNavContext(data: unknown): NavContext {
+  if (typeof data !== "object" || data === null) return { status: "anon" };
+  if (!("authenticated" in data) || !data.authenticated) return { status: "anon" };
+  const dashboardPath =
+    "dashboardPath" in data && typeof data.dashboardPath === "string"
+      ? data.dashboardPath
+      : undefined;
+  return { status: "authed", dashboardPath };
 }
 
 /**
- * Reads the viewer's auth + plan state from the console's `/api/nav-context`. The
+ * Reads the viewer's auth state from the console's `/api/nav-context`. The
  * marketing zone shares the prod origin with the console, so this same-origin fetch
  * carries the Better Auth cookie. Defaults to `anon` (the always-redirected landing
  * page is the common case) and only flips to `authed` once the probe resolves — so
@@ -332,14 +280,10 @@ function useNavContext(): NavContext {
     let active = true;
     fetch("/api/nav-context", { credentials: "same-origin" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!active || !data?.authenticated) return;
-        setCtx({
-          status: "authed",
-          plan: data.plan,
-          dashboardPath: data.dashboardPath,
-          upgradePath: data.upgradePath,
-        });
+      .then((data: unknown) => {
+        if (!active) return;
+        const next = readNavContext(data);
+        if (next.status === "authed") setCtx(next);
       })
       .catch(() => {});
     return () => {
@@ -349,17 +293,47 @@ function useNavContext(): NavContext {
   return ctx;
 }
 
-/** Public site header — brand lockup, Product/Resources menus, Enterprise & Pricing links, GitHub, and CTAs. */
-export function Header({
-  stars,
-  homeHref = "/",
-}: {
-  stars?: number | null;
-  homeHref?: "/" | "/home";
-}) {
+/** The one call to action: "Try Alethia" for a visitor, "Dashboard" once signed in. */
+function primaryCta(nav: NavContext): { label: string; href: string } {
+  return nav.status === "authed"
+    ? { label: "Dashboard", href: nav.dashboardPath ?? "/dashboard" }
+    : { label: "Try Alethia", href: "/signup" };
+}
+
+const SHEET_LINK_CLASS =
+  "flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-surface-muted hover:text-text-primary";
+
+/** A link row in the mobile sheet; closes the sheet when followed. */
+function SheetLink({ item, onNavigate }: { item: MenuLink; onNavigate: () => void }) {
+  return (
+    <SiteLink
+      href={item.href}
+      target={item.external ? "_blank" : undefined}
+      rel={item.external ? "noreferrer" : undefined}
+      onClick={onNavigate}
+      className={SHEET_LINK_CLASS}
+    >
+      {item.name}
+      {item.external && <ExternalMark />}
+    </SiteLink>
+  );
+}
+
+/**
+ * Public site header: a three-column grid with the lockup centred.
+ *
+ * Desktop (≥ 900px): News · Docs · Enterprise · Pricing on the left,
+ * Company ▾ · Contact · the CTA on the right. Below 900px: the menu button on the
+ * left, the lockup in the centre, and the CTA on the right — always visible, so
+ * the one thing the header asks you to do never hides behind the menu.
+ */
+export function Header({ homeHref = "/" }: { homeHref?: "/" | "/home" }) {
   const [open, setOpen] = useState<string | null>(null);
   const [mobile, setMobile] = useState(false);
   const nav = useNavContext();
+  const cta = primaryCta(nav);
+  const closeSheet = () => setMobile(false);
+
   return (
     <header
       style={{
@@ -384,232 +358,106 @@ export function Header({
       <Wrap
         style={{
           height: 62,
-          display: "flex",
+          display: "grid",
+          // `minmax(0, 1fr)` rather than `1fr`: a bare `1fr` has an `auto` minimum,
+          // so a side column wider than its share would push the lockup off centre.
+          gridTemplateColumns: "minmax(0, 1fr) auto minmax(0, 1fr)",
           alignItems: "center",
-          justifyContent: "space-between",
+          columnGap: 12,
         }}
       >
-        <Link href={homeHref} style={{ textDecoration: "none" }}>
-          <AlethiaLockup size={24} />
-        </Link>
-
-        <nav
-          style={{ display: "flex", alignItems: "center", gap: 2 }}
-          className="ah-navmenu"
-        >
-          <NavMenu
-            label="Product"
-            id="product"
-            open={open}
-            setOpen={setOpen}
-            width={360}
-          >
-            {PRODUCT_MENU.map((it) => (
-              <MenuItem key={it.name} {...it} />
-            ))}
-            <div
-              style={{
-                borderTop: "1px solid var(--border-faint)",
-                marginTop: 8,
-                padding: "12px 11px 4px",
-              }}
-            >
-              <a
-                href="/docs/get-started"
-                className="vx-clamp vx-clamp--tight"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontSize: 12.5,
-                  color: "var(--text-primary)",
-                  whiteSpace: "nowrap",
-                  textDecoration: "none",
-                }}
-              >
-                Getting started <Icon k="arrow" size={13} />
-              </a>
-            </div>
-          </NavMenu>
-
-          <NavMenu
-            label="Resources"
-            id="resources"
-            open={open}
-            setOpen={setOpen}
-            width={320}
-          >
-            {RESOURCE_MENU.map((it) => (
-              <MenuItem key={it.name} {...it} />
-            ))}
-          </NavMenu>
-
-          <NavLink href="/enterprise">Enterprise</NavLink>
-          <NavLink href="/pricing">Pricing</NavLink>
-        </nav>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <GitHubLink stars={stars} />
-          {nav.status === "authed" ? (
-            <>
-              {nav.plan === "community" && (
-                <Link
-                  href={nav.upgradePath ?? "/dashboard/settings/billing"}
-                  className="ah-hide-sm"
-                >
-                  <Button variant="outline" size="sm">
-                    Upgrade to Pro
-                  </Button>
-                </Link>
-              )}
-              {nav.plan === "team" && (
-                <Link href="/contact/enterprise" className="ah-hide-sm">
-                  <Button variant="outline" size="sm">
-                    Talk to sales
-                  </Button>
-                </Link>
-              )}
-              <Link href={nav.dashboardPath ?? "/dashboard"}>
-                <Button size="sm">
-                  Dashboard <Icon k="arrow" size={14} />
-                </Button>
-              </Link>
-            </>
-          ) : (
-            <>
-              <Link href="/contact/sales" className="ah-hide-sm">
-                <Button variant="outline" size="sm">
-                  Get a demo
-                </Button>
-              </Link>
-              <Link href="/login" className="ah-hide-sm">
-                <Button variant="ghost" size="sm">
-                  Login
-                </Button>
-              </Link>
-              <Link href="/signup">
-                <Button size="sm">
-                  Sign up <Icon k="arrow" size={14} />
-                </Button>
-              </Link>
-            </>
-          )}
-
-          {/* mobile */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start" }}>
           <Sheet open={mobile} onOpenChange={setMobile}>
             <SheetTrigger
               render={
-                <Button variant="ghost" size="icon-sm" className="hidden max-[900px]:inline-flex">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Open menu"
+                  className="ah-nav-mobile"
+                >
                   <Menu className="h-4 w-4" />
                 </Button>
               }
             />
-            <SheetContent side="right" className="w-72 overflow-y-auto">
-              <nav className="mt-8 flex flex-col gap-1">
-                <p className="vx-eyebrow px-3 pb-1 pt-2">Product</p>
-                {PRODUCT_MENU.map((it) => (
-                  <Link
-                    key={it.name}
-                    href={it.href}
-                    onClick={() => setMobile(false)}
-                    className="rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-surface-muted hover:text-text-primary"
-                  >
-                    {it.name}
-                  </Link>
+            <SheetContent side="left" className="w-72 overflow-y-auto">
+              <SheetTitle className="sr-only">Site menu</SheetTitle>
+              <nav aria-label="Site" className="mt-8 flex flex-col gap-1">
+                {LEFT_LINKS.map((it) => (
+                  <SheetLink key={it.name} item={it} onNavigate={closeSheet} />
                 ))}
-                <p className="vx-eyebrow px-3 pb-1 pt-3">Resources</p>
-                {RESOURCE_MENU.map((it) => (
-                  <Link
-                    key={it.name}
-                    href={it.href}
-                    target={it.external ? "_blank" : undefined}
-                    rel={it.external ? "noreferrer" : undefined}
-                    onClick={() => setMobile(false)}
-                    className="rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-surface-muted hover:text-text-primary"
-                  >
-                    {it.name}
-                  </Link>
+                <p className="vx-eyebrow px-3 pb-1 pt-3">Company</p>
+                {COMPANY_MENU.map((it) => (
+                  <SheetLink key={it.name} item={it} onNavigate={closeSheet} />
                 ))}
-                <Link
-                  href="/enterprise"
-                  onClick={() => setMobile(false)}
-                  className="rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-surface-muted hover:text-text-primary"
-                >
-                  Enterprise
-                </Link>
-                <Link
-                  href="/pricing"
-                  onClick={() => setMobile(false)}
-                  className="rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-surface-muted hover:text-text-primary"
-                >
-                  Pricing
-                </Link>
-                <div className="mt-3 flex flex-col gap-2 border-t border-border-faint pt-4">
-                  {nav.status === "authed" ? (
-                    <>
-                      {nav.plan === "community" && (
-                        <Link
-                          href={nav.upgradePath ?? "/dashboard/settings/billing"}
-                          onClick={() => setMobile(false)}
-                        >
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full"
-                          >
-                            Upgrade to Pro
-                          </Button>
-                        </Link>
-                      )}
-                      {nav.plan === "team" && (
-                        <Link
-                          href="/contact/enterprise"
-                          onClick={() => setMobile(false)}
-                        >
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full"
-                          >
-                            Talk to sales
-                          </Button>
-                        </Link>
-                      )}
-                      <Link
-                        href={nav.dashboardPath ?? "/dashboard"}
-                        onClick={() => setMobile(false)}
-                      >
-                        <Button size="sm" className="w-full">
-                          Dashboard
-                        </Button>
-                      </Link>
-                    </>
-                  ) : (
-                    <>
-                      <Link
-                        href="/contact/sales"
-                        onClick={() => setMobile(false)}
-                      >
-                        <Button variant="outline" size="sm" className="w-full">
-                          Get a demo
-                        </Button>
-                      </Link>
-                      <Link href="/login" onClick={() => setMobile(false)}>
-                        <Button variant="ghost" size="sm" className="w-full">
-                          Login
-                        </Button>
-                      </Link>
-                      <Link href="/signup" onClick={() => setMobile(false)}>
-                        <Button size="sm" className="w-full">
-                          Sign up
-                        </Button>
-                      </Link>
-                    </>
-                  )}
+                <div className="mt-3 border-t border-border-faint pt-3">
+                  <SheetLink item={CONTACT_LINK} onNavigate={closeSheet} />
                 </div>
+                <SiteLink href={cta.href} onClick={closeSheet} className="mt-3">
+                  <Button size="sm" className="w-full">
+                    {cta.label}
+                  </Button>
+                </SiteLink>
               </nav>
             </SheetContent>
           </Sheet>
+
+          <nav
+            aria-label="Primary"
+            className="ah-nav-desktop"
+            style={{ display: "flex", alignItems: "center", gap: 2 }}
+          >
+            {LEFT_LINKS.map((it) => (
+              <NavLink key={it.name} item={it} />
+            ))}
+          </nav>
+        </div>
+
+        <SiteLink
+          href={homeHref}
+          aria-label="Alethia Labs home"
+          style={{ textDecoration: "none", color: "inherit", display: "flex" }}
+        >
+          {/* The animated mark folds to [ · ] on scroll. It sits in the grid's `auto`
+              column between two `minmax(0, 1fr)` sides; the sides always split the
+              leftover space equally and pin their content to the outer edges, so
+              when the mark narrows the navs do not move — the centre column just
+              gives the space back to both sides. On a phone it is size 20 (the
+              lockup's floor with a tag), set by a media query in tokens.css. */}
+          <AnimatedMark />
+        </SiteLink>
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: 2,
+          }}
+        >
+          <nav
+            aria-label="Company"
+            className="ah-nav-desktop"
+            style={{ display: "flex", alignItems: "center", gap: 2, marginRight: 10 }}
+          >
+            <NavMenu
+              label="Company"
+              id="company"
+              open={open}
+              setOpen={setOpen}
+              align="right"
+              items={COMPANY_MENU}
+            />
+            <NavLink item={CONTACT_LINK} />
+          </nav>
+          <SiteLink href={cta.href} style={{ flexShrink: 0 }}>
+            <Button size="sm">
+              {cta.label}
+              <span className="ah-nav-desktop">
+                <Icon k="arrow" size={14} />
+              </span>
+            </Button>
+          </SiteLink>
         </div>
       </Wrap>
     </header>

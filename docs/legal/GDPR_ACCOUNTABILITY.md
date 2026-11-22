@@ -2,7 +2,7 @@
 
 Owner: Alethia Labs legal/privacy
 
-Effective: 2026-08-12
+Effective: 2026-11-22
 
 Review cadence: quarterly and before any new vendor or materially new processing
 
@@ -17,24 +17,29 @@ evidence described below.
 
 | Activity | People and data | Purpose | GDPR basis | System / recipient | Retention |
 | --- | --- | --- | --- | --- | --- |
-| Account and authentication | Users; email, name, avatar, provider id, session and sign-in events | Create and secure accounts | Contract; legitimate interests | Alethia PostgreSQL; selected identity provider; Resend | Account life plus closure workflow; security records as below |
+| Account and authentication | Users; email, name, avatar, provider id, session and sign-in events | Create and secure accounts | Contract; legitimate interests | Alethia PostgreSQL; selected identity provider; Amazon SES (AWS, eu-central-1) | Account life plus closure workflow; security records as below |
 | Organization and access control | Members; org id, role, grants, authorization decisions | Multi-tenant access and governance | Contract; legitimate interests | Alethia PostgreSQL | Active account; authorization activity 365 days |
-| Infrastructure control | Customer users and incidental people in submitted content; configuration, repo/commit metadata, plans, state, job records, logs | Perform requested provisioning and management | Contract; customer instructions under DPA | Hetzner-hosted compute, PostgreSQL and object storage; selected cloud and git providers | Active project; job logs 30 days; removed inventory 7 days |
+| Infrastructure control | Customer users and incidental people in submitted content; configuration, repo/commit metadata, plans, state, job records, logs | Perform requested provisioning and management | Contract; customer instructions under DPA | Hetzner-hosted compute, PostgreSQL and object storage (which also holds the OpenTofu state of what Alethia provisioned, `apps/console/lib/storage/tofu-state.ts`); selected cloud and git providers | Active project; job logs 30 days; removed inventory 7 days |
 | Cloud federation | Users and cloud-account administrators; issuer, audience, role, tenant, project and session metadata | Obtain short-lived access to customer cloud accounts | Contract; legitimate interests | Selected cloud provider | Configuration until disconnect; short-lived credentials expire at provider |
 | Billing | Billing contacts; organization, plan, invoice, transaction and tax metadata. Card data is entered into Stripe-hosted fields and is never received by Alethia | Take payment for paid plans and keep statutory records | Contract; legal obligation | Alethia PostgreSQL; **Stripe Payments Europe, Ltd. (active)** | Statutory accounting period. **NOT ESTABLISHED — requires the retained period to be confirmed against Bulgarian accounting law and recorded here** |
-| Support and legal requests | Users and correspondents; contact details, message, evidence and response | Resolve requests and establish legal claims | Contract; legitimate interests; legal obligation | Alethia PostgreSQL/email; Cloudflare routing; Resend | Matter closure plus 3 years, unless a claim or law requires longer |
+| Support and legal requests | Users and correspondents; contact details, message, evidence and response | Resolve requests and establish legal claims | Contract; legitimate interests; legal obligation | Alethia PostgreSQL/email; Cloudflare routing to a mailbox whose provider is not named in this repository; Amazon SES (AWS, eu-central-1); Slack, for the case number, subject, severity and organization id, only when `SUPPORT_SLACK_WEBHOOK_URL` is set (`apps/console/lib/support/slack-notify.ts`) | Matter closure plus 3 years, unless a claim or law requires longer. **No code deletes support cases; the window is a policy applied by hand** |
 | Security and operations | Users and visitors; IP, user agent, request, incident, audit and diagnostic data | Protect availability, integrity and tenants | Legitimate interests; legal obligation where applicable | Hetzner; Cloudflare; Alethia logs | Minimized by system; job logs 30 days; fleet actions 90 days; authorization activity 365 days |
 | Product analytics and client diagnostics | Consenting users; pseudonymous internal ids, plan/role, pages, feature events, performance and client errors | Understand, improve and diagnose the Service | Consent | PostHog EU Cloud | Provider retention must be verified and recorded before release |
 | Operational diagnostics | Users and visitors; minimized server and migration errors, request metadata and structured operational logs | Secure, diagnose and maintain the hosted Service | Legitimate interests | PostHog EU Cloud | Provider retention must be verified and recorded before release |
-| AI assistance | Users and people in submitted context; prompt, selected Service context, response and usage | Provide a user-requested AI feature | Contract; customer instructions under DPA | Configured Anthropic or OpenAI endpoint; Alethia PostgreSQL for unsent drafts | Provider retention governed by contracted configuration; Alethia product analytics receives no prompt or output; unsent Elench drafts deleted after 30 days unwritten; discarded drafts deleted after 24 hours by a daily sweep, so kept up to about 2 days |
+| AI assistance | Users and people in submitted context; prompt, selected Service context, response and usage | Provide a user-requested AI feature | Contract; customer instructions under DPA | Anthropic (the default models, on Alethia's own key; registered in `processing.ts`); OpenAI only if an operator sets an `openai/*` model override; Alethia PostgreSQL for conversations and unsent drafts | Provider retention governed by contracted configuration; Alethia product analytics receives no prompt or output; unsent Elench drafts deleted after 30 days unwritten; discarded drafts deleted after 24 hours by a daily sweep, so kept up to about 2 days |
 
 ## Data-flow and minimization rules
 
 1. Hosted primary data remains in Hetzner `fsn1`, Germany. PostgreSQL and the
    S3-compatible object store are part of the same hosted control plane.
-2. Static customer cloud keys are prohibited. Cloud access uses short-lived
-   workload-identity federation.
-3. Git OAuth tokens are encrypted at rest. Credentials and secrets must not be
+2. On AWS, Google Cloud, Azure and Alibaba Cloud, access uses short-lived
+   workload-identity federation and no static cloud key is stored. Clouds with
+   no federation (Hetzner, DigitalOcean, Civo) use a scoped API token the
+   customer supplies, encrypted at rest (`apps/console/lib/cloud-providers/connections.ts`)
+   and never held when the customer runs a self-managed runner.
+3. Git OAuth tokens are encrypted at rest. Connector API keys and alert-channel
+   secrets are encrypted with `encryptSecret` (`apps/console/lib/crypto/secrets.ts`)
+   before they are written. Credentials and secrets must not be
    written to job logs, execution metadata, analytics, support messages, or
    evidence receipts.
 4. Optional browser analytics defaults off. The first-party
@@ -72,8 +77,8 @@ adding or activating a provider:
    telemetry gate where applicable.
 
 Do not claim a transfer mechanism from configuration alone. Before production
-release, record the executed Resend DPA and applicable transfer mechanism, and
-the PostHog DPA, EU project location, retention setting, and secondary-use
+release, record the AWS data processing addendum that covers Amazon SES
+(eu-central-1) and any transfer mechanism it relies on, and the PostHog DPA, EU project location, retention setting, and secondary-use
 settings. Store contracts and transfer-impact records in the restricted legal
 drive, not this public repository. If evidence is missing, disable the provider
 or block the release.
@@ -147,7 +152,17 @@ entry here.
   erasure API is recorded as `manual`, and the ledger records when a person did
   it — which is more honest than an automated step that quietly does nothing.
 - Backups are protected from ordinary use and expire on the configured rotation.
-  **NOT ESTABLISHED — requires the rotation to be evidenced.** A restore
+  Two kinds exist. Hetzner server backups of the control-plane box
+  (`backups = true` in `infra/cp-hetzner/main.tf`). And a nightly off-box copy
+  (`deploy/prod/backup/backup.sh`: the Postgres dump, the object-store buckets
+  and the erasure tombstones), encrypted with `age` on the box before upload,
+  kept as 14 daily and 8 weekly copies by default (`BACKUP_KEEP_DAILY`,
+  `BACKUP_KEEP_WEEKLY`), and written to an S3-compatible store at a provider
+  that is deliberately not Hetzner. **NOT ESTABLISHED — which provider holds the
+  off-box store, and that the timer runs in production.** The provider is set
+  in `/etc/alethia/backup.env` on the box, not in this repository, so it is not
+  in the subprocessor register; the restore drill record that
+  `docs/ops/restore-runbook.md` names is what shows it runs, and none is in the tree yet. A restore
   reinstates erased data, so every erasure writes a
   `privacy_erasure_tombstone` that outlives it and carries no personal data (the
   identifier is a SHA-256). A restored instance must replay every unreplayed
@@ -207,8 +222,9 @@ requires evidence that does not exist here and must not be asserted anywhere
 public until it does.
 
 Nothing here is a legal opinion. It is an inventory of what the repository can
-and cannot back up, produced while landing #2371, for the maintainer to work
-through with counsel.
+and cannot back up, produced while landing #2371 and re-audited for LEG-L1 (#6920),
+for the maintainer to work through. There is no counsel: by the decision of
+2026-11-17, agents write and audit the legal set.
 
 ### Established — provable from this repository
 
@@ -227,9 +243,14 @@ through with counsel.
 
 | Gap | Requires |
 | --- | --- |
-| **Paid markets are unrecorded while billing is live** | `PAID_MARKETS` in `packages/legal/src/processing.ts` is empty, yet Stripe billing is active and the pricing page advertises per-seat monthly charging. Either the markets where charging is offered are recorded there, or the commerce gates in #2372 are enforcing against an empty set. This is the most consequential gap in this table |
+| **No paid market is open** | `PAID_MARKETS` in `packages/legal/src/commerce.ts` is empty, so the commerce gate refuses every paid purchase, for businesses and individuals alike. Opening a cell is the maintainer's switch (decisions of 2026-11-17); `docs/legal/PAID_MARKETS.md` lists the evidence a cell needs |
+| Off-box backup provider | `deploy/prod/backup/backup.sh` writes an encrypted nightly copy to an S3-compatible store at a provider other than Hetzner. The provider is named only in the box's `backup.env`, so it is not in `processing.ts`. It holds ciphertext only, but it is still a recipient and belongs in the register once named |
+| Inbound mailbox provider | Cloudflare Email Routing forwards the published addresses (support@, sales@, legal@, privacy@, security@) to one destination mailbox (`email_forward_to` in `infra/cp-hetzner/email-routing.tf`, supplied from the vault). The provider of that mailbox receives every privacy request and support email and is not in the register |
+| Slack support notifications | When `SUPPORT_SLACK_WEBHOOK_URL` is set, each new support case and reply posts its subject, severity and organization id to Slack. Whether it is set in production is a vault fact; Slack is not in the register |
+| Anthropic DPA and transfer mechanism | `processing.ts` lists Anthropic because the hosted assistant's default models are Anthropic's. The assistant stays off until `ALETHIA_AI_ANTHROPIC_{DPA,TRANSFER,RETENTION,NO_TRAINING}` are recorded; whether they are, and so whether Anthropic receives prompts today, is a vault fact |
 | Stripe DPA and transfer mechanism | The executed DPA reference and the transfer mechanism relied on for card-network processing outside the EEA. Registered as active with no safeguard named |
-| Resend DPA and transfer mechanism | `processing.ts` records `region: "United States"` with no SCC or transfer-impact record anywhere in the tree. #2370 forbids claiming one from configuration |
+| AWS (Amazon SES) DPA and transfer mechanism | `processing.ts` records `aws-ses` as active in `Germany (eu-central-1, Frankfurt)`, contracted with Amazon Web Services EMEA SARL. No executed DPA reference or transfer-impact record is in the tree, and AWS support access from outside the EEA is not assessed. #2370 forbids claiming one from configuration |
+| Resend, the previous email processor | Removed from the processing register and from the code when hosted email moved to Amazon SES. The maintainer closed the Resend account on 2026-11-21 and the DNS records that authorised it to send for the domain were deleted the same day. Resend's own retention of message data after closure follows its terms; no deletion confirmation from Resend is on file |
 | PostHog DPA, EU project location, retention settings, secondary-use settings | Provider-side configuration evidence. Until recorded, no retention maximum may be published |
 | Statutory billing retention period | Confirmation against Bulgarian accounting law, then recorded in the processing inventory above |
 | Data Protection Officer | Whether a DPO is appointed, and if so the appointment record and published contact point. No DPO is named anywhere in this repository, and absence of a name is not evidence that none is required |

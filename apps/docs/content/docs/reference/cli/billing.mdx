@@ -70,6 +70,13 @@ Use `-o json` or `-o csv` when a script needs the raw counters. Only the card is
 person: `runner_minutes` is a plain integer of minutes in the JSON, and the CSV `Runner minutes`
 row carries that same integer rather than `2h 15m`.
 
+### Output and exit codes
+
+The card is the only thing `billing` and `usage` write on stdout, and they write nothing there when
+they fail. A failure exits with the code of its kind and says on stderr what happened: `4` when you
+are not signed in, `5` when you are not permitted to read the organization's billing, and `11` when
+the control plane cannot be reached.
+
 ## `alethia fleet`
 
 The **managed fleet** is the platform's pool of warm provisioning runners — one pool per cloud — that
@@ -97,8 +104,10 @@ no input of its own.
 
 ## `alethia fleet set`
 
-Updates the warm pool for one cloud. Only the flags you pass are changed; the rest keep their
-stored value. A pinned `--version` and a release `--channel` are **mutually exclusive** — a version
+Creates or updates the warm pool for one cloud. For an existing pool, only the flags you pass are
+changed; the rest keep their stored value. For a cloud with no pool yet, the command creates one: the
+flags you pass are applied, and every other setting takes its default — warm-min `1`, max `10`, slots
+`1`, enabled. A pinned `--version` and a release `--channel` are **mutually exclusive** — a version
 pin clears the channel.
 
 The provider is optional at a terminal: omit it and you choose from the clouds Alethia knows —
@@ -119,7 +128,15 @@ alethia fleet set gcp --version v1.4.0
 
 # Pause a pool (drains its runners — prompts for confirmation)
 alethia fleet set azure --enabled=false
+
+# Show the request a change would send, and send nothing
+alethia fleet set aws --max 3 --dry-run
 ```
+
+`--dry-run` prints the request that `fleet set` would send and sends nothing: the provider, plus
+only the fields you passed. A person reads it as one sentence, for example
+`Would set the aws pool to max 3`, and `-o json` prints the request itself. A dry run asks for no
+confirmation, not even for `--enabled=false`, because nothing changes.
 
 {/* fieldspec: alethia fleet set */}
 

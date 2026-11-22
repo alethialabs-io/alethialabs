@@ -4,214 +4,130 @@
 import { CURRENT_LEGAL_OPERATOR } from "@repo/legal/entity";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { mono, Wrap } from "@repo/brand/site-primitives";
 import { SiteShell } from "@repo/brand/site-shell";
-import { PageCTA, PageHero } from "@repo/brand/site-sections";
-import { Wrap } from "@repo/brand/site-primitives";
+import { Block, Card, Cell, EditorialStatement, RowHead, TableBox } from "@/components/landing/editorial";
 
 export const metadata: Metadata = {
-	title: "Security · Alethia",
+	title: "Security",
 	description:
-		"How Alethia is built: zero stored cloud credentials, short-lived federated identity, sealed per-job execution, and signed evidence you can verify offline.",
+		"The credentials Alethia deliberately never holds: exactly what is stored for AWS, Google Cloud, Azure and Hetzner, how Alethia gets in, and how you revoke it. No certification is claimed; vulnerabilities go to security@alethialabs.io.",
 };
 
 /**
- * The public security page.
- *
- * Deliberately makes no certification claim, because none is held. Every
- * statement here is architectural and checkable — the control plane is AGPL, so
- * a reader can go and confirm any of it rather than take our word for it. That
- * is the honest version of a trust page for a product whose entire argument is
- * "don't trust us, verify."
- *
- * It used to render through `LegalShell` — a trust page wearing legal-document
- * chrome, with no nav and no way back into the site. It is a marketing surface and
- * now wears the same composition as /pricing and /enterprise. Every one of the ten
- * sections below is unchanged; only the frame around them moved.
+ * Read by `scripts/check-legal-set.mjs` as this page's displayed date — it matches the first
+ * "Last updated", a middle dot, then a long date closed by a double quote — so it stays one string
+ * literal in that exact shape, and no other text in this file may spell that prefix.
  */
-export default async function SecurityPage() {
+const LAST_UPDATED = "Last updated · November 22, 2026";
+
+/** One cloud's row in the ledger. `holdsNothing` marks the clouds where nothing is stored. */
+interface LedgerRow {
+	cloud: string;
+	access: string;
+	stored: string;
+	holdsNothing: boolean;
+	revoke: string;
+}
+
+/**
+ * The ledger, cloud by cloud. Hetzner is the one exception: it has no federation, so its scoped
+ * API token is encrypted at rest and decrypted only for the job — and a self-managed runner keeps
+ * it from reaching us at all. Same terms as the pricing FAQ, which used to be the only other page
+ * that stated it, and disagreed.
+ */
+const LEDGER: LedgerRow[] = [
+	{ cloud: "AWS", access: "Short-lived role assumed per job (OIDC)", stored: "Nothing", holdsNothing: true, revoke: "Delete the IAM role" },
+	{ cloud: "Google Cloud", access: "Workload Identity Federation per job", stored: "Nothing", holdsNothing: true, revoke: "Remove the binding" },
+	{ cloud: "Azure", access: "Federated credential on your managed identity", stored: "Nothing", holdsNothing: true, revoke: "Delete the federated credential" },
+	{ cloud: "Hetzner", access: "A scoped API token (no federation exists)", stored: "Encrypted at rest; never with a self-managed runner", holdsNothing: false, revoke: "Revoke the token" },
+];
+
+/** The related documents, in the order a security review reads them. */
+const RELATED: { label: string; href: string }[] = [
+	{ label: "Data Processing Addendum", href: "/legal/dpa" },
+	{ label: "Subprocessors", href: "/legal/subprocessors" },
+	{ label: "Privacy Policy", href: "/privacy" },
+	{ label: "Cookie Notice", href: "/cookies" },
+	{ label: "Acceptable Use Policy", href: "/acceptable-use" },
+	{ label: "Self-hosting", href: "/open-source" },
+];
+
+/**
+ * The public security page: one statement, then a single table of what Alethia holds and does
+ * not hold, cloud by cloud, then what we do hold, certifications and disclosure.
+ *
+ * Deliberately makes no certification claim, because none is held. Every statement is
+ * architectural and checkable against the AGPL source.
+ */
+export default function SecurityPage() {
 	return (
 		<SiteShell>
-			<PageHero
-				kicker="alethia · security"
-				status="no keys held"
-				headline={{ lead: "The credentials we", muted: "deliberately never hold." }}
-				lede="Alethia provisions into your cloud account using short-lived federated identity. There is no access key to leak, because there is no access key. Every claim on this page is architectural and checkable against an AGPL codebase."
-				ctas={[
-					{ label: "Read the architecture", href: "/docs/reference/standards/workload-identity", icon: "arrow" },
-					{ label: "Report a vulnerability", href: "mailto:security@alethialabs.io", variant: "outline", icon: "shield", iconBefore: true },
-				]}
-				footnote="Last updated · August 5, 2026"
-				paddingBottom={24}
+			<EditorialStatement
+				lead="The credentials we deliberately never hold."
+				rest="Here is exactly what Alethia stores for each cloud, and what it does not."
 			/>
 
-			<section style={{ padding: "8px 0 96px" }}>
+			<Block label="What Alethia stores, cloud by cloud">
+				<TableBox
+					caption="What Alethia stores for each cloud, how it gets in, and how you revoke it"
+					columns={["Cloud", "How Alethia gets in", "Stored by Alethia", "How you revoke it"]}
+					minWidth={640}
+				>
+					{LEDGER.map((row) => (
+						<tr key={row.cloud}>
+							<RowHead>{row.cloud}</RowHead>
+							<Cell>{row.access}</Cell>
+							<Cell tone={row.holdsNothing ? "strong" : undefined}>{row.stored}</Cell>
+							<Cell>{row.revoke}</Cell>
+						</tr>
+					))}
+				</TableBox>
+				<div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
+					<Card label="What we do hold">
+						The signing key for our identity provider: the private half never leaves the control
+						plane, and the public keys are published. We also hold the credentials you give us
+						for the git provider and the connectors you choose to connect.
+					</Card>
+					<Card label="Certifications">
+						No SOC 2 or ISO 27001 today, and we will not imply otherwise. The code is open for you
+						to check instead.
+					</Card>
+					<Card label="Report a vulnerability">
+						<a href="mailto:security@alethialabs.io" className="text-text-primary" style={mono}>
+							security@alethialabs.io
+						</a>{" "}
+						— acknowledged within five business days.
+					</Card>
+				</div>
+			</Block>
+
+			<section aria-label="Related documents" className="pb-20 max-[640px]:pb-14">
 				<Wrap>
-					<div className="vx-prose mx-auto max-w-2xl">
-			<p>
-				Alethia provisions infrastructure into <strong>your</strong> cloud account.
-				That makes the most valuable thing we could lose the one thing we
-				deliberately never hold: your cloud credentials. This page describes how
-				that works, what we do hold, and what to do if you find a problem.
-			</p>
-
-			<h2>1. We store no cloud credentials</h2>
-			<p>
-				There is no access key, service-account JSON, or client secret anywhere in
-				the platform. The control plane is its own OIDC identity provider: it mints
-				a short-lived, audience-scoped assertion per operation, and your cloud
-				federates against it directly.
-			</p>
-			<ul>
-				<li>
-					<strong>AWS</strong> — <code>AssumeRoleWithWebIdentity</code> straight
-					into your role, against an IAM OIDC provider you create. No Alethia AWS
-					account is involved and there is no ExternalId to leak.
-				</li>
-				<li>
-					<strong>Google Cloud</strong> — Workload Identity Federation token
-					exchange.
-				</li>
-				<li>
-					<strong>Azure</strong> — a client assertion into your own user-assigned
-					managed identity via a federated credential. No Alethia Entra app.
-				</li>
-				<li>
-					<strong>Alibaba Cloud</strong> — anonymous{" "}
-					<code>AssumeRoleWithOIDC</code>, with no AccessKey and no Alethia
-					Alibaba account.
-				</li>
-			</ul>
-			<p>
-				Each exchange returns a credential of roughly one hour, refreshed for the
-				life of a job. The assertion itself is scoped by audience, so a token minted
-				for one cloud cannot be replayed at another.
-			</p>
-
-			<h2>2. What we do hold</h2>
-			<p>
-				One long-lived secret: the signing key of the OIDC issuer. Its private half
-				never leaves the control plane, and clouds verify assertions against the
-				public JWKS we publish. It is rotatable with zero downtime. Everything else
-				an operation needs is derived at run time and expires.
-			</p>
-
-			<h2>3. Revocation is yours, not ours</h2>
-			<p>
-				Because the trust lives in your account, so does the off switch. Delete the
-				IAM role, the workload-identity binding, the federated credential, or the
-				RAM role, and our access ends immediately — no ticket, no waiting on us to
-				delete anything. There is nothing on our side that could be stolen and
-				replayed afterwards.
-			</p>
-
-			<h2>4. Your own code runs sealed</h2>
-			<p>
-				When you bring your own OpenTofu, Terraform providers, or Helm charts, that
-				code is arbitrary and we treat it that way. On the managed fleet each job
-				runs in a per-job sandbox with no shared secrets, no access to the cloud
-				instance metadata service, and default-deny egress restricted to an
-				allowlist. Your provisioning code cannot reach the platform&rsquo;s secrets or
-				the open internet.
-			</p>
-
-			<h2>5. Tenant isolation</h2>
-			<p>
-				Tenant data is separated in the database by row-level security, so isolation
-				is enforced by the database rather than by application code remembering to
-				filter. Authorization is relationship-based (ReBAC) and evaluated by a
-				dedicated policy engine, so a permission decision is a lookup rather than a
-				scattered set of conditionals.
-			</p>
-
-			<h2>6. Evidence, not assurances</h2>
-			<p>
-				Every apply passes a deterministic, fail-closed gate between plan and apply,
-				and seals an evidence receipt. The receipt is bound to the hash of the exact
-				plan that ran and to the version of the control catalog that judged it, and
-				it is signed with ed25519 — so anyone holding the public key can verify it
-				offline, later, without trusting our console. A verdict is reproducible given
-				the same plan.
-			</p>
-			<p>
-				We are precise about the limits of this: a receipt is evidence that named,
-				versioned controls passed on a specific plan. It is not a claim of
-				compliance, and the gate reports what it could not evaluate rather than
-				passing it silently.
-			</p>
-
-			<h2>7. Certifications</h2>
-			<p>
-				<strong>
-					Alethia holds no SOC 2, ISO 27001, or equivalent certification today, and
-					we will not imply otherwise.
-				</strong>{" "}
-				We are an early company and an audit is not yet in scope. What we offer
-				instead is verifiability: the control plane is open source under AGPL-3.0,
-				so every claim on this page can be read in the source rather than accepted on
-				trust. If your procurement process requires a certified vendor, we would
-				rather tell you now.
-			</p>
-
-			<h2>8. Self-hosting</h2>
-			<p>
-				If your requirements do not permit a third-party control plane at all, run
-				ours. The whole platform is self-hostable — see{" "}
-				<Link href="/open-source">Open source</Link> — which makes data residency and
-				vendor risk questions yours to answer directly.
-			</p>
-
-			<h2>9. Reporting a vulnerability</h2>
-			<p>
-				Please do not open a public issue or discussion. Email{" "}
-				<a href="mailto:security@alethialabs.io">security@alethialabs.io</a> with the
-				affected component and version or commit, reproduction steps and proof of
-				impact, any known exploitation or disclosure, and a safe way to reach you.
-			</p>
-			<p>
-				We aim to acknowledge receipt within five business days. No bounty or payment
-				is promised unless agreed in writing before work is performed. Security fixes
-				target the current hosted release and the current stable CLI and runner
-				releases; self-hosted operators are responsible for applying published
-				updates.
-			</p>
-
-			<h2>10. Related documents</h2>
-			<ul>
-				<li>
-					<Link href="/legal/dpa">Data Processing Agreement</Link> — the terms under
-					which we process personal data on your behalf.
-				</li>
-				<li>
-					<Link href="/legal/subprocessors">Subprocessors</Link> — every third party
-					that may process customer data.
-				</li>
-				<li>
-					<Link href="/privacy">Privacy Policy</Link> and{" "}
-					<Link href="/cookies">Cookie Notice</Link>.
-				</li>
-				<li>
-					<Link href="/acceptable-use">Acceptable Use Policy</Link> — what the
-					Service may not be used for.
-				</li>
-			</ul>
-			<p>
-				This page describes the Service as operated by{" "}
-				<strong>{CURRENT_LEGAL_OPERATOR}</strong>. It is a description of
-				architecture, not a warranty; the binding commitments are in the{" "}
-				<Link href="/terms">Terms</Link> and the DPA.
-			</p>
+					<div className="grid gap-4 pt-6" style={{ borderTop: "1px solid var(--border)" }}>
+						<p className="m-0 text-ui-sm text-text-tertiary" style={mono}>
+							{LAST_UPDATED}
+						</p>
+						<ul className="m-0 flex list-none flex-wrap gap-x-6 gap-y-2 p-0">
+							{RELATED.map((doc) => (
+								<li key={doc.href}>
+									<Link href={doc.href} className="text-ui-sm text-text-secondary no-underline hover:text-text-primary">
+										{doc.label}
+									</Link>
+								</li>
+							))}
+						</ul>
+						<p className="m-0 max-w-[64ch] text-ui-sm leading-[1.6] text-text-tertiary">
+							This page describes the Service as operated by {CURRENT_LEGAL_OPERATOR}. It is a
+							description of architecture, not a warranty; the binding commitments are in the{" "}
+							<Link href="/terms" className="text-text-secondary">
+								Terms
+							</Link>{" "}
+							and the DPA.
+						</p>
 					</div>
 				</Wrap>
 			</section>
-
-			<PageCTA
-				headline="Verify it yourself."
-				lede="The control plane is open source. Read the federation code, run it in your own account, and check the receipt offline."
-				ctas={[
-					{ label: "Read the docs", href: "/docs", icon: "arrow" },
-					{ label: "Self-host it", href: "/open-source", variant: "outline" },
-				]}
-			/>
 		</SiteShell>
 	);
 }

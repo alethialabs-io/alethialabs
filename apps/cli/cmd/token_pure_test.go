@@ -192,11 +192,13 @@ func TestRunTokenList(t *testing.T) {
 	// readable rather than emitting prose a parser would choke on.
 	buf.Reset()
 	empty := &fakeClient{}
+	p, _, said := splitPrinter(ui.FormatTable)
+	withPrinter(t, p)
 	if err := runTokenList(empty, &buf, ui.FormatTable); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "token create") {
-		t.Errorf("the empty case does not say how to create one:\n%s", buf.String())
+	if !strings.Contains(said.String(), "token create") || buf.Len() != 0 {
+		t.Errorf("the empty case must say how to create one, on stderr:\nstderr: %s\nstdout: %s", said.String(), buf.String())
 	}
 	buf.Reset()
 	if err := runTokenList(empty, &buf, "json"); err != nil {
@@ -261,7 +263,7 @@ func TestRunTokenCreate(t *testing.T) {
 func TestRunTokenRevoke(t *testing.T) {
 	var buf bytes.Buffer
 	c := &fakeClient{}
-	if err := runTokenRevoke(c, &buf, "t1"); err != nil {
+	if err := runTokenRevoke(c, testPrinter(&buf, "table"), "t1", false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if c.revokedTokenID != "t1" {
@@ -273,7 +275,7 @@ func TestRunTokenRevoke(t *testing.T) {
 		t.Errorf("the confirmation does not say when it takes effect:\n%s", buf.String())
 	}
 
-	if err := runTokenRevoke(&fakeClient{err: errors.New("boom")}, io.Discard, "t1"); err == nil {
+	if err := runTokenRevoke(&fakeClient{err: errors.New("boom")}, testPrinter(io.Discard, "table"), "t1", false); err == nil {
 		t.Error("a client error was swallowed")
 	}
 }

@@ -1,0 +1,71 @@
+---
+title: How we know it works on each cloud, and what the beta promises
+description: Every claim this week rests on a record of a real run that anyone can read. This post explains how we capture those records, how we define "beta" as nine checks a script evaluates, and what the beta does not promise.
+date: 2027-01-29
+author: Alethia Labs
+tags: [launch, beta, testing, open-source]
+kind: engineering
+excerpt: Every claim this week rests on a record of a real run that anyone can read. How we capture them, how nine checks define "beta", and what the beta does not promise.
+draft: true
+---
+
+{/* Before this post is published: run `pnpm check:programme` (or read PROGRAMME.md) and confirm
+    that B1 to B9 all read "met". If any does not, change the paragraph under "Beta is nine checks"
+    to say which one is still open, or hold the post. */}
+
+This is the last post in our launch week. On Monday, Tuesday, Wednesday and Thursday we wrote "what we
+have tested" at the end of each post. Today we explain what stands behind that sentence.
+
+## A record of a real run, in the repository
+
+Our nightly tests apply real infrastructure in real cloud accounts, on each of the four clouds. Each run
+writes a **proof bundle**: a directory in the open repository, under
+[`demos/proofs/`](https://github.com/alethialabs-io/alethialabs/tree/dev/demos/proofs), named for the
+cloud and the time of the run. A bundle holds:
+
+- a short summary: resources added, nodes ready, how many ArgoCD Applications were healthy and in sync
+- the verdict of the run, in one line
+- selected lines from the runner log
+- the state of the cluster at the moment the job finished
+- confirmation that the run tore everything down again
+
+Three rules keep the bundles honest:
+
+- **A failed run is captured too,** with the stage where it failed. A record that exists only for
+  passing runs would hide every failure.
+- **Secrets are removed before anything is written,** and the finished bundle is searched again. If a
+  secret survived, the bundle is deleted and the run fails.
+- **A pass needs a committed bundle.** A green check mark in a CI log expires, so it does not count as a
+  proof. Only a bundle in the repository does.
+
+## Nothing left behind
+
+A test that creates real infrastructure can leave some of it behind when it fails half-way. So a
+separate job looks for resources that a test run left in our test accounts, deletes them, and checks
+again that nothing remains. Its result counts only when that second check is clean.
+
+## Beta is nine checks
+
+We did not want "beta" to mean "we feel ready". So we wrote it down as nine checks, B1 to B9, in
+[`docs/beta/README.md`](https://github.com/alethialabs-io/alethialabs/blob/dev/docs/beta/README.md). Each
+check names what it measures and what counts as a pass, and a script evaluates all nine against one
+commit. They include: exactly four clouds are offered; a new user completes the whole path on
+production on each cloud; the same path works from the CLI; and nothing is left standing after the
+tests.
+
+A check with no evidence counts as **not met**. Nothing passes because nobody looked.
+
+## What the beta does not promise
+
+- **No uptime SLA.** We do not promise an uptime number during the beta.
+- **No frozen interface.** A command, a field or a screen can still change before general
+  availability.
+- **No clouds beyond these four.** We add a cloud back only when it passes the same checks.
+
+If something breaks, tell us. An issue on
+[GitHub](https://github.com/alethialabs-io/alethialabs/issues) is the fastest way.
+
+## Start
+
+The public beta opens on **January 31**. [Sign up](/signup), or read
+[Get started](/docs/get-started) first.

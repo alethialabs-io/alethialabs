@@ -62,12 +62,16 @@ const OTHER_RUNTIME_SOURCE: Record<string, OtherSource> = {
 	NEXT_PUBLIC_POSTHOG_HOST: { kind: "deploy-env", why: "emitted from the vault (empty = EU default)" },
 	NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: { kind: "deploy-env", why: "emitted from the vault" },
 	NEXT_PUBLIC_STATUS_URL: {
-		kind: "code-default",
-		why: "unset ⇒ lib/legal.ts falls back to https://status.alethialabs.io",
+		kind: "deploy-env",
+		why: "emitted from the vault (#7148); empty ⇒ every status link is hidden (lib/legal.ts statusUrl)",
 	},
 	NEXT_PUBLIC_FEEDBACK_REPO_URL: {
 		kind: "code-default",
-		why: "unset ⇒ sidebar-profile.tsx falls back to the public issues URL",
+		why: "unset ⇒ components/shell/instance-links.ts falls back to the public issues URL",
+	},
+	NEXT_PUBLIC_TURNSTILE_SITE_KEY: {
+		kind: "code-default",
+		why: "unset ⇒ the sign-up challenge is off (lib/config/auth.ts getSignupChallengeConfig needs it and TURNSTILE_SECRET_KEY)",
 	},
 	NEXT_PUBLIC_UMAMI_HOST: {
 		kind: "code-default",

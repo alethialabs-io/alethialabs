@@ -1,0 +1,67 @@
+---
+title: ArgoCD on every cluster, and add-ons you pick from a catalog
+description: After an apply, Alethia installs ArgoCD on the new cluster. From then on Git is the source of truth for what runs there, and the add-on catalog is a list of Helm charts that ArgoCD deploys for you.
+date: 2027-01-28
+author: Alethia Labs
+tags: [launch, beta, gitops, argocd, product]
+kind: announcement
+excerpt: After an apply, Alethia installs ArgoCD on the new cluster. Git becomes the source of truth for what runs there, and the add-on catalog is a list of Helm charts ArgoCD deploys.
+draft: true
+---
+
+This is the fourth post in our launch week. The first three were about getting infrastructure into
+your account. Today is about what runs on a cluster once it exists.
+
+## ArgoCD comes with the cluster
+
+When an apply succeeds, the runner installs ArgoCD on the new cluster with Helm, and waits until it
+is ready. From then on, application delivery is GitOps: ArgoCD reads a Git repository and keeps the
+cluster in line with it.
+
+Two details about how the runner does this:
+
+- **It needs no cloud CLI.** It does not shell out to `aws`, `gcloud` or `az`. On AWS, GCP and Azure,
+  cluster access uses short-lived tokens that the runner mints when it needs them, so no long-lived
+  kubeconfig is stored.
+- **The ArgoCD admin password stays in the cluster.** Alethia does not read it or store it. You fetch
+  it from the cluster when you need it.
+
+## Your own repository
+
+Point an environment at your own Git repository and a path inside it, and ArgoCD deploys what is
+there. You can also attach a Helm chart from your own repository. It runs next to the add-ons, inside
+a published contract that says what a chart may deploy.
+
+## The add-on catalog
+
+The add-on catalog is a list of Helm charts that ArgoCD deploys for you. You enable one on
+an environment and set its options, in the console or with `alethia addon enable`. Some of what is in
+the catalog today:
+
+| Area | Add-ons |
+| --- | --- |
+| Observability | Prometheus and Grafana, Grafana Loki, Grafana Tempo, OpenTelemetry Collector |
+| Security and policy | Trivy Operator, Falco, Kyverno |
+| Secrets | HashiCorp Vault, Sealed Secrets |
+| Networking | Traefik, ExternalDNS |
+| Scaling and delivery | KEDA, Argo Rollouts |
+| Backup and data | Velero, MinIO |
+
+Each add-on is a normal ArgoCD Application on your cluster. You can see it, and change it, with the
+tools you already use.
+
+## What we have tested
+
+On each of the four clouds we have enabled every add-on that was in the catalog at the time, in one
+run, and waited until ArgoCD reported every Application as healthy and in sync. On each cloud we have
+also checked that an application repository and a Helm chart from a customer repository both deploy
+and manage real resources. The records are in
+[`demos/proofs/`](https://github.com/alethialabs-io/alethialabs/tree/dev/demos/proofs).
+
+## Read more
+
+- [GitOps and ArgoCD](/docs/concepts/gitops-argocd)
+- [Bring your own charts](/docs/concepts/bring-your-own-charts)
+- [Add-on commands](/docs/reference/cli/addons)
+
+Tomorrow: how we keep those records, and what "beta" does and does not promise.

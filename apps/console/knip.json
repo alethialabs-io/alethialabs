@@ -39,9 +39,6 @@
     "components/billing/plan-picker.tsx": [
       "files"
     ],
-    "components/create-project/scan-review-notice.tsx": [
-      "files"
-    ],
     "components/plan/plan-summary-bar.tsx": [
       "files"
     ],

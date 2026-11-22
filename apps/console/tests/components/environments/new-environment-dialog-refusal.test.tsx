@@ -82,7 +82,7 @@ describe("NewEnvironmentDialog — a refused name", () => {
 		const alert = await screen.findByRole("alert");
 		expect(alert).toHaveTextContent(TAKEN);
 		expect(field).toHaveAttribute("aria-invalid", "true");
-		expect(field).toHaveAttribute("aria-describedby", alert.id);
+		expect(field.getAttribute("aria-describedby")?.split(" ")).toContain(alert.id);
 		expect(duplicateEnvironment).toHaveBeenCalledWith("p1", "env-1", "Staging");
 		expect(toastError).not.toHaveBeenCalled();
 		expect(onCreated).not.toHaveBeenCalled();
@@ -110,7 +110,7 @@ describe("NewEnvironmentDialog — a refused name", () => {
 
 		await user.type(field, "-2");
 		expect(screen.queryByRole("alert")).toBeNull();
-		expect(field).not.toHaveAttribute("aria-invalid");
+		expect(field).toHaveAttribute("aria-invalid", "false");
 	});
 
 	it("still creates and hands the new name back on success", async () => {
@@ -163,8 +163,59 @@ describe("NewEnvironmentDialog — a refused name", () => {
 	});
 });
 
-// #6459 — opening seeds the base from `defaultBaseId` (an env's Duplicate action), set while
-// rendering rather than from an effect.
+// #6819 — the dialog is a real form (react-hook-form + zod): Enter submits it, a missing name is said
+// under its field before anything is sent, and an empty environment is given a stage instead of
+// always landing in Development.
+describe("NewEnvironmentDialog — a form", () => {
+	it("refuses an empty name under the field, and sends nothing", async () => {
+		const user = userEvent.setup();
+		renderIt();
+		await user.click(screen.getByRole("button", { name: "Create environment" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Environment name is required");
+		expect(screen.getByLabelText("Environment name")).toHaveAttribute("aria-invalid", "true");
+		expect(duplicateEnvironment).not.toHaveBeenCalled();
+		expect(addEnvironment).not.toHaveBeenCalled();
+	});
+
+	it("Enter in the name field submits", async () => {
+		duplicateEnvironment.mockResolvedValue({ ok: true, environment: { id: "env-2", name: "qa" } });
+		const user = userEvent.setup();
+		const { onCreated } = renderIt();
+		await user.type(screen.getByLabelText("Environment name"), "qa{Enter}");
+		await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith("qa"));
+		expect(duplicateEnvironment).toHaveBeenCalledWith("p1", "env-1", "qa");
+	});
+
+	it("a duplicate picks a base; an empty environment picks a stage instead", async () => {
+		const user = userEvent.setup();
+		renderIt();
+		expect(screen.getByRole("combobox", { name: "Base environment" })).toBeInTheDocument();
+		expect(screen.queryByRole("combobox", { name: "Stage" })).toBeNull();
+
+		await user.click(screen.getByRole("button", { name: /empty environment/i }));
+		expect(screen.getByRole("combobox", { name: "Stage" })).toBeInTheDocument();
+		expect(screen.queryByRole("combobox", { name: "Base environment" })).toBeNull();
+	});
+
+	it("closes itself once the environment is created", async () => {
+		duplicateEnvironment.mockResolvedValue({ ok: true, environment: { id: "env-2", name: "qa" } });
+		const user = userEvent.setup();
+		const { onOpenChange } = renderIt();
+		await user.type(screen.getByLabelText("Environment name"), "qa");
+		await user.click(screen.getByRole("button", { name: "Create environment" }));
+		await vi.waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+	});
+
+	it("says promote, the console's word for moving a change between environments", () => {
+		renderIt();
+		const dialog = screen.getByRole("dialog");
+		expect(dialog).toHaveTextContent(/until you promote them to another/);
+		expect(dialog).not.toHaveTextContent(/sync/i);
+	});
+});
+
+// #6459 — opening seeds the base from `defaultBaseId` (an env's Duplicate action).
 describe("NewEnvironmentDialog — the base an opening seeds", () => {
 	const ENVS: SwitcherEnv[] = [
 		{ id: "env-1", project_id: "p1", name: "production", is_default: true, stage: "production" },

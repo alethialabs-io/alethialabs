@@ -18,6 +18,13 @@ export interface CliTokenPayload extends jose.JWTPayload {
 	service_token_org_id?: string;
 	service_token_id?: string;
 	service_token_name?: string;
+	/**
+	 * The service token's scopes and project list (`null` = every project), as stored on its row.
+	 * Set only by a service token, beside the org pin. `authorizeCli` reads them into the actor's
+	 * ceiling (lib/authz/scope-ceiling.ts) and refuses a pinned payload whose values it cannot read.
+	 */
+	service_token_scopes?: string[];
+	service_token_project_ids?: string[] | null;
 }
 
 /** 401, in the one shape every arm here answers with. */
@@ -90,6 +97,8 @@ export async function verifyCliToken(
 				service_token_org_id: identity.organizationId,
 				service_token_id: identity.tokenId,
 				service_token_name: identity.name,
+				service_token_scopes: [...identity.scopes],
+				service_token_project_ids: identity.projectIds === null ? null : [...identity.projectIds],
 			},
 			error: null,
 		};

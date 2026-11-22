@@ -12,7 +12,7 @@ import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export const metadata = pageMetadata({
-	title: "Preview environments - Settings",
+	title: "Preview environments · Settings",
 	description: "Configure pull request preview environments for this project.",
 });
 
@@ -20,8 +20,8 @@ export const metadata = pageMetadata({
  * `/{org}/{project}/settings/preview` — PR-preview generator settings (#6128).
  *
  * Prefetches the two keys the page reads in-process and hydrates them, so the first paint is the
- * filled form. The two keys are `settings.preview` for this slug (the config, the project's fabrics
- * and its git credentials) and `projects.linkedGitProviders` (the viewer's linked git accounts,
+ * filled form. The two keys are `settings.preview` for this slug (the config, the project's Fabrics,
+ * its git credentials, and whether the viewer may save) and `projects.linkedGitProviders` (the viewer's linked git accounts,
  * which decide whether the Source row is the repository picker or the "No Git accounts linked"
  * panel, #6335). A slug that names no project in this org is this segment's 404. A project the
  * caller may not see is not dehydrated, and the client renders the refusal. The git-provider

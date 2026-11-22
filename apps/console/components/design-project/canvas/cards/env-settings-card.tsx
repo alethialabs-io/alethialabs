@@ -2,13 +2,25 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ArrowLeft, Settings2, TriangleAlert } from "lucide-react";
+import { Settings2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Button } from "@repo/ui/button";
 import { Label } from "@repo/ui/label";
 import { SectionHeading } from "@repo/ui/section-heading";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useStore } from "zustand";
+import { EmptyState } from "@repo/ui/empty";
+import { StatusBadge } from "@repo/ui/status-badge";
+import { DeployPane } from "@/components/agent/deploy-pane";
+import type { DeployState } from "@/lib/canvas/component-status";
+import { JOB_LABEL } from "@/lib/canvas/job-display";
+import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
+import { PROJECT_NODE_ID, type InspectorTab } from "@/lib/canvas/store/types";
+import {
+	useAllNodes,
+	useEffectiveProvider,
+	useInspectorTab,
+} from "@/lib/canvas/store/use-board";
 import {
 	NATIVE_LABELS,
 	environmentConnector,
@@ -21,7 +33,13 @@ import { getKindConfig } from "../inspector/config-schema";
 import { ConnectorSelect } from "../inspector/connector-select";
 import { useNodeCapabilities } from "../inspector/use-node-capabilities";
 import { CompatAlert } from "../inspector/compat-alert";
-import { SheetCard } from "./sheet-card";
+import { InspectorFrame } from "../inspector-shell/inspector-frame";
+import {
+	EnvironmentBlock,
+	environmentStatusLabel,
+	environmentStatusTier,
+} from "../inspector-shell/node-subject";
+import { resolveTab, useCloseInspector } from "../inspector-shell/subject";
 import { useClusterK8sVersion } from "../use-cluster-k8s-version";
 import { DestroyEnvironmentDialog, type DestroyTreeState } from "./destroy-environment-dialog";
 import { DestroyHoldNotice, useDestroyHold } from "./destroy-hold";
@@ -31,35 +49,50 @@ import {
 	environmentSettingsHref,
 } from "./destroy-tree-view";
 
+/** Where the saved design stands against the last deploy, as a sentence for the status row. */
+const DEPLOY_STATE_LINE: Record<DeployState, string> = {
+	never: "This environment has not been deployed yet.",
+	ahead: "The saved design is ahead of what is deployed.",
+	"in-sync": "The saved design is what is deployed.",
+};
+
 /**
- * W2 — the cluster + network are no longer cards on the board (one environment IS one cluster inside
- * one VPC). They stay env-scoped DB singletons, edited here as environment settings. The rows persist
- * as hidden store nodes, so this edits them through the SAME `updateNodeConfig` + `CONFIG_SCHEMA`
- * the inspector uses — graphToForm / the deploy snapshot are unchanged.
+ * The inspector on the ENVIRONMENT (#6834): everything that belongs to the environment as a whole
+ * rather than to any one card. Four views:
  *
- * The secret store joined them (#1412): it is env-level for the same reason, since the runtime reads
- * one store per environment. It is the one section NOT driven by `CONFIG_SCHEMA`, because unlike
- * cluster/network it has no singleton row to hang a schema off — the choice lives on the secret rows
- * themselves and is written through to all of them.
+ *   Settings  the cluster and its VPC, where secrets and images come from, and Destroy
+ *   Sources   the infrastructure module that governs the environment, and its charts
+ *   Status    what state the environment is in, and how it is delivered
+ *   Activity  what has run against it
+ *
+ * The cluster and the network are not cards on the board (one environment IS one cluster inside
+ * one VPC). They are env-scoped singletons that persist as hidden design nodes, so Settings edits
+ * them through the same `updateNodeConfig` and the same config schema a node's Settings uses —
+ * `graphToForm` and the deploy snapshot are unchanged. The secret store and the registry are
+ * env-level for the same reason: the runtime reads one store per environment, so the choice is
+ * written through to every row of the kind.
  *
  * "Per environment" needs no control here: the canvas is already scoped to one environment by the
- * topbar `EnvSwitcher` (`?environment_id=`), and the board is remounted when it changes. Switching
- * there switches which environment this card is editing.
+ * topbar's environment switcher, and the board is remounted when it changes.
  *
- * A docked card on the workspace rail, not a modal Sheet: you can change the cluster's version and
- * keep dragging cards on the board while it is open.
+ * This is also where the environment is DESTROYED (#4775): it acts on the environment as a whole.
  *
- * It is also where the environment is DESTROYED (#4775). That action used to live on the project
- * node's inspector, and the project node has not been rendered on the board since #536 — so the
- * only control that tears an environment down was unreachable. It belongs here for the same reason
- * the cluster does: it acts on the environment as a whole, not on any one card.
+ * Sources and Activity used to be two more cards with two more headers. They are views of this
+ * subject now, drawn inside its frame. The host hands both in, so this file reads no server action
+ * and a view the host cannot fill is not offered as an empty tab.
  */
 export function EnvSettingsCard({
 	destroyEnvironment,
+	sources,
+	activity,
 }: {
-	/** Edit mode only: read the destroy tree and queue a DESTROY job. Absent in the create flow,
-	 * where there is no provisioned environment to destroy. */
+	/** Read the destroy tree and queue a DESTROY job. Absent where there is no provisioned
+	 * environment to destroy. */
 	destroyEnvironment?: DestroyEnvironmentControl;
+	/** The Sources view. The view is offered only when the host hands one in. */
+	sources?: ReactNode;
+	/** The Activity view. Offered only when the host has a project and an environment to read. */
+	activity?: ReactNode;
 }) {
 	const envStatus = useEnvironmentStatus();
 	// A BYO-IaC source in replace mode OWNS the substrate: the cluster's version and the VPC come
@@ -70,12 +103,20 @@ export function EnvSettingsCard({
 	// card keeps the settings the console still owns reachable; refusing outright would make that
 	// readout do nothing at all, with no way for the operator to tell why.
 	const iacGoverned = envStatus.iac !== null;
-	const closeCard = useCanvasStore((s) => s.closeCard);
-	const cardBack = useCanvasStore((s) => s.cardBack);
-	const goBackCard = useCanvasStore((s) => s.goBackCard);
-	const nodes = useCanvasStore((s) => s.nodes);
-	const updateNodeConfig = useCanvasStore((s) => s.updateNodeConfig);
-	const provider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
+	const board = useBoard();
+	const close = useCloseInspector();
+	const cameFrom = useStore(board.view, (v) => v.cardBack);
+	const requested = useInspectorTab();
+	const tabs: InspectorTab[] = ["configure"];
+	if (sources) tabs.push("sources");
+	tabs.push("status");
+	if (activity) tabs.push("activity");
+	const tab = resolveTab(requested, tabs);
+	const environment = envStatus.environment;
+	const nodes = useAllNodes();
+	const updateNodeConfig = (id: string, patch: Record<string, unknown>) =>
+		board.document.getState().updateNodeConfig(id, patch);
+	const provider = useEffectiveProvider(PROJECT_NODE_ID);
 
 	const secretsStore = environmentConnector(nodes, "secret");
 	const secretNodes = nodes.filter((n) => n.data.kind === "secret");
@@ -108,26 +149,40 @@ export function EnvSettingsCard({
 	const networkCaps = useNodeCapabilities(network?.id ?? null);
 
 	return (
-		<SheetCard
-			title="Environment settings"
+		<InspectorFrame
 			icon={<Settings2 className="h-4 w-4" />}
-			description="Settings that belong to this environment as a whole rather than to any one card — its cluster and VPC, and where its secrets and images come from."
-			onClose={closeCard}
+			eyebrow="Environment"
+			title="Environment settings"
+			summary={
+				environment
+					? `${environment.name} · ${environment.stage}`
+					: "The cluster, its network, and where secrets and images come from."
+			}
+			status={
+				environment
+					? {
+							label: environmentStatusLabel(environment.status),
+							tier: environmentStatusTier(environment.status),
+							message:
+								envStatus.deployRefusal?.message ?? DEPLOY_STATE_LINE[envStatus.deployState],
+						}
+					: null
+			}
+			// Arrived here from the control that asked the question (the Secrets vault's "Store"
+			// row): the subject was replaced, so this is the way back to it.
+			back={
+				cameFrom ? { label: "Back", onClick: () => board.view.getState().goBackCard() } : null
+			}
+			tabs={tabs}
+			tab={tab}
+			onTabChange={(next) => board.view.getState().setTab(next)}
+			onClose={close}
 		>
+			{tab === "sources" && sources}
+			{tab === "status" && <EnvironmentStatusView />}
+			{tab === "activity" && activity}
+			{tab === "configure" && (
 			<div className="space-y-6">
-				{/* Arrived here from the control that asked the question (the Secrets vault's
-				    "Store · …" row): one card on the rail means that card was replaced, so this is
-				    the way back to it. */}
-				{cardBack && (
-					<button
-						type="button"
-						onClick={goBackCard}
-						className="flex items-center gap-1.5 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
-					>
-						<ArrowLeft className="h-3.5 w-3.5" />
-						Back
-					</button>
-				)}
 				{iacGoverned && (
 					<p className="text-xs text-muted-foreground">
 						This environment&apos;s cluster and network are defined by its infrastructure
@@ -271,7 +326,60 @@ export function EnvSettingsCard({
 				    module is still one that can be torn down. */}
 				{destroyEnvironment && <DestroyEnvironmentZone control={destroyEnvironment} />}
 			</div>
-		</SheetCard>
+			)}
+		</InspectorFrame>
+	);
+}
+
+/**
+ * The environment's Status view: which environment this is and what state it is in, what is
+ * running against it now, and how it is delivered.
+ */
+function EnvironmentStatusView() {
+	const env = useEnvironmentStatus();
+	return (
+		<div className="space-y-6">
+			{env.environment ? (
+				<EnvironmentBlock env={env.environment} />
+			) : (
+				<EmptyState
+					className="px-0 py-4 md:px-0 md:py-4"
+					title="This environment's status has not loaded"
+					description="It is read with the board. Reload the page if this does not change."
+				/>
+			)}
+			{env.activeJob && (
+				<section className="space-y-2">
+					<SectionHeading level={3} title="Running now" />
+					<div className="flex items-center gap-2 border border-border bg-surface-sunken px-2.5 py-1.5">
+						<StatusBadge status="running" tier="live" className="shrink-0" />
+						<span className="font-mono text-ui-2xs uppercase tracking-wide">
+							{JOB_LABEL[env.activeJob.type] ?? env.activeJob.type}
+						</span>
+					</div>
+				</section>
+			)}
+			{env.unattributedDrift.length > 0 && (
+				<section className="space-y-2">
+					<SectionHeading level={3} title="Drift" count={env.unattributedDrift.length} />
+					<ul className="space-y-1">
+						{env.unattributedDrift.map((d) => (
+							<li
+								key={d.address}
+								className="flex items-center gap-2 border border-border bg-surface-sunken px-2 py-1 font-mono text-ui-2xs"
+							>
+								<span className="min-w-0 flex-1 truncate">{d.address}</span>
+								<span className="vx-eyebrow shrink-0 text-ui-3xs">{d.kind}</span>
+							</li>
+						))}
+					</ul>
+				</section>
+			)}
+			<section className="space-y-2">
+				<SectionHeading level={3} title="Delivery" />
+				<DeployPane status={env.gitops} />
+			</section>
+		</div>
 	);
 }
 

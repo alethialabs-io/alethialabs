@@ -7,11 +7,13 @@
 // failing takes down this column, not the page.
 
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { RegionError } from "@/components/errors/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
+import { MANAGE_PENDING_REASON, manageReason } from "@/components/errors/manage-gate";
 import { isForbidden } from "@/components/overview/overview-reads";
 import { FleetPoolWizard } from "@/components/runners/fleet-pool-wizard";
 import { PoolCard, PoolCardSkeleton, PoolsEmpty } from "@/components/runners/pool-card";
@@ -47,6 +49,17 @@ export function PoolsSection() {
 		setDialogOpen(true);
 	};
 
+	// "Add pool" is never hidden from a viewer who cannot use it: it is disabled with the reason.
+	// Until the fleet read answers, nobody is known to be able to use it.
+	const addPoolReason = fleet ? manageReason({ canManage: canManageFleet }) : MANAGE_PENDING_REASON;
+	const addPool = (
+		<DisabledReason reason={addPoolReason}>
+			<Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={openCreate}>
+				<Plus className="mr-1 h-3.5 w-3.5" aria-hidden /> Add pool
+			</Button>
+		</DisabledReason>
+	);
+
 	return (
 		<section className="space-y-3">
 			{/* The shared section heading, as the Runners column beside it uses: one look for a heading
@@ -55,13 +68,9 @@ export function PoolsSection() {
 			    first one in the main region). The pool cards themselves say how many there are. */}
 			<SectionHeading
 				title="Pools"
-				actions={
-					canManageFleet ? (
-						<Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={openCreate}>
-							<Plus className="mr-1 h-3.5 w-3.5" /> Add pool
-						</Button>
-					) : undefined
-				}
+				// The heading carries "Add pool" while pools are listed; with none, the empty state below
+				// carries it, so the control is on screen once. No action while the read has failed.
+				actions={!isError && (isPending || hasPools) ? addPool : undefined}
 			/>
 
 			{canManageFleet && hasPools && !fleet?.fleetProviderActive && (
@@ -103,13 +112,13 @@ export function PoolsSection() {
 										? () => setPoolEnabled.mutate({ id: pool.id, enabled: !pool.enabled })
 										: undefined
 								}
-								onDelete={canManageFleet && !busy ? () => deletePool.mutate({ id: pool.id }) : undefined}
+								onDelete={canManageFleet && !busy ? () => deletePool.mutateAsync({ id: pool.id }) : undefined}
 							/>
 						);
 					})}
 				</div>
 			) : (
-				<PoolsEmpty />
+				<PoolsEmpty action={addPool} />
 			)}
 
 			{canManageFleet && (

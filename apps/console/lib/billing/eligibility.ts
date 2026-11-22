@@ -196,13 +196,9 @@ export async function assertPaidConversionAllowed(
 		);
 	}
 	if (!paidMarketEnabled(country, ctx.capacity) && !testModeMarketOpen()) {
-		// No word about a trial (#5443). This sentence used to add "and the Pro trial is
-		// unaffected", but the gate is what REFUSES a trial on the most-used path: the public "Start
-		// free trial" CTA lands on /start, which opens a Pro Checkout carrying a 30-day trial, and this
-		// is the refusal it renders under "We can't start your trial checkout". The card-less trial
-		// (`startProTrial`) really is ungated, but it is reachable only from onboarding and the
-		// create-org sheet, and only while the account has not used it — so no page that shows this
-		// sentence can promise it.
+		// No word about a trial (#5443), and none is true to add: the card-less trial (`startProTrial`)
+		// passes this same gate (decision M12, #6907), so a closed market refuses it for this same
+		// reason, and Hobby is the only thing a closed market leaves open.
 		throw new PaidConversionNotAllowedError(
 			"market_closed",
 			"Alethia is not yet able to sell to customers in this country in this capacity. " +

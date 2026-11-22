@@ -46,7 +46,7 @@
   <rect class="d-surface" x="702" y="150" width="112" height="64" rx="8"/>
   <text class="d-label" x="758" y="176" text-anchor="middle" font-size="13" font-weight="600">Cloud</text>
   <text class="d-sub mono" x="758" y="194" text-anchor="middle" font-size="9">AWS·GCP·Azure</text>
-  <text class="d-sub mono" x="758" y="206" text-anchor="middle" font-size="9">Alibaba·Hetzner</text>
+  <text class="d-sub mono" x="758" y="206" text-anchor="middle" font-size="9">Hetzner</text>
 
   <line class="d-edge" x1="178" y1="139" x2="246" y2="172" marker-end="url(#ar)"/>
   <line class="d-edge" x1="178" y1="225" x2="246" y2="192" marker-end="url(#ar)"/>

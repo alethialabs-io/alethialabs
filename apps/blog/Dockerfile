@@ -4,7 +4,7 @@
 #
 # Blog (Next.js + velite) self-host image. Build context = repo root:
 #   docker build -f apps/blog/Dockerfile -t alethia-blog .
-# Stateless — serves the prebuilt MDX blog at basePath /blog.
+# Stateless — serves the prebuilt MDX blog at basePath /news (Caddy 308s the old /blog paths here).
 
 FROM node:22-alpine AS base
 RUN corepack enable

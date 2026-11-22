@@ -16,6 +16,8 @@ import {
 	ThreadStartError,
 	UnansweredTurnError,
 } from "@/components/agent/chat-error";
+import { ShellEditionProvider } from "@/components/shell/shell-edition-provider";
+import type { ShellEdition } from "@/components/shell/shell-edition";
 import { MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
 
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
@@ -42,14 +44,50 @@ beforeEach(() => {
 	mockTier("ai_free");
 });
 
+/** The route's 503 body when the deployment has no model provider key. */
+const NOT_CONFIGURED = new Error("AI is not configured. Set ANTHROPIC_API_KEY to enable the agent.");
+
+const HOSTED: ShellEdition = { deployment: "hosted", edition: "enterprise", offering: "hosted" };
+const SELF_HOSTED: ShellEdition = {
+	deployment: "self-managed",
+	edition: "community",
+	offering: "self-hosted",
+};
+
 describe("ChatError", () => {
 	it("classifies a 503 'not configured' body as missing-key", () => {
+		render(<ChatError error={NOT_CONFIGURED} />);
+		expect(screen.getByText("The assistant is not available")).toBeInTheDocument();
+		expect(vi.mocked(track)).toHaveBeenCalledWith("elench_error", { kind: "missing-key" });
+	});
+
+	// #6924 (R6 G-12): the card told every reader to "Set ANTHROPIC_API_KEY in your environment".
+	// A customer of the hosted service has no environment to set it in. The variable is named only
+	// where the instance edition says the deployment is self-managed.
+	it("on the hosted service, a missing key names no environment variable and asks nothing of the reader", () => {
+		const { container } = render(
+			<ShellEditionProvider edition={HOSTED}>
+				<ChatError error={NOT_CONFIGURED} onRetry={vi.fn()} />
+			</ShellEditionProvider>,
+		);
+		expect(screen.getByText("The assistant is not available")).toBeInTheDocument();
+		expect(container.textContent).not.toMatch(/ANTHROPIC_API_KEY|environment/i);
+		expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+	});
+
+	it("where the edition is not known, a missing key names no environment variable either", () => {
+		const { container } = render(<ChatError error={NOT_CONFIGURED} />);
+		expect(container.textContent).not.toMatch(/ANTHROPIC_API_KEY/);
+	});
+
+	it("on a self-managed instance, a missing key names the variable its operator sets", () => {
 		render(
-			<ChatError
-				error={new Error("AI is not configured. Set ANTHROPIC_API_KEY to enable the agent.")}
-			/>,
+			<ShellEditionProvider edition={SELF_HOSTED}>
+				<ChatError error={NOT_CONFIGURED} />
+			</ShellEditionProvider>,
 		);
 		expect(screen.getByText("AI is not configured")).toBeInTheDocument();
+		expect(screen.getByText(/Set ANTHROPIC_API_KEY in the console's environment/)).toBeInTheDocument();
 	});
 
 	it("classifies a 402 budget/quota body as budget", () => {
@@ -104,6 +142,21 @@ describe("ChatError", () => {
 		expect(
 			screen.queryByRole("button", { name: /buy credits/i }),
 		).not.toBeInTheDocument();
+	});
+
+	it("shows the server's own sentence when free AI is paused platform-wide", async () => {
+		mockTier("ai_free");
+		const sentence = "Free AI is paused for today. It resumes at 00:00 UTC.";
+		render(
+			<ChatError
+				error={
+					new Error(
+						JSON.stringify({ error: sentence, reason: "paused", resetAt: null, upgradable: true }),
+					)
+				}
+			/>,
+		);
+		expect(await screen.findByText(sentence)).toBeInTheDocument();
 	});
 
 	it("shows an Upgrade AI plan CTA when the reason is not_enabled (subscribe)", () => {

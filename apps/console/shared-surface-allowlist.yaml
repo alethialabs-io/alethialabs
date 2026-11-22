@@ -161,7 +161,7 @@ page_title:
     hits: 4
     reason: Sign-in is the front door — no sidebar, no breadcrumb, nothing else on the screen says what this is. It keeps the display heading the website uses, so the two halves of arriving look like one product.
   - path: apps/console/components/auth/onboarding-form.tsx
-    hits: 2
+    hits: 1
     reason: The first screen after sign-up, still outside the console shell — it welcomes you, and there is no breadcrumb above it to welcome you instead.
   - path: apps/console/components/forms/oauth-consent-form.tsx
     hits: 2

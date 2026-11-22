@@ -153,7 +153,7 @@ describe("shell header height — one token, every seam", () => {
 
 	it("the sidebar head and the open drill head both carry SHELL_HEADER", () => {
 		// A settings route is a route-owned drill, so both heads are in the DOM at once.
-		const { container } = render(<AppSidebar isHosted selfRunners />);
+		const { container } = render(<AppSidebar selfRunners />);
 		expect(shellHeads(container).length).toBeGreaterThanOrEqual(2);
 		expect(literalHeights(container)).toEqual([]);
 	});

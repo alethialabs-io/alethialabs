@@ -22,9 +22,19 @@ import {
   type SupportNotification,
 } from "@/hooks/use-support-notifications";
 import { formatCaseNumber } from "@/components/support/cases/case-list-item";
+import { globalHref } from "@/lib/routing";
 import { JOB_TYPES } from "@/lib/jobs/format";
 import { SUPPORT_STATUS_LABELS } from "@/lib/validations/support";
 import { cn } from "@repo/ui/utils";
+
+/**
+ * The bell's accessible name. The unread dot is drawn, not spoken, so the count rides in the name —
+ * "Notifications, 3 unread" — or a screen reader hears the same "Notifications" with or without
+ * anything new (S-13).
+ */
+export function bellName(unreadCount: number): string {
+  return unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications";
+}
 
 /** A job or support entry unified for the merged, recency-sorted feed. */
 type FeedItem =
@@ -140,7 +150,7 @@ export function NotificationsPopover() {
             {unreadCount > 0 && (
               <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-foreground ring-2 ring-background" />
             )}
-            <span className="sr-only">Notifications</span>
+            <span className="sr-only">{bellName(unreadCount)}</span>
           </Button>
         }
       />
@@ -156,6 +166,7 @@ export function NotificationsPopover() {
           </div>
           {unreadCount > 0 && (
             <button
+              type="button"
               onClick={markAllRead}
               className="text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
             >
@@ -241,7 +252,7 @@ function JobRow({
   const label = JOB_TYPES[n.jobType]?.label ?? n.jobType;
   const scope = [n.projectName, n.environmentName].filter(Boolean).join(" · ");
   return (
-    <Link href={`/${org}/~/jobs/${n.jobId}`} onClick={() => onRead(n.jobId)}>
+    <Link href={globalHref(org, `jobs/${n.jobId}`)} onClick={() => onRead(n.jobId)}>
       <div
         className={cn(
           "flex items-center gap-3 border-b border-border/20 px-4 py-2.5 transition-colors hover:bg-muted/50",
@@ -299,7 +310,7 @@ function SupportRow({
 }) {
   return (
     <Link
-      href={`/${org}/~/support/cases/${n.caseId}`}
+      href={globalHref(org, `support/cases/${n.caseId}`)}
       onClick={() => onRead(n.caseId)}
     >
       <div

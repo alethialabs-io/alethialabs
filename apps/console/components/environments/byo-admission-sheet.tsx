@@ -36,7 +36,7 @@ import { formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { Checkbox } from "@repo/ui/checkbox";
 import { EmptyState } from "@repo/ui/empty";
-import { Sheet, SheetContent } from "@repo/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@repo/ui/sheet";
 import { Skeleton } from "@repo/ui/skeleton";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import { Switch } from "@repo/ui/switch";
@@ -187,14 +187,17 @@ export function ByoAdmissionSheet({
 				<form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
 					<div className="flex items-start justify-between gap-3 border-b px-[22px] py-5">
 						<div>
-							<div className="font-mono text-ui-2xs uppercase tracking-[0.16em] text-text-tertiary">
-								BYO admission
-							</div>
-							<div className="mt-1.5 font-mono text-ui-xl text-text-primary">{envName}</div>
-							<p className="mt-2 max-w-[44ch] text-ui-sm text-text-tertiary">
+							{/* The sheet's accessible name: "BYO admission <environment>". */}
+							<SheetTitle className="flex flex-col gap-1.5 font-normal">
+								<span className="font-mono text-ui-2xs uppercase tracking-[0.16em] text-text-tertiary">
+									BYO admission
+								</span>
+								<span className="font-mono text-ui-xl text-text-primary">{envName}</span>
+							</SheetTitle>
+							<SheetDescription className="mt-2 max-w-[44ch] text-ui-sm text-text-tertiary">
 								A bring-your-own namespace where a chart already ran only reports what its admission
 								rules refuse. Turn refusal on to make every BYO namespace of this environment refuse it.
-							</p>
+							</SheetDescription>
 						</div>
 						<button
 							type="button"

@@ -4,7 +4,15 @@
 
 import { toRecord, toStr, toStrArray } from "@/lib/coerce";
 import { ChevronDown } from "lucide-react";
-import { useCallback, useId, useMemo, useRef, useState } from "react";
+import {
+	type FocusEvent,
+	useEffectEvent,
+	useId,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useForm } from "react-hook-form";
 import type { NodeKind } from "../graph/types";
 import { useSectionOpen } from "@/lib/stores/use-inspector-prefs-store";
@@ -83,6 +91,17 @@ type Config = Record<string, unknown>;
  * empty; a `list` holds blank rows that `flush` deliberately DROPS on the way out. Both of those are
  * states the schema rejects, so a blanket commit-on-invalid would write precisely the two values
  * #4256 was built to withhold, and would undo it while appearing to fix this.
+ *
+ * ── LEAVING WITHOUT A BLUR (#6837) ──────────────────────────────────────────────────────────────
+ *
+ * The inspector has no Save button, so "commits on blur" is only true if every way out of a field
+ * is a blur. Two are not: the card unmounting under a focused field (the rail closes, the view
+ * changes), and the card being handed ANOTHER node's config while a field is half-typed (the rail
+ * follows the subject without remounting). A field that has buffered a value and not yet committed
+ * it is therefore recorded as PENDING, together with the `onChange` it was typed against, and both
+ * exits flush it there through the same `flush`/`flushNumber` rules a blur uses. The second exit
+ * runs in a layout effect, before react-hook-form's own effect re-seeds the buffer from the new
+ * config, so what is flushed is still what was typed, and it goes to the node it was typed into.
  */
 export interface FieldBuffer {
 	/** Buffer a value without touching the store — keystroke-level edits. A text write that flips
@@ -113,6 +132,40 @@ function resolve<T>(
 	if (typeof r !== "function") return r;
 	// @ts-expect-error Resolvable<T> = T | ((ctx)=>T); T may itself be a function type, so typeof==="function" can't narrow r to the resolver
 	return r(ctx);
+}
+
+/** Whether a number field parses as a float: declared so, or stepped in fractions. */
+function isFloatField(field: FieldDef, ctx: FieldCtx): boolean {
+	const step = resolve(field.step, ctx);
+	return Boolean(field.float || (typeof step === "number" && step < 1));
+}
+
+/** The field types whose control buffers keystrokes, so a value can be typed and not yet committed. */
+function buffersKeystrokes(field: FieldDef): boolean {
+	return field.type === "text" || field.type === "number" || field.type === "list";
+}
+
+/**
+ * A field row was focused as a whole (the review view's "Go to" focuses the element marked
+ * `data-field-key`), so hand the focus to the first control inside it that can take it.
+ *
+ * One rule for every field type, rather than a `data-field-key` threaded into eleven controls and
+ * the repository selector this file does not own: a composite (a list, radio cards, a repository
+ * picker) has no single control to mark, and its first focusable one is the honest landing place.
+ * A focus that landed on a child is not the row's, and is left alone.
+ */
+function focusFirstControl(event: FocusEvent<HTMLDivElement>) {
+	const row = event.currentTarget;
+	if (event.target !== row) return;
+	const candidates = Array.from(
+		row.querySelectorAll<HTMLElement>("input, button, select, textarea, [tabindex]"),
+	);
+	for (const el of candidates) {
+		if (el.tabIndex < 0) continue;
+		if (el.matches(":disabled, [aria-hidden='true'], input[type='hidden']")) continue;
+		el.focus();
+		if (row.ownerDocument.activeElement === el) return;
+	}
 }
 
 /**
@@ -398,7 +451,7 @@ function FieldControl({
 
 		case "number": {
 			const step = resolve(field.step, ctx);
-			const isFloat = Boolean(field.float || (typeof step === "number" && step < 1));
+			const isFloat = isFloatField(field, ctx);
 			return (
 				<Input
 					id={id}
@@ -450,6 +503,8 @@ function FieldControl({
 					value={toStr(raw) || options[0]?.value || ""}
 					onChange={patch}
 					options={options}
+					// Two-up only where the CONTAINER is wide enough for it (see RadioCardGroup); in
+					// the 392px rail a card with a description needs the whole width.
 					columns={options.length >= 2 ? 2 : 1}
 				/>
 			);
@@ -567,62 +622,68 @@ function FieldRow({
 			? "Select a cloud account to configure this."
 			: unavailable;
 		const off = Boolean(needsProvider || unavailable);
+		const described = [
+			note ?? field.description ? `${fieldId}-note` : null,
+			error ? `${fieldId}-error` : null,
+		]
+			.filter(Boolean)
+			.join(" ");
 		return (
 			<div
+				data-field-key={field.key}
+				tabIndex={-1}
+				onFocus={focusFirstControl}
 				className={cn(
-					"col-span-full flex items-center justify-between gap-4 rounded-none border px-3 py-2.5",
+					"rounded-none border px-3 py-2.5 outline-none",
 					// Hairline weight is the de-emphasis, the same move `advanced` makes with a sunken
 					// surface. No colour: an unavailable cell is a fact, not a warning.
 					off ? "border-border/40" : "border-border/60",
 				)}
 			>
-				<div className="min-w-0">
-					<p
-						className={cn(
-							"flex items-center gap-2 text-sm font-medium",
-							off && "text-muted-foreground",
-						)}
-					>
-						{field.label}
-						{/* Same typography as the option advisory above, a DIFFERENT mechanism: that one
-						    is ink-only and must never disable (#918), this one marks a real gate. */}
-						{unavailable && (
-							<span className="vx-eyebrow shrink-0 text-ui-3xs text-muted-foreground">
-								unavailable
-							</span>
-						)}
-					</p>
-					{(note ?? field.description) && (
-						<p id={`${fieldId}-note`} className="mt-0.5 text-xs text-muted-foreground">
-							{note ?? field.description}
+				<div className="flex items-center justify-between gap-4">
+					<div className="min-w-0">
+						<p
+							className={cn(
+								"flex items-center gap-2 text-sm font-medium",
+								off && "text-muted-foreground",
+							)}
+						>
+							{field.label}
+							{/* Same typography as the option advisory above, a DIFFERENT mechanism: that one
+							    is ink-only and must never disable (#918), this one marks a real gate. */}
+							{unavailable && (
+								<span className="vx-eyebrow shrink-0 text-ui-3xs text-muted-foreground">
+									unavailable
+								</span>
+							)}
 						</p>
-					)}
+						{(note ?? field.description) && (
+							<p id={`${fieldId}-note`} className="mt-0.5 text-xs text-muted-foreground">
+								{note ?? field.description}
+							</p>
+						)}
+					</div>
+					{/* A switch's label is a sibling <p>, not a <Label htmlFor>, so without these the
+					    control has NO accessible name — a screen reader reads "switch, off" and the reason
+					    for a disabled one is never announced at all. */}
+					<Switch
+						aria-label={field.label}
+						aria-describedby={described || undefined}
+						checked={off ? false : raw !== false}
+						disabled={off}
+						onCheckedChange={(v) => buffer.set(field, v)}
+					/>
 				</div>
-				{/* A switch's label is a sibling <p>, not a <Label htmlFor>, so without these the
-				    control has NO accessible name — a screen reader reads "switch, off" and the reason
-				    for a disabled one is never announced at all. */}
-				<Switch
-					aria-label={field.label}
-					aria-describedby={note ?? field.description ? `${fieldId}-note` : undefined}
-					checked={off ? false : raw !== false}
-					disabled={off}
-					onCheckedChange={(v) => buffer.set(field, v)}
-				/>
+				{/* Under the text, not beside the switch: it used to be a third flex item squeezed
+				    between the label and the toggle. */}
 				{error && (
-					<p className="col-span-full text-xs font-medium text-foreground">{error}</p>
+					<p id={`${fieldId}-error`} className="mt-1.5 text-xs font-medium text-foreground">
+						{error}
+					</p>
 				)}
 			</div>
 		);
 	}
-
-	const full =
-		field.full ||
-		field.type === "radio-card" ||
-		field.type === "region" ||
-		field.type === "repository" ||
-		field.type === "list" ||
-		field.type === "subresource" ||
-		field.type === "bindings";
 
 	// Composite controls (list / subresource / bindings / radio-card / repository) label their own
 	// inner rows, so the section label stays decorative for those; everything else gets a real
@@ -641,10 +702,25 @@ function FieldRow({
 	// The one id both halves of the binding read: the `<Label htmlFor>` here, and the `id` FieldControl
 	// puts on the input it renders.
 	const id = composite ? undefined : fieldId;
+	const labelId = `${fieldId}-label`;
 
+	// One column, every field full width: the rail is 392px, and the two-up grid this replaced put
+	// two ~160px controls side by side, which truncated every select and split a label from its
+	// pair. There is no per-field width any more: every row is the full width.
+	//
+	// The row is the element `data-field-key` marks, so the review view's "Go to" can land on ANY
+	// field by its key; `focusFirstControl` forwards that focus to the control. A composite's row is
+	// also a named group, so the label it shows is the name a screen reader hears on entering it.
 	return (
-		<div className={cn("space-y-1.5", full && "col-span-full")}>
-			<Label htmlFor={id} className="text-xs">
+		<div
+			data-field-key={field.key}
+			tabIndex={-1}
+			onFocus={focusFirstControl}
+			role={composite ? "group" : undefined}
+			aria-labelledby={composite ? labelId : undefined}
+			className="space-y-1.5 outline-none"
+		>
+			<Label id={labelId} htmlFor={id} className="text-xs">
 				{label}
 			</Label>
 			<FieldControl field={field} ctx={ctx} buffer={buffer} id={id} />
@@ -724,11 +800,25 @@ function Section({
 	// A collapsed section hiding an invalid field would hide the error, so open it when one of its
 	// fields is failing (W4).
 	const hasError = fields.some((f) => errors[f.key]);
-	// Advanced = provider-specific knobs. Collapsed by DEFAULT, so the portable fields stay the
-	// thing you see first; you have to deliberately open the door to leave cloud-indifferent ground.
-	// The user's own choice wins over that default and is remembered per kind — this was local
-	// state, so every section you opened collapsed again the moment the card unmounted.
-	const [open, setOpen] = useSectionOpen(kind, section.id, section.defaultOpen ?? false);
+	// What is open on FIRST VIEW (#6837): only a group holding a field with no usable default. The
+	// schema validator is what decides "usable" — the same one behind the inline errors and the
+	// board's "Needs setup" — so the group a node needs you in is the one in front, and every group
+	// whose defaults already deploy starts collapsed behind its one-line value summary. A service
+	// used to open six of its eight groups at once, which is a wall, not a form.
+	//
+	// Taken ONCE, at mount: a default computed every render would fold the group shut under your
+	// cursor the moment the last required field in it became valid.
+	//
+	// Without a `kind` there is no validator to ask, so the schema's own `defaultOpen` stands —
+	// those surfaces (and the add palette's quick-config) keep the disclosure they were written for.
+	//
+	// The user's own choice still wins and is remembered per kind (`useSectionOpen`).
+	const [firstView] = useState(() => (kind ? hasError : (section.defaultOpen ?? false)));
+	const [open, setOpen] = useSectionOpen(kind, section.id, firstView);
+	// A group you are working in stays open while you work in it. Without this, a group forced open
+	// by an error folded shut under the caret on the keystroke that fixed the error.
+	const [engaged, setEngaged] = useState(false);
+	const shown = open || hasError || engaged;
 	const summary = sectionSummary(section, ctx);
 
 	// A section scoped to clouds this project isn't on doesn't exist for it.
@@ -744,19 +834,22 @@ function Section({
 
 	return (
 		<Collapsible
-			open={open || hasError}
-			onOpenChange={setOpen}
+			open={shown}
+			onOpenChange={(next) => {
+				setOpen(next);
+				if (!next) setEngaged(false);
+			}}
 			className={cn(
 				"rounded-none border border-border",
 				advanced && "bg-surface-sunken/40",
 				hasError && "border-foreground/40",
 			)}
 		>
-			<CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
+			<CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
 				<span className="flex min-w-0 flex-1 items-center gap-2">
 					<span className="min-w-0">
 						<span className="block text-sm font-medium">{section.title}</span>
-						{!open && summary && (
+						{!shown && summary && (
 							<span className="block truncate text-xs text-muted-foreground">
 								{summary}
 							</span>
@@ -771,13 +864,20 @@ function Section({
 					)}
 				</span>
 				<ChevronDown
+					aria-hidden
 					className={cn(
 						"h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-						open && "rotate-180",
+						shown && "rotate-180",
 					)}
 				/>
 			</CollapsibleTrigger>
-			<CollapsibleContent className="grid grid-cols-1 gap-4 border-t border-border/60 px-4 py-4 sm:grid-cols-2">
+			{/* One column (see FieldRow). */}
+			<CollapsibleContent
+				className="flex flex-col gap-4 border-t border-border/60 px-3 py-3"
+				onFocus={() => {
+					if (!engaged) setEngaged(true);
+				}}
+			>
 				{fields.map((field) => (
 					<FieldRow
 						key={field.key}
@@ -833,7 +933,15 @@ export function ConfigFields({
 	const kindRef = useRef(kind);
 	kindRef.current = kind;
 
-	const buffer: FieldBuffer = useMemo(() => {
+	// The fields holding a typed value that has not reached the store yet, and the `onChange` they
+	// were typed against. See FieldBuffer's doc, "LEAVING WITHOUT A BLUR".
+	const pending = useRef(new Map<string, FieldDef>());
+	const pendingTarget = useRef<((patch: Config) => void) | null>(null);
+	// The field context, for the one flush that runs outside a render: a number field's float rule
+	// can depend on it (a resolvable `step`).
+	const ctxRef = useRef<FieldCtx | null>(null);
+
+	const engine = useMemo(() => {
 		/** Buffer a field's value; returns the config keys it wrote (a `set` field spans several). */
 		const write = (field: FieldDef, value: unknown): string[] => {
 			const patch = field.set
@@ -845,12 +953,13 @@ export function ConfigFields({
 			return Object.keys(patch);
 		};
 		/** Push buffered keys to the store as ONE patch. The store's answer comes back through
-		 * `values`, so the buffer does not need to be told what it just said. */
-		const commit = (keys: string[]) => {
+		 * `values`, so the buffer does not need to be told what it just said. `emit` is the node's
+		 * `onChange`, or, for a pending flush, the one the value was typed against. */
+		const commit = (keys: string[], emit: (patch: Config) => void = onChange) => {
 			const current = form.getValues();
 			const patch: Config = {};
 			for (const k of keys) patch[k] = current[k];
-			onChange(patch);
+			emit(patch);
 		};
 		/** The buffered value of a field, through its own accessor. A field with `get`/`set` does
 		 * NOT live under its key — the cluster's "vCPU per node" reads and writes `node_size` — so
@@ -863,6 +972,17 @@ export function ConfigFields({
 		/** Put back what is stored — for a field the user emptied but did not answer. */
 		const restore = (field: FieldDef) => {
 			write(field, read(field, committed.current));
+		};
+		/** Record that a field holds a typed value the store has not heard. The first pending field
+		 * pins the `onChange` the flush will use. */
+		const markPending = (field: FieldDef) => {
+			if (pending.current.size === 0) pendingTarget.current = onChange;
+			pending.current.set(field.key, field);
+		};
+		/** The field's value has reached the store (or been put back); nothing is pending for it. */
+		const settle = (field: FieldDef) => {
+			pending.current.delete(field.key);
+			if (pending.current.size === 0) pendingTarget.current = null;
 		};
 		/**
 		 * Which of `keys` the schema currently rejects in `cfg`, as a comparable string.
@@ -879,9 +999,47 @@ export function ConfigFields({
 			const errs = validateNodeConfig(k, cfg);
 			return keys.map((key) => (errs[key] ? "1" : "0")).join("");
 		};
-		return {
+		/** Commit a buffered text or list field (a blur). Lists drop their blank rows here. */
+		const flushInto = (field: FieldDef, emit: (patch: Config) => void) => {
+			// An empty row is not a value — an empty CIDR fails zod at deploy with a message about
+			// a field the user never typed in. Dropped HERE, on the way to the store, so the row
+			// survives being added.
+			if (field.type === "list") {
+				const rows = read(field, form.getValues());
+				if (Array.isArray(rows)) {
+					commit(write(field, rows.filter((v) => typeof v !== "string" || v.trim() !== "")), emit);
+					return;
+				}
+			}
+			commit(keysOf(field), emit);
+		};
+		/** Commit a buffered number field's text (a blur). */
+		const flushNumberInto = (
+			field: FieldDef,
+			isFloat: boolean,
+			emit: (patch: Config) => void,
+		) => {
+			const text = numberText(read(field, form.getValues()));
+			if (text.trim() === "") {
+				// Optional (nullable column) → "use the template's default". Required → nothing was
+				// said, so nothing is written: the last committed value comes back. It used to write
+				// 0, which both trips the `min(1)` bound and fights you the moment you backspace.
+				if (field.optional) commit(write(field, null), emit);
+				else restore(field);
+				return;
+			}
+			const n = isFloat ? Number.parseFloat(text) : Number.parseInt(text, 10);
+			if (Number.isNaN(n)) {
+				restore(field);
+				return;
+			}
+			commit(write(field, n), emit);
+		};
+
+		const buffer: FieldBuffer = {
 			write: (field, value) => {
 				const keys = write(field, value);
+				if (buffersKeystrokes(field)) markPending(field);
 				// See FieldBuffer's doc: TEXT only, and only on a change of validity. `committed.current`
 				// is what readiness is reading right now; `form.getValues()` is what the user has just
 				// said. When those two disagree about whether this field is acceptable, the store is
@@ -889,47 +1047,64 @@ export function ConfigFields({
 				if (field.type !== "text") return;
 				if (rejected(committed.current, keys) !== rejected(form.getValues(), keys)) {
 					commit(keys);
+					settle(field);
 				}
 			},
 			set: (field, value) => {
 				commit(write(field, value));
+				settle(field);
 			},
 			flush: (field) => {
-				// An empty row is not a value — an empty CIDR fails zod at deploy with a message about
-				// a field the user never typed in. Dropped HERE, on the way to the store, so the row
-				// survives being added.
-				if (field.type === "list") {
-					const rows = read(field, form.getValues());
-					if (Array.isArray(rows)) {
-						commit(write(field, rows.filter((v) => typeof v !== "string" || v.trim() !== "")));
-						return;
-					}
-				}
-				commit(keysOf(field));
+				flushInto(field, onChange);
+				settle(field);
 			},
 			flushNumber: (field, isFloat) => {
-				const text = numberText(read(field, form.getValues()));
-				if (text.trim() === "") {
-					// Optional (nullable column) → "use the template's default". Required → nothing was
-					// said, so nothing is written: the last committed value comes back. It used to write
-					// 0, which both trips the `min(1)` bound and fights you the moment you backspace.
-					if (field.optional) commit(write(field, null));
-					else restore(field);
-					return;
-				}
-				const n = isFloat ? Number.parseFloat(text) : Number.parseInt(text, 10);
-				if (Number.isNaN(n)) {
-					restore(field);
-					return;
-				}
-				commit(write(field, n));
+				flushNumberInto(field, isFloat, onChange);
+				settle(field);
 			},
 			commitPatch: (patch) => {
 				for (const [k, v] of Object.entries(patch)) form.setValue(k, v);
 				onChange(patch);
 			},
 		};
+
+		/** Flush every pending field to the node it was typed into, by the rules a blur uses. */
+		const flushPending = () => {
+			const emit = pendingTarget.current;
+			const fields = Array.from(pending.current.values());
+			pending.current.clear();
+			pendingTarget.current = null;
+			if (!emit) return;
+			const ctx = ctxRef.current;
+			for (const field of fields) {
+				if (field.type === "number") {
+					flushNumberInto(field, ctx ? isFloatField(field, ctx) : Boolean(field.float), emit);
+				} else {
+					flushInto(field, emit);
+				}
+			}
+		};
+
+		return { buffer, flushPending };
 	}, [form, onChange]);
+	const buffer = engine.buffer;
+
+	// The two exits that are not a blur. An effect event, so both read the CURRENT engine without
+	// re-running when it is rebuilt (it is rebuilt whenever the parent passes a new `onChange`).
+	const leave = useEffectEvent(() => engine.flushPending());
+	// The card handed a different config — another node, as the rail follows the subject without
+	// remounting. A LAYOUT effect, because react-hook-form re-seeds the buffer from `values` in a
+	// plain effect of the same commit: this runs first, while the buffer still holds what was typed.
+	// Compared by content, so a parent that rebuilds an equal config object flushes nothing.
+	const seen = useRef(config);
+	useLayoutEffect(() => {
+		if (seen.current === config) return;
+		const same = JSON.stringify(seen.current) === JSON.stringify(config);
+		seen.current = config;
+		if (!same) leave();
+	}, [config]);
+	// The card unmounting under a focused field: the rail closes, or the view changes.
+	useLayoutEffect(() => () => leave(), []);
 
 	// Conditionals (`visibleWhen` / `unavailableWhen`) and the option resolvers read the BUFFERED
 	// values, so a section that appears when a toggle flips appears on the flip, not on the commit.
@@ -938,6 +1113,7 @@ export function ConfigFields({
 		config: values,
 		caps: capabilities ?? NO_CAPABILITIES,
 	};
+	ctxRef.current = ctx;
 	// W4 — validate against the DB-derived per-node schema so what the form accepts conforms to what
 	// the DB stores. A pure function of the buffered values, so an error can never lag the input.
 	const errors = useMemo(
@@ -951,7 +1127,9 @@ export function ConfigFields({
 		<div className="space-y-3">
 			{sections.map((section) => (
 				<Section
-					key={section.id}
+					// Keyed by kind as well: the rail re-renders this card for another node without
+					// remounting it, and a group's first-view state belongs to the kind it was taken on.
+					key={`${kind ?? ""}:${section.id}`}
 					section={section}
 					ctx={ctx}
 					buffer={buffer}

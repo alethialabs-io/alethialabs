@@ -9,6 +9,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -311,12 +312,23 @@ func keylessQuery(t *testing.T, ctx context.Context, kc string, p keylessDBParam
 	sql := keylessProbeSQL(p.cfg.engine, keylessCanaryTable, canary)
 	argv := keylessClientArgv(p.cfg.engine, manifests.KeylessDBUser, p.dbName, keylessEnginePort(p.cfg.engine), sql)
 	out, err := keylessDebugExec(ctx, kc, p, pod, "probe", argv, timeout)
-	if err != nil {
-		t.Fatalf("keyless: the password-free query FAILED — %v\n%s", err, out)
+	// kubectl debug --attach exits 0 even when the client inside failed, so a refused connection
+	// arrives as a "successful" exec whose output is the client's error. Read the output for that
+	// too — the 2026-11-22 runs (44982043922, 45000390548) both reported a digest mismatch whose
+	// value was psql's "db-authproxy could not authenticate upstream".
+	if line, failed := keylessClientError(out); err != nil || failed {
+		t.Fatalf("keyless: the password-free query FAILED — %v %s\n%s\n--- %s sidecar log (last lines) ---\n%s",
+			err, line, out, p.cfg.keylessProxyContainer(), keylessProxyLogs(ctx, kc, p, pod))
 	}
 	value, perr := parseProbeValue(out)
 	if perr != nil {
 		t.Fatalf("keyless: %v\n%s", perr, out)
+	}
+	// A value that is not canary-shaped cannot be the canary, so it is safe to print — and it is the
+	// diagnosis when the digest then mismatches (a run costs EUR 3.50; the next one should not have to
+	// guess). A canary-shaped value is never printed.
+	if len(value) != len(canary) {
+		t.Logf("keyless: the query's last line is not canary-shaped (%d chars, want %d): %q", len(value), len(canary), truncateForLog(value, 160))
 	}
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
@@ -328,19 +340,31 @@ const keylessCanaryTable = "alethia_e2e_keyless_canary"
 
 // keylessDebugExec runs argv in an ephemeral container attached to pod. Each call needs a distinct
 // container name — a pod's ephemeralContainers list is append-only and a repeated name is rejected.
+//
+// It returns STDOUT ONLY on success. The value the caller compares is the last line the client
+// printed, and kubectl writes its own chatter (attach fallbacks, warnings) to stderr on calls that
+// succeed: with CombinedOutput the 2026-11-22 aws run (44982043922) connected keylessly, read the row,
+// and still failed the digest, because the "last line" was kubectl's, not psql's. Stderr is joined
+// back in only on failure, where it is the diagnosis.
 func keylessDebugExec(ctx context.Context, kc string, p keylessDBParams, pod, tag string, argv []string, timeout time.Duration) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	args := []string{
 		"--kubeconfig", kc, "debug", "pod/" + pod, "-n", p.cfg.namespace,
 		"--image=" + p.cfg.clientImage,
-		"--container=keyless-" + tag,
+		"--container=" + keylessDebugContainerName(tag),
 		"--quiet", "--attach", "--stdin=false", "--tty=false",
 		"--",
 	}
 	args = append(args, argv...)
-	out, err := exec.CommandContext(cctx, "kubectl", args...).CombinedOutput()
-	return string(out), err
+	cmd := exec.CommandContext(cctx, "kubectl", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return stdout.String() + stderr.String(), err
+	}
+	return stdout.String(), nil
 }
 
 // assertKeylessSurvivesRotation is the assertion db-authproxy exists for.
@@ -453,4 +477,26 @@ func writeKeylessSummary(t *testing.T, c keylessDBConfig, s keylessSummary) {
 	if err := os.WriteFile(c.summaryPath, b, 0o644); err != nil {
 		t.Logf("keyless: could not write the summary to %s: %v", c.summaryPath, err)
 	}
+}
+
+// truncateForLog shortens s to at most n bytes for a log line.
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+// keylessProxyLogs returns the last lines of the db-authproxy sidecar's log. The proxy logs only the
+// reason a connection failed, never the token (apps/runner/internal/agent/authproxy.go), so it is
+// safe to print — and it is the only place that reason exists.
+func keylessProxyLogs(ctx context.Context, kc string, p keylessDBParams, pod string) string {
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kc, "logs", "pod/"+pod,
+		"-n", p.cfg.namespace, "-c", p.cfg.keylessProxyContainer(), "--tail=40").Output()
+	if err != nil {
+		return fmt.Sprintf("(could not read the sidecar log: %v)", err)
+	}
+	return string(out)
 }

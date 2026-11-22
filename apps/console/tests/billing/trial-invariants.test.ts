@@ -1,31 +1,28 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The cardless Pro trial, pinned (#2372).
+// The cardless Pro trial, pinned (#2372; decision M12, #6907).
 //
-// The trial was correct before this PR and the requirement is to PRESERVE it exactly. That is a
-// harder thing to guarantee than to build: the change that breaks it will not be a change to the
-// trial, it will be a change to the paid-conversion gate that quietly starts applying to it. A
-// paywall in front of the free trial would be a straightforward product regression AND a false
-// statement on the pricing page.
+// #2372 pinned the trial OUTSIDE the paid-conversion gate. Decision M12 (2026-11-17) reversed that:
+// the trial is kept, card-less, but "the trial path must sit behind the same gate rules as paid", so a
+// trial is refused for exactly the reasons a purchase is. This file now pins the reverse, plus the
+// properties that did not change:
 //
-// So these read the source structurally, the same way the eligibility-coverage test does, and assert
-// the four properties the product actually promises:
+//   behind the gate · ceilings reserved before Stripe, given back on failure · one per ACCOUNT ·
+//   no card required · Hobby fallback · never deleted on expiry
 //
-//   one per ACCOUNT · no card required · Community fallback · never deleted on expiry
-//
-// A behavioural test over a mocked Stripe would prove the current code path; it would not notice
-// `startProTrial` gaining a `gatePaidConversion` call, which is the realistic way this breaks.
+// These read the source structurally, the same way the eligibility-coverage test does: the realistic
+// regression is a refactor that quietly drops the gate call, which a mocked-Stripe test would not see.
+// The ceilings' own behaviour is tested in tests/lib/billing/trial.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-// The GATE is imported for real — not the action. What this file asserts about startProTrial is an
-// ABSENCE ("it must not call the gate"), and an absence is only meaningful while the thing being
-// absent exists: if `assertPaidConversionAllowed` were deleted, every check below would pass while
-// proving nothing. Importing the action instead would drag the whole auth chain into a test that
-// only reads text.
-import { assertPaidConversionAllowed } from "@/lib/billing/eligibility";
+// The GATE is imported for real — not the action. A presence check on its name is only meaningful
+// while the thing named exists: if `assertOrgPaidConversionAllowed` were deleted, a body that still
+// said `gatePaidConversion(` would prove nothing. Importing the action instead would drag the whole
+// auth chain into a test that only reads text.
+import { assertOrgPaidConversionAllowed } from "@/lib/billing/eligibility";
 
 const SRC = readFileSync(
 	join(process.cwd(), "app/server/actions/billing.ts"),
@@ -42,18 +39,28 @@ function actionBody(name: string): string {
 describe("the cardless Pro trial", () => {
 	const body = actionBody("startProTrial");
 
-	it("the gate this trial must stay out of actually exists", () => {
-		expect(typeof assertPaidConversionAllowed).toBe("function");
+	it("the gate this trial passes actually exists", () => {
+		expect(typeof assertOrgPaidConversionAllowed).toBe("function");
 	});
 
-	// THE regression this file exists to catch. The trial takes no money, so the paid-conversion gate
-	// must not apply to it — and the gate is new, adjacent, and looks like it belongs everywhere.
-	it("is NOT behind the paid-conversion gate", () => {
-		// If this fails: the trial requires no card and takes no money. Gating it puts a paywall in
-		// front of the free trial the pricing page promises, and refuses it outright in every market
-		// that is not yet open.
-		expect(body.includes("gatePaidConversion(")).toBe(false);
-		expect(body.includes("assertPaidConversionAllowed(")).toBe(false);
+	// Decision M12: the trial is refused for the same reasons a purchase is, and before Stripe is touched.
+	it("passes the paid-conversion gate before any Stripe call", () => {
+		const gate = body.indexOf("gatePaidConversion(");
+		const created = body.indexOf("subscriptions.create");
+		expect(gate).toBeGreaterThan(-1);
+		expect(created).toBeGreaterThan(-1);
+		expect(gate).toBeLessThan(created);
+	});
+
+	// The ceilings (one per organization, per person, per network) are spent before the mint, and given
+	// back when no subscription was created — so a failed create does not consume a lifetime trial.
+	it("reserves the trial ceilings before the mint and releases them when nothing was minted", () => {
+		const reserved = body.indexOf("reserveTrial(");
+		const created = body.indexOf("subscriptions.create");
+		expect(reserved).toBeGreaterThan(-1);
+		expect(reserved).toBeLessThan(created);
+		expect(body).toContain("releaseTrial(reservation)");
+		expect(body).toContain("if (!minted.done) await releaseTrial(reservation)");
 	});
 
 	// No card. `trial_period_days` with no payment method is the whole mechanism; a `payment_method`
@@ -86,7 +93,7 @@ describe("the cardless Pro trial", () => {
 	});
 
 	// On a missing payment method at trial end Stripe CANCELS the subscription; the org falls back to
-	// Community. `pause` would leave it in a state the entitlement seam reads as neither.
+	// Hobby (`community`). `pause` would leave it in a state the entitlement seam reads as neither.
 	it("ends by cancelling to the Community fallback, never by deleting anything", () => {
 		expect(body).toContain('missing_payment_method: "cancel"');
 		// An expired trial must leave the org and its data intact on Community, not remove them.

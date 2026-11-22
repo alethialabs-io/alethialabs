@@ -90,6 +90,10 @@
       "covered": 490,
       "total": 517
     },
+    "lib/canvas/store": {
+      "covered": 952,
+      "total": 970
+    },
     "lib/classification": {
       "covered": 19,
       "total": 20

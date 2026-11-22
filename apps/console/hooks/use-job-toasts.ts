@@ -21,8 +21,17 @@ import { NOTIFY_JOB_TYPES, jobPhase, jobToastContent } from "@/lib/jobs/toast-co
  * updates the existing toast), which is the whole dedup mechanism.
  *
  * Jobs already present in the first settled snapshot are treated as pre-existing and never
- * toasted — toasts are for work the user starts in THIS session; history lives on the Jobs
+ * toasted — toasts are for work that starts in THIS session; history lives on the Jobs
  * page and the bell.
+ *
+ * THE FEED IS THE ORG'S NEWEST JOBS, CAPPED (`SHELL_JOB_FEED_LIMIT`), so a job this hook is
+ * showing as in flight can leave it before it finishes — pushed out by newer jobs. Its toast is
+ * then dismissed: with no later snapshot to carry its outcome, a spinner left up would never
+ * resolve. The outcome is on the Jobs page and in the bell.
+ *
+ * NOT YET FILTERED BY AUTHOR: the feed's rows (`ShellJob`, lib/rpc/procedures/workspace.ts) do not
+ * carry who started the job, so a teammate's deploy toasts here too. That needs `user_id` on the
+ * feed, which is outside this hook.
  */
 export function useJobToasts(): void {
 	const { data: jobs } = useRecentJobsQuery();
@@ -32,7 +41,7 @@ export function useJobToasts(): void {
 	// Ids present in the first settled snapshot — pre-existing work, never toasted.
 	const knownRef = useRef<Set<string>>(new Set());
 	// Last status we emitted a toast for, per managed job — guards against re-emitting an
-	// unchanged status on every poll.
+	// unchanged status every time the feed is read again (a `jobs` hint, a refocus).
 	const statusRef = useRef<Map<string, ProvisionJobStatus>>(new Map());
 	const seededRef = useRef(false);
 	// Keep the live org in a ref so a "View job" closure created on one page still navigates
@@ -60,6 +69,17 @@ export function useJobToasts(): void {
 			if (statusRef.current.get(job.id) === job.status) continue;
 			statusRef.current.set(job.id, job.status);
 			emit(job);
+		}
+
+		// A job last shown as in flight that is no longer in the feed: nothing will ever arrive to
+		// resolve its toast, so take it down. A finished job's toast is left to its own duration.
+		const inFeed = new Set(jobs.map((job) => job.id));
+		for (const [jobId, status] of statusRef.current) {
+			if (inFeed.has(jobId) || jobPhase(status) !== "active") continue;
+			toast.dismiss(`job-${jobId}`);
+			statusRef.current.delete(jobId);
+			// Remembered as seen, so it is not toasted afresh if it comes back into the feed.
+			knownRef.current.add(jobId);
 		}
 
 		/** Renders/updates the single toast for a job at its current phase. */

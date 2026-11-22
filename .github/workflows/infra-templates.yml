@@ -32,11 +32,16 @@ on:
 # PR #3562, which re-triggers every `pull_request` workflow on EVERY merge into dev. `CI` had
 # already cancelled its own superseded runs and showed 1; these seven each showed a full stack.
 #
-# Scoped to `github.ref`, so this only ever cancels an OLDER run of the SAME workflow on the SAME
-# PR or branch — the ordinary "I pushed again" case. It cannot cancel a run for a different ref.
+# Scoped to `github.ref`, and cancelling only on `pull_request`, so this only ever cancels an OLDER
+# run of the SAME workflow on the SAME PR — the ordinary "I pushed again" case. It cannot cancel a
+# run for a different ref, and it never cancels a push.
+# CONCURRENCY HYGIENE (2026-11-22): `cancel-in-progress` is true only for `pull_request`, so a push to
+# the deploy branch (an apply) is never cancelled mid-flight; push runs on one ref still SERIALISE,
+# and a newer push replaces a still-PENDING one, which is the apply that would have been superseded
+# anyway. `github.event_name` is in the group so a dispatch never shares a group with a push.
 concurrency:
-  group: infra-templates-${{ github.ref }}
-  cancel-in-progress: true
+  group: infra-templates-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

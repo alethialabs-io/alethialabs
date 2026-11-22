@@ -82,7 +82,7 @@ describe("RepositorySelector — one layout through load (F034)", () => {
 			<RepositorySelector value={undefined} onChange={vi.fn()} label="" />,
 		);
 		expect(unseeded).not.toContain("No Git accounts linked");
-		expect(unseeded).not.toContain("Link GitHub");
+		expect(unseeded).not.toContain("Connect GitHub");
 	});
 
 	it("unseeded, the first render is the loading row — never a Link panel the data will take away", async () => {
@@ -91,7 +91,7 @@ describe("RepositorySelector — one layout through load (F034)", () => {
 		renderSelector(undefined);
 
 		expect(screen.queryByText("No Git accounts linked")).toBeNull();
-		expect(screen.queryByRole("button", { name: /Link GitHub/i })).toBeNull();
+		expect(screen.queryByRole("button", { name: /Connect GitHub/i })).toBeNull();
 		expect(getLinkedProviders).toHaveBeenCalledTimes(1);
 		// …and it settles on the row once the list lands.
 		expect(

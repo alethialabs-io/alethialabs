@@ -13,8 +13,9 @@ export const metadata = pageMetadata({
 });
 
 /**
- * The abuse-report route. Prefills the notification email from the signed-in user's session
- * and renders the {@link AbuseForm}, which submits + redirects to the case thread.
+ * The abuse-report route. Prefills the notification email from the signed-in user's session,
+ * keys the report's tab draft by their id, and renders the {@link AbuseForm}, which submits and
+ * redirects to the case thread.
  */
 export default async function ReportAbusePage({
 	params,
@@ -24,5 +25,5 @@ export default async function ReportAbusePage({
 	const { org } = await params;
 	const session = await auth.api.getSession({ headers: await headers() });
 
-	return <AbuseForm orgSlug={org} defaultEmail={session?.user?.email} />;
+	return <AbuseForm orgSlug={org} defaultEmail={session?.user?.email} viewerId={session?.user?.id} />;
 }

@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
-import { diffNodes } from "@/lib/stores/use-canvas-store";
+import { diffNodes } from "@/lib/canvas/store/derive";
 import {
 	addonNode,
 	cacheNode,

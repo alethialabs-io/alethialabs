@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -18,16 +17,24 @@ import (
 var usageCmd = &cobra.Command{
 	Use:   "usage",
 	Short: "Show the active organization's current usage",
-	Long: `Display the active organization's current usage: billable seats used vs the
-purchased cap, managed-runner minutes consumed this period, the project count, and AI
-credits used vs the plan's weekly grant. Read-only. Use --output json for scripting.`,
+	Args:  cobra.NoArgs,
+	Long: `Shows the active organization's usage: billable seats used against the purchased cap,
+managed-runner minutes this period, the number of projects, and AI credits used against the plan's
+weekly grant.
+
+Use it before a change that adds seats or runs jobs, or when a command is refused with a plan
+limit (exit 10). It only reads. "alethia billing" shows the plan itself.
+
+--output json prints the usage record, and --output csv the card's rows with runner minutes as a
+bare number.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		if err := runUsage(api.NewClient(token), os.Stdout, outputFormat(cmd)); err != nil {
-			failf("Failed to get usage: %v", err)
+		p := printerFor(cmd)
+		if err := runUsage(api.NewClient(token), p.Out, p.Format); err != nil {
+			fail(fmt.Errorf("read usage: %w", err))
 		}
 	},
 }

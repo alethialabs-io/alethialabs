@@ -534,7 +534,7 @@ environments:
 	if got := body[i+1:]; got != want {
 		t.Errorf("manifest =\n%s\nwant\n%s", got, want)
 	}
-	if !strings.HasPrefix(body, "# alethia.yaml for project web, written by `alethia export`.") {
+	if !strings.HasPrefix(body, manifestSchemaComment+"\n# alethia.yaml for project web, written by `alethia export`.\n") {
 		t.Errorf("header:\n%s", body)
 	}
 }

@@ -39,10 +39,24 @@ const h = vi.hoisted(() => ({
 	getProjectAsFormData: vi.fn(),
 	getEnvReconcileStates: vi.fn(),
 	diffDesigns: vi.fn(),
+	/** The PDP's non-recording answer, by action. A missing key is allowed; "throw" rejects. */
+	can: new Map<string, boolean | "throw">(),
+	/** Every `can()` question asked, as `action:type:id`. */
+	asked: [] as string[],
 }));
 
 const ACTOR = { userId: "user-1", orgId: "org-1", credential: "session" as const };
 
+vi.mock("@/lib/authz", () => ({
+	getPdp: () => ({
+		can: async (_actor: unknown, action: string, ref: { type: string; id?: string }) => {
+			h.asked.push(`${action}:${ref.type}:${ref.id ?? ""}`);
+			const answer = h.can.get(action);
+			if (answer === "throw") throw new Error("pdp down");
+			return { allowed: answer !== false };
+		},
+	}),
+}));
 vi.mock("@/lib/authz/guard", () => ({
 	authorizeRead: h.authorizeRead,
 	authorize: h.authorize,
@@ -120,6 +134,8 @@ beforeEach(() => {
 	h.serviceRows.length = 0;
 	h.scopedRows.length = 0;
 	h.selects = 0;
+	h.can.clear();
+	h.asked.length = 0;
 	h.authorizeRead.mockResolvedValue(ACTOR);
 	h.getProjectEnvironments.mockResolvedValue({ environments: [] });
 	h.getEnvConsistency.mockResolvedValue({ envs: [], rows: [] });
@@ -227,6 +243,53 @@ describe("environments.overview", () => {
 			protectionByEnv: {},
 		});
 		expect(h.getProjectEnvironments).toHaveBeenCalledWith(PROJECT);
+	});
+
+	it("says what the viewer may do — edit and deploy, asked of THIS project, with nothing recorded (#6819)", async () => {
+		h.serviceRows.push([{ id: PROJECT }]);
+		h.can.set("deploy", false);
+		const out = await client.overview({ project: "payments" });
+		expect(out).toMatchObject({ canManage: true, canPromote: false });
+		expect(h.asked.sort()).toEqual([`deploy:project:${PROJECT}`, `edit:project:${PROJECT}`]);
+	});
+
+	it("is fail-closed on the write side: a PDP error is a read-only page, not a failed one", async () => {
+		h.serviceRows.push([{ id: PROJECT }]);
+		h.can.set("edit", "throw");
+		h.can.set("deploy", "throw");
+		const out = await client.overview({ project: "payments" });
+		expect(out).toMatchObject({ projectId: PROJECT, canManage: false, canPromote: false });
+	});
+
+	it("the filters narrow the LIST, not the environments the rest of the page reads (#6819)", async () => {
+		h.serviceRows.push([{ id: PROJECT }]);
+		const at = new Date("2026-10-01T00:00:00Z");
+		h.getProjectEnvironments.mockResolvedValue({
+			environments: [
+				{ id: ENV_A, name: "dev", stage: "development", status: "ACTIVE", is_default: true, updated_at: at },
+				{ id: ENV_B, name: "prod", stage: "production", status: "FAILED", is_default: false, updated_at: at },
+			],
+		});
+		const out = await client.overview({ project: "payments", stages: ["production"] });
+		expect(out.envs.map((e) => e.id)).toEqual([ENV_A, ENV_B]);
+		expect(out.page.rowIds).toEqual([ENV_B]);
+		expect(out.page).toMatchObject({ resultCount: 1, total: 2 });
+		// The facet pass never saw the filter: both stages keep their counts.
+		expect(out.page.facets.stages).toEqual([
+			{ value: "development", label: null, count: 1 },
+			{ value: "staging", label: null, count: 0 },
+			{ value: "production", label: null, count: 1 },
+		]);
+	});
+
+	it("a pristine read lists every environment", async () => {
+		h.serviceRows.push([{ id: PROJECT }]);
+		const at = new Date("2026-10-01T00:00:00Z");
+		h.getProjectEnvironments.mockResolvedValue({
+			environments: [{ id: ENV_A, name: "dev", stage: "development", status: "ACTIVE", is_default: true, updated_at: at }],
+		});
+		const out = await client.overview({ project: "payments" });
+		expect(out.page).toMatchObject({ rowIds: [ENV_A], resultCount: 1, total: 1 });
 	});
 
 	it("a failed promotions read fails the page — it never reads as 'no promotion in flight'", async () => {

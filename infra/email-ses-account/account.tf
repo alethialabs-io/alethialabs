@@ -4,13 +4,16 @@
 # Account-level SES settings. Both resources are PUT calls on the account, not objects with an
 # identity: creating them needs no import, and destroying them only resets the setting.
 
-# Virtual Deliverability Manager, as infra/email-ses/vdm.tf: the deliverability dashboard with
-# engagement metrics, and Guardian's optimized shared delivery.
+# Virtual Deliverability Manager: the deliverability dashboard and Guardian's optimized shared
+# delivery. Engagement metrics are OFF on purpose. With them on, SES rewrites every link through
+# awstrack.me and adds a tracking pixel to every message — including sign-in codes, where a
+# rewritten link looks like phishing and an open pixel is tracking the privacy policy does not
+# describe. Bounce and complaint reputation (cloudwatch.tf) does not depend on them.
 resource "aws_sesv2_account_vdm_attributes" "this" {
   vdm_enabled = "ENABLED"
 
   dashboard_attributes {
-    engagement_metrics = "ENABLED"
+    engagement_metrics = "DISABLED"
   }
 
   guardian_attributes {

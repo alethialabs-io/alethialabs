@@ -1,13 +1,112 @@
 ---
 title: The canvas
-description: How the architecture canvas is designed — what a card tells you, how status reads without colour, why some resources collapse into one card, and how detail changes with zoom.
+description: How the architecture canvas works — the toolbar, the inspector, the changes bar and the review view, how to connect a service, what a card tells you, and how status reads without colour.
 ---
 
 # The canvas
 
 The Architecture view is where a project's infrastructure is designed, deployed, and kept honest.
-This page explains how to *read* it — the conventions are deliberate, and once you know them the
-board tells you a great deal at a glance.
+This page explains where everything is on the board, how to connect what you draw, and how to *read*
+the board. The conventions are deliberate: once you know them, the board tells you a great deal at a
+glance.
+
+## How the board is laid out
+
+The board is one environment, and one environment is one Kubernetes cluster inside one network. Four
+things sit around the cards, each always in the same place:
+
+```text
+     [ environment | Select Hand | Add Connect | Undo Redo | Tidy Fit | Run Sources | ⌘K ? ⋯ ]
+
+   ┌────────────────────────────────────────────────────────┐ ┌──────────────────┐
+   │                                                        │ │  the inspector   │
+   │                       the cards                        │ │  (or the review  │
+   │                                                        │ │   view)          │
+   │                                                        │ │                  │
+   │         [ Pending changes · 3   Discard  Review plan ] │ │                  │
+   └────────────────────────────────────────────────────────┘ └──────────────────┘
+```
+
+- **The toolbar**, top centre. One row of tools. It starts with the environment: click its name to
+  size the cluster and the network. Then come the select and hand tools, **Add** and **Connect**,
+  **Undo** and **Redo**, **Tidy layout** and **Fit view**, the **Run** menu (plan, audit, detect
+  drift, probe the cluster), **Sources**, the command palette, the list of keyboard shortcuts, and
+  the **⋯** menu. Hover a tool to see its key. A tool that cannot be used stays in place, disabled,
+  and its tooltip says why. On a narrow window the row drops **Connect**, **Tidy layout**,
+  **Fit view** and the shortcut list first. Each of those is also a key, a row of the **⋯** menu or
+  a row of the command palette.
+- **The inspector**, docked on the right. Select a card and it opens there. It is the one panel for
+  everything on the board: a resource, the vault of secrets, an add-on, a chart, the environment
+  itself, or several cards at once. It does not cover the board, so you can keep working on the
+  board while it is open. See [The node inspector](/guides/design-project/node-inspector).
+- **The changes bar**, bottom centre. It says where the design stands: **Pending changes** with a
+  count, **Not deployed yet**, **Saved, not deployed**, **Up to date**, **Deploying** or
+  **Deploy failed**. Its one way forward is **Review plan**. With changes pending it also offers
+  **Discard**, which asks first, and **Save**, which keeps the design without planning or deploying
+  it. When the design has problems, a button on the bar counts them.
+- **The review view**, docked on the right in place of the inspector. **Review plan** (or **⌘S**)
+  opens it. It reads top to bottom in the order the work happens: the design changes, then
+  **Run plan**, which saves the design and shows what would change in the cloud, then **Deploy**,
+  which applies exactly that plan. **Deploy** is only here, and it is enabled only for a current
+  plan that you have reviewed. When it is disabled, the view says why. Open a card while the review
+  is open and the review steps aside; close the card and the review comes back.
+
+### An empty board
+
+A board with nothing on it shows a guide with three ways to start:
+
+1. **Start from a template** sizes the cluster from a starter template, for the project's cloud.
+2. **Add the first piece yourself** opens the **Add** picker. The **A** key does the same.
+3. **Bring your own** attaches a Helm chart or a bring-your-own IaC module.
+
+A template changes the cluster, not the cards, so the guide stays and says which template is applied.
+The guide goes away when the first card is on the board.
+
+A link to the board can carry a starting point in its address (`?seed=…`), for example a template.
+The board applies it once and then removes it from the address, so reloading the page or sharing
+the address does not apply it again. A starting point that cannot be applied is explained in one
+sentence above the board. Dismiss it to remove it from the address.
+
+## Connect a service to what it uses
+
+A service connects to a database, a cache, a queue or a secret. Alethia then gives the service that
+resource's endpoint and credentials when it deploys, without a stored key.
+
+1. Drag from the handle at the bottom of the service card.
+2. Release anywhere on the card you want to connect to.
+
+While you drag, the card under the pointer says what releasing there does, or why it cannot be
+connected. The connection is drawn and the inspector opens on the service's **Connections** tab, where
+you choose what the service gets from it. If you release on empty board instead, a menu offers what
+the service can connect to, including a new database, cache, queue or secret placed where you let go.
+
+To connect without a pointer, select the service and press **C**. The same menu opens.
+
+To remove a connection, select the line and press **Delete**, or click **Remove connection** beside
+it. **⌘Z** puts it back.
+
+## Keyboard
+
+Every card and every line is a focus stop. Press **Tab** to move between them.
+
+| Key | Does |
+| --- | --- |
+| **Enter** | Opens the focused card in the inspector. On a line, it opens the service the line starts from. |
+| Arrow keys | Move the selected cards. **Shift** makes the step larger. A held key is one step to undo. |
+| **Delete** or **Backspace** | Removes the selection: a line, or cards. |
+| **C** | Connects the selected service. |
+| **A** | Opens the **Add** picker. |
+| **V** / **H** | The select tool / the hand tool. Hold **Space** to pan for a moment. |
+| **⌘Z** / **⇧⌘Z** | Undo / redo. |
+| **⌘D** | Duplicates the selection. |
+| **⌘S** | Opens the review view. |
+| **⌘K** | Opens the command palette. |
+| **Esc** | Closes the inspector. |
+| **?** | Lists every key the board binds. |
+
+Letter keys never fire while you type in a field. On Windows and Linux, read **Ctrl** for **⌘**.
+
+## Why the board has no colour
 
 The canvas is **fully grayscale**. Nothing on it is colour-coded. That is a constraint, not an
 oversight: colour is the first thing to fail under a projector, a screenshot, colour-blindness, or a
@@ -34,7 +133,6 @@ service**. This is what makes a database look like a database and not like a DNS
 | Database | `PostgreSQL 16 · 0.5–4 · 7 d` |
 | Cache | `Valkey · cache.t3.medium · 2 · multi-AZ` |
 | Bucket | `private · on · 2 origins` |
-| Cluster | `1.31 · 2–5 · m5a.large` |
 | Topic | `3 subscriptions · push · pull` |
 
 A fact with no value yet draws a **muted dash**, so an unconfigured resource reads as unconfigured
@@ -111,29 +209,22 @@ A **core** resource placed on a different cloud than the project is drawn as **g
 designed and drawn, but the project will not provision until it's colocated. This mirrors the
 provisioner's own rule — the canvas will never let you believe something will deploy when it won't.
 
-## Regions — where a resource actually runs
+## The cluster and the network are not cards
 
-The board draws two nested regions, and puts each resource where it really lives:
+One environment is one Kubernetes cluster inside one network (VPC), so neither is drawn as a card.
+The board itself stands for them. To size the cluster or change the network, click the environment's
+name at the start of the toolbar, or choose **Environment settings** from the **⋯** menu. The
+environment opens in the inspector with its **Settings**, **Sources**, **Status** and **Activity**
+tabs.
 
-- The **VPC** — your network. It holds the cluster, and every managed data service.
-- The **cluster** — nested inside the VPC. It holds what runs as a workload in Kubernetes.
-
-Everything else — DNS, buckets, the container registry, secrets, the GitOps repository — sits
-**outside both**. That isn't an accident of layout: those are exactly the resources that have no VPC,
-which is why they're the ones allowed to live on a *different cloud* from the rest of the project.
-
-Drawn flat, a managed database and an in-cluster Grafana look like the same kind of thing. They are
-not: the database runs *in* the VPC but *outside* Kubernetes, and Grafana runs *inside* the cluster.
-The regions make that difference visible at a glance.
+The classification rule on each card still says where it can live: a **core** resource must sit on
+the project's cloud, and a **periphery** resource (DNS, buckets, the container registry, secrets, the
+GitOps repository) may live on a different one.
 
 <Callout>
 On a compute-only cloud like Hetzner there is no managed data plane, so databases, caches and queues
-deploy as Helm charts **inside your cluster** — and the board draws them there. The same design lays
-out differently on a different cloud, because it genuinely *deploys* differently.
+deploy as Helm charts **inside your cluster**, and their cards say so (`Runs as · CloudNativePG`).
 </Callout>
-
-Regions are derived from the resources inside them, so dragging a card simply re-shapes the region
-around it. They are background only — you can't select, drag, or delete one.
 
 ## Collections — when one card stands for many
 
@@ -166,8 +257,6 @@ bring-your-own environment reads as an architecture like any other:
   subnets become one **Network** card; the `aws_eks_*` resources a **Cluster** card. A real module is
   fifty to two hundred resources, and drawn one per card they would bury the architecture, so the
   same collapsing rule that governs the Secrets vault applies here.
-- The cards sit in the **same VPC and cluster regions** as a template environment, because that is
-  genuinely where they run.
 - They are drawn **dashed** — external. Alethia plans, prices, drifts and audits these resources; it
   does not own their definition. Changing one means editing your OpenTofu module, so the cards are
   read-only. Open one to see every resource inside it: its address, what the last plan would do to
@@ -175,7 +264,7 @@ bring-your-own environment reads as an architecture like any other:
 - Resources whose type Alethia doesn't recognise — `random_password`, `null_resource`, a provider it
   has never seen — are **never dropped**. They collect in an honest **Other** card.
 
-A card in the corner shows where the module came from: the repository, the ref, the exact commit the
+**Sources** in the toolbar shows where the module came from: the repository, the ref, the exact commit the
 safety scan pinned — that commit, not the moving branch, is what a deploy applies — and the scan's
 verdict. A module the scan **rejected** reads as *Needs setup* even if its resources are live, because
 the next deploy will not run.

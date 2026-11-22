@@ -153,34 +153,55 @@ test.describe("Deploy jobs — a finished deploy reaches every surface", () => {
 
 	test("the project's clusters page names the cluster and its endpoint", async ({ owner }) => {
 		await visit(owner.page, `/${owner.orgSlug}/${deployed.slug}/clusters`);
-		// The card's heading is the project name (`SectionHeading level={3}`); there is no page
-		// title on this surface and asserting one is what made the old test fail.
-		await expect(
-			owner.page.getByRole("heading", { name: deployed.name }),
-		).toBeVisible({ timeout: 25_000 });
-		await expect(owner.page.getByText(CLUSTER_ENDPOINT)).toBeVisible();
-		await expect(
-			owner.page.getByRole("button", { name: "Copy cluster endpoint" }),
-		).toBeVisible();
+		// The clusters are a table since #6819, one row per cluster and led by the ENVIRONMENT; the
+		// row's first cell is the control that opens the cluster's record, where the endpoint is.
+		const open = owner.page.getByRole("button", { name: `Open production in ${deployed.name}` });
+		await expect(open).toBeVisible({ timeout: 25_000 });
+		await open.click();
+		const record = owner.page.getByRole("dialog");
+		await expect(record).toBeVisible({ timeout: 15_000 });
+		await expect(record.getByText(CLUSTER_ENDPOINT, { exact: true })).toBeVisible();
+		await expect(record.getByRole("button", { name: "Copy cluster endpoint" })).toBeVisible();
+		// The open row is in the URL, so the record is a link.
+		await expect(owner.page).toHaveURL(/[?&]selected=/);
 	});
 
+	// The titles of this test and the next still say "card" and "grid": a title is the key of its
+	// entry in gate-baseline.json, which is generated and never hand-edited. What each ASSERTS is
+	// the table and the record (#6819).
 	test("the cluster card offers ArgoCD and its password recipe", async ({ owner }) => {
 		await visit(owner.page, `/${owner.orgSlug}/${deployed.slug}/clusters`);
-		await expect(owner.page.getByText(ARGOCD_URL)).toBeVisible({ timeout: 25_000 });
-		await expect(owner.page.getByRole("button", { name: "Open ArgoCD" })).toBeVisible();
-		// The admin password is never stored, so the card hands over the command instead — the
+		const open = owner.page.getByRole("button", { name: `Open production in ${deployed.name}` });
+		await expect(open).toBeVisible({ timeout: 25_000 });
+		await open.click();
+		const record = owner.page.getByRole("dialog");
+		await expect(record.getByText(ARGOCD_URL, { exact: true })).toBeVisible({ timeout: 15_000 });
+		// One link, not a button nested in an anchor (#6819).
+		await expect(record.getByRole("link", { name: "Open ArgoCD in a new tab" })).toHaveAttribute(
+			"href",
+			ARGOCD_URL,
+		);
+		// The admin password is never stored, so the record hands over the command instead — the
 		// distinction is the whole reason this block exists.
 		await expect(
-			owner.page.getByRole("button", { name: "Copy ArgoCD admin password command" }),
+			record.getByRole("button", { name: "Copy ArgoCD admin password command" }),
 		).toBeVisible();
 	});
 
 	test("the org clusters grid shows the same cluster", async ({ owner }) => {
-		await visit(owner.page, `/${owner.orgSlug}/~/clusters`);
+		// The org list is paged and the persona org is shared, so the list's own `?search=` names the
+		// one project; the URL hydrating the bar is the filter standard's URL half.
+		await visit(
+			owner.page,
+			`/${owner.orgSlug}/~/clusters?search=${encodeURIComponent(deployed.name)}`,
+		);
 		await expect(owner.page).not.toHaveURL(/\/login/);
+		// The org list has a Project column the project's own list does not; the row is still led by
+		// the environment.
 		await expect(
-			owner.page.getByRole("heading", { name: deployed.name }),
+			owner.page.getByRole("button", { name: `Open production in ${deployed.name}` }),
 		).toBeVisible({ timeout: 25_000 });
+		await expect(owner.page.getByRole("columnheader", { name: "Project" })).toBeVisible();
 	});
 
 	test("evidence rolls the environment up with its drift count", async ({ owner }) => {
@@ -403,6 +424,10 @@ test.describe("Deploy jobs — the job detail page", () => {
 	// The QA env runs a live runner that claims real QUEUED DEPLOY jobs within seconds (they then
 	// fail preflight on a missing local tool), so a seeded QUEUED job will not persist. PROCESSING
 	// is the in-flight state the runner does NOT claim, which is what makes this deterministic.
+	//
+	// THE TITLE STILL SAYS "waiting-for-runner" AND THE BODY NO LONGER ASSERTS IT (#6818). The title
+	// is this test's key in `e2e/gate-baseline.json`, which another open unit holds, so it is left as
+	// it is: what the test measures is what the log pane says for an in-flight job with no output.
 	test("an in-flight job offers Cancel and the waiting-for-runner state", async ({ owner }) => {
 		const { id } = await seedJob(ownerId, {
 			jobType: "DEPLOY",
@@ -417,7 +442,11 @@ test.describe("Deploy jobs — the job detail page", () => {
 		await expect(owner.page.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled({
 			timeout: 25_000,
 		});
-		await expect(owner.page.getByText(/Waiting for runner to claim job/i)).toBeVisible();
+		// A PROCESSING job HAS a runner, so the log pane says it is running and has printed nothing
+		// yet. It used to say "Waiting for runner to claim job" for every in-flight status, which is
+		// what this line asserted until #6818 — the sentence was false for exactly this job.
+		await expect(owner.page.getByText("Running — no output yet")).toBeVisible();
+		await expect(owner.page.getByText(/waiting for a runner/i)).toHaveCount(0);
 		// An in-flight job has nothing to re-run.
 		await expect(owner.page.getByRole("button", { name: /re-?run/i })).toHaveCount(0);
 	});

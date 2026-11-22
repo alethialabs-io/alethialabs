@@ -4,8 +4,10 @@
 package cmd
 
 import (
+	"fmt"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/spf13/cobra"
@@ -50,7 +52,7 @@ func opsResolveExpectedFrom(cmd *cobra.Command, preselect string) []string {
 	if strings.TrimSpace(supplied) != "" {
 		values := opsSplitStatuses(supplied)
 		if len(values) == 0 {
-			failf("--%s was given no statuses", f.Flag)
+			fail(clierr.New(clierr.CodeValidationFailed, fmt.Sprintf("--%s was given no statuses", f.Flag)))
 			return nil
 		}
 		if err := opsValidateStatuses(f.Flag, values); err != nil {

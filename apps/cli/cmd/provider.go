@@ -6,9 +6,9 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/spf13/cobra"
@@ -17,22 +17,25 @@ import (
 var providerCmd = &cobra.Command{
 	Use:     "provider",
 	Aliases: []string{"providers"},
-	Short:   "Inspect connected cloud provider identities",
-	Long: `Show the connection status of a cloud provider identity, or re-run the
-server-side health probe (auth + provisioning-capability check) against it.
+	Short:   "Inspect and re-verify connected cloud accounts",
+	Long: `Show the connection status of a cloud account, or run the control plane's health
+probe against it again.
 
-Use 'alethia connector' to create or change a connection; these commands only
-read and re-verify an existing one.`,
+These commands read and re-verify a connection that exists. Use 'alethia connector'
+to create or remove one.`,
 }
 
+// providerStatusCmd shows one cloud's connection. Its Long names the offered clouds, so it is
+// written by applyCloudHelp.
 var providerStatusCmd = &cobra.Command{
 	Use:   "status [provider]",
-	Short: "Show the connection status of a cloud provider identity",
-	Long: `Show the connection status of a cloud provider identity.
-
-Omit the provider for a picker over the accounts you have connected.`,
-	Args: cobra.MaximumNArgs(1),
+	Short: "Show whether a cloud is connected and the identity Alethia uses on it",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		p := resultPrinter(cmd)
+		if err := checkProviderArg(args); err != nil {
+			fail(err)
+		}
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
@@ -42,8 +45,8 @@ Omit the provider for a picker over the accounts you have connected.`,
 		if err != nil {
 			fail(err)
 		}
-		if err := runProviderStatus(client, os.Stdout, outputFormat(cmd), provider); err != nil {
-			failf("Failed to get %s status: %v", provider, err)
+		if err := runProviderStatus(client, p, provider); err != nil {
+			fail(err)
 		}
 	},
 }
@@ -55,26 +58,19 @@ Omit the provider for a picker over the accounts you have connected.`,
 // two commands read and re-probe an existing connection, so offering a provider with no
 // identity behind it can only ever produce "no connected X identity".
 func resolveProviderRef(lister cloudIdentityLister, args []string) (string, error) {
-	if len(args) == 1 {
-		return args[0], nil
+	if err := checkProviderArg(args); err != nil {
+		return "", err
 	}
-	if err := requireInteractiveForm(); err != nil {
-		return "", fmt.Errorf(
-			"no provider given: pass one (%s) as the argument (%w)",
-			strings.Join(connectorProviderNames(), ", "), err,
-		)
+	if len(args) == 1 {
+		return providerSlug(args[0]), nil
 	}
 
-	var identities []api.CloudIdentity
-	var err error
-	runSpinner("Fetching cloud connections...", func() {
-		identities, err = lister.GetCloudIdentities()
-	})
+	identities, err := listCloudIdentities(lister)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch cloud connections: %w", err)
+		return "", err
 	}
 	if len(identities) == 0 {
-		return "", fmt.Errorf("no cloud accounts connected — run `alethia connector` first")
+		return "", noCloudAccountsError()
 	}
 
 	chosenID, err := pickConnectedIdentity("Select a cloud account", identities)
@@ -86,7 +82,30 @@ func resolveProviderRef(lister cloudIdentityLister, args []string) (string, erro
 			return id.Provider, nil
 		}
 	}
-	return "", fmt.Errorf("no cloud account selected")
+	return "", invalidInputError("no cloud account selected")
+}
+
+// providerSlug returns the `[provider]` argument in the form the control plane keys clouds by.
+func providerSlug(arg string) string {
+	return strings.ToLower(strings.TrimSpace(arg))
+}
+
+// checkProviderArg refuses what the command line alone shows to be wrong: an argument that is not
+// a cloud, and no argument where nothing can show the picker. It asks nothing of the control
+// plane, so the commands call it before they sign in and the refusal is made before any request.
+func checkProviderArg(args []string) error {
+	if len(args) == 1 {
+		if !isCloudProviderSlug(providerSlug(args[0])) {
+			return clierr.New(clierr.CodeInvalidUsage, fmt.Sprintf(
+				"%q is not a cloud: pass one of %s", args[0], strings.Join(connectorProviderNames(), ", ")))
+		}
+		return nil
+	}
+	if err := requireInteractiveForm(); err != nil {
+		return inputRequiredError(err, "no provider given: pass one (%s) as the argument",
+			strings.Join(connectorProviderNames(), ", "))
+	}
+	return nil
 }
 
 // providerStatusRows projects a ProviderStatus into field/value cells, showing
@@ -115,24 +134,34 @@ func providerStatusRows(s *api.ProviderStatus, outFmt string) [][]string {
 	return rows
 }
 
-// runProviderStatus fetches and renders a provider's connection status.
-func runProviderStatus(c apiClient, out io.Writer, format, provider string) error {
+// runProviderStatus fetches a provider's connection status and writes it on the Printer's stdout.
+//
+// A cloud this build does not offer is still answered for when an account is connected on it. With
+// none, the answer is the refusal: there is nothing to show and nothing new may be connected.
+func runProviderStatus(c apiClient, p *Printer, provider string) error {
 	status, err := c.GetProviderStatus(provider)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get %s status: %w", provider, err)
 	}
-	return ui.RenderCard(out, format, "alethia · "+provider+" status", providerStatusRows(status, format), status)
+	if !status.Connected {
+		if err := requireCloudOffered(provider); err != nil {
+			return err
+		}
+	}
+	return ui.RenderCard(p.Out, p.Format, "alethia · "+provider+" status", providerStatusRows(status, p.Format), status)
 }
 
+// providerVerifyCmd re-runs the health probe. Its Long names the offered clouds, so it is written
+// by applyCloudHelp.
 var providerVerifyCmd = &cobra.Command{
 	Use:   "verify [provider]",
-	Short: "Re-run the server-side health probe against a connected identity",
-	Long: `Re-run the server-side health probe (auth + provisioning-capability check) against
-the connected identity for a provider.
-
-Omit the provider for a picker over the accounts you have connected.`,
-	Args: cobra.MaximumNArgs(1),
+	Short: "Run the health probe against a connected cloud account again",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		p := resultPrinter(cmd)
+		if err := checkProviderArg(args); err != nil {
+			fail(err)
+		}
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
@@ -142,52 +171,77 @@ Omit the provider for a picker over the accounts you have connected.`,
 		if err != nil {
 			fail(err)
 		}
-		if err := runProviderVerify(client, os.Stdout, outputFormat(cmd), provider); err != nil {
-			failf("%v", err)
+		if err := runProviderVerify(client, p, provider); err != nil {
+			fail(err)
 		}
 	},
 }
 
-// runProviderVerify resolves the connected identity for a provider and re-runs
-// the server-side verification, rendering the verdict. It returns an error (so
-// the process exits non-zero) when there is nothing to verify or the probe
-// reports the identity is not connected.
-func runProviderVerify(c apiClient, out io.Writer, format, provider string) error {
+// runProviderVerify resolves the connected identity for a provider, re-runs the server-side
+// verification and reports the verdict as a mutation result: the probe's outcome is recorded on
+// the connection.
+//
+// A probe that fails is an error of the operation-failed class and nothing is written on stdout.
+// The error carries the status and the reason the control plane gave.
+func runProviderVerify(c apiClient, p *Printer, provider string) error {
 	status, err := c.GetProviderStatus(provider)
 	if err != nil {
 		return fmt.Errorf("failed to get %s status: %w", provider, err)
 	}
 	if !status.Connected || status.IdentityID == "" {
-		return fmt.Errorf("no connected %s identity to verify — run `alethia connector` first", provider)
+		if err := requireCloudOffered(provider); err != nil {
+			return err
+		}
+		notFound := clierr.New(clierr.CodeNotFound, fmt.Sprintf("no connected %s identity to verify", provider))
+		if connectorHasProvider(provider) {
+			notFound.Hint = fmt.Sprintf("Connect one with `alethia connector %s`.", provider)
+		}
+		return notFound
 	}
 
 	result, err := c.VerifyProviderIdentity(provider, status.IdentityID)
 	if err != nil {
 		return fmt.Errorf("failed to verify %s connection: %w", provider, err)
 	}
-
-	rows := [][]string{
-		{"identity", result.IdentityID},
-		{"status", result.Status},
-		{"verified", fmt.Sprintf("%t", result.Verified)},
-	}
-	if len(result.MissingPermissions) > 0 {
-		rows = append(rows, []string{"missing permissions", strings.Join(result.MissingPermissions, ", ")})
-	}
-	if result.Error != "" {
-		rows = append(rows, []string{"error", result.Error})
-	}
-	if err := ui.RenderCard(out, format, "alethia · "+provider+" verify", rows, result); err != nil {
-		return err
-	}
-
 	if !result.Verified {
-		return fmt.Errorf("%s connection failed verification (%s)", provider, result.Status)
+		message := fmt.Sprintf("%s connection failed verification (%s)", provider, result.Status)
+		if result.Error != "" {
+			message += ": " + result.Error
+		}
+		failed := clierr.New(clierr.CodeOperationFailed, message)
+		failed.Hint = "Check the access on the cloud side, then run the command again."
+		return failed
+	}
+
+	missing := result.MissingPermissions
+	if missing == nil {
+		missing = []string{}
 	}
 	if result.Status == "degraded" {
-		ui.Warning("Connected, but missing some provisioning permissions.")
+		p.Warn("Connected, but missing some provisioning permissions.")
 	}
-	return nil
+	return p.Result(
+		MutationResult{
+			ID: result.IdentityID, Kind: kindCloudIdentity, Action: ResultUpdated,
+			Object: connectionRecord{
+				Provider:           provider,
+				Status:             result.Status,
+				Verified:           result.Verified,
+				MissingPermissions: missing,
+			},
+		},
+		func(w io.Writer) {
+			rows := [][]string{
+				{"identity", result.IdentityID},
+				{"status", result.Status},
+				{"verified", fmt.Sprintf("%t", result.Verified)},
+			}
+			if len(missing) > 0 {
+				rows = append(rows, []string{"missing permissions", strings.Join(missing, ", ")})
+			}
+			_ = ui.RenderCard(w, ui.FormatTable, "alethia · "+provider+" verify", rows, result)
+		},
+	)
 }
 
 func init() {

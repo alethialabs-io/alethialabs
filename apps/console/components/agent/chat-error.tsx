@@ -20,6 +20,8 @@ import { useEffect, useState } from "react";
 import { getAiUsageSummary } from "@/app/server/actions/billing";
 import { CreditPackDialog } from "@/components/billing/credit-pack-dialog";
 import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
+import { isSelfManaged } from "@/components/shell/shell-edition";
+import { useShellEdition } from "@/components/shell/shell-edition-provider";
 import { MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
 import { providerErrorCodeOf } from "@/lib/ai/provider-error";
 import { formatCountdown } from "@/lib/billing/ai-usage-format";
@@ -95,8 +97,9 @@ export class ChatNoticeError extends Error {
 }
 
 /** The AI budget reasons the 402 body carries (mirrors AiBudgetError.reason; "daily" is
- *  the pre-session-window legacy alias, accepted from in-flight old responses). */
-type BudgetReason = "not_enabled" | "session" | "daily" | "weekly" | "out";
+ *  the pre-session-window legacy alias, accepted from in-flight old responses; "paused" is free AI
+ *  stopped platform-wide by the daily ceiling or the operator switch, lib/abuse/free-ai-pool.ts). */
+type BudgetReason = "not_enabled" | "session" | "daily" | "weekly" | "out" | "paused";
 
 /** The parsed shape of the streaming route's 402 body ({error,reason,resetAt,upgradable}). */
 interface ParsedBudget {
@@ -112,6 +115,7 @@ const BUDGET_REASONS: readonly BudgetReason[] = [
 	"daily",
 	"weekly",
 	"out",
+	"paused",
 ];
 
 /**
@@ -174,15 +178,34 @@ function resetsIn(iso: string | null): string | null {
 	return `in ${formatCountdown(ms)}`;
 }
 
-const COPY: Record<
-	ChatErrorKind,
-	{ icon: LucideIcon; title: string; description: string }
-> = {
+/** What one card says. */
+interface ChatErrorCopy {
+	icon: LucideIcon;
+	title: string;
+	description: string;
+}
+
+/**
+ * The missing-key card on an instance its operator runs. It names the variable, because the
+ * person reading it may be the one who sets it. It is shown ONLY where the instance edition says
+ * the deployment is self-managed: a customer of the hosted service has no environment to set a
+ * variable in, and being told to is an instruction they cannot follow.
+ */
+const MISSING_KEY_SELF_MANAGED: ChatErrorCopy = {
+	icon: KeyRound,
+	title: "AI is not configured",
+	description:
+		"Set ANTHROPIC_API_KEY in the console's environment to enable the assistant, then retry. This is a setting of the deployment, made by whoever runs it.",
+};
+
+const COPY: Record<ChatErrorKind, ChatErrorCopy> = {
+	// Everywhere the deployment is not known to be self-managed: the hosted service, and any
+	// surface that renders this card outside the shell. Nothing here is the reader's to fix.
 	"missing-key": {
 		icon: KeyRound,
-		title: "AI is not configured",
+		title: "The assistant is not available",
 		description:
-			"Set ANTHROPIC_API_KEY in your environment to enable the assistant, then retry.",
+			"The assistant is not set up on this service right now. This is not something you can fix from here. Try again later, or contact support if it continues.",
 	},
 	budget: {
 		icon: AlertTriangle,
@@ -240,7 +263,9 @@ const COPY: Record<
 
 /**
  * The transcript's error affordance. Kind-aware (missing-key / budget / too-long / unanswered /
- * thread-start / provider-billing / provider-auth / provider-overloaded / network) so a missing gateway key reads as setup rather than failure, and
+ * thread-start / provider-billing / provider-auth / provider-overloaded / network) so a missing gateway key reads as setup rather than failure — as
+ * setup the reader can do only on a self-managed instance, which is read from the instance edition
+ * (`useShellEdition`); everywhere else the card names no environment variable — and
  * offers the caller's Retry (`regenerate` for a turn, a thread re-attempt for thread-start) on
  * every kind but too-long and the two operator-side provider kinds (billing, auth) — re-sending
  * cannot succeed until the message, or the deployment's provider account, changes. A busy
@@ -258,6 +283,7 @@ export function ChatError({
 	onRetry?: () => void;
 }) {
 	const kind = classify(error);
+	const selfManaged = isSelfManaged(useShellEdition());
 	const budget = kind === "budget" ? parseBudget(error) : null;
 	const [upgradeOpen, setUpgradeOpen] = useState(false);
 	const [creditsOpen, setCreditsOpen] = useState(false);
@@ -288,7 +314,9 @@ export function ChatError({
 	const base =
 		error instanceof ChatNoticeError
 			? { ...COPY.notice, title: error.title, description: error.message }
-			: COPY[kind];
+			: kind === "missing-key" && selfManaged
+				? MISSING_KEY_SELF_MANAGED
+				: COPY[kind];
 	const Icon = base.icon;
 	// When we parsed a real budget body, use the server's human message + reset time.
 	const reset = budget ? resetsIn(budget.resetAt) : null;

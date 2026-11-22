@@ -83,7 +83,7 @@ func TestGovAnswered_ChannelCreateFormFillsTheDraft(t *testing.T) {
 		&authFormScript{keys: recipients},
 	)
 
-	draft, err := resolveChannelDraft(nil)
+	draft, err := resolveChannelDraft(nil, channelSecrets{})
 	if err != nil {
 		t.Fatalf("resolveChannelDraft: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestGovAnswered_ChannelCreateAsksOnlyForWhatIsMissing(t *testing.T) {
 	keys := authFormKey(authFormType("Ops Slack"), tea.KeyEnter)
 	scripts := authFormAnswer(t, &authFormScript{keys: keys})
 
-	draft, err := resolveChannelDraft(nil)
+	draft, err := resolveChannelDraft(nil, channelSecrets{})
 	if err != nil {
 		t.Fatalf("resolveChannelDraft: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestGovAnswered_ChannelCreateNameFromThePositionalOpensNoNameQuestion(t *te
 	keys := authFormKey(authFormType("R0UT1NGKEY"), tea.KeyEnter)
 	authFormAnswer(t, &authFormScript{keys: keys})
 
-	draft, err := resolveChannelDraft([]string{"PD"})
+	draft, err := resolveChannelDraft([]string{"PD"}, channelSecrets{})
 	if err != nil {
 		t.Fatalf("resolveChannelDraft: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestGovAnswered_ChannelCreateWebhookAsksForAURL(t *testing.T) {
 	keys := authFormKey(authFormType("https://discord.example/hook"), tea.KeyEnter)
 	authFormAnswer(t, &authFormScript{keys: keys})
 
-	draft, err := resolveChannelDraft([]string{"Chat"})
+	draft, err := resolveChannelDraft([]string{"Chat"}, channelSecrets{})
 	if err != nil {
 		t.Fatalf("resolveChannelDraft: %v", err)
 	}
@@ -188,14 +188,14 @@ func TestGovAnswered_ChannelCreateScriptedNamesTheMissingValue(t *testing.T) {
 	hygCliConfirmSetNoInput(t, true)
 	govAnsweredResetChannelFlags(t)
 
-	if _, err := resolveChannelDraft(nil); err != errChannelNameRequired {
+	if _, err := resolveChannelDraft(nil, channelSecrets{}); err != errChannelNameRequired {
 		t.Errorf("no name scripted: got %v, want errChannelNameRequired", err)
 	}
-	if _, err := resolveChannelDraft([]string{"n"}); err != errChannelTypeRequired {
+	if _, err := resolveChannelDraft([]string{"n"}, channelSecrets{}); err != errChannelTypeRequired {
 		t.Errorf("no type scripted: got %v, want errChannelTypeRequired", err)
 	}
 	channelType = "email"
-	_, err := resolveChannelDraft([]string{"n"})
+	_, err := resolveChannelDraft([]string{"n"}, channelSecrets{})
 	if err == nil || !strings.Contains(err.Error(), "--recipient") {
 		t.Errorf("no destination scripted: got %v, want the email destination refusal", err)
 	}
@@ -208,12 +208,11 @@ func TestGovAnswered_ChannelCreateFullyFlaggedAsksNothing(t *testing.T) {
 	govAnsweredResetChannelFlags(t)
 	channelType = "slack"
 	channelURL = "https://x/y"
-	channelSigningSecret = "s3cr3t"
 
 	// No scripts: authFormAnswer reports any form that opens.
 	authFormAnswer(t)
 
-	draft, err := resolveChannelDraft([]string{"Ops"})
+	draft, err := resolveChannelDraft([]string{"Ops"}, channelSecrets{SigningSecret: "s3cr3t"})
 	if err != nil {
 		t.Fatalf("resolveChannelDraft: %v", err)
 	}
@@ -658,7 +657,7 @@ func TestGovAnswered_AbandonedFormsAreReportedNotIgnored(t *testing.T) {
 	runHuhForm = func(...*huh.Group) error { return huh.ErrUserAborted }
 	t.Cleanup(func() { runHuhForm = prev })
 
-	if _, err := resolveChannelDraft(nil); err == nil {
+	if _, err := resolveChannelDraft(nil, channelSecrets{}); err == nil {
 		t.Error("an abandoned channel form produced a draft")
 	}
 	if _, err := resolveGovRef(channelSelect, govRefsFromChannels(govAnsweredChannels()), nil); err == nil {

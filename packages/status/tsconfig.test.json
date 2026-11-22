@@ -1,0 +1,11 @@
+{
+  // Tests only. They run under Node in vitest, so they need Node's types (node:sqlite, node:fs) — which
+  // tsconfig.json withholds from the Worker source on purpose. `check-types` runs both configs, so src
+  // is checked once with Worker types only (the guarantee that matters) and once here beside the tests.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["src", "tests", "vitest.config.ts"]
+}

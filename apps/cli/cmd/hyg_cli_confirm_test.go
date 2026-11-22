@@ -218,8 +218,9 @@ func TestHygCliConfirm_ADryRunPreflightIsNotAWrite(t *testing.T) {
 	s.forget()
 
 	if got := run("project", "design", "apply", "--project", "p1",
-		"-f", "testdata/design-document.json", "--no-input"); got != 1 {
-		t.Fatalf("exit code = %d, want 1 — the plan removes a component and no --yes was given", got)
+		"-f", "testdata/design-document.json", "--no-input"); got != clierr.ExitInputRequired {
+		t.Fatalf("exit code = %d, want %d — the plan removes a component and no --yes was given",
+			got, clierr.ExitInputRequired)
 	}
 
 	reqs := s.snapshotRequests()
@@ -401,6 +402,13 @@ func hygCliConfirmEnv(t *testing.T) (*hygCliConfirmServer, func(args ...string) 
 			_ = enc.Encode(map[string]interface{}{"channels": []map[string]interface{}{
 				{"id": "ch1", "name": "ops", "type": "slack", "is_verified": true, "enabled": true},
 			}})
+		// `runner destroy` queues a job another runner has to run, and refuses when nothing
+		// can. An enabled pool is what lets it reach its confirmation gate and, with --yes, the
+		// control plane.
+		case p == "/api/cli/fleet" && r.Method == http.MethodGet:
+			_ = enc.Encode(map[string]interface{}{"pools": []map[string]interface{}{
+				{"provider": "aws", "warm_min": 1, "max": 4, "slots_per_runner": 1, "enabled": true},
+			}})
 		case strings.HasPrefix(p, "/api/cli/fleet/"):
 			_ = enc.Encode(map[string]interface{}{"pool": map[string]interface{}{
 				"provider": strings.TrimPrefix(p, "/api/cli/fleet/"),
@@ -447,6 +455,12 @@ func hygCliConfirmEnv(t *testing.T) (*hygCliConfirmServer, func(args ...string) 
 				"id": "g1", "principal_type": "user", "principal_id": "u1", "effect": "deny",
 				"role": "viewer", "resource_type": "org",
 			}})
+		// `token create` refuses a success that carries no token: the token cannot be read
+		// again, so an empty one is not something to report as created.
+		case p == "/api/cli/tokens" && r.Method == http.MethodPost:
+			_ = enc.Encode(map[string]interface{}{
+				"id": "tok1", "name": "from-the-form", "token_prefix": "alethia_sat_x", "token": "alethia_sat_x_secret",
+			})
 		case p == "/api/jobs" && r.Method == http.MethodPost:
 			_ = enc.Encode(map[string]interface{}{"job": map[string]interface{}{
 				"id": "j1", "job_type": "DESTROY", "status": "PENDING",
@@ -546,14 +560,11 @@ func TestHygCliConfirm_NoInputWithoutYesIsFatal(t *testing.T) {
 	for _, tc := range hygCliConfirmDestructive {
 		t.Run(tc.name, func(t *testing.T) {
 			s.forget()
-			// Every command that refuses through confirmDestructive exits with the
-			// input-required code. `project design apply` refuses earlier, with its own
-			// sentence naming what the plan removes; that error carries no class yet, so
-			// it exits unclassified.
+			// Every one of them exits with the input-required code: a confirmation was
+			// needed and nobody could give it. `project design apply` refuses earlier than
+			// the rest, with its own sentence naming what the plan removes, and under the
+			// same code.
 			want := clierr.ExitInputRequired
-			if tc.name == "project_design_apply" {
-				want = clierr.ExitUnclassified
-			}
 			if got := run(append(append([]string{}, tc.args...), "--no-input")...); got != want {
 				t.Errorf("exit code = %d, want %d (a scripted destructive command must not exit 0)", got, want)
 			}

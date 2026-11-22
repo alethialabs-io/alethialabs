@@ -1,0 +1,43 @@
+{
+  "$comment": "Credential profiles for scripts/creds.py. NAMES ONLY — never a value. A keychain profile's values live in the macOS login Keychain under service 'alethia-creds', account '<profile>/<VAR>', stored with `pnpm creds --set <profile>` (the maintainer types it; input is not echoed). An aws-secret profile reads a JSON secret through the aws CLI's own credentials. Add a machine-local profile in ~/.alethia/creds-profiles.json (same shape); it overrides a repo profile of the same name.",
+  "profiles": {
+    "cloudflare": {
+      "source": "keychain",
+      "vars": ["CLOUDFLARE_API_TOKEN"],
+      "description": "Cloudflare API token (DNS, Workers, status page)."
+    },
+    "stripe-test": {
+      "source": "keychain",
+      "vars": ["STRIPE_API_KEY"],
+      "description": "Stripe TEST-mode secret key."
+    },
+    "stripe-live": {
+      "source": "keychain",
+      "vars": ["STRIPE_API_KEY"],
+      "description": "Stripe LIVE-mode secret key. Real money: only on an explicit maintainer instruction."
+    },
+    "vercel": {
+      "source": "keychain",
+      "vars": ["VERCEL_TOKEN"],
+      "description": "Vercel API token."
+    },
+    "github-admin": {
+      "source": "keychain",
+      "vars": ["GH_TOKEN"],
+      "description": "A GitHub token with admin scopes beyond the gh CLI's own login (rulesets, org settings)."
+    },
+    "tofu-sandbox": {
+      "source": "keychain",
+      "vars": ["TF_VAR_hcloud_token", "TF_VAR_cloudflare_api_token"],
+      "description": "Inputs for infra/sandbox when its local tfvars file is absent."
+    },
+    "prod-env": {
+      "source": "aws-secret",
+      "asm_path": "alethia/prod/env",
+      "region": "eu-central-1",
+      "aws_profile": "alethia-sso",
+      "keys": "*",
+      "description": "Every key of the production app secret (AWS Secrets Manager), as env vars."
+    }
+  }
+}

@@ -58,6 +58,8 @@ beforeEach(() => {
 		organizationId: "org-A",
 		name: "ci",
 		createdBy: "user-1",
+		scopes: ["read", "design", "plan", "apply", "destroy"],
+		projectIds: null,
 	});
 });
 
@@ -67,6 +69,9 @@ describe("verifyCliToken pins a service token to the org it was minted for", () 
 		expect(error).toBeNull();
 		expect(payload?.service_token_org_id).toBe("org-A");
 		expect(payload?.sub).toBe("user-1");
+		// The token's limit travels with its pin, for the guard to read into the actor's ceiling.
+		expect(payload?.service_token_scopes).toEqual(["read", "design", "plan", "apply", "destroy"]);
+		expect(payload?.service_token_project_ids).toBeNull();
 	});
 
 	it("accepts a header that AGREES with the token's org", async () => {

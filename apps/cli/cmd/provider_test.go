@@ -4,11 +4,11 @@
 package cmd
 
 import (
-	"bytes"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 )
 
@@ -16,8 +16,8 @@ func TestRunProviderStatus(t *testing.T) {
 	c := &fakeClient{providerStat: &api.ProviderStatus{
 		Connected: true, IdentityID: "id-1", AccountID: "123456789012", RoleArn: "arn:aws:iam::123:role/x",
 	}}
-	var buf bytes.Buffer
-	if err := runProviderStatus(c, &buf, "table", "aws"); err != nil {
+	p, buf, _ := cloudsTestPrinter("table")
+	if err := runProviderStatus(c, p, "aws"); err != nil {
 		t.Fatalf("runProviderStatus: %v", err)
 	}
 	out := buf.String()
@@ -30,8 +30,8 @@ func TestRunProviderStatus(t *testing.T) {
 
 func TestRunProviderStatusDisconnected(t *testing.T) {
 	c := &fakeClient{providerStat: &api.ProviderStatus{Connected: false}}
-	var buf bytes.Buffer
-	if err := runProviderStatus(c, &buf, "table", "gcp"); err != nil {
+	p, buf, _ := cloudsTestPrinter("table")
+	if err := runProviderStatus(c, p, "gcp"); err != nil {
 		t.Fatalf("runProviderStatus: %v", err)
 	}
 	if !strings.Contains(buf.String(), "disconnected") {
@@ -41,7 +41,8 @@ func TestRunProviderStatusDisconnected(t *testing.T) {
 
 func TestRunProviderStatusError(t *testing.T) {
 	c := &fakeClient{err: errors.New("boom")}
-	if err := runProviderStatus(c, &bytes.Buffer{}, "table", "aws"); err == nil {
+	p, _, _ := cloudsTestPrinter("table")
+	if err := runProviderStatus(c, p, "aws"); err == nil {
 		t.Error("expected error to propagate")
 	}
 }
@@ -51,8 +52,8 @@ func TestRunProviderVerifyConnected(t *testing.T) {
 		providerStat: &api.ProviderStatus{Connected: true, IdentityID: "id-1"},
 		verifyResult: &api.ConnectIdentityResponse{IdentityID: "id-1", Verified: true, Status: "connected"},
 	}
-	var buf bytes.Buffer
-	if err := runProviderVerify(c, &buf, "table", "aws"); err != nil {
+	p, buf, _ := cloudsTestPrinter("table")
+	if err := runProviderVerify(c, p, "aws"); err != nil {
 		t.Fatalf("runProviderVerify: %v", err)
 	}
 	if !strings.Contains(buf.String(), "connected") {
@@ -62,7 +63,8 @@ func TestRunProviderVerifyConnected(t *testing.T) {
 
 func TestRunProviderVerifyNotConnected(t *testing.T) {
 	c := &fakeClient{providerStat: &api.ProviderStatus{Connected: false}}
-	err := runProviderVerify(c, &bytes.Buffer{}, "table", "azure")
+	p, _, _ := cloudsTestPrinter("table")
+	err := runProviderVerify(c, p, "azure")
 	if err == nil || !strings.Contains(err.Error(), "no connected azure identity") {
 		t.Errorf("expected no-connected-identity error, got: %v", err)
 	}
@@ -73,20 +75,28 @@ func TestRunProviderVerifyFails(t *testing.T) {
 		providerStat: &api.ProviderStatus{Connected: true, IdentityID: "id-1"},
 		verifyResult: &api.ConnectIdentityResponse{IdentityID: "id-1", Verified: false, Status: "disconnected", Error: "access denied"},
 	}
-	var buf bytes.Buffer
-	err := runProviderVerify(c, &buf, "table", "aws")
+	p, buf, _ := cloudsTestPrinter("table")
+	err := runProviderVerify(c, p, "aws")
 	if err == nil || !strings.Contains(err.Error(), "failed verification") {
 		t.Errorf("expected verification failure error, got: %v", err)
 	}
-	// The verdict (including the error detail) is still rendered before returning.
-	if !strings.Contains(buf.String(), "access denied") {
-		t.Errorf("expected error detail in verdict, got: %q", buf.String())
+	// A failed probe is an error and not a result: the reason travels in the error, the exit code
+	// is the operation-failed one, and stdout stays empty.
+	if err != nil && !strings.Contains(err.Error(), "access denied") {
+		t.Errorf("the error does not carry the control plane's reason: %v", err)
+	}
+	if got := clierr.From(err); got == nil || got.Exit != clierr.ExitOperationFailed {
+		t.Errorf("a failed probe is classed %+v, want exit %d", got, clierr.ExitOperationFailed)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("a failed probe wrote on stdout: %q", buf.String())
 	}
 }
 
 func TestRunProviderVerifyStatusError(t *testing.T) {
 	c := &fakeClient{err: errors.New("boom")}
-	if err := runProviderVerify(c, &bytes.Buffer{}, "table", "aws"); err == nil {
+	p, _, _ := cloudsTestPrinter("table")
+	if err := runProviderVerify(c, p, "aws"); err == nil {
 		t.Error("expected error when status lookup fails")
 	}
 }

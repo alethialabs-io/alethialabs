@@ -16,8 +16,8 @@ import { formatMonthlyDelta, formatMonthlyRate } from "@repo/format";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { JobOutcome } from "@/app/(private)/[org]/~/jobs/[id]/job-outcome";
-import { readJobResult } from "@/app/(private)/[org]/~/jobs/[id]/job-result";
+import { DeployWarnings, JobOutcome } from "@/app/(private)/[org]/~/jobs/[id]/job-outcome";
+import { readDeployWarnings, readJobResult } from "@/app/(private)/[org]/~/jobs/[id]/job-result";
 
 /** `n` drifted resources, alternating kinds, each naming the attribute paths that differed. */
 function driftDetails(n: number) {
@@ -226,5 +226,79 @@ describe("JobOutcome — a stored result that cannot be read", () => {
 		expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(`${subject} summary unavailable`);
 		expect(screen.getByText(/raw output is in the log below/)).toBeInTheDocument();
 		expect(screen.queryByText(/No changes|In sync/)).not.toBeInTheDocument();
+	});
+});
+
+// #6818 — a deploy's manifest warnings (`execution_metadata.gitops_status.manifest_warnings`): what
+// the runner went on without. They were stored on the job and shown nowhere on it, so a deploy that
+// skipped a service read exactly like one that deployed everything.
+describe("a deploy's warnings", () => {
+	/** A deploy's metadata carrying `warnings` as the runner writes them. */
+	const deploy = (warnings: unknown, job_type = "DEPLOY") => ({
+		job_type,
+		execution_metadata: { gitops_status: { mode: "gitops", manifest_warnings: warnings } },
+	});
+
+	describe("readDeployWarnings", () => {
+		it("reads them in the runner's order", () => {
+			expect(readDeployWarnings(deploy(["b skipped", "a unresolved"]))).toEqual(["b skipped", "a unresolved"]);
+		});
+
+		it("drops blank entries: there is nothing to show for one", () => {
+			expect(readDeployWarnings(deploy(["  ", "a unresolved", ""]))).toEqual(["a unresolved"]);
+		});
+
+		it.each([
+			["no metadata", { job_type: "DEPLOY", execution_metadata: null }],
+			["metadata with no gitops status", { job_type: "DEPLOY", execution_metadata: { tofu_version: "1.8.0" } }],
+			["a gitops status with no warnings", { job_type: "DEPLOY", execution_metadata: { gitops_status: { mode: "direct" } } }],
+			["an empty list", deploy([])],
+			["warnings that are not a list of strings", deploy({ first: "x" })],
+			["a list holding something that is not a string", deploy(["ok", 7])],
+		])("is empty for %s", (_name, job) => {
+			expect(readDeployWarnings(job)).toEqual([]);
+		});
+
+		it("is empty for a job that is not a deploy, whatever its metadata holds", () => {
+			expect(readDeployWarnings(deploy(["x"], "PLAN"))).toEqual([]);
+			expect(readDeployWarnings(deploy(["x"], "DESTROY"))).toEqual([]);
+		});
+	});
+
+	describe("the block", () => {
+		it("renders nothing for a deploy without warnings", () => {
+			const { container } = render(<DeployWarnings job={deploy([])} />);
+			expect(container).toBeEmptyDOMElement();
+		});
+
+		it("heads the block with the count and lists each warning as the runner wrote it", () => {
+			render(<DeployWarnings job={deploy(["service api skipped: no image"])} />);
+			const block = screen.getByRole("region", { name: "Deploy warnings" });
+			expect(within(block).getByRole("heading", { level: 2 })).toHaveTextContent("1 deploy warning");
+			expect(within(block).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+				"service api skipped: no image",
+			]);
+		});
+
+		it("shows the first three and discloses the rest", async () => {
+			const user = userEvent.setup();
+			const warnings = ["one", "two", "three", "four", "five"];
+			render(<DeployWarnings job={deploy(warnings)} />);
+			const block = screen.getByRole("region", { name: "Deploy warnings" });
+			expect(within(block).getByRole("heading", { level: 2 })).toHaveTextContent("5 deploy warnings");
+			expect(within(block).getAllByRole("listitem")).toHaveLength(3);
+			expect(block).toHaveTextContent("… 2 more");
+
+			await user.click(within(block).getByRole("button", { name: "Show all 5" }));
+			expect(within(block).getAllByRole("listitem").map((li) => li.textContent)).toEqual(warnings);
+			expect(within(block).getByRole("button", { name: "Show fewer" })).toHaveAttribute("aria-expanded", "true");
+		});
+
+		it("renders a warning as text: markup in it is not interpreted", () => {
+			render(<DeployWarnings job={deploy(["<img src=x onerror=alert(1)> skipped"])} />);
+			const block = screen.getByRole("region", { name: "Deploy warnings" });
+			expect(block.querySelector("img")).toBeNull();
+			expect(block).toHaveTextContent("<img src=x onerror=alert(1)> skipped");
+		});
 	});
 });

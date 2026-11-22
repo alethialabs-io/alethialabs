@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 )
 
@@ -323,7 +322,7 @@ func TestExecuteApply_EnablesCreatesAndUpdatesOnly(t *testing.T) {
 	f.envs = append(f.envs, api.Environment{ID: "e2", Name: "staging", Stage: "staging", PlacementMode: "namespace"})
 	f.addons["staging"] = nil
 	plan := planAddonManifest(t, f, addonManifest, map[string]string{"kps.yaml": "grafana:\n  replicas: 2\n"})
-	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
+	if _, err := applyExec(f, &bytes.Buffer{}, plan, "", false); err != nil {
 		t.Fatal(err)
 	}
 	stagingValues := "replicaCount: 2\n"
@@ -357,7 +356,7 @@ func TestExecuteApply_ARefusedAddonHoldsBackOnlyItsEnvironment(t *testing.T) {
 	f.refuseAddon = map[string]error{"kube-prometheus-stack": errors.New("Advanced values must be valid YAML describing a mapping")}
 	plan := planAddonManifest(t, f, addonManifest, map[string]string{"kps.yaml": "grafana:\n  replicas: 2\n"})
 	var out bytes.Buffer
-	result, err := executeApply(f, &out, ui.FormatTable, plan, "", false)
+	result, err := applyExec(f, &out, plan, "", false)
 	if err == nil || !strings.Contains(err.Error(), "prod addon/kube-prometheus-stack") {
 		t.Fatalf("err = %v, want the refused add-on named", err)
 	}

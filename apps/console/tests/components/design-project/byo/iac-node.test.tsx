@@ -16,7 +16,8 @@ import {
 	type IacSourceCanvasContextValue,
 } from "@/components/design-project/byo/iac-source-canvas-context";
 import { detachIacSourceAction, type IacSourceState } from "@/app/server/actions/byo-iac";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { board } from "@/lib/canvas/store/board";
+import { boardCard } from "@/tests/fixtures/canvas/board";
 
 vi.mock("@/app/server/actions/byo-iac", () => ({
 	detachIacSourceAction: vi.fn().mockResolvedValue({ ok: true, data: { projectId: "proj-1" } }),
@@ -119,10 +120,10 @@ describe("IacNode", () => {
 
 	it("opens the scan card on the workspace rail when the chip is clicked", async () => {
 		const user = userEvent.setup();
-		useCanvasStore.getState().closeCard();
+		board.view.getState().openCard(null);
 		renderNode(makeSource());
 		await user.click(screen.getByTitle("IaC safety scan"));
-		expect(useCanvasStore.getState().card).toEqual({ kind: "iac-scan" });
+		expect(boardCard()).toEqual({ kind: "iac-scan" });
 	});
 
 	// ── the confirmation (#4281), and the state in which it is not offered at all (#4600 review).

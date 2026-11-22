@@ -138,20 +138,21 @@ describe("previewLayout — the board's cards, laid out as the store lays them o
 });
 
 describe("BoardPreview — the server render is the board (B1)", () => {
-	it("a blank design: the guide and the last job, and not one skeleton block", () => {
+	it("a blank design: the guide and the toolbar, and not one skeleton block", () => {
 		const html = renderToString(preview(serverDesign()));
 		expect(html).toContain('data-slot="board-preview"');
 		expect(html).toContain("Nothing designed yet");
 		expect(html).toContain('data-slot="empty"');
-		expect(html).toContain("Destroy");
-		expect(html).toContain("Failed");
+		expect(html).toContain('aria-label="Command palette"');
 		expect(html).not.toContain('data-slot="skeleton"');
 	});
 
-	it("leaves the job's age to the browser — the server's clock is not the viewer's", () => {
+	// The last job used to be drawn top-left, on the picture as on the board. The board no longer
+	// draws it there (#6832): the job's state belongs to the changes bar. The picture follows.
+	it("draws no job line: the board has none", () => {
 		const html = renderToString(preview(serverDesign()));
-		// `ago` would print "1 m"; the slot is reserved (its sizer) but empty on the server.
-		expect(html).not.toMatch(/>\s*1 m\s*</);
+		expect(html).not.toContain("Open the activity log");
+		expect(html).not.toContain("Failed");
 	});
 
 	it("a designed board: the design's cards, and no blank-board guide", () => {
@@ -162,7 +163,7 @@ describe("BoardPreview — the server render is the board (B1)", () => {
 		expect(html).not.toContain('data-slot="skeleton"');
 	});
 
-	it("an environment an IaC module governs: nothing to add, so no guide and no Add", () => {
+	it("an environment an IaC module governs: nothing to add, so no guide, and Add is off", () => {
 		const governed: EnvironmentStatus = {
 			...LAST_DESTROY_FAILED,
 			iac: IAC,
@@ -170,7 +171,8 @@ describe("BoardPreview — the server render is the board (B1)", () => {
 		render(preview(serverDesign([ORDERS]), governed));
 		expect(screen.queryByText("Nothing designed yet")).toBeNull();
 		expect(screen.queryByText("orders")).toBeNull();
-		expect(screen.queryByText("Add")).toBeNull();
+		// Off, not gone: the live toolbar keeps Add in place and says why it cannot be used.
+		expect(screen.getByText("Add").closest("button")).toBeDisabled();
 	});
 
 	it("is a picture: inert and hidden from the accessibility tree, so no dead control can be found", () => {
@@ -182,8 +184,8 @@ describe("BoardPreview — the server render is the board (B1)", () => {
 	});
 
 	it("without the page's data it is the skeleton, as before", () => {
-		render(withQueryClient(<BoardPreview />));
-		expect(screen.getByRole("status", { name: /loading the board/i })).toBeInTheDocument();
+		const { container } = render(withQueryClient(<BoardPreview />));
+		expect(container.querySelector('[data-slot="canvas-skeleton"]')).not.toBeNull();
 	});
 });
 
@@ -202,7 +204,7 @@ describe("DesignProjectWorkbench — what the page sends while the board loads",
 		);
 		expect(html).toContain('data-slot="board-preview"');
 		expect(html).toContain("Nothing designed yet");
-		expect(html).toContain("Destroy");
+		expect(html).toContain('aria-label="Command palette"');
 		expect(html).not.toContain('data-slot="skeleton"');
 		expect(html).not.toContain("live-board");
 	});

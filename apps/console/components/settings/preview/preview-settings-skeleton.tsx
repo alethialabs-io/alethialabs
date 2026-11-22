@@ -17,10 +17,12 @@
 //
 // THE SOURCE ROW has two layouts: the "No Git accounts linked" panel or the repository row. The
 // skeleton draws the one the viewer will get, from `linked`. The route reads the viewer's linked git
-// accounts before it draws (see `loading.tsx`).
+// accounts from the query cache (see `preview-route-skeleton.tsx`); with no answer there it draws
+// the repository row.
 
 import { Skeleton } from "@repo/ui/skeleton";
 import { RepositorySelectorSkeleton } from "@/components/repository-selector";
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import {
 	SettingsCardFoot,
 	SettingsField,
@@ -58,59 +60,61 @@ function NoteSkeleton() {
  */
 export function PreviewSettingsSkeleton({ linked }: { linked: boolean | undefined }) {
 	return (
-		<div data-slot="preview-settings-skeleton" aria-hidden>
-			<SettingsSection title={PREVIEW_SECTION_TITLE} className="mb-0">
-				<SettingsPanel>
-					<div className="py-1">
-						<SettingsField label={PREVIEW_ROWS.enable.label} hint={PREVIEW_ROWS.enable.hint}>
-							<div className="flex items-center justify-between gap-4">
-								<div className="flex min-w-0 items-center gap-2">
-									<Skeleton className="h-5 w-20 shrink-0" />
-									<div className="flex h-[1lh] items-center text-ui-sm">
-										<Skeleton className="h-3 w-56 max-w-full" />
+		<SkeletonRoot>
+			<div data-slot="preview-settings-skeleton">
+				<SettingsSection title={PREVIEW_SECTION_TITLE} className="mb-0">
+					<SettingsPanel>
+						<div className="py-1">
+							<SettingsField label={PREVIEW_ROWS.enable.label} hint={PREVIEW_ROWS.enable.hint}>
+								<div className="flex items-center justify-between gap-4">
+									<div className="flex min-w-0 items-center gap-2">
+										<Skeleton className="h-5 w-20 shrink-0" />
+										<div className="flex h-[1lh] items-center text-ui-sm">
+											<Skeleton className="h-3 w-56 max-w-full" />
+										</div>
 									</div>
+									<Skeleton className="h-[1.15rem] w-8 shrink-0 rounded-full" />
 								</div>
-								<Skeleton className="h-[1.15rem] w-8 shrink-0 rounded-full" />
-							</div>
-						</SettingsField>
+							</SettingsField>
 
-						<SettingsField label={PREVIEW_ROWS.source.label} hint={PREVIEW_ROWS.source.hint}>
-							<RepositorySelectorSkeleton linked={linked} variant="settings" />
-							<div className="flex min-h-[1lh] items-center gap-2 text-ui-xs">
-								<Skeleton className="size-3.5 shrink-0" />
-								<Skeleton className="h-3 w-24" />
-							</div>
-							<div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_160px]">
-								<Skeleton className="h-[38px] rounded-sm" />
-								<Skeleton className="h-[38px] rounded-sm" />
-							</div>
-						</SettingsField>
+							<SettingsField label={PREVIEW_ROWS.source.label} hint={PREVIEW_ROWS.source.hint}>
+								<RepositorySelectorSkeleton linked={linked} variant="settings" />
+								<div className="flex min-h-[1lh] items-center gap-2 text-ui-xs">
+									<Skeleton className="size-3.5 shrink-0" />
+									<Skeleton className="h-3 w-24" />
+								</div>
+								<div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_160px]">
+									<Skeleton className="h-[38px] rounded-sm" />
+									<Skeleton className="h-[38px] rounded-sm" />
+								</div>
+							</SettingsField>
 
-						<SettingsField
-							label={PREVIEW_ROWS.placement.label}
-							hint={PREVIEW_ROWS.placement.hint}
-						>
-							<Skeleton className="h-9 w-full" />
-							<div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-								<Skeleton className="h-[38px] rounded-sm" />
-								<Skeleton className="h-9" />
-							</div>
-							<NoteSkeleton />
-						</SettingsField>
+							<SettingsField
+								label={PREVIEW_ROWS.placement.label}
+								hint={PREVIEW_ROWS.placement.hint}
+							>
+								<Skeleton className="h-9 w-full" />
+								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+									<Skeleton className="h-[38px] rounded-sm" />
+									<Skeleton className="h-9" />
+								</div>
+								<NoteSkeleton />
+							</SettingsField>
 
-						<SettingsField
-							label={PREVIEW_ROWS.credentials.label}
-							hint={PREVIEW_ROWS.credentials.hint}
-						>
-							<Skeleton className="h-9 w-full" />
-							<NoteSkeleton />
-						</SettingsField>
-					</div>
-					<SettingsCardFoot note={PREVIEW_SAVE_NOTE}>
-						<Skeleton className="h-8 w-28" />
-					</SettingsCardFoot>
-				</SettingsPanel>
-			</SettingsSection>
-		</div>
+							<SettingsField
+								label={PREVIEW_ROWS.credentials.label}
+								hint={PREVIEW_ROWS.credentials.hint}
+							>
+								<Skeleton className="h-9 w-full" />
+								<NoteSkeleton />
+							</SettingsField>
+						</div>
+						<SettingsCardFoot note={PREVIEW_SAVE_NOTE}>
+							<Skeleton className="h-8 w-28" />
+						</SettingsCardFoot>
+					</SettingsPanel>
+				</SettingsSection>
+			</div>
+		</SkeletonRoot>
 	);
 }

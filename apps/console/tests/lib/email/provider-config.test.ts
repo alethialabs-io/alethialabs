@@ -3,8 +3,9 @@
 
 // getEmailConfig: the pluggable transport selector. Verifies the provider is chosen
 // by EMAIL_PROVIDER when set, else inferred from whichever creds are present
-// (precedence Resend → SMTP → SES), that each provider's sub-config is populated,
-// and the SMTP secure/port defaults. The module memoizes, so each case re-imports
+// (precedence SMTP → SES), that each provider's sub-config is populated,
+// the SMTP secure/port defaults, and that a leftover Resend setting is refused rather than
+// degraded to the log fallback. The module memoizes, so each case re-imports
 // after vi.resetModules() to re-read process.env fresh.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -61,16 +62,8 @@ describe("getEmailConfig — provider selection", () => {
 	it("is null (log-only) when no provider creds are present", async () => {
 		const config = await loadConfig();
 		expect(config.provider).toBeNull();
-		expect(config.resend).toBeUndefined();
 		expect(config.smtp).toBeUndefined();
 		expect(config.ses).toBeUndefined();
-	});
-
-	it("selects Resend when RESEND_API_KEY is set", async () => {
-		process.env.RESEND_API_KEY = "re_test_key";
-		const config = await loadConfig();
-		expect(config.provider).toBe("resend");
-		expect(config.resend).toEqual({ apiKey: "re_test_key" });
 	});
 
 	it("selects SMTP when SMTP_HOST is set, with port/secure defaults", async () => {
@@ -106,36 +99,77 @@ describe("getEmailConfig — provider selection", () => {
 		expect(config.ses).toMatchObject({ region: "eu-central-1" });
 	});
 
-	it("prefers Resend over SMTP and SES when several are configured", async () => {
-		process.env.RESEND_API_KEY = "re_test_key";
+	it("prefers SMTP over SES when both are configured", async () => {
 		process.env.SMTP_HOST = "smtp.example.com";
 		process.env.ALETHIA_SES_REGION = "eu-central-1";
-		const config = await loadConfig();
-		expect(config.provider).toBe("resend");
-	});
-
-	it("honors an explicit EMAIL_PROVIDER over the inferred precedence", async () => {
-		process.env.EMAIL_PROVIDER = "smtp";
-		process.env.RESEND_API_KEY = "re_test_key";
-		process.env.SMTP_HOST = "smtp.example.com";
 		const config = await loadConfig();
 		expect(config.provider).toBe("smtp");
 	});
 
+	it("honors an explicit EMAIL_PROVIDER over the inferred precedence", async () => {
+		process.env.EMAIL_PROVIDER = "ses";
+		process.env.SMTP_HOST = "smtp.example.com";
+		process.env.ALETHIA_SES_REGION = "eu-central-1";
+		const config = await loadConfig();
+		expect(config.provider).toBe("ses");
+	});
+
 	it("falls back to log-only when EMAIL_PROVIDER names a provider with no creds", async () => {
 		process.env.EMAIL_PROVIDER = "ses"; // pinned to SES...
-		process.env.RESEND_API_KEY = "re_test_key"; // ...but only Resend has creds
+		process.env.SMTP_HOST = "smtp.example.com"; // ...but only SMTP has creds
 		const config = await loadConfig();
 		expect(config.provider).toBeNull();
 	});
 
 	it("fails closed when hosted email credentials do not match the selected provider", async () => {
 		process.env.ALETHIA_DEPLOYMENT_MODE = "hosted";
-		process.env.EMAIL_PROVIDER = "resend";
+		process.env.EMAIL_PROVIDER = "ses";
 
 		await expect(loadConfig()).rejects.toThrow(
-			"EMAIL_PROVIDER=resend is configured without matching credentials.",
+			"EMAIL_PROVIDER=ses is configured without matching credentials.",
 		);
+	});
+
+	describe("Resend was removed — a leftover setting is refused, never degraded to the log", () => {
+		// The trap this pins: an operator upgrades with the old Resend config still in place. Without
+		// these throws the transport would resolve to null and every sign-in code would be printed to
+		// the server log instead of sent, in a self-managed deployment, with nothing red anywhere.
+
+		it("refuses EMAIL_PROVIDER=resend in a self-managed deployment", async () => {
+			process.env.EMAIL_PROVIDER = "resend";
+			process.env.RESEND_API_KEY = "re_test_key";
+			await expect(loadConfig()).rejects.toThrow(
+				/EMAIL_PROVIDER=resend is not a supported transport \(use smtp or ses\)\. Resend support was removed/,
+			);
+		});
+
+		it("refuses EMAIL_PROVIDER=resend in hosted mode, even with SES credentials present", async () => {
+			process.env.ALETHIA_DEPLOYMENT_MODE = "hosted";
+			process.env.EMAIL_PROVIDER = "resend";
+			process.env.ALETHIA_SES_REGION = "eu-central-1";
+			await expect(loadConfig()).rejects.toThrow(/not a supported transport/);
+		});
+
+		it("refuses any other unknown EMAIL_PROVIDER, case-insensitively", async () => {
+			process.env.EMAIL_PROVIDER = "Postmark";
+			await expect(loadConfig()).rejects.toThrow(
+				"EMAIL_PROVIDER=postmark is not a supported transport (use smtp or ses).",
+			);
+		});
+
+		it("refuses a bare RESEND_API_KEY that used to be inferred as the transport", async () => {
+			process.env.RESEND_API_KEY = "re_test_key";
+			await expect(loadConfig()).rejects.toThrow(
+				/RESEND_API_KEY is set but Resend support was removed/,
+			);
+		});
+
+		it("ignores a leftover RESEND_API_KEY once a real transport resolves", async () => {
+			process.env.RESEND_API_KEY = "re_test_key";
+			process.env.ALETHIA_SES_REGION = "eu-central-1";
+			const config = await loadConfig();
+			expect(config.provider).toBe("ses");
+		});
 	});
 
 	describe("the sandbox carve-out (#2953)", () => {
@@ -185,10 +219,10 @@ describe("getEmailConfig — provider selection", () => {
 			// logging instead would hide it.
 			process.env.ALETHIA_DEPLOYMENT_MODE = "hosted";
 			process.env.ALETHIA_SANDBOX = "1";
-			process.env.EMAIL_PROVIDER = "resend";
+			process.env.EMAIL_PROVIDER = "ses";
 
 			await expect(loadConfig()).rejects.toThrow(
-				"EMAIL_PROVIDER=resend is configured without matching credentials.",
+				"EMAIL_PROVIDER=ses is configured without matching credentials.",
 			);
 		});
 
@@ -202,8 +236,8 @@ describe("getEmailConfig — provider selection", () => {
 	it("uses default from-addresses and lets EMAIL_FROM/AUTH_EMAIL_FROM override", async () => {
 		const dflt = await loadConfig();
 		// The default sender must sit on the APEX domain. It used to default to
-		// `no-reply@auth.alethialabs.io`, and a provider that verifies domains individually —
-		// Resend does — rejects a subdomain whose parent is verified. That bounces every message at
+		// `no-reply@auth.alethialabs.io`, and a provider that verifies domains individually (Resend,
+		// the transport this package used to carry, did) rejects a subdomain whose parent is verified. That bounces every message at
 		// send time, after the deploy and the config have both reported success.
 		//
 		// Asserted as an exact DOMAIN rather than with `toContain`, because

@@ -32,11 +32,12 @@ function toRoute(file) {
 	return "/" + r;
 }
 
-/** Parse `---\n...\n---` frontmatter; return { title, description, body }. */
+/** Parse `---\n...\n---` frontmatter; return { title, description, hidden, body }. */
 function parseFrontmatter(raw) {
 	const m = raw.match(/^---\n([\s\S]*?)\n---\n?/);
 	let title = "";
 	let description = "";
+	let hidden = false;
 	let body = raw;
 	if (m) {
 		body = raw.slice(m[0].length);
@@ -45,9 +46,10 @@ function parseFrontmatter(raw) {
 			const d = line.match(/^description:\s*(.+)$/);
 			if (t) title = t[1].replace(/^["']|["']$/g, "").trim();
 			if (d) description = d[1].replace(/^["']|["']$/g, "").trim();
+			if (/^availability:\s*["']?hidden["']?\s*$/.test(line)) hidden = true;
 		}
 	}
-	return { title, description, body };
+	return { title, description, hidden, body };
 }
 
 /** Light MDX → text: drop import/export lines and JSX tags, keep prose + code text. */
@@ -97,9 +99,16 @@ function chunkByHeading(body) {
 
 const files = walk(DOCS_ROOT).sort();
 const records = [];
+let skipped = 0;
 for (const file of files) {
 	const route = toRoute(file);
-	const { title, description, body } = parseFrontmatter(readFileSync(file, "utf8"));
+	const { title, description, hidden, body } = parseFrontmatter(readFileSync(file, "utf8"));
+	// `availability: hidden` pages are kept in the docs tree but off the docs site
+	// (apps/docs/lib/source.ts); the assistant must not cite a page a reader cannot open.
+	if (hidden) {
+		skipped++;
+		continue;
+	}
 	const pageTitle = title || route;
 	const chunks = chunkByHeading(body);
 	// Page-level record (title + description) so a page matches even without a heading hit.
@@ -125,4 +134,4 @@ for (const file of files) {
 }
 
 writeFileSync(OUT, JSON.stringify({ generatedFrom: "apps/docs/content/docs", records }, null, 0) + "\n");
-console.log(`docs-index: ${records.length} chunks from ${files.length} pages → ${relative(join(HERE, ".."), OUT)}`);
+console.log(`docs-index: ${records.length} chunks from ${files.length - skipped} pages (${skipped} hidden, skipped) → ${relative(join(HERE, ".."), OUT)}`);

@@ -91,8 +91,8 @@ missing is refused, and the refusal names the two tokens rather than the prompt 
 | Resource kind | The record type being labelled, e.g. project_environment | `[kind]` |
 | Resource id | The UUID of the resource whose labels to read | `[id]` |
 
-Columns: **Dimension**, **Value** (both rendered as their human labels). Prints `Not classified.`
-when the resource carries no values. Backing call:
+Columns: **Dimension**, **Value** (both rendered as their human labels). When the resource carries
+no values it says so on stderr, and prints `[]` under `-o json`. Backing call:
 `GET /cli/classification/assignments?kind=<kind>&id=<id>`.
 
 ```bash
@@ -113,7 +113,13 @@ target that kind — and then which of **that dimension's** allowed values. Neit
 have to have read out of `dimensions` first.
 
 Given all four, both slugs are checked against the org's taxonomy before anything is sent, and a
-miss names the real keys or the real values rather than surfacing a 4xx.
+miss names the real keys or the real values rather than surfacing a 4xx: an unknown dimension
+exits `6`, a value the dimension does not have exits `8`. With a slug missing and nothing to ask,
+the command exits `9`.
+
+`--dry-run` makes the same checks and assigns nothing. Under `-o json` the command prints one
+result whose `object` names the resource, the dimension and the value; the shape is described under
+[What a command prints and how it fails](/reference/cli/organizations#what-a-command-prints-and-how-it-fails).
 
 {/* fieldspec: alethia classification assign */}
 
@@ -151,7 +157,8 @@ alethia classification unassign project_environment 8f3c1a2b-0000-4000-8000-0000
 ```
 
 Clearing a value is destructive — policy that selects on it stops matching the resource — so it
-asks before acting. In a pipeline `--yes` is **required**.
+asks before acting. In a pipeline `--yes` is **required**: without it the command exits `9` and
+clears nothing. `--dry-run` names the value that would be cleared and clears nothing.
 
 Omit the slug at a terminal and you choose from the values **the resource actually carries** — a
 different source from `assign`'s, deliberately. `assign` chooses from everything that could be true

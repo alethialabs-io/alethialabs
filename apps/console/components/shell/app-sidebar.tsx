@@ -37,10 +37,8 @@ import { SidebarProfile } from "./sidebar-profile";
  * never reach it.
  */
 export function AppSidebar({
-  isHosted = false,
   selfRunners = false,
 }: {
-  isHosted?: boolean;
   /** Org runs its own runners — surfaces the gated Runners nav item. */
   selfRunners?: boolean;
 }) {
@@ -143,7 +141,7 @@ export function AppSidebar({
         </div>
       </div>
 
-      <SidebarProfile isHosted={isHosted} />
+      <SidebarProfile />
     </div>
   );
 }

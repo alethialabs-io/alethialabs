@@ -1,0 +1,92 @@
+---
+title: The whole workflow, from your shell
+description: The alethia CLI runs the same plan and apply as the console. One file describes a project, and two commands take it to a running cluster. This post shows how.
+date: 2027-01-27
+author: Alethia Labs
+tags: [launch, beta, cli, product]
+kind: announcement
+excerpt: The alethia CLI runs the same plan and apply as the console. One file describes a project, and two commands take it to a running cluster.
+draft: true
+---
+
+This is the third post in our launch week. Yesterday we went through the console. Today we do the same
+thing from a terminal, with the `alethia` CLI.
+
+The CLI does not run OpenTofu on your machine. It sends jobs to the control plane, and a runner executes
+them, exactly as when you click **Plan** in the console. So the console and the CLI always show the
+same project.
+
+## Install and sign in
+
+On macOS or Linux, with Homebrew:
+
+```bash
+brew install alethialabs-io/tap/alethia
+alethia login
+```
+
+`alethia login` opens your browser to approve the sign-in. The CLI also ships for Windows, as Linux
+packages and as a Docker image; see [Installation](/docs/get-started/install-the-cli).
+
+## Connect a cloud account
+
+Each cloud has its own connect command. On AWS, GCP and Azure, the account trusts Alethia through
+federation, so there is no key to paste. On Hetzner you pass a project-scoped token on standard input:
+
+```bash
+alethia connector aws
+echo "$HCLOUD_TOKEN" | alethia connector hetzner --no-input --token-stdin
+```
+
+## Describe the project in one file
+
+`alethia.yaml` holds the whole shape of a project: where it runs, its environments, and the components
+of each one.
+
+```yaml
+project: boutique
+cloud:
+  account: prod-account   # the label of the connected account
+  region: nbg1
+environments:
+  - name: prod
+    stage: production
+    components:
+      cluster:
+        node_min_size: 2
+        node_max_size: 3
+```
+
+## Plan, then apply
+
+```bash
+alethia plan    # what would change; writes nothing
+alethia apply   # shows the plan, asks, then deploys
+```
+
+`alethia plan` writes nothing and queues no job. `alethia apply` shows the same plan and asks before it
+changes anything. In a pipeline, `alethia apply --yes --no-input` skips the question.
+
+Two details make `apply` safe to run again and again:
+
+- **It does not remove anything.** An environment or component that exists on the server but not in the
+  file is listed as unmanaged and left alone. Removing something is always a separate, explicit command.
+- **It refuses bad input before it sends anything.** A misspelt key or an unknown component kind is
+  reported at once, with every problem in one list.
+
+To follow a deploy, run `alethia jobs logs --latest --follow`. It exits with the job's result, so a
+script can act on it.
+
+## What we have tested
+
+On each of the four clouds we have provisioned a cluster through the real `alethia` binary, not through
+a test shortcut. A few setup steps still happen outside Alethia, because the cloud offers no API for
+them. Delegating a DNS zone at your registrar is one of them.
+
+## Read more
+
+- [Plan & Apply](/docs/reference/cli/plan-and-apply)
+- [Connector commands](/docs/reference/cli/connector)
+- [Command reference](/docs/reference/cli)
+
+Tomorrow: what runs on each cluster after the apply.
