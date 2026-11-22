@@ -312,8 +312,13 @@ func keylessQuery(t *testing.T, ctx context.Context, kc string, p keylessDBParam
 	sql := keylessProbeSQL(p.cfg.engine, keylessCanaryTable, canary)
 	argv := keylessClientArgv(p.cfg.engine, manifests.KeylessDBUser, p.dbName, keylessEnginePort(p.cfg.engine), sql)
 	out, err := keylessDebugExec(ctx, kc, p, pod, "probe", argv, timeout)
-	if err != nil {
-		t.Fatalf("keyless: the password-free query FAILED — %v\n%s", err, out)
+	// kubectl debug --attach exits 0 even when the client inside failed, so a refused connection
+	// arrives as a "successful" exec whose output is the client's error. Read the output for that
+	// too — the 2026-11-22 runs (44982043922, 45000390548) both reported a digest mismatch whose
+	// value was psql's "db-authproxy could not authenticate upstream".
+	if line, failed := keylessClientError(out); err != nil || failed {
+		t.Fatalf("keyless: the password-free query FAILED — %v %s\n%s\n--- %s sidecar log (last lines) ---\n%s",
+			err, line, out, p.cfg.keylessProxyContainer(), keylessProxyLogs(ctx, kc, p, pod))
 	}
 	value, perr := parseProbeValue(out)
 	if perr != nil {
@@ -480,4 +485,18 @@ func truncateForLog(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// keylessProxyLogs returns the last lines of the db-authproxy sidecar's log. The proxy logs only the
+// reason a connection failed, never the token (apps/runner/internal/agent/authproxy.go), so it is
+// safe to print — and it is the only place that reason exists.
+func keylessProxyLogs(ctx context.Context, kc string, p keylessDBParams, pod string) string {
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kc, "logs", "pod/"+pod,
+		"-n", p.cfg.namespace, "-c", p.cfg.keylessProxyContainer(), "--tail=40").Output()
+	if err != nil {
+		return fmt.Sprintf("(could not read the sidecar log: %v)", err)
+	}
+	return string(out)
 }
