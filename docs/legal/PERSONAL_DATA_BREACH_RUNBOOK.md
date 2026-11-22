@@ -46,8 +46,13 @@ the breach is likely to risk people’s rights and freedoms.
 - A notification should describe the nature of the breach, privacy contact,
   likely consequences, and measures taken or proposed.
 - Coordinate law enforcement, insurers, customers, vendors and other
-  authorities as appropriate. Counsel should review notifications when
-  available, but lack of counsel must not silently consume the deadline.
+  authorities as appropriate. There is no counsel (decision of 2026-11-17):
+  the maintainer approves a notification, and waiting for a review must not
+  silently consume the deadline.
+- If a subprocessor is involved, the current list is
+  `packages/legal/src/processing.ts` (rendered at `/legal/subprocessors`); the
+  off-box backup store and the inbound mailbox provider are not in it yet (see
+  `GDPR_ACCOUNTABILITY.md`).
 
 ## Recovery and closure
 

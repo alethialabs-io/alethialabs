@@ -26,7 +26,7 @@ export const metadata: Metadata = {
  */
 export default function DataActPage() {
 	return (
-		<LegalShell title="Switching and data portability" lastUpdated="August 24, 2026">
+		<LegalShell title="Switching and data portability" lastUpdated="November 22, 2026">
 			<p>
 				This page is about leaving. It says what you can take, how long you have
 				to take it, and what it costs — which is nothing.
@@ -35,31 +35,36 @@ export default function DataActPage() {
 			<h2>Most of it was never ours to hold</h2>
 			<p>
 				Alethia provisions infrastructure into <em>your</em> cloud account, using
-				OpenTofu you can read, under credentials we never store. Your clusters,
-				databases, networks and their state belong to you and stay where they
-				are. If you stop using Alethia tomorrow, nothing is provisioned away and
-				nothing stops running.
+				OpenTofu you can read. On AWS, Google Cloud and Azure it signs in with
+				short-lived federated credentials and stores no cloud key. Your
+				clusters, databases and networks run in your account and stay there. If
+				you stop using Alethia tomorrow, nothing is provisioned away and nothing
+				stops running.
 			</p>
 			<p>
 				That is the substance of the switching right in our case, and it is worth
-				stating before the procedural part: there is no lock-in to unwind because
-				there was no custody to begin with.
+				stating before the procedural part: the infrastructure itself was never
+				in our custody, so there is no lock-in to unwind there.
 			</p>
 
 			<h2>What we hold, and how to take it</h2>
 			<p>
 				What Alethia holds is the design and the record: your projects and their
-				component graphs, environments, deploy history, evidence receipts,
-				connector configuration (never the credentials), and your organization
-				and members.
+				component graphs, environments, the OpenTofu state of the
+				infrastructure we provisioned for you, deploy history, evidence
+				receipts, connector configuration, and your organization and members.
+				For clouds with no federation (such as Hetzner) and for API-key
+				connectors, it also holds the token or key you gave it, encrypted at
+				rest; those are revoked and deleted, not exported.
 			</p>
 			<p>
-				You can export all of it in a machine-readable archive from the console,
-				at any time and without asking us. The archive ships with a manifest
-				listing every file, its record count and its digest, so you can verify
-				you received the whole thing. Where a signing key is configured the
-				manifest is signed; where it is not, it says so rather than looking
-				signed.
+				A self-service export in the console is being built and is not available
+				yet. Until it is, write to{" "}
+				<a href={`mailto:${LEGAL_ENTITY.supportEmail}`}>
+					{LEGAL_ENTITY.supportEmail}
+				</a>{" "}
+				and we will send you what we hold in a machine-readable form, without
+				charge.
 			</p>
 
 			<h2>Transition and retrieval</h2>

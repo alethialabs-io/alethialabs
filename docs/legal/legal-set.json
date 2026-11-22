@@ -35,8 +35,8 @@
 			"source": "apps/marketing/app/privacy/requests/page.tsx",
 			"status": "current",
 			"sealed": false,
-			"version": "2026-07-29",
-			"displayedDate": "2026-07-29",
+			"version": "2026-11-22",
+			"displayedDate": "2026-11-22",
 			"contentHash": null,
 			"owner": "LEG-L1"
 		},
@@ -100,8 +100,8 @@
 			"source": "apps/marketing/app/legal/subprocessors/page.tsx",
 			"status": "current",
 			"sealed": false,
-			"version": "2026-11-21",
-			"displayedDate": "2026-11-21",
+			"version": "2026-11-22",
+			"displayedDate": "2026-11-22",
 			"contentHash": null,
 			"owner": "LEG-L1"
 		},
@@ -126,8 +126,8 @@
 			"source": "apps/marketing/app/legal/data-act/page.tsx",
 			"status": "current",
 			"sealed": false,
-			"version": "2026-08-24",
-			"displayedDate": "2026-08-24",
+			"version": "2026-11-22",
+			"displayedDate": "2026-11-22",
 			"contentHash": null,
 			"owner": "LEG-L1"
 		},
@@ -152,8 +152,8 @@
 			"source": "apps/marketing/app/consumer-rights/page.tsx",
 			"status": "current",
 			"sealed": false,
-			"version": "2026-08-24",
-			"displayedDate": "2026-08-24",
+			"version": "2026-11-22",
+			"displayedDate": "2026-11-22",
 			"contentHash": null,
 			"owner": "LEG-L1"
 		},
@@ -165,8 +165,8 @@
 			"source": "apps/marketing/app/security/page.tsx",
 			"status": "current",
 			"sealed": false,
-			"version": "2026-11-21",
-			"displayedDate": "2026-11-21",
+			"version": "2026-11-22",
+			"displayedDate": "2026-11-22",
 			"contentHash": null,
 			"owner": "LEG-L1"
 		},
@@ -178,8 +178,8 @@
 			"source": "docs/legal/GDPR_ACCOUNTABILITY.md",
 			"status": "current",
 			"sealed": false,
-			"version": "2026-11-21",
-			"displayedDate": "2026-11-21",
+			"version": "2026-11-22",
+			"displayedDate": "2026-11-22",
 			"contentHash": null,
 			"owner": "LEG-L1"
 		},
@@ -516,10 +516,10 @@
 			"kind": "internal-record",
 			"route": null,
 			"source": "docs/legal/claims-ledger.md",
-			"status": "planned",
+			"status": "current",
 			"sealed": false,
-			"version": null,
-			"displayedDate": null,
+			"version": "2026-11-22",
+			"displayedDate": "2026-11-22",
 			"contentHash": null,
 			"owner": "LEG-L1"
 		},
@@ -1002,6 +1002,762 @@
 			],
 			"owner": "LEG-L5",
 			"verifiedOn": "2026-11-21"
+		},
+		{
+			"id": "privacy.sign-in-methods",
+			"document": "privacy",
+			"kind": "other",
+			"status": "tied",
+			"quote": "Social sign-in may come from GitHub, GitLab, Bitbucket, or Google. Email sign-in uses a one-time code.",
+			"evidence": [
+				{
+					"path": "apps/console/lib/config/auth.ts",
+					"pattern": "github: provider\\(\"GITHUB_CLIENT_ID\", \"GITHUB_CLIENT_SECRET\"\\)",
+					"shows": "GitHub sign-in is configured from its client id and secret."
+				},
+				{
+					"path": "apps/console/lib/config/auth.ts",
+					"pattern": "google: provider\\(\"GOOGLE_CLIENT_ID\", \"GOOGLE_CLIENT_SECRET\"\\)",
+					"shows": "Google sign-in likewise."
+				},
+				{
+					"path": "apps/console/lib/config/auth.ts",
+					"pattern": "gitlab: provider\\(\"GITLAB_APPLICATION_ID\", \"GITLAB_SECRET\"\\)",
+					"shows": "GitLab sign-in likewise."
+				},
+				{
+					"path": "apps/console/lib/config/auth.ts",
+					"pattern": "bitbucket: provider\\(\"BITBUCKET_KEY\", \"BITBUCKET_SECRET\"\\)",
+					"shows": "Bitbucket sign-in likewise; these four are the only social providers."
+				},
+				{
+					"path": "apps/console/lib/auth/index.ts",
+					"pattern": "import \\{ emailOTP, genericOAuth, jwt \\} from \"better-auth/plugins\";",
+					"shows": "Email sign-in is Better Auth's one-time-code plugin."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.card-fields-stripe-hosted",
+			"document": "privacy",
+			"kind": "subprocessor",
+			"status": "tied",
+			"quote": "the payment fields are Stripe-hosted, so card numbers do not pass through our systems",
+			"evidence": [
+				{
+					"path": "apps/console/components/billing/payment-form.tsx",
+					"pattern": "<PaymentElement />",
+					"shows": "The card form is Stripe's Payment Element, which Stripe.js mounts in its own frame."
+				},
+				{
+					"path": "apps/console/components/billing/stripe-elements.tsx",
+					"pattern": "import \\{ Elements \\} from \"@stripe/react-stripe-js\";",
+					"shows": "The payment forms are wrapped in Stripe Elements."
+				},
+				{
+					"path": "apps/console/app/server/actions/billing.ts",
+					"pattern": "checkout\\.sessions\\.create\\(",
+					"shows": "The purchase path uses a Stripe Checkout session, a page Stripe serves."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.analytics-internal-ids",
+			"document": "privacy",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "Analytics uses internal account and organization identifiers rather than names or email addresses.",
+			"evidence": [
+				{
+					"path": "apps/console/components/analytics/analytics-identity.tsx",
+					"pattern": "identify\\(viewer\\.id\\);",
+					"shows": "The person is identified by the internal user id, with no traits."
+				},
+				{
+					"path": "apps/console/components/analytics/analytics-identity.tsx",
+					"pattern": "group\\(activeOrgId, \\{\\s*plan: org\\?\\.plan,\\s*role: org\\?\\.role,\\s*\\}\\)",
+					"shows": "The organization is grouped by its internal id with plan and role only."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.no-session-replay",
+			"document": "privacy",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "We do not record sessions: there is no session replay, and no choice that could enable one.",
+			"evidence": [
+				{
+					"path": "apps/console/components/providers/analytics-provider.tsx",
+					"pattern": "disable_session_recording: true",
+					"shows": "The analytics SDK is initialised with recording disabled."
+				},
+				{
+					"path": "packages/privacy/src/consent.ts",
+					"pattern": "consentPreferencesSchema = z\\.object\\(\\{\\s*analytics: z\\.boolean\\(\\),\\s*\\}\\);",
+					"shows": "The consent record has one choice, analytics; there is no replay choice."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.global-privacy-control",
+			"document": "privacy",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "If your browser sends <strong>Global Privacy Control</strong>, we honour it as a standing opt-out and optional analytics stays off",
+			"evidence": [
+				{
+					"path": "packages/privacy/src/consent.ts",
+					"pattern": "if \\(globalPrivacyControlEnabled\\(\\)\\) return false;\\s*return record\\?\\.analytics === true;",
+					"shows": "The signal is read before the stored choice and wins over it."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.withdrawal-purges-storage",
+			"document": "privacy",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "Withdrawing the choice deletes the analytics provider’s identifiers and browser storage from your device.",
+			"evidence": [
+				{
+					"path": "apps/console/components/providers/analytics-provider.tsx",
+					"pattern": "if \\(!analyticsAllowed\\) \\{\\s*purgePostHogStorage\\(\\);",
+					"shows": "When the answer becomes no, the provider's storage is purged."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.operational-data-posthog",
+			"document": "privacy",
+			"kind": "subprocessor",
+			"status": "tied",
+			"quote": "proportionate server and migration errors and structured operational logs may be sent to PostHog",
+			"evidence": [
+				{
+					"path": "scripts/ci/deploy-console-assemble-env.sh",
+					"pattern": "# Structured logs → PostHog Logs over OTLP",
+					"shows": "The hosted deploy points the structured-log exporter at PostHog."
+				},
+				{
+					"path": "scripts/ci/deploy-console-assemble-env.sh",
+					"pattern": "emit OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+					"shows": "And passes that endpoint to the console."
+				},
+				{
+					"path": "apps/console/scripts/migrate.mjs",
+					"pattern": "\"https://eu\\.i\\.posthog\\.com\"",
+					"shows": "The migration runner reports to PostHog EU."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.hosting-fsn1",
+			"document": "privacy",
+			"kind": "subprocessor",
+			"status": "tied",
+			"quote": "The primary hosted control plane, PostgreSQL database, and S3-compatible object storage run in Hetzner’s <code>fsn1</code> location in Germany.",
+			"evidence": [
+				{
+					"path": "infra/cp-hetzner/variables.tf",
+					"pattern": "variable \"location\" \\{[^}]*default\\s+= \"fsn1\"",
+					"shows": "The control-plane server's location defaults to fsn1."
+				},
+				{
+					"path": ".github/workflows/infra-cp-hetzner.yml",
+					"absent": "TF_VAR_location",
+					"shows": "The workflow that applies it does not override the location."
+				},
+				{
+					"path": "deploy/prod/docker-compose.prod.yml",
+					"pattern": "^\\s+postgres:",
+					"shows": "PostgreSQL runs on that server, in the production compose file."
+				},
+				{
+					"path": "deploy/prod/docker-compose.prod.yml",
+					"pattern": "^\\s+seaweedfs:",
+					"shows": "So does the S3-compatible object store."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.posthog-eu",
+			"document": "privacy",
+			"kind": "subprocessor",
+			"status": "tied",
+			"quote": "PostHog EU Cloud processes the telemetry and operational data described above.",
+			"evidence": [
+				{
+					"path": "apps/console/lib/analytics/config.ts",
+					"pattern": "host: \\(phHost \\|\\| \"https://eu\\.i\\.posthog\\.com\"\\)",
+					"shows": "The browser SDK's host defaults to PostHog's EU ingestion."
+				},
+				{
+					"path": "apps/console/next.config.ts",
+					"pattern": "destination: \"https://eu\\.i\\.posthog\\.com/:path\\*\"",
+					"shows": "The first-party proxy forwards only to PostHog EU."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.cloudflare-edge",
+			"document": "privacy",
+			"kind": "subprocessor",
+			"status": "tied",
+			"quote": "Cloudflare processes edge-network and security data.",
+			"evidence": [
+				{
+					"path": "deploy/prod/docker-compose.tunnel.yml",
+					"pattern": "fronts the origin with a Cloudflare Tunnel",
+					"shows": "The production origin is reached through a Cloudflare Tunnel."
+				},
+				{
+					"path": "packages/legal/src/processing.ts",
+					"pattern": "id: \"cloudflare\",(?:(?!\\n\\t\\},)[\\s\\S])*?status: \"active\"",
+					"shows": "Cloudflare is an active party in the processing register."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.retention.fleet-actions",
+			"document": "privacy",
+			"kind": "retention",
+			"status": "tied",
+			"quote": "Fleet-action records: 90 days by default.",
+			"evidence": [
+				{
+					"path": "apps/console/lib/retention/registry.ts",
+					"pattern": "fleetActions: 90,",
+					"shows": "The published default window for fleet actions is 90 days."
+				},
+				{
+					"path": "apps/console/lib/reconcile/gc.ts",
+					"pattern": "RETENTION_DEFAULT_DAYS\\.fleetActions",
+					"shows": "The collector reads its default from that constant."
+				},
+				{
+					"path": "apps/console/lib/reconcile/gc.ts",
+					"pattern": "gc_fleet_actions\\(make_interval\\(days => \\$\\{FLEET_ACTION_RETENTION_DAYS\\}\\)",
+					"shows": "And passes it to the SQL function that deletes."
+				},
+				{
+					"path": "apps/console/lib/db/programmables.sql",
+					"pattern": "FUNCTION public\\.gc_fleet_actions\\(\\s*p_age INTERVAL DEFAULT INTERVAL '90 days'",
+					"shows": "Whose own default is also 90 days."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.retention.authz-activity",
+			"document": "privacy",
+			"kind": "retention",
+			"status": "tied",
+			"quote": "Authorization activity records: 365 days by default.",
+			"evidence": [
+				{
+					"path": "apps/console/lib/retention/registry.ts",
+					"pattern": "authzActivity: 365,",
+					"shows": "The published default window for authorization activity is 365 days."
+				},
+				{
+					"path": "apps/console/lib/reconcile/gc.ts",
+					"pattern": "RETENTION_DEFAULT_DAYS\\.authzActivity",
+					"shows": "The collector reads its default from that constant."
+				},
+				{
+					"path": "apps/console/lib/reconcile/gc.ts",
+					"pattern": "gc_authz_activity_log\\(make_interval\\(days => \\$\\{AUTHZ_ACTIVITY_RETENTION_DAYS\\}\\)",
+					"shows": "And passes it to the SQL function that deletes."
+				},
+				{
+					"path": "apps/console/lib/db/programmables.sql",
+					"pattern": "FUNCTION public\\.gc_authz_activity_log\\(\\s*p_age INTERVAL DEFAULT INTERVAL '365 days'",
+					"shows": "Whose own default is also 365 days."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.backup-rotation-and-replay",
+			"document": "privacy",
+			"kind": "retention",
+			"status": "outside-repo",
+			"quote": "Deletion from encrypted backups may occur on the backup rotation rather than immediately; restored data is re-subjected to the deletion request.",
+			"evidence": [
+				{
+					"path": "deploy/prod/backup/lib.sh",
+					"pattern": "BACKUP_FILE_DUMP=\"postgres\\.dump\\.age\"",
+					"shows": "The off-box copy is age-encrypted."
+				},
+				{
+					"path": "deploy/prod/backup/backup.sh",
+					"pattern": "BACKUP_KEEP_DAILY=\"\\$\\{BACKUP_KEEP_DAILY:-14\\}\"",
+					"shows": "Copies expire on a rotation: 14 daily by default."
+				},
+				{
+					"path": "deploy/prod/backup/backup.sh",
+					"pattern": "BACKUP_KEEP_WEEKLY=\"\\$\\{BACKUP_KEEP_WEEKLY:-8\\}\"",
+					"shows": "And 8 weekly."
+				},
+				{
+					"path": "deploy/prod/backup/alethia-backup-tombstones.service",
+					"pattern": "this copy is what lets the restore replay it",
+					"shows": "Erasure tombstones are exported hourly so a restore replays deletions made after the dump."
+				}
+			],
+			"requires": "That the backup timers are installed and running on the production box. The restore drill record named in docs/ops/restore-runbook.md is the evidence; none is in the tree yet.",
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "cookies.session-cookie-name",
+			"document": "cookies",
+			"kind": "device-storage",
+			"status": "tied",
+			"quote": "<code>better-auth.session_token</code> and secure-prefixed variants",
+			"evidence": [
+				{
+					"path": "apps/marketing/proxy.ts",
+					"pattern": "const SESSION_COOKIE = \"better-auth\\.session_token\";",
+					"shows": "The session cookie's name."
+				},
+				{
+					"path": "apps/marketing/proxy.ts",
+					"pattern": "const SESSION_COOKIE_SECURE = \"__Secure-better-auth\\.session_token\";",
+					"shows": "Its secure-prefixed variant."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "cookies.posthog-eu-after-consent",
+			"document": "cookies",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "If you consent, the hosted Alethia service loads PostHog EU Cloud",
+			"evidence": [
+				{
+					"path": "apps/console/components/providers/analytics-provider.tsx",
+					"pattern": "if \\(!analyticsAllowed\\) \\{\\s*purgePostHogStorage\\(\\);\\s*return;",
+					"shows": "Without consent the SDK is not loaded."
+				},
+				{
+					"path": "apps/console/lib/analytics/config.ts",
+					"pattern": "host: \\(phHost \\|\\| \"https://eu\\.i\\.posthog\\.com\"\\)",
+					"shows": "The host it loads against defaults to PostHog EU."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "cookies.analytics-attributes",
+			"document": "cookies",
+			"kind": "consent",
+			"status": "tied",
+			"quote": "We use internal identifiers and low-cardinality plan or role attributes",
+			"evidence": [
+				{
+					"path": "apps/console/components/analytics/analytics-identity.tsx",
+					"pattern": "identify\\(viewer\\.id\\);",
+					"shows": "The person is identified by the internal id only."
+				},
+				{
+					"path": "apps/console/components/analytics/analytics-identity.tsx",
+					"pattern": "group\\(activeOrgId, \\{\\s*plan: org\\?\\.plan,\\s*role: org\\?\\.role,\\s*\\}\\)",
+					"shows": "The organization carries plan and role and nothing else."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "imprint.not-vat-registered",
+			"document": "imprint",
+			"kind": "entity",
+			"status": "tied",
+			"quote": "VAT registration: not registered",
+			"evidence": [
+				{
+					"path": "packages/legal/src/entity.ts",
+					"pattern": "vatRegistered: false,",
+					"shows": "The entity record says the company is not registered for VAT."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy-requests.console-deletion-request",
+			"document": "privacy-requests",
+			"kind": "other",
+			"status": "tied",
+			"quote": "you can also ask for your account to be deleted from <strong>Delete account</strong> in your account settings.",
+			"evidence": [
+				{
+					"path": "apps/console/components/shell/account-settings-dialog.tsx",
+					"pattern": "title=\"Delete account\"",
+					"shows": "The account settings dialog has a Delete account section."
+				},
+				{
+					"path": "apps/console/components/shell/account-settings-dialog.tsx",
+					"pattern": "await requestMyErasure\\(\\);",
+					"shows": "Its button calls the self-service erasure request."
+				},
+				{
+					"path": "apps/console/app/server/actions/privacy/self-serve.ts",
+					"pattern": "It OPENS A CASE and erases nothing\\.",
+					"shows": "Which opens a case and deletes nothing."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "data-act.federated-clouds-store-no-key",
+			"document": "data-act",
+			"kind": "security",
+			"status": "tied",
+			"quote": "On AWS, Google Cloud and Azure it signs in with short-lived federated credentials and stores no cloud key.",
+			"evidence": [
+				{
+					"path": "scripts/ci/deploy-console-assemble-env.sh",
+					"pattern": "# AWS is KEYLESS and issuer-direct",
+					"shows": "AWS access is federated from Alethia's OIDC issuer; nothing is emitted for it."
+				},
+				{
+					"path": "scripts/ci/deploy-console-assemble-env.sh",
+					"pattern": "# Azure is KEYLESS \\+ customer-side",
+					"shows": "Azure likewise."
+				},
+				{
+					"path": "scripts/ci/deploy-console-assemble-env.sh",
+					"pattern": "# GCP needs NO separate secret either",
+					"shows": "Google Cloud likewise."
+				},
+				{
+					"path": "apps/console/app/server/actions/identities.ts",
+					"pattern": "TOKEN_CLOUD_PROVIDERS = \\[\"digitalocean\", \"hetzner\", \"civo\"\\] as const;",
+					"shows": "The only clouds connected by a stored token are DigitalOcean, Hetzner and Civo."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "data-act.state-held",
+			"document": "data-act",
+			"kind": "other",
+			"status": "tied",
+			"quote": "the OpenTofu state of the infrastructure we provisioned for you",
+			"evidence": [
+				{
+					"path": "apps/console/lib/storage/tofu-state.ts",
+					"pattern": "process\\.env\\.ALETHIA_STORAGE_STATE_BUCKET \\|\\| \"project-tofu-state\"",
+					"shows": "The console keeps OpenTofu state in its own object-store bucket."
+				},
+				{
+					"path": "apps/console/app/api/jobs/[id]/state/route.ts",
+					"pattern": "storage\\.get\\(TOFU_STATE_BUCKET, ctx\\.stateKey\\)",
+					"shows": "And serves it to runners as the state backend."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "data-act.tokens-encrypted",
+			"document": "data-act",
+			"kind": "security",
+			"status": "tied",
+			"quote": "it also holds the token or key you gave it, encrypted at rest",
+			"evidence": [
+				{
+					"path": "apps/console/lib/cloud-providers/connections.ts",
+					"pattern": "token: encryptSecret\\(\\{ api_token: token \\}\\)",
+					"shows": "A token cloud's API token is encrypted before it is stored."
+				},
+				{
+					"path": "apps/console/app/server/actions/connectors.ts",
+					"pattern": "secret: Object\\.keys\\(secret\\)\\.length \\? encryptSecret\\(secret\\) : null",
+					"shows": "A connector's secret fields are encrypted before they are stored."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "data-act.no-self-service-export",
+			"document": "data-act",
+			"kind": "other",
+			"status": "tied",
+			"quote": "A self-service export in the console is being built and is not available yet.",
+			"evidence": [
+				{
+					"path": "apps/console/app/server/actions/privacy/self-serve.ts",
+					"absent": "privacy/manifest",
+					"shows": "The self-service privacy actions do not build an export."
+				},
+				{
+					"path": "apps/console/components/settings/settings-nav-items.ts",
+					"absent": "label: \"[^\"]*[Ee]xport[^\"]*\"",
+					"shows": "Settings has no export page; LEG-L3 adds one, and this entry then has to be revisited."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "data-act.retained-after-deletion",
+			"document": "data-act",
+			"kind": "retention",
+			"status": "tied",
+			"quote": "statutory accounting records, and proof of which terms your account accepted",
+			"evidence": [
+				{
+					"path": "apps/console/lib/privacy/erasure-plan.ts",
+					"pattern": "table: \"legal_acceptance\",[\\s\\S]{0,80}disposition: \"retain\"",
+					"shows": "An erasure keeps the terms-acceptance record."
+				},
+				{
+					"path": "apps/console/lib/privacy/erasure-plan.ts",
+					"pattern": "table: \"commerce_order\",[\\s\\S]{0,80}disposition: \"retain\"",
+					"shows": "And the orders kept for accounting."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "data-act.deleted-after-retrieval",
+			"document": "data-act",
+			"kind": "retention",
+			"status": "outside-repo",
+			"quote": "At the end of the retrieval window we delete what we hold",
+			"evidence": [
+				{
+					"path": "apps/console/app/server/actions/privacy/cases.ts",
+					"pattern": "export async function fulfilErasure\\(",
+					"shows": "Deletion is performed by fulfilling an erasure case."
+				}
+			],
+			"requires": "A person opening and fulfilling the erasure when the 30-day retrieval window ends. Nothing in the repository schedules it, and no screen calls fulfilErasure yet (#7222).",
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "consumer-rights.no-consumer-market",
+			"document": "consumer-rights",
+			"kind": "commerce",
+			"status": "tied",
+			"quote": "has not yet opened paid plans to individuals in any country",
+			"evidence": [
+				{
+					"path": "packages/legal/src/commerce.ts",
+					"pattern": "PAID_MARKETS: readonly PaidMarketCell\\[\\] = \\[\\];",
+					"shows": "No market is open."
+				},
+				{
+					"path": "apps/marketing/app/consumer-rights/page.tsx",
+					"pattern": "PAID_MARKETS\\.some\\(\\(c\\) => c\\.capacity === \"consumer\"\\)",
+					"shows": "The sentence is shown only while no consumer cell exists."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "security.token-clouds-encrypted",
+			"document": "security",
+			"kind": "security",
+			"status": "tied",
+			"quote": "Encrypted at rest; never with a self-managed runner",
+			"evidence": [
+				{
+					"path": "apps/console/lib/cloud-providers/connections.ts",
+					"pattern": "token: encryptSecret\\(\\{ api_token: token \\}\\)",
+					"shows": "The Hetzner token is encrypted before it is stored."
+				},
+				{
+					"path": "apps/console/lib/db/schema/jobs.ts",
+					"pattern": "the credential lives only in the customer's\\s*// self-hosted runner env, never in Alethia",
+					"shows": "With a self-managed runner the token stays in the customer's runner."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "security.federated-clouds-store-nothing",
+			"document": "security",
+			"kind": "security",
+			"status": "tied",
+			"quote": "{ cloud: \"AWS\", access: \"Short-lived role assumed per job (OIDC)\", stored: \"Nothing\"",
+			"evidence": [
+				{
+					"path": "scripts/ci/deploy-console-assemble-env.sh",
+					"pattern": "# AWS is KEYLESS and issuer-direct",
+					"shows": "AWS access is federated; no key is held."
+				},
+				{
+					"path": "apps/console/app/server/actions/identities.ts",
+					"pattern": "TOKEN_CLOUD_PROVIDERS = \\[\"digitalocean\", \"hetzner\", \"civo\"\\] as const;",
+					"shows": "AWS, Google Cloud and Azure are not token clouds."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "subprocessors.anthropic-default-provider",
+			"document": "module-processing",
+			"kind": "ai",
+			"status": "outside-repo",
+			"quote": "id: \"anthropic\",",
+			"evidence": [
+				{
+					"path": "apps/console/lib/config/ai.ts",
+					"pattern": "DEFAULT_EXECUTOR = \"anthropic/claude-haiku-4-5\";",
+					"shows": "The assistant's default executor model is Anthropic's."
+				},
+				{
+					"path": "apps/console/lib/config/ai.ts",
+					"pattern": "DEFAULT_ADVISOR_PLUS = \"anthropic/",
+					"shows": "So is the default advisor."
+				},
+				{
+					"path": "apps/console/lib/config/ai.ts",
+					"pattern": "anthropicProvider \\?\\?= createAnthropic\\(\\{ apiKey: env\\(\"ANTHROPIC_API_KEY\"\\) \\}\\);",
+					"shows": "Requests go to Anthropic with the deployment's own key, not one the customer supplies."
+				},
+				{
+					"path": "scripts/ci/deploy-console-assemble-env.sh",
+					"pattern": "emit ANTHROPIC_API_KEY",
+					"shows": "The hosted deploy passes that key from the vault."
+				},
+				{
+					"path": "apps/console/lib/config/ai.ts",
+					"pattern": "if \\(!providerGate\\(provider\\)\\.allowed\\) return false;",
+					"shows": "The assistant stays off until the provider's evidence is recorded."
+				}
+			],
+			"requires": "Whether ALETHIA_AI_ANTHROPIC_DPA, _TRANSFER, _RETENTION and _NO_TRAINING are set in the production vault. Until they are, the assistant is off and Anthropic receives nothing; the register lists it as the provider the feature uses (#7223).",
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "subprocessors.hetzner-backups",
+			"document": "module-processing",
+			"kind": "subprocessor",
+			"status": "tied",
+			"quote": "Hosted compute, database, backups, and object storage",
+			"evidence": [
+				{
+					"path": "infra/cp-hetzner/main.tf",
+					"pattern": "backups\\s+= true",
+					"shows": "Hetzner server backups are on for the control-plane box."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "dpa.processing-in-germany",
+			"document": "dpa",
+			"kind": "subprocessor",
+			"status": "tied",
+			"quote": "Processing is primarily in Germany.",
+			"evidence": [
+				{
+					"path": "infra/cp-hetzner/variables.tf",
+					"pattern": "variable \"location\" \\{[^}]*default\\s+= \"fsn1\"",
+					"shows": "The control plane is in Hetzner fsn1, Germany."
+				},
+				{
+					"path": "packages/legal/src/processing.ts",
+					"pattern": "region: \"Germany \\(eu-central-1, Frankfurt\\)\"",
+					"shows": "Email is sent from AWS Frankfurt."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "gdpr-accountability.backup-rotation",
+			"document": "gdpr-accountability",
+			"kind": "retention",
+			"status": "tied",
+			"quote": "kept as 14 daily and 8 weekly copies by default",
+			"evidence": [
+				{
+					"path": "deploy/prod/backup/backup.sh",
+					"pattern": "BACKUP_KEEP_DAILY=\"\\$\\{BACKUP_KEEP_DAILY:-14\\}\"",
+					"shows": "14 daily copies by default."
+				},
+				{
+					"path": "deploy/prod/backup/backup.sh",
+					"pattern": "BACKUP_KEEP_WEEKLY=\"\\$\\{BACKUP_KEEP_WEEKLY:-8\\}\"",
+					"shows": "8 weekly copies by default."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "gdpr-accountability.no-paid-market",
+			"document": "gdpr-accountability",
+			"kind": "commerce",
+			"status": "tied",
+			"quote": "`PAID_MARKETS` in `packages/legal/src/commerce.ts` is empty",
+			"evidence": [
+				{
+					"path": "packages/legal/src/commerce.ts",
+					"pattern": "PAID_MARKETS: readonly PaidMarketCell\\[\\] = \\[\\];",
+					"shows": "The list is empty."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "privacy-request-runbook.no-staff-case-screen",
+			"document": "privacy-request-runbook",
+			"kind": "other",
+			"status": "tied",
+			"quote": "No console or admin screen calls `openPrivacyCase`, `verifyPrivacyCaseIdentity` or `fulfilErasure` yet",
+			"evidence": [
+				{
+					"path": "apps/console/components/shell/account-settings-dialog.tsx",
+					"absent": "import \\{[^}]*\\b(openPrivacyCase|fulfilErasure)\\b",
+					"shows": "The only privacy-case UI imports the self-service request, not the staff steps."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-22"
 		}
 	],
 	"findings": [
@@ -1019,69 +1775,6 @@
 				}
 			],
 			"owner": "LEG-L2",
-			"foundOn": "2026-11-17"
-		},
-		{
-			"id": "privacy-requests.replay-consent",
-			"document": "privacy-requests",
-			"quote": "can change analytics and replay consent immediately",
-			"says": "The page says a visitor can change a replay consent.",
-			"actually": "There is no replay consent. The consent record holds one choice, analytics; the Cookie Notice says there is no replay choice to make.",
-			"evidence": [
-				{
-					"path": "packages/privacy/src/consent.ts",
-					"pattern": "consentPreferencesSchema = z\\.object\\(\\{\\s*analytics: z\\.boolean\\(\\),\\s*\\}\\);",
-					"shows": "The consent record has exactly one field."
-				},
-				{
-					"path": "apps/marketing/app/cookies/page.tsx",
-					"pattern": "no replay choice to make",
-					"shows": "The Cookie Notice says the opposite of this page."
-				}
-			],
-			"owner": "LEG-L1",
-			"foundOn": "2026-11-17"
-		},
-		{
-			"id": "data-act.console-export",
-			"document": "data-act",
-			"quote": "You can export all of it in a machine-readable archive from the console, at any time and without asking us.",
-			"says": "The page says the console offers a self-service export of everything Alethia holds, with a manifest.",
-			"actually": "The console has no export. The manifest format exists (apps/console/lib/privacy/manifest.ts) and the privacy case table has columns for an export, but on 2026-11-17 nothing under apps/console imported the manifest module except its own test, and no server action or route builds an archive. Board unit LEG-L3 builds the export; until it lands the sentence is not true. The page's 30-day transition and retrieval windows were also searched for in apps/console/lib/privacy and apps/console/app/server/actions/privacy and nothing there enforces them; the rest of the tree was not searched for those.",
-			"evidence": [
-				{
-					"path": "apps/console/app/server/actions/privacy/self-serve.ts",
-					"absent": "privacy/manifest",
-					"shows": "The self-service privacy actions open an erasure case and do not build an export."
-				},
-				{
-					"path": "apps/console/app/server/actions/privacy/cases.ts",
-					"absent": "privacy/manifest",
-					"shows": "The case actions do not build an export either."
-				}
-			],
-			"owner": "LEG-L1",
-			"foundOn": "2026-11-17"
-		},
-		{
-			"id": "consumer-rights.vat-given-as-the-reason",
-			"document": "consumer-rights",
-			"quote": "{CURRENT_LEGAL_OPERATOR} is not yet registered for VAT, so we do not currently take payment from individuals in any country.",
-			"says": "The page gives the missing VAT registration as the reason no individual can pay.",
-			"actually": "No individual can pay because PAID_MARKETS is empty, which is what the page's own condition reads. The tax research found that a VAT registration is not a precondition for selling to buyers in Bulgaria, nor to individuals elsewhere in the EU while those sales stay at or under EUR 10,000 a year. The stated reason is therefore not the real one, and it will read as false the day a consumer cell opens with the company still unregistered.",
-			"evidence": [
-				{
-					"path": "packages/legal/src/commerce.ts",
-					"pattern": "PAID_MARKETS: readonly PaidMarketCell\\[\\] = \\[\\];",
-					"shows": "No market is open, for either kind of buyer."
-				},
-				{
-					"path": "docs/legal/TAX_MARKET_PRECONDITIONS.md",
-					"pattern": "\\| Bulgaria \\| Business or individual \\| \\*\\*May open with no registration \\[C\\]\\*\\*",
-					"shows": "The tax research's verdict for Bulgaria."
-				}
-			],
-			"owner": "LEG-L1",
 			"foundOn": "2026-11-17"
 		},
 		{
@@ -1161,6 +1854,174 @@
 			],
 			"owner": "REL-L4",
 			"foundOn": "2026-11-17"
+		},
+		{
+			"id": "privacy.static-cloud-keys",
+			"document": "privacy",
+			"quote": "Alethia does not store static cloud access keys.",
+			"says": "The policy says Alethia stores no static cloud access key and that cloud access uses short-lived federated credentials.",
+			"actually": "True for AWS, Google Cloud, Azure and Alibaba Cloud only. Hetzner, DigitalOcean and Civo have no federation: the customer's scoped API token is stored, encrypted at rest, unless a self-managed runner holds it. API keys entered for connectors (DNS, registries, secret stores, observability) are stored encrypted too, and the paragraph does not mention them. The page is sealed, so the fix is the re-seal's. Proposed text: \"On AWS, Google Cloud, Azure and Alibaba Cloud, Alethia stores no cloud access key; access uses short-lived, federated credentials. Clouds without federation (such as Hetzner) use a scoped API token you supply, which we store encrypted at rest, or not at all when you run your own runner. API keys you enter for a connector are stored encrypted at rest.\" The Security and Data Act pages already say this.",
+			"evidence": [
+				{
+					"path": "apps/console/app/server/actions/identities.ts",
+					"pattern": "TOKEN_CLOUD_PROVIDERS = \\[\"digitalocean\", \"hetzner\", \"civo\"\\] as const;",
+					"shows": "Three clouds are connected by a stored token."
+				},
+				{
+					"path": "apps/console/lib/cloud-providers/connections.ts",
+					"pattern": "token: encryptSecret\\(\\{ api_token: token \\}\\)",
+					"shows": "The token is stored, encrypted."
+				},
+				{
+					"path": "apps/console/app/server/actions/connectors.ts",
+					"pattern": "encryptSecret\\(secret\\)",
+					"shows": "Connector secrets are stored, encrypted."
+				}
+			],
+			"owner": "LEG-L2",
+			"foundOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.ai-conversations-not-listed",
+			"document": "privacy",
+			"quote": "support conversations, and the metadata needed to manage your environments",
+			"says": "Section 1 lists the infrastructure and service data Alethia processes.",
+			"actually": "It does not list the AI assistant: the conversations (agent_threads and related tables) and the infrastructure context sent with a prompt, which go to the model provider when the assistant is on. The erasure plan already treats AI conversations as the subject's data. The page is sealed, so the fix is the re-seal's: add \"AI assistant conversations and the project context sent with them\" to the list.",
+			"evidence": [
+				{
+					"path": "apps/console/lib/db/schema/agent.ts",
+					"pattern": "export const agentThreads = pgTable\\(",
+					"shows": "Assistant conversations are stored."
+				},
+				{
+					"path": "apps/console/lib/privacy/erasure-plan.ts",
+					"pattern": "AI conversations are the subject's own content",
+					"shows": "The erasure plan names them."
+				}
+			],
+			"owner": "LEG-L2",
+			"foundOn": "2026-11-22"
+		},
+		{
+			"id": "privacy.support-retention-not-enforced",
+			"document": "privacy",
+			"quote": "Support and contractual correspondence: up to 3 years after the matter closes",
+			"says": "The policy publishes a maximum of 3 years after closure for support correspondence.",
+			"actually": "No code deletes support cases or messages, and the retention register has no entry for them. The window is a policy applied by hand at best. Filed as #7220: either a deletion job enforces it, or the re-seal states what is actually done.",
+			"evidence": [
+				{
+					"path": "apps/console/lib/retention/registry.ts",
+					"absent": "[Ss]upport (case|message|thread)",
+					"shows": "The retention register has no entry for support cases or messages."
+				}
+			],
+			"owner": "LEG-L4",
+			"foundOn": "2026-11-22"
+		},
+		{
+			"id": "retention-registry.backups-entry-stale",
+			"document": "module-retention-registry",
+			"quote": "requires the backup rotation to be evidenced",
+			"says": "The retention register says the backup rotation is not established.",
+			"actually": "deploy/prod/backup/backup.sh now keeps 14 daily and 8 weekly encrypted off-box copies by default and exports erasure tombstones hourly (REL-L7, #6908). What is still not evidenced is that it runs in production. Filed as #7220.",
+			"evidence": [
+				{
+					"path": "deploy/prod/backup/backup.sh",
+					"pattern": "BACKUP_KEEP_DAILY=\"\\$\\{BACKUP_KEEP_DAILY:-14\\}\"",
+					"shows": "The rotation exists in code."
+				}
+			],
+			"owner": "LEG-L4",
+			"foundOn": "2026-11-22"
+		},
+		{
+			"id": "module-processing.backup-store-unregistered",
+			"document": "module-processing",
+			"quote": null,
+			"says": "The processing register lists Hetzner for backups and no other backup recipient.",
+			"actually": "The nightly off-box copy is written to an S3-compatible store at a provider that is deliberately not Hetzner. The copy is encrypted before upload, but the provider is still a recipient. Its name is set on the production box, not in the repository, so it cannot be registered here until the maintainer names it (#7223).",
+			"evidence": [
+				{
+					"path": "deploy/prod/backup/backup.env.example",
+					"pattern": "S3-compatible, at a provider that is NOT Hetzner",
+					"shows": "The off-box store is at another provider."
+				},
+				{
+					"path": "packages/legal/src/processing.ts",
+					"absent": "off-box|backup store",
+					"shows": "The register names no such provider."
+				}
+			],
+			"owner": "LEG-L1",
+			"foundOn": "2026-11-22"
+		},
+		{
+			"id": "module-processing.inbound-mailbox-unregistered",
+			"document": "module-processing",
+			"quote": null,
+			"says": "The processing register lists Cloudflare for inbound email routing.",
+			"actually": "Cloudflare forwards the published addresses (support, sales, legal, privacy, security) to one destination mailbox set from the vault. The provider of that mailbox receives every privacy request and support email and is not registered (#7223).",
+			"evidence": [
+				{
+					"path": "infra/cp-hetzner/email-routing.tf",
+					"pattern": "\"privacy\",\\s+# data-subject requests",
+					"shows": "privacy@ is one of the forwarded addresses."
+				},
+				{
+					"path": "packages/legal/src/processing.ts",
+					"absent": "[Mm]ailbox provider",
+					"shows": "The register names no mailbox provider."
+				}
+			],
+			"owner": "LEG-L1",
+			"foundOn": "2026-11-22"
+		},
+		{
+			"id": "module-processing.slack-unregistered",
+			"document": "module-processing",
+			"quote": null,
+			"says": "The processing register does not list Slack.",
+			"actually": "When SUPPORT_SLACK_WEBHOOK_URL is set, each new support case and reply posts its subject, severity and organization id to a Slack webhook. Whether it is set in production is a vault fact (#7223).",
+			"evidence": [
+				{
+					"path": "apps/console/lib/support/slack-notify.ts",
+					"pattern": "text: `\\*\\$\\{payload\\.text\\}\\*\\\\n\\$\\{payload\\.subject\\}`",
+					"shows": "The case subject is posted."
+				},
+				{
+					"path": "scripts/ci/deploy-console-assemble-env.sh",
+					"pattern": "emit SUPPORT_SLACK_WEBHOOK_URL",
+					"shows": "The hosted deploy passes the webhook from the vault."
+				},
+				{
+					"path": "packages/legal/src/processing.ts",
+					"absent": "[Ss]lack",
+					"shows": "The register does not list Slack."
+				}
+			],
+			"owner": "LEG-L1",
+			"foundOn": "2026-11-22"
+		},
+		{
+			"id": "consumer-rights.withdrawal-control-missing",
+			"document": "consumer-rights",
+			"quote": "A withdrawal control in the console&rsquo;s billing settings will be in place before consumer sales open.",
+			"says": "The page commits to a console withdrawal control before consumer sales open.",
+			"actually": "The server half exists (getWithdrawalRight, withdrawFromContract) but no component calls it. Filed as #7221; it gates the first consumer PAID_MARKETS cell together with paid-markets.withdrawal-function-not-listed.",
+			"evidence": [
+				{
+					"path": "apps/console/app/server/actions/consumer-rights.ts",
+					"pattern": "export async function withdrawFromContract\\(",
+					"shows": "The server action exists."
+				},
+				{
+					"path": "apps/console/components/billing/payer-declaration-form.tsx",
+					"absent": "withdrawFromContract",
+					"shows": "The billing form that asks for the buyer's capacity does not call it."
+				}
+			],
+			"owner": "REL-L4",
+			"foundOn": "2026-11-22"
 		}
 	]
 }

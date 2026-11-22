@@ -132,6 +132,31 @@ export const PROCESSING_PARTIES: readonly ProcessingParty[] = [
 		evidenceId: "ops:email:ses-alethia-email:2026-11-21",
 	},
 	{
+		id: "anthropic",
+		name: "Anthropic",
+		purposes: [
+			{
+				name: "AI assistant requests: your prompt and the Service context sent with it, only while the assistant is switched on",
+				lawfulBasis: "contract",
+				consentRequired: false,
+			},
+		],
+		role: "subprocessor",
+		// ACTIVE because the hosted assistant's default models are Anthropic's
+		// (apps/console/lib/config/ai.ts, DEFAULT_EXECUTOR and DEFAULT_ADVISOR_*) and the hosted deploy
+		// passes Alethia's own ANTHROPIC_API_KEY (scripts/ci/deploy-console-assemble-env.sh). The customer
+		// configures no endpoint, so this is Alethia's subprocessor, not a customer-directed one: the
+		// "AI model endpoint you configure" category that stood here described a choice the hosted
+		// product does not offer. Whether the assistant is ON is a vault fact (isAiConfigured() fails
+		// closed until the DPA, transfer, retention and no-training values are recorded), which is why
+		// the purpose says "only while the assistant is switched on" and the legal-set claim is
+		// outside-repo. OpenAI is not listed: no default model resolves to it, and it receives requests
+		// only if an operator sets an openai/* model override.
+		status: "active",
+		region: "United States",
+		evidenceId: "code:ai:default-provider-anthropic:2026-11-22",
+	},
+	{
 		id: "grafana-prometheus",
 		name: "Alethia-operated Grafana and Prometheus",
 		purposes: [
@@ -160,7 +185,7 @@ export function publicProcessingParties(): readonly ProcessingParty[] {
  * Providers the CUSTOMER points Alethia at, disclosed as conditional rather than current.
  *
  * These are categories, deliberately not company names. Alethia has no agreement with, and no
- * knowledge of, which cloud or git host or model endpoint a given customer connects — the connector
+ * knowledge of, which cloud or git host or connector service a given customer connects — the connector
  * registry (apps/console/lib/connectors) defines the SHAPES that can be connected, not a list of
  * parties anyone is actually using. Naming companies here would assert relationships this repository
  * cannot evidence, and an unevidenced name in a processing register is the same defect as a missing
@@ -215,21 +240,6 @@ export const CUSTOMER_DIRECTED_PARTIES: readonly ProcessingParty[] = [
 		status: "customer-directed",
 		region: "Determined by the service you choose",
 		evidenceId: "code:connectors:pluggable:2026-08-24",
-	},
-	{
-		id: "customer-ai-endpoint",
-		name: "The AI model endpoint you configure",
-		purposes: [
-			{
-				name: "Answer a request you make of the AI feature, using the context you submit",
-				lawfulBasis: "contract",
-				consentRequired: false,
-			},
-		],
-		role: "subprocessor",
-		status: "customer-directed",
-		region: "Determined by the endpoint you configure",
-		evidenceId: "code:ai:configured-endpoint:2026-08-24",
 	},
 ];
 
