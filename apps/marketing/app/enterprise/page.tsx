@@ -3,31 +3,19 @@
 
 import type { Metadata } from "next";
 import { SiteShell } from "@repo/brand/site-shell";
-import { Reveal } from "@/components/landing/reveal";
 import { EnterpriseSections } from "@/components/landing/enterprise/page-sections";
 
 export const metadata: Metadata = {
-	title: "Enterprise · Alethia",
+	title: "Enterprise",
 	description:
-		"Govern multi-cloud infrastructure for the whole organization — single sign-on, custom roles over OpenFGA, granular IAM, a complete audit trail, and self-managed deployment. Access maps to who needs it, and every decision is on the record.",
+		"Every cloud account, every team, every change, governed in one place: single sign-on with OIDC or SAML 2.0, custom roles where a deny always wins, every change on the record, hosted or inside your own perimeter.",
 };
 
-/**
- * Public enterprise-governance page: organizations, identity, roles, audit,
- * deployment, and the trial form.
- *
- * `Reveal` selects `:scope > section` and skips the first, so
- * `EnterpriseSections` must return a flat fragment of `<section>` elements with
- * the hero first — a wrapper div here would silently kill every scroll
- * animation on the page. The plan band is gone: it duplicated /pricing's
- * Enterprise tier with a different and partly wrong feature list.
- */
-export default async function EnterprisePage() {
+/** The public enterprise page: statement, what you get, who can do what, the trial, contact. */
+export default function EnterprisePage() {
 	return (
 		<SiteShell>
-			<Reveal>
-				<EnterpriseSections />
-			</Reveal>
+			<EnterpriseSections />
 		</SiteShell>
 	);
 }

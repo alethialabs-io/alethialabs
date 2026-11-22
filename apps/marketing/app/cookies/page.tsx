@@ -9,7 +9,7 @@ import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
-	title: "Cookie Notice · Alethia",
+	title: "Cookie Notice",
 	description: "The cookies and similar technologies used by Alethia.",
 };
 

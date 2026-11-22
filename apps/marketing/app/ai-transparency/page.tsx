@@ -7,7 +7,7 @@ import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
-	title: "AI transparency · Alethia",
+	title: "AI transparency",
 	description:
 		"What Alethia's AI assistant is, what it can get wrong, who provides it, and what happens to what you send it.",
 };

@@ -7,7 +7,7 @@ import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";
 
 export const metadata: Metadata = {
-	title: "Privacy Policy · Alethia",
+	title: "Privacy Policy",
 	description:
 		"How Alethia collects, uses, shares, and protects personal data.",
 };

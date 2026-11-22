@@ -1,258 +1,157 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { CSSProperties } from "react";
-import Link from "next/link";
-import { Button } from "@repo/ui/button";
-import { disp, eyebrow, HeroRail, Icon, type IconKey, mono, SecMark, Wrap } from "@repo/brand/site-primitives";
+import { CommandBlock } from "@repo/brand/site-command-block";
+import { mono } from "@repo/brand/site-primitives";
+import {
+	ActionLink,
+	Actions,
+	Block,
+	Card,
+	Cell,
+	EditorialStatement,
+	RowHead,
+	Rows,
+	RuleHead,
+	TableBox,
+	type Row,
+} from "@/components/landing/editorial";
 
-/* ---------- small local helpers (site idiom: hairline surfaces, mono data) ---------- */
+/**
+ * The /open-source page, editorial: one statement with the install command, an honest table of
+ * what is open and what is commercial, the ways to run it, and the licence.
+ */
 
-/** Compact star count (2400 → "2.4k"); "" when unknown. */
-function fmtStars(n: number | null | undefined): string {
-	if (n == null) return "";
-	if (n < 1000) return ` · ${n}`;
-	const k = n / 1000;
-	return ` · ${(k >= 10 ? Math.round(k) : Math.round(k * 10) / 10)}k`;
+const REPO_URL = "https://github.com/alethialabs-io/alethialabs";
+
+/**
+ * The self-host installer, the one place the site spells it.
+ *
+ * It depends on the `get.alethialabs.io/self-host` route serving `deploy/install.sh`; if that
+ * route moves or stops answering, this command breaks for everyone who copies it.
+ */
+export const SELF_HOST_INSTALL_COMMAND = "curl -fsSL https://get.alethialabs.io/self-host | sh";
+
+/** One row of the open/commercial table. `enterprise: null` means nothing extra is licensed. */
+interface Part {
+	name: string;
+	open: string;
+	enterprise: string | null;
 }
 
 /**
- * `CTA` lived here — a complete re-implementation of `@repo/ui/button` in inline
- * styles. It looked close enough to pass review, and it was: same height, same
- * radius, same ink. What it silently dropped was everything that is not colour —
- * the clamp, the focus ring and the press displacement — so six controls on this
- * page were unreachable-looking to a keyboard and dead to the motion system.
- * Use `Button` and let the system carry those.
+ * The split follows /docs/editions/feature-matrix: SSO, custom roles, audit export, alerting and
+ * the managed runner pool are the licensed rows; everything else is AGPL.
  */
-
-/** A bordered command line, mono. */
-function Command({ children }: { children: React.ReactNode }) {
-	return (
-		<div style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: "var(--surface-sunken)", padding: "12px 14px", maxWidth: 560 }}>
-			<span style={{ ...mono, fontSize: 12, color: "var(--text-disabled)" }}>$</span>
-			<code style={{ ...mono, fontSize: 12.5, color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{children}</code>
-		</div>
-	);
-}
-
-/* ---------- 00 · Hero ---------- */
-
-function Hero({ stars }: { stars: number | null }) {
-	return (
-		<section style={{ padding: "96px 0 76px", borderBottom: "1px solid var(--border)" }}>
-			<Wrap>
-				<HeroRail kicker="Open source" status="AGPL-3.0" />
-				<h1 style={{ ...disp, fontSize: 52, fontWeight: 600, letterSpacing: "-0.04em", lineHeight: 1.04, margin: "0 0 20px", color: "var(--text-primary)", maxWidth: 760 }}>
-					Run the entire control plane yourself.
-				</h1>
-				<p style={{ fontSize: 16.5, color: "var(--text-tertiary)", lineHeight: 1.6, margin: "0 0 30px", maxWidth: 600 }}>
-					Alethia is open source under the GNU AGPL. Self-host the whole platform — console, CLI,
-					runners, and multi-cloud provisioning — on your own infrastructure, on any cloud. The hosted
-					service runs on Alethia-operated infrastructure; self-hosted operators control their own control plane and clusters.
-				</p>
-				<div style={{ marginBottom: 26 }}>
-					<Command>curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh | sh</Command>
-				</div>
-				<div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-					<Button nativeButton={false} render={<Link href="/docs/guides/self-hosting" />}><Icon k="book" size={15} /> Read the self-host docs</Button>
-					<Button variant="outline" nativeButton={false} render={<a href="https://github.com/alethialabs-io/alethialabs" target="_blank" rel="noreferrer" />}><Icon k="git" size={15} /> Star on GitHub{fmtStars(stars)}</Button>
-				</div>
-			</Wrap>
-		</section>
-	);
-}
-
-/* ---------- 01 · Portable, closed-origin (the differentiator) ---------- */
-
-const CLOUDS: { name: string; access: string; hardening: string }[] = [
-	{ name: "Hetzner", access: "SSH (key-only)", hardening: "firewall: SSH only" },
-	{ name: "GCP", access: "IAP tunnel", hardening: "Shielded VM" },
-	{ name: "AWS", access: "SSM Session Manager", hardening: "IMDSv2 · encrypted EBS" },
-	{ name: "Azure", access: "az vm run-command", hardening: "Trusted Launch" },
+const PARTS: Part[] = [
+	{ name: "Console", open: "Full control plane, project designer, GitOps", enterprise: "Organizations with many members" },
+	{ name: "alethia CLI", open: "Every command", enterprise: null },
+	{ name: "Runner", open: "The runner and multi-cloud provisioning", enterprise: "The managed runner pool" },
+	{ name: "Identity", open: "Sign-in, built-in roles", enterprise: "SSO (OIDC, SAML), custom roles" },
+	{ name: "Record", open: "Activity log", enterprise: "Audit export, alerting" },
 ];
 
-function Proof() {
+/**
+ * The four documented ways to run a self-hosted control plane. The OpenTofu row is scoped to
+ * the per-cloud stacks on purpose: the one-click templates open 22/80/443.
+ */
+const WAYS: Row[] = [
+	{ d: "One VM", k: "Docker Compose", t: "The whole bundle behind Caddy, one command", href: "/docs/guides/self-hosting" },
+	{ d: "Per cloud", k: "OpenTofu", t: "Version-controlled, closed-origin behind a tunnel", href: "/docs/guides/self-hosting/terraform" },
+	{ d: "Existing cluster", k: "Helm", t: "The same bundle on Kubernetes you already run", href: "/docs/guides/self-hosting/helm" },
+	{ d: "AWS · Azure", k: "One-click", t: "Launch from a prefilled template", href: "/docs/guides/self-hosting/one-click" },
+];
+
+/** The opening statement, the install command and the two actions. */
+function Opening() {
 	return (
-		<section style={{ padding: "84px 0", borderBottom: "1px solid var(--border)", background: "var(--surface-sunken)" }}>
-			<Wrap>
-				<SecMark n="01" label="Portable · closed-origin" />
-				<div style={{ display: "grid", gridTemplateColumns: "1fr 1.15fr", gap: 56, alignItems: "start" }} className="ah-surface">
-					<div>
-						<h2 style={{ ...disp, fontSize: 34, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 14px", color: "var(--text-primary)" }}>
-							One control plane, four clouds, zero open ports.
-						</h2>
-						<p style={{ fontSize: 15, color: "var(--text-tertiary)", lineHeight: 1.65, margin: "0 0 22px", maxWidth: 440 }}>
-							Each per-cloud stack fronts the box with a Cloudflare Tunnel — the origin dials out,
-							so no web port is ever exposed. Admin access is the cloud’s own no-open-port channel,
-							never a public SSH port. Pick a cloud; the OpenTofu is version-controlled and CI-checked.
-						</p>
-						<Link href="/docs/guides/self-hosting/terraform" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, color: "var(--text-primary)", borderBottom: "1px solid var(--border-strong)", paddingBottom: 3, textDecoration: "none" }}>
-							Per-cloud deploy guide <Icon k="arrow" size={14} />
-						</Link>
-					</div>
-					<div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)", boxShadow: "var(--shadow-sm)", overflow: "hidden" }}>
-						<div style={{ display: "grid", gridTemplateColumns: "0.8fr 1.1fr 1.1fr", padding: "9px 16px", borderBottom: "1px solid var(--border)", background: "var(--surface-muted)" }}>
-							{["Cloud", "Admin access", "Hardening"].map((c) => <span key={c} style={{ ...eyebrow, fontSize: 9 }}>{c}</span>)}
-						</div>
-						{CLOUDS.map((c, i) => (
-							<div key={c.name} style={{ display: "grid", gridTemplateColumns: "0.8fr 1.1fr 1.1fr", alignItems: "center", padding: "13px 16px", borderBottom: i < CLOUDS.length - 1 ? "1px solid var(--border-faint)" : "none" }}>
-								<span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{c.name}</span>
-								<span style={{ ...mono, fontSize: 11.5, color: "var(--text-secondary)" }}>{c.access}</span>
-								<span style={{ ...mono, fontSize: 11, color: "var(--text-tertiary)" }}>{c.hardening}</span>
-							</div>
-						))}
-					</div>
-				</div>
-			</Wrap>
-		</section>
-	);
-}
-
-/* ---------- 02 · What's open (editions / trust) ---------- */
-
-function Editions() {
-	const card: CSSProperties = { border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)", padding: "26px", boxShadow: "var(--shadow-sm)" };
-	return (
-		<section style={{ padding: "84px 0", borderBottom: "1px solid var(--border)" }}>
-			<Wrap>
-				<SecMark n="02" label="What's open" />
-				<h2 style={{ ...disp, fontSize: 34, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 30px", color: "var(--text-primary)", maxWidth: 620 }}>
-					Genuinely open source. One honest paid boundary.
-				</h2>
-				<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }} className="ah-surface">
-					<div style={card}>
-						<span style={{ ...mono, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-tertiary)" }}>Core · AGPL-3.0</span>
-						<h3 style={{ ...disp, fontSize: 19, fontWeight: 600, margin: "10px 0 10px", color: "var(--text-primary)" }}>The whole platform, free.</h3>
-						<p style={{ fontSize: 14, color: "var(--text-tertiary)", lineHeight: 1.6, margin: 0 }}>
-							Console, the <code style={{ ...mono, fontSize: 12.5 }}>alethia</code> CLI, self-healing
-							runners, multi-cloud provisioning, GitOps reconciliation. AGPL is OSI-approved open
-							source — not source-available. Self-host it anywhere, forever.
-						</p>
-					</div>
-					<div style={card}>
-						<span style={{ ...mono, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-tertiary)" }}>Enterprise · ee/</span>
-						<h3 style={{ ...disp, fontSize: 19, fontWeight: 600, margin: "10px 0 10px", color: "var(--text-primary)" }}>One directory, one license.</h3>
-						<p style={{ fontSize: 14, color: "var(--text-tertiary)", lineHeight: 1.6, margin: 0 }}>
-							SSO, custom RBAC, the audit trail, and managed runners live under <code style={{ ...mono, fontSize: 12.5 }}>ee/</code> —
-							the only commercially-licensed code, and the boundary is enforced in CI so it can
-							never blur into the core.
-						</p>
-					</div>
-				</div>
-				<div style={{ display: "flex", gap: 20, marginTop: 22 }}>
-					<Link href="/docs/editions" style={{ ...linkStyle }}>Editions <Icon k="arrow" size={13} /></Link>
-					<Link href="/docs/editions/licensing" style={{ ...linkStyle }}>Licensing <Icon k="arrow" size={13} /></Link>
-				</div>
-			</Wrap>
-		</section>
-	);
-}
-
-const linkStyle: CSSProperties = { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13.5, color: "var(--text-secondary)", textDecoration: "none", borderBottom: "1px solid var(--border-strong)", paddingBottom: 2 };
-
-/* ---------- 03 · Self-host, honestly (candor) ---------- */
-
-function Ops() {
-	const YOU = ["Security patches & CVEs", "Uptime & capacity", "Upgrades & migrations", "Backups & restore"];
-	const US = ["Zero-downtime upgrades", "Warm-pool scaling", "SLA & on-call", "Backups managed for you"];
-	const col = (title: string, items: string[], muted?: boolean): React.ReactNode => (
-		<div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: muted ? "var(--surface-sunken)" : "var(--surface)", padding: "22px 24px" }}>
-			<span style={{ ...eyebrow, fontSize: 10 }}>{title}</span>
-			<div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-				{items.map((it) => (
-					<div key={it} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13.5, color: "var(--text-secondary)" }}>
-						<Icon k="check" size={13} sw={2} /> {it}
-					</div>
-				))}
+		<EditorialStatement
+			lead="The control plane is open source."
+			rest="Run it on your own infrastructure, read every line of it, and keep it for as long as you like."
+		>
+			<div className="min-w-0 max-w-[640px]">
+				<CommandBlock command={SELF_HOST_INSTALL_COMMAND} />
 			</div>
-		</div>
-	);
-	return (
-		<section style={{ padding: "84px 0", borderBottom: "1px solid var(--border)", background: "var(--surface-sunken)" }}>
-			<Wrap>
-				<SecMark n="03" label="Self-host, honestly" />
-				<h2 style={{ ...disp, fontSize: 34, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 14px", color: "var(--text-primary)", maxWidth: 620 }}>
-					Full control means you carry the operations.
-				</h2>
-				<p style={{ fontSize: 15, color: "var(--text-tertiary)", lineHeight: 1.65, margin: "0 0 30px", maxWidth: 560 }}>
-					That’s the honest trade. Self-hosting gives you data residency and zero lock-in; the day-2
-					work that managed Alethia does for its customers becomes yours. If you’d rather not carry it,
-					we run it.
-				</p>
-				<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }} className="ah-surface">
-					{col("You run it", YOU)}
-					{col("We run it", US, true)}
-				</div>
-				<div style={{ display: "flex", gap: 12, marginTop: 24 }}>
-					<Button variant="outline" nativeButton={false} render={<Link href="/pricing" />}>See managed pricing</Button>
-					<Button variant="outline" nativeButton={false} render={<Link href="/enterprise" />}>Enterprise</Button>
-				</div>
-			</Wrap>
-		</section>
+			<Actions>
+				<ActionLink link={{ label: "Self-hosting guide ↗", href: "/docs/guides/self-hosting", external: true }} />
+				<ActionLink variant="outline" link={{ label: "View on GitHub ↗", href: REPO_URL, external: true }} />
+			</Actions>
+		</EditorialStatement>
 	);
 }
 
-/* ---------- 04 · Ways to run it ---------- */
-
-const PATHS: { ic: IconKey; name: string; body: string; href: string }[] = [
-	{ ic: "terminal", name: "Docker Compose", body: "One command on a fresh VM. The whole bundle behind Caddy.", href: "/docs/guides/self-hosting" },
-	{ ic: "layers", name: "Terraform (per-cloud)", body: "Version-controlled OpenTofu, closed-origin behind a tunnel.", href: "/docs/guides/self-hosting/terraform" },
-	{ ic: "node", name: "Helm", body: "The same bundle on an existing Kubernetes cluster.", href: "/docs/guides/self-hosting/helm" },
-	{ ic: "zap", name: "One-click", body: "Launch on AWS or Azure from a prefilled template.", href: "/docs/guides/self-hosting/one-click" },
-];
-
-function DeployPaths() {
+/** What is AGPL and what is commercial, part by part, and where the boundary is enforced. */
+function WhatIsOpen() {
 	return (
-		<section style={{ padding: "84px 0", borderBottom: "1px solid var(--border)" }}>
-			<Wrap>
-				<SecMark n="04" label="Ways to run it" />
-				<div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }} className="ah-surface">
-					{PATHS.map((p) => (
-						<Link key={p.name} href={p.href} style={{ display: "flex", gap: 14, border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)", padding: "20px 22px", textDecoration: "none" }}>
-							<span style={{ display: "grid", placeItems: "center", width: 34, height: 34, flexShrink: 0, borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--surface-sunken)", color: "var(--text-primary)" }}>
-								<Icon k={p.ic} size={17} />
-							</span>
-							<div>
-								<div style={{ ...disp, fontSize: 15, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4, display: "flex", alignItems: "center", gap: 7 }}>{p.name} <Icon k="arrow" size={13} /></div>
-								<p style={{ fontSize: 13, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.55 }}>{p.body}</p>
-							</div>
-						</Link>
-					))}
-				</div>
-			</Wrap>
-		</section>
+		<Block label="What is open, and what is not">
+			<RuleHead title="What is open, and what is not" action={{ label: "Editions ↗", href: "/docs/editions", external: true }} />
+			<TableBox
+				caption="What is open source and what is commercial, part by part"
+				columns={["Part", "Open source (AGPL-3.0)", "Enterprise (ee/, commercial)"]}
+				minWidth={560}
+			>
+				{PARTS.map((p) => (
+					<tr key={p.name}>
+						<RowHead>{p.name}</RowHead>
+						<Cell tone="strong">{p.open}</Cell>
+						{p.enterprise === null ? (
+							<Cell tone="quiet">
+								<span aria-hidden="true">—</span>
+								<span className="sr-only">Nothing extra</span>
+							</Cell>
+						) : (
+							<Cell>{p.enterprise}</Cell>
+						)}
+					</tr>
+				))}
+			</TableBox>
+			<p className="m-0 mt-3.5 text-sm text-text-secondary">
+				The commercial code lives in one directory, <span style={mono}>ee/</span>, and a CI check fails
+				any change that lets the open core depend on it.
+			</p>
+		</Block>
 	);
 }
 
-/* ---------- 05 · Closing CTA ---------- */
-
-function Close({ stars }: { stars: number | null }) {
+/** The ways to run it, as ruled link rows into the self-hosting guides. */
+function WaysToRun() {
 	return (
-		<section style={{ padding: "92px 0" }}>
-			<Wrap style={{ textAlign: "center" }}>
-				<h2 style={{ ...disp, fontSize: 40, fontWeight: 600, letterSpacing: "-0.04em", margin: "0 0 16px", color: "var(--text-primary)" }}>Yours to run.</h2>
-				<p style={{ fontSize: 15.5, color: "var(--text-tertiary)", lineHeight: 1.6, margin: "0 auto 28px", maxWidth: 440 }}>
-					Clone it, read the source, deploy it on your own cloud. Open the docs or star the repo.
-				</p>
-				<div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-					<Button nativeButton={false} render={<Link href="/docs/guides/self-hosting" />}><Icon k="book" size={15} /> Self-host docs</Button>
-					<Button variant="outline" nativeButton={false} render={<a href="https://github.com/alethialabs-io/alethialabs" target="_blank" rel="noreferrer" />}><Icon k="git" size={15} /> Star on GitHub{fmtStars(stars)}</Button>
-				</div>
-			</Wrap>
-		</section>
+		<Block label="Ways to run it">
+			<RuleHead title="Ways to run it" action={{ label: "All guides ↗", href: "/docs/guides/self-hosting", external: true }} />
+			<Rows rows={WAYS} />
+		</Block>
+	);
+}
+
+/** The licence, and the hosted service for anyone who would rather not run it. */
+function LicenceAndHosted() {
+	return (
+		<Block label="Licence and hosted service">
+			<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+				<Card label="Licence" title="GNU AGPL-3.0">
+					OSI-approved open source, not source-available. Use it, change it, run it commercially;
+					share changes you serve to others.
+				</Card>
+				<Card
+					label="Rather not run it?"
+					title="Use the hosted service"
+					action={<ActionLink variant="outline" link={{ label: "See pricing", href: "/pricing" }} />}
+				>
+					The same product, operated by us on our infrastructure.
+				</Card>
+			</div>
+		</Block>
 	);
 }
 
 /** All sections of the /open-source page, in order. */
-export function OpenSourceSections({ stars }: { stars: number | null }) {
+export function OpenSourceSections() {
 	return (
 		<>
-			<Hero stars={stars} />
-			<Proof />
-			<Editions />
-			<Ops />
-			<DeployPaths />
-			<Close stars={stars} />
+			<Opening />
+			<WhatIsOpen />
+			<WaysToRun />
+			<LicenceAndHosted />
 		</>
 	);
 }

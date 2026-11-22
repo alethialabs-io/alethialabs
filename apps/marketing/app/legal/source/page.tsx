@@ -8,7 +8,7 @@ import { LegalShell } from "@/components/legal/legal-shell";
 const REPOSITORY = "https://github.com/alethialabs-io/alethialabs";
 
 export const metadata: Metadata = {
-  title: "Source and licences · Alethia",
+  title: "Source and licences",
   description:
     "Licence boundaries and source-version information for Alethia's AGPL community core.",
 };

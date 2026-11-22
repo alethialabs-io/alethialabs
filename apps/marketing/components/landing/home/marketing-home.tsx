@@ -2,34 +2,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { SiteShell } from "@repo/brand/site-shell";
-
-import {
-	Announce,
-	CliBand,
-	Clouds,
-	Close,
-	ConsoleBand,
-	Hero,
-	ReceiptBand,
-} from "./sections";
+import { getLatestPosts, getLatestReleases } from "@/lib/home/feeds";
+import { Film, FromTheBlog, Latest, Statement } from "./home-sections";
 
 /**
- * The home page: hero, what it runs on, three bands, close.
- *
- * The announcement line sits inside `main` rather than above the header, where
- * its Vercel counterpart lives — `SiteShell` is shared with apps/blog, so a bar
- * added above the header would ship there too. It reads identically here.
+ * The home page, in the editorial order the maintainer chose (modelled on anthropic.com's
+ * structure, not its content): a statement, the film, the latest three releases from the
+ * changelog, four posts from the blog. The two feeds are fetched in parallel and cached for an
+ * hour; either one failing only removes its own section.
  */
 export async function MarketingHome({ homeHref = "/" }: { homeHref?: "/" | "/home" }) {
+	const [releases, posts] = await Promise.all([getLatestReleases(3), getLatestPosts(4)]);
 	return (
 		<SiteShell homeHref={homeHref}>
-			<Announce />
-			<Hero />
-			<Clouds />
-			<ConsoleBand />
-			<CliBand />
-			<ReceiptBand />
-			<Close />
+			<Statement />
+			<Film />
+			<Latest releases={releases} />
+			<FromTheBlog posts={posts} />
 		</SiteShell>
 	);
 }

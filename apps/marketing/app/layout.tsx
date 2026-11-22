@@ -8,6 +8,7 @@ import { ThemeProvider } from "next-themes";
 import { Toaster } from "@repo/ui/sonner";
 import { ConsentProvider } from "@repo/privacy/consent-provider";
 import { cloudListLabel } from "@repo/cloud-catalog";
+import { SITE_URL } from "@/lib/site";
 import "./globals.css";
 
 // The description is what a search result and a link preview show, so it carries the
@@ -15,10 +16,11 @@ import "./globals.css";
 const SITE_DESCRIPTION = `Configure multi-cloud infrastructure in the browser. Deploy from the terminal. In beta on ${cloudListLabel()}.`;
 
 export const metadata: Metadata = {
-	metadataBase: new URL("https://alethialabs.io"),
+	metadataBase: new URL(SITE_URL),
 	title: {
 		default: "Alethia",
-		template: "%s — Alethia",
+		// Pages set the bare name ("Pricing"); the template adds the product once.
+		template: "%s · Alethia",
 	},
 	description: SITE_DESCRIPTION,
 	applicationName: "Alethia",
