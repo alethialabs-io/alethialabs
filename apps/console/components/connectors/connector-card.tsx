@@ -36,9 +36,9 @@ interface ConnectorCardProps {
 	offered?: boolean;
 	isConnecting?: boolean;
 	/**
-	 * Pick mode (create-project cloud picker): a connected, healthy card becomes a radio-style pick
-	 * target — the whole card selects instead of offering Manage. Backward-compatible: off by default,
-	 * so the connectors page renders identically.
+	 * Pick mode, for a caller that lets the person choose a cloud with these cards: a connected,
+	 * healthy card becomes a pick target — the whole card selects instead of offering Manage. Off by
+	 * default, which is how the connectors page renders it.
 	 */
 	selectable?: boolean;
 	selected?: boolean;
@@ -116,8 +116,8 @@ export function ConnectorCard({
 		// Choosing a cloud is the FIRST REQUIRED STEP of creating a project, so a keyboard or
 		// screen-reader user could not create one at all (WCAG 2.1.1). The four pick attributes
 		// below sit behind the existing `isPick` predicate deliberately — `isPick` is a
-		// six-condition question and a second copy of it in `create-project/cloud-picker.tsx`
-		// would be the copy that never gets the fix.
+		// six-condition question and a second copy of it in a caller would be the copy that never
+		// gets the fix.
 		//
 		// WHY `role="button"` AND NOT `radio`. A radio needs a `radiogroup` parent, and the picker's
 		// container is a `group` — deliberately, because a radio may own no interactive descendants
@@ -140,7 +140,7 @@ export function ConnectorCard({
 		// computed the name "AWS AWS Amazon Web Services. 1 accountConnected" — one run-on string
 		// with the status welded to the account count. Naming the control explicitly and pointing
 		// the description at the two nodes that carry the copy and the state gives them back as a
-		// description. Same remedy, and the same reason, as `create-project/start-from-scratch-cards.tsx`.
+		// description.
 		<div
 			onClick={isPick ? onSelect : undefined}
 			role={isPick ? "button" : undefined}

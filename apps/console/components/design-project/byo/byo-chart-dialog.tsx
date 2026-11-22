@@ -27,7 +27,6 @@
 import { type FormEvent, useEffect, useMemo, useRef } from "react";
 import { Controller, FormProvider, useWatch } from "react-hook-form";
 import { GitBranch, Package, TriangleAlert } from "lucide-react";
-import { z } from "zod";
 import {
 	Dialog,
 	DialogContent,
@@ -61,20 +60,19 @@ import {
 	ociHostOf,
 } from "@/lib/connectors/helm-registry-hosts";
 import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
-import { byoWizardId } from "@/lib/projects/canvas-handoff";
 import { WIZARD_PARAM } from "@/lib/query/view-url-params";
 import { orpc } from "@/lib/rpc/client";
-import {
-	byoChartFormSchema,
-	byoChartNamespace,
-	CHART_SOURCES,
-	type ByoChartFormValues,
-	type ChartSource,
-} from "@/lib/validations/byo-charts";
+import { byoChartNamespace, type ChartSource } from "@/lib/validations/byo-charts";
 import { chartSlug } from "@/lib/validations/names";
-import { defineWizard } from "@/lib/wizard/define";
-import { useWizardEnvironment, type WizardOpener, wizardOpener } from "@/lib/wizard/location";
+import { useWizardEnvironment, wizardOpener } from "@/lib/wizard/location";
+import { useOpenRequest } from "@/lib/wizard/use-open-request";
 import { useWizardEngine } from "@/lib/wizard/use-wizard";
+import {
+	BYO_CHART_WIZARD_ID,
+	type ByoChartWizardValues,
+	byoChartWizard,
+	wizardFieldOf,
+} from "@/components/design-project/byo/byo-chart.wizard";
 
 interface ByoChartDialogProps {
 	/** The canvas asks for the dialog. The URL (`?wizard=byo-chart`) is what keeps it open. */
@@ -132,131 +130,8 @@ const SOURCE_OPTIONS = [
 
 // ── THE WIZARD ───────────────────────────────────────────────────────────────────────────────────
 //
-// The git remote and the OCI reference are two fields, not one `repoUrl`: each is shown by its own
-// step, and the engine requires every field to have exactly one step that shows it. They become the
-// action's one `repoUrl` only when the chart is attached (`toChartForm`).
-
-/** The wizard's URL and draft namespace (`?wizard=byo-chart`): the id a `byo` canvas seed opens. */
-export const BYO_CHART_WIZARD_ID = byoWizardId("chart");
-
-/** Every field the wizard holds, as typed. */
-const chartFieldsSchema = z.object({
-	source: z.enum(CHART_SOURCES),
-	gitUrl: z.string(),
-	ociRef: z.string(),
-	chartPath: z.string(),
-	ref: z.string(),
-	name: z.string(),
-	namespace: z.string(),
-	valuesYaml: z.string(),
-});
-
-/** The wizard's values. */
-export type ByoChartWizardValues = z.infer<typeof chartFieldsSchema>;
-
-/** A wizard field. */
-type ChartField = keyof ByoChartWizardValues;
-
-/** The wizard's values in the attach form's shape: one `repoUrl`, from the source's own field. */
-function toChartForm(values: ByoChartWizardValues): ByoChartFormValues {
-	return {
-		source: values.source,
-		repoUrl: values.source === "oci" ? values.ociRef : values.gitUrl,
-		chartPath: values.chartPath,
-		ref: values.ref,
-		name: values.name,
-		namespace: values.namespace,
-		valuesYaml: values.valuesYaml,
-	};
-}
-
-/** The wizard field an attach-form (or attach-action) key is shown in, for this source. */
-function wizardFieldOf(key: string, source: ChartSource): string {
-	if (key === "repoUrl") return source === "oci" ? "ociRef" : "gitUrl";
-	// The action's `id` is derived from the name the Review step shows.
-	if (key === "id") return "name";
-	return key;
-}
-
-/**
- * The attach form's rules, reported on the wizard's fields. `owned` keeps only the issues on those
- * fields, which is what one step checks; `null` keeps every issue, which is what Attach checks.
- */
-function chartRules(owned: readonly ChartField[] | null) {
-	return chartFieldsSchema.superRefine((values, ctx) => {
-		const parsed = byoChartFormSchema.safeParse(toChartForm(values));
-		if (parsed.success) return;
-		for (const issue of parsed.error.issues) {
-			const [head, ...rest] = issue.path;
-			const field = wizardFieldOf(String(head ?? ""), values.source);
-			if (owned !== null && !owned.some((name) => name === field)) continue;
-			ctx.addIssue({ code: "custom", path: [field, ...rest], message: issue.message });
-		}
-	});
-}
-
-/** Whether the chart comes from a git repository. */
-const fromGit = (values: ByoChartWizardValues) => values.source !== "oci";
-
-/** Whether the chart comes from an OCI registry. */
-const fromOci = (values: ByoChartWizardValues) => values.source === "oci";
-
-/**
- * The attach-a-chart wizard. The draft keeps everything but the Helm values: values files are where
- * people put passwords, and nothing about a values block needs to survive a reload more than it needs
- * to stay out of storage. The Review step says so.
- */
-export const byoChartWizard = defineWizard<ByoChartWizardValues, ByoChartWizardValues>({
-	id: BYO_CHART_WIZARD_ID,
-	presentation: "overlay",
-	schema: chartRules(null),
-	steps: [
-		{ id: "source", label: "Source", fields: ["source"], schema: chartRules(["source"]) },
-		{
-			id: "repository",
-			label: "Repository",
-			fields: ["gitUrl"],
-			schema: chartRules(["gitUrl"]),
-			when: fromGit,
-			// Linking a git provider leaves the console and returns to this URL.
-			gate: { kind: "external", returnParams: [] },
-		},
-		{
-			id: "registry",
-			label: "Registry",
-			fields: ["ociRef"],
-			schema: chartRules(["ociRef"]),
-			when: fromOci,
-		},
-		{
-			id: "chart-path",
-			label: "Chart path",
-			fields: ["chartPath"],
-			schema: chartRules(["chartPath"]),
-			when: fromGit,
-		},
-		{ id: "ref", label: "Ref", fields: ["ref"], schema: chartRules(["ref"]) },
-		{
-			id: "review",
-			label: "Review",
-			fields: ["name", "namespace", "valuesYaml"],
-			schema: chartRules(["name", "namespace", "valuesYaml"]),
-		},
-	],
-	draft: {
-		version: 1,
-		ttlMinutes: 24 * 60,
-		schema: z.object({
-			source: z.enum(CHART_SOURCES).optional(),
-			gitUrl: z.string().optional(),
-			ociRef: z.string().optional(),
-			chartPath: z.string().optional(),
-			ref: z.string().optional(),
-			name: z.string().optional(),
-			namespace: z.string().optional(),
-		}),
-	},
-});
+// The definition — steps, rules and draft — is `byo-chart.wizard.ts`. What is below is how this
+// dialog shows it.
 
 /** A fresh chart: from git, nothing typed. */
 const DEFAULT_VALUES: ByoChartWizardValues = {
@@ -322,30 +197,6 @@ function toWizardFieldErrors(fields: FieldErrors, source: ChartSource): FieldErr
 	return mapped;
 }
 
-/**
- * Keeps the canvas's request and the URL in step; the URL decides. A request that rises opens
- * `?wizard=<id>` (and drops the canvas's one-shot `?attachChart=1`, which would otherwise be read
- * again and strip the URL the dialog just opened). A URL that opens or closes on its own — Back, a
- * link, the return from a git provider — is reported to the canvas so its request matches.
- */
-function useOverlayRequest(
-	requested: boolean,
-	onRequestedChange: (open: boolean) => void,
-	opener: WizardOpener,
-	openUrl: () => void,
-): void {
-	const seen = useRef({ requested: false, url: false });
-	useEffect(() => {
-		const before = seen.current;
-		seen.current = { requested, url: opener.open };
-		if (requested && !before.requested && !opener.open) {
-			openUrl();
-			return;
-		}
-		if (opener.open !== before.url && opener.open !== requested) onRequestedChange(opener.open);
-	});
-}
-
 /** The "attach a Helm chart" dialog: open while the URL names it, its wizard mounted only while open. */
 export function ByoChartDialog({
 	open,
@@ -356,7 +207,9 @@ export function ByoChartDialog({
 }: ByoChartDialogProps) {
 	const env = useWizardEnvironment();
 	const opener = wizardOpener(env.location, BYO_CHART_WIZARD_ID);
-	useOverlayRequest(open, onOpenChange, opener, () =>
+	// Opening drops the canvas's one-shot `?attachChart=1`, which would otherwise be read again and
+	// strip the URL the dialog just opened.
+	useOpenRequest(open, onOpenChange, opener, () =>
 		env.location.push({ [WIZARD_PARAM]: BYO_CHART_WIZARD_ID, attachChart: null }),
 	);
 

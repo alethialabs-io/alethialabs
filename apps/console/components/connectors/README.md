@@ -26,37 +26,75 @@ file is deleted, not aliased.
 | `connectors-link-error.ts` | The sentence for a failed git-provider connection, shared with `components/repository-selector.tsx`. |
 | `connectors-query.ts` | **Pure filter/query plumbing.** `connectorState()` (the one status ladder), `GROUP_META`, `normalizeConnectorQuery()`, `selectConnectors()`, `buildConnectorFacets()`, `buildConnectorsView()`. No React, no server imports. |
 | `connectors-filter-bar.tsx` | The filter bar: `FilterSearch` + `FilterChipGroup` (status) + `FacetFilter` (group) + `MultiCombobox` (vendor) + `FilterBarReset`. |
-| `connector-card.tsx` | One connector as a tile (card view). Also used by the create-project cloud picker. |
+| `connector-card.tsx` | One connector as a tile (card view). Its pick mode (`selectable`) makes a connected cloud's whole tile a choice instead of a Manage button. |
 | `connector-row.tsx` | The same connector as a table row (table view). |
 | `connector-detail-sheet.tsx` | The manage drawer, on `@repo/ui/detail-sheet`. |
 | `connector-icon.tsx`, `git-provider-icon.tsx` | Logo rendering with monogram / mono fallbacks. |
 
 ### The connect sheets
 
-These are the per-cloud flows a user runs to give Alethia provisioning access. They render inside a
-right-side `Sheet` on the board and in the create-project cloud picker.
+These are the per-cloud flows a user runs to give Alethia provisioning access. Every cloud connects
+through **one sheet, held in the URL**, on the shared wizard engine (`lib/wizard/`):
+
+```
+?wizard=cloud-connect&step=<cloud>
+```
+
+The URL is the sheet's open state. A refresh, Back or a shared link reopens it on the same cloud,
+and the cloud's form comes back filled in from its draft. The draft keeps identifiers only (a role
+ARN, a GCP project id and number, the Azure ids) and never a token or a pasted credential config.
+The sheet opens from the board and from the create-project form; both call the same host hook.
+
+Which clouds can be opened is the server's answer (`offeredClouds`, from
+`lib/cloud-providers/availability.ts`). Until it arrives the build-time `AVAILABLE_CLOUDS` stands in.
+A link naming a cloud that is not offered opens the sheet on a sentence saying so, with the clouds
+that are offered, and never on a form the server would refuse.
 
 Design: the **grayscale design system** (`@repo/ui` on `@repo/brand/tokens.css`). No cards, no
 shadows, no colored status fills — flat hairline `Separator`-divided sections, status shown as an
-icon + label. All sheets share one scaffold, so they look identical bar their copy and fields.
+icon + label. All sheets share one scaffold and one form frame, so they look identical bar their
+copy and fields.
 
 | Family | Clouds | Badge | Stored |
 |--------|--------|-------|--------|
 | **Keyless federation** | AWS, GCP, Azure, Alibaba | `Keyless` | a public trust identifier (role ARN / WIF config / tenant+subscription) — **no secret** |
 | **Token clouds** | Hetzner, DigitalOcean, Civo | `Encrypted` | the customer's scoped API token, AES-GCM at rest, decrypted only on the runner |
 
+The table lists every cloud that has a sheet. Which of them a deployment offers is decided by
+`availability.ts`, not by this table.
+
 The keyless clouds trust the Alethia OIDC issuer directly and Alethia federates in with a
 short-lived minted assertion; the token clouds have no federation, so a scoped token is the ceiling.
 
+#### How one connect runs
+
+1. `openConnect(integration)` pushes `?wizard=cloud-connect&step=<cloud>`. Opening starts nothing
+   on the server, so a person who looks and closes leaves no row.
+2. The sheet mounts that cloud's form with a `ConnectSession`: the cloud, the draft's scope (org +
+   cloud), and how to get the pending identity to save into.
+3. Connect validates the form, then makes **one round trip**: it takes the host's seeded pending
+   identity, or starts one with `startCloudConnect` at that moment, and calls `connectCloudAccount`,
+   which saves and verifies. A retry saves into the same identity.
+4. A field refusal lands on its field (the form's field names are the server's own); anything else
+   is said above the button.
+5. A verified connect replaces the form with the result and a primary **Done**. The host's
+   `onConnected` gets the account at once, before Done, so the screen behind can select it, and the
+   draft is cleared.
+
 | File | Role |
 |------|------|
-| `connection-ui.tsx` | **The shared scaffold.** Exports `ConnectSheetShell` (badge + intro + "How this works" popover + hairline sections), `MethodTabs` (segmented setup-method control), `Step`, `VerifySection` (+ `ConnectionTestStatus`/`StatusCallout`), and `StoredNote`. Change the look here → every sheet updates. Keep the exported props stable. |
-| `{aws,gcp,azure,hetzner,extra-cloud,api-key}-connection.tsx` | **Per-cloud sheets.** Each composes the scaffold, renders its own fields, and calls an injected `onComplete`/`onSave`/`onCompleteFromIds` handler. `extra-cloud-connection.tsx` exports both `AlibabaConnection` (RAM role ARN) and `TokenCloudConnection` (generic token cloud). |
-| `use-connection-test.ts` | The instant server-side verify hook. `useConnectionTest()` runs a save+verify round trip through `useActionMutation` and exposes `state` (`idle`/`saving`/`success`/`failed`) → drives the shared status UI. Handlers return `connectCloudAccount`'s `ActionResult<VerifyOutcome>`. |
+| `../cloud-connect/use-cloud-connect.tsx` | **The host hook.** `useCloudConnect()` reads the sheet's open state and cloud from the URL, decides which clouds may open, holds the seeded pending identities, and renders the one `<Sheet>` (header + that cloud's form, a pending state while the offered clouds load, or the not-offered sentence). Hosts call `openConnect(integration)` and render `sheets` once. Git, api-key, manage and disconnect are not handled here; they stay on the board. |
+| `../cloud-connect/cloud-connect.wizard.ts` | **The definitions.** One wizard definition per cloud, all under the wizard id `cloud-connect`, each with one step whose id is the cloud's slug. Field names are `connectCloudAccount`'s own. Also the pure helpers that read a setup script's printed output. |
+| `../cloud-connect/use-connect-wizard.ts` | `useConnectWizard()` — one cloud's form on the wizard engine, wired to `connectCloudAccount` through `useConnectionTest`. Owns the one-round-trip, same-identity-on-retry and field-error placement rules above. |
+| `../cloud-connect/connect-form.tsx` | `ConnectForm` — the frame every cloud's form renders inside: the restored-draft line, where the press stands, the one button, and the Done outcome. |
+| `../cloud-connect/download-file.ts` | `downloadFile()` — downloads a setup script or Terraform module this console serves. |
+| `connection-ui.tsx` | **The shared scaffold.** `ConnectSheetShell` (badge + intro + "How this works" popover + hairline sections), `MethodTabs` (segmented setup-method control), `Step`, `ConnectStatus` (verifying / connected / degraded / failed, said once under the form), `StatusCallout`, `InfoNote` and `StoredNote`. Change the look here → every sheet updates. |
+| `{aws,gcp,azure,hetzner,extra-cloud}-connection.tsx` | **Per-cloud forms.** Each takes a `ConnectSession`, runs `useConnectWizard` with its definition, and renders its method choice, setup steps and fields inside `ConnectSheetShell` + `ConnectForm`. Each field sits in the step that produces its value. `extra-cloud-connection.tsx` exports both `AlibabaConnection` (RAM role ARN) and `TokenCloudConnection` (DigitalOcean, Civo). |
+| `api-key-connection.tsx` | The api_key credential form for a pluggable connector, opened from the board. Not a cloud connect. |
+| `use-connection-test.ts` | `useConnectionTest()` — runs one save + verify through `useActionMutation` (double submit ignored, board invalidated) and exposes `state` (`idle`/`saving`/`success`/`failed`) for `ConnectStatus`. |
 | `provider-config-fields.tsx` | The generic `provider_config` field renderer (also used by the canvas inspector). |
-| `connector-assets.ts` | `connectorAssetUrl()` (setup script / template URLs), `CONNECTOR_DOCS_BASE`, `connectorDocsHref()` (maps a connector → its `/docs/guides/connectors/*` page), and the pre-filled issuer/client-id env constants. |
-| `../cloud-connect/use-cloud-connect.tsx` | **The host hook.** Owns the sheet open/close state, reuses a seeded or starts (`startCloudConnect`) a pending identity, wires the per-provider save handlers to the server actions, and renders every `<Sheet>` + `ConnectSheetHeader`. Callers use `openConnect(integration)` + render `sheets`. |
-| `../../lib/cloud-providers/gcp-wif.ts` | Pure WIF helper — `buildWifConfig(projectId, projectNumber)` + the fixed pool/provider/SA constants + `GCP_PROJECT_ID_REGEX`. No server deps, so the server verify **and** the client sheet import the same builder. |
+| `connector-assets.ts` | `connectorAssetUrl()` (setup script / template URLs), `CONNECTOR_DOCS_BASE`, and the pre-filled issuer/client-id constants. |
+| `../../lib/cloud-providers/gcp-wif.ts` | Pure WIF helper — `buildWifConfig(projectId, projectNumber)` + the fixed pool/provider/SA constants + `GCP_PROJECT_ID_REGEX`. No server deps, so the server verify **and** the client form import the same builder. |
 
 ## Clouds a deployment does not offer
 
@@ -136,30 +174,36 @@ with, bound to the addressed org, before the connection library runs.
 ## The GCP "assembled config" pattern
 
 GCP is the one cloud whose credential is a multi-line JSON blob. Rather than make the user paste it,
-the sheet takes **two fields — Project ID + Project Number** — and the server assembles the
+the form takes **two fields — Project ID + Project Number** — and the server assembles the
 `external_account` config with `buildWifConfig` (the pool/provider/SA names are fixed connector
 conventions, so the two IDs fully determine the config).
 
 - **Why the project number is required:** the WIF audience is keyed on the *numeric* project number
   (`//iam.googleapis.com/projects/<NUMBER>/...`), not the ID, and it can't be derived without already
   being authenticated. The ID separately forms the SA email. The setup script prints both.
-- **Advanced escape hatch:** a "Paste raw config JSON instead" toggle still accepts a full
+- **Advanced escape hatch:** a "Paste a credential config instead" toggle accepts a full
   `external_account` config (e.g. `terraform output credential_config`) for custom setups.
 
 `buildWifConfig` lives in a **pure, dep-free module** precisely so both sides share it — never fork it.
 
 ## Server side
 
-Per-cloud server actions in `app/(private)/dashboard/providers/`:
-`actions.ts` (AWS), `gcp-actions.ts`, `azure-actions.ts`, `extra-cloud-actions.ts`. Each exposes an
-`initXIdentity` (seed a pending `cloud_identity` row) and `saveX` (persist + verify).
+A connect calls two actions in `app/server/actions/identities.ts`: `startCloudConnect` (a pending
+`cloud_identity` row, only when the host seeded none) and `connectCloudAccount`, whose input is one
+discriminated arm per connect method (`aws`, `gcp-ids`, `gcp-wif`, `azure`, `alibaba`, `token`).
 
-They delegate to `lib/cloud-providers/connections.ts`: `initIdentity`, `saveAwsIdentity`,
-`saveGcpIdentity` / `saveGcpIdentityFromIds`, `saveAzureIdentity`, `saveAlibabaIdentity`,
-`saveTokenCloudIdentity`, plus `reverifyConnection` / `disconnectIdentity`. Every save ends in the
-private `verifyConnectionInline` — an **instant, server-side** auth + provisioning-permission probe
-(no runner, no job) that resolves the `cloud_identity` status to `connected` / `degraded` /
-`disconnected`. All queries filter by `provider` to prevent cross-provider leaks.
+`connectCloudAccount` hands each arm to its builder in `lib/cloud-providers/connections.ts`:
+`saveAwsIdentity`, `saveGcpIdentityFromIds` / `saveGcpIdentity`, `saveAzureIdentity`,
+`saveAlibabaIdentity`, `saveTokenCloudIdentity`; `reverifyConnection` and `disconnectIdentity` back
+Re-verify and Disconnect. Every save ends in the private `verifyConnectionInline` — an **instant,
+server-side** auth + provisioning-permission probe (no runner, no job) that resolves the
+`cloud_identity` status to `connected` / `degraded` / `disconnected`. All queries filter by
+`provider` to prevent cross-provider leaks.
+
+The create-project page seeds pending identities ahead of time through the per-cloud `initXIdentity`
+actions in `app/(private)/dashboard/providers/` (`lib/connectors/cloud-connect-setup.ts`) and passes
+them to `useCloudConnect` as `awsSetup` / `gcpSetup` / `azureSetup` / `extraSetup`. The board seeds
+none.
 
 ## Assets pipeline (single source of truth)
 
@@ -171,7 +215,7 @@ sync:connector-assets`** — never hand-edit the `public/` copy.
 
 ## Product docs
 
-Each sheet's "Docs" link resolves through `connectorDocsHref` → `CONNECTOR_DOCS_BASE`
+Each sheet's "Docs" link resolves through `connectorDocsHref` (`use-cloud-connect.tsx`) → `CONNECTOR_DOCS_BASE`
 (`/docs/guides/connectors`) → the per-cloud MDX in `apps/docs/content/docs/guides/connectors/`.
 Keep those in sync when a flow changes (e.g. the GCP two-field flow lives in `gcp.mdx`).
 
@@ -179,10 +223,17 @@ Keep those in sync when a flow changes (e.g. the GCP two-field flow lives in `gc
 
 1. Add the setup artifact under `infra/connector/<cloud>/`, register it in the `PAIRS` list in
    `scripts/sync-connector-assets.mjs`, and run `pnpm sync:connector-assets`.
-2. Write `<cloud>-connection.tsx` composing `ConnectSheetShell` + `MethodTabs` + `Step` +
-   `VerifySection`; take the credential value(s) and call an injected save handler.
-3. Add `initXIdentity` + `saveX` server actions and a `saveXIdentity` builder in `connections.ts`
-   that ends in `verifyConnectionInline`. Filter every query by `provider`.
-4. Wire it into `use-cloud-connect.tsx` (open state, handler, `<Sheet>` + `ConnectSheetHeader`).
-5. Add the docs page under `apps/docs/content/docs/guides/connectors/` and list it in that
+2. Add the cloud's arm to `connectCloudAccount`'s input in `app/server/actions/identities.ts`, and a
+   `saveXIdentity` builder in `connections.ts` that ends in `verifyConnectionInline`. Filter every
+   query by `provider`.
+3. Add its definition to `cloud-connect.wizard.ts`: one step whose id is the cloud's slug, fields
+   named as the server arm names them, and a draft that lists identifiers only (or `draft: null`).
+   `tests/lib/wizard/definitions.test.ts` checks it is complete and keeps no credential-shaped key.
+4. Write `<cloud>-connection.tsx`: take a `ConnectSession`, call `useConnectWizard` with the
+   definition and a `toInput` that builds the server arm, and render `ConnectSheetShell` +
+   `ConnectForm` with `MethodTabs` / `Step` as the setup needs.
+5. Add the cloud to `CONNECT_SHEETS` and `CloudConnectBody` in `use-cloud-connect.tsx`.
+   `CONNECT_SHEETS` is a `Record` over the connectable clouds, so the compiler names it once the slug
+   is in the catalog; the `CloudConnectBody` case is yours to add.
+6. Add the docs page under `apps/docs/content/docs/guides/connectors/` and list it in that
    directory's `meta.json`; the `RESERVED_SLUGS`/docs mapping follow automatically.
