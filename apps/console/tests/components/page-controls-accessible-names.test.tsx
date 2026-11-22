@@ -295,7 +295,7 @@ describe("settings pages — accessible names", () => {
 		);
 		// "Placement" is the row label and cannot name two controls, so each says which half it is —
 		// and each still contains the visible label, so "placement" reaches both (WCAG 2.5.3).
-		for (const name of ["Placement mode", "Placement fabric", "Credentials"]) {
+		for (const name of ["Placement mode", "Placement Fabric", "Credentials"]) {
 			expect(
 				await screen.findByRole("combobox", { name }),
 			).toBeInTheDocument();

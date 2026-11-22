@@ -38,8 +38,6 @@ const APP = join(CONSOLE, "app");
  * apps/console. No route was migrated by the unit that wrote this list.
  */
 const OWED_ASYNC: Record<string, string> = {
-	"app/(private)/[org]/[project]/settings/access/loading.tsx": "#6824",
-	"app/(private)/[org]/[project]/settings/preview/loading.tsx": "#6824",
 	"app/(private)/[org]/~/support/cases/[id]/loading.tsx": "#6826",
 };
 

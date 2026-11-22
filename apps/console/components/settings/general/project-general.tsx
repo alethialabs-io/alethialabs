@@ -11,15 +11,23 @@
 // against a double submit, refusals under the field, and the shell's project list invalidated, so
 // the switcher, breadcrumb and palette show the new name at once (F040). Delete refuses
 // server-side while any environment is live — destroy those first.
+//
+// R6 F-11 (#6824): the read carries the viewer's edit and delete decisions, asked with the same
+// questions the writes ask. A viewer who may not rename sees the form read-only with Save disabled
+// and the reason beside it; one who may not delete sees Delete disabled with the reason. Nothing is
+// left enabled only to be refused, and nothing is hidden without a word.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useEffect, useId } from "react";
+import { useEffect, useId, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { removeProject, renameProject } from "@/app/server/actions/project-settings";
 import { ClassificationControl } from "@/components/classification/classification-control";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
+import { FormRootError } from "@/components/forms/form-root-error";
+import { manageReason, MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { RegionError } from "@/components/errors/region-error";
 import {
   GeneralRefusal,
@@ -41,23 +49,20 @@ import type { ProjectGeneral as ProjectGeneralRow } from "@/lib/rpc/procedures/s
 import { readRefusalOf, retryUnlessRefused } from "@/lib/rpc/refusal";
 import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
 import { projectNameSchema } from "@/lib/validations/project-name";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import { ReadOnlyValue } from "@repo/ui/read-only-value";
 import { cn } from "@repo/ui/utils";
 
 const nameForm = z.object({ name: projectNameSchema });
 type NameForm = z.input<typeof nameForm>;
+
+/**
+ * What the delete confirmation says before anything is sent: the rule the server applies
+ * (`removeProject` refuses while an environment is live or in flight), then what it does not touch.
+ */
+const DELETE_RULE =
+  "This permanently deletes the project and its environments, design, and promotion history. Provisioned cloud resources are not touched — destroy the environments first. This cannot be undone.";
 
 /**
  * The project General settings page body. Four renders, never confused (RUBRIC B4): the form, a
@@ -121,15 +126,17 @@ function ProjectGeneralForm({
     // breadcrumbs, palette and project list read `workspace.projects`).
     invalidates: [orpc.settings.project.key(), orpc.workspace.projects.key()],
     successMessage: "Project updated.",
-    onValidationError: (fields) => {
-      // Carries the SERVER's refusal (a name another project holds) as well as the schema's.
-      const message = fields.name?.[0] ?? fields.projectId?.[0];
-      if (message) form.setError("name", { type: "server", message });
-    },
+    // The SERVER's refusal (a name another project holds) lands under the name field; a message
+    // about anything else lands in the form's root error rather than nowhere.
+    form: { instance: form, fields: ["name"] },
     onSuccess: (saved) => form.reset({ name: saved.project_name }),
   });
 
+  // The confirmation is open; the dialog stays mounted and is driven by this.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const remove = useActionMutation(removeProject, {
+    // The project is gone, so its own reads would only refetch into a 404; the shell's list is
+    // what still shows it.
     invalidates: [orpc.workspace.projects.key()],
     successMessage: "Project deleted.",
     onSuccess: () => router.push(`/${orgSlug}`),
@@ -138,13 +145,15 @@ function ProjectGeneralForm({
   // `mutateAsync` inside `handleSubmit` keeps `isSubmitting` true for the whole round trip, so the
   // button stays disabled until the save settles; a failure is routed by the mutation itself.
   const onSave = form.handleSubmit(async (values) => {
-    if (rename.isPending) return;
+    if (rename.isPending || !project.canManage) return;
     await rename.mutateAsync({ projectId: project.id, name: values.name }).catch(() => undefined);
   });
 
   const busy = isSubmitting || rename.isPending;
-  // The live-environment refusal is rendered IN the danger zone as well as toasted — the dialog
-  // closes on click, so a toast alone leaves a user who looked away with a page that did nothing.
+  const editReason = manageReason(project);
+  const deleteReason = project.canDelete ? null : MANAGE_DENIED_REASON;
+  // The live-environment refusal is rendered IN the danger zone as well as toasted, so it is still
+  // on the page after the confirmation is dismissed.
   const deleteRefusal =
     remove.error && remove.error.error.kind === "conflict" ? remove.error.error.message : null;
 
@@ -153,45 +162,53 @@ function ProjectGeneralForm({
       <SettingsSection title="Project profile">
         <SettingsPanel>
           <form noValidate onSubmit={onSave} aria-label="Project settings">
-            <div className="py-1">
-              <SettingsField label="Project name" hint="Shown across the console and the CLI.">
-                <SettingsInput
-                  className={cn(settingsControl, settingsControlSize)}
-                  autoComplete="off"
-                  maxLength={PROJECT_NAME_MAX_LENGTH}
-                  aria-invalid={errors.name ? true : undefined}
-                  aria-describedby={errors.name ? nameErrorId : undefined}
-                  {...form.register("name")}
-                />
-                {errors.name && (
-                  // `role="alert"`: a rename refused by the server changes nothing else on screen.
-                  <span id={nameErrorId} role="alert" className="text-ui-xs text-destructive">
-                    {errors.name.message}
-                  </span>
-                )}
-              </SettingsField>
-              <SettingsField
-                label="Project URL"
-                hint="The slug in this project's URLs — kept stable across renames."
-              >
-                {/* Read-only, so NOT on the input surface (#6117, F039): a sunken bordered box
-                    beside the editable name field read as a second field that ignored clicks. */}
-                <ReadOnlyValue mono>
-                  /{orgSlug}/{project.slug ?? "—"}
-                </ReadOnlyValue>
-              </SettingsField>
-              {/* Classification (Workstream B) — chips + a picker for org editors. */}
-              <SettingsField
-                label="Classification"
-                hint="Pin this project's classification values (e.g. Environment, Team)."
-              >
-                <ClassificationControl kind="project" id={project.id} canEdit />
-              </SettingsField>
-            </div>
+            {/* A viewer who may not rename cannot edit either: the field is read-only, and Save
+                says why. */}
+            <fieldset disabled={!project.canManage} className="m-0 min-w-0 border-0 p-0">
+              <div className="py-1">
+                <SettingsField label="Project name" hint="Shown across the console and the CLI.">
+                  <SettingsInput
+                    className={cn(settingsControl, settingsControlSize)}
+                    autoComplete="off"
+                    maxLength={PROJECT_NAME_MAX_LENGTH}
+                    aria-invalid={errors.name ? true : undefined}
+                    aria-describedby={errors.name ? nameErrorId : undefined}
+                    {...form.register("name")}
+                  />
+                  {errors.name && (
+                    // `role="alert"`: a rename refused by the server changes nothing else on screen.
+                    <span id={nameErrorId} role="alert" className="text-ui-xs text-destructive">
+                      {errors.name.message}
+                    </span>
+                  )}
+                </SettingsField>
+                <SettingsField
+                  label="Project URL"
+                  hint="The slug in this project's URLs — kept stable across renames."
+                >
+                  {/* Read-only, so NOT on the input surface (#6117, F039): a sunken bordered box
+                      beside the editable name field read as a second field that ignored clicks. */}
+                  <ReadOnlyValue mono>
+                    /{orgSlug}/{project.slug ?? "—"}
+                  </ReadOnlyValue>
+                </SettingsField>
+                {/* Classification (Workstream B) — chips, and a picker for a viewer who may edit
+                    this project (the control also requires the org's classification edit). */}
+                <SettingsField
+                  label="Classification"
+                  hint="Pin this project's classification values (e.g. Environment, Team)."
+                >
+                  <ClassificationControl kind="project" id={project.id} canEdit={project.canManage} />
+                </SettingsField>
+              </div>
+            </fieldset>
+            <FormRootError form={form} className="mx-[22px] mb-3" />
             <SettingsCardFoot note="Applies across the console">
-              <Button type="submit" size="sm" disabled={!isDirty || busy}>
-                {busy ? "Saving…" : "Save changes"}
-              </Button>
+              <DisabledReason reason={editReason}>
+                <Button type="submit" size="sm" disabled={!isDirty || busy}>
+                  {busy ? "Saving…" : "Save changes"}
+                </Button>
+              </DisabledReason>
             </SettingsCardFoot>
           </form>
         </SettingsPanel>
@@ -211,46 +228,22 @@ function ProjectGeneralForm({
               </>
             }
           >
-            <AlertDialog>
-              <AlertDialogTrigger
-                render={
-                  // See org-general.tsx — the trigger agrees with its own dialog (#4462).
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    aria-label="Delete project"
-                    disabled={remove.isPending}
-                  >
-                    {remove.isPending ? "Deleting…" : "Delete"}
-                  </Button>
-                }
-              />
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete this project?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This permanently deletes the project and its environments, design, and
-                    promotion history. Provisioned cloud resources are not touched — destroy the
-                    environments first. This cannot be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => {
-                      if (!remove.isPending) remove.mutate({ projectId: project.id });
-                    }}
-                    disabled={remove.isPending}
-                    variant="destructive"
-                  >
-                    {remove.isPending ? "Deleting…" : "Delete project"}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            {/* The name says WHAT it deletes: the dialog is titled "Delete this project?", and a
+                trigger announced only as "Delete" disagreed with it (#4462). */}
+            <DisabledReason reason={deleteReason}>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="Delete project"
+                disabled={remove.isPending}
+                onClick={() => setConfirmingDelete(true)}
+              >
+                {remove.isPending ? "Deleting…" : "Delete"}
+              </Button>
+            </DisabledReason>
           </SettingsDangerRow>
-          {/* The server's reason, kept on the page after the dialog closes. `role="alert"` so a
-              screen reader is told too — the visual change is below the fold of the click. */}
+          {/* The server's reason, kept on the page after the dialog is dismissed. `role="alert"`
+              so a screen reader is told too. */}
           {deleteRefusal && (
             <p role="alert" className="px-1 pb-1 text-ui-xs text-destructive">
               {deleteRefusal}
@@ -258,6 +251,20 @@ function ProjectGeneralForm({
           )}
         </SettingsPanel>
       </SettingsSection>
+
+      {/* The console's one confirmation (CON-SM2). It stays open while the delete runs, closes
+          itself on success, and stays up beside the toast when the server refuses. */}
+      <ConfirmAction
+        open={confirmingDelete}
+        onOpenChange={setConfirmingDelete}
+        title="Delete this project?"
+        description={DELETE_RULE}
+        confirmLabel="Delete project"
+        pendingLabel="Deleting…"
+        severity={{ level: "confirm" }}
+        mutation={remove}
+        variables={confirmingDelete ? { projectId: project.id } : null}
+      />
     </div>
   );
 }
