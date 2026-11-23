@@ -283,12 +283,14 @@ func fleetDryRunSentence(provider string, update api.FleetPoolUpdate) string {
 
 // resolveFleetProvider answers "which cloud?" from the positional argument or a picker.
 //
-// The picker offers every cloud_provider value, and NOTHING is validated against that set. The
-// CLI does not know which clouds the fleet controller of the deployment it is talking to
-// supports, so refusing on a list kept here could refuse a cloud that works.
+// The picker offers the clouds this build offers — the catalog's capability switch, read through
+// cloudProviderNames, the same source that hides a cloud from `alethia connector` — and NOTHING
+// is validated against that set. The CLI does not know which clouds the fleet controller of the
+// deployment it is talking to supports, so refusing on the offered list could refuse a cloud that
+// works.
 //
-// So the closed set is used for the OFFER, where being complete is the whole point, and the
-// server keeps the refusal, which is the only place that knows.
+// So the offered set is used for the OFFER, and the server keeps the refusal, which is the only
+// place that knows.
 func resolveFleetProvider(args []string) (string, error) {
 	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
 		return strings.ToLower(strings.TrimSpace(args[0])), nil
