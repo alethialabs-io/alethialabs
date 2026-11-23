@@ -83,7 +83,15 @@ vi.mock("@/lib/billing/use-live-plan-price", () => ({
 }));
 vi.mock("@/lib/org-url", () => ({ orgHost: () => "alethialabs.io" }));
 
+// The sheet is an overlay wizard (`?wizard=create-org&step=`): its URL and viewer come from the test
+// page, whose query string survives an unmount — so a fresh render is a reload.
+vi.mock("@/lib/wizard/location", async (importOriginal) => {
+	const harness = await import("@/tests/components/design-project/byo/byo-wizard-harness");
+	return { ...(await importOriginal()), useWizardEnvironment: harness.useTestWizardEnvironment };
+});
+
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
+import { resetTestPage } from "@/tests/components/design-project/byo/byo-wizard-harness";
 
 const RESERVED = "That slug is reserved — try another.";
 const TAKEN = "That slug is taken — try another.";
@@ -102,6 +110,7 @@ async function nameAndContinue(user: ReturnType<typeof userEvent.setup>, name: s
 }
 
 beforeEach(() => {
+	resetTestPage();
 	vi.clearAllMocks();
 	getProOffer.mockResolvedValue({ kind: "pay" });
 	// The real action's answer for a reserved slug: false, indistinguishable from taken.
