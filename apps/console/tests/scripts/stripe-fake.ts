@@ -7,17 +7,18 @@
 // `transfer_lookup_key`; a webhook secret is returned only by create.
 
 import type Stripe from "stripe";
-import type {
-	AccountView,
-	MeterView,
-	PaymentMethodConfigView,
-	PortalView,
-	PriceView,
-	ProductView,
-	StripeClient,
-	TaxSettingsView,
-	WebhookCreatedView,
-	WebhookView,
+import {
+	ALL_PAYMENT_METHODS,
+	type AccountView,
+	type MeterView,
+	type PaymentMethodConfigView,
+	type PortalView,
+	type PriceView,
+	type ProductView,
+	type StripeClient,
+	type TaxSettingsView,
+	type WebhookCreatedView,
+	type WebhookView,
 } from "../../scripts/stripe-setup";
 
 /** A price as the fake stores it: the view plus its lookup key. */
@@ -48,7 +49,7 @@ export function permissivePortal(id = "bpc_default"): PortalView {
 		id,
 		is_default: true,
 		active: true,
-		business_profile: { privacy_policy_url: null, terms_of_service_url: null },
+		business_profile: { headline: null, privacy_policy_url: null, terms_of_service_url: null },
 		features: {
 			customer_update: { enabled: true, allowed_updates: ["email", "address", "tax_id"] },
 			invoice_history: { enabled: true },
@@ -56,6 +57,37 @@ export function permissivePortal(id = "bpc_default"): PortalView {
 			subscription_cancel: { enabled: true, mode: "at_period_end" },
 			subscription_update: { enabled: false },
 		},
+	};
+}
+
+/** True for a display preference Stripe accepts. */
+function isPreference(p: string): p is "on" | "off" | "none" {
+	return p === "on" || p === "off" || p === "none";
+}
+
+/** One method's entry in a payment method configuration, as Stripe returns it. */
+export function pmSetting(preference: "on" | "off" | "none", available = preference === "on") {
+	const value: "on" | "off" = preference === "on" ? "on" : "off";
+	return { available, display_preference: { overridable: null, preference, value } };
+}
+
+/**
+ * A default payment method configuration shaped like a new EU account's: cards and the common local
+ * methods on, a wallet left at Stripe's default (`none`), Klarna off.
+ */
+export function defaultPaymentMethods(id = "pmc_default"): PaymentMethodConfigView {
+	return {
+		id,
+		is_default: true,
+		active: true,
+		card: pmSetting("on"),
+		link: pmSetting("on"),
+		apple_pay: pmSetting("none"),
+		google_pay: pmSetting("on"),
+		sepa_debit: pmSetting("on"),
+		bancontact: pmSetting("on"),
+		ideal: pmSetting("on"),
+		klarna: pmSetting("off"),
 	};
 }
 
@@ -81,7 +113,7 @@ export function emptyAccount(): FakeAccount {
 		},
 		portals: [permissivePortal()],
 		webhooks: [],
-		pmcs: [{ id: "pmc_1", is_default: true, card: { available: true }, link: { available: true } }],
+		pmcs: [{ ...defaultPaymentMethods("pmc_other"), is_default: false }, defaultPaymentMethods()],
 		writes: [],
 	};
 }
@@ -261,6 +293,7 @@ export function fakeClient(acct: FakeAccount): StripeClient {
 					const bp = p.business_profile;
 					if (bp) {
 						c.business_profile = {
+							headline: bp.headline === undefined ? c.business_profile.headline : bp.headline || null,
 							privacy_policy_url: bp.privacy_policy_url ?? c.business_profile.privacy_policy_url,
 							terms_of_service_url: bp.terms_of_service_url ?? c.business_profile.terms_of_service_url,
 						};
@@ -295,6 +328,24 @@ export function fakeClient(acct: FakeAccount): StripeClient {
 				return Promise.resolve({ id: w.id, url: w.url, status: w.status, enabled_events: w.enabled_events });
 			},
 		},
-		paymentMethodConfigurations: { list: (p) => page(acct.pmcs, p.limit, undefined) },
+		paymentMethodConfigurations: {
+			list: (p) => page(acct.pmcs, p.limit, p.starting_after),
+			update: (cid, p) => {
+				const c = acct.pmcs.find((x) => x.id === cid);
+				if (!c) return Promise.reject(new Error(`no payment method configuration ${cid}`));
+				for (const method of ALL_PAYMENT_METHODS) {
+					const preference = p[method]?.display_preference?.preference;
+					const setting = c[method];
+					if (preference === undefined) continue;
+					// Stripe refuses a preference for a method the account does not offer.
+					if (!setting) return Promise.reject(new Error(`${method} is not offered by this account`));
+					if (!isPreference(preference)) return Promise.reject(new Error(`bad preference ${preference}`));
+					setting.display_preference = pmSetting(preference).display_preference;
+					setting.available = preference === "on";
+				}
+				acct.writes.push(`payment_methods.update ${cid}`);
+				return Promise.resolve(c);
+			},
+		},
 	};
 }
