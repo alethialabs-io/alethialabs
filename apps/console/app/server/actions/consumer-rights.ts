@@ -29,6 +29,7 @@ import { deploymentMode, isStripeConfigured } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
 import { forgetSubscription } from "@/lib/billing/subscription-cache";
 import { getOrgBilling } from "@/lib/billing/queries";
+import { sendWithdrawalAcknowledgementEmail } from "@/lib/email/withdrawal-email";
 
 // THE CLOCK IS READ HERE, NEVER RECEIVED. Every exported function in this file is a Server Action,
 // and a Server Action's arguments are whatever the request carried. The instant that decides
@@ -240,6 +241,19 @@ async function withdrawAt(order: CommerceOrder | null, now: Date): Promise<Withd
 			updatedAt: now,
 		})
 		.where(eq(commerceOrder.id, order.id));
+
+	// The acknowledgement on a durable medium (CRD art. 11a, ЗЗП art. 52a), sent only once the
+	// withdrawal is recorded so it never acknowledges one that did not take effect. It never throws:
+	// the withdrawal has happened, and a failed send is logged for a hand send rather than reported
+	// to the consumer as a failed withdrawal (lib/email/withdrawal-email.ts).
+	await sendWithdrawalAcknowledgementEmail({
+		orderId: order.id,
+		placedByUserId: order.placedByUserId,
+		withdrawnAt: now,
+		refundMinorUnits: outcome.refundMinorUnits,
+		retainedMinorUnits: outcome.retainedMinorUnits,
+		currency: order.currency,
+	});
 
 	return {
 		refundMinorUnits: outcome.refundMinorUnits,
