@@ -352,7 +352,7 @@ export const ORGANIZATION_OPERATIONS: readonly OpenApiOperation[] = [
 		tag: "Access",
 		summary: "Mint a service token",
 		description:
-			"The token acts as the person who minted it, pinned to this organization, with all five scopes over every project. A request naming fewer `scopes` or any `project_ids` is refused with 400 and `code: \"narrow_tokens_unavailable\"`.",
+			"The token acts as the person who minted it, pinned to this organization, limited to the `scopes` and `project_ids` the request names. A request that names neither mints a token with all five scopes over every project.",
 		permission: { action: "manage_tokens", resource: "org" },
 		body: createTokenSchema,
 		responses: [

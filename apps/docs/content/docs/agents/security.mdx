@@ -42,11 +42,11 @@ agent in your shell and a change to your infrastructure:
 - **Protected environments.** A deploy into an environment with protection rules waits for a person
   to approve it in the console. See [protection](/reference/cli/protection).
 
-Service-account tokens carry scopes and a project list. Today every token holds all five scopes
-(`read`, `design`, `plan`, `apply`, `destroy`) over every project, so it can do everything its creator
-can do in its organization. A narrower token is refused with `narrow_tokens_unavailable` until every
-route that queues a job applies the limit. Give each token an expiry, store it in a secret store, and revoke it when
-the work is done.
+Service-account tokens carry scopes and a project list. A token minted without either holds all five
+scopes (`read`, `design`, `plan`, `apply`, `destroy`) over every project, so it can do everything its
+creator can do in its organization. Mint a token through the API with `scopes` and `project_ids` to
+give it only what its work needs. A request outside its limit is refused with `insufficient_scope`. Give each token an expiry, store it in
+a secret store, and revoke it when the work is done.
 
 ## Text from outside is data
 

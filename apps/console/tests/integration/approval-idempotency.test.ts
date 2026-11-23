@@ -21,7 +21,7 @@
 // and the double queue happens once the first job has settled and the stale card is clicked again.
 
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { describeIfDb } from "./db";
 
@@ -115,6 +115,18 @@ async function settleAll() {
 		.update(jobs)
 		.set({ status: "SUCCESS" })
 		.where(inArray(jobs.project_id, [projectId, otherProjectId]));
+	// A succeeded plan records its digest (the status route stamps it from the verify receipt), which
+	// is what lets a deploy of it be queued (lib/approvals/plan-binding.ts).
+	await db
+		.update(jobs)
+		.set({ plan_sha256: "5e".repeat(32) })
+		.where(
+			and(
+				inArray(jobs.project_id, [projectId, otherProjectId]),
+				eq(jobs.job_type, "PLAN"),
+				isNull(jobs.plan_sha256),
+			),
+		);
 	await db
 		.update(projectEnvironments)
 		.set({ status: "ACTIVE" })
@@ -220,11 +232,14 @@ describeIfDb("approval idempotency — one approval, one job (#5797)", () => {
 
 	it("two concurrent approvals of one DEPLOY proposal queue exactly one deploy", async () => {
 		const key = `thread-1:toolu_${randomUUID()}`;
+		// A deploy applies a reviewed plan (decision M23): plan first, let it succeed.
+		const plan = jobIdOf(await tryPlanProject(projectId, undefined, envId));
+		await settleAll();
 		const before = (await jobsOn(projectId)).length;
 
 		const [a, b] = await Promise.all([
-			tryProvisionProject(projectId, undefined, undefined, envId, key),
-			tryProvisionProject(projectId, undefined, undefined, envId, key),
+			tryProvisionProject(projectId, plan, undefined, envId, key),
+			tryProvisionProject(projectId, plan, undefined, envId, key),
 		]);
 
 		expect(jobIdOf(a)).toBe(jobIdOf(b));
@@ -250,7 +265,7 @@ describeIfDb("approval idempotency — one approval, one job (#5797)", () => {
 		const plan = jobIdOf(await tryPlanProject(projectId, undefined, envId, key));
 		await settleAll();
 		const deploy = jobIdOf(
-			await tryProvisionProject(projectId, undefined, undefined, envId, key),
+			await tryProvisionProject(projectId, plan, undefined, envId, key),
 		);
 
 		expect(deploy).not.toBe(plan);

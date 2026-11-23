@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import {
 	finalizeDeployment,
@@ -32,6 +32,7 @@ import {
 	recordSecurityPosture,
 } from "@/lib/addons/inspection-persistence";
 import { captureServer } from "@/lib/analytics/server";
+import { receiptPlanDigest } from "@/lib/approvals/plan-binding";
 import { anchorReceipt } from "@/lib/evidence/receipt-anchor";
 import { gitopsStatusReportSchema } from "@/lib/gitops/deploy-status";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
@@ -174,6 +175,23 @@ export async function PUT(
 				.from(jobs)
 				.where(eq(jobs.id, jobId))
 				.limit(1);
+
+			// A succeeded PLAN records the digest of the plan file it produced, from its verify receipt,
+			// on the row: what a DEPLOY of this plan copies, and what the applying runner checks the
+			// downloaded plan against (lib/approvals/plan-binding.ts). Stamped once. A failure leaves the
+			// column empty, and the DEPLOY then reads the same digest from the receipt.
+			if (job && status === "SUCCESS" && job.job_type === "PLAN") {
+				const digest = receiptPlanDigest(job.execution_metadata);
+				if (digest) {
+					await db
+						.update(jobs)
+						.set({ plan_sha256: digest })
+						.where(and(eq(jobs.id, jobId), isNull(jobs.plan_sha256)))
+						.catch((err: unknown) => {
+							jlog.error("failed to record the plan digest on the plan job", { err });
+						});
+				}
+			}
 
 			// Telemetry (no-op unless an OTLP endpoint is configured): on a terminal status,
 			// record the provision duration + outcome (low-cardinality provider/job_type/outcome

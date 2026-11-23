@@ -164,50 +164,58 @@ func TestPlanBinding_Refusals(t *testing.T) {
 	}
 }
 
-// A job that carries no digest is not bound, and its behaviour is the one it had before the
-// digest existed: no plan job means no plan is fetched; a named plan job's saved plan is used as
-// saved; and a plan job or saved plan that cannot be read is a warning followed by a new plan.
-func TestPlanBinding_JobWithoutDigestIsUnchanged(t *testing.T) {
+// A job that names a plan job but carries no digest of it is refused before anything is fetched:
+// there is no path from a named plan to an apply of a plan computed on the runner, whether the
+// digest is absent or blank, and whether or not the saved plan could be downloaded.
+func TestPlanBinding_NamedPlanWithoutDigestIsRefused(t *testing.T) {
 	planJobID := "plan-1"
-	empty := "  "
+	blank := "  "
 
-	t.Run("no plan job", func(t *testing.T) {
-		api := newPlanBindAPI([]byte("unused"))
-		runs, handed, err := runBoundDeploy(t, api, boundJob(nil, nil))
-		if err != nil || runs != 1 {
-			t.Fatalf("the deploy must run (err %v, runs %d)", err, runs)
-		}
-		if handed != "" || len(api.downloads) != 0 {
-			t.Fatalf("no plan must be fetched (handed %q, downloads %v)", handed, api.downloads)
-		}
-	})
-
-	for name, digest := range map[string]*string{"absent digest": nil, "blank digest": &empty} {
-		t.Run("named plan job, "+name+", saved plan used as saved", func(t *testing.T) {
-			runs, handed, err := runBoundDeploy(t, newPlanBindAPI([]byte("saved-plan")), boundJob(&planJobID, digest))
-			if err != nil || runs != 1 || handed != "saved-plan" {
-				t.Fatalf("the saved plan must be applied (err %v, runs %d, handed %q)", err, runs, handed)
+	for name, digest := range map[string]*string{"absent digest": nil, "blank digest": &blank} {
+		t.Run(name, func(t *testing.T) {
+			api := newPlanBindAPI([]byte("saved-plan"))
+			runs, handed, err := runBoundDeploy(t, api, boundJob(&planJobID, digest))
+			if code, ok := planBindingRefusal(err); !ok || code != PlanDigestMissing {
+				t.Fatalf("want %q, got %v", PlanDigestMissing, err)
+			}
+			if runs != 0 || handed != "" {
+				t.Fatalf("a refused apply must not reach the stage (runs %d, handed %q)", runs, handed)
+			}
+			if len(api.downloads) != 0 {
+				t.Fatalf("no plan may be fetched for a refused apply (downloads %v)", api.downloads)
+			}
+			if !strings.Contains(err.Error(), "Run a new plan, review it, and apply that plan.") {
+				t.Errorf("the refusal must tell the user to plan again, got %q", err)
 			}
 		})
 	}
 
-	t.Run("named plan job, saved plan and plan job unreadable", func(t *testing.T) {
+	t.Run("no fallback to a new plan when the saved plan is unavailable", func(t *testing.T) {
 		api := newPlanBindAPI(nil)
 		api.downloadErr = errors.New("plan artifact not found (expired or missing)")
-		api.getJobFn = func(string) (*Job, error) { return nil, errors.New("get job returned status 403") }
-		runs, handed, err := runBoundDeploy(t, api, boundJob(&planJobID, nil))
-		if err != nil || runs != 1 || handed != "" {
-			t.Fatalf("the deploy must run with no saved plan (err %v, runs %d, handed %q)", err, runs, handed)
+		runs, _, err := runBoundDeploy(t, api, boundJob(&planJobID, nil))
+		if _, ok := planBindingRefusal(err); !ok || runs != 0 {
+			t.Fatalf("the apply must be refused, not re-planned (err %v, runs %d)", err, runs)
 		}
-		var warnedJob, warnedPlan bool
 		for _, c := range api.getLogChunks() {
-			warnedJob = warnedJob || strings.Contains(c.chunk, "could not fetch plan job")
-			warnedPlan = warnedPlan || strings.Contains(c.chunk, "will re-plan")
-		}
-		if !warnedJob || !warnedPlan {
-			t.Fatalf("both warnings must be logged (plan job %v, saved plan %v)", warnedJob, warnedPlan)
+			if strings.Contains(c.chunk, "will re-plan") {
+				t.Fatalf("a named plan must never fall back to a new plan, log said %q", c.chunk)
+			}
 		}
 	})
+}
+
+// A job that names no plan job and carries no digest is a system re-apply (auto-heal, the build
+// chain): it is not bound, no plan is fetched, and the stage plans afresh.
+func TestPlanBinding_SystemReapplyWithoutPlanPlansAfresh(t *testing.T) {
+	api := newPlanBindAPI([]byte("unused"))
+	runs, handed, err := runBoundDeploy(t, api, boundJob(nil, nil))
+	if err != nil || runs != 1 {
+		t.Fatalf("the deploy must run (err %v, runs %d)", err, runs)
+	}
+	if handed != "" || len(api.downloads) != 0 {
+		t.Fatalf("no plan must be fetched (handed %q, downloads %v)", handed, api.downloads)
+	}
 }
 
 // A refused apply settles the job FAILED with the refusal's code in its metadata and its message

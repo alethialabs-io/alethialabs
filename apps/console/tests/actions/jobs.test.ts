@@ -149,14 +149,11 @@ describe("rerunJob — a project's operation runs again through its own entry po
 		...extra,
 	});
 
-	it.each([
-		["PLAN", () => tryPlanProject, ["proj-1", null, "env-1"]],
-		["DEPLOY", () => tryProvisionProject, ["proj-1", undefined, null, "env-1"]],
-	] as const)("re-runs a %s through the entry point a fresh run uses, with its project and environment", async (type, entry, args) => {
-		const { valuesSpy } = mockDb([[projectJob(type)]]);
-		vi.mocked(entry()).mockResolvedValue({ ok: true, jobId: "new-job" } as never);
+	it("re-runs a PLAN through the entry point a fresh run uses, with its project and environment", async () => {
+		const { valuesSpy } = mockDb([[projectJob("PLAN")]]);
+		vi.mocked(tryPlanProject).mockResolvedValue({ ok: true, jobId: "new-job" } as never);
 		expect(await rerunJob({ jobId: JOB })).toEqual({ ok: true, data: { id: "new-job" } });
-		expect(entry()).toHaveBeenCalledWith(...args);
+		expect(tryPlanProject).toHaveBeenCalledWith("proj-1", null, "env-1");
 		// Nothing is copied: the entry point builds the job from the project's current configuration.
 		expect(valuesSpy).not.toHaveBeenCalled();
 		// Its permission is the operation's on the project (inside the entry point), not `create` on job.
@@ -176,9 +173,24 @@ describe("rerunJob — a project's operation runs again through its own entry po
 		expect(valuesSpy).not.toHaveBeenCalled();
 	});
 
+	it("refuses a DEPLOY with a sentence that says to plan again, and queues nothing (decision M23)", async () => {
+		const { valuesSpy } = mockDb([[projectJob("DEPLOY")]]);
+		expect(await rerunJob({ jobId: JOB })).toEqual({
+			ok: false,
+			error: {
+				kind: "conflict",
+				message:
+					"A deploy applies a reviewed plan, so it runs again from a new one: plan this environment, review the plan, then apply it.",
+			},
+		});
+		expect(tryProvisionProject).not.toHaveBeenCalled();
+		expect(tryPlanProject).not.toHaveBeenCalled();
+		expect(valuesSpy).not.toHaveBeenCalled();
+	});
+
 	it("returns the entry point's refusal (a job already in flight, a gate) as its own sentence", async () => {
-		mockDb([[projectJob("DEPLOY")]]);
-		vi.mocked(tryProvisionProject).mockResolvedValue({ ok: false, error: "A job is already running on this environment." } as never);
+		mockDb([[projectJob("PLAN")]]);
+		vi.mocked(tryPlanProject).mockResolvedValue({ ok: false, error: "A job is already running on this environment." } as never);
 		expect(await rerunJob({ jobId: JOB })).toEqual({
 			ok: false,
 			error: { kind: "conflict", message: "A job is already running on this environment." },

@@ -124,6 +124,9 @@ export async function enqueueDeployAfterBuild(buildJobId: string) {
 			environment_id: buildJob.environment_id,
 			cloud_identity_id: buildJob.cloud_identity_id,
 			job_type: "DEPLOY",
+			// A system origin with no plan by design (lib/approvals/plan-binding.ts): it deploys the
+			// snapshot its BUILD was queued with, names no plan job, and the runner plans it afresh.
+			initiated_by: "system",
 			config_snapshot: buildJob.config_snapshot,
 			status: "QUEUED",
 		}))

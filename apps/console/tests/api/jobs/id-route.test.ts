@@ -9,7 +9,10 @@ import { NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const verifyRunnerToken = vi.fn();
-vi.mock("@/lib/runners/auth", () => ({
+vi.mock("@/lib/runners/auth", async (importOriginal) => ({
+	// Real: the read check runs over the mocked db below (the applying-runner arm is covered in
+	// tests/lib/approvals/plan-binding-runner-read.test.ts).
+	...(await importOriginal<typeof import("@/lib/runners/auth")>()),
 	verifyRunnerToken: (req: Request) => verifyRunnerToken(req),
 }));
 

@@ -95,13 +95,19 @@ async function refuseOverUsage(orgId: string): Promise<void> {
 	}
 }
 
+/** Why a deploy is not re-run as it was: a deploy applies a current reviewed plan. */
+const RERUN_DEPLOY =
+	"A deploy applies a reviewed plan, so it runs again from a new one: plan this environment, review the plan, then apply it.";
+
 /**
  * Runs a job again (see lib/jobs/operation.ts for the rule).
  *
- * - A project's plan or deploy runs again through the entry point a fresh run uses
- *   (`tryPlanProject` / `tryProvisionProject`) against the same project and environment: the
- *   project permission for that operation, the one-job-in-flight guard on the environment, the
- *   queue-time gates and the project's current configuration all come from there.
+ * - A project's plan runs again through the entry point a fresh run uses (`tryPlanProject`)
+ *   against the same project and environment: the project permission for that operation, the
+ *   one-job-in-flight guard on the environment, the queue-time gates and the project's current
+ *   configuration all come from there.
+ * - A project's deploy is refused with a sentence that says to plan again: a deploy applies a
+ *   current reviewed plan (decision M23), and the original deploy's plan is no longer current.
  * - A project's destroy is refused: a destroy starts from the environment. The route type has no
  *   destroy member, so this function has no branch that could reach `tryDestroyProject`.
  * - An allow-listed org-level job is re-queued as a copy of itself under the org's job permission.
@@ -146,10 +152,11 @@ async function rerun(jobId: string): Promise<{ id: string }> {
 		if (original.project_org_id === null) throw new ActionRefusal("not-found", "Project not found.");
 		const refusal = projectOrgRefusal(original.project_org_id, actor);
 		if (refusal) throw new ActionRefusal("conflict", refusal);
-		const result =
-			route.operation === "plan"
-				? await tryPlanProject(route.projectId, null, route.environmentId)
-				: await tryProvisionProject(route.projectId, undefined, null, route.environmentId);
+		// A deploy applies a current reviewed plan (decision M23), and the plan the original deploy
+		// applied is not current once that deploy was queued after it. So a deploy runs again by
+		// planning again: the sentence says so instead of queuing a deploy that would be refused.
+		if (route.operation !== "plan") throw new ActionRefusal("conflict", RERUN_DEPLOY);
+		const result = await tryPlanProject(route.projectId, null, route.environmentId);
 		if (!result.ok) throw new ActionRefusal("conflict", result.error);
 		return { id: result.jobId };
 	}
