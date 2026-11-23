@@ -185,6 +185,32 @@ export function statusOnly(r: EndpointResult): Verdict {
 }
 
 /**
+ * What the installer body must carry beyond starting with `#!/bin/sh`: two lines of
+ * apps/console/public/install.sh that name THIS product's installer. The post-deploy smoke
+ * (apps/console/scripts/e2e/public-hosts-check.ts) reads the same markers; its unit test holds the two
+ * lists equal and runs both against the real file.
+ */
+export const INSTALLER_SHEBANG = "#!/bin/sh";
+export const INSTALLER_MARKERS = ["Alethia CLI installer", 'REPO="alethialabs-io/alethia-cli"'];
+
+/**
+ * The Installer row: 2xx is necessary, not sufficient. get.alethialabs.io is a rewrite to the
+ * console's /install.sh (deploy/prod/Caddyfile.tunnel, apps/console/next.config.ts); a routing
+ * regression answers 200 with a web page, and `curl … | sh` would pipe that into a shell. So the body
+ * must BE the install script. A 2xx that is not is reported down, with what it was instead.
+ */
+export function assertInstaller(r: EndpointResult): Verdict {
+	const page = statusOnly(r);
+	if (page.health !== "up") return page;
+	if (!r.body.startsWith(INSTALLER_SHEBANG)) {
+		return { health: "down", reason: `HTTP ${r.status} but not the install script (starts ${JSON.stringify(r.body.slice(0, 24))})` };
+	}
+	const missing = INSTALLER_MARKERS.filter((m) => !r.body.includes(m));
+	if (missing.length > 0) return { health: "down", reason: "a shell script, but not the Alethia installer" };
+	return UP;
+}
+
+/**
  * The console row: the aggregate `status` off the body. The route answers 503 for `unhealthy` and 200
  * for `degraded`, so the body — not the code — is what separates degraded from healthy.
  */
@@ -308,7 +334,7 @@ export const COMPONENTS: ComponentSpec[] = [
 		description: "get.alethialabs.io — the CLI install script.",
 		endpoint: "installer",
 		critical: false,
-		assert: statusOnly,
+		assert: assertInstaller,
 	},
 ];
 
