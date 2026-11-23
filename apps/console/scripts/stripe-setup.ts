@@ -72,6 +72,7 @@ export const WEBHOOK_EVENTS: Stripe.WebhookEndpointCreateParams.EnabledEvent[] =
 	"invoice.payment_succeeded",
 	"invoice.payment_failed",
 	"invoice.voided",
+	"charge.refunded",
 	"charge.refund.updated",
 ];
 

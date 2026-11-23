@@ -70,6 +70,9 @@ importers:
       '@repo/format':
         specifier: workspace:*
         version: link:../../packages/format
+      '@repo/legal':
+        specifier: workspace:*
+        version: link:../../packages/legal
       '@repo/org-slug':
         specifier: workspace:*
         version: link:../../packages/org-slug

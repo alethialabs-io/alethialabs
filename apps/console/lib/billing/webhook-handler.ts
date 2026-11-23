@@ -51,6 +51,7 @@ import type Stripe from "stripe";
 import { captureServer } from "@/lib/analytics/server";
 import type { AnalyticsEvent } from "@/lib/analytics/events";
 import { grantAiCredits } from "@/lib/billing/ai-quota";
+import { markRefundedInvoice, recordInvoiceFacts } from "@/lib/billing/invoice-facts";
 import { mirrorPaidInvoice, setInvoiceStatus } from "@/lib/billing/invoices";
 import { attemptBackupPayment } from "@/lib/billing/payment-methods";
 import { HOLD_REFUND_METADATA_KEY } from "@/lib/billing/payment-holds/observe";
@@ -282,8 +283,8 @@ export async function handleStripeEvent(
 			log.error(`[stripe] ${label} email failed`, { err });
 		}
 	};
-	// Mirrors a paid invoice locally, swallowing (logging) failures — the entitlement sync has
-	// already committed, so a mirror/PDF hiccup must never fail the caller.
+	// Mirrors a paid invoice locally and records its tax facts, swallowing (logging) failures — the
+	// entitlement sync has already committed, so a mirror/PDF hiccup must never fail the caller.
 	const safeMirror = async (
 		invoice: Stripe.Invoice,
 		orgId: string,
@@ -292,6 +293,16 @@ export async function handleStripeEvent(
 			await mirrorPaidInvoice(invoice, orgId);
 		} catch (err) {
 			log.error(`[stripe] invoice mirror failed for ${invoice.id}`, { err });
+			return;
+		}
+		// The tax facts the turnover thresholds sum (#7327, EA-5), written onto the row just mirrored.
+		// Logged, never thrown, like the mirror: a replay records them (recordInvoiceFacts is
+		// idempotent). Until then the row is UNATTRIBUTED: billed in EUR it counts toward the EU and
+		// BG totals (high), otherwise the admin /turnover page reports it (@repo/legal/turnover).
+		try {
+			await recordInvoiceFacts(invoice, orgId);
+		} catch (err) {
+			log.error(`[stripe] invoice facts failed for ${invoice.id}`, { err });
 		}
 	};
 
@@ -471,6 +482,13 @@ export async function handleStripeEvent(
 		case "invoice.voided": {
 			const invoice = event.data.object;
 			if (invoice.id) await setInvoiceStatus(invoice.id, "void");
+			break;
+		}
+		case "charge.refunded": {
+			// A FULL refund takes the invoice out of the turnover totals (#7327, EA-5); a partial one
+			// changes nothing (lib/billing/invoice-facts.ts). A Stripe error fails the event, and the
+			// redelivery re-runs an idempotent status write.
+			await markRefundedInvoice(event.data.object, getStripe());
 			break;
 		}
 		case "charge.refund.updated": {

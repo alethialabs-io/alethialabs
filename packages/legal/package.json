@@ -10,7 +10,8 @@
 		"./launch": "./src/launch.ts",
 		"./paid-markets": "./src/paid-markets.ts",
 		"./processing": "./src/processing.ts",
-		"./thresholds": "./src/thresholds.ts"
+		"./thresholds": "./src/thresholds.ts",
+		"./turnover": "./src/turnover.ts"
 	},
 	"scripts": {
 		"lint": "eslint . --max-warnings 0",
