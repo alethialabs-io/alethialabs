@@ -5,16 +5,34 @@
 // creation, so a currency switch creates a new intent. The old intent's client secret is dropped
 // by the switch itself (an event handler), not by the effect that asks again: the render after the
 // click must not still be offering the payment form for the old currency.
+//
+// #6906 (REL-L3): AI Plus and AI Max are sold behind the same gate as Pro. When the server says
+// nothing is on sale, the paid tiers are disabled with the launch state's own sentence.
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { LaunchState } from "@repo/legal/launch";
 
 type Intent = { clientSecret: string; currency: "usd" | "eur" };
 
 const h = vi.hoisted(() => ({
 	createAiSubscriptionIntent: vi.fn(),
 	getAiUsageSummary: vi.fn(),
+	salesOpen: vi.fn<() => Promise<{ open: boolean }>>(),
+}));
+
+// The launch state the sheet reads; the beforeEach puts back today's real one (closed).
+const launch = vi.hoisted(() => {
+	const holder: { paid: LaunchState } = { paid: { status: "closed", lapsedAnnouncement: null } };
+	return holder;
+});
+vi.mock(import("@repo/legal/launch"), async (importOriginal) => {
+	const real = await importOriginal();
+	return { ...real, paidLaunchState: () => ({ ...real.paidLaunchState(), paid: launch.paid }) };
+});
+vi.mock("@/lib/rpc/client", () => ({
+	rpcClient: { billing: { salesOpen: () => h.salesOpen() } },
 }));
 
 vi.mock("@/app/server/actions/billing", () => ({
@@ -58,6 +76,9 @@ function deferred<T>() {
 beforeEach(() => {
 	h.createAiSubscriptionIntent.mockReset();
 	h.getAiUsageSummary.mockResolvedValue({ tier: "ai_free", paidTiersEnabled: true });
+	h.salesOpen.mockReset();
+	h.salesOpen.mockResolvedValue({ open: true });
+	launch.paid = { status: "closed", lapsedAnnouncement: null };
 });
 
 describe("UpgradeAiSheet — the subscription intent", () => {
@@ -99,3 +120,35 @@ describe("UpgradeAiSheet — the subscription intent", () => {
 	});
 });
 
+describe("UpgradeAiSheet — the launch state (#6906)", () => {
+	it("open: the paid tiers are offered", async () => {
+		render(<UpgradeAiSheet open onOpenChange={() => {}} />);
+		const plus = await screen.findByRole("button", { name: "Upgrade to AI Plus" });
+		expect(plus).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Upgrade to AI Max" })).toBeEnabled();
+	});
+
+	it("closed: the paid tiers say they are not on sale and cannot be chosen", async () => {
+		h.salesOpen.mockResolvedValue({ open: false });
+		render(<UpgradeAiSheet open onOpenChange={() => {}} />);
+
+		const buttons = await screen.findAllByRole("button", { name: "Not on sale yet" });
+		expect(buttons).toHaveLength(2);
+		for (const button of buttons) expect(button).toBeDisabled();
+		expect(screen.queryByRole("button", { name: /Upgrade to AI/ })).toBeNull();
+		expect(screen.queryByText("Coming soon")).toBeNull();
+		expect(h.createAiSubscriptionIntent).not.toHaveBeenCalled();
+	});
+
+	it("announced: the disabled tiers name the promised date", async () => {
+		launch.paid = { status: "announced", from: "2099-02-15" };
+		h.salesOpen.mockResolvedValue({ open: false });
+		render(<UpgradeAiSheet open onOpenChange={() => {}} />);
+
+		const buttons = await screen.findAllByRole("button", {
+			name: "Paid plans available from 15 Feb 2099",
+		});
+		expect(buttons).toHaveLength(2);
+		for (const button of buttons) expect(button).toBeDisabled();
+	});
+});

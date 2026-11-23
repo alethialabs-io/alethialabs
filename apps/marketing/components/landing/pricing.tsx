@@ -20,10 +20,16 @@ import {
 } from "@repo/brand/site-primitives";
 import { PageClose } from "@repo/brand/site-sections";
 import {
+	monthlyPriceLabel,
+	PAID_AI_PLANS,
+	type PaidAvailabilityCopy,
+	paidAvailabilityCopy,
 	PLAN_CATALOG,
 	type PlanId,
 	type SupportedCurrency,
 } from "@repo/plan-catalog";
+import { formatDate } from "@repo/format";
+import { type LaunchState, paidLaunchState } from "@repo/legal/launch";
 import { splitPriceLabel } from "@/lib/billing/price-label";
 
 /** Every "talk to us" path on the site is the one contact form. */
@@ -60,6 +66,14 @@ function ctaFor(plan: PlanId): Cta {
 	}
 }
 
+/**
+ * The launch date as a calendar day, e.g. `15 Feb 2027`. Pinned to UTC: the date is a day, not an
+ * instant, and an unpinned zone would let a visitor west of Greenwich read the day before.
+ */
+function formatLaunchDay(isoDate: string): string {
+	return formatDate(isoDate, "date", "UTC");
+}
+
 /* ============ Hero ============ */
 /**
  * Two lines, left, and nothing else — no rail, no lede, no CTAs, no footnote.
@@ -70,6 +84,9 @@ function PricingOpen() {
 	return (
 		<section className="pt-[112px] pb-14 max-[640px]:pt-[80px]">
 			<Wrap>
+				<Badge variant="outline" className="vx-badge-mono mb-6">
+					Beta
+				</Badge>
 				<h1
 					className="vx-display-in font-grotesk text-display-md font-bold leading-display tracking-display text-text-primary"
 					style={{ margin: 0, maxWidth: "16ch" }}
@@ -100,12 +117,23 @@ function PricingOpen() {
 function TierColumn({
 	plan,
 	priceLabel,
+	paid,
+	trial,
 }: {
 	plan: (typeof PLAN_CATALOG)[number];
 	priceLabel: string;
+	/** What the launch state says about buying a paid plan. */
+	paid: PaidAvailabilityCopy;
+	/** What it says about starting the trial — the same gate, read separately (decision M12). */
+	trial: PaidAvailabilityCopy;
 }) {
 	const popular = Boolean(plan.popular);
 	const cta = ctaFor(plan.id);
+	// A plan with a Stripe price and no "talk to us" path is one a visitor buys (or trials) here,
+	// so its call to action is only live while the launch state says so. Enterprise goes to the
+	// contact form whatever the state is.
+	const selfServe = plan.paid && plan.priceMonthly !== undefined;
+	const ctaOff = selfServe && !trial.onSale;
 	const { amount, suffix } = splitPriceLabel(priceLabel);
 	const inheritsName = plan.inheritsFrom
 		? PLAN_CATALOG.find((p) => p.id === plan.inheritsFrom)?.name
@@ -136,6 +164,9 @@ function TierColumn({
 				</span>
 				{suffix && <span className="text-[12px] text-text-tertiary">{suffix}</span>}
 			</div>
+			{selfServe && paid.notice && (
+				<p className="mt-3 text-ui-sm text-text-secondary">{paid.notice}</p>
+			)}
 
 			<p className="mt-5 min-h-[38px] max-w-[26ch] text-[13px] leading-[1.5] text-text-tertiary">
 				{plan.tagline}
@@ -159,15 +190,34 @@ function TierColumn({
 
 			{/* Pinned so all three CTAs share one baseline whatever the row count. */}
 			<div className="mt-auto pt-9">
-				<Button
-					size="sm"
-					variant={cta.variant}
-					className="w-full"
-					nativeButton={false}
-					render={<Link href={cta.href} />}
-				>
-					{cta.label}
-				</Button>
+				{ctaOff ? (
+					// The trial call to action stays (decision M12), switched off with the reason
+					// beside it. A disabled LINK still navigates, so this is a plain button.
+					<Button
+						size="sm"
+						variant={cta.variant}
+						className="w-full"
+						disabled
+						aria-describedby={`${plan.id}-availability`}
+					>
+						{cta.label}
+					</Button>
+				) : (
+					<Button
+						size="sm"
+						variant={cta.variant}
+						className="w-full"
+						nativeButton={false}
+						render={<Link href={cta.href} />}
+					>
+						{cta.label}
+					</Button>
+				)}
+				{ctaOff && trial.notice && (
+					<p id={`${plan.id}-availability`} className="sr-only">
+						{trial.notice}
+					</p>
+				)}
 			</div>
 		</div>
 	);
@@ -183,10 +233,14 @@ function TierBox({
 	teamPriceLabel,
 	currency,
 	onCurrency,
+	paid,
+	trial,
 }: {
 	teamPriceLabel: string;
 	currency: SupportedCurrency;
 	onCurrency: (c: SupportedCurrency) => void;
+	paid: PaidAvailabilityCopy;
+	trial: PaidAvailabilityCopy;
 }) {
 	return (
 		<section className="pb-[96px]">
@@ -210,16 +264,51 @@ function TierBox({
 								key={plan.id}
 								plan={plan}
 								priceLabel={plan.id === "team" ? teamPriceLabel : plan.priceLabel}
+								paid={paid}
+								trial={trial}
 							/>
 						))}
 					</div>
 				</div>
+				<AiAddOns currency={currency} paid={paid} />
 				<p className="mt-6 text-[12.5px] leading-[1.6] text-text-tertiary">
-					Every plan provisions into your own cloud account. The Pro price is per seat, billed
-					monthly through Stripe.
+					Every plan provisions into your own cloud account. {paid.proBilling}
 				</p>
 			</Wrap>
 		</section>
+	);
+}
+
+/**
+ * The AI add-ons, priced from `AI_PLAN_CATALOG` in the selected currency. AI is a separate
+ * product from the workspace plan, so it is one line under the tier box rather than a fourth
+ * column, and it carries the same launch notice as Pro: it is sold behind the same gate.
+ */
+function AiAddOns({
+	currency,
+	paid,
+}: {
+	currency: SupportedCurrency;
+	paid: PaidAvailabilityCopy;
+}) {
+	return (
+		<div
+			className="flex flex-wrap items-baseline gap-x-8 gap-y-2 px-7 py-5"
+			style={{ border: "1px solid var(--border)", borderTop: 0, background: "var(--surface)" }}
+		>
+			<span style={{ ...eyebrow, fontSize: 9 }}>AI add-ons</span>
+			{PAID_AI_PLANS.map((tier) => (
+				<span key={tier.id} className="flex items-baseline gap-2">
+					<span className="text-ui-md font-semibold text-text-primary">{tier.name}</span>
+					<span className="font-mono text-ui-sm text-text-secondary">
+						{monthlyPriceLabel(tier, currency)}
+					</span>
+				</span>
+			))}
+			<span className="text-ui-sm text-text-tertiary">
+				{paid.notice ? `${paid.notice}. ${paid.aiBilling}` : paid.aiBilling}
+			</span>
+		</div>
 	);
 }
 
@@ -439,9 +528,22 @@ function OpenCore() {
 }
 
 /* ============ FAQ ============ */
-const FAQ: { q: string; a: string }[] = [
+/** The FAQ, with the billing answer taken from the launch state: Stripe only once it is open. */
+function faqFor(paid: PaidAvailabilityCopy): { q: string; a: string }[] {
+	return [
+		FAQ[0],
+		{
+			q: "How does per-seat billing work?",
+			a: paid.notice
+				? `${paid.proBilling} Seats follow your team as it changes. ${paid.notice}.`
+				: `${paid.proBilling} Seats follow your team as it changes.`,
+		},
+		...FAQ.slice(1),
+	];
+}
+
+const FAQ: [{ q: string; a: string }, ...{ q: string; a: string }[]] = [
 	{ q: "Is the free tier really free?", a: "Yes. The core is open source under AGPL-3.0, so you can self-host it in your own cloud and pay nothing." },
-	{ q: "How does per-seat billing work?", a: "Pro is billed per active member of your organization, monthly through Stripe. Seats follow your team as it changes." },
 	{ q: "Can I self-host the paid features?", a: "Yes, with Enterprise. It includes a self-managed license for SSO, custom roles and audit in your own environment." },
 	{ q: "Do you store my cloud credentials?", a: "On AWS, GCP and Azure, no: the runner mints short-lived federated credentials per job, and no access key is written to disk or held in our database. Hetzner has no federation, so a scoped API token is stored encrypted at rest and decrypted only for the job — run a self-managed runner there and it never reaches us at all." },
 ];
@@ -454,7 +556,7 @@ const FAQ: { q: string; a: string }[] = [
  * open so the section still says something at a glance. The trigger holds its clamp
  * while its panel is open, straight off base-ui's `data-panel-open`.
  */
-function Faq() {
+function Faq({ items }: { items: { q: string; a: string }[] }) {
 	return (
 		<section style={{ padding: "72px 0", borderTop: "1px solid var(--border)", background: "var(--surface-sunken)" }}>
 			<Wrap>
@@ -465,10 +567,10 @@ function Faq() {
 					Questions, answered.
 				</h2>
 				<Accordion
-					defaultValue={[FAQ[0]?.q ?? ""]}
+					defaultValue={[items[0]?.q ?? ""]}
 					className="overflow-hidden rounded-lg border border-border bg-surface"
 				>
-					{FAQ.map((item) => (
+					{items.map((item) => (
 						<AccordionItem key={item.q} value={item.q} className="border-b border-border-faint last:border-b-0">
 							<AccordionHeader>
 								<AccordionTrigger className="group flex w-full items-center justify-between gap-6 px-[22px] py-5 text-left">
@@ -509,25 +611,44 @@ interface PricingProps {
 	teamPrice: Record<SupportedCurrency, string>;
 	/** Currency to show first (from the visitor's region); the toggle overrides. */
 	initialCurrency: SupportedCurrency;
+	/**
+	 * Whether paid plans and the trial can be started, from `paidLaunchState()` — the one source.
+	 * Defaults to today's state; a caller passes it only to render a state other than today's.
+	 */
+	launch?: { readonly paid: LaunchState; readonly trial: LaunchState };
 }
 
 /**
  * Public pricing page body (between Header/Footer). Tiers come from PLAN_CATALOG — the
  * same source of truth as the in-app billing picker — so marketing never drifts from the
  * enforced entitlement ladder. The EUR/USD toggle (defaulted from the visitor's region)
- * switches the Pro per-seat label.
+ * switches the Pro per-seat label and the AI add-on prices.
+ *
+ * Whether any of it can be bought is `paidLaunchState()` (#6906): open, announced for a date, or
+ * closed. The notice beside a paid price, the trial button's state, the billing footnote and the
+ * FAQ's billing answer all come from `paidAvailabilityCopy`, so this page cannot word it
+ * differently from the console's upgrade sheet.
  */
-export function Pricing({ teamPrice, initialCurrency }: PricingProps) {
+export function Pricing({ teamPrice, initialCurrency, launch }: PricingProps) {
 	const [currency, setCurrency] = useState<SupportedCurrency>(initialCurrency);
 	const [query, setQuery] = useState("");
 	const teamPriceLabel = teamPrice[currency];
+	const state = launch ?? paidLaunchState();
+	const paid = paidAvailabilityCopy(state.paid, formatLaunchDay);
+	const trial = paidAvailabilityCopy(state.trial, formatLaunchDay);
 	return (
 		<div id="pricing">
 			<PricingOpen />
-			<TierBox teamPriceLabel={teamPriceLabel} currency={currency} onCurrency={setCurrency} />
+			<TierBox
+				teamPriceLabel={teamPriceLabel}
+				currency={currency}
+				onCurrency={setCurrency}
+				paid={paid}
+				trial={trial}
+			/>
 			<Matrix teamPriceLabel={teamPriceLabel} query={query} onQuery={setQuery} />
 			<OpenCore />
-			<Faq />
+			<Faq items={faqFor(paid)} />
 			<PricingClose />
 		</div>
 	);

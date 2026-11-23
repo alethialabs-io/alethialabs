@@ -483,3 +483,147 @@ export function formatSeatPrice(
 ): string {
 	return `${formatPriceLabel(unitAmountCents, currency)} / seat / ${shortInterval(interval)}`;
 }
+
+/**
+ * A flat monthly catalog price in one currency — `"$20 / mo"`, `"€18 / mo"` — for the AI tiers on
+ * the pricing page. A free entry keeps its own label ("Free"), and an entry with no amount in that
+ * currency falls back to its hand-written `priceLabel` rather than inventing a figure.
+ */
+export function monthlyPriceLabel(
+	entry: { readonly priceLabel: string; readonly priceMonthly?: PriceByCurrency },
+	currency: SupportedCurrency,
+): string {
+	const amount = entry.priceMonthly?.[currency];
+	if (amount == null || amount === 0) return entry.priceLabel;
+	return `${formatPriceLabel(amount, currency)} / mo`;
+}
+
+// ── Paid availability copy ─────────────────────────────────────────────────────────
+// What every pricing and upgrade surface SAYS about whether paid plans can be bought (#6906,
+// REL-L3). The launch state itself is decided in `@repo/legal/launch` (`paidLaunchState()`, #6774);
+// this section only turns that state into sentences, so the marketing pricing page, the console's
+// upgrade sheets and anything after them say the same thing in the same words. No surface writes
+// its own "not on sale" sentence.
+//
+// THE STATE IS TAKEN STRUCTURALLY, NOT IMPORTED. This package's one dependency is
+// `@repo/cloud-catalog`; importing `@repo/legal` (or `@repo/format` for the date) would add a
+// runtime dependency and rewrite `pnpm-lock.yaml`. `PaidAvailability` below is the subset of
+// `LaunchState` the copy reads, so `paidLaunchState().paid` is passed as it is, and the caller
+// hands in the date formatter it already uses (`@repo/format`'s `formatDate`).
+//
+// THE COPY NEVER OPENS ANYTHING. `onSale` is true exactly when the state says `open`; the purchase
+// gate (`apps/console/lib/billing/eligibility.ts`) stays the authority over any single sale.
+
+/**
+ * Whether paid plans can be bought — the part of `@repo/legal/launch`'s `LaunchState` the copy
+ * reads. `LaunchState` is assignable to it.
+ *
+ *  - `open` — at least one market is open.
+ *  - `announced` — nothing is open; `from` (`YYYY-MM-DD`) is the promised date, still ahead.
+ *  - `closed` — nothing is open and no date is promised.
+ */
+export type PaidAvailability =
+	| { readonly status: "open" }
+	| { readonly status: "announced"; readonly from: string }
+	| { readonly status: "closed" };
+
+/** A launch state in which nothing can be bought: announced for a date, or closed. */
+export type PaidUnavailability = Exclude<PaidAvailability, { readonly status: "open" }>;
+
+/** The billing lines, which every state carries. */
+interface BillingLines {
+	/**
+	 * How Pro is billed. Names Stripe only when the state is `open`: until a sale can be taken,
+	 * "billed monthly through Stripe" describes a payment nobody can make.
+	 */
+	readonly proBilling: string;
+	/** How AI Plus and AI Max are billed, under the same rule as `proBilling`. */
+	readonly aiBilling: string;
+}
+
+/** The sentences for a state in which paid plans cannot be bought. */
+export interface NotOnSaleCopy extends BillingLines {
+	readonly onSale: false;
+	/** The line beside a paid price, and the reason a disabled paid call to action is disabled. */
+	readonly notice: string;
+	/** The heading of a surface that opens on the state (the upgrade sheet). */
+	readonly heading: string;
+	/** The body under `heading`. Names the free tier from the catalog. */
+	readonly body: string;
+}
+
+/** The sentences for the open state: no notice, no heading, Stripe named in the billing lines. */
+export interface OnSaleCopy extends BillingLines {
+	readonly onSale: true;
+	readonly notice: null;
+	readonly heading: null;
+	readonly body: null;
+}
+
+/** Every sentence a pricing or upgrade surface shows about paid availability. */
+export type PaidAvailabilityCopy = OnSaleCopy | NotOnSaleCopy;
+
+/** Formats a `YYYY-MM-DD` date for display, e.g. `15 Feb 2027`. */
+export type FormatDay = (isoDate: string) => string;
+
+/**
+ * The sentences for a state in which nothing can be bought.
+ *
+ * `announced` says the date and nothing more: "Paid plans available from 15 Feb 2027". `closed`
+ * keeps the sentence production has said since #6132 — "Pro isn't on sale yet" — because with no
+ * date promised there is no date to say. Neither promises to notify anyone.
+ *
+ * A surface that already KNOWS nothing is on sale — the upgrade sheet, after the server said so —
+ * calls this directly with the announced or closed state, rather than `paidAvailabilityCopy`.
+ *
+ * @param state the announced or closed launch state.
+ * @param formatDay renders the announced date; pass `@repo/format`'s `formatDate` pinned to UTC,
+ *   since the date is a calendar day and not an instant.
+ */
+export function notOnSaleCopy(state: PaidUnavailability, formatDay: FormatDay): NotOnSaleCopy {
+	const pro = planMeta("team").name;
+	const free = planMeta("community").name;
+	const proBilling = `${pro} will be billed per active member of your organization, monthly.`;
+	const aiBilling = "AI plans will be billed monthly, separately from your workspace plan.";
+	if (state.status === "announced") {
+		const day = formatDay(state.from);
+		return {
+			onSale: false,
+			notice: `Paid plans available from ${day}`,
+			heading: `${pro} is available from ${day}`,
+			body: `We can't take payment for ${pro} yet. Paid plans are available from ${day}; ${free} stays free, with no time limit.`,
+			proBilling,
+			aiBilling,
+		};
+	}
+	return {
+		onSale: false,
+		notice: "Not on sale yet",
+		heading: `${pro} isn't on sale yet`,
+		body: `We can't take payment for ${pro} in any country yet. ${free} stays free, with no time limit.`,
+		proBilling,
+		aiBilling,
+	};
+}
+
+/**
+ * The sentences for one launch state — `open`, `announced` or `closed`.
+ *
+ * @param state the launch state — pass `paidLaunchState().paid` (or `.trial`) as it is.
+ * @param formatDay renders the announced date (see `notOnSaleCopy`).
+ */
+export function paidAvailabilityCopy(
+	state: PaidAvailability,
+	formatDay: FormatDay,
+): PaidAvailabilityCopy {
+	if (state.status !== "open") return notOnSaleCopy(state, formatDay);
+	const pro = planMeta("team").name;
+	return {
+		onSale: true,
+		notice: null,
+		heading: null,
+		body: null,
+		proBilling: `${pro} is billed per active member of your organization, monthly through Stripe.`,
+		aiBilling: "AI plans are billed monthly through Stripe, separately from your workspace plan.",
+	};
+}
