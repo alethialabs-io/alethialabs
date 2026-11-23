@@ -305,16 +305,18 @@ async function seedMirroredInvoice(
 	await db()`
 		insert into invoice
 			(organization_id, stripe_invoice_id, stripe_customer_id, number, status,
-			 amount_total, currency, period_start, period_end, pdf_key, hosted_invoice_url, paid_at)
+			 amount_total, currency, period_start, period_end, pdf_key, factura_status, hosted_invoice_url, paid_at)
 		values
 			(${orgId}, ${mirroredStripeId(number)}, ${customerId}, ${number}, 'paid',
 			 2000, 'usd',
 			 now() - (${paidHoursAgo}::int * interval '1 hour') - interval '30 days',
 			 now() - (${paidHoursAgo}::int * interval '1 hour'),
 			 ${pdfKey},
+			 ${pdfKey ? "issued" : "pending"},
 			 ${`https://stripe.test/hosted/${number}`},
 			 now() - (${paidHoursAgo}::int * interval '1 hour'))
-		on conflict (stripe_invoice_id) do update set number = excluded.number, pdf_key = excluded.pdf_key`;
+		on conflict (stripe_invoice_id) do update set number = excluded.number, pdf_key = excluded.pdf_key,
+			factura_status = excluded.factura_status`;
 }
 
 // ── Billing page — Pro trial (team persona) ───────────────────────────────────────────────
@@ -626,7 +628,9 @@ test.describe("Billing — mirrored invoices (team)", () => {
 		const number = `E2E-RECENT-${Date.now()}`;
 		// THE ONLY `now()` SEED IN THIS FILE — this is the test that reads the limit-5 section, so
 		// its row has to be the newest the org has. Everything else is backdated behind it.
-		await seedMirroredInvoice(team.orgId!, customerId, number, 0);
+		// Issued: only an issued фактура shows its number in the list (EA-7c, #7341).
+		const factura = await storeFacturaPdf(team.orgId!, mirroredStripeId(number), number);
+		await seedMirroredInvoice(team.orgId!, customerId, number, 0, factura.pdfKey);
 
 		await team.page.goto(billingPath(team.orgSlug));
 		await expect(team.page.getByText(number)).toBeVisible({ timeout: 30_000 });
@@ -642,7 +646,9 @@ test.describe("Billing — mirrored invoices (team)", () => {
 		const number = `E2E-PAGE-${Date.now()}`;
 		// Backdated a day: the dedicated page is not limit-5, so nothing here needs recency, and a
 		// `now()` row would be a third contender for the sibling test's five slots.
-		await seedMirroredInvoice(team.orgId!, customerId, number, 24);
+		// Issued: only an issued фактура shows its number in the list (EA-7c, #7341).
+		const factura = await storeFacturaPdf(team.orgId!, mirroredStripeId(number), number);
+		await seedMirroredInvoice(team.orgId!, customerId, number, 24, factura.pdfKey);
 
 		await team.page.goto(invoicesPath(team.orgSlug));
 		await expect(team.page).not.toHaveURL(/\/login/);

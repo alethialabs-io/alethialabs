@@ -154,8 +154,9 @@ async function seedBilling(
 
 /**
  * Inserts a mirrored invoice row for the org; returns its id. `pdfKey` is the stored фактура's
- * object key (`storeFacturaPdf`), written the way `mirrorPaidInvoice` writes it; without one the row
- * is an invoice whose фактура is still being issued. The hosted URL is seeded either way, because
+ * object key (`storeFacturaPdf`), written the way `mirrorPaidInvoice` writes it: with one the row is
+ * `factura_status = 'issued'` and carries the фактура number; without one it is `pending` with no
+ * number, an invoice whose фактура is still being issued. The hosted URL is seeded either way, because
  * production keeps it beside the фактура as the payment receipt — and so that the "being issued"
  * assertion proves the route ignores it rather than passing for want of a URL to redirect to.
  */
@@ -165,15 +166,19 @@ async function seedInvoice(
 ): Promise<string> {
 	if (!sql) throw new Error("no db");
 	const pdfKey = inv.pdfKey ?? null;
+	const facturaStatus = pdfKey ? "issued" : "pending";
+	const number = pdfKey ? inv.number : null;
 	const [row] = await sql<{ id: string }[]>`
 		INSERT INTO invoice
 			(organization_id, stripe_invoice_id, stripe_customer_id, number, status,
-			 amount_total, currency, period_start, period_end, pdf_key, hosted_invoice_url, paid_at)
+			 amount_total, currency, period_start, period_end, pdf_key, hosted_invoice_url, paid_at,
+			 factura_status)
 		VALUES
-			(${orgId}, ${inv.stripeInvoiceId}, ${`cus_e2e_${orgId.slice(0, 8)}`}, ${inv.number},
+			(${orgId}, ${inv.stripeInvoiceId}, ${`cus_e2e_${orgId.slice(0, 8)}`}, ${number},
 			 ${"paid"}, ${inv.amountTotal}, ${"usd"}, now(), now(), ${pdfKey},
-			 ${`https://stripe.test/hosted/${inv.stripeInvoiceId}`}, now())
-		ON CONFLICT (stripe_invoice_id) DO UPDATE SET number = EXCLUDED.number, pdf_key = EXCLUDED.pdf_key
+			 ${`https://stripe.test/hosted/${inv.stripeInvoiceId}`}, now(), ${facturaStatus})
+		ON CONFLICT (stripe_invoice_id) DO UPDATE SET number = EXCLUDED.number, pdf_key = EXCLUDED.pdf_key,
+			factura_status = EXCLUDED.factura_status
 		RETURNING id`;
 	return row.id;
 }
@@ -263,10 +268,16 @@ test.describe("Billing — owned invoices", () => {
 			page.getByRole("link", { name: /view all invoices/i }),
 		).toBeVisible();
 
-		// Dedicated invoices page lists both mirrored invoices.
+		// Dedicated invoices page lists both mirrored invoices: the issued one by its фактура number
+		// with a download of it, the pending one as "Being issued" with none (EA-7c, #7341). No link
+		// on the page goes to Stripe, although both rows carry a hosted URL.
 		await page.goto(`/${orgSlug}/~/settings/billing/invoices`);
 		await expect(page.getByText("E2E-0001")).toBeVisible();
-		await expect(page.getByText("E2E-0002")).toBeVisible();
+		await expect(page.getByText("Being issued", { exact: true })).toBeVisible();
+		await expect(page.getByText("E2E-0002")).toHaveCount(0);
+		await expect(page.locator(`a[href*="/invoices/${invId}/pdf"]`)).toHaveCount(1);
+		await expect(page.locator(`a[href*="/invoices/${pendingId}/pdf"]`)).toHaveCount(0);
+		await expect(page.locator('a[href*="stripe"]')).toHaveCount(0);
 
 		// The authorized PDF route serves the stored фактура itself: 200, a PDF, and byte-for-byte
 		// the document that was stored for THIS invoice — not some PDF, and not a redirect.
