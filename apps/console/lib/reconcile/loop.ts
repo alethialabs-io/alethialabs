@@ -21,7 +21,7 @@ import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { log } from "@/lib/observability/log";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { releaseStrandedAiHolds } from "@/lib/reconcile/ai-holds";
-import { gcAuthzActivityLog, gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
+import { gcAuthzActivityLog, gcFleetActions, gcJobLogs, gcSupportCases } from "@/lib/reconcile/gc";
 import { getHeartbeats, isDue, runTask } from "@/lib/reconcile/heartbeat";
 import { reapExpiredEphemeralEnvs } from "@/lib/reconcile/reap";
 
@@ -44,6 +44,9 @@ const INTERVALS = {
 	"gc-job-logs": 15 * 60_000, // 15m — bounded-batch retention GC; a backlog drains over passes
 	"gc-fleet-actions": 15 * 60_000, // 15m
 	"gc-authz-activity": 15 * 60_000, // 15m — bounded-batch retention GC for the governance/audit log
+	// 1h — support cases 3 years after the matter closes (lib/retention/registry.ts). Hourly keeps a
+	// case inside "up to 3 years" by a margin, and the sweep is paged and stops when drained.
+	"gc-support-cases": 60 * 60_000,
 	// 15m — two kinds of hold reach this sweep. A hold the two Elench chat routes reserved is CLAIMED
 	// (ADR 0003): it is released when its claim's 90 s lease goes silent or the attempt passes its
 	// 15-minute bound (pass 1, C8), so it waits at most 90 s plus one gap between runs here (about
@@ -128,6 +131,9 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		}
 		if (isDue("gc-authz-activity", INTERVALS["gc-authz-activity"], now)) {
 			await runTask("gc-authz-activity", () => gcAuthzActivityLog(db));
+		}
+		if (isDue("gc-support-cases", INTERVALS["gc-support-cases"], now)) {
+			await runTask("gc-support-cases", () => gcSupportCases(db));
 		}
 		// Release AI budget holds whose reconciling write never landed (#2683). Not retention — the
 		// row stays; only the reserved credits are released, so the org stops being billed-in-effect

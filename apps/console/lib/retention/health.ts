@@ -55,7 +55,7 @@ const OVERRUN_SLACK_DAYS = 1;
 /**
  * The slack for a `reconcile-task` entry: the GC's one day plus the task's cadence.
  *
- * The only `reconcile-task` today, `elench-drafts-sweep`, runs once a day (its interval in
+ * The slowest `reconcile-task`, `elench-drafts-sweep`, runs once a day (its interval in
  * lib/reconcile/loop.ts), so a row may legitimately sit up to a day past its window before the next
  * pass deletes it — the register itself says a discarded draft "can stay up to about two days". With
  * the GC's one-day slack alone, the limit for the 1-day discarded-drafts window would be two days,
@@ -123,6 +123,13 @@ const RECONCILE_TASK_AGE: Readonly<Record<string, SQL>> = {
 	    from elench_drafts where status = 'active'`,
 	"elench-drafts-discarded": sql`select extract(epoch from (now() - min(discarded_at))) / 86400 as age_days
 	    from elench_drafts where status = 'discarded'`,
+	// Aged from when the matter closed, as `gcSupportCases` (lib/reconcile/gc.ts) deletes: the current
+	// status's own stamp, or the last message if later. An open or pending case is never a breach.
+	"support-cases": sql`select extract(epoch from (now() - min(greatest(
+	        case status when 'closed' then coalesce(closed_at, updated_at)
+	                    else coalesce(resolved_at, updated_at) end,
+	        last_message_at)))) / 86400 as age_days
+	    from support_cases where status in ('resolved', 'closed')`,
 };
 
 /** Whether this entry is enforced by code this product runs, as opposed to a documented gap. */

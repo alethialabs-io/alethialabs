@@ -11,7 +11,12 @@ import { getServiceDb } from "@/lib/db";
  */
 const LOCK_TTL_SECONDS = 3 * 60 * 60;
 
-/** Acquires the state lock, stealing only an expired one. Returns the current holder's info on conflict. */
+/**
+ * Acquires the state lock, stealing only an expired one. Returns the current holder's info on conflict.
+ * `jobId` must be the job DOING the work (the state token's job), not the job named in the URL: a
+ * DEPLOY reusing a PLAN's saved artifact talks to the PLAN's URL, and a lock filed under the finished
+ * PLAN is one releaseStateLocksForJob(<deploy>) can never find when the deploy is cancelled (#7290).
+ */
 export async function acquireStateLock(
 	stateKey: string,
 	lockId: string,
@@ -72,6 +77,23 @@ export async function releaseStateLocksForJob(jobId: string): Promise<number> {
 		sql`select release_tofu_state_locks_for_job(${jobId}::uuid) as released`,
 	);
 	return Number(rows[0]?.released ?? 0);
+}
+
+/**
+ * True iff `jobId` holds the LIVE lock on `stateKey` right now. Used to admit the final state write
+ * and unlock of a job that was cancelled while its tofu was still applying (#7290): that job keeps
+ * the lock until its runner reports terminal, at which point releaseStateLocksForJob rotates the
+ * lock away and this answers false — so the admission ends with the job's last report.
+ */
+export async function jobHoldsStateLock(stateKey: string, jobId: string): Promise<boolean> {
+	const db = getServiceDb();
+	const rows = await db.execute<{ held: boolean }>(
+		sql`select exists (
+			select 1 from tofu_state_locks
+			 where state_key = ${stateKey} and job_id = ${jobId}::uuid and expires_at > now()
+		) as held`,
+	);
+	return !!rows[0]?.held;
 }
 
 /** The fence: true iff a LIVE lock with this exact id is held for the state key. */

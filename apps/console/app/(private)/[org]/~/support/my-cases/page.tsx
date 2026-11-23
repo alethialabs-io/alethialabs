@@ -16,8 +16,9 @@ import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export const metadata = pageMetadata({
-	title: "My cases",
-	description: "Your support cases and their conversation threads.",
+	// "Cases", not "My cases": a support admin sees the whole organization's (G-22).
+	title: "Cases",
+	description: "Support cases and their conversation threads.",
 });
 
 /**

@@ -74,7 +74,8 @@ const SEGMENT_LABELS: Record<string, string> = {
 	// hyphen and all, where the deleted heading said "My cases". Neither support route has a
 	// sidebar entry either: both are reached from the support hub.
 	support: "Support",
-	"my-cases": "My cases",
+	// "Cases", not "My cases": a support admin's list is the whole organization's (G-22).
+	"my-cases": "Cases",
 	cases: "Cases",
 	abuse: "Report abuse",
 	submit: "Submit a case",
@@ -106,9 +107,9 @@ const SEGMENT_LABELS: Record<string, string> = {
  * limit, not an oversight — the day something needs it, the value has to grow a root, and this
  * comment is the warning that it cannot simply be written with a slash in front.
  *
- * The LABEL moves with the target on purpose. A crumb reading "Cases" that navigates to a page
- * whose own crumb reads "My cases" is a second, quieter defect — and `cases/[id]/not-found.tsx`
- * already decided, in this tree, that the way back from a case is "My cases".
+ * The LABEL moves with the target on purpose. A crumb that navigates to a page whose own crumb
+ * reads something else is a second, quieter defect — so this label is the `my-cases` segment's
+ * own, "Cases" (G-22: a support admin's list is the whole organization's, not "My" anything).
  */
 export const ANCESTOR_REDIRECTS: Record<
 	string,
@@ -116,7 +117,7 @@ export const ANCESTOR_REDIRECTS: Record<
 > = {
 	// `app/(private)/[org]/~/support/cases/` holds `[id]/` and nothing else — there is no
 	// `page.tsx`, so `/{org}/~/support/cases` is a 404 and the case list lives at `my-cases`.
-	"support/cases": { trail: "support/my-cases", label: "My cases" },
+	"support/cases": { trail: "support/my-cases", label: "Cases" },
 };
 
 /**

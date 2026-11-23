@@ -180,8 +180,25 @@ jobs:
           owner: alethialabs-io
           repositories: alethialabs
 
+      # The record changes B7's rendered verdict, and CI's "Programme ledger is in sync with the tree"
+      # fails any PR whose PROGRAMME.md was not regenerated with it — the first drill PR (#7378) went
+      # red on exactly that. The rollup must evaluate DEV's tree (the PR's base), not the checkout,
+      # which is main on the schedule: so it runs in a dev worktree holding the new record, and only
+      # the resulting PROGRAMME.md is copied back. Plain Node, no dependencies, no install.
+      - name: Regenerate the programme ledger against dev
+        if: steps.outcome.outputs.outcome == 'pass'
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin dev
+          git worktree add --detach "$RUNNER_TEMP/dev" FETCH_HEAD
+          mkdir -p "$RUNNER_TEMP/dev/docs/beta/evidence/b7"
+          cp docs/beta/evidence/b7/* "$RUNNER_TEMP/dev/docs/beta/evidence/b7/"
+          (cd "$RUNNER_TEMP/dev" && node scripts/programme-rollup.mjs --write)
+          cp "$RUNNER_TEMP/dev/PROGRAMME.md" PROGRAMME.md
+          git worktree remove --force "$RUNNER_TEMP/dev"
+
       # One stable branch: an unmerged week's record is replaced by the newer one, which is the one
-      # B7 reads anyway. Only the two record files are added.
+      # B7 reads anyway. Only the two record files and the regenerated ledger are added.
       - name: Open the evidence PR into dev
         if: steps.outcome.outputs.outcome == 'pass'
         uses: peter-evans/create-pull-request@v8
@@ -189,7 +206,9 @@ jobs:
           token: ${{ steps.app_token.outputs.token || github.token }}
           base: dev
           branch: chore/restore-drill-evidence
-          add-paths: docs/beta/evidence/b7/*
+          add-paths: |
+            docs/beta/evidence/b7/*
+            PROGRAMME.md
           title: "docs(beta): B7 restore drill record"
           commit-message: |
             docs(beta): B7 restore drill record

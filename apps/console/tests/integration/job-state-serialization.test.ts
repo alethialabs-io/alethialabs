@@ -32,6 +32,7 @@ import {
 } from "@/lib/db/schema";
 import {
 	acquireStateLock,
+	jobHoldsStateLock,
 	releaseStateLocksForJob,
 	validateStateLock,
 } from "@/lib/runners/state-lock";
@@ -194,6 +195,27 @@ describeIfDb("per-state-object job serialization", () => {
 		// The apply's runner reports terminal: tofu has exited, so no writer is left on this state.
 		expect(await releaseStateLocksForJob(apply)).toBe(1);
 
+		expect(await claim()).toBe(destroy);
+	});
+
+	// #7290: a cancelled apply's tofu still holds the lock while it saves state and unlocks — that is
+	// what lets the state route admit its final write — and stops holding it at the terminal report,
+	// which is what lets the cleanup DESTROY be claimed.
+	it("a cancelled apply holds its lock until its terminal report, then the DESTROY is claimable", async () => {
+		const apply = await seedJob("PROCESSING", envId);
+		const lockId = randomUUID();
+		const stateKey = `projects/${projectId}/${envId}/tofu.tfstate`;
+		await acquireStateLock(stateKey, lockId, apply, { ID: lockId });
+		// The console's cancel flips the job; the runner's tofu is still draining.
+		await db().update(jobs).set({ status: "CANCELLED", completed_at: new Date() }).where(eq(jobs.id, apply));
+
+		expect(await jobHoldsStateLock(stateKey, apply)).toBe(true);
+		expect(await validateStateLock(stateKey, lockId)).toBe(true); // its final write passes the fence
+		const destroy = await seedJob("QUEUED", envId, "DESTROY");
+		expect(await claim()).toBeNull(); // still a live writer on this state
+
+		expect(await releaseStateLocksForJob(apply)).toBe(1); // the runner's CANCELLED report
+		expect(await jobHoldsStateLock(stateKey, apply)).toBe(false);
 		expect(await claim()).toBe(destroy);
 	});
 

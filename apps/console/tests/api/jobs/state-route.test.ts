@@ -25,7 +25,7 @@ const params = Promise.resolve({ id: "job-1" });
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	resolveStateRequest.mockResolvedValue({ stateKey: KEY });
+	resolveStateRequest.mockResolvedValue({ stateKey: KEY, jobId: "job-1" });
 });
 
 describe("state route", () => {
@@ -91,5 +91,23 @@ describe("state route", () => {
 		});
 		expect(res.status).toBe(200);
 		expect(storage.del).toHaveBeenCalledWith(expect.any(String), KEY);
+	});
+	// #7290: a cancelled apply's interrupted tofu writes its final state after the cancel flip. Only
+	// that write opts into the cancelled-holder admission; a read and a purge never do.
+	it("POST (the final write) opts into the cancelled-holder admission", async () => {
+		validateStateLock.mockResolvedValue(true);
+		await POST(new Request("https://x/s?ID=lock-1", { method: "POST", body: "{}" }), { params });
+		expect(resolveStateRequest).toHaveBeenCalledWith(expect.any(Request), "job-1", {
+			allowCancelledHolder: true,
+		});
+	});
+
+	it("GET and DELETE do not opt in — a cancelled job may not read or purge state", async () => {
+		storage.get.mockResolvedValue(null);
+		await GET(new Request("https://x/s"), { params });
+		await DELETE(new Request("https://x/s", { method: "DELETE" }), { params });
+		for (const call of resolveStateRequest.mock.calls) {
+			expect(call).toHaveLength(2);
+		}
 	});
 });

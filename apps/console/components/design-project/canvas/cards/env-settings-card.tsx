@@ -57,6 +57,19 @@ const DEPLOY_STATE_LINE: Record<DeployState, string> = {
 };
 
 /**
+ * The status row's sentence. A FAILED environment with no deployed design is not "not deployed yet":
+ * its first deploy started and did not finish (it failed, or was cancelled mid-apply), so it may
+ * already have created cloud resources (#7290). Saying "not deployed" there tells the operator there
+ * is nothing to clean up when there may be.
+ */
+function deployStateLine(status: string, deployState: DeployState): string {
+	if (status === "FAILED" && deployState === "never") {
+		return "The last deploy did not finish. Cloud resources it created may still exist; destroy the environment to remove them.";
+	}
+	return DEPLOY_STATE_LINE[deployState];
+}
+
+/**
  * The inspector on the ENVIRONMENT (#6834): everything that belongs to the environment as a whole
  * rather than to any one card. Four views:
  *
@@ -164,7 +177,8 @@ export function EnvSettingsCard({
 							label: environmentStatusLabel(environment.status),
 							tier: environmentStatusTier(environment.status),
 							message:
-								envStatus.deployRefusal?.message ?? DEPLOY_STATE_LINE[envStatus.deployState],
+								envStatus.deployRefusal?.message ??
+								deployStateLine(environment.status, envStatus.deployState),
 						}
 					: null
 			}
