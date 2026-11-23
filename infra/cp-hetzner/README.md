@@ -21,78 +21,65 @@ tofu init -backend-config=backend.hcl
 tofu plan && tofu apply
 ```
 
-## Inbound email — Cloudflare Email Routing (free)
+## Company mail — Google Workspace (#7261)
 
-> **Terraform does not manage this until the maintainer adopts it (#3291, #4374).**
-> `var.manage_email_routing` defaults to `false` and none of the 11 resources below is in this
-> stack's state — the live routing was bootstrapped out-of-band. The adoption is wired
-> (`email-routing-imports.tf` + optional loads in `infra-cp-hetzner.yml`) but does nothing until
-> the four secret keys below exist. Read `manage_email_routing`'s description in `variables.tf`
-> first: once adopted, removing the keys plans a **destroy** of live inbound mail.
+Mail for the `alethialabs.io` apex is Google Workspace, since 2026-11-22. `mail.tf` declares the
+four apex records Workspace needs, and `mail-imports.tf` adopts the live ones:
 
-### Adopting the live routing (#4374)
+| Record | Value | Adopted by |
+|---|---|---|
+| `MX` `@` | `1 smtp.google.com` | import, literal id |
+| `TXT` `@` | `v=spf1 include:_spf.google.com ~all` | import, literal id |
+| `TXT` `google._domainkey` | Google DKIM, 2048-bit | import, literal id |
+| `TXT` `@` | `google-site-verification=…` | import, literal id |
 
-Nine of the 11 resources are imported; the settings and catch-all singletons have no importer in
-provider 4.x and are adopted by a create that is idempotent against the live objects
-(`email-routing-imports.tf` says why). So the adoption plan reads
-**`9 to import, 2 to add, 0 to change, 0 to destroy`**.
+The apex addresses the product prints (`support@`, `sales@`, `legal@`, `privacy@`, `security@`,
+`feedback@`, `dmarc@`) are aliases of one Workspace user, configured in the Workspace admin console.
+Google rejects unknown local-parts. There is no catch-all. `_dmarc` is unchanged and is not declared here.
 
-1. **List the IDs** (token with Email Routing read on the account and zone):
+**SES is not affected.** `infra/email-ses` sends from its own Easy DKIM selectors with the default
+`amazonses.com` MAIL FROM, and reads nothing from the apex MX or SPF. Do not add an SES or
+Cloudflare `include:` to the apex SPF.
 
-   ```sh
-   # destination address — take the `id` of the entry whose `email` is the forward inbox
-   curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-     "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/email/routing/addresses" \
-     | jq '.result[] | {id, email, verified}'
-   # the 8 forward rules — key each `id` by the local-part of its matcher value
-   curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-     "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/email/routing/rules?per_page=50" \
-     | jq '[.result[] | select(.matchers[0].type == "literal")
-            | {key: (.matchers[0].value | split("@")[0]), value: .id}] | from_entries'
-   # for comparison only (not imported): zone settings and the catch-all
-   curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-     "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/email/routing" | jq .result
-   curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-     "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/email/routing/rules/catch_all" | jq .result
-   ```
+### Cloudflare Email Routing is disabled and retired
 
-   Check the live objects match `email-routing.tf`: rule names `forward-<local-part>`, exactly the 8
-   local-parts in `local.adopted_addresses`, catch-all `drop-unmatched` with action `drop`.
+Cloudflare Email Routing for the zone was **disabled out of band on 2026-11-22**. While it was
+enabled, Cloudflare kept its own locked `route{1,2,3}.mx.cloudflare.net` records on the apex,
+refused to add any other MX, and re-added its records on a re-sync after they had been removed by
+hand. Disabling it removed those three MX records and its `cf2024-1._domainkey` record. The Google
+MX was added after that.
 
-2. **Add four keys to the `alethia/prod/env` secret** (eu-central-1): `MANAGE_EMAIL_ROUTING` =
-   `"true"`, `EMAIL_FORWARD_TO` = the live destination `email` exactly (it forces replacement),
-   `EMAIL_ROUTING_ADDRESS_ID` = the address `id`, and `EMAIL_ROUTING_RULE_IDS` = the JSON object
-   from the second call (a JSON object or a string holding one both work).
+`email-routing.tf` and `email-routing-imports.tf` are deleted, together with the
+`manage_email_routing`, `email_forward_to`, `email_routing_address_id` and `email_routing_rule_ids`
+inputs and the workflow lines that loaded them. A stale `MANAGE_EMAIL_ROUTING` key in the secret
+does nothing: the workflow no longer reads it, and tofu ignores an undeclared `TF_VAR_`. Nothing in
+this stack declares `cloudflare_email_routing_settings`, whose create is the call that enables
+routing. `removed { lifecycle { destroy = false } }` blocks in `mail.tf` make OpenTofu forget any
+routing object that a local apply might once have adopted, so no apply calls Cloudflare for it.
 
-3. **Plan locally** with the same values (`TF_VAR_manage_email_routing=true`,
-   `TF_VAR_email_forward_to=…`, `TF_VAR_email_routing_address_id=…`,
-   `TF_VAR_email_routing_rule_ids='{"support":"…",…}'`, plus the five usual inputs) and
-   `tofu init -backend-config=backend.hcl && tofu plan`. It must read
-   `9 to import, 2 to add, 0 to change, 0 to destroy` for the email-routing addresses (other
-   resources in this stack must show no change). Anything to change or destroy means the
-   declaration disagrees with the live routing — fix the declaration, not the live routing.
+Check that only Google is on the apex:
 
-4. The next `main` apply of this stack (a push touching `infra/cp-hetzner/**`) performs the
-   adoption. The keys stay in the secret from then on.
+```sh
+dig +short MX alethialabs.io     # expect exactly: 1 smtp.google.com.
+```
 
-`email-routing.tf` receives at the apex addresses the product prints (`support@`,
-`sales@`, `legal@`, `security@`, `feedback@`, `dmarc@`, `borislav@`) and **forwards them
-to `var.email_forward_to`**. It coexists with the SES *send* stack (`infra/email-ses`):
-SES sends from the `auth.*`/`mail.*` subdomains with their own `bounce.*` MX, while Email
-Routing claims the previously-empty **apex MX**. Enabling it also auto-adds the apex MX +
-SPF records (priorities are Cloudflare-randomised, so they aren't pinned in code).
+### Looking up a record id
 
-The Cloudflare API token needs **Email Routing** perms (Rules — zone, Addresses — account)
-on top of the DNS + Tunnel perms it already has.
+Use this to re-read an id that `mail-imports.tf` cannot find. The token needs DNS read on the zone:
 
-**One-time after apply:** Cloudflare emails a confirmation link to the destination
-(`email_forward_to`) — **click it once** or nothing delivers. Watch delivery under
-Cloudflare dashboard → *Email* → *Email Routing*.
+```sh
+curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records?per_page=100" \
+  | jq -r '.result[] | select(.type == "MX" or .type == "TXT") | [.id, .type, .name, .content] | @tsv'
+```
 
-**Add / remove a routed address:** edit `local.inbound_addresses` in `email-routing.tf`
-and re-apply. Unmatched apex mail is dropped (catch-all) — flip `action.type` to `forward`
-to catch-all instead.
+Here, run it as `pnpm creds prod-env -- bash -c '…'`, so the token stays in the child's
+environment.
 
-**Reply *as* these addresses** (not just receive) is a separate path: the apex
-`alethialabs.io` SES identity + `alethia-ses-smtp-gmail` IAM user in `infra/email-ses`,
-consumed by `scripts/gmail-inbox/` (Gmail "Send mail as" over SES SMTP).
+**Inbound support mail to the console** (MAIL-S1 #7246 / MAIL-L3 #7250) does not use the apex. A
+Workspace routing rule also delivers `support@` to a Cloudflare-handled subdomain, such as
+`inbound.alethialabs.io`. That subdomain has its own MX to Cloudflare and an Email Worker behind it.
+**Open question for MAIL-S1:** Cloudflare's subdomain routing lives under the zone's Email Routing,
+which is disabled, and which held the apex MX while it was enabled. Before re-enabling it for a
+subdomain, prove that the apex MX stays `smtp.google.com` afterwards. If it does not, the inbound
+host needs a zone of its own.

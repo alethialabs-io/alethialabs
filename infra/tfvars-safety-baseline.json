@@ -81,26 +81,6 @@
 		},
 		{
 			"stack": "infra/cp-hetzner",
-			"variable": "email_forward_to",
-			"reason": "\"\" is the dormant value and only matters when manage_email_routing is true: it is the destination address's `email` and is read by the precondition on cloudflare_email_routing_address.dest, which fails the plan while it is empty. So the empty default cannot reach Cloudflare — it turns into a plan error, which is the intended direction. Supplied by the EMAIL_FORWARD_TO key of alethia/prod/env (optional load in infra-cp-hetzner.yml) at adoption (#4374). It must equal the LIVE destination exactly: `email` forces replacement, so any other value plans a destroy of the live destination address."
-		},
-		{
-			"stack": "infra/cp-hetzner",
-			"variable": "email_routing_address_id",
-			"reason": "\"\" is the dormant value: the import in email-routing-imports.tf is gated on manage_email_routing, not on this, and the precondition on cloudflare_email_routing_address.dest fails the PLAN when the input is true and this is empty — so the empty default cannot silently turn an import into a second create. Supplied by the EMAIL_ROUTING_ADDRESS_ID key of alethia/prod/env at adoption (#4374). Account data, not a secret; kept out of the repo because it is one account's id."
-		},
-		{
-			"stack": "infra/cp-hetzner",
-			"variable": "email_routing_rule_ids",
-			"reason": "{} is the dormant value: the rule imports in email-routing-imports.tf iterate it only when manage_email_routing is true, and the precondition on cloudflare_email_routing_rule.inbound fails the PLAN for every adopted local-part (local.adopted_addresses) missing from it — so an empty or partial map cannot quietly create a second forward rule beside a live one. An unknown key fails too (import target does not exist). Supplied by the EMAIL_ROUTING_RULE_IDS key of alethia/prod/env, a JSON object keyed by local-part, at adoption (#4374)."
-		},
-		{
-			"stack": "infra/cp-hetzner",
-			"variable": "manage_email_routing",
-			"reason": "DECIDED (#3291), ADOPTION WIRED (#4374): false leaves the 11 Cloudflare email-routing resources in email-routing.tf gated out of existence, including the 8 inbound addresses printed in transactional email footers and on the contact/CLA/legal/security pages, and leaves every import block in email-routing-imports.tf with an empty for_each. The routing is live, bootstrapped out-of-band, and absent from this stack's state until the maintainer adopts it. What SUPPLIES it: infra-cp-hetzner.yml's apply loads TF_VAR_manage_email_routing from the MANAGE_EMAIL_ROUTING key of alethia/prod/env ONLY when that key is present (load_opt), so the default holds until the maintainer adds it together with the import IDs. What is ENFORCED: input true with an adopted ID missing fails the plan (preconditions in email-routing.tf). What is NOT enforced: removing the key or setting it false AFTER adoption leaves configuration at zero instances and state at eleven, a planned DESTROY of live inbound mail (and the settings destroy disables Email Routing for the zone) that the workflow applies -auto-approve on the next push to main touching infra/cp-hetzner/**. That is why the key, once added, stays."
-		},
-		{
-			"stack": "infra/cp-hetzner",
 			"variable": "ssh_allowed_cidrs",
 			"kind": "permissive-default",
 			"reason": "DECIDED (#3292 point 2): the open default STAYS, and this is the reason rather than a deferral. [\"0.0.0.0/0\", \"::/0\"] is the source_ips of the port-22 rule on the alethia-cp firewall (main.tf:33), and infra-cp-hetzner.yml applies `-auto-approve` on push to main touching infra/cp-hetzner/** with nothing supplying a narrower value — so the open default is not a placeholder, it IS the applied production configuration. THE REASON IS REAL AND CHECKABLE, which is what promotes it from a code comment: SSH from a GitHub-hosted runner is a LIVE, REQUIRED path, not a hypothetical one. deploy-console.yml is the only workflow that SSHes anywhere, and it SSHes here — `ssh $SSHOPTS root@${HOST}` at deploy-console.yml:1052, :1059 and :1173, where HOST is DEPLOY_HOST, which infra-cp-hetzner.yml writes into Secrets Manager from `tofu output -raw server_ipv4`. It is the only way console code reaches production. GitHub publishes its egress ranges, but they are large and they move, so a pinned list breaks the deploy path on a day nobody changed anything — narrowing all three boxes to the meta ranges is the alternative #3292 explicitly rejected. WHAT IS NOT ENFORCED, and must not be read into the quoted comment: \"key-only auth\" is not configured anywhere in this repo. Nothing under infra/ writes an sshd_config, sets PasswordAuthentication or PermitRootLogin, and no test asserts it; it holds because the Hetzner Ubuntu image ships with no root password and the key comes from hcloud_ssh_key.deploy. It is an inherited image property, not a control this stack asserts, and it is a mitigation rather than the control this variable is named after. A bastion or Tailscale hop would replace the open range with something narrower AND enforced; that remains open and is the maintainer's to schedule."

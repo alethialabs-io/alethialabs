@@ -1960,12 +1960,12 @@
 			"document": "module-processing",
 			"quote": null,
 			"says": "The processing register lists Cloudflare for inbound email routing.",
-			"actually": "Cloudflare forwards the published addresses (support, sales, legal, privacy, security) to one destination mailbox set from the vault. The provider of that mailbox receives every privacy request and support email and is not registered (#7223).",
+			"actually": "Since 2026-11-22 the published addresses (support, sales, legal, privacy, security) are received by Google Workspace (Google Cloud), which hosts the company mailbox. Cloudflare no longer forwards them (#7261). Google receives every privacy request and support email and is not registered (#7223).",
 			"evidence": [
 				{
-					"path": "infra/cp-hetzner/email-routing.tf",
-					"pattern": "\"privacy\",\\s+# data-subject requests",
-					"shows": "privacy@ is one of the forwarded addresses."
+					"path": "infra/cp-hetzner/mail.tf",
+					"pattern": "content  = \"smtp\\.google\\.com\"",
+					"shows": "The apex MX, which receives mail for every published address, is Google's."
 				},
 				{
 					"path": "packages/legal/src/processing.ts",

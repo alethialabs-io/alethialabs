@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // One-shot, idempotent setup of the alethialabs.io shared inbox in Gmail, via the
-// Gmail API. Companion to Cloudflare Email Routing (infra/cp-hetzner/email-routing.tf,
-// which forwards support@/sales@/… here) and the SES apex send-as identity
+// Gmail API. Companion to the retired Cloudflare Email Routing (it forwarded support@/sales@/…
+// here; company mail is Google Workspace since #7261) and the SES apex send-as identity
 // (infra/email-ses). It:
 //
 //   1. creates nested labels (Alethia/Support, …),
