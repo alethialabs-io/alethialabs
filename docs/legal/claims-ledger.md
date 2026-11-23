@@ -128,6 +128,11 @@ receives data.
 - "from the billing settings in the console": no component calls the withdrawal action. Now says
   email, and that the console control comes before consumer sales (finding
   `consumer-rights.withdrawal-control-missing`, REL-L4, #7221).
+- 2026-11-23, the maintainer's legal review (#7351): the control exists (#7221), so the page names it
+  again (claim `consumer-rights.console-withdrawal`; the finding is removed). It adds the sentence
+  for an owed refund that could not be issued automatically (claim `consumer-rights.refund-arranged`,
+  outside-repo: a person acts on the operator alert), and a Bulgarian section, `#bg`. The page is now
+  hash-sealed in `LEGAL_DOCUMENTS` for `en` and `bg-BG`.
 
 ### Security (`/security`) — corrected
 
