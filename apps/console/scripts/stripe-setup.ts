@@ -24,8 +24,18 @@
 //   • Tax settings: head office from LEGAL_ENTITY, default tax code and `exclusive` behaviour. This
 //     does not turn Stripe Tax on; that stays `STRIPE_TAX_ENABLED` and a dashboard decision.
 //   • The DEFAULT Customer Portal configuration: no tax-ID edit, no address (so no country) change,
-//     no plan change, no Stripe invoice history (Stripe's PDF is not the invoice of record).
+//     no plan change, no Stripe invoice history (Stripe's PDF is not the invoice of record), and its
+//     business profile: a headline and the privacy and terms links.
+//   • The DEFAULT payment method configuration: exactly DESIRED_PAYMENT_METHODS on (card, Apple Pay,
+//     Google Pay, Link) and every other method the account offers off.
 //   • With `--webhook-url`: one endpoint at that URL subscribed to exactly WEBHOOK_EVENTS.
+//
+// What this does NOT manage, because Stripe's API cannot set it on your OWN account ("To update your
+// own account, use the Dashboard": POST /v1/accounts/:id is for connected accounts): branding, public
+// business details, the statement descriptor, customer emails, Smart Retries, Radar rules, and the
+// account's default invoice footer and memo. Those are a checklist in
+// apps/console/docs/stripe-prod-runbook.md §3. The invoice footer is set per customer instead, where
+// the console creates the customer (STRIPE_INVOICE_FOOTER in lib/billing/receipt-footer.ts).
 //
 // Secrets: the key is read from the environment (STRIPE_API_KEY, which `pnpm creds` sets, or
 // STRIPE_SECRET_KEY) and never printed. A new endpoint's signing secret is written to a 0600 file
@@ -210,9 +220,118 @@ export const DESIRED_PORTAL = {
 	subscriptionUpdate: false,
 	subscriptionCancel: true,
 	cancelMode: "at_period_end",
+	/** Shown at the top of the portal. Stripe caps it at 60 characters. */
+	headline: "Alethia: manage your subscription and payment method",
+	/** The marketing site's routes apps/marketing/app/privacy and apps/marketing/app/terms. */
 	privacyPolicyUrl: "https://alethialabs.io/privacy",
 	termsOfServiceUrl: "https://alethialabs.io/terms",
 } as const;
+
+/**
+ * Every payment method field of a payment method configuration in the pinned stripe-node. Derived
+ * from the SDK's own type, so it ranges over exactly what the API version this SDK pins can return.
+ */
+export type PaymentMethodKey = {
+	[K in keyof Stripe.PaymentMethodConfiguration]-?: NonNullable<Stripe.PaymentMethodConfiguration[K]> extends {
+		display_preference: unknown;
+	}
+		? K
+		: never;
+}[keyof Stripe.PaymentMethodConfiguration];
+
+/**
+ * The same set as a value, so it can be iterated. A `Record` over the derived type: upgrading
+ * stripe-node to one that adds or drops a method fails type-checking here until this list matches,
+ * so a newly typed method becomes a decision at upgrade time. A method the pinned SDK does not type
+ * at all is invisible to this tool; `stripe:check` reports only what it can name.
+ */
+const PAYMENT_METHOD_KEYS: Record<PaymentMethodKey, true> = {
+	acss_debit: true,
+	affirm: true,
+	afterpay_clearpay: true,
+	alipay: true,
+	alma: true,
+	amazon_pay: true,
+	apple_pay: true,
+	au_becs_debit: true,
+	bacs_debit: true,
+	bancontact: true,
+	billie: true,
+	bizum: true,
+	blik: true,
+	boleto: true,
+	card: true,
+	cartes_bancaires: true,
+	cashapp: true,
+	crypto: true,
+	customer_balance: true,
+	eps: true,
+	fpx: true,
+	giropay: true,
+	google_pay: true,
+	grabpay: true,
+	ideal: true,
+	jcb: true,
+	kakao_pay: true,
+	klarna: true,
+	konbini: true,
+	kr_card: true,
+	link: true,
+	mb_way: true,
+	mobilepay: true,
+	multibanco: true,
+	naver_pay: true,
+	nz_bank_account: true,
+	oxxo: true,
+	p24: true,
+	pay_by_bank: true,
+	payco: true,
+	paynow: true,
+	paypal: true,
+	payto: true,
+	pix: true,
+	promptpay: true,
+	revolut_pay: true,
+	samsung_pay: true,
+	satispay: true,
+	scalapay: true,
+	sepa_debit: true,
+	sofort: true,
+	sunbit: true,
+	swish: true,
+	twint: true,
+	upi: true,
+	us_bank_account: true,
+	wechat_pay: true,
+	zip: true,
+};
+
+/** True when `key` names a payment method field of the pinned SDK's configuration type. */
+export function isPaymentMethodKey(key: string): key is PaymentMethodKey {
+	return Object.hasOwn(PAYMENT_METHOD_KEYS, key);
+}
+
+/** Every payment method field of the pinned SDK's configuration type, in a stable order. */
+export const ALL_PAYMENT_METHODS: readonly PaymentMethodKey[] = Object.keys(PAYMENT_METHOD_KEYS)
+	.filter(isPaymentMethodKey)
+	.sort();
+
+/**
+ * The payment methods the default configuration turns on; every other method the account offers is
+ * turned off. Proposed to the maintainer as a DECISION in the PR that introduced it (#7407), not a
+ * settled fact: cards, the two wallets that pay with a card (Apple Pay, Google Pay), and Link. The
+ * cost of the narrow list is that a customer who would pay by SEPA Direct Debit, iDEAL or Bancontact
+ * cannot; widening it is one entry here.
+ */
+export const DESIRED_PAYMENT_METHODS: readonly PaymentMethodKey[] = ["card", "apple_pay", "google_pay", "link"];
+
+/** A display preference this tool sets. */
+export type PaymentMethodPreference = "on" | "off";
+
+/** The preference DESIRED_PAYMENT_METHODS gives `key`. */
+export function desiredPreference(key: PaymentMethodKey): PaymentMethodPreference {
+	return DESIRED_PAYMENT_METHODS.includes(key) ? "on" : "off";
+}
 
 // ── The Stripe surface this tool uses ─────────────────────────────────────────────────────────
 // Narrow views of Stripe's objects: the real SDK satisfies them structurally, and a test fake can
@@ -299,7 +418,11 @@ export interface PortalView {
 	id: string;
 	is_default: boolean;
 	active: boolean;
-	business_profile: { privacy_policy_url: string | null; terms_of_service_url: string | null };
+	business_profile: {
+		headline: string | null;
+		privacy_policy_url: string | null;
+		terms_of_service_url: string | null;
+	};
 	features: {
 		customer_update: { enabled: boolean; allowed_updates: string[] };
 		invoice_history: { enabled: boolean };
@@ -322,24 +445,15 @@ export interface WebhookCreatedView extends WebhookView {
 	secret?: string;
 }
 
-/** Availability of one payment method in a payment method configuration. */
-export interface PaymentMethodAvailability {
-	available: boolean;
-}
-
-/** The payment method configuration fields the check reports. */
-export interface PaymentMethodConfigView {
-	id: string;
-	is_default: boolean;
-	card?: PaymentMethodAvailability;
-	link?: PaymentMethodAvailability;
-	sepa_debit?: PaymentMethodAvailability;
-	us_bank_account?: PaymentMethodAvailability;
-	apple_pay?: PaymentMethodAvailability;
-	google_pay?: PaymentMethodAvailability;
-	bancontact?: PaymentMethodAvailability;
-	ideal?: PaymentMethodAvailability;
-}
+/**
+ * The payment method configuration fields compared and reported. The SDK types every method's field
+ * as optional; this tool treats an absent field as a method the account does not offer.
+ * `display_preference.preference` is what it sets.
+ */
+export type PaymentMethodConfigView = Pick<
+	Stripe.PaymentMethodConfiguration,
+	"id" | "is_default" | "active" | PaymentMethodKey
+>;
 
 /** The Stripe methods this tool and stripe-check.ts call. `new Stripe(key)` satisfies it. */
 export interface StripeClient {
@@ -379,6 +493,7 @@ export interface StripeClient {
 	};
 	paymentMethodConfigurations: {
 		list(params: Stripe.PaymentMethodConfigurationListParams): Promise<ListPage<PaymentMethodConfigView>>;
+		update(id: string, params: Stripe.PaymentMethodConfigurationUpdateParams): Promise<PaymentMethodConfigView>;
 	};
 }
 
@@ -464,6 +579,8 @@ export interface Observed {
 	prices: Map<string, PriceView | null>;
 	tax: TaxSettingsView;
 	portal: PortalView | null;
+	/** The account's default payment method configuration, or null. */
+	paymentMethods: PaymentMethodConfigView | null;
 	/** Endpoints at `webhookUrl`, when one was given. */
 	webhooks: WebhookView[];
 	webhookUrl: string | undefined;
@@ -500,6 +617,12 @@ export async function readState(client: StripeClient, webhookUrl: string | undef
 	const portals = await client.billingPortal.configurations.list({ is_default: true, limit: 1 });
 	const portal = portals.data.find((c) => c.is_default) ?? null;
 
+	// The list endpoint has no `is_default` filter, so read every page and pick the default.
+	const pmcs = await listAll((after) =>
+		client.paymentMethodConfigurations.list({ limit: 100, ...(after ? { starting_after: after } : {}) }),
+	);
+	const paymentMethods = pmcs.find((c) => c.is_default) ?? null;
+
 	let webhooks: WebhookView[] = [];
 	if (webhookUrl) {
 		const all = await listAll((after) =>
@@ -507,7 +630,7 @@ export async function readState(client: StripeClient, webhookUrl: string | undef
 		);
 		webhooks = all.filter((w) => w.url === webhookUrl);
 	}
-	return { products, meter, prices, tax, portal, webhooks, webhookUrl };
+	return { products, meter, prices, tax, portal, paymentMethods, webhooks, webhookUrl };
 }
 
 // ── The plan ──────────────────────────────────────────────────────────────────────────────────
@@ -520,6 +643,12 @@ export type Action =
 	| { kind: "price.create"; lookupKey: string; replaces: PriceView | null; summary: string }
 	| { kind: "tax.update"; summary: string }
 	| { kind: "portal.update"; id: string; summary: string }
+	| {
+			kind: "payment_methods.update";
+			id: string;
+			changes: { method: PaymentMethodKey; preference: PaymentMethodPreference }[];
+			summary: string;
+	  }
 	| { kind: "webhook.create"; url: string; summary: string }
 	| { kind: "webhook.update"; id: string; summary: string };
 
@@ -643,6 +772,9 @@ export function portalDrift(p: PortalView): string[] {
 	) {
 		out.push(`subscription_cancel ${show(f.subscription_cancel.mode)} → ${DESIRED_PORTAL.cancelMode}`);
 	}
+	if (p.business_profile.headline !== DESIRED_PORTAL.headline) {
+		out.push(`headline ${show(p.business_profile.headline)} → ${show(DESIRED_PORTAL.headline)}`);
+	}
 	if (p.business_profile.privacy_policy_url !== DESIRED_PORTAL.privacyPolicyUrl) {
 		out.push(`privacy_policy_url ${show(p.business_profile.privacy_policy_url)} → ${DESIRED_PORTAL.privacyPolicyUrl}`);
 	}
@@ -652,6 +784,47 @@ export function portalDrift(p: PortalView): string[] {
 		);
 	}
 	return out;
+}
+
+/** The difference between a payment method configuration and DESIRED_PAYMENT_METHODS. */
+export interface PaymentMethodDrift {
+	/** Methods whose display preference must change, and to what. */
+	changes: { method: PaymentMethodKey; preference: PaymentMethodPreference }[];
+	/** Desired methods the account does not offer at all, which no API call can turn on. */
+	missing: PaymentMethodKey[];
+}
+
+/**
+ * Compares each method the configuration carries (an absent field is read as "not offered") with its
+ * desired preference. The account's own preference is what is compared, not the
+ * effective `value` and not `available`: `available` also needs the capability to be active (Apple Pay
+ * needs a verified domain), which a preference cannot fix, and a `none` preference follows Stripe's
+ * default, which can change under us, so it is set explicitly.
+ */
+export function paymentMethodDrift(cfg: PaymentMethodConfigView): PaymentMethodDrift {
+	const changes: PaymentMethodDrift["changes"] = [];
+	const missing: PaymentMethodKey[] = [];
+	for (const method of ALL_PAYMENT_METHODS) {
+		const setting = cfg[method];
+		const preference = desiredPreference(method);
+		if (!setting) {
+			if (preference === "on") missing.push(method);
+			continue;
+		}
+		if (setting.display_preference.preference !== preference) changes.push({ method, preference });
+	}
+	return { changes, missing };
+}
+
+/** The update params that set each change's display preference, and nothing else. */
+export function paymentMethodUpdateParams(
+	changes: PaymentMethodDrift["changes"],
+): Stripe.PaymentMethodConfigurationUpdateParams {
+	const params: Stripe.PaymentMethodConfigurationUpdateParams = {};
+	for (const { method, preference } of changes) {
+		params[method] = { display_preference: { preference } };
+	}
+	return params;
 }
 
 /** The difference between the observed account and the desired state. Pure: reads nothing. */
@@ -774,7 +947,36 @@ export function computePlan(obs: Observed): Plan {
 				summary: `~ portal ${obs.portal.id}: ${drift.join("; ")}`,
 			});
 		} else {
-			plan.ok.push(`portal ${obs.portal.id} (email-only customer updates, no plan change, no invoice history)`);
+			plan.ok.push(
+				`portal ${obs.portal.id} (email-only customer updates, no plan change, no invoice history, headline and legal links)`,
+			);
+		}
+	}
+
+	const desiredLabel = DESIRED_PAYMENT_METHODS.join(", ");
+	if (!obs.paymentMethods) {
+		plan.errors.push(
+			"No default payment method configuration. Open Settings → Payments → Payment methods in this mode once, then run this again.",
+		);
+	} else {
+		const pmc = obs.paymentMethods;
+		const drift = paymentMethodDrift(pmc);
+		if (drift.missing.length) {
+			plan.errors.push(
+				`payment methods: the account does not offer ${drift.missing.join(", ")}, so the default configuration ${pmc.id} cannot turn ${drift.missing.length === 1 ? "it" : "them"} on. Activate ${drift.missing.length === 1 ? "it" : "them"} under Settings → Payments → Payment methods.`,
+			);
+		} else if (drift.changes.length) {
+			const on = drift.changes.filter((c) => c.preference === "on").map((c) => c.method);
+			const off = drift.changes.filter((c) => c.preference === "off").map((c) => c.method);
+			const parts = [...(on.length ? [`on ${on.join(" ")}`] : []), ...(off.length ? [`off ${off.join(" ")}`] : [])];
+			plan.actions.push({
+				kind: "payment_methods.update",
+				id: pmc.id,
+				changes: drift.changes,
+				summary: `~ payment methods ${pmc.id}: ${parts.join("; ")}`,
+			});
+		} else {
+			plan.ok.push(`payment methods ${pmc.id} (only ${desiredLabel})`);
 		}
 	}
 
@@ -904,7 +1106,7 @@ export interface ApplyResult {
 }
 
 /**
- * Makes exactly the plan's changes, in dependency order (products, meter, prices, tax, portal,
+ * Makes exactly the plan's changes, in dependency order (products, meter, prices, tax, portal, payment methods,
  * webhook). Refuses a plan with blocking errors. Never prints a secret.
  */
 export async function applyPlan(
@@ -973,6 +1175,7 @@ export async function applyPlan(
 		if (a.kind === "portal.update") {
 			await client.billingPortal.configurations.update(a.id, {
 				business_profile: {
+					headline: DESIRED_PORTAL.headline,
 					privacy_policy_url: DESIRED_PORTAL.privacyPolicyUrl,
 					terms_of_service_url: DESIRED_PORTAL.termsOfServiceUrl,
 				},
@@ -985,6 +1188,9 @@ export async function applyPlan(
 				},
 			});
 			ctx.log(`  ~ portal ${a.id}`);
+		} else if (a.kind === "payment_methods.update") {
+			await client.paymentMethodConfigurations.update(a.id, paymentMethodUpdateParams(a.changes));
+			ctx.log(`  ~ payment methods ${a.id}`);
 		} else if (a.kind === "webhook.update") {
 			await client.webhookEndpoints.update(a.id, { enabled_events: WEBHOOK_EVENTS, disabled: false });
 			ctx.log(`  ~ webhook ${a.id}`);
