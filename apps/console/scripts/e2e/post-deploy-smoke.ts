@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// THE POST-DEPLOY SMOKE — eleven checks a real browser makes against the PUBLIC console URL.
+// THE POST-DEPLOY SMOKE — thirteen checks against the PUBLIC hosts: eleven a real browser makes against
+// the console URL, and two plain fetches of the CLI installer and status hosts (REL-L8, #6909).
 //
 // # Why this exists
 //
@@ -54,8 +55,21 @@ import {
 	MARKETING_BUILD,
 	type BuildIdProbe,
 } from "./build-id-check";
+import {
+	assertInstaller,
+	assertStatusPage,
+	assertStatusSummary,
+	INSTALLER_URL,
+	STATUS_PAGE_URL,
+	STATUS_SUMMARY_URL,
+	type HostReport,
+	type HostResponse,
+} from "./public-hosts-check";
 
 const OUT_DIR = path.resolve(import.meta.dirname, "../../smoke-results");
+
+/** The promoted tree's install script — what get.alethialabs.io must serve byte for byte after a rebuild. */
+const TREE_INSTALL_SH = path.resolve(import.meta.dirname, "../../public/install.sh");
 
 
 /** A same-origin request the page made, with the status it came back with. */
@@ -315,6 +329,31 @@ const CHECKS: Check[] = [
 		},
 	},
 	{
+		id: "installer",
+		name: "get.alethialabs.io serves the CLI install script (body signature, and the promoted bytes)",
+		// B7's "public hosts" part (docs/beta/README.md). A 200 is not the answer here: a routing
+		// regression serves the landing page with a 200, and `curl … | sh` would pipe HTML into a
+		// shell. public-hosts-check.ts reads the body. Byte equality with the tree is asserted only
+		// when the apps images were rebuilt — the same `SMOKE_EXPECTED_SHA` gate as `build-id`.
+		async run(ctx) {
+			const rebuilt = Boolean(process.env.SMOKE_EXPECTED_SHA?.trim());
+			const tree = rebuilt ? fs.readFileSync(TREE_INSTALL_SH, "utf8") : null;
+			assertInstaller(await fetchHost(INSTALLER_URL), tree, hostReport(ctx));
+		},
+	},
+	{
+		id: "status-page",
+		name: "status.alethialabs.io answers with a fresh summary and the rendered page",
+		// B7's other public host. The Worker keeps serving its last snapshot with a 200 after its cron
+		// dies, so the summary's `generatedAt` must be recent — public-hosts-check.ts STATUS_MAX_AGE_MS.
+		// The page reporting a degraded row is a warning, not a failure: that is the page working.
+		async run(ctx) {
+			const report = hostReport(ctx);
+			assertStatusSummary(await fetchHost(STATUS_SUMMARY_URL), Date.now(), report);
+			assertStatusPage(await fetchHost(STATUS_PAGE_URL), report);
+		},
+	},
+	{
 		id: "self-guard",
 		name: "the run itself touched no auth endpoint but get-session",
 		// A smoke test that signs in, or trips a sign-in side effect, stops being a smoke test and
@@ -355,6 +394,37 @@ function browserBuildProbe(ctx: Ctx): BuildIdProbe {
 			} finally {
 				await v.page.close();
 			}
+		},
+	};
+}
+
+/**
+ * One un-followed GET of a public host. Redirects are NOT followed: a 3xx is reported with its target,
+ * because following one is how a probe ends up judging the sign-in page instead of the host it was
+ * asked about (packages/status/src/probes.ts documents the instance). No credential is ever sent.
+ */
+async function fetchHost(url: string): Promise<HostResponse> {
+	const res = await fetch(url, {
+		redirect: "manual",
+		signal: AbortSignal.timeout(20_000),
+		headers: { "user-agent": "alethia-post-deploy-smoke" },
+	});
+	return {
+		status: res.status,
+		contentType: res.headers.get("content-type"),
+		body: await res.text(),
+		location: res.headers.get("location"),
+	};
+}
+
+/** The smoke's `fail`/`note` pair, plus a `warn` that annotates the run without failing it. */
+function hostReport(ctx: Ctx): HostReport {
+	return {
+		fail: ctx.fail,
+		note: ctx.note,
+		warn(why) {
+			console.log(`::warning::${why}`);
+			ctx.note(`warning: ${why}`);
 		},
 	};
 }
@@ -485,7 +555,22 @@ async function main(argv: string[]): Promise<number> {
 		await browser?.close();
 		fs.writeFileSync(
 			path.join(OUT_DIR, "smoke-report.json"),
-			`${JSON.stringify({ baseUrl, at: new Date().toISOString(), results }, null, 2)}\n`,
+			`${JSON.stringify(
+				{
+					baseUrl,
+					at: new Date().toISOString(),
+					// Which deploy this report is about, so a reader of the artifact (the programme
+					// rollup's B7 "public hosts" part) can tie it to a commit and a run without
+					// trusting the artifact's name. Absent outside Actions.
+					sha: process.env.GITHUB_SHA ?? null,
+					ref: process.env.GITHUB_REF ?? null,
+					runId: process.env.GITHUB_RUN_ID ?? null,
+					checks: CHECKS.length,
+					results,
+				},
+				null,
+				2,
+			)}\n`,
 		);
 	}
 
