@@ -37,13 +37,17 @@ export async function GET(
 	});
 }
 
-/** POST → write state. Fail-closed on the lock fence: tofu appends the held lock id as ?ID=. */
+/**
+ * POST → write state. Fail-closed on the lock fence: tofu appends the held lock id as ?ID=.
+ * A cancelled job whose tofu still holds the lock may make this write (#7290): it is the state of
+ * whatever the interrupted apply already created, and refusing it orphans those resources.
+ */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
 	const { id } = await params;
-	const ctx = await resolveStateRequest(req, id);
+	const ctx = await resolveStateRequest(req, id, { allowCancelledHolder: true });
 	if ("error" in ctx) return ctx.error;
 
 	// The ONLY lost-update guard (this backend has no ETag): reject a write whose lock id is not the
