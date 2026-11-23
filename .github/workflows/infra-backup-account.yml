@@ -65,11 +65,17 @@ jobs:
           tofu validate
           tofu test
 
-      # The operator scripts in ops/ are run by hand against real accounts; nothing here runs them.
-      # shellcheck is what keeps them honest between uses.
+      # The operator scripts in ops/ are run by hand against real accounts; nothing here runs them
+      # against AWS. shellcheck is what keeps them honest between uses.
       - name: shellcheck (operator scripts)
         working-directory: ${{ env.TF_DIR }}/ops
         run: shellcheck -x ./*.sh
+
+      # The one piece of 04-verify.sh that can be checked offline: its writer-policy filter, against
+      # fixed policies. It once failed every policy (a jq precedence error), the deployed one included.
+      - name: 04-verify policy filter self-test
+        working-directory: ${{ env.TF_DIR }}/ops
+        run: ./04-verify.sh --self-test
 
       - name: IaC checks (fmt + tflint + Trivy)
         uses: ./.github/actions/iac-checks

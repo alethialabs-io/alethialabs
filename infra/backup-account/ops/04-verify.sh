@@ -5,6 +5,7 @@
 # Step 4: READ-ONLY posture check of the live backup account. Changes nothing; safe to run any time.
 #
 #   04-verify.sh [--sso-profile alethia-sso] [--account-id ID] [--dry-run]
+#   04-verify.sh --self-test
 #
 # Checks, each printed PASS or FAIL (exit 1 if any FAIL):
 #   · the bucket: Object Lock enabled, COMPLIANCE, 15 days; versioning on; SSE-KMS with a Bucket
@@ -15,7 +16,8 @@
 #   · the KMS key behind alias/alethia-prod-backup: Enabled, rotation on
 #   · the drill identity secret exists (its value is never read)
 #
-#   --dry-run  list the checks without calling AWS
+#   --dry-run    list the checks without calling AWS
+#   --self-test  run the policy filter below against fixed policies, offline; exit 1 on a wrong verdict
 set -euo pipefail
 
 # shellcheck source-path=SCRIPTDIR source=lib.sh
@@ -23,19 +25,61 @@ set -euo pipefail
 
 SSO_PROFILE="alethia-sso"
 ACCOUNT_ARG=""
+SELF_TEST=0
+
+# True when the writer's inline policy has at least one statement and none of its Allow statements
+# grants a Delete action or a wildcard. Deny statements are not read: a Deny of "*" is a restriction.
+# The statement-count clause sits OUTSIDE the array pipe on purpose: written after it, `.Statement`
+# is evaluated against the filtered array, jq errors, and the check fails for every policy.
+WRITER_NO_DELETE_FILTER='(.Statement | length) > 0 and ([.Statement[] | select(.Effect == "Allow") | .Action | if type == "array" then .[] else . end | select(test("delete|\\*"; "i"))] | length == 0)'
 
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--sso-profile) SSO_PROFILE="${2:?}"; shift 2 ;;
 	--account-id) ACCOUNT_ARG="${2:?}"; shift 2 ;;
 	--dry-run) DRY_RUN=1; shift ;;
-	-h | --help) sed -n '5,19p' "$0"; exit 0 ;;
+	--self-test) SELF_TEST=1; shift ;;
+	-h | --help) sed -n '5,20p' "$0"; exit 0 ;;
 	*) die "unknown argument: $1 (see --help)" ;;
 	esac
 done
 
 if [ "$DRY_RUN" = 1 ]; then
-	sed -n '9,17p' "$0"
+	sed -n '10,18p' "$0"
+	exit 0
+fi
+
+# Asserts the filter's verdict on one policy: expect_verdict <true|false> "<name>" '<policy json>'.
+# Counts a wrong verdict, or a jq error, in ST_FAILS.
+expect_verdict() {
+	local want="$1" name="$2" got
+	got="$(printf '%s' "$3" | jq "$WRITER_NO_DELETE_FILTER" 2>/dev/null || echo error)"
+	if [ "$got" = "$want" ]; then
+		printf 'ok    %s -> %s\n' "$name" "$got"
+	else
+		printf 'WRONG %s -> %s (want %s)\n' "$name" "$got" "$want"
+		ST_FAILS=$((ST_FAILS + 1))
+	fi
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+	require_cmd jq
+	ST_FAILS=0
+	box_deny='{"Effect":"Deny","Action":"*","Resource":"*"}'
+	expect_verdict true "the deployed writer policy (Allow put/get/list/kms, Deny * off-box)" \
+		'{"Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:GetObject"]},{"Effect":"Allow","Action":"s3:ListBucket"},{"Effect":"Allow","Action":["kms:GenerateDataKey","kms:Decrypt"]},'"$box_deny"']}'
+	expect_verdict false "Allow s3:DeleteObject (array)" \
+		'{"Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:DeleteObject"]},'"$box_deny"']}'
+	expect_verdict false "Allow s3:DeleteObjectVersion (string)" \
+		'{"Statement":[{"Effect":"Allow","Action":"s3:DeleteObjectVersion"}]}'
+	expect_verdict false "Allow *" '{"Statement":[{"Effect":"Allow","Action":"*"}]}'
+	expect_verdict false "Allow s3:*" '{"Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:*"]}]}'
+	expect_verdict false "no statements" '{"Statement":[]}'
+	if [ "$ST_FAILS" -gt 0 ]; then
+		printf '\n%s self-test assertion(s) failed\n' "$ST_FAILS"
+		exit 1
+	fi
+	printf '\nself-test passed\n'
 	exit 0
 fi
 
@@ -90,7 +134,7 @@ groups="$(aws iam list-groups-for-user --user-name "$WRITER_USER_NAME" --query '
 check "writer: in no group" jq_true '. == []' <<<"$groups"
 doc="$(aws iam get-user-policy --user-name "$WRITER_USER_NAME" --policy-name "$WRITER_POLICY_NAME" --query PolicyDocument --output json 2>/dev/null || echo '{}')"
 check "writer: no Delete or wildcard action granted" jq_true \
-	'[.Statement[] | select(.Effect == "Allow") | .Action | if type == "array" then .[] else . end | select(test("delete|\\*"; "i"))] | length == 0 and (.Statement | length) > 0' <<<"$doc"
+	"$WRITER_NO_DELETE_FILTER" <<<"$doc"
 
 if [ -n "$writer_arn" ]; then
 	sim="$(aws iam simulate-principal-policy --policy-source-arn "$writer_arn" \
