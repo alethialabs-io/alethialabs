@@ -45,6 +45,7 @@ function memoryStore(): FacturaStore & { rows: Factura[]; last: number } {
 				kind: insert.kind,
 				originalFacturaId: null,
 				stripeInvoiceId: insert.stripeInvoiceId,
+				stripeRefundId: null,
 				issueDate: insert.issueDate,
 				chargeableDate: insert.chargeableDate,
 				snapshot: insert.snapshot,

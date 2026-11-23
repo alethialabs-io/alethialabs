@@ -16,3 +16,11 @@ export const INVOICE_PDF_BUCKET = "invoices";
 export function invoicePdfKey(orgId: string, stripeInvoiceId: string): string {
 	return `${orgId}/${stripeInvoiceId}.pdf`;
 }
+
+/**
+ * Storage key for a credit note's PDF (#7369): beside the фактура it corrects, keyed by the Stripe
+ * refund it records, so two partial refunds of one invoice never overwrite each other.
+ */
+export function creditNotePdfKey(orgId: string, stripeInvoiceId: string, stripeRefundId: string): string {
+	return `${orgId}/${stripeInvoiceId}.credit-${stripeRefundId}.pdf`;
+}

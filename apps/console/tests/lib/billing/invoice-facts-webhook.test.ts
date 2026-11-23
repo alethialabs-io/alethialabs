@@ -16,6 +16,10 @@ vi.mock("@/lib/billing/invoice-facts", () => ({
 	markRefundedInvoice: vi.fn(),
 }));
 vi.mock("@/lib/billing/payment-methods", () => ({ attemptBackupPayment: vi.fn() }));
+vi.mock("@/lib/billing/factura/credit-note", () => ({
+	issueCreditNotesForCharge: vi.fn(),
+	issueCreditNoteForRefund: vi.fn(),
+}));
 const stripeClient = vi.hoisted(() => ({ subscriptions: { retrieve: vi.fn(), list: vi.fn() } }));
 vi.mock("@/lib/billing/stripe", () => ({ getStripe: () => stripeClient }));
 vi.mock("@/lib/email/billing-email", () => ({
@@ -27,6 +31,7 @@ vi.mock("@/lib/email/billing-email", () => ({
 	sendTrialEndingEmail: vi.fn(),
 }));
 
+import { issueCreditNotesForCharge } from "@/lib/billing/factura/credit-note";
 import { markRefundedInvoice, recordInvoiceFacts } from "@/lib/billing/invoice-facts";
 import { mirrorPaidInvoice } from "@/lib/billing/invoices";
 import { handleStripeEvent, type WebhookHoldPort } from "@/lib/billing/webhook-handler";
@@ -56,6 +61,7 @@ beforeEach(() => {
 	vi.mocked(mirrorPaidInvoice).mockReset();
 	vi.mocked(recordInvoiceFacts).mockReset();
 	vi.mocked(markRefundedInvoice).mockReset();
+	vi.mocked(issueCreditNotesForCharge).mockReset();
 });
 
 describe("invoice.payment_succeeded records the tax facts", () => {
@@ -98,6 +104,29 @@ describe("charge.refunded reaches the invoice", () => {
 		const charge = { id: "ch_1", refunded: true, payment_intent: "pi_1" };
 		await handleStripeEvent(eventOf("charge.refunded", charge), { holds: noHolds });
 		expect(markRefundedInvoice).toHaveBeenCalledWith(charge, stripeClient);
+	});
+
+	it("issues the charge's credit notes after the status write (#7369)", async () => {
+		const order: string[] = [];
+		vi.mocked(markRefundedInvoice).mockImplementation(async () => {
+			order.push("status");
+			return "in_1";
+		});
+		vi.mocked(issueCreditNotesForCharge).mockImplementation(async () => {
+			order.push("credit-notes");
+			return [];
+		});
+		const charge = { id: "ch_1", refunded: false, payment_intent: "pi_1" };
+		await handleStripeEvent(eventOf("charge.refunded", charge), { holds: noHolds });
+		expect(order).toEqual(["status", "credit-notes"]);
+		expect(issueCreditNotesForCharge).toHaveBeenCalledWith(charge, stripeClient);
+	});
+
+	it("a credit-note store failure fails the event, so Stripe redelivers it", async () => {
+		vi.mocked(issueCreditNotesForCharge).mockRejectedValue(new Error("credit note: store_failed"));
+		await expect(
+			handleStripeEvent(eventOf("charge.refunded", { id: "ch_1", refunded: false }), { holds: noHolds }),
+		).rejects.toThrow("store_failed");
 	});
 
 	it("a Stripe error fails the event, so Stripe redelivers it", async () => {
