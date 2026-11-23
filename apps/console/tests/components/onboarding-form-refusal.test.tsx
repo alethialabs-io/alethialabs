@@ -39,6 +39,7 @@ vi.mock("@/components/org/org-logo-upload", () => ({ OrgLogoUpload: () => null }
 vi.mock("@/lib/org-url", () => ({ orgHost: () => "alethialabs.io" }));
 
 import { OnboardingForm, type OnboardingFormProps } from "@/components/auth/onboarding-form";
+import { unnamedControls } from "../support/accessible-names";
 
 const RESERVED = "That slug is reserved — try another.";
 const TERMS = [
@@ -341,6 +342,20 @@ describe("OnboardingForm — the Pro trial's payer facts", () => {
 		expect(finishOnboarding.mock.calls[0]?.[0]).toMatchObject({
 			payer: { vatIdStatus: "given", vatId: "DE123456789" },
 		});
+	});
+
+	it("asks a US payer for its state, with a named picker (#7324)", async () => {
+		const user = userEvent.setup();
+		const { container } = renderIt({ trial, country: { code: "US", source: "location" }, capacity: "organization" });
+
+		await user.click(screen.getByRole("radio", { name: /commercial projects/i }));
+		expect(screen.getByRole("combobox", { name: "State" })).toBeInTheDocument();
+		// Swept for page-controls-accessible-names.test.tsx.
+		expect(unnamedControls(container)).toEqual([]);
+		await user.type(screen.getByRole("textbox", { name: /your role/i }), "Founder");
+		await user.click(createButton());
+		expect(await screen.findByText(/Select the US state/i)).toBeInTheDocument();
+		expect(finishOnboarding).not.toHaveBeenCalled();
 	});
 
 	it("does not ask a consumer about a VAT number", async () => {

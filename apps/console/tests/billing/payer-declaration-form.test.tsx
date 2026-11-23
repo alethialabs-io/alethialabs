@@ -14,6 +14,7 @@ import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { unnamedControls } from "../support/accessible-names";
 
 vi.mock("@repo/ui/country-select", () => ({
 	CountrySelect: ({ value, onChange }: { value: string; onChange: (code: string) => void }) => (
@@ -117,6 +118,8 @@ describe("the US state", () => {
 		await organizationIn(user, "US");
 		expect(screen.queryByText("Does the organization have a VAT number?")).toBeNull();
 		expect(screen.getByRole("combobox", { name: "State" })).toBeInTheDocument();
+		// Swept for page-controls-accessible-names.test.tsx: every control on the form has a name.
+		expect(unnamedControls(document.body)).toEqual([]);
 		await user.click(screen.getByRole("button", { name: /Continue to payment/ }));
 		expect(await screen.findByText(/Select the US state/)).toBeInTheDocument();
 		expect(onDeclare).not.toHaveBeenCalled();

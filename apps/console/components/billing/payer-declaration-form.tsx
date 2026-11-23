@@ -440,7 +440,7 @@ export function PayerDeclarationForm({
 					{(id) => (
 						<Input
 							id={id}
-							placeholder="DE123456789"
+							aria-label="VAT number" placeholder="DE123456789"
 							autoComplete="off"
 							disabled={busy}
 							{...form.register("vatId")}
@@ -572,28 +572,28 @@ export function BillingAddressForm({
 			</p>
 			<Field label="Billing name" required error={errors.name?.message}>
 				{(id) => (
-					<Input id={id} placeholder="Acme GmbH" autoComplete="organization" disabled={busy} {...form.register("name")} />
+					<Input id={id} aria-label="Billing name" placeholder="Acme GmbH" autoComplete="organization" disabled={busy} {...form.register("name")} />
 				)}
 			</Field>
 			<Field label="Address line 1" required error={errors.line1?.message}>
 				{(id) => (
-					<Input id={id} placeholder="123 Main St" autoComplete="address-line1" disabled={busy} {...form.register("line1")} />
+					<Input id={id} aria-label="Address line 1" placeholder="123 Main St" autoComplete="address-line1" disabled={busy} {...form.register("line1")} />
 				)}
 			</Field>
 			<Field label="Address line 2" error={errors.line2?.message}>
 				{(id) => (
-					<Input id={id} placeholder="Suite, unit, floor" autoComplete="address-line2" disabled={busy} {...form.register("line2")} />
+					<Input id={id} aria-label="Address line 2" placeholder="Suite, unit, floor" autoComplete="address-line2" disabled={busy} {...form.register("line2")} />
 				)}
 			</Field>
 			<div className="grid grid-cols-2 gap-3">
 				<Field label="City" required error={errors.city?.message}>
 					{(id) => (
-						<Input id={id} placeholder="Berlin" autoComplete="address-level2" disabled={busy} {...form.register("city")} />
+						<Input id={id} aria-label="City" placeholder="Berlin" autoComplete="address-level2" disabled={busy} {...form.register("city")} />
 					)}
 				</Field>
 				<Field label="Postal code" required error={errors.postalCode?.message}>
 					{(id) => (
-						<Input id={id} placeholder="10115" autoComplete="postal-code" disabled={busy} {...form.register("postalCode")} />
+						<Input id={id} aria-label="Postal code" placeholder="10115" autoComplete="postal-code" disabled={busy} {...form.register("postalCode")} />
 					)}
 				</Field>
 			</div>
