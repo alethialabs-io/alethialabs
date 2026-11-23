@@ -8,7 +8,7 @@
 // duplicate-destroy guard, and that notifyScaler fires after queueing jobs.
 
 import { PgDialect } from "drizzle-orm/pg-core";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
@@ -108,6 +108,12 @@ beforeEach(() => {
 		hash: "tok-hash",
 	});
 	vi.mocked(deploymentMode).mockReturnValue("self-managed");
+	vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://alethia.example.com");
+	vi.stubEnv("BETTER_AUTH_URL", "");
+});
+
+afterEach(() => {
+	vi.unstubAllEnvs();
 });
 
 describe("getRunnersWithReleases (the mention picker's and the agent tool's list)", () => {
@@ -269,6 +275,37 @@ describe("deployRunner", () => {
 				region: "europe-west1",
 			}),
 		).rejects.toThrow(/deployed runners are AWS only/i);
+		expect(mock.valuesSpy).not.toHaveBeenCalled();
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	// EDN-H7 (#6904): the runner connects back to THIS instance, and an instance with no public URL
+	// is refused rather than handed the hosted service as a default.
+	it("points the deployed runner at this instance's own origin", async () => {
+		vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://alethia.example.com/");
+		mock.queue.push([{ provider: "aws" }], [{ id: "r-dep", name: "Cloud" }], [{ id: "job-1" }]);
+		await deployRunner({ name: "Cloud", cloudIdentityId: "ci-1", region: "us-east-1" });
+		expect(mock.valuesSpy.mock.calls[1][0].config_snapshot.alethia_url).toBe(
+			"https://alethia.example.com",
+		);
+	});
+
+	it("falls back to the auth origin, never to the hosted service", async () => {
+		vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
+		vi.stubEnv("BETTER_AUTH_URL", "https://auth.example.com");
+		mock.queue.push([{ provider: "aws" }], [{ id: "r-dep", name: "Cloud" }], [{ id: "job-1" }]);
+		await deployRunner({ name: "Cloud", cloudIdentityId: "ci-1", region: "us-east-1" });
+		expect(mock.valuesSpy.mock.calls[1][0].config_snapshot.alethia_url).toBe(
+			"https://auth.example.com",
+		);
+	});
+
+	it("refuses a self-hosted instance with no public URL, before writing anything", async () => {
+		vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
+		mock.queue.push([{ provider: "aws" }], [{ id: "r-dep", name: "Cloud" }], [{ id: "job-1" }]);
+		await expect(
+			deployRunner({ name: "Cloud", cloudIdentityId: "ci-1", region: "us-east-1" }),
+		).rejects.toThrow(/no public URL/);
 		expect(mock.valuesSpy).not.toHaveBeenCalled();
 		expect(notifyScaler).not.toHaveBeenCalled();
 	});
@@ -455,6 +492,36 @@ describe("updateRunner", () => {
 			[{ id: "active", config_snapshot: { runner_id: "r-up" } }], // active DEPLOY/UPDATE/DESTROY
 		);
 		await expect(updateRunner("r-up")).rejects.toThrow(/already in progress/);
+	});
+
+	// EDN-H7 (#6904): the URL the runner was deployed with wins; only a runner deployed before it was
+	// recorded takes this instance's own origin, and an instance with none is refused.
+	it("keeps the console URL the runner was deployed with", async () => {
+		const recorded = {
+			...runnerRow,
+			metadata: {
+				deploy_config: { ...runnerRow.metadata.deploy_config, alethia_url: "https://old.example.com" },
+			},
+		};
+		mock.queue.push([recorded], [{ provider: "aws" }], [], [{ version: "3.4.5" }], [], [{ id: "job-up" }]);
+		await updateRunner("r-up");
+		expect(mock.valuesSpy.mock.calls[0][0].config_snapshot.alethia_url).toBe("https://old.example.com");
+	});
+
+	it("gives an unrecorded runner this instance's own origin", async () => {
+		mock.queue.push([runnerRow], [{ provider: "aws" }], [], [{ version: "3.4.5" }], [], [{ id: "job-up" }]);
+		await updateRunner("r-up");
+		expect(mock.valuesSpy.mock.calls[0][0].config_snapshot.alethia_url).toBe(
+			"https://alethia.example.com",
+		);
+	});
+
+	it("refuses an unrecorded runner on a self-hosted instance with no public URL", async () => {
+		vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
+		mock.queue.push([runnerRow], [{ provider: "aws" }], [], [{ version: "3.4.5" }], [], [{ id: "job-up" }]);
+		await expect(updateRunner("r-up")).rejects.toThrow(/no public URL/);
+		expect(mock.valuesSpy).not.toHaveBeenCalled();
+		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 
 	it("succeeds without a stored token — nothing is read from at rest (#945)", async () => {

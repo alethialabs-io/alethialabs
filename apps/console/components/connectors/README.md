@@ -93,7 +93,7 @@ short-lived minted assertion; the token clouds have no federation, so a scoped t
 | `api-key-connection.tsx` | The api_key credential form for a pluggable connector, opened from the board. Not a cloud connect. |
 | `use-connection-test.ts` | `useConnectionTest()` — runs one save + verify through `useActionMutation` (double submit ignored, board invalidated) and exposes `state` (`idle`/`saving`/`success`/`failed`) for `ConnectStatus`. |
 | `provider-config-fields.tsx` | The generic `provider_config` field renderer (also used by the canvas inspector). |
-| `connector-assets.ts` | `connectorAssetUrl()` (setup script / template URLs), `CONNECTOR_DOCS_BASE`, and the pre-filled issuer/client-id constants. |
+| `connector-assets.ts` | `useConnectorAssets()` (setup script URLs and the OIDC issuer, decided from the instance edition: the hosted asset bucket only on the hosted service, this instance's own origin otherwise), `CONNECTOR_DOCS_BASE`. |
 | `../../lib/cloud-providers/gcp-wif.ts` | Pure WIF helper — `buildWifConfig(projectId, projectNumber)` + the fixed pool/provider/SA constants + `GCP_PROJECT_ID_REGEX`. No server deps, so the server verify **and** the client form import the same builder. |
 
 ## Clouds a deployment does not offer

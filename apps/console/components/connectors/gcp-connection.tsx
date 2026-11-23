@@ -10,7 +10,7 @@ import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@repo/
 import { Input } from "@repo/ui/input";
 import { Textarea } from "@repo/ui/textarea";
 import { ConnectSheetShell, MethodTabs, Step, StoredNote } from "@/components/connectors/connection-ui";
-import { connectorAssetUrl } from "@/components/connectors/connector-assets";
+import { useConnectorAssets } from "@/components/connectors/connector-assets";
 import { ConnectForm } from "@/components/cloud-connect/connect-form";
 import {
 	commandWith,
@@ -51,7 +51,8 @@ export function GcpConnection({ session }: { session: ConnectSession }) {
 	const mode = useWatch({ control: form.control, name: "mode" });
 	const projectId = useWatch({ control: form.control, name: "projectId" }) ?? "";
 
-	const scriptUrl = connectorAssetUrl("alethia-gcp-setup.sh");
+	const { assetUrl } = useConnectorAssets();
+	const scriptUrl = assetUrl("alethia-gcp-setup.sh");
 	const cloudShellCmd = commandWith(
 		`curl -sO ${scriptUrl} && bash alethia-gcp-setup.sh YOUR_PROJECT_ID`,
 		"YOUR_PROJECT_ID",
