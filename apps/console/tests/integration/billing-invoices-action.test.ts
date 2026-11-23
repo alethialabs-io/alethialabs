@@ -93,6 +93,9 @@ describeIfDb("listInvoices without Stripe configured (#3731)", () => {
 				organizationId: ORG,
 				stripeInvoiceId: `in_test_${INVOICE_MINE.slice(0, 12)}`,
 				number: "IT-0001",
+				// An issued фактура: only those show their number (EA-7c, #7341).
+				facturaStatus: "issued",
+				pdfKey: `test/IT-0001.pdf`,
 				status: "paid",
 				amountTotal: 2000,
 				currency: "usd",
@@ -103,6 +106,9 @@ describeIfDb("listInvoices without Stripe configured (#3731)", () => {
 				organizationId: OTHER_ORG,
 				stripeInvoiceId: `in_test_${INVOICE_THEIRS.slice(0, 12)}`,
 				number: "IT-9999",
+				// An issued фактура: only those show their number (EA-7c, #7341).
+				facturaStatus: "issued",
+				pdfKey: `test/IT-9999.pdf`,
 				status: "paid",
 				amountTotal: 9900,
 				currency: "usd",

@@ -52,6 +52,7 @@ const invoice = (over: Record<string, unknown> = {}) => ({
 	id: "inv-1",
 	number: "A-0001",
 	pdfKey: "org-1/inv-1.pdf",
+	facturaStatus: "issued",
 	hostedInvoiceUrl: "https://invoice.stripe.test/i/inv-1",
 	...over,
 });
@@ -132,6 +133,17 @@ describe("invoice PDF refusals", () => {
 		expect(body).toContain("Your invoice is being issued");
 		expect(body).toContain('data-invoice-pdf-error="being-issued"');
 		expect(body).not.toContain("stripe");
+		expect(storageGet).not.toHaveBeenCalled();
+	});
+
+	it("never serves a stored PDF on a row whose фактура is not issued (a pre-pipeline Stripe copy)", async () => {
+		authorize.mockResolvedValue({ orgId: "org-1" });
+		for (const facturaStatus of ["pending", "failed", null]) {
+			getOrgInvoice.mockResolvedValue(invoice({ facturaStatus }));
+			const res = await call();
+			expect(res.status).toBe(404);
+			expect(await htmlBody(res)).toContain("Your invoice is being issued");
+		}
 		expect(storageGet).not.toHaveBeenCalled();
 	});
 

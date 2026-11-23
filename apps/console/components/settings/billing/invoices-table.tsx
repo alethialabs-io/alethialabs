@@ -4,8 +4,12 @@
 
 // Invoices table (Billing) — a presentational DataTable of the org's mirrored invoices with
 // number, paid date, billing period, status, total, and per-row actions (Preview + a
-// self-hosted PDF download). Read-only; the parent owns the data + the preview dialog. The
-// PDF/download hrefs are built from the org slug (route segment `[org]`).
+// download of our stored фактура PDF). Read-only; the parent owns the data + the preview dialog.
+// The PDF/download hrefs are built from the org slug (route segment `[org]`).
+//
+// A row whose фактура is not issued yet says "Being issued" in place of its number and offers no
+// download (EA-7c, #7341): Stripe's hosted invoice and Stripe's PDF are never the customer's
+// invoice, so there is nothing to link to until ours exists.
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { Download, Eye } from "lucide-react";
@@ -44,6 +48,9 @@ export function formatBillingPeriod(invoice: InvoiceInfo): string {
 	return formatDate(invoice.paidAt, "month");
 }
 
+/** What a row or the preview dialog says in place of a фактура that is not issued yet. */
+export const INVOICE_BEING_ISSUED = "Being issued";
+
 /** Builds the inline-preview / download href for an invoice's PDF route. */
 export function invoicePdfHref(org: string, id: string, download = false): string {
 	const base = `/${org}/~/settings/billing/invoices/${id}/pdf`;
@@ -73,11 +80,14 @@ export function InvoicesTable({
 			{
 				accessorKey: "number",
 				header: "Invoice",
-				cell: ({ row }) => (
-					<span className="font-mono text-xs text-foreground">
-						{row.original.number ?? "—"}
-					</span>
-				),
+				cell: ({ row }) =>
+					row.original.facturaIssued ? (
+						<span className="font-mono text-xs text-foreground">
+							{row.original.number ?? "—"}
+						</span>
+					) : (
+						<span className="text-xs text-muted-foreground">{INVOICE_BEING_ISSUED}</span>
+					),
 			},
 			{
 				accessorKey: "paidAt",
@@ -137,7 +147,7 @@ export function InvoicesTable({
 							<Eye size={12} />
 							Preview
 						</button>
-						{row.original.hasPdf && (
+						{row.original.facturaIssued && (
 							<a
 								className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
 								href={invoicePdfHref(org, row.original.id, true)}

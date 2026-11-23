@@ -3,12 +3,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Invoice preview dialog — the detail view for a single mirrored invoice: header metadata
-// (number, status, paid date, billing period, description, total) over an embedded PDF
-// preview (inline `pdf` route in an iframe). The footer downloads the PDF and, whenever Stripe has
-// one, links out to Stripe's hosted receipt as well. Presentational — the parent owns the
-// open state + which invoice is selected.
+// (фактура number, status, paid date, billing period, description, total) over an embedded
+// preview of our stored фактура PDF (inline `pdf` route in an iframe), with its download in the
+// footer. Presentational — the parent owns the open state + which invoice is selected.
+//
+// Until the фактура is issued the dialog says "Your invoice is being issued" and offers no
+// document (EA-7c, #7341). It used to link out to Stripe's hosted receipt; that page is not the
+// customer's invoice of record (lib/billing/invoices.ts), so it is not offered here at all, not
+// even as a fallback beside the PDF.
 
-import { Download, ExternalLink } from "lucide-react";
+import { Download, FileClock } from "lucide-react";
 import { useParams } from "next/navigation";
 import type { InvoiceInfo } from "@/lib/rpc/procedures/billing";
 import { formatDate, formatMoney } from "@repo/format";
@@ -21,6 +25,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@repo/ui/dialog";
+import { EmptyState } from "@repo/ui/empty";
 import {
 	formatBillingPeriod,
 	InvoiceStatusBadge,
@@ -42,9 +47,9 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 }
 
 /**
- * The invoice preview dialog. Renders nothing meaningful until an `invoice` is selected;
- * embeds the inline PDF route when a PDF exists, offers its download, and offers Stripe's hosted
- * receipt whenever there is one.
+ * The invoice preview dialog. Renders nothing meaningful until an `invoice` is selected; embeds
+ * and offers the download of our stored фактура PDF once it is issued, and says the invoice is
+ * being issued until then.
  */
 export function InvoicePreviewDialog({
 	invoice,
@@ -66,7 +71,7 @@ export function InvoicePreviewDialog({
 						{invoice && <InvoiceStatusBadge status={invoice.status} />}
 					</DialogTitle>
 					<DialogDescription>
-						{invoice?.description ?? "Invoice details and receipt."}
+						{invoice?.description ?? "Invoice details."}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -87,43 +92,32 @@ export function InvoicePreviewDialog({
 							</DetailRow>
 						</div>
 
-						{invoice.hasPdf && (
-							<iframe
-								title={`Invoice ${invoice.number ?? invoice.id}`}
-								src={invoicePdfHref(org, invoice.id)}
-								className="h-[60vh] w-full rounded-md border border-border bg-surface"
+						{invoice.facturaIssued ? (
+							<>
+								<iframe
+									title={`Invoice ${invoice.number ?? invoice.id}`}
+									src={invoicePdfHref(org, invoice.id)}
+									className="h-[60vh] w-full rounded-md border border-border bg-surface"
+								/>
+								<DialogFooter>
+									<Button
+										size="sm"
+										nativeButton={false}
+										render={<a href={invoicePdfHref(org, invoice.id, true)} />}
+									>
+										<Download size={14} />
+										Download PDF
+									</Button>
+								</DialogFooter>
+							</>
+						) : (
+							<EmptyState
+								className="rounded-md border border-border"
+								icon={<FileClock />}
+								title="Your invoice is being issued"
+								description="The invoice will appear here to view and download once it is issued."
 							/>
 						)}
-
-						{/* The hosted receipt is offered BESIDE the PDF whenever Stripe has one, not only
-						    when there is no PDF: it is the fallback when the preview above cannot load
-						    the stored copy (CON-L3, R6 F-08), and the route's own failure page is a
-						    sentence, not a way to the document. */}
-						<DialogFooter>
-							{invoice.hostedInvoiceUrl && (
-								<Button
-									size="sm"
-									variant="outline"
-									nativeButton={false}
-									render={
-										<a
-											href={invoice.hostedInvoiceUrl}
-											target="_blank"
-											rel="noopener noreferrer"
-										/>
-									}
-								>
-									<ExternalLink size={14} />
-									Open receipt
-								</Button>
-							)}
-							{invoice.hasPdf && (
-								<Button size="sm" nativeButton={false} render={<a href={invoicePdfHref(org, invoice.id, true)} />}>
-									<Download size={14} />
-									Download PDF
-								</Button>
-							)}
-						</DialogFooter>
 					</>
 				)}
 			</DialogContent>
