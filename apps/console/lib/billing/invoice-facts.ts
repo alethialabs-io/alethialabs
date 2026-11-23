@@ -416,6 +416,19 @@ export async function recordInvoiceFacts(
 export type InvoicePaymentsReader = Pick<Stripe, "invoicePayments">;
 
 /**
+ * The one Stripe call that finds the invoice a PaymentIntent paid, as a structural type: the Stripe
+ * client satisfies it, and so does a test double that implements only this call.
+ */
+export interface InvoicePaymentLookup {
+	invoicePayments: {
+		list(params: {
+			payment: { type: "payment_intent"; payment_intent: string };
+			limit: number;
+		}): Promise<{ data: { invoice?: string | { id?: string } | null }[] }>;
+	};
+}
+
+/**
  * Marks the invoice a FULLY refunded charge paid as `refunded`, so it drops out of every total.
  * A partial refund changes nothing (see the file header). The charge names no invoice in this API
  * version, so the invoice is found through the charge's PaymentIntent. Returns the Stripe invoice id
@@ -426,7 +439,21 @@ export async function markRefundedInvoice(
 	stripe: InvoicePaymentsReader,
 ): Promise<string | null> {
 	if (!charge.refunded) return null;
-	const pi = charge.payment_intent;
+	const invoiceId = await invoiceIdOfPaymentIntent(charge.payment_intent, stripe);
+	if (!invoiceId) return null;
+	await setInvoiceStatus(invoiceId, "refunded");
+	return invoiceId;
+}
+
+/**
+ * The Stripe invoice a PaymentIntent paid, or null. A charge or refund names no invoice in this API
+ * version, so the invoice is found through its invoice payment. Shared by the refund status write
+ * above and the credit-note issuer (lib/billing/factura/credit-note.ts). A Stripe error throws.
+ */
+export async function invoiceIdOfPaymentIntent(
+	pi: string | Stripe.PaymentIntent | null | undefined,
+	stripe: InvoicePaymentLookup,
+): Promise<string | null> {
 	const paymentIntent = typeof pi === "string" ? pi : (pi?.id ?? null);
 	if (!paymentIntent) return null;
 	const payments = await stripe.invoicePayments.list({
@@ -434,10 +461,7 @@ export async function markRefundedInvoice(
 		limit: 1,
 	});
 	const ref = payments.data[0]?.invoice;
-	const invoiceId = typeof ref === "string" ? ref : (ref?.id ?? null);
-	if (!invoiceId) return null;
-	await setInvoiceStatus(invoiceId, "refunded");
-	return invoiceId;
+	return typeof ref === "string" ? ref : (ref?.id ?? null);
 }
 
 // ── The totals, for the purchase gate ───────────────────────────────────────────────────────────

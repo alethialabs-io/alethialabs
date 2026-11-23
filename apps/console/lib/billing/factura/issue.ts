@@ -15,7 +15,7 @@
 //     that fails, the фактура still exists (number and snapshot are committed), the outcome says
 //     `pdf_failed`, and a replay of the event renders it again from the same snapshot.
 //
-// IDEMPOTENT on (Stripe invoice id, kind): a replay finds the issued row and returns it. Two
+// IDEMPOTENT on (Stripe invoice id, kind, refund id), the refund id NULL for a фактура: a replay finds the issued row and returns it. Two
 // concurrent issuers for one invoice race on that unique key; the loser's insert does nothing, its
 // transaction is rolled back (returning its number), and it returns the winner's row.
 //
@@ -37,7 +37,7 @@ import {
 } from "@/lib/db/schema";
 import { log } from "@/lib/observability/log";
 import { storage } from "@/lib/storage";
-import { INVOICE_PDF_BUCKET, invoicePdfKey } from "@/lib/storage/invoice-pdf";
+import { creditNotePdfKey, INVOICE_PDF_BUCKET, invoicePdfKey } from "@/lib/storage/invoice-pdf";
 import {
 	type FacturaFailure,
 	type FacturaSource,
@@ -124,7 +124,7 @@ export const dbFacturaStore: FacturaStore = {
 				const [row] = await tx
 					.insert(factura)
 					.values(build(String(series.lastNumber).padStart(10, "0")))
-					.onConflictDoNothing({ target: [factura.stripeInvoiceId, factura.kind] })
+					.onConflictDoNothing({ target: [factura.stripeInvoiceId, factura.kind, factura.stripeRefundId] })
 					.returning();
 				if (!row) throw new LostRace();
 				return row;
@@ -173,11 +173,22 @@ function fail(reason: FacturaFailure, detail: string): FacturaOutcome {
 	return { ok: false, reason, detail };
 }
 
+/** Where an issued row's PDF is stored: per Stripe invoice for a фактура, per refund for a credit note. */
+export function facturaPdfKey(row: Pick<Factura, "organizationId" | "stripeInvoiceId" | "stripeRefundId">): string {
+	return row.stripeRefundId
+		? creditNotePdfKey(row.organizationId, row.stripeInvoiceId, row.stripeRefundId)
+		: invoicePdfKey(row.organizationId, row.stripeInvoiceId);
+}
+
 /**
- * The PDF of an issued row: the stored one, checked against its SHA-256, or, when none is stored
- * yet, rendered from the snapshot, stored and attached.
+ * The PDF of an issued row (a фактура or a credit note): the stored one, checked against its
+ * SHA-256, or, when none is stored yet, rendered from the snapshot, stored and attached. Shared by
+ * the credit-note issuer and the sweeper (#7369).
  */
-async function documentFor(row: Factura, orgId: string, deps: IssueDeps): Promise<FacturaOutcome> {
+export async function documentFor(
+	row: Factura,
+	deps: Pick<IssueDeps, "store" | "pdfStorage" | "render">,
+): Promise<FacturaOutcome> {
 	const issued = (pdfKey: string, pdf: Uint8Array): FacturaOutcome => ({
 		ok: true,
 		factura: {
@@ -204,7 +215,7 @@ async function documentFor(row: Factura, orgId: string, deps: IssueDeps): Promis
 	}
 	try {
 		const pdf = await deps.render(row.snapshot);
-		const key = invoicePdfKey(orgId, row.stripeInvoiceId);
+		const key = facturaPdfKey(row);
 		await deps.pdfStorage.put(INVOICE_PDF_BUCKET, key, pdf, "application/pdf");
 		await deps.store.attachPdf(row.id, key, sha256(pdf));
 		return issued(key, pdf);
@@ -241,7 +252,7 @@ async function issueFor(inv: FacturaSource & { id: string }, orgId: string, deps
 		log.error("[factura] lookup failed", { err, invoice: inv.id });
 		return fail("store_failed", "the фактура store could not be read");
 	}
-	if (existing) return documentFor(existing, orgId, deps);
+	if (existing) return documentFor(existing, deps);
 
 	const paidAt = inv.status_transitions?.paid_at ? new Date(inv.status_transitions.paid_at * 1000) : deps.now();
 	const chargeableDate = sofiaDay(paidAt);
@@ -276,7 +287,7 @@ async function issueFor(inv: FacturaSource & { id: string }, orgId: string, deps
 	if (!row || !isLegalInvoiceNumber(row.number)) {
 		return fail("store_failed", "the issued фактура could not be read back");
 	}
-	return documentFor(row, orgId, deps);
+	return documentFor(row, deps);
 }
 
 // Dedupe concurrent issue+render for the same invoice within a process. The database is the real
@@ -319,7 +330,7 @@ export async function issuedFacturaFor(
 	try {
 		const row = await all.store.findIssued(stripeInvoiceId);
 		if (!row) return null;
-		const outcome = await documentFor(row, row.organizationId, all);
+		const outcome = await documentFor(row, all);
 		return outcome.ok ? outcome.factura : null;
 	} catch (err) {
 		log.error("[factura] lookup for the receipt failed", { err, invoice: stripeInvoiceId });
