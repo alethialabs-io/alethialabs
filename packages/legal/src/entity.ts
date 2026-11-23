@@ -14,6 +14,7 @@ export const LEGAL_ENTITY = {
 	vatRegistered: false,
 	vatNumber: null,
 	jurisdiction: "Bulgaria",
+	jurisdictionBulgarian: "България",
 	governingLaw: "Bulgaria",
 	manager: "Borislav Ventsislavov Borisov",
 	managerBulgarian: "Борислав Венциславов Борисов",
