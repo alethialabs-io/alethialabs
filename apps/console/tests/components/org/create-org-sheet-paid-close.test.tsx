@@ -166,7 +166,15 @@ vi.mock("@/lib/billing/use-live-plan-price", () => ({
 }));
 vi.mock("@/lib/org-url", () => ({ orgHost: () => "alethialabs.io" }));
 
+// The sheet is an overlay wizard (`?wizard=create-org&step=`): its URL and viewer come from the test
+// page, whose query string survives an unmount — so a fresh render is a reload.
+vi.mock("@/lib/wizard/location", async (importOriginal) => {
+	const harness = await import("@/tests/components/design-project/byo/byo-wizard-harness");
+	return { ...(await importOriginal()), useWizardEnvironment: harness.useTestWizardEnvironment };
+});
+
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
+import { resetTestPage } from "@/tests/components/design-project/byo/byo-wizard-harness";
 import { fakeServer, orgCreatedButResponseLost } from "./fake-new-org-server";
 import {
 	pendingPaidSetupKey,
@@ -224,6 +232,7 @@ async function payAndFail(user: ReturnType<typeof userEvent.setup>, onOpenChange
 }
 
 beforeEach(() => {
+	resetTestPage();
 	vi.clearAllMocks();
 	fakeServer.reset();
 	findUnfinished.mockResolvedValue(null);
