@@ -2706,6 +2706,29 @@ ALTER TABLE public.runner_usage_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.legal_acceptance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.commerce_order ENABLE ROW LEVEL SECURITY;
 
+-- ── Early Access grant requests (#7321) ───────────────────────────────────────────
+-- early_access_request is ORG-BOUNDED, the projects/jobs arm: a row is reachable from the org it
+-- belongs to (organization_id = current_org) and from the caller's personal org
+-- (organization_id = current_owner), never by who filed it. The app role may SELECT and INSERT
+-- only, and an app-role INSERT must be a bare `open` request with no VIES fields. There is
+-- deliberately no UPDATE or DELETE policy: the status, the staff decision and the VIES verdict are
+-- written by the service role (the console's VIES check, the admin app's grant), so an app-role
+-- session cannot file a request as already granted, forge a VIES verdict, or rewrite either later.
+-- (A decided row also needs decided_at/decided_by_email, which the decision_shape check ties to
+-- status, so status = 'open' here keeps the decision columns empty too.)
+ALTER TABLE public.early_access_request ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS early_access_request_select ON public.early_access_request;
+CREATE POLICY early_access_request_select ON public.early_access_request FOR SELECT
+  USING (organization_id = current_setting('app.current_org', true)::uuid
+         OR organization_id = current_setting('app.current_owner', true)::uuid);
+DROP POLICY IF EXISTS early_access_request_insert ON public.early_access_request;
+CREATE POLICY early_access_request_insert ON public.early_access_request FOR INSERT
+  WITH CHECK ((organization_id = current_setting('app.current_org', true)::uuid
+               OR organization_id = current_setting('app.current_owner', true)::uuid)
+              AND status = 'open'
+              AND vies_valid IS NULL AND vies_name IS NULL AND vies_address IS NULL
+              AND vies_request_id IS NULL AND vies_checked_at IS NULL);
+
 -- ── Privacy operations (#2373) ────────────────────────────────────────────────────
 -- privacy_case / privacy_case_event / privacy_erasure_tombstone hold the record of who
 -- exercised a right and what was done about it. Service-role only: RLS enabled with NO

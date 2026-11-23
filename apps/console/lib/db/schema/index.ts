@@ -47,6 +47,7 @@ export * from "./pending-org-setups";
 export * from "./purchase-leases";
 export * from "./payment-holds";
 export * from "./invoices";
+export * from "./early-access";
 export * from "./teams";
 export * from "./sso";
 export * from "./alerts";
