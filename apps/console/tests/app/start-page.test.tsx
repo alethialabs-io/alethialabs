@@ -82,6 +82,9 @@ async function realMarketClosedRefusal(): Promise<PaidConversionNotAllowedError>
 			organizationId: "org-1",
 			capacity: "organization",
 			billingCountry: "DE",
+			// Since #7324 a German organization must say whether it has a VAT number before the market
+			// is asked; "no" is the answer that reaches the market check.
+			vatIdGiven: false,
 		});
 	} catch (err) {
 		if (err instanceof PaidConversionNotAllowedError && err.reason === "market_closed") return err;

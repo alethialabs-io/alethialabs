@@ -168,6 +168,20 @@ function catalogMoney(
   return money(prices?.[currency] ?? 0, currency);
 }
 
+/**
+ * A billing address already collected — by the payer declaration, before the intent (#7324). Given
+ * one, the form does not ask again: it shows the address read-only and charges the card under it.
+ */
+export interface CheckoutPrefill {
+  name: string;
+  line1: string;
+  line2?: string;
+  city: string;
+  postalCode: string;
+  country: string;
+  state?: string;
+}
+
 interface BillingCheckoutFormProps {
   /** The subscription intent's client secret (confirmed here). */
   clientSecret: string;
@@ -205,6 +219,17 @@ interface BillingCheckoutFormProps {
    * charge cannot lose them (#5445).
    */
   beforeConfirm?: (billing: CollectedBilling) => Promise<CheckoutRefusal | null>;
+  /**
+   * The address the declaration collected (#7324). The sheets that pass it have already written it to
+   * the Stripe customer before the intent, so the form only shows it.
+   */
+  prefilled?: CheckoutPrefill | null;
+  /**
+   * Whether to offer the "Add a tax ID" field. Default true. False in the upgrade sheets (#7324): a
+   * VAT number reaches the order only through the declaration, where the purchase gate has judged it
+   * — never as a tax id saved after the card is charged.
+   */
+  collectTaxId?: boolean;
 }
 
 export function BillingCheckoutForm({
@@ -218,6 +243,8 @@ export function BillingCheckoutForm({
   scrollable = false,
   onPaid,
   beforeConfirm,
+  prefilled = null,
+  collectTaxId = true,
 }: BillingCheckoutFormProps) {
   const stripe = useStripe();
   const elements = useElements();
@@ -230,13 +257,13 @@ export function BillingCheckoutForm({
   const form = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
-      name: "",
-      country: "",
-      line1: "",
-      line2: "",
-      city: "",
-      state: "",
-      postalCode: "",
+      name: prefilled?.name ?? "",
+      country: prefilled?.country ?? "",
+      line1: prefilled?.line1 ?? "",
+      line2: prefilled?.line2 ?? "",
+      city: prefilled?.city ?? "",
+      state: prefilled?.state ?? "",
+      postalCode: prefilled?.postalCode ?? "",
       useAsPrimary: true,
       taxType: DEFAULT_TAX_ID_TYPE,
       taxValue: "",
@@ -287,7 +314,7 @@ export function BillingCheckoutForm({
       postalCode: values.postalCode,
       country: values.country,
       taxType: values.taxType,
-      taxValue: showTaxId ? values.taxValue : "",
+      taxValue: collectTaxId && showTaxId ? values.taxValue : "",
       useAsPrimary: values.useAsPrimary,
     };
     if (beforeConfirm) {
@@ -396,6 +423,24 @@ export function BillingCheckoutForm({
             </p>
           </div>
 
+          {prefilled ? (
+            <div className="space-y-1 rounded-lg border border-border px-4 py-3 text-ui-sm">
+              <div className="font-medium text-text-primary">{prefilled.name}</div>
+              <div className="text-text-secondary">
+                {[
+                  prefilled.line1,
+                  prefilled.line2,
+                  prefilled.city,
+                  prefilled.state,
+                  prefilled.postalCode,
+                  prefilled.country,
+                ]
+                  .filter((part) => part && part.length > 0)
+                  .join(", ")}
+              </div>
+            </div>
+          ) : (
+          <>
           {/* full name */}
           <Field label="Full name" error={form.formState.errors.name?.message}>
             {(id) => (
@@ -499,6 +544,8 @@ export function BillingCheckoutForm({
               />
             )}
           </Field>
+          </>
+          )}
 
           {/* use as primary address */}
           <Controller
@@ -516,15 +563,17 @@ export function BillingCheckoutForm({
           />
 
           {/* tax id — optional disclosure */}
-          <TaxIdSection
-            show={showTaxId}
-            onShow={() => setShowTaxId(true)}
-            onHide={() => {
-              setShowTaxId(false);
-              form.setValue("taxValue", "");
-            }}
-            form={form}
-          />
+          {collectTaxId && (
+            <TaxIdSection
+              show={showTaxId}
+              onShow={() => setShowTaxId(true)}
+              onHide={() => {
+                setShowTaxId(false);
+                form.setValue("taxValue", "");
+              }}
+              form={form}
+            />
+          )}
 
           {/* legal paragraph */}
           <p className="text-ui-xs leading-relaxed text-text-tertiary">

@@ -8,6 +8,10 @@
 //
 // #6906 (REL-L3): AI Plus and AI Max are sold behind the same gate as Pro. When the server says
 // nothing is on sale, the paid tiers are disabled with the launch state's own sentence.
+//
+// #7324: choosing a tier first declares the payer and takes the billing address; the intent waits
+// for both and carries the address. The two forms are stubbed here to submit a fixed declaration —
+// their own fields are pinned in tests/billing/payer-declaration-form.test.tsx.
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -38,15 +42,47 @@ vi.mock("@/lib/rpc/client", () => ({
 vi.mock("@/app/server/actions/billing", () => ({
 	createAiSubscriptionIntent: (...args: unknown[]) => h.createAiSubscriptionIntent(...args),
 	getAiUsageSummary: () => h.getAiUsageSummary(),
-	saveTaxId: vi.fn(),
-	updateBillingAddress: vi.fn(),
+}));
+vi.mock("@/app/server/actions/legal", () => ({
+	declarePayer: vi.fn(async () => ({ capacity: "organization", billingCountry: "US" })),
+	payerConversionStatus: vi.fn(async () => ({ allowed: true })),
+}));
+const ADDRESS = { name: "Acme", line1: "1 Main St", city: "NYC", postalCode: "10001", country: "US", state: "NY" };
+vi.mock("@/components/billing/payer-declaration-form", () => ({
+	declaredPayerFacts: (d: unknown) => d,
+	refusalActionFor: () => null,
+	PayerDeclarationForm: ({ onDeclare }: { onDeclare: (d: unknown) => void }) => (
+		<button
+			type="button"
+			onClick={() =>
+				onDeclare({
+					capacity: "organization",
+					billingCountry: "US",
+					authorityAttestation: "CEO",
+					vatIdStatus: null,
+					vatId: null,
+					billingState: "NY",
+				})
+			}
+		>
+			declare
+		</button>
+	),
+	BillingAddressForm: ({ onSubmit }: { onSubmit: (a: unknown) => void }) => (
+		<button type="button" onClick={() => onSubmit(ADDRESS)}>
+			address
+		</button>
+	),
 }));
 vi.mock("@/components/providers/viewer-provider", () => ({
 	useViewer: () => ({ viewer: { email: "owner@example.com" } }),
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+	useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+	useParams: () => ({ org: "acme" }),
+}));
 vi.mock("@/components/billing/billing-checkout-form", () => ({
 	billingAddressFrom: vi.fn(),
 	BillingCheckoutForm: ({ clientSecret }: { clientSecret: string }) => <p>pay with {clientSecret}</p>,
@@ -63,6 +99,13 @@ vi.mock("@/components/billing/currency-toggle", () => ({
 }));
 
 import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
+
+/** Chooses AI Plus, then submits the stubbed declaration and address steps. */
+async function chooseAndDeclare(): Promise<void> {
+	fireEvent.click(await screen.findByRole("button", { name: "Upgrade to AI Plus" }));
+	fireEvent.click(await screen.findByRole("button", { name: "declare" }));
+	fireEvent.click(await screen.findByRole("button", { name: "address" }));
+}
 
 /** A promise the test settles by hand. */
 function deferred<T>() {
@@ -88,13 +131,16 @@ describe("UpgradeAiSheet — the subscription intent", () => {
 		h.createAiSubscriptionIntent.mockReturnValueOnce(usd.promise).mockReturnValueOnce(eur.promise);
 
 		render(<UpgradeAiSheet open onOpenChange={() => {}} />);
-		fireEvent.click(await screen.findByRole("button", { name: "Upgrade to AI Plus" }));
+		await chooseAndDeclare();
 		await act(async () => usd.resolve({ clientSecret: "cs_usd", currency: "usd" }));
 		expect(screen.getByText("pay with cs_usd")).toBeTruthy();
 
 		fireEvent.click(screen.getByRole("button", { name: "switch to EUR" }));
 		expect(screen.queryByText("pay with cs_usd")).toBeNull();
-		expect(h.createAiSubscriptionIntent).toHaveBeenLastCalledWith("ai_plus", { currency: "eur" });
+		expect(h.createAiSubscriptionIntent).toHaveBeenLastCalledWith("ai_plus", {
+			currency: "eur",
+			billingAddress: ADDRESS,
+		});
 
 		await act(async () => eur.resolve({ clientSecret: "cs_eur", currency: "eur" }));
 		expect(screen.getByText("pay with cs_eur")).toBeTruthy();
@@ -106,7 +152,7 @@ describe("UpgradeAiSheet — the subscription intent", () => {
 		h.createAiSubscriptionIntent.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
 
 		const { rerender } = render(<UpgradeAiSheet open onOpenChange={() => {}} />);
-		fireEvent.click(await screen.findByRole("button", { name: "Upgrade to AI Plus" }));
+		await chooseAndDeclare();
 		await act(async () => first.resolve({ clientSecret: "cs_first", currency: "usd" }));
 		expect(screen.getByText("pay with cs_first")).toBeTruthy();
 

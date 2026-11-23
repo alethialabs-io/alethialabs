@@ -17,12 +17,15 @@
 // question again before it writes, so a stale tab cannot start a second trial.
 //
 // What the draft never keeps: the terms box (an acceptance restored ticked is an acceptance nobody
-// gave), the payer facts (they are re-deduced on every load) and the role.
+// gave), the payer facts (they are re-deduced on every load), the role, and the VAT-number answer and
+// state (#7324) — payer facts too.
 // `tests/lib/wizard/definitions.test.ts` holds this file to the engine's rules.
 
 import type { FieldPath } from "react-hook-form";
 import { orgSlugShapeRefusal } from "@repo/org-slug";
 import { z } from "zod";
+import { EU_MEMBER_STATES } from "@repo/legal/commerce";
+import { isUsStateCode } from "@/lib/billing/tax-ids";
 import { finishSlugDraft } from "@/lib/utils/slugify";
 import { defineWizard } from "@/lib/wizard/define";
 
@@ -44,6 +47,15 @@ export interface OnboardingValues {
 	business: boolean;
 	/** The payer's role at the organization — the attestation a business purchase needs. */
 	role: string;
+	/**
+	 * Whether the business has a VAT number (#7324): "" until answered — never defaulted. Asked only of
+	 * a business billed in an EU member state, where the answer decides which sale is possible.
+	 */
+	vatIdStatus: "" | "given" | "not_given";
+	/** The VAT number, when the business has one. */
+	vatId: string;
+	/** USPS state code for a US payer; "" until chosen. */
+	billingState: string;
 	/** The inline terms box. Starts unticked, always. */
 	acceptTerms: boolean;
 	/** Whether the server says the current terms are not yet accepted. Set by the page, never typed. */
@@ -59,6 +71,9 @@ export const onboardingSchema = z
 		billingCountry: z.string(),
 		business: z.boolean(),
 		role: z.string().max(200, "Keep your role under 200 characters."),
+		vatIdStatus: z.enum(["", "given", "not_given"]),
+		vatId: z.string().max(32, "Keep the VAT number under 32 characters."),
+		billingState: z.string().max(2),
 		acceptTerms: z.boolean(),
 		termsRequired: z.boolean(),
 	})
@@ -83,6 +98,26 @@ export const onboardingSchema = z
 				message: "Say what your role is — a purchase for a company needs someone who can act for it.",
 			});
 		}
+		const country = values.billingCountry.trim().toUpperCase();
+		if (values.business && EU_MEMBER_STATES.includes(country)) {
+			if (values.vatIdStatus === "") {
+				ctx.addIssue({
+					code: "custom",
+					path: ["vatIdStatus"],
+					message: "Say whether the organization has a VAT number.",
+				});
+			}
+			if (values.vatIdStatus === "given" && values.vatId.trim().length === 0) {
+				ctx.addIssue({ code: "custom", path: ["vatId"], message: "Enter the VAT number." });
+			}
+		}
+		if (country === "US" && !isUsStateCode(values.billingState)) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["billingState"],
+				message: "Select the US state this organization is billed in.",
+			});
+		}
 	});
 
 /** The values once the submit schema has parsed them. */
@@ -96,6 +131,9 @@ export const ONBOARDING_FIELDS: readonly FieldPath<OnboardingValues>[] = [
 	"billingCountry",
 	"business",
 	"role",
+	"vatIdStatus",
+	"vatId",
+	"billingState",
 	"acceptTerms",
 	"termsRequired",
 ];

@@ -13,8 +13,12 @@ import { headers } from "next/headers";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
+	EU_MEMBER_STATES,
 	PAYER_CAPACITIES,
 	type PayerCapacity,
+	VAT_ID_STATUSES,
+	type VatIdStatus,
+	vatIdGivenOf,
 } from "@repo/legal/commerce";
 import { LEGAL_DOCUMENTS } from "@repo/legal/documents";
 import { authorize, authorizeInOrg, currentActor } from "@/lib/authz/guard";
@@ -25,6 +29,8 @@ import {
 	paidConversionStatus,
 } from "@/lib/billing/eligibility";
 import { markPendingOrgSetupDeclared } from "@/lib/billing/pending-org-setup";
+import { isUsStateCode, normaliseEuVatNumber } from "@/lib/billing/tax-ids";
+import { checkVatNumber } from "@/lib/billing/vies";
 import { getServiceDb } from "@/lib/db";
 import { legalAcceptance, organizationBilling } from "@/lib/db/schema";
 import type { LegalAcceptanceEvidence } from "@/types/jsonb.types";
@@ -250,9 +256,75 @@ const declarePayerSchema = z.object({
 		.transform((v) => v.toUpperCase()),
 	/** Required for an organization: the role under which the payer can bind it. */
 	authorityAttestation: z.string().trim().min(2).max(200).nullable().default(null),
+	/**
+	 * Whether the organization has a VAT number (#7324). OPTIONAL so callers written before Early
+	 * Access still parse — and omitted means "not stated in this call" (see `declarePayer` for what
+	 * that keeps), never "no VAT number". `null` clears it.
+	 */
+	vatIdStatus: z.enum(["given", "not_given"]).nullable().optional(),
+	/** The VAT number, required with `given` and refused with anything else. */
+	vatId: z.string().trim().max(32).nullable().optional(),
+	/** USPS state code, for a US payer only. Upper-cased so the gate's comparison is total. */
+	billingState: z
+		.string()
+		.trim()
+		.transform((v) => v.toUpperCase())
+		.nullable()
+		.optional(),
 });
 
 export type DeclarePayerInput = z.input<typeof declarePayerSchema>;
+
+/** The declaration once parsed. */
+type ParsedDeclaration = z.output<typeof declarePayerSchema>;
+
+/**
+ * Refuses VAT-number and state facts that do not fit the capacity and country, before anything is
+ * written or asked. Shared by `declarePayer` and `payerConversionStatus`, like the attestation rule.
+ *
+ *  - A consumer has no VAT-number status: stating one is the same disagreement about the regime as a
+ *    consumer attestation.
+ *  - `given` needs the number, and for an EU country one in that country's format; `not_given` (or
+ *    no status) carries no number — the record that none was communicated must stay true.
+ *  - A state belongs to a US payer only, and must be a USPS code the thresholds know.
+ *
+ * Returns the VAT number normalised for storage (an EU number as `PREFIX+number`), or null.
+ */
+function assertVatAndStateCoherent(parsed: ParsedDeclaration): string | null {
+	if (parsed.capacity === "consumer" && (parsed.vatIdStatus || parsed.vatId)) {
+		throw new Error(
+			"An individual purchase has no VAT-number status — clear it, or choose the organization option.",
+		);
+	}
+	const vatId = parsed.vatId?.trim() ? parsed.vatId.trim() : null;
+	let normalisedVatId: string | null = null;
+	if (parsed.vatIdStatus === "given") {
+		if (!vatId) throw new Error("Enter the organization's VAT number.");
+		if (EU_MEMBER_STATES.includes(parsed.billingCountry)) {
+			const vat = normaliseEuVatNumber(parsed.billingCountry, vatId);
+			if (!vat) {
+				throw new Error(
+					"That is not a VAT number for the billing country. Check the number and the country.",
+				);
+			}
+			normalisedVatId = vat.full;
+		} else {
+			normalisedVatId = vatId.toUpperCase();
+		}
+	} else if (vatId) {
+		throw new Error(
+			"A VAT number can only be recorded for an organization that says it has one.",
+		);
+	}
+	const state = parsed.billingState?.trim() ? parsed.billingState : null;
+	if (state !== null) {
+		if (parsed.billingCountry !== "US") {
+			throw new Error("A state is recorded only for a purchase billed in the United States.");
+		}
+		if (!isUsStateCode(state)) throw new Error("Select a US state.");
+	}
+	return normalisedVatId;
+}
 
 /**
  * Refuses a declaration whose attestation does not match its capacity, in BOTH directions.
@@ -293,7 +365,20 @@ function assertAttestationMatchesCapacity(parsed: {
  * nothing to bind and storing a role there would make the record ambiguous about which regime
  * applied.
  *
- * @param input The declared facts — capacity, ISO-2 billing country, and the attestation.
+ * AND, FOR EARLY ACCESS (#7324), whether the organization has a VAT number (and which), and a US
+ * payer's state. A VAT number given for an EU country is checked with VIES first: one VIES says is
+ * not registered is refused here, and a VIES outage is NOT a refusal (a national register being down
+ * must not block a purchase; the gate does not open anything on the number's say-so — an EU business
+ * with a VAT number outside Bulgaria is routed to the complimentary grant either way).
+ *
+ * The three new fields are OPTIONAL for the callers written before them (the create-a-team flow,
+ * #6930 and #7004). Omitted, the stored values are KEPT while the capacity and country are unchanged,
+ * and CLEARED when either changes — a VAT-number status or a state declared for another country is
+ * not a fact about this one. The gate then refuses an EU organization or a US payer until they are
+ * stated: fail-closed, never a guess.
+ *
+ * @param input The declared facts — capacity, ISO-2 billing country, the attestation, and the
+ *   optional VAT-number status, VAT number and US state.
  * @param opts.orgId The organization to record the declaration ON, when it is not the ambient one.
  *   NAMED, not ambient, for exactly the reason `startProTrial` and `linkSubscriptionToNewOrg` take
  *   one (#4133): the create-org purchase sheet runs from a page inside the CURRENT org and declares
@@ -314,15 +399,33 @@ export async function declarePayer(
 		throw new Error("Create an organization before setting up billing.");
 	}
 	assertAttestationMatchesCapacity(parsed);
+	const vatId = assertVatAndStateCoherent(parsed);
 	const authorityAttestation =
 		parsed.capacity === "organization" ? parsed.authorityAttestation : null;
+	if (vatId && parsed.vatIdStatus === "given" && EU_MEMBER_STATES.includes(parsed.billingCountry)) {
+		const vies = await checkVatNumber(parsed.billingCountry, vatId);
+		if (vies.status === "invalid") {
+			throw new Error(
+				"The EU VAT register (VIES) does not list that VAT number. Check it, or answer that the " +
+					"organization has no VAT number only if that is true.",
+			);
+		}
+	}
 
 	const db = getServiceDb();
 	const [existing] = await db
-		.select({ id: organizationBilling.id })
+		.select({
+			id: organizationBilling.id,
+			payerCapacity: organizationBilling.payerCapacity,
+			billingCountry: organizationBilling.billingCountry,
+			vatIdStatus: organizationBilling.vatIdStatus,
+			vatId: organizationBilling.vatId,
+			billingState: organizationBilling.billingState,
+		})
 		.from(organizationBilling)
 		.where(eq(organizationBilling.organizationId, actor.orgId))
 		.limit(1);
+	const vatFacts = vatAndStateToStore(parsed, vatId, existing ?? null);
 	if (existing) {
 		await db
 			.update(organizationBilling)
@@ -330,6 +433,7 @@ export async function declarePayer(
 				payerCapacity: parsed.capacity,
 				billingCountry: parsed.billingCountry,
 				authorityAttestation,
+				...vatFacts,
 				updatedAt: new Date(),
 			})
 			.where(eq(organizationBilling.id, existing.id));
@@ -339,12 +443,70 @@ export async function declarePayer(
 			payerCapacity: parsed.capacity,
 			billingCountry: parsed.billingCountry,
 			authorityAttestation,
+			...vatFacts,
 		});
 	}
 	// The last step of a paid create-a-team setup (#5445): a declaration NAMING an org is how that flow
 	// declares, so it closes the caller's setup record for that org, if there is one.
 	if (opts?.orgId) await markPendingOrgSetupDeclared(actor.userId, actor.orgId);
 	return { capacity: parsed.capacity, billingCountry: parsed.billingCountry };
+}
+
+/** The VAT-number and state columns a declaration writes. */
+interface VatAndStateColumns {
+	vatIdStatus: VatIdStatus | null;
+	vatId: string | null;
+	billingState: string | null;
+}
+
+/**
+ * What a declaration stores in the three Early Access columns. A field the call STATED (present, even
+ * as null) is written as stated. A field it omitted keeps the stored value only while the capacity and
+ * country are the ones it was declared under; a change of either clears it.
+ */
+function vatAndStateToStore(
+	parsed: ParsedDeclaration,
+	vatId: string | null,
+	existing: {
+		payerCapacity: string | null;
+		billingCountry: string | null;
+		vatIdStatus: string | null;
+		vatId: string | null;
+		billingState: string | null;
+	} | null,
+): VatAndStateColumns {
+	const sameRegime =
+		existing !== null &&
+		existing.payerCapacity === parsed.capacity &&
+		existing.billingCountry === parsed.billingCountry;
+	const keptStatus = sameRegime ? narrowVatIdStatus(existing?.vatIdStatus) : null;
+	const vatIdStatus =
+		parsed.capacity === "consumer"
+			? null
+			: parsed.vatIdStatus !== undefined
+				? parsed.vatIdStatus
+				: keptStatus;
+	const keptVatId = sameRegime && keptStatus === "given" ? (existing?.vatId ?? null) : null;
+	const storedVatId =
+		vatIdStatus !== "given" ? null : parsed.vatIdStatus !== undefined ? vatId : keptVatId;
+	const keptState = sameRegime ? (existing?.billingState ?? null) : null;
+	const billingState =
+		parsed.billingCountry !== "US"
+			? null
+			: parsed.billingState !== undefined
+				? parsed.billingState?.trim()
+					? parsed.billingState
+					: null
+				: keptState;
+	return { vatIdStatus, vatId: storedVatId, billingState };
+}
+
+/** Narrows a stored value to a known VAT-number status, or null. */
+function narrowVatIdStatus(value: string | null | undefined): VatIdStatus | null {
+	for (const known of VAT_ID_STATUSES) {
+		if (value === known) return known;
+	}
+	return null;
 }
 
 /**
@@ -374,12 +536,15 @@ export async function payerConversionStatus(
 > {
 	const parsed = declarePayerSchema.parse(input);
 	assertAttestationMatchesCapacity(parsed);
+	assertVatAndStateCoherent(parsed);
 	const actor = await currentActor();
 	return paidConversionStatus({
 		userId: actor.userId,
 		organizationId: actor.orgId,
 		capacity: parsed.capacity,
 		billingCountry: parsed.billingCountry,
+		vatIdGiven: parsed.capacity === "organization" ? vatIdGivenOf(parsed.vatIdStatus) : null,
+		billingState: parsed.billingState ?? null,
 	});
 }
 
@@ -388,6 +553,9 @@ export async function getDeclaredPayer(): Promise<{
 	capacity: PayerCapacity | null;
 	billingCountry: string | null;
 	authorityAttestation: string | null;
+	vatIdStatus: VatIdStatus | null;
+	vatId: string | null;
+	billingState: string | null;
 }> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	const [row] = await getServiceDb()
@@ -395,6 +563,9 @@ export async function getDeclaredPayer(): Promise<{
 			capacity: organizationBilling.payerCapacity,
 			billingCountry: organizationBilling.billingCountry,
 			authorityAttestation: organizationBilling.authorityAttestation,
+			vatIdStatus: organizationBilling.vatIdStatus,
+			vatId: organizationBilling.vatId,
+			billingState: organizationBilling.billingState,
 		})
 		.from(organizationBilling)
 		.where(eq(organizationBilling.organizationId, actor.orgId))
@@ -406,6 +577,9 @@ export async function getDeclaredPayer(): Promise<{
 		capacity: narrowCapacity(row?.capacity),
 		billingCountry: row?.billingCountry ?? null,
 		authorityAttestation: row?.authorityAttestation ?? null,
+		vatIdStatus: narrowVatIdStatus(row?.vatIdStatus),
+		vatId: row?.vatId ?? null,
+		billingState: row?.billingState ?? null,
 	};
 }
 

@@ -26,20 +26,45 @@
 import { and, eq } from "drizzle-orm";
 import {
 	anyPaidMarketOpen,
+	complimentaryGrantEligible,
 	type PayerCapacity,
 	paidMarketEnabled,
+	vatIdGivenOf,
+	vatIdStatusRequired,
 } from "@repo/legal/commerce";
 import { LEGAL_DOCUMENTS } from "@repo/legal/documents";
+import { LEGAL_ENTITY } from "@repo/legal/entity";
+import { usStateThreshold } from "@repo/legal/thresholds";
 import { stripeSecretKey } from "@/lib/billing/stripe-key";
+import { crossedThresholds, type SaleAmount } from "@/lib/billing/turnover";
 import { getServiceDb } from "@/lib/db";
 import { legalAcceptance, organizationBilling } from "@/lib/db/schema";
 
-/** Why a paid conversion was refused — a closed set, so callers can branch without parsing prose. */
+/**
+ * Why a paid conversion was refused — a closed set, so callers can branch without parsing prose.
+ *
+ * The Early Access refusals (#7324):
+ *  - `vat_status_not_declared` — an organization in an EU member state other than Bulgaria has not
+ *    said whether it has a VAT number. The answer decides the paid-market cell, so it is not guessed.
+ *  - `state_missing` — a US buyer gave no state (or one that is not a USPS code): the sale could not
+ *    be counted against any state's threshold.
+ *  - `complimentary_grant` — an EU business with a VAT number, while the seller is not VAT-registered.
+ *    Selling to it needs an Art. 97a registration first; it is routed to the complimentary Early
+ *    Access request (EA-3) instead. Callers link to `EARLY_ACCESS_REQUEST_PATH`.
+ *  - `us_state_closed` — the buyer's US state's economic-nexus threshold would be reached by this sale.
+ *  - `threshold_reached` — the Bulgarian registration threshold or the EU EUR 10,000 cross-border
+ *    threshold would be crossed by this sale.
+ */
 export type PaidConversionRefusal =
 	| "terms_not_accepted"
 	| "capacity_not_declared"
 	| "billing_country_missing"
-	| "market_closed";
+	| "vat_status_not_declared"
+	| "state_missing"
+	| "complimentary_grant"
+	| "market_closed"
+	| "us_state_closed"
+	| "threshold_reached";
 
 /** A refusal carrying the reason and a message safe to show the user. */
 export class PaidConversionNotAllowedError extends Error {
@@ -60,6 +85,20 @@ export interface PaidConversionContext {
 	readonly capacity: PayerCapacity | null | undefined;
 	/** ISO 3166-1 alpha-2. */
 	readonly billingCountry: string | null | undefined;
+	/**
+	 * Whether an organization declared a VAT number: `true` given, `false` not given, `null`/omitted
+	 * undeclared. Optional so callers written before #7324 still compile — and an omitted answer is
+	 * UNDECLARED, which refuses an EU organization outside Bulgaria rather than guessing.
+	 */
+	readonly vatIdGiven?: boolean | null;
+	/** USPS state code for a US buyer. Omitted or unknown refuses a US sale (`state_missing`). */
+	readonly billingState?: string | null;
+	/**
+	 * What this sale charges, for the threshold check ("stop BEFORE the sale that crosses"). Omitted,
+	 * the totals are read alone: a crossed threshold still refuses, only the last sale before it is
+	 * not caught early.
+	 */
+	readonly sale?: SaleAmount | null;
 }
 
 /**
@@ -169,8 +208,14 @@ export function paidSalesOpen(
  * truthy return as "allowed" while ignoring a rejection.
  *
  * The order of the checks is the order a user can act on them: accept the terms, tell us who you
- * are, tell us where you are, and only then do we say whether we can sell there. Leading with
- * `market_closed` would make the other three unreachable and every refusal look permanent.
+ * are, tell us where you are (and, for an EU organization, whether it has a VAT number; for a US
+ * buyer, which state), and only then do we say whether we can sell there. Leading with
+ * `market_closed` would make the other checks unreachable and every refusal look permanent.
+ *
+ * `complimentary_grant` comes BEFORE the market: an EU business with a VAT number is not a buyer we
+ * may sell to while unregistered, whatever the cells say, and it has somewhere to go today (EA-3).
+ * The thresholds come AFTER it, and the test-mode waiver opens only the market check — a release gate
+ * run still walks every Early Access refusal a customer would.
  */
 export async function assertPaidConversionAllowed(
 	ctx: PaidConversionContext,
@@ -195,7 +240,31 @@ export async function assertPaidConversionAllowed(
 			"Add a billing address before subscribing.",
 		);
 	}
-	if (!paidMarketEnabled(country, ctx.capacity) && !testModeMarketOpen()) {
+	const vatIdGiven = ctx.capacity === "organization" ? (ctx.vatIdGiven ?? null) : null;
+	if (vatIdGiven === null && vatIdStatusRequired(country, ctx.capacity)) {
+		throw new PaidConversionNotAllowedError(
+			"vat_status_not_declared",
+			"Tell us whether the organization has a VAT number before subscribing.",
+		);
+	}
+	const state = country === "US" ? normaliseState(ctx.billingState) : null;
+	if (country === "US" && state === null) {
+		throw new PaidConversionNotAllowedError(
+			"state_missing",
+			"Select the US state this purchase is billed in before subscribing.",
+		);
+	}
+	if (
+		complimentaryGrantEligible(country, ctx.capacity, vatIdGiven, LEGAL_ENTITY.vatRegistered)
+	) {
+		throw new PaidConversionNotAllowedError(
+			"complimentary_grant",
+			"Alethia cannot yet invoice a business in this country that has a VAT number. " +
+				"Request complimentary Early Access instead: you get the plan with nothing to pay, " +
+				"and nothing is ever charged for the free period.",
+		);
+	}
+	if (!paidMarketEnabled(country, ctx.capacity, vatIdGiven) && !testModeMarketOpen()) {
 		// No word about a trial (#5443), and none is true to add: the card-less trial (`startProTrial`)
 		// passes this same gate (decision M12, #6907), so a closed market refuses it for this same
 		// reason, and Hobby is the only thing a closed market leaves open.
@@ -206,6 +275,30 @@ export async function assertPaidConversionAllowed(
 				"Contact sales@alethialabs.io and we will tell you when it opens.",
 		);
 	}
+	const crossed = await crossedThresholds(
+		{ country, capacity: ctx.capacity, vatIdGiven, state },
+		ctx.sale ?? null,
+	);
+	if (crossed.some((c) => c.counter.id === "us_state")) {
+		throw new PaidConversionNotAllowedError(
+			"us_state_closed",
+			"Alethia cannot take new purchases billed to this US state at the moment. " +
+				"Hobby stays free. Contact sales@alethialabs.io and we will tell you when it reopens.",
+		);
+	}
+	if (crossed.length > 0) {
+		throw new PaidConversionNotAllowedError(
+			"threshold_reached",
+			"Alethia cannot take new purchases from this country at the moment. " +
+				"Hobby stays free. Contact sales@alethialabs.io and we will tell you when it reopens.",
+		);
+	}
+}
+
+/** A USPS code the thresholds know, upper-case, or null — the same reading the gate counts by. */
+function normaliseState(state: string | null | undefined): string | null {
+	const code = state?.trim().toUpperCase() ?? "";
+	return usStateThreshold(code) === null ? null : code;
 }
 
 /**
@@ -219,11 +312,14 @@ export async function assertPaidConversionAllowed(
 export async function assertOrgPaidConversionAllowed(
 	userId: string,
 	organizationId: string,
+	sale?: SaleAmount | null,
 ): Promise<void> {
 	const [row] = await getServiceDb()
 		.select({
 			capacity: organizationBilling.payerCapacity,
 			billingCountry: organizationBilling.billingCountry,
+			vatIdStatus: organizationBilling.vatIdStatus,
+			billingState: organizationBilling.billingState,
 		})
 		.from(organizationBilling)
 		.where(eq(organizationBilling.organizationId, organizationId))
@@ -233,6 +329,9 @@ export async function assertOrgPaidConversionAllowed(
 		organizationId,
 		capacity: row?.capacity ?? null,
 		billingCountry: row?.billingCountry ?? null,
+		vatIdGiven: vatIdGivenOf(row?.vatIdStatus),
+		billingState: row?.billingState ?? null,
+		sale: sale ?? null,
 	});
 }
 

@@ -33,6 +33,7 @@ import {
 	hasAcceptedCurrentDocuments,
 	PaidConversionNotAllowedError,
 } from "@/lib/billing/eligibility";
+import { isUsStateCode } from "@/lib/billing/tax-ids";
 import { getServiceDb } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -133,6 +134,14 @@ const finishOnboardingInput = z.object({
 			capacity: z.enum(["consumer", "organization"]),
 			billingCountry: z.string().trim().length(2),
 			authorityAttestation: z.string().trim().max(200).nullable(),
+			/**
+			 * The Early Access facts (#7324): whether a business has a VAT number (and which), and a US
+			 * payer's state. Optional so an older tab still parses; the purchase gate then refuses an EU
+			 * business or a US payer as undeclared, and the form says which field to fill.
+			 */
+			vatIdStatus: z.enum(["given", "not_given"]).nullable().optional(),
+			vatId: z.string().trim().max(32).nullable().optional(),
+			billingState: z.string().trim().max(2).nullable().optional(),
 		})
 		.nullable(),
 });
@@ -257,7 +266,7 @@ async function runFinishOnboarding(
 	await setActiveOrganization(org.id);
 
 	if (payer) {
-		await declarePayer(payer, { orgId: org.id });
+		await declarePayerOrRefuse(payer, org.id);
 		await startTrialOrRefuse(org.id);
 	}
 
@@ -270,9 +279,14 @@ async function runFinishOnboarding(
  * country, and an attestation exactly when the payer is an organization. Each refusal names the
  * form field it is about.
  */
-function checkedPayer(
-	payer: z.output<typeof finishOnboardingInput>["payer"],
-): { capacity: "consumer" | "organization"; billingCountry: string; authorityAttestation: string | null } {
+function checkedPayer(payer: z.output<typeof finishOnboardingInput>["payer"]): {
+	capacity: "consumer" | "organization";
+	billingCountry: string;
+	authorityAttestation: string | null;
+	vatIdStatus: "given" | "not_given" | null;
+	vatId: string | null;
+	billingState: string | null;
+} {
 	if (!payer) {
 		throw new FieldRefusal(
 			{ billingCountry: ["Select the country this organization is billed in."] },
@@ -286,11 +300,52 @@ function checkedPayer(
 			"Say what your role is.",
 		);
 	}
+	const country = payer.billingCountry.toUpperCase();
+	const business = payer.capacity === "organization";
+	const vatIdStatus = business ? (payer.vatIdStatus ?? null) : null;
+	const vatId = vatIdStatus === "given" ? (payer.vatId?.trim() ?? "") : "";
+	if (vatIdStatus === "given" && vatId.length === 0) {
+		throw new FieldRefusal(
+			{ vatId: ["Enter the organization's VAT number."] },
+			"Enter the organization's VAT number.",
+		);
+	}
+	const state = country === "US" ? (payer.billingState?.trim().toUpperCase() ?? "") : "";
+	if (country === "US" && !isUsStateCode(state)) {
+		throw new FieldRefusal(
+			{ billingState: ["Select the US state this organization is billed in."] },
+			"Select the US state this organization is billed in.",
+		);
+	}
 	return {
 		capacity: payer.capacity,
-		billingCountry: payer.billingCountry.toUpperCase(),
-		authorityAttestation: payer.capacity === "organization" ? role : null,
+		billingCountry: country,
+		authorityAttestation: business ? role : null,
+		vatIdStatus,
+		vatId: vatId.length > 0 ? vatId : null,
+		billingState: state.length > 0 ? state : null,
 	};
+}
+
+/**
+ * Records the payer facts on `orgId`, turning a declaration the writer refuses (a malformed VAT
+ * number, one VIES does not list) into a refusal under the VAT-number field. `declarePayer` refuses
+ * with a plain `Error` whose sentence is written for the customer; anything that is not a refusal —
+ * an authorization failure, a database error — is rethrown.
+ */
+async function declarePayerOrRefuse(
+	payer: ReturnType<typeof checkedPayer>,
+	orgId: string,
+): Promise<void> {
+	try {
+		await declarePayer(payer, { orgId });
+	} catch (err) {
+		unstable_rethrow(err);
+		if (payer.vatIdStatus === "given" && err instanceof Error && /VAT number/.test(err.message)) {
+			throw new FieldRefusal({ vatId: [err.message] }, err.message);
+		}
+		throw err;
+	}
 }
 
 /**
