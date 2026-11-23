@@ -39,7 +39,10 @@ vi.mock("@/app/server/actions/projects", () => ({
 // design through untouched, so the fixture below arrives at the domain function as it was sent.
 vi.mock("@/lib/validations/project-form.schema", async () => {
 	const { z } = await import("zod");
-	return { projectFormSchema: z.object({}).passthrough() };
+	return {
+		projectFormSchema: z.object({}).passthrough(),
+		designSaveSchema: z.object({}).passthrough(),
+	};
 });
 
 import {

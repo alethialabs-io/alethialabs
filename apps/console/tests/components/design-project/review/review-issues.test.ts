@@ -8,8 +8,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
 	reviewIssues,
+	saveRefusalMessage,
+	schemaIssues,
 	type ReviewIssue,
 } from "@/components/design-project/canvas/review/review-issues";
+import { graphToForm } from "@/components/design-project/canvas/graph/graph-to-form";
+import { designSaveSchema, projectFormSchema } from "@/lib/validations/project-form.schema";
 import { board } from "@/lib/canvas/store/board";
 import { PROJECT_NODE_ID } from "@/lib/canvas/store/types";
 
@@ -95,5 +99,52 @@ describe("reviewIssues", () => {
 		board.document.getState().addNode("database");
 		const keys = reviewIssues(design()).map((issue) => issue.key);
 		expect(new Set(keys).size).toBe(keys.length);
+	});
+});
+
+// #7272: the board's Save toasted `Can't save: project.cloud_identity_id — Cloud account is required`.
+describe("saveRefusalMessage", () => {
+	/** A validator path, or a key as the schema spells it. */
+	const looksLikeAPath = (text: string) =>
+		/[a-z]_[a-z]/.test(text) || /\.\d/.test(text) || /\w\.\w/.test(text);
+
+	it("tells the missing cloud account in words, never as `project.cloud_identity_id`", () => {
+		const message = saveRefusalMessage(
+			schemaIssues(design(), [
+				{ path: ["project", "cloud_identity_id"], message: "Cloud account is required" },
+			]),
+		);
+		expect(message).toMatch(/^Can't save: Project/);
+		expect(message).toContain("Cloud account");
+		expect(message).not.toContain("cloud_identity_id");
+		expect(looksLikeAPath(message)).toBe(false);
+	});
+
+	it("names no field path for any issue the real validator reports on an unfinished board", () => {
+		board.document.getState().addNode("database");
+		board.document.getState().addNode("database");
+		const second = design().filter((n) => n.data.kind === "database")[1];
+		board.document.getState().updateNodeConfig(second.id, { name: "" });
+
+		const parsed = projectFormSchema.safeParse(graphToForm(design()));
+		const issues = schemaIssues(design(), parsed.error?.issues ?? []);
+		expect(issues.length).toBeGreaterThan(0);
+		const offenders = issues
+			.map((_, index) => saveRefusalMessage(issues.slice(index)))
+			.filter(looksLikeAPath);
+		expect(offenders).toEqual([]);
+	});
+
+	it("still says something when there is nothing specific to say", () => {
+		expect(saveRefusalMessage([])).toMatch(/^Can't save/);
+	});
+
+	it("does not refuse a design for having no cloud account: Save uses the save schema", () => {
+		// The default board's project has no cloud account, as a project created without one.
+		const form = graphToForm(design());
+		const onAccount = (issues: readonly { path: readonly PropertyKey[] }[] = []) =>
+			issues.filter((issue) => issue.path.join("/") === "project/cloud_identity_id");
+		expect(onAccount(projectFormSchema.safeParse(form).error?.issues)).toHaveLength(1);
+		expect(onAccount(designSaveSchema.safeParse(form).error?.issues)).toHaveLength(0);
 	});
 });
