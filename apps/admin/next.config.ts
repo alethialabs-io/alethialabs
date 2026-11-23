@@ -36,6 +36,7 @@ const nextConfig: NextConfig = {
 		"@repo/brand",
 		"@repo/email",
 		"@repo/format",
+		"@repo/legal",
 		"@repo/support",
 		"@repo/org-slug",
 	],

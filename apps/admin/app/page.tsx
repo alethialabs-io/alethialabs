@@ -8,6 +8,7 @@ import { getStaff } from "@/lib/auth/staff";
 import { getQueryClient } from "@/lib/query-client";
 import { StaffCaseList } from "@/components/staff-case-list";
 import { StaffShell } from "@/components/staff-shell";
+import { TurnoverNotice } from "@/components/turnover/turnover-notice";
 
 export const metadata: Metadata = {
 	title: "Support admin",
@@ -18,7 +19,9 @@ export const metadata: Metadata = {
  * The staff support console landing route (the app root, `/`). Gates on `getStaff()`
  * (Cloudflare Access should already have blocked non-staff — this is defense-in-depth),
  * then prefetches the unfiltered cross-tenant case list on the server and hands the
- * dehydrated cache to the client so the list renders on first paint.
+ * dehydrated cache to the client so the list renders on first paint. Above the list, a one-line
+ * notice links to `/turnover` while any tax threshold is at warn or stop (#7327); the staff nav
+ * has no turnover entry because that file belongs to another unit.
  */
 export default async function SupportAdminHome() {
 	const staff = await getStaff();
@@ -42,6 +45,7 @@ export default async function SupportAdminHome() {
 
 	return (
 		<StaffShell staffEmail={staff.email}>
+			<TurnoverNotice />
 			<HydrationBoundary state={dehydrate(queryClient)}>
 				<StaffCaseList />
 			</HydrationBoundary>
