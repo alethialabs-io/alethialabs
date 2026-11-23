@@ -13,11 +13,14 @@
 //   · A server field refusal is shown under its field; a failed verify is an alert with Retry, and
 //     the retry saves into the same identity.
 //   · The typed identifiers survive a reload; a token never reaches storage.
+//   · An instance that cannot serve a keyless connect (no signing key, or an app URL no cloud can
+//     reach) shows "not publicly reachable" for AWS, GCP and Azure instead of a form; Hetzner is
+//     unaffected (EDN-H6).
 //
 // "A reload" is an unmount and a fresh render over the same query string and tab storage.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 
@@ -25,6 +28,7 @@ const h = vi.hoisted(() => ({
 	start: vi.fn(),
 	connect: vi.fn(),
 	offered: { clouds: ["aws", "gcp", "azure", "hetzner"] },
+	keyless: { readiness: { ready: true } as { ready: boolean; reason?: string } },
 }));
 
 vi.mock("next/navigation", async () => {
@@ -56,7 +60,9 @@ vi.mock("@/app/server/actions/identities", () => ({
 vi.mock("@/lib/rpc/client", async () => {
 	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
 	return {
-		orpc: fakeOrpc({ "connectors.board": async () => ({ offeredClouds: h.offered.clouds }) }).orpc,
+		orpc: fakeOrpc({
+			"connectors.board": async () => ({ offeredClouds: h.offered.clouds, keylessReadiness: h.keyless.readiness }),
+		}).orpc,
 	};
 });
 vi.mock("@/lib/stores/use-workspace-store", () => ({ useActiveOrgSlug: () => "acme" }));
@@ -119,7 +125,7 @@ function Host({
 	const connect = useCloudConnect({ integrations: [], refreshRouteOnClose: false, onConnected, gcpSetup });
 	return (
 		<>
-			{["aws", "gcp", "hetzner", "alibaba"].map((slug) => (
+			{["aws", "gcp", "azure", "hetzner", "alibaba"].map((slug) => (
 				<button key={slug} type="button" onClick={() => void connect.openConnect(cloud(slug))}>
 					{`Open ${slug}`}
 				</button>
@@ -160,6 +166,7 @@ beforeEach(() => {
 	h.start.mockResolvedValue({ ok: true, data: { identityId: STARTED } });
 	h.connect.mockResolvedValue(verified(STARTED));
 	h.offered.clouds = ["aws", "gcp", "azure", "hetzner"];
+	h.keyless.readiness = { ready: true };
 });
 
 describe("one sheet, opened from the URL", () => {
@@ -324,5 +331,60 @@ describe("what survives a reload", () => {
 			if (key !== null) stored.push(`${key}=${sessionStorage.getItem(key) ?? ""}`);
 		}
 		expect(stored.filter((entry) => entry.includes(token))).toEqual([]);
+	});
+});
+
+describe("keyless readiness (EDN-H6)", () => {
+	it.each([
+		["signing-key-missing", /no issuer signing key/],
+		["origin-missing", /no public URL configured/],
+		["origin-not-https", /not HTTPS/],
+		["origin-not-public", /private or local address/],
+	])("%s: AWS, GCP and Azure show the not-reachable state instead of a form", async (reason, text) => {
+		h.keyless.readiness = { ready: false, reason };
+		renderHost();
+		for (const slug of ["aws", "gcp", "azure"]) {
+			fireEvent.click(screen.getByRole("button", { name: `Open ${slug}` }));
+			expect(await screen.findByText("This instance is not publicly reachable")).toBeInTheDocument();
+			expect(screen.getByText(text)).toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+			fireEvent.click(within(screen.getByTestId("keyless-not-reachable")).getByRole("button", { name: "Close" }));
+			await waitFor(() => expect(testParam("wizard")).toBeNull());
+		}
+		expect(h.start).not.toHaveBeenCalled();
+		expect(h.connect).not.toHaveBeenCalled();
+	});
+
+	it("Hetzner is unaffected: its form opens on the same instance", async () => {
+		h.keyless.readiness = { ready: false, reason: "origin-not-public" };
+		renderHost();
+		fireEvent.click(screen.getByRole("button", { name: "Open hetzner" }));
+		expect(await screen.findByLabelText("API Token")).toBeInTheDocument();
+		expect(screen.queryByText("This instance is not publicly reachable")).toBeNull();
+	});
+
+	it("offers Hetzner instead, and opens its form", async () => {
+		h.keyless.readiness = { ready: false, reason: "signing-key-missing" };
+		renderHost();
+		fireEvent.click(screen.getByRole("button", { name: "Open aws" }));
+		fireEvent.click(await screen.findByRole("button", { name: "Connect Hetzner instead" }));
+		expect(await screen.findByLabelText("API Token")).toBeInTheDocument();
+		expect(testParam("step")).toBe("hetzner");
+	});
+
+	it("does not offer Hetzner when this deployment does not", async () => {
+		h.offered.clouds = ["aws", "gcp", "azure"];
+		h.keyless.readiness = { ready: false, reason: "origin-not-https" };
+		renderHost();
+		fireEvent.click(screen.getByRole("button", { name: "Open aws" }));
+		await screen.findByText("This instance is not publicly reachable");
+		expect(screen.queryByRole("button", { name: "Connect Hetzner instead" })).toBeNull();
+	});
+
+	it("a ready instance shows the AWS form", async () => {
+		renderHost();
+		fireEvent.click(screen.getByRole("button", { name: "Open aws" }));
+		expect(await screen.findByRole("button", { name: "Connect" })).toBeInTheDocument();
+		expect(screen.queryByText("This instance is not publicly reachable")).toBeNull();
 	});
 });
