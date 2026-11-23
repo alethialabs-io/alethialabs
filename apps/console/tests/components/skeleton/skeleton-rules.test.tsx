@@ -40,11 +40,11 @@ const APP = join(CONSOLE, "app");
 
 /**
  * Async `loading.tsx` files, each with the issue whose scope holds it. Keyed by path relative to
- * apps/console. No route was migrated by the unit that wrote this list.
+ * apps/console. No route was migrated by the unit that wrote this list. Empty since #7236 made the
+ * case-detail route's synchronous; the ledger stays so a new async one has to be listed against an
+ * issue to pass.
  */
-const OWED_ASYNC: Record<string, string> = {
-	"app/(private)/[org]/~/support/cases/[id]/loading.tsx": "#6826",
-};
+const OWED_ASYNC: Record<string, string> = {};
 
 /**
  * Spinner `loading.tsx` files. Empty since #7010 replaced the last one; the ledger stays so a new
