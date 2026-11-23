@@ -42,6 +42,15 @@ resource "hcloud_volume" "data" {
   location = var.location
   format   = "ext4"
   labels   = local.labels
+
+  # Holds production Postgres. Two independent guards against losing it: Hetzner refuses a delete
+  # while delete_protection is on, and tofu refuses any plan that would destroy (or replace) it.
+  # Removing either is a deliberate two-step — see "Delete protection" in README.md.
+  delete_protection = true
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "hcloud_server" "cp" {
@@ -53,6 +62,12 @@ resource "hcloud_server" "cp" {
   backups     = true # Hetzner server backups for off-box durability (+20%).
   labels      = local.labels
 
+  # Hetzner refuses a delete or a rebuild while these are on (the provider requires the two to be
+  # equal). Together with prevent_destroy below, a change to user_data, image or location fails the
+  # plan instead of silently replacing the box. See "Delete protection" in README.md.
+  delete_protection  = true
+  rebuild_protection = true
+
   # No volume.linux_device reference here (that would create a server↔volume
   # cycle); cloud-init discovers the mounted volume by glob instead.
   user_data = templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
@@ -60,7 +75,8 @@ resource "hcloud_server" "cp" {
   })
 
   lifecycle {
-    ignore_changes = [ssh_keys] # don't rebuild the box if the key rotates
+    prevent_destroy = true
+    ignore_changes  = [ssh_keys] # don't rebuild the box if the key rotates
   }
 }
 
