@@ -98,7 +98,7 @@
 # that a script could count all along. Nothing compared them, which is exactly why it went unnoticed
 # — it is prose, and prose is not measured. Now it is.
 #
-#   census: 52 controls — 52 confirmed
+#   census: 53 controls — 53 confirmed
 
 version: 1
 
@@ -839,6 +839,25 @@ controls:
     status: confirmed
     prod-qa: skip
     reason: cancels the QA org's real subscription
+
+  - id: billing.withdrawal
+    route: /[org]/~/settings/billing
+    surface: apps/console/components/billing/withdrawal-section.tsx
+    # The consumer's statutory withdrawal (#7221, #7339) — NOT ordinary cancellation: it ends access
+    # at once and refunds what `withdrawalOutcome` computes. The labels are the statute's own words
+    # (CRD art. 11a): "withdraw from contract here", then "confirm withdrawal". `ConfirmAction` at
+    # `severity: confirm`, an alert dialog: the consumer's right may not be made harder to exercise
+    # than to buy (CRD art. 11a), so it is not typed.
+    mutation: withdrawFromContract
+    control: { role: button, name: "Withdraw from contract here" }
+    confirm: alert-dialog
+    confirm_action: "Confirm withdrawal"
+    dialog_title: "Withdraw from this contract?"
+    fixture: consumer-order-in-withdrawal-period
+    persona: team
+    status: confirmed
+    prod-qa: skip
+    reason: confirming refunds a real consumer order and ends its access at once, and production holds no consumer order to open it on while every consumer cell is closed
 
   - id: org.logo.remove
     route: /[org]/~/settings/general

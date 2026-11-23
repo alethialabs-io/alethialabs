@@ -861,6 +861,33 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 			},
 		},
 	],
+	[
+		"consumer-order-in-withdrawal-period",
+		{
+			// The billing page renders the withdrawal section for a billing admin, and the section
+			// offers "Withdraw from contract here" only while `getWithdrawalRight` reads the org's
+			// latest `commerce_order` as a consumer order inside its 14 days (#7339). Offline like
+			// `active-subscription`: NO stripe ids, because the spec opens the dialog and presses
+			// Cancel — it never reaches `withdrawFromContract`, which is what would call Stripe.
+			writes: "one `commerce_order` for the audit's org: capacity consumer, placed now, immediate start acknowledged, NO stripe ids",
+			seed: async (scope) => {
+				const sql = db();
+				await sql`
+					insert into commerce_order (
+						organization_id, placed_by_user_id, capacity, billing_country, billing_address,
+						vat_id_communicated, total_minor_units, currency, product_id, period_days,
+						renews_automatically, cancellation_notice_days, document_versions,
+						performance_start, proportional_charge_acknowledged_at, withdrawal_period_ends_at
+					) values (
+						${scope.owner.orgId}, ${scope.owner.userId}, 'consumer', 'BG',
+						${sql.json({ line1: "1 Audit Street", line2: null, city: "Sofia", postalCode: "1000", region: null, country: "BG" })},
+						false, 12000, 'eur', 'pro', 30,
+						true, 0, ${sql.json({ documents: [] })},
+						'immediate', now(), now() + interval '14 days'
+					)`;
+			},
+		},
+	],
 
 	// ── org ────────────────────────────────────────────────────────────────────────────────────
 	[

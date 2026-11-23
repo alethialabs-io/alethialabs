@@ -21,6 +21,11 @@ vi.mock("@/lib/authz/guard", () => ({
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: vi.fn() }));
 vi.mock("@/lib/billing/stripe", () => ({ getStripe: vi.fn() }));
+// The acknowledgement's own behaviour is tested in tests/lib/email/withdrawal-acknowledgement.test.ts;
+// here only WHETHER and WHEN the action asks for it (#7339).
+vi.mock("@/lib/email/withdrawal-email", () => ({
+	sendWithdrawalAcknowledgementEmail: vi.fn(async () => true),
+}));
 vi.mock("@/lib/billing/config", () => ({
 	deploymentMode: vi.fn(() => "hosted"),
 	isStripeConfigured: vi.fn(() => true),
@@ -31,6 +36,7 @@ import { getServiceDb } from "@/lib/db";
 import { getStripe } from "@/lib/billing/stripe";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { deploymentMode, isStripeConfigured } from "@/lib/billing/config";
+import { sendWithdrawalAcknowledgementEmail } from "@/lib/email/withdrawal-email";
 import {
 	getWithdrawalRight,
 	recordOrdinaryCancellation,
@@ -48,6 +54,7 @@ function order(overrides: Record<string, unknown> = {}) {
 	return {
 		id: "order-1",
 		organizationId: ORG,
+		placedByUserId: "u-1",
 		capacity: "consumer",
 		state: "active",
 		totalMinorUnits: 12_000,
@@ -264,6 +271,45 @@ describe("exercising the withdrawal", () => {
 		stubDb([order({ daysAgo: 10 })]);
 		stubStripe();
 		expect((await withdrawFromContract({ reason: null })).refundIssued).toBe(true);
+	});
+
+	// The acknowledgement on a durable medium (CRD art. 11a, ЗЗП art. 52a) — sent only AFTER the
+	// withdrawal is recorded, so it can never acknowledge one that did not take effect, and carrying
+	// the split the action computed rather than figures of its own.
+	it("acknowledges the withdrawal after recording it, with the recorded split", async () => {
+		const updates = stubDb([order({ daysAgo: 10 })]);
+		stubStripe();
+		let recordedBeforeSend = false;
+		vi.mocked(sendWithdrawalAcknowledgementEmail).mockImplementation(async () => {
+			recordedBeforeSend = updates.at(-1)?.state === "withdrawn";
+			return true;
+		});
+		await withdrawFromContract({ reason: null });
+		expect(recordedBeforeSend).toBe(true);
+		expect(sendWithdrawalAcknowledgementEmail).toHaveBeenCalledOnce();
+		expect(sendWithdrawalAcknowledgementEmail).toHaveBeenCalledWith({
+			orderId: "order-1",
+			placedByUserId: "u-1",
+			withdrawnAt: NOW,
+			refundMinorUnits: 8_000,
+			retainedMinorUnits: 4_000,
+			currency: "eur",
+		});
+	});
+
+	it("sends no acknowledgement for a refused withdrawal", async () => {
+		stubDb([order({ daysAgo: 30 })]);
+		stubStripe();
+		await expect(withdrawFromContract({ reason: null })).rejects.toThrow();
+		expect(sendWithdrawalAcknowledgementEmail).not.toHaveBeenCalled();
+	});
+
+	it("sends no acknowledgement when the refund fails, because nothing was recorded", async () => {
+		stubDb([order({ daysAgo: 10 })]);
+		const stripe = stubStripe();
+		stripe.refunds.create.mockRejectedValueOnce(new Error("stripe down"));
+		await expect(withdrawFromContract({ reason: null })).rejects.toThrow(/stripe down/);
+		expect(sendWithdrawalAcknowledgementEmail).not.toHaveBeenCalled();
 	});
 });
 
