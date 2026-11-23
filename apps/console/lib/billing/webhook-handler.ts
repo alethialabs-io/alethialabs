@@ -51,6 +51,7 @@ import type Stripe from "stripe";
 import { captureServer } from "@/lib/analytics/server";
 import type { AnalyticsEvent } from "@/lib/analytics/events";
 import { grantAiCredits } from "@/lib/billing/ai-quota";
+import { issueCreditNoteForRefund, issueCreditNotesForCharge } from "@/lib/billing/factura/credit-note";
 import { markRefundedInvoice, recordInvoiceFacts } from "@/lib/billing/invoice-facts";
 import { mirrorPaidInvoice, setInvoiceStatus } from "@/lib/billing/invoices";
 import { attemptBackupPayment } from "@/lib/billing/payment-methods";
@@ -489,6 +490,9 @@ export async function handleStripeEvent(
 			// changes nothing (lib/billing/invoice-facts.ts). A Stripe error fails the event, and the
 			// redelivery re-runs an idempotent status write.
 			await markRefundedInvoice(event.data.object, getStripe());
+			// Every succeeded refund of the charge, full or partial, gets its credit note (кредитно
+			// известие, Art. 115 ЗДДС; #7369), one per refund, so a replay issues none twice.
+			await issueCreditNotesForCharge(event.data.object, getStripe());
 			break;
 		}
 		case "charge.refund.updated": {
@@ -500,6 +504,9 @@ export async function handleStripeEvent(
 			const paymentIntentId = typeof piRef === "string" ? piRef : (piRef?.id ?? null);
 			const holdId = refund.metadata?.[HOLD_REFUND_METADATA_KEY] ?? null;
 			await nudge(() => holds.nudgeRefund(holdId, paymentIntentId));
+			// A refund that was still pending when charge.refunded fired gets its credit note when it
+			// succeeds (#7369). Idempotent per refund, like the charge.refunded path.
+			await issueCreditNoteForRefund(refund, getStripe());
 			break;
 		}
 		default:
