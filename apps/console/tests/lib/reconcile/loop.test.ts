@@ -38,6 +38,7 @@ import {
 } from "@/lib/observability/heartbeats";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
+import { runFacturaSweep } from "@/lib/billing/factura/sweeper";
 import { sweepElenchDrafts } from "@/lib/elench/drafts-sweep";
 import { sweepExpiredKubeconfigMints } from "@/lib/kubeconfig-mint/sweep";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
@@ -81,6 +82,37 @@ describe("startReconcileLoop — guards", () => {
 		delete process.env.ALETHIA_DATABASE_URL;
 		startReconcileLoop();
 		expect(intervalCalls).toBe(0);
+	});
+});
+
+describe("tick — the фактура sweep (#7369)", () => {
+	const ORIGINAL_KEY = process.env.STRIPE_SECRET_KEY;
+	afterEach(() => {
+		if (ORIGINAL_KEY === undefined) delete process.env.STRIPE_SECRET_KEY;
+		else process.env.STRIPE_SECRET_KEY = ORIGINAL_KEY;
+	});
+
+	it("never runs on a console without Stripe configured", async () => {
+		delete process.env.STRIPE_SECRET_KEY;
+		await tick(new Date());
+		expect(runFacturaSweep).not.toHaveBeenCalled();
+		expect(getHeartbeats().map((h) => h.task)).not.toContain("factura-sweep");
+	});
+
+	it("runs under its own heartbeat when Stripe is configured, then waits an hour", async () => {
+		process.env.STRIPE_SECRET_KEY = "sk_test_loop";
+		// `runTask` stamps lastRunAt from the wall clock, so the ticks are offsets from now.
+		const t0 = new Date();
+		await tick(t0);
+		expect(runFacturaSweep).toHaveBeenCalledTimes(1);
+		expect(runFacturaSweep).toHaveBeenCalledWith(t0);
+		expect(getHeartbeats().map((h) => h.task)).toContain("factura-sweep");
+
+		vi.mocked(runFacturaSweep).mockClear();
+		await tick(new Date(t0.getTime() + 30 * 60_000));
+		expect(runFacturaSweep).not.toHaveBeenCalled();
+		await tick(new Date(t0.getTime() + 61 * 60_000));
+		expect(runFacturaSweep).toHaveBeenCalledTimes(1);
 	});
 });
 
