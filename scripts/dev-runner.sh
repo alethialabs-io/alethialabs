@@ -47,10 +47,8 @@ RUNNERS="${RUNNERS:-1}"
 CRED="${CRED:-bootstrap}"
 SLOTS="${SLOTS:-1}"
 
-if [[ ! -f .env ]]; then
-  echo "✗ no .env found — run: cp .env.example .env" >&2
-  exit 1
-fi
+# Create .env, or fill any instance secret it lacks, from deploy/selfhost/secrets.manifest.
+bash scripts/dev-env.sh
 
 # ── Default MODE: native when the Go toolchain is present, else docker ──
 if [[ -z "${MODE:-}" ]]; then
@@ -120,17 +118,13 @@ if ! curl -fsS -o /dev/null --max-time 3 "$WEB_ORIGIN" 2>/dev/null; then
 fi
 
 # ── Preflight: bootstrap token must exist AND be loaded by the running console ──
-# The console reads ALETHIA_RUNNER_BOOTSTRAP_TOKEN from .env at `dev:up` start, so a
-# token we add now isn't live until the console restarts. Generate-and-stop in that
-# case rather than launching runners that would 401 on every bootstrap.
+# scripts/dev-env.sh (run above) generates ALETHIA_RUNNER_BOOTSTRAP_TOKEN into .env when it is
+# missing. The console reads it from .env at start, so a token generated just now is not live until
+# the console restarts — the 401 probe below says so instead of launching runners that would 401.
 if [[ "$CRED" == "bootstrap" ]]; then
   if [[ -z "${ALETHIA_RUNNER_BOOTSTRAP_TOKEN:-}" ]]; then
-    TOKEN="$(openssl rand -hex 32)"
-    printf '\n# Added by scripts/dev-runner.sh — shared secret for local runner self-registration.\nALETHIA_RUNNER_BOOTSTRAP_TOKEN=%s\n' "$TOKEN" >> .env
-    echo "✓ generated ALETHIA_RUNNER_BOOTSTRAP_TOKEN and wrote it to .env"
-    echo "↻ restart the console so it picks up the token, then re-run dev:runner:"
-    echo "     FORCE=1 pnpm dev:up   &&   pnpm dev:runner"
-    exit 0
+    echo "✗ ALETHIA_RUNNER_BOOTSTRAP_TOKEN is empty in .env — run scripts/dev-env.sh, then restart the console." >&2
+    exit 1
   fi
   # The token is in .env — confirm the live console actually accepts it (a wrong
   # token returns 401). Probe with the real token + a throwaway instance id, then
