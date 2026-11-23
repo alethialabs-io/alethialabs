@@ -32,6 +32,10 @@ function probeBody(status: string, checks: { db: boolean; schema: boolean; openf
 
 const HEALTHY = probeBody("healthy", { db: true, schema: true, openfga: null });
 
+/** The head of apps/console/public/install.sh as production served it on 2026-11-23. */
+const INSTALL_SH =
+	'#!/bin/sh\n# Alethia CLI installer (macOS / Linux).\n# SPDX-License-Identifier: AGPL-3.0-only\n\nmain() {\n\tset -eu\n\n\tREPO="alethialabs-io/alethia-cli"\n}\n';
+
 /** A response with the given code and body. */
 function res(status: number, body = "", location?: string): EndpointResult {
 	return location ? { status, body, ms: 12, location } : { status, body, ms: 12 };
@@ -44,7 +48,7 @@ function healthyWorld(): Record<string, EndpointResult> {
 		website: res(200, "<html>home</html>"),
 		docs: res(200, "<html>docs</html>"),
 		news: res(200, "<html>news</html>"),
-		installer: res(200, "#!/bin/sh\n"),
+		installer: res(200, INSTALL_SH),
 	};
 }
 
@@ -206,5 +210,31 @@ describe("pages are judged strictly — a redirect is down", () => {
 				{ id: "website", health: "up" },
 			]),
 		).toBe("outage");
+	});
+});
+
+describe("the installer is judged on its body", () => {
+	it("is up when it serves the install script", () => {
+		expect(healthOf(healthyWorld(), "installer")).toEqual({ health: "up" });
+	});
+
+	it("is DOWN when a routing regression serves a web page with a 200", () => {
+		const world = healthyWorld();
+		world.installer = res(200, "<!DOCTYPE html><html><head><title>Alethia</title></head></html>");
+		const v = healthOf(world, "installer");
+		expect(v.health).toBe("down");
+		expect(v.reason).toMatch(/not the install script/);
+	});
+
+	it("is DOWN for a shell script that is not this installer", () => {
+		const world = healthyWorld();
+		world.installer = res(200, "#!/bin/sh\necho hello\n");
+		expect(healthOf(world, "installer")).toEqual({ health: "down", reason: "a shell script, but not the Alethia installer" });
+	});
+
+	it("keeps the page rules: a redirect is down with its target, before the body is read", () => {
+		const world = healthyWorld();
+		world.installer = res(301, "", "https://alethialabs.io/");
+		expect(healthOf(world, "installer")).toEqual({ health: "down", reason: "HTTP 301 → https://alethialabs.io/" });
 	});
 });
