@@ -2508,8 +2508,9 @@ const TS_CATALOG = "packages/cloud-catalog/src/generated.ts";
 // B5: `paidLaunchState().paid.status` is `open` exactly when at least one cell is in PAID_MARKETS
 // (launch.ts: "`open` — at least one cell is open", decided "by the cell list alone"). Node cannot
 // import the TypeScript, so the declaration is read; a declaration this reader cannot find is an
-// integrity failure, never a closed market.
-const PAID_MARKETS_SOURCE = "packages/legal/src/commerce.ts";
+// integrity failure, never a closed market. The list moved out of commerce.ts into its own file
+// (#7320); commerce.ts only re-exports it, so the declaration is read where it now lives.
+const PAID_MARKETS_SOURCE = "packages/legal/src/paid-markets.ts";
 const LAUNCH_SOURCE = "packages/legal/src/launch.ts";
 const LEGAL_SET = "docs/legal/legal-set.json";
 const PROOF_INTEGRITY = "demos/proofs/check-proof-integrity.sh";

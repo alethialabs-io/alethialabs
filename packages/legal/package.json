@@ -8,7 +8,9 @@
 		"./documents": "./src/documents.ts",
 		"./entity": "./src/entity.ts",
 		"./launch": "./src/launch.ts",
-		"./processing": "./src/processing.ts"
+		"./paid-markets": "./src/paid-markets.ts",
+		"./processing": "./src/processing.ts",
+		"./thresholds": "./src/thresholds.ts"
 	},
 	"scripts": {
 		"lint": "eslint . --max-warnings 0",
