@@ -131,6 +131,7 @@
     "@orpc/server": "1.16.3",
     "@orpc/tanstack-query": "1.16.3",
     "@react-email/components": "^1.0.12",
+    "@react-pdf/renderer": "4.9.0",
     "@repo/assets": "workspace:*",
     "@repo/brand": "workspace:*",
     "@repo/cloud-catalog": "workspace:*",
