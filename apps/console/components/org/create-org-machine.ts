@@ -34,6 +34,7 @@ import type {
 } from "@/components/org/pending-paid-setup";
 import type { NewOrgPlanReport } from "@/lib/billing/new-org-plan-state";
 import type { NewOrgSetupState } from "@/lib/billing/new-org-setup";
+import type { Settlement } from "@/lib/wizard/types";
 import { SUPPORTED_CURRENCIES, type SupportedCurrency } from "@repo/plan-catalog";
 
 /** The four steps of the sheet. `pay` has seven panels of its own (`screenOf`). */
@@ -170,6 +171,8 @@ export type CreateOrgEvent =
 	| { readonly type: "recovery-found"; readonly state: NewOrgSetupState }
 	/** The server found one, and an open hold refuses it. */
 	| { readonly type: "recovery-held"; readonly notice: string }
+	/** The server has been asked about what the tab held; it is not asked twice per open. */
+	| { readonly type: "recovery-asked" }
 	| { readonly type: "refusal-set"; readonly message: string | null }
 	/** Name and slug passed; `trial` sends a trial-eligible account to the trial panel. */
 	| { readonly type: "name-accepted"; readonly name: string; readonly trial: boolean }
@@ -329,6 +332,8 @@ export function createOrgReducer(state: CreateOrgState, event: CreateOrgEvent): 
 		}
 		case "recovery-held":
 			return { ...state, stopped: event.notice, view: "pay" };
+		case "recovery-asked":
+			return { ...state, recoverFrom: null };
 		case "refusal-set":
 			return { ...state, refusal: event.message };
 		case "name-accepted":
@@ -479,3 +484,47 @@ export const CREATE_ORG_SCREENS: readonly CreateOrgScreen["kind"][] = [
 	"checkout",
 	"no-intent",
 ];
+
+/** The steps in the order the wizard shows them (`create-org.wizard.ts`). */
+export const CREATE_ORG_STEPS: readonly CreateOrgView[] = ["name", "declare", "pay", "invite"];
+
+/** Whether a wizard step id is one of the sheet's four steps. */
+export function isCreateOrgView(step: string): step is CreateOrgView {
+	return CREATE_ORG_STEPS.some((view) => view === step);
+}
+
+/** What the payment step's gate says while a setup is finishing. */
+export const SETUP_IN_FLIGHT_MESSAGE = "Your payment went through — setting up your team now.";
+
+/**
+ * What the payment gate can say from the machine alone: done once a setup finished (the sheet is on
+ * `invite`), in flight while a paid setup is unfinished, stopped when a run or a hold ended it.
+ * `null` when the machine knows nothing — the sheet then asks the server about what the tab held.
+ */
+export function settlementOf(state: CreateOrgState): Settlement | null {
+	if (state.view === "invite") return { kind: "done", continueAt: "invite" };
+	if (state.stopped !== null) return { kind: "stopped", message: state.stopped };
+	if (state.pending !== null) return { kind: "in-flight", message: SETUP_IN_FLIGHT_MESSAGE };
+	return null;
+}
+
+/**
+ * The event a Back to `step` stands for on `screen`, or `null` when the URL may not move the sheet
+ * there — after a charge, on a recovered or stopped setup, or past the screen in front. A Back the
+ * machine refuses is undone in the URL; `pay` and `invite` are never reached this way.
+ */
+export function backEventFor(screen: CreateOrgScreen, step: CreateOrgView): CreateOrgEvent | null {
+	switch (screen.kind) {
+		case "declare":
+			return step === "name" ? { type: "back-to-name" } : null;
+		case "checkout":
+		case "no-intent":
+			if (step === "declare") return { type: "back-to-declare" };
+			return step === "name" ? { type: "back-to-name" } : null;
+		case "trial":
+			// The trial skips the declaration, so a Back from its panel lands on the name.
+			return step === "name" || step === "declare" ? { type: "back-to-name" } : null;
+		default:
+			return null;
+	}
+}
