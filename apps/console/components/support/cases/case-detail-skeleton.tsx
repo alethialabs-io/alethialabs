@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 import { CaseClosedNotice } from "./case-closed-notice";
@@ -51,9 +52,10 @@ function MessageSkeleton({ message }: { message: CaseShapeMessage }) {
 }
 
 /**
- * The case view's loading form — the route's `loading.tsx` (with the case's {@link CaseShape}, read
- * on the server before it draws) and the view's own pending branch (with no data, so
- * {@link OPENING_CASE_SHAPE}) draw this ONE component. It is the page's layout part for part, so the
+ * The case view's loading form — the route's `loading.tsx` and the view's own pending branch both
+ * draw this ONE component, with {@link OPENING_CASE_SHAPE} (a `loading.tsx` is synchronous, so it
+ * reads nothing about the case; RUBRIC skeleton rule 4). A caller that already holds a case's
+ * {@link CaseShape} may pass it. It is the page's layout part for part, so the
  * swap to the page moves nothing (#6354, B2):
  *
  * - the header: the back link (its ghost button's `-ml-2` box), the reference, the subject, the
@@ -69,7 +71,7 @@ function MessageSkeleton({ message }: { message: CaseShapeMessage }) {
  */
 export function CaseDetailSkeleton({ shape = OPENING_CASE_SHAPE }: { shape?: CaseShape }) {
 	return (
-		<div className="flex flex-col gap-6" aria-busy="true">
+		<SkeletonRoot className="flex flex-col gap-6">
 			{/* Header */}
 			<div className="space-y-4">
 				<Skeleton className="-ml-2 h-7 w-24" />
@@ -129,6 +131,6 @@ export function CaseDetailSkeleton({ shape = OPENING_CASE_SHAPE }: { shape?: Cas
 					</div>
 				</div>
 			)}
-		</div>
+		</SkeletonRoot>
 	);
 }
