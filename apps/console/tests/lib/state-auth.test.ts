@@ -5,6 +5,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+const jobHoldsStateLock = vi.fn();
+vi.mock("@/lib/runners/state-lock", () => ({
+	jobHoldsStateLock: (...a: unknown[]) => jobHoldsStateLock(...a),
+}));
 import { getServiceDb } from "@/lib/db";
 import { resolveStateRequest } from "@/lib/runners/state-auth";
 import { mintStateToken } from "@/lib/runners/state-token";
@@ -85,9 +89,10 @@ async function resolve(
 	byId: Record<string, JobRow>,
 	token: string | null,
 	pathJobId = "job-1",
+	opts: { allowCancelledHolder?: boolean } = {},
 ) {
 	mockJobs(byId);
-	return resolveStateRequest(reqWithToken(token), pathJobId);
+	return resolveStateRequest(reqWithToken(token), pathJobId, opts);
 }
 
 describe("resolveStateRequest", () => {
@@ -131,7 +136,7 @@ describe("resolveStateRequest", () => {
 	it("resolves the server-derived key for a valid request", async () => {
 		const tok = await mintStateToken({ jobId: "job-1", stateKey: KEY });
 		const r = await resolve({ "job-1": job("PROCESSING") }, tok);
-		expect(r).toEqual({ stateKey: KEY });
+		expect(r).toEqual({ stateKey: KEY, jobId: "job-1" });
 	});
 
 	// ── THE BUG (BUG#2) ──────────────────────────────────────────────────────────────────────────
@@ -151,7 +156,8 @@ describe("resolveStateRequest", () => {
 			deployTok,
 			"plan-1",
 		);
-		expect(r).toEqual({ stateKey: KEY });
+		// The token's job (the DEPLOY) is the one a lock is filed under — never the PLAN in the URL.
+		expect(r).toEqual({ stateKey: KEY, jobId: "deploy-1" });
 	});
 
 	// ── AND THE WALL MUST HOLD ───────────────────────────────────────────────────────────────────
@@ -221,7 +227,7 @@ describe("resolveStateRequest", () => {
 			},
 			tok,
 		);
-		expect(r).toEqual({ stateKey: RUNNER_KEY });
+		expect(r).toEqual({ stateKey: RUNNER_KEY, jobId: "job-1" });
 	});
 
 	it("403s a runner-lifecycle job whose target runner is in ANOTHER org", async () => {
@@ -251,7 +257,7 @@ describe("resolveStateRequest", () => {
 			},
 			tok,
 		);
-		expect(r).toEqual({ stateKey: RUNNER_KEY });
+		expect(r).toEqual({ stateKey: RUNNER_KEY, jobId: "job-1" });
 	});
 
 	it("403s ANOTHER user's personal-org runner, even when the job's creator names it", async () => {
@@ -284,5 +290,76 @@ describe("resolveStateRequest", () => {
 			tok,
 		);
 		expect("error" in r && r.error.status).toBe(400);
+	});
+	// ── A cancelled apply draining (#7290) ───────────────────────────────────────────────────────
+	// Cancelling flips the job to CANCELLED before the runner's SIGINT reaches tofu, so tofu's final
+	// state write and unlock arrive from a CANCELLED job. They are admitted only when asked for
+	// (allowCancelledHolder), inside the drain window, and while that job still holds the lock.
+	describe("a cancelled job's final write", () => {
+		const justCancelled = () => job("CANCELLED", { completed_at: new Date(Date.now() - 30_000) });
+
+		it("ADMITS the cancelled job that still holds the lock, for the final write/unlock", async () => {
+			jobHoldsStateLock.mockResolvedValue(true);
+			const tok = await mintStateToken({ jobId: "job-1", stateKey: KEY });
+			const r = await resolve({ "job-1": justCancelled() }, tok, "job-1", {
+				allowCancelledHolder: true,
+			});
+			expect(r).toEqual({ stateKey: KEY, jobId: "job-1" });
+			expect(jobHoldsStateLock).toHaveBeenCalledWith(KEY, "job-1");
+		});
+
+		it("409s the cancelled job once it no longer holds the lock (released at its terminal report)", async () => {
+			jobHoldsStateLock.mockResolvedValue(false);
+			const tok = await mintStateToken({ jobId: "job-1", stateKey: KEY });
+			const r = await resolve({ "job-1": justCancelled() }, tok, "job-1", {
+				allowCancelledHolder: true,
+			});
+			expect("error" in r && r.error.status).toBe(409);
+		});
+
+		it("409s a cancelled job on every call that did not opt in (read, lock acquire, purge)", async () => {
+			jobHoldsStateLock.mockResolvedValue(true);
+			const tok = await mintStateToken({ jobId: "job-1", stateKey: KEY });
+			const r = await resolve({ "job-1": justCancelled() }, tok);
+			expect("error" in r && r.error.status).toBe(409);
+			expect(jobHoldsStateLock).not.toHaveBeenCalled();
+		});
+
+		it("409s a cancelled job past the drain window even if a lock row still names it", async () => {
+			jobHoldsStateLock.mockResolvedValue(true);
+			const tok = await mintStateToken({ jobId: "job-1", stateKey: KEY });
+			const stale = job("CANCELLED", { completed_at: new Date(Date.now() - 60 * 60 * 1000) });
+			const r = await resolve({ "job-1": stale }, tok, "job-1", { allowCancelledHolder: true });
+			expect("error" in r && r.error.status).toBe(409);
+		});
+
+		it("409s a FAILED or SUCCESS job even with the option — only a cancel leaves a live writer behind", async () => {
+			jobHoldsStateLock.mockResolvedValue(true);
+			const tok = await mintStateToken({ jobId: "job-1", stateKey: KEY });
+			for (const status of ["FAILED", "SUCCESS"]) {
+				const r = await resolve(
+					{ "job-1": job(status, { completed_at: new Date() }) },
+					tok,
+					"job-1",
+					{ allowCancelledHolder: true },
+				);
+				expect("error" in r && r.error.status).toBe(409);
+			}
+		});
+
+		it("keeps the key wall: a cancelled holder's token aimed at another tenant's job URL is 403", async () => {
+			jobHoldsStateLock.mockResolvedValue(true);
+			const tok = await mintStateToken({ jobId: "mine", stateKey: KEY });
+			const r = await resolve(
+				{
+					mine: justCancelled(),
+					victim: job("PROCESSING", { project_id: "p-2", environment_id: "e-2" }),
+				},
+				tok,
+				"victim",
+				{ allowCancelledHolder: true },
+			);
+			expect("error" in r && r.error.status).toBe(403);
+		});
 	});
 });
