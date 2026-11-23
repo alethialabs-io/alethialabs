@@ -16,7 +16,7 @@ const stripe = vi.hoisted(() => ({ customersRetrieve: vi.fn() }));
 vi.mock("@/lib/billing/stripe", () => ({
 	getStripe: () => ({ customers: { retrieve: stripe.customersRetrieve } }),
 }));
-vi.mock("@/lib/billing/odoo-invoice", () => ({ issueFactura: vi.fn() }));
+vi.mock("@/lib/billing/factura/issue", () => ({ issuedFacturaFor: vi.fn(async () => null) }));
 vi.mock("@/lib/db", () => {
 	const chain = {
 		select: () => chain,

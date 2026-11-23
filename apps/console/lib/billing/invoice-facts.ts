@@ -107,7 +107,7 @@ function eightPlaces(value: number): string {
  * The live lookup: EUR is rate 1; USD is the ECB reference rate. Any other currency, a network
  * failure, a timeout (5 s) or an answer without the rate is null — never a guess.
  */
-const ecbEurRate: EurRateLookup = async (currency, on) => {
+export const ecbEurRate: EurRateLookup = async (currency, on) => {
 	const code = currency.toLowerCase();
 	if (code === "eur") return { eurPerUnit: "1.00000000", source: "EUR" };
 	if (!CONVERTIBLE.has(code)) return null;

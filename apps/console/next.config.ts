@@ -97,8 +97,16 @@ const nextConfig: NextConfig = {
 	// The whole package is included rather than just `esm/**`: it is ~438 small files, and naming
 	// one subdirectory would re-create the same guess the tracer already got wrong. The version is
 	// globbed so a future bump does not silently reintroduce this.
+	//
+	// The фактура fonts (#7368) are read at runtime from `lib/billing/factura/fonts` relative to the
+	// working directory (lib/billing/factura/document.tsx). A path built at runtime is not something
+	// the tracer can follow, so they are named here; without them the standalone image could not
+	// render a фактура, and every paid invoice would stay pending with `pdf_failed`.
 	outputFileTracingIncludes: {
-		"/**/*": ["../../node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/**"],
+		"/**/*": [
+			"../../node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/**",
+			"./lib/billing/factura/fonts/**",
+		],
 	},
 	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
 	// Every @repo/* here ships raw TypeScript from `src/`, so it is compiled by the app, not
