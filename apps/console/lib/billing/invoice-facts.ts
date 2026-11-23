@@ -91,7 +91,16 @@ export function ecbRateFromXml(xml: string, currency: string, on: Date): EurRate
 		if (!best || date > best.date) best = { date, rate: value };
 	}
 	if (!best) return null;
-	return { eurPerUnit: (1 / best.rate).toFixed(8), source: `ECB:${best.date}` };
+	return { eurPerUnit: eightPlaces(1 / best.rate), source: `ECB:${best.date}` };
+}
+
+/**
+ * A positive rate as the 8-place decimal string `numeric(18, 8)` stores. This is a stored value, not
+ * a figure shown to anyone, so it is built from integer arithmetic rather than a display formatter.
+ */
+function eightPlaces(value: number): string {
+	const digits = String(Math.round(value * 1e8)).padStart(9, "0");
+	return `${digits.slice(0, -8)}.${digits.slice(-8)}`;
 }
 
 /**
