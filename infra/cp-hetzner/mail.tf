@@ -26,10 +26,18 @@
 # console uses a subdomain (MAIL-S1 #7246, README), and its design must first prove it leaves the
 # apex MX alone.
 
+# THE APEX NAME IS THE ZONE NAME, NOT "@". These records are imported, and the provider's importer
+# (cloudflare v4.52, resourceCloudflareRecordImport) stores `name` as the API's FQDN with
+# ".<zone>" trimmed — which leaves an apex record as "alethialabs.io", not "@". `name` is ForceNew
+# with no diff suppression, so "@" here planned all three apex records as destroy-and-recreate
+# (a real plan against prod state, 2026-11-23): a window with no apex MX. var.domain is the zone
+# name (the tunnel ingress in main.tf uses it as the apex hostname too). The apex CNAME in main.tf
+# keeps "@" because the provider CREATED it, so "@" is what its state holds.
+
 # MX 1 smtp.google.com — Google's single-host MX for Workspace (the 5-host aspmx set is legacy).
 resource "cloudflare_record" "mail_mx_google" {
   zone_id  = var.cloudflare_zone_id
-  name     = "@"
+  name     = var.domain
   type     = "MX"
   content  = "smtp.google.com"
   priority = 1
@@ -41,10 +49,10 @@ resource "cloudflare_record" "mail_mx_google" {
 # re-authorise the retired forwarder.
 #
 # Cloudflare stores TXT content quoted, and these values are written exactly as the API returns
-# them so that the import plans no change.
+# them (GET /zones/{zone_id}/dns_records, 2026-11-22; compared byte for byte).
 resource "cloudflare_record" "mail_spf" {
   zone_id = var.cloudflare_zone_id
-  name    = "@"
+  name    = var.domain
   type    = "TXT"
   content = "\"v=spf1 include:_spf.google.com ~all\""
   ttl     = 1
@@ -65,7 +73,7 @@ resource "cloudflare_record" "mail_dkim_google" {
 # Workspace domain, which is why it is in code rather than left as an untracked dashboard record.
 resource "cloudflare_record" "mail_google_site_verification" {
   zone_id = var.cloudflare_zone_id
-  name    = "@"
+  name    = var.domain
   type    = "TXT"
   content = "\"google-site-verification=C1hm16eOOsqixasFknN0C3KmgnMV8p0OvfHwHKAYKvg\""
   ttl     = 3600
