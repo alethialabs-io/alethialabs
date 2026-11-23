@@ -12,9 +12,18 @@ import { and, eq } from "drizzle-orm";
 import { claimPlanWelcome, upsertOrgBilling } from "@/lib/billing/queries";
 import { sendPlanWelcomeEmailForOrg } from "@/lib/email/billing-email";
 import { sendInviteEmail } from "@/lib/email/notify-email";
+import type { AiTier } from "@/lib/billing/ai-plan";
 import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
 import { getServiceDb } from "@/lib/db";
-import { invitation, member, organization, user } from "@/lib/db/schema";
+import {
+	type EarlyAccessPlan,
+	invitation,
+	member,
+	organization,
+	organizationBilling,
+	user,
+} from "@/lib/db/schema";
+import { sendEarlyAccessGrantedEmail } from "@/lib/early-access/notify";
 import { RESERVED_SLUGS } from "@/lib/routing";
 import { orgSlugShapeRefusal } from "@repo/org-slug";
 import { log } from "@/lib/observability/log";
@@ -147,20 +156,107 @@ export async function provisionOrg(
 
 export interface SetOrgPlanInput {
 	orgId: string;
-	plan: BillingPlan;
-	status: BillingStatus;
+	/** The org plan to set. Omitted (with `status`) for an AI-tier-only grant. */
+	plan?: BillingPlan;
+	status?: BillingStatus;
 	seats?: number | null;
-	/** The contract term end — the console lapses off-Stripe grants past this (isManualGrantExpired). */
+	/**
+	 * The term end — the console lapses off-Stripe grants past this (isManualGrantExpired for the
+	 * plan, billingAiTier for an off-Stripe AI tier). One row holds one term end, shared by both.
+	 */
 	periodEnd?: Date | null;
+	/** A standalone AI tier to grant off Stripe, with its status (EA-3: AI plans can be granted). */
+	ai?: { tier: AiTier; status: BillingStatus };
+	/**
+	 * Set when this is a complimentary Early Access grant (EA-3, #7325): the customer gets the
+	 * complimentary-terms email for that plan INSTEAD of the plan-welcome email, which talks about
+	 * invoices and payment methods. The plan-welcome claim is left untouched, so an organization that
+	 * later subscribes still gets its welcome then.
+	 */
+	earlyAccessGrant?: EarlyAccessPlan;
 }
 
 /**
- * Sets an org's plan by writing the ONE billing record through the real upsertOrgBilling (keeps
- * organization_billing single-writer in the console). On activation, sends the plan-welcome email
- * exactly once (claimPlanWelcome). Used by the OFF-STRIPE onboarding path; the Stripe path lets the
- * webhook do this. No Stripe object is created here.
+ * Writes an off-Stripe AI tier onto the org's billing row. Refuses where the grant would overwrite or
+ * fail to lapse: a Stripe-backed AI subscription is never overwritten (the webhook owns it), and a
+ * time-limited AI grant is refused on a row whose PLAN is a Stripe subscription, because the term end
+ * it would lapse on belongs to that subscription (billingAiTier).
+ *
+ * When `planAlsoSet` is false the grant's term end is written too — and refused if it would silently
+ * move the term of a live off-Stripe plan grant on the same row; grant both together instead.
+ */
+async function writeOffStripeAiTier(
+	orgId: string,
+	ai: { tier: AiTier; status: BillingStatus },
+	periodEnd: Date | null,
+	planAlsoSet: boolean,
+): Promise<void> {
+	const db = getServiceDb();
+	const [row] = await db
+		.select({
+			plan: organizationBilling.plan,
+			status: organizationBilling.status,
+			stripeSubscriptionId: organizationBilling.stripeSubscriptionId,
+			aiStripeSubscriptionId: organizationBilling.aiStripeSubscriptionId,
+			currentPeriodEnd: organizationBilling.currentPeriodEnd,
+		})
+		.from(organizationBilling)
+		.where(eq(organizationBilling.organizationId, orgId))
+		.limit(1);
+	if (row?.aiStripeSubscriptionId) {
+		throw new ProvisionError(
+			"This organization has a Stripe AI subscription; an off-Stripe AI grant would overwrite it.",
+		);
+	}
+	if (!planAlsoSet && periodEnd && row?.stripeSubscriptionId) {
+		throw new ProvisionError(
+			"A time-limited AI grant cannot be given to an organization whose plan is a Stripe subscription: it would never lapse.",
+		);
+	}
+	if (
+		!planAlsoSet &&
+		row &&
+		!row.stripeSubscriptionId &&
+		row.plan !== "community" &&
+		(row.status === "active" || row.status === "trialing") &&
+		(row.currentPeriodEnd?.getTime() ?? null) !== (periodEnd?.getTime() ?? null)
+	) {
+		throw new ProvisionError(
+			"This organization has an off-Stripe plan grant with a different term end. Grant the AI tier with the same end date, or grant the plan and the AI tier together.",
+		);
+	}
+
+	const now = new Date();
+	const fields = {
+		aiTier: ai.tier,
+		aiSubscriptionStatus: ai.status,
+		aiStripeSubscriptionId: null,
+		updatedAt: now,
+		// The plan write (upsertOrgBilling) already set the term end when the plan was set too. A row
+		// whose plan is a Stripe subscription keeps that subscription's renewal date.
+		...(planAlsoSet || row?.stripeSubscriptionId ? {} : { currentPeriodEnd: periodEnd }),
+	};
+	await db
+		.insert(organizationBilling)
+		.values({ organizationId: orgId, ...fields })
+		.onConflictDoUpdate({ target: organizationBilling.organizationId, set: fields });
+}
+
+/**
+ * Sets an org's plan and/or its standalone AI tier. The plan is written through the ONE billing
+ * writer, upsertOrgBilling (keeps organization_billing single-writer in the console for the plan
+ * columns); an AI tier is written by `writeOffStripeAiTier` onto the AI columns only. On activation
+ * it sends the plan-welcome email exactly once (claimPlanWelcome) — or, for a complimentary Early
+ * Access grant, the complimentary-terms email instead. Used by the OFF-STRIPE onboarding path; the
+ * Stripe path lets the webhook do this. No Stripe object is created here.
  */
 export async function setOrgPlan(input: SetOrgPlanInput): Promise<void> {
+	if ((input.plan === undefined) !== (input.status === undefined)) {
+		throw new ProvisionError("A plan and its status are set together.");
+	}
+	if (input.plan === undefined && !input.ai) {
+		throw new ProvisionError("Nothing to set: give a plan, an AI tier, or both.");
+	}
 	const [org] = await getServiceDb()
 		.select({ id: organization.id })
 		.from(organization)
@@ -168,15 +264,44 @@ export async function setOrgPlan(input: SetOrgPlanInput): Promise<void> {
 		.limit(1);
 	if (!org) throw new ProvisionError("Organization not found.");
 
-	await upsertOrgBilling({
-		organizationId: input.orgId,
-		plan: input.plan,
-		status: input.status,
-		seats: input.seats ?? null,
-		currentPeriodEnd: input.periodEnd ?? null,
-	});
+	const periodEnd = input.periodEnd ?? null;
+	if (input.plan !== undefined && input.status !== undefined) {
+		await upsertOrgBilling({
+			organizationId: input.orgId,
+			plan: input.plan,
+			status: input.status,
+			seats: input.seats ?? null,
+			currentPeriodEnd: periodEnd,
+		});
+	}
+	if (input.ai) {
+		await writeOffStripeAiTier(input.orgId, input.ai, periodEnd, input.plan !== undefined);
+	}
 
-	if (input.status === "active" || input.status === "trialing") {
+	const activated =
+		input.status === "active" ||
+		input.status === "trialing" ||
+		input.ai?.status === "active" ||
+		input.ai?.status === "trialing";
+	if (!activated) return;
+
+	if (input.earlyAccessGrant) {
+		try {
+			await sendEarlyAccessGrantedEmail({
+				orgId: input.orgId,
+				plan: input.earlyAccessGrant,
+				periodEnd,
+			});
+		} catch (err) {
+			log.error(`[platform] early-access grant email failed for ${input.orgId}`, {
+				org_id: input.orgId,
+				err,
+			});
+		}
+		return;
+	}
+
+	if (input.plan !== undefined && (input.status === "active" || input.status === "trialing")) {
 		if (await claimPlanWelcome(input.orgId)) {
 			try {
 				await sendPlanWelcomeEmailForOrg({

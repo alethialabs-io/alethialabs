@@ -20,7 +20,7 @@
 // type-import `AiTier`; the client display copy lives in @repo/plan-catalog, so client
 // components never need to import this module.
 
-import { isBillingActive } from "@/lib/billing/plan";
+import { isBillingActive, isManualGrantExpired } from "@/lib/billing/plan";
 import { getOrgBilling } from "@/lib/billing/queries";
 import type { Tx } from "@/lib/db";
 import type { BillingStatus } from "@/lib/db/schema/enums";
@@ -129,18 +129,49 @@ export function effectiveAiTier(tier: AiTier, status: BillingStatus): AiTier {
 	return isBillingActive(status) ? tier : "ai_free";
 }
 
+/** The billing-row columns {@link billingAiTier} reads. */
+export interface AiTierBillingFields {
+	aiTier: AiTier | null;
+	aiSubscriptionStatus: BillingStatus | null;
+	aiStripeSubscriptionId: string | null;
+	stripeSubscriptionId: string | null;
+	currentPeriodEnd: Date | null;
+}
+
+/**
+ * The effective AI tier of a billing row: {@link effectiveAiTier}, plus the lapse of an OFF-STRIPE
+ * AI grant. A paid tier with no AI subscription id behind it was granted through the operator plane
+ * (`setOrgPlan` with an `ai` tier — the complimentary Early Access grant, EA-3 #7325), and it lapses
+ * with the row's term end exactly as an off-Stripe plan grant does (`isManualGrantExpired`). Without
+ * this, `ai_subscription_status = 'active'` with no subscription to renew or cancel it would stay paid
+ * forever. A Stripe-backed AI tier is never affected: the webhook maintains its status.
+ *
+ * `isManualGrantExpired` is scoped to rows with no Stripe PLAN subscription, so an off-Stripe AI
+ * grant on a row whose plan is a Stripe subscription never lapses here; `setOrgPlan` refuses a
+ * time-limited AI grant on such a row for that reason, so the only grants in that position are
+ * open-ended ones.
+ */
+export function billingAiTier(billing: AiTierBillingFields, now: Date = new Date()): AiTier {
+	const tier = effectiveAiTier(
+		billing.aiTier ?? "ai_free",
+		billing.aiSubscriptionStatus ?? "none",
+	);
+	if (tier === "ai_free") return tier;
+	if (billing.aiStripeSubscriptionId == null && isManualGrantExpired(billing, now)) {
+		return "ai_free";
+	}
+	return tier;
+}
+
 /**
  * Resolve an org's effective AI tier from its billing record (INDEPENDENT of the org
- * plan). No row, or a lapsed AI subscription, → `ai_free`. The single place the guard +
- * usage surfaces read the AI tier from.
+ * plan). No row, a lapsed AI subscription, or a lapsed off-Stripe AI grant → `ai_free`. The single
+ * place the guard + usage surfaces read the AI tier from.
  */
 export async function resolveAiTier(orgId: string): Promise<AiTier> {
 	const billing = await getOrgBilling(orgId).catch(() => null);
 	if (!billing) return "ai_free";
-	return effectiveAiTier(
-		billing.aiTier ?? "ai_free",
-		billing.aiSubscriptionStatus ?? "none",
-	);
+	return billingAiTier(billing);
 }
 
 /** An org's effective AI tier plus its AI-spend hard-cap policy — one billing read. */
@@ -185,10 +216,7 @@ export async function resolveAiPlan(
 		};
 	}
 	return {
-		tier: effectiveAiTier(
-			billing.aiTier ?? "ai_free",
-			billing.aiSubscriptionStatus ?? "none",
-		),
+		tier: billingAiTier(billing),
 		hardCap: billing.usageHardCap ?? false,
 		orgWeeklyCapCredits: billing.aiOrgWeeklyCapCredits ?? null,
 		perUserWeeklyCapCredits: billing.aiPerUserWeeklyCapCredits ?? null,
