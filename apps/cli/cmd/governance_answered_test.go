@@ -4,10 +4,13 @@
 package cmd
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 )
@@ -642,6 +645,66 @@ func TestGovAnswered_FleetProviderPicker(t *testing.T) {
 	want := cloudProviderNames()[1]
 	if got != want {
 		t.Errorf("resolved to %q, want the SECOND generated provider %q", got, want)
+	}
+}
+
+// TestGovAnswered_FleetProviderPickerFollowsTheCapabilitySwitch drives the real provider select
+// past its last option and pins that the last choice is the last OFFERED cloud, not a hidden one;
+// then re-enables the hidden clouds through the catalog's switch and pins that the offered list
+// (and the --no-input refusal built from it) widens with it, so its list is the switch's and not
+// one kept in this package.
+func TestGovAnswered_FleetProviderPickerFollowsTheCapabilitySwitch(t *testing.T) {
+	t.Setenv(catalog.HiddenCloudsEnv, "")
+	var hidden []string
+	for _, p := range types.AllCloudProviders {
+		if catalog.MustLoad().Offered(string(p)) {
+			continue
+		}
+		if _, listed := catalog.MustLoad().Availability(string(p)); listed {
+			hidden = append(hidden, string(p))
+		}
+	}
+	if len(hidden) == 0 {
+		t.Fatal("the catalog hides no cloud_provider value, so this test compares nothing")
+	}
+
+	govAnsweredTTY(t)
+	keys := make([]tea.KeyType, 0, len(types.AllCloudProviders)+1)
+	for range types.AllCloudProviders {
+		keys = append(keys, tea.KeyDown)
+	}
+	keys = append(keys, tea.KeyEnter)
+	authFormAnswer(t, &authFormScript{keys: authFormKey(nil, keys...)})
+	got, err := resolveFleetProvider(nil)
+	if err != nil {
+		t.Fatalf("resolveFleetProvider: %v", err)
+	}
+
+	offered := cloudProviderNames()
+	if got != offered[len(offered)-1] {
+		t.Errorf("last picker option = %q, want the last offered cloud %q", got, offered[len(offered)-1])
+	}
+	if slices.Contains(hidden, got) {
+		t.Errorf("the picker offered %q, which the catalog hides", got)
+	}
+
+	t.Setenv(catalog.HiddenCloudsEnv, strings.Join(hidden, ","))
+	widened := cloudProviderNames()
+	for _, h := range hidden {
+		if !slices.Contains(widened, h) {
+			t.Errorf("%s was re-enabled and the picker still leaves it out: %v", h, widened)
+		}
+	}
+	// The widened half reads the --no-input refusal, which lists the names the picker would offer.
+	noInputMode = true
+	_, err = resolveFleetProvider(nil)
+	if err == nil {
+		t.Fatal("a missing provider under --no-input resolved to one")
+	}
+	for _, h := range hidden {
+		if !strings.Contains(err.Error(), h) {
+			t.Errorf("%s was re-enabled and the refusal does not offer it: %v", h, err)
+		}
 	}
 }
 
