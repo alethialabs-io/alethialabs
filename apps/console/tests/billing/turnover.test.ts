@@ -1,41 +1,75 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The turnover sums the purchase gate reads (#7324, `lib/billing/turnover.ts`). The threshold RULES
-// are EA-1's (`packages/legal/src/thresholds.test.ts`); this file pins only what is summed, into
-// which period, and that an unreadable figure fails closed.
+// The purchase gate's threshold question (#7324, `lib/billing/turnover.ts`). Since #7352 the gate
+// does no summing of its own: it asks EA-5's `assessSaleBeforeCharge`, which sums with
+// `@repo/legal/turnover` — the admin page's function. The summing rules are
+// `packages/legal/src/turnover.test.ts`'s subject; this file pins that the GATE gets the same answer,
+// over an in-memory invoice store, and that it fails closed.
 
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+vi.mock("@/lib/billing/operator-alert", () => ({ alertOperator: vi.fn(async () => true) }));
+vi.mock("@/lib/billing/invoices", () => ({ setInvoiceStatus: vi.fn() }));
 
+import type { InvoiceFactRow, InvoiceFactsStore } from "@/lib/billing/invoice-facts";
 import {
-	assessSaleAgainstTotals,
 	CONSERVATIVE_CROSS_RATE,
+	crossedThresholds,
 	eurMinorOf,
-	sumTurnover,
-	type TurnoverRow,
+	type ThresholdBuyer,
 	usdMinorOf,
 } from "@/lib/billing/turnover";
 
-const NOW = new Date("2027-03-15T12:00:00Z");
+const NOW = new Date("2027-06-15T12:00:00Z");
 
-/** A paid row with the snapshot filled in; override what the case is about. */
-function row(over: Partial<TurnoverRow>): TurnoverRow {
+/** A paid EUR invoice to a German consumer this year; override what the case is about. */
+function fact(over: Partial<InvoiceFactRow> = {}): InvoiceFactRow {
 	return {
-		customerCountry: "DE",
-		customerState: null,
-		payerCapacity: "organization",
-		vatIdGiven: false,
-		amountEurMinor: 2900,
-		amountTotal: 2900,
+		id: "inv_1",
+		eurRateSource: "EUR",
+		status: "paid",
+		paidAt: new Date("2027-03-01T10:00:00Z"),
 		currency: "eur",
-		paidAt: new Date("2027-02-01T00:00:00Z"),
+		amountMinor: 100_00,
+		amountEurMinor: 100_00,
+		country: "DE",
+		state: null,
+		capacity: "consumer",
+		vatIdGiven: null,
 		...over,
 	};
 }
 
-describe("conversions overestimate, never under", () => {
+/** A store whose gate read returns `rows`; the recording paths are not the gate's and refuse. */
+function storeOf(rows: readonly InvoiceFactRow[]): InvoiceFactsStore {
+	return {
+		declaration: async () => {
+			throw new Error("the gate does not read declarations");
+		},
+		locked: async () => {
+			throw new Error("the gate does not take the recording lock");
+		},
+		factsSince: async (since) => rows.filter((r) => r.paidAt !== null && r.paidAt >= since),
+	};
+}
+
+/** A store whose read fails, as a database outage would. */
+const brokenStore: InvoiceFactsStore = {
+	declaration: async () => null,
+	locked: async () => {
+		throw new Error("db down");
+	},
+	factsSince: async () => {
+		throw new Error("db down");
+	},
+};
+
+const EU_CONSUMER: ThresholdBuyer = { country: "FR", capacity: "consumer", vatIdGiven: null, state: null };
+const eur = (amountMinor: number) => ({ amountMinor, currency: "eur" });
+
+describe("conversions of the sale being priced overestimate, never under", () => {
 	it("is exact in its own currency and multiplied by the conservative rate across", () => {
 		expect(eurMinorOf({ amountMinor: 1000, currency: "EUR" })).toBe(1000);
 		expect(eurMinorOf({ amountMinor: 1000, currency: "usd" })).toBe(1000 * CONSERVATIVE_CROSS_RATE);
@@ -49,96 +83,68 @@ describe("conversions overestimate, never under", () => {
 	});
 });
 
-describe("sumTurnover", () => {
-	it("counts an EU no-VAT-number sale toward the EU total AND the Bulgarian one", () => {
-		const t = sumTurnover([row({})], NOW);
-		expect(t.euCurrentYearEurMinor).toBe(2900);
-		expect(t.bgCalendarYearEurMinor).toBe(2900);
+describe("crossedThresholds — the gate stops BEFORE the sale that crosses EUR 10,000", () => {
+	const near = storeOf([fact({ amountMinor: 9_950_00, amountEurMinor: 9_950_00 })]);
+
+	it("EUR 9,950 + EUR 51 → stop", async () => {
+		const crossed = await crossedThresholds(EU_CONSUMER, eur(51_00), { now: NOW, store: near });
+		expect(crossed.map((c) => c.counter.id)).toContain("eu_cross_border_no_vat_id");
 	});
 
-	it("does not count an EU business that gave a VAT number", () => {
-		const t = sumTurnover([row({ vatIdGiven: true })], NOW);
-		expect(t.euCurrentYearEurMinor).toBe(0);
-		expect(t.bgCalendarYearEurMinor).toBe(0);
+	it("EUR 9,950 + EUR 50 → allowed (the threshold is 'exceeds', so landing on it is not crossing)", async () => {
+		expect(await crossedThresholds(EU_CONSUMER, eur(50_00), { now: NOW, store: near })).toEqual([]);
 	});
 
-	it("counts a Bulgarian sale toward the Bulgarian total only", () => {
-		const t = sumTurnover([row({ customerCountry: "BG", vatIdGiven: true })], NOW);
-		expect(t.bgCalendarYearEurMinor).toBe(2900);
-		expect(t.euCurrentYearEurMinor).toBe(0);
+	it("an unknown sale amount reads the totals alone, which still stops once a total is crossed", async () => {
+		const over = storeOf([fact({ amountMinor: 10_000_01, amountEurMinor: 10_000_01 })]);
+		expect(await crossedThresholds(EU_CONSUMER, null, { now: NOW, store: near })).toEqual([]);
+		const crossed = await crossedThresholds(EU_CONSUMER, null, { now: NOW, store: over });
+		expect(crossed.map((c) => c.counter.id)).toContain("eu_cross_border_no_vat_id");
 	});
 
-	it("puts last year's EU sales in the previous-year total, not this year's", () => {
-		const t = sumTurnover([row({ paidAt: new Date("2026-06-01T00:00:00Z") })], NOW);
-		expect(t.euPreviousYearEurMinor).toBe(2900);
-		expect(t.euCurrentYearEurMinor).toBe(0);
-		expect(t.bgCalendarYearEurMinor).toBe(0);
-	});
-
-	it("skips a row with no snapshot country — it predates the snapshot", () => {
-		const t = sumTurnover([row({ customerCountry: null })], NOW);
-		expect(t.euCurrentYearEurMinor).toBe(0);
-	});
-
-	it("falls back to a conservative conversion when the EUR amount was not recorded", () => {
-		const t = sumTurnover([row({ amountEurMinor: null, amountTotal: 1000, currency: "usd" })], NOW);
-		expect(t.euCurrentYearEurMinor).toBe(1000 * CONSERVATIVE_CROSS_RATE);
-	});
-
-	it("fails closed on an amount it cannot read", () => {
-		const t = sumTurnover([row({ amountEurMinor: null, currency: "gbp" })], NOW);
-		expect(t.euCurrentYearEurMinor).toBeNaN();
-	});
-
-	it("counts US revenue and transactions per state", () => {
-		const t = sumTurnover(
-			[
-				row({ customerCountry: "US", customerState: "NY", amountTotal: 5000, currency: "usd" }),
-				row({ customerCountry: "US", customerState: "NY", amountTotal: 5000, currency: "usd" }),
-				row({ customerCountry: "US", customerState: "CA", amountTotal: 100, currency: "usd" }),
-			],
-			NOW,
-		);
-		expect(t.usStates.get("NY")).toEqual({ revenueUsdMinor: 10000, transactions: 2 });
-		expect(t.usStates.get("CA")).toEqual({ revenueUsdMinor: 100, transactions: 1 });
-	});
-
-	it("poisons every state's total with a US sale that has no state", () => {
-		const t = sumTurnover([row({ customerCountry: "US", customerState: null, currency: "usd" })], NOW);
-		const assessed = assessSaleAgainstTotals(
-			{ country: "US", capacity: "organization", vatIdGiven: null, state: "TX" },
-			null,
-			t,
-		);
-		expect(assessed[0]?.assessment.verdict).toBe("stop");
+	it("does not count a voided or refunded invoice (EA-5's rule, not a second one)", async () => {
+		const store = storeOf([fact({ status: "refunded", amountMinor: 9_990_00, amountEurMinor: 9_990_00 })]);
+		expect(await crossedThresholds(EU_CONSUMER, eur(51_00), { now: NOW, store })).toEqual([]);
 	});
 });
 
-describe("assessSaleAgainstTotals — stop BEFORE the sale that crosses", () => {
-	const EU_NO_VAT = { country: "FR", capacity: "organization", vatIdGiven: false, state: null } as const;
-
-	it("stops the sale that would take the EU total over EUR 10,000", () => {
-		const totals = sumTurnover([row({ amountEurMinor: 9_990_00, amountTotal: 9_990_00 })], NOW);
-		const assessed = assessSaleAgainstTotals(EU_NO_VAT, { amountMinor: 2900, currency: "eur" }, totals);
-		const eu = assessed.find((a) => a.counter.id === "eu_cross_border_no_vat_id");
-		expect(eu?.assessment.verdict).toBe("stop");
+describe("crossedThresholds — fail-closed", () => {
+	it("an invoice whose EUR amount was never recorded makes the total unreadable → stop", async () => {
+		const store = storeOf([fact({ currency: "usd", amountMinor: 1_00, amountEurMinor: null })]);
+		const crossed = await crossedThresholds(EU_CONSUMER, eur(1_00), { now: NOW, store });
+		expect(crossed.map((c) => c.counter.id)).toContain("eu_cross_border_no_vat_id");
 	});
 
-	it("lets a sale through that stays under, with a warning near the line", () => {
-		const totals = sumTurnover([row({ amountEurMinor: 8_500_00, amountTotal: 8_500_00 })], NOW);
-		const assessed = assessSaleAgainstTotals(EU_NO_VAT, { amountMinor: 2900, currency: "eur" }, totals);
-		const eu = assessed.find((a) => a.counter.id === "eu_cross_border_no_vat_id");
-		expect(eu?.assessment.verdict).toBe("warn");
+	it("a sale in a currency no threshold is kept in → stop", async () => {
+		const crossed = await crossedThresholds(
+			EU_CONSUMER,
+			{ amountMinor: 1_00, currency: "gbp" },
+			{ now: NOW, store: storeOf([]) },
+		);
+		expect(crossed.length).toBeGreaterThan(0);
 	});
 
-	it("assesses nothing for a buyer outside BG, the EU and the US", () => {
-		const totals = sumTurnover([], NOW);
-		expect(
-			assessSaleAgainstTotals(
-				{ country: "GB", capacity: "organization", vatIdGiven: null, state: null },
-				null,
-				totals,
+	it("a failed read throws, which the gate's caller treats as a refusal", async () => {
+		await expect(
+			crossedThresholds(EU_CONSUMER, eur(1_00), { now: NOW, store: brokenStore }),
+		).rejects.toThrow("db down");
+	});
+});
+
+describe("crossedThresholds — buyers who count toward nothing", () => {
+	it("reads nothing for a buyer outside BG, the EU and the US", async () => {
+		const buyer: ThresholdBuyer = { country: "GB", capacity: "organization", vatIdGiven: null, state: null };
+		expect(await crossedThresholds(buyer, eur(1_00), { now: NOW, store: brokenStore })).toEqual([]);
+	});
+
+	it("a US sale is assessed against its state in USD", async () => {
+		const store = storeOf(
+			Array.from({ length: 199 }, (_, i) =>
+				fact({ id: `inv_${i}`, country: "US", state: "GA", capacity: "organization", currency: "usd", amountMinor: 1_00 }),
 			),
-		).toEqual([]);
+		);
+		const buyer: ThresholdBuyer = { country: "US", capacity: "organization", vatIdGiven: null, state: "GA" };
+		const crossed = await crossedThresholds(buyer, { amountMinor: 1_00, currency: "usd" }, { now: NOW, store });
+		expect(crossed.map((c) => c.counter.id)).toEqual(["us_state"]);
 	});
 });
