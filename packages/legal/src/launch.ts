@@ -15,51 +15,26 @@
 // console, not of the launch, and a caller that needs it combines it itself.
 
 import {
+	EU_MEMBER_STATES,
 	PAID_MARKETS,
 	PAYER_CAPACITIES,
 	type PaidMarketCell,
 	type PayerCapacity,
+	SELLER_COUNTRY,
+	VAT_ID_STATUSES,
+	type VatIdStatus,
+	matchPaidMarketCell,
+	vatIdGivenOf,
+	vatIdStatusOf,
+	vatIdStatusRequired,
 } from "./commerce";
 import { LEGAL_ENTITY } from "./entity";
 
 // ── The decided markets ─────────────────────────────────────────────────────────────────────────
 
-/** The country the seller is established in, ISO 3166-1 alpha-2. */
-export const SELLER_COUNTRY = "BG";
-
-/**
- * The 27 EU member states, ISO 3166-1 alpha-2. Greece is `GR` here; `EL` is its VAT prefix, not its
- * country code.
- */
-export const EU_MEMBER_STATES: readonly string[] = [
-	"AT",
-	"BE",
-	"BG",
-	"CY",
-	"CZ",
-	"DE",
-	"DK",
-	"EE",
-	"ES",
-	"FI",
-	"FR",
-	"GR",
-	"HR",
-	"HU",
-	"IE",
-	"IT",
-	"LT",
-	"LU",
-	"LV",
-	"MT",
-	"NL",
-	"PL",
-	"PT",
-	"RO",
-	"SE",
-	"SI",
-	"SK",
-];
+// The seller's country and the EU member states moved to commerce.ts, which needs them for the
+// VAT-number rule (#7320). They are re-exported so `@repo/legal/launch` imports keep working.
+export { EU_MEMBER_STATES, SELLER_COUNTRY };
 
 /**
  * The North American countries in the decided market. The decision says "North America"; the tax
@@ -89,31 +64,52 @@ export const DECIDED_MARKET_COUNTRIES: readonly string[] = [
  */
 export const PAID_LAUNCH_ANNOUNCED_FOR: string | null = null;
 
+// ── The stage name ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The name of the commercial stage the product is in, as every surface prints it (ruling
+ * 2026-11-23: paid use before the beta is called "Early Access").
+ *
+ * ONE constant on purpose. Before it, four surfaces each carried their own "Beta" literal and none
+ * of them agreed on when it changed. A surface that needs the stage name imports this; it does not
+ * write the words itself. Feature-level "Beta" tags on single features are a different thing and do
+ * not read it.
+ */
+export const RELEASE_STAGE = "Early Access";
+
 // ── The contract ────────────────────────────────────────────────────────────────────────────────
 
 /**
  * Why a cell is closed — a closed set, so a surface can branch without parsing prose.
  *
- *  - `market_not_identified` — the country or the capacity is missing or malformed. Nothing is
- *    assumed about who is asking.
+ *  - `market_not_identified` — the country or the capacity is missing or malformed, or the buyer is
+ *    an organization in an EU member state other than the seller's and has not declared whether it
+ *    has a VAT number. Nothing is assumed about who is asking.
  *  - `market_not_decided` — the country is outside `DECIDED_MARKET_COUNTRIES`.
  *  - `subnational_thresholds_unresolved` — the country sets tax thresholds below the country level
  *    that a country-wide cell cannot honour, and the question is recorded as blocking.
- *  - `seller_registration_required` — the cell includes buyers the seller may not charge before it
- *    holds a tax registration, and `vatRegistered` is false.
+ *  - `seller_registration_required` — an organization in an EU member state other than the
+ *    seller's that GAVE a VAT number, while `vatRegistered` is false. The same organization without
+ *    a VAT number does not carry this reason. (Such a buyer is offered the complimentary grant
+ *    instead: `complimentaryGrantEligible` in commerce.ts.)
  *  - `evidence_not_recorded` — the market is decided and nothing above applies, but no cell with its
  *    evidence has been added to `PAID_MARKETS`.
+ *  - `threshold_reached` — the cell is listed, but the next sale would cross a tax threshold
+ *    (thresholds.ts). The launch state reads no turnover, so `paidLaunchState` and `paidLaunchCell`
+ *    NEVER return it: it exists so the purchase gate, which does read turnover, refuses with a
+ *    reason from this same set. It is the only reason that can apply to a listed cell.
  *
  * One reason per cell: the first that applies, in the order above. A cell that is in the list is
  * open whatever this taxonomy would have said about it — the list is the authority, and the reason
- * only ever explains an absence.
+ * only ever explains an absence (except `threshold_reached`, above).
  */
 export type PaidCellClosedReason =
 	| "market_not_identified"
 	| "market_not_decided"
 	| "subnational_thresholds_unresolved"
 	| "seller_registration_required"
-	| "evidence_not_recorded";
+	| "evidence_not_recorded"
+	| "threshold_reached";
 
 /** Every closed reason, in the order they are tested. */
 export const PAID_CELL_CLOSED_REASONS: readonly PaidCellClosedReason[] = [
@@ -122,6 +118,7 @@ export const PAID_CELL_CLOSED_REASONS: readonly PaidCellClosedReason[] = [
 	"subnational_thresholds_unresolved",
 	"seller_registration_required",
 	"evidence_not_recorded",
+	"threshold_reached",
 ];
 
 /**
@@ -132,22 +129,28 @@ export const PAID_CELL_CLOSED_REASON_DETAIL: Readonly<
 	Record<PaidCellClosedReason, string>
 > = {
 	market_not_identified:
-		"The country or the payer capacity was missing or malformed, so no market could be identified.",
+		"The country or the payer capacity was missing or malformed, or an organization in another EU " +
+		"member state did not declare whether it has a VAT number, so no market could be identified.",
 	market_not_decided:
 		"The country is outside the decided markets (the EU, the United States and Canada).",
 	subnational_thresholds_unresolved:
 		"Provincial thresholds below the country level are recorded as unresolved, and a country-wide " +
 		"cell cannot refuse a single province. See docs/legal/TAX_MARKET_PRECONDITIONS.md, section 3.7.",
 	seller_registration_required:
-		"The cell includes businesses that give a VAT number, which may not be charged before the " +
-		"seller's registration exists. See docs/legal/TAX_MARKET_PRECONDITIONS.md, section 3.3.",
+		"The buyer is a business in another EU member state that gives a VAT number, which may not be " +
+		"charged before the seller's registration exists. See docs/legal/TAX_MARKET_PRECONDITIONS.md, " +
+		"section 3.3.",
 	evidence_not_recorded:
 		"The market is decided, but no cell with its evidence has been added to PAID_MARKETS. " +
 		"See docs/legal/PAID_MARKETS.md for the four conditions.",
+	threshold_reached:
+		"The cell is open, but the next sale would cross a tax threshold (EUR 51,130 in Bulgaria, " +
+		"EUR 10,000 for cross-border EU sales to buyers with no VAT number, or a US state's threshold). " +
+		"See docs/legal/TAX_MARKET_PRECONDITIONS.md, sections 3.1 and 3.5.",
 };
 
 /**
- * The state of one country × capacity cell.
+ * The state of one cell.
  *
  *  - `open` — the cell is in the cell list; `evidence` is the string recorded on it.
  *  - `announced` — closed today, in a decided market, with a date promised that is still ahead.
@@ -176,6 +179,11 @@ export interface PaidLaunchCell {
 	readonly country: string;
 	/** `null` when the capacity was not declared. */
 	readonly capacity: PayerCapacity | null;
+	/**
+	 * The organization's VAT-number status the cell was asked for, or `null` when it was not declared
+	 * or the capacity is `consumer` (a consumer has none).
+	 */
+	readonly vatId: VatIdStatus | null;
 	readonly paid: PaidCellState;
 	readonly trial: TrialCellState;
 }
@@ -194,9 +202,9 @@ export type LaunchState =
 	| { readonly status: "closed"; readonly lapsedAnnouncement: string | null };
 
 /**
- * How much of the decided market is open: `none`, `partial`, or `full` when every decided
- * country × capacity cell is open. It is a count, not a verdict — which of these counts as "paid is
- * ready" is the maintainer's to define, and this module does not define it.
+ * How much of the decided market is open: `none`, `partial`, or `full` when every decided cell is
+ * open. It is a count, not a verdict — which of these counts as "paid is ready" is the maintainer's
+ * to define, and this module does not define it.
  */
 export type DecidedMarketCoverage = "none" | "partial" | "full";
 
@@ -219,9 +227,13 @@ export interface PaidLaunchState {
 	readonly trial: LaunchState;
 	readonly coverage: DecidedMarketCoverage;
 	/**
-	 * Every decided country × capacity cell, in `DECIDED_MARKET_COUNTRIES` × `PAYER_CAPACITIES`
-	 * order, followed by any open cell outside the decided markets so that an open cell is never
-	 * missing from the list.
+	 * Every decided cell, in `DECIDED_MARKET_COUNTRIES` × `PAYER_CAPACITIES` order, with each
+	 * `organization` listed once per `VAT_ID_STATUSES` entry (`given`, then `not_given`) — 3 cells per
+	 * country. Then any open cell outside the decided markets, so that an open cell is never missing
+	 * from the list.
+	 *
+	 * The organization is split in every country, not only in the EU, because a cell may be narrowed
+	 * by `vatId` anywhere; in Bulgaria and outside the EU a cell without `vatId` simply opens both.
 	 */
 	readonly cells: readonly PaidLaunchCell[];
 }
@@ -306,14 +318,14 @@ function knownCapacity(
 function closedReason(
 	country: string,
 	capacity: PayerCapacity,
+	vatId: VatIdStatus | null,
 	inputs: PaidLaunchInputs,
 ): PaidCellClosedReason {
 	if (!DECIDED_MARKET_COUNTRIES.includes(country)) return "market_not_decided";
 	if (country === "CA") return "subnational_thresholds_unresolved";
 	if (
-		capacity === "organization" &&
-		country !== SELLER_COUNTRY &&
-		EU_MEMBER_STATES.includes(country) &&
+		vatId === "given" &&
+		vatIdStatusRequired(country, capacity) &&
 		!inputs.vatRegistered
 	) {
 		return "seller_registration_required";
@@ -325,25 +337,27 @@ function closedReason(
  * The state of one cell under the given inputs — the ONE rule both the paid state and the trial
  * state are read from.
  *
- * `open` is decided by the cell list alone, with the same matching `paidMarketEnabled` uses, so the
- * two cannot disagree about a cell. A closed cell in a decided market is `announced` while a
- * promised date is ahead; a cell outside the decided markets is never announced, because the
- * promise was not made about it.
+ * `open` is decided by the cell list alone, through `matchPaidMarketCell` — the same function
+ * `paidMarketEnabled` calls — so the two cannot disagree about a cell. A closed cell in a decided
+ * market is `announced` while a promised date is ahead; a cell outside the decided markets is never
+ * announced, because the promise was not made about it.
  */
 function cellState(
 	country: string | null,
 	capacity: PayerCapacity | null,
+	vatId: VatIdStatus | null,
 	inputs: PaidLaunchInputs,
 ): PaidCellState {
 	if (country === null || capacity === null) {
 		return { status: "closed", reason: "market_not_identified" };
 	}
-	const open = inputs.cells.find(
-		(cell) => cell.country === country && cell.capacity === capacity,
-	);
+	if (vatId === null && vatIdStatusRequired(country, capacity)) {
+		return { status: "closed", reason: "market_not_identified" };
+	}
+	const open = matchPaidMarketCell(inputs.cells, country, capacity, vatIdGivenOf(vatId));
 	if (open) return { status: "open", evidence: open.evidence };
 
-	const reason = closedReason(country, capacity, inputs);
+	const reason = closedReason(country, capacity, vatId, inputs);
 	const from = announcementAhead(inputs);
 	if (from !== null && reason !== "market_not_decided") {
 		return { status: "announced", from, reason };
@@ -352,21 +366,27 @@ function cellState(
 }
 
 /**
- * The paid and trial state for one country × capacity, for any country — decided or not.
+ * The paid and trial state for one buyer, for any country — decided or not.
  *
  * FAIL-CLOSED on the inputs, as `paidMarketEnabled` is: a missing or malformed country and an
  * undeclared capacity are closed with `market_not_identified`, never defaulted to the seller's own
- * country.
+ * country; so is an organization in an EU member state other than the seller's whose VAT-number
+ * status is undeclared.
+ *
+ * @param vatIdGiven whether an organization gave a VAT number; `null`/omitted when undeclared.
+ *   Ignored for a consumer. Same meaning as in `paidMarketEnabled`.
  */
 export function paidLaunchCell(
 	country: string | null | undefined,
 	capacity: PayerCapacity | null | undefined,
+	vatIdGiven: boolean | null = null,
 	inputs: PaidLaunchInputs = currentPaidLaunchInputs(),
 ): PaidLaunchCell {
 	const iso = normaliseCountry(country);
 	const known = knownCapacity(capacity);
-	const state = cellState(iso, known, inputs);
-	return { country: iso ?? "", capacity: known, paid: state, trial: state };
+	const vatId = known === "organization" ? vatIdStatusOf(vatIdGiven) : null;
+	const state = cellState(iso, known, vatId, inputs);
+	return { country: iso ?? "", capacity: known, vatId, paid: state, trial: state };
 }
 
 /** The whole-product state for a set of cells: open if any is, else announced, else closed. */
@@ -382,6 +402,17 @@ function overallState(
 	return { status: "closed", lapsedAnnouncement: lapsedAnnouncement(inputs) };
 }
 
+/** The decided cells for one country: the consumer, then the organization once per VAT status. */
+function decidedCellsFor(country: string, inputs: PaidLaunchInputs): PaidLaunchCell[] {
+	return PAYER_CAPACITIES.flatMap((capacity) =>
+		capacity === "organization"
+			? VAT_ID_STATUSES.map((status) =>
+					paidLaunchCell(country, capacity, vatIdGivenOf(status), inputs),
+				)
+			: [paidLaunchCell(country, capacity, null, inputs)],
+	);
+}
+
 /**
  * The launch state: whether paid plans and the trial are open, announced or closed, for the product
  * and for every cell.
@@ -391,7 +422,8 @@ function overallState(
  *
  * Three properties the tests hold it to:
  *
- *  1. A cell is `open` exactly when it is in `inputs.cells`. No date, flag or reason opens one.
+ *  1. A cell is `open` exactly when `matchPaidMarketCell` finds it in `inputs.cells` — the rule
+ *     `paidMarketEnabled` uses. No date, flag or reason opens one.
  *  2. The trial's state equals the paid state, cell for cell and overall, because it is the same
  *     value from the same rule.
  *  3. With today's inputs everything is `closed` — which is what a visitor can buy today.
@@ -400,12 +432,21 @@ export function paidLaunchState(
 	inputs: PaidLaunchInputs = currentPaidLaunchInputs(),
 ): PaidLaunchState {
 	const decided = DECIDED_MARKET_COUNTRIES.flatMap((country) =>
-		PAYER_CAPACITIES.map((capacity) => paidLaunchCell(country, capacity, inputs)),
+		decidedCellsFor(country, inputs),
 	);
+	const seen = new Set<string>();
 	const outside = inputs.cells
 		.filter((cell) => !DECIDED_MARKET_COUNTRIES.includes(cell.country))
-		.map((cell) => paidLaunchCell(cell.country, cell.capacity, inputs))
-		.filter((cell) => cell.paid.status === "open");
+		.map((cell) =>
+			paidLaunchCell(cell.country, cell.capacity, vatIdGivenOf(cell.vatId), inputs),
+		)
+		.filter((cell) => cell.paid.status === "open")
+		.filter((cell) => {
+			const key = `${cell.country}/${cell.capacity}/${cell.vatId}`;
+			if (seen.has(key)) return false;
+			seen.add(key);
+			return true;
+		});
 	const cells = [...decided, ...outside];
 
 	const openDecided = decided.filter((cell) => cell.paid.status === "open").length;
@@ -414,4 +455,159 @@ export function paidLaunchState(
 
 	const overall = overallState(cells, inputs);
 	return { paid: overall, trial: overall, coverage, cells };
+}
+
+// ── The open markets, in words ──────────────────────────────────────────────────────────────────
+
+/**
+ * English names for the decided countries, written to follow "in" ("in the Netherlands"). A country
+ * outside this list is printed as its code — an open cell outside the decided markets is a decision
+ * nobody has made, and it should look odd on a page rather than be dressed up.
+ */
+const COUNTRY_NAMES: Readonly<Record<string, string>> = {
+	AT: "Austria",
+	BE: "Belgium",
+	BG: "Bulgaria",
+	CY: "Cyprus",
+	CZ: "Czechia",
+	DE: "Germany",
+	DK: "Denmark",
+	EE: "Estonia",
+	ES: "Spain",
+	FI: "Finland",
+	FR: "France",
+	GR: "Greece",
+	HR: "Croatia",
+	HU: "Hungary",
+	IE: "Ireland",
+	IT: "Italy",
+	LT: "Lithuania",
+	LU: "Luxembourg",
+	LV: "Latvia",
+	MT: "Malta",
+	NL: "the Netherlands",
+	PL: "Poland",
+	PT: "Portugal",
+	RO: "Romania",
+	SE: "Sweden",
+	SI: "Slovenia",
+	SK: "Slovakia",
+	US: "the US",
+	CA: "Canada",
+};
+
+/** A list in English with a serial comma: "a", "a and b", "a, b, and c". */
+function englishList(items: readonly string[]): string {
+	if (items.length <= 2) return items.join(" and ");
+	return `${items.slice(0, -1).join(", ")}, and ${items.at(-1) ?? ""}`;
+}
+
+/** Countries in decided-market order, then any others alphabetically, so the wording is stable. */
+function orderCountries(countries: ReadonlySet<string>): string[] {
+	const rank = (country: string): number => {
+		const index = DECIDED_MARKET_COUNTRIES.indexOf(country);
+		return index === -1 ? DECIDED_MARKET_COUNTRIES.length : index;
+	};
+	return [...countries].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
+
+/** The countries' names, in a stable order. */
+function countryNames(countries: ReadonlySet<string>): string[] {
+	return orderCountries(countries).map((country) => COUNTRY_NAMES[country] ?? country);
+}
+
+/** Whether every EU member state is in `countries`. */
+function coversEu(countries: ReadonlySet<string>): boolean {
+	return EU_MEMBER_STATES.every((country) => countries.has(country));
+}
+
+/** `countries` without the EU member states. */
+function withoutEu(countries: ReadonlySet<string>): Set<string> {
+	return new Set([...countries].filter((country) => !EU_MEMBER_STATES.includes(country)));
+}
+
+/**
+ * "in X, Y and Z" for a set of countries, saying "the EU" in place of the 27 member states when all
+ * of them are present.
+ */
+function inCountries(countries: ReadonlySet<string>): string {
+	if (!coversEu(countries)) return `in ${englishList(countryNames(countries))}`;
+	return `in ${englishList(["the EU", ...countryNames(withoutEu(countries))])}`;
+}
+
+/**
+ * The phrase for organization cells narrowed to one VAT status, e.g. "EU businesses without a VAT
+ * number". A member state already open to every business counts as covered, so a Bulgarian cell
+ * without `vatId` plus the 26 other member states' `not_given` cells reads as the whole EU.
+ */
+function narrowedPhrase(
+	narrowed: ReadonlySet<string>,
+	anyStatus: ReadonlySet<string>,
+	qualifier: string,
+): string[] {
+	if (narrowed.size === 0) return [];
+	const covered = new Set([...narrowed, ...anyStatus]);
+	if (!coversEu(covered)) return [`businesses ${qualifier} ${inCountries(narrowed)}`];
+	const rest = withoutEu(narrowed);
+	return [
+		`EU businesses ${qualifier}`,
+		...(rest.size > 0 ? [`businesses ${qualifier} ${inCountries(rest)}`] : []),
+	];
+}
+
+/**
+ * Who can buy today, in words, derived from the cells — or `null` when no cell is open.
+ *
+ * For example, with Bulgarian and US business cells and a `not_given` business cell for each of the
+ * other 26 member states: "businesses in Bulgaria and the US, and EU businesses without a VAT
+ * number". The phrase is lower-case so a surface can put it after its own words ("Early Access is
+ * open to …"). It names only open cells; it never says what is closed.
+ *
+ * It is derived, never typed, so the sentence cannot claim a market that the gate refuses. An
+ * organization with both a `given` and a `not_given` cell in a country reads as open to every
+ * business there.
+ *
+ * @param cells in production, `PAID_MARKETS` (the default).
+ */
+export function openMarketSummary(
+	cells: readonly PaidMarketCell[] = PAID_MARKETS,
+): string | null {
+	const statusesByCountry = new Map<string, Set<VatIdStatus | "any">>();
+	const consumers = new Set<string>();
+	for (const cell of cells) {
+		if (cell.capacity === "consumer") {
+			// A consumer cell narrowed by vatId never matches (commerce.ts), so it opens nothing.
+			if (cell.vatId === undefined) consumers.add(cell.country);
+			continue;
+		}
+		const statuses = statusesByCountry.get(cell.country) ?? new Set<VatIdStatus | "any">();
+		statuses.add(cell.vatId ?? "any");
+		statusesByCountry.set(cell.country, statuses);
+	}
+
+	const anyStatus = new Set<string>();
+	const notGiven = new Set<string>();
+	const given = new Set<string>();
+	for (const [country, statuses] of statusesByCountry) {
+		if (statuses.has("any") || (statuses.has("given") && statuses.has("not_given"))) {
+			anyStatus.add(country);
+		} else if (statuses.has("not_given")) {
+			notGiven.add(country);
+		} else {
+			given.add(country);
+		}
+	}
+
+	const phrases = [
+		...(anyStatus.size > 0 ? [`businesses ${inCountries(anyStatus)}`] : []),
+		...narrowedPhrase(notGiven, anyStatus, "without a VAT number"),
+		...narrowedPhrase(given, anyStatus, "with a VAT number"),
+		...(consumers.size > 0 ? [`individuals ${inCountries(consumers)}`] : []),
+	];
+	if (phrases.length === 0) return null;
+	// Two phrases that already contain "and" need the comma, or the second reads as one more country.
+	if (phrases.length === 2 && phrases.some((phrase) => phrase.includes(" and "))) {
+		return phrases.join(", and ");
+	}
+	return englishList(phrases);
 }
