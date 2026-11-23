@@ -65,6 +65,10 @@ const OTHER_RUNTIME_SOURCE: Record<string, OtherSource> = {
 		kind: "deploy-env",
 		why: "emitted from the vault (#7148); empty ⇒ every status link is hidden (lib/legal.ts statusUrl)",
 	},
+	NEXT_PUBLIC_CONNECTOR_ASSETS_ORIGIN: {
+		kind: "code-default",
+		why: "unset ⇒ components/connectors/connector-assets.ts uses the hosted bucket on the hosted edition and the instance's own origin otherwise (EDN-H7, #6904)",
+	},
 	NEXT_PUBLIC_FEEDBACK_REPO_URL: {
 		kind: "code-default",
 		why: "unset ⇒ components/shell/instance-links.ts falls back to the public issues URL",
