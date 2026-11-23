@@ -101,9 +101,10 @@ test.describe("Runners — destroy", () => {
 	test("the destroy confirmation opens, warns, and dismissing it queues nothing", async ({
 		team,
 	}) => {
-		// The registry's `runners.destroy` — `confirm: popover`, `confirm_action: "Destroy"`. A
-		// popover has no Cancel button, so the dismissal is Escape; the assertion that matters is
-		// the one after it, that no job was enqueued. A dialog that merely closed is not evidence.
+		// The registry's `runners.destroy` — reached through the runner picker (`open: "Destroy"`),
+		// then `confirm: typed` (#6827, R6 C-20). The dismissal is the dialog's Cancel; the assertion
+		// that matters is the one after it, that no job was enqueued. A dialog that merely closed is
+		// not evidence.
 		const name = `e2e-destroy-cancel-${Date.now()}`;
 		const { runner, identityId: id } = await seedDeployedRunner(
 			{ userId: team.userId!, orgId: team.orgId! },
@@ -117,13 +118,14 @@ test.describe("Runners — destroy", () => {
 
 		await card.getByRole("button", { name: "Destroy", exact: true }).click();
 		const popover = destroyPopover(team.page);
-		await expect(popover.getByText("Select runner")).toBeVisible();
-		await expect(
-			popover.getByText(new RegExp(`This will tear down all cloud resources for "${name}"`)),
-		).toBeVisible();
+		await expect(popover.getByText(`Destroy runner \u201C${name}\u201D`)).toBeVisible();
+		await popover.getByRole("button", { name: "Continue to destroy", exact: true }).click();
 
-		await team.page.keyboard.press("Escape");
-		await expect(popover).toHaveCount(0);
+		const dialog = team.page.getByRole("alertdialog");
+		await expect(dialog.getByText(/cloud resources are torn down/)).toBeVisible();
+		await expect(dialog.getByRole("button", { name: "Destroy runner", exact: true })).toBeDisabled();
+		await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+		await expect(dialog).toHaveCount(0);
 		expect(await destroyJobCount(runner.id)).toBe(0);
 	});
 
@@ -145,18 +147,19 @@ test.describe("Runners — destroy", () => {
 		const card = cardFor(team.page, name);
 		await expect(card).toBeVisible({ timeout: 15_000 });
 
-		// Open the destroy popover from the card, then confirm. The confirm control shares the
-		// "Destroy" label with its trigger, so it is reached inside the popover, never positionally.
+		// Open the destroy popover from the card, pick, then type the runner's name to confirm.
 		//
 		// EXACT, because the popover is also a runner PICKER (`RunnerSelectPopover`): it lists every
 		// runner in the org as a button named after it, and a role name matches as a case-insensitive
-		// SUBSTRING by default. The sibling test's `e2e-destroy-cancel-…` runner therefore matched
-		// `{ name: "Destroy" }` too — a strict-mode violation whenever both tests' runners were alive
-		// at once (#5892). No runner row is named exactly "Destroy"; the confirm is.
+		// SUBSTRING by default. The sibling test's `e2e-destroy-cancel-…` runner would otherwise match
+		// a loose name too — a strict-mode violation whenever both tests' runners were alive at once
+		// (#5892).
 		await card.getByRole("button", { name: "Destroy", exact: true }).click();
 		const popover = destroyPopover(team.page);
-		await expect(popover.getByText("Select runner")).toBeVisible();
-		await popover.getByRole("button", { name: "Destroy", exact: true }).click();
+		await popover.getByRole("button", { name: "Continue to destroy", exact: true }).click();
+		const dialog = team.page.getByRole("alertdialog");
+		await dialog.getByRole("textbox").fill(name);
+		await dialog.getByRole("button", { name: "Destroy runner", exact: true }).click();
 
 		// The job is inserted QUEUED. Assert only that it EXISTS — a live runner sharing this
 		// database could claim and then fail it against the fake credentials, and pinning a

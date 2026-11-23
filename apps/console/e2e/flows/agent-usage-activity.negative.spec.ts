@@ -102,7 +102,7 @@ test.describe("Activity — retention window gating (Hobby)", () => {
 		// only one of the four that is a DISCLOSURE control, and it carries `aria-expanded`
 		// because of what it is, not because of where the panel was portalled: the presets are
 		// plain `<button>`s without the attribute. Nothing else in the bar can collide — the
-		// other disclosure triggers label themselves "User", "Project", "Events", or, for
+		// other disclosure triggers label themselves "Member", "Project", "Events", or, for
 		// `DateRangeFilter`, with formatted dates (`formatRangeLabel`).
 		//
 		// So NOT `.first()`, which would be an assertion about DOM ORDER — the same trap
