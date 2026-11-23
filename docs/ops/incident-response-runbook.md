@@ -106,3 +106,12 @@ force-destroy. Include the `trace_id` in the escalation so the next responder st
   CF-Access header path) `BREAKGLASS_ACCESS_PROXY_SECRET`; add these to the prod emit list.
 - Nightly real-cloud proof: add `HCLOUD_TOKEN` (then AWS/Azure secrets) to enable `e2e-nightly.yml`.
 - All are default-off — nothing here is live until enabled.
+
+### Platform alert paging (one command)
+`apps/console/scripts/ops/platform-alert-paging.ts` wires paging for every `system.platform.*` alert
+in one idempotent run: it picks (or creates) the operator org, creates or reuses the channel you name,
+adds one rule per event of the catalog's "Platform health" group bound to that channel, sets
+`ALETHIA_PLATFORM_ALERT_ORG_ID` in `alethia/prod/env` with `--write-vault`, and ends by emitting a
+`[TEST]` platform alert and reporting whether the channel accepted it. Run it with `--dry-run` first;
+a second run changes nothing. The header of the script has the exact command and its inputs; the
+vault value reaches the console on the next `deploy-console` run.
