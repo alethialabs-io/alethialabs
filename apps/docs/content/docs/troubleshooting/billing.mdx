@@ -1,0 +1,85 @@
+---
+title: Billing and plans
+description: Fix a plan or trial that cannot start, a failed payment, and refusals from plan and usage limits.
+---
+
+# Troubleshoot billing and plans
+
+Plans are managed on the **Billing** page in the console's settings. The plans and their prices are on
+the [pricing page](https://alethialabs.io/pricing). The ceilings that apply to each plan are in
+[Limits](/reference/limits).
+
+## "Alethia is not yet able to sell to customers in this country in this capacity."
+
+**Cause:** paid plans are not open yet for your country, or for the way you buy: as an individual or
+for an organization. Each country, and each way of buying, opens separately.
+
+**Fix:** keep using the Hobby plan. It stays free, with no time limit. To hear when your market
+opens, write to sales@alethialabs.io.
+
+## A purchase asks for more information first
+
+The console shows one of these before it starts a purchase:
+
+| Message | What to do |
+|---|---|
+| "Accept the current Terms of Service before subscribing." | Accept the terms when the console asks, then try again. |
+| "Tell us whether you are buying as an individual or on behalf of an organization …" | Choose one. The two carry different rights. |
+| "Add a billing address before subscribing." | Add the address on the **Billing** page. |
+
+## "Couldn't start the purchase. Billing may not be configured on this deployment"
+
+**Cause:** the console could not start the payment. On a self-hosted console, billing is often not
+set up at all.
+
+**Fix:** try again. If it continues on alethialabs.io, open a support case from **Support** in the
+sidebar.
+
+## The Pro trial is not offered, or is refused
+
+| Message | Cause |
+|---|---|
+| "This organization has already used its free Pro trial. …" | Each organization gets one trial. |
+| "Your account has already used its free Pro trial. …" | Each person gets one trial, across every organization. |
+| "Too many Pro trials have been started from your network recently, so a new one can't start now. …" | Your network reached the trial ceiling in [Limits](/reference/limits). |
+
+**Fix:** you can still subscribe to Pro from the **Billing** page, when paid plans are open for you.
+
+## The trial ended
+
+**Cause:** the Pro trial lasts 30 days and needs no card. When it ends without a paid plan, the
+organization goes back to the Hobby plan. Alethia sends an email when this happens.
+
+**Fix:** nothing is deleted. Projects, environments, and clusters stay, and the Hobby plan's limits
+apply again. To keep Pro, subscribe on the **Billing** page.
+
+## "Payment failed"
+
+The **Billing** page shows **Payment failed**: "The last payment for … didn't go through, so this
+organization's paid features are paused until a payment succeeds." Alethia also sends an email.
+
+**Cause:** the card was declined, expired, or needs your bank's confirmation.
+
+**Fix:** select **Update the payment method**. If you see "Ask a member with the billing permission
+to update the payment method.", ask a member who manages billing.
+
+## "The payment did not complete — the card may have been declined, or your bank may need you to confirm it."
+
+**Cause:** the payment for a new organization's plan did not complete. The organization is on the
+Hobby plan until it is paid.
+
+**Fix:** confirm the payment with your bank, or try another card. If the console says the payment is
+still being confirmed, wait. A bank debit can take several business days.
+
+## A feature says it needs another plan
+
+**Cause:** the feature is part of a higher plan. The dialog says which one: "This feature is
+available on the … plan."
+
+**Fix:** upgrade on the **Billing** page, or compare plans on the
+[pricing page](https://alethialabs.io/pricing).
+
+## Job and minute limits
+
+The daily job limit and the monthly provisioning minutes are described in
+[Troubleshoot a deploy](/troubleshooting/deploy#the-daily-job-limit-is-reached).

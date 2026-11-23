@@ -1,0 +1,92 @@
+---
+title: Destroy
+description: Fix a destroy that is refused, fails, waits on a state lock, or leaves cloud load balancers behind.
+---
+
+# Troubleshoot a destroy
+
+A destroy is a job that removes an environment's cloud resources. In the console, start it from the
+canvas: **More**, then **Environment settings**, then **Destroy** under **Danger zone**. From the
+CLI, run `alethia project destroy`. See
+[`alethia project destroy`](/reference/cli/plan-and-apply#alethia-project-destroy).
+
+<Callout type="warn">
+Until a destroy job succeeds, your cloud provider can still bill you for the environment's
+resources. Check the job's result. Do not assume it finished.
+</Callout>
+
+## Deleting is not destroying
+
+Deleting an environment record or a project removes it from Alethia. It destroys **nothing** in the
+cloud. The console refuses to delete an environment or a project that is still live, with
+"Destroy this environment before deleting it." or "This project has live or in-flight environments.
+Destroy them before deleting the project."
+
+**Fix:** destroy each environment first, then delete.
+
+## Other environments run on this environment's cluster
+
+The console asks you to destroy several environments at once, or the CLI refuses with a list of the
+environments placed on this one.
+
+**Cause:** other environments are placed on this environment's cluster. Destroying the cluster would
+remove them too.
+
+**Fix:** destroy those environments first. Or destroy them all together: in the console, type the
+project name and confirm. In the CLI, add `--cascade`. See
+[Destroying an environment that other environments run on](/reference/cli/plan-and-apply#destroying-an-environment-that-other-environments-run-on).
+
+With `--cascade`, the first environment's destroy waits until the others are gone. If one of their
+destroys fails, it keeps waiting. Destroy the failed environment again, or cancel the waiting job
+with `alethia jobs cancel`.
+
+## "tofu destroy failed"
+
+**Cause:** OpenTofu could not remove one or more resources. The log shows the resource and the
+cloud's reason.
+
+**Fix:** fix the cause in the log, then run the destroy again. OpenTofu state is kept, so the next
+destroy continues from what is left. See
+[State and failure recovery](/concepts/terraform-state#state-and-failure-recovery).
+
+## Load balancers were not released
+
+The log says "CLOUD LOAD BALANCERS MAY STILL EXIST AND STILL BILL.", or the job fails with "the
+environment's cloud resources were destroyed, but its load balancers were not released".
+
+**Cause:** a Kubernetes service on the cluster created a load balancer in your cloud account, and the
+destroy could not remove it. Nothing removes these automatically.
+
+**Fix:** delete those services from the cluster and run the destroy again. Or delete the load
+balancers in your cloud provider's console.
+
+## "namespace teardown … completed with errors — re-run the destroy to converge"
+
+**Cause:** some objects in a namespace could not be removed in one pass.
+
+**Fix:** run the destroy again.
+
+## The destroy waits on a state lock
+
+The job does not start, or OpenTofu reports that the state is locked.
+
+**Cause:** another job on the same environment holds the state lock. Jobs on one environment run one
+at a time. A lock is released when its job ends, also when the job is cancelled or its runner
+crashes.
+
+**Fix:** wait for the other job to finish, or cancel it from its job page or with
+`alethia jobs cancel`. Then run the destroy again.
+
+## The destroy was cancelled before it started
+
+The job page says "This job has not started — no runner has claimed it and nothing has been applied."
+
+**Cause:** the job was cancelled while it waited in the queue. Nothing was changed.
+
+**Fix:** start the destroy again. If it waits for a runner, see
+[The job waits for a runner](/troubleshooting/deploy#the-job-waits-for-a-runner).
+
+## The daily job limit is reached
+
+A destroy you start is a provisioning job, so it counts toward the daily job limit on the Hobby plan.
+See [The daily job limit is reached](/troubleshooting/deploy#the-daily-job-limit-is-reached).
