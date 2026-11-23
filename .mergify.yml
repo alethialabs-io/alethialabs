@@ -191,3 +191,23 @@ merge_protections_settings:
     # "NOT EXPRESSIBLE" note above). Both are kept, and check-required-checks.mjs fails the build if
     # the gate is in only one of them — or in merge_conditions/success_conditions, where it is dead.
     - "#review-threads-unresolved = 0"
+
+# THE AUTO-QUEUE THAT ACTUALLY FIRES. Measured 2026-11-23: on every dev PR merged since the switch to
+# `CI required` (7 of 8), nothing entered the queue until someone commented `@Mergifyio queue` — #7312
+# went green at 02:23:58Z and sat unqueued until a manual comment at 02:37. No "Merge Protections" check
+# ever appears on a PR head, which says merge protections are not enabled for this repository, and
+# Mergify documents `auto_merge_conditions` as acting only when they are
+# (docs.mergify.com/merge-protections/auto-merge). The `queue` action below does not depend on that
+# switch. It enqueues a matching PR, and the PR still has to satisfy the dev queue's
+# `queue_conditions` to enter (docs.mergify.com/workflow/actions/queue), so this adds no new
+# admission path — it only removes the comment. `merge_protections_settings` above stays: if
+# protections are switched on later both paths name the same PRs, and enqueueing one twice is a no-op.
+pull_request_rules:
+  - name: auto-queue every ready dev PR
+    conditions:
+      - base = dev
+      - "-draft"
+      - "#review-threads-unresolved = 0"
+    actions:
+      queue:
+        name: dev
