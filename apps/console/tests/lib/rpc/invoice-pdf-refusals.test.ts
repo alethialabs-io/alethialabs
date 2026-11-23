@@ -8,8 +8,11 @@
 // same 404 as an unknown org — not 401 ("sign in"), which is what the invoice PDF route said.
 //
 // CON-L3 (R6 F-08): every failure is an HTML page, never JSON — both readers of this route (the
-// preview iframe and a "Download PDF" navigation) render the body as it is — and a stored copy that
-// cannot be read falls back to Stripe's hosted invoice when there is one.
+// preview iframe and a "Download PDF" navigation) render the body as it is.
+//
+// EA-7b (#7338): the route NEVER redirects to Stripe's hosted invoice. Only the stored фактура is
+// the invoice; a row without one answers "being issued", and an unreadable stored copy answers 503.
+// Every case below that could redirect carries a `hostedInvoiceUrl`, so a restored fallback fails.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -91,14 +94,23 @@ describe("invoice PDF refusals", () => {
 		expect(res.headers.get("content-type")).toBe("application/pdf");
 	});
 
-	it("falls back to the hosted invoice when the stored copy cannot be read", async () => {
+	it("never redirects to the hosted invoice when the stored copy cannot be read", async () => {
 		authorize.mockResolvedValue({ orgId: "org-1" });
 		getOrgInvoice.mockResolvedValue(invoice());
 		storageGet.mockRejectedValue(new Error("bucket unreachable"));
 		const res = await call();
-		expect(res.status).toBeGreaterThanOrEqual(300);
-		expect(res.status).toBeLessThan(400);
-		expect(res.headers.get("location")).toBe("https://invoice.stripe.test/i/inv-1");
+		expect(res.status).toBe(503);
+		expect(res.headers.get("location")).toBeNull();
+		expect(await htmlBody(res)).toContain("Couldn't load this invoice");
+	});
+
+	it("answers a stored key whose object is missing as a 503 page, not the hosted invoice", async () => {
+		authorize.mockResolvedValue({ orgId: "org-1" });
+		getOrgInvoice.mockResolvedValue(invoice());
+		storageGet.mockResolvedValue(null);
+		const res = await call();
+		expect(res.status).toBe(503);
+		expect(res.headers.get("location")).toBeNull();
 	});
 
 	it("answers an unreadable stored copy with no hosted invoice as a 503 page", async () => {
@@ -110,12 +122,25 @@ describe("invoice PDF refusals", () => {
 		expect(await htmlBody(res)).toContain("Couldn't load this invoice");
 	});
 
-	it("answers an invoice with no document anywhere as a 404 page", async () => {
+	it("answers an invoice with no stored фактура as 'being issued', even when Stripe has a hosted invoice", async () => {
+		authorize.mockResolvedValue({ orgId: "org-1" });
+		getOrgInvoice.mockResolvedValue(invoice({ pdfKey: null, number: null }));
+		const res = await call();
+		expect(res.status).toBe(404);
+		expect(res.headers.get("location")).toBeNull();
+		const body = await htmlBody(res);
+		expect(body).toContain("Your invoice is being issued");
+		expect(body).toContain('data-invoice-pdf-error="being-issued"');
+		expect(body).not.toContain("stripe");
+		expect(storageGet).not.toHaveBeenCalled();
+	});
+
+	it("answers an invoice with no document anywhere as 'being issued'", async () => {
 		authorize.mockResolvedValue({ orgId: "org-1" });
 		getOrgInvoice.mockResolvedValue(invoice({ pdfKey: null, hostedInvoiceUrl: null }));
 		const res = await call();
 		expect(res.status).toBe(404);
-		expect(await htmlBody(res)).toContain("No PDF for this invoice");
+		expect(await htmlBody(res)).toContain("Your invoice is being issued");
 	});
 
 	it("answers a failed invoice read as a 503 page, not an unhandled error", async () => {

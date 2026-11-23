@@ -5,8 +5,9 @@
 // email experience (receipt / dunning / trial / cancellation / credit pack) via SES
 // rather than Stripe's default emails. Each fn maps the Stripe object(s) the webhook
 // already holds onto a react-email template and sends through the suppression-aware
-// guard on the general stream. The receipt carries Stripe's compliant invoice PDF as
-// an attachment (Stripe stays the source of truth for the invoice document).
+// guard on the general stream. The receipt carries the Odoo фактура as its attachment when
+// one was issued, and otherwise says the invoice follows: Stripe's PDF is never sent as the
+// invoice (EA-7b, #7338).
 
 import type Stripe from "stripe";
 import { formatDate, formatMoney } from "@repo/format";
@@ -161,33 +162,49 @@ async function recipient(
 	return c.deleted ? null : (c.email ?? null);
 }
 
-/** The invoice PDF to attach to the receipt: the branded Odoo фактура when Odoo is
- *  configured, else Stripe's hosted PDF. Best-effort — null on any failure so a hiccup
- *  never blocks the receipt email. */
-async function invoicePdfAttachment(
-	invoice: Stripe.Invoice,
-): Promise<EmailAttachment | null> {
-	const factura = await issueFactura(invoice);
-	if (factura) {
-		const name = (factura.number ?? invoice.number ?? invoice.id ?? "invoice").replace(/\//g, "-");
-		return { filename: `Invoice-${name}.pdf`, content: factura.pdf, contentType: "application/pdf" };
-	}
-	const url = invoice.invoice_pdf;
-	if (!url) return null;
+/** What a receipt says about the invoice: the фактура to attach and its number, when one exists. */
+interface ReceiptInvoice {
+	/** The фактура PDF to attach, or null when none was issued. */
+	attachment: EmailAttachment | null;
+	/** The фактура number (ten Arabic digits), or undefined when none was issued. */
+	number: string | undefined;
+}
+
+/**
+ * The invoice a receipt carries: the Odoo фактура (Art. 113-114 ЗДДС) or NOTHING (EA-7b, #7338).
+ *
+ * There is no Stripe fallback, on purpose. Stripe's PDF is not a compliant фактура (its number is
+ * Stripe's `PREFIX-0031` series, not the ten-digit sequence Art. 114(1) requires), and attached as
+ * `Invoice-<n>.pdf` it would be the document the customer files as the invoice. When `issueFactura` returns null (unconfigured,
+ * recipient incomplete, Odoo down, and so on), the receipt goes out WITHOUT an attachment and
+ * says the invoice follows. The invoice row stays pending, and the operator alert that
+ * `mirrorPaidInvoice` raises (lib/billing/invoices.ts) drives the retry.
+ *
+ * The number is the фактура's too, never `invoice.number`: Stripe's number printed next to
+ * "Invoice" makes the same false claim as the PDF.
+ */
+async function receiptInvoice(invoice: Stripe.Invoice): Promise<ReceiptInvoice> {
+	let factura: Awaited<ReturnType<typeof issueFactura>> = null;
 	try {
-		const res = await fetch(url);
-		if (!res.ok) return null;
-		const content = new Uint8Array(await res.arrayBuffer());
-		const name = (invoice.number ?? invoice.id ?? "invoice").replace(/\//g, "-");
-		return { filename: `Invoice-${name}.pdf`, content, contentType: "application/pdf" };
+		factura = await issueFactura(invoice);
 	} catch {
-		return null;
+		// Best-effort: a failure here must never block the receipt itself.
+		factura = null;
 	}
+	if (!factura) return { attachment: null, number: undefined };
+	return {
+		attachment: {
+			filename: `Invoice-${factura.number}.pdf`,
+			content: factura.pdf,
+			contentType: "application/pdf",
+		},
+		number: factura.number,
+	};
 }
 
 // ── Senders (called by the Stripe webhook) ──────────────────────────────────
 
-/** Receipt for a successful subscription payment, with the invoice PDF attached. */
+/** Receipt for a successful subscription payment, with the фактура attached when one was issued. */
 export async function sendReceiptEmail(
 	sub: Stripe.Subscription,
 	invoice: Stripe.Invoice,
@@ -199,14 +216,15 @@ export async function sendReceiptEmail(
 	const orgId = sub.metadata?.organization_id;
 	const planLabel = planLabelFromSub(sub);
 	const amountLabel = money(invoice.amount_paid, invoice.currency);
+	const doc = await receiptInvoice(invoice);
 	const props = {
 		orgName: await orgName(orgId),
 		planLabel,
 		amountLabel,
 		periodLabel: fmtPeriod(invoice.period_start, invoice.period_end),
-		invoiceNumber: invoice.number ?? undefined,
+		invoiceNumber: doc.number,
+		invoiceAttached: doc.attachment !== null,
 	};
-	const pdf = await invoicePdfAttachment(invoice);
 	const config = getEmailConfig();
 	await sendGuardedEmail({
 		from: config.from.general,
@@ -214,7 +232,7 @@ export async function sendReceiptEmail(
 		to,
 		subject: receiptSubject({ amountLabel }),
 		react: ReceiptEmail(props),
-		attachments: pdf ? [pdf] : undefined,
+		attachments: doc.attachment ? [doc.attachment] : undefined,
 		devLog: `receipt ${amountLabel} for ${props.orgName}`,
 	});
 }
@@ -383,8 +401,8 @@ export async function sendPlanWelcomeEmail(sub: Stripe.Subscription): Promise<vo
 	});
 }
 
-/** Receipt for a one-time AI credit-pack purchase — now invoiced, so the compliant
- *  invoice PDF is attached (same as subscription receipts). */
+/** Receipt for a one-time AI credit-pack purchase — invoiced, so the фактура is attached
+ *  when one was issued (same as subscription receipts). */
 export async function sendCreditPackReceiptEmail(
 	invoice: Stripe.Invoice,
 ): Promise<void> {
@@ -393,7 +411,7 @@ export async function sendCreditPackReceiptEmail(
 	const to = await recipient(invoice.customer, invoice.customer_email);
 	if (!to) return;
 	const amountLabel = money(invoice.amount_paid, invoice.currency);
-	const pdf = await invoicePdfAttachment(invoice);
+	const doc = await receiptInvoice(invoice);
 	const config = getEmailConfig();
 	await sendGuardedEmail({
 		from: config.from.general,
@@ -404,9 +422,10 @@ export async function sendCreditPackReceiptEmail(
 			orgName: await orgName(invoice.metadata?.organization_id),
 			credits,
 			amountLabel,
-			invoiceNumber: invoice.number ?? undefined,
+			invoiceNumber: doc.number,
+			invoiceAttached: doc.attachment !== null,
 		}),
-		attachments: pdf ? [pdf] : undefined,
+		attachments: doc.attachment ? [doc.attachment] : undefined,
 		devLog: `credit pack ${credits} credits`,
 	});
 }
