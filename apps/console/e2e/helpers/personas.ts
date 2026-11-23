@@ -163,6 +163,10 @@ export async function tickOnboardingTerms(page: Page): Promise<void> {
  * country is deduced by the page (the request's location, the email domain, the browser language),
  * so it is usually set; the role is asked only for a business purchase, which a company-domain
  * address (every persona's `@alethia.test`) defaults to.
+ *
+ * Since #7324 the page also asks an EU business whether it has a VAT number — answered "No", the
+ * answer whose trial the gate can start — and a US payer for its state, which depends on where the
+ * runner signs in from, so both are answered only when they are shown.
  */
 async function fillTrialPayerFacts(page: Page): Promise<void> {
 	const pickCountry = page.getByRole("button", { name: "Select a country" });
@@ -175,6 +179,13 @@ async function fillTrialPayerFacts(page: Page): Promise<void> {
 	if (await role.isVisible().catch(() => false)) {
 		await role.click();
 		await page.keyboard.type("Founder");
+	}
+	const noVatNumber = page.getByRole("radio", { name: "No", exact: true });
+	if (await noVatNumber.isVisible().catch(() => false)) await noVatNumber.check();
+	const state = page.getByRole("combobox", { name: "State", exact: true });
+	if (await state.isVisible().catch(() => false)) {
+		await state.click();
+		await page.getByRole("option", { name: "New York", exact: true }).click();
 	}
 }
 

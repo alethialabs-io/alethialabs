@@ -181,6 +181,10 @@ function cardRow(page: import("@playwright/test").Page, last4: string) {
  * "Moved past it" is measured as the declaration's submit button going away. If the gate refuses
  * instead, the button stays and the refusal sentence renders above it, so the failure names the
  * gate's own words rather than a missing card field thirty seconds later.
+ *
+ * Since #7324 a German organization also answers "Does the organization have a VAT number?" — "No",
+ * the answer whose sale the gate can take; "Yes" routes it to the complimentary Early Access grant —
+ * and then gives the billing address, in its own step, before the intent exists.
  */
 async function declareOrganizationPayer(page: import("@playwright/test").Page): Promise<void> {
 	const dialog = page.getByRole("dialog", { name: "Upgrade to Pro" });
@@ -201,12 +205,24 @@ async function declareOrganizationPayer(page: import("@playwright/test").Page): 
 	await expect(authority, "typing right after choosing a country reached the authority field").toHaveValue(
 		"Director",
 	);
-	const submit = dialog.getByRole("button", { name: /Continue to payment/ });
-	await submit.click();
-	await expect(submit, "the eligibility gate refused the declaration — see the sentence in the sheet").toBeHidden({
+	await dialog.getByRole("radio", { name: "No", exact: true }).check();
+	await dialog.getByRole("button", { name: /Continue to payment/ }).click();
+	const billingName = dialog.getByRole("textbox", { name: /Billing name/ });
+	await expect(billingName, "the eligibility gate refused the declaration — see the sentence in the sheet").toBeVisible({
+		timeout: 30_000,
+	});
+	await billingName.fill(E2E_BILLING_NAME);
+	await dialog.getByRole("textbox", { name: /Address line 1/ }).fill("Hauptstr. 1");
+	await dialog.getByRole("textbox", { name: /City/ }).fill("Berlin");
+	await dialog.getByRole("textbox", { name: /Postal code/ }).fill("10115");
+	await dialog.getByRole("button", { name: /Continue to payment/ }).click();
+	await expect(billingName, "the billing address step did not hand over to payment").toBeHidden({
 		timeout: 30_000,
 	});
 }
+
+/** The billing name the declaration walk gives; the checkout form shows it back, read-only. */
+const E2E_BILLING_NAME = "E2E Org GmbH";
 
 /**
  * Records the `team` org's payer declaration directly, for the one conversion path with no form.
@@ -219,7 +235,8 @@ async function declareTeamPayer(orgId: string): Promise<void> {
 	await db()`
 		update organization_billing
 		set payer_capacity = 'organization', billing_country = 'DE',
-		    authority_attestation = 'Director', updated_at = now()
+		    authority_attestation = 'Director', vat_id_status = 'not_given', vat_id = null,
+		    updated_at = now()
 		where organization_id = ${orgId}`;
 }
 
@@ -235,13 +252,15 @@ async function declareTeamPayer(orgId: string): Promise<void> {
 async function seedCustomerWithoutPlan(orgId: string, customerId: string): Promise<void> {
 	await db()`
 		insert into organization_billing
-			(organization_id, stripe_customer_id, payer_capacity, billing_country, authority_attestation)
-		values (${orgId}, ${customerId}, 'organization', 'DE', 'Director')
+			(organization_id, stripe_customer_id, payer_capacity, billing_country, authority_attestation, vat_id_status)
+		values (${orgId}, ${customerId}, 'organization', 'DE', 'Director', 'not_given')
 		on conflict (organization_id) do update
 			set stripe_customer_id = excluded.stripe_customer_id,
 			    payer_capacity = excluded.payer_capacity,
 			    billing_country = excluded.billing_country,
 			    authority_attestation = excluded.authority_attestation,
+			    vat_id_status = excluded.vat_id_status,
+			    vat_id = null,
 			    updated_at = now()`;
 }
 
@@ -388,6 +407,10 @@ test.describe("Billing — Stripe test mode", () => {
 		const stripe = stripeApi();
 		const customer = await stripe.customers.create({
 			email,
+			// /start has no form, so the billing address the order record needs (#7324) is on the
+			// customer already, in the declared country — as a customer who had used the upgrade sheet.
+			name: "E2E Org GmbH",
+			address: { line1: "Hauptstr. 1", city: "Berlin", postal_code: "10115", country: "DE" },
 			metadata: { organization_id: orgId, e2e: "billing.spec /start positive (#5993)" },
 		});
 		await seedCustomerWithoutPlan(orgId, customer.id);
@@ -691,7 +714,8 @@ test.describe("Billing settings — Hobby → Pro upgrade (owner)", () => {
 		await expect(dialog.getByText("Card information")).toBeVisible({ timeout: 30_000 });
 		// Order summary: a Total row (the seat unit) — a stable, payment-free assertion.
 		await expect(dialog.getByText("Total")).toBeVisible();
-		await expect(dialog.getByText("Full name")).toBeVisible();
+		// The address was given before the intent (#7324); the checkout form shows it back, read-only.
+		await expect(dialog.getByText(E2E_BILLING_NAME)).toBeVisible();
 	});
 
 	// THE PLAN SURFACE OF THE PURCHASE FLOW. `components/billing/plan-picker.tsx` exists but is

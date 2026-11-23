@@ -27,6 +27,12 @@ vi.mock("@/lib/db", () => {
 	};
 	return { getServiceDb: () => chain };
 });
+// The threshold check reads the turnover totals; here no threshold is near, so the market is the
+// only open question. Its own rules are pinned in tests/billing/turnover.test.ts.
+const crossed = vi.hoisted(() => ({ value: [] as unknown[] }));
+vi.mock("@/lib/billing/turnover", () => ({
+	crossedThresholds: vi.fn(async () => crossed.value),
+}));
 
 import { PAID_MARKETS } from "@repo/legal/commerce";
 import {
@@ -42,12 +48,17 @@ import {
 const TEST_KEY = "sk_test_51Example";
 const LIVE_KEY = "sk_live_51Example";
 
-/** A fully declared organization purchase, so the only open question is the market. */
+/**
+ * A fully declared organization purchase, so the only open question is the market. Since #7324 that
+ * includes the VAT-number answer: a German organization that has not said whether it has one is
+ * refused before the market is asked.
+ */
 const DECLARED: PaidConversionContext = {
 	userId: "u-1",
 	organizationId: "org-1",
 	capacity: "organization",
 	billingCountry: "DE",
+	vatIdGiven: false,
 };
 
 /** The refusal reason the gate throws for `ctx`, or "allowed" when it lets the sale through. */
@@ -71,6 +82,7 @@ function setEnv(key: string | undefined, flag: string | undefined): void {
 
 beforeEach(() => {
 	acceptanceRows = [{ id: "accepted-1" }];
+	crossed.value = [];
 });
 
 afterEach(() => {
@@ -156,6 +168,32 @@ describe("only the MARKET check is waived", () => {
 		expect(await verdict({ ...DECLARED, billingCountry: null })).toBe(
 			"billing_country_missing",
 		);
+	});
+
+	// #7324: every Early Access refusal is walked by the gate run too.
+	it("still refuses an EU organization that has not said whether it has a VAT number", async () => {
+		setEnv(TEST_KEY, "1");
+		expect(await verdict({ ...DECLARED, vatIdGiven: null })).toBe("vat_status_not_declared");
+	});
+
+	it("still routes an EU business with a VAT number to the complimentary grant", async () => {
+		setEnv(TEST_KEY, "1");
+		expect(await verdict({ ...DECLARED, vatIdGiven: true })).toBe("complimentary_grant");
+	});
+
+	it("still refuses a US buyer with no state", async () => {
+		setEnv(TEST_KEY, "1");
+		expect(await verdict({ ...DECLARED, billingCountry: "US", vatIdGiven: null })).toBe(
+			"state_missing",
+		);
+	});
+
+	it("still refuses a sale that would cross a threshold", async () => {
+		setEnv(TEST_KEY, "1");
+		crossed.value = [
+			{ counter: { id: "eu_cross_border_no_vat_id" }, assessment: { verdict: "stop", usage: 1.1 } },
+		];
+		expect(await verdict()).toBe("threshold_reached");
 	});
 });
 

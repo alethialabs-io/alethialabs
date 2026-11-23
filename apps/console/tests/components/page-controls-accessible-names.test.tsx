@@ -175,6 +175,9 @@ const SWEPT: Record<string, string> = {
 	"components/settings/access/combobox.tsx": "this file",
 	"components/design-project/canvas/inspector/config-fields.tsx": "this file",
 	"components/shell/switcher-trigger.tsx": "shell-chrome-accessible-names.test.tsx",
+	// The US state pickers of the payer declaration and onboarding (#7324).
+	"components/billing/payer-declaration-form.tsx": "tests/billing/payer-declaration-form.test.tsx",
+	"components/auth/onboarding-form.tsx": "tests/components/onboarding-form-refusal.test.tsx",
 };
 
 /**

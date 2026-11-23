@@ -39,6 +39,7 @@ vi.mock("@/components/org/org-logo-upload", () => ({ OrgLogoUpload: () => null }
 vi.mock("@/lib/org-url", () => ({ orgHost: () => "alethialabs.io" }));
 
 import { OnboardingForm, type OnboardingFormProps } from "@/components/auth/onboarding-form";
+import { unnamedControls } from "../support/accessible-names";
 
 const RESERVED = "That slug is reserved — try another.";
 const TERMS = [
@@ -287,7 +288,7 @@ describe("OnboardingForm — the Pro trial's payer facts", () => {
 		await user.click(screen.getByRole("radio", { name: /commercial projects/i }));
 		await user.click(createButton());
 
-		expect(await screen.findByRole("alert")).toHaveTextContent(/say what your role is/i);
+		expect(await screen.findByText(/say what your role is/i)).toHaveAttribute("role", "alert");
 		expect(finishOnboarding).not.toHaveBeenCalled();
 
 		await user.click(screen.getByRole("switch", { name: /buying for a company/i }));
@@ -301,13 +302,68 @@ describe("OnboardingForm — the Pro trial's payer facts", () => {
 
 		await user.click(screen.getByRole("radio", { name: /commercial projects/i }));
 		await user.type(screen.getByRole("textbox", { name: /your role/i }), "Founder");
+		await user.click(screen.getByRole("radio", { name: "No" }));
 		await user.click(createButton());
 
 		await vi.waitFor(() => expect(finishOnboarding).toHaveBeenCalled());
 		expect(finishOnboarding.mock.calls[0]?.[0]).toMatchObject({
 			plan: "team",
-			payer: { capacity: "organization", billingCountry: "DE", authorityAttestation: "Founder" },
+			payer: {
+				capacity: "organization",
+				billingCountry: "DE",
+				authorityAttestation: "Founder",
+				vatIdStatus: "not_given",
+				vatId: null,
+				billingState: null,
+			},
 		});
+	});
+
+	// #7324: an EU business is asked whether it has a VAT number, neutrally and with no default.
+	it("asks an EU business whether it has a VAT number, and takes the number on a yes", async () => {
+		finishOnboarding.mockResolvedValue({ ok: true, data: { slug: "acme" } });
+		const user = userEvent.setup();
+		renderIt({ trial, country: { code: "DE", source: "location" }, capacity: "organization" });
+
+		await user.click(screen.getByRole("radio", { name: /commercial projects/i }));
+		await user.type(screen.getByRole("textbox", { name: /your role/i }), "Founder");
+		const yes = screen.getByRole("radio", { name: "Yes" });
+		const no = screen.getByRole("radio", { name: "No" });
+		expect(yes).not.toBeChecked();
+		expect(no).not.toBeChecked();
+		await user.click(createButton());
+		expect(await screen.findByText(/whether the organization has a VAT number/i)).toBeInTheDocument();
+		expect(finishOnboarding).not.toHaveBeenCalled();
+
+		await user.click(yes);
+		await user.type(screen.getByRole("textbox", { name: /the vat number/i }), "DE123456789");
+		await user.click(createButton());
+		await vi.waitFor(() => expect(finishOnboarding).toHaveBeenCalled());
+		expect(finishOnboarding.mock.calls[0]?.[0]).toMatchObject({
+			payer: { vatIdStatus: "given", vatId: "DE123456789" },
+		});
+	});
+
+	it("asks a US payer for its state, with a named picker (#7324)", async () => {
+		const user = userEvent.setup();
+		const { container } = renderIt({ trial, country: { code: "US", source: "location" }, capacity: "organization" });
+
+		await user.click(screen.getByRole("radio", { name: /commercial projects/i }));
+		expect(screen.getByRole("combobox", { name: "State" })).toBeInTheDocument();
+		// Swept for page-controls-accessible-names.test.tsx.
+		expect(unnamedControls(container)).toEqual([]);
+		await user.type(screen.getByRole("textbox", { name: /your role/i }), "Founder");
+		await user.click(createButton());
+		expect(await screen.findByText(/Select the US state/i)).toBeInTheDocument();
+		expect(finishOnboarding).not.toHaveBeenCalled();
+	});
+
+	it("does not ask a consumer about a VAT number", async () => {
+		const user = userEvent.setup();
+		renderIt({ trial, country: { code: "DE", source: "location" }, capacity: "consumer" });
+
+		await user.click(screen.getByRole("radio", { name: /commercial projects/i }));
+		expect(screen.queryByRole("radio", { name: "Yes" })).toBeNull();
 	});
 
 	it("sends a consumer with no attestation", async () => {

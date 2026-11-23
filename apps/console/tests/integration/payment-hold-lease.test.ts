@@ -168,6 +168,24 @@ vi.mock("@/lib/billing/eligibility", () => ({
 	assertPaidConversionAllowed: vi.fn(async () => undefined),
 	assertOrgPaidConversionAllowed: vi.fn(async () => undefined),
 }));
+// Nor is the order record (#7324): it is pinned in tests/billing/paid-order.test.ts. Here every order
+// prepares and records, so the leases stay the only thing measured.
+vi.mock("@/lib/billing/paid-order", () => ({
+	preparePaidOrder: vi.fn(async (input: { orgId: string; userId: string }) => ({
+		organizationId: input.orgId,
+		placedByUserId: input.userId,
+		capacity: "organization",
+		authorityAttestation: "Director",
+		billingCountry: "US",
+		billingState: "NY",
+		vatIdStatus: null,
+		vatId: null,
+		billingName: "Leased",
+		billingAddress: { line1: "1 Main St", line2: null, city: "NYC", postalCode: "10001", region: "NY", country: "US" },
+	})),
+	recordPaidOrder: vi.fn(async () => "order-1"),
+	taxIdRefusal: vi.fn(() => ({ ok: true, value: "" })),
+}));
 
 import { createNewOrgSubscriptionIntent, createSubscriptionIntent, startProTrial } from "@/app/server/actions/billing";
 import { runWithActor } from "@/lib/authz/actor-context";

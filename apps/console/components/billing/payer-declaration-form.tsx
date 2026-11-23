@@ -17,17 +17,49 @@
 //
 // Nothing here is pre-selected. A default would answer the one question the gate exists to stop the
 // product answering on the payer's behalf.
+//
+// EARLY ACCESS (#7324) adds three facts, all asked BEFORE any intent exists:
+//   - for an organization billed in an EU member state, one neutral question — "Does the organization
+//     have a VAT number?" — and the number on a yes. No copy hints at what either answer opens:
+//     steering a VAT-registered business to withhold its number would be a misrepresentation;
+//   - for a US buyer, the state (a USPS code), which the per-state thresholds count by;
+//   - and, in its own step right after (`BillingAddressForm`, below), the full billing address, which
+//     the sheet passes to the intent so the customer carries it before the first invoice is finalised.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight } from "lucide-react";
 import { useEffect } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
-import type { PayerCapacity } from "@repo/legal/commerce";
+import { EU_MEMBER_STATES, type PayerCapacity, type VatIdStatus } from "@repo/legal/commerce";
 import { Button } from "@repo/ui/button";
 import { CountrySelect } from "@repo/ui/country-select";
 import { Input } from "@repo/ui/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@repo/ui/select";
 import { Field } from "@/components/org/org-purchase-ui";
+import { BILLING_FIELD_CAPS, tooLongMessage } from "@/lib/billing/billing-field-caps";
+import type { PaidConversionRefusal } from "@/lib/billing/eligibility";
+import { EARLY_ACCESS_REQUEST_PATH, isUsStateCode, US_STATES } from "@/lib/billing/tax-ids";
+import { globalHref } from "@/lib/routing";
+
+/** The billing address collected with the declaration, in the shape the intent actions take. */
+export interface DeclaredBillingAddress {
+	name: string;
+	line1: string;
+	line2?: string;
+	city: string;
+	postalCode: string;
+	/** ISO 3166-1 alpha-2 — always the declared billing country. */
+	country: string;
+	/** The US state, when the country is the US. */
+	state?: string;
+}
 
 /** The declared facts, in the shape `declarePayer` and `payerConversionStatus` both take. */
 export interface PayerDeclaration {
@@ -36,9 +68,69 @@ export interface PayerDeclaration {
 	billingCountry: string;
 	/** The role binding the organization, or null for a consumer — never the empty string. */
 	authorityAttestation: string | null;
+	/**
+	 * Whether the organization has a VAT number — asked of an organization billed in the EU, null
+	 * everywhere else. Optional in the TYPE so declarations saved before #7324 still read.
+	 */
+	vatIdStatus?: VatIdStatus | null;
+	/** The VAT number, with `given` only. */
+	vatId?: string | null;
+	/** USPS state code, for a US buyer only. */
+	billingState?: string | null;
+	/** The billing address, once the sheet's address step collected it. Not part of `declarePayer`. */
+	billingAddress?: DeclaredBillingAddress | null;
 }
 
-const schema = z
+/**
+ * The facts `declarePayer` and `payerConversionStatus` take, from a declaration — everything but the
+ * billing address, which goes to the intent instead.
+ */
+export function declaredPayerFacts(d: PayerDeclaration): {
+	capacity: PayerCapacity;
+	billingCountry: string;
+	authorityAttestation: string | null;
+	vatIdStatus: VatIdStatus | null;
+	vatId: string | null;
+	billingState: string | null;
+} {
+	return {
+		capacity: d.capacity,
+		billingCountry: d.billingCountry,
+		authorityAttestation: d.authorityAttestation,
+		vatIdStatus: d.vatIdStatus ?? null,
+		vatId: d.vatId ?? null,
+		billingState: d.billingState ?? null,
+	};
+}
+
+/**
+ * Where a gate refusal points, if anywhere: `complimentary_grant` links to the org's complimentary
+ * Early Access request (EA-3, #7325). Every other refusal is the payer's to fix on this form.
+ */
+export function refusalActionFor(
+	reason: PaidConversionRefusal,
+	orgSlug: string | null,
+): { href: string; label: string } | null {
+	if (reason !== "complimentary_grant" || !orgSlug) return null;
+	return {
+		href: globalHref(orgSlug, EARLY_ACCESS_REQUEST_PATH),
+		label: "Request complimentary Early Access",
+	};
+}
+
+/** Whether the VAT-number question applies: an organization billed in an EU member state. */
+function asksVatNumber(capacity: PayerCapacity | undefined, country: string): boolean {
+	return capacity === "organization" && EU_MEMBER_STATES.includes(country.trim().toUpperCase());
+}
+
+/** A trimmed string no longer than `max`. */
+function capped(max: number) {
+	return z.string().trim().max(max, tooLongMessage(max));
+}
+
+/** The declaration form's schema. */
+function declarationSchema() {
+	return z
 	.object({
 		capacity: z.enum(["consumer", "organization"], {
 			error: "Choose whether you are buying as an individual or for an organization.",
@@ -51,8 +143,31 @@ const schema = z
 			.string()
 			.trim()
 			.max(200, "Keep the role under 200 characters."),
+		vatIdStatus: z.enum(["", "given", "not_given"]),
+		vatId: capped(32),
+		billingState: z.string(),
 	})
 	.superRefine((values, ctx) => {
+		if (asksVatNumber(values.capacity, values.billingCountry)) {
+			if (values.vatIdStatus === "") {
+				ctx.addIssue({
+					code: "custom",
+					path: ["vatIdStatus"],
+					message: "Say whether the organization has a VAT number.",
+				});
+			}
+			if (values.vatIdStatus === "given" && values.vatId.length === 0) {
+				ctx.addIssue({ code: "custom", path: ["vatId"], message: "Enter the VAT number." });
+			}
+		}
+		if (values.billingCountry.trim().toUpperCase() === "US" && !isUsStateCode(values.billingState)) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["billingState"],
+				message: "Select the US state this purchase is billed in.",
+			});
+		}
+		
 		// BOTH directions, because both are wrong in the same way: the record would say something
 		// the payer did not. An organization purchase with no attestation binds a legal person that
 		// nobody has claimed authority over; a consumer purchase carrying one describes a binding
@@ -74,8 +189,9 @@ const schema = z
 			});
 		}
 	});
+}
 
-type FormData = z.infer<typeof schema>;
+type FormData = z.infer<ReturnType<typeof declarationSchema>>;
 
 /** The two regimes, with what each one actually means for the person choosing. */
 const CAPACITY_OPTIONS: ReadonlyArray<{
@@ -93,7 +209,7 @@ const CAPACITY_OPTIONS: ReadonlyArray<{
 		value: "organization",
 		label: "An organization",
 		description:
-			"You are buying on behalf of a company or other legal person. Consumer protections do not apply, and a VAT or tax id can be added at payment.",
+			"You are buying on behalf of a company or other legal person. Consumer protections do not apply.",
 	},
 ];
 
@@ -107,6 +223,12 @@ interface PayerDeclarationFormProps {
 	 * payer just gave, and it is the only thing that tells them whether this is theirs to fix.
 	 */
 	refusal: string | null;
+	/**
+	 * Where the refusal points, when it has somewhere to go — the complimentary Early Access request
+	 * for `complimentary_grant` (#7324). Rendered as a link under the refusal.
+	 */
+	refusalAction?: { href: string; label: string } | null;
+	
 	submitLabel: string;
 	/**
 	 * Called whenever any declared fact changes, so a sheet can drop a refusal about the PREVIOUS
@@ -127,22 +249,30 @@ interface PayerDeclarationFormProps {
 export function PayerDeclarationForm({
 	busy,
 	refusal,
+	refusalAction,
 	submitLabel,
 	onEdit,
 	onBack,
 	onDeclare,
 }: PayerDeclarationFormProps) {
 	const form = useForm<FormData>({
-		resolver: zodResolver(schema),
-		// No capacity. The whole point of the field is that it is answered, not defaulted.
+		resolver: zodResolver(declarationSchema()),
+		// No capacity, and no VAT-number answer. The point of each is that it is answered, not defaulted.
 		defaultValues: {
 			capacity: undefined,
 			billingCountry: "",
 			authorityAttestation: "",
+			vatIdStatus: "",
+			vatId: "",
+			billingState: "",
 		},
 		mode: "onSubmit",
 	});
 	const capacity = useWatch({ control: form.control, name: "capacity" });
+	const country = useWatch({ control: form.control, name: "billingCountry" });
+	const vatIdStatus = useWatch({ control: form.control, name: "vatIdStatus" });
+	const iso = country.trim().toUpperCase();
+	const asksVat = asksVatNumber(capacity, iso);
 
 	// Every change to a declared fact — capacity, country, attestation — tells the sheet its refusal
 	// (if any) is about an answer that no longer stands.
@@ -153,11 +283,19 @@ export function PayerDeclarationForm({
 
 	/** Normalises the validated values into the shape both server actions accept. */
 	function submit(values: FormData) {
+		const billingCountry = values.billingCountry.trim().toUpperCase();
+		const vatAsked = asksVatNumber(values.capacity, billingCountry);
+		const status = vatAsked && values.vatIdStatus !== "" ? values.vatIdStatus : null;
+		const billingState = billingCountry === "US" ? values.billingState.toUpperCase() : null;
 		onDeclare({
 			capacity: values.capacity,
-			billingCountry: values.billingCountry.trim().toUpperCase(),
+			billingCountry,
 			authorityAttestation:
 				values.capacity === "organization" ? values.authorityAttestation.trim() : null,
+			vatIdStatus: status,
+			vatId: status === "given" ? values.vatId : null,
+			billingState,
+			billingAddress: null,
 		});
 	}
 
@@ -236,6 +374,81 @@ export function PayerDeclarationForm({
 				/>
 			</Field>
 
+			{iso === "US" && (
+				<Field label="State" required error={form.formState.errors.billingState?.message}>
+					<Controller
+						control={form.control}
+						name="billingState"
+						render={({ field }) => (
+							<Select value={field.value} onValueChange={field.onChange} disabled={busy}>
+								<SelectTrigger
+									aria-label="State"
+									aria-invalid={Boolean(form.formState.errors.billingState)}
+									className="w-full"
+								>
+									<SelectValue placeholder="Select a state" />
+								</SelectTrigger>
+								<SelectContent>
+									{US_STATES.map((s) => (
+										<SelectItem key={s.code} value={s.code}>
+											{s.name}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						)}
+					/>
+				</Field>
+			)}
+
+			{asksVat && (
+				<fieldset className="space-y-1.5" disabled={busy}>
+					<legend className="flex items-center gap-1.5 text-ui-md font-medium text-text-primary">
+						Does the organization have a VAT number?
+						<span className="font-mono text-ui-2xs uppercase tracking-wide text-text-tertiary">
+							required
+						</span>
+					</legend>
+					<div className="flex gap-4 pt-1">
+						{(
+							[
+								["given", "Yes"],
+								["not_given", "No"],
+							] as const
+						).map(([value, label]) => (
+							<label key={value} className="flex items-center gap-2 text-ui-sm text-text-secondary">
+								<input
+									type="radio"
+									value={value}
+									className="size-4 accent-[var(--text-primary)]"
+									{...form.register("vatIdStatus")}
+								/>
+								{label}
+							</label>
+						))}
+					</div>
+					{form.formState.errors.vatIdStatus?.message && (
+						<p className="text-ui-xs text-destructive">
+							{form.formState.errors.vatIdStatus.message}
+						</p>
+					)}
+				</fieldset>
+			)}
+
+			{asksVat && vatIdStatus === "given" && (
+				<Field label="VAT number" required error={form.formState.errors.vatId?.message}>
+					{(id) => (
+						<Input
+							id={id}
+							aria-label="VAT number" placeholder="DE123456789"
+							autoComplete="off"
+							disabled={busy}
+							{...form.register("vatId")}
+						/>
+					)}
+				</Field>
+			)}
+
 			{capacity === "organization" && (
 				<Field
 					label="Your authority to bind it"
@@ -260,13 +473,132 @@ export function PayerDeclarationForm({
 			)}
 
 			{refusal && (
-				<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
-					{refusal}
-				</p>
+				<div className="space-y-2 rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
+					<p>{refusal}</p>
+					{refusalAction && (
+						<a
+							href={refusalAction.href}
+							className="inline-flex items-center gap-1 font-medium text-text-primary underline underline-offset-2"
+						>
+							{refusalAction.label}
+							<ArrowRight size={13} />
+						</a>
+					)}
+				</div>
 			)}
 
 			<Button type="submit" disabled={busy} className="mt-auto w-full">
 				{busy ? "Checking…" : submitLabel}
+				<ArrowRight size={15} />
+			</Button>
+		</form>
+	);
+}
+
+/** The address step's schema: the same fields and caps as the checkout form. */
+const addressSchema = z.object({
+	name: capped(BILLING_FIELD_CAPS.name).min(1, "Enter the name to bill — the organization's, or yours."),
+	line1: capped(BILLING_FIELD_CAPS.line1).min(1, "Enter the address."),
+	line2: capped(BILLING_FIELD_CAPS.line2),
+	city: capped(BILLING_FIELD_CAPS.city).min(1, "Enter the city."),
+	postalCode: capped(BILLING_FIELD_CAPS.postalCode).min(1, "Enter the postal code."),
+});
+
+type AddressFormData = z.infer<typeof addressSchema>;
+
+interface BillingAddressFormProps {
+	/** The declared billing country — the address is in it, and is not asked again. */
+	country: string;
+	/** The declared US state, when the country is the US. */
+	state: string | null;
+	busy: boolean;
+	submitLabel: string;
+	onBack?: () => void;
+	onSubmit: (address: DeclaredBillingAddress) => void;
+}
+
+/**
+ * The billing address, asked right after the declaration and BEFORE any intent exists (#7324). The
+ * sheet sends it with the intent, and the server writes it to the Stripe customer before the
+ * subscription is created — Stripe snapshots the customer's address onto an invoice when it finalises
+ * it, and the first invoice is finalised at creation, so an address saved after the charge never
+ * reached it. The country (and a US state) come from the declaration, so the two cannot disagree.
+ */
+export function BillingAddressForm({
+	country,
+	state,
+	busy,
+	submitLabel,
+	onBack,
+	onSubmit,
+}: BillingAddressFormProps) {
+	const form = useForm<AddressFormData>({
+		resolver: zodResolver(addressSchema),
+		defaultValues: { name: "", line1: "", line2: "", city: "", postalCode: "" },
+		mode: "onSubmit",
+	});
+	const errors = form.formState.errors;
+
+	/** Hands the validated address, with the declared country and state, to the sheet. */
+	function submit(values: AddressFormData) {
+		onSubmit({
+			name: values.name,
+			line1: values.line1,
+			line2: values.line2 || undefined,
+			city: values.city,
+			postalCode: values.postalCode,
+			country,
+			state: state ?? undefined,
+		});
+	}
+
+	return (
+		<form
+			onSubmit={form.handleSubmit(submit)}
+			className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto"
+		>
+			{onBack && (
+				<button
+					type="button"
+					onClick={onBack}
+					disabled={busy}
+					className="shrink-0 self-start text-ui-sm text-text-tertiary transition-colors hover:text-text-primary"
+				>
+					← Back
+				</button>
+			)}
+			<p className="text-ui-xs text-text-tertiary">
+				The invoice is addressed to this name and address.
+			</p>
+			<Field label="Billing name" required error={errors.name?.message}>
+				{(id) => (
+					<Input id={id} aria-label="Billing name" placeholder="Acme GmbH" autoComplete="organization" disabled={busy} {...form.register("name")} />
+				)}
+			</Field>
+			<Field label="Address line 1" required error={errors.line1?.message}>
+				{(id) => (
+					<Input id={id} aria-label="Address line 1" placeholder="123 Main St" autoComplete="address-line1" disabled={busy} {...form.register("line1")} />
+				)}
+			</Field>
+			<Field label="Address line 2" error={errors.line2?.message}>
+				{(id) => (
+					<Input id={id} aria-label="Address line 2" placeholder="Suite, unit, floor" autoComplete="address-line2" disabled={busy} {...form.register("line2")} />
+				)}
+			</Field>
+			<div className="grid grid-cols-2 gap-3">
+				<Field label="City" required error={errors.city?.message}>
+					{(id) => (
+						<Input id={id} aria-label="City" placeholder="Berlin" autoComplete="address-level2" disabled={busy} {...form.register("city")} />
+					)}
+				</Field>
+				<Field label="Postal code" required error={errors.postalCode?.message}>
+					{(id) => (
+						<Input id={id} aria-label="Postal code" placeholder="10115" autoComplete="postal-code" disabled={busy} {...form.register("postalCode")} />
+					)}
+				</Field>
+			</div>
+			<Button type="submit" disabled={busy} className="mt-auto w-full">
+				{submitLabel}
 				<ArrowRight size={15} />
 			</Button>
 		</form>
