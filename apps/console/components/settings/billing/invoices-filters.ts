@@ -38,6 +38,13 @@ export const RECENT_INVOICES_INPUT: InvoiceListParams = { limit: 5 };
 /** The label shown when no date window is set. */
 export const ALL_TIME_LABEL = "All time";
 
+/**
+ * The most invoices one read returns: `listOrgInvoices`' default `limit` in `lib/billing/invoices.ts`
+ * (the page never passes one). `invoices-filters.test.ts` reads that file and fails if the two part,
+ * so the "showing the most recent N" note cannot go on naming a number the read no longer uses.
+ */
+export const INVOICE_LIST_CAP = 200;
+
 /** The date picker's trigger label while there is no window to show. */
 export const NO_WINDOW_LABEL = "Pick dates";
 

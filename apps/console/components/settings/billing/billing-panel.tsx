@@ -45,6 +45,7 @@ import { Card } from "@repo/ui/card";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Skeleton } from "@repo/ui/skeleton";
+import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import { aiPlanMeta, planMeta } from "@repo/plan-catalog";
 import { useActiveOrgSlug, useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { BillingSkeleton } from "./billing-skeleton";
@@ -62,6 +63,31 @@ const STATE_LABEL: Record<BillingSummary["state"], string> = {
 	past_due: "Past due",
 	canceled: "Canceled",
 };
+
+/**
+ * The status tier each subscription state draws (R6 F-24). Billing's words are not in the shared
+ * `STATUS_TIER` vocabulary, so the tier is explicit rather than falling to the silent `idle`.
+ */
+const STATE_TIER: Record<BillingSummary["state"], StatusTier> = {
+	none: "disabled",
+	trialing: "active",
+	active: "active",
+	canceling: "pending",
+	past_due: "failed",
+	canceled: "disabled",
+};
+
+/** Where the self-managed licensing mechanism is documented (R6 F-38). */
+const SELF_MANAGED_LICENSING_DOCS = "/docs/editions/licensing";
+
+/**
+ * The plan card's lifecycle button label (R6 F-36). It is derived from `cancelAtPeriodEnd`, the
+ * same field that decides what the click does, so a `past_due` subscription already set to cancel
+ * reads "Resume plan" and resumes — the label and the action can no longer disagree.
+ */
+function lifecycleLabel(cancelAtPeriodEnd: boolean): string {
+	return cancelAtPeriodEnd ? "Resume plan" : "Cancel plan";
+}
 
 /** The element id of the Payment methods section, which the past-due notice links to. */
 export const PAYMENT_METHODS_ANCHOR = "payment-methods";
@@ -94,8 +120,18 @@ export function BillingPanel() {
 			<Card className="p-6">
 				<SectionHeading
 					title="Self-managed deployment"
-					description="This instance is not connected to hosted billing. Enterprise features are unlocked by your license key. See the docs for self-managed licensing."
+					description="This instance is not connected to hosted billing. Enterprise features are unlocked by your license key."
 				/>
+				<a
+					href={SELF_MANAGED_LICENSING_DOCS}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="mt-3 inline-flex items-center gap-1 text-ui-sm font-medium text-text-primary underline underline-offset-4"
+				>
+					Read how self-managed licensing works
+					<ArrowUpRight size={13} aria-hidden />
+					<span className="sr-only">(opens in a new tab)</span>
+				</a>
 			</Card>
 		);
 	}
@@ -219,17 +255,13 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 								</span>
 								{!isHobby && (
 									<>
-										<span
-											className={
-												isEntitled
-													? "rounded-full border border-ink bg-ink px-2 py-[3px] font-mono text-ui-3xs uppercase tracking-[0.1em] text-ink-foreground"
-													: "rounded-full border border-border-strong px-2 py-[3px] font-mono text-ui-3xs uppercase tracking-[0.1em] text-text-secondary"
-											}
-										>
-											{STATE_LABEL[state]}
-										</span>
+										<StatusBadge
+											status={state}
+											tier={STATE_TIER[state]}
+											label={STATE_LABEL[state]}
+										/>
 										{isEntitled && (
-											<span className="rounded-full border border-border-strong px-2 py-[3px] font-mono text-ui-3xs uppercase tracking-[0.1em] text-text-secondary">
+											<span className="font-mono text-ui-3xs uppercase tracking-[0.1em] text-text-secondary">
 												Monthly
 											</span>
 										)}
@@ -290,18 +322,15 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 										size="sm"
 										disabled={pending}
 										onClick={
-											// The BRANCH is `cancelAtPeriodEnd`, not `state === "canceling"`,
-											// because that is what the single `toggleCancel` handler this
-											// replaced tested. The two disagree only for a `past_due`
-											// subscription already set to cancel — where the label reads
-											// "Cancel plan" and the click resumes — and that contradiction
-											// is #4276's to record, not to change behind a rename.
+											// The label and the branch read the SAME field (R6 F-36):
+											// a `past_due` subscription already set to cancel used to
+											// read "Cancel plan" while the click resumed it.
 											summary.cancelAtPeriodEnd
 												? () => resume.mutate({})
 												: () => setCancelOpen(true)
 										}
 									>
-										{state === "canceling" ? "Resume plan" : "Cancel plan"}
+										{lifecycleLabel(summary.cancelAtPeriodEnd)}
 									</Button>
 								</DisabledReason>
 							) : (

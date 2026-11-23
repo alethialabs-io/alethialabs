@@ -28,6 +28,11 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/query/use-projects-query", () => ({ useProjectsQuery: () => ({ data: [] }) }));
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => false }));
 vi.mock("@/components/org/upgrade-org-sheet", () => ({ UpgradeOrgSheet: () => null }));
+// The Activity feed opens the shell's ONE upgrade sheet (R6 F-31); the provider is the org layout's.
+vi.mock("@/components/org/upgrade-sheet-provider", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/components/org/upgrade-sheet-provider")>()),
+	useUpgradeSheet: () => ({ openUpgrade: vi.fn() }),
+}));
 vi.mock("@/app/server/actions/activity", () => ({ getActivityExportCsv: vi.fn() }));
 
 const h = vi.hoisted(() => ({ page: vi.fn<(input: unknown) => Promise<unknown>>() }));

@@ -18,6 +18,7 @@ import { formatDate, formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { SectionHeading } from "@repo/ui/section-heading";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import { type ActivityContext, describeEvent } from "./humanize-event";
 
@@ -128,31 +129,41 @@ export function ActivityFeed({
 											})}
 										</span>
 									)}
-									<span
-										title={e.denied ? (e.detail ?? undefined) : undefined}
-										className={cn(
-											"min-w-0 flex-1 truncate text-ui-md",
-											e.denied ? "text-text-secondary" : "text-text-primary",
+									<div className="flex min-w-0 flex-1 flex-col">
+										<span
+											className={cn(
+												"min-w-0 truncate text-ui-md",
+												e.denied ? "text-text-secondary" : "text-text-primary",
+											)}
+										>
+											{e.denied && (
+												// The shared status device (R6 F-24), not a local pill.
+												<StatusBadge
+													status="denied"
+													tier="failed"
+													label="Denied"
+													className="mr-1.5 align-middle"
+												/>
+											)}
+											<strong className="font-semibold text-text-primary">
+												{e.actor}
+											</strong>{" "}
+											{e.lead}
+											{e.target && (
+												<>
+													{" "}
+													<strong className="font-semibold text-text-primary">
+														{e.target}
+													</strong>
+												</>
+											)}
+										</span>
+										{/* Why it was denied is said on the row, to every reader (R6 E-24): it
+										    used to live in a `title`, which only a mouse hover ever showed. */}
+										{e.denied && e.detail && (
+											<span className="text-ui-sm text-text-tertiary">{e.detail}</span>
 										)}
-									>
-										{e.denied && (
-											<span className="mr-1.5 rounded-full border border-border-strong px-1.5 py-px align-middle font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
-												Denied
-											</span>
-										)}
-										<strong className="font-semibold text-text-primary">
-											{e.actor}
-										</strong>{" "}
-										{e.lead}
-										{e.target && (
-											<>
-												{" "}
-												<strong className="font-semibold text-text-primary">
-													{e.target}
-												</strong>
-											</>
-										)}
-									</span>
+									</div>
 									{/* "3 hours ago" reads the clock, and the title the browser's zone: both
 									    wait for hydration (#418), in a slot that already has the text's
 									    width, so the row does not reflow when they land. */}

@@ -64,9 +64,22 @@ const PAGE: AccessGrantsPage & { asOf: string } = {
 			resourceId: null,
 			createdAt: "2026-01-01T00:00:00.000Z",
 		},
+		// A grant on a Project the option lists do not name (deleted, or not visible): R6 F-19.
+		{
+			id: "g2",
+			principalType: "user",
+			principalId: "u2",
+			principalLabel: "Grace Hopper",
+			effect: "allow",
+			roleName: "operator",
+			permissionKey: null,
+			resourceType: "project",
+			resourceId: "9f1c2d3e-0000-4000-8000-000000000000",
+			createdAt: "2026-01-01T00:00:00.000Z",
+		},
 	],
-	resultCount: 1,
-	total: 1,
+	resultCount: 2,
+	total: 2,
 	asOf: "2026-01-02T00:00:00.000Z",
 	facets: { scopes: [], roles: [], effects: [] },
 };
@@ -153,5 +166,37 @@ describe("the grant builder (R6 E-16)", () => {
 		h.options.mockResolvedValue(OPTIONS);
 		await user.click(screen.getByRole("button", { name: "Try again" }));
 		expect(await screen.findByRole("form", { name: "New grant" })).toBeInTheDocument();
+	});
+});
+
+// CON-PB2 (R6 E-20, E-21, E-25, F-19).
+describe("access grants — CON-PB2", () => {
+	it("a scope the option lists do not name reads Unknown resource, not a UUID fragment (F-19)", async () => {
+		render(tree(true));
+		expect(await screen.findByText("Unknown resource")).toBeInTheDocument();
+		expect(screen.queryByText(/^9f1c2d3e/)).toBeNull();
+	});
+
+	it("the first column is headed Member or team, not Principal (E-25)", async () => {
+		render(tree(true));
+		expect(await screen.findByRole("columnheader", { name: "Member or team" })).toBeInTheDocument();
+		expect(screen.queryByRole("columnheader", { name: "Principal" })).toBeNull();
+	});
+
+	it("the revoke confirmation names the role and who loses it (E-21)", async () => {
+		const user = userEvent.setup();
+		render(tree(true));
+		await user.click(await screen.findByRole("button", { name: "Manage grant for Ada Lovelace" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Revoke access" }));
+		const dialog = await screen.findByRole("alertdialog");
+		expect(dialog).toHaveTextContent("Revoke Viewer from Ada Lovelace?");
+	});
+
+	it("Add grant opens the builder in a sheet (E-20)", async () => {
+		const user = userEvent.setup();
+		render(tree(true));
+		await user.click(await screen.findByRole("button", { name: /add grant/i }));
+		const sheet = await screen.findByRole("dialog");
+		expect(within(sheet).getByRole("form", { name: "New grant" })).toBeInTheDocument();
 	});
 });

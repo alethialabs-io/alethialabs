@@ -367,3 +367,23 @@ describe("Preview settings — what the viewer may change", () => {
 		expect(input).toHaveAttribute("aria-invalid", "true");
 	});
 });
+
+// CON-PB2, R6 F-16: nine fields of edits were dropped by a reload or a closed tab without a word.
+describe("Preview settings — unsaved edits", () => {
+	it("an edit says it is unsaved and asks before the tab goes; a pristine form does neither", async () => {
+		const user = userEvent.setup();
+		renderPanel();
+		expect(screen.queryByText("You have unsaved changes")).toBeNull();
+		const pristine = new Event("beforeunload", { cancelable: true });
+		window.dispatchEvent(pristine);
+		expect(pristine.defaultPrevented).toBe(false);
+
+		const appsPath = screen.getByRole("textbox", { name: "Apps path" });
+		await user.clear(appsPath);
+		await user.type(appsPath, "apps");
+		expect(await screen.findByText("You have unsaved changes")).toBeInTheDocument();
+		const leaving = new Event("beforeunload", { cancelable: true });
+		window.dispatchEvent(leaving);
+		expect(leaving.defaultPrevented).toBe(true);
+	});
+});

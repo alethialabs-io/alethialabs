@@ -15,8 +15,8 @@
 // behind rows keeps the rows and says they may be out of date.
 
 import { ORPCError } from "@orpc/client";
-import { useParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import { useMemo } from "react";
 import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
 import { SectionHeading } from "@repo/ui/section-heading";
@@ -24,6 +24,12 @@ import { RegionError } from "@/components/errors/region-error";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useEvidenceQuery } from "@/lib/query/use-evidence-query";
+import {
+	hrefWithParamPatch,
+	type ParamPatch,
+	selectionFromUrl,
+	selectionPatch,
+} from "@/lib/query/view-url-params";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useEvidenceFilters } from "@/lib/stores/use-evidence-filters";
 import { EvidenceDrawer } from "./drawer/evidence-drawer";
@@ -34,6 +40,30 @@ import { EvidenceSkeleton } from "./evidence-skeleton";
 import { EvidenceTable } from "./evidence-table";
 import { EvidenceWaivers } from "./evidence-waivers";
 import { downloadReceipt } from "./receipt-download";
+
+/** The URL param holding the open drawer's tab (R6 C-32). */
+const EVIDENCE_TAB_PARAM = "tab";
+
+/** The drawer's tabs, in order; anything else in the URL falls back to the row's default. */
+const DRAWER_TABS = ["report", "receipt", "drift"] as const;
+
+/** Narrows a URL value to one of the drawer's tabs. */
+function isDrawerTab(value: string | null): value is (typeof DRAWER_TABS)[number] {
+	return DRAWER_TABS.some((t) => t === value);
+}
+
+/**
+ * Applies a param patch to the address bar in place — `history.replaceState`, not a router
+ * navigation, so opening a drawer does not re-render the server route; Next keeps
+ * `useSearchParams` in step with the native call.
+ */
+function patchUrl(patch: ParamPatch): void {
+	window.history.replaceState(
+		null,
+		"",
+		hrefWithParamPatch(window.location.pathname, window.location.search, patch),
+	);
+}
 
 /** The default drawer tab for a row — Report if verified, else Receipt, else Drift. */
 function defaultTab(row: EvidenceEnvRow): string {
@@ -61,9 +91,11 @@ export function EvidenceClient() {
 		refetch,
 	} = useEvidenceQuery(urlRead);
 
-	// Row interaction.
-	const [drawerId, setDrawerId] = useState<string | null>(null);
-	const [drawerTab, setDrawerTab] = useState("report");
+	// Row interaction. The open drawer (`?selected=`) and its tab are URL state (R6 C-32), so a link to an
+	// environment's evidence opens on it and Back/refresh keep what was open.
+	const searchParams = useSearchParams();
+	const drawerId = selectionFromUrl(searchParams);
+	const urlTab = searchParams.get(EVIDENCE_TAB_PARAM);
 
 	// The drawer opens only on a currently-visible row, so it's always in the grouped set.
 	const drawerRow = useMemo(() => {
@@ -73,11 +105,11 @@ export function EvidenceClient() {
 		}
 		return null;
 	}, [result?.groups, drawerId]);
+	const drawerTab = isDrawerTab(urlTab) ? urlTab : drawerRow ? defaultTab(drawerRow) : "report";
 
 	/** Opens the detail drawer — every row opens it; empty tabs show explained states. */
 	const openDrawer = (row: EvidenceEnvRow) => {
-		setDrawerTab(defaultTab(row));
-		setDrawerId(row.environmentId);
+		patchUrl({ ...selectionPatch(row.environmentId), [EVIDENCE_TAB_PARAM]: defaultTab(row) });
 	};
 
 	/**
@@ -178,8 +210,8 @@ export function EvidenceClient() {
 				row={drawerRow}
 				waivers={result.waivers}
 				tab={drawerTab}
-				onTab={setDrawerTab}
-				onClose={() => setDrawerId(null)}
+				onTab={(tab) => patchUrl({ [EVIDENCE_TAB_PARAM]: tab })}
+				onClose={() => patchUrl({ ...selectionPatch(null), [EVIDENCE_TAB_PARAM]: null })}
 				onDownload={download}
 			/>
 		</div>

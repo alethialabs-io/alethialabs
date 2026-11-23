@@ -20,6 +20,11 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/lib/query/use-projects-query", () => ({ useProjectsQuery: () => ({ data: [] }) }));
 vi.mock("@/components/org/upgrade-org-sheet", () => ({ UpgradeOrgSheet: () => null }));
+// The Activity feed opens the shell's ONE upgrade sheet (R6 F-31); the provider is the org layout's.
+vi.mock("@/components/org/upgrade-sheet-provider", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/components/org/upgrade-sheet-provider")>()),
+	useUpgradeSheet: () => ({ openUpgrade: vi.fn() }),
+}));
 // The member list (`members.list`) and the feed's pages (`activity.page`) are GET reads since #6129;
 // `getActivityLog` stands for the page read and is called with the input of each page asked for.
 const { getActivityLog } = vi.hoisted(() => ({

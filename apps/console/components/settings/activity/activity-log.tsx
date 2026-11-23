@@ -35,15 +35,12 @@ import { useHydrated } from "@repo/ui/use-hydrated";
 import { useActivityQuery, useMembersQuery } from "@/lib/query/use-activity-query";
 import { RegionError } from "@/components/errors/region-error";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
-import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
+import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useActivityFilters } from "@/lib/stores/use-settings-filters";
-import {
-	useActiveOrgSlug,
-	useWorkspaceStore,
-} from "@/lib/stores/use-workspace-store";
+import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { Button } from "@repo/ui/button";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { DisabledReason } from "@repo/ui/disabled-reason";
@@ -124,7 +121,6 @@ export function ActivityLog({
 	exportEntitled?: boolean;
 	defaultWindow?: ActivityWindow;
 } = {}) {
-	const orgSlug = useActiveOrgSlug();
 	// The route's answer when it gave one; otherwise the workspace store's, which is `null` while it
 	// has not answered (#5864): the Export button is then not rendered at all, rather than shown
 	// disabled with the "requires Enterprise" reason to an org that may well have it.
@@ -192,7 +188,8 @@ export function ActivityLog({
 	// for an explicit window, never a relative name over fixed bounds (#6740).
 	const rangeLabel = rangeFilterLabel(parseRangeFilter(filters.range), DEFAULT_RANGE_LABEL);
 
-	const [upgradeOpen, setUpgradeOpen] = useState(false);
+	// The shell's ONE upgrade sheet (R6 F-31): this feed used to mount a second UpgradeOrgSheet.
+	const { openUpgrade } = useUpgradeSheet();
 
 	// Resource-name lookups that drive the humanizer's name resolution.
 	const lookups = useMemo(() => {
@@ -274,12 +271,12 @@ export function ActivityLog({
 			const days = retentionDays ?? COMMUNITY_ENTITLEMENTS.quotas.activityRetentionDays;
 			const minFrom = Date.now() - days * DAY - RETENTION_GRACE;
 			if (next.from.getTime() < minFrom) {
-				if (retentionDays !== null) setUpgradeOpen(true);
+				if (retentionDays !== null) openUpgrade();
 				return;
 			}
 			set("range", label === null ? rangeWindowValue(next) : rangeFromPick(next, label));
 		},
-		[retentionDays, set],
+		[retentionDays, set, openUpgrade],
 	);
 
 	// The facet counts come from the server's facet passes (lib/queries/activity.ts), which see
@@ -353,7 +350,7 @@ export function ActivityLog({
 	// page shows, so it invalidates nothing.
 	const exportCsv = useActionMutation(getActivityExportCsv, {
 		invalidates: [],
-		onEntitlement: () => setUpgradeOpen(true),
+		onEntitlement: () => openUpgrade(),
 		onSuccess: (csv) => {
 			const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
 			const url = URL.createObjectURL(blob);
@@ -442,7 +439,8 @@ export function ActivityLog({
 					onChange={(r) => applyRange(r, null)}
 				/>
 				<FacetFilter
-					label="User"
+					// "Member", Settings' word for a person in the org (R6 E-25); the facet lists members.
+					label="Member"
 					icon={Users}
 					options={userOptions}
 					value={filters.actorIds}
@@ -530,12 +528,6 @@ export function ActivityLog({
 					/>
 				</div>
 			)}
-
-			<UpgradeOrgSheet
-				open={upgradeOpen}
-				onOpenChange={setUpgradeOpen}
-				orgSlug={orgSlug}
-			/>
 		</div>
 	);
 }

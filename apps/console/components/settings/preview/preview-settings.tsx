@@ -4,7 +4,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Controller, type FieldPath, useForm, useWatch } from "react-hook-form";
 import { savePreviewConfig } from "@/app/server/actions/preview";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
@@ -56,7 +56,12 @@ import { Switch } from "@repo/ui/switch";
 import { cn } from "@repo/ui/utils";
 import type { GitProviderAvailability } from "@/lib/connectors/git-providers";
 import type { GitProvider } from "@/lib/db/schema";
-import { PREVIEW_ROWS, PREVIEW_SAVE_NOTE, PREVIEW_SECTION_TITLE } from "./preview-copy";
+import {
+	PREVIEW_ROWS,
+	PREVIEW_SAVE_NOTE,
+	PREVIEW_SECTION_TITLE,
+	PREVIEW_UNSAVED_NOTE,
+} from "./preview-copy";
 import { PreviewSettingsSkeleton, linkedFromProviders } from "./preview-settings-skeleton";
 
 type PreviewConfigRow = StoredPreviewConfig | null;
@@ -284,7 +289,18 @@ export function PreviewSettings({
 	});
 
 	const busy = form.formState.isSubmitting || save.isPending;
-	const saveDisabled = busy || !form.formState.isDirty;
+	const dirty = form.formState.isDirty;
+	const saveDisabled = busy || !dirty;
+
+	// Nine fields of unsaved edits are not dropped silently (R6 F-16): a reload or a closed tab asks
+	// first, the page-level form of the guard the console's sheets use (`useUnsavedGuard`), and the
+	// card's foot says the changes are not saved yet. A save resets the form, which clears both.
+	useEffect(() => {
+		if (!dirty || readOnly) return undefined;
+		const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+		window.addEventListener("beforeunload", warn);
+		return () => window.removeEventListener("beforeunload", warn);
+	}, [dirty, readOnly]);
 	const errors = form.formState.errors;
 	const repoMessage = repoError ?? errors.repo_owner?.message ?? errors.repo_name?.message;
 	const placementMessage =
@@ -523,7 +539,9 @@ export function PreviewSettings({
 						</div>
 					</fieldset>
 					<FormRootError form={form} className="mx-[22px] mb-3" />
-					<SettingsCardFoot note={PREVIEW_SAVE_NOTE}>
+					<SettingsCardFoot
+						note={dirty && !readOnly ? PREVIEW_UNSAVED_NOTE : PREVIEW_SAVE_NOTE}
+					>
 						<DisabledReason reason={writeReason}>
 							<Button type="submit" size="sm" disabled={saveDisabled}>
 								{busy ? "Saving…" : "Save changes"}

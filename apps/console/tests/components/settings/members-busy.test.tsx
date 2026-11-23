@@ -15,8 +15,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { InvitationRow, MemberRow } from "@/app/server/actions/members";
-import type { MembersPage } from "@/lib/queries/members";
+import type { MemberRow } from "@/app/server/actions/members";
+import type { MembersPage, MembersPageInvitation } from "@/lib/queries/members";
 
 let currentSearch = "";
 
@@ -81,12 +81,19 @@ function member(id: string): MemberRow {
 }
 
 /** One pending invitation row. */
-function invite(id: string): InvitationRow {
-	return { id, email: `${id}@invited.test`, role: "viewer", inviterName: "Owner", createdAt: "2026-01-01T00:00:00.000Z" };
+function invite(id: string): MembersPageInvitation {
+	return {
+		id,
+		email: `${id}@invited.test`,
+		role: "viewer",
+		inviterName: "Owner",
+		createdAt: "2026-01-01T00:00:00.000Z",
+		expiresAt: "2026-01-08T00:00:00.000Z",
+	};
 }
 
 /** A members page answering with the given rows, over a six-row universe. */
-function pageOf(members: MemberRow[], invitations: InvitationRow[]): MembersPage {
+function pageOf(members: MemberRow[], invitations: MembersPageInvitation[]): MembersPage {
 	return {
 		members,
 		invitations,

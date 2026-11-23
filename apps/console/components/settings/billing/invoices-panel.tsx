@@ -15,7 +15,7 @@
 // server-filtered list is the thing this standard exists to stop.
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { CircleDot } from "lucide-react";
+import { CircleDot, ReceiptText } from "lucide-react";
 import { useMemo, useState } from "react";
 import { RegionError } from "@/components/errors/region-error";
 import { RegionRefusal, refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
@@ -25,8 +25,10 @@ import { orpc } from "@/lib/rpc/client";
 import type { InvoiceInfo } from "@/lib/rpc/procedures/billing";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useInvoiceFilters } from "@/lib/stores/use-settings-filters";
+import { Button } from "@repo/ui/button";
 import { CountPill } from "@repo/ui/count-pill";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
+import { EmptyState } from "@repo/ui/empty";
 import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
@@ -42,6 +44,7 @@ import {
 import {
 	ALL_TIME_LABEL,
 	DEFAULT_INVOICE_FILTERS,
+	INVOICE_LIST_CAP,
 	INVOICE_STATUS_OPTIONS,
 	invoiceStatusCounts,
 	NO_WINDOW_LABEL,
@@ -154,6 +157,19 @@ export function InvoicesPanel() {
 					/>
 				) : invoices.isPending ? (
 					<Skeleton className="h-56 w-full" />
+				) : rows.length === 0 && activeFilters > 0 ? (
+					// A filtered view with no rows offers the way back (R6 F-25), as Activity does.
+					<EmptyState
+						className="bg-surface-sunken"
+						icon={<ReceiptText />}
+						title="No invoices match these filters."
+						description="Clear the filters to see every invoice."
+						action={
+							<Button variant="outline" size="sm" onClick={reset}>
+								Clear filters
+							</Button>
+						}
+					/>
 				) : (
 					<div className={cn(invoices.isPlaceholderData && "opacity-60")}>
 						<InvoicesTable
@@ -163,12 +179,19 @@ export function InvoicesPanel() {
 								setPreviewOpen(true);
 							}}
 							pageSize={20}
-							emptyMessage={
-								activeFilters > 0
-									? "No invoices match these filters."
-									: "No invoices yet — invoices appear here after your first payment."
-							}
+							emptyMessage="No invoices yet — invoices appear here after your first payment."
 						/>
+						{rows.length >= INVOICE_LIST_CAP && (
+							// The read returns the newest INVOICE_LIST_CAP; say so rather than let the
+							// oldest invoices vanish silently (R6 F-26).
+							<p
+								data-testid="invoices-cap-note"
+								className="mt-3 text-ui-sm text-text-secondary"
+							>
+								Showing the {INVOICE_LIST_CAP} most recent invoices. Narrow the paid date to
+								see older ones.
+							</p>
+						)}
 					</div>
 				)}
 			</div>

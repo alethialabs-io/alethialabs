@@ -19,6 +19,9 @@ export const PREVIEW_SECTION_TITLE = "Preview environments";
 /** The note in the Save band. */
 export const PREVIEW_SAVE_NOTE = "Saved changes apply on the next preview reconciliation";
 
+/** The card foot's note while the form holds edits that are not saved yet (R6 F-16). */
+export const PREVIEW_UNSAVED_NOTE = "You have unsaved changes";
+
 /** The form's four rows, top to bottom. */
 export const PREVIEW_ROWS = {
 	enable: {

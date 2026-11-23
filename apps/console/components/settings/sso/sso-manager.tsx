@@ -10,6 +10,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, KeyRound, Pencil, Plus, ShieldCheck, Trash2, XCircle } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
 	deleteSsoProvider,
@@ -20,7 +21,10 @@ import {
 	testSsoProvider,
 	verifySsoDomain,
 } from "@/app/server/actions/sso";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
+import { manageReason } from "@/components/errors/manage-gate";
 import { RegionError } from "@/components/errors/region-error";
+import { hrefWithParamPatch, selectionFromUrl, selectionPatch } from "@/lib/query/view-url-params";
 import { PanelSkeleton } from "@/components/skeletons/page-skeletons";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { legalUrl } from "@/lib/legal";
@@ -31,18 +35,9 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useSsoFilters } from "@/lib/stores/use-settings-filters";
-import {
-	AlertDialog,
-	AlertDialogAction,
-	AlertDialogCancel,
-	AlertDialogContent,
-	AlertDialogDescription,
-	AlertDialogFooter,
-	AlertDialogHeader,
-	AlertDialogTitle,
-} from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
 import { CopyButton } from "@repo/ui/copy-button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
 import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
@@ -88,10 +83,22 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 		[filters, search],
 	);
 
-	const [selectedId, setSelectedId] = useState<string | null>(null);
+	// The selected provider is URL state (R6 E-23), written in place so it is not a server navigation.
+	const searchParams = useSearchParams();
+	const selectedId = selectionFromUrl(searchParams);
+	const setSelectedId = (id: string | null) =>
+		window.history.replaceState(
+			null,
+			"",
+			hrefWithParamPatch(window.location.pathname, window.location.search, selectionPatch(id)),
+		);
+	// One answer to "you can't do this", on every write control (R6 E-09): disabled WITH the reason.
+	const writeReason = manageReason({ canManage });
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const [editing, setEditing] = useState<SsoProviderRow | null>(null);
 	const [deleting, setDeleting] = useState<SsoProviderRow | null>(null);
+	// The name the confirmation is RENDERING, which outlives `deleting` by one close.
+	const [deletingName, setDeletingName] = useState("");
 
 	// Filtered SERVER-SIDE by `sso.providers`. `isPlaceholderData` is the other half of the hook's
 	// `keepPreviousData` (lib/query/README.md, step 5): the rows stay while the next query loads,
@@ -118,11 +125,11 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 		invalidates: ssoReadKeys(),
 		successMessage: "Provider removed",
 		onSuccess: () => {
-			setDeleting(null);
 			setSelectedId(null);
 		},
 	});
 
+	/** Opens the provider sheet empty, to connect a new identity provider. */
 	function connect() {
 		setEditing(null);
 		setSheetOpen(true);
@@ -139,10 +146,12 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 				description="Identity providers your members can sign in through."
 				count={providers ? providers.length : null}
 				actions={
-					<Button size="sm" disabled={!canManage} onClick={connect}>
-						<Plus size={13} />
-						Connect provider
-					</Button>
+					<DisabledReason reason={writeReason}>
+						<Button size="sm" onClick={connect}>
+							<Plus size={13} />
+							Connect provider
+						</Button>
+					</DisabledReason>
 				}
 			/>
 
@@ -214,10 +223,12 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 								Clear filters
 							</Button>
 						) : (
-							<Button size="sm" disabled={!canManage} onClick={connect}>
-								<Plus size={13} />
-								Connect provider
-							</Button>
+							<DisabledReason reason={writeReason}>
+								<Button size="sm" onClick={connect}>
+									<Plus size={13} />
+									Connect provider
+								</Button>
+							</DisabledReason>
 						)
 					}
 				/>
@@ -234,6 +245,8 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 								key={p.id}
 								type="button"
 								onClick={() => setSelectedId(p.id)}
+								// The rail picks the pane's subject: WAI-ARIA's current item (R6 E-24).
+								aria-current={selected?.id === p.id ? "true" : undefined}
 								className={cn(
 									"flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left transition-colors",
 									selected?.id === p.id
@@ -267,13 +280,16 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 							provider={selected}
 							origin={origin}
 							slug={slug}
-							canManage={canManage}
+							writeReason={writeReason}
 							removing={removal.isPending && removal.variables?.id === selected.id}
 							onEdit={() => {
 								setEditing(selected);
 								setSheetOpen(true);
 							}}
-							onDelete={() => setDeleting(selected)}
+							onDelete={() => {
+								setDeletingName(selected.providerId);
+								setDeleting(selected);
+							}}
 						/>
 					)}
 				</div>
@@ -306,35 +322,21 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 				orgId={orgId}
 			/>
 
-			<AlertDialog
+			{/* The console's one confirmation (R6 E-21): it names the provider, stays open while the
+			    removal runs and closes once it has succeeded. */}
+			<ConfirmAction
 				open={deleting !== null}
-				onOpenChange={(o) => !o && !removal.isPending && setDeleting(null)}
-			>
-				<AlertDialogContent>
-					<AlertDialogHeader>
-						<AlertDialogTitle>Remove this identity provider?</AlertDialogTitle>
-						<AlertDialogDescription>
-							Members who sign in through <strong>{deleting?.providerId}</strong> will
-							no longer be able to. Their accounts and memberships are kept. This cannot
-							be undone.
-						</AlertDialogDescription>
-					</AlertDialogHeader>
-					<AlertDialogFooter>
-						<AlertDialogCancel disabled={removal.isPending}>Cancel</AlertDialogCancel>
-						<AlertDialogAction
-							disabled={removal.isPending}
-							onClick={(e) => {
-								// Stay open while the removal is in flight; `onSuccess` closes it.
-								e.preventDefault();
-								if (deleting && !removal.isPending) removal.mutate({ id: deleting.id });
-							}}
-							variant="destructive"
-						>
-							{removal.isPending ? "Removing…" : "Remove provider"}
-						</AlertDialogAction>
-					</AlertDialogFooter>
-				</AlertDialogContent>
-			</AlertDialog>
+				onOpenChange={(o) => {
+					if (!o) setDeleting(null);
+				}}
+				title={`Remove identity provider \u201C${deletingName}\u201D?`}
+				description="Members who sign in through it will no longer be able to. Their accounts and memberships are kept. This cannot be undone."
+				confirmLabel="Remove provider"
+				pendingLabel="Removing…"
+				severity={{ level: "confirm" }}
+				mutation={removal}
+				variables={deleting ? { id: deleting.id } : null}
+			/>
 		</div>
 	);
 }
@@ -369,7 +371,7 @@ function ProviderDetail({
 	provider: p,
 	origin,
 	slug,
-	canManage,
+	writeReason,
 	removing,
 	onEdit,
 	onDelete,
@@ -377,7 +379,8 @@ function ProviderDetail({
 	provider: SsoProviderRow;
 	origin: string;
 	slug: string;
-	canManage: boolean;
+	/** Why the viewer may not change this provider, or null when they may. */
+	writeReason: string | null;
 	/** A removal of this provider is in flight. */
 	removing: boolean;
 	onEdit: () => void;
@@ -428,32 +431,38 @@ function ProviderDetail({
 						</p>
 					</div>
 					<div className="flex shrink-0 items-center gap-2">
-						<Button
-							variant="outline"
-							size="sm"
-							disabled={!canManage || busy}
-							onClick={() => testing.mutate({ id: p.id })}
-						>
-							{testing.isPending ? "Testing…" : "Test connection"}
-						</Button>
-						<Button
-							variant="outline"
-							size="sm"
-							aria-label="Edit provider"
-							disabled={!canManage || busy}
-							onClick={onEdit}
-						>
-							<Pencil size={13} />
-						</Button>
-						<Button
-							variant="outline"
-							size="sm"
-							aria-label="Remove provider"
-							disabled={!canManage || busy}
-							onClick={onDelete}
-						>
-							<Trash2 size={13} />
-						</Button>
+						<DisabledReason reason={writeReason}>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={busy}
+								onClick={() => testing.mutate({ id: p.id })}
+							>
+								{testing.isPending ? "Testing…" : "Test connection"}
+							</Button>
+						</DisabledReason>
+						<DisabledReason reason={writeReason}>
+							<Button
+								variant="outline"
+								size="sm"
+								aria-label="Edit provider"
+								disabled={busy}
+								onClick={onEdit}
+							>
+								<Pencil size={13} />
+							</Button>
+						</DisabledReason>
+						<DisabledReason reason={writeReason}>
+							<Button
+								variant="outline"
+								size="sm"
+								aria-label="Remove provider"
+								disabled={busy}
+								onClick={onDelete}
+							>
+								<Trash2 size={13} />
+							</Button>
+						</DisabledReason>
 					</div>
 				</div>
 				{test && (
@@ -497,21 +506,25 @@ function ProviderDetail({
 						</div>
 					)}
 					<div className="flex items-center gap-2 border-t border-border bg-surface-sunken px-5 py-3">
-						<Button
-							variant="outline"
-							size="sm"
-							disabled={!canManage || busy}
-							onClick={() => minting.mutate({ id: p.id })}
-						>
-							{minting.isPending ? "Loading…" : "Show DNS record"}
-						</Button>
-						<Button
-							size="sm"
-							disabled={!canManage || busy}
-							onClick={() => verifying.mutate({ id: p.id })}
-						>
-							{verifying.isPending ? "Verifying…" : "Verify domain"}
-						</Button>
+						<DisabledReason reason={writeReason}>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={busy}
+								onClick={() => minting.mutate({ id: p.id })}
+							>
+								{minting.isPending ? "Loading…" : "Show DNS record"}
+							</Button>
+						</DisabledReason>
+						<DisabledReason reason={writeReason}>
+							<Button
+								size="sm"
+								disabled={busy}
+								onClick={() => verifying.mutate({ id: p.id })}
+							>
+								{verifying.isPending ? "Verifying…" : "Verify domain"}
+							</Button>
+						</DisabledReason>
 					</div>
 				</div>
 			)}

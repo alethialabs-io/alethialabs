@@ -53,6 +53,16 @@ import {
 // `MemberRow`/`InvitationRow` stay defined in the action module (components import them
 // from there); the import above is type-only, so it is erased and no runtime cycle exists.
 
+/**
+ * One pending invitation as the members page reads it: the action module's row plus when its link
+ * stops working (#6827, from CON-L10). Better Auth keeps an expired invitation `pending`, so
+ * "expired" is a comparison the table makes against the page's `asOf`, not a status.
+ */
+export interface MembersPageInvitation extends InvitationRow {
+	/** ISO instant the invitation's link expires (a resend moves it forward). */
+	expiresAt: string;
+}
+
 /** The three states a row of the members table can be in — the status facet's values. */
 export const MEMBER_ROW_STATUSES = ["active", "pending", "suspended"] as const;
 
@@ -126,7 +136,7 @@ export interface MembersPage {
 	/** Member rows matching the query. */
 	members: MemberRow[];
 	/** Pending invitations matching the query (empty when the query excludes them). */
-	invitations: InvitationRow[];
+	invitations: MembersPageInvitation[];
 	/** members + invitations returned. */
 	resultCount: number;
 	/** Every member + pending invitation in the org — the count pill's denominator. */
@@ -279,6 +289,7 @@ export async function queryMembersPage(
 							inviterName: user.name,
 							inviterEmail: user.email,
 							createdAt: invitation.createdAt,
+							expiresAt: invitation.expiresAt,
 						})
 						.from(invitation)
 						.leftJoin(user, eq(invitation.inviterId, user.id))
@@ -373,12 +384,13 @@ export async function queryMembersPage(
 				lastActiveAt: lastByUser.get(r.userId) ?? null,
 			}));
 
-	const invitations: InvitationRow[] = inviteRows.map((r) => ({
+	const invitations: MembersPageInvitation[] = inviteRows.map((r) => ({
 		id: r.id,
 		email: r.email,
 		role: toDisplayRole(r.role ?? DEFAULT_INVITE_ROLE),
 		inviterName: r.inviterName ?? r.inviterEmail ?? "—",
 		createdAt: r.createdAt.toISOString(),
+		expiresAt: r.expiresAt.toISOString(),
 	}));
 
 	// The facet universe: every member row (or the synthetic owner) + every pending invite.

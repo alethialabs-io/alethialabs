@@ -26,6 +26,7 @@ const h = vi.hoisted(() => ({
 	getTeamsPage: vi.fn<(query: unknown) => Promise<TeamsPage>>(),
 	updateTeam: vi.fn(async (_input: unknown) => ({ error: null })),
 	removeTeam: vi.fn(async (_input: unknown) => ({ error: null })),
+	createTeam: vi.fn(async (_input: unknown) => ({ error: null })),
 }));
 
 vi.mock("@/lib/rpc/client", async () => {
@@ -38,6 +39,7 @@ vi.mock("@/lib/auth/client", () => ({
 		organization: {
 			updateTeam: (input: unknown) => h.updateTeam(input),
 			removeTeam: (input: unknown) => h.removeTeam(input),
+			createTeam: (input: unknown) => h.createTeam(input),
 		},
 	},
 }));
@@ -83,6 +85,7 @@ beforeEach(() => {
 	h.getTeamsPage.mockResolvedValue(PAGE);
 	h.updateTeam.mockClear();
 	h.removeTeam.mockClear();
+	h.createTeam.mockClear();
 });
 
 describe("the role gate (R6 E-08)", () => {
@@ -157,8 +160,8 @@ describe("delete", () => {
 		await user.click(await screen.findByRole("button", { name: "Manage team Networking" }));
 		await user.click(await screen.findByRole("menuitem", { name: "Delete team" }));
 		const dialog = await screen.findByRole("alertdialog");
-		expect(dialog).toHaveTextContent("Delete this team?");
-		expect(dialog).toHaveTextContent("Networking");
+		// R6 E-21: the question names the team it deletes.
+		expect(dialog).toHaveTextContent("Delete team \u201CNetworking\u201D?");
 		expect(h.removeTeam).not.toHaveBeenCalled();
 		await user.click(within(dialog).getByRole("button", { name: "Delete team" }));
 		await waitFor(() => expect(h.removeTeam).toHaveBeenCalledWith({ teamId: "t1" }));
@@ -183,5 +186,24 @@ describe("stable cells (R6 E-15)", () => {
 
 		await waitFor(() => expect(h.getTeamsPage.mock.calls.length).toBeGreaterThan(1));
 		expect(screen.queryByRole("menuitem", { name: "Rename team" })).toBe(item);
+	});
+});
+
+// CON-PB2, R6 E-20: Create team was an inline panel, the one create in Settings that was not a
+// dialog. A one-field form now opens the same dialog shape as Rename team.
+describe("create (R6 E-20)", () => {
+	it("opens a dialog, validates the name, creates and closes", async () => {
+		const user = userEvent.setup();
+		render(tree(ALL));
+		await waitFor(() => expect(screen.getByText("Networking")).toBeTruthy());
+		await user.click(screen.getAllByRole("button", { name: /create team/i })[0]);
+		const dialog = await screen.findByRole("dialog");
+		expect(within(dialog).getByRole("heading", { name: "Create team" })).toBeInTheDocument();
+		await user.click(within(dialog).getByRole("button", { name: "Create team" }));
+		expect(await within(dialog).findByRole("alert")).toHaveTextContent("Name the team");
+		await user.type(within(dialog).getByRole("textbox", { name: "Team name" }), "Platform");
+		await user.click(within(dialog).getByRole("button", { name: "Create team" }));
+		await waitFor(() => expect(h.createTeam).toHaveBeenCalledWith({ name: "Platform" }));
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 	});
 });

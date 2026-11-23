@@ -15,19 +15,16 @@
 // shown (R6 E-14); the design's per-team description and role-tag have no backend yet — omitted and
 // tracked in dataroom/spec/features/settings-design-port.md.
 
-import { zodResolver } from "@hookform/resolvers/zod";
 import { planMeta } from "@repo/plan-catalog";
 import type { CellContext, ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Plus, Users } from "lucide-react";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
 import type { TeamRow } from "@/app/server/actions/teams";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { DataTable } from "@/components/data-table";
 import { RegionError } from "@/components/errors/region-error";
 import { viaAuth } from "@/components/settings/members/auth-action";
 import { PeopleListSkeleton } from "@/components/settings/members/people-skeleton";
-import { settingsControl, settingsControlSize } from "@/components/settings/settings-ui";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import {
@@ -59,8 +56,10 @@ import {
 	TEAM_SIZE_OPTIONS,
 } from "./teams-filters";
 import { ManageTeamDialog } from "./manage-team-dialog";
-import { RenameTeamDialog, type TeamNameInput, teamNameSchema } from "./rename-team-dialog";
+import { CreateTeamDialog } from "./create-team-dialog";
+import { RenameTeamDialog } from "./rename-team-dialog";
 import { NO_TEAM_WRITES, type TeamsGate } from "./teams-gate";
+import { SETTINGS_LIST_PAGE_SIZE } from "@/components/settings/members/members-filters";
 
 /** Two-letter avatar initials for a team name. */
 function monogram(name: string): string {
@@ -267,10 +266,6 @@ export function TeamsList({
 	// The name the delete confirmation is RENDERING, which outlives `deleting` by one close (the
 	// dialog stays mounted and fades out; a description built from the cleared row would blank).
 	const [deletingName, setDeletingName] = useState("");
-	const form = useForm<TeamNameInput>({
-		resolver: zodResolver(teamNameSchema),
-		defaultValues: { name: "" },
-	});
 	const createReason = writeReason(entitled, gate.canCreate);
 
 	// Filtered SERVER-SIDE: `members.teams` narrows in SQL and returns the size facet counted
@@ -296,17 +291,6 @@ export function TeamsList({
 		teamsQuery.isPlaceholderData ||
 		filters.search !== search;
 
-	const createTeam = useActionMutation(
-		({ name }: TeamNameInput) => viaAuth(() => authClient.organization.createTeam({ name })),
-		{
-			invalidates: TEAM_READS,
-			successMessage: "Team created",
-			onSuccess: () => {
-				form.reset({ name: "" });
-				setCreating(false);
-			},
-		},
-	);
 	const removeTeam = useActionMutation(
 		({ teamId }: { teamId: string }) =>
 			viaAuth(() => authClient.organization.removeTeam({ teamId })),
@@ -317,11 +301,6 @@ export function TeamsList({
 	);
 	/** The team a delete is in flight for: its row menu is closed until it settles. */
 	const removingId = removeTeam.isPending ? removeTeam.variables?.teamId : undefined;
-
-	const submitCreate = form.handleSubmit((values) => {
-		if (createReason !== null) return;
-		createTeam.submit(values);
-	});
 
 	const askDelete = useCallback((team: TeamRow) => {
 		setDeletingName(team.name);
@@ -365,7 +344,7 @@ export function TeamsList({
 	// or ends in a refusal toast. The upsell panel below explains the plan.
 	const createAction = (
 		<DisabledReason reason={createReason}>
-			<Button size="sm" aria-expanded={creating} onClick={() => setCreating((v) => !v)}>
+			<Button size="sm" onClick={() => setCreating(true)}>
 				<Plus size={13} />
 				Create team
 			</Button>
@@ -374,7 +353,6 @@ export function TeamsList({
 	// The upsell IS the page body when the org is not entitled and has no teams to show; then there
 	// is nothing to filter, so the filter bar is not drawn above it (F017).
 	const upsellIsBody = !entitled && total === 0;
-	const nameError = form.formState.errors.name?.message;
 
 	return (
 		<div aria-busy={busy}>
@@ -410,58 +388,6 @@ export function TeamsList({
 				</FilterBar>
 			)}
 
-			{/* inline create panel */}
-			{createReason === null && creating && (
-				<form
-					onSubmit={(e) => void submitCreate(e)}
-					className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm"
-				>
-					<p className="mb-3 text-ui-md font-medium text-text-primary">New team</p>
-					<div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-						<div className="flex-1">
-							<label
-								htmlFor="team-name"
-								className="mb-1.5 block text-ui-xs text-text-tertiary"
-							>
-								Team name
-							</label>
-							<input
-								id="team-name"
-								className={cn(settingsControl, settingsControlSize)}
-								placeholder="e.g. Networking"
-								autoComplete="off"
-								autoFocus
-								aria-invalid={nameError ? true : undefined}
-								aria-describedby={nameError ? "team-name-error" : undefined}
-								disabled={createTeam.isPending}
-								{...form.register("name")}
-							/>
-							{nameError && (
-								<p id="team-name-error" className="mt-1.5 text-ui-xs text-destructive">
-									{nameError}
-								</p>
-							)}
-						</div>
-						<div className="flex gap-2 sm:pt-6">
-							<Button
-								type="button"
-								variant="ghost"
-								size="sm"
-								onClick={() => {
-									setCreating(false);
-									form.reset({ name: "" });
-								}}
-							>
-								Cancel
-							</Button>
-							<Button type="submit" size="sm" disabled={createTeam.isPending}>
-								{createTeam.isPending ? "Creating…" : "Create team"}
-							</Button>
-						</div>
-					</div>
-				</form>
-			)}
-
 			{/* table */}
 			{rows.length === 0 ? (
 				upsellIsBody ? (
@@ -481,7 +407,7 @@ export function TeamsList({
 								<Button variant="outline" size="sm" onClick={reset}>
 									Clear filters
 								</Button>
-							) : createReason === null && !creating ? (
+							) : createReason === null ? (
 								<Button variant="outline" size="sm" onClick={() => setCreating(true)}>
 									<Plus size={13} />
 									Create team
@@ -497,7 +423,7 @@ export function TeamsList({
 					)}
 				>
 					<TeamsCellsContext.Provider value={cells}>
-						<DataTable columns={TEAM_COLUMNS} data={rows} pageSize={10} />
+						<DataTable columns={TEAM_COLUMNS} data={rows} pageSize={SETTINGS_LIST_PAGE_SIZE} />
 					</TeamsCellsContext.Provider>
 				</div>
 			)}
@@ -513,6 +439,8 @@ export function TeamsList({
 
 			<RenameTeamDialog team={renaming} onOpenChange={(o) => !o && setRenaming(null)} />
 
+			{createReason === null && <CreateTeamDialog open={creating} onOpenChange={setCreating} />}
+
 			{/* The console's one confirmation (CON-SM2): it stays open while the delete runs, closes
 			    itself once it has succeeded, and stays up beside the reason when it is refused. */}
 			<ConfirmAction
@@ -520,8 +448,8 @@ export function TeamsList({
 				onOpenChange={(o) => {
 					if (!o) setDeleting(null);
 				}}
-				title="Delete this team?"
-				description={`${deletingName} and its membership are removed. Grants made to the team are revoked; its members keep their own roles. This cannot be undone.`}
+				title={`Delete team \u201C${deletingName}\u201D?`}
+				description={`The team and its membership are removed. Grants made to the team are revoked; its members keep their own roles. This cannot be undone.`}
 				confirmLabel="Delete team"
 				pendingLabel="Deleting…"
 				severity={{ level: "confirm" }}

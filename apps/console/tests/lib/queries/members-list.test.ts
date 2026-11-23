@@ -54,6 +54,7 @@ function orderByOf(chain: { argsOf(method: string): unknown[] | undefined }): st
 
 const JOINED = new Date("2026-01-05T09:00:00.000Z");
 const INVITED = new Date("2026-08-20T09:00:00.000Z");
+const INVITE_EXPIRES = new Date("2026-08-22T09:00:00.000Z");
 
 function memberRow(over: Record<string, unknown> = {}) {
 	return {
@@ -78,6 +79,7 @@ function inviteRow(over: Record<string, unknown> = {}) {
 		inviterName: "Ada Lovelace",
 		inviterEmail: "ada@x.io",
 		createdAt: INVITED,
+		expiresAt: INVITE_EXPIRES,
 		...over,
 	};
 }
@@ -136,6 +138,8 @@ describe("queryMembersPage", () => {
 				role: "viewer",
 				inviterName: "Ada Lovelace",
 				createdAt: "2026-08-20T09:00:00.000Z",
+				// When the link stops working (#6827): the table says so beside the sent date.
+				expiresAt: "2026-08-22T09:00:00.000Z",
 			},
 		]);
 		expect(page.resultCount).toBe(2);

@@ -91,8 +91,11 @@ describe("ActivityFeed", () => {
 		);
 		expect(screen.getByText("Denied")).toBeInTheDocument();
 		expect(screen.getByText("an activity-log export").tagName).toBe("STRONG");
-		// The deny reason moves to the row's tooltip (no second line).
-		expect(screen.getByTitle("Not an admin")).toBeInTheDocument();
+		// R6 E-24: the deny reason is on the row as text — a `title` reached only a mouse hover.
+		expect(screen.getByText("Not an admin")).toBeInTheDocument();
+		expect(screen.queryByTitle("Not an admin")).toBeNull();
+		// R6 F-24: through the shared status device, not a local pill.
+		expect(screen.getByText("Denied").closest(".vx-status--failed")).not.toBeNull();
 	});
 
 	it("shows the avatar image when present, else initials", () => {
