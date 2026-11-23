@@ -43,8 +43,7 @@ const INVOICE: InvoiceInfo = {
 	periodStart: null,
 	periodEnd: null,
 	description: null,
-	hasPdf: false,
-	hostedInvoiceUrl: null,
+	facturaIssued: true,
 };
 
 /** The panel inside a fresh query provider. */
