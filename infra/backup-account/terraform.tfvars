@@ -2,10 +2,11 @@
 # public or is a design decision recorded in the open.
 #
 # Not here, on purpose:
-#   backup_account_id    the account does not exist yet. After README step 1, add it below in a
-#                        one-line PR (or pass TF_VAR_backup_account_id for the first plan).
 #   writer_source_cidrs  the box's origin addresses → gitignored box.auto.tfvars
 #   budget_alert_emails  personal addresses       → gitignored emails.auto.tfvars
+
+# The `alethia-backup` member account (README step 1).
+backup_account_id = "450956683176"
 
 # The Alethia platform account, named only so a precondition can refuse backup_account_id == this.
 alethia_account_id = "270587882865"
