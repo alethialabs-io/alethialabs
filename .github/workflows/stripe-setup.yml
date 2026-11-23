@@ -1,0 +1,146 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Stripe setup as code, run against the TEST account from CI (EA-6b, #7354; the tool is EA-6, #7332).
+#
+# Nobody should have to hold the Stripe test key on a laptop to plan, apply or check the catalog.
+# This workflow runs apps/console/scripts/stripe-setup.ts (`--plan` / `--apply`) or
+# apps/console/scripts/stripe-check.ts with the existing repo secret STRIPE_TEST_SECRET_KEY:
+#
+#   gh workflow run stripe-setup.yml -f mode=plan    # read-only: the diff against the desired state
+#   gh workflow run stripe-setup.yml -f mode=apply   # make that diff, re-plan, print the price ids
+#   gh workflow run stripe-setup.yml -f mode=check   # read-only report; red when the account drifts
+#
+# ── TEST MODE ONLY, AND WHAT ENFORCES IT ─────────────────────────────────────────────────────────
+#
+# Two independent things, so neither is the only one:
+#   1. The "Refuse anything but a TEST key" step reads the secret's PREFIX and fails the job unless
+#      it is `sk_test_` or `rk_test_`. A live key — or an empty secret — never reaches the tool.
+#   2. The tool itself refuses a live key without `--live` (modeRefusal in stripe-setup.ts), and
+#      this file never passes `--live`. There is deliberately no input that could add it.
+# The key goes in as STRIPE_SECRET_KEY only; STRIPE_API_KEY is left unset so resolveKey has exactly
+# one candidate. GitHub masks the secret's value in the log; the tool never prints it either.
+#
+# ── NO WEBHOOK ENDPOINT, ON PURPOSE ──────────────────────────────────────────────────────────────
+#
+# `--webhook-url` is never passed, so the webhook endpoint is neither planned nor created here (the
+# tool prints "(no --webhook-url: the webhook endpoint is not planned)"). A NEW endpoint's signing
+# secret would otherwise land in a 0600 file on the runner, and the only safe thing to do with it is
+# `gh secret set STRIPE_TEST_WEBHOOK_SECRET < file` — which needs a token with `secrets: write` on
+# the repository. GITHUB_TOKEN cannot be granted that, and the one app token other workflows mint
+# (TAP_APP_*) was not verified to hold it, so per #7354 the endpoint is skipped rather than
+# half-handled. The test
+# endpoint stays an operator step: `pnpm creds stripe-test -- pnpm -C apps/console run stripe:setup
+# -- --apply --webhook-url=<url>`, then `gh secret set` from the printed path.
+#
+# ── THE LOG IS PUBLIC ────────────────────────────────────────────────────────────────────────────
+#
+# This repository is public, so the run log is too. What it shows: the test account's id, name and
+# country, the plan lines, the price ids (not secrets — they are the STRIPE_TEST_PRICE_* repo
+# variables) and, for `check`, the test webhook endpoints' URLs and events. No key, no signing
+# secret. The same output is copied into the job summary.
+#
+# ── CONCURRENCY ──────────────────────────────────────────────────────────────────────────────────
+#
+# One group for every mode, never cancelled: two applies cannot interleave (each re-plans and fails
+# unless the account converged, but two at once would each create the same missing price), and a
+# plan or check queued behind an apply reads the account after it, not halfway through.
+#
+# ── DISPATCHABLE ONLY FROM `main` ────────────────────────────────────────────────────────────────
+#
+# GitHub accepts a dispatch only for a workflow_dispatch workflow present on the DEFAULT branch
+# (`main`). Merged to `dev` this file is inert until dev → staging → main. Once it is on `main`,
+# `--ref <branch>` picks which branch's tool and catalog run.
+#
+# COST: zero. Stripe test mode bills nothing; one ubuntu-latest job. Classified `free` in
+# .claude/hooks/guard-spend.sh.
+
+name: Stripe setup (test account)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (read-only diff) · apply (make the diff, print price ids) · check (read-only report)"
+        type: choice
+        options:
+          - plan
+          - apply
+          - check
+        default: plan
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stripe-setup-test
+  cancel-in-progress: false
+
+jobs:
+  stripe:
+    name: stripe ${{ inputs.mode }} (test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Before installing anything: a run that would touch the wrong account should fail in seconds.
+      # Only the prefix is inspected; the value is never echoed.
+      - name: Refuse anything but a TEST key
+        env:
+          STRIPE_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+        run: |
+          case "$STRIPE_KEY" in
+          sk_test_* | rk_test_*) echo "STRIPE_TEST_SECRET_KEY is a test-mode key." ;;
+          "")
+            echo "::error::STRIPE_TEST_SECRET_KEY is empty or not available to this run."
+            exit 1
+            ;;
+          sk_live_* | rk_live_*)
+            echo "::error::STRIPE_TEST_SECRET_KEY holds a LIVE key. This workflow runs in test mode only; refusing."
+            exit 1
+            ;;
+          *)
+            echo "::error::STRIPE_TEST_SECRET_KEY is not a Stripe secret or restricted key (sk_test_/rk_test_)."
+            exit 1
+            ;;
+          esac
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # `console...` so the workspace packages the tool imports (@repo/legal, @repo/plan-catalog)
+      # are linked; both export TypeScript source that tsx runs directly, so nothing is built.
+      - name: Install console deps
+        run: pnpm install --frozen-lockfile --filter "console..."
+      - name: Run stripe ${{ inputs.mode }}
+        env:
+          MODE: ${{ inputs.mode }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          unset STRIPE_API_KEY
+          case "$MODE" in
+          plan) cmd=(pnpm -C apps/console run stripe:setup -- --plan) ;;
+          apply) cmd=(pnpm -C apps/console run stripe:setup -- --apply) ;;
+          check) cmd=(pnpm -C apps/console run stripe:check) ;;
+          *)
+            echo "::error::Unknown mode '$MODE' (plan, apply or check)."
+            exit 2
+            ;;
+          esac
+          out="$RUNNER_TEMP/stripe-$MODE.txt"
+          status=0
+          "${cmd[@]}" 2>&1 | tee "$out" || status=$?
+          {
+            echo "## Stripe $MODE (test account)"
+            echo
+            echo '```'
+            cat "$out"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
