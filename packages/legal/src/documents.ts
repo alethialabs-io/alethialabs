@@ -89,6 +89,22 @@ export const LEGAL_DOCUMENTS: readonly LegalDocumentVersion[] = [
 			"bad66ea9d9064452e50f981e12a2107a449137bdd3e118f215ea24b935d08402",
 		source: "apps/marketing/app/imprint/page.tsx",
 	},
+	{
+		id: "consumer-rights",
+		title: "Consumer rights",
+		// Sealed by the maintainer's legal review of 2026-11-23 (#7351): the console withdrawal control
+		// is named, the owed-refund sentence added, and the Bulgarian section (#bg) written, so the
+		// one hash pins both languages. A `consumer` paid-market cell needs this seal
+		// (paid-markets.ts, condition 3).
+		version: "2026-11-23",
+		effectiveDate: "2026-11-23",
+		path: "/consumer-rights",
+		locales: ["en", "bg-BG"],
+		acceptanceRequired: false,
+		contentHash:
+			"1d57baabd0e9fa3710f4b806b4590aad30a77d5b49a6b6a7e551ca532b243e1b",
+		source: "apps/marketing/app/consumer-rights/page.tsx",
+	},
 ];
 
 /**
