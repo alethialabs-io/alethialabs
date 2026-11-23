@@ -122,3 +122,37 @@ describe("destroying the environment from its settings card", () => {
 		expect(screen.queryByText("Destroy environment")).not.toBeInTheDocument();
 	});
 });
+
+// #7290: a first deploy that was cancelled mid-apply (or failed) leaves the environment FAILED with
+// no deployed design — and possibly real cloud resources. "Not deployed yet" told the operator there
+// was nothing to clean up.
+describe("the status line after a deploy that did not finish", () => {
+	/** Renders the card for an environment in `status` that has never recorded a deployed design. */
+	function renderWithEnv(status: "FAILED" | "DRAFT") {
+		setBoardNodes([node("project"), node("cluster"), node("network")]);
+		board.view.getState().openCard({ kind: "env-settings" });
+		return render(
+			<EnvironmentStatusProvider
+				value={{
+					...EMPTY_ENVIRONMENT_STATUS,
+					deployState: "never",
+					environment: { id: "e-1", name: "dev", stage: "development", status },
+				}}
+			>
+				<EnvSettingsCard />
+			</EnvironmentStatusProvider>,
+			{ wrapper: queryWrapper() },
+		);
+	}
+
+	it("says resources may exist when a never-deployed environment is FAILED", () => {
+		renderWithEnv("FAILED");
+		expect(screen.getByText(/Cloud resources it created may still exist/)).toBeInTheDocument();
+		expect(screen.queryByText("This environment has not been deployed yet.")).not.toBeInTheDocument();
+	});
+
+	it("still says 'not deployed yet' for an environment that never started a deploy", () => {
+		renderWithEnv("DRAFT");
+		expect(screen.getByText("This environment has not been deployed yet.")).toBeInTheDocument();
+	});
+});
