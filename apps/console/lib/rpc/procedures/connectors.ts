@@ -26,6 +26,8 @@ import type { Actor } from "@/lib/authz/types";
 import { isCloudOffered, offeredClouds } from "@/lib/cloud-providers/availability";
 import { identityWasConfigured } from "@/lib/cloud-providers/identity-configured";
 import { computePlatformConfigured } from "@/lib/connectors/cloud-connect-setup";
+import { keylessReadiness } from "@/lib/oidc/assertion-source";
+import type { KeylessReadiness } from "@/lib/oidc/keyless-readiness";
 import { asGitProvider } from "@/lib/connectors/git-providers";
 import { getServiceDb, withScope } from "@/lib/db";
 import {
@@ -342,6 +344,12 @@ export interface ConnectorsBoard {
 	 * cannot show a Connect control the server would refuse.
 	 */
 	offeredClouds: string[];
+	/**
+	 * Whether a keyless (issuer-federated) connect can work on this instance, and if not, why — the
+	 * connect sheet shows "not publicly reachable" for AWS, GCP and Azure instead of a doomed form
+	 * (EDN-H6). A reason code only.
+	 */
+	keylessReadiness: KeylessReadiness;
 }
 
 /** Whether `actor` may add/edit connections (clouds + api_key connectors). */
@@ -385,6 +393,7 @@ export async function readConnectorsBoard(
 		canManage,
 		platformConfigured,
 		offeredClouds: [...offeredClouds()],
+		keylessReadiness: keylessReadiness(),
 	};
 }
 
