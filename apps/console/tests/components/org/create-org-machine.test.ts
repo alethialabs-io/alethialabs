@@ -19,8 +19,14 @@ import {
 	type CreateOrgEvent,
 	type CreateOrgScreen,
 	type CreateOrgState,
+	type CreateOrgView,
+	backEventFor,
+	CREATE_ORG_STEPS,
 	closeNeedsConfirmation,
 	createOrgReducer,
+	isCreateOrgView,
+	settlementOf,
+	SETUP_IN_FLIGHT_MESSAGE,
 	INITIAL_CREATE_ORG_STATE,
 	knownCurrency,
 	type OpenedIntent,
@@ -190,6 +196,12 @@ const EVENTS: { readonly [K in CreateOrgEvent["type"]]: Row } = {
 		event: { type: "recovery-held", notice: "A hold refuses this." },
 		expect: { view: "pay", stopped: "A hold refuses this." },
 		screen: "stopped",
+	},
+	"recovery-asked": {
+		from: at({ recoverFrom: { kind: "none" } }),
+		event: { type: "recovery-asked" },
+		expect: { recoverFrom: null },
+		screen: "name",
 	},
 	"refusal-set": {
 		from: at({ view: "declare" }),
@@ -618,5 +630,68 @@ describe("recovery-found", () => {
 			state: foundSetup({ currency: "jpy" }),
 		});
 		expect(next.currency).toBe("eur");
+	});
+});
+
+describe("settlementOf — what the payment gate can say from the machine alone", () => {
+	it("is done once the sheet is on invite, so the URL may follow it there", () => {
+		expect(settlementOf(at({ view: "invite" }))).toEqual({ kind: "done", continueAt: "invite" });
+	});
+
+	it("is in flight while a paid setup is unfinished", () => {
+		expect(settlementOf(at({ view: "pay", pending: RECORD }))).toEqual({
+			kind: "in-flight",
+			message: SETUP_IN_FLIGHT_MESSAGE,
+		});
+	});
+
+	it("is stopped with the run's or the hold's sentence", () => {
+		expect(settlementOf(at({ view: "pay", stopped: "Held.", pending: RECORD }))).toEqual({
+			kind: "stopped",
+			message: "Held.",
+		});
+	});
+
+	it("knows nothing before a charge — the sheet asks the tab and the server", () => {
+		expect(settlementOf(at({}))).toBeNull();
+		expect(settlementOf(at({ view: "pay", clientSecret: "s" }))).toBeNull();
+	});
+});
+
+const PAY_AND_INVITE: readonly CreateOrgView[] = ["pay", "invite"];
+
+describe("backEventFor — which Backs the URL may make", () => {
+	const ALLOWED: ReadonlyArray<readonly [CreateOrgScreen["kind"], CreateOrgState, string, string]> = [
+		["declare", at({ view: "declare" }), "name", "back-to-name"],
+		["checkout", at({ view: "pay", clientSecret: "s" }), "declare", "back-to-declare"],
+		["checkout", at({ view: "pay", clientSecret: "s" }), "name", "back-to-name"],
+		["no-intent", at({ view: "pay" }), "declare", "back-to-declare"],
+		["trial", at({ view: "pay", offer: { kind: "trial" } }), "name", "back-to-name"],
+		["trial", at({ view: "pay", offer: { kind: "trial" } }), "declare", "back-to-name"],
+	];
+
+	it.each(ALLOWED)("%s → %s on Back to %s", (kind, state, step, event) => {
+		expect(screenOf(state).kind).toBe(kind);
+		if (!isCreateOrgView(step)) throw new Error(step);
+		expect(backEventFor(screenOf(state), step)?.type).toBe(event);
+	});
+
+	it("refuses every Back once a charge is confirmed, a setup is recovered or stopped, or from invite", () => {
+		const refusing = SCREENS.filter(([kind]) =>
+			["declare-recovered", "invite", "confirm-close", "stopped", "retry-new-slug", "retry-setup", "name"].includes(kind),
+		);
+		const allowed = refusing.flatMap(([kind, state]) =>
+			CREATE_ORG_STEPS.flatMap((step) => (backEventFor(screenOf(state), step) === null ? [] : [`${kind}>${step}`])),
+		);
+		expect(allowed).toEqual([]);
+	});
+
+	it("never moves forward: no Back reaches pay or invite", () => {
+		const forward = SCREENS.flatMap(([kind, state]) =>
+			PAY_AND_INVITE.flatMap((step) =>
+				backEventFor(screenOf(state), step) === null ? [] : [`${kind}>${step}`],
+			),
+		);
+		expect(forward).toEqual([]);
 	});
 });
