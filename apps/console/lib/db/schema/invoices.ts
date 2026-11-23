@@ -87,6 +87,11 @@ export const invoice = pgTable("invoice", {
 	/** Where `eurRate` came from and for which date, e.g. `BNB:2027-01-15` or `ECB:2027-01-15`. */
 	eurRateSource: text(),
 	facturaStatus: text().$type<FacturaStatus>(),
+	/**
+	 * When the фактура sweeper (lib/billing/factura/sweeper.ts) last told the operator this pending
+	 * фактура is near its Art. 113(4) deadline. It alerts at most once a day per invoice.
+	 */
+	facturaAlertedAt: timestamp({ withTimezone: true }),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 }, () => [
