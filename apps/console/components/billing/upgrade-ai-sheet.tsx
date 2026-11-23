@@ -19,7 +19,6 @@
 // `salesClosedCopy`, not "Coming soon". A failed read falls through to the old behaviour: the
 // eligibility gate behind the intent is still the authority.
 
-import { useQuery } from "@tanstack/react-query";
 import { Check } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -43,7 +42,7 @@ import { useViewer } from "@/components/providers/viewer-provider";
 import { track } from "@/lib/analytics/track";
 import type { PaidAiTier } from "@/lib/billing/config";
 import { billingIntentErrorMessage } from "@/lib/billing/intent-error";
-import { orpc } from "@/lib/rpc/client";
+import { rpcClient } from "@/lib/rpc/client";
 import {
 	type AiPlanCatalogEntry,
 	aiPlanMeta,
@@ -98,12 +97,11 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 	const [currency, setCurrency] = useState<SupportedCurrency>("usd");
 	const [error, setError] = useState<string | null>(null);
 
-	// Is anything on sale? The same read, with the same caching, as the org upgrade sheet: the
-	// answer moves with a deploy, not with anything a viewer does.
-	const sales = useQuery(
-		orpc.billing.salesOpen.queryOptions({ enabled: open, staleTime: Infinity, retry: 1 }),
-	);
-	const notOnSale = sales.data?.open === false ? salesClosedCopy().notice : null;
+	// Is anything on sale? The same server answer the org upgrade sheet reads. Asked with the plain
+	// RPC client, not a query hook: this sheet is mounted by surfaces (the chat's budget card)
+	// that sit outside any QueryClientProvider. `null` until answered, and on a failed read.
+	const [salesOpen, setSalesOpen] = useState<boolean | null>(null);
+	const notOnSale = salesOpen === false ? salesClosedCopy().notice : null;
 
 	// Load the canonical AI summary when the sheet opens — the current tier drives the
 	// "Current"/"Upgrade" affordances and `paidTiersEnabled` drives the "Coming soon" gate.
@@ -114,6 +112,12 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 			.then((s) => alive && setSummary(s))
 			.catch(() => {
 				/* best-effort — the chooser just shows skeletons */
+			});
+		rpcClient.billing
+			.salesOpen()
+			.then((answer) => alive && setSalesOpen(answer.open))
+			.catch(() => {
+				/* fail through — the eligibility gate behind the intent is still the authority */
 			});
 		return () => {
 			alive = false;

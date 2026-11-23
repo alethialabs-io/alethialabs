@@ -9,8 +9,6 @@
 // #6906 (REL-L3): AI Plus and AI Max are sold behind the same gate as Pro. When the server says
 // nothing is on sale, the paid tiers are disabled with the launch state's own sentence.
 
-import { createTanstackQueryUtils } from "@orpc/tanstack-query";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,7 +32,7 @@ vi.mock(import("@repo/legal/launch"), async (importOriginal) => {
 	return { ...real, paidLaunchState: () => ({ ...real.paidLaunchState(), paid: launch.paid }) };
 });
 vi.mock("@/lib/rpc/client", () => ({
-	orpc: createTanstackQueryUtils({ billing: { salesOpen: () => h.salesOpen() } }),
+	rpcClient: { billing: { salesOpen: () => h.salesOpen() } },
 }));
 
 vi.mock("@/app/server/actions/billing", () => ({
@@ -66,14 +64,6 @@ vi.mock("@/components/billing/currency-toggle", () => ({
 
 import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
 
-/** A fresh query client around each render, so one test's `salesOpen` answer is not another's. */
-function withQueryClient() {
-	const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } });
-	return function Wrapper({ children }: { children: ReactNode }) {
-		return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-	};
-}
-
 /** A promise the test settles by hand. */
 function deferred<T>() {
 	let resolve: (value: T) => void = () => {};
@@ -97,7 +87,7 @@ describe("UpgradeAiSheet — the subscription intent", () => {
 		const eur = deferred<Intent>();
 		h.createAiSubscriptionIntent.mockReturnValueOnce(usd.promise).mockReturnValueOnce(eur.promise);
 
-		render(<UpgradeAiSheet open onOpenChange={() => {}} />, { wrapper: withQueryClient() });
+		render(<UpgradeAiSheet open onOpenChange={() => {}} />);
 		fireEvent.click(await screen.findByRole("button", { name: "Upgrade to AI Plus" }));
 		await act(async () => usd.resolve({ clientSecret: "cs_usd", currency: "usd" }));
 		expect(screen.getByText("pay with cs_usd")).toBeTruthy();
@@ -115,9 +105,7 @@ describe("UpgradeAiSheet — the subscription intent", () => {
 		const second = deferred<Intent>();
 		h.createAiSubscriptionIntent.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
 
-		const { rerender } = render(<UpgradeAiSheet open onOpenChange={() => {}} />, {
-			wrapper: withQueryClient(),
-		});
+		const { rerender } = render(<UpgradeAiSheet open onOpenChange={() => {}} />);
 		fireEvent.click(await screen.findByRole("button", { name: "Upgrade to AI Plus" }));
 		await act(async () => first.resolve({ clientSecret: "cs_first", currency: "usd" }));
 		expect(screen.getByText("pay with cs_first")).toBeTruthy();
@@ -134,7 +122,7 @@ describe("UpgradeAiSheet — the subscription intent", () => {
 
 describe("UpgradeAiSheet — the launch state (#6906)", () => {
 	it("open: the paid tiers are offered", async () => {
-		render(<UpgradeAiSheet open onOpenChange={() => {}} />, { wrapper: withQueryClient() });
+		render(<UpgradeAiSheet open onOpenChange={() => {}} />);
 		const plus = await screen.findByRole("button", { name: "Upgrade to AI Plus" });
 		expect(plus).toBeEnabled();
 		expect(screen.getByRole("button", { name: "Upgrade to AI Max" })).toBeEnabled();
@@ -142,7 +130,7 @@ describe("UpgradeAiSheet — the launch state (#6906)", () => {
 
 	it("closed: the paid tiers say they are not on sale and cannot be chosen", async () => {
 		h.salesOpen.mockResolvedValue({ open: false });
-		render(<UpgradeAiSheet open onOpenChange={() => {}} />, { wrapper: withQueryClient() });
+		render(<UpgradeAiSheet open onOpenChange={() => {}} />);
 
 		const buttons = await screen.findAllByRole("button", { name: "Not on sale yet" });
 		expect(buttons).toHaveLength(2);
@@ -155,7 +143,7 @@ describe("UpgradeAiSheet — the launch state (#6906)", () => {
 	it("announced: the disabled tiers name the promised date", async () => {
 		launch.paid = { status: "announced", from: "2099-02-15" };
 		h.salesOpen.mockResolvedValue({ open: false });
-		render(<UpgradeAiSheet open onOpenChange={() => {}} />, { wrapper: withQueryClient() });
+		render(<UpgradeAiSheet open onOpenChange={() => {}} />);
 
 		const buttons = await screen.findAllByRole("button", {
 			name: "Paid plans available from 15 Feb 2099",
