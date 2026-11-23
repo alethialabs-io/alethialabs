@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.1](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.11.0...cli-v0.11.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **cli:** fleet set picker documented and pinned to the offered clouds; Azure setup comment names the managed identity ([#7312](https://github.com/alethialabs-io/alethialabs/issues/7312)) ([aebeba2](https://github.com/alethialabs-io/alethialabs/commit/aebeba2c8263092edf33b37ef7f9b4ec5745ac52)), closes [#7311](https://github.com/alethialabs-io/alethialabs/issues/7311)
+* **connector:** grant iam:TagPolicy, UntagPolicy and ListPolicyTags to the AWS provisioner role ([#7289](https://github.com/alethialabs-io/alethialabs/issues/7289)) ([c402bc1](https://github.com/alethialabs-io/alethialabs/commit/c402bc16cc70d1157564be05c597ca1ab308b463))
+
 ## [0.11.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.10.0...cli-v0.11.0) (2026-11-22)
 
 
