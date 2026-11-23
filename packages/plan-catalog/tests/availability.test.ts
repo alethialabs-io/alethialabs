@@ -1,0 +1,104 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// #6906 (REL-L3) — the one set of sentences every pricing and upgrade surface shows for the launch
+// state. One test per state, plus the rules that hold across them: Stripe is named only when open,
+// and no state promises to notify anyone.
+
+import { describe, expect, it } from "vitest";
+import {
+	AI_PLAN_CATALOG,
+	monthlyPriceLabel,
+	type PaidAvailability,
+	paidAvailabilityCopy,
+	PLAN_CATALOG,
+} from "../src/index";
+
+/** A stand-in for `@repo/format`'s `formatDate(iso, "date", "UTC")` that is visibly not it. */
+const day = (iso: string): string => `<${iso}>`;
+
+const STATES: readonly PaidAvailability[] = [
+	{ status: "open" },
+	{ status: "announced", from: "2027-02-15" },
+	{ status: "closed" },
+];
+
+describe("paidAvailabilityCopy — open", () => {
+	it("is on sale, carries no notice, and names Stripe in the billing lines", () => {
+		const copy = paidAvailabilityCopy({ status: "open" }, day);
+		expect(copy.onSale).toBe(true);
+		expect(copy.notice).toBeNull();
+		expect(copy.heading).toBeNull();
+		expect(copy.body).toBeNull();
+		expect(copy.proBilling).toBe(
+			"Pro is billed per active member of your organization, monthly through Stripe.",
+		);
+		expect(copy.aiBilling).toContain("through Stripe");
+	});
+});
+
+describe("paidAvailabilityCopy — announced", () => {
+	it("says the promised date, formatted by the caller, on every line that shows it", () => {
+		const copy = paidAvailabilityCopy({ status: "announced", from: "2027-02-15" }, day);
+		expect(copy.onSale).toBe(false);
+		expect(copy.notice).toBe("Paid plans available from <2027-02-15>");
+		expect(copy.heading).toBe("Pro is available from <2027-02-15>");
+		expect(copy.body).toContain("Paid plans are available from <2027-02-15>");
+		expect(copy.body).toContain("Hobby stays free, with no time limit.");
+	});
+
+	it("follows the date it is given rather than a fixed one", () => {
+		const copy = paidAvailabilityCopy({ status: "announced", from: "2027-03-01" }, day);
+		expect(copy.notice).toBe("Paid plans available from <2027-03-01>");
+	});
+});
+
+describe("paidAvailabilityCopy — closed", () => {
+	it("keeps the sentence production says today, with no date", () => {
+		const copy = paidAvailabilityCopy({ status: "closed" }, day);
+		expect(copy.onSale).toBe(false);
+		expect(copy.notice).toBe("Not on sale yet");
+		expect(copy.heading).toBe("Pro isn't on sale yet");
+		expect(copy.body).toBe(
+			"We can't take payment for Pro in any country yet. Hobby stays free, with no time limit.",
+		);
+	});
+});
+
+describe("paidAvailabilityCopy — across the states", () => {
+	it("names Stripe only when the state is open", () => {
+		for (const state of STATES) {
+			const copy = paidAvailabilityCopy(state, day);
+			const lines = `${copy.proBilling} ${copy.aiBilling}`;
+			expect(lines.includes("Stripe")).toBe(state.status === "open");
+		}
+	});
+
+	it("never promises to notify anyone, and never names a tier called Team", () => {
+		for (const state of STATES) {
+			const copy = paidAvailabilityCopy(state, day);
+			const text = Object.values(copy).filter((v) => typeof v === "string").join(" ");
+			expect(text).not.toMatch(/tell you when|notify|let you know/i);
+			expect(text).not.toMatch(/\bTeam\b/);
+		}
+	});
+});
+
+describe("monthlyPriceLabel", () => {
+	it("renders AI Plus and AI Max in each currency from the catalog amounts", () => {
+		const plus = AI_PLAN_CATALOG.find((p) => p.id === "ai_plus");
+		const max = AI_PLAN_CATALOG.find((p) => p.id === "ai_max");
+		if (!plus || !max) throw new Error("AI tiers missing from the catalog");
+		expect(monthlyPriceLabel(plus, "usd")).toBe("$20 / mo");
+		expect(monthlyPriceLabel(plus, "eur")).toBe("€18 / mo");
+		expect(monthlyPriceLabel(max, "usd")).toBe("$100 / mo");
+		expect(monthlyPriceLabel(max, "eur")).toBe("€90 / mo");
+	});
+
+	it("keeps a free entry's own label and falls back when a currency has no amount", () => {
+		const hobby = PLAN_CATALOG.find((p) => p.id === "community");
+		if (!hobby) throw new Error("Hobby missing from the catalog");
+		expect(monthlyPriceLabel(hobby, "eur")).toBe("Free");
+		expect(monthlyPriceLabel({ priceLabel: "Let's talk" }, "usd")).toBe("Let's talk");
+	});
+});
