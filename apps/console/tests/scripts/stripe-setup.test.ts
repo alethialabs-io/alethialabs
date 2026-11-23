@@ -23,6 +23,7 @@ import {
 	resolveKey,
 	runSetup,
 	SAAS_TAX_CODE,
+	type StripeKeyEnv,
 	WEBHOOK_EVENTS,
 } from "../../scripts/stripe-setup";
 import { emptyAccount, FAKE_WEBHOOK_SECRET, type FakeAccount, fakeClient } from "./stripe-fake";
@@ -41,7 +42,7 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 /** Runs the CLI against `acct` with a test key, collecting output. */
-function run(acct: FakeAccount, argv: string[], env: NodeJS.ProcessEnv = { STRIPE_API_KEY: TEST_KEY }) {
+function run(acct: FakeAccount, argv: string[], env: StripeKeyEnv = { STRIPE_API_KEY: TEST_KEY }) {
 	return runSetup(argv, env, () => fakeClient(acct), (l) => lines.push(l), join(dir, "secrets"));
 }
 

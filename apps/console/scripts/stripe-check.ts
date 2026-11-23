@@ -32,6 +32,7 @@ import {
 	readState,
 	resolveKey,
 	type StripeClient,
+	type StripeKeyEnv,
 	WEBHOOK_EVENTS,
 	type WebhookView,
 } from "./stripe-setup";
@@ -238,7 +239,7 @@ export function formatCheck(r: CheckReport): string[] {
 /** Runs the check; returns the process exit code. */
 export async function runCheckCli(
 	argv: string[],
-	env: NodeJS.ProcessEnv,
+	env: StripeKeyEnv,
 	makeClient: (key: string) => StripeClient,
 	log: (line: string) => void,
 ): Promise<number> {

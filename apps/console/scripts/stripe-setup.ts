@@ -386,6 +386,13 @@ export interface StripeClient {
 /** Which Stripe dataset a key targets. */
 export type Mode = "test" | "live";
 
+/** The environment variables a key is read from; `process.env` satisfies it. */
+export interface StripeKeyEnv {
+	[name: string]: string | undefined;
+	STRIPE_API_KEY?: string;
+	STRIPE_SECRET_KEY?: string;
+}
+
 /** A usable key and its mode, or why none is usable. */
 export type KeyChoice = { ok: true; key: string; mode: Mode } | { ok: false; error: string };
 
@@ -394,7 +401,7 @@ export type KeyChoice = { ok: true; key: string; mode: Mode } | { ok: false; err
  * STRIPE_SECRET_KEY. Refuses when both are set to different values, so the account is never a
  * guess. The returned error never contains the key.
  */
-export function resolveKey(env: NodeJS.ProcessEnv): KeyChoice {
+export function resolveKey(env: StripeKeyEnv): KeyChoice {
 	const api = env.STRIPE_API_KEY?.trim() || undefined;
 	const secret = env.STRIPE_SECRET_KEY?.trim() || undefined;
 	if (api && secret && api !== secret) {
@@ -1026,7 +1033,7 @@ export function parseSetupArgs(argv: string[]): SetupArgs {
 /** Runs the tool; returns the process exit code. */
 export async function runSetup(
 	argv: string[],
-	env: NodeJS.ProcessEnv,
+	env: StripeKeyEnv,
 	makeClient: (key: string) => StripeClient,
 	log: (line: string) => void,
 	secretDir: string = DEFAULT_SECRET_DIR,
