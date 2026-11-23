@@ -199,8 +199,13 @@ A change to that gate binds only once a promotion has carried it to `main` (Merg
 only from the default branch); until then, the only thing that actually holds a PR back is opening it
 as a **draft**.
 
-Letting Mergify land it is the default and almost always right. Merging a **dev**-targeted PR
-yourself is permitted when you have a reason. **A promotion merge** (`release/<sha> → main`, opened
+**Mergify merges every dev PR; you never do** (maintainer ruling 2026-11-23, enforced by
+`.claude/hooks/guard-merge.sh`). A non-draft dev PR queues itself (`pull_request_rules` in
+`.mergify.yml`) and is merged by `app/mergify` after the queue re-runs CI on it stacked on
+everything ahead of it — the only check that sees two green PRs break each other. Do not run
+`gh pr merge` on a dev PR and do not comment `@Mergifyio queue`: hand merges on 2026-11-23 also hid
+that auto-queue was switched off. A green PR that has not queued is a bug to find (open threads,
+the Mergify Merge Queue check's text), not a reason to merge around the queue. **A promotion merge** (`release/<sha> → main`, opened
 by `.github/workflows/promote.yml` at one green dev commit and never moved — the `dev → staging` and
 `staging → main` hops are retired and refused) **goes through
 `.claude/hooks/guard-merge.sh`**:
@@ -373,7 +378,7 @@ command-text parser, `.claude/hooks/lib/cmdline.sh`:
 | `.claude/hooks/guard-worktree.sh` | PreToolUse · Bash + edits | Lease enforcement + no commits **or rebases** in the main checkout |
 | `.claude/hooks/guard-runtime.sh` | PreToolUse · Bash | Blocks local dev servers and destructive resets |
 | `.claude/hooks/guard-compose.sh` | PreToolUse · Bash | Blocks a raw `docker compose` bring-up |
-| `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base and head: `dev` may merge; a green `release/<sha> → main` promotion (the app's PR, head on dev) or a green release-please PR into `main` whose author and files are release-please's may merge with `--merge`; anything else into `main`, any merge into the retired `staging`, and `--admin`, may not |
+| `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base and head: `dev` is refused (the Mergify queue merges it); a green `release/<sha> → main` promotion (the app's PR, head on dev) or a green release-please PR into `main` whose author and files are release-please's may merge with `--merge`; anything else into `main`, any merge into the retired `staging`, and `--admin`, may not |
 | `.claude/hooks/guard-spend.sh` | PreToolUse · Bash | Prices each spend action into `~/.alethia/spend-ledger.jsonl` and refuses one that crosses EUR 80 per rolling 7 days — its only refusal besides hcloud's wrong-account check and the ledger's own integrity |
 | `.claude/hooks/guard-secrets.sh` | PreToolUse · Bash | Refuses a command whose effect is to PRINT a secret (env dumps, shell tracing, vault reads to stdout, credential files, a literal key) and names the `pnpm creds` form instead |
 | `.claude/hooks/guard-destroy.sh` | PreToolUse · Bash | Backs up what a destructive command would destroy (remote refs, repos, releases, tfstate, databases, volumes, cloud resources) to `~/.alethia/backups/` or `refs/safety/`, then allows it; refuses only what it cannot back up |
