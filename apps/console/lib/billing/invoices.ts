@@ -4,26 +4,25 @@
 // The mirror + typed reads for locally-owned invoices. Stripe remains the payment rail,
 // but every invoice for which money actually moved is mirrored into our `invoice` table
 // by the Stripe webhook (mirrorPaidInvoice). The stored document + number are the Bulgarian
-// фактура Odoo issues (requestFactura), captured into object storage so the billing UI owns the
-// document and never hits the Stripe API at page load. Idempotent on stripe_invoice_id, so a
-// replay converges to one row.
+// фактура the console issues itself (lib/billing/factura/issue.ts, #7368), kept in object storage
+// so the billing UI owns the document and never hits the Stripe API at page load. Idempotent on
+// stripe_invoice_id, so a replay converges to one row.
 //
 // There is no fallback to Stripe's PDF, number or hosted page. A Stripe invoice does not satisfy
 // Art. 114(1) of the VAT Act (docs/legal/TAX_MARKET_PRECONDITIONS.md §2.4), so filing it as "the
-// invoice" would present a non-compliant document as one. When no compliant фактура exists — Odoo
-// unconfigured, down, slow, or answering with something Art. 113-114 does not allow — the row is
-// written PENDING (number, pdfKey and hostedInvoiceUrl all null, so neither the list nor the PDF
-// route has a document to show) and the operator is alerted, because Art. 113(4) gives five days.
+// invoice" would present a non-compliant document as one. When no compliant фактура exists — the
+// recipient's details are incomplete, no EUR rate could be had, the store or the PDF failed — the
+// row is written PENDING (factura_status 'pending'; number, pdfKey and hostedInvoiceUrl null, so
+// neither the list nor the PDF route has a document to show) and the operator is alerted, because
+// Art. 113(4) gives five days.
 
 import type Stripe from "stripe";
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import { alertOperator } from "@/lib/billing/operator-alert";
-import { type FacturaOutcome, requestFactura } from "@/lib/billing/odoo-invoice";
+import { type FacturaOutcome, requestFactura } from "@/lib/billing/factura/issue";
 import { getServiceDb } from "@/lib/db";
 import { type Invoice, invoice } from "@/lib/db/schema";
 import type { InvoiceStatus } from "@/lib/db/schema/enums";
-import { storage } from "@/lib/storage";
-import { INVOICE_PDF_BUCKET, invoicePdfKey } from "@/lib/storage/invoice-pdf";
 
 /** Art. 113(4): the фактура is due within this many days of the chargeable event. */
 const FACTURA_DEADLINE_DAYS = 5;
@@ -63,17 +62,10 @@ async function alertFacturaPending(
 	});
 }
 
-/** Stores the фактура PDF into object storage under the invoice's key and returns that key. */
-async function storeFacturaPdf(orgId: string, invoiceId: string, pdf: Uint8Array): Promise<string> {
-	const key = invoicePdfKey(orgId, invoiceId);
-	await storage.put(INVOICE_PDF_BUCKET, key, pdf, "application/pdf");
-	return key;
-}
-
 /**
- * Mirrors a paid Stripe invoice into the local table for `orgId`, with the Odoo фактура as its
- * number and document. Idempotent on stripe_invoice_id — a replayed webhook (or a later status
- * change) upserts the one row. Only ever called once payment has actually succeeded, so the local
+ * Mirrors a paid Stripe invoice into the local table for `orgId`, with the фактура as its number
+ * and document (issued on the first delivery, found again on a replay). Idempotent on
+ * stripe_invoice_id — a replayed webhook (or a later status change) upserts the one row. Only ever called once payment has actually succeeded, so the local
  * table never holds never-paid draft/void artifacts. With no compliant фактура the row is written
  * pending (no number, no document) and the operator is alerted; a replay that then succeeds fills
  * them in, and one that fails again never erases a фактура an earlier attempt stored.
@@ -84,17 +76,21 @@ export async function mirrorPaidInvoice(
 ): Promise<void> {
 	if (!inv.id) return;
 	const paidAt = toDate(inv.status_transitions?.paid_at) ?? new Date();
-	const outcome = await requestFactura(inv);
+	const outcome = await requestFactura(inv, orgId);
 	if (!outcome.ok) await alertFacturaPending(inv, orgId, outcome, paidAt);
 	const factura = outcome.ok ? outcome.factura : null;
 	// The document fields come ONLY from a compliant фактура. Stripe's hosted page is kept beside it
 	// as the payment receipt, never on its own: the PDF route redirects to it when there is no stored
 	// PDF, which would serve Stripe's document as the invoice.
-	const document = factura
+	const document: Pick<
+		typeof invoice.$inferInsert,
+		"number" | "pdfKey" | "hostedInvoiceUrl" | "facturaStatus"
+	> | null = factura
 		? {
 				number: factura.number,
-				pdfKey: await storeFacturaPdf(orgId, inv.id, factura.pdf),
+				pdfKey: factura.pdfKey,
 				hostedInvoiceUrl: inv.hosted_invoice_url ?? null,
+				facturaStatus: "issued",
 			}
 		: null;
 	const values: typeof invoice.$inferInsert = {
@@ -110,6 +106,7 @@ export async function mirrorPaidInvoice(
 		description: inv.lines?.data[0]?.description ?? inv.description ?? null,
 		pdfKey: document?.pdfKey ?? null,
 		hostedInvoiceUrl: document?.hostedInvoiceUrl ?? null,
+		facturaStatus: document ? "issued" : "pending",
 		paidAt,
 		updatedAt: new Date(),
 	};
