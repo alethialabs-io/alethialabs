@@ -1261,6 +1261,13 @@
       "when": 1795454354122,
       "tag": "0179_furry_harry_osborn",
       "breakpoints": true
+    },
+    {
+      "idx": 180,
+      "version": "7",
+      "when": 1795475363189,
+      "tag": "0180_short_namor",
+      "breakpoints": true
     }
   ]
 }
