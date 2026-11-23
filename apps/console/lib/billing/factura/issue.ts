@@ -26,7 +26,7 @@
 import { createHash } from "node:crypto";
 import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { ecbEurRate, type EurRate, type EurRateLookup } from "@/lib/billing/invoice-facts";
+import { ecbEurRate, type EurRate, type EurRateLookup } from "@/lib/billing/ecb-rate";
 import { getServiceDb } from "@/lib/db";
 import {
 	FACTURA_SERIES_BG,

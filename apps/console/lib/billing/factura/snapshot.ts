@@ -16,8 +16,7 @@
 //    (Art. 114(5); the 2026-11-23 ruling), recorded with the rate and its date.
 
 import { LEGAL_ENTITY } from "@repo/legal/entity";
-import type { EurRate } from "@/lib/billing/invoice-facts";
-import { toEurMinor } from "@/lib/billing/invoice-facts";
+import { type EurRate, toEurMinor } from "@/lib/billing/ecb-rate";
 import type { FacturaLine, FacturaParty, FacturaSnapshot } from "@/types/jsonb.types";
 import type { FacturaSource, FacturaSourceLine } from "./checks";
 
