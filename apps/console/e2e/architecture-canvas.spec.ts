@@ -11,8 +11,9 @@
 // WITHOUT connecting a cloud account — "Create empty project" needs only a name, and the palette
 // explicitly supports designing before a cloud is connected. No external services. That also fixes
 // the ceiling of this file: with no cloud identity `projectFormSchema` refuses (`cloud_identity_id`
-// is required), so nothing here can Save or Deploy — every assertion is about the board, the rail
-// and the client draft.
+// is required), so nothing here can Plan or Deploy — and no journey but the one below presses Save,
+// which since #7272 DOES work without a cloud account (`designSaveSchema`). Every other assertion is
+// about the board, the rail and the client draft.
 //
 // Assertions are scoped to the BOARD (`.react-flow`) or the RAIL (`[data-testid=workspace-rail]`),
 // never the whole page: the same words legitimately appear in both (a bucket's "Access" fact and
@@ -41,10 +42,10 @@
 // ── THE ONE WRITE ─────────────────────────────────────────────────────────────────────────────
 //
 // "Save clears the bar and a reload shows no pending changes" is the single journey here that puts
-// the design on the wire. It cannot use the fixture above, for the reason the first paragraph
-// gives: with no cloud identity the save is refused in the browser. So it seeds its own project
-// with a connected (fixture) cloud account and a region, straight into the database, and saves
-// THAT. A save writes the design tables and queues nothing, so it costs nothing. The test raises
+// the design on the wire. It seeds its own project with a connected (fixture) cloud account and a
+// region, straight into the database, and saves THAT — it predates #7272, when a save with no cloud
+// identity was refused in the browser, and a per-test project keeps its write off the shared
+// fixture either way. A save writes the design tables and queues nothing, so it costs nothing. The test raises
 // `designWritesAllowed` to exactly 1 for itself, and the `afterEach` holds every test to its own
 // number — zero for all the others — so the exception is counted rather than waved through.
 
@@ -733,8 +734,8 @@ test.describe("Architecture canvas", () => {
 	});
 
 	test("Save clears the bar and a reload shows no pending changes", async ({ page }, testInfo) => {
-		// This journey's own project: a connected cloud account and a region are what the save's
-		// validation needs and the blank fixture lacks. Seeded rows, fixture credentials, no cloud.
+		// This journey's own project, with a connected cloud account and a region, so its write stays
+		// off the shared fixture. Seeded rows, fixture credentials, no cloud.
 		const orgSlug = new URL(page.url()).pathname.split("/")[1] ?? "";
 		const owner = await resolveOwner(orgSlug);
 		const identity = await seedCloudIdentity(owner, { provider: "aws" });
