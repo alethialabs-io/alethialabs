@@ -1,0 +1,107 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Self-host overlay — the production layer for a self-hosted single-VM install. Layer it on the
+# base bundle:
+#
+#   docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml config
+#
+# What it sets, relative to the base bundle:
+#   - every image comes prebuilt from GHCR at ONE pinned tag, ALETHIA_VERSION (no on-box builds);
+#   - the bundled runner is self-operated (ALETHIA_RUNNER_OPERATOR: self);
+#   - the marketing and admin services are hosted-only and never start here;
+#   - Caddy serves ALETHIA_DOMAIN with automatic TLS; Postgres and the object store are not
+#     published to the host;
+#   - every `required` entry of deploy/selfhost/secrets.manifest is referenced as `${NAME:?…}`.
+#     A missing or empty secret stops compose before any container starts, naming the variable.
+#     No secret in this file has a default, and none may be given one.
+#
+# The hosted service's overlay is deploy/prod/docker-compose.prod.yml; this file does not
+# inherit from it. Layout, lifecycle and the lanes that wire this in: deploy/selfhost/README.md.
+name: alethia
+
+services:
+  migrate:
+    image: "ghcr.io/alethialabs-io/console-migrate:${ALETHIA_VERSION:?ALETHIA_VERSION is not set. Pin the release to run, see deploy/selfhost/README.md}"
+    pull_policy: always
+    environment:
+      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:?ALETHIA_DB_PASSWORD is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_APP_DB_PASSWORD: "${ALETHIA_APP_DB_PASSWORD:?ALETHIA_APP_DB_PASSWORD is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+
+  app:
+    image: "ghcr.io/alethialabs-io/console:${ALETHIA_VERSION:?ALETHIA_VERSION is not set. Pin the release to run, see deploy/selfhost/README.md}"
+    pull_policy: always
+    environment:
+      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:?ALETHIA_DB_PASSWORD is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_APP_DATABASE_URL: "postgres://alethia_app:${ALETHIA_APP_DB_PASSWORD:?ALETHIA_APP_DB_PASSWORD is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_CRED_ENCRYPTION_KEY: "${ALETHIA_CRED_ENCRYPTION_KEY:?ALETHIA_CRED_ENCRYPTION_KEY is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+      CLI_JWT_SECRET: "${CLI_JWT_SECRET:?CLI_JWT_SECRET is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+      ALETHIA_STORAGE_ACCESS_KEY_ID: "${ALETHIA_STORAGE_ACCESS_KEY_ID:?ALETHIA_STORAGE_ACCESS_KEY_ID is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+      ALETHIA_STORAGE_SECRET_ACCESS_KEY: "${ALETHIA_STORAGE_SECRET_ACCESS_KEY:?ALETHIA_STORAGE_SECRET_ACCESS_KEY is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+      ALETHIA_SNAPSHOT_HMAC_KEY: "${ALETHIA_SNAPSHOT_HMAC_KEY:?ALETHIA_SNAPSHOT_HMAC_KEY is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+      ALETHIA_CRON_SECRET: "${ALETHIA_CRON_SECRET:?ALETHIA_CRON_SECRET is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+      ALETHIA_RUNNER_BOOTSTRAP_TOKEN: "${ALETHIA_RUNNER_BOOTSTRAP_TOKEN:?ALETHIA_RUNNER_BOOTSTRAP_TOKEN is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+      ALETHIA_OIDC_SIGNING_KEY: "${ALETHIA_OIDC_SIGNING_KEY:?ALETHIA_OIDC_SIGNING_KEY is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+      ALETHIA_RECEIPT_SIGNING_KEY: "${ALETHIA_RECEIPT_SIGNING_KEY:?ALETHIA_RECEIPT_SIGNING_KEY is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+
+  runner:
+    image: "ghcr.io/alethialabs-io/runner:${ALETHIA_VERSION:?ALETHIA_VERSION is not set. Pin the release to run, see deploy/selfhost/README.md}"
+    pull_policy: always
+    environment:
+      # Stated explicitly rather than left to the runner's built-in default: this runner runs on
+      # the operator's own VM and uses the credentials the operator gives it.
+      ALETHIA_RUNNER_OPERATOR: self
+      ALETHIA_RUNNER_BOOTSTRAP_TOKEN: "${ALETHIA_RUNNER_BOOTSTRAP_TOKEN:?ALETHIA_RUNNER_BOOTSTRAP_TOKEN is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+      ALETHIA_STORAGE_ACCESS_KEY_ID: "${ALETHIA_STORAGE_ACCESS_KEY_ID:?ALETHIA_STORAGE_ACCESS_KEY_ID is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+      ALETHIA_STORAGE_SECRET_ACCESS_KEY: "${ALETHIA_STORAGE_SECRET_ACCESS_KEY:?ALETHIA_STORAGE_SECRET_ACCESS_KEY is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+      ALETHIA_RECEIPT_SIGNING_KEY: "${ALETHIA_RECEIPT_SIGNING_KEY:?ALETHIA_RECEIPT_SIGNING_KEY is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+
+  docs:
+    image: "ghcr.io/alethialabs-io/docs:${ALETHIA_VERSION:?ALETHIA_VERSION is not set. Pin the release to run, see deploy/selfhost/README.md}"
+    pull_policy: always
+  blog:
+    image: "ghcr.io/alethialabs-io/blog:${ALETHIA_VERSION:?ALETHIA_VERSION is not set. Pin the release to run, see deploy/selfhost/README.md}"
+    pull_policy: always
+
+  # Hosted-only. Moved to a profile this layout never enables, so COMPOSE_PROFILES=marketing or
+  # =admin does not start them on a self-hosted instance.
+  marketing:
+    profiles: !override ["hosted-only"]
+  admin:
+    profiles: !override ["hosted-only"]
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: "${ALETHIA_DB_PASSWORD:?ALETHIA_DB_PASSWORD is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+    ports: !reset []
+
+  seaweedfs:
+    ports: !reset []
+
+  # Optional browser DB UI (`tools` profile); same superuser connection as migrate.
+  pgweb:
+    environment:
+      PGWEB_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:?ALETHIA_DB_PASSWORD is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}@postgres:5432/${ALETHIA_DB_NAME:-alethia}?sslmode=disable"
+
+  # OpenFGA (`enterprise` profile).
+  openfga-db:
+    environment:
+      POSTGRES_PASSWORD: "${OPENFGA_DB_PASSWORD:?OPENFGA_DB_PASSWORD is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
+  openfga-migrate:
+    environment:
+      OPENFGA_DATASTORE_URI: "postgres://openfga:${OPENFGA_DB_PASSWORD:?OPENFGA_DB_PASSWORD is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}@openfga-db:5432/openfga?sslmode=disable"
+  openfga:
+    environment:
+      OPENFGA_DATASTORE_URI: "postgres://openfga:${OPENFGA_DB_PASSWORD:?OPENFGA_DB_PASSWORD is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}@openfga-db:5432/openfga?sslmode=disable"
+
+  caddy:
+    environment:
+      # Empty ALETHIA_DOMAIN serves plain HTTP on :80 (an IP-only first look).
+      ALETHIA_DOMAIN: "${ALETHIA_DOMAIN:-}"
+      ALETHIA_ACME_EMAIL: "${ALETHIA_ACME_EMAIL:-}"
+    volumes: !override
+      # The single-domain TLS Caddyfile both overlays share today.
+      - ./deploy/prod/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
