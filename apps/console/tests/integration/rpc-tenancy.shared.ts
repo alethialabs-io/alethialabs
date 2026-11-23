@@ -1458,8 +1458,8 @@ export async function runRpcTenancySuite(opts: {
 				.set({ aiOrgWeeklyCapCredits: 2222, currentPeriodStart: Y_PERIOD.start, currentPeriodEnd: Y_PERIOD.end })
 				.where(eq(organizationBilling.organizationId, ORG_Y));
 			await db.insert(invoice).values([
-				{ organizationId: ORG_X, stripeInvoiceId: `in_it6127_x_${ORG_X.slice(0, 8)}`, number: "IT-6127-X", status: "paid", amountTotal: 100, currency: "usd", paidAt: X_PERIOD.start },
-				{ organizationId: ORG_Y, stripeInvoiceId: `in_it6127_y_${ORG_Y.slice(0, 8)}`, number: "IT-6127-Y", status: "paid", amountTotal: 200, currency: "usd", paidAt: Y_PERIOD.start },
+				{ organizationId: ORG_X, stripeInvoiceId: `in_it6127_x_${ORG_X.slice(0, 8)}`, number: "IT-6127-X", facturaStatus: "issued", pdfKey: "test/IT-6127-X.pdf", status: "paid", amountTotal: 100, currency: "usd", paidAt: X_PERIOD.start },
+				{ organizationId: ORG_Y, stripeInvoiceId: `in_it6127_y_${ORG_Y.slice(0, 8)}`, number: "IT-6127-Y", facturaStatus: "issued", pdfKey: "test/IT-6127-Y.pdf", status: "paid", amountTotal: 200, currency: "usd", paidAt: Y_PERIOD.start },
 			]);
 			await db.insert(projects).values({
 				id: USAGE_PROJECT_X,
