@@ -12,8 +12,10 @@
 // writes this table, behaves exactly as before. The row is written by the hosted
 // Stripe webhook (F2) or a signed self-managed license (F3).
 
+import { sql } from "drizzle-orm";
 import {
 	boolean,
+	check,
 	integer,
 	pgTable,
 	text,
@@ -23,6 +25,17 @@ import {
 import type { AiTier } from "@/lib/billing/ai-plan";
 import { billingPlan, billingStatus, payerCapacity } from "./enums";
 import { organization } from "./organizations";
+
+/** The declared VAT-number status of a paying organization. NULL in the column = undeclared. */
+export const VAT_ID_STATUSES = ["given", "not_given"] as const;
+
+/** One of `VAT_ID_STATUSES`. */
+export type VatIdStatus = (typeof VAT_ID_STATUSES)[number];
+
+/** `'a', 'b', …` for a CHECK constraint's IN list, from a closed list of literals declared here. */
+function sqlList(values: readonly string[]): string {
+	return values.map((v) => `'${v}'`).join(", ");
+}
 
 export const organizationBilling = pgTable("organization_billing", {
 	id: uuid().primaryKey().defaultRandom(),
@@ -89,13 +102,32 @@ export const organizationBilling = pgTable("organization_billing", {
 	// The payer's attestation that they can bind the organization, in their own words (role/title).
 	// Null for a consumer, where there is nothing to bind.
 	authorityAttestation: text(),
+	// ── VAT number and US state, declared (#7321, Early Access) ─────────────────
+	// Whether the organization HAS a VAT number decides which paid-market cell it falls in, so it
+	// is declared alongside capacity and country. `vatIdStatus` is `given` | `not_given` (a check
+	// constraint, not a pg enum: enums.ts is owned elsewhere). NULL means UNDECLARED, and the gate
+	// fails closed on it in the EU — it is never read as "no VAT number".
+	vatIdStatus: text().$type<VatIdStatus>(),
+	// The VAT number itself, as given. Only an organization that declared `given` can hold one
+	// (check constraint below): a `not_given` organization records no VAT number at all.
+	vatId: text(),
+	// USPS two-letter state code for a US payer (the per-state thresholds). NULL outside the US,
+	// and NULL for a US payer that has not declared one — which the gate refuses.
+	billingState: text(),
 	// Set the first time the org reaches a paid plan (trial or paid) — the
 	// exactly-once claim for the "welcome to your plan" email, so it never re-sends
 	// on renewals/updates (see syncSubscriptionToBilling). Null until first activation.
 	welcomedAt: timestamp({ withTimezone: true }),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
-});
+}, () => [
+	check(
+		"organization_billing_vat_id_status_known",
+		sql.raw(`vat_id_status IS NULL OR vat_id_status IN (${sqlList(VAT_ID_STATUSES)})`),
+	),
+	// A VAT number exists only where one was declared.
+	check("organization_billing_vat_id_only_when_given", sql`vat_id IS NULL OR vat_id_status = 'given'`),
+]);
 
 export type OrganizationBilling = typeof organizationBilling.$inferSelect;
 export type OrganizationBillingInsert = typeof organizationBilling.$inferInsert;

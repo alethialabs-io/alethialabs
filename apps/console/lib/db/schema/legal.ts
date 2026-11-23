@@ -133,6 +133,19 @@ export const commerceOrder = pgTable(
 		billingAddress: jsonb().$type<CommerceBillingAddress>().notNull(),
 		/** VAT/tax id, when supplied. Optional by law and by design — never a gate on paying. */
 		taxId: text(),
+		/**
+		 * Whether the buyer communicated a VAT number for this order (#7321, Early Access) — the
+		 * record behind "no VAT number given", which decides the order's paid-market cell and its
+		 * place of supply. Kept apart from `taxId` because it is the FACT that was declared, not
+		 * the value: a buyer who declared "no VAT number" must read `false` here even if a tax id
+		 * of another kind is on file.
+		 *
+		 * NOT NULL with NO default, so the insert type makes every writer state it: a default of
+		 * `false` would let a writer that forgot the field record "no VAT number given" for a buyer
+		 * who gave one. Adding it without a default is safe only because nothing inserts into this
+		 * table yet (the first writer is the Early Access gate, EA-2).
+		 */
+		vatIdCommunicated: boolean().notNull(),
 
 		// ── What was charged ─────────────────────────────────────────────────────────────────────
 		/** TOTAL, TAX-INCLUSIVE, in minor units. The figure the consumer must be shown before

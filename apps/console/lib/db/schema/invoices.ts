@@ -9,9 +9,35 @@
 // hosted link). One row per Stripe invoice (stripe_invoice_id unique → idempotent
 // mirror: a replayed webhook converges to the same row).
 
-import { integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import { invoiceStatus } from "./enums";
+import { sql } from "drizzle-orm";
+import {
+	boolean,
+	check,
+	integer,
+	numeric,
+	pgTable,
+	text,
+	timestamp,
+	uuid,
+} from "drizzle-orm/pg-core";
+import { invoiceStatus, payerCapacity } from "./enums";
 import { organization } from "./organizations";
+
+/**
+ * Where the Bulgarian invoice of record (фактура, Art. 113 ЗДДС) for this payment stands. `pending`
+ * means it is still owed — Odoo was down or unconfigured — and is retried; `issued` means the
+ * document exists; `failed` means retries stopped and an operator must act. NULL on rows mirrored
+ * before the фактура pipeline existed.
+ */
+export const FACTURA_STATUSES = ["pending", "issued", "failed"] as const;
+
+/** One of `FACTURA_STATUSES`. */
+export type FacturaStatus = (typeof FACTURA_STATUSES)[number];
+
+/** `'a', 'b', …` for a CHECK constraint's IN list, from a closed list of literals declared here. */
+function sqlList(values: readonly string[]): string {
+	return values.map((v) => `'${v}'`).join(", ");
+}
 
 export const invoice = pgTable("invoice", {
 	id: uuid().primaryKey().defaultRandom(),
@@ -41,9 +67,38 @@ export const invoice = pgTable("invoice", {
 	// When the invoice was actually paid (Stripe's status_transitions.paid_at), the
 	// primary sort/display date. createdAt is our mirror-insert time.
 	paidAt: timestamp({ withTimezone: true }),
+	// ── Recipient and tax facts, SNAPSHOTTED at payment (#7321, Early Access) ──────
+	// The turnover thresholds (BG place of supply, the EU EUR 10,000 distance-sales limit, the US
+	// per-state counts) are sums over these columns, so each row records the payer as declared AT
+	// THE TIME it paid, never joined from organization_billing later: a later change of country or
+	// VAT status must not re-describe a past sale. All are NULL on rows mirrored before #7321.
+	/** ISO 3166-1 alpha-2, upper-case. */
+	customerCountry: text(),
+	/** USPS two-letter state code, for a US customer. */
+	customerState: text(),
+	payerCapacity: payerCapacity(),
+	/** Whether the customer had declared a VAT number when this invoice was paid. */
+	vatIdGiven: boolean(),
+	/** The invoice total converted to EUR, in euro cents (Art. 114(5) and the EUR thresholds). */
+	amountEurMinor: integer(),
+	/** The rate used for `amountEurMinor`: EUR per one unit of `currency`, exact (string). */
+	eurRate: numeric({ precision: 18, scale: 8 }),
+	/** Where `eurRate` came from and for which date, e.g. `BNB:2027-01-15` or `ECB:2027-01-15`. */
+	eurRateSource: text(),
+	facturaStatus: text().$type<FacturaStatus>(),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
-});
+}, () => [
+	check(
+		"invoice_factura_status_known",
+		sql.raw(`factura_status IS NULL OR factura_status IN (${sqlList(FACTURA_STATUSES)})`),
+	),
+	// A EUR amount is meaningless without the rate and source that produced it.
+	check(
+		"invoice_eur_amount_has_rate",
+		sql`amount_eur_minor IS NULL OR (eur_rate IS NOT NULL AND eur_rate_source IS NOT NULL)`,
+	),
+]);
 
 export type Invoice = typeof invoice.$inferSelect;
 export type InvoiceInsert = typeof invoice.$inferInsert;
