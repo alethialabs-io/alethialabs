@@ -3,8 +3,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Which release of the platform this console is, said in the account menu beside the other
-// instance facts (status, changelog, source): the stage ("Beta"), the platform release name, and
+// instance facts (status, changelog, source): the commercial stage, the platform release name, and
 // the short SHA of the build that is running.
+//
+// The stage is `RELEASE_STAGE` from `@repo/legal/launch` (EA-4, #7326) — the one name every
+// surface prints, so this line cannot disagree with the pricing page. It is not re-declared here.
 //
 // The SHA is the one the console already exposes: the image's `runner` stage sets
 // NEXT_PUBLIC_APP_VERSION to the deploy commit (`apps/console/Dockerfile`), `/api/health` reports it
@@ -18,12 +21,13 @@
 // `versionFacts` is pure and takes the build value, so every case is unit tested
 // (`tests/components/shell/version-label.test.tsx`). `VersionLabel` reads the value.
 
+import { RELEASE_STAGE } from "@repo/legal/launch";
 import { env } from "next-runtime-env";
 
-/** The release stage the platform is in. */
-export const RELEASE_STAGE = "Beta";
-
-/** The platform release name: one name for the console, CLI and runner of this release. */
+/**
+ * The platform release name: one name for the console, CLI and runner of this release. Whether it
+ * keeps its name now that the stage reads `RELEASE_STAGE` is the maintainer's call (EA-4).
+ */
 export const PLATFORM_RELEASE = "2027.01-beta";
 
 /** A full or abbreviated git commit SHA. */
@@ -37,7 +41,7 @@ const SHORT_SHA_LENGTH = 7;
 
 /** What the version line says. `build` is null when the running build is not known. */
 export interface VersionFacts {
-	/** The release stage, e.g. "Beta". */
+	/** The commercial stage, `RELEASE_STAGE`. */
 	stage: string;
 	/** The platform release name. */
 	release: string;
@@ -61,7 +65,10 @@ export function versionFacts(buildValue: string | undefined): VersionFacts {
 	return { ...base, build: null, commit: null };
 }
 
-/** The account menu's version line: "BETA · 2027.01-beta · 703d40d". Not interactive. */
+/**
+ * The account menu's version line: the stage (upper-cased by CSS), the release name and the short
+ * build, e.g. "<stage> · 2027.01-beta · 703d40d". Not interactive.
+ */
 export function VersionLabel() {
 	const facts = versionFacts(env("NEXT_PUBLIC_APP_VERSION"));
 	return (

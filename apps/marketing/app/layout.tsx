@@ -8,12 +8,14 @@ import { ThemeProvider } from "next-themes";
 import { Toaster } from "@repo/ui/sonner";
 import { ConsentProvider } from "@repo/privacy/consent-provider";
 import { cloudListLabel } from "@repo/cloud-catalog";
+import { RELEASE_STAGE } from "@repo/legal/launch";
 import { SITE_URL } from "@/lib/site";
 import "./globals.css";
 
-// The description is what a search result and a link preview show, so it carries the
-// Beta label too. The cloud names come from the catalog, never a literal list.
-const SITE_DESCRIPTION = `Configure multi-cloud infrastructure in the browser. Deploy from the terminal. In beta on ${cloudListLabel()}.`;
+// The description is what a search result and a link preview show, so it carries the stage
+// name too — `RELEASE_STAGE`, never a literal (EA-4, #7326). The cloud names come from the
+// catalog, never a literal list.
+const SITE_DESCRIPTION = `Configure multi-cloud infrastructure in the browser. Deploy from the terminal. In ${RELEASE_STAGE} on ${cloudListLabel()}.`;
 
 export const metadata: Metadata = {
 	metadataBase: new URL(SITE_URL),
