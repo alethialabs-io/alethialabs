@@ -325,6 +325,7 @@ describe("ConnectorsPage — ~/connectors?search=…", () => {
 				canManage: false,
 				platformConfigured: {},
 				offeredClouds: [],
+				keylessReadiness: { ready: true },
 			}),
 		);
 		await settleWithoutTime();
