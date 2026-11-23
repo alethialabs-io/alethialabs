@@ -2,15 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { type FormEvent, useEffect, useRef } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Controller } from "react-hook-form";
+import { toast } from "sonner";
 import {
 	type AbuseReportOutput,
 	type AbuseReportValues,
 	abuseReportSubmission,
 	abuseReportWizard,
 } from "@/components/support/abuse/abuse-report.wizard";
+import { AttachmentPicker } from "@/components/support/attachment-picker";
+import { ATTACHMENT_HINT } from "@/components/support/attachment-policy";
 import { FieldMessage } from "@/components/support/field-message";
+import { ATTACHMENTS_NOT_KEPT } from "@/components/support/submit/steps/step-details";
 import { useSubmitCase } from "@/components/support/use-submit-case";
 import { supportAbuseCategory } from "@/lib/db/schema/enums";
 import { SUPPORT_ABUSE_CATEGORY_LABELS } from "@/lib/validations/support";
@@ -27,6 +31,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@repo/ui/select";
+import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { Skeleton } from "@repo/ui/skeleton";
 import { Textarea } from "@repo/ui/textarea";
 import { cn } from "@repo/ui/utils";
@@ -70,6 +75,8 @@ const FIELD = "space-y-2";
 const BUTTON_ROW = "flex justify-end border-t pt-6";
 /** A narrow control (the selects, the resource and the email). */
 const NARROW = "max-w-md";
+/** A field's hint line, under its control. */
+const HINT = "text-xs text-muted-foreground";
 /**
  * The description box's floor. A floor rather than `rows`: the console's `Textarea` sizes to its
  * content (`field-sizing: content`), so a fixed floor is what makes the empty box one known height
@@ -93,13 +100,17 @@ const RELATIONSHIP_LABELS: Record<"third_party" | "affected_party", string> = {
  *   - a tab draft: a reload, Back or a detour brings the report back, with "Start over" (G-07);
  *   - server field refusals under their fields, and one that belongs to no field shown above the
  *     button rather than dropped (G-04).
- * Submits through `useSubmitCase` (the mutation contract) and routes to the created case thread.
- * Every validation message has its line reserved (`FieldMessage`), so a message appearing never
- * moves the submit button (F043).
+ * Submits through `useSubmitCase` (the mutation contract), which attaches the evidence files to the
+ * case once it exists, and routes to the created case thread. The fields the report can be filed
+ * without say so in their label (G-15). Every validation message has its line reserved
+ * (`FieldMessage`), so a message appearing never moves the submit button (F043).
  */
 export function AbuseForm({ orgSlug, defaultEmail, viewerId }: AbuseFormProps) {
 	// The engine calls this once every field passes; it points at the mutation after each render.
 	const fileReport = useRef<(values: AbuseReportOutput) => void>(() => undefined);
+	// Evidence files. Held beside the form, not in it: a `File` cannot be written into the draft,
+	// and the field says so (as the new-case wizard's attachments step does).
+	const [files, setFiles] = useState<File[]>([]);
 	const env: WizardEnvironment = { location: NO_URL, viewerId: viewerId ?? null };
 	const wizard = useWizardEngine<AbuseReportValues, AbuseReportOutput>(
 		abuseReportWizard,
@@ -128,7 +139,7 @@ export function AbuseForm({ orgSlug, defaultEmail, viewerId }: AbuseFormProps) {
 
 	useEffect(() => {
 		fileReport.current = (values) =>
-			submit.submit({ values: abuseReportSubmission(values, browserContext()) });
+			submit.submit({ values: abuseReportSubmission(values, browserContext()), files });
 	});
 
 	const pending = submit.isPending || submit.isSuccess;
@@ -147,7 +158,7 @@ export function AbuseForm({ orgSlug, defaultEmail, viewerId }: AbuseFormProps) {
 
 			<section className={SECTION}>
 				<div className={FIELD}>
-					<Label htmlFor="abuse-category">Category</Label>
+					<Label htmlFor="abuse-category">Category (optional)</Label>
 					<Controller
 						control={control}
 						name="abuse.abuseCategory"
@@ -169,16 +180,14 @@ export function AbuseForm({ orgSlug, defaultEmail, viewerId }: AbuseFormProps) {
 				</div>
 
 				<div className={FIELD}>
-					<Label htmlFor="abuse-resource">Reported resource</Label>
+					<Label htmlFor="abuse-resource">Reported resource (optional)</Label>
 					<Input
 						id="abuse-resource"
 						placeholder="URL, IP, domain, or resource identifier"
 						className={NARROW}
 						{...register("abuse.reportedResource")}
 					/>
-					<p className="text-xs text-muted-foreground">
-						Where you saw the abusive content or activity.
-					</p>
+					<p className={HINT}>Where you saw the abusive content or activity.</p>
 				</div>
 
 				<div className={FIELD}>
@@ -230,6 +239,16 @@ export function AbuseForm({ orgSlug, defaultEmail, viewerId }: AbuseFormProps) {
 					/>
 					<FieldMessage id="abuse-description-message" message={errors.description?.message} />
 				</div>
+
+				<div className={FIELD}>
+					<Label>Evidence (optional)</Label>
+					<AttachmentPicker
+						files={files}
+						onChange={setFiles}
+						onReject={(reason) => toast.error(reason)}
+					/>
+					<p className={HINT}>{ATTACHMENTS_NOT_KEPT}</p>
+				</div>
 			</section>
 
 			<section className={RULED_SECTION}>
@@ -279,6 +298,24 @@ function FieldSkeleton({ control, hint = false, message = false }: { control: st
 }
 
 /**
+ * The evidence field's loading form: its label line, the picker's `size="sm"` "Add files" button
+ * (32px), and the two static lines the field always shows — the picker's allowlist hint and the
+ * draft note — as their real copy, so they wrap where the page's do.
+ */
+function EvidenceSkeleton() {
+	return (
+		<div className={FIELD}>
+			<Skeleton className="h-3.5 w-28" />
+			<div className="space-y-2">
+				<Skeleton className="h-8 w-28 rounded-none" />
+				<p className={HINT}>{ATTACHMENT_HINT}</p>
+			</div>
+			<p className={HINT}>{ATTACHMENTS_NOT_KEPT}</p>
+		</div>
+	);
+}
+
+/**
  * The abuse-report route's loading form (#6354, B2): the form's own frame, its real line of copy
  * (static, so it wraps where the page's does), each section with its rule and each field at its
  * control's height — the selects and inputs `h-9`, the description at its floor — and the submit
@@ -286,7 +323,7 @@ function FieldSkeleton({ control, hint = false, message = false }: { control: st
  */
 export function AbuseFormSkeleton() {
 	return (
-		<div className={FORM} aria-busy="true">
+		<SkeletonRoot className={FORM}>
 			<PageToolbar description={DESCRIPTION} />
 
 			<div className={SECTION}>
@@ -298,6 +335,7 @@ export function AbuseFormSkeleton() {
 			<div className={RULED_SECTION}>
 				<FieldSkeleton control="h-9" message />
 				<FieldSkeleton control="h-40" message />
+				<EvidenceSkeleton />
 			</div>
 
 			<div className={RULED_SECTION}>
@@ -307,6 +345,6 @@ export function AbuseFormSkeleton() {
 			<div className={BUTTON_ROW}>
 				<Skeleton className="h-9 w-32 rounded-none" />
 			</div>
-		</div>
+		</SkeletonRoot>
 	);
 }
