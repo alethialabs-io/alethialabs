@@ -15,8 +15,8 @@ Stripe test mode and live mode are **separate datasets**. Both are set up by the
 | `stripe-live` | the live-mode secret key, as `STRIPE_API_KEY` | `! pnpm creds --set stripe-live` |
 
 The maintainer types the key; the broker does not echo it. A restricted key (`rk_…`) works if it can
-read and write products, prices, meters, tax settings, portal configurations and webhook endpoints,
-and read the account and payment method configurations.
+read and write products, prices, meters, tax settings, portal configurations, payment method
+configurations and webhook endpoints, and read the account.
 
 ---
 
@@ -48,9 +48,10 @@ pnpm creds stripe-live -- pnpm -C apps/console run stripe:check -- --live \
 - **`stripe:check` only reads.** It exits 0 only when the setup plan would be empty. Its `key: value`
   lines (`--json` for one JSON object) are what EA-8's evidence strings cite: mode, account id and
   country, `charges_enabled`, `payouts_enabled`, the tax settings status and head office, each
-  product's tax code, each price's tax behaviour, the portal settings, the payment methods the
-  default configuration offers, and every webhook endpoint with whether its events match the
-  handler's.
+  product's tax code, each price's tax behaviour, the portal settings and headline, the payment
+  methods the default configuration turns on (`payment_methods.on`) and those Stripe can offer at
+  checkout now (`payment_methods.available`), and every webhook endpoint with whether its events
+  match the handler's.
 - **Without `--webhook-url`** the endpoint is not planned. `stripe:check` still lists every endpoint.
 
 ### What the script manages
@@ -61,7 +62,8 @@ pnpm creds stripe-live -- pnpm -C apps/console run stripe:check -- --live \
 | Prices `alethia_pro_monthly`, `alethia_runner_minutes_pro`, `alethia_ai_plus_monthly`, `alethia_ai_max_monthly` (found by lookup key) | the planned amounts in `@repo/plan-catalog`, USD with an EUR option, no discount, `tax_behavior: exclusive` | **replaced**: a price cannot change, so a new price takes the lookup key and the old one is archived. Existing subscriptions keep the old price |
 | Billing meter `alethia_runner_minutes` | sum, by `stripe_customer_id` | created if missing; a meter with other settings is blocking (meters cannot change) |
 | Tax settings | head office from `LEGAL_ENTITY` (Sofia, BG), default tax code `txcd_10103001`, default behaviour `exclusive` | updated. This does **not** turn on Stripe Tax; that is `STRIPE_TAX_ENABLED` and a dashboard decision (§3) |
-| The **default** Customer Portal configuration | customers can change their email only: **no tax-ID edit, no address and so no country change**; no plan change (it would skip the console's purchase gate); cancel at period end; payment method update on; Stripe invoice history **off**; privacy and terms links to alethialabs.io | updated. If the account has no default configuration yet, the plan is blocking: open Settings → Billing → Customer portal in that mode, press Save once, and run again |
+| The **default** Customer Portal configuration | customers can change their email only: **no tax-ID edit, no address and so no country change**; no plan change (it would skip the console's purchase gate); cancel at period end; payment method update on; Stripe invoice history **off**; business profile: headline "Alethia: manage your subscription and payment method", privacy link `https://alethialabs.io/privacy`, terms link `https://alethialabs.io/terms` | updated. If the account has no default configuration yet, the plan is blocking: open Settings → Billing → Customer portal in that mode, press Save once, and run again |
+| The **default** payment method configuration (`DESIRED_PAYMENT_METHODS`) | **card, Apple Pay, Google Pay and Link on; every other method the account offers off** (SEPA Direct Debit, Bancontact, iDEAL, Klarna, and the rest). Every offered method gets an explicit preference, so none follows Stripe's default | the drifted methods' display preferences are updated, and only those. A desired method the account does not offer at all is blocking: activate it under Settings → Payments → Payment methods. `payment_methods.available` can still lack Apple Pay until the payment domain is registered; that is not a preference and the script does not report it as drift |
 | Webhook endpoint at `--webhook-url` | exactly the events `lib/billing/webhook-handler.ts` handles, enabled | created, or its events set to exactly that list (a stray event such as `payment_intent.succeeded` is dropped). Two endpoints at one URL is blocking |
 
 The event list is `WEBHOOK_EVENTS` in `stripe-setup.ts`. A unit test fails when it differs from the
@@ -104,33 +106,71 @@ done when instructed):
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | `pk_live_…` (not a secret) |
 | `STRIPE_WEBHOOK_SECRET` | from the 0600 file (§1) |
 | `STRIPE_PRICE_TEAM`, `STRIPE_PRICE_METER_TEAM`, `STRIPE_PRICE_AI_PLUS`, `STRIPE_PRICE_AI_MAX` | from the apply's printed block |
-| `STRIPE_TAX_ENABLED` | `true` only after the Stripe Tax decision in §3 |
+| `STRIPE_TAX_ENABLED` | unset: Stripe Tax stays off (maintainer, 2026-11-23; §3) |
 
 Hosted production sends email through AWS SES from the `alethia-email` account
 (`EMAIL_PROVIDER=ses`, the `ALETHIA_SES_*` keys; `infra/email-ses-account/README.md`).
 
 ## 3. Dashboard-only steps (no API)
 
-The script cannot do these. They are the maintainer's, in the live dashboard:
+The script cannot do these. Stripe's API cannot change your **own** account: `POST /v1/accounts/:id`
+updates connected accounts only, and its reference says "To update your own account, use the
+Dashboard". So branding, public details, the statement descriptor, customer emails, retries, Radar
+rules and the account's default invoice footer are set by hand, in **each** mode (test and live are
+separate). They are the maintainer's.
 
 1. **Activate the account** as legal representative of ALETHIA LABS (EIK 208913663): business
-   details, identity verification, a EUR bank account, the statement descriptor, public support
-   details and the website.
-2. **Settings → Emails: turn off emailing finalised invoices and invoice PDFs to customers**, and the
-   other Stripe customer emails, **before go-live**, not after. The customer gets one document called
-   an invoice: Alethia's.
-3. **Branding** (logo, icon, colour) for Checkout and the portal.
-4. **Decide whether to turn on Stripe Tax.** It is a paid fee and computes zero for a seller with no
-   registration. EA-5's threshold counters do not need it. Only after this, set `STRIPE_TAX_ENABLED`.
-5. **Save the Customer Portal settings once** if `--plan` reports no default configuration (§1).
+   details, identity verification and a EUR bank account.
+2. **Save the Customer Portal settings once** if `--plan` reports no default configuration (§1), and
+   open Settings → Payments → Payment methods once if it reports no default payment method
+   configuration.
+3. **Stripe Tax stays off** (maintainer, 2026-11-23). Leave `STRIPE_TAX_ENABLED` unset. The head
+   office in Settings → Tax is managed by the script and stays as it is.
+
+### The dashboard-only checklist
+
+Set each value exactly. Paths are the dashboard's menu names; the URL follows in brackets.
+
+| Area | Dashboard path | Setting | Value |
+|---|---|---|---|
+| Branding | Settings → Business → Branding (`dashboard.stripe.com/settings/branding`) | Icon | PNG export of `apps/marketing/public/brand/alethia-app-icon.svg`, square, at least 128 × 128 px |
+| | | Logo | PNG export of `apps/marketing/public/brand/alethia-lockup-black.svg` |
+| | | Brand colour | `#fafafa` (light background, `RAMP_THEME.light.background` in `packages/brand/src/ramp-srgb.ts`) |
+| | | Accent colour | `#171717` (ink, `RAMP_THEME.light.ink`: the console's `--primary`) |
+| Public business details | Settings → Business → Business details (`dashboard.stripe.com/settings/business-details`) | Statement descriptor | `ALETHIA LABS` |
+| | | Shortened descriptor | `ALETHIA` |
+| | Settings → Business → Public details (`dashboard.stripe.com/settings/public`) | Support email | `support@alethialabs.io` |
+| | | Business website and support website | `https://alethialabs.io` |
+| | | Privacy policy | `https://alethialabs.io/privacy` |
+| | | Terms of service | `https://alethialabs.io/terms` |
+| Invoice footer | Settings → Billing → Invoices (`dashboard.stripe.com/settings/billing/invoice`) | Default footer | `This is a payment receipt, not a tax invoice. Your фактура is issued by Alethia Labs and is available in your billing settings.` (the console also sets it on every customer it creates, `lib/billing/receipt-footer.ts`; this default covers customers created before that) |
+| Customer emails: Stripe's receipts | Settings → Business → Customer emails (`dashboard.stripe.com/settings/emails`), under Payments | Successful payments | **Off**. The console sends its own receipt with the фактура attached |
+| | | Refunds | **On** for now. The console does not send a refund email yet; turn it off when it does |
+| Customer emails: Stripe's invoices | Settings → Billing → Subscriptions and emails (`dashboard.stripe.com/settings/billing/automatic`), under Manage invoices sent to customers | Send finalized invoices to customers | **Off**. Stripe's invoice is not the invoice of record |
+| | | Send credit notes to customers | **Off**, for the same reason |
+| | | Send reminders if a recurring invoice hasn't been paid | **Off**. It links Stripe's hosted invoice |
+| Customer emails: payment recovery | Billing → Revenue recovery → Emails (`dashboard.stripe.com/revenue_recovery/emails`) | Send emails when card payments fail | **Off**. The console sends its own failed-payment email (`sendPaymentFailedEmail`), and withholds it on purpose while a payment hold is open; Stripe's would contradict that |
+| | | Send emails about expiring cards | **On**. The console does not send one |
+| | | Send a Stripe-hosted link for customers to confirm their payments when required (3D Secure) | **On**, with its reminders. The console does not handle `invoice.payment_action_required` |
+| | | Send emails about upcoming renewals | **On**, if offered. The console does not send one |
+| Smart Retries | Billing → Revenue recovery → Retries (`dashboard.stripe.com/revenue_recovery/retries`) | Smart Retries | **On** (Stripe's recommended schedule) |
+| | | If all retries for a payment fail | **Cancel the subscription** |
+| Radar | Radar → Rules (`dashboard.stripe.com/radar/rules`) | Block if CVC verification fails (or "… based on risk score" where the account shows only the newer rules) | **Enabled** |
+| | | Block if postal code verification fails (or "… based on risk score") | **Enabled** |
+
+What the console sends itself, so Stripe's copy stays off: the receipt with the фактура
+(`sendReceiptEmail`), the failed-payment email, the trial-ending and trial-ended emails, the
+cancellation email, and the payment-hold emails (`lib/email/billing-email.ts`, sent from
+`lib/billing/webhook-handler.ts`).
 
 ### Stripe's PDF is not the invoice of record
 
 The invoice of record is the фактура the console issues itself from Stripe's paid invoice
 (`lib/billing/factura/issue.ts`): a ten-digit number from a gap-free series, and the Art. 114 ЗДДС
 fields, rendered to PDF from an immutable snapshot. Stripe's invoice and its PDF are payment records only. That is
-why the portal does not show Stripe's invoice history and why Stripe's invoice emails are off at
-go-live.
+why the portal does not show Stripe's invoice history, why Stripe's invoice emails are off at
+go-live, and why every Stripe invoice carries the footer "This is a payment receipt, not a tax
+invoice." (set on each customer the console creates, and as the account default above).
 
 ## 4. Smoke test on live
 
@@ -145,9 +185,11 @@ go-live.
 
 ## 5. Customer emails
 
-Alethia sends every billing email (receipt, dunning, trial, cancel) through the transactional
-provider. Stripe's customer emails stay off (§3 step 2). The `stripe_webhook_event` ledger makes each
-email go out once per event, even when Stripe retries.
+Alethia sends the receipt, the failed-payment email, the trial emails and the cancellation email
+through the transactional provider. Stripe's copies of those stay off; the emails the console does
+not send (expiring card, 3D Secure confirmation, refunds, upcoming renewal) stay on in Stripe (§3,
+the checklist). The `stripe_webhook_event` ledger makes each email go out once per event, even when
+Stripe retries.
 
 ## 6. Close a paid team setup that blocks its organization
 
