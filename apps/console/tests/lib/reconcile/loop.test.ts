@@ -8,6 +8,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(() => ({})) }));
+vi.mock("@/lib/billing/factura/sweeper", () => ({
+	runFacturaSweep: vi.fn(async () => ({ retried: 0, issued: 0, alerted: 0, pdfsRendered: 0, failures: 0 })),
+}));
 vi.mock("@/lib/reconcile/converge", () => ({ convergeEnvStatuses: vi.fn(async () => ({ converged: 0, candidates: 0 })) }));
 vi.mock("@/lib/reconcile/reap", () => ({ reapExpiredEphemeralEnvs: vi.fn(async () => ({ reaped: 0, expired: 0 })) }));
 vi.mock("@/lib/drift/dispatch", () => ({ sweepDriftSchedule: vi.fn(async () => ({ enqueued: 0 })) }));
