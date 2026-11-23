@@ -18,6 +18,14 @@
 // build-time list (`AVAILABLE_CLOUDS`) stands in. A link naming a cloud that is not offered opens
 // the sheet on a sentence saying so, never on a form the server would refuse.
 //
+// KEYLESS READINESS (EDN-H6). AWS, GCP and Azure (and Alibaba when re-enabled) connect keylessly:
+// the customer's cloud fetches this instance's issuer keys over HTTPS from the public internet. When
+// the server says that cannot work here (`keylessReadiness` on the board — no signing key, or an app
+// URL that is not public HTTPS) the sheet shows "this instance is not publicly reachable" in place
+// of the form. A token cloud (Hetzner) is unaffected. Until the server answers, a keyless cloud's
+// sheet waits rather than flashing a form it may take away; if the read fails, the form is shown and
+// the connect reports what the cloud says.
+//
 // WHAT THE HOST GETS BACK. `onConnected` receives a `ConnectedAccount` — the stored identity's id
 // and its cloud, nothing else — the moment a connect verifies, so the screen behind can select it.
 
@@ -33,6 +41,7 @@ import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { startCloudConnect } from "@/app/server/actions/identities";
 import { CLOUD_CONNECT_WIZARD_ID } from "@/components/cloud-connect/cloud-connect.wizard";
 import type { ConnectSession } from "@/components/cloud-connect/use-connect-wizard";
+import { KeylessNotReachable } from "@/components/cloud-connect/keyless-not-reachable";
 import { AwsConnection } from "@/components/connectors/aws-connection";
 import { AzureConnection } from "@/components/connectors/azure-connection";
 import { CONNECTOR_DOCS_BASE } from "@/components/connectors/connector-assets";
@@ -45,6 +54,7 @@ import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import type { ActionResult } from "@/lib/actions/result";
 import { type ConnectableCloudSlug, PROVIDERS } from "@/lib/cloud-providers/generated/catalog";
 import { isConnectableCloudSlug } from "@/lib/cloud-providers/provider-slug";
+import { cloudNeedsPublicIssuer, type KeylessReadiness } from "@/lib/oidc/keyless-readiness";
 import { type ConnectedAccount, connectedAccount } from "@/lib/projects/connected-account";
 import { hrefWithParamPatch, isWizardOpenInUrl, readViewParam, STEP_PARAM, WIZARD_PARAM } from "@/lib/query/view-url-params";
 import { orpc } from "@/lib/rpc/client";
@@ -166,6 +176,8 @@ interface OfferedClouds {
 	readonly clouds: readonly string[];
 	/** True once the server has answered (or failed to). */
 	readonly settled: boolean;
+	/** Whether a keyless connect can work here. `undefined` until the server answers, or if it failed. */
+	readonly keyless: KeylessReadiness | undefined;
 }
 
 /** The offered clouds, read from the connectors board while a sheet is open. */
@@ -175,8 +187,21 @@ function useOfferedClouds(enabled: boolean): OfferedClouds {
 		staleTime: 5 * 60_000,
 		enabled,
 	});
-	if (query.data !== undefined) return { clouds: query.data.offeredClouds, settled: true };
-	return { clouds: AVAILABLE_CLOUDS, settled: query.isError };
+	if (query.data !== undefined) {
+		return { clouds: query.data.offeredClouds, settled: true, keyless: query.data.keylessReadiness };
+	}
+	return { clouds: AVAILABLE_CLOUDS, settled: query.isError, keyless: undefined };
+}
+
+/** What the sheet shows for an offered cloud: its form, a wait, or why a keyless connect cannot work. */
+type OfferedBody = { kind: "form" } | { kind: "pending" } | { kind: "not-reachable"; readiness: Extract<KeylessReadiness, { ready: false }> };
+
+/** Decides an offered cloud's body from the server's keyless readiness. Token clouds always get the form. */
+function offeredBody(cloud: ConnectableCloudSlug, offered: OfferedClouds): OfferedBody {
+	if (!cloudNeedsPublicIssuer(cloud)) return { kind: "form" };
+	const readiness = offered.keyless;
+	if (readiness === undefined) return offered.settled ? { kind: "form" } : { kind: "pending" };
+	return readiness.ready ? { kind: "form" } : { kind: "not-reachable", readiness };
 }
 
 /** A pending identity a host created ahead, so the first connect saves into it. */
@@ -302,16 +327,18 @@ export function useCloudConnect({
 			<SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl">
 				{/* Nothing while closing: the panel slides out empty rather than flashing another state. */}
 				{!open ? null : provider !== null && offered.clouds.includes(provider) ? (
-					<>
-						<ConnectSheetHeader
-							integration={bySlug(provider)}
-							title={CONNECT_SHEETS[provider].title}
-							description={CONNECT_SHEETS[provider].description}
-						/>
-						<div className="px-6 py-6">
-							<CloudConnectBody key={provider} cloud={provider} sessionFor={sessionFor} />
-						</div>
-					</>
+					<OfferedCloudSheet
+						cloud={provider}
+						body={offeredBody(provider, offered)}
+						integration={bySlug(provider)}
+						sessionFor={sessionFor}
+						onUseHetzner={
+							offered.clouds.includes("hetzner")
+								? () => navigate("replace", { [WIZARD_PARAM]: CLOUD_CONNECT_WIZARD_ID, [STEP_PARAM]: "hetzner" })
+								: undefined
+						}
+						onClose={() => close(false)}
+					/>
 				) : provider !== null && !offered.settled ? (
 					<CloudConnectPending title={CONNECT_SHEETS[provider].title} />
 				) : (
@@ -326,6 +353,46 @@ export function useCloudConnect({
 	);
 
 	return { openConnect, connectingSlug: null, sheets };
+}
+
+/** An offered cloud's sheet: its header over its form, the readiness wait, or the not-reachable state. */
+function OfferedCloudSheet({
+	cloud,
+	body,
+	integration,
+	sessionFor,
+	onUseHetzner,
+	onClose,
+}: {
+	cloud: ConnectableCloudSlug;
+	body: OfferedBody;
+	integration: ConnectorWithConnection | undefined;
+	sessionFor: (cloud: ConnectableCloudSlug, scope: string) => ConnectSession;
+	onUseHetzner: (() => void) | undefined;
+	onClose: () => void;
+}) {
+	if (body.kind === "pending") return <CloudConnectPending title={CONNECT_SHEETS[cloud].title} />;
+	return (
+		<>
+			<ConnectSheetHeader
+				integration={integration}
+				title={CONNECT_SHEETS[cloud].title}
+				description={CONNECT_SHEETS[cloud].description}
+			/>
+			<div className="px-6 py-6">
+				{body.kind === "not-reachable" ? (
+					<KeylessNotReachable
+						cloudName={PROVIDERS[cloud].shortName}
+						reason={body.readiness.reason}
+						onUseHetzner={onUseHetzner}
+						onClose={onClose}
+					/>
+				) : (
+					<CloudConnectBody key={cloud} cloud={cloud} sessionFor={sessionFor} />
+				)}
+			</div>
+		</>
+	);
 }
 
 /** One cloud's form, with its draft scoped to the org and the cloud. Mounted only while open. */
@@ -359,7 +426,7 @@ function CloudConnectBody({
 function CloudConnectPending({ title }: { title: string }) {
 	return (
 		<>
-			<ConnectSheetHeader title={title} description="Checking which clouds this deployment offers." />
+			<ConnectSheetHeader title={title} description="Checking what this deployment can connect." />
 			<SkeletonRoot className="space-y-4 px-6 py-6">
 				<Skeleton className="h-4 w-48" />
 				<Skeleton className="h-9 w-full" />
