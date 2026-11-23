@@ -1,0 +1,8 @@
+{
+	"title": "Changelog",
+	"icon": "History",
+	"root": true,
+	"pages": [
+		"index"
+	]
+}
