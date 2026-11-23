@@ -5,13 +5,16 @@ import { describe, expect, it } from "vitest";
 import {
 	CONSUMER_ADR,
 	CONSUMER_PAYMENT_OBLIGATION_LABEL,
+	CONSUMER_PAYMENT_OBLIGATION_LABEL_BG,
 	EU_MEMBER_STATES,
 	PAID_MARKETS,
 	type PaidMarketCell,
 	SELLER_COUNTRY,
 	VAT_ID_STATUSES,
 	anyPaidMarketOpen,
+	WITHDRAWAL_BASIS,
 	complimentaryGrantEligible,
+	consumerLocaleFor,
 	matchPaidMarketCell,
 	orderButtonLabel,
 	paidMarketEnabled,
@@ -262,6 +265,48 @@ describe("statutory withdrawal accounting (CRD art. 14(3))", () => {
 		expect(withdrawalOutcome({ ...base, paidMinorUnits: -500 }).refundMinorUnits).toBe(0);
 		expect(withdrawalOutcome({ ...base, daysSupplied: -5 }).retainedMinorUnits).toBe(0);
 	});
+
+	// The Bulgarian acknowledgement quotes `basis` (#7351). The locale changes the words and nothing
+	// else: the same input must give the same split in every language.
+	it("renders the basis in Bulgarian without changing the figures", () => {
+		const inputs = [
+			{ ...base, performanceStart: "deferred" as const },
+			{ ...base, acknowledgedProportionalCharge: false },
+			{ ...base, periodDays: 0 },
+			base,
+		];
+		for (const input of inputs) {
+			const en = withdrawalOutcome(input);
+			const bg = withdrawalOutcome(input, "bg-BG");
+			expect(bg.refundMinorUnits).toBe(en.refundMinorUnits);
+			expect(bg.retainedMinorUnits).toBe(en.retainedMinorUnits);
+			expect(bg.basis).not.toBe(en.basis);
+			expect(bg.basis).toMatch(/[А-Яа-я]/);
+		}
+		expect(withdrawalOutcome(base, "bg-BG").basis).toBe(WITHDRAWAL_BASIS["bg-BG"].proportional(10, 30));
+		expect(withdrawalOutcome(base, "bg-BG").basis).toContain("10 от 30 дни");
+	});
+
+	it("keeps the English basis as the default", () => {
+		expect(withdrawalOutcome(base).basis).toBe(withdrawalOutcome(base, "en").basis);
+		expect(withdrawalOutcome({ ...base, performanceStart: "deferred" }).basis).toBe(
+			WITHDRAWAL_BASIS.en.deferred,
+		);
+	});
+});
+
+describe("the consumer's locale", () => {
+	it("is Bulgarian for a Bulgarian billing country, in any case", () => {
+		expect(consumerLocaleFor("BG")).toBe("bg-BG");
+		expect(consumerLocaleFor(" bg ")).toBe("bg-BG");
+	});
+
+	it("is English for every other country, and for a missing one", () => {
+		expect(consumerLocaleFor("DE")).toBe("en");
+		expect(consumerLocaleFor("US")).toBe("en");
+		expect(consumerLocaleFor(null)).toBe("en");
+		expect(consumerLocaleFor("")).toBe("en");
+	});
 });
 
 describe("contract formation", () => {
@@ -276,6 +321,14 @@ describe("contract formation", () => {
 		expect(orderButtonLabel("organization")).not.toBe(CONSUMER_PAYMENT_OBLIGATION_LABEL);
 		expect(orderButtonLabel("organization").length).toBeGreaterThan(0);
 	});
+
+	// ЗЗП art. 49(2) names „поръчка със задължение за плащане“.
+	it("labels a Bulgarian consumer order with the ЗЗП formulation", () => {
+		expect(orderButtonLabel("consumer", "bg-BG")).toBe(CONSUMER_PAYMENT_OBLIGATION_LABEL_BG);
+		expect(CONSUMER_PAYMENT_OBLIGATION_LABEL_BG.toLowerCase()).toContain("задължение за плащане");
+		expect(orderButtonLabel("organization", "bg-BG")).not.toBe(CONSUMER_PAYMENT_OBLIGATION_LABEL_BG);
+		expect(orderButtonLabel("consumer", "en")).toBe(CONSUMER_PAYMENT_OBLIGATION_LABEL);
+	});
 });
 
 describe("consumer dispute resolution", () => {
@@ -286,6 +339,7 @@ describe("consumer dispute resolution", () => {
 			expect(body.name.length).toBeGreaterThan(0);
 			expect(body.localName.length).toBeGreaterThan(0);
 			expect(body.role.length).toBeGreaterThan(0);
+			expect(body.localRole).toMatch(/[А-Яа-я]/);
 		}
 	});
 

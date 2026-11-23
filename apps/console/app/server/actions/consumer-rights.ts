@@ -21,7 +21,11 @@
 
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { WITHDRAWAL_PERIOD_DAYS, withdrawalOutcome } from "@repo/legal/commerce";
+import {
+	WITHDRAWAL_PERIOD_DAYS,
+	consumerLocaleFor,
+	withdrawalOutcome,
+} from "@repo/legal/commerce";
 import { authorize, authorizeRead } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { commerceOrder, type CommerceOrder } from "@/lib/db/schema";
@@ -29,6 +33,8 @@ import { deploymentMode, isStripeConfigured } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
 import { forgetSubscription } from "@/lib/billing/subscription-cache";
 import { getOrgBilling } from "@/lib/billing/queries";
+import { alertOperator } from "@/lib/billing/operator-alert";
+import { formatMoney } from "@repo/format";
 import { sendWithdrawalAcknowledgementEmail } from "@/lib/email/withdrawal-email";
 
 // THE CLOCK IS READ HERE, NEVER RECEIVED. Every exported function in this file is a Server Action,
@@ -201,13 +207,19 @@ async function withdrawAt(order: CommerceOrder | null, now: Date): Promise<Withd
 		);
 	}
 
-	const outcome = withdrawalOutcome({
-		paidMinorUnits: order.totalMinorUnits,
-		periodDays: order.periodDays,
-		daysSupplied: daysBetween(order.placedAt, now),
-		performanceStart: order.performanceStart ?? "deferred",
-		acknowledgedProportionalCharge: order.proportionalChargeAcknowledgedAt !== null,
-	});
+	// The acknowledgement quotes `basis`, so it is computed in the consumer's language: Bulgarian for
+	// a Bulgarian billing country (ЗЗП art. 52a). The figures do not depend on the locale.
+	const locale = consumerLocaleFor(order.billingCountry);
+	const outcome = withdrawalOutcome(
+		{
+			paidMinorUnits: order.totalMinorUnits,
+			periodDays: order.periodDays,
+			daysSupplied: daysBetween(order.placedAt, now),
+			performanceStart: order.performanceStart ?? "deferred",
+			acknowledgedProportionalCharge: order.proportionalChargeAcknowledgedAt !== null,
+		},
+		locale,
+	);
 
 	const stripe = getStripe();
 	// Refund BEFORE recording, so a recorded withdrawal always corresponds to money that actually
@@ -249,6 +261,22 @@ async function withdrawAt(order: CommerceOrder | null, now: Date): Promise<Withd
 		})
 		.where(eq(commerceOrder.id, order.id));
 
+	// An owed refund that could not be issued here is money the consumer is owed and has not had. The
+	// Consumer rights page promises "we contact you within 14 days to arrange it" (CRD art. 13: the
+	// refund is due within 14 days of the withdrawal), and this alert is what puts that in front of a
+	// person. `alertOperator` never throws.
+	if (!refundIssued) {
+		await alertOperator({
+			title: "Withdrawal refund owed but not issued",
+			subject: { type: "user", id: order.placedByUserId },
+			summary:
+				`The withdrawal from order ${order.id} is recorded, but the ` +
+				`${formatMoney(outcome.refundMinorUnits, order.currency)} refund owed could not be issued ` +
+				"automatically (the order carries no payment to refund against). Contact the consumer and " +
+				"arrange the refund within 14 days of the withdrawal (CRD art. 13).",
+		});
+	}
+
 	// The acknowledgement on a durable medium (CRD art. 11a, ЗЗП art. 52a), sent only once the
 	// withdrawal is recorded so it never acknowledges one that did not take effect. It never throws:
 	// the withdrawal has happened, and a failed send is logged for a hand send rather than reported
@@ -260,6 +288,9 @@ async function withdrawAt(order: CommerceOrder | null, now: Date): Promise<Withd
 		refundMinorUnits: outcome.refundMinorUnits,
 		retainedMinorUnits: outcome.retainedMinorUnits,
 		currency: order.currency,
+		refundIssued,
+		basis: outcome.basis,
+		locale,
 	});
 
 	return {
