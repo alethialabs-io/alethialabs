@@ -19,7 +19,7 @@ import {
 	supportCases,
 	supportMessages,
 } from "@/lib/db/schema";
-import { gcSupportCases } from "@/lib/reconcile/gc";
+import { gcSupportCases, SUPPORT_CASE_RETENTION_DAYS } from "@/lib/reconcile/gc";
 import { describeIfDb } from "./db";
 
 const created: string[] = [];
@@ -72,12 +72,17 @@ async function exists(id: string): Promise<boolean> {
 }
 
 const ago = (interval: string): SQL => sql`now() - ${interval}::interval`;
-const OLD = ago("1096 days");
-const RECENT = ago("1094 days");
+// A day either side of the enforced window, which is read from the module under test.
+const OLD = ago(`${SUPPORT_CASE_RETENTION_DAYS + 1} days`);
+const RECENT = ago(`${SUPPORT_CASE_RETENTION_DAYS - 1} days`);
 
 describeIfDb("the support-case retention sweep against Postgres", () => {
 	afterAll(async () => {
 		if (created.length > 0) await getServiceDb().delete(supportCases).where(inArray(supportCases.id, created));
+	});
+
+	it("enforces the published window: 3 years (1095 days) after the matter closes", () => {
+		expect(SUPPORT_CASE_RETENTION_DAYS).toBe(1095);
 	});
 
 	it("deletes a case closed 3 years and a day ago, with its thread and its files", async () => {
