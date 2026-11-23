@@ -16,8 +16,9 @@ import _ "embed"
 //go:embed gcp-setup.sh
 var GcpSetupScript string
 
-// AzureSetupScript creates the app registration, federated credential, and role
-// assignment, then prints tenant_id/client_id/subscription_id between
+// AzureSetupScript creates a resource group, a user-assigned managed identity with a
+// federated credential trusting Alethia, and a custom role assigned to that
+// identity, then prints tenant_id/client_id/subscription_id between
 // "--- START CONFIG --- / --- END CONFIG ---" markers. Takes the subscription
 // id as its first argument.
 //

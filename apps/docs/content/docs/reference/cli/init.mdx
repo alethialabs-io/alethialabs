@@ -214,11 +214,15 @@ needs a browser to approve the device code — for a fully non-interactive machi
 
 ## Where things are stored
 
-`init` writes to the standard per-user config directory (`os.UserConfigDir()/alethia/`): the
-control-plane URL and active-org context to the CLI config file, and the login tokens to a separate
-credentials file. `alethia config` prints both exact paths. See
-[Configuration](/reference/cli/configuration) for the file formats and
-[Authentication](/reference/cli/authentication) for token lifetimes and refresh.
+`init` writes the control-plane URL and active-org context to the CLI config file in the standard
+per-user config directory (`os.UserConfigDir()/alethia/`). The login tokens go to the credential
+store of the operating system: Keychain on macOS, the Secret Service on Linux, Credential Manager on
+Windows. When the host has no credential store, the store does not answer in time, or you pass
+`--insecure-storage` to `alethia login`, the tokens go to an owner-only credentials file in the same
+directory instead. `alethia config` prints the path of the config file and of the credentials file.
+See [Configuration](/reference/cli/configuration) for the file formats and
+[Authentication](/reference/cli/authentication#credential-storage) for the storage rules, token
+lifetimes and refresh.
 
 ## See also
 

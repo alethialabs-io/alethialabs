@@ -110,11 +110,10 @@ flags you pass are applied, and every other setting takes its default — warm-m
 `1`, enabled. A pinned `--version` and a release `--channel` are **mutually exclusive** — a version
 pin clears the channel.
 
-The provider is optional at a terminal: omit it and you choose from the clouds Alethia knows —
-`aws`, `azure`, `gcp`, `alibaba`, `digitalocean`, `hetzner`, `civo`. That list is the product's own
-`cloud_provider` set rather than a list typed into this page, and **nothing is refused on it**:
-which of those clouds a given deployment's fleet controller actually serves is the server's answer,
-not the CLI's.
+The provider is optional at a terminal: omit it and you choose from the clouds this release
+offers — `aws`, `gcp`, `azure`, `hetzner`. That is the same list `alethia connector` offers, and
+**nothing is refused on it**: a provider you pass as the argument is sent as written, and which
+clouds a given deployment's fleet controller actually serves is the server's answer, not the CLI's.
 
 ```bash
 # Choose the cloud at a terminal
