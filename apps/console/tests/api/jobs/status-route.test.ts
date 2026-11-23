@@ -67,19 +67,28 @@ vi.mock("@/lib/clusters/missing", () => ({
  */
 function mockDb(applied: boolean, job: Record<string, unknown> | undefined) {
 	const executeCalls: unknown[] = [];
+	const updateSets: unknown[] = [];
 	const db: Record<string, unknown> = {};
+	const updateChain = {
+		set: (payload: unknown) => {
+			updateSets.push(payload);
+			return updateChain;
+		},
+		where: () => Promise.resolve([]),
+	};
 	Object.assign(db, {
 		execute: (q: unknown) => {
 			executeCalls.push(q);
 			return Promise.resolve([{ applied }]);
 		},
+		update: () => updateChain,
 		select: () => db,
 		from: () => db,
 		where: () => db,
 		limit: () => Promise.resolve(job ? [job] : []),
 	});
 	vi.mocked(getServiceDb).mockReturnValue(db as never);
-	return { executeCalls };
+	return { executeCalls, updateSets };
 }
 
 // The route pulls in a large module graph (every finalize* action), and importing it cold takes
@@ -417,5 +426,34 @@ describe("PUT /api/jobs/[id]/status — a lost claim answers 409 (#5162)", () =>
 	it("keeps any OTHER database failure a 500 (a transient error the runner may retry)", async () => {
 		rpcThrows("57P01");
 		expect((await put("job-1", { status: "SUCCESS" })).status).toBe(500);
+	});
+});
+
+describe("PUT /api/jobs/[id]/status — a succeeded PLAN records its plan digest (AGT-S0b)", () => {
+	const DIGEST = "5e".repeat(32);
+
+	/** A PLAN job whose stored metadata carries a verify receipt recording `planSha256`. */
+	function planJob(planSha256: string): Record<string, unknown> {
+		return {
+			...deployJob({ verify_receipt: { algorithm: "none", receipt: { plan_sha256: planSha256 } } }),
+			job_type: "PLAN",
+		};
+	}
+
+	it("stamps the receipt's digest on the plan job, lowercased", async () => {
+		const { updateSets } = mockDb(true, planJob(DIGEST.toUpperCase()));
+		const res = await put("job-plan", { status: "SUCCESS" });
+		expect(res.status).toBe(200);
+		expect(updateSets).toContainEqual({ plan_sha256: DIGEST });
+	});
+
+	it("stamps nothing when the receipt holds no SHA-256 digest, or the plan did not succeed", async () => {
+		const bad = mockDb(true, planJob("not-a-digest"));
+		await put("job-plan", { status: "SUCCESS" });
+		expect(bad.updateSets).not.toContainEqual(expect.objectContaining({ plan_sha256: expect.anything() }));
+
+		const failed = mockDb(true, planJob(DIGEST));
+		await put("job-plan", { status: "FAILED", error_message: "boom" });
+		expect(failed.updateSets).not.toContainEqual(expect.objectContaining({ plan_sha256: expect.anything() }));
 	});
 });

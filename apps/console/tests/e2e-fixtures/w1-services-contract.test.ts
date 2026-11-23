@@ -31,6 +31,12 @@ vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
 vi.mock("@/lib/authz/runner-org", () => ({ assertRunnerInOrg: vi.fn() }));
+// The deploy names a plan that resolves: the reviewed-plan rule is not this file's subject
+// (tests/lib/approvals/plan-binding.test.ts), the snapshot the DEPLOY freezes is.
+vi.mock("@/lib/approvals/plan-binding", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/approvals/plan-binding")>()),
+	resolveReviewedPlan: vi.fn(async () => ({ planJobId: "plan-1", planSha256: "a".repeat(64) })),
+}));
 
 import { provisionProject } from "@/app/server/actions/projects";
 import { requireOwner } from "@/lib/auth/owner";
@@ -260,7 +266,7 @@ describe("W1 services contract-lock (#572)", () => {
 		const insert = new Map<unknown, Rows>([[jobs, [{ id: "job-1" }]]]);
 		const valuesSpy = setupDb(select, insert);
 
-		await provisionProject("p1");
+		await provisionProject("p1", "plan-1");
 
 		const jobCall = valuesSpy.mock.calls.find((c) => c[0] === jobs);
 		if (!jobCall) throw new Error("no DEPLOY job insert recorded");

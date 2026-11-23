@@ -386,7 +386,7 @@ const DESCRIPTION = [
 	"",
 	"Five scopes name the agent lifecycle on a project: `read`, `design`, `plan`, `apply` and `destroy`. Each operation lists the scopes it needs in its security requirement and in `x-alethia-scopes`, and the permission it asks in `x-alethia-permission`; administration of the organization (members, tokens, connectors, runners, alerts and the like) needs all five. Where a body field chooses the permission (`job_type` when queueing a job, `tier` when minting a kubeconfig), both are listed per value. The repository listings, which read nothing of the organization's, need a valid credential and no scope.",
 	"",
-	"Today every service token carries all five scopes over every project of its organization. A request to mint a token with fewer scopes or limited to named projects is refused with `code: \"narrow_tokens_unavailable\"`.",
+	"A service token carries the scopes and the project list it was minted with; minted with neither, it carries all five scopes over every project of its organization. A request outside them is refused with 403 and `error: \"insufficient_scope\"`.",
 	"",
 	"## Request ids and the CLI version handshake",
 	"",

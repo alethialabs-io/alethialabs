@@ -46,6 +46,19 @@ vi.mock("@/lib/billing/usage-guard", async (importOriginal) => ({
 	assertUsageAllowed: vi.fn(),
 }));
 vi.mock("@/lib/authz/tuple-sync", () => ({ mirrorHierarchyEdge: vi.fn() }));
+// The reviewed-plan READ is mocked (its rule is unit-tested in tests/lib/approvals/plan-binding.test.ts
+// and run against real Postgres in tests/integration/plan-binding.test.ts); `configurationHashOf` and
+// `PlanBindingError` stay REAL, so the stamped hash and the refusal type are the production ones.
+vi.mock("@/lib/approvals/plan-binding", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@/lib/approvals/plan-binding")>();
+	return {
+		...actual,
+		resolveReviewedPlan: vi.fn(async (_tx: unknown, target: { planJobId?: string | null }) => {
+			if (!target.planJobId) throw new actual.PlanBindingError("plan_required", "A deploy applies a reviewed plan.");
+			return { planJobId: target.planJobId, planSha256: "a".repeat(64) };
+		}),
+	};
+});
 // The live-tenant READ is mocked (its SQL is exercised against real Postgres in
 // tests/integration/destroy-fabric-tenants.test.ts); the tree ordering and the refusal error stay
 // REAL. Default: no tenants — every pre-#5249 destroy test is about an environment nobody shares.
@@ -68,6 +81,7 @@ vi.mock("@/lib/cloud-providers/unsupported-kinds", async (importOriginal) => {
 
 import { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
+import { configurationHashOf, PlanBindingError, resolveReviewedPlan } from "@/lib/approvals/plan-binding";
 import { ProjectNameTakenError } from "@/lib/queries/projects";
 import { readDuplicateTargets } from "@/lib/rpc/procedures/projects";
 import {
@@ -2499,10 +2513,19 @@ describe("provisionProject", () => {
 		expect(jobVals).toMatchObject({
 			job_type: "DEPLOY",
 			plan_job_id: "plan-3",
+			plan_sha256: "a".repeat(64),
 			assigned_runner_id: "runner-2",
 			environment_id: "env-1",
 			status: "QUEUED",
 		});
+		// The DEPLOY carries the hash of the snapshot it applies, the value the plan was checked against.
+		expect(resolveReviewedPlan).toHaveBeenCalledWith(expect.anything(), {
+			projectId: "p1",
+			environmentId: "env-1",
+			planJobId: "plan-3",
+			configurationHash: configurationHashOf(jobVals.config_snapshot),
+		});
+		expect(jobVals.configuration_hash).toBe(configurationHashOf(jobVals.config_snapshot));
 		expect(valuesFor(valuesSpy, auditLog)).toMatchObject({
 			project_id: "p1",
 			user_id: "user-1",
@@ -2513,6 +2536,32 @@ describe("provisionProject", () => {
 		expect(executeSpy).toHaveBeenCalled();
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 		expect(r).toEqual({ jobId: "job-7" });
+	});
+
+	it("refuses a deploy that names no plan, before anything is inserted (decision M23)", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(),
+			insert: new Map([[jobs, [{ id: "job-8" }]]]),
+		});
+
+		await expect(provisionProject("p1")).rejects.toBeInstanceOf(PlanBindingError);
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow(/no values/);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+});
+
+describe("planProject — configuration hash", () => {
+	it("stamps the hash of the snapshot it plans from, the value a deploy of this plan is checked against", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(),
+			insert: new Map([[jobs, [{ id: "job-9" }]]]),
+		});
+
+		await planProject("p1");
+
+		const jobVals = valuesFor(valuesSpy, jobs);
+		expect(jobVals).toMatchObject({ job_type: "PLAN" });
+		expect(jobVals.configuration_hash).toBe(configurationHashOf(jobVals.config_snapshot));
 	});
 });
 

@@ -109,6 +109,9 @@ export async function maybeAutoHeal(
 			environment_id: environmentId,
 			cloud_identity_id: lastDeploy.cloud_identity_id,
 			job_type: "DEPLOY",
+			// A system origin with no plan by design (lib/approvals/plan-binding.ts): it re-applies the
+			// last deployed snapshot, names no plan job, and the runner plans it afresh.
+			initiated_by: "system",
 			config_snapshot: lastDeploy.config_snapshot,
 			status: "QUEUED",
 			// An auto-heal re-apply is a fresh operation → a new trace root.

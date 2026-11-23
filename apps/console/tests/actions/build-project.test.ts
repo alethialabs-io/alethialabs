@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Mocked-boundary tests for the W2 BUILD enqueue entrypoint (#605): buildProject queues a
-// BUILD with the env's frozen snapshot off an ACTIVE environment, and provisionProject
-// reroutes to build-then-deploy exactly when (a) the env is ACTIVE, (b) the snapshot
-// carries a repo-sourced service, and (c) no gated plan is being applied. Same harness
-// shape as projects.test.ts (thenable drizzle chain through withActorScope).
+// BUILD with the env's frozen snapshot off an ACTIVE environment. provisionProject applies a
+// reviewed plan (decision M23) and so never reroutes to a BUILD: a deploy with no plan is
+// refused, and a named plan deploys exactly that plan. Same harness shape as projects.test.ts
+// (thenable drizzle chain through withActorScope).
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,11 +16,24 @@ vi.mock("@/lib/db", () => ({
 	getServiceDb: vi.fn(),
 }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// The reviewed-plan read is unit-tested in tests/lib/approvals/plan-binding.test.ts; here it resolves
+// any named plan, and refuses (with the real error type) when none is named.
+vi.mock("@/lib/approvals/plan-binding", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@/lib/approvals/plan-binding")>();
+	return {
+		...actual,
+		resolveReviewedPlan: vi.fn(async (_tx: unknown, target: { planJobId?: string | null }) => {
+			if (!target.planJobId) throw new actual.PlanBindingError("plan_required", "A deploy applies a reviewed plan.");
+			return { planJobId: target.planJobId, planSha256: "b".repeat(64) };
+		}),
+	};
+});
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
 vi.mock("@/lib/authz/tuple-sync", () => ({ mirrorHierarchyEdge: vi.fn() }));
 
 import { buildProject, provisionProject } from "@/app/server/actions/projects";
+import { PlanBindingError } from "@/lib/approvals/plan-binding";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
@@ -205,40 +218,28 @@ describe("buildProject", () => {
 	});
 });
 
-describe("provisionProject — W2 build-then-deploy rerouting", () => {
-	it("queues BUILD first on an ACTIVE env with repo-sourced services (the chain deploys)", async () => {
+describe("provisionProject — a deploy applies the reviewed plan and never reroutes", () => {
+	it("refuses a deploy that names no plan, even on an ACTIVE env with repo-sourced services", async () => {
 		const { valuesSpy } = setupDb(
 			snapshotSelect("ACTIVE", [repoServiceRow]),
 			new Map([[jobs, [{ id: "job-b2" }]]]),
 		);
 
-		const r = await provisionProject("p1");
+		await expect(provisionProject("p1")).rejects.toBeInstanceOf(PlanBindingError);
 
-		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "BUILD" });
-		expect(r).toEqual({ jobId: "job-b2", jobType: "BUILD" });
+		expect(valuesSpy.mock.calls.some((c) => c[0] === jobs)).toBe(false);
+		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 
-	it("deploys directly when there are no repo-sourced services", async () => {
-		const { valuesSpy } = setupDb(
-			snapshotSelect("ACTIVE", [imageServiceRow]),
-			new Map([[jobs, [{ id: "job-d1" }]]]),
-		);
-
-		const r = await provisionProject("p1");
-
-		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "DEPLOY" });
-		expect(r).toEqual({ jobId: "job-d1" });
-	});
-
-	it("deploys infra directly on first provision (env not ACTIVE) even with repo services", async () => {
+	it("deploys infra on first provision (env not ACTIVE) from the named plan", async () => {
 		const { valuesSpy } = setupDb(
 			snapshotSelect("DRAFT", [repoServiceRow]),
 			new Map([[jobs, [{ id: "job-d2" }]]]),
 		);
 
-		const r = await provisionProject("p1");
+		const r = await provisionProject("p1", "plan-8");
 
-		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "DEPLOY" });
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "DEPLOY", plan_job_id: "plan-8" });
 		expect(r).toEqual({ jobId: "job-d2" });
 	});
 
@@ -253,6 +254,7 @@ describe("provisionProject — W2 build-then-deploy rerouting", () => {
 		expect(valuesFor(valuesSpy, jobs)).toMatchObject({
 			job_type: "DEPLOY",
 			plan_job_id: "plan-9",
+			plan_sha256: "b".repeat(64),
 		});
 		expect(r).toEqual({ jobId: "job-d3" });
 	});

@@ -22,16 +22,21 @@ import (
 // two digests are equal. Every other outcome is a refusal with a PlanBindingCode: there is no path
 // from a job that carries a digest to an apply of a plan computed afterwards.
 //
+// A job that names a plan job must carry its digest: a named plan without one is refused too, and
+// the apply never falls back to computing a plan of its own. A job that names no plan job is a
+// system re-apply (auto-heal, the build chain) the console queues without a plan by design; it is
+// not bound, and the runner plans it afresh.
+//
 // The rule reads the job, not who queued it, so it is the same for a job from the console, the
-// CLI, an agent or git. A job that carries no digest is not bound and is outside this file.
+// CLI, an agent or git.
 
 // PlanBindingCode names why an apply bound to a reviewed plan was refused. The values are stable:
 // they are posted as `plan_binding_refusal` in the failed job's metadata.
 type PlanBindingCode string
 
 const (
-	// PlanDigestMissing: the digest the job carries is not a SHA-256 digest, so there is nothing
-	// to compare the plan with.
+	// PlanDigestMissing: the job names a plan job but carries no SHA-256 digest of it, so there is
+	// nothing to compare the plan with.
 	PlanDigestMissing PlanBindingCode = "plan_digest_missing"
 	// PlanReferenceMissing: the job carries a plan digest but names no plan job to check it against.
 	PlanReferenceMissing PlanBindingCode = "plan_reference_missing"
@@ -103,14 +108,18 @@ type planBinding struct {
 	digest    string // lowercase hex SHA-256 of the reviewed plan file
 }
 
-// jobPlanBinding reads the reviewed plan a job is bound to. bound is false when the job carries no
-// digest. A job that carries one must also name the plan job, and the digest must be well formed.
+// jobPlanBinding reads the reviewed plan a job is bound to. bound is false only when the job names
+// no plan job and carries no digest. A job that names a plan job must carry its digest, a job that
+// carries a digest must name the plan job, and the digest must be well formed.
 func jobPlanBinding(job *Job) (binding planBinding, bound bool, err error) {
 	planJobID := derefTrim(job.PlanJobID)
 	digest := strings.ToLower(derefTrim(job.PlanSHA256))
 	switch {
-	case digest == "":
+	case digest == "" && planJobID == "":
 		return planBinding{}, false, nil
+	case digest == "":
+		return planBinding{}, true, refusePlan(PlanDigestMissing, planJobID, nil,
+			"this job names plan job %s but carries no digest of that plan, so it cannot be confirmed as the reviewed one.", planJobID)
 	case planJobID == "":
 		return planBinding{}, true, refusePlan(PlanReferenceMissing, "", nil,
 			"this job carries a plan digest but names no plan job to check it against.")
