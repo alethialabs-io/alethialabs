@@ -178,8 +178,9 @@ merge_protections:
       # file has to wait for it or the merge is refused after the queue has already decided.
       - "check-success=contribution-legal"
 
-# Auto-queue: automatically queues + squash-merges a matching PR once the merge_protections
-# success_conditions above pass. The current, non-deprecated auto-merge mechanism (no @mergifyio command).
+# Documented auto-queue: queues a matching PR once the merge_protections success_conditions above
+# pass — but only when merge protections are ENABLED for the repository, and as of 2026-11-23 they
+# are not (see `pull_request_rules` at the end of this file, which is what actually queues PRs).
 merge_protections_settings:
   auto_merge_conditions:
     - base = dev
