@@ -4,6 +4,7 @@
 import {
 	CONSUMER_ADR,
 	CONSUMER_PAYMENT_OBLIGATION_LABEL,
+	CONSUMER_PAYMENT_OBLIGATION_LABEL_BG,
 	PAID_MARKETS,
 	WITHDRAWAL_PERIOD_DAYS,
 } from "@repo/legal/commerce";
@@ -25,12 +26,18 @@ export const metadata: Metadata = {
  * and whether we can sell to consumers at all all come from `@repo/legal/commerce` — the same module
  * the server-side gate and the withdrawal accounting read. A page that retyped them would be the
  * copy that drifts, and it would drift in the direction of whatever was easiest to write.
+ *
+ * TWO LANGUAGES, ONE SEAL. The Bulgarian section (`#bg`) says what the English says, for buyers in
+ * Bulgaria (ЗЗП art. 52a and the Bulgarian-language rule for consumer information). Both halves are
+ * in this one file, so the hash in `LEGAL_DOCUMENTS` covers both, and the withdrawal acknowledgement
+ * email quotes sentences from each verbatim (tests/lib/email/withdrawal-acknowledgement.test.ts in
+ * the console).
  */
 export default function ConsumerRightsPage() {
 	const sellsToConsumers = PAID_MARKETS.some((c) => c.capacity === "consumer");
 
 	return (
-		<LegalShell title="Consumer rights" lastUpdated="November 22, 2026">
+		<LegalShell title="Consumer rights" lastUpdated="November 23, 2026">
 			<p>
 				This page is for people buying Alethia as an individual, outside a trade,
 				business or profession. If you are buying on behalf of a company, these
@@ -78,8 +85,8 @@ export default function ConsumerRightsPage() {
 					{LEGAL_ENTITY.contactEmail}
 				</a>
 				. We tell you what you will get back <em>before</em> the withdrawal
-				takes effect. A withdrawal control in the console&rsquo;s billing
-				settings will be in place before consumer sales open.
+				takes effect. You can also withdraw from the billing settings in the
+				console, which shows what you will get back before you confirm.
 			</p>
 
 			<h3>What withdrawing costs you</h3>
@@ -109,7 +116,9 @@ export default function ConsumerRightsPage() {
 			</ul>
 			<p>
 				Withdrawing ends your access immediately, and we refund you using the
-				same payment method you paid with, without a fee.
+				same payment method you paid with, without a fee. If we cannot refund
+				automatically, for example because there was no card payment to refund
+				against, we contact you within 14 days to arrange it.
 			</p>
 
 			<h2>Cancelling is a different thing</h2>
@@ -156,6 +165,145 @@ export default function ConsumerRightsPage() {
 				Full details are on the <Link href="/imprint">company information</Link>{" "}
 				page.
 			</p>
+
+			<section id="bg" lang="bg">
+				<h2>Права на потребителите (на български език)</h2>
+				<p>
+					Тази част е за лица, които купуват Alethia като физически лица извън
+					своята търговска или професионална дейност. Ако купувате от името на
+					дружество, тези законови права не се прилагат за Вас — вместо тях се
+					прилагат <Link href="/terms">Общите условия</Link>. При поръчката
+					питаме в какво качество купувате и никога не предполагаме, защото
+					отговорът определя кой закон се прилага.
+				</p>
+
+				{!sellsToConsumers && (
+					<>
+						<h3>Все още не продаваме на потребители</h3>
+						<p>
+							{CURRENT_LEGAL_OPERATOR} все още не предлага платени планове на
+							физически лица в нито една държава, затова в момента не приемаме
+							плащания от физически лица. Community остава безплатен и без
+							ограничение във времето, а пробният период на Pro не изисква карта.
+							Тази страница описва правата, които ще се прилагат, когато започнат
+							продажбите на потребители, и е публикувана сега, за да бъдат тези
+							права оповестени, преди да бъдат платени каквито и да е суми, а не
+							след това.
+						</p>
+					</>
+				)}
+
+				<h3>Преди да поръчате</h3>
+				<p>
+					Преди да поръчате, Ви показваме общата цена, която ще платите,
+					включително всички данъци — а не цена, която нараства на последната
+					стъпка. Казваме Ви дали абонаментът се подновява, кога и как да го
+					спрете. Бутонът, с който се прави поръчката, гласи „
+					{CONSUMER_PAYMENT_OBLIGATION_LABEL_BG}“, защото поръчка, която струва
+					пари, трябва да казва това на бутона, а не в абзац над него.
+				</p>
+				<p>
+					След поръчката Ви изпращаме потвърждение, което можете да запазите и
+					което съдържа какво сте купили, колко сте платили и тези права.
+				</p>
+
+				<h3>Право на отказ в срок от {WITHDRAWAL_PERIOD_DAYS} дни</h3>
+				<p>
+					Можете да се откажете от договора в срок от {WITHDRAWAL_PERIOD_DAYS}{" "}
+					дни от направата на поръчката, по каквато и да е причина, без да е
+					необходимо да ни я посочвате. Можете да го направите, като ни пишете
+					на{" "}
+					<a href={`mailto:${LEGAL_ENTITY.contactEmail}`}>
+						{LEGAL_ENTITY.contactEmail}
+					</a>
+					. Казваме Ви какво ще получите обратно, <em>преди</em> отказът да
+					породи действие. Можете да се откажете и от настройките за плащане в
+					конзолата, които показват какво ще получите обратно, преди да
+					потвърдите.
+				</p>
+
+				<h4>Какво Ви струва отказът</h4>
+				<p>
+					Това зависи от един избор, който правите при поръчката — дали услугата
+					да започне веднага, или да изчака изтичането на{" "}
+					{WITHDRAWAL_PERIOD_DAYS}-те дни.
+				</p>
+				<ul>
+					<li>
+						<strong>Ако сте поискали да изчакаме</strong>, нищо не е
+						предоставено и получавате обратно цялата сума.
+					</li>
+					<li>
+						<strong>Ако сте поискали да започнем веднага</strong> и сте
+						потвърдили, че разбирате последицата, заплащате частта, която
+						действително сте използвали — изчислена ден по ден спрямо платения
+						период — а останалото Ви възстановяваме. Всяка част от цент остава
+						за Вас, а не за нас.
+					</li>
+					<li>
+						<strong>Ако сте поискали да започнем веднага, но никога не сте
+						били помолени да потвърдите тази последица</strong>, не дължите
+						нищо, въпреки че услугата е била предоставяна. Това е санкцията,
+						която законът налага на нас, задето не сме попитали както трябва, и
+						ние я прилагаме сами, вместо да Ви караме да я отстоявате.
+					</li>
+				</ul>
+				<p>
+					Отказът прекратява достъпа Ви незабавно и Ви възстановяваме сумата
+					чрез същото платежно средство, с което сте платили, без такса. Ако не
+					можем да възстановим сумата автоматично, например защото няма плащане
+					с карта, срещу което да я възстановим, се свързваме с Вас в срок от 14
+					дни, за да уредим възстановяването.
+				</p>
+
+				<h3>Прекратяването е нещо различно</h3>
+				<p>
+					След изтичането на {WITHDRAWAL_PERIOD_DAYS}-те дни можете да
+					прекратите абонамента по всяко време. Прекратяването спира следващото
+					подновяване, а достъпът Ви продължава до края на вече платения период
+					— запазвате това, за което сте платили, и неизползваната част не се
+					възстановява. Не предлагаме възстановяване по преценка, защото
+					възстановяване, което зависи от това кой пита, не е право.
+				</p>
+
+				<h3>Ако нещо се обърка</h3>
+				<p>
+					Първо ни пишете на{" "}
+					<a href={`mailto:${LEGAL_ENTITY.supportEmail}`}>
+						{LEGAL_ENTITY.supportEmail}
+					</a>{" "}
+					— повечето проблеми се решават по-бързо така, отколкото с жалба. Ако
+					това не реши въпроса, можете да се обърнете към:
+				</p>
+				<ul>
+					{CONSUMER_ADR.map((body) => (
+						<li key={body.url}>
+							<a href={body.url} rel="noopener noreferrer" target="_blank">
+								{body.localName}
+							</a>{" "}
+							— {body.localRole}
+						</li>
+					))}
+				</ul>
+				<p>
+					Не сме задължени да използваме и не поемаме ангажимент да използваме
+					конкретен орган за алтернативно решаване на спорове; посочените по-горе
+					са изброени, за да знаете къде да се обърнете. Платформата за онлайн
+					решаване на спорове на Европейската комисия не е посочена, защото беше
+					закрита през юли 2025 г. — възможно е все още да я виждате цитирана на
+					сайтовете на други търговци.
+				</p>
+
+				<h3>С кого сключвате договора</h3>
+				<p>
+					{LEGAL_ENTITY.legalNameBulgarian},{" "}
+					{LEGAL_ENTITY.legalFormBulgarian.toLowerCase()}, регистрирано в{" "}
+					{LEGAL_ENTITY.jurisdictionBulgarian} с ЕИК{" "}
+					{LEGAL_ENTITY.registrationNumber}, със седалище и адрес на управление{" "}
+					{LEGAL_ENTITY.registeredAddressBulgarian}. Пълните данни са на
+					страницата с <Link href="/imprint">информация за дружеството</Link>.
+				</p>
+			</section>
 		</LegalShell>
 	);
 }
