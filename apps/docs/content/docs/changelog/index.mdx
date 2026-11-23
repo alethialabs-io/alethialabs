@@ -1,0 +1,57 @@
+---
+title: Changelog
+description: How Alethia is versioned, where each component's changes are recorded, and the platform release notes that pin a console build to a CLI and runner version.
+---
+
+# Changelog
+
+Alethia ships as three parts. The console is the web app and its API. The `alethia` CLI runs on your
+machine. The runner executes plan and apply jobs. The CLI and the runner each have a version
+number and a changelog. The console has no version number of its own: each build is identified by
+the commit it was built from.
+
+A **platform release** ties the three together. Its note names one console build, one CLI version
+and one runner version that are tested together. Self-hosters install from it.
+
+## Version numbers
+
+| Part | Version format | Released as |
+|---|---|---|
+| Platform | `YYYY.MM-beta`, for example `2027.01-beta` | A release note in this section |
+| CLI | Semantic version, `0.x.y` during the beta | A GitHub release on [`alethia-cli`](https://github.com/alethialabs-io/alethia-cli/releases), plus Homebrew, Scoop and Linux packages |
+| Runner | Semantic version, `0.x.y` during the beta | The container image `ghcr.io/alethialabs-io/runner:<version>` |
+| Console | The commit SHA of the build | Container images on `ghcr.io/alethialabs-io`, pinned by digest in each platform release note |
+
+During the beta, the CLI and the runner stay on `0.x`. A `0.x` minor release can contain breaking
+changes. Read the platform release note before you upgrade: it lists breaking changes and the steps
+to upgrade. Version `1.0.0` is reserved for general availability.
+
+## Component changelogs
+
+Each component changelog lists every change by type, with a link to the pull request. It is
+generated from the commit history when the component is released.
+
+- **CLI:** [`apps/cli/CHANGELOG.md`](https://github.com/alethialabs-io/alethialabs/blob/main/apps/cli/CHANGELOG.md)
+- **Runner:** [`apps/runner/CHANGELOG.md`](https://github.com/alethialabs-io/alethialabs/blob/main/apps/runner/CHANGELOG.md)
+
+Read these files on the `main` branch. Copies on other branches can be out of date.
+
+## Platform release notes
+
+No platform release has been published yet. The first is `2027.01-beta`, at the public beta. Each
+note lists:
+
+- the console image digests, the CLI version and the runner version that ship together
+- the user-visible highlights
+- breaking changes, with the steps to upgrade
+- known issues
+
+## Check the version you run
+
+Print the CLI version, the commit it was built from, and whether a newer release exists:
+
+```bash
+alethia version
+```
+
+To check a runner, read the image tag of the runner container you deployed.
