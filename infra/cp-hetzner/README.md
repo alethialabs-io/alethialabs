@@ -21,6 +21,41 @@ tofu init -backend-config=backend.hcl
 tofu plan && tofu apply
 ```
 
+## Delete protection
+
+The server `alethia-cp` and the data volume `alethia-data` (production Postgres and object
+storage) carry two independent guards:
+
+- `delete_protection = true` on both, and `rebuild_protection = true` on the server: Hetzner's API
+  refuses a delete or rebuild, whoever asks (console, `hcloud`, tofu).
+- `lifecycle { prevent_destroy = true }` on both: tofu refuses any plan that would destroy them,
+  and that includes a **replacement**. A change to `user_data`, `image` or `location` (all
+  force-new on the server) now fails the plan with an error, instead of planning a silent rebuild.
+
+Removing either is a **deliberate two-step**, never one PR:
+
+1. A reviewed PR that drops the flags (sets the protections to `false`, removes `prevent_destroy`),
+   applied on its own. That apply is an in-place update and destroys nothing.
+2. Only then a second change that performs the destroy or replacement, after the data on the
+   volume has a verified backup somewhere off the box.
+
+## Expected plan (adopting `get` and turning on protection)
+
+Against the current state, the next plan for this stack is expected to read:
+
+- `cloudflare_record.admin` — **create** (proxied CNAME `admin` onto the tunnel).
+- `cloudflare_record.get` — **import** (`dns-imports.tf`). The record was created by hand and
+  already exists, so without the import the create fails with "record already exists". If the
+  live record matches the declaration there is no further change for it.
+- `cloudflare_zero_trust_tunnel_cloudflared_config.cp` — **update in-place** (ingress rules for
+  `admin.` and `get.`).
+- `hcloud_server.cp` — **update in-place**: `delete_protection` and `rebuild_protection`
+  `false → true`. This is a protection API call; it does not reboot or rebuild the server.
+- `hcloud_volume.data` — **update in-place**: `delete_protection` `false → true`. No detach, no
+  resize.
+
+Nothing in this stack should show **destroy** or **replace**; if it does, stop and read why.
+
 ## Inbound email — Cloudflare Email Routing (free)
 
 > **Terraform does not manage this until the maintainer adopts it (#3291, #4374).**
