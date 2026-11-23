@@ -1,96 +1,151 @@
-# Stripe production activation runbook (inactive)
+# Stripe runbook: account setup as code, go-live, and billing operations
 
-> **Do not run this procedure.** No paid consumer market is active. Activation requires an approved
-> commerce launch covering terms, withdrawal/cancellation rights, pricing disclosures, tax/VAT,
-> invoicing, refund handling, and a production verification pass. This document only preserves the
-> technical seam for that later project.
+> **Live sales stay closed until EA-8 opens a cell** (`packages/legal/src/paid-markets.ts`). That
+> switch is the maintainer's. Sections 1 to 4 set up an account so it is ready for it. Running them
+> against the live account does not open a market.
 
-How to take the Stripe integration live and keep it "set-and-forget". Test and live are
-**separate datasets** in Stripe — the catalog, webhook endpoint, and env below must all be
-created again against the **live** secret key. Everything here is idempotent/re-runnable.
+Stripe test mode and live mode are **separate datasets**. Both are set up by the same script,
+`apps/console/scripts/stripe-setup.ts`, and checked by the same read-only script,
+`apps/console/scripts/stripe-check.ts`. Keys reach them only through the credential broker
+(`pnpm creds`), never on a command line or in a file you can read.
 
-Prereqs: the live secret key (`sk_live_…`) and publishable key (`pk_live_…`) from the
-**ALETHIA LABS (EIK 208913663)** account, and write access to the prod env vault
-(AWS Secrets Manager `alethia/prod/env`).
+| Profile | Holds | Store it with |
+|---|---|---|
+| `stripe-test` | the test-mode secret key, as `STRIPE_API_KEY` | `! pnpm creds --set stripe-test` |
+| `stripe-live` | the live-mode secret key, as `STRIPE_API_KEY` | `! pnpm creds --set stripe-live` |
+
+The maintainer types the key; the broker does not echo it. A restricted key (`rk_…`) works if it can
+read and write products, prices, meters, tax settings, portal configurations and webhook endpoints,
+and read the account and payment method configurations.
 
 ---
 
-## 1. Create the live catalog + webhook endpoint
+## 1. Plan, apply, check
 
-```bash
-STRIPE_SECRET_KEY=sk_live_… \
-  node apps/console/scripts/stripe-setup.mjs \
+Every run prints the account it targets first, as `→ Stripe TEST mode · account acct_… · <name> ·
+country BG`. Read that line before anything else.
+
+```sh
+# Test mode
+pnpm creds stripe-test -- pnpm -C apps/console run stripe:setup -- --plan
+pnpm creds stripe-test -- pnpm -C apps/console run stripe:setup -- --apply
+pnpm creds stripe-test -- pnpm -C apps/console run stripe:check
+
+# Live mode: every command needs --live, and a live key without it is refused
+pnpm creds stripe-live -- pnpm -C apps/console run stripe:setup -- --live --plan \
+  --webhook-url=https://alethialabs.io/api/webhooks/stripe
+pnpm creds stripe-live -- pnpm -C apps/console run stripe:setup -- --live --apply \
+  --webhook-url=https://alethialabs.io/api/webhooks/stripe
+pnpm creds stripe-live -- pnpm -C apps/console run stripe:check -- --live \
   --webhook-url=https://alethialabs.io/api/webhooks/stripe
 ```
 
-This ensures (idempotently): the **Alethia Pro** product + per-seat price, the
-`alethia_runner_minutes` billing meter, the graduated runner-minutes overage price, and a
-**webhook endpoint** subscribed to the full event set the handler processes:
+- **`--plan` only reads.** It prints one line per change: `+` create, `~` update in place, `±`
+  replace, `✓` already right, `✗` blocking. A blocking line makes the run exit 1 and `--apply`
+  refuse to change anything.
+- **`--apply` makes exactly the plan's changes**, then reads the account again and fails unless a
+  second plan is empty. Running it twice in a row changes nothing.
+- **`stripe:check` only reads.** It exits 0 only when the setup plan would be empty. Its `key: value`
+  lines (`--json` for one JSON object) are what EA-8's evidence strings cite: mode, account id and
+  country, `charges_enabled`, `payouts_enabled`, the tax settings status and head office, each
+  product's tax code, each price's tax behaviour, the portal settings, the payment methods the
+  default configuration offers, and every webhook endpoint with whether its events match the
+  handler's.
+- **Without `--webhook-url`** the endpoint is not planned. `stripe:check` still lists every endpoint.
 
-- `customer.subscription.created | updated | deleted | trial_will_end`
-- `checkout.session.completed`
-- `invoice.payment_succeeded | payment_failed`
-- `payment_intent.succeeded`
+### What the script manages
 
-It prints the live `STRIPE_PRICE_TEAM`, `STRIPE_PRICE_METER_TEAM`, and (on first creation)
-`STRIPE_WEBHOOK_SECRET`. If the endpoint already exists it **re-syncs `enabled_events`** but
-can't re-read the secret — roll it in the dashboard if you need a fresh one.
+| Object | Desired state | How a difference is fixed |
+|---|---|---|
+| Products Alethia Pro, runner minutes, AI Plus, AI Max (found by `metadata.alethia`) | name, and tax code `txcd_10103001` (SaaS, business use) | updated in place |
+| Prices `alethia_pro_monthly`, `alethia_runner_minutes_pro`, `alethia_ai_plus_monthly`, `alethia_ai_max_monthly` (found by lookup key) | the planned amounts in `@repo/plan-catalog`, USD with an EUR option, no discount, `tax_behavior: exclusive` | **replaced**: a price cannot change, so a new price takes the lookup key and the old one is archived. Existing subscriptions keep the old price |
+| Billing meter `alethia_runner_minutes` | sum, by `stripe_customer_id` | created if missing; a meter with other settings is blocking (meters cannot change) |
+| Tax settings | head office from `LEGAL_ENTITY` (Sofia, BG), default tax code `txcd_10103001`, default behaviour `exclusive` | updated. This does **not** turn on Stripe Tax; that is `STRIPE_TAX_ENABLED` and a dashboard decision (§3) |
+| The **default** Customer Portal configuration | customers can change their email only: **no tax-ID edit, no address and so no country change**; no plan change (it would skip the console's purchase gate); cancel at period end; payment method update on; Stripe invoice history **off**; privacy and terms links to alethialabs.io | updated. If the account has no default configuration yet, the plan is blocking: open Settings → Billing → Customer portal in that mode, press Save once, and run again |
+| Webhook endpoint at `--webhook-url` | exactly the events `lib/billing/webhook-handler.ts` handles, enabled | created, or its events set to exactly that list (a stray event such as `payment_intent.succeeded` is dropped). Two endpoints at one URL is blocking |
 
-> The event set is defined once in `scripts/stripe-setup.mjs` (`WEBHOOK_EVENTS`) and mirrored
-> by the handler in `app/api/webhooks/stripe/route.ts`. Keep them in step when adding events.
+The event list is `WEBHOOK_EVENTS` in `stripe-setup.ts`. A unit test fails when it differs from the
+handler's `case` labels, so adding an event to the handler means adding it there too.
 
-## 2. Push env into the prod vault (`alethia/prod/env`)
+### The webhook signing secret is never printed
 
-Set (live values):
+Stripe returns an endpoint's signing secret only when the endpoint is created. `--apply` writes it to
+`~/.alethia/stripe/webhook-secret.<mode>.<account id>` with mode 0600 and prints only that path.
+
+- Put it where it belongs **without printing it**: `STRIPE_WEBHOOK_SECRET` in `alethia/prod/env` for
+  live, or the GitHub secret for test (`gh secret set STRIPE_TEST_WEBHOOK_SECRET < <path>`).
+- Then delete the file.
+- An endpoint that already exists keeps its secret, and the script cannot read it. To get a new one,
+  roll it in the dashboard (Developers → Webhooks → the endpoint → Roll secret) and store it the same
+  way.
+
+### After a test-mode apply that replaced a price
+
+The release gate reads the test price ids from repository variables (`STRIPE_TEST_PRICE_TEAM`,
+`STRIPE_TEST_PRICE_METER_TEAM`, `STRIPE_TEST_PRICE_AI_PLUS`, `STRIPE_TEST_PRICE_AI_MAX`;
+`.github/workflows/release-gate.yml`). An archived price cannot start a new subscription, so after a
+`±` line set each replaced id from the printed block:
+
+```sh
+gh variable set STRIPE_TEST_PRICE_TEAM --body price_…
+```
+
+Price ids are not secrets.
+
+## 2. Values for the production env (`alethia/prod/env`)
+
+After the live apply, these are written into the vault and the console is redeployed (an ops step,
+done when instructed):
 
 | Key | Value |
 |-----|-------|
 | `ALETHIA_DEPLOYMENT_MODE` | `hosted` |
-| `STRIPE_SECRET_KEY` | `sk_live_…` |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | `pk_live_…` |
-| `STRIPE_WEBHOOK_SECRET` | `whsec_…` (from step 1 or the dashboard) |
-| `STRIPE_PRICE_TEAM` | from step 1 |
-| `STRIPE_PRICE_METER_TEAM` | from step 1 |
-| `STRIPE_TAX_ENABLED` | `true` only once Stripe Tax origin + registrations are set up |
+| `STRIPE_SECRET_KEY` | the live key, from the `stripe-live` profile |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | `pk_live_…` (not a secret) |
+| `STRIPE_WEBHOOK_SECRET` | from the 0600 file (§1) |
+| `STRIPE_PRICE_TEAM`, `STRIPE_PRICE_METER_TEAM`, `STRIPE_PRICE_AI_PLUS`, `STRIPE_PRICE_AI_MAX` | from the apply's printed block |
+| `STRIPE_TAX_ENABLED` | `true` only after the Stripe Tax decision in §3 |
+| `ODOO_INVOICE_URL`, `ODOO_INVOICE_TOKEN` | confirm present (check the key names only) |
 
-The approved transactional email provider must also be live. Hosted production uses AWS SES from
-the `alethia-email` account (`EMAIL_PROVIDER=ses`, the `ALETHIA_SES_*` keys;
-`infra/email-ses-account/README.md`); re-verify this at commerce activation time.
+Hosted production sends email through AWS SES from the `alethia-email` account
+(`EMAIL_PROVIDER=ses`, the `ALETHIA_SES_*` keys; `infra/email-ses-account/README.md`).
 
-Redeploy the console so it picks up the new env.
+## 3. Dashboard-only steps (no API)
 
-## 3. Configure the live dashboard
+The script cannot do these. They are the maintainer's, in the live dashboard:
 
-These feed Stripe's compliant invoice **PDF** (which we attach to our branded receipt) and the
-Customer Portal:
+1. **Activate the account** as legal representative of ALETHIA LABS (EIK 208913663): business
+   details, identity verification, a EUR bank account, the statement descriptor, public support
+   details and the website.
+2. **Settings → Emails: turn off emailing finalised invoices and invoice PDFs to customers**, and the
+   other Stripe customer emails, **before go-live**, not after. The customer gets one document called
+   an invoice: Alethia's.
+3. **Branding** (logo, icon, colour) for Checkout and the portal.
+4. **Decide whether to turn on Stripe Tax.** It is a paid fee and computes zero for a seller with no
+   registration. EA-5's threshold counters do not need it. Only after this, set `STRIPE_TAX_ENABLED`.
+5. **Save the Customer Portal settings once** if `--plan` reports no default configuration (§1).
 
-- **Branding** (Settings → Branding): logo, icon, brand color — appears on the invoice PDF + portal.
-- **Invoicing** (Settings → Invoicing): invoice number prefix/sequence, default memo + footer,
-  default payment terms. Sequential numbering is what makes the PDF a compliant invoice.
-- **Customer emails** (Settings → Emails): see the staged flip in step 5.
-- **Tax** (only if `STRIPE_TAX_ENABLED=true`): set the origin address + registrations first, or
-  checkout errors.
+### Stripe's PDF is not the invoice of record
 
-## 4. Smoke-test on live
+The invoice of record is the фактура issued through Odoo (`lib/billing/odoo-invoice.ts`), which
+carries what Art. 114 ЗДДС requires. Stripe's invoice and its PDF are payment records only. That is
+why the portal does not show Stripe's invoice history and why Stripe's invoice emails are off at
+go-live.
 
-- Subscribe a real org (or run a $1 test), then confirm:
-  - The webhook shows **200** in the dashboard (Developers → Webhooks → your endpoint).
-  - A branded **receipt** email arrives with the **invoice PDF attached**.
-  - `organization_billing` flipped to `active`, and a `stripe_webhook_event` row is `done`.
-- Trigger a failed payment (a test card that declines on renewal) → confirm the **dunning** email.
+## 4. Smoke test on live
 
-## 5. Staged email flip (own the customer experience)
+- Subscribe a real organisation in an open cell, then confirm:
+  - the webhook shows **200** (Developers → Webhooks → the endpoint);
+  - `organization_billing` is `active` and a `stripe_webhook_event` row is `done`;
+  - the фактура is issued in Odoo and the customer receives Alethia's email, and no email from Stripe.
+- Trigger a failed renewal with a declining card and confirm the dunning email.
+- Run `stripe:check -- --live --webhook-url=…` and keep its output as the evidence.
 
-We own the billing emails through the configured transactional provider, but roll it out safely:
+## 5. Customer emails
 
-1. **Initially, leave Stripe's automatic customer emails ON** (Settings → Emails → "Successful
-   payments", "Failed payments", etc.). Customers may briefly get both.
-2. Watch ~1 week of live events: verify our receipt/dunning/trial/cancel emails match reality
-   (right recipient, amounts, PDF attached, exactly one per event — the `stripe_webhook_event`
-   ledger guarantees no duplicates on Stripe retries).
-3. **Then disable Stripe's customer emails** so customers get one consistent Alethia-branded
-   experience. Our emails remain the source of truth for customer comms; Stripe stays the source
-   of truth for the invoice data + PDF.
+Alethia sends every billing email (receipt, dunning, trial, cancel) through the transactional
+provider. Stripe's customer emails stay off (§3 step 2). The `stripe_webhook_event` ledger makes each
+email go out once per event, even when Stripe retries.
 
 ## 6. Close a paid team setup that blocks its organization
 
@@ -365,6 +420,10 @@ pnpm -C apps/console billing:payment-holds reconcile --backfill   # again, once 
 ## Rollback
 
 - Set `STRIPE_TAX_ENABLED=false` to drop automatic tax if registrations aren't ready.
-- Re-enable Stripe's automatic emails in the dashboard (instant) if our email path has an issue.
+- If Alethia's email path fails, fix it; do not turn Stripe's invoice emails back on. They would send
+  the customer a second document titled "invoice" with a different number from the фактура.
+- A wrong catalog change is undone by the script, not by hand: fix the desired state in
+  `stripe-setup.ts` or `@repo/plan-catalog`, then `--plan` and `--apply` again. An archived price stays
+  archived; the replacement takes its lookup key.
 - The webhook is fail-safe: an email error never fails the webhook (state still syncs); a handler
   error returns 500 so Stripe retries, and the event-log makes retries exactly-once.
