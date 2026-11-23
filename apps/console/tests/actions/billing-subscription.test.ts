@@ -334,6 +334,7 @@ import { getServiceDb } from "@/lib/db";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { listOrgInvoices } from "@/lib/billing/invoices";
 import { getPurchaseStripe, getStripe } from "@/lib/billing/stripe";
+import { STRIPE_INVOICE_FOOTER } from "@/lib/billing/receipt-footer";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import { openHold } from "@/lib/billing/payment-holds/store";
 import {
@@ -595,6 +596,7 @@ describe("createCheckoutSession", () => {
 			email: "owner@test.io",
 			name: "Acme",
 			metadata: { organization_id: "org-1", created_by: "user-1" },
+			invoice_settings: { footer: STRIPE_INVOICE_FOOTER },
 		});
 		expect(upsertOrgBilling).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -1314,6 +1316,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 			email: "owner@test.io",
 			name: "NewCo",
 			metadata: { created_by: "user-1" },
+			invoice_settings: { footer: STRIPE_INVOICE_FOOTER },
 		});
 		const subArgs = stripe.subscriptions.create.mock.calls[0][0];
 		expect(subArgs.items).toEqual([{ price: "price_team", quantity: 1 }]);

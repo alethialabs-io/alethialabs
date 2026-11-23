@@ -9,8 +9,8 @@
 //
 // It reports the mode, the account (id, name, country, charges_enabled, payouts_enabled), the tax
 // settings status and head office, each product's tax code, each price, the default Customer Portal
-// settings, the payment methods the default configuration offers, and every webhook endpoint with
-// its events. Each line is `key: value`, so EA-8's evidence strings can cite it; `--json` prints the
+// settings (with its headline), the default payment method configuration (which methods are set on,
+// and which of those are available at checkout), and every webhook endpoint with its events. Each line is `key: value`, so EA-8's evidence strings can cite it; `--json` prints the
 // same report as one JSON object. Exit 0 when the account matches stripe-setup's desired state
 // (the setup plan is empty), 1 when it does not, 2 on a usage error.
 //
@@ -19,6 +19,7 @@
 import { pathToFileURL } from "node:url";
 import Stripe from "stripe";
 import {
+	ALL_PAYMENT_METHODS,
 	type AccountView,
 	computePlan,
 	DESIRED_PRICES,
@@ -36,18 +37,6 @@ import {
 	WEBHOOK_EVENTS,
 	type WebhookView,
 } from "./stripe-setup";
-
-/** The payment methods the report names, in the order printed. */
-const PAYMENT_METHODS = [
-	"card",
-	"link",
-	"sepa_debit",
-	"us_bank_account",
-	"apple_pay",
-	"google_pay",
-	"bancontact",
-	"ideal",
-] as const;
 
 /** One webhook endpoint as the report shows it. */
 export interface WebhookReport {
@@ -86,19 +75,31 @@ export interface CheckReport {
 		paymentMethodUpdate: boolean;
 		subscriptionUpdate: boolean;
 		subscriptionCancel: string;
+		headline: string | null;
 	} | null;
-	paymentMethods: Record<string, boolean> | null;
+	paymentMethods: {
+		id: string;
+		/** Methods whose account preference is `on`, sorted. */
+		on: string[];
+		/** Methods Stripe can offer at checkout now (preference on AND capability active), sorted. */
+		available: string[];
+	} | null;
 	webhooks: WebhookReport[];
 	/** stripe-setup's plan against this account; empty actions and errors means it matches. */
 	plan: string[];
 	matches: boolean;
 }
 
-/** The available-at-checkout flag of each named payment method in a configuration. */
-function paymentMethodsOf(cfg: PaymentMethodConfigView): Record<string, boolean> {
-	const out: Record<string, boolean> = {};
-	for (const pm of PAYMENT_METHODS) out[pm] = cfg[pm]?.available ?? false;
-	return out;
+/** The methods a configuration sets on, and those of them Stripe can offer at checkout now. */
+function paymentMethodsOf(cfg: PaymentMethodConfigView): NonNullable<CheckReport["paymentMethods"]> {
+	const on: string[] = [];
+	const available: string[] = [];
+	for (const method of ALL_PAYMENT_METHODS) {
+		const setting = cfg[method];
+		if (setting?.display_preference.preference === "on") on.push(method);
+		if (setting?.available) available.push(method);
+	}
+	return { id: cfg.id, on, available };
 }
 
 /** The account's display name. */
@@ -131,9 +132,6 @@ export async function runCheck(
 		events: [...w.enabled_events].sort(),
 		matchesHandler: [...w.enabled_events].sort().join(",") === want,
 	}));
-
-	const pmcs = await client.paymentMethodConfigurations.list({ limit: 100 });
-	const defaultPmc = pmcs.data.find((c) => c.is_default);
 
 	const ho = obs.tax.head_office?.address;
 	const portal = obs.portal;
@@ -177,9 +175,10 @@ export async function runCheck(
 					subscriptionCancel: portal.features.subscription_cancel.enabled
 						? portal.features.subscription_cancel.mode
 						: "off",
+					headline: portal.business_profile.headline,
 				}
 			: null,
-		paymentMethods: defaultPmc ? paymentMethodsOf(defaultPmc) : null,
+		paymentMethods: obs.paymentMethods ? paymentMethodsOf(obs.paymentMethods) : null,
 		webhooks,
 		plan: formatPlan(plan),
 		matches: plan.actions.length === 0 && plan.errors.length === 0,
@@ -214,15 +213,17 @@ export function formatCheck(r: CheckReport): string[] {
 			`portal.payment_method_update: ${yes(r.portal.paymentMethodUpdate)}`,
 			`portal.subscription_update: ${yes(r.portal.subscriptionUpdate)}`,
 			`portal.subscription_cancel: ${r.portal.subscriptionCancel}`,
+			`portal.headline: ${r.portal.headline ?? "(none)"}`,
 		);
 	} else {
 		lines.push("portal: (no default configuration)");
 	}
 	if (r.paymentMethods) {
-		const on = Object.entries(r.paymentMethods)
-			.filter(([, v]) => v)
-			.map(([k]) => k);
-		lines.push(`payment_methods.available: ${on.join(",") || "(none)"}`);
+		lines.push(
+			`payment_methods.id: ${r.paymentMethods.id}`,
+			`payment_methods.on: ${r.paymentMethods.on.join(",") || "(none)"}`,
+			`payment_methods.available: ${r.paymentMethods.available.join(",") || "(none)"}`,
+		);
 	} else {
 		lines.push("payment_methods: (no default configuration)");
 	}
