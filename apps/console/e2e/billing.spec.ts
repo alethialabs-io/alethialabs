@@ -5,7 +5,8 @@
 //   1. Plan-state coherence — a canceled org never shows "Renews / next charge"; an active
 //      org shows "Renews" and never a "Canceled/Cancels" contradiction.
 //   2. Owned invoices — locally-mirrored invoices render on the dedicated invoices page with
-//      a working preview + an authorized PDF route that never 404s for a mirrored invoice.
+//      a working preview + an authorized PDF route that serves the stored фактура, and answers
+//      "being issued" (never Stripe's hosted invoice) for a row that has none.
 //
 // Auth is done via the API (email-OTP → session cookie → create + activate org) rather than
 // the brittle multi-step signup UI: it's faster and deterministic. The one step the API cannot
@@ -21,6 +22,7 @@ import { readFile } from "node:fs/promises";
 import { ACCEPTANCE_LABELS } from "@repo/legal/documents";
 import { expect, type Page, test } from "@playwright/test";
 import postgres from "postgres";
+import { storeFacturaPdf } from "./helpers/invoice-pdf";
 
 const DB_URL = process.env.ALETHIA_DATABASE_URL ?? "";
 const LOG_PATH = process.env.DEV_CONSOLE_LOG ?? "/tmp/alethia-dev-console.log";
@@ -150,21 +152,28 @@ async function seedBilling(
 			current_period_end = EXCLUDED.current_period_end, updated_at = now()`;
 }
 
-/** Inserts a mirrored invoice row for the org; returns its id. */
+/**
+ * Inserts a mirrored invoice row for the org; returns its id. `pdfKey` is the stored фактура's
+ * object key (`storeFacturaPdf`), written the way `mirrorPaidInvoice` writes it; without one the row
+ * is an invoice whose фактура is still being issued. The hosted URL is seeded either way, because
+ * production keeps it beside the фактура as the payment receipt — and so that the "being issued"
+ * assertion proves the route ignores it rather than passing for want of a URL to redirect to.
+ */
 async function seedInvoice(
 	orgId: string,
-	inv: { stripeInvoiceId: string; number: string; amountTotal: number },
+	inv: { stripeInvoiceId: string; number: string; amountTotal: number; pdfKey?: string },
 ): Promise<string> {
 	if (!sql) throw new Error("no db");
+	const pdfKey = inv.pdfKey ?? null;
 	const [row] = await sql<{ id: string }[]>`
 		INSERT INTO invoice
 			(organization_id, stripe_invoice_id, stripe_customer_id, number, status,
-			 amount_total, currency, period_start, period_end, hosted_invoice_url, paid_at)
+			 amount_total, currency, period_start, period_end, pdf_key, hosted_invoice_url, paid_at)
 		VALUES
 			(${orgId}, ${inv.stripeInvoiceId}, ${`cus_e2e_${orgId.slice(0, 8)}`}, ${inv.number},
-			 ${"paid"}, ${inv.amountTotal}, ${"usd"}, now(), now(),
+			 ${"paid"}, ${inv.amountTotal}, ${"usd"}, now(), now(), ${pdfKey},
 			 ${`https://stripe.test/hosted/${inv.stripeInvoiceId}`}, now())
-		ON CONFLICT (stripe_invoice_id) DO UPDATE SET number = EXCLUDED.number
+		ON CONFLICT (stripe_invoice_id) DO UPDATE SET number = EXCLUDED.number, pdf_key = EXCLUDED.pdf_key
 		RETURNING id`;
 	return row.id;
 }
@@ -231,12 +240,17 @@ test.describe("Billing — owned invoices", () => {
 			status: "active",
 			currentPeriodEnd: new Date(Date.now() + 30 * 24 * 3600 * 1000),
 		});
+		// E2E-0001 carries a stored фактура, as every invoice `mirrorPaidInvoice` completed does.
+		// E2E-0002 has none: its фактура is still being issued.
+		const issuedStripeId = `in_e2e_${orgId.slice(0, 8)}_1`;
+		const factura = await storeFacturaPdf(orgId, issuedStripeId, "E2E-0001");
 		const invId = await seedInvoice(orgId, {
-			stripeInvoiceId: `in_e2e_${orgId.slice(0, 8)}_1`,
+			stripeInvoiceId: issuedStripeId,
 			number: "E2E-0001",
 			amountTotal: 2000,
+			pdfKey: factura.pdfKey,
 		});
-		await seedInvoice(orgId, {
+		const pendingId = await seedInvoice(orgId, {
 			stripeInvoiceId: `in_e2e_${orgId.slice(0, 8)}_2`,
 			number: "E2E-0002",
 			amountTotal: 2000,
@@ -254,12 +268,28 @@ test.describe("Billing — owned invoices", () => {
 		await expect(page.getByText("E2E-0001")).toBeVisible();
 		await expect(page.getByText("E2E-0002")).toBeVisible();
 
-		// The authorized PDF route never 404s for a mirrored invoice: with no captured PDF it
-		// redirects (307) to the hosted document.
+		// The authorized PDF route serves the stored фактура itself: 200, a PDF, and byte-for-byte
+		// the document that was stored for THIS invoice — not some PDF, and not a redirect.
 		const res = await page.request.get(
 			`/${orgSlug}/~/settings/billing/invoices/${invId}/pdf`,
 			{ maxRedirects: 0 },
 		);
-		expect([200, 302, 307]).toContain(res.status());
+		expect(res.status()).toBe(200);
+		expect(res.headers()["content-type"]).toContain("application/pdf");
+		expect(Buffer.from(await res.body()).equals(Buffer.from(factura.bytes))).toBe(true);
+
+		// With no stored фактура the route answers the "being issued" page (404) and never hands
+		// out Stripe's hosted invoice in its place (EA-7b, #7338) — the row HAS a hosted URL, so a
+		// redirect would be possible and is what this refuses.
+		const pending = await page.request.get(
+			`/${orgSlug}/~/settings/billing/invoices/${pendingId}/pdf`,
+			{ maxRedirects: 0 },
+		);
+		expect(pending.status()).toBe(404);
+		expect(pending.headers().location ?? "").not.toMatch(/stripe/i);
+		const pendingBody = await pending.text();
+		expect(pendingBody).toContain('data-invoice-pdf-error="being-issued"');
+		expect(pendingBody).toContain("Your invoice is being issued");
+		expect(pendingBody).not.toMatch(/stripe\.(com|test)/i);
 	});
 });

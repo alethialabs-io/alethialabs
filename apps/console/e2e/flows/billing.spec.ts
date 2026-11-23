@@ -71,6 +71,7 @@
 import Stripe from "stripe";
 import { scanA11y } from "../helpers/a11y";
 import { db, orgIdBySlug } from "../helpers/db";
+import { storeFacturaPdf } from "../helpers/invoice-pdf";
 import { signUpHobby } from "../helpers/personas";
 import { expect, test } from "../fixtures/qa";
 
@@ -264,6 +265,9 @@ async function seedCustomerWithoutPlan(orgId: string, customerId: string): Promi
 			    updated_at = now()`;
 }
 
+/** The Stripe invoice id `seedMirroredInvoice` gives the row for `number`. */
+const mirroredStripeId = (number: string) => `in_e2e_${number}`;
+
 /**
  * Mirrors one paid invoice row for the org, exactly as the `invoice.paid` webhook would.
  *
@@ -281,12 +285,17 @@ async function seedCustomerWithoutPlan(orgId: string, customerId: string): Promi
  * every earlier run's rows are older still, so the current run's newest is newest, full stop.
  * The whole row hangs off the one instant, so a backdated invoice's period is backdated with it
  * rather than claiming to have been paid before the period it covers ended.
+ *
+ * `pdfKey` is the stored фактура's object key (`storeFacturaPdf`), written into `pdf_key` the way
+ * `mirrorPaidInvoice` writes it. Without one the row is an invoice whose фактура is still being
+ * issued: listed, but with no document behind its PDF route (EA-7b, #7338).
  */
 async function seedMirroredInvoice(
 	orgId: string,
 	customerId: string,
 	number: string,
 	paidHoursAgo: number,
+	pdfKey: string | null = null,
 ): Promise<void> {
 	// `now()` is the DATABASE's clock, evaluated once per statement, so every seeded row is stamped
 	// from one source and they are strictly comparable however the runner's own clock is set. The
@@ -296,15 +305,16 @@ async function seedMirroredInvoice(
 	await db()`
 		insert into invoice
 			(organization_id, stripe_invoice_id, stripe_customer_id, number, status,
-			 amount_total, currency, period_start, period_end, hosted_invoice_url, paid_at)
+			 amount_total, currency, period_start, period_end, pdf_key, hosted_invoice_url, paid_at)
 		values
-			(${orgId}, ${`in_e2e_${number}`}, ${customerId}, ${number}, 'paid',
+			(${orgId}, ${mirroredStripeId(number)}, ${customerId}, ${number}, 'paid',
 			 2000, 'usd',
 			 now() - (${paidHoursAgo}::int * interval '1 hour') - interval '30 days',
 			 now() - (${paidHoursAgo}::int * interval '1 hour'),
+			 ${pdfKey},
 			 ${`https://stripe.test/hosted/${number}`},
 			 now() - (${paidHoursAgo}::int * interval '1 hour'))
-		on conflict (stripe_invoice_id) do update set number = excluded.number`;
+		on conflict (stripe_invoice_id) do update set number = excluded.number, pdf_key = excluded.pdf_key`;
 }
 
 // ── Billing page — Pro trial (team persona) ───────────────────────────────────────────────
@@ -647,24 +657,39 @@ test.describe("Billing — mirrored invoices (team)", () => {
 
 	test("an invoice's PDF route resolves for its own org rather than 404ing", { tag: "@needs:stripe" }, async ({
 		team,
+		owner,
 	}) => {
 		const customerId = await stripeCustomerId(team.orgId!);
 		const number = `E2E-PDF-${Date.now()}`;
-		// Backdated two days: this row is fetched by its own id, so its position in any list is
-		// irrelevant to this test and must not be relevant to the sibling one either.
-		await seedMirroredInvoice(team.orgId!, customerId, number, 48);
+		// The row carries a stored фактура, stored where and how `mirrorPaidInvoice` stores one, so
+		// the route has a document to serve. Backdated two days: this row is fetched by its own id,
+		// so its position in any list is irrelevant to this test and must not be relevant to the
+		// sibling one either.
+		const factura = await storeFacturaPdf(team.orgId!, mirroredStripeId(number), number);
+		await seedMirroredInvoice(team.orgId!, customerId, number, 48, factura.pdfKey);
 		const rows = await db()<{ id: string }[]>`
-			select id from invoice where stripe_invoice_id = ${`in_e2e_${number}`}`;
+			select id from invoice where stripe_invoice_id = ${mirroredStripeId(number)}`;
 		const invoiceId = rows[0]?.id;
 		expect(invoiceId, "the seeded invoice was not written").toBeTruthy();
 
-		// No PDF was captured for a hand-mirrored row, so the authorized route redirects to the
-		// hosted document. A 404 would mean the row is not resolvable as the org's own.
+		// Its own org: the route serves THIS invoice's stored фактура — 200, a PDF, the same bytes.
+		// A 404 would mean the row is not resolvable as the org's own.
 		const res = await team.page.request.get(
 			`${invoicesPath(team.orgSlug)}/${invoiceId}/pdf`,
 			{ maxRedirects: 0 },
 		);
-		expect([200, 302, 307]).toContain(res.status());
+		expect(res.status()).toBe(200);
+		expect(res.headers()["content-type"]).toContain("application/pdf");
+		expect(Buffer.from(await res.body()).equals(Buffer.from(factura.bytes))).toBe(true);
+
+		// Another org's billing admin asking for the same id gets "not found" — the row is scoped to
+		// the org that owns it, and nothing about it (not even that a document exists) leaks across.
+		const foreign = await owner.page.request.get(
+			`${invoicesPath(owner.orgSlug)}/${invoiceId}/pdf`,
+			{ maxRedirects: 0 },
+		);
+		expect(foreign.status()).toBe(404);
+		expect(await foreign.text()).toContain('data-invoice-pdf-error="not-found"');
 	});
 });
 
