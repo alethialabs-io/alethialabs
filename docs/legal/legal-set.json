@@ -1778,27 +1778,6 @@
 			"foundOn": "2026-11-17"
 		},
 		{
-			"id": "privacy.inventory-window-not-in-retention-register",
-			"document": "privacy",
-			"quote": "Removed cloud inventory and capability observations: 7 days by default.",
-			"says": "The page publishes a 7-day window for removed inventory and capability observations.",
-			"actually": "The window is real (see the claim privacy.retention.removed-inventory), but the retention register has no entry for it, although that file states that nothing may be retained without appearing there. Its test covers only the gc_* SQL functions, and this purge is TypeScript, so nothing reports the gap. Not a false statement on the page; a hole in the register LEG-L4's retention schedule is to agree with.",
-			"evidence": [
-				{
-					"path": "apps/console/lib/retention/registry.ts",
-					"absent": "inventory",
-					"shows": "The retention register does not mention inventory."
-				},
-				{
-					"path": "apps/console/lib/retention/registry.ts",
-					"pattern": "nothing may be retained by this product\\s*//\\s*without appearing here",
-					"shows": "The register's own statement of completeness."
-				}
-			],
-			"owner": "LEG-L4",
-			"foundOn": "2026-11-17"
-		},
-		{
 			"id": "tax.art-97a-statement-incomplete",
 			"document": "tax-market-preconditions",
 			"quote": "Art. 97a(1) imposes the same registration on a company that **receives**",
@@ -1900,38 +1879,6 @@
 				}
 			],
 			"owner": "LEG-L2",
-			"foundOn": "2026-11-22"
-		},
-		{
-			"id": "privacy.support-retention-not-enforced",
-			"document": "privacy",
-			"quote": "Support and contractual correspondence: up to 3 years after the matter closes",
-			"says": "The policy publishes a maximum of 3 years after closure for support correspondence.",
-			"actually": "No code deletes support cases or messages, and the retention register has no entry for them. The window is a policy applied by hand at best. Filed as #7220: either a deletion job enforces it, or the re-seal states what is actually done.",
-			"evidence": [
-				{
-					"path": "apps/console/lib/retention/registry.ts",
-					"absent": "[Ss]upport (case|message|thread)",
-					"shows": "The retention register has no entry for support cases or messages."
-				}
-			],
-			"owner": "LEG-L4",
-			"foundOn": "2026-11-22"
-		},
-		{
-			"id": "retention-registry.backups-entry-stale",
-			"document": "module-retention-registry",
-			"quote": "requires the backup rotation to be evidenced",
-			"says": "The retention register says the backup rotation is not established.",
-			"actually": "deploy/prod/backup/backup.sh now keeps 14 daily and 8 weekly encrypted off-box copies by default and exports erasure tombstones hourly (REL-L7, #6908). What is still not evidenced is that it runs in production. Filed as #7220.",
-			"evidence": [
-				{
-					"path": "deploy/prod/backup/backup.sh",
-					"pattern": "BACKUP_KEEP_DAILY=\"\\$\\{BACKUP_KEEP_DAILY:-14\\}\"",
-					"shows": "The rotation exists in code."
-				}
-			],
-			"owner": "LEG-L4",
 			"foundOn": "2026-11-22"
 		},
 		{
