@@ -7,7 +7,12 @@
 #   which is the policy. This resolves the PR's base AND head branches first, then decides.
 #
 # THE POLICY (maintainer ruling 2026-11-06: agents run the promotions when they are green):
-#   base=dev                      allow   Mergify normally lands it; merging your own dev PR is permitted
+#   base=dev                      block   MERGIFY ONLY (maintainer ruling 2026-11-23). Every dev PR is
+#                                         auto-queued (.mergify.yml pull_request_rules) and merged by
+#                                         app/mergify after the queue's speculative run of the PR ON TOP
+#                                         of everything ahead of it. A hand merge skips that run — the
+#                                         only check that sees two green PRs break each other — and on
+#                                         2026-11-23 lanes' hand merges also hid that auto-queue was off.
 #   base=main,    head=release/<hex sha>
 #                                 allow   a PINNED PROMOTION (promote.yml) — only when green, as
 #                                         below, plus the three after it
@@ -235,7 +240,10 @@ main() {
 	read -r base head sha <<<"$refs"
 
 	case "$base" in
-	dev) exit 0 ;;
+	dev)
+		# @mut merge-dev-queue
+		deny "PR #$pr targets \`dev\`, and dev PRs are merged by the Mergify queue, never by hand. It queues itself once \`CI required\` and \`contribution-legal\` pass with no open review threads. If it is green and has not queued, find out why (scripts/pr-threads.sh $pr; the Mergify Merge Queue check's text) rather than merging around the queue."
+		;;
 	"") deny "could not resolve the base branch of PR #$pr${repo:+ in $repo} (offline, or not a PR in that repo)." ;;
 	main) ;;
 	staging)
@@ -655,9 +663,11 @@ STUB
 		fi
 	}
 
-	t allow 'gh pr merge 1535'
-	t allow 'gh pr merge 1535 --squash'
-	t allow 'gh pr merge --squash 1535'
+	# dev: the queue merges, never a hand merge (2026-11-23), in every spelling.
+	t block 'gh pr merge 1535'
+	t block 'gh pr merge 1535 --squash'
+	t block 'gh pr merge --squash 1535'
+	says 'merged by the Mergify queue, never by hand' 'a dev PR is refused for the queue'
 	t block 'gh pr merge 1600'               # staging: the hop is retired
 	t block 'gh pr merge 1601 --merge'       # main, not a promotion
 	t block 'gh pr merge 1535 --admin'       # bypasses the queue even on dev
@@ -763,7 +773,7 @@ STUB
 	# ── gh's global flags before the subcommand, and the repository they name ──
 	t block 'gh -R o/r pr merge 1601 --merge'
 	t block 'gh --repo o/r pr merge 1612 --merge --match-head-commit aaa1612'
-	t allow 'gh -R o/r pr merge 1535 --squash'
+	t block 'gh -R o/r pr merge 1535 --squash'
 	t allow 'gh -R o/other pr merge 1700 --merge --match-head-commit aaa1700'
 	t allow 'gh pr merge 1700 --merge --match-head-commit aaa1700 -R o/other'
 	t block 'gh pr merge 1700 --merge --match-head-commit aaa1700'   # not in the cwd's repo → unresolvable
@@ -773,7 +783,7 @@ STUB
 	t block 'gh pr merge --merge --body "fixes 1535" 1601'      # 1601 (main ← feature) is what merges
 	says 'PR #1601' 'the PR checked is the positional one'
 	t block 'gh pr merge --merge -t "promote 1535 now" 1612 --match-head-commit aaa1612'
-	t allow "gh pr merge 1535 --squash --body 'done; see #1601'"
+	t block "gh pr merge 1535 --squash --body 'done; see #1601'"
 	t block 'gh pr merge feat/some-branch --merge'               # a branch name, not a PR
 	says 'is not a PR number or URL' 'a non-number selector is named'
 
