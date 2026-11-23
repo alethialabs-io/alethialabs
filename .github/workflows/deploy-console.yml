@@ -1109,9 +1109,15 @@ jobs:
 
   # DID THE DEPLOY ACTUALLY SERVE? A green `deploy` job proves the box accepted the images; it does
   # not prove the public URL answers, and `retag-unchanged` can report success while shipping a stale
-  # image. So this runs eleven checks against https://alethialabs.io itself, including "the served build
-  # id equals the promoted SHA" — the one assertion that separates a deploy from a deploy that
-  # landed.
+  # image. So this runs thirteen checks: eleven against https://alethialabs.io itself, including "the
+  # served build id equals the promoted SHA" — the one assertion that separates a deploy from a deploy
+  # that landed — and two against the other public hosts (REL-L8, #6909): get.alethialabs.io must serve
+  # the CLI install script (its BODY, byte-identical to the tree when the apps were rebuilt), and
+  # status.alethialabs.io must answer with a summary generated in the last 20 minutes. Those two are
+  # the instrument docs/beta/README.md names for beta predicate B7's "public hosts" part. The
+  # `post-deploy-smoke` artifact's smoke-report.json names the sha and run it is about; NOTHING reads it
+  # into the programme snapshot yet (scripts/programme-rollup.mjs still reports that part unmeasured),
+  # so a green smoke here does not by itself turn B7 green.
   #
   # A SEPARATE JOB, not extra steps on `deploy`, deliberately: `deploy` holds the SSH key, and
   # Chromium plus a pnpm install do not belong in the job that holds it. The blast radius of a
@@ -1166,8 +1172,8 @@ jobs:
           set -euo pipefail
           out="$(pnpm -C apps/console run smoke:prod -- --list)"
           printf '%s\n' "$out"
-          printf '%s' "$out" | grep -qE '^post-deploy smoke — 11 checks:$' || {
-            echo "::error::the post-deploy smoke manifest is not 11 checks. If a check was added or removed deliberately, move this number in the same PR; if not, the suite shrank and would have reported green on almost nothing."
+          printf '%s' "$out" | grep -qE '^post-deploy smoke — 13 checks:$' || {
+            echo "::error::the post-deploy smoke manifest is not 13 checks. If a check was added or removed deliberately, move this number in the same PR; if not, the suite shrank and would have reported green on almost nothing."
             exit 1
           }
 
