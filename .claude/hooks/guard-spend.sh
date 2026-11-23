@@ -166,7 +166,7 @@ wf_class() {
 		echo free
 		;;
 	deploy-*.yml | release-cli.yml | release-runner.yml | release-please.yml | publish-cli-release-metadata.yml | \
-		mirror-cli.yml | infra-*.yml | promote.yml)
+		mirror-cli.yml | infra-*.yml | promote.yml | backup-box-setup.yml)
 		echo prod
 		;;
 	e2e-nightly.yml) echo nightly ;;
@@ -1148,6 +1148,7 @@ STUB
 	t allow 'gh workflow run deploy-fleet-aws.yml -f x=y'
 	t allow 'gh workflow run release-cli.yml'
 	t allow 'gh workflow run infra-cp-hetzner.yml'
+	t allow 'gh workflow run backup-box-setup.yml -f mode=apply'
 	t allow 'gh workflow run "Deploy Console"'
 	t allow 'gh workflow run deploy-console.yml --json'
 	t allow 'gh api -X POST repos/o/r/actions/workflows/deploy-console.yml/dispatches -f ref=main'
