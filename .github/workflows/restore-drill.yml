@@ -1,0 +1,223 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The weekly automated restore drill (BKP-L3, #7245; beta predicate B7). Design: management repo,
+# spec/features/beta-2027-01-31/backups-and-mail.md §A.3 "Restore test", decision A-4.
+#
+# Once a week it restores the newest off-box backup onto a throwaway spot instance in the
+# `alethia-backup` AWS account, proves the restored console answers healthy with every erasure
+# tombstone replayed, and lands the B7 record as a PR into `dev`. Each step is one subcommand of
+# scripts/ops/restore-drill-launch.sh; the instance runs scripts/ops/restore-drill-ec2.sh, which
+# runs scripts/ops/restore-drill.sh.
+#
+#   preflight   the three repository variables set and well formed, and the run on main. Unset is a
+#               GREEN "not configured" run, so this stays quiet until the maintainer has applied
+#               infra/backup-account and set them.
+#   launch      ONE instance from the stack's launch template, nothing overridden (drill-launcher
+#               may not override anything). The instance powers itself off at the template's
+#               maximum lifetime whatever it is doing, and powering off terminates it.
+#   wait        until the instance has powered itself off, or BACKUP_DRILL_MAX_WAIT_MINUTES.
+#   terminate   ALWAYS, whatever happened above, including a cancelled run: a drill instance holds
+#               restored production data and must not outlive the run that started it.
+#   collect     the record, its log and result.json from the bucket's evidence prefix.
+#   evidence PR on a pass: the record and log under docs/beta/evidence/b7/, into dev.
+#   report      the job summary, and ONE tracking issue that a failure opens and a pass closes.
+#
+# WHAT NEVER CROSSES THIS LOG. The drill's age identity is fetched by the INSTANCE from Secrets
+# Manager with its own role; this workflow cannot read it (the secret's policy admits only the
+# instance role). The workflow's own credential is a short web identity session, refreshed before
+# each AWS call (restore-drill-launch.sh, "CREDENTIALS"), never printed.
+#
+# REPOSITORY VARIABLES (infra/backup-account outputs; none of them is a secret):
+#   BACKUP_DRILL_LAUNCHER_ROLE_ARN   output drill_launcher_role_arn
+#   BACKUP_DRILL_LAUNCH_TEMPLATE_ID  output drill_launch_template_id
+#   BACKUP_BUCKET                    output bucket_name
+#   BACKUP_AWS_REGION                optional, default eu-central-1
+#   BACKUP_DRILL_MAX_WAIT_MINUTES    optional, default 240, from 30 to 270 (the job times out at
+#                                    300); keep it at or above the stack's drill_max_lifetime_minutes
+#
+# ONLY `main` CAN RUN IT. drill-launcher trusts exactly repo:<repo>:ref:refs/heads/main (both a
+# schedule run and a dispatch from main present it). `schedule:` fires the DEFAULT branch's copy, so
+# nothing here runs weekly until it is promoted to main. Do not put the job behind an
+# `environment:` without changing the role's trust in infra/backup-account/oidc.tf in the same PR:
+# the OIDC subject would change.
+#
+# COST: about one spot instance-hour a week in the backup account (infra/backup-account/README.md
+# "Cost"). On a pull request only the hermetic self-tests run: no cloud, no credentials.
+
+name: Restore drill (weekly, AWS)
+
+on:
+  schedule:
+    # Mondays 06:41 UTC: hours after the 02:30 nightly backup, so the newest copy is that night's.
+    # Off-minute per the repo's cron convention.
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/ops/restore-drill*.sh"
+      - "deploy/prod/backup/lib.sh"
+      - ".github/workflows/restore-drill.yml"
+
+# Never two drills at once (each would launch an instance), and never cancel one in flight: the
+# terminate guard would still run, but a cancelled drill is a week without a measurement.
+concurrency:
+  group: restore-drill-${{ github.event_name == 'pull_request' && github.ref || 'drill' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    name: Restore drill scripts (hermetic self-tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: shellcheck
+        run: shellcheck -x scripts/ops/restore-drill.sh scripts/ops/restore-drill-ec2.sh scripts/ops/restore-drill-launch.sh
+
+      - name: restore-drill.sh --self-test
+        run: bash scripts/ops/restore-drill.sh --self-test
+
+      - name: restore-drill-ec2.sh --self-test
+        run: bash scripts/ops/restore-drill-ec2.sh --self-test
+
+      - name: restore-drill-launch.sh --self-test
+        run: bash scripts/ops/restore-drill-launch.sh --self-test
+
+  drill:
+    name: Restore drill on AWS
+    needs: self-test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # Above the default 240-minute wait plus launch, collect and the PR.
+    timeout-minutes: 300
+    permissions:
+      contents: write # the fallback path of the evidence PR (see the token step)
+      pull-requests: write
+      issues: write # the one tracking issue
+      id-token: write # the OIDC token drill-launcher trusts
+    env:
+      AWS_REGION: ${{ vars.BACKUP_AWS_REGION || 'eu-central-1' }}
+      DRILL_ROLE_ARN: ${{ vars.BACKUP_DRILL_LAUNCHER_ROLE_ARN }}
+      DRILL_LAUNCH_TEMPLATE_ID: ${{ vars.BACKUP_DRILL_LAUNCH_TEMPLATE_ID }}
+      DRILL_BUCKET: ${{ vars.BACKUP_BUCKET }}
+      DRILL_MAX_WAIT_MINUTES: ${{ vars.BACKUP_DRILL_MAX_WAIT_MINUTES || '240' }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Preflight (configured?)
+        id: pre
+        run: bash scripts/ops/restore-drill-launch.sh preflight
+
+      - name: Not configured
+        if: steps.pre.outputs.configured != 'true'
+        env:
+          DRILL_REASON: ${{ steps.pre.outputs.reason }}
+        run: |
+          echo "::notice title=Restore drill not run::${DRILL_REASON}"
+          bash scripts/ops/restore-drill-launch.sh report not-configured
+
+      - name: Launch the drill instance
+        id: launch
+        if: steps.pre.outputs.configured == 'true'
+        run: bash scripts/ops/restore-drill-launch.sh launch
+
+      - name: Wait for the drill to finish
+        id: wait
+        if: steps.launch.outputs.instance_id != ''
+        env:
+          INSTANCE_ID: ${{ steps.launch.outputs.instance_id }}
+        run: bash scripts/ops/restore-drill-launch.sh wait "$INSTANCE_ID"
+
+      # THE GUARD. `always()` runs it after a failure and after a cancellation. The instance also
+      # powers itself off at its maximum lifetime, so this is the second of two independent stops.
+      - name: Terminate the drill instance (always)
+        if: always() && steps.launch.outputs.instance_id != ''
+        env:
+          INSTANCE_ID: ${{ steps.launch.outputs.instance_id }}
+        run: bash scripts/ops/restore-drill-launch.sh terminate "$INSTANCE_ID"
+
+      - name: Collect the evidence
+        id: collect
+        if: always() && steps.launch.outputs.instance_id != ''
+        env:
+          INSTANCE_ID: ${{ steps.launch.outputs.instance_id }}
+        run: bash scripts/ops/restore-drill-launch.sh collect "$INSTANCE_ID" docs/beta/evidence/b7
+
+      - name: Decide the outcome
+        id: outcome
+        if: always() && steps.pre.outputs.configured == 'true'
+        env:
+          LAUNCHED: ${{ steps.launch.outputs.instance_id }}
+          ENDED: ${{ steps.wait.outputs.ended }}
+          VERDICT: ${{ steps.collect.outputs.verdict }}
+          RECORD: ${{ steps.collect.outputs.record }}
+        run: |
+          if [ -z "$LAUNCHED" ]; then outcome=launch-failed
+          elif [ "$ENDED" = timeout ]; then outcome=timeout
+          elif [ "$VERDICT" = pass ] || [ "$VERDICT" = fail ]; then outcome="$VERDICT"
+          else outcome=missing
+          fi
+          echo "outcome=$outcome" >>"$GITHUB_OUTPUT"
+          if [ -n "$RECORD" ]; then echo "record=docs/beta/evidence/b7/$RECORD" >>"$GITHUB_OUTPUT"; fi
+
+      # The PR must not be authored by GITHUB_TOKEN: a github-actions[bot] PR's checks wait on a
+      # manual approval (see programme.yml, "THE PR MUST NOT BE AUTHORED BY GITHUB_TOKEN"). Same App
+      # as release-please.yml and programme.yml; non-fatal, with GITHUB_TOKEN as the fallback.
+      - name: Mint the evidence-PR token (GitHub App)
+        id: app_token
+        if: steps.outcome.outputs.outcome == 'pass'
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: alethialabs
+
+      # One stable branch: an unmerged week's record is replaced by the newer one, which is the one
+      # B7 reads anyway. Only the two record files are added.
+      - name: Open the evidence PR into dev
+        if: steps.outcome.outputs.outcome == 'pass'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.app_token.outputs.token || github.token }}
+          base: dev
+          branch: chore/restore-drill-evidence
+          add-paths: docs/beta/evidence/b7/*
+          title: "docs(beta): B7 restore drill record"
+          commit-message: |
+            docs(beta): B7 restore drill record
+
+            Written by the weekly restore drill (.github/workflows/restore-drill.yml).
+          body: |
+            The weekly restore drill passed. `.github/workflows/restore-drill.yml` restored the newest
+            off-box backup onto a throwaway instance in the backup account, replayed every erasure
+            tombstone, and the restored console answered healthy.
+
+            This adds its B7 record and step log under `docs/beta/evidence/b7/`. Both carry counts,
+            timings, the backup stamp and the readiness body, and no personal data. The instance is
+            terminated.
+
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Report
+        if: always() && steps.outcome.outputs.outcome != ''
+        env:
+          OUTCOME: ${{ steps.outcome.outputs.outcome }}
+          RECORD: ${{ steps.outcome.outputs.record }}
+        run: bash scripts/ops/restore-drill-launch.sh report "$OUTCOME" "$RECORD"
+
+      # A drill that did not pass turns the run red, so workflow-health sees it as well as the issue.
+      - name: Fail the run unless the drill passed
+        if: always() && steps.outcome.outputs.outcome != '' && steps.outcome.outputs.outcome != 'pass'
+        env:
+          OUTCOME: ${{ steps.outcome.outputs.outcome }}
+        run: |
+          echo "::error title=Restore drill::outcome ${OUTCOME}"
+          exit 1
