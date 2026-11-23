@@ -800,6 +800,37 @@ jobs:
       # not a downgraded run at the bottom.
       - name: Guard — every promised capability has its variables (seconds, before a single build)
         run: pnpm -C apps/console exec tsx e2e/helpers/capabilities.ts --assert-env
+      # THE OBJECT STORE the job env's `ALETHIA_STORAGE_*` has always pointed at, and which nothing
+      # here used to start, so every storage read in a leg failed on a refused connection. Since
+      # EA-7b (#7338) the invoice PDF route serves ONLY a stored фактура — never a redirect to
+      # Stripe's hosted invoice — so `billing.spec.ts` and `flows/billing.spec.ts` seed one into this
+      # store and assert the route serves those exact bytes. Without it they could only ever
+      # measure "unavailable".
+      #
+      # A step, not a `services:` entry: SeaweedFS needs its `server -s3` arguments, which a service
+      # container cannot be given. The S3 identity is the job env's own throwaway `e2e` pair, in the
+      # shape of deploy/seaweedfs/s3.json. Started BEFORE the build so its volume server has minutes
+      # to come up; the probe's 120s is a ceiling, not an expected duration.
+      - name: Start the object store (SeaweedFS S3 on :8333)
+        run: |
+          set -euo pipefail
+          cfg="$RUNNER_TEMP/seaweedfs-s3.json"
+          cat > "$cfg" <<JSON
+          {"identities":[{"name":"e2e","credentials":[{"accessKey":"$ALETHIA_STORAGE_ACCESS_KEY_ID","secretKey":"$ALETHIA_STORAGE_SECRET_ACCESS_KEY"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+          JSON
+          docker run -d --name seaweedfs -p 8333:8333 \
+            -v "$cfg:/etc/seaweedfs/s3.json:ro" \
+            chrislusf/seaweedfs:4.53 \
+            server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json \
+            -master.volumeSizeLimitMB=1024 -ip.bind=0.0.0.0 >/dev/null
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/ || true)
+            if [ "$code" != "000" ]; then echo "SeaweedFS S3 answering (HTTP $code)"; exit 0; fi
+            sleep 2
+          done
+          docker logs seaweedfs || true
+          echo "::error::SeaweedFS S3 did not answer on :8333 within 120s"
+          exit 1
       - name: Migrate the test database (schema + programmables/RLS + app role)
         run: pnpm -C apps/console run db:migrate
       # Build @alethia/ee FIRST, and prove its dist exists. Without it lib/auth/scope.ts falls back
