@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/authz/guard", () => ({
 	currentActor: vi.fn(),
 	authorize: vi.fn(),
+	authorizeRead: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: vi.fn() }));
@@ -31,7 +32,7 @@ vi.mock("@/lib/billing/config", () => ({
 	isStripeConfigured: vi.fn(() => true),
 }));
 
-import { authorize } from "@/lib/authz/guard";
+import { authorize, authorizeRead } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { getStripe } from "@/lib/billing/stripe";
 import { getOrgBilling } from "@/lib/billing/queries";
@@ -119,6 +120,10 @@ beforeEach(() => {
 		userId: "u-1",
 		orgId: ORG,
 	} as unknown as Awaited<ReturnType<typeof authorize>>);
+	vi.mocked(authorizeRead).mockResolvedValue({
+		userId: "u-1",
+		orgId: ORG,
+	} as unknown as Awaited<ReturnType<typeof authorizeRead>>);
 });
 afterEach(() => {
 	vi.useRealTimers();
@@ -157,6 +162,23 @@ describe("the withdrawal preview", () => {
 	it("is unavailable when there is no order at all", async () => {
 		stubDb([]);
 		expect((await getWithdrawalRight()).reason).toBe("no_order");
+	});
+	// The billing page mounts this read on every load. `authorize` records an ALLOWED
+	// "manage_billing" activity row (manage_billing is not read-only in lib/authz/activity.ts), so a
+	// page view became an audit entry — and, landing fire-and-forget, a row inside the Cancel window
+	// of `billing.subscription.cancel` in e2e/audit/destructive.spec.ts. The read must take the
+	// read guard, which records only a denial.
+	it("is gated as a READ, so viewing it writes no activity row", async () => {
+		stubDb([order()]);
+		await getWithdrawalRight();
+		expect(authorizeRead).toHaveBeenCalledWith("manage_billing", { type: "billing" });
+		expect(authorize).not.toHaveBeenCalled();
+	});
+
+	it("still refuses a caller the read guard denies", async () => {
+		stubDb([order()]);
+		vi.mocked(authorizeRead).mockRejectedValue(new Error("forbidden"));
+		await expect(getWithdrawalRight()).rejects.toThrow("forbidden");
 	});
 });
 

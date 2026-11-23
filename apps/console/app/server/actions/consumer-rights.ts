@@ -22,7 +22,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { WITHDRAWAL_PERIOD_DAYS, withdrawalOutcome } from "@repo/legal/commerce";
-import { authorize } from "@/lib/authz/guard";
+import { authorize, authorizeRead } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { commerceOrder, type CommerceOrder } from "@/lib/db/schema";
 import { deploymentMode, isStripeConfigured } from "@/lib/billing/config";
@@ -85,9 +85,16 @@ async function latestOrder(orgId: string): Promise<CommerceOrder | null> {
  * Shown BEFORE they act, because CRD art. 6 requires the consumer to be told what withdrawing will
  * cost them, and a figure produced only after the fact is not that. It runs the same
  * `withdrawalOutcome` the actual withdrawal runs, so the preview cannot disagree with the outcome.
+ *
+ * A READ, so it is gated by `authorizeRead`, never `authorize`. `manage_billing` is not one of the
+ * actions `lib/authz/activity.ts` treats as read-only, so `authorize` would record an ALLOWED
+ * "manage_billing" activity row every time the billing page mounts the withdrawal section — an
+ * audit entry saying the admin managed billing when they only looked at it. That row is
+ * fire-and-forget and lands late, which is how the destructive-action spec caught it: it fell
+ * inside `billing.subscription.cancel`'s Cancel window. A denial is still recorded.
  */
 export async function getWithdrawalRight(): Promise<WithdrawalRight> {
-	const actor = await authorize("manage_billing", { type: "billing" });
+	const actor = await authorizeRead("manage_billing", { type: "billing" });
 	return withdrawalRightAt(await latestOrder(actor.orgId), new Date());
 }
 
