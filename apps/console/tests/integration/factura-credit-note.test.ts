@@ -69,7 +69,10 @@ describeIfDb("credit notes: one per refund, in the фактура series", () =>
 			ORG,
 			pdf,
 		);
-		expect(issued.ok).toBe(true);
+		// A setup failure, not an assertion: every test below credits this фактура.
+		if (!issued.ok) {
+			throw new Error("setup: the original фактура was not issued");
+		}
 	});
 
 	afterAll(async () => {
