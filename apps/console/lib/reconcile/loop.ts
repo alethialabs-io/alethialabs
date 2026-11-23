@@ -11,6 +11,8 @@
 // Every reconciler is idempotent + reconvergent (safe under concurrent app instances) and isolated:
 // `runTask` catches a throw per task, so one failing reconciler never aborts its siblings in the tick.
 
+import { runFacturaSweep } from "@/lib/billing/factura/sweeper";
+import { stripeSecretKey } from "@/lib/billing/stripe-key";
 import { getServiceDb } from "@/lib/db";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
 import { sweepElenchDrafts } from "@/lib/elench/drafts-sweep";
@@ -66,6 +68,10 @@ const INTERVALS = {
 	// pass keeps a discarded draft at most about two days. The silent claims it settles are a
 	// backstop: every draft action settles its own row or scope first (lib/elench/drafts-sweep.ts).
 	"elench-drafts-sweep": 24 * 60 * 60_000,
+	// 1h — a фактура is due within five days of the payment (Art. 113(4) ЗДДС) and the operator is
+	// paged at day 3, so an hourly retry leaves ample room; each retry reads Stripe once per owed
+	// invoice (lib/billing/factura/sweeper.ts).
+	"factura-sweep": 60 * 60_000,
 } as const;
 
 declare global {
@@ -154,6 +160,12 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		// past 24h and drafts unwritten for 30 days. Never deletes a `sending` row.
 		if (isDue("elench-drafts-sweep", INTERVALS["elench-drafts-sweep"], now)) {
 			await runTask("elench-drafts-sweep", () => sweepElenchDrafts(db));
+		}
+		// фактура retries (#7369): re-issue every owed фактура, page the operator by day 3 of the
+		// Art. 113(4) window, and render credit-note PDFs whose upload failed. Billing-only: a console
+		// without Stripe configured has no invoices to sweep.
+		if (stripeSecretKey() && isDue("factura-sweep", INTERVALS["factura-sweep"], now)) {
+			await runTask("factura-sweep", () => runFacturaSweep(now));
 		}
 
 		// Bubble any reconciler currently in a FAILED STATE up to the loop heartbeat (runTask already

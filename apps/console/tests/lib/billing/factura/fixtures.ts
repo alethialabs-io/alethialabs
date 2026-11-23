@@ -4,7 +4,7 @@
 // Shared fixtures for the фактура tests: a paid Stripe invoice with every Art. 114(1) recipient
 // detail, in EUR or USD, and the fixed ECB rate the USD one is converted at.
 
-import type { EurRate } from "@/lib/billing/invoice-facts";
+import type { EurRate } from "@/lib/billing/ecb-rate";
 import type { FacturaSource } from "@/lib/billing/factura/checks";
 
 /** 2027-01-15 09:00 UTC, the payment. */
