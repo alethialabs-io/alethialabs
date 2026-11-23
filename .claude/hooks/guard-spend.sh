@@ -1070,6 +1070,11 @@ STUB
 	c 150 'gh run rerun 104'
 	c 50 'gh run rerun 104 --job 5552'
 	c 50 'gh run rerun --job 5551'
+	# a redirection is the shell's, never the run id (#7281)
+	c 50 'gh run rerun --job 5551 2>&1 | tail -2'
+	c 200 'gh run rerun 112 2>&1'
+	c 200 'gh run rerun 112 > /tmp/out.log 2>&1'
+	c 200 'gh run rerun 112 &>/tmp/out.log'
 	c 1550 'gh run rerun 105 --failed'
 	c 10 'gh run rerun 103'
 	c 0 'gh run rerun 101'
