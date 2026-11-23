@@ -65,6 +65,7 @@
     "db:reencrypt": "tsx scripts/reencrypt-secrets.ts",
     "db:studio": "drizzle-kit studio",
     "stripe:setup": "tsx scripts/stripe-setup.ts",
+    "stripe:check": "tsx scripts/stripe-check.ts",
     "billing:pending-org-setups": "tsx scripts/pending-org-setups.ts",
     "billing:payment-holds": "tsx scripts/payment-holds.ts",
     "org:set-plan": "node scripts/set-org-plan.mjs",
