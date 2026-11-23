@@ -10,10 +10,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
-vi.mock("@/lib/billing/operator-alert", () => ({ alertOperator: vi.fn(async () => true) }));
-vi.mock("@/lib/billing/invoices", () => ({ setInvoiceStatus: vi.fn() }));
 
-import type { InvoiceFactRow, InvoiceFactsStore } from "@/lib/billing/invoice-facts";
+import type { InvoiceFactRow, TurnoverFactsReader } from "@/lib/billing/turnover-facts";
 import {
 	CONSERVATIVE_CROSS_RATE,
 	crossedThresholds,
@@ -42,25 +40,13 @@ function fact(over: Partial<InvoiceFactRow> = {}): InvoiceFactRow {
 	};
 }
 
-/** A store whose gate read returns `rows`; the recording paths are not the gate's and refuse. */
-function storeOf(rows: readonly InvoiceFactRow[]): InvoiceFactsStore {
-	return {
-		declaration: async () => {
-			throw new Error("the gate does not read declarations");
-		},
-		locked: async () => {
-			throw new Error("the gate does not take the recording lock");
-		},
-		factsSince: async (since) => rows.filter((r) => r.paidAt !== null && r.paidAt >= since),
-	};
+/** A read that returns `rows` paid at or after `since`. */
+function storeOf(rows: readonly InvoiceFactRow[]): TurnoverFactsReader {
+	return { factsSince: async (since) => rows.filter((r) => r.paidAt !== null && r.paidAt >= since) };
 }
 
-/** A store whose read fails, as a database outage would. */
-const brokenStore: InvoiceFactsStore = {
-	declaration: async () => null,
-	locked: async () => {
-		throw new Error("db down");
-	},
+/** A read that fails, as a database outage would. */
+const brokenStore: TurnoverFactsReader = {
 	factsSince: async () => {
 		throw new Error("db down");
 	},

@@ -4,7 +4,7 @@
 // The purchase gate's threshold question (#7324, EA-2): would THIS sale cross a tax threshold?
 //
 // ONE CHECK. This file does no summing. The totals come from `assessSaleBeforeCharge`
-// (lib/billing/invoice-facts.ts, EA-5), which sums the paid invoice rows with `@repo/legal/turnover`
+// (lib/billing/turnover-facts.ts, EA-5's read, a leaf — see its header for the import cycle it avoids), which sums the paid invoice rows with `@repo/legal/turnover`
 // — the same function the admin `/turnover` page calls — adds the prospective sale, and assesses it
 // with EA-1's threshold rules. So the gate and the admin page read the same totals by construction
 // (#7352): refunds and voids, recorded EUR rates, Bulgarian calendar years, US measuring periods and
@@ -22,7 +22,7 @@
 
 import type { PayerCapacity } from "@repo/legal/commerce";
 import { type ThresholdAssessment, type ThresholdCounter, thresholdCountersForSale } from "@repo/legal/thresholds";
-import { assessSaleBeforeCharge, type InvoiceFactsStore } from "@/lib/billing/invoice-facts";
+import { assessSaleBeforeCharge, type TurnoverFactsReader } from "@/lib/billing/turnover-facts";
 
 /**
  * The factor a USD amount is multiplied by to get an EUR figure, and an EUR amount to get a USD one,
@@ -79,7 +79,7 @@ export interface ThresholdBuyer {
 export async function crossedThresholds(
 	buyer: ThresholdBuyer,
 	sale: SaleAmount | null,
-	opts: { now?: Date; store?: InvoiceFactsStore } = {},
+	opts: { now?: Date; store?: TurnoverFactsReader } = {},
 ): Promise<CounterAssessment[]> {
 	if (thresholdCountersForSale(buyer).length === 0) return [];
 	const assessed = await assessSaleBeforeCharge(
