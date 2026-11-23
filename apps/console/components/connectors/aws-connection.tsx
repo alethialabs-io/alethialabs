@@ -9,7 +9,7 @@ import { Input } from "@repo/ui/input";
 import { ConnectSheetShell, MethodTabs, Step, StoredNote } from "@/components/connectors/connection-ui";
 import { FieldHelp } from "@repo/ui/field-help";
 import { CopyButton } from "@repo/ui/copy-button";
-import { ALETHIA_ISSUER_URL, connectorAssetUrl } from "@/components/connectors/connector-assets";
+import { useConnectorAssets } from "@/components/connectors/connector-assets";
 import { ConnectForm } from "@/components/cloud-connect/connect-form";
 import { awsConnectWizard, extractAwsRoleArn } from "@/components/cloud-connect/cloud-connect.wizard";
 import { type ConnectSession, useConnectWizard } from "@/components/cloud-connect/use-connect-wizard";
@@ -35,10 +35,11 @@ export function AwsConnection({ session }: { session: ConnectSession }) {
 	});
 	const { form } = flow.wizard;
 
-	const scriptUrl = connectorAssetUrl("alethia-aws-setup.sh");
+	const { assetUrl, issuerUrl } = useConnectorAssets();
+	const scriptUrl = assetUrl("alethia-aws-setup.sh");
 	// Pass the issuer explicitly so a self-hosted console points the customer's trust at its OWN
 	// issuer (the script also defaults it). Creates the OIDC provider + role.
-	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-aws-setup.sh ${ALETHIA_ISSUER_URL}`;
+	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-aws-setup.sh ${issuerUrl}`;
 
 	/** A paste of the script's whole output keeps only the role ARN in it. */
 	const onArnPaste = (event: ClipboardEvent<HTMLInputElement>) => {

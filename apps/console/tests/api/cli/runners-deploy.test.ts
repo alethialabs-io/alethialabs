@@ -7,7 +7,7 @@
 // here separately. Without it, `alethia runner deploy` on a GCP identity queues a job that dies in
 // the runner with "no templates for provider gcp", long after the runner row exists.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", async (importOriginal) => ({
 	authorizeCli: vi.fn(),
@@ -95,6 +95,12 @@ beforeEach(() => {
 		credential: "session",
 	} as never);
 	vi.mocked(getServiceDb).mockReturnValue(mock.db as never);
+	vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://alethia.example.com");
+	vi.stubEnv("BETTER_AUTH_URL", "");
+});
+
+afterEach(() => {
+	vi.unstubAllEnvs();
 });
 
 describe("POST /api/cli/runners/deploy", () => {
@@ -307,5 +313,49 @@ describe("POST /api/cli/runners/deploy", () => {
 
 		expect((await POST(req(DEPLOY))).status).toBe(201);
 		expect(order).toEqual(["quota", "insert", "insert"]);
+	});
+});
+
+// EDN-H7 (#6904): the runner connects back to THIS instance. The route used to fall back to the
+// hosted service when the origin was unset, which on a self-hosted instance handed the new runner
+// to Alethia Labs.
+describe("POST /api/cli/runners/deploy — the console URL the runner is given", () => {
+	/** Seeds the four queries a successful deploy runs. */
+	function seedDeploy() {
+		mock.queue.push(
+			[{ id: "ci-1", provider: "aws", org_id: "org-1" }],
+			[{ version: "1.4.0" }],
+			[{ id: "r-dep", name: "Cloud" }],
+			[{ id: "job-1", status: "QUEUED", created_at: new Date() }],
+		);
+	}
+
+	it("is this instance's own origin", async () => {
+		vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://alethia.example.com/");
+		seedDeploy();
+		expect((await POST(req(DEPLOY))).status).toBe(201);
+		expect(mock.valuesSpy.mock.calls[1][0].config_snapshot.alethia_url).toBe(
+			"https://alethia.example.com",
+		);
+	});
+
+	it("falls back to the auth origin, never to the hosted service", async () => {
+		vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
+		vi.stubEnv("BETTER_AUTH_URL", "https://auth.example.com");
+		seedDeploy();
+		expect((await POST(req(DEPLOY))).status).toBe(201);
+		expect(mock.valuesSpy.mock.calls[1][0].config_snapshot.alethia_url).toBe(
+			"https://auth.example.com",
+		);
+	});
+
+	it("refuses a self-hosted instance with no public URL with 409, before writing anything", async () => {
+		vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
+		seedDeploy();
+		const res = await POST(req(DEPLOY));
+		expect(res.status).toBe(409);
+		expect((await res.json()).error).toMatch(/no public URL/);
+		expect(mock.valuesSpy).not.toHaveBeenCalled();
+		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 });
