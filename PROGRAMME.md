@@ -327,7 +327,7 @@ The predicates are defined in `docs/beta/README.md`; this section only evaluates
   - sealed register: ✅ met — `terms` is sealed at 2026-08-24; the hashes themselves are held by `pnpm check:legal-hashes` and `pnpm check:legal-set` in CI
   - beta terms: ? not measured — nothing in the register records which `terms` version carries the beta and no-SLA wording (LEG-L2 writes it)
 - **B7** ❌ not met
-  - off-box backup: ? not measured — no instrument reads the off-box backup listing yet (REL-L7 builds the job)
+  - off-box backup: ? not measured — no backup-status.yml result in the snapshot (BKP-L2 runs it daily from `main`)
   - restore drill: ❌ not met — no restore-drill record
   - public hosts: ? not measured — the post-deploy smoke result is not in the snapshot, and the installer and status hosts are not in the smoke yet (REL-L8)
 - **B8** ❌ not met

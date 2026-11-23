@@ -14,6 +14,9 @@
 //
 // NEVER prints a token or key material — only row ids and counts.
 //
+// `db:reencrypt` (scripts/reencrypt-secrets.ts) runs this same pass alongside every other credential
+// ciphertext, so a key rotation re-seals these tokens too; this entry point runs it on its own.
+//
 // Run: pnpm -C apps/console exec tsx scripts/encrypt-oauth-tokens.ts
 //      (needs ALETHIA_DATABASE_URL and the ALETHIA_CRED_ENCRYPTION_KEY keyring; batch size via
 //      OAUTH_TOKEN_BATCH, default 500). Exits non-zero if any row could not be processed.

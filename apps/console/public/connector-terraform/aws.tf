@@ -473,6 +473,9 @@ data "aws_iam_policy_document" "iam" {
       "iam:AttachRolePolicy", "iam:DetachRolePolicy",
       "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:ListRoleTags",
       "iam:CreatePolicy", "iam:DeletePolicy", "iam:GetPolicy",
+      # The project template tags every IAM policy it creates; without these, CreatePolicy is
+      # refused at the tagging step and the AWS provider retries until the deploy times out.
+      "iam:TagPolicy", "iam:UntagPolicy", "iam:ListPolicyTags",
       "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
       "iam:GetPolicyVersion", "iam:ListPolicyVersions", "iam:ListPolicies",
       "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile",
