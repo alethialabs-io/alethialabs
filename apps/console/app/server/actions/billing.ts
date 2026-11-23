@@ -35,6 +35,7 @@ import {
 } from "@/lib/billing/ai-plan";
 import { canOrgInvite } from "@/lib/billing/collaboration";
 import { effectiveBillingPeriodStart } from "@/lib/billing/period";
+import { STRIPE_INVOICE_FOOTER } from "@/lib/billing/receipt-footer";
 import {
 	type PaidConversionContext,
 	assertOrgPaidConversionAllowed,
@@ -399,6 +400,7 @@ async function ensureCustomer(
 		email: billingEmail || u?.email,
 		name: org?.name,
 		metadata: { organization_id: orgId, created_by: userId },
+		invoice_settings: { footer: STRIPE_INVOICE_FOOTER },
 	});
 
 	// Persist the customer id without disturbing any existing plan/status.
@@ -2760,6 +2762,7 @@ async function startNewOrgSubscription(
 			email: u?.email,
 			name: opts.orgName,
 			metadata: { created_by: actor.userId },
+			invoice_settings: { footer: STRIPE_INVOICE_FOOTER },
 		});
 		customerId = customer.id;
 	}
