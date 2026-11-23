@@ -18,7 +18,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/billing/config", () => ({ planForPriceId: vi.fn() }));
 vi.mock("@/lib/billing/stripe", () => ({ getStripe: vi.fn() }));
-vi.mock("@/lib/billing/odoo-invoice", () => ({ issueFactura: vi.fn() }));
+vi.mock("@/lib/billing/factura/issue", () => ({ issuedFacturaFor: vi.fn(async () => null) }));
 // The org-name / owner-email lookups are not the subject here — a chainable stub that answers
 // every builder shape billing-email.ts uses keeps the suite I/O-free.
 vi.mock("@/lib/db", () => {

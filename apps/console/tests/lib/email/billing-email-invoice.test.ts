@@ -5,7 +5,7 @@
 // EA-7b (#7338): a receipt never hands the customer Stripe's PDF as the invoice.
 //
 // The receipt and credit-pack senders run for real, with the REAL templates rendered to text, so
-// the assertions read what a person reads. Only the фактура source (`issueFactura`) and the guarded
+// the assertions read what a person reads. Only the фактура source (`issuedFacturaFor`) and the guarded
 // sender are replaced. Every Stripe invoice below carries an `invoice_pdf` URL and a Stripe
 // `number`, and `fetch` is spied on, so a restored fallback to Stripe's PDF or Stripe's number
 // fails a case rather than passing silently.
@@ -16,7 +16,7 @@ import { type MockInstance, afterEach, beforeEach, describe, expect, it, vi } fr
 
 vi.mock("@/lib/billing/config", () => ({ planForPriceId: vi.fn(() => "team") }));
 vi.mock("@/lib/billing/stripe", () => ({ getStripe: vi.fn() }));
-vi.mock("@/lib/billing/odoo-invoice", () => ({ issueFactura: vi.fn() }));
+vi.mock("@/lib/billing/factura/issue", () => ({ issuedFacturaFor: vi.fn() }));
 vi.mock("@/lib/db", () => {
 	/** A self-returning query builder whose `limit` resolves to one row. */
 	const chain = {
@@ -34,7 +34,7 @@ vi.mock("@repo/email/config", () => ({
 }));
 vi.mock("@/lib/email/guard", () => ({ sendGuardedEmail: vi.fn() }));
 
-import { issueFactura } from "@/lib/billing/odoo-invoice";
+import { issuedFacturaFor } from "@/lib/billing/factura/issue";
 import { sendCreditPackReceiptEmail, sendReceiptEmail } from "@/lib/email/billing-email";
 import { sendGuardedEmail } from "@/lib/email/guard";
 
@@ -96,10 +96,11 @@ describe.each([
 	["credit-pack receipt", () => sendCreditPackReceiptEmail(stripeInvoice())],
 ])("%s", (_name, send) => {
 	it("attaches the фактура and names its number when one was issued", async () => {
-		vi.mocked(issueFactura).mockResolvedValue({
+		vi.mocked(issuedFacturaFor).mockResolvedValue({
 			number: FACTURA_NUMBER,
 			currency: "usd",
 			vatGround: "чл. 113, ал. 9 ЗДДС",
+			pdfKey: "org-1/in_1.pdf",
 			pdf: FACTURA_PDF,
 		});
 		await send();
@@ -114,7 +115,7 @@ describe.each([
 	});
 
 	it("sends no attachment, no Stripe number, and says the invoice follows when no фактура exists", async () => {
-		vi.mocked(issueFactura).mockResolvedValue(null);
+		vi.mocked(issuedFacturaFor).mockResolvedValue(null);
 		await send();
 		const { text, attachments } = await sentEmail();
 		expect(attachments).toBeUndefined();
@@ -125,8 +126,8 @@ describe.each([
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 
-	it("still sends the receipt, without an attachment, when issuing the фактура throws", async () => {
-		vi.mocked(issueFactura).mockRejectedValue(new Error("odoo exploded"));
+	it("still sends the receipt, without an attachment, when reading the фактура throws", async () => {
+		vi.mocked(issuedFacturaFor).mockRejectedValue(new Error("store exploded"));
 		await send();
 		const { text, attachments } = await sentEmail();
 		expect(attachments).toBeUndefined();

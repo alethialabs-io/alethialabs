@@ -105,7 +105,6 @@ done when instructed):
 | `STRIPE_WEBHOOK_SECRET` | from the 0600 file (§1) |
 | `STRIPE_PRICE_TEAM`, `STRIPE_PRICE_METER_TEAM`, `STRIPE_PRICE_AI_PLUS`, `STRIPE_PRICE_AI_MAX` | from the apply's printed block |
 | `STRIPE_TAX_ENABLED` | `true` only after the Stripe Tax decision in §3 |
-| `ODOO_INVOICE_URL`, `ODOO_INVOICE_TOKEN` | confirm present (check the key names only) |
 
 Hosted production sends email through AWS SES from the `alethia-email` account
 (`EMAIL_PROVIDER=ses`, the `ALETHIA_SES_*` keys; `infra/email-ses-account/README.md`).
@@ -127,8 +126,9 @@ The script cannot do these. They are the maintainer's, in the live dashboard:
 
 ### Stripe's PDF is not the invoice of record
 
-The invoice of record is the фактура issued through Odoo (`lib/billing/odoo-invoice.ts`), which
-carries what Art. 114 ЗДДС requires. Stripe's invoice and its PDF are payment records only. That is
+The invoice of record is the фактура the console issues itself from Stripe's paid invoice
+(`lib/billing/factura/issue.ts`): a ten-digit number from a gap-free series, and the Art. 114 ЗДДС
+fields, rendered to PDF from an immutable snapshot. Stripe's invoice and its PDF are payment records only. That is
 why the portal does not show Stripe's invoice history and why Stripe's invoice emails are off at
 go-live.
 
@@ -137,7 +137,9 @@ go-live.
 - Subscribe a real organisation in an open cell, then confirm:
   - the webhook shows **200** (Developers → Webhooks → the endpoint);
   - `organization_billing` is `active` and a `stripe_webhook_event` row is `done`;
-  - the фактура is issued in Odoo and the customer receives Alethia's email, and no email from Stripe.
+  - a `factura` row exists with a ten-digit number and a stored PDF, the `invoice` row reads
+    `factura_status = 'issued'`, and the customer receives Alethia's email with the фактура attached,
+    and no email from Stripe.
 - Trigger a failed renewal with a declining card and confirm the dunning email.
 - Run `stripe:check -- --live --webhook-url=…` and keep its output as the evidence.
 

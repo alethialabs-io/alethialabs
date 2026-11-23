@@ -9,7 +9,7 @@ reviewed from clean production artifacts before each public release.
 |---|---|---|---|
 | Space Grotesk | Brand/display font, vendored (`latin` subset) in `packages/brand/src/fonts/` | SIL Open Font License 1.1 | Retain OFL text and copyright notice: `packages/brand/src/fonts/OFL-SpaceGrotesk.txt` |
 | Geist / Geist Mono | Interface fonts, vendored (`latin` subsets) in `packages/brand/src/fonts/` | SIL Open Font License 1.1 | Retain OFL text and copyright notice: `packages/brand/src/fonts/OFL-Geist.txt`, `OFL-GeistMono.txt` |
-| Noto Sans | Text font where bundled | SIL Open Font License 1.1 | Retain OFL text and copyright notice |
+| Noto Sans | Text font where bundled; Regular and Bold TTF vendored unmodified in `apps/console/lib/billing/factura/fonts/` and embedded (subset) in the фактура PDF | SIL Open Font License 1.1 | Retain OFL text and copyright notice: `apps/console/lib/billing/factura/fonts/OFL.txt` |
 | Lucide | Interface icons | ISC | Retain copyright and licence notice |
 | Base UI / Radix / shadcn-derived components | UI primitives | Upstream permissive terms | Retain applicable notices and modification records |
 | Sharp / libvips runtime | Image processing | Mixed; libvips includes LGPL terms | Preserve notices and verify the distributed linking/source obligations |

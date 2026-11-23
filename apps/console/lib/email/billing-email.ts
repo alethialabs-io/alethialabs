@@ -5,9 +5,9 @@
 // email experience (receipt / dunning / trial / cancellation / credit pack) via SES
 // rather than Stripe's default emails. Each fn maps the Stripe object(s) the webhook
 // already holds onto a react-email template and sends through the suppression-aware
-// guard on the general stream. The receipt carries the Odoo фактура as its attachment when
-// one was issued, and otherwise says the invoice follows: Stripe's PDF is never sent as the
-// invoice (EA-7b, #7338).
+// guard on the general stream. The receipt carries the фактура as its attachment when one was
+// issued, and otherwise says the invoice follows: Stripe's PDF is never sent as the invoice
+// (EA-7b, #7338).
 
 import type Stripe from "stripe";
 import { formatDate, formatMoney } from "@repo/format";
@@ -15,7 +15,7 @@ import { planMeta } from "@repo/plan-catalog";
 import { getEmailConfig } from "@repo/email/config";
 import type { EmailAttachment } from "@repo/email/send";
 import { and, asc, eq } from "drizzle-orm";
-import { issueFactura } from "@/lib/billing/odoo-invoice";
+import { issuedFacturaFor } from "@/lib/billing/factura/issue";
 import { getStripe } from "@/lib/billing/stripe";
 import { planFromSubscription, planItem } from "@/lib/billing/sync";
 import type { BillingPlan } from "@/lib/db/schema/enums";
@@ -171,22 +171,25 @@ interface ReceiptInvoice {
 }
 
 /**
- * The invoice a receipt carries: the Odoo фактура (Art. 113-114 ЗДДС) or NOTHING (EA-7b, #7338).
+ * The invoice a receipt carries: the фактура (Art. 113-114 ЗДДС) or NOTHING (EA-7b, #7338).
  *
  * There is no Stripe fallback, on purpose. Stripe's PDF is not a compliant фактура (its number is
  * Stripe's `PREFIX-0031` series, not the ten-digit sequence Art. 114(1) requires), and attached as
- * `Invoice-<n>.pdf` it would be the document the customer files as the invoice. When `issueFactura` returns null (unconfigured,
- * recipient incomplete, Odoo down, and so on), the receipt goes out WITHOUT an attachment and
- * says the invoice follows. The invoice row stays pending, and the operator alert that
- * `mirrorPaidInvoice` raises (lib/billing/invoices.ts) drives the retry.
+ * `Invoice-<n>.pdf` it would be the document the customer files as the invoice.
+ *
+ * The receipt never ISSUES one. The webhook mirrors the invoice first (`mirrorPaidInvoice`, which
+ * issues the фактура through lib/billing/factura/issue.ts), and the receipt attaches what that
+ * issued. When nothing was issued (the recipient's details are incomplete, no EUR rate, a store
+ * failure), the receipt goes out WITHOUT an attachment and says the invoice follows; the invoice
+ * row stays pending and the operator alert the mirror raised drives the retry.
  *
  * The number is the фактура's too, never `invoice.number`: Stripe's number printed next to
  * "Invoice" makes the same false claim as the PDF.
  */
 async function receiptInvoice(invoice: Stripe.Invoice): Promise<ReceiptInvoice> {
-	let factura: Awaited<ReturnType<typeof issueFactura>> = null;
+	let factura: Awaited<ReturnType<typeof issuedFacturaFor>> = null;
 	try {
-		factura = await issueFactura(invoice);
+		factura = invoice.id ? await issuedFacturaFor(invoice.id) : null;
 	} catch {
 		// Best-effort: a failure here must never block the receipt itself.
 		factura = null;
