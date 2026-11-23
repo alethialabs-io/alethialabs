@@ -9,6 +9,7 @@
 // public page without three copies drifting apart — the failure mode #2371 already recorded for the
 // processing register.
 
+import type { LegalDocumentLocale } from "./documents";
 import { PAID_MARKETS } from "./paid-markets";
 
 /**
@@ -282,6 +283,64 @@ export interface WithdrawalOutcome {
 }
 
 /**
+ * The language a consumer's statutory texts are given in: Bulgarian for a buyer whose billing country
+ * is Bulgaria (ЗЗП art. 52a, and the Bulgarian-language rule for consumer information), English
+ * otherwise. Uses the same locale codes as `LEGAL_DOCUMENTS[].locales`.
+ */
+export type ConsumerLocale = LegalDocumentLocale;
+
+/**
+ * The locale a consumer with this billing country is addressed in: `bg-BG` for `BG` (any case,
+ * surrounding whitespace ignored), `en` for everything else, including a missing country.
+ */
+export function consumerLocaleFor(country: string | null | undefined): ConsumerLocale {
+	return normaliseCountry(country) === SELLER_COUNTRY ? "bg-BG" : "en";
+}
+
+/** The four `basis` sentences, in one language. The proportional one takes the day counts. */
+export interface WithdrawalBasisText {
+	readonly deferred: string;
+	readonly notAcknowledged: string;
+	readonly noPeriod: string;
+	readonly proportional: (supplied: number, periodDays: number) => string;
+}
+
+/**
+ * Every `basis` sentence `withdrawalOutcome` can return, per locale. A parallel map rather than a
+ * translation call, so each language's wording is reviewable as text, and a test can require that
+ * every locale covers every outcome.
+ */
+export const WITHDRAWAL_BASIS: Readonly<Record<ConsumerLocale, WithdrawalBasisText>> = {
+	en: {
+		deferred:
+			"Service was not supplied during the withdrawal period, so the full amount is refunded.",
+		notAcknowledged:
+			"Immediate performance was requested but the proportional charge was not acknowledged at " +
+			"purchase, so no part of the price may be retained and the full amount is refunded.",
+		noPeriod:
+			"The billed period has no measurable length, so no proportion can be retained and the " +
+			"full amount is refunded.",
+		proportional: (supplied, periodDays) =>
+			`Immediate performance was requested and the proportional charge acknowledged, so the ` +
+			`amount for ${supplied} of ${periodDays} day(s) supplied is retained and the rest refunded.`,
+	},
+	"bg-BG": {
+		deferred:
+			"Услугата не е предоставяна през срока за отказ, затова цялата сума се възстановява.",
+		notAcknowledged:
+			"Поискано е незабавно изпълнение, но при покупката не е потвърдено задължението за " +
+			"пропорционално плащане, затова не може да бъде задържана никаква част от цената и цялата " +
+			"сума се възстановява.",
+		noPeriod:
+			"Платеният период няма измерима продължителност, затова не може да бъде задържана " +
+			"пропорционална част и цялата сума се възстановява.",
+		proportional: (supplied, periodDays) =>
+			`Поискано е незабавно изпълнение и е потвърдено задължението за пропорционално плащане, ` +
+			`затова се задържа сумата за предоставените ${supplied} от ${periodDays} дни, а остатъкът се възстановява.`,
+	},
+};
+
+/**
  * The MANDATORY proportional accounting for a consumer exercising the statutory withdrawal right
  * (CRD art. 14(3)). Not a refund policy — a legal computation, which is why it is a pure function
  * with its own tests rather than a branch inside a Stripe call.
@@ -299,10 +358,15 @@ export interface WithdrawalOutcome {
  *
  * Rounding favours the consumer: the retained amount is floored, so a fractional minor unit becomes
  * refund rather than revenue.
+ *
+ * `locale` chooses only the language of `basis` (from {@link WITHDRAWAL_BASIS}); the figures never
+ * depend on it.
  */
 export function withdrawalOutcome(
 	input: WithdrawalAccounting,
+	locale: ConsumerLocale = "en",
 ): WithdrawalOutcome {
+	const text = WITHDRAWAL_BASIS[locale];
 	const paid = Math.max(0, Math.floor(input.paidMinorUnits));
 	const refundAll = (basis: string): WithdrawalOutcome => ({
 		retainedMinorUnits: 0,
@@ -311,21 +375,13 @@ export function withdrawalOutcome(
 	});
 
 	if (input.performanceStart === "deferred") {
-		return refundAll(
-			"Service was not supplied during the withdrawal period, so the full amount is refunded.",
-		);
+		return refundAll(text.deferred);
 	}
 	if (!input.acknowledgedProportionalCharge) {
-		return refundAll(
-			"Immediate performance was requested but the proportional charge was not acknowledged at " +
-				"purchase, so no part of the price may be retained and the full amount is refunded.",
-		);
+		return refundAll(text.notAcknowledged);
 	}
 	if (input.periodDays <= 0) {
-		return refundAll(
-			"The billed period has no measurable length, so no proportion can be retained and the " +
-				"full amount is refunded.",
-		);
+		return refundAll(text.noPeriod);
 	}
 
 	const supplied = Math.min(
@@ -337,9 +393,7 @@ export function withdrawalOutcome(
 	return {
 		retainedMinorUnits: retained,
 		refundMinorUnits: paid - retained,
-		basis:
-			`Immediate performance was requested and the proportional charge acknowledged, so the ` +
-			`amount for ${supplied} of ${input.periodDays} day(s) supplied is retained and the rest refunded.`,
+		basis: text.proportional(supplied, input.periodDays),
 	};
 }
 
@@ -356,11 +410,32 @@ export function withdrawalOutcome(
  */
 export const CONSUMER_PAYMENT_OBLIGATION_LABEL = "Order with an obligation to pay";
 
+/**
+ * The consumer order button's label in Bulgarian. ЗЗП art. 49(2), which transposes CRD art. 8(2),
+ * names the formulation „поръчка със задължение за плащане“. It lives here for the same reason as
+ * the English one.
+ */
+export const CONSUMER_PAYMENT_OBLIGATION_LABEL_BG = "Поръчка със задължение за плащане";
+
 /** The order button's label for an ORGANIZATION purchase, where the CRD does not apply. */
 export const ORGANIZATION_ORDER_LABEL = "Confirm and pay";
 
-/** The label to render for a given payer capacity. */
-export function orderButtonLabel(capacity: PayerCapacity): string {
+/** {@link ORGANIZATION_ORDER_LABEL} in Bulgarian. */
+export const ORGANIZATION_ORDER_LABEL_BG = "Потвърждаване и плащане";
+
+/**
+ * The label to render for a given payer capacity, in the consumer's locale (`en` by default; see
+ * {@link consumerLocaleFor}).
+ */
+export function orderButtonLabel(
+	capacity: PayerCapacity,
+	locale: ConsumerLocale = "en",
+): string {
+	if (locale === "bg-BG") {
+		return capacity === "consumer"
+			? CONSUMER_PAYMENT_OBLIGATION_LABEL_BG
+			: ORGANIZATION_ORDER_LABEL_BG;
+	}
 	return capacity === "consumer"
 		? CONSUMER_PAYMENT_OBLIGATION_LABEL
 		: ORGANIZATION_ORDER_LABEL;
@@ -374,6 +449,8 @@ export interface ConsumerDisputeBody {
 	readonly localName: string;
 	readonly url: string;
 	readonly role: string;
+	/** {@link role} in Bulgarian, for the Bulgarian section of the Consumer rights page. */
+	readonly localRole: string;
 }
 
 /**
@@ -391,11 +468,15 @@ export const CONSUMER_ADR: readonly ConsumerDisputeBody[] = [
 		localName: "Комисия за защита на потребителите (КЗП)",
 		url: "https://kzp.bg/",
 		role: "The Bulgarian consumer-protection authority — complaints about a trader's conduct.",
+		localRole:
+			"Българският орган за защита на потребителите — жалби относно поведението на търговец.",
 	},
 	{
 		name: "General Conciliation Commission, Sofia",
 		localName: "Обща помирителна комисия — София",
 		url: "https://kzp.bg/bg/pomiritelna-komisiya",
 		role: "Alternative dispute resolution for consumer disputes with traders established in Bulgaria.",
+		localRole:
+			"Алтернативно решаване на потребителски спорове с търговци, установени в България.",
 	},
 ];

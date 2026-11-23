@@ -27,6 +27,7 @@ vi.mock("@/lib/billing/stripe", () => ({ getStripe: vi.fn() }));
 vi.mock("@/lib/email/withdrawal-email", () => ({
 	sendWithdrawalAcknowledgementEmail: vi.fn(async () => true),
 }));
+vi.mock("@/lib/billing/operator-alert", () => ({ alertOperator: vi.fn(async () => true) }));
 vi.mock("@/lib/billing/config", () => ({
 	deploymentMode: vi.fn(() => "hosted"),
 	isStripeConfigured: vi.fn(() => true),
@@ -38,6 +39,8 @@ import { getStripe } from "@/lib/billing/stripe";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { deploymentMode, isStripeConfigured } from "@/lib/billing/config";
 import { sendWithdrawalAcknowledgementEmail } from "@/lib/email/withdrawal-email";
+import { alertOperator } from "@/lib/billing/operator-alert";
+import { WITHDRAWAL_BASIS } from "@repo/legal/commerce";
 import {
 	getWithdrawalRight,
 	recordOrdinaryCancellation,
@@ -58,6 +61,7 @@ function order(overrides: Record<string, unknown> = {}) {
 		placedByUserId: "u-1",
 		capacity: "consumer",
 		state: "active",
+		billingCountry: "DE",
 		totalMinorUnits: 12_000,
 		currency: "eur",
 		periodDays: 30,
@@ -316,7 +320,51 @@ describe("exercising the withdrawal", () => {
 			refundMinorUnits: 8_000,
 			retainedMinorUnits: 4_000,
 			currency: "eur",
+			refundIssued: true,
+			basis: WITHDRAWAL_BASIS.en.proportional(10, 30),
+			locale: "en",
 		});
+	});
+
+	// ЗЗП art. 52a: a Bulgarian consumer is acknowledged in Bulgarian, and the basis the email quotes
+	// is computed in that language. The split is the same either way (#7351).
+	it("acknowledges a Bulgarian consumer in Bulgarian, with the same split", async () => {
+		stubDb([order({ daysAgo: 10, billingCountry: "BG" })]);
+		stubStripe();
+		await withdrawFromContract({ reason: null });
+		expect(sendWithdrawalAcknowledgementEmail).toHaveBeenCalledWith(
+			expect.objectContaining({
+				refundMinorUnits: 8_000,
+				retainedMinorUnits: 4_000,
+				basis: WITHDRAWAL_BASIS["bg-BG"].proportional(10, 30),
+				locale: "bg-BG",
+			}),
+		);
+	});
+
+	// The page promises "we contact you within 14 days to arrange it" for a refund that could not be
+	// issued automatically. The alert is what puts that in front of a person, and the email is told
+	// so it can say that sentence.
+	it("alerts the operator, and tells the email, when an owed refund could not be issued", async () => {
+		stubDb([order({ daysAgo: 10, stripePaymentIntentId: null })]);
+		stubStripe();
+		await withdrawFromContract({ reason: null });
+		expect(alertOperator).toHaveBeenCalledWith(
+			expect.objectContaining({
+				subject: { type: "user", id: "u-1" },
+				summary: expect.stringMatching(/order order-1 .*within 14 days/),
+			}),
+		);
+		expect(sendWithdrawalAcknowledgementEmail).toHaveBeenCalledWith(
+			expect.objectContaining({ refundIssued: false }),
+		);
+	});
+
+	it("does not alert the operator when the refund was issued", async () => {
+		stubDb([order({ daysAgo: 10 })]);
+		stubStripe();
+		await withdrawFromContract({ reason: null });
+		expect(alertOperator).not.toHaveBeenCalled();
 	});
 
 	it("sends no acknowledgement for a refused withdrawal", async () => {
