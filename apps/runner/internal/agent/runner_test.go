@@ -875,6 +875,7 @@ func TestHygRunnerAgentDeployValidationSettlesTheJobFailed(t *testing.T) {
 					ID:                "hyg-deploy",
 					JobType:           "DEPLOY",
 					PlanJobID:         &planJobID,
+					PlanSHA256:        planDigestOf([]byte("hyg-plan")),
 					ConfigurationHash: tc.jobHash,
 					ConfigSnapshot: map[string]any{
 						"project_name":      "test",

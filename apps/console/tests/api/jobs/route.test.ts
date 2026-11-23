@@ -13,17 +13,45 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", async (importOriginal) => ({
-	// Real: the pure credential → "is userId the caller" mapping the DESTROY_RUNNER branch reads.
-	userIdIsTheCaller: (await importOriginal<typeof import("@/lib/authz/guard")>())
-		.userIdIsTheCaller,
-	authorize: vi.fn(),
-	ensureCliOrgAccess: vi.fn(),
-	// The service-token arm asks this one instead (#4298) — "is the MINTER still a member".
-	// Stubbed here rather than left off the factory: without it the token tests below would
-	// exercise `undefined(...)`, which throws where the route expects a 403-or-null.
-	assertMintingProfileStillMember: vi.fn(),
+const realGuard = vi.hoisted(() => ({
+	withServiceTokenCeiling: undefined as undefined | typeof import("@/lib/authz/guard").withServiceTokenCeiling,
 }));
+vi.mock("@/lib/authz/guard", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@/lib/authz/guard")>();
+	realGuard.withServiceTokenCeiling = actual.withServiceTokenCeiling;
+	return {
+		// Real: the pure credential → "is userId the caller" mapping the DESTROY_RUNNER branch reads.
+		userIdIsTheCaller: actual.userIdIsTheCaller,
+		// Real: the 403 body a ceiling refusal answers with.
+		insufficientScope: actual.insufficientScope,
+		// Passes the actor through by default (the token payloads below carry no scope list); the scope
+		// ceiling tests switch it to the real one.
+		withServiceTokenCeiling: vi.fn((actor: unknown) => actor),
+		authorize: vi.fn(),
+		ensureCliOrgAccess: vi.fn(),
+		// The service-token arm asks this one instead (#4298) — "is the MINTER still a member".
+		// Stubbed here rather than left off the factory: without it the token tests below would
+		// exercise `undefined(...)`, which throws where the route expects a 403-or-null.
+		assertMintingProfileStillMember: vi.fn(),
+	};
+});
+// The reviewed-plan read is unit-tested in tests/lib/approvals/plan-binding.test.ts; here a named plan
+// resolves and an unnamed one is refused with the real error type, so the route's 409 is exercised.
+vi.mock("@/lib/approvals/plan-binding", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@/lib/approvals/plan-binding")>();
+	return {
+		...actual,
+		resolveReviewedPlan: vi.fn(async (_tx: unknown, target: { planJobId?: string | null }) => {
+			if (!target.planJobId) {
+				throw new actual.PlanBindingError(
+					"plan_required",
+					"A deploy applies a reviewed plan. Plan this environment, review the plan, then apply it.",
+				);
+			}
+			return { planJobId: target.planJobId, planSha256: "d".repeat(64) };
+		}),
+	};
+});
 // The PDP the DESTROY_RUNNER branch asks directly (#5479). Partial: the server actions this suite
 // runs for real import the rest of the module.
 const pdpCan = vi.fn();
@@ -47,8 +75,12 @@ import {
 	assertMintingProfileStillMember,
 	authorize,
 	ensureCliOrgAccess,
+	withServiceTokenCeiling,
 } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
+import { getInjectedActor } from "@/lib/authz/actor-context";
+import { ceilingDecision } from "@/lib/authz/scope-ceiling";
+import { configurationHashOf } from "@/lib/approvals/plan-binding";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { verifyCliToken } from "@/lib/cli/auth";
@@ -320,9 +352,8 @@ describe("POST /api/jobs (CLI queue)", () => {
 			select: snapshotSelect(),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
 		});
-		const { updateSetSpy } = mockServiceDb({
+		mockServiceDb({
 			selectRows: [wireJob({ job_type: "PLAN" })],
-			updateRows: [wireJob({ job_type: "PLAN", configuration_hash: "h" })],
 		});
 
 		const res = await post({
@@ -367,9 +398,8 @@ describe("POST /api/jobs (CLI queue)", () => {
 		// Env flipped to QUEUED via the set_env_status CAS (tx.execute), not a bare .set().
 		expect(executeSpy).toHaveBeenCalled();
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
-		expect(updateSetSpy).toHaveBeenCalledWith({
-			configuration_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
-		});
+		// The plan→apply hash is stamped on the insert itself, over the snapshot it froze.
+		expect(jobVals.configuration_hash).toBe(configurationHashOf(jobVals.config_snapshot));
 	});
 
 	it("DEPLOY delegates to provisionProject (plan chaining + PROVISIONED audit)", async () => {
@@ -379,7 +409,6 @@ describe("POST /api/jobs (CLI queue)", () => {
 		});
 		mockServiceDb({
 			selectRows: [wireJob()],
-			updateRows: [wireJob({ configuration_hash: "h" })],
 		});
 
 		const res = await post({
@@ -394,8 +423,11 @@ describe("POST /api/jobs (CLI queue)", () => {
 		expect(valuesFor(valuesSpy, jobs)).toMatchObject({
 			job_type: "DEPLOY",
 			plan_job_id: "plan-3",
+			plan_sha256: "d".repeat(64),
 			assigned_runner_id: "runner-2",
 		});
+		// The digest stays off the CLI wire (the Go strict decoder would refuse it).
+		expect(await res.json()).not.toHaveProperty("job.plan_sha256");
 		expect(valuesFor(valuesSpy, jobs).config_snapshot).toMatchObject({
 			provider: "aws",
 			environment_stage: "production",
@@ -409,10 +441,7 @@ describe("POST /api/jobs (CLI queue)", () => {
 			insert: new Map([[jobs, [{ id: "job-9" }]]]),
 		});
 		mockServiceDb({
-			selectRows: [wireJob({ job_type: "DESTROY" })],
-			updateRows: [
-				wireJob({ job_type: "DESTROY", org_id: ORG_ID, configuration_hash: "h" }),
-			],
+			selectRows: [wireJob({ job_type: "DESTROY", org_id: ORG_ID })],
 		});
 
 		const res = await post({ job_type: "DESTROY", configuration_id: "p1" });
@@ -883,4 +912,116 @@ describe("POST /api/jobs (CLI queue)", () => {
 		expect(res.status).toBe(403);
 		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
 	});
+
+	it("409s a DEPLOY that names no plan, with the refusal's code, and queues nothing (decision M23)", async () => {
+		const { valuesSpy } = setupTx({
+			select: snapshotSelect(),
+			insert: new Map([[jobs, [{ id: "job-7" }]]]),
+		});
+		mockServiceDb({ selectRows: [wireJob()] });
+
+		const res = await post({ job_type: "DEPLOY", configuration_id: "p1" });
+
+		expect(res.status).toBe(409);
+		// The caller is an older CLI or a script: the sentence names both ways forward.
+		expect(await res.json()).toEqual({
+			error:
+				"A deploy applies a reviewed plan. Upgrade the Alethia CLI, whose `alethia project deploy` previews the environment first, or run `alethia project preview --wait` and then `alethia project deploy --latest-plan`.",
+			code: "plan_required",
+		});
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+	});
 });
+
+/**
+ * The service token's scope ceiling on POST /api/jobs (AGT-L3 note on #6780). The route attaches the
+ * token's limit with the REAL `withServiceTokenCeiling`; `authorize` is answered by the REAL ceiling
+ * rule (`ceilingDecision`) over the actor the route bound with `runWithActor`, so what is proved is
+ * that the actor the actions see carries the token's scopes and project list.
+ */
+describe("POST /api/jobs — a service token is held to its scopes and project list", () => {
+	const OTHER_PROJECT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+	/** A service-token caller pinned to org-1 with the given limit. */
+	function tokenCaller(scopes: string[], projectIds: string[] | null) {
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: {
+				sub: "user-1",
+				service_token_org_id: "org-1",
+				service_token_id: "st-1",
+				service_token_scopes: scopes,
+				service_token_project_ids: projectIds,
+			},
+			error: null,
+		} as never);
+	}
+
+	beforeEach(() => {
+		const real = realGuard.withServiceTokenCeiling;
+		if (!real) throw new Error("the real withServiceTokenCeiling was not captured");
+		vi.mocked(withServiceTokenCeiling).mockImplementation(real);
+		vi.mocked(authorize).mockImplementation(async (action, resource) => {
+			const actor = getInjectedActor();
+			if (!actor) throw new Error("no actor bound");
+			const ref = { type: resource.type, id: resource.id };
+			const decision = await ceilingDecision(actor, action, ref);
+			if (!decision.allowed) throw new ForbiddenError(action, ref, decision.reason);
+			return actor;
+		});
+	});
+
+	it.each([
+		["DEPLOY", ["read", "design", "plan"]],
+		["DESTROY", ["read", "design", "plan", "apply"]],
+		["PLAN", ["read", "design"]],
+	] as const)("refuses a %s outside the token's scopes with 403 insufficient_scope, queuing nothing", async (verb, scopes) => {
+		tokenCaller([...scopes], null);
+		const { valuesSpy } = setupTx({ select: snapshotSelect(), insert: new Map([[jobs, [{ id: "job-x" }]]]) });
+		mockServiceDb({ selectRows: [wireJob()] });
+
+		const res = await post({ job_type: verb, configuration_id: PROJECT_ID, plan_job_id: CLIENT_PLAN_ID });
+
+		expect(res.status).toBe(403);
+		expect(res.headers.get("WWW-Authenticate")).toBe('Bearer error="insufficient_scope"');
+		expect(await res.json()).toMatchObject({ error: "insufficient_scope", reason: "insufficient_scope" });
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+	});
+
+	it("refuses a project outside the token's project list with 403 project_not_permitted", async () => {
+		tokenCaller(["read", "design", "plan", "apply", "destroy"], [OTHER_PROJECT]);
+		const { valuesSpy } = setupTx({ select: snapshotSelect(), insert: new Map([[jobs, [{ id: "job-x" }]]]) });
+		mockServiceDb({ selectRows: [wireJob()] });
+
+		const res = await post({ job_type: "PLAN", configuration_id: PROJECT_ID });
+
+		expect(res.status).toBe(403);
+		expect(await res.json()).toMatchObject({ error: "insufficient_scope", reason: "project_not_permitted" });
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+	});
+
+	it("queues a verb the token's scopes and project list cover", async () => {
+		tokenCaller(["read", "plan"], [PROJECT_ID]);
+		const { valuesSpy } = setupTx({ select: snapshotSelect(), insert: new Map([[jobs, [{ id: "job-p" }]]]) });
+		mockServiceDb({ selectRows: [wireJob({ job_type: "PLAN" })] });
+
+		const res = await post({ job_type: "PLAN", configuration_id: PROJECT_ID });
+
+		expect(res.status).toBe(201);
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "PLAN" });
+	});
+
+	it("refuses a service token whose limit cannot be read, before any verb runs", async () => {
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: { sub: "user-1", service_token_org_id: "org-1", service_token_id: "st-1" },
+			error: null,
+		} as never);
+		setupTx({ select: snapshotSelect() });
+		mockServiceDb({});
+
+		const res = await post({ job_type: "PLAN", configuration_id: PROJECT_ID });
+
+		expect(res.status).toBe(403);
+		expect(authorize).not.toHaveBeenCalled();
+	});
+});
+

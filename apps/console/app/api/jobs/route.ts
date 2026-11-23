@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createHash } from "crypto";
 import { type SQL, eq, inArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -12,6 +11,7 @@ import {
 } from "@/app/server/actions/projects";
 import { destroyRunner } from "@/app/server/actions/runners";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { PlanBindingError } from "@/lib/approvals/plan-binding";
 import { ApplyAuthorizationError } from "@/lib/approvals/types";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
@@ -22,13 +22,16 @@ import {
 	assertMintingProfileStillMember,
 	authorizeCli,
 	ensureCliOrgAccess,
+	insufficientScope,
+	withServiceTokenCeiling,
 } from "@/lib/authz/guard";
+import { INSUFFICIENT_SCOPE, PROJECT_NOT_PERMITTED } from "@/lib/authz/scope-ceiling";
 import {
 	assertRunnerInOrg,
 	personalRunnerArm,
 } from "@/lib/authz/runner-org";
-import { type CredentialKind, ForbiddenError } from "@/lib/authz/types";
-import { verifyCliToken } from "@/lib/cli/auth";
+import { type Actor, type CredentialKind, ForbiddenError } from "@/lib/authz/types";
+import { type CliTokenPayload, verifyCliToken } from "@/lib/cli/auth";
 import {
 	type CursorScope,
 	cursorKey,
@@ -102,6 +105,38 @@ function actorCredentialOf(caller: CliCaller): CredentialKind {
 		case "session":
 			return "cli_session";
 	}
+}
+
+/**
+ * The sentence a DEPLOY that names no plan is refused with on this route. A current CLI never sends
+ * one (`alethia project deploy` previews first and deploys that plan), so the caller is an older CLI
+ * or a script: it names both ways forward.
+ */
+const CLI_PLAN_REQUIRED =
+	"A deploy applies a reviewed plan. Upgrade the Alethia CLI, whose `alethia project deploy` previews the environment first, or run `alethia project preview --wait` and then `alethia project deploy --latest-plan`.";
+
+/**
+ * The actor this route acts as, with a service token's scope ceiling attached (lib/authz/scope-ceiling.ts),
+ * so every decision the server actions ask through `runWithActor` — plan, deploy, destroy — is held to
+ * the token's scopes and project list, as on every route that goes through `authorizeCli`. A session
+ * has no ceiling. `null` is a service token whose limit cannot be read, which is refused.
+ */
+function ceiledActor(actor: Actor, caller: CliCaller, payload: CliTokenPayload): Actor | null {
+	switch (caller.credential) {
+		case "service_token":
+			return withServiceTokenCeiling(actor, payload);
+		case "session":
+			return actor;
+		default: {
+			const unhandled: never = caller;
+			return unhandled;
+		}
+	}
+}
+
+/** True when a refusal came from the credential's scope ceiling rather than the person's grants. */
+function isCeilingRefusal(e: ForbiddenError): boolean {
+	return e.reason === INSUFFICIENT_SCOPE || e.reason === PROJECT_NOT_PERMITTED;
 }
 
 /**
@@ -283,10 +318,19 @@ export async function POST(req: Request) {
 		// Carries the credential kind, so the server actions below (reached through `runWithActor`)
 		// never treat a service token's minter as the person asking (`personalIdentityAuthor`), and
 		// can tell a device login from a person at the console (`actorCredentialOf`).
-		const actor = actorWithCredential(
-			await getActiveScope(userId, scopedOrg),
-			actorCredentialOf(caller),
+		// A service token's scopes and project list ride on the actor (`ceiledActor`), so the PDP
+		// answers every verb below for the token, not for the full grants of the person who minted it.
+		const actor = ceiledActor(
+			actorWithCredential(
+				await getActiveScope(userId, scopedOrg),
+				actorCredentialOf(caller),
+			),
+			caller,
+			payload,
 		);
+		if (!actor) {
+			return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+		}
 		// WHICH QUESTION TO ASK DEPENDS ON WHAT THE CREDENTIAL IS (#4298).
 		//
 		// This route resolves its own scope rather than going through `authorizeCli`, so it
@@ -361,6 +405,9 @@ export async function POST(req: Request) {
 			// without this a viewer — or a service token one minted — could queue a runner teardown.
 			const decision = await getPdp().can(actor, "destroy", { type: "runner" });
 			if (!decision.allowed) {
+				if (decision.reason === INSUFFICIENT_SCOPE || decision.reason === PROJECT_NOT_PERMITTED) {
+					return insufficientScope(decision.reason);
+				}
 				return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 			}
 			// THE CLIENT NAMES THE RUNNER AND NOTHING ELSE (#5481). This branch used to persist the
@@ -533,6 +580,11 @@ export async function POST(req: Request) {
 			});
 			jobId = result.jobId;
 		} catch (e: unknown) {
+			// The token's scopes or project list do not cover this verb on this project: a 403 that
+			// names the reason, so a pipeline can tell "this token cannot" from "this person cannot".
+			if (e instanceof ForbiddenError && isCeilingRefusal(e)) {
+				return insufficientScope(e.reason);
+			}
 			// The PDP denies both "not yours" and "does not exist" — keep the CLI's
 			// historical 404 contract for that case.
 			if (e instanceof ForbiddenError) {
@@ -557,6 +609,16 @@ export async function POST(req: Request) {
 					{ status: 403 },
 				);
 			}
+			// A DEPLOY applies a current reviewed plan of its environment (decision M23). No plan, a
+			// plan of another environment, an out-of-date plan or one with no digest is a conflict
+			// with the environment's current state; the message says to plan again, and `code` names
+			// which (lib/approvals/plan-binding.ts).
+			if (e instanceof PlanBindingError) {
+				return NextResponse.json(
+					{ error: e.code === "plan_required" ? CLI_PLAN_REQUIRED : e.message, code: e.code },
+					{ status: 409 },
+				);
+			}
 			// #5249: a dedicated environment whose Fabric still hosts live tenants, destroyed without
 			// cascade. A conflict with the resource's current state, like the one above — and the body
 			// names the tenants so a client can render them without parsing the message.
@@ -577,28 +639,20 @@ export async function POST(req: Request) {
 			throw e;
 		}
 
-		const [inserted] = await db
+		// The plan→apply drift guard is stamped by the actions at insert: a PLAN carries its
+		// `configuration_hash`, a DEPLOY carries its own plus the plan's digest, and the runner
+		// compares both before applying (lib/approvals/plan-binding.ts).
+		const [job] = await db
 			.select()
 			.from(jobs)
 			.where(eq(jobs.id, jobId))
 			.limit(1);
-		if (!inserted) {
+		if (!job) {
 			return NextResponse.json(
 				{ error: "Job not found after queue" },
 				{ status: 500 },
 			);
 		}
-
-		// Preserve the CLI plan→apply drift guard: the runner compares the PLAN job's
-		// configuration_hash against the DEPLOY job's before applying.
-		const configHash = createHash("sha256")
-			.update(JSON.stringify(inserted.config_snapshot))
-			.digest("hex");
-		const [job] = await db
-			.update(jobs)
-			.set({ configuration_hash: configHash })
-			.where(eq(jobs.id, jobId))
-			.returning();
 
 		// Ops alert (free): a teardown was requested. org_id is trigger-populated on insert.
 		if (jobType === "DESTROY" && job.org_id) {

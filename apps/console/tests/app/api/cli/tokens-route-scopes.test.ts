@@ -3,9 +3,10 @@
 
 // @vitest-environment node
 
-// `POST /api/cli/tokens` and the token limit (AGT-L3). A token carries every scope over every
-// project; a request for anything narrower is refused with `narrow_tokens_unavailable` and nothing
-// is written. The minting library is real; mocked boundary: the guard and the database insert.
+// `POST /api/cli/tokens` and the token limit (AGT-L3, lifted in AGT-S0b). A token carries the scopes
+// and the project list the request names, or every scope over every project when it names neither;
+// every route that acts for a service token, `POST /api/jobs` included, holds it to that limit. The
+// minting library is real; mocked boundary: the guard and the database insert.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -52,28 +53,34 @@ beforeEach(() => {
 	});
 });
 
-describe("narrower tokens are refused", () => {
-	it("refuses fewer scopes, any project list, or both — and mints nothing", async () => {
+describe("narrower tokens are minted with their limit", () => {
+	it("mints fewer scopes, a project list, or both, and stores exactly that limit", async () => {
 		const bodies = [
 			{ name: "ci", scopes: ["read"] },
 			{ name: "ci", scopes: ["read", "design", "plan"] },
 			{ name: "ci", project_ids: [PROJECT] },
 			{ name: "ci", scopes: ALL, project_ids: [PROJECT] },
 		];
+		const expected = [
+			{ scopes: ["read"], project_ids: null },
+			{ scopes: ["read", "design", "plan"], project_ids: null },
+			{ scopes: ALL, project_ids: [PROJECT] },
+			{ scopes: ALL, project_ids: [PROJECT] },
+		];
 		const answers: unknown[] = [];
 		for (const body of bodies) {
 			const res = await POST(post(body));
-			answers.push([res.status, (await res.json()).code]);
+			const json = await res.json();
+			answers.push({ status: res.status, scopes: json.scopes, project_ids: json.project_ids });
 		}
-		expect(answers).toEqual(bodies.map(() => [400, "narrow_tokens_unavailable"]));
-		expect(insertValues).not.toHaveBeenCalled();
+		expect(answers).toEqual(expected.map((limit) => ({ status: 201, ...limit })));
+		expect(insertValues.mock.calls.map(([values]) => ({ scopes: values.scopes, project_ids: values.project_ids }))).toEqual(
+			expected,
+		);
 	});
+});
 
-	it("names in the refusal that narrower tokens are not available yet", async () => {
-		const res = await POST(post({ name: "ci", scopes: ["read"] }));
-		expect((await res.json()).error).toMatch(/not available yet/);
-	});
-
+describe("malformed limits are refused", () => {
 	it("refuses an unknown scope, an empty scope list and a malformed project id", async () => {
 		const bodies = [
 			{ name: "ci", scopes: ["read", "admin"] },
