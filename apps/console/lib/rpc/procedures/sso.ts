@@ -15,6 +15,7 @@ import type {
 import { getPdp } from "@/lib/authz";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorizeQuiet } from "@/lib/authz/guard";
+import { getAuthConfig } from "@/lib/config/auth";
 import { getServiceDb } from "@/lib/db";
 import { organization, ssoProvider } from "@/lib/db/schema";
 import { query } from "@/lib/rpc/base";
@@ -80,9 +81,14 @@ export function ssoProviderType(oidcConfig: string | null, samlConfig: string | 
 	return "unknown";
 }
 
-/** The public origin the SP URLs are built on. */
+/**
+ * The public origin the SP URLs are built on: the auth server's own base URL, because the ACS,
+ * metadata, callback and start routes are the auth server's and live wherever it is served. No
+ * hosted default (EDN-H7, #6904): a self-hosted instance must never hand its IdP the hosted
+ * service's URLs, and `getAuthConfig()` already refuses an instance with no base URL at all.
+ */
 function publicOrigin(): string {
-	return process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? "https://alethialabs.io";
+	return getAuthConfig().baseURL.replace(/\/+$/, "");
 }
 
 /**
