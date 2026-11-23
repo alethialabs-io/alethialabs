@@ -1,0 +1,115 @@
+---
+title: Deploy
+description: Fix a deploy that waits for a runner, is blocked by the verify gate, is refused by a plan limit, or fails in the job log.
+---
+
+# Troubleshoot a deploy
+
+A deploy is a job. A runner claims it, plans with OpenTofu, runs the
+[verify gate](/guides/jobs/plan-and-apply#verify-gate), and applies the plan. Start with the job log:
+open the job from **Jobs** in the sidebar, select **View log** on the canvas, or run
+`alethia jobs logs --latest --follow`.
+
+## The job waits for a runner
+
+The job page shows **Waiting for a runner**. After two minutes it shows **Still waiting for a
+runner** and a **View runners** button.
+
+**Cause:** no runner has claimed the job. A job stays queued until one does. The usual reasons:
+
+- No runner that can take the job is online.
+- The runner you selected does not take jobs for this cloud.
+- Your plan's limit on jobs that run at the same time is reached. Extra jobs wait. They are not
+  refused. See [Free plan limits](/guides/jobs/plan-and-apply#free-plan-limits).
+- Another job on the same environment is still running. Jobs on one environment run one at a time.
+
+**Fix:** select **View runners** and check that a runner is online. If other jobs are running, wait
+for them to finish. To register your own runner, see [Runners](/guides/runners).
+
+From the CLI, `alethia apply` refuses a runner that does not take the project's cloud. The message
+says `does not take … jobs`. Run `alethia runner list`, and name a runner that does with `--runner`.
+
+## "No runner is registered to run this job."
+
+**Cause:** the organization has no runner to select, so **Confirm** is turned off.
+
+**Fix:** select **Register a runner**, or see [Runners](/guides/runners).
+
+## The daily job limit is reached
+
+The console says "The Hobby plan allows … provisioning jobs per day. You've hit the limit — it
+clears over the next 24 hours, or upgrade to remove it."
+
+**Cause:** a Hobby organization started the most provisioning jobs it can start in 24 hours. Plans,
+deploys, destroys, and scans that you start count. Kubeconfig requests and jobs that the platform
+runs for you do not. The current number is in [Limits](/reference/limits).
+
+**Fix:** wait until older jobs leave the 24-hour window, or upgrade the organization.
+
+## The monthly provisioning minutes are used up
+
+The console says "You've used your … included provisioning minutes this month. Upgrade to keep
+provisioning."
+
+**Cause:** on the Hobby plan, runner time counts against the minutes the plan includes each month.
+
+**Fix:** upgrade the organization, or wait for the next month. On a paid plan with a usage cap, the
+message is "Usage cap reached" instead: raise or turn off the cap on the **Billing** page.
+
+## "verification gate BLOCKED apply: failing controls …"
+
+**Cause:** the plan failed one or more controls of the verify gate, so the runner stopped before it
+changed anything. The message lists the failing controls.
+
+**Fix:** change the design so that the controls pass, then run the plan and deploy again. If your
+organization accepts the risk, someone with the right permission can record an override on the
+queued deploy. See [Verify override](/guides/jobs/verify-override).
+
+A message that starts with "verification gate produced no verdict" means the gate could not
+evaluate the plan at all. The runner refuses to apply in that case too. Read the cause in the
+message.
+
+## "compatibility gate (…) BLOCKED apply"
+
+**Cause:** the Kubernetes minor version and an add-on version in the design do not work together.
+
+**Fix:** change the Kubernetes version or the add-on version, then plan and deploy again.
+
+## "configuration changed since plan was generated"
+
+**Cause:** the design changed after the plan was made. A deploy applies only the plan that was
+reviewed.
+
+**Fix:** run the plan again, read it, and deploy.
+
+## "plan job … has status …, expected SUCCESS"
+
+**Cause:** the deploy is bound to a plan that did not succeed.
+
+**Fix:** fix what the plan job's log reports, then run the plan again.
+
+## "failed to assume role …"
+
+**Cause:** the runner could not sign in to your AWS account with the connected role.
+
+**Fix:** open **Connectors** and select **Re-verify** on the account. If verification fails, see
+[Troubleshoot connecting a cloud](/troubleshooting/connect#aws).
+
+## A runner stopped during the job
+
+**Cause:** the runner crashed or lost its connection while it held the job.
+
+**Fix:** nothing, at first. Alethia puts the job back in the queue, and another runner continues it.
+OpenTofu state is kept, so the next attempt starts from what was already applied. After several
+failed attempts the job fails. See [Failure recovery](/concepts/job-queue#failure-recovery).
+
+## CLI exit codes while waiting
+
+| Message | Exit code | What to do |
+|---|---|---|
+| `job failed: …` | 13 | Read the log with `alethia jobs logs <job-id>`. |
+| `job was cancelled` | 13 | Start the deploy again if the cancel was a mistake. |
+| `timed out after … waiting for job …; it is still running` | 12 | The job continues. Follow it with `alethia jobs logs <job-id> --follow`. |
+
+For every exit code of `alethia apply`, see
+[Exit codes of `apply`](/reference/cli/plan-and-apply#exit-codes-of-apply).
