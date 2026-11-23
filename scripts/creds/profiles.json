@@ -26,6 +26,11 @@
       "vars": ["GH_TOKEN"],
       "description": "A GitHub token with admin scopes beyond the gh CLI's own login (rulesets, org settings)."
     },
+    "platform-alert-paging": {
+      "source": "keychain",
+      "vars": ["ALETHIA_PAGING_CHANNEL_SECRET"],
+      "description": "The platform paging channel's destination for scripts/ops/platform-alert-paging.ts: a webhook/Slack/Teams/... URL, or a PagerDuty routing key. Not needed for an email channel."
+    },
     "tofu-sandbox": {
       "source": "keychain",
       "vars": ["TF_VAR_hcloud_token", "TF_VAR_cloudflare_api_token"],
