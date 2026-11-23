@@ -149,6 +149,7 @@ REAP_PLIST="$HOME/Library/LaunchAgents/io.alethialabs.sandbox-reap.plist"
 #   free     costs nothing worth metering (CI minutes on the repo's own runners)
 #            (spend-report.yml: read-only cost APIs — 4 Cost Explorer requests per AWS account, two accounts, at USD 0.01 each — and one email)
 #            (backup-status.yml: a few S3 GETs of small JSON pointers in the backup account, inside the free tier)
+#            (stripe-setup.yml: Stripe TEST-mode API calls only — test mode bills nothing; a live key is refused)
 #   prod     ships or changes production — free (0); kept as its own class so the table still says
 #            which workflows touch production
 #   nightly  priced from its inputs (C-NIGHTLY)
@@ -162,7 +163,7 @@ wf_class() {
 		posthog-error-issues.yml | gate-fixme-currency.yml | template-proof-currency.yml | programme.yml | \
 		go-floors-rerecord.yml | e2e-issuer-health.yml | e2e-orphan-reaper.yml | hcloud-zone-probe.yml | \
 		branch-flow-guard.yml | cla.yml | close-on-dev-merge.yml | byo-admission-kind.yml | \
-		spend-report.yml | news-changelog-draft.yml | backup-status.yml)
+		spend-report.yml | news-changelog-draft.yml | backup-status.yml | stripe-setup.yml)
 		echo free
 		;;
 	deploy-*.yml | release-cli.yml | release-runner.yml | release-please.yml | publish-cli-release-metadata.yml | \
