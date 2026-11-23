@@ -14,6 +14,7 @@ import { authorize } from "@/lib/authz/guard";
 import { signedJob } from "@/lib/db/signed-job";
 import { projectOrgRefusal } from "@/lib/projects/project-org";
 import { withScope } from "@/lib/db";
+import { ENV_TRANSITIONS, EnvStateConflictError } from "@/lib/db/env-status";
 import {
 	cloudIdentities,
 	jobs,
@@ -95,6 +96,23 @@ async function refuseOverUsage(orgId: string): Promise<void> {
 	}
 }
 
+/**
+ * True when the environment is not in a state a deploy may be queued from, which means another
+ * job on it is queued or running (the `enqueueDeploy` from-states, lib/db/env-status.ts). Read as
+ * the actor, through RLS.
+ */
+async function environmentHasJobInFlight(actor: { userId: string; orgId: string }, environmentId: string): Promise<boolean> {
+	const deployableFrom: readonly string[] = ENV_TRANSITIONS.enqueueDeploy.from;
+	const [env] = await withScope({ ownerId: actor.userId, orgId: actor.orgId }, (tx) =>
+		tx
+			.select({ status: projectEnvironments.status })
+			.from(projectEnvironments)
+			.where(eq(projectEnvironments.id, environmentId))
+			.limit(1),
+	);
+	return env !== undefined && !deployableFrom.includes(env.status);
+}
+
 /** Why a deploy is not re-run as it was: a deploy applies a current reviewed plan. */
 const RERUN_DEPLOY =
 	"A deploy applies a reviewed plan, so it runs again from a new one: plan this environment, review the plan, then apply it.";
@@ -106,8 +124,10 @@ const RERUN_DEPLOY =
  *   against the same project and environment: the project permission for that operation, the
  *   one-job-in-flight guard on the environment, the queue-time gates and the project's current
  *   configuration all come from there.
- * - A project's deploy is refused with a sentence that says to plan again: a deploy applies a
- *   current reviewed plan (decision M23), and the original deploy's plan is no longer current.
+ * - A project's deploy queues nothing (decision M23: a deploy applies a current reviewed plan, and
+ *   the original deploy's plan is no longer current). It is answered in a fixed order: the project
+ *   permission to deploy (a `forbidden`), then a job in flight on the environment (the enqueue's
+ *   own conflict sentence), then a sentence that says to plan again.
  * - A project's destroy is refused: a destroy starts from the environment. The route type has no
  *   destroy member, so this function has no branch that could reach `tryDestroyProject`.
  * - An allow-listed org-level job is re-queued as a copy of itself under the org's job permission.
@@ -154,8 +174,16 @@ async function rerun(jobId: string): Promise<{ id: string }> {
 		if (refusal) throw new ActionRefusal("conflict", refusal);
 		// A deploy applies a current reviewed plan (decision M23), and the plan the original deploy
 		// applied is not current once that deploy was queued after it. So a deploy runs again by
-		// planning again: the sentence says so instead of queuing a deploy that would be refused.
-		if (route.operation !== "plan") throw new ActionRefusal("conflict", RERUN_DEPLOY);
+		// planning again, and nothing is queued here. The answers come in a fixed order: a caller
+		// without deploy on the project is told that and nothing about the environment; then a job
+		// in flight on the environment wins, as it does for every enqueue; then "plan again".
+		if (route.operation !== "plan") {
+			await authorize("deploy", { type: "project", id: route.projectId });
+			if (route.environmentId && (await environmentHasJobInFlight(actor, route.environmentId))) {
+				throw new ActionRefusal("conflict", new EnvStateConflictError("enqueueDeploy").message);
+			}
+			throw new ActionRefusal("conflict", RERUN_DEPLOY);
+		}
 		const result = await tryPlanProject(route.projectId, null, route.environmentId);
 		if (!result.ok) throw new ActionRefusal("conflict", result.error);
 		return { id: result.jobId };

@@ -174,7 +174,7 @@ describe("rerunJob — a project's operation runs again through its own entry po
 	});
 
 	it("refuses a DEPLOY with a sentence that says to plan again, and queues nothing (decision M23)", async () => {
-		const { valuesSpy } = mockDb([[projectJob("DEPLOY")]]);
+		const { valuesSpy } = mockDb([[projectJob("DEPLOY")], [{ status: "ACTIVE" }]]);
 		expect(await rerunJob({ jobId: JOB })).toEqual({
 			ok: false,
 			error: {
@@ -185,6 +185,32 @@ describe("rerunJob — a project's operation runs again through its own entry po
 		});
 		expect(tryProvisionProject).not.toHaveBeenCalled();
 		expect(tryPlanProject).not.toHaveBeenCalled();
+		expect(valuesSpy).not.toHaveBeenCalled();
+	});
+
+	it("answers a DEPLOY re-run in order: the deploy permission first, before anything about the environment", async () => {
+		const { valuesSpy, whereSpy } = mockDb([[projectJob("DEPLOY")], [{ status: "QUEUED" }]]);
+		vi.mocked(authorize).mockImplementation(async (action) => {
+			if (action === "deploy") throw new ForbiddenError("deploy", { type: "project", id: "proj-1" });
+			return { userId: "user-1", orgId: "org-1" } as never;
+		});
+		expect(await rerunJob({ jobId: JOB })).toMatchObject({ ok: false, error: { kind: "forbidden" } });
+		expect(authorize).toHaveBeenCalledWith("deploy", { type: "project", id: "proj-1" });
+		// Only the job was read: the environment's state is not consulted for a caller who cannot deploy.
+		expect(whereSpy).toHaveBeenCalledTimes(1);
+		expect(valuesSpy).not.toHaveBeenCalled();
+	});
+
+	it("answers a DEPLOY re-run with the in-flight conflict, ahead of 'plan again', while a job runs on the environment", async () => {
+		const { valuesSpy } = mockDb([[projectJob("DEPLOY")], [{ status: "QUEUED" }]]);
+		expect(await rerunJob({ jobId: JOB })).toEqual({
+			ok: false,
+			error: {
+				kind: "conflict",
+				message: "Environment is not in a valid state for this operation — a job may already be in progress.",
+			},
+		});
+		expect(tryProvisionProject).not.toHaveBeenCalled();
 		expect(valuesSpy).not.toHaveBeenCalled();
 	});
 
