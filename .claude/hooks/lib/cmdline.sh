@@ -175,6 +175,12 @@ cmdline_split() {
 		s="$pre\$__SUBST__$post"
 	done
 	s="$s$nl$lifted"
+	# A file-descriptor redirection (`2>&1`, `>&2`, `<&3`, `&>log`, `&>>log`) carries an `&` that is
+	# not a separator. Mask it before the `&` split below, or `gh run rerun --job 5 2>&1` splits into
+	# `… 2>` and a bogus `1` segment (#7281). cmdline_normalise then drops the redirection word.
+	s="${s//>&/>__ALETHIA_AMP__}"
+	s="${s//<&/<__ALETHIA_AMP__}"
+	s="${s//&>/__ALETHIA_AMP__>}"
 	s="${s//&&/$nl}"
 	s="${s//||/$nl}"
 	s="${s//;/$nl}"
@@ -255,10 +261,26 @@ cmdline_normalise() {
 	done
 	seg="${seg%[\"\']}"
 	SEG="$seg"
+	SEG="${SEG//__ALETHIA_AMP__/&}"
 	TOK=()
-	local _words
+	local _words _skip=0
 	read -r -a _words <<<"$seg"
 	for w in "${_words[@]}"; do
+		# A redirection is the shell's, not the program's: `2>&1`, `>out`, `2>>log`, `<in`, `&>log`
+		# are dropped, and a bare operator (`>`, `2>`, `<`) drops the target word after it too, so a
+		# rule reading positional arguments never takes `2>` or a log path for one (#7281).
+		if [ "$_skip" = 1 ]; then
+			_skip=0
+			continue
+		fi
+		case "$w" in
+		'>' | '>>' | '<' | [0-9]'>' | [0-9]'>>' | [0-9]'<' | '__ALETHIA_AMP__>' | '__ALETHIA_AMP__>>')
+			_skip=1
+			continue
+			;;
+		'>'* | [0-9]'>'* | '<'* | [0-9]'<'* | '__ALETHIA_AMP__>'*) continue ;;
+		esac
+		w="${w//__ALETHIA_AMP__/&}"
 		w="${w//\"/}"
 		w="${w//\'/}"
 		TOK+=("$w")
