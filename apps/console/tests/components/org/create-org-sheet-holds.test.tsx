@@ -122,7 +122,15 @@ vi.mock("@/components/org/pending-paid-setup", async (importActual) => {
 });
 
 import { toast } from "sonner";
+// The sheet is an overlay wizard (`?wizard=create-org&step=`): its URL and viewer come from the test
+// page, whose query string survives an unmount — so a fresh render is a reload.
+vi.mock("@/lib/wizard/location", async (importOriginal) => {
+	const harness = await import("@/tests/components/design-project/byo/byo-wizard-harness");
+	return { ...(await importOriginal()), useWizardEnvironment: harness.useTestWizardEnvironment };
+});
+
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
+import { resetTestPage } from "@/tests/components/design-project/byo/byo-wizard-harness";
 import { finishPaidSetup, pendingPaidSetupKey } from "@/components/org/pending-paid-setup";
 import type { NewOrgSetupState } from "@/lib/billing/new-org-setup";
 
@@ -162,6 +170,7 @@ async function toPayment(user: ReturnType<typeof userEvent.setup>, onOpenChange 
 }
 
 beforeEach(() => {
+	resetTestPage();
 	vi.clearAllMocks();
 	window.sessionStorage.clear();
 	m.createIntent.mockResolvedValue({
