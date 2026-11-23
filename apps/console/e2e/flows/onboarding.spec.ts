@@ -247,6 +247,19 @@ test.describe("Onboarding — fresh signup + plan pick", () => {
 		await expect(page.getByRole("button", { name: "Select a country" })).toHaveCount(0);
 		await expect(page.getByRole("switch", { name: /buying for a company/i })).toBeChecked();
 		await page.getByRole("textbox", { name: /your role/i }).fill("Founder");
+		// Since EA-2 (#7349) the deduced country brings its own question, and WHICH one depends on
+		// where the runner signs in from: a US payer must name its state (GitHub's runners deduce
+		// United States, and an unanswered state refuses the submit with "Select the US state this
+		// organization is billed in."), and an EU business is asked whether it has a VAT number.
+		// Each is answered only when shown — the same answers as `fillTrialPayerFacts`
+		// (helpers/personas.ts), which builds the personas through this form.
+		const state = page.getByRole("combobox", { name: "State", exact: true });
+		if (await state.isVisible().catch(() => false)) {
+			await state.click();
+			await page.getByRole("option", { name: "New York", exact: true }).click();
+		}
+		const noVatNumber = page.getByRole("radio", { name: "No", exact: true });
+		if (await noVatNumber.isVisible().catch(() => false)) await noVatNumber.check();
 		await tickOnboardingTerms(page);
 		await page.getByRole("button", { name: /create organization/i }).click();
 		await throughToNewProject(page, 60_000);
