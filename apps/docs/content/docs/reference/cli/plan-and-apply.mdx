@@ -558,15 +558,26 @@ alethia up --project boutique --region nbg1 --cloud-account prod-account --yes -
 | --- | --- |
 | the control-plane URL and the login | this machine has a live credential |
 | a cloud account | one is connected — **otherwise `up` stops**, see below |
+| a runner | a runner that takes the account's cloud is online, or a managed fleet takes the deploy — **otherwise `up` stops**, see below |
 | `alethia.yaml` | this directory has one |
 | the apply | never; that is the point |
 
-With the manifest already present and an account connected, `alethia up` **is** `alethia apply`.
+With the manifest already present, an account connected and a runner available, `alethia up`
+**is** `alethia apply`.
 
 <Callout type="info">
   `up` cannot attach a cloud account for you. Each cloud has its own keyless flow with its own
-  arguments — `alethia connector aws|gcp|azure|alibaba|hetzner` — so `up` stops and names them
-  rather than growing a sixth version that would drift from the five.
+  arguments — `alethia connector aws|gcp|azure|hetzner` — so `up` stops and names them
+  rather than growing a fifth version that would drift from the four.
+</Callout>
+
+<Callout type="info">
+  `up` cannot start a runner for you either: a runner is a process that somebody has to start. When
+  nothing would claim the deploy, `up` stops before it creates anything or queues a job, and prints
+  the command that adds a runner for the account's cloud —
+  [`alethia runner register`](/reference/cli/runners), or `alethia runner deploy` when a runner is
+  already online to build one. Run that command, then run `alethia up` again. With `--runner`, the
+  named runner must exist, be online, and take the account's cloud.
 </Callout>
 
 {/* fieldspec: alethia up */}

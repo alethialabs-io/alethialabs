@@ -71,7 +71,7 @@ The CLI creates (or reuses) a pending cloud identity for the provider.
 
 ### Run provider setup
 The CLI drives the provider's own tooling to create the resources Alethia needs (an IAM OIDC provider +
-role, a workload identity pool, or an app registration) and captures the resulting credential
+role, a workload identity pool, or a user-assigned managed identity) and captures the resulting credential
 material.
 
 ### Submit & verify
@@ -527,4 +527,4 @@ reconnect the same provider later.
 | `could not find WIF config in installer output` | The Cloud Shell installer did not finish. Re-run, or use `--manual` and paste the config yourself. |
 | `the WIF config is not valid JSON` | The pasted block was truncated. Copy everything between `--- START CONFIG ---` and `--- END CONFIG ---`. |
 | `connection test failed` (exit `13`) | Alethia could not assume the credentials. Confirm the role trust policy pins the Alethia issuer + sub/aud (AWS), the workload identity binding (GCP), or the federated credential + least-privilege role (Azure). The verify runs inline server-side and returns the reason with the result — re-run the connector command to see it. |
-| `Invalid format. Expected: arn:aws:iam::…` | The pasted role ARN is malformed — copy the exact `RoleArn` from the stack Outputs. |
+| `failed to submit aws credentials: Invalid format. Expected: arn:aws:iam::…` | The control plane refused the role ARN, pasted or given with `--role-arn`, as malformed. Copy the exact `RoleArn` from the stack Outputs. |
