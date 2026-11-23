@@ -13,10 +13,12 @@
 //   same grid with the same copy, and the button row;
 // - my cases: the answered list is a real `ul`/`li` (an open-ended list, whose bottom edge a
 //   skeleton cannot know) whose frame and rows are the skeleton's;
-// - case detail: drawn in the shape of the case the request addresses (its messages, attachments and
-//   status, read on the server — `case-shape.test.ts` pins the read), in the page's own frames: the
-//   thread's frame, bound and column, each message's box with its text sized invisibly inside, the
-//   attachments panel, and the composer or the page's own closed notice.
+// - case detail: the route's `loading.tsx` is synchronous (G-24) and draws the opening shape; the
+//   skeleton, given a case's shape, draws it in the page's own frames: the thread's frame, bound and
+//   column, each message's box with its text sized invisibly inside, the attachments panel, and the
+//   composer or the page's own closed notice;
+// - ask (G-18): the page opens on the chat's empty state — the "Try one of these:" line, a row of
+//   suggestion chips, the docked composer — not on chat bubbles.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render } from "@testing-library/react";
@@ -41,9 +43,6 @@ vi.mock("@/app/server/actions/support", () => ({
 	closeCase: vi.fn(),
 }));
 vi.mock("@/components/classification/classification-control", () => ({ ClassificationControl: () => null }));
-// The case route's loading form reads the case's shape on the server (`case-shape.test.ts`).
-const { readCaseShape } = vi.hoisted(() => ({ readCaseShape: vi.fn() }));
-vi.mock("@/components/support/cases/read-case-shape", () => ({ readCaseShape }));
 // The new-case wizard's URL and viewer (`submit-wizard-harness.tsx`).
 vi.mock("@/lib/wizard/location", async () => {
 	const harness = await import("@/tests/components/support/submit-wizard-harness");
@@ -59,9 +58,12 @@ vi.mock("@/lib/rpc/client", async () => {
 });
 
 import ReportAbuseLoading from "@/app/(private)/[org]/~/support/abuse/loading";
+import SupportAskLoading from "@/app/(private)/[org]/~/support/ask/loading";
 import CaseDetailLoading from "@/app/(private)/[org]/~/support/cases/[id]/loading";
 import SubmitCaseLoading from "@/app/(private)/[org]/~/support/submit/loading";
 import { AbuseForm, AbuseFormSkeleton } from "@/components/support/abuse/abuse-form";
+import { ATTACHMENT_HINT } from "@/components/support/attachment-policy";
+import { ATTACHMENTS_NOT_KEPT } from "@/components/support/submit/steps/step-details";
 import { CaseComposer } from "@/components/support/cases/case-composer";
 import { CaseDetail } from "@/components/support/cases/case-detail";
 import { CASE_THREAD_CONTENT, CASE_THREAD_VIEWPORT } from "@/components/support/cases/case-detail-parts";
@@ -101,14 +103,12 @@ function elementOf(node: unknown): ReactElement<Record<string, unknown>> {
 }
 
 describe("the support routes' loading.tsx draw the pages' own loading forms (#6354)", () => {
-	it("abuse, submit and case detail each render their page's skeleton", async () => {
+	it("abuse, submit and case detail each render their page's skeleton", () => {
 		expect(elementOf(ReportAbuseLoading()).type).toBe(AbuseFormSkeleton);
-		// The case route's draws the shape of the case it read, not a fixed one.
-		const shape: CaseShape = { closed: true, attachments: 2, messages: [] };
-		readCaseShape.mockResolvedValueOnce(shape);
-		const caseLoading = elementOf(await CaseDetailLoading());
+		// The case route's is synchronous (G-24): no promise, and the opening shape — it reads nothing.
+		const caseLoading = elementOf(CaseDetailLoading());
 		expect(caseLoading.type).toBe(CaseDetailSkeleton);
-		expect(caseLoading.props.shape).toBe(shape);
+		expect(caseLoading.props.shape).toBeUndefined();
 		// The submit page wraps its form in `max-w-2xl`; the skeleton sits in the same column.
 		const submit = elementOf(SubmitCaseLoading());
 		expect(submit.props.className).toBe("max-w-2xl");
@@ -154,9 +154,46 @@ describe("~/support/abuse: the skeleton is the form's layout (#6354, B2)", () =>
 		expect(kids(kids(sk)[1])[1].querySelector(".h-4")).not.toBeNull();
 	});
 
+	it("marks the fields a report can be filed without, and offers an evidence upload (G-15)", () => {
+		const form = real();
+		const labels = Array.from(form?.querySelectorAll('[data-slot="label"], label') ?? []).map((l) => l.textContent);
+		expect(labels).toEqual(
+			expect.arrayContaining(["Category (optional)", "Reported resource (optional)", "Evidence (optional)"]),
+		);
+		expect(form?.querySelector('input[type="file"]')).not.toBeNull();
+		// The skeleton draws the evidence field where the form has it: last in the description section.
+		const field = kids(kids(skeleton())[2]).at(-1);
+		expect(field?.querySelector('[data-slot="skeleton"].h-8')).not.toBeNull();
+		const realField = kids(kids(form)[2]).at(-1);
+		for (const line of [ATTACHMENT_HINT, ATTACHMENTS_NOT_KEPT]) {
+			expect(realField?.textContent).toContain(line);
+			expect(field?.textContent).toContain(line);
+		}
+	});
+
 	it("draws the description box at the textarea's floor", () => {
 		expect(classes(real()?.querySelector("textarea"))).toContain("min-h-40");
 		expect(skeleton()?.querySelectorAll('[data-slot="skeleton"].h-40')).toHaveLength(1);
+	});
+});
+
+describe("~/support/ask: the skeleton is the page's empty conversation (G-18)", () => {
+	const skeleton = () => render(<SupportAskLoading />).container.firstElementChild;
+
+	it("is one synchronous SkeletonRoot over the page's full-height column", () => {
+		const sk = skeleton();
+		expect(sk?.getAttribute("data-slot")).toBe("skeleton-root");
+		expect(sk?.getAttribute("aria-busy")).toBe("true");
+		expect(classes(sk)).toEqual(expect.arrayContaining(["flex", "flex-col", "-m-4"]));
+	});
+
+	it("opens on the suggestions line and its chips, then the docked composer — no chat bubbles", () => {
+		const [conversation, composer] = kids(skeleton());
+		expect(conversation?.textContent).toBe("Try one of these:");
+		expect(conversation?.querySelectorAll('[data-slot="skeleton"].h-8')).toHaveLength(3);
+		expect(classes(composer)).toEqual(expect.arrayContaining(["border-t", "p-3"]));
+		expect(composer?.querySelector('[data-slot="skeleton"].h-16')).not.toBeNull();
+		expect(skeleton()?.querySelector(".rounded-lg")).toBeNull();
 	});
 });
 
