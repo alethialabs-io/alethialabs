@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
+import { WithdrawalSection } from "@/components/billing/withdrawal-section";
 import { BillingPanel } from "@/components/settings/billing/billing-panel";
 import { RECENT_INVOICES_INPUT } from "@/components/settings/billing/invoices-filters";
 import { getQueryClient } from "@/lib/query/client";
@@ -26,6 +27,10 @@ export const metadata = pageMetadata({
  * would only be refused); and cards, charges and invoices exist only once a Stripe customer does.
  * A failed prefetch is not dehydrated; that section then reads in the browser and renders its own
  * error or refusal. `loading.tsx` covers the prefetch window.
+ *
+ * The consumer withdrawal section (#7221) follows the panel for a hosted org's billing admin — the
+ * only viewer `getWithdrawalRight` answers — and renders nothing unless the org's order was a
+ * consumer purchase.
  */
 export default async function BillingPage() {
 	const queryClient = getQueryClient();
@@ -49,9 +54,12 @@ export default async function BillingPage() {
 		]);
 	}
 
+	const showWithdrawal = Boolean(summary?.hosted && summary.hasOrg && summary.canManageBilling);
+
 	return (
 		<HydrationBoundary state={dehydrate(queryClient)}>
 			<BillingPanel />
+			{showWithdrawal ? <WithdrawalSection /> : null}
 		</HydrationBoundary>
 	);
 }
