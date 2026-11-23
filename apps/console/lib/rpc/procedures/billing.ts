@@ -280,6 +280,7 @@ export async function listPaymentMethods(): Promise<PaymentMethodInfo[]> {
 export interface InvoiceInfo {
 	/** Our invoice id (used for the preview + PDF-download route). */
 	id: string;
+	/** The фактура's number — null until `facturaIssued`, never Stripe's invoice number. */
 	number: string | null;
 	/** Total in the smallest currency unit (e.g. cents). */
 	total: number;
@@ -291,17 +292,31 @@ export interface InvoiceInfo {
 	periodStart: string | null;
 	periodEnd: string | null;
 	description: string | null;
-	/** A self-hosted PDF is available at the download route. */
-	hasPdf: boolean;
-	/** Stripe's hosted invoice URL — a fallback link only. */
-	hostedInvoiceUrl: string | null;
+	/**
+	 * Our фактура is issued and its PDF is stored, so the PDF route can serve it. False means the
+	 * invoice is still being issued (EA-7c, #7341): pending, failed and awaiting an operator, or a
+	 * row mirrored before the фактура pipeline existed.
+	 */
+	facturaIssued: boolean;
+}
+
+/**
+ * Whether a mirrored row carries OUR issued фактура. Both halves are required: `factura_status`
+ * is `issued` only when the console issued the document (lib/billing/invoices.ts), and a row
+ * mirrored before that pipeline (status NULL) may still hold a `pdf_key` to a captured Stripe PDF
+ * or only Stripe's hosted URL — neither is the customer's invoice, so such a row reads as being
+ * issued. `hostedInvoiceUrl` is deliberately not read and not returned.
+ */
+function isFacturaIssued(row: Invoice): boolean {
+	return row.facturaStatus === "issued" && Boolean(row.pdfKey);
 }
 
 /** Maps a mirrored invoice row to the UI shape. */
 function toInvoiceInfo(row: Invoice): InvoiceInfo {
+	const facturaIssued = isFacturaIssued(row);
 	return {
 		id: row.id,
-		number: row.number,
+		number: facturaIssued ? row.number : null,
 		total: row.amountTotal,
 		currency: row.currency,
 		status: row.status,
@@ -309,8 +324,7 @@ function toInvoiceInfo(row: Invoice): InvoiceInfo {
 		periodStart: row.periodStart?.toISOString() ?? null,
 		periodEnd: row.periodEnd?.toISOString() ?? null,
 		description: row.description,
-		hasPdf: Boolean(row.pdfKey) || Boolean(row.hostedInvoiceUrl),
-		hostedInvoiceUrl: row.hostedInvoiceUrl,
+		facturaIssued,
 	};
 }
 
