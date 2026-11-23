@@ -28,10 +28,12 @@ export async function POST(
 		return NextResponse.json({ error: "Invalid lock info" }, { status: 400 });
 	}
 
+	// Filed under the TOKEN's job — the one doing the work — not the URL's: for a Plan→Apply the URL
+	// names the finished PLAN, and a lock filed there is never released when the DEPLOY ends (#7290).
 	const { acquired, holder } = await acquireStateLock(
 		ctx.stateKey,
 		lockId,
-		id,
+		ctx.jobId,
 		info,
 	);
 	if (acquired) return NextResponse.json(info, { status: 200 });
@@ -39,13 +41,16 @@ export async function POST(
 	return NextResponse.json(holder ?? {}, { status: 423 });
 }
 
-/** DELETE → release the lock (tofu UNLOCK / force-unlock). Body is the lock-info JSON. */
+/**
+ * DELETE → release the lock (tofu UNLOCK / force-unlock). Body is the lock-info JSON. A cancelled job
+ * whose tofu still holds the lock may release it (#7290) — the unlock an interrupted apply sends last.
+ */
 export async function DELETE(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
 	const { id } = await params;
-	const ctx = await resolveStateRequest(req, id);
+	const ctx = await resolveStateRequest(req, id, { allowCancelledHolder: true });
 	if ("error" in ctx) return ctx.error;
 
 	const info = asRecord(await req.json().catch(() => null));
