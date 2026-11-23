@@ -92,10 +92,11 @@ Under **Cluster access**, the sheet shows the cluster endpoint and the command t
 short-lived kubeconfig:
 
 ```bash
-alethia cluster kubeconfig <cluster-name>
+alethia cluster kubeconfig
 ```
 
-The sheet shows the command with your cluster's name filled in. The sheet also shows the `az aks get-credentials` command, for people who can sign in to the Azure subscription. To install the CLI, see
+On a terminal, the command asks which cluster to use. The sheet shows the command with your
+cluster's name already filled in. The sheet also shows the `az aks get-credentials` command, for people who can sign in to the Azure subscription. To install the CLI, see
 [Installation](/get-started/install-the-cli). For the kubeconfig options, see
 [Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
 

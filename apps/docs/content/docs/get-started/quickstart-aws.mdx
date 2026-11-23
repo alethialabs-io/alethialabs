@@ -90,10 +90,11 @@ Under **Cluster access**, the sheet shows the cluster endpoint and the command t
 short-lived kubeconfig:
 
 ```bash
-alethia cluster kubeconfig <cluster-name>
+alethia cluster kubeconfig
 ```
 
-The sheet shows the command with your cluster's name filled in. The sheet also shows the `aws eks update-kubeconfig` command, for people who can sign in to the AWS account. To install the CLI, see
+On a terminal, the command asks which cluster to use. The sheet shows the command with your
+cluster's name already filled in. The sheet also shows the `aws eks update-kubeconfig` command, for people who can sign in to the AWS account. To install the CLI, see
 [Installation](/get-started/install-the-cli). For the kubeconfig options, see
 [Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
 
