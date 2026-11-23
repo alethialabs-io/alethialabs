@@ -68,6 +68,7 @@
     "stripe:check": "tsx scripts/stripe-check.ts",
     "billing:pending-org-setups": "tsx scripts/pending-org-setups.ts",
     "billing:payment-holds": "tsx scripts/payment-holds.ts",
+    "factura:export": "tsx scripts/factura-export.ts",
     "org:set-plan": "node scripts/set-org-plan.mjs",
     "audit:grant-scopes": "node scripts/audit-grant-scopes.mjs",
     "audit:credential-knobs": "tsx scripts/audit-credential-knobs.ts",

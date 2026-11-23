@@ -12,6 +12,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/analytics/server", () => ({ captureServer: vi.fn() }));
 vi.mock("@/lib/billing/ai-quota", () => ({ grantAiCredits: vi.fn() }));
+vi.mock("@/lib/billing/factura/credit-note", () => ({
+	issueCreditNotesForCharge: vi.fn(async () => []),
+	issueCreditNoteForRefund: vi.fn(async () => []),
+}));
 vi.mock("@/lib/billing/invoices", () => ({ mirrorPaidInvoice: vi.fn(), setInvoiceStatus: vi.fn() }));
 vi.mock("@/lib/billing/payment-methods", () => ({ attemptBackupPayment: vi.fn() }));
 vi.mock("@/lib/billing/stripe", () => ({ getStripe: () => ({ subscriptions: { retrieve: vi.fn(), list: vi.fn() } }) }));

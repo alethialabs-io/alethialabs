@@ -1903,6 +1903,11 @@ export interface FacturaSnapshot {
 	eurEquivalent: FacturaEurEquivalent | null;
 	/** For a credit note: the фактура it corrects. Null on a фактура. */
 	original: { number: string; issueDate: string } | null;
+	/**
+	 * For a credit note: why it was issued, as printed (Art. 115(3) ЗДДС asks for the reason). Absent
+	 * on a фактура, and on rows written before credit notes existed (#7369).
+	 */
+	reason?: string | null;
 	/** Stripe's own number for the paid invoice, printed as a reference. */
 	stripeInvoiceNumber: string | null;
 }
