@@ -6,6 +6,7 @@ import {
 	PROJECT_NAME_MAX_LENGTH,
 	environmentMatrixSchema,
 	helmRegistryProviderConfigSchema,
+	designSaveSchema,
 	pickFreeProjectName,
 	projectFormSchema,
 } from "@/lib/validations/project-form.schema";
@@ -808,5 +809,37 @@ describe("pickFreeProjectName", () => {
 
 	it("an empty org has nothing to avoid", () => {
 		expect(pickFreeProjectName("My App (aws)", [])).toBe("My App (aws)");
+	});
+});
+
+// #7272: a project created without a cloud account ("connect one on the canvas") could not SAVE its
+// design, because Save validated with the deploy schema. Save provisions nothing.
+describe("designSaveSchema", () => {
+	it.each([
+		["an empty account (how the canvas projects none)", ""],
+		["a null account", null],
+		["no account at all", undefined],
+	])("saves a design with %s, storing NULL", (_label, cloud_identity_id) => {
+		const data = { ...validProject, project: { ...validProject.project, cloud_identity_id } };
+		expect(designSaveSchema.parse(data).project.cloud_identity_id).toBeNull();
+	});
+
+	it("keeps a chosen account as it was", () => {
+		expect(designSaveSchema.parse(validProject).project.cloud_identity_id).toBe(
+			validProject.project.cloud_identity_id,
+		);
+	});
+
+	it("leaves the deploy schema requiring the account", () => {
+		const data = { ...validProject, project: { ...validProject.project, cloud_identity_id: "" } };
+		const paths = (projectFormSchema.safeParse(data).error?.issues ?? []).map((issue) =>
+			issue.path.join("."),
+		);
+		expect(paths).toContain("project.cloud_identity_id");
+	});
+
+	it("validates everything else exactly as the deploy schema does", () => {
+		const data = { ...validProject, project: { ...validProject.project, project_name: "", cloud_identity_id: "" } };
+		expect(designSaveSchema.safeParse(data).success).toBe(false);
 	});
 });

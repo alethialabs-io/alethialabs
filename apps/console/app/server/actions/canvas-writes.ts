@@ -23,7 +23,7 @@ import { applyStagedChanges, discardStagedChanges } from "@/app/server/actions/s
 import { readDestroyTree } from "@/lib/rpc/procedures/canvas";
 import { defineAction } from "@/lib/actions/define-action";
 import { refusingCanvasWrite, returnedRefusalAsConflict } from "@/lib/canvas/write-refusals";
-import { projectFormSchema } from "@/lib/validations/project-form.schema";
+import { designSaveSchema, projectFormSchema } from "@/lib/validations/project-form.schema";
 
 const uuid = z.string().uuid();
 
@@ -37,14 +37,20 @@ const environmentInput = z.object({
 const designInput = environmentInput.extend({ design: projectFormSchema });
 
 /**
+ * A design SAVE: the same write, but the project may not have a cloud account yet (#7272) — a save
+ * provisions nothing. A deploy keeps `designInput`, which requires one.
+ */
+const saveDesignInput = environmentInput.extend({ design: designSaveSchema });
+
+/**
  * Saves the board's design to the environment WITHOUT provisioning it: it writes the live design
  * tables and then DELETES the environment's staged rows (`applyStagedChanges`). The board never
  * stages a change itself — `stageChanges` is called only by the CLI's design route — so the rows
  * this clears are ones staged from there. Answers the environment it resolved.
  */
-export async function saveDesignAction(raw: z.input<typeof designInput>) {
+export async function saveDesignAction(raw: z.input<typeof saveDesignInput>) {
 	return defineAction({
-		input: designInput,
+		input: saveDesignInput,
 		run: async ({ input }) =>
 			refusingCanvasWrite(async () => {
 				const environmentId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
