@@ -9,6 +9,8 @@
 // public page without three copies drifting apart — the failure mode #2371 already recorded for the
 // processing register.
 
+import { PAID_MARKETS } from "./paid-markets";
+
 /**
  * WHO is paying, which decides WHICH law applies.
  *
@@ -24,86 +26,220 @@
  */
 export type PayerCapacity = "consumer" | "organization";
 
+/** Both payer capacities, `consumer` first. */
 export const PAYER_CAPACITIES: readonly PayerCapacity[] = [
 	"consumer",
 	"organization",
 ];
 
-/** One country × capacity pair the product may lawfully sell into. */
+/**
+ * Whether an ORGANIZATION buyer gave a VAT identification number.
+ *
+ *  - `given` — the buyer communicated a VAT number.
+ *  - `not_given` — the buyer declared that it has none, or chose not to give one. For an EU buyer
+ *    outside Bulgaria this is what the Art. 18(2) presumption of Implementing Regulation 282/2011
+ *    rests on, so the order must record it (`docs/legal/TAX_MARKET_PRECONDITIONS.md` §3.4).
+ *
+ * Like the capacity, it is CAPTURED, never inferred, and it is asked neutrally: nothing may hint that
+ * one answer opens a sale the other does not. An undeclared status is `null`, never a default.
+ */
+export type VatIdStatus = "given" | "not_given";
+
+/** Both VAT-number statuses, `given` first. */
+export const VAT_ID_STATUSES: readonly VatIdStatus[] = ["given", "not_given"];
+
+/** The country the seller is established in, ISO 3166-1 alpha-2. */
+export const SELLER_COUNTRY = "BG";
+
+/**
+ * The 27 EU member states, ISO 3166-1 alpha-2. Greece is `GR` here; `EL` is its VAT prefix, not its
+ * country code. (Defined here rather than in launch.ts because the VAT-number rule needs it, and
+ * launch.ts re-exports it so existing imports keep working.)
+ */
+export const EU_MEMBER_STATES: readonly string[] = [
+	"AT",
+	"BE",
+	"BG",
+	"CY",
+	"CZ",
+	"DE",
+	"DK",
+	"EE",
+	"ES",
+	"FI",
+	"FR",
+	"GR",
+	"HR",
+	"HU",
+	"IE",
+	"IT",
+	"LT",
+	"LU",
+	"LV",
+	"MT",
+	"NL",
+	"PL",
+	"PT",
+	"RO",
+	"SE",
+	"SI",
+	"SK",
+];
+
+/** One country × capacity pair, optionally narrowed by VAT-number status, the product may sell into. */
 export interface PaidMarketCell {
 	/** ISO 3166-1 alpha-2, upper-case. */
 	readonly country: string;
 	readonly capacity: PayerCapacity;
+	/**
+	 * Narrows an `organization` cell to buyers that gave (`given`) or did not give (`not_given`) a
+	 * VAT number. Absent means either. See `PAID_MARKETS` for when each is used.
+	 */
+	readonly vatId?: VatIdStatus;
 	/** The evidence that opened this cell — an audit trail, not a comment. */
 	readonly evidence: string;
 }
 
-/**
- * The country × capacity cells paid conversion is enabled for.
- *
- * ⚠️ IT IS EMPTY, AND EMPTY IS THE CORRECT STATE TODAY. `LEGAL_ENTITY.vatRegistered` is `false`:
- * the company is not VAT-registered, so cross-border B2C sales into the EU have no OSS return to
- * report through, and there is no basis on which to charge a Bulgarian consumer VAT-inclusive
- * pricing either. Selling first and papering it later is the one order these gates exist to prevent.
- *
- * A cell may be added ONLY when all four hold, and the evidence string must say which:
- *
- *  1. **Tax** — a registration that covers the sale (VAT/OSS for EU B2C, or a documented basis for
- *     charging none), and Stripe Tax configured to compute it for that country and capacity.
- *  2. **Stripe** — the account is live (not test), enabled for that country's payment methods, with
- *     the tax and invoicing settings the sale needs.
- *  3. **Contractual** — Terms, and for `consumer` cells the consumer-rights disclosures, published
- *     in a language the market requires, at a version whose hash is sealed (see documents.ts).
- *  4. **Commercial rights** — for `consumer` cells: the withdrawal, confirmation and ADR duties are
- *     implemented AND the ADR body named in CONSUMER_ADR is the correct one for that country.
- *
- * The checklist and its current state live in `docs/legal/PAID_MARKETS.md`. Adding a cell here
- * without the evidence is not a shortcut — it converts a compliance gap into a live sale.
- */
-export const PAID_MARKETS: readonly PaidMarketCell[] = [];
+// The cell list itself lives in paid-markets.ts (owned by the unit that opens cells) and is
+// re-exported here so `import { PAID_MARKETS } from "@repo/legal/commerce"` keeps working.
+export { PAID_MARKETS };
+
+/** The country as an upper-case alpha-2 code, or `null` when it is missing or not two characters. */
+function normaliseCountry(country: string | null | undefined): string | null {
+	if (!country) return null;
+	const iso = country.trim().toUpperCase();
+	return iso.length === 2 ? iso : null;
+}
 
 /**
- * Whether the product may take money from this country × capacity today.
- *
- * FAIL-CLOSED by construction: an empty PAID_MARKETS refuses everything, an unknown country refuses,
- * and a missing country refuses rather than defaulting to the seller's own jurisdiction. The reader
- * exists so the answer is computed in one place — a caller doing `PAID_MARKETS.length > 0` would be
- * asking a different, weaker question.
+ * The VAT-number status as the boolean the gate is called with: `true` for `given`, `false` for
+ * `not_given`, `null` when nothing was declared. The inverse of `vatIdStatusOf`.
  */
-export function paidMarketEnabled(
+export function vatIdGivenOf(status: VatIdStatus | null | undefined): boolean | null {
+	if (status === "given") return true;
+	if (status === "not_given") return false;
+	return null;
+}
+
+/** The VAT-number status for a boolean answer, or `null` when the answer is unknown. */
+export function vatIdStatusOf(vatIdGiven: boolean | null | undefined): VatIdStatus | null {
+	if (vatIdGiven === true) return "given";
+	if (vatIdGiven === false) return "not_given";
+	return null;
+}
+
+/**
+ * Whether the purchase gate must know the buyer's VAT-number status before it can answer: true for
+ * an `organization` in an EU member state other than the seller's own.
+ *
+ * That is where the status changes the tax treatment of the sale (reverse charge and the seller's
+ * registration, against the no-VAT-number presumption and the EUR 10,000 threshold). In Bulgaria
+ * and outside the EU it does not, so an undeclared status there is not a reason to refuse.
+ */
+export function vatIdStatusRequired(
 	country: string | null | undefined,
 	capacity: PayerCapacity | null | undefined,
 ): boolean {
-	if (!country || !capacity) return false;
-	const iso = country.trim().toUpperCase();
-	if (iso.length !== 2) return false;
-	return PAID_MARKETS.some(
-		(cell) => cell.country === iso && cell.capacity === capacity,
+	const iso = normaliseCountry(country);
+	return (
+		capacity === "organization" &&
+		iso !== null &&
+		iso !== SELLER_COUNTRY &&
+		EU_MEMBER_STATES.includes(iso)
 	);
 }
 
 /**
- * Whether ANY country × capacity cell is open — "is anything on sale anywhere", NOT "may this payer
- * buy". It decides only whether the purchase sheet may skip straight to saying "not on sale yet"
- * before asking the payer anything; once any cell opens, `paidMarketEnabled` (through the console's
+ * The cell in `cells` that opens this buyer, or `undefined` — the ONE matching rule.
+ * `paidMarketEnabled`, `paidMarketEvidence` and launch.ts's `paidLaunchCell` all call it, so they
+ * cannot disagree.
+ *
+ * A cell matches when its country (exact, upper-case) and capacity equal the buyer's, and its `vatId`
+ * is absent or equal to the buyer's status. FAIL-CLOSED throughout:
+ *
+ *  - a missing or malformed country, or an undeclared capacity, matches nothing;
+ *  - an `organization` in an EU member state other than the seller's with an undeclared VAT status
+ *    (`null`) matches nothing, not even a cell without `vatId`;
+ *  - a cell narrowed by `vatId` never matches an undeclared status, and never matches a `consumer`
+ *    (a consumer has no VAT-number status).
+ */
+export function matchPaidMarketCell(
+	cells: readonly PaidMarketCell[],
+	country: string | null | undefined,
+	capacity: PayerCapacity | null | undefined,
+	vatIdGiven: boolean | null | undefined,
+): PaidMarketCell | undefined {
+	const iso = normaliseCountry(country);
+	if (iso === null || !capacity || !PAYER_CAPACITIES.includes(capacity)) return undefined;
+	const status = capacity === "organization" ? vatIdStatusOf(vatIdGiven) : null;
+	if (status === null && vatIdStatusRequired(iso, capacity)) return undefined;
+	return cells.find(
+		(cell) =>
+			cell.country === iso &&
+			cell.capacity === capacity &&
+			(cell.vatId === undefined || cell.vatId === status),
+	);
+}
+
+/**
+ * Whether the product may take money from this buyer today.
+ *
+ * FAIL-CLOSED by construction: an empty PAID_MARKETS refuses everything, an unknown country refuses,
+ * and a missing country refuses rather than defaulting to the seller's own jurisdiction. An EU
+ * organization outside Bulgaria with an undeclared VAT status (`vatIdGiven` null or omitted) is
+ * refused; in Bulgaria and the US the status is not needed. The reader exists so the answer is
+ * computed in one place — a caller doing `PAID_MARKETS.length > 0` would be asking a different,
+ * weaker question.
+ *
+ * @param vatIdGiven whether an organization gave a VAT number; `null`/omitted when undeclared.
+ *   Ignored for a consumer.
+ */
+export function paidMarketEnabled(
+	country: string | null | undefined,
+	capacity: PayerCapacity | null | undefined,
+	vatIdGiven: boolean | null = null,
+): boolean {
+	return matchPaidMarketCell(PAID_MARKETS, country, capacity, vatIdGiven) !== undefined;
+}
+
+/**
+ * Whether ANY cell is open — "is anything on sale anywhere", NOT "may this payer buy". It decides
+ * only whether the purchase sheet may skip straight to saying "not on sale yet" before asking the
+ * payer anything; once any cell opens, `paidMarketEnabled` (through the console's
  * `assertPaidConversionAllowed`) stays the authority for each declared payer.
  */
 export function anyPaidMarketOpen(): boolean {
 	return PAID_MARKETS.length > 0;
 }
 
-/** The evidence recorded for an enabled cell, or null when the cell is closed. */
+/** The evidence recorded for the cell that opens this buyer, or null when no cell does. */
 export function paidMarketEvidence(
 	country: string | null | undefined,
 	capacity: PayerCapacity | null | undefined,
+	vatIdGiven: boolean | null = null,
 ): string | null {
-	if (!country || !capacity) return null;
-	const iso = country.trim().toUpperCase();
-	return (
-		PAID_MARKETS.find(
-			(cell) => cell.country === iso && cell.capacity === capacity,
-		)?.evidence ?? null
-	);
+	return matchPaidMarketCell(PAID_MARKETS, country, capacity, vatIdGiven)?.evidence ?? null;
+}
+
+/**
+ * Whether this buyer is routed to the complimentary Early Access grant instead of a sale: exactly an
+ * `organization` in an EU member state other than the seller's that GAVE a VAT number, while the
+ * seller is not VAT-registered.
+ *
+ * Such a sale would be a supply for consideration that needs the seller's Art. 97a registration first
+ * (`docs/legal/TAX_MARKET_PRECONDITIONS.md` §3.3). A free grant is not, so it may be given today; the
+ * customer is billed only after the registration, going forward. Once `vatRegistered` is true the
+ * buyer is an ordinary sale and this is false. An undeclared status is never eligible.
+ *
+ * @param vatRegistered in production, `LEGAL_ENTITY.vatRegistered`.
+ */
+export function complimentaryGrantEligible(
+	country: string | null | undefined,
+	capacity: PayerCapacity | null | undefined,
+	vatIdGiven: boolean | null | undefined,
+	vatRegistered: boolean,
+): boolean {
+	return vatIdStatusRequired(country, capacity) && vatIdGiven === true && !vatRegistered;
 }
 
 // ── Consumer withdrawal ─────────────────────────────────────────────────────────────────────────
