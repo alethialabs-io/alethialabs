@@ -3,8 +3,10 @@
 
 // The free AI pool (lib/abuse/free-ai-pool.ts, REL-L11 #6912): the operator's kill switch, the
 // global daily ceiling read from the typed table, the per-process cache, and the two platform
-// alerts (fail-open, ceiling reached). The count's SQL runs against real Postgres through the
-// guard's integration tests; here the read is injected so each decision is pinned on its own.
+// alerts (fail-open, ceiling reached). Here the read is injected so each decision is pinned on its
+// own. Which organizations the count includes is `sumFreeAiPoolUsed` (pinned below, #7348); the
+// per-organization SQL around it is NOT executed by any test in this repo — ai-guard.test.ts mocks
+// `readFreeAiPoolUsed` too.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -28,8 +30,10 @@ import {
 	freeAiPoolState,
 	isFreeAiSwitchedOff,
 	resetFreeAiPoolCache,
+	sumFreeAiPoolUsed,
 	utcDayStart,
 } from "@/lib/abuse/free-ai-pool";
+import type { AiTierBillingFields } from "@/lib/billing/ai-plan";
 
 /** 2026-11-21 15:30 UTC, and the midnight that ends that day. */
 const NOW = Date.UTC(2026, 10, 21, 15, 30);
@@ -150,5 +154,56 @@ describe("freeAiPoolState", () => {
 			severity: "critical",
 		});
 		expect(alert?.summary).toContain("connection refused");
+	});
+});
+
+describe("sumFreeAiPoolUsed — who counts as free is billingAiTier's answer (#7348)", () => {
+	const at = new Date(NOW);
+	const dayAgo = new Date(NOW - 24 * 3_600_000);
+	const dayAhead = new Date(NOW + 24 * 3_600_000);
+
+	/** A billing row with a live paid AI tier; override what the case is about. */
+	const billing = (over: Partial<AiTierBillingFields> = {}): AiTierBillingFields => ({
+		aiTier: "ai_plus",
+		aiSubscriptionStatus: "active",
+		aiStripeSubscriptionId: null,
+		stripeSubscriptionId: null,
+		currentPeriodEnd: null,
+		...over,
+	});
+
+	it("counts an EXPIRED off-Stripe AI grant as free", () => {
+		expect(sumFreeAiPoolUsed([{ credits: "40", billing: billing({ currentPeriodEnd: dayAgo }) }], at)).toBe(40);
+	});
+
+	it("does not count an off-Stripe AI grant still inside its term, or an open-ended one", () => {
+		expect(
+			sumFreeAiPoolUsed(
+				[
+					{ credits: "40", billing: billing({ currentPeriodEnd: dayAhead }) },
+					{ credits: "7", billing: billing({ currentPeriodEnd: null }) },
+				],
+				at,
+			),
+		).toBe(0);
+	});
+
+	it("never lapses a Stripe-backed AI tier on the term end (the webhook owns its status)", () => {
+		const row = billing({ aiStripeSubscriptionId: "sub_ai", currentPeriodEnd: dayAgo });
+		expect(sumFreeAiPoolUsed([{ credits: "40", billing: row }], at)).toBe(0);
+	});
+
+	it("counts no billing row, ai_free, and a lapsed paid subscription; sums them", () => {
+		expect(
+			sumFreeAiPoolUsed(
+				[
+					{ credits: "5", billing: null },
+					{ credits: 6, billing: billing({ aiTier: "ai_free" }) },
+					{ credits: "7", billing: billing({ aiStripeSubscriptionId: "sub_ai", aiSubscriptionStatus: "canceled" }) },
+					{ credits: null, billing: null },
+				],
+				at,
+			),
+		).toBe(18);
 	});
 });
