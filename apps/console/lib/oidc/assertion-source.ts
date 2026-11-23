@@ -13,7 +13,8 @@ import {
 } from "@repo/workload-identity";
 import { decodeJwt } from "jose";
 import { readJsonBody } from "@/lib/net/read-json-body";
-import { mintWorkloadToken, oidcIssuerConfigured } from "./issuer";
+import { issuerUrl, mintWorkloadToken, oidcIssuerConfigured } from "./issuer";
+import { assessKeylessReadiness, type KeylessReadiness } from "./keyless-readiness";
 
 const BROKER_URL_ENV = "ALETHIA_E2E_ASSERTION_BROKER_URL";
 const BROKER_AUDIENCE_ENV = "ALETHIA_E2E_ASSERTION_BROKER_AUDIENCE";
@@ -39,6 +40,20 @@ export function assertionSourceForProvider(
 /** Whether either the local issuer or a complete broker runtime is configured. */
 export function workloadAssertionSourceConfigured(): boolean {
   return oidcIssuerConfigured() || brokerRuntimeConfigured();
+}
+
+/**
+ * Whether a keyless connect can work on this instance (EDN-H6): a signing key, and an issuer URL a
+ * cloud can reach over HTTPS — or a complete broker runtime, whose issuer is the broker's own. Read
+ * by the connect sheet so it says "not publicly reachable" instead of offering a doomed connect.
+ * The answer carries a reason code only — never the key, the env value or the broker's address.
+ */
+export function keylessReadiness(): KeylessReadiness {
+  return assessKeylessReadiness({
+    signingKeyConfigured: oidcIssuerConfigured(),
+    issuerUrl: issuerUrl(),
+    brokerConfigured: brokerRuntimeConfigured(),
+  });
 }
 
 /** Builds a provider-bound source that authenticates to the broker with GitHub OIDC. */
