@@ -25,11 +25,17 @@ import {
 	type PaidAvailabilityCopy,
 	paidAvailabilityCopy,
 	PLAN_CATALOG,
+	type LaunchWording,
 	type PlanId,
 	type SupportedCurrency,
 } from "@repo/plan-catalog";
 import { formatDate } from "@repo/format";
-import { type LaunchState, paidLaunchState } from "@repo/legal/launch";
+import {
+	type LaunchState,
+	openMarketSummary,
+	paidLaunchState,
+	RELEASE_STAGE,
+} from "@repo/legal/launch";
 import { splitPriceLabel } from "@/lib/billing/price-label";
 
 /** Every "talk to us" path on the site is the one contact form. */
@@ -74,18 +80,28 @@ function formatLaunchDay(isoDate: string): string {
 	return formatDate(isoDate, "date", "UTC");
 }
 
+/**
+ * The stage name and the open markets, from `@repo/legal/launch` — the only words this page uses
+ * for the commercial stage (EA-4, #7326). The markets are derived from the cells, so the sentence
+ * changes by itself when a cell opens.
+ */
+const LAUNCH_WORDING: LaunchWording = {
+	stage: RELEASE_STAGE,
+	openMarkets: openMarketSummary(),
+};
+
 /* ============ Hero ============ */
 /**
  * Two lines, left, and nothing else — no rail, no lede, no CTAs, no footnote.
  * The tier box is a few hundred pixels below and is the actual call to action;
- * a second one above it was competing with it.
+ * a second one above it was competing with it. The badge is the stage name, `RELEASE_STAGE`.
  */
 function PricingOpen() {
 	return (
 		<section className="pt-[112px] pb-14 max-[640px]:pt-[80px]">
 			<Wrap>
 				<Badge variant="outline" className="vx-badge-mono mb-6">
-					Beta
+					{RELEASE_STAGE}
 				</Badge>
 				<h1
 					className="vx-display-in font-grotesk text-display-md font-bold leading-display tracking-display text-text-primary"
@@ -634,8 +650,8 @@ export function Pricing({ teamPrice, initialCurrency, launch }: PricingProps) {
 	const [query, setQuery] = useState("");
 	const teamPriceLabel = teamPrice[currency];
 	const state = launch ?? paidLaunchState();
-	const paid = paidAvailabilityCopy(state.paid, formatLaunchDay);
-	const trial = paidAvailabilityCopy(state.trial, formatLaunchDay);
+	const paid = paidAvailabilityCopy(state.paid, formatLaunchDay, LAUNCH_WORDING);
+	const trial = paidAvailabilityCopy(state.trial, formatLaunchDay, LAUNCH_WORDING);
 	return (
 		<div id="pricing">
 			<PricingOpen />

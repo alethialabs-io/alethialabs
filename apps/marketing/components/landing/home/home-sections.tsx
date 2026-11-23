@@ -4,6 +4,8 @@
 import { disp, eyebrow, mono, Wrap } from "@repo/brand/site-primitives";
 import { cloudListLabel } from "@repo/cloud-catalog";
 import { formatDate } from "@repo/format";
+import { openMarketSummary, RELEASE_STAGE } from "@repo/legal/launch";
+import { releaseStageLine } from "@repo/plan-catalog";
 import { Badge } from "@repo/ui/badge";
 import { NewsCover } from "@repo/brand/cover";
 import { RELEASES_URL, type PostItem, type ReleaseItem } from "@repo/brand/news-feeds";
@@ -23,31 +25,34 @@ function day(iso: string): string {
 }
 
 /**
- * The Beta line above the statement (REL-L17, #7100): the product is in beta with no uptime SLA,
- * on the clouds the catalog offers — a hidden cloud drops out by itself. No launch date, because
- * the date can still move (decision M15, 2026-11-17).
+ * The stage line above the statement (REL-L17 #7100, EA-4 #7326): the stage badge, the clouds the
+ * catalog offers — a hidden cloud drops out by itself — and `releaseStageLine`, which names who can
+ * buy once a cell is open and otherwise says only that there is no uptime SLA. The stage name is
+ * `RELEASE_STAGE` and the markets are `openMarketSummary()`, so the line changes by itself when a
+ * cell opens. No launch date and no countdown: the 2027-01-31 release is not promoted (ruling
+ * 2026-11-23).
  */
-function BetaLine() {
+function StageLine() {
 	return (
 		<a
 			href="/docs/get-started"
 			className="mb-6 inline-flex flex-wrap items-center gap-2 text-ui-xs text-text-tertiary no-underline transition-colors hover:text-text-secondary"
 		>
 			<Badge variant="outline" className="vx-badge-mono px-1.5 py-px">
-				Beta
+				{RELEASE_STAGE}
 			</Badge>
-			{`On ${cloudListLabel()}. No uptime SLA during the beta.`}
+			{`On ${cloudListLabel()}. ${releaseStageLine({ stage: RELEASE_STAGE, openMarkets: openMarketSummary() })}`}
 			<span className="text-text-disabled">Get started ›</span>
 		</a>
 	);
 }
 
-/** The opening statement: the Beta line, then a bold lead sentence and a quieter continuation. */
+/** The opening statement: the stage line, then a bold lead sentence and a quieter continuation. */
 export function Statement() {
 	return (
 		<section className="pt-[72px] pb-12 max-[640px]:pt-12 max-[640px]:pb-8">
 			<Wrap>
-				<BetaLine />
+				<StageLine />
 				<h1
 					className="text-display-md"
 					style={{ ...disp, margin: 0, maxWidth: "48ch", lineHeight: 1.14, letterSpacing: "var(--tracking-display)", color: "var(--text-primary)", fontWeight: 400, textWrap: "balance" }}
