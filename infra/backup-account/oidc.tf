@@ -231,8 +231,17 @@ resource "aws_iam_role_policy" "launcher" {
 # RunInstances only from THIS launch template, and only with every resource taken from it
 # (ec2:IsLaunchTemplateResource): the caller cannot swap the AMI, the instance profile, the network,
 # the user-data or the shutdown behaviour. The resource is "*" because RunInstances authorises every
-# resource type it touches (instance, volume, ENI, subnet, SG, image, spot request); the two
-# conditions are what scope it.
+# resource type it touches (instance, volume, ENI, subnet, SG, image); the two conditions are what
+# scope it.
+#
+# Except the spot request. AWS's Service Authorization Reference lists only aws:RequestTag and
+# aws:TagKeys for the spot-instances-request resource of RunInstances — neither ec2:LaunchTemplate nor
+# ec2:IsLaunchTemplateResource is in its request context, so the first statement can never match it
+# (the first drill failed exactly there). It gets its own statement, on that one resource type and
+# without a condition. That adds no launch the first statement does not already permit: RunInstances
+# authorises every resource of a call together, so a spot request is only ever created alongside an
+# instance, volume and ENI that each still have to come from this template. RequestSpotInstances,
+# the other way to create one, is not granted.
 #
 # A policy of its own, built with jsonencode, because the template's ARN carries an id known only
 # after apply: in the policy document above it would defer the WHOLE document to apply time, so the
@@ -242,15 +251,23 @@ resource "aws_iam_role_policy" "launcher_run" {
   role = aws_iam_role.launcher.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Sid      = "RunOnlyTheDrillLaunchTemplate"
-      Effect   = "Allow"
-      Action   = local.launcher_run_actions
-      Resource = "*"
-      Condition = {
-        ArnEquals = { "ec2:LaunchTemplate" = aws_launch_template.drill.arn }
-        Bool      = { "ec2:IsLaunchTemplateResource" = "true" }
-      }
-    }]
+    Statement = [
+      {
+        Sid      = "RunOnlyTheDrillLaunchTemplate"
+        Effect   = "Allow"
+        Action   = local.launcher_run_actions
+        Resource = "*"
+        Condition = {
+          ArnEquals = { "ec2:LaunchTemplate" = aws_launch_template.drill.arn }
+          Bool      = { "ec2:IsLaunchTemplateResource" = "true" }
+        }
+      },
+      {
+        Sid      = "TheDrillsSpotRequest"
+        Effect   = "Allow"
+        Action   = local.launcher_run_actions
+        Resource = "arn:aws:ec2:${var.backup_region}:${var.backup_account_id}:spot-instances-request/*"
+      },
+    ]
   })
 }
