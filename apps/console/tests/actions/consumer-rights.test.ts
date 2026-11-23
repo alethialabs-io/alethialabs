@@ -19,6 +19,7 @@ vi.mock("@/lib/authz/guard", () => ({
 	authorize: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: vi.fn() }));
 vi.mock("@/lib/billing/stripe", () => ({ getStripe: vi.fn() }));
 vi.mock("@/lib/billing/config", () => ({
 	deploymentMode: vi.fn(() => "hosted"),
@@ -28,9 +29,11 @@ vi.mock("@/lib/billing/config", () => ({
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { getStripe } from "@/lib/billing/stripe";
+import { getOrgBilling } from "@/lib/billing/queries";
 import { deploymentMode, isStripeConfigured } from "@/lib/billing/config";
 import {
 	getWithdrawalRight,
+	recordOrdinaryCancellation,
 	withdrawFromContract,
 } from "@/app/server/actions/consumer-rights";
 
@@ -95,6 +98,11 @@ function stubStripe() {
 }
 
 beforeEach(() => {
+	// The actions read the clock themselves (a Server Action's arguments come from the request), so
+	// time is pinned by faking `Date` rather than by passing an instant in. Only `Date` is faked, so
+	// promise and timer scheduling behave normally.
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(NOW);
 	// Re-armed here, not only in the module factory: afterEach's resetAllMocks clears the factory's
 	// implementations too, so a later test would see `isStripeConfigured()` return undefined and be
 	// refused by the hosted-billing guard for a reason that has nothing to do with what it asserts.
@@ -105,14 +113,17 @@ beforeEach(() => {
 		orgId: ORG,
 	} as unknown as Awaited<ReturnType<typeof authorize>>);
 });
-afterEach(() => vi.resetAllMocks());
+afterEach(() => {
+	vi.useRealTimers();
+	vi.resetAllMocks();
+});
 
 describe("the withdrawal preview", () => {
 	// Shown BEFORE the consumer acts, because they must be told what withdrawing will cost them —
 	// a figure produced only afterwards is not that.
 	it("quotes the proportional split for an acknowledged immediate start", () => {
 		stubDb([order({ daysAgo: 10 })]);
-		return getWithdrawalRight(NOW).then((r) => {
+		return getWithdrawalRight().then((r) => {
 			expect(r.available).toBe(true);
 			expect(r.retainedMinorUnits).toBe(4_000); // 10/30 of 12000
 			expect(r.refundMinorUnits).toBe(8_000);
@@ -123,14 +134,14 @@ describe("the withdrawal preview", () => {
 
 	it("is unavailable on an organization order, and says why", async () => {
 		stubDb([order({ capacity: "organization" })]);
-		const r = await getWithdrawalRight(NOW);
+		const r = await getWithdrawalRight();
 		expect(r.available).toBe(false);
 		expect(r.reason).toBe("not_a_consumer_order");
 	});
 
 	it("is unavailable once the 14 days have run, and says when they did", async () => {
 		stubDb([order({ daysAgo: 20 })]);
-		const r = await getWithdrawalRight(NOW);
+		const r = await getWithdrawalRight();
 		expect(r.available).toBe(false);
 		expect(r.reason).toBe("period_expired");
 		expect(r.expiresAt).toBeTruthy();
@@ -138,7 +149,7 @@ describe("the withdrawal preview", () => {
 
 	it("is unavailable when there is no order at all", async () => {
 		stubDb([]);
-		expect((await getWithdrawalRight(NOW)).reason).toBe("no_order");
+		expect((await getWithdrawalRight()).reason).toBe("no_order");
 	});
 });
 
@@ -149,7 +160,7 @@ describe("exercising the withdrawal", () => {
 		const updates = stubDb([order({ daysAgo: 10 })]);
 		const stripe = stubStripe();
 
-		const out = await withdrawFromContract({ reason: null }, NOW);
+		const out = await withdrawFromContract({ reason: null });
 
 		expect(stripe.calls).toEqual(["refund", "cancel"]);
 		expect(stripe.refunds.create).toHaveBeenCalledWith(
@@ -173,7 +184,7 @@ describe("exercising the withdrawal", () => {
 	it("ends access immediately rather than at the period end", async () => {
 		const updates = stubDb([order({ daysAgo: 2 })]);
 		stubStripe();
-		await withdrawFromContract({ reason: null }, NOW);
+		await withdrawFromContract({ reason: null });
 		expect(updates.at(-1)?.accessEndsAt).toEqual(NOW);
 	});
 
@@ -182,7 +193,7 @@ describe("exercising the withdrawal", () => {
 	it("refunds everything when immediate performance was never acknowledged", async () => {
 		stubDb([order({ daysAgo: 10, proportionalChargeAcknowledgedAt: null })]);
 		const stripe = stubStripe();
-		const out = await withdrawFromContract({ reason: null }, NOW);
+		const out = await withdrawFromContract({ reason: null });
 		expect(out.refundMinorUnits).toBe(12_000);
 		expect(out.retainedMinorUnits).toBe(0);
 		expect(stripe.refunds.create).toHaveBeenCalledWith(
@@ -195,7 +206,7 @@ describe("exercising the withdrawal", () => {
 	it("skips the refund call when the whole price is retained", async () => {
 		stubDb([order({ daysAgo: 13, periodDays: 13 })]);
 		const stripe = stubStripe();
-		const out = await withdrawFromContract({ reason: null }, NOW);
+		const out = await withdrawFromContract({ reason: null });
 		expect(out.refundMinorUnits).toBe(0);
 		expect(stripe.refunds.create).not.toHaveBeenCalled();
 		expect(stripe.subscriptions.cancel).toHaveBeenCalled();
@@ -204,7 +215,7 @@ describe("exercising the withdrawal", () => {
 	it("refuses an organization order and points at cancellation instead", async () => {
 		stubDb([order({ capacity: "organization" })]);
 		stubStripe();
-		await expect(withdrawFromContract({ reason: null }, NOW)).rejects.toThrow(
+		await expect(withdrawFromContract({ reason: null })).rejects.toThrow(
 			/cancel it instead/i,
 		);
 	});
@@ -212,7 +223,7 @@ describe("exercising the withdrawal", () => {
 	it("refuses once the period has expired, naming the date", async () => {
 		stubDb([order({ daysAgo: 30 })]);
 		stubStripe();
-		await expect(withdrawFromContract({ reason: null }, NOW)).rejects.toThrow(
+		await expect(withdrawFromContract({ reason: null })).rejects.toThrow(
 			/withdrawal period for this order ended/i,
 		);
 	});
@@ -220,7 +231,7 @@ describe("exercising the withdrawal", () => {
 	it("refuses a second withdrawal from the same order", async () => {
 		stubDb([order({ state: "withdrawn" })]);
 		stubStripe();
-		await expect(withdrawFromContract({ reason: null }, NOW)).rejects.toThrow(
+		await expect(withdrawFromContract({ reason: null })).rejects.toThrow(
 			/already been withdrawn/i,
 		);
 	});
@@ -230,6 +241,114 @@ describe("exercising the withdrawal", () => {
 	it("does not require a reason", async () => {
 		stubDb([order({ daysAgo: 3 })]);
 		stubStripe();
-		await expect(withdrawFromContract(undefined, NOW)).resolves.toBeTruthy();
+		await expect(withdrawFromContract(undefined)).resolves.toBeTruthy();
+	});
+
+	// An owed refund with no payment intent on the order cannot be issued. The withdrawal still takes
+	// effect, but the record must not claim a refund that never moved.
+	it("does not record a refund it could not issue", async () => {
+		const updates = stubDb([order({ daysAgo: 10, stripePaymentIntentId: null })]);
+		const stripe = stubStripe();
+		const out = await withdrawFromContract({ reason: null });
+		expect(stripe.refunds.create).not.toHaveBeenCalled();
+		expect(out.refundIssued).toBe(false);
+		expect(out.refundMinorUnits).toBe(8_000); // still owed, and still reported as owed
+		expect(updates.at(-1)).toMatchObject({
+			state: "withdrawn",
+			withdrawalRefundMinorUnits: null,
+			withdrawalRetainedMinorUnits: 4_000,
+		});
+	});
+
+	it("reports the refund as issued when it was", async () => {
+		stubDb([order({ daysAgo: 10 })]);
+		stubStripe();
+		expect((await withdrawFromContract({ reason: null })).refundIssued).toBe(true);
+	});
+});
+
+describe("the clock is the server's", () => {
+	// A Server Action's arguments come from the request. Earlier signatures took the instant as a
+	// trailing parameter; these calls pass one anyway (through Reflect.apply, which the action's
+	// typed signature would otherwise refuse) and prove it changes nothing.
+	const EARLIER = new Date(NOW.getTime() - 9 * 86_400_000);
+
+	it("ignores an extra argument to the preview", async () => {
+		stubDb([order({ daysAgo: 10 })]);
+		const r: Awaited<ReturnType<typeof getWithdrawalRight>> = await Reflect.apply(
+			getWithdrawalRight,
+			undefined,
+			[EARLIER],
+		);
+		expect(r.refundMinorUnits).toBe(8_000);
+		expect(r.retainedMinorUnits).toBe(4_000);
+	});
+
+	it("ignores an extra argument to the withdrawal — the refund and the window are unchanged", async () => {
+		const updates = stubDb([order({ daysAgo: 10 })]);
+		const stripe = stubStripe();
+		const out: Awaited<ReturnType<typeof withdrawFromContract>> = await Reflect.apply(
+			withdrawFromContract,
+			undefined,
+			[{ reason: null }, EARLIER],
+		);
+		expect(out.refundMinorUnits).toBe(8_000);
+		expect(stripe.refunds.create).toHaveBeenCalledWith(
+			expect.objectContaining({ amount: 8_000 }),
+		);
+		expect(updates.at(-1)).toMatchObject({ withdrawnAt: NOW, accessEndsAt: NOW });
+	});
+
+	it("refuses an expired window even when an in-window instant is passed", async () => {
+		stubDb([order({ daysAgo: 20 })]);
+		const stripe = stubStripe();
+		const fiveDaysAfterPlacement = new Date(NOW.getTime() - 15 * 86_400_000);
+		await expect(
+			Reflect.apply(withdrawFromContract, undefined, [
+				{ reason: null },
+				fiveDaysAfterPlacement,
+			]),
+		).rejects.toThrow(/withdrawal period for this order ended/i);
+		expect(stripe.refunds.create).not.toHaveBeenCalled();
+	});
+});
+
+describe("recording an ordinary cancellation", () => {
+	it("ends access at the billing row's period end for this order's subscription", async () => {
+		const periodEnd = new Date(NOW.getTime() + 12 * 86_400_000);
+		const updates = stubDb([order({ daysAgo: 5 })]);
+		vi.mocked(getOrgBilling).mockResolvedValue({
+			stripeSubscriptionId: "sub_1",
+			currentPeriodEnd: periodEnd,
+		} as unknown as Awaited<ReturnType<typeof getOrgBilling>>);
+		await recordOrdinaryCancellation();
+		expect(updates.at(-1)).toMatchObject({
+			state: "cancelled",
+			cancelledAt: NOW,
+			accessEndsAt: periodEnd,
+		});
+	});
+
+	it("falls back to the order's own period when the billing row is another subscription", async () => {
+		const updates = stubDb([order({ daysAgo: 35 })]); // 30-day periods: second period ends 25 days out
+		vi.mocked(getOrgBilling).mockResolvedValue({
+			stripeSubscriptionId: "sub_other",
+			currentPeriodEnd: new Date(NOW.getTime() + 300 * 86_400_000),
+		} as unknown as Awaited<ReturnType<typeof getOrgBilling>>);
+		await recordOrdinaryCancellation();
+		expect(updates.at(-1)?.accessEndsAt).toEqual(
+			new Date(NOW.getTime() + 25 * 86_400_000),
+		);
+	});
+
+	it("ignores a caller-supplied access end", async () => {
+		const updates = stubDb([order({ daysAgo: 5 })]);
+		vi.mocked(getOrgBilling).mockResolvedValue(null);
+		await Reflect.apply(recordOrdinaryCancellation, undefined, [
+			new Date(NOW.getTime() + 3650 * 86_400_000),
+		]);
+		expect(updates.at(-1)?.accessEndsAt).toEqual(
+			new Date(NOW.getTime() + 25 * 86_400_000),
+		);
 	});
 });
