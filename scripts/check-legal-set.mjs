@@ -55,7 +55,13 @@ const LEGAL_DOCS_DIR = "docs/legal";
 const LEGAL_DOCS_EXEMPT = new Set(["README.md"]);
 
 const DOCUMENT_KINDS = ["public-page", "internal-record", "repository-file", "source-module"];
-const DOCUMENT_STATUSES = ["current", "planned"];
+/**
+ * `current` — written and in force. `planned` — a board unit has still to write it; the file must
+ * not exist. `draft` — written but NOT in force (e.g. pending the maintainer's legal review): the
+ * file must exist, it is never sealed, it carries no version, date or hash, it is skipped by
+ * `--sync`, and no claim or finding may cite it — a draft is never counted as current or sealed.
+ */
+const DOCUMENT_STATUSES = ["current", "planned", "draft"];
 const CLAIM_KINDS = [
 	"retention",
 	"consent",
@@ -161,6 +167,14 @@ export function derivedFields(entry, fs, sealed) {
 		displayedDate,
 		contentHash: seal ? seal.contentHash : null,
 	};
+}
+
+/**
+ * What `--sync` writes for an entry: its derived fields when it is `current`, and null for a
+ * `planned` or `draft` entry, which `--sync` never touches (neither is in force).
+ */
+export function syncedFields(entry, fs, sealed) {
+	return entry.status === "current" ? derivedFields(entry, fs, sealed) : null;
 }
 
 /** Compiles an evidence pattern, or says why it may not be used. */
@@ -352,6 +366,26 @@ export function checkLegalSet(fs) {
 			}
 			continue;
 		}
+		if (entry.status === "draft") {
+			if (!exists) {
+				report(
+					"document-gone",
+					`${label}: ${entry.source} does not exist. A draft must be written; mark it "planned".`,
+				);
+			}
+			if (entry.sealed !== false || sealed.has(entry.source)) {
+				report(
+					"draft-sealed",
+					`${label}: a draft is not in force, so it cannot be sealed or declared in ${DOCUMENTS_TS}.`,
+				);
+			}
+			for (const key of ["version", "displayedDate", "contentHash"]) {
+				if ((entry[key] ?? null) !== null) {
+					report("document-shape", `${label}: a draft carries no ${key}; set it to null.`);
+				}
+			}
+			continue;
+		}
 
 		const isSealed = sealed.has(entry.source);
 		if (entry.sealed !== isSealed) {
@@ -430,7 +464,10 @@ export function checkLegalSet(fs) {
 			return null;
 		}
 		if (doc.status !== "current") {
-			report("unknown-document", `${label}: document "${entry.document}" is planned, not current.`);
+			report(
+				"unknown-document",
+				`${label}: document "${entry.document}" is ${doc.status}, not current.`,
+			);
 			return null;
 		}
 		const content = fs.read(doc.source);
@@ -540,8 +577,8 @@ function sync() {
 	const sealed = parseSealedDocuments(fs.read(DOCUMENTS_TS) ?? "");
 	let changed = 0;
 	for (const entry of register.documents) {
-		if (entry.status !== "current") continue;
-		const derived = derivedFields(entry, fs, sealed);
+		const derived = syncedFields(entry, fs, sealed);
+		if (derived === null) continue;
 		for (const key of ["version", "displayedDate", "contentHash"]) {
 			if ((entry[key] ?? null) !== derived[key]) {
 				console.log(`  ${entry.id}: ${key} ${JSON.stringify(entry[key] ?? null)} → ${JSON.stringify(derived[key])}`);
@@ -763,6 +800,60 @@ const SELF_TEST_CASES = [
 		},
 	},
 	{
+		name: "a draft whose file is gone",
+		code: "document-gone",
+		mutate: (t) => editRegister(t, (r) => {
+			r.documents[3].status = "draft";
+		}),
+	},
+	{
+		name: "a draft marked sealed",
+		code: "draft-sealed",
+		mutate: (t) => {
+			t["docs/legal/DPIA.md"] = "# DPIA\n\nEffective: 2026-11-23\n";
+			editRegister(t, (r) => {
+				r.documents[3].status = "draft";
+				r.documents[3].sealed = true;
+			});
+		},
+	},
+	{
+		name: "a draft declared in the sealed registry",
+		code: "draft-sealed",
+		mutate: (t) => {
+			t[DOCUMENTS_TS] = t[DOCUMENTS_TS].replace(
+				"apps/marketing/app/terms/page.tsx",
+				"docs/legal/DPIA.md",
+			);
+			t["docs/legal/DPIA.md"] = "# DPIA\n\nEffective: 2026-11-23\n";
+			editRegister(t, (r) => {
+				r.documents[3].status = "draft";
+			});
+		},
+	},
+	{
+		name: "a draft given a version as if it were in force",
+		code: "document-shape",
+		mutate: (t) => {
+			t["docs/legal/DPIA.md"] = "# DPIA\n\nEffective: 2026-11-23\n";
+			editRegister(t, (r) => {
+				r.documents[3].status = "draft";
+				r.documents[3].version = "2026-11-23";
+			});
+		},
+	},
+	{
+		name: "a claim about a document that is only a draft",
+		code: "unknown-document",
+		mutate: (t) => {
+			t["docs/legal/DPIA.md"] = "# DPIA\n\nEffective: 2026-11-23\n";
+			editRegister(t, (r) => {
+				r.documents[3].status = "draft";
+				r.claims[0].document = "dpia";
+			});
+		},
+	},
+	{
 		name: "a document marked sealed that the registry does not declare",
 		code: "sealed-mismatch",
 		mutate: (t) => editRegister(t, (r) => {
@@ -953,6 +1044,19 @@ function selfTest() {
 		failed += 1;
 		console.error("✗ self-test: a re-wrapped paragraph was reported as a changed quote.");
 	}
+	// A written draft is the one status whose file must exist and that --sync leaves alone: it is
+	// clean as it stands, and syncing must not give it a version (that would read as in force).
+	const drafted = fixtureTree();
+	drafted["docs/legal/DPIA.md"] = "# DPIA\n\nEffective: 2026-11-23\n";
+	editRegister(drafted, (r) => {
+		r.documents.find((d) => d.id === "dpia").status = "draft";
+	});
+	const draftFs = memoryFs(drafted);
+	const draftEntry = JSON.parse(drafted[REGISTER_PATH]).documents.find((d) => d.id === "dpia");
+	if (checkLegalSet(draftFs).length > 0 || syncedFields(draftEntry, draftFs, new Map()) !== null) {
+		failed += 1;
+		console.error("✗ self-test: a written draft was reported, or --sync would give it a version.");
+	}
 	for (const testCase of SELF_TEST_CASES) {
 		const tree = fixtureTree();
 		testCase.mutate(tree);
@@ -983,7 +1087,7 @@ if (invokedDirectly) {
 			console.error(`::error::check-legal-set --self-test: ${failed} case(s) failed.`);
 			process.exit(1);
 		}
-		console.log(`✓ check-legal-set --self-test: ${SELF_TEST_CASES.length + 3} case(s) behave as stated.`);
+		console.log(`✓ check-legal-set --self-test: ${SELF_TEST_CASES.length + 4} case(s) behave as stated.`);
 		process.exit(0);
 	}
 	if (argv.includes("--sync")) {
