@@ -255,12 +255,18 @@ tier_separation:
 
   # CORRECTED BY #3262. gc.ts is NOT reached by reconcile-b2c.test.ts — that suite's retention-GC
   # tests call the SQL functions directly (`select public.gc_job_logs(...)`), so the TypeScript
-  # wrappers never execute. Exactly one of its FOUR exports has a real caller in a test, and these
-  # are the two suites that call it. The other three are in `baseline:` below.
+  # wrappers never execute. The exports listed here have a real caller in an integration suite; the
+  # rest are in `baseline:` below. gcSupportCases (#7220) deletes object-storage files as well as
+  # rows, so its suite runs it against real support tables with a stub storage backend.
   - path: lib/reconcile/gc.ts
-    suite: [tests/integration/authz-activity-gc.test.ts, tests/integration/authz-activity-worm.test.ts]
-    symbols: [gcAuthzActivityLog]
-    reason: The authz-activity retention sweep, asserted against the real WORM table and its keyset index.
+    suite:
+      [
+        tests/integration/authz-activity-gc.test.ts,
+        tests/integration/authz-activity-worm.test.ts,
+        tests/integration/support-cases-gc.test.ts,
+      ]
+    symbols: [gcAuthzActivityLog, gcSupportCases, SUPPORT_CASE_RETENTION_DAYS]
+    reason: The authz-activity and support-case retention sweeps, asserted against real tables (the WORM table and its keyset index; support cases with their threads and attachment rows).
 
   # ── lib/agent — the chat turn's claim state machine (ADR 0003 slice 5) ─────────────────────
   - path: lib/agent/turn-claims.ts

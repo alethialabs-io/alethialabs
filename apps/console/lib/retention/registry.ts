@@ -18,7 +18,10 @@
 //   `reconcile-task` — a bounded, paged TypeScript sweep on the reconcile loop (lib/reconcile/loop.ts)
 //                    rather than a SQL function, because deciding what to do with a row needs app
 //                    code (the Elench drafts sweep settles a silent claim before it deletes). The
-//                    window here IS the sweep's window: the sweep imports it from this file.
+//                    window here IS the sweep's window: the sweep imports it from this file, or —
+//                    for a sweep that predates the register and lives outside this module (the
+//                    removed-inventory purge in lib/cloud-providers/sweep.ts) — the register test
+//                    pins the sweep's own default to it, so the two cannot drift apart.
 //   `provider`     — held by a third party under their configuration. We do not enforce it and must
 //                    not imply we do; the entry records what has to be verified with them.
 //   `contractual`  — kept for as long as a legal obligation requires, and deliberately NOT deleted
@@ -81,7 +84,37 @@ export const RETENTION_DEFAULT_DAYS = {
 	// ADR 0001 §9 / Q2: an Elench draft nobody writes, and a discarded one (its 24 h Undo window).
 	elenchDrafts: 30,
 	elenchDraftsDiscarded: 1,
+	// The Privacy Policy: "Support and contractual correspondence: up to 3 years after the matter
+	// closes". 3 × 365 — never more than three calendar years, whatever the leap days.
+	supportCases: 3 * 365,
+	// The Privacy Policy: "Removed cloud inventory and capability observations: 7 days by default".
+	// Enforced by lib/cloud-providers/sweep.ts with its own default; the register test pins the two.
+	removedInventory: 7,
 } as const;
+
+/**
+ * The off-box backup rotation, as `deploy/prod/backup/backup.sh` and `infra/backup-account/` set it.
+ * Not a retention this product's code enforces — the backup job and the bucket's lifecycle rules do —
+ * so these are the numbers the `backups` entry states, and the register test pins each one to the
+ * file that sets it.
+ */
+export const BACKUP_ROTATION = {
+	/** `BACKUP_KEEP_DAILY`'s default in backup.sh: daily copies kept in script mode. */
+	keepDaily: 14,
+	/** `BACKUP_KEEP_WEEKLY`'s default in backup.sh: weekly copies kept in script mode. */
+	keepWeekly: 8,
+	/** Production (bucket mode): a weekly copy's current version expires after this many days. */
+	bucketWeeklyDays: 60,
+	/** Production (bucket mode): an expired version is removed this many days after it stops being current. */
+	bucketNoncurrentDays: 16,
+} as const;
+
+/**
+ * The longest any backup copy survives in production: a weekly copy's 60 days current plus 16 days
+ * noncurrent. A deletion is therefore gone from every backup at most this long after it happened —
+ * provided a restore replays the erasure tombstones (the open half of the `backups` entry).
+ */
+export const BACKUP_MAX_DAYS = BACKUP_ROTATION.bucketWeeklyDays + BACKUP_ROTATION.bucketNoncurrentDays;
 
 /**
  * Every retention promise, in the order a reader of the privacy policy meets them.
@@ -165,6 +198,40 @@ export const RETENTION_REGISTRY: readonly RetentionEntry[] = [
 			"two days.",
 	},
 	{
+		id: "support-cases",
+		subject:
+			"Support and contractual correspondence — support cases, their messages, read markers and attachments",
+		table: "support_cases",
+		windowDays: RETENTION_DEFAULT_DAYS.supportCases,
+		mechanism: "reconcile-task",
+		gcFunction: null,
+		evidence:
+			"Enforced by the gc-support-cases task (gcSupportCases in lib/reconcile/gc.ts), run hourly " +
+			"by the reconcile loop in bounded pages: a case that is resolved or closed, and has been for " +
+			"3 years, is deleted. The matter closes at its latest resolved_at (resolved) or closed_at " +
+			"(closed), or its last message if that is later; a reopened case is not deleted, and its " +
+			"clock restarts when it settles again. Its messages, read markers and attachment rows go " +
+			"with it (ON DELETE CASCADE), its attachment files are deleted from storage first — a case " +
+			"whose file cannot be deleted is kept and retried, so no file outlives its record — and its " +
+			"classification assignments are removed in the same transaction.",
+	},
+	{
+		id: "removed-cloud-inventory",
+		subject:
+			"Removed cloud inventory and capability observations — resources deleted in a connected cloud",
+		table: null,
+		windowDays: RETENTION_DEFAULT_DAYS.removedInventory,
+		mechanism: "reconcile-task",
+		gcFunction: null,
+		evidence:
+			"Enforced by the connection sweeper (runConnectionSweep in lib/cloud-providers/sweep.ts, " +
+			"every minute on every app instance): rows soft-removed (removed_at) more than 7 days ago " +
+			"are deleted from every cloud inventory table and from the launchable-service and quota " +
+			"capability tables (gcRemovedInventory, gcRemovedServiceCapabilities, " +
+			"gcRemovedQuotaCapabilities). The window is the sweep's own default, overridable by " +
+			"ALETHIA_INVENTORY_RETENTION_DAYS; the register test pins that default to this entry.",
+	},
+	{
 		id: "legal-acceptance",
 		subject: "Records of which Terms version an account accepted, and when",
 		table: "legal_acceptance",
@@ -204,16 +271,20 @@ export const RETENTION_REGISTRY: readonly RetentionEntry[] = [
 	},
 	{
 		id: "backups",
-		subject: "Database backups",
+		subject: "Database and storage backups, encrypted and kept off the production box",
 		table: null,
-		windowDays: null,
+		windowDays: BACKUP_MAX_DAYS,
 		mechanism: "not-enforced",
 		evidence:
-			"NOT ESTABLISHED — requires the backup rotation to be evidenced, and requires the " +
-			"deletion queue to be replayed after any restore before normal operation resumes. A " +
-			"backup that outlives a deletion silently reinstates it, which is why the tombstone in " +
-			"the deletion path is restore-resistant and this entry stays open until the rotation is " +
-			"documented.",
+			"The rotation is established, outside this product's code. deploy/prod/backup/backup.sh " +
+			"takes a nightly copy and keeps 14 dailies and 8 weeklies by default (BACKUP_KEEP_DAILY, " +
+			"BACKUP_KEEP_WEEKLY); in production (BACKUP_RETENTION=bucket) the bucket's lifecycle " +
+			"rules expire them instead (infra/backup-account/main.tf: dailies 15 days, weeklies 60, " +
+			"then 16 days noncurrent), so no copy outlives 76 days. The erasure tombstones are " +
+			"exported off-box hourly, so a restore of an older copy CAN replay the erasures made " +
+			"after it. NOT ESTABLISHED — requires the restore procedure to replay those tombstones " +
+			"before normal operation resumes: nothing in this repository does it yet, and a backup " +
+			"that outlives a deletion silently reinstates it when restored.",
 		gcFunction: null,
 	},
 ];

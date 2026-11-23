@@ -26,6 +26,7 @@ vi.mock("@/lib/reconcile/gc", () => ({
 	gcJobLogs: vi.fn(async () => ({ deleted: 0 })),
 	gcFleetActions: vi.fn(async () => ({ deleted: 0 })),
 	gcAuthzActivityLog: vi.fn(async () => ({ deleted: 0 })),
+	gcSupportCases: vi.fn(async () => ({ deleted: 0, filesDeleted: 0, storageFailed: 0 })),
 }));
 
 import {
@@ -104,6 +105,7 @@ describe("tick — fan-out", () => {
 			"gc-authz-activity",
 			"gc-fleet-actions",
 			"gc-job-logs",
+			"gc-support-cases",
 			"kubeconfig-mint-sweep",
 			"probe-schedule",
 			"rate-limit-sweep",
