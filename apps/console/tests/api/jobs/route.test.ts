@@ -923,8 +923,10 @@ describe("POST /api/jobs (CLI queue)", () => {
 		const res = await post({ job_type: "DEPLOY", configuration_id: "p1" });
 
 		expect(res.status).toBe(409);
+		// The caller is an older CLI or a script: the sentence names both ways forward.
 		expect(await res.json()).toEqual({
-			error: "A deploy applies a reviewed plan. Plan this environment, review the plan, then apply it.",
+			error:
+				"A deploy applies a reviewed plan. Upgrade the Alethia CLI, whose `alethia project deploy` previews the environment first, or run `alethia project preview --wait` and then `alethia project deploy --latest-plan`.",
 			code: "plan_required",
 		});
 		expect(() => valuesFor(valuesSpy, jobs)).toThrow();

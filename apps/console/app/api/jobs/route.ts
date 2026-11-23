@@ -108,6 +108,14 @@ function actorCredentialOf(caller: CliCaller): CredentialKind {
 }
 
 /**
+ * The sentence a DEPLOY that names no plan is refused with on this route. A current CLI never sends
+ * one (`alethia project deploy` previews first and deploys that plan), so the caller is an older CLI
+ * or a script: it names both ways forward.
+ */
+const CLI_PLAN_REQUIRED =
+	"A deploy applies a reviewed plan. Upgrade the Alethia CLI, whose `alethia project deploy` previews the environment first, or run `alethia project preview --wait` and then `alethia project deploy --latest-plan`.";
+
+/**
  * The actor this route acts as, with a service token's scope ceiling attached (lib/authz/scope-ceiling.ts),
  * so every decision the server actions ask through `runWithActor` — plan, deploy, destroy — is held to
  * the token's scopes and project list, as on every route that goes through `authorizeCli`. A session
@@ -607,7 +615,7 @@ export async function POST(req: Request) {
 			// which (lib/approvals/plan-binding.ts).
 			if (e instanceof PlanBindingError) {
 				return NextResponse.json(
-					{ error: e.message, code: e.code },
+					{ error: e.code === "plan_required" ? CLI_PLAN_REQUIRED : e.message, code: e.code },
 					{ status: 409 },
 				);
 			}
