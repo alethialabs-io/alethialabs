@@ -4,7 +4,7 @@
 import { Button, Heading, Text } from "@react-email/components";
 import { EmailLayout } from "@repo/email/components/layout";
 import { primaryButton, text } from "@repo/email/components/theme";
-import { BillingLegal, Callout, SummaryTable } from "./billing-shared";
+import { BillingLegal, Callout, SummaryTable, invoiceSentence } from "./billing-shared";
 
 export interface CreditPackReceiptEmailProps {
 	/** Organization the credits were added to. */
@@ -13,8 +13,10 @@ export interface CreditPackReceiptEmailProps {
 	credits: number;
 	/** Formatted amount charged, e.g. "$29.00". */
 	amountLabel: string;
-	/** Stripe invoice number, e.g. "ABCD-0002". */
+	/** The фактура number (ten Arabic digits), only when one was issued. Never Stripe's number. */
 	invoiceNumber?: string;
+	/** Whether the фактура PDF is attached. False: the email says the invoice follows. */
+	invoiceAttached: boolean;
 	/** Absolute link to the usage page. */
 	usageUrl?: string;
 }
@@ -27,12 +29,13 @@ export function subject(
 }
 
 /** Sent on the credit-pack invoice's payment_succeeded — confirms the one-time
- *  top-up; the compliant invoice PDF is attached by the sender. */
+ *  top-up; the sender attaches the фактура when one was issued, never Stripe's PDF. */
 export function CreditPackReceiptEmail({
 	orgName,
 	credits = 0,
 	amountLabel,
 	invoiceNumber,
+	invoiceAttached,
 	usageUrl = "https://alethialabs.io/dashboard/usage",
 }: CreditPackReceiptEmailProps) {
 	const creditsLabel = credits.toLocaleString("en-US");
@@ -50,8 +53,7 @@ export function CreditPackReceiptEmail({
 			<Text className="a-text-2" style={text.body}>
 				We&apos;ve added <strong>{creditsLabel}</strong> AI credits to{" "}
 				<strong>{orgName}</strong>. They&apos;re available now and stack on top
-				of your plan&apos;s included allowance. A PDF copy of this invoice is
-				attached for your records.
+				of your plan&apos;s included allowance. {invoiceSentence(invoiceAttached)}
 			</Text>
 
 			<SummaryTable
@@ -81,7 +83,8 @@ CreditPackReceiptEmail.PreviewProps = {
 	orgName: "Acme Cloud",
 	credits: 2000,
 	amountLabel: "$29.00",
-	invoiceNumber: "ABCD-0002",
+	invoiceNumber: "0000000002",
+	invoiceAttached: true,
 	usageUrl: "https://alethialabs.io/dashboard/usage",
 } satisfies CreditPackReceiptEmailProps;
 

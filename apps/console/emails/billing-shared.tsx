@@ -217,3 +217,14 @@ export function Callout({
 		</Section>
 	);
 }
+
+/**
+ * The receipt sentence about the invoice document (EA-7b, #7338). Attached: the фактура is in the
+ * email. Not attached: no compliant фактура exists yet, so the receipt says the invoice follows
+ * rather than sending Stripe's PDF in its place.
+ */
+export function invoiceSentence(invoiceAttached: boolean): string {
+	return invoiceAttached
+		? "Your invoice is attached as a PDF for your records."
+		: "Your invoice is being issued and will follow. Once it is ready, you can download it from billing settings.";
+}

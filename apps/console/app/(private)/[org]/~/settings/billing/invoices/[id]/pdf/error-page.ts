@@ -18,7 +18,7 @@ export type InvoicePdfFailure =
 	| "signed-out"
 	| "forbidden"
 	| "not-found"
-	| "no-pdf"
+	| "being-issued"
 	| "unavailable";
 
 /** The status and the sentence for each failure. */
@@ -38,10 +38,13 @@ const FAILURES: Record<InvoicePdfFailure, { status: number; title: string; body:
 		title: "Invoice not found",
 		body: "This invoice doesn't exist, or it isn't in this organization.",
 	},
-	"no-pdf": {
+	// No stored фактура yet (EA-7b, #7338). The payment went through; the invoice document is
+	// pending and the operator has been alerted. Still 404, because the PDF does not exist yet,
+	// and the route never substitutes Stripe's hosted invoice for it.
+	"being-issued": {
 		status: 404,
-		title: "No PDF for this invoice",
-		body: "There's no document stored for this invoice. Contact support if you need a copy.",
+		title: "Your invoice is being issued",
+		body: "Your payment went through. The invoice for it is still being issued and will appear here once it is ready.",
 	},
 	unavailable: {
 		status: 503,
