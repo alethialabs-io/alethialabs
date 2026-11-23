@@ -31,6 +31,7 @@
 				"$TURBO_ROOT$/apps/cli/cmd/testdata/kubeconfig-access-cases.json",
 				"$TURBO_ROOT$/apps/docs/generated/abuse-limits.json",
 				"$TURBO_ROOT$/apps/marketing/Dockerfile",
+				"$TURBO_ROOT$/apps/marketing/app/consumer-rights/page.tsx",
 				"$TURBO_ROOT$/deploy/prod/Caddyfile.tunnel",
 				"$TURBO_ROOT$/deploy/prod/docker-compose.prod.yml",
 				"$TURBO_ROOT$/docs/legal/GDPR_ACCOUNTABILITY.md",
