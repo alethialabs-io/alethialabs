@@ -26,6 +26,18 @@ import { cliJson } from "@/lib/cli/respond";
 import { deployRunnerWire } from "@/lib/validations/cli-contract";
 
 /**
+ * The console origin a deployed runner connects back to: this instance's own public URL
+ * (`NEXT_PUBLIC_APP_URL`, else the auth origin `BETTER_AUTH_URL`), or null when neither is set.
+ * The same rule as `deployRunner()` (app/server/actions/runners.ts); there is no hosted default.
+ */
+function runnerConsoleUrl(): string | null {
+	const origin = (process.env.NEXT_PUBLIC_APP_URL || process.env.BETTER_AUTH_URL || "")
+		.trim()
+		.replace(/\/+$/, "");
+	return origin || null;
+}
+
+/**
  * Deploys a runner by creating a runner record + queuing a DEPLOY_RUNNER job.
  *
  * TENANCY (#3874). Both inserts run on `getServiceDb()` — a role that bypasses RLS and
@@ -139,6 +151,20 @@ export async function POST(req: Request) {
 		//
 		await assertJobQuotaAllowed(actor.orgId);
 
+		// The console the new runner connects back to. No hosted default (EDN-H7, #6904): an
+		// instance with no public URL refuses here, before the first insert, instead of handing
+		// the runner to the hosted service.
+		const alethiaUrl = runnerConsoleUrl();
+		if (alethiaUrl === null) {
+			return NextResponse.json(
+				{
+					error:
+						"This instance has no public URL (NEXT_PUBLIC_APP_URL is unset), so a deployed runner would have no console to connect to. Set it and try again.",
+				},
+				{ status: 409 },
+			);
+		}
+
 		const [latestRelease] = await db
 			.select({ version: runnerReleases.version })
 			.from(runnerReleases)
@@ -170,8 +196,7 @@ export async function POST(req: Request) {
 			image_tag: imageTag,
 			region,
 			cloud_provider: identity.provider,
-			alethia_url:
-				process.env.NEXT_PUBLIC_APP_URL || "https://alethialabs.io",
+			alethia_url: alethiaUrl,
 		};
 
 		const [job] = await db
