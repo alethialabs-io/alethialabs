@@ -5,7 +5,7 @@ description: Alethia's web control plane for multi-cloud infrastructure orchestr
 
 # Console
 
-The Console (`apps/console`) is Alethia's web control plane. It provides a visual interface for configuring infrastructure, managing [cloud identities](/guides/connectors), monitoring [jobs](/guides/jobs), and viewing provisioned clusters — all from the browser. Alethia is the platform; the Console is the web app you drive it from.
+The console is Alethia's web control plane. The hosted console is at [alethialabs.io](https://alethialabs.io). It provides a visual interface for configuring infrastructure, managing [cloud identities](/guides/connectors), monitoring [jobs](/guides/jobs), and viewing provisioned clusters — all from the browser. Alethia is the platform; the Console is the web app you drive it from.
 
 ## Key Pages
 
@@ -36,16 +36,12 @@ The Console (`apps/console`) is Alethia's web control plane. It provides a visua
   </Card>
 </Cards>
 
-## Architecture
+## Start here
 
-<Mermaid chart={`
-flowchart TD
-  B[Browser] --> A[Next.js App Router]
-  A --> SA[Server Actions<br/>Drizzle · org-scoped RLS]
-  A --> API[API Routes<br/>Runner + CLI token auth]
-  A --> SSE[LISTEN/NOTIFY → SSE]
-  SSE --> ST[Live job-log & message streams]
-`} />
+To go from a new account to a running cluster in the console, follow the quickstart for your
+cloud: [AWS](/get-started/quickstart-aws), [GCP](/get-started/quickstart-gcp),
+[Azure](/get-started/quickstart-azure), or [Hetzner](/get-started/quickstart-hetzner).
 
-All database access goes through Drizzle with org-scoped RLS policies enforcing per-org data isolation through a Policy Decision Point (PDP). Server Actions set the current org context (`app.current_org` via `set_config`) automatically.
+Every organization's data is kept apart from every other organization's. For how, see
+[Security](/concepts/security).
 

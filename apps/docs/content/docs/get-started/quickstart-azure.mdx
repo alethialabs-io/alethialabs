@@ -1,0 +1,174 @@
+---
+title: "Quickstart: Azure"
+description: Sign up, connect an Azure subscription, deploy a Kubernetes cluster to it, see the cluster running, and destroy it again.
+---
+
+# Quickstart: Azure
+
+This quickstart takes you from a new Alethia account to a running Kubernetes cluster in
+your Azure subscription, and then removes the cluster. It has six steps: sign up, connect, design, deploy, see the
+cluster running, and destroy. Plan for about an hour. Most of that time is the cloud creating the
+cluster.
+
+<Callout type="warn">
+The deploy step creates real resources in your Azure subscription, and Azure bills you for them while they
+exist. The last step destroys them. Do not skip it.
+</Callout>
+
+## Before you begin
+
+- An Azure subscription where you can create a managed identity and assign it a role. The setup script does both. It does not need directory administrator rights.
+- A web browser. You do not need the Alethia CLI for this quickstart.
+
+<Steps>
+
+### Sign up
+
+1. Open [alethialabs.io/signup](https://alethialabs.io/signup).
+2. Select **Continue with email**, or sign up with GitHub, Google, GitLab, or Bitbucket.
+   The email path sends a 6-digit code to your address. Enter it on the **Enter your code** screen.
+3. On **Create your organization**, keep the **Hobby** plan.
+   Hobby is free and is enough for this quickstart. The **Pro** tile says whether a trial is open to you.
+4. Enter a name in **Organization name**.
+5. Select **Create organization**.
+
+The console opens the **New project** screen. You come back to it in the design step.
+
+### Connect Azure
+
+1. Select **Connectors** in the sidebar.
+2. On the card for Azure, select **Connect**. A setup sheet opens.
+3. Enter your subscription ID in **Subscription ID**.
+   The setup command on the **Azure CLI** tab fills in the ID for you.
+4. Under **Run the setup in Azure Cloud Shell**, copy the setup command.
+5. Select **Open Cloud Shell**. Azure Cloud Shell opens in your browser.
+6. Paste the command into Cloud Shell and run it.
+   The script creates a managed identity with a federated credential that trusts Alethia. It creates no client secret.
+7. Under **Enter the IDs it prints**, enter the **Tenant ID** and the **Client ID** that the script prints.
+   To fill both from the whole output, select **Paste all**.
+8. Select **Connect**. Alethia signs in as the managed identity and runs read-only checks against your subscription.
+9. When the sheet reports success, select **Done**.
+
+The sheet also has a **Terraform / IaC** tab that creates the same identity with OpenTofu or Terraform. For the details, see the [Azure connector guide](/guides/connectors/azure).
+
+### Design a project
+
+1. Select **Overview** in the sidebar, then select **Create**, then **Project**.
+   If the **New project** screen is already open, skip this step.
+2. Under **Start from**, select **Cluster only**. It needs no Git repository.
+3. Under **Cloud**, select **Azure**, then the account you connected.
+4. Under **Region**, keep the suggested region or select another one.
+   The hint next to the field says where the suggestion comes from.
+5. Enter a name in **Project name**.
+6. Select **Create project**.
+
+Alethia creates the project as a draft with one environment, `production`, and opens its
+**Architecture** canvas. Nothing is provisioned yet. The canvas shows an Azure Kubernetes Service (AKS) cluster. By default it
+has two worker nodes of type `Standard_D2s_v5`. You can change the size on the canvas before you deploy.
+For what the other starting points contain, see
+[Starter templates](/guides/design-project/starter-templates).
+
+### Deploy
+
+1. On the bar at the bottom of the canvas, select **Review plan**.
+   The **Review and deploy** panel opens.
+2. Under **Plan**, select **Run plan**. Alethia saves the design and queues a plan job.
+3. When the plan finishes, read the list of resources that it would create.
+4. Under **Deploy**, select **Deploy**.
+
+Alethia queues a deploy job, and a runner picks it up. If the job stays at **Waiting for a
+runner**, see [The job waits for a runner](/troubleshooting/deploy#the-job-waits-for-a-runner). Before the runner changes anything in
+your Azure subscription, it runs the [verify gate](/guides/jobs/plan-and-apply#verify-gate). A failed gate stops
+the deploy before any change is applied. To follow the job, select **View log** on the bar, or open
+**Jobs** in the sidebar.
+
+### See the cluster running
+
+1. When the deploy job succeeds, select **Clusters** in the sidebar.
+2. Select the row for your project. A detail sheet opens.
+3. Check the status. **Active** means every component is healthy.
+
+Under **Cluster access**, the sheet shows the cluster endpoint and the command that gets a
+short-lived kubeconfig:
+
+```bash
+alethia cluster kubeconfig
+```
+
+On a terminal, the command asks which cluster to use. The sheet shows the command with your
+cluster's name already filled in. The sheet also shows the `az aks get-credentials` command, for people who can sign in to the Azure subscription. To install the CLI, see
+[Installation](/get-started/install-the-cli). For the kubeconfig options, see
+[Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
+
+Under **ArgoCD**, the sheet shows the ArgoCD URL and the command that reads the ArgoCD admin
+password.
+
+### Destroy the environment
+
+1. Select **Open Architecture** on the cluster sheet, or open the project's **Architecture** canvas.
+2. On the canvas toolbar, select **More** (the **…** button), then **Environment settings**.
+3. On the **Settings** tab, find **Danger zone**, and select **Destroy** next to
+   **Destroy environment**.
+4. Type the environment name, `production`, to confirm.
+5. Select **Destroy environment**.
+
+Alethia queues a destroy job. The environment's status changes to **Destroying**, then to
+**Destroyed**. When the destroy job succeeds, nothing that this quickstart created is left in
+your Azure subscription.
+
+</Steps>
+
+## Clean up the rest
+
+The destroy step removes the cloud resources. These items stay, and cost nothing:
+
+- **The project.** To delete it, open the project's **Settings**, then select **Delete** under
+  **Danger zone**. Deleting a project destroys no cloud resources, so always destroy the environments
+  first.
+- **The Azure connection.** To remove it, see [Disconnect an account](/guides/connectors/managing-connections#disconnect-an-account).
+- **What the setup created in your Azure subscription.** Alethia does not remove it for you. The
+  [Azure connector guide](/guides/connectors/azure) says what it is.
+
+## Do the same from a terminal
+
+The CLI declares the same project in an `alethia.yaml` file. Install the CLI first, from
+[Installation](/get-started/install-the-cli).
+
+```bash
+# Sign in. The browser opens to confirm the code.
+alethia login
+
+# Connect Azure.
+alethia connector azure --subscription 00000000-0000-0000-0000-000000000000
+
+# Write ./alethia.yaml for a project named demo.
+alethia init --project demo --region westeurope
+
+# Show the plan, then deploy after you confirm.
+alethia apply
+
+# List the cluster, then get a kubeconfig for it.
+alethia cluster list
+alethia cluster kubeconfig demo
+
+# Destroy the environment again. You type the project name to confirm.
+alethia project destroy --project demo
+```
+
+Replace the example ID with your subscription ID. The command needs the `az` CLI, signed in to that subscription. When more than one cloud account is connected, `alethia init` asks which one to
+use. For every flag, see [`alethia init`](/reference/cli/init),
+[Plan & Apply](/reference/cli/plan-and-apply), and [Connector commands](/reference/cli/connector).
+
+## If something goes wrong
+
+- [Troubleshoot sign-in](/troubleshooting/sign-in)
+- [Troubleshoot connecting a cloud](/troubleshooting/connect)
+- [Troubleshoot a deploy](/troubleshooting/deploy)
+- [Troubleshoot a destroy](/troubleshooting/destroy)
+- [Limits](/reference/limits)
+
+## Next steps
+
+- [Design a project](/guides/design-project): add databases, caches, and services on the canvas.
+- [Deploy Online Boutique to three environments](/tutorials/online-boutique): one cluster, three environments, from the terminal.
+- [Concepts](/concepts): how provisioning, runners, and security work.

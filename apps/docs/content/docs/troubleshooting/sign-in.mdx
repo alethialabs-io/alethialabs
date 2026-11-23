@@ -1,0 +1,139 @@
+---
+title: Sign-in
+description: Fix sign-in codes that do not arrive, expire, or are refused, sign-up refusals, and `alethia login` failures.
+---
+
+# Troubleshoot sign-in
+
+## Sign-in codes in the console
+
+The email path sends a 6-digit code. The code is valid for 10 minutes. For how the flow works, see
+[Email OTP flow](/concepts/authentication#email-otp-flow).
+
+### "That code didn’t work — try again."
+
+**Cause:** the code you entered does not match the one that was sent.
+
+**Fix:** check the code in the most recent email and enter it again.
+
+### "That code has expired. Use Resend code to get a new one."
+
+**Cause:** more than 10 minutes passed between sending the code and entering it.
+
+**Fix:** select **Resend code**, and enter the new code within 10 minutes.
+
+### "Too many wrong tries — that code no longer works. Use Resend code to get a new one."
+
+**Cause:** a code accepts only a few wrong entries. After that, it stops working.
+
+**Fix:** select **Resend code**, and enter the new code.
+
+### "Too many attempts — wait a minute, then try again."
+
+**Cause:** your network sent more than 5 requests to send or check a code in one minute.
+
+**Fix:** wait 60 seconds, then try again. The **Resend code** button also waits longer after each
+resend. It shows **Resend in** with a countdown.
+
+### "We couldn’t send the code — try again."
+
+**Cause:** the email service refused or failed to send the code.
+
+**Fix:** wait a moment and try again. If it keeps failing, sign in with GitHub, Google, GitLab, or
+Bitbucket instead. On a self-hosted console, check the email settings in
+[Email](/guides/self-hosting/email).
+
+### The form asks you to sign up instead of showing a code screen
+
+**Cause:** no account exists for that email address. Alethia sends an email that points to sign-up
+instead of a code.
+
+**Fix:** select **Create an account**, or use the address you signed up with.
+
+### The code never arrives on a self-hosted console
+
+**Cause:** when a self-hosted console has no email provider set, it does not send email. It writes
+the code to the server log instead, on a line that starts with `[email] no provider configured`.
+
+**Fix:** read the code from the console's log, or set up an email provider. See
+[Email](/guides/self-hosting/email).
+
+## Sign-up refusals
+
+### "Too many accounts were created from your network today. Try again tomorrow, or ask a teammate to invite you."
+
+**Cause:** the network you are on reached the daily ceiling for new accounts. The ceiling is listed
+in [Limits](/reference/limits).
+
+**Fix:** try again after 00:00 UTC, or ask someone in an existing organization to invite you.
+Existing accounts can still sign in.
+
+### "Use a permanent email address to create an account. Temporary inbox services aren’t accepted."
+
+**Cause:** the address belongs to a temporary inbox service.
+
+**Fix:** sign up with an address you keep, or with GitHub, Google, GitLab, or Bitbucket.
+
+### "The security check couldn’t load. Allow challenges.cloudflare.com, or sign in with a provider above."
+
+**Cause:** the console shows a security check, and a browser extension, a firewall, or a network
+filter blocked it.
+
+**Fix:** allow `challenges.cloudflare.com`, or sign in with one of the providers. If you see
+"Complete the security check, then try again.", finish the check and submit again.
+
+## Messages after a provider sign-in
+
+| Message | What to do |
+|---|---|
+| "We couldn’t sign you in with that provider — try again." | Try again. If it repeats, use another provider or the email path. |
+| "Sign-in was cancelled." | You closed or refused the provider's screen. Start again. |
+| "Your session expired — please sign in again." | Sign in again. |
+| "Single sign-on isn’t set up for that organization." | Ask your organization's administrator. |
+| "Single sign-on is temporarily unavailable — try again shortly." | Wait, then try again. |
+
+## `alethia login`
+
+`alethia login` opens a browser page where you approve the sign-in. The code it shows is valid for 10
+minutes. For the full flow, see [Login](/reference/cli/authentication#login).
+
+### "this login code has expired or was already used — run `alethia login` again"
+
+**Cause:** the code is older than 10 minutes, or it was already approved.
+
+**Fix:** run `alethia login` again, and approve the new code in the browser.
+
+### "timed out after 10m0s waiting for the login to be approved in the browser"
+
+**Cause:** nobody approved the code in the browser. This is common on a machine without a browser.
+
+**Fix:** run `alethia login --no-browser`. The CLI prints the URL and the code, and you open the URL
+on any device.
+
+### "The sign-in was refused in the browser. Nothing was shared and no token was issued"
+
+**Cause:** someone selected the refuse option on the browser page.
+
+**Fix:** if you started the login, run `alethia login` again and approve it. If you did not, see
+[Refusing a login you did not start](/reference/cli/authentication#refusing-a-login-you-did-not-start).
+
+### "ALETHIA_TOKEN is set, and every command uses it ahead of a stored sign-in"
+
+**Cause:** the `ALETHIA_TOKEN` environment variable, or the `--token` flag, is set. A token always
+wins over a stored sign-in, so signing in would change nothing.
+
+**Fix:** unset `ALETHIA_TOKEN`, then run `alethia login`. To see which credential the CLI uses, run
+`alethia auth status`.
+
+### "authentication required. Please run `alethia login`"
+
+**Cause:** this machine has no stored sign-in, or the sign-in ended.
+
+**Fix:** run `alethia login`.
+
+### "failed to connect to server"
+
+**Cause:** the CLI cannot reach the control plane.
+
+**Fix:** check your network. If you use a self-hosted console, check the control plane URL with
+`alethia login --web-origin <url>`.

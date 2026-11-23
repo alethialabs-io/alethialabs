@@ -4,6 +4,10 @@
 	"root": true,
 	"pages": [
 		"index",
+		"quickstart-aws",
+		"quickstart-gcp",
+		"quickstart-azure",
+		"quickstart-hetzner",
 		"install-the-cli",
 		"the-console",
 		"the-cli"

@@ -1,0 +1,127 @@
+---
+title: Limits
+description: The ceilings that bound sign-up, the Pro trial, free AI use, free provisioning jobs, and repository scans on Alethia, and what you see when you reach one.
+---
+
+import abuseLimits from '../../../generated/abuse-limits.json';
+
+export const windowLabel = {
+  'utc-day': 'One UTC day. Resets at 00:00 UTC.',
+  'trailing-24h': 'The last 24 hours, rolling.',
+  'trailing-30d': 'The last 30 days, rolling.',
+  lifetime: 'Never resets.',
+  'per-item': 'Each repository.',
+};
+
+export const scopeLabel = {
+  network: 'Each network',
+  person: 'Each person',
+  organization: 'Each organization',
+  platform: 'All free organizations together',
+};
+
+export const appliesToLabel = {
+  free: 'Hobby and unpaid trials',
+  all: 'Every plan',
+};
+
+export const amount = (value, unit) =>
+  `${value.toLocaleString('en-US')} ${value === 1 ? unit.replace(/s$/, '') : unit}`;
+
+export const surfaceLabel = {
+  'sign-up': 'Sign-up',
+  trial: 'Pro trial',
+  ai: 'AI',
+  jobs: 'Provisioning jobs',
+  scans: 'Repository scans',
+};
+
+# Limits
+
+Alethia sets ceilings on the actions that cost the platform money, so that one account cannot use
+up what every account shares. This page lists each ceiling, who it applies to, and what happens
+when you reach it.
+
+The table below is generated from the same source that the console enforces. The numbers on this
+page and the numbers in the product cannot differ.
+
+## Ceilings
+
+<table>
+  <thead>
+    <tr>
+      <th>Surface</th>
+      <th>What is counted</th>
+      <th>Ceiling</th>
+      <th>Window</th>
+      <th>Counted for</th>
+      <th>Applies to</th>
+      <th>When you reach it</th>
+    </tr>
+  </thead>
+  <tbody>
+    {abuseLimits.limits.map((limit) => (
+      <tr key={limit.key}>
+        <td>{surfaceLabel[limit.surface] ?? limit.surface}</td>
+        <td>{limit.description}</td>
+        <td>{amount(limit.default, limit.unit)}</td>
+        <td>{windowLabel[limit.window] ?? limit.window}</td>
+        <td>{scopeLabel[limit.scope] ?? limit.scope}</td>
+        <td>{appliesToLabel[limit.appliesTo] ?? limit.appliesTo}</td>
+        <td>{limit.whenReached}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+A **network** is the client network address that Alethia's edge reports for a request. A
+**person** is one verified email address.
+
+Some surfaces in this table are still being released during the beta. A ceiling applies from the
+moment its surface is available to your organization.
+
+## Per-organization limits on provisioning jobs
+
+Besides the daily job ceiling above, Hobby organizations can run a limited number of jobs at the
+same time. Extra jobs wait in the queue. They are not refused. For the numbers per plan, see
+[Free plan limits](/guides/jobs/plan-and-apply#free-plan-limits).
+
+Requests for a short-lived kubeconfig do not count toward the daily job ceiling. They have their own
+rate limit, described in [Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
+
+## Plans and pricing
+
+The plans, their prices, and what each plan includes are on the
+[pricing page](https://alethialabs.io/pricing). To compare the open-source and commercial editions,
+see the [feature matrix](/editions/feature-matrix).
+
+## Self-hosted consoles
+
+An operator of a self-hosted console can change any ceiling with the environment variable named for
+it. A positive number replaces the default. An empty value, zero, a negative number, or text keeps the
+default. A value of zero does not close a surface: a mistyped value cannot stop sign-up by accident.
+
+<table>
+  <thead>
+    <tr>
+      <th>Ceiling</th>
+      <th>Environment variable</th>
+      <th>Default</th>
+    </tr>
+  </thead>
+  <tbody>
+    {abuseLimits.limits.map((limit) => (
+      <tr key={limit.key}>
+        <td>{limit.description}</td>
+        <td><code>{limit.env}</code></td>
+        <td>{limit.default.toLocaleString('en-US')}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+## Related
+
+- [Troubleshoot billing and plan limits](/troubleshooting/billing)
+- [Free plan limits](/guides/jobs/plan-and-apply#free-plan-limits)
+- [Editions](/editions)

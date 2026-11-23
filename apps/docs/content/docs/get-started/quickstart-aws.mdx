@@ -1,0 +1,172 @@
+---
+title: "Quickstart: AWS"
+description: Sign up, connect an AWS account, deploy a Kubernetes cluster to it, see the cluster running, and destroy it again.
+---
+
+# Quickstart: AWS
+
+This quickstart takes you from a new Alethia account to a running Kubernetes cluster in
+your AWS account, and then removes the cluster. It has six steps: sign up, connect, design, deploy, see the
+cluster running, and destroy. Plan for about an hour. Most of that time is the cloud creating the
+cluster.
+
+<Callout type="warn">
+The deploy step creates real resources in your AWS account, and AWS bills you for them while they
+exist. The last step destroys them. Do not skip it.
+</Callout>
+
+## Before you begin
+
+- An AWS account where you can create IAM roles and an IAM OpenID Connect (OIDC) identity provider. The setup script creates both.
+- A web browser. You do not need the Alethia CLI for this quickstart.
+
+<Steps>
+
+### Sign up
+
+1. Open [alethialabs.io/signup](https://alethialabs.io/signup).
+2. Select **Continue with email**, or sign up with GitHub, Google, GitLab, or Bitbucket.
+   The email path sends a 6-digit code to your address. Enter it on the **Enter your code** screen.
+3. On **Create your organization**, keep the **Hobby** plan.
+   Hobby is free and is enough for this quickstart. The **Pro** tile says whether a trial is open to you.
+4. Enter a name in **Organization name**.
+5. Select **Create organization**.
+
+The console opens the **New project** screen. You come back to it in the design step.
+
+### Connect AWS
+
+1. Select **Connectors** in the sidebar.
+2. On the card for AWS, select **Connect**. A setup sheet opens on the **AWS CLI / CloudShell** tab.
+3. Under **Run the setup in AWS CloudShell**, copy the setup command.
+4. Select **Open CloudShell**. AWS CloudShell opens in your browser.
+5. Paste the command into CloudShell and run it.
+   The script creates an IAM OIDC identity provider and an IAM role that trusts Alethia. It creates no access keys.
+6. Copy the role ARN that the script prints, and paste it into **IAM Role ARN**.
+   You can paste the whole output. The field keeps only the ARN.
+7. Select **Connect**. Alethia assumes the role and runs read-only checks against your account.
+8. When the sheet reports success, select **Done**.
+
+The sheet also has a **Terraform / IaC** tab that creates the same role with OpenTofu or Terraform. For the details, see the [AWS connector guide](/guides/connectors/aws).
+
+### Design a project
+
+1. Select **Overview** in the sidebar, then select **Create**, then **Project**.
+   If the **New project** screen is already open, skip this step.
+2. Under **Start from**, select **Cluster only**. It needs no Git repository.
+3. Under **Cloud**, select **AWS**, then the account you connected.
+4. Under **Region**, keep the suggested region or select another one.
+   The hint next to the field says where the suggestion comes from.
+5. Enter a name in **Project name**.
+6. Select **Create project**.
+
+Alethia creates the project as a draft with one environment, `production`, and opens its
+**Architecture** canvas. Nothing is provisioned yet. The canvas shows an Amazon EKS cluster. By default it
+has two worker nodes of type `t3.large`. You can change the size on the canvas before you deploy.
+For what the other starting points contain, see
+[Starter templates](/guides/design-project/starter-templates).
+
+### Deploy
+
+1. On the bar at the bottom of the canvas, select **Review plan**.
+   The **Review and deploy** panel opens.
+2. Under **Plan**, select **Run plan**. Alethia saves the design and queues a plan job.
+3. When the plan finishes, read the list of resources that it would create.
+4. Under **Deploy**, select **Deploy**.
+
+Alethia queues a deploy job, and a runner picks it up. If the job stays at **Waiting for a
+runner**, see [The job waits for a runner](/troubleshooting/deploy#the-job-waits-for-a-runner). Before the runner changes anything in
+your AWS account, it runs the [verify gate](/guides/jobs/plan-and-apply#verify-gate). A failed gate stops
+the deploy before any change is applied. To follow the job, select **View log** on the bar, or open
+**Jobs** in the sidebar.
+
+### See the cluster running
+
+1. When the deploy job succeeds, select **Clusters** in the sidebar.
+2. Select the row for your project. A detail sheet opens.
+3. Check the status. **Active** means every component is healthy.
+
+Under **Cluster access**, the sheet shows the cluster endpoint and the command that gets a
+short-lived kubeconfig:
+
+```bash
+alethia cluster kubeconfig
+```
+
+On a terminal, the command asks which cluster to use. The sheet shows the command with your
+cluster's name already filled in. The sheet also shows the `aws eks update-kubeconfig` command, for people who can sign in to the AWS account. To install the CLI, see
+[Installation](/get-started/install-the-cli). For the kubeconfig options, see
+[Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
+
+Under **ArgoCD**, the sheet shows the ArgoCD URL and the command that reads the ArgoCD admin
+password.
+
+### Destroy the environment
+
+1. Select **Open Architecture** on the cluster sheet, or open the project's **Architecture** canvas.
+2. On the canvas toolbar, select **More** (the **…** button), then **Environment settings**.
+3. On the **Settings** tab, find **Danger zone**, and select **Destroy** next to
+   **Destroy environment**.
+4. Type the environment name, `production`, to confirm.
+5. Select **Destroy environment**.
+
+Alethia queues a destroy job. The environment's status changes to **Destroying**, then to
+**Destroyed**. When the destroy job succeeds, nothing that this quickstart created is left in
+your AWS account.
+
+</Steps>
+
+## Clean up the rest
+
+The destroy step removes the cloud resources. These items stay, and cost nothing:
+
+- **The project.** To delete it, open the project's **Settings**, then select **Delete** under
+  **Danger zone**. Deleting a project destroys no cloud resources, so always destroy the environments
+  first.
+- **The AWS connection.** To remove it, see [Disconnect an account](/guides/connectors/managing-connections#disconnect-an-account).
+- **What the setup created in your AWS account.** Alethia does not remove it for you. The
+  [AWS connector guide](/guides/connectors/aws) says what it is.
+
+## Do the same from a terminal
+
+The CLI declares the same project in an `alethia.yaml` file. Install the CLI first, from
+[Installation](/get-started/install-the-cli).
+
+```bash
+# Sign in. The browser opens to confirm the code.
+alethia login
+
+# Connect AWS.
+alethia connector aws
+
+# Write ./alethia.yaml for a project named demo.
+alethia init --project demo --region eu-west-1
+
+# Show the plan, then deploy after you confirm.
+alethia apply
+
+# List the cluster, then get a kubeconfig for it.
+alethia cluster list
+alethia cluster kubeconfig demo
+
+# Destroy the environment again. You type the project name to confirm.
+alethia project destroy --project demo
+```
+
+The command needs the `aws` CLI, signed in to the account you connect. It creates the same IAM role with an AWS CloudFormation stack named `AlethiaConnect`. When more than one cloud account is connected, `alethia init` asks which one to
+use. For every flag, see [`alethia init`](/reference/cli/init),
+[Plan & Apply](/reference/cli/plan-and-apply), and [Connector commands](/reference/cli/connector).
+
+## If something goes wrong
+
+- [Troubleshoot sign-in](/troubleshooting/sign-in)
+- [Troubleshoot connecting a cloud](/troubleshooting/connect)
+- [Troubleshoot a deploy](/troubleshooting/deploy)
+- [Troubleshoot a destroy](/troubleshooting/destroy)
+- [Limits](/reference/limits)
+
+## Next steps
+
+- [Design a project](/guides/design-project): add databases, caches, and services on the canvas.
+- [Deploy Online Boutique to three environments](/tutorials/online-boutique): one cluster, three environments, from the terminal.
+- [Concepts](/concepts): how provisioning, runners, and security work.
