@@ -1,16 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The withdrawal acknowledgement's sender (#7339). The template is a legal text awaiting the
-// maintainer's review — see the banner in emails/withdrawal-acknowledgement.tsx.
+// The withdrawal acknowledgement's sender (#7339). The template is a legal text, approved by the
+// maintainer's review of 2026-11-23 (#7351) — see the header of emails/withdrawal-acknowledgement.tsx.
 
 import { formatDate, formatMoney } from "@repo/format";
 import { getEmailConfig } from "@repo/email/config";
 import { eq } from "drizzle-orm";
-import {
-	WithdrawalAcknowledgementEmail,
-	subject as withdrawalSubject,
-} from "@/emails/withdrawal-acknowledgement";
+import type { ConsumerLocale } from "@repo/legal/commerce";
+import { SUBJECT, WithdrawalAcknowledgementEmail } from "@/emails/withdrawal-acknowledgement";
 import { alertOperator } from "@/lib/billing/operator-alert";
 import { getServiceDb } from "@/lib/db";
 import { user } from "@/lib/db/schema";
@@ -26,6 +24,15 @@ export interface WithdrawalAcknowledgement {
 	readonly refundMinorUnits: number;
 	readonly retainedMinorUnits: number;
 	readonly currency: string;
+	/**
+	 * Whether the owed refund was issued at Stripe, or none was owed (`WithdrawalResult.refundIssued`).
+	 * False adds the "we contact you within 14 days" sentence.
+	 */
+	readonly refundIssued: boolean;
+	/** `withdrawalOutcome`'s `basis`, computed in {@link locale}. */
+	readonly basis: string;
+	/** The email's language, from the order's billing country (`consumerLocaleFor`). */
+	readonly locale: ConsumerLocale;
 }
 
 /** The email address of the user who placed the order, or null. */
@@ -76,7 +83,7 @@ export async function sendWithdrawalAcknowledgementEmail(
 			from: config.from.general,
 			configurationSetName: config.configSet.general,
 			to,
-			subject: withdrawalSubject,
+			subject: SUBJECT[ack.locale],
 			react: WithdrawalAcknowledgementEmail({
 				// UTC, and said so: the acknowledgement records an instant, and a time without its zone
 				// is not one.
@@ -84,6 +91,9 @@ export async function sendWithdrawalAcknowledgementEmail(
 				orderReference: ack.orderId,
 				refundLabel: formatMoney(ack.refundMinorUnits, ack.currency),
 				retainedLabel: formatMoney(ack.retainedMinorUnits, ack.currency),
+				basis: ack.basis,
+				refundIssued: ack.refundIssued,
+				locale: ack.locale,
 			}),
 			devLog: `withdrawal acknowledgement for order ${ack.orderId}`,
 		});
