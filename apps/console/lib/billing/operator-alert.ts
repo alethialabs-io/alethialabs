@@ -17,9 +17,13 @@ import { log } from "@/lib/observability/log";
 /** The event the platform operator's alert rules route (`alertPaymentNeedsSupport` raises the same one). */
 export const OPERATOR_ALERT_EVENT = "system.platform.payment_needs_support";
 
-/** What an operator alert is about: its resource, so a rule's throttle collapses repeats for the same one. */
+/**
+ * What an operator alert is about: its resource, so a rule's throttle collapses repeats for the same one.
+ * `tax_threshold` is a turnover threshold and period (lib/billing/invoice-facts.ts), keyed on the
+ * threshold rather than a customer so it is never collapsed with that customer's other alerts.
+ */
 interface OperatorAlertSubject {
-	type: "stripe_subscription" | "stripe_customer" | "user";
+	type: "stripe_subscription" | "stripe_customer" | "user" | "tax_threshold";
 	id: string;
 }
 

@@ -18,23 +18,33 @@
 // sentence — "Paid plans available from 15 Feb 2027" or "Not on sale yet" — from the shared
 // `salesClosedCopy`, not "Coming soon". A failed read falls through to the old behaviour: the
 // eligibility gate behind the intent is still the authority.
+//
+// THE PAYER IS DECLARED BEFORE THE INTENT (#7324). Choosing a tier opens the same payer declaration
+// the org upgrade sheet asks — capacity, country, the VAT-number question for an EU organization, a
+// US state, and the billing address — and only then the intent, which carries the address to the
+// Stripe customer before the first invoice exists. Nothing about the payer is saved after the charge.
 
 import { Check } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
 	type AiUsageSummary,
 	createAiSubscriptionIntent,
 	getAiUsageSummary,
-	saveTaxId,
-	updateBillingAddress,
 } from "@/app/server/actions/billing";
+import { declarePayer, payerConversionStatus } from "@/app/server/actions/legal";
 import {
-	billingAddressFrom,
 	BillingCheckoutForm,
-	type CollectedBilling,
+	type CheckoutPrefill,
 } from "@/components/billing/billing-checkout-form";
+import {
+	BillingAddressForm,
+	declaredPayerFacts,
+	PayerDeclarationForm,
+	type PayerDeclaration,
+	refusalActionFor,
+} from "@/components/billing/payer-declaration-form";
 import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { salesClosedCopy } from "@/components/billing/launch-copy";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
@@ -61,7 +71,7 @@ import {
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 
-type View = "choose" | "pay";
+type View = "choose" | "declare" | "address" | "pay";
 
 interface UpgradeAiSheetProps {
 	open: boolean;
@@ -84,8 +94,21 @@ function paidTierOf(entry: AiPlanCatalogEntry): PaidAiTier | null {
  */
 export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiSheetProps) {
 	const router = useRouter();
+	const params = useParams();
+	const orgSlug = typeof params?.org === "string" ? params.org : null;
 	const { viewer } = useViewer();
 	const ownerEmail = viewer?.email ?? "";
+	// The declared payer facts (#7324). Null until declared; the intent effect waits on them.
+	const [declaration, setDeclaration] = useState<PayerDeclaration | null>(null);
+	// The facts the gate accepted, waiting for the billing address (#7324).
+	const [declared, setDeclared] = useState<PayerDeclaration | null>(null);
+	const [declaring, setDeclaring] = useState(false);
+	const [refusal, setRefusal] = useState<string | null>(null);
+	const [refusalAction, setRefusalAction] = useState<{ href: string; label: string } | null>(null);
+	const clearRefusal = useCallback(() => {
+		setRefusal(null);
+		setRefusalAction(null);
+	}, []);
 
 	const [summary, setSummary] = useState<AiUsageSummary | null>(null);
 	const [view, setView] = useState<View>("choose");
@@ -141,9 +164,12 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 	// `switchCurrency`, Back) or by the opening changing (above), so the render that asks again
 	// already shows neither.
 	useEffect(() => {
-		if (!open || !tier) return;
+		if (!open || !tier || !declaration) return;
 		let alive = true;
-		createAiSubscriptionIntent(tier, selected ? { currency: selected } : undefined)
+		createAiSubscriptionIntent(tier, {
+			...(selected ? { currency: selected } : {}),
+			...(declaration.billingAddress ? { billingAddress: declaration.billingAddress } : {}),
+		})
 			.then((intent) => {
 				if (!alive) return;
 				setClientSecret(intent.clientSecret);
@@ -153,7 +179,7 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 		return () => {
 			alive = false;
 		};
-	}, [open, tier, selected]);
+	}, [open, tier, selected, declaration]);
 
 	/** Reset all transient state (called on close). */
 	function reset() {
@@ -163,6 +189,11 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 		setSelected(undefined);
 		setCurrency("usd");
 		setError(null);
+		setDeclaration(null);
+		setDeclared(null);
+		setDeclaring(false);
+		setRefusal(null);
+		setRefusalAction(null);
 	}
 
 	function handleOpenChange(next: boolean) {
@@ -170,12 +201,51 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 		onOpenChange(next);
 	}
 
-	/** Begin checkout for a paid tier — records the intent and swaps to the pay view. */
+	/** Begin checkout for a paid tier — records the choice and asks who is paying first. */
 	function choose(next: PaidAiTier) {
 		track("upgrade_started", { plan: next, context: "ai_upgrade_sheet" });
 		setClientSecret(null);
 		setError(null);
 		setTier(next);
+		setView("declare");
+	}
+
+	/**
+	 * Records the declaration, asks the gate, and only then moves to payment — the order the org
+	 * upgrade sheet uses, for the same reason: a refusal thrown by the intent reaches the sheet with
+	 * its reason erased.
+	 */
+	async function handleDeclare(next: PayerDeclaration) {
+		if (declaring) return;
+		setDeclaring(true);
+		clearRefusal();
+		try {
+			const facts = declaredPayerFacts(next);
+			await declarePayer(facts);
+			const verdict = await payerConversionStatus(facts);
+			if (!verdict.allowed) {
+				setRefusal(verdict.message);
+				setRefusalAction(refusalActionFor(verdict.reason, orgSlug));
+				return;
+			}
+			// The address comes next, still before any intent (#7324).
+			setDeclared(next);
+			setView("address");
+		} catch (e) {
+			setRefusal(
+				e instanceof Error ? e.message : "Couldn't record who this purchase is for — try again.",
+			);
+		} finally {
+			setDeclaring(false);
+		}
+	}
+
+	/** The billing address, after the gate said yes and before the intent, which carries it (#7324). */
+	function handleAddress(address: NonNullable<PayerDeclaration["billingAddress"]>) {
+		if (!declared) return;
+		setClientSecret(null);
+		setError(null);
+		setDeclaration({ ...declared, billingAddress: address });
 		setView("pay");
 	}
 
@@ -187,22 +257,10 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 	}
 
 	/**
-	 * Card confirmed — the webhook flips the org's AI tier; persist billing details
-	 * (best-effort), refetch/refresh so the new tier reflects everywhere, then close.
+	 * Card confirmed — the webhook flips the org's AI tier; refetch/refresh so the new tier reflects
+	 * everywhere, then close. The address and any VAT number went in BEFORE the intent (#7324).
 	 */
-	async function handlePaid(billing: CollectedBilling) {
-		try {
-			await updateBillingAddress(billingAddressFrom(billing));
-		} catch {
-			// Non-fatal — Stripe already has the address from the payment method.
-		}
-		if (billing.taxValue.trim()) {
-			try {
-				await saveTaxId(billing.taxType, billing.taxValue);
-			} catch {
-				toast.warning("Couldn't save the tax id — add it later in billing.");
-			}
-		}
+	async function handlePaid() {
 		onUpgraded?.();
 		router.refresh();
 		toast.success(`You're on ${aiPlanMeta(tier ?? "ai_plus").name}.`);
@@ -218,11 +276,13 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 			<SheetContent side="right" className="w-[92vw] gap-0 sm:max-w-md">
 				<SheetHeader>
 					<SheetTitle>
-						{view === "pay" && meta ? `Upgrade to ${meta.name}` : "Upgrade your AI plan"}
+						{view !== "choose" && meta ? `Upgrade to ${meta.name}` : "Upgrade your AI plan"}
 					</SheetTitle>
 					<SheetDescription>
-						{view === "pay"
-							? "Add a payment method to raise your session and weekly limits."
+						{view === "declare" || view === "address"
+								? "Tell us who this purchase is for, then add a payment method."
+								: view === "pay"
+									? "Add a payment method to raise your session and weekly limits."
 							: "AI is billed separately from your workspace plan. A paid plan raises your session and weekly limits and deepens what Elench can do."}
 					</SheetDescription>
 				</SheetHeader>
@@ -236,6 +296,32 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 							notOnSale={notOnSale}
 							onChoose={choose}
 						/>
+					) : view === "declare" ? (
+						<PayerDeclarationForm
+							busy={declaring}
+							refusal={refusal}
+							refusalAction={refusalAction}
+							onEdit={clearRefusal}
+							submitLabel="Continue to payment"
+							onBack={() => {
+								setView("choose");
+								setTier(null);
+								clearRefusal();
+							}}
+							onDeclare={(d) => void handleDeclare(d)}
+						/>
+					) : view === "address" && declared ? (
+						<BillingAddressForm
+							country={declared.billingCountry}
+							state={declared.billingState ?? null}
+							busy={false}
+							submitLabel="Continue to payment"
+							onBack={() => {
+								setDeclared(null);
+								setView("declare");
+							}}
+							onSubmit={handleAddress}
+						/>
 					) : (
 						<PayView
 							meta={meta}
@@ -244,11 +330,13 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 							error={error}
 							ownerEmail={ownerEmail}
 							onCurrencyChange={switchCurrency}
+							prefilled={declaration?.billingAddress ?? null}
 							onBack={() => {
 								setView("choose");
 								setTier(null);
 								setClientSecret(null);
 								setError(null);
+								setDeclaration(null);
 							}}
 							onClose={() => handleOpenChange(false)}
 							onPaid={handlePaid}
@@ -426,6 +514,7 @@ function PayView({
 	clientSecret,
 	error,
 	ownerEmail,
+	prefilled,
 	onCurrencyChange,
 	onBack,
 	onClose,
@@ -436,10 +525,12 @@ function PayView({
 	clientSecret: string | null;
 	error: string | null;
 	ownerEmail: string;
+	/** The address the declaration collected, shown instead of asked again. */
+	prefilled: CheckoutPrefill | null;
 	onCurrencyChange: (currency: SupportedCurrency) => void;
 	onBack: () => void;
 	onClose: () => void;
-	onPaid: (billing: CollectedBilling) => void | Promise<void>;
+	onPaid: () => void | Promise<void>;
 }) {
 	if (!meta) return null;
 	if (error) {
@@ -479,7 +570,9 @@ function PayView({
 						ownerEmail={ownerEmail}
 						showMembers={false}
 						submitLabel={`Subscribe to ${meta.name}`}
-						scrollable
+							scrollable
+							prefilled={prefilled}
+							collectTaxId={false}
 						onPaid={onPaid}
 					/>
 				</StripeElementsProvider>

@@ -1240,6 +1240,13 @@
       "when": 1795183795241,
       "tag": "0176_ordinary_network",
       "breakpoints": true
+    },
+    {
+      "idx": 177,
+      "version": "7",
+      "when": 1795420983379,
+      "tag": "0177_rapid_genesis",
+      "breakpoints": true
     }
   ]
 }

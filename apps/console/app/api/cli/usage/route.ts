@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorizeCli } from "@/lib/authz/guard";
-import { aiTierSpec, effectiveAiTier } from "@/lib/billing/ai-plan";
+import { aiTierSpec, billingAiTier } from "@/lib/billing/ai-plan";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { countBillableSeats } from "@/lib/billing/seats";
 import { sumCredits } from "@/lib/billing/ai-quota";
@@ -30,12 +30,7 @@ export async function GET(req: Request) {
 		const billing = hasOrg ? await getOrgBilling(actor.orgId) : null;
 		// AI is a standalone tier now (independent of the org plan); the CLI reports the
 		// tier's weekly credit grant as the AI budget denominator.
-		const aiSpec = aiTierSpec(
-			effectiveAiTier(
-				billing?.aiTier ?? "ai_free",
-				billing?.aiSubscriptionStatus ?? "none",
-			),
-		);
+		const aiSpec = aiTierSpec(billing ? billingAiTier(billing) : "ai_free");
 
 		const now = new Date();
 		// Meter from the current paid period start, else the calendar month (matches getOrgUsage).

@@ -509,7 +509,10 @@ export function monthlyPriceLabel(
 // `@repo/cloud-catalog`; importing `@repo/legal` (or `@repo/format` for the date) would add a
 // runtime dependency and rewrite `pnpm-lock.yaml`. `PaidAvailability` below is the subset of
 // `LaunchState` the copy reads, so `paidLaunchState().paid` is passed as it is, and the caller
-// hands in the date formatter it already uses (`@repo/format`'s `formatDate`).
+// hands in the date formatter it already uses (`@repo/format`'s `formatDate`). The stage name and
+// the open markets arrive the same way, as `LaunchWording` (EA-4, #7326): the caller passes
+// `RELEASE_STAGE` and `openMarketSummary()` from `@repo/legal/launch`, so this package never writes
+// the stage name itself and cannot name a market the gate does not open.
 //
 // THE COPY NEVER OPENS ANYTHING. `onSale` is true exactly when the state says `open`; the purchase
 // gate (`apps/console/lib/billing/eligibility.ts`) stays the authority over any single sale.
@@ -552,10 +555,18 @@ export interface NotOnSaleCopy extends BillingLines {
 	readonly body: string;
 }
 
-/** The sentences for the open state: no notice, no heading, Stripe named in the billing lines. */
+/**
+ * The sentences for the open state: a notice naming the stage and the open markets, no heading, and
+ * Stripe named in the billing lines.
+ */
 export interface OnSaleCopy extends BillingLines {
 	readonly onSale: true;
-	readonly notice: null;
+	/**
+	 * The stage, who can buy, and that there is no uptime SLA, e.g. "<stage> is open to
+	 * businesses in Bulgaria and the US, with no uptime SLA". No full stop, so a surface can follow
+	 * it with its own sentence.
+	 */
+	readonly notice: string;
 	readonly heading: null;
 	readonly body: null;
 }
@@ -565,6 +576,43 @@ export type PaidAvailabilityCopy = OnSaleCopy | NotOnSaleCopy;
 
 /** Formats a `YYYY-MM-DD` date for display, e.g. `15 Feb 2027`. */
 export type FormatDay = (isoDate: string) => string;
+
+/**
+ * The words the copy needs from `@repo/legal/launch` and does not import (see the section note).
+ */
+export interface LaunchWording {
+	/** The commercial stage's name. In production, `RELEASE_STAGE`. */
+	readonly stage: string;
+	/**
+	 * Who can buy today, lower-case, or `null` when no market is open. In production,
+	 * `openMarketSummary()` — derived from the cells, never typed.
+	 */
+	readonly openMarkets: string | null;
+}
+
+/**
+ * The stage line for the open state, without a full stop: "<stage> is open to businesses in
+ * Bulgaria and the US, with no uptime SLA". With no markets to name (a console whose test-mode
+ * waiver opened the sale while every cell is closed) it says the stage and the SLA only.
+ */
+function openStageLine(wording: LaunchWording): string {
+	if (wording.openMarkets === null) return `${wording.stage}, with no uptime SLA`;
+	return `${wording.stage} is open to ${wording.openMarkets}, with no uptime SLA`;
+}
+
+/**
+ * The one line a surface shows about the commercial stage, outside a price: the home page's line
+ * under the stage badge.
+ *
+ * With a market open it says who can buy ("<stage> is open to businesses in Bulgaria and the
+ * US, with no uptime SLA."). With none open it says only that there is no uptime SLA during the
+ * stage, and nothing about buying — whether anything is on sale is the pricing page's to say, in
+ * `paidAvailabilityCopy`'s words.
+ */
+export function releaseStageLine(wording: LaunchWording): string {
+	if (wording.openMarkets === null) return `No uptime SLA during ${wording.stage}.`;
+	return `${openStageLine(wording)}.`;
+}
 
 /**
  * The sentences for a state in which nothing can be bought.
@@ -609,18 +657,24 @@ export function notOnSaleCopy(state: PaidUnavailability, formatDay: FormatDay): 
 /**
  * The sentences for one launch state — `open`, `announced` or `closed`.
  *
+ * The open state names the stage and the open markets from `wording`; the other two are
+ * `notOnSaleCopy`'s, unchanged, because a visitor outside every open cell can still buy nothing.
+ *
  * @param state the launch state — pass `paidLaunchState().paid` (or `.trial`) as it is.
  * @param formatDay renders the announced date (see `notOnSaleCopy`).
+ * @param wording the stage name and the open markets — pass `RELEASE_STAGE` and
+ *   `openMarketSummary()` from `@repo/legal/launch`.
  */
 export function paidAvailabilityCopy(
 	state: PaidAvailability,
 	formatDay: FormatDay,
+	wording: LaunchWording,
 ): PaidAvailabilityCopy {
 	if (state.status !== "open") return notOnSaleCopy(state, formatDay);
 	const pro = planMeta("team").name;
 	return {
 		onSale: true,
-		notice: null,
+		notice: openStageLine(wording),
 		heading: null,
 		body: null,
 		proBilling: `${pro} is billed per active member of your organization, monthly through Stripe.`,

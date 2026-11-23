@@ -523,7 +523,7 @@ Every number above is derived from these, and from nothing else:
 - `docs/testing/programme-snapshot.json`
 - `docs/beta/evidence-schema.json`
 - `packages/cloud-catalog/src/generated.ts`
-- `packages/legal/src/commerce.ts`
+- `packages/legal/src/paid-markets.ts`
 - `packages/legal/src/launch.ts`
 - `docs/legal/legal-set.json`
 - `apps/console/docs/qa/prod-runs/`

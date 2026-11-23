@@ -22,12 +22,20 @@
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { WITHDRAWAL_PERIOD_DAYS, withdrawalOutcome } from "@repo/legal/commerce";
-import { authorize } from "@/lib/authz/guard";
+import { authorize, authorizeRead } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { commerceOrder } from "@/lib/db/schema";
+import { commerceOrder, type CommerceOrder } from "@/lib/db/schema";
 import { deploymentMode, isStripeConfigured } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
 import { forgetSubscription } from "@/lib/billing/subscription-cache";
+import { getOrgBilling } from "@/lib/billing/queries";
+import { sendWithdrawalAcknowledgementEmail } from "@/lib/email/withdrawal-email";
+
+// THE CLOCK IS READ HERE, NEVER RECEIVED. Every exported function in this file is a Server Action,
+// and a Server Action's arguments are whatever the request carried. The instant that decides
+// whether the window is still open, how many days were supplied, and when access ends is therefore
+// taken from the server's own clock inside each action, and the time-taking logic lives in
+// non-exported helpers that the actions call with `new Date()`.
 
 /** Guards that billing is actually wired before any Stripe call. Mirrors billing.ts's own guard —
  *  a withdrawal that cannot refund must fail loudly rather than record a refund that never moved. */
@@ -61,7 +69,7 @@ export interface WithdrawalRight {
 }
 
 /** The most recent order for the active org, or null. */
-async function latestOrder(orgId: string) {
+async function latestOrder(orgId: string): Promise<CommerceOrder | null> {
 	const [row] = await getServiceDb()
 		.select()
 		.from(commerceOrder)
@@ -77,10 +85,22 @@ async function latestOrder(orgId: string) {
  * Shown BEFORE they act, because CRD art. 6 requires the consumer to be told what withdrawing will
  * cost them, and a figure produced only after the fact is not that. It runs the same
  * `withdrawalOutcome` the actual withdrawal runs, so the preview cannot disagree with the outcome.
+ *
+ * A READ, so it is gated by `authorizeRead`, never `authorize`. `manage_billing` is not one of the
+ * actions `lib/authz/activity.ts` treats as read-only, so `authorize` would record an ALLOWED
+ * "manage_billing" activity row every time the billing page mounts the withdrawal section — an
+ * audit entry saying the admin managed billing when they only looked at it. That row is
+ * fire-and-forget and lands late, which is how the destructive-action spec caught it: it fell
+ * inside `billing.subscription.cancel`'s Cancel window. A denial is still recorded.
  */
-export async function getWithdrawalRight(now = new Date()): Promise<WithdrawalRight> {
-	const actor = await authorize("manage_billing", { type: "billing" });
-	const order = await latestOrder(actor.orgId);
+export async function getWithdrawalRight(): Promise<WithdrawalRight> {
+	const actor = await authorizeRead("manage_billing", { type: "billing" });
+	return withdrawalRightAt(await latestOrder(actor.orgId), new Date());
+}
+
+/** {@link getWithdrawalRight}'s computation for `order` at the instant `now`. Not exported: `now`
+ *  is always the server clock, supplied by the action. */
+function withdrawalRightAt(order: CommerceOrder | null, now: Date): WithdrawalRight {
 	if (!order) return { available: false, reason: "no_order" };
 	if (order.capacity !== "consumer") {
 		return { available: false, reason: "not_a_consumer_order" };
@@ -124,6 +144,20 @@ const withdrawSchema = z.object({
 
 export type WithdrawInput = z.input<typeof withdrawSchema>;
 
+/** What a withdrawal computed, and whether the refund it computed was actually issued. */
+export interface WithdrawalResult {
+	/** What the consumer is owed back, in minor units, as `withdrawalOutcome` computed it. */
+	readonly refundMinorUnits: number;
+	readonly retainedMinorUnits: number;
+	readonly currency: string;
+	/**
+	 * True when that refund was issued at Stripe, or when none was owed. False when an amount was
+	 * owed but the order carries no payment to refund against — the order is withdrawn, the owed
+	 * amount is NOT recorded as refunded, and it has to be settled outside this action.
+	 */
+	readonly refundIssued: boolean;
+}
+
 /**
  * Exercises the statutory withdrawal right.
  *
@@ -136,13 +170,16 @@ export type WithdrawInput = z.input<typeof withdrawSchema>;
  */
 export async function withdrawFromContract(
 	input: WithdrawInput = { reason: null },
-	now = new Date(),
-): Promise<{ refundMinorUnits: number; retainedMinorUnits: number; currency: string }> {
+): Promise<WithdrawalResult> {
 	withdrawSchema.parse(input);
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
+	return withdrawAt(await latestOrder(actor.orgId), new Date());
+}
 
-	const order = await latestOrder(actor.orgId);
+/** {@link withdrawFromContract}'s work for `order` at the instant `now`. Not exported: `now` is
+ *  always the server clock, supplied by the action. */
+async function withdrawAt(order: CommerceOrder | null, now: Date): Promise<WithdrawalResult> {
 	if (!order) throw new Error("There is no order to withdraw from.");
 	if (order.capacity !== "consumer") {
 		throw new Error(
@@ -175,6 +212,9 @@ export async function withdrawFromContract(
 	const stripe = getStripe();
 	// Refund BEFORE recording, so a recorded withdrawal always corresponds to money that actually
 	// moved. A failure here throws and leaves the order untouched, which the consumer can retry.
+	// With an amount owed but no payment intent on the order there is nothing to refund against:
+	// the withdrawal still takes effect, but the record must not say money moved when it did not.
+	const refundIssued = outcome.refundMinorUnits === 0 || order.stripePaymentIntentId !== null;
 	if (outcome.refundMinorUnits > 0 && order.stripePaymentIntentId) {
 		await stripe.refunds.create({
 			payment_intent: order.stripePaymentIntentId,
@@ -201,17 +241,55 @@ export async function withdrawFromContract(
 			state: "withdrawn",
 			withdrawnAt: now,
 			withdrawalRetainedMinorUnits: outcome.retainedMinorUnits,
-			withdrawalRefundMinorUnits: outcome.refundMinorUnits,
+			// Only what was actually refunded. Null — not the computed figure, and not 0, which would
+			// read as "nothing was owed" — when an owed refund could not be issued.
+			withdrawalRefundMinorUnits: refundIssued ? outcome.refundMinorUnits : null,
 			accessEndsAt: now,
 			updatedAt: now,
 		})
 		.where(eq(commerceOrder.id, order.id));
 
+	// The acknowledgement on a durable medium (CRD art. 11a, ЗЗП art. 52a), sent only once the
+	// withdrawal is recorded so it never acknowledges one that did not take effect. It never throws:
+	// the withdrawal has happened, and a failed send is logged for a hand send rather than reported
+	// to the consumer as a failed withdrawal (lib/email/withdrawal-email.ts).
+	await sendWithdrawalAcknowledgementEmail({
+		orderId: order.id,
+		placedByUserId: order.placedByUserId,
+		withdrawnAt: now,
+		refundMinorUnits: outcome.refundMinorUnits,
+		retainedMinorUnits: outcome.retainedMinorUnits,
+		currency: order.currency,
+	});
+
 	return {
 		refundMinorUnits: outcome.refundMinorUnits,
 		retainedMinorUnits: outcome.retainedMinorUnits,
 		currency: order.currency,
+		refundIssued,
 	};
+}
+
+/**
+ * When access ends for an ordinary cancellation of `order` made at `now`: the end of the paid
+ * period that is running, read from server-held records only.
+ *
+ * Preferred source is the org's billing row, which the Stripe webhooks keep current — but only
+ * when it describes THIS order's subscription and its period end is still ahead. Otherwise the
+ * order's own terms decide: the first boundary of its `periodDays` cycle, counted from `placedAt`,
+ * that lies after `now`. Never earlier than `now`.
+ */
+function paidPeriodEnd(
+	order: CommerceOrder,
+	billingPeriodEnd: Date | null,
+	now: Date,
+): Date {
+	if (billingPeriodEnd && billingPeriodEnd > now) return billingPeriodEnd;
+	const periodMs = Math.max(1, order.periodDays) * 86_400_000;
+	const elapsed = now.getTime() - order.placedAt.getTime();
+	const periods = Math.max(1, Math.floor(elapsed / periodMs) + 1);
+	const end = new Date(order.placedAt.getTime() + periods * periodMs);
+	return end > now ? end : now;
 }
 
 /**
@@ -222,13 +300,21 @@ export async function withdrawFromContract(
  * different states with different money attached, and a single "ended" flag would make it impossible
  * to answer "was this consumer refunded what they were owed?" from the record.
  */
-export async function recordOrdinaryCancellation(
-	accessEndsAt: Date,
-	now = new Date(),
-): Promise<void> {
+export async function recordOrdinaryCancellation(): Promise<void> {
 	const actor = await authorize("manage_billing", { type: "billing" });
+	const now = new Date();
 	const order = await latestOrder(actor.orgId);
 	if (!order || order.state === "withdrawn" || order.state === "cancelled") return;
+	const billing = await getOrgBilling(actor.orgId);
+	const sameSubscription =
+		billing !== null &&
+		order.stripeSubscriptionId !== null &&
+		billing.stripeSubscriptionId === order.stripeSubscriptionId;
+	const accessEndsAt = paidPeriodEnd(
+		order,
+		sameSubscription ? billing.currentPeriodEnd : null,
+		now,
+	);
 	await getServiceDb()
 		.update(commerceOrder)
 		.set({

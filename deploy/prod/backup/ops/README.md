@@ -81,6 +81,13 @@ in CI over OIDC and ships only the assembled `.env`, so the box cannot read the 
 values go over the SSH connection on stdin and are not stored on the box anywhere except in
 `backup.env`.
 
+**Steps 3 and 4 in practice:** the box accepts only the deploy key, which is in the vault and is read
+only by CI, so no laptop can SSH to it. Run these steps with the
+[`backup-box-setup.yml`](../../../../.github/workflows/backup-box-setup.yml) workflow (`mode` =
+`dry-run`, `apply` or `status`). It builds the values file from the vault and the repository
+variables `BACKUP_S3_BUCKET`, `BACKUP_S3_SSE_KMS_KEY_ID` and `BACKUP_AGE_RECIPIENTS`, and runs the
+commands below over the deploy's SSH connection.
+
 ## 3. Dry run on the box
 
 ```sh

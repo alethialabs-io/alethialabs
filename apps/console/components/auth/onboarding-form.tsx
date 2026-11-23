@@ -24,11 +24,18 @@ import { ArrowRight, Building2, Check, User } from "lucide-react";
 import { Fragment, type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Controller, type UseFormReturn, useFormState } from "react-hook-form";
 import { useRouter } from "next/navigation";
-import type { PayerCapacity } from "@repo/legal/commerce";
+import { EU_MEMBER_STATES, type PayerCapacity } from "@repo/legal/commerce";
 import { Button } from "@repo/ui/button";
 import { Checkbox } from "@repo/ui/checkbox";
 import { CountrySelect } from "@repo/ui/country-select";
 import { Input } from "@repo/ui/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@repo/ui/select";
 import { Switch } from "@repo/ui/switch";
 import { cn } from "@repo/ui/utils";
 import { WizardFormError, WizardRestoredNotice } from "@repo/ui/wizard";
@@ -54,6 +61,7 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { ROOT_SERVER_ERROR } from "@/lib/actions/form-errors";
 import { track } from "@/lib/analytics/track";
 import type { BillingCountrySource, DeducedCountry, PrimaryOrg } from "@/lib/auth/onboarding";
+import { US_STATES } from "@/lib/billing/tax-ids";
 import { orgHost } from "@/lib/org-url";
 import { finishSlugDraft, slugifyDraft, slugifyOrEmpty } from "@/lib/utils/slugify";
 import type { WizardEnvironment, WizardLocation } from "@/lib/wizard/types";
@@ -128,8 +136,29 @@ export function onboardingSubmission(
 						capacity: business ? "organization" : "consumer",
 						billingCountry: values.billingCountry.trim().toUpperCase(),
 						authorityAttestation: business ? values.role.trim() : null,
+						...payerVatAndState(values),
 					}
 				: null,
+	};
+}
+
+/**
+ * The VAT-number answer and the US state, as `finishOnboarding` takes them (#7324): the VAT facts only
+ * for a business billed in an EU member state (the only place they are asked), the state only for the
+ * United States. Anything not asked is sent as null, never as a stale answer from another country.
+ */
+function payerVatAndState(values: OnboardingOutput): {
+	vatIdStatus: "given" | "not_given" | null;
+	vatId: string | null;
+	billingState: string | null;
+} {
+	const country = values.billingCountry.trim().toUpperCase();
+	const asked = values.business && EU_MEMBER_STATES.includes(country);
+	const vatIdStatus = asked && values.vatIdStatus !== "" ? values.vatIdStatus : null;
+	return {
+		vatIdStatus,
+		vatId: vatIdStatus === "given" ? values.vatId.trim() : null,
+		billingState: country === "US" ? values.billingState.trim().toUpperCase() : null,
 	};
 }
 
@@ -161,6 +190,9 @@ export function OnboardingForm({
 				billingCountry: country?.code ?? "",
 				business: capacity === "organization",
 				role: "",
+				vatIdStatus: "",
+				vatId: "",
+				billingState: "",
 				acceptTerms: false,
 				termsRequired: terms.length > 0,
 			},
@@ -619,6 +651,120 @@ function PayerFacts({
 					</div>
 				) : null}
 			</div>
+
+			{business && EU_MEMBER_STATES.includes(chosen.trim().toUpperCase()) ? (
+				<VatNumberFacts form={form} disabled={disabled} />
+			) : null}
+
+			{chosen.trim().toUpperCase() === "US" ? (
+				<div className="flex flex-col gap-1.5">
+					<span id="billing-state-label" className={FIELD_LABEL}>
+						State
+					</span>
+					<Controller
+						control={form.control}
+						name="billingState"
+						render={({ field }) => (
+							<Select
+								value={field.value}
+								onValueChange={field.onChange}
+								disabled={disabled}
+							>
+								<SelectTrigger
+									aria-labelledby="billing-state-label"
+									aria-invalid={Boolean(errors.billingState)}
+									className="h-9 w-full"
+								>
+									<SelectValue placeholder="Select a state" />
+								</SelectTrigger>
+								<SelectContent>
+									{US_STATES.map((s) => (
+										<SelectItem key={s.code} value={s.code}>
+											{s.name}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						)}
+					/>
+					<FieldError id="billing-state-error" message={errors.billingState?.message} />
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+/**
+ * "Does the organization have a VAT number?" — one neutral question, nothing pre-selected, and no
+ * word about what either answer opens (#7324): advising a business to withhold a VAT number it has
+ * would be a misrepresentation. A "yes" takes the number.
+ */
+function VatNumberFacts({ form, disabled }: { form: OnboardingFormInstance; disabled: boolean }) {
+	const { errors } = useFormState({ control: form.control });
+	const status = form.getValues("vatIdStatus");
+	const legendId = useId();
+	return (
+		<div className="flex flex-col gap-2.5">
+			<span id={legendId} className={FIELD_LABEL}>
+				VAT number
+			</span>
+			<Controller
+				control={form.control}
+				name="vatIdStatus"
+				render={({ field }) => (
+					<div role="radiogroup" aria-labelledby={legendId} className="flex flex-col gap-1.5">
+						<span className="text-ui-sm text-text-primary">Does the organization have a VAT number?</span>
+						<div className="flex gap-4">
+							{(
+								[
+									["given", "Yes"],
+									["not_given", "No"],
+								] as const
+							).map(([value, label]) => (
+								<label key={value} className="flex items-center gap-2 text-ui-sm text-text-secondary">
+									<input
+										type="radio"
+										name={field.name}
+										value={value}
+										checked={field.value === value}
+										onChange={() => field.onChange(value)}
+										disabled={disabled}
+										className="size-4 accent-[var(--text-primary)]"
+									/>
+									{label}
+								</label>
+							))}
+						</div>
+					</div>
+				)}
+			/>
+			<FieldError id="vat-status-error" message={errors.vatIdStatus?.message} />
+			{status === "given" ? (
+				<div className="flex flex-col gap-1.5">
+					<label htmlFor="payer-vat-id" className={FIELD_LABEL}>
+						The VAT number
+					</label>
+					<Controller
+						control={form.control}
+						name="vatId"
+						render={({ field }) => (
+							<Input
+								id="payer-vat-id"
+								ref={field.ref}
+								value={field.value}
+								onChange={field.onChange}
+								onBlur={field.onBlur}
+								placeholder="DE123456789"
+								autoComplete="off"
+								disabled={disabled}
+								aria-invalid={Boolean(errors.vatId)}
+								className="h-9"
+							/>
+						)}
+					/>
+					<FieldError id="payer-vat-id-error" message={errors.vatId?.message} />
+				</div>
+			) : null}
 		</div>
 	);
 }

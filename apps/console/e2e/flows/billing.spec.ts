@@ -71,6 +71,7 @@
 import Stripe from "stripe";
 import { scanA11y } from "../helpers/a11y";
 import { db, orgIdBySlug } from "../helpers/db";
+import { storeFacturaPdf } from "../helpers/invoice-pdf";
 import { signUpHobby } from "../helpers/personas";
 import { expect, test } from "../fixtures/qa";
 
@@ -181,6 +182,10 @@ function cardRow(page: import("@playwright/test").Page, last4: string) {
  * "Moved past it" is measured as the declaration's submit button going away. If the gate refuses
  * instead, the button stays and the refusal sentence renders above it, so the failure names the
  * gate's own words rather than a missing card field thirty seconds later.
+ *
+ * Since #7324 a German organization also answers "Does the organization have a VAT number?" — "No",
+ * the answer whose sale the gate can take; "Yes" routes it to the complimentary Early Access grant —
+ * and then gives the billing address, in its own step, before the intent exists.
  */
 async function declareOrganizationPayer(page: import("@playwright/test").Page): Promise<void> {
 	const dialog = page.getByRole("dialog", { name: "Upgrade to Pro" });
@@ -201,12 +206,24 @@ async function declareOrganizationPayer(page: import("@playwright/test").Page): 
 	await expect(authority, "typing right after choosing a country reached the authority field").toHaveValue(
 		"Director",
 	);
-	const submit = dialog.getByRole("button", { name: /Continue to payment/ });
-	await submit.click();
-	await expect(submit, "the eligibility gate refused the declaration — see the sentence in the sheet").toBeHidden({
+	await dialog.getByRole("radio", { name: "No", exact: true }).check();
+	await dialog.getByRole("button", { name: /Continue to payment/ }).click();
+	const billingName = dialog.getByRole("textbox", { name: /Billing name/ });
+	await expect(billingName, "the eligibility gate refused the declaration — see the sentence in the sheet").toBeVisible({
+		timeout: 30_000,
+	});
+	await billingName.fill(E2E_BILLING_NAME);
+	await dialog.getByRole("textbox", { name: /Address line 1/ }).fill("Hauptstr. 1");
+	await dialog.getByRole("textbox", { name: /City/ }).fill("Berlin");
+	await dialog.getByRole("textbox", { name: /Postal code/ }).fill("10115");
+	await dialog.getByRole("button", { name: /Continue to payment/ }).click();
+	await expect(billingName, "the billing address step did not hand over to payment").toBeHidden({
 		timeout: 30_000,
 	});
 }
+
+/** The billing name the declaration walk gives; the checkout form shows it back, read-only. */
+const E2E_BILLING_NAME = "E2E Org GmbH";
 
 /**
  * Records the `team` org's payer declaration directly, for the one conversion path with no form.
@@ -219,7 +236,8 @@ async function declareTeamPayer(orgId: string): Promise<void> {
 	await db()`
 		update organization_billing
 		set payer_capacity = 'organization', billing_country = 'DE',
-		    authority_attestation = 'Director', updated_at = now()
+		    authority_attestation = 'Director', vat_id_status = 'not_given', vat_id = null,
+		    updated_at = now()
 		where organization_id = ${orgId}`;
 }
 
@@ -235,15 +253,20 @@ async function declareTeamPayer(orgId: string): Promise<void> {
 async function seedCustomerWithoutPlan(orgId: string, customerId: string): Promise<void> {
 	await db()`
 		insert into organization_billing
-			(organization_id, stripe_customer_id, payer_capacity, billing_country, authority_attestation)
-		values (${orgId}, ${customerId}, 'organization', 'DE', 'Director')
+			(organization_id, stripe_customer_id, payer_capacity, billing_country, authority_attestation, vat_id_status)
+		values (${orgId}, ${customerId}, 'organization', 'DE', 'Director', 'not_given')
 		on conflict (organization_id) do update
 			set stripe_customer_id = excluded.stripe_customer_id,
 			    payer_capacity = excluded.payer_capacity,
 			    billing_country = excluded.billing_country,
 			    authority_attestation = excluded.authority_attestation,
+			    vat_id_status = excluded.vat_id_status,
+			    vat_id = null,
 			    updated_at = now()`;
 }
+
+/** The Stripe invoice id `seedMirroredInvoice` gives the row for `number`. */
+const mirroredStripeId = (number: string) => `in_e2e_${number}`;
 
 /**
  * Mirrors one paid invoice row for the org, exactly as the `invoice.paid` webhook would.
@@ -262,12 +285,17 @@ async function seedCustomerWithoutPlan(orgId: string, customerId: string): Promi
  * every earlier run's rows are older still, so the current run's newest is newest, full stop.
  * The whole row hangs off the one instant, so a backdated invoice's period is backdated with it
  * rather than claiming to have been paid before the period it covers ended.
+ *
+ * `pdfKey` is the stored фактура's object key (`storeFacturaPdf`), written into `pdf_key` the way
+ * `mirrorPaidInvoice` writes it. Without one the row is an invoice whose фактура is still being
+ * issued: listed, but with no document behind its PDF route (EA-7b, #7338).
  */
 async function seedMirroredInvoice(
 	orgId: string,
 	customerId: string,
 	number: string,
 	paidHoursAgo: number,
+	pdfKey: string | null = null,
 ): Promise<void> {
 	// `now()` is the DATABASE's clock, evaluated once per statement, so every seeded row is stamped
 	// from one source and they are strictly comparable however the runner's own clock is set. The
@@ -277,15 +305,16 @@ async function seedMirroredInvoice(
 	await db()`
 		insert into invoice
 			(organization_id, stripe_invoice_id, stripe_customer_id, number, status,
-			 amount_total, currency, period_start, period_end, hosted_invoice_url, paid_at)
+			 amount_total, currency, period_start, period_end, pdf_key, hosted_invoice_url, paid_at)
 		values
-			(${orgId}, ${`in_e2e_${number}`}, ${customerId}, ${number}, 'paid',
+			(${orgId}, ${mirroredStripeId(number)}, ${customerId}, ${number}, 'paid',
 			 2000, 'usd',
 			 now() - (${paidHoursAgo}::int * interval '1 hour') - interval '30 days',
 			 now() - (${paidHoursAgo}::int * interval '1 hour'),
+			 ${pdfKey},
 			 ${`https://stripe.test/hosted/${number}`},
 			 now() - (${paidHoursAgo}::int * interval '1 hour'))
-		on conflict (stripe_invoice_id) do update set number = excluded.number`;
+		on conflict (stripe_invoice_id) do update set number = excluded.number, pdf_key = excluded.pdf_key`;
 }
 
 // ── Billing page — Pro trial (team persona) ───────────────────────────────────────────────
@@ -388,6 +417,10 @@ test.describe("Billing — Stripe test mode", () => {
 		const stripe = stripeApi();
 		const customer = await stripe.customers.create({
 			email,
+			// /start has no form, so the billing address the order record needs (#7324) is on the
+			// customer already, in the declared country — as a customer who had used the upgrade sheet.
+			name: "E2E Org GmbH",
+			address: { line1: "Hauptstr. 1", city: "Berlin", postal_code: "10115", country: "DE" },
 			metadata: { organization_id: orgId, e2e: "billing.spec /start positive (#5993)" },
 		});
 		await seedCustomerWithoutPlan(orgId, customer.id);
@@ -624,24 +657,39 @@ test.describe("Billing — mirrored invoices (team)", () => {
 
 	test("an invoice's PDF route resolves for its own org rather than 404ing", { tag: "@needs:stripe" }, async ({
 		team,
+		owner,
 	}) => {
 		const customerId = await stripeCustomerId(team.orgId!);
 		const number = `E2E-PDF-${Date.now()}`;
-		// Backdated two days: this row is fetched by its own id, so its position in any list is
-		// irrelevant to this test and must not be relevant to the sibling one either.
-		await seedMirroredInvoice(team.orgId!, customerId, number, 48);
+		// The row carries a stored фактура, stored where and how `mirrorPaidInvoice` stores one, so
+		// the route has a document to serve. Backdated two days: this row is fetched by its own id,
+		// so its position in any list is irrelevant to this test and must not be relevant to the
+		// sibling one either.
+		const factura = await storeFacturaPdf(team.orgId!, mirroredStripeId(number), number);
+		await seedMirroredInvoice(team.orgId!, customerId, number, 48, factura.pdfKey);
 		const rows = await db()<{ id: string }[]>`
-			select id from invoice where stripe_invoice_id = ${`in_e2e_${number}`}`;
+			select id from invoice where stripe_invoice_id = ${mirroredStripeId(number)}`;
 		const invoiceId = rows[0]?.id;
 		expect(invoiceId, "the seeded invoice was not written").toBeTruthy();
 
-		// No PDF was captured for a hand-mirrored row, so the authorized route redirects to the
-		// hosted document. A 404 would mean the row is not resolvable as the org's own.
+		// Its own org: the route serves THIS invoice's stored фактура — 200, a PDF, the same bytes.
+		// A 404 would mean the row is not resolvable as the org's own.
 		const res = await team.page.request.get(
 			`${invoicesPath(team.orgSlug)}/${invoiceId}/pdf`,
 			{ maxRedirects: 0 },
 		);
-		expect([200, 302, 307]).toContain(res.status());
+		expect(res.status()).toBe(200);
+		expect(res.headers()["content-type"]).toContain("application/pdf");
+		expect(Buffer.from(await res.body()).equals(Buffer.from(factura.bytes))).toBe(true);
+
+		// Another org's billing admin asking for the same id gets "not found" — the row is scoped to
+		// the org that owns it, and nothing about it (not even that a document exists) leaks across.
+		const foreign = await owner.page.request.get(
+			`${invoicesPath(owner.orgSlug)}/${invoiceId}/pdf`,
+			{ maxRedirects: 0 },
+		);
+		expect(foreign.status()).toBe(404);
+		expect(await foreign.text()).toContain('data-invoice-pdf-error="not-found"');
 	});
 });
 
@@ -691,7 +739,8 @@ test.describe("Billing settings — Hobby → Pro upgrade (owner)", () => {
 		await expect(dialog.getByText("Card information")).toBeVisible({ timeout: 30_000 });
 		// Order summary: a Total row (the seat unit) — a stable, payment-free assertion.
 		await expect(dialog.getByText("Total")).toBeVisible();
-		await expect(dialog.getByText("Full name")).toBeVisible();
+		// The address was given before the intent (#7324); the checkout form shows it back, read-only.
+		await expect(dialog.getByText(E2E_BILLING_NAME)).toBeVisible();
 	});
 
 	// THE PLAN SURFACE OF THE PURCHASE FLOW. `components/billing/plan-picker.tsx` exists but is

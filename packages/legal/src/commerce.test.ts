@@ -5,14 +5,27 @@ import { describe, expect, it } from "vitest";
 import {
 	CONSUMER_ADR,
 	CONSUMER_PAYMENT_OBLIGATION_LABEL,
+	EU_MEMBER_STATES,
 	PAID_MARKETS,
+	type PaidMarketCell,
+	SELLER_COUNTRY,
+	VAT_ID_STATUSES,
 	anyPaidMarketOpen,
+	complimentaryGrantEligible,
+	matchPaidMarketCell,
 	orderButtonLabel,
 	paidMarketEnabled,
 	paidMarketEvidence,
+	vatIdGivenOf,
+	vatIdStatusOf,
+	vatIdStatusRequired,
 	withdrawalOutcome,
 } from "./commerce";
 import { LEGAL_ENTITY } from "./entity";
+import { PAID_MARKETS as PAID_MARKETS_SOURCE } from "./paid-markets";
+
+/** The EU member states other than the seller's own. */
+const OTHER_MEMBER_STATES = EU_MEMBER_STATES.filter((country) => country !== SELLER_COUNTRY);
 
 describe("paid markets", () => {
 	// The gate is only a gate while it is shut. This is not "assert the current value" — it is the
@@ -27,6 +40,19 @@ describe("paid markets", () => {
 	it("refuses everything while no cell is open", () => {
 		expect(paidMarketEnabled("BG", "consumer")).toBe(false);
 		expect(paidMarketEnabled("DE", "organization")).toBe(false);
+		if (PAID_MARKETS.length > 0) return;
+		for (const country of [...EU_MEMBER_STATES, "US", "CA"]) {
+			for (const given of [true, false, null]) {
+				expect(paidMarketEnabled(country, "organization", given)).toBe(false);
+				expect(paidMarketEnabled(country, "consumer", given)).toBe(false);
+			}
+		}
+	});
+
+	// One list, two import paths: the unit that opens cells owns paid-markets.ts, and every existing
+	// import from commerce.ts must see the same array, not a copy.
+	it("re-exports the cell list from paid-markets.ts unchanged", () => {
+		expect(PAID_MARKETS).toBe(PAID_MARKETS_SOURCE);
 	});
 
 	// "Is anything on sale anywhere" agrees with the list it reads: open exactly when a cell exists.
@@ -51,18 +77,114 @@ describe("paid markets", () => {
 		for (const cell of PAID_MARKETS) {
 			expect(cell.country).toMatch(/^[A-Z]{2}$/);
 			expect(cell.evidence.trim().length).toBeGreaterThan(20);
-			expect(paidMarketEnabled(cell.country, cell.capacity)).toBe(true);
-			expect(paidMarketEvidence(cell.country, cell.capacity)).toBe(cell.evidence);
+			const given = vatIdGivenOf(cell.vatId) ?? false;
+			expect(paidMarketEnabled(cell.country, cell.capacity, given)).toBe(true);
+			expect(paidMarketEvidence(cell.country, cell.capacity, given)).not.toBeNull();
 		}
 	});
 
-	it("matches a country case-insensitively once a cell is open", () => {
-		// Exercised against a synthetic cell so the rule keeps its teeth on an empty list.
-		const open = [{ country: "BG", capacity: "consumer" as const, evidence: "x" }];
-		const enabled = (c: string) =>
-			open.some((k) => k.country === c.trim().toUpperCase() && k.capacity === "consumer");
-		expect(enabled("bg")).toBe(true);
-		expect(enabled(" BG ")).toBe(true);
+	// A consumer has no VAT-number status, so a consumer cell narrowed by one could never match: it
+	// would read as open in this file and open nothing in the gate.
+	it("narrows only organization cells by VAT-number status", () => {
+		for (const cell of PAID_MARKETS) {
+			if (cell.vatId !== undefined) expect(cell.capacity).toBe("organization");
+		}
+	});
+
+	// While the seller is not registered, no cell may sell to an EU business outside Bulgaria that
+	// gives a VAT number: that buyer gets the complimentary grant (TAX_MARKET_PRECONDITIONS §3.3).
+	it("opens no VAT-number EU business outside Bulgaria while the seller is unregistered", () => {
+		if (LEGAL_ENTITY.vatRegistered) return;
+		for (const country of OTHER_MEMBER_STATES) {
+			expect(paidMarketEnabled(country, "organization", true)).toBe(false);
+		}
+	});
+});
+
+describe("the matching rule, on synthetic cells", () => {
+	const evidence = "Synthetic evidence used only by this test file.";
+	const cells: readonly PaidMarketCell[] = [
+		{ country: "BG", capacity: "organization", evidence },
+		{ country: "DE", capacity: "organization", vatId: "not_given", evidence },
+		{ country: "FR", capacity: "organization", evidence },
+		{ country: "IT", capacity: "consumer", vatId: "not_given", evidence },
+	];
+
+	it("matches a country trimmed and case-insensitively", () => {
+		expect(matchPaidMarketCell(cells, " bg ", "organization", null)).toBe(cells[0]);
+		expect(matchPaidMarketCell(cells, "bg", "organization", true)).toBe(cells[0]);
+	});
+
+	// THE property of the dimension: a no-VAT-number cell never opens the VAT-number case.
+	it("does not open the VAT-number case from a not_given cell", () => {
+		expect(matchPaidMarketCell(cells, "DE", "organization", false)).toBe(cells[1]);
+		expect(matchPaidMarketCell(cells, "DE", "organization", true)).toBeUndefined();
+	});
+
+	// Unknown status: fail closed in the EU outside Bulgaria, pass in Bulgaria and the US.
+	it("refuses an undeclared VAT status in another member state, even on a cell without vatId", () => {
+		expect(matchPaidMarketCell(cells, "FR", "organization", null)).toBeUndefined();
+		expect(matchPaidMarketCell(cells, "FR", "organization", undefined)).toBeUndefined();
+		expect(matchPaidMarketCell(cells, "FR", "organization", true)).toBe(cells[2]);
+		expect(matchPaidMarketCell(cells, "FR", "organization", false)).toBe(cells[2]);
+		expect(matchPaidMarketCell(cells, "DE", "organization", null)).toBeUndefined();
+		expect(matchPaidMarketCell(cells, "BG", "organization", null)).toBe(cells[0]);
+		const us: readonly PaidMarketCell[] = [{ country: "US", capacity: "organization", evidence }];
+		expect(matchPaidMarketCell(us, "US", "organization", null)).toBe(us[0]);
+	});
+
+	it("never matches a consumer against a cell narrowed by vatId", () => {
+		for (const given of [true, false, null]) {
+			expect(matchPaidMarketCell(cells, "IT", "consumer", given)).toBeUndefined();
+		}
+	});
+
+	it("refuses missing and malformed inputs", () => {
+		expect(matchPaidMarketCell(cells, null, "organization", true)).toBeUndefined();
+		expect(matchPaidMarketCell(cells, "BGR", "organization", true)).toBeUndefined();
+		expect(matchPaidMarketCell(cells, "BG", null, true)).toBeUndefined();
+	});
+});
+
+describe("the VAT-number status", () => {
+	it("is required exactly for an organization in another member state", () => {
+		for (const country of OTHER_MEMBER_STATES) {
+			expect(vatIdStatusRequired(country, "organization")).toBe(true);
+			expect(vatIdStatusRequired(country.toLowerCase(), "organization")).toBe(true);
+			expect(vatIdStatusRequired(country, "consumer")).toBe(false);
+		}
+		for (const country of ["BG", "US", "CA", "GB", null, "", "DEU"]) {
+			expect(vatIdStatusRequired(country, "organization")).toBe(false);
+		}
+		expect(vatIdStatusRequired("DE", null)).toBe(false);
+	});
+
+	it("converts between the stored status and the gate's boolean, keeping unknown unknown", () => {
+		for (const status of VAT_ID_STATUSES) {
+			expect(vatIdStatusOf(vatIdGivenOf(status))).toBe(status);
+		}
+		expect(vatIdGivenOf("given")).toBe(true);
+		expect(vatIdGivenOf("not_given")).toBe(false);
+		expect(vatIdGivenOf(null)).toBeNull();
+		expect(vatIdGivenOf(undefined)).toBeNull();
+		expect(vatIdStatusOf(null)).toBeNull();
+		expect(vatIdStatusOf(undefined)).toBeNull();
+	});
+});
+
+describe("the complimentary Early Access grant", () => {
+	it("is offered exactly to a VAT-number business in another member state while unregistered", () => {
+		for (const country of OTHER_MEMBER_STATES) {
+			expect(complimentaryGrantEligible(country, "organization", true, false)).toBe(true);
+			expect(complimentaryGrantEligible(country, "organization", false, false)).toBe(false);
+			expect(complimentaryGrantEligible(country, "organization", null, false)).toBe(false);
+			expect(complimentaryGrantEligible(country, "consumer", true, false)).toBe(false);
+			// Once registered, that buyer is an ordinary sale.
+			expect(complimentaryGrantEligible(country, "organization", true, true)).toBe(false);
+		}
+		for (const country of ["BG", "US", "CA", "GB", null]) {
+			expect(complimentaryGrantEligible(country, "organization", true, false)).toBe(false);
+		}
 	});
 });
 

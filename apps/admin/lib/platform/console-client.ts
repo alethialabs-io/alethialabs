@@ -88,13 +88,21 @@ export function provisionOrg(input: {
 	return post("/provision-org", input);
 }
 
-/** Set an org's plan via the console's single billing writer (the off-Stripe path). */
+/**
+ * Set an org's plan and/or standalone AI tier via the console's single billing writer (the off-Stripe
+ * path). `plan`+`status` and `aiTier`+`aiStatus` each travel together; at least one pair is given.
+ * `earlyAccessGrant` marks a complimentary Early Access grant (EA-3): the console then sends the
+ * complimentary-terms email instead of the plan-welcome email.
+ */
 export function setOrgPlan(input: {
 	orgId: string;
-	plan: string;
-	status: string;
+	plan?: string;
+	status?: string;
 	seats?: number | null;
 	periodEnd?: string | null;
+	aiTier?: "ai_free" | "ai_plus" | "ai_max";
+	aiStatus?: string;
+	earlyAccessGrant?: "team" | "ai_plus" | "ai_max";
 }): Promise<{ ok: true }> {
 	return post("/set-plan", input);
 }

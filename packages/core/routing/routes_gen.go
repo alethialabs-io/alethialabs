@@ -12,48 +12,49 @@ package routing
 
 // The console's private route patterns, as Next.js spells them.
 const (
-	RouteOrgProjectArchitecture     = "/[org]/[project]/architecture"
-	RouteOrgProjectClusters         = "/[org]/[project]/clusters"
-	RouteOrgProjectEnvironments     = "/[org]/[project]/environments"
-	RouteOrgProjectJobs             = "/[org]/[project]/jobs"
-	RouteOrgProject                 = "/[org]/[project]"
-	RouteOrgProjectSettingsAccess   = "/[org]/[project]/settings/access"
-	RouteOrgProjectSettingsActivity = "/[org]/[project]/settings/activity"
-	RouteOrgProjectSettingsGeneral  = "/[org]/[project]/settings/general"
-	RouteOrgProjectSettings         = "/[org]/[project]/settings"
-	RouteOrgProjectSettingsPreview  = "/[org]/[project]/settings/preview"
-	RouteOrgProjectUsage            = "/[org]/[project]/usage"
-	RouteOrg                        = "/[org]"
-	RouteOrgAlerts                  = "/[org]/~/alerts"
-	RouteOrgClusters                = "/[org]/~/clusters"
-	RouteOrgConnectors              = "/[org]/~/connectors"
-	RouteOrgEvidence                = "/[org]/~/evidence"
-	RouteOrgJobs                    = "/[org]/~/jobs"
-	RouteOrgJobsID                  = "/[org]/~/jobs/[id]"
-	RouteOrgNew                     = "/[org]/~/new"
-	RouteOrgRunners                 = "/[org]/~/runners"
-	RouteOrgSettingsAccess          = "/[org]/~/settings/access"
-	RouteOrgSettingsActivity        = "/[org]/~/settings/activity"
-	RouteOrgSettingsBillingInvoices = "/[org]/~/settings/billing/invoices"
-	RouteOrgSettingsBilling         = "/[org]/~/settings/billing"
-	RouteOrgSettingsClassification  = "/[org]/~/settings/classification"
-	RouteOrgSettingsGeneral         = "/[org]/~/settings/general"
-	RouteOrgSettingsMembers         = "/[org]/~/settings/members"
-	RouteOrgSettings                = "/[org]/~/settings"
-	RouteOrgSettingsRoles           = "/[org]/~/settings/roles"
-	RouteOrgSettingsSso             = "/[org]/~/settings/sso"
-	RouteOrgSettingsTeams           = "/[org]/~/settings/teams"
-	RouteOrgSupportAbuse            = "/[org]/~/support/abuse"
-	RouteOrgSupportAsk              = "/[org]/~/support/ask"
-	RouteOrgSupportCasesID          = "/[org]/~/support/cases/[id]"
-	RouteOrgSupportMyCases          = "/[org]/~/support/my-cases"
-	RouteOrgSupport                 = "/[org]/~/support"
-	RouteOrgSupportSubmit           = "/[org]/~/support/submit"
-	RouteOrgUsage                   = "/[org]/~/usage"
-	RouteCliLogin                   = "/cli/login"
+	RouteOrgProjectArchitecture        = "/[org]/[project]/architecture"
+	RouteOrgProjectClusters            = "/[org]/[project]/clusters"
+	RouteOrgProjectEnvironments        = "/[org]/[project]/environments"
+	RouteOrgProjectJobs                = "/[org]/[project]/jobs"
+	RouteOrgProject                    = "/[org]/[project]"
+	RouteOrgProjectSettingsAccess      = "/[org]/[project]/settings/access"
+	RouteOrgProjectSettingsActivity    = "/[org]/[project]/settings/activity"
+	RouteOrgProjectSettingsGeneral     = "/[org]/[project]/settings/general"
+	RouteOrgProjectSettings            = "/[org]/[project]/settings"
+	RouteOrgProjectSettingsPreview     = "/[org]/[project]/settings/preview"
+	RouteOrgProjectUsage               = "/[org]/[project]/usage"
+	RouteOrg                           = "/[org]"
+	RouteOrgAlerts                     = "/[org]/~/alerts"
+	RouteOrgClusters                   = "/[org]/~/clusters"
+	RouteOrgConnectors                 = "/[org]/~/connectors"
+	RouteOrgEvidence                   = "/[org]/~/evidence"
+	RouteOrgJobs                       = "/[org]/~/jobs"
+	RouteOrgJobsID                     = "/[org]/~/jobs/[id]"
+	RouteOrgNew                        = "/[org]/~/new"
+	RouteOrgRunners                    = "/[org]/~/runners"
+	RouteOrgSettingsAccess             = "/[org]/~/settings/access"
+	RouteOrgSettingsActivity           = "/[org]/~/settings/activity"
+	RouteOrgSettingsBillingEarlyAccess = "/[org]/~/settings/billing/early-access"
+	RouteOrgSettingsBillingInvoices    = "/[org]/~/settings/billing/invoices"
+	RouteOrgSettingsBilling            = "/[org]/~/settings/billing"
+	RouteOrgSettingsClassification     = "/[org]/~/settings/classification"
+	RouteOrgSettingsGeneral            = "/[org]/~/settings/general"
+	RouteOrgSettingsMembers            = "/[org]/~/settings/members"
+	RouteOrgSettings                   = "/[org]/~/settings"
+	RouteOrgSettingsRoles              = "/[org]/~/settings/roles"
+	RouteOrgSettingsSso                = "/[org]/~/settings/sso"
+	RouteOrgSettingsTeams              = "/[org]/~/settings/teams"
+	RouteOrgSupportAbuse               = "/[org]/~/support/abuse"
+	RouteOrgSupportAsk                 = "/[org]/~/support/ask"
+	RouteOrgSupportCasesID             = "/[org]/~/support/cases/[id]"
+	RouteOrgSupportMyCases             = "/[org]/~/support/my-cases"
+	RouteOrgSupport                    = "/[org]/~/support"
+	RouteOrgSupportSubmit              = "/[org]/~/support/submit"
+	RouteOrgUsage                      = "/[org]/~/usage"
+	RouteCliLogin                      = "/cli/login"
 )
 
-// Routes is every pattern above, in manifest order — 39 routes.
+// Routes is every pattern above, in manifest order — 40 routes.
 var Routes = []string{
 	RouteOrgProjectArchitecture,
 	RouteOrgProjectClusters,
@@ -77,6 +78,7 @@ var Routes = []string{
 	RouteOrgRunners,
 	RouteOrgSettingsAccess,
 	RouteOrgSettingsActivity,
+	RouteOrgSettingsBillingEarlyAccess,
 	RouteOrgSettingsBillingInvoices,
 	RouteOrgSettingsBilling,
 	RouteOrgSettingsClassification,

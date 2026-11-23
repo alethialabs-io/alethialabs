@@ -41,13 +41,27 @@ import {
 	assertPaidConversionAllowed,
 	hasAcceptedCurrentDocuments,
 } from "@/lib/billing/eligibility";
-import type { PayerCapacity } from "@repo/legal/commerce";
+import { EU_MEMBER_STATES, type PayerCapacity, vatIdGivenOf } from "@repo/legal/commerce";
 import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { countBillableSeats } from "@/lib/billing/seats";
 import type { TaxIdType } from "@/lib/billing/tax-ids";
+import {
+	type OrderBillingAddressInput,
+	type PaidOrderCharge,
+	type PreparedOrder,
+	preparePaidOrder,
+	recordPaidOrder,
+	taxIdRefusal,
+} from "@/lib/billing/paid-order";
+import type { SaleAmount } from "@/lib/billing/turnover";
 import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
 import { type Money, money } from "@repo/format";
-import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
+import {
+	aiPlanUnitAmountCents,
+	type SupportedCurrency,
+	planMeta,
+	planUnitAmountCents,
+} from "@repo/plan-catalog";
 import { currencyFromRequest } from "@/lib/billing/currency";
 import { personTrialAvailable, releaseTrial, reserveTrial, trialSalesOpen } from "@/lib/billing/trial";
 import { isManualGrantExpired, resolvePlanEntitlements } from "@/lib/billing/plan";
@@ -1231,15 +1245,64 @@ function sweepOutcomes(sweep: IncompleteSweep): PaymentOutcome[] {
  * have one — so `tests/billing/eligibility-coverage.test.ts` reds when an exported action in this
  * file reaches Stripe's subscription/payment APIs without passing through here.
  */
-async function gatePaidConversion(actor: {
-	userId: string;
-	orgId: string;
-}): Promise<void> {
-	await assertOrgPaidConversionAllowed(actor.userId, actor.orgId);
+async function gatePaidConversion(
+	actor: {
+		userId: string;
+		orgId: string;
+	},
+	sale?: SaleAmount | null,
+): Promise<void> {
+	// The sale is passed only when known, so a trial (no charge) asks the gate exactly as before.
+	if (sale) await assertOrgPaidConversionAllowed(actor.userId, actor.orgId, sale);
+	else await assertOrgPaidConversionAllowed(actor.userId, actor.orgId);
 }
 
+/**
+ * The catalog price of what is about to be sold, for the gate's threshold check ("stop BEFORE the sale
+ * that crosses", #7324). The catalog, not Stripe: the gate runs before any Stripe call, and the
+ * threshold check converts conservatively anyway. Null when the product has no list price (Enterprise).
+ */
+function catalogSale(amountMinor: () => number, currency: SupportedCurrency): SaleAmount | null {
+	try {
+		return { amountMinor: amountMinor(), currency };
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Whether Checkout may collect a tax id from this org's buyer (#7324). Never for an EU organization,
+ * whatever `STRIPE_TAX_ENABLED` says: an EU VAT number reaches the order only through the declaration,
+ * where the gate has already judged it, and Checkout's own field would let a non-BG EU business with
+ * a VAT number pay — the supply TAX §3.3 forbids before Art. 97a. An org with no declared country is
+ * treated as EU: fail-closed.
+ */
+function checkoutMayCollectTaxId(billingCountry: string | null | undefined): boolean {
+	const country = billingCountry?.trim().toUpperCase() ?? "";
+	return country.length === 2 && !EU_MEMBER_STATES.includes(country);
+}
+
+/** The first invoice's total and currency on a freshly minted subscription, for the order record. */
+function firstInvoiceCharge(
+	invoice: Pick<Stripe.Invoice, "total" | "currency"> | null,
+	fallback: SaleAmount | null,
+	currency: string,
+): { totalMinorUnits: number; currency: string } {
+	if (invoice) return { totalMinorUnits: invoice.total, currency: invoice.currency };
+	return { totalMinorUnits: fallback?.amountMinor ?? 0, currency: fallback?.currency ?? currency };
+}
+
+/**
+ * Starts hosted Checkout for the active org's plan. The org's payer facts are read by the gate, and the
+ * order is recorded (`commerce_order`) once the session exists (#7324).
+ *
+ * @param opts.billingAddress the billing address collected with the declaration, written to the
+ *   customer before the session; omitted, the customer must already carry a complete address in the
+ *   declared country, or the purchase is refused before Stripe is asked for a session.
+ */
 export async function createCheckoutSession(
 	plan: PaidPlan,
+	opts?: { billingAddress?: OrderBillingAddressInput },
 ): Promise<{ url: string }> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
@@ -1253,14 +1316,16 @@ export async function createCheckoutSession(
 	// The row predicate (ADR 0004 D5, D7), on a row read after the guard, before the lock and any Stripe write.
 	const rowRefusal = orgRowBlocksNewPlan(await getOrgBilling(actor.orgId));
 	if (rowRefusal) throw new Error(rowRefusal);
-	await gatePaidConversion(actor);
+	await gatePaidConversion(actor, catalogSale(() => planUnitAmountCents(plan, "usd"), "usd"));
 	// The same two org-plan keys `createSubscriptionIntent` takes, in the same order (ADR 0004 D3,
 	// `withOrgPlanPurchaseKeys`): an intent and a Checkout in two tabs run one after another, so the second
 	// one's live check runs after the first one's Stripe writes. That orders them; it does not stop a double
 	// plan. An intent's subscription stays `incomplete` until it is paid, the live check does not count
 	// `incomplete`, and Checkout has no sweep, so a Checkout after an unpaid intent still opens a session
 	// beside it (ADR 0004 C21, owned by O6).
-	const run = await withOrgPlanPurchaseKeys(actor.orgId, (lease) => startCheckoutSession(actor, plan, lease));
+	const run = await withOrgPlanPurchaseKeys(actor.orgId, (lease) =>
+		startCheckoutSession(actor, plan, lease, opts?.billingAddress),
+	);
 	if (!run.ran) throw new Error(run.lost ? PURCHASE_STOPPED : PURCHASE_IN_PROGRESS);
 	return run.value;
 }
@@ -1288,6 +1353,7 @@ async function startCheckoutSession(
 	actor: { orgId: string; userId: string },
 	plan: PaidPlan,
 	lease: PurchaseLease,
+	billingAddress?: OrderBillingAddressInput,
 ): Promise<{ url: string }> {
 	const cfg = getStripeConfig();
 	// §4.4 rule 1: `ensureCustomer` may create the org's customer, a Stripe write.
@@ -1296,12 +1362,24 @@ async function startCheckoutSession(
 	// The row alone misses a live plan whose webhook has not been written yet (#5977).
 	const livePlan = await liveOrgPlanCheck(customerId);
 	if (livePlan) throw new Error(livePlan);
-	// Stripe Tax: compute VAT/sales tax + collect the customer's Tax/VAT id (EU B2B
-	// reverse-charge). Gated until the account's Tax settings are configured.
+	// The payer's address on the customer BEFORE the session (#7324), so the first invoice carries it.
+	// §4.4 rule 1: it may write the customer.
+	await fenceFor(lease)();
+	const order = await preparePaidOrder({
+		orgId: actor.orgId,
+		userId: actor.userId,
+		customerId,
+		billingAddress,
+		stripe: getStripe(),
+	});
+	// Stripe Tax: compute VAT/sales tax. Tax-id collection is a SEPARATE question (#7324): never for an
+	// EU organization, whose VAT number reaches the order only through the declaration.
 	const tax: Partial<Stripe.Checkout.SessionCreateParams> = isStripeTaxEnabled()
 		? {
 				automatic_tax: { enabled: true },
-				tax_id_collection: { enabled: true },
+				...(checkoutMayCollectTaxId(order.billingCountry)
+					? { tax_id_collection: { enabled: true } }
+					: {}),
 				customer_update: { name: "auto", address: "auto" },
 			}
 		: {};
@@ -1339,6 +1417,26 @@ async function startCheckoutSession(
 	if (!session.url) {
 		await closeOutCheckoutSession(session.id, actor.orgId);
 		throw new Error("Stripe did not return a checkout URL.");
+	}
+	// The order record before the URL leaves (#7324). A record that cannot be written closes the session
+	// out: a payable artifact with no order behind it is the gap this record exists to close.
+	try {
+		await recordPaidOrder(order, {
+			productId: plan,
+			...firstInvoiceCharge(
+				null,
+				session.amount_total === null
+					? null
+					: { amountMinor: session.amount_total, currency: session.currency ?? "usd" },
+				session.currency ?? "usd",
+			),
+			periodDays: 30,
+			renewsAutomatically: true,
+			stripeSubscriptionId: typeof session.subscription === "string" ? session.subscription : null,
+		});
+	} catch (err) {
+		await closeOutCheckoutSession(session.id, actor.orgId);
+		throw err;
 	}
 	return { url: session.url };
 }
@@ -1396,7 +1494,16 @@ export interface SubscriptionIntent {
  */
 export async function createSubscriptionIntent(
 	plan: PaidPlan,
-	opts?: { billingEmail?: string; currency?: SupportedCurrency },
+	opts?: {
+		billingEmail?: string;
+		currency?: SupportedCurrency;
+		/**
+		 * The billing address the declaration step collected (#7324), written to the customer BEFORE
+		 * the subscription so its first invoice carries it. Omitted, the customer's existing address
+		 * is used, and a customer with none is refused.
+		 */
+		billingAddress?: OrderBillingAddressInput;
+	},
 ): Promise<SubscriptionIntent | { error: string }> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
@@ -1410,7 +1517,8 @@ export async function createSubscriptionIntent(
 	// Stripe write (#5714): the org's unlinked paid setup must not get a second plan beside it.
 	const openSetup = await openSetupRefusal(actor);
 	if (openSetup) return { error: openSetup };
-	await gatePaidConversion(actor);
+	const saleCurrency = opts?.currency ?? "usd";
+	await gatePaidConversion(actor, catalogSale(() => planUnitAmountCents(plan, saleCurrency), saleCurrency));
 	// One purchase per org at a time (#5489): two tabs that each read "nothing in flight" before either
 	// minted would otherwise each mint a payable subscription. ADR 0004 D3: the advisory key, then the
 	// `org-plan:<org>` lease inside it (`withOrgPlanPurchaseKeys`).
@@ -1430,7 +1538,9 @@ export async function createSubscriptionIntent(
 async function startOrgSubscription(
 	actor: { orgId: string; userId: string },
 	plan: PaidPlan,
-	opts: { billingEmail?: string; currency?: SupportedCurrency } | undefined,
+	opts:
+		| { billingEmail?: string; currency?: SupportedCurrency; billingAddress?: OrderBillingAddressInput }
+		| undefined,
 	lease: PurchaseLease,
 ): Promise<SubscriptionIntent | { error: string }> {
 	const fence = fenceFor(lease);
@@ -1456,6 +1566,16 @@ async function startOrgSubscription(
 	// refuses rather than get a second plan minted beside it (#5977, ADR 0004 D2 (c)).
 	const livePlan = await liveOrgPlanCheck(customerId);
 	if (livePlan) return { error: livePlan };
+	// The payer's address (and a recordable VAT number) on the customer BEFORE the mint (#7324): the
+	// first invoice is finalised at creation and snapshots the customer then. §4.4 rule 1: a Stripe write.
+	await fence();
+	const order = await preparePaidOrder({
+		orgId: actor.orgId,
+		userId: actor.userId,
+		customerId,
+		billingAddress: opts?.billingAddress,
+		stripe: getStripe(),
+	});
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
 		: {};
@@ -1508,6 +1628,20 @@ async function startOrgSubscription(
 		await closeOutMintedSubscription(sub, mintedOn);
 		throw new Error("Stripe did not return a payment client secret.");
 	}
+	// The order record before the client secret leaves (#7324); one that cannot be written closes the
+	// subscription out (§4.4 rule 4) rather than hand out a payable intent with no order behind it.
+	try {
+		await recordPaidOrder(order, {
+			productId: plan,
+			...firstInvoiceCharge(invoice, null, currency),
+			periodDays: 30,
+			renewsAutomatically: true,
+			stripeSubscriptionId: sub.id,
+		});
+	} catch (err) {
+		await closeOutMintedSubscription(sub, mintedOn);
+		throw err;
+	}
 	return { clientSecret, subscriptionId: sub.id, currency };
 }
 
@@ -1521,7 +1655,12 @@ async function startOrgSubscription(
  */
 export async function createAiSubscriptionIntent(
 	tier: PaidAiTier,
-	opts?: { billingEmail?: string; currency?: SupportedCurrency },
+	opts?: {
+		billingEmail?: string;
+		currency?: SupportedCurrency;
+		/** As `createSubscriptionIntent`'s: written to the customer before the mint (#7324). */
+		billingAddress?: OrderBillingAddressInput;
+	},
 ): Promise<SubscriptionIntent> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
@@ -1538,7 +1677,8 @@ export async function createAiSubscriptionIntent(
 			"This organization already has an active AI subscription — change it instead.",
 		);
 	}
-	await gatePaidConversion(actor);
+	const saleCurrency = opts?.currency ?? "usd";
+	await gatePaidConversion(actor, catalogSale(() => aiPlanUnitAmountCents(tier, saleCurrency), saleCurrency));
 	// The AI purchase's own lock (ADR 0002 §10.2 F2), not the org-plan one: the AI subscription writes the
 	// org's AI slot only, and the org-plan sweep never touches it. Two AI purchases of one org run one after
 	// another. This flow has no sweep and no live check of its own (ADR 0002 C22), so the lock orders the
@@ -1555,13 +1695,23 @@ export async function createAiSubscriptionIntent(
 async function startAiSubscription(
 	actor: { orgId: string; userId: string },
 	tier: PaidAiTier,
-	opts: { billingEmail?: string; currency?: SupportedCurrency } | undefined,
+	opts:
+		| { billingEmail?: string; currency?: SupportedCurrency; billingAddress?: OrderBillingAddressInput }
+		| undefined,
 ): Promise<SubscriptionIntent> {
 	const customerId = await ensureCustomer(
 		actor.orgId,
 		actor.userId,
 		opts?.billingEmail,
 	);
+	// The payer's address on the customer before the mint (#7324), as the org-plan intent does.
+	const order = await preparePaidOrder({
+		orgId: actor.orgId,
+		userId: actor.userId,
+		customerId,
+		billingAddress: opts?.billingAddress,
+		stripe: getStripe(),
+	});
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
 		: {};
@@ -1590,7 +1740,39 @@ async function startAiSubscription(
 	if (!clientSecret) {
 		throw new Error("Stripe did not return a payment client secret.");
 	}
+	await recordOrderOrCancel(order, {
+		productId: tier,
+		...firstInvoiceCharge(invoice, null, currency),
+		periodDays: 30,
+		renewsAutomatically: true,
+		stripeSubscriptionId: sub.id,
+	}, () => getStripe().subscriptions.cancel(sub.id));
 	return { clientSecret, subscriptionId: sub.id, currency };
+}
+
+/**
+ * Records the order for a mint that has no close-out of its own (the AI subscription, the credit
+ * pack). A failed write UNDOES the mint with `undo` — best effort, logged when it fails too — and
+ * throws, so nothing payable leaves without its order record (#7324).
+ */
+async function recordOrderOrCancel(
+	order: PreparedOrder,
+	charge: PaidOrderCharge,
+	undo: () => Promise<unknown>,
+): Promise<void> {
+	try {
+		await recordPaidOrder(order, charge);
+	} catch (err) {
+		try {
+			await undo();
+		} catch (undoErr) {
+			log.error("[billing] the order record failed and the mint could not be undone", {
+				err: undoErr,
+				organization_id: order.organizationId,
+			});
+		}
+		throw err;
+	}
 }
 
 /**
@@ -1842,7 +2024,17 @@ interface NewOrgSubscriptionOpts {
 	 * them on. Omitting them refuses the sale exactly as an undeclared org would: the gate's
 	 * inputs are optional here, its verdict is not.
 	 */
-	payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
+	payer?: {
+		capacity: PayerCapacity | null;
+		billingCountry: string | null;
+		/**
+		 * The Early Access facts (#7324), optional so the create-a-team sheet keeps compiling until it
+		 * passes them (#6930). Omitted, the gate reads them as UNDECLARED: an EU organization outside
+		 * Bulgaria and a US payer are refused, never guessed.
+		 */
+		vatIdStatus?: "given" | "not_given" | null;
+		billingState?: string | null;
+	};
 }
 
 /**
@@ -1903,8 +2095,15 @@ export async function createNewOrgSubscriptionIntent(
 		organizationId: actor.userId,
 		capacity: opts.payer?.capacity ?? null,
 		billingCountry: opts.payer?.billingCountry ?? null,
+		vatIdGiven: vatIdGivenOf(opts.payer?.vatIdStatus ?? null),
+		billingState: opts.payer?.billingState ?? null,
+		sale: catalogSale(() => planUnitAmountCents(plan, opts.currency ?? "usd"), opts.currency ?? "usd"),
 	};
 	await assertPaidConversionAllowed(newOrgContext);
+	// NO ORDER RECORD HERE, and that is a known gap rather than an oversight (#7324): `commerce_order`
+	// names an organization, and this purchase mints before the organization exists. Its order belongs
+	// at the link (`linkSubscriptionToNewOrg`), once the declaration — attestation and VAT facts included
+	// — has reached the new org; that flow is #6930's and #7004's to finish.
 
 	// One create-a-team purchase per user at a time (#5489): two tabs that each read "nothing in flight"
 	// before either minted would otherwise each mint a payable subscription.
@@ -3437,6 +3636,17 @@ export async function attachTaxIdToCustomer(input: {
 	if (customer.deleted || customer.metadata?.created_by !== actor.userId) {
 		throw new Error("Not allowed to set a tax id on this customer.");
 	}
+	// The tax-ID rule (#7324), judged on the country on the customer — the one the create-a-team sheet
+	// wrote with `setCustomerBillingAddress` before this. No org exists yet, so there is no declared VAT
+	// status to read; no country refuses an `eu_vat` (fail-closed).
+	const verdict = taxIdRefusal({
+		type: input.type,
+		value: input.value,
+		country: customer.address?.country ?? null,
+		vatIdStatus: null,
+		vatRegistered: LEGAL_ENTITY.vatRegistered,
+	});
+	if (!verdict.ok) throw new Error(verdict.message);
 
 	const existing = await stripe.customers.listTaxIds(input.customerId, {
 		limit: 5,
@@ -3444,11 +3654,10 @@ export async function attachTaxIdToCustomer(input: {
 	for (const t of existing.data) {
 		await stripe.customers.deleteTaxId(input.customerId, t.id);
 	}
-	const trimmed = input.value.trim();
-	if (trimmed) {
+	if (verdict.value) {
 		await stripe.customers.createTaxId(input.customerId, {
 			type: input.type,
-			value: trimmed,
+			value: verdict.value,
 		});
 	}
 	return { ok: true };
@@ -3520,10 +3729,17 @@ export async function createCreditPackIntent(
 	}
 	const pack = creditPack(packId);
 	if (!pack) throw new Error("Unknown credit pack.");
-	await gatePaidConversion(actor);
+	await gatePaidConversion(actor, { amountMinor: pack.amountCents, currency: "usd" });
 
 	const customerId = await ensureCustomer(actor.orgId, actor.userId);
 	const stripe = getStripe();
+	// The payer's address on the customer before the invoice is finalised (#7324).
+	const order = await preparePaidOrder({
+		orgId: actor.orgId,
+		userId: actor.userId,
+		customerId,
+		stripe,
+	});
 	// Metadata identifies the purchase on the invoice.payment_succeeded event.
 	const metadata = {
 		organization_id: actor.orgId,
@@ -3562,7 +3778,19 @@ export async function createCreditPackIntent(
 	if (!clientSecret) {
 		throw new Error("Stripe did not return a payment client secret for the invoice.");
 	}
-	return { clientSecret, invoiceId: invoice.id ?? draft.id };
+	const invoiceId = invoice.id ?? draft.id;
+	await recordOrderOrCancel(
+		order,
+		{
+			productId: `ai_credits:${pack.id}`,
+			totalMinorUnits: invoice.total,
+			currency: invoice.currency,
+			periodDays: 0,
+			renewsAutomatically: false,
+		},
+		() => stripe.invoices.voidInvoice(invoiceId),
+	);
+	return { clientSecret, invoiceId };
 }
 
 // ── Payment methods (embedded card management) ──────────────────────────────
@@ -3944,7 +4172,14 @@ export async function updateBillingAddress(
 	return { ok: true };
 }
 
-/** Sets (or clears) the active org's tax id — one per customer for our UI. */
+/**
+ * Sets (or clears) the active org's tax id — one per customer for our UI.
+ *
+ * Judged by the tax-ID rule first (#7324, `taxIdRefusal`): no EU VAT number for a non-BG EU
+ * organization while the seller is not VAT-registered, none at all for an organization that declared
+ * "no VAT number", and an `eu_vat` only in the billing country's format. Read from the org's declared
+ * facts, not from the customer, so the declaration and the tax ids cannot disagree.
+ */
 export async function saveTaxId(
 	type: TaxIdType,
 	value: string,
@@ -3953,6 +4188,14 @@ export async function saveTaxId(
 	requireHostedBilling();
 	const billing = await getOrgBilling(actor.orgId);
 	if (!billing?.stripeCustomerId) throw new Error("No billing account yet.");
+	const verdict = taxIdRefusal({
+		type,
+		value,
+		country: billing.billingCountry ?? null,
+		vatIdStatus: billing.vatIdStatus ?? null,
+		vatRegistered: LEGAL_ENTITY.vatRegistered,
+	});
+	if (!verdict.ok) throw new Error(verdict.message);
 
 	const stripe = getStripe();
 	const existing = await stripe.customers.listTaxIds(billing.stripeCustomerId, {
@@ -3961,11 +4204,10 @@ export async function saveTaxId(
 	for (const t of existing.data) {
 		await stripe.customers.deleteTaxId(billing.stripeCustomerId, t.id);
 	}
-	const trimmed = value.trim();
-	if (trimmed) {
+	if (verdict.value) {
 		await stripe.customers.createTaxId(billing.stripeCustomerId, {
 			type,
-			value: trimmed,
+			value: verdict.value,
 		});
 	}
 	return { ok: true };

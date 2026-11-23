@@ -4,7 +4,7 @@
 import { Button, Heading, Text } from "@react-email/components";
 import { EmailLayout } from "@repo/email/components/layout";
 import { primaryButton, text } from "@repo/email/components/theme";
-import { BillingLegal, Callout, SummaryTable } from "./billing-shared";
+import { BillingLegal, Callout, SummaryTable, invoiceSentence } from "./billing-shared";
 
 export interface ReceiptEmailProps {
 	/** Organization the subscription belongs to. */
@@ -17,8 +17,10 @@ export interface ReceiptEmailProps {
 	periodLabel?: string;
 	/** Card used, e.g. "Visa •••• 4242". */
 	cardLabel?: string;
-	/** Stripe invoice number, e.g. "ABCD-0001". */
+	/** The фактура number (ten Arabic digits), only when one was issued. Never Stripe's number. */
 	invoiceNumber?: string;
+	/** Whether the фактура PDF is attached. False: the email says the invoice follows. */
+	invoiceAttached: boolean;
 	/** Absolute link to the org's billing settings. */
 	billingUrl?: string;
 }
@@ -28,8 +30,8 @@ export function subject(props: Pick<ReceiptEmailProps, "amountLabel">): string {
 	return `Your Alethia receipt — ${props.amountLabel}`;
 }
 
-/** Sent on invoice.payment_succeeded — a branded receipt; the compliant Stripe
- *  invoice PDF is attached by the sender (lib/email/billing-email.ts). */
+/** Sent on invoice.payment_succeeded — a branded receipt; the sender
+ *  (lib/email/billing-email.ts) attaches the фактура when one was issued, never Stripe's PDF. */
 export function ReceiptEmail({
 	orgName,
 	planLabel,
@@ -37,6 +39,7 @@ export function ReceiptEmail({
 	periodLabel,
 	cardLabel,
 	invoiceNumber,
+	invoiceAttached,
 	billingUrl = "https://alethialabs.io/dashboard/settings/billing",
 }: ReceiptEmailProps) {
 	return (
@@ -52,8 +55,7 @@ export function ReceiptEmail({
 			</Heading>
 			<Text className="a-text-2" style={text.body}>
 				Thanks — we&apos;ve received your payment for{" "}
-				<strong>{orgName}</strong>. Your Alethia {planLabel} plan is active. A
-				PDF copy of this invoice is attached for your records.
+				<strong>{orgName}</strong>. Your Alethia {planLabel} plan is active. {invoiceSentence(invoiceAttached)}
 			</Text>
 
 			<SummaryTable
@@ -86,7 +88,8 @@ ReceiptEmail.PreviewProps = {
 	amountLabel: "$58.00",
 	periodLabel: "Jul 3 – Aug 3, 2026",
 	cardLabel: "Visa •••• 4242",
-	invoiceNumber: "ABCD-0001",
+	invoiceNumber: "0000000001",
+	invoiceAttached: true,
 	billingUrl: "https://alethialabs.io/dashboard/settings/billing",
 } satisfies ReceiptEmailProps;
 

@@ -1,0 +1,233 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Off-box backup: install it on the production box (BKP-L1, #7243).
+#
+# THE OPERATOR PATH FOR STEPS 3 AND 4 of deploy/prod/backup/ops/README.md (setup steps 7 and 9 of
+# docs/ops/restore-runbook.md). Those steps say `ssh root@<box> …/setup-box.sh --values - < values.env`.
+# Nobody can do that from a laptop, BY DESIGN: the box accepts only the deploy key, and the deploy
+# key lives only in the vault (`alethia/prod/env`), which only CI reads, over OIDC. Handing a person
+# that key, or giving the box a vault credential of its own, would widen what one stolen laptop or
+# one compromised box reaches. So the setup runs from here, through the same door the deploy uses.
+#
+#   mode=dry-run   setup-box.sh --values - --dry-run   validates the values, names what it would do,
+#                                                      changes nothing (README step 3)
+#   mode=apply     setup-box.sh --values -             installs age, writes /etc/alethia/backup.env,
+#                                                      enables the timers, takes the first copy and
+#                                                      checks it; ends RESULT: PASS|FAIL (README step 4)
+#   mode=status    backup.sh status on the box         the newest complete copy and its age, read
+#                                                      with the box's own writer key
+#
+# THE SAME DOOR AS THE DEPLOY, step for step (deploy-console.yml `deploy` job and
+# scripts/ci/deploy-console-assemble-env.sh): the `production` environment, the read-only
+# alethia-deploy-reader role over OIDC (vars.DEPLOY_READER_ROLE_ARN, GetSecretValue on the one
+# secret), DEPLOY_HOST and DEPLOY_SSH_PRIVATE_KEY from the vault, `root@` with the deploy key. The
+# `production` environment's branch policy decides which ref may dispatch it, as it does for the
+# deploy. HOST KEY: the deploy connects with `StrictHostKeyChecking=accept-new` against an empty
+# known_hosts. This does the same unless the optional repository variable PROD_BOX_SSH_HOST_KEY
+# holds the box's known_hosts line (`<host> ssh-ed25519 AAAA…`), in which case the key is pinned and
+# anything else is refused. It never uses `StrictHostKeyChecking=no`.
+#
+# THE VALUES. values.env is built in $RUNNER_TEMP (0600) and goes to the box on the SSH connection's
+# stdin; setup-box.sh writes it only into /etc/alethia/backup.env. Constants: endpoint, region,
+# provider AWS, retention bucket. From repository variables (outputs of infra/backup-account and of
+# generate-age-identities.sh, none of them secret):
+#   BACKUP_S3_BUCKET           the bucket name
+#   BACKUP_S3_SSE_KMS_KEY_ID   the KMS key ARN the bucket encrypts with
+#   BACKUP_AGE_RECIPIENTS      the three age public keys, space-separated
+# From the vault (runbook setup step 5): BACKUP_S3_ACCESS_KEY_ID, BACKUP_S3_SECRET_ACCESS_KEY.
+# Every secret is masked before it is used and never echoed. The values file and the SSH key are
+# deleted at the end of the job, whatever happened.
+#
+# NEVER MID-DEPLOY. Its own non-cancelling group (a cancelled setup can stop between writing
+# backup.env and enabling the timers; re-running it is safe, but a cancel is never the right tool).
+# It does NOT share `deploy-console`: GitHub keeps one pending run per group, so a queued deploy
+# would be silently replaced by this run, or this by it. Instead the first step refuses while a
+# Deploy Console run is queued or in progress.
+#
+# COST: zero. Runner minutes, and the first copy's uploads into the backup account.
+#
+# Never add `set -x` here: the steps hold the deploy key and the writer secret.
+
+name: Backup box setup (operator)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run validates and changes nothing; apply installs and takes the first copy; status reads the newest copy"
+        required: true
+        type: choice
+        default: dry-run
+        options:
+          - dry-run
+          - apply
+          - status
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-box-setup
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    name: setup-box.sh on the production box (${{ inputs.mode }})
+    runs-on: ubuntu-latest
+    environment: production
+    # The first copy is the whole database and every SeaweedFS bucket; the unit allows it 3h.
+    timeout-minutes: 200
+    permissions:
+      contents: read
+      actions: read # the "no deploy in flight" check lists Deploy Console runs
+      id-token: write # assume the read-only vault role via GitHub OIDC; no stored secrets
+    env:
+      MODE: ${{ inputs.mode }}
+      ASM_SECRET_ID: alethia/prod/env
+      ASM_REGION: eu-central-1
+      BOX_DIR: /opt/alethia/deploy/prod/backup
+    steps:
+      # No checkout: nothing in the tree is needed here, and no token is left in .git/config in the
+      # one job that holds the production host key.
+      - name: Refuse while a production deploy is queued or running
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          busy=0
+          for s in queued in_progress waiting pending requested; do
+            n="$(gh api "repos/$REPO/actions/workflows/deploy-console.yml/runs?status=$s&per_page=1" --jq '.total_count')"
+            busy=$((busy + n))
+          done
+          if [ "$busy" -gt 0 ]; then
+            echo "::error::A Deploy Console run is queued or in progress. It restarts the stack this touches; dispatch this again after it finishes."
+            exit 1
+          fi
+          echo "no Deploy Console run in flight"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.DEPLOY_READER_ROLE_ARN }}
+          aws-region: ${{ env.ASM_REGION }}
+
+      - name: Read the vault, write the SSH key and values.env
+        env:
+          BACKUP_S3_BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
+          BACKUP_S3_SSE_KMS_KEY_ID: ${{ vars.BACKUP_S3_SSE_KMS_KEY_ID }}
+          BACKUP_AGE_RECIPIENTS: ${{ vars.BACKUP_AGE_RECIPIENTS }}
+          PROD_BOX_SSH_HOST_KEY: ${{ vars.PROD_BOX_SSH_HOST_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          json="$(aws secretsmanager get-secret-value --secret-id "$ASM_SECRET_ID" --region "$ASM_REGION" --query SecretString --output text)"
+          val() { printf '%s' "$json" | jq -r --arg k "$1" '.[$k] // ""'; }
+
+          HOST="$(val DEPLOY_HOST)"
+          [ -n "$HOST" ] || { echo "::error::DEPLOY_HOST is not in $ASM_SECRET_ID."; exit 1; }
+          key="$(val DEPLOY_SSH_PRIVATE_KEY)"
+          [ -n "$key" ] || { echo "::error::DEPLOY_SSH_PRIVATE_KEY is not in $ASM_SECRET_ID."; exit 1; }
+          while IFS= read -r line; do
+            [ -n "$line" ] && echo "::add-mask::$line"
+          done <<<"$key"
+
+          # Same place and mode as the deploy writes it.
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$key" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          unset key
+          printf '%s' "$HOST" > "$RUNNER_TEMP/box-host"
+
+          if [ -n "$PROD_BOX_SSH_HOST_KEY" ]; then
+            printf '%s\n' "$PROD_BOX_SSH_HOST_KEY" > "$RUNNER_TEMP/box-known-hosts"
+            echo "host key: pinned from PROD_BOX_SSH_HOST_KEY"
+          else
+            echo "::warning::PROD_BOX_SSH_HOST_KEY is unset, so the host key is accepted on first use, as the deploy does. Set it to the box's known_hosts line to pin it."
+          fi
+
+          if [ "$MODE" = status ]; then
+            echo "mode=status: no values file needed"
+            exit 0
+          fi
+
+          ak="$(val BACKUP_S3_ACCESS_KEY_ID)"
+          sk="$(val BACKUP_S3_SECRET_ACCESS_KEY)"
+          [ -n "$ak" ] && echo "::add-mask::$ak"
+          [ -n "$sk" ] && echo "::add-mask::$sk"
+          missing=""
+          [ -n "$ak" ] || missing="$missing BACKUP_S3_ACCESS_KEY_ID(vault)"
+          [ -n "$sk" ] || missing="$missing BACKUP_S3_SECRET_ACCESS_KEY(vault)"
+          [ -n "$BACKUP_S3_BUCKET" ] || missing="$missing BACKUP_S3_BUCKET(var)"
+          [ -n "$BACKUP_S3_SSE_KMS_KEY_ID" ] || missing="$missing BACKUP_S3_SSE_KMS_KEY_ID(var)"
+          [ -n "$BACKUP_AGE_RECIPIENTS" ] || missing="$missing BACKUP_AGE_RECIPIENTS(var)"
+          if [ -n "$missing" ]; then
+            echo "::error::missing:$missing"
+            exit 1
+          fi
+
+          # setup-box.sh validates every value again on the box and refuses quotes, `$`, backticks
+          # and newlines; recipients are double-quoted because they hold spaces.
+          {
+            echo "BACKUP_S3_ENDPOINT=https://s3.eu-central-1.amazonaws.com"
+            echo "BACKUP_S3_REGION=eu-central-1"
+            echo "BACKUP_S3_PROVIDER=AWS"
+            echo "BACKUP_S3_BUCKET=$BACKUP_S3_BUCKET"
+            echo "BACKUP_S3_ACCESS_KEY_ID=$ak"
+            echo "BACKUP_S3_SECRET_ACCESS_KEY=$sk"
+            echo "BACKUP_S3_SSE_KMS_KEY_ID=$BACKUP_S3_SSE_KMS_KEY_ID"
+            echo "BACKUP_RETENTION=bucket"
+            echo "BACKUP_AGE_RECIPIENTS=\"$BACKUP_AGE_RECIPIENTS\""
+          } > "$RUNNER_TEMP/values.env"
+          chmod 600 "$RUNNER_TEMP/values.env"
+          unset ak sk json
+          echo "values.env written (names only): BACKUP_S3_ENDPOINT BACKUP_S3_REGION BACKUP_S3_PROVIDER BACKUP_S3_BUCKET BACKUP_S3_ACCESS_KEY_ID BACKUP_S3_SECRET_ACCESS_KEY BACKUP_S3_SSE_KMS_KEY_ID BACKUP_RETENTION BACKUP_AGE_RECIPIENTS"
+
+      - name: Run on the box
+        run: |
+          set -euo pipefail
+          HOST="$(cat "$RUNNER_TEMP/box-host")"
+          opts=(-i "$HOME/.ssh/deploy_key" -o BatchMode=yes -o ServerAliveInterval=60 -o ServerAliveCountMax=5)
+          if [ -s "$RUNNER_TEMP/box-known-hosts" ]; then
+            opts+=(-o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/box-known-hosts")
+          else
+            opts+=(-o StrictHostKeyChecking=accept-new)
+          fi
+          # One remote command line; BOX_DIR is expanded here on purpose (it names the box's path).
+          # shellcheck disable=SC2029
+          box() { ssh "${opts[@]}" "root@$HOST" "$1"; }
+
+          # The scripts come from the box's deployed checkout. Say so plainly if that checkout
+          # predates them, rather than letting ssh report "No such file".
+          rc=0
+          box "test -x '$BOX_DIR/ops/setup-box.sh' && test -x '$BOX_DIR/backup.sh'" || rc=$?
+          if [ "$rc" -eq 255 ]; then
+            echo "::error::ssh to the box failed (exit 255): the connection, the deploy key or the host key was refused. Nothing ran on the box."
+            exit 1
+          elif [ "$rc" -ne 0 ]; then
+            echo "::error::$BOX_DIR/ops/setup-box.sh or backup.sh is missing on the box: its checkout predates BKP-0. Deploy main first (Deploy Console)."
+            exit 1
+          fi
+
+          case "$MODE" in
+            dry-run)
+              box "$BOX_DIR/ops/setup-box.sh --values - --dry-run" < "$RUNNER_TEMP/values.env"
+              ;;
+            apply)
+              box "$BOX_DIR/ops/setup-box.sh --values -" < "$RUNNER_TEMP/values.env"
+              ;;
+            status)
+              # backup.sh reads its configuration from the environment, which the unit loads from
+              # backup.env; do the same here, on the box. Exit 0 fresh, 1 stale, 2 unreadable.
+              box "test -r /etc/alethia/backup.env || { echo 'backup.env is not installed: run mode=apply first' >&2; exit 2; }; set -a; . /etc/alethia/backup.env; set +a; exec '$BOX_DIR/backup.sh' status"
+              ;;
+            *)
+              echo "::error::unknown mode '$MODE'"
+              exit 1
+              ;;
+          esac
+
+      - name: Delete values.env and the SSH key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/values.env" "$RUNNER_TEMP/box-host" "$RUNNER_TEMP/box-known-hosts" "$HOME/.ssh/deploy_key"

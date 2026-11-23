@@ -241,6 +241,28 @@ vi.mock("@/lib/billing/eligibility", () => ({
 		}
 	},
 }));
+// The order record and the pre-mint payer facts (#7324) are their own module, pinned in
+// tests/billing/paid-order.test.ts. Here every order prepares and records, so the tests keep asserting
+// the Stripe orchestration; the tax-ID rule runs for real.
+vi.mock("@/lib/billing/paid-order", async (importActual) => {
+	const actual = await importActual<typeof import("@/lib/billing/paid-order")>();
+	return {
+		...actual,
+		preparePaidOrder: vi.fn(async (input: { orgId: string; userId: string }) => ({
+			organizationId: input.orgId,
+			placedByUserId: input.userId,
+			capacity: "organization",
+			authorityAttestation: "Director",
+			billingCountry: "US",
+			billingState: "NY",
+			vatIdStatus: null,
+			vatId: null,
+			billingName: "Acme",
+			billingAddress: { line1: "1 Main St", line2: null, city: "NYC", postalCode: "10001", region: "NY", country: "US" },
+		})),
+		recordPaidOrder: vi.fn(async () => "order-1"),
+	};
+});
 // The trial's ceilings (REL-L19) count in the bucket table; their decision and store are tested under
 // tests/lib/billing/trial. Here they admit every start, and the offer is open, so the trial cases
 // below keep asserting the Stripe orchestration they were written for.
@@ -2468,9 +2490,11 @@ describe("saveNewOrgSetupDetails", () => {
 // ── attachTaxIdToCustomer / setCustomerBillingAddress (pre-org, created_by-gated)
 describe("attachTaxIdToCustomer", () => {
 	it("replaces existing tax ids with the new one", async () => {
+		// A Bulgarian customer: the one EU country whose VAT number may be recorded today (#7324).
 		stripe.customers.retrieve.mockResolvedValue({
 			deleted: false,
 			metadata: { created_by: "user-1" },
+			address: { country: "BG" },
 		} as never);
 		stripe.customers.listTaxIds.mockResolvedValue({
 			data: [{ id: "txi_old" }],
@@ -2479,15 +2503,41 @@ describe("attachTaxIdToCustomer", () => {
 		const r = await attachTaxIdToCustomer({
 			customerId: "cus_1",
 			type: "eu_vat" as never,
-			value: "  DE123456789  ",
+			value: "  BG123456789  ",
 		});
 
 		expect(r).toEqual({ ok: true });
 		expect(stripe.customers.deleteTaxId).toHaveBeenCalledWith("cus_1", "txi_old");
 		expect(stripe.customers.createTaxId).toHaveBeenCalledWith("cus_1", {
 			type: "eu_vat",
-			value: "DE123456789", // trimmed
+			value: "BG123456789", // trimmed
 		});
+	});
+
+	it("refuses an EU VAT number for a non-BG EU customer, and writes nothing (#7324)", async () => {
+		stripe.customers.retrieve.mockResolvedValue({
+			deleted: false,
+			metadata: { created_by: "user-1" },
+			address: { country: "DE" },
+		} as never);
+
+		await expect(
+			attachTaxIdToCustomer({ customerId: "cus_1", type: "eu_vat" as never, value: "DE123456789" }),
+		).rejects.toThrow(/complimentary Early Access/);
+		expect(stripe.customers.deleteTaxId).not.toHaveBeenCalled();
+		expect(stripe.customers.createTaxId).not.toHaveBeenCalled();
+	});
+
+	it("refuses an EU VAT number when the customer has no country on file (#7324)", async () => {
+		stripe.customers.retrieve.mockResolvedValue({
+			deleted: false,
+			metadata: { created_by: "user-1" },
+		} as never);
+
+		await expect(
+			attachTaxIdToCustomer({ customerId: "cus_1", type: "eu_vat" as never, value: "BG123456789" }),
+		).rejects.toThrow(/EU billing country/);
+		expect(stripe.customers.createTaxId).not.toHaveBeenCalled();
 	});
 
 	it("clears tax ids when given a blank value (no create)", async () => {
@@ -3297,17 +3347,42 @@ describe("saveTaxId", () => {
 	});
 
 	it("replaces existing tax ids with the trimmed value", async () => {
-		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		orgBilling.mockResolvedValue({
+			stripeCustomerId: "cus_1",
+			billingCountry: "BG",
+			vatIdStatus: "given",
+		} as never);
 		stripe.customers.listTaxIds.mockResolvedValue({
 			data: [{ id: "txi_a" }, { id: "txi_b" }],
 		} as never);
 
-		await saveTaxId("eu_vat" as never, "  DE999  ");
+		await saveTaxId("eu_vat" as never, "  BG999999999  ");
 		expect(stripe.customers.deleteTaxId).toHaveBeenCalledTimes(2);
 		expect(stripe.customers.createTaxId).toHaveBeenCalledWith("cus_1", {
 			type: "eu_vat",
-			value: "DE999",
+			value: "BG999999999",
 		});
+	});
+
+	it("refuses an EU VAT number for a non-BG EU organization, and writes nothing (#7324)", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", billingCountry: "DE" } as never);
+
+		await expect(saveTaxId("eu_vat" as never, "DE123456789")).rejects.toThrow(
+			/complimentary Early Access/,
+		);
+		expect(stripe.customers.deleteTaxId).not.toHaveBeenCalled();
+		expect(stripe.customers.createTaxId).not.toHaveBeenCalled();
+	});
+
+	it("records no VAT number for an organization that declared it has none (#7324)", async () => {
+		orgBilling.mockResolvedValue({
+			stripeCustomerId: "cus_1",
+			billingCountry: "GB",
+			vatIdStatus: "not_given",
+		} as never);
+
+		await expect(saveTaxId("gb_vat" as never, "GB123456789")).rejects.toThrow(/no VAT number/);
+		expect(stripe.customers.createTaxId).not.toHaveBeenCalled();
 	});
 
 	it("clears tax ids when given a blank value", async () => {

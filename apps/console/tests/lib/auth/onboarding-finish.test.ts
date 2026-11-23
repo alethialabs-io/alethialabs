@@ -230,7 +230,15 @@ describe("finishOnboarding — the Pro trial behind the purchase gate", () => {
 		expect(await finishOnboarding(pro())).toEqual({ ok: true, data: { slug: "acme-cloud" } });
 		expect(calls).toEqual(["rename", "accept", "scope", "declare", "trial", "complete"]);
 		expect(declarePayer).toHaveBeenCalledWith(
-			{ capacity: "organization", billingCountry: "DE", authorityAttestation: "Founder" },
+			{
+				capacity: "organization",
+				billingCountry: "DE",
+				authorityAttestation: "Founder",
+				// #7324: the VAT-number and state facts, null when the browser sent none.
+				vatIdStatus: null,
+				vatId: null,
+				billingState: null,
+			},
 			{ orgId: "org-1" },
 		);
 		expect(startProTrial).toHaveBeenCalledWith({ orgId: "org-1" });
@@ -241,7 +249,14 @@ describe("finishOnboarding — the Pro trial behind the purchase gate", () => {
 			pro({ payer: { capacity: "consumer", billingCountry: "FR", authorityAttestation: "CEO" } }),
 		);
 		expect(declarePayer).toHaveBeenCalledWith(
-			{ capacity: "consumer", billingCountry: "FR", authorityAttestation: null },
+			{
+				capacity: "consumer",
+				billingCountry: "FR",
+				authorityAttestation: null,
+				vatIdStatus: null,
+				vatId: null,
+				billingState: null,
+			},
 			{ orgId: "org-1" },
 		);
 	});

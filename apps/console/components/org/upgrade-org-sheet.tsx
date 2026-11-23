@@ -6,7 +6,8 @@
 // minus the name step (the org already exists). It DECLARES the payer, opens a subscription
 // intent on the ACTIVE org (createSubscriptionIntent), takes payment through the shared
 // BillingCheckoutForm, then — since a paid org can now collaborate — drops into the
-// shared invite view. Best-effort billing-detail persistence mirrors the create flow.
+// shared invite view. The billing address is collected WITH the declaration and sent with the
+// intent (#7324), so nothing about the payer is written after the card is charged.
 // Shares the two-column shell / invite view / primitives with the create sheet via
 // ./org-purchase-ui. Owner-gated server-side; refuses if a live subscription exists.
 //
@@ -34,11 +35,7 @@ import { ArrowUpRight } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import {
-	createSubscriptionIntent,
-	saveTaxId,
-	updateBillingAddress,
-} from "@/app/server/actions/billing";
+import { createSubscriptionIntent } from "@/app/server/actions/billing";
 import { declarePayer, payerConversionStatus } from "@/app/server/actions/legal";
 import {
 	billingAddressFrom,
@@ -46,8 +43,11 @@ import {
 	type CollectedBilling,
 } from "@/components/billing/billing-checkout-form";
 import {
+	BillingAddressForm,
+	declaredPayerFacts,
 	PayerDeclarationForm,
 	type PayerDeclaration,
+	refusalActionFor,
 } from "@/components/billing/payer-declaration-form";
 import { updateOrgPrimaryAddress } from "@/app/server/actions/org-settings";
 import {
@@ -79,7 +79,7 @@ import {
 	SheetTitle,
 } from "@repo/ui/sheet";
 
-type View = "declare" | "pay" | "invite";
+type View = "declare" | "address" | "pay" | "invite";
 
 /**
  * What the sheet shows before the payer is asked anything, from the one `billing.salesOpen` answer:
@@ -126,11 +126,15 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	// The declared payer facts. Null until the customer answers, and the intent effect below is
 	// gated on it — this is what keeps the conversion from being attempted undeclared.
 	const [declaration, setDeclaration] = useState<PayerDeclaration | null>(null);
+	// The facts the gate accepted, waiting for the billing address (#7324). The intent waits for both.
+	const [declared, setDeclared] = useState<PayerDeclaration | null>(null);
 	const [declaring, setDeclaring] = useState(false);
 	// The gate's own sentence when it refused THIS declaration (a closed market, unaccepted terms),
 	// shown on the declaration step rather than swapped in for the whole sheet: the answer may be
 	// one the customer can change.
 	const [refusal, setRefusal] = useState<string | null>(null);
+	// Where that refusal points, if anywhere — the complimentary Early Access request (#7324).
+	const [refusalAction, setRefusalAction] = useState<{ href: string; label: string } | null>(null);
 	// `selected` is the explicit currency override (undefined = let the server geo-decide);
 	// `currency` is what the created intent actually used (Stripe locks it) — drives display.
 	const [selected, setSelected] = useState<SupportedCurrency | undefined>(undefined);
@@ -155,7 +159,10 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	// A refusal describes the declaration that produced it. Once the payer changes a fact it is a
 	// sentence about an answer they no longer give (F031) — it names the previous country — so any
 	// edit drops it. Stable identity, so the form subscribes once.
-	const clearRefusal = useCallback(() => setRefusal(null), []);
+	const clearRefusal = useCallback(() => {
+		setRefusal(null);
+		setRefusalAction(null);
+	}, []);
 
 	// Announce the attempt when the sheet opens, but open NOTHING: the subscription intent is an
 	// effect of the declaration, not of the sheet being visible.
@@ -184,7 +191,12 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	useEffect(() => {
 		if (!open || !declaration) return;
 		let active = true;
-		createSubscriptionIntent("team", selected ? { currency: selected } : undefined)
+		// The address the declaration collected goes WITH the intent (#7324): the server writes it to the
+		// customer before the subscription exists, so the first invoice carries it.
+		createSubscriptionIntent("team", {
+			...(selected ? { currency: selected } : {}),
+			...(declaration.billingAddress ? { billingAddress: declaration.billingAddress } : {}),
+		})
 			.then((intent) => {
 				if (!active) return;
 				if ("error" in intent) {
@@ -211,8 +223,10 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 		setClientSecret(null);
 		setError(null);
 		setDeclaration(null);
+		setDeclared(null);
 		setDeclaring(false);
 		setRefusal(null);
+		setRefusalAction(null);
 		setSelected(undefined);
 		setCurrency("usd");
 		setInviteEmail("");
@@ -236,17 +250,19 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 		if (declaring) return;
 		setDeclaring(true);
 		setRefusal(null);
+		setRefusalAction(null);
 		try {
-			await declarePayer(next);
-			const verdict = await payerConversionStatus(next);
+			const facts = declaredPayerFacts(next);
+			await declarePayer(facts);
+			const verdict = await payerConversionStatus(facts);
 			if (!verdict.allowed) {
 				setRefusal(verdict.message);
+				setRefusalAction(refusalActionFor(verdict.reason, orgSlug));
 				return;
 			}
-			setClientSecret(null);
-			setError(null);
-			setDeclaration(next);
-			setView("pay");
+			// The address comes next, still before any intent (#7324).
+			setDeclared(next);
+			setView("address");
 		} catch (e) {
 			setRefusal(
 				e instanceof Error
@@ -256,6 +272,18 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 		} finally {
 			setDeclaring(false);
 		}
+	}
+
+	/**
+	 * The billing address, collected after the gate said yes and before the intent: it rides WITH the
+	 * intent, so the customer carries it before the first invoice is finalised (#7324).
+	 */
+	function handleAddress(address: NonNullable<PayerDeclaration["billingAddress"]>) {
+		if (!declared) return;
+		setClientSecret(null);
+		setError(null);
+		setDeclaration({ ...declared, billingAddress: address });
+		setView("pay");
 	}
 
 	/** The currency toggle: drops the intent made in the old currency, then asks in the new one. */
@@ -271,24 +299,17 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	}
 
 	/**
-	 * Card confirmed — the webhook activates the entitlement; persist billing details
-	 * (best-effort) on the active org's customer, refresh the workspace so Pro features
+	 * Card confirmed — the webhook activates the entitlement; refresh the workspace so Pro features
 	 * unlock immediately, then move to invite (a paid org can collaborate).
+	 *
+	 * NOTHING about the payer is written here any more (#7324). The billing address went to the
+	 * customer with the intent, BEFORE the first invoice was finalised; a VAT number reaches the order
+	 * only through the declaration, which the gate judged before any charge. Saving either after the
+	 * card is charged is what left the first invoice without the recipient's details, and let a VAT
+	 * number arrive after the gate.
 	 */
 	async function handlePaid(billing: CollectedBilling) {
 		try {
-			try {
-				await updateBillingAddress(billingAddressFrom(billing));
-			} catch {
-				// Non-fatal — Stripe already has the address from the payment method.
-			}
-			if (billing.taxValue.trim()) {
-				try {
-					await saveTaxId(billing.taxType, billing.taxValue);
-				} catch {
-					toast.warning("Couldn't save the tax id — add it later in billing.");
-				}
-			}
 			if (billing.useAsPrimary) {
 				try {
 					await updateOrgPrimaryAddress(billingAddressFrom(billing));
@@ -385,12 +406,32 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 						<PayerDeclarationForm
 							busy={declaring}
 							refusal={refusal}
-							onEdit={clearRefusal}
+							refusalAction={refusalAction}
+								onEdit={clearRefusal}
 							submitLabel="Continue to payment"
 							onDeclare={(d) => void handleDeclare(d)}
 						/>
 					</PurchaseLayout>
-				) : view === "pay" ? (
+				) : view === "address" && declared ? (
+						<PurchaseLayout
+							meta={meta}
+							heading="Upgrade to Pro"
+							subheading="Where should the invoice be addressed?"
+							onClose={() => handleOpenChange(false)}
+						>
+							<BillingAddressForm
+								country={declared.billingCountry}
+								state={declared.billingState ?? null}
+								busy={false}
+								submitLabel="Continue to payment"
+								onBack={() => {
+									setDeclared(null);
+									setView("declare");
+								}}
+								onSubmit={handleAddress}
+							/>
+						</PurchaseLayout>
+					) : view === "pay" ? (
 					<PurchaseLayout
 						meta={meta}
 						heading="Upgrade to Pro"
@@ -430,6 +471,8 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 									ownerEmail={ownerEmail}
 									submitLabel="Upgrade"
 									scrollable
+									prefilled={declaration?.billingAddress ?? null}
+									collectTaxId={false}
 									onPaid={(b) => handlePaid(b)}
 								/>
 							</StripeElementsProvider>

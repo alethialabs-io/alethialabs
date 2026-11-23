@@ -1577,7 +1577,7 @@
 			"quote": "has not yet opened paid plans to individuals in any country",
 			"evidence": [
 				{
-					"path": "packages/legal/src/commerce.ts",
+					"path": "packages/legal/src/paid-markets.ts",
 					"pattern": "PAID_MARKETS: readonly PaidMarketCell\\[\\] = \\[\\];",
 					"shows": "No market is open."
 				},
@@ -1735,7 +1735,7 @@
 			"quote": "`PAID_MARKETS` in `packages/legal/src/commerce.ts` is empty",
 			"evidence": [
 				{
-					"path": "packages/legal/src/commerce.ts",
+					"path": "packages/legal/src/paid-markets.ts",
 					"pattern": "PAID_MARKETS: readonly PaidMarketCell\\[\\] = \\[\\];",
 					"shows": "The list is empty."
 				}
