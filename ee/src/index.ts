@@ -19,7 +19,13 @@ import { organization } from "better-auth/plugins/organization";
 import type { Entitlements, ResolvedScope } from "@/lib/authz/types";
 import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
 import { FgaTupleSync } from "./fga-tuple-sync";
-import { type InstanceLicense, resolveInstanceLicense } from "./license";
+import {
+  graceEndsAt,
+  type InstanceLicense,
+  licenseGrants,
+  licenseState,
+  resolveInstanceLicense,
+} from "./license";
 import { OpenFgaPdp } from "./openfga-pdp";
 import { newOrgSetupHooks } from "./new-org-setup-hooks";
 import { orgSlugHooks } from "./org-slug-hooks";
@@ -66,14 +72,12 @@ const ALL_ENTITLEMENTS: Entitlements = {
 
 /**
  * The entitlements the instance licence grants to every organization at `now`, or null when it
- * grants none. It grants only when the licence was verified, its claims were read, and its end —
- * if it has one — has not passed. Every other state is null, so the caller falls back to what the
- * organization's own plan gives it.
+ * grants none. It grants only when the licence verified and its state at `now` is one that grants
+ * (`active`, `expiring` or `grace`; see ./license `licenseState`). Every other state is null, so
+ * the caller falls back to what the organization's own plan gives it.
  */
 export function licensedEntitlements(instance: InstanceLicense, now: Date): Entitlements | null {
-  if (!instance.active || instance.license === undefined) return null;
-  const { expiresAt } = instance.license;
-  if (expiresAt !== null && !(expiresAt * 1000 > now.getTime())) return null;
+  if (instance.license === undefined || !licenseGrants(licenseState(instance, now, true))) return null;
   return instance.license.entitlements ?? ALL_ENTITLEMENTS;
 }
 
@@ -94,10 +98,10 @@ function isoInstant(seconds: number | null | undefined): string | null {
  * licence at `now`, the capabilities that licence grants, and every module of
  * {@link ENTERPRISE_FEATURES} with whether it is built.
  *
- * The state is `active` exactly when {@link licensedEntitlements} grants, and the capability list
- * is empty in every other state — the report and the entitlement resolver decide from the same
- * function, so they cannot disagree. A verified licence whose end has passed is `expired`. A
- * licence that is installed and was not verified is `invalid`; no installed licence is `none`.
+ * The state is ./license `licenseState` at `now`. The capabilities are listed exactly when
+ * {@link licensedEntitlements} grants, and the list is empty in every other state — the report and
+ * the entitlement resolver decide from the same function, so they cannot disagree. A licence that
+ * is installed and was not verified is `invalid`; no installed licence is `none`.
  *
  * @param instance the resolved instance licence
  * @param features the module registry to report
@@ -110,20 +114,17 @@ export function editionReport(
   now: Date,
   licenseInstalled: boolean,
 ): EnterpriseEditionReport {
+  const state: LicenseState = licenseState(instance, now, licenseInstalled);
   const granted = licensedEntitlements(instance, now);
-  let state: LicenseState = "none";
-  if (granted !== null) state = "active";
-  else if (instance.active && instance.license !== undefined) state = "expired";
-  else if (licenseInstalled) state = "invalid";
   // The claims of a licence are named only when it was verified; an unverified one names nothing.
-  const license = instance.active ? instance.license : undefined;
+  const license = instance.verified ? instance.license : undefined;
   return {
     license: {
       state,
       subject: license?.subject ?? null,
       tier: license?.tier ?? null,
       expiresAt: isoInstant(license?.expiresAt),
-      graceEndsAt: null,
+      graceEndsAt: isoInstant(license ? graceEndsAt(license) : null),
     },
     capabilities: granted === null ? [] : capabilityNames(granted),
     features: features.map(({ id, built }) => ({ id, built })),
@@ -206,15 +207,18 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
   };
 
   // Resolve + log the instance license once at boot (fire-and-forget — never blocks or crashes
-  // register). Active ⇒ every org is enterprise; inactive ⇒ per-org billing decides, and the reason
-  // (no license / expired / bad signature) is surfaced so a misconfigured license is diagnosable.
+  // register). A verified licence in a granting state ⇒ every org is enterprise; otherwise per-org
+  // billing decides, and the reason (no licence / bad signature / no built-in key) is surfaced so a
+  // misconfigured licence is diagnosable.
   void resolveInstanceLicense().then((instance) => {
-    if (instance.active) {
+    if (instance.verified) {
       const exp = instance.license?.expiresAt;
       console.info(
-        `[license] instance licensed (${instance.license?.subject ?? "unknown"}, tier=${
+        `[license] instance licence verified (${instance.license?.subject ?? "unknown"}, tier=${
           instance.license?.tier ?? "enterprise"
-        }${exp ? `, expires ${new Date(exp * 1000).toISOString()}` : ", perpetual"})`,
+        }${
+          exp ? `, expires ${new Date(exp * 1000).toISOString()}, grace ${instance.license?.graceDays ?? 0} days` : ", no end"
+        }, state=${licenseState(instance, new Date(), true)})`,
       );
     } else {
       console.info(
