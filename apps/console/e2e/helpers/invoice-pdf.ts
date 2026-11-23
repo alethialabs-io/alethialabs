@@ -4,10 +4,11 @@
 // Seeds a stored фактура PDF the way production stores one, so an e2e invoice row has a document
 // the authorized PDF route can serve.
 //
-// Production: `mirrorPaidInvoice` (lib/billing/invoices.ts) puts the Odoo фактура's bytes into the
-// object store at `INVOICE_PDF_BUCKET` / `invoicePdfKey(orgId, stripeInvoiceId)` and writes that key
-// into `invoice.pdf_key`. The route (app/(private)/[org]/~/settings/billing/invoices/[id]/pdf) reads
-// `pdf_key` and serves exactly those bytes. Since EA-7b (#7338) a row WITHOUT `pdf_key` answers the
+// Production: `requestFactura` (lib/billing/factura/issue.ts) puts the фактура's bytes into the
+// object store at `INVOICE_PDF_BUCKET` / `invoicePdfKey(orgId, stripeInvoiceId)`, and
+// `mirrorPaidInvoice` (lib/billing/invoices.ts) writes that key into `invoice.pdf_key`. The route
+// (app/(private)/[org]/~/settings/billing/invoices/[id]/pdf) reads `pdf_key` and serves exactly
+// those bytes. Since EA-7b (#7338) a row WITHOUT `pdf_key` answers the
 // "Your invoice is being issued" page (404) and never redirects to Stripe's hosted invoice, so a
 // seed that carries only `hosted_invoice_url` is, correctly, an invoice with no document.
 //

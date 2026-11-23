@@ -1827,3 +1827,82 @@ export interface GitopsBumpRecord {
 	/** When this record was last written (ISO). */
 	updated_at: string;
 }
+
+// ── The Bulgarian фактура (#7367, INV-S) ─────────────────────────────────────
+
+/** One party on a фактура: the supplier or the recipient (Art. 114(1), points 4 and 5 ЗДДС). */
+export interface FacturaParty {
+	/** The legal name as printed. */
+	name: string;
+	/** The postal address as printed, one entry per line. */
+	addressLines: string[];
+	/** ISO 3166-1 alpha-2, upper-case. */
+	country: string;
+	/** Identification numbers as printed: the ЕИК, a VAT number, or another register number. */
+	identifiers: { label: string; value: string }[];
+}
+
+/** One line of a фактура: the service, its quantity, unit price and amount (Art. 114(1), points 6-9). */
+export interface FacturaLine {
+	description: string;
+	quantity: number;
+	/** The unit price in the invoice currency's minor unit. */
+	unitAmountMinor: number;
+	/** The line amount in the invoice currency's minor unit. */
+	amountMinor: number;
+	/** The service period the line covers (YYYY-MM-DD), when it has one. */
+	periodStart: string | null;
+	periodEnd: string | null;
+}
+
+/**
+ * The EUR equivalent printed on a фактура in another currency (Art. 114(5) ЗДДС): the taxable amount
+ * and the tax in euro cents, the rate used and the date it is for.
+ */
+export interface FacturaEurEquivalent {
+	taxBaseEurMinor: number;
+	vatEurMinor: number;
+	/** EUR per one unit of the invoice currency, an 8-place decimal string. */
+	rate: string;
+	/** The publication date of the rate (YYYY-MM-DD). */
+	rateDate: string;
+	/** Where the rate came from, e.g. `ECB:2027-01-15`. */
+	source: string;
+}
+
+/**
+ * Every Art. 114 field of an issued фактура or credit note, on `factura.snapshot`. The PDF is
+ * rendered from this and nothing else, so the stored document can be reproduced from the row.
+ * It is written once, at issue; the row is immutable (the trigger in programmables.sql).
+ */
+export interface FacturaSnapshot {
+	/** The shape of this snapshot, so a later reader can tell old rows from new ones. */
+	version: 1;
+	/** The document name as printed: "ФАКТУРА" or "КРЕДИТНО ИЗВЕСТИЕ". */
+	documentName: string;
+	/** The ten-digit number, as on the row. */
+	number: string;
+	/** YYYY-MM-DD, as on the row. */
+	issueDate: string;
+	/** The date of the chargeable event (YYYY-MM-DD), as on the row. */
+	chargeableDate: string;
+	supplier: FacturaParty;
+	recipient: FacturaParty;
+	lines: FacturaLine[];
+	/** ISO 4217, upper-case. */
+	currency: string;
+	/** The taxable amount, in the currency's minor unit. */
+	taxBaseMinor: number;
+	/** The VAT charged, in the currency's minor unit (0 while the supplier is not VAT-registered). */
+	vatMinor: number;
+	/** The amount payable, in the currency's minor unit. */
+	totalMinor: number;
+	/** The ground for charging no VAT, e.g. "чл. 113, ал. 9 ЗДДС"; null when VAT is charged. */
+	noVatGround: string | null;
+	/** Present exactly when `currency` is not EUR. */
+	eurEquivalent: FacturaEurEquivalent | null;
+	/** For a credit note: the фактура it corrects. Null on a фактура. */
+	original: { number: string; issueDate: string } | null;
+	/** Stripe's own number for the paid invoice, printed as a reference. */
+	stripeInvoiceNumber: string | null;
+}

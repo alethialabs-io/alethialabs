@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// EA-7 (#7323): mirrorPaidInvoice records the Odoo фактура as the invoice, and NOTHING else. When no
-// compliant фактура exists it used to file Stripe's PDF and Stripe's number as "the invoice of
-// record" without a word; now the row is written pending (no number, no document, no hosted link the
-// PDF route would redirect to) and the operator is alerted with the reason and the Art. 113(4) date.
+// EA-7 (#7323), #7368: mirrorPaidInvoice records the фактура the console issued as the invoice, and
+// NOTHING else. When no compliant фактура exists it used to file Stripe's PDF and Stripe's number as
+// "the invoice of record" without a word; now the row is written pending (factura_status 'pending',
+// no number, no document, no hosted link the PDF route would redirect to) and the operator is
+// alerted with the reason and the Art. 113(4) date.
 
 import type Stripe from "stripe";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,15 +29,13 @@ vi.mock("@/lib/db", () => ({
 		}),
 	}),
 }));
-vi.mock("@/lib/storage", () => ({ storage: { put: vi.fn(async () => undefined) } }));
 vi.mock("@/lib/billing/operator-alert", () => ({ alertOperator: vi.fn(async () => true) }));
-vi.mock("@/lib/billing/odoo-invoice", () => ({ requestFactura: vi.fn() }));
+vi.mock("@/lib/billing/factura/issue", () => ({ requestFactura: vi.fn() }));
 
 import { mirrorPaidInvoice } from "@/lib/billing/invoices";
-import type { FacturaFailure } from "@/lib/billing/odoo-invoice";
-import { requestFactura } from "@/lib/billing/odoo-invoice";
+import type { FacturaFailure } from "@/lib/billing/factura/checks";
+import { requestFactura } from "@/lib/billing/factura/issue";
 import { alertOperator } from "@/lib/billing/operator-alert";
-import { storage } from "@/lib/storage";
 
 const PAID_AT = Date.UTC(2027, 0, 10, 9, 0, 0) / 1000;
 
@@ -61,7 +60,7 @@ function paidInvoice(): Stripe.Invoice {
 	return inv as unknown as Stripe.Invoice;
 }
 
-/** The compliant outcome requestFactura returns when Odoo issued a correct фактура. */
+/** The compliant outcome requestFactura returns when it issued (or found) the фактура. */
 function issued() {
 	return {
 		ok: true as const,
@@ -69,6 +68,7 @@ function issued() {
 			number: "0000000042",
 			currency: "usd",
 			vatGround: "чл. 113, ал. 9 ЗДДС",
+			pdfKey: "org_1/in_1.pdf",
 			pdf: new Uint8Array([37, 80, 68, 70]),
 		},
 	};
@@ -80,7 +80,6 @@ describe("mirrorPaidInvoice (EA-7)", () => {
 	beforeEach(() => {
 		insertValues.mockReset();
 		conflictSet.mockReset();
-		vi.mocked(storage.put).mockClear();
 		vi.mocked(alertOperator).mockClear();
 		vi.mocked(requestFactura).mockReset();
 		fetchMock.mockReset();
@@ -90,18 +89,15 @@ describe("mirrorPaidInvoice (EA-7)", () => {
 		vi.unstubAllGlobals();
 	});
 
-	it("records the фактура's ten-digit number and PDF, and alerts nobody", async () => {
+	it("records the фактура's ten-digit number and stored PDF as issued, and alerts nobody", async () => {
 		vi.mocked(requestFactura).mockResolvedValueOnce(issued());
 		await mirrorPaidInvoice(paidInvoice(), "org_1");
-		expect(storage.put).toHaveBeenCalledWith(
-			"invoices",
-			expect.stringContaining("in_1"),
-			new Uint8Array([37, 80, 68, 70]),
-			"application/pdf",
-		);
+		expect(requestFactura).toHaveBeenCalledWith(expect.objectContaining({ id: "in_1" }), "org_1");
 		const row = insertValues.mock.calls[0][0];
 		expect(row.number).toBe("0000000042");
-		expect(row.pdfKey).toEqual(expect.stringContaining("in_1"));
+		expect(row.pdfKey).toBe("org_1/in_1.pdf");
+		expect(row.facturaStatus).toBe("issued");
+		expect(conflictSet.mock.calls[0][0].facturaStatus).toBe("issued");
 		expect(row.hostedInvoiceUrl).toBe("https://invoice.stripe.com/i/acct/in_1");
 		expect(conflictSet.mock.calls[0][0].number).toBe("0000000042");
 		expect(alertOperator).not.toHaveBeenCalled();
@@ -109,23 +105,23 @@ describe("mirrorPaidInvoice (EA-7)", () => {
 	});
 
 	const FAILURES: FacturaFailure[] = [
-		"unconfigured",
+		"no_invoice_id",
 		"recipient_incomplete",
 		"no_ground_ruling",
-		"unreachable",
-		"rejected",
-		"not_posted",
-		"number_format",
-		"ground_mismatch",
+		"vat_charged",
+		"no_rate",
+		"store_failed",
+		"pdf_failed",
+		"pdf_integrity",
 	];
 
 	it.each(FAILURES)("on %s: never files Stripe's PDF, number or page as the invoice", async (reason) => {
 		vi.mocked(requestFactura).mockResolvedValueOnce({ ok: false, reason, detail: "the detail" });
 		await mirrorPaidInvoice(paidInvoice(), "org_1");
-		// Stripe's PDF is not fetched, and nothing is stored.
+		// Stripe's PDF is not fetched.
 		expect(fetchMock).not.toHaveBeenCalled();
-		expect(storage.put).not.toHaveBeenCalled();
 		const row = insertValues.mock.calls[0][0];
+		expect(row.facturaStatus).toBe("pending");
 		expect(row.number).toBeNull();
 		expect(row.pdfKey).toBeNull();
 		expect(row.hostedInvoiceUrl).toBeNull();
@@ -151,14 +147,15 @@ describe("mirrorPaidInvoice (EA-7)", () => {
 	it("a failed retry leaves a stored фактура alone", async () => {
 		vi.mocked(requestFactura).mockResolvedValueOnce({
 			ok: false,
-			reason: "unreachable",
-			detail: "Odoo answered HTTP 502",
+			reason: "pdf_failed",
+			detail: "the PDF could not be stored",
 		});
 		await mirrorPaidInvoice(paidInvoice(), "org_1");
 		const set = conflictSet.mock.calls[0][0];
 		expect(set).not.toHaveProperty("number");
 		expect(set).not.toHaveProperty("pdfKey");
 		expect(set).not.toHaveProperty("hostedInvoiceUrl");
+		expect(set).not.toHaveProperty("facturaStatus");
 		expect(set.status).toBe("paid");
 	});
 

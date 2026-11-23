@@ -85,7 +85,7 @@ describe("invoice.payment_succeeded records the tax facts", () => {
 	});
 
 	it("a failed mirror records no facts: there is no row to write them onto", async () => {
-		vi.mocked(mirrorPaidInvoice).mockRejectedValue(new Error("odoo down"));
+		vi.mocked(mirrorPaidInvoice).mockRejectedValue(new Error("mirror down"));
 		const logged = vi.spyOn(log, "error").mockImplementation(() => {});
 		await handleStripeEvent(eventOf("invoice.payment_succeeded", creditPack), { holds: noHolds, suppressEmails: true });
 		expect(recordInvoiceFacts).not.toHaveBeenCalled();

@@ -1247,6 +1247,13 @@
       "when": 1795420983379,
       "tag": "0177_rapid_genesis",
       "breakpoints": true
+    },
+    {
+      "idx": 178,
+      "version": "7",
+      "when": 1795443454050,
+      "tag": "0178_many_hammerhead",
+      "breakpoints": true
     }
   ]
 }

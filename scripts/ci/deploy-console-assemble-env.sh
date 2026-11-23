@@ -259,12 +259,6 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   # so tax stays off. Set STRIPE_TAX_ENABLED=true in the vault ONLY after the Stripe
   # account's Tax origin + registrations are configured, else Checkout errors on session create.
   emit STRIPE_TAX_ENABLED
-  # Odoo фактура (legal invoice-of-record) — both keys must be non-empty for issueFactura()
-  # to post the НАП фактура (lib/billing/odoo-invoice.ts odooConfig). Unset ⇒ emitted empty
-  # ⇒ odooConfig() returns null ⇒ the receipt/mirror fall back to Stripe's PDF. Strictly
-  # safe default-off (needs BOTH URL + token), same "stay dark when unset" semantics as STRIPE_PRICE_AI_*.
-  emit ODOO_INVOICE_URL
-  emit ODOO_INVOICE_TOKEN
   # Transactional email: the vault-selected transport (ses unless the vault says smtp; validated
   # above). Both transports' keys are emitted so the two stay one vault edit apart. The SES ones
   # are the alethia-email account's (infra/email-ses-account); the SMTP ones are empty unless the

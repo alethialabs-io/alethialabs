@@ -203,7 +203,7 @@ export const HEAD_OFFICE: PostalAddress = parseHeadOffice(LEGAL_ENTITY.registere
 export const DESIRED_PORTAL = {
 	/** Email only: no address (so no country change) and no tax ID. */
 	customerUpdates: ["email"],
-	/** Stripe's invoice PDF is not the invoice of record (Odoo issues the фактура). */
+	/** Stripe's invoice PDF is not the invoice of record (the console issues the фактура). */
 	invoiceHistory: false,
 	paymentMethodUpdate: true,
 	/** A plan change in the portal would skip the console's purchase gate. */

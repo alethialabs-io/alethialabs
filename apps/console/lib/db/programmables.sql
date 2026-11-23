@@ -2803,6 +2803,121 @@ CREATE TRIGGER privacy_tombstone_no_truncate
   BEFORE TRUNCATE ON public.privacy_erasure_tombstone
   FOR EACH STATEMENT EXECUTE FUNCTION public.privacy_tombstone_worm();
 
+-- ── The Bulgarian фактура (#7367, INV-S) ──────────────────────────────────────────
+-- factura_series is the gap-free number counter and factura the issued documents; the design is in
+-- lib/db/schema/factura.ts. Four things are enforced here, and each is what makes the series legal
+-- rather than conventional (Art. 114(1), point 2 and Art. 121(1) ЗДДС):
+--
+--  1. READS. factura is ORG-BOUNDED for reads, the early_access_request arm: a row is visible from
+--     the org it was issued to (organization_id = current_org) and from the personal org
+--     (organization_id = current_owner). factura_series names no tenant and is read by nobody but
+--     the issuer.
+--  2. WRITES. Service role only, on both tables: RLS with no write policy, and the app role's write
+--     grants revoked (the payment_holds idiom), so an app-role session cannot take a number, issue a
+--     document or attach a PDF.
+--  3. IMMUTABILITY. An issued factura row cannot be updated, deleted or truncated, by any role. The
+--     one write admitted is attaching the PDF once: pdf_key and pdf_sha256 from NULL to a value, with
+--     every other column unchanged. The comparison is over the whole row minus those two columns, so
+--     a column added later is immutable by default rather than by someone remembering to list it.
+--  4. NO GAPS. The counter only moves by one, cannot be deleted, and a CONSTRAINT TRIGGER checks at
+--     COMMIT that the number it moved to belongs to a factura row. A transaction that takes a number
+--     and does not issue the document therefore cannot commit, and one that rolls back returns the
+--     number. (A SEQUENCE would not do: nextval is not transactional.)
+--
+-- What the app role cannot do is turn these off: DISABLE TRIGGER needs table ownership and
+-- session_replication_role needs superuser.
+ALTER TABLE public.factura ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.factura_series ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS factura_select ON public.factura;
+CREATE POLICY factura_select ON public.factura FOR SELECT
+  USING (organization_id = current_setting('app.current_org', true)::uuid
+         OR organization_id = current_setting('app.current_owner', true)::uuid);
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'alethia_app') THEN
+    EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.factura FROM alethia_app';
+    EXECUTE 'REVOKE ALL ON public.factura_series FROM alethia_app';
+  END IF;
+END $$;
+
+-- The one series the console issues from, starting before 0000000001. ON CONFLICT keeps a re-run of
+-- this file from touching a counter that has moved.
+INSERT INTO public.factura_series (id, last_number) VALUES ('BG', 0) ON CONFLICT (id) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION public.factura_immutable()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_LEVEL = 'ROW' AND TG_OP = 'UPDATE'
+     AND OLD.pdf_key IS NULL AND OLD.pdf_sha256 IS NULL
+     AND NEW.pdf_key IS NOT NULL AND NEW.pdf_sha256 IS NOT NULL
+     AND (to_jsonb(NEW) - 'pdf_key' - 'pdf_sha256') = (to_jsonb(OLD) - 'pdf_key' - 'pdf_sha256') THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION
+    'factura is issued and immutable: % is not permitted. The only write an issued фактура admits is attaching its PDF once; a correction is a credit note.', TG_OP
+    USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS factura_no_mutate ON public.factura;
+CREATE TRIGGER factura_no_mutate
+  BEFORE UPDATE OR DELETE ON public.factura
+  FOR EACH ROW EXECUTE FUNCTION public.factura_immutable();
+
+DROP TRIGGER IF EXISTS factura_no_truncate ON public.factura;
+CREATE TRIGGER factura_no_truncate
+  BEFORE TRUNCATE ON public.factura
+  FOR EACH STATEMENT EXECUTE FUNCTION public.factura_immutable();
+
+-- The counter moves forward by exactly one (an UPDATE that only touches updated_at is allowed), and
+-- is never deleted or truncated: a counter that can go back reissues a number, and one that can
+-- jump leaves a gap.
+CREATE OR REPLACE FUNCTION public.factura_series_forward_only()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_LEVEL = 'ROW' AND TG_OP = 'UPDATE'
+     AND NEW.id = OLD.id
+     AND NEW.last_number IN (OLD.last_number, OLD.last_number + 1) THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION
+    'factura_series moves forward by one only: % is not permitted. A number taken out of order leaves a gap or reissues a number (Art. 114(1), point 2 ЗДДС).', TG_OP
+    USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS factura_series_no_rewind ON public.factura_series;
+CREATE TRIGGER factura_series_no_rewind
+  BEFORE UPDATE OR DELETE ON public.factura_series
+  FOR EACH ROW EXECUTE FUNCTION public.factura_series_forward_only();
+
+DROP TRIGGER IF EXISTS factura_series_no_truncate ON public.factura_series;
+CREATE TRIGGER factura_series_no_truncate
+  BEFORE TRUNCATE ON public.factura_series
+  FOR EACH STATEMENT EXECUTE FUNCTION public.factura_series_forward_only();
+
+-- At COMMIT, the number the counter moved to must be on a factura row. Deferred, because the issuer
+-- takes the number first and inserts the document second, inside one transaction.
+CREATE OR REPLACE FUNCTION public.factura_series_number_used()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.last_number > OLD.last_number AND NOT EXISTS (
+    SELECT 1 FROM public.factura WHERE number = lpad(NEW.last_number::text, 10, '0')
+  ) THEN
+    RAISE EXCEPTION
+      'factura_series %: number % was taken but no factura was issued with it. Take the number and insert the document in one transaction.',
+      NEW.id, lpad(NEW.last_number::text, 10, '0')
+      USING ERRCODE = 'integrity_constraint_violation';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS factura_series_number_used_check ON public.factura_series;
+CREATE CONSTRAINT TRIGGER factura_series_number_used_check
+  AFTER UPDATE OF last_number ON public.factura_series
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION public.factura_series_number_used();
+
 -- Public catalogs: readable by anyone; writes only via service role.
 ALTER TABLE public.connectors ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS connectors_read ON public.connectors;

@@ -257,6 +257,22 @@ run "committed_posture_plans_the_protected_store" {
     condition     = strcontains(aws_iam_role_policy.launcher_run.policy, "lt-0123456789abcdef0") && strcontains(aws_iam_role_policy.launcher_run.policy, "ec2:IsLaunchTemplateResource")
     error_message = "drill-launcher may run only the drill launch template, with nothing overridden."
   }
+  # The spot request carries no launch-template condition key, so it needs its own statement — and
+  # that statement must stay on the spot-request resource type alone, never "*".
+  assert {
+    condition = (
+      length(jsondecode(aws_iam_role_policy.launcher_run.policy).Statement) == 2 &&
+      length([
+        for s in jsondecode(aws_iam_role_policy.launcher_run.policy).Statement : s
+        if !can(s.Condition) && s.Resource != "arn:aws:ec2:eu-central-1:111122223333:spot-instances-request/*"
+      ]) == 0 &&
+      length([
+        for s in jsondecode(aws_iam_role_policy.launcher_run.policy).Statement : s
+        if s.Resource == "arn:aws:ec2:eu-central-1:111122223333:spot-instances-request/*" && jsonencode(s.Action) == jsonencode(["ec2:RunInstances"])
+      ]) == 1
+    )
+    error_message = "drill-launcher's only unconditioned RunInstances grant must be on spot-instances-request/* (the one RunInstances resource the drill touches without the launch-template keys)."
+  }
 
   # The drill.
   assert {

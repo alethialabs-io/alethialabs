@@ -25,9 +25,10 @@ import { organization } from "./organizations";
 
 /**
  * Where the Bulgarian invoice of record (фактура, Art. 113 ЗДДС) for this payment stands. `pending`
- * means it is still owed — Odoo was down or unconfigured — and is retried; `issued` means the
- * document exists; `failed` means retries stopped and an operator must act. NULL on rows mirrored
- * before the фактура pipeline existed.
+ * means it is still owed (lib/billing/factura/issue.ts named why, and the operator was alerted); a
+ * replay of the Stripe event retries it. `issued` means the document exists (the `factura` row);
+ * `failed` means retries stopped and an operator must act. NULL on rows mirrored before the
+ * фактура pipeline existed.
  */
 export const FACTURA_STATUSES = ["pending", "issued", "failed"] as const;
 
