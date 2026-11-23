@@ -75,7 +75,7 @@ function describe(description: string, start: string | null, end: string | null)
 	return start && end ? `${description} (${bgDate(start)} – ${bgDate(end)})` : description;
 }
 
-/** The printed content of the фактура `s`. */
+/** The printed content of the фактура or credit note `s` (a credit note has `original` set). */
 export function facturaLayout(s: FacturaSnapshot): FacturaLayout {
 	const eur = s.eurEquivalent;
 	return {
@@ -103,7 +103,10 @@ export function facturaLayout(s: FacturaSnapshot): FacturaLayout {
 		totals: [
 			{ label: "Данъчна основа / Taxable amount", value: amount(s.taxBaseMinor, s.currency) },
 			{ label: "ДДС / VAT", value: amount(s.vatMinor, s.currency) },
-			{ label: "Сума за плащане / Amount payable", value: amount(s.totalMinor, s.currency) },
+			{
+				label: s.original ? "Сума за възстановяване / Amount refunded" : "Сума за плащане / Amount payable",
+				value: amount(s.totalMinor, s.currency),
+			},
 		],
 		eur: eur
 			? {
@@ -115,8 +118,9 @@ export function facturaLayout(s: FacturaSnapshot): FacturaLayout {
 				}
 			: null,
 		notes: [
+			...(s.reason ? [`Основание за издаване / Reason for issue: ${s.reason}`] : []),
 			...(s.noVatGround ? [`Основание за неначисляване на ДДС / Ground for not charging VAT: ${s.noVatGround}`] : []),
-			"Платено чрез Stripe / Paid via Stripe",
+			s.original ? "Възстановено чрез Stripe / Refunded via Stripe" : "Платено чрез Stripe / Paid via Stripe",
 			...(s.stripeInvoiceNumber ? [`Референция / Reference: ${s.stripeInvoiceNumber}`] : []),
 		],
 	};

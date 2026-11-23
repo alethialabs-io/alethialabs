@@ -49,6 +49,10 @@ vi.mock("@/lib/email/billing-email", () => ({
 // The dispatcher's other neighbours, for the ADR 0004 cases that drive it.
 vi.mock("@/lib/analytics/server", () => ({ captureServer: vi.fn() }));
 vi.mock("@/lib/billing/ai-quota", () => ({ grantAiCredits: vi.fn() }));
+vi.mock("@/lib/billing/factura/credit-note", () => ({
+	issueCreditNotesForCharge: vi.fn(async () => []),
+	issueCreditNoteForRefund: vi.fn(async () => []),
+}));
 vi.mock("@/lib/billing/invoices", () => ({ mirrorPaidInvoice: vi.fn(), setInvoiceStatus: vi.fn() }));
 vi.mock("@/lib/billing/payment-methods", () => ({ attemptBackupPayment: vi.fn(async () => null) }));
 vi.mock("@/lib/alerts/emit", () => ({ emitAlertEvent: vi.fn(async () => 1) }));

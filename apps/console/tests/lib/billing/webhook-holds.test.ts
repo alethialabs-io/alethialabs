@@ -22,6 +22,10 @@ vi.mock("@/lib/billing/invoices", () => ({
 	setInvoiceStatus: vi.fn(),
 }));
 vi.mock("@/lib/billing/payment-methods", () => ({ attemptBackupPayment: vi.fn() }));
+vi.mock("@/lib/billing/factura/credit-note", () => ({
+	issueCreditNotesForCharge: vi.fn(async () => []),
+	issueCreditNoteForRefund: vi.fn(async () => []),
+}));
 const stripeMock = vi.hoisted(() => ({
 	retrieve: vi.fn(),
 	pay: vi.fn(),
