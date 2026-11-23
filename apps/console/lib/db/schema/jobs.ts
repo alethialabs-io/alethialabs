@@ -6,6 +6,7 @@ import {
 	type AnyPgColumn,
 	bigint,
 	boolean,
+	check,
 	index,
 	integer,
 	jsonb,
@@ -101,6 +102,13 @@ export const jobs = pgTable(
 		approval_id: uuid().references((): AnyPgColumn => applyApprovals.id, {
 			onDelete: "set null",
 		}),
+		// The reviewed plan's SHA-256 (lowercase hex), the digest the plan job's verify receipt records.
+		// On a PLAN job: the plan it produced, stamped when it succeeds. On a DEPLOY that names a plan
+		// (`plan_job_id`): the plan it applies, stamped at every insert site, and the runner applies that
+		// plan only when the downloaded file hashes to this value (apps/runner/internal/agent/
+		// plan_binding.go). NULL on a DEPLOY a system origin queued with no plan (auto-heal, the
+		// build chain), which plans afresh on the runner. lib/approvals/plan-binding.ts reads it.
+		plan_sha256: text(),
 		claimed_at: timestamp({ withTimezone: true }),
 		started_at: timestamp({ withTimezone: true }),
 		completed_at: timestamp({ withTimezone: true }),
@@ -201,6 +209,11 @@ export const jobs = pgTable(
 		uniqueIndex("uq_jobs_approval_id")
 			.on(t.approval_id)
 			.where(sql`approval_id IS NOT NULL`),
+		// The same shape `apply_approvals.plan_sha256` holds, so the two compare as plain strings.
+		check(
+			"jobs_plan_sha256_hex",
+			sql`plan_sha256 IS NULL OR plan_sha256 ~ '^[0-9a-f]{64}$'`,
+		),
 	],
 );
 

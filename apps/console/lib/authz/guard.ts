@@ -198,7 +198,7 @@ function forbidden(): Response {
  * The body names the reason the ceiling gave (`insufficient_scope` or `project_not_permitted`), so
  * a pipeline can tell "this token cannot do that" from "this person cannot".
  */
-function insufficientScope(reason: string | undefined): Response {
+export function insufficientScope(reason: string | undefined): Response {
 	return new Response(
 		JSON.stringify({
 			error: "insufficient_scope",

@@ -93,9 +93,10 @@ the organization it was created for.
 
 An agent in your shell uses your CLI sign-in. `alethia login` refuses while `ALETHIA_TOKEN` is set.
 
-A service-account token carries scopes and a project list. Today every token, existing or new, holds
-all five scopes (`read`, `design`, `plan`, `apply`, `destroy`) over every project, so it can do
-everything you can do in its organization. A request for a narrower token is refused with
-`narrow_tokens_unavailable` until every route that queues a job applies the limit. Give a token an
-expiry with `--expires-in-days`, and revoke it with `alethia token revoke <id>` when the work is done.
+A service-account token carries scopes and a project list. A token minted without either holds all
+five scopes (`read`, `design`, `plan`, `apply`, `destroy`) over every project, so it can do everything
+you can do in its organization. `alethia token create` mints that token. To give a token less, mint
+it through the API with `scopes` and `project_ids`. A request outside its limit is refused with
+`insufficient_scope`. Give a token an expiry with
+`--expires-in-days`, and revoke it with `alethia token revoke <id>` when the work is done.
 See [authentication](/reference/cli/authentication).

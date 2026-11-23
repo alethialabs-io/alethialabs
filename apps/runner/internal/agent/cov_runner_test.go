@@ -1169,6 +1169,8 @@ func TestRun_ExecuteDeploy_SucceedsAndPersistsMetadata(t *testing.T) {
 	job := &Job{
 		ID: "covrun-deploy", JobType: string(types.JobTypeDeploy),
 		ConfigSnapshot: covRunDeploySnapshot(""), PlanJobID: &planJobID, ConfigurationHash: &hash,
+		// The digest of the bytes covRunAPI.DownloadPlanArtifact serves, so the reviewed plan is applied.
+		PlanSHA256: planDigestOf([]byte("plan")),
 	}
 	err := w.executeDeploy(t.Context(), job, "hetzner", &CloudIdentity{Provider: "hetzner", AccountID: "acct-1"}, nil, stdout, stderr)
 	stdout.Close()
@@ -1446,25 +1448,21 @@ func TestRun_ExecuteDeploy_RejectsBeforeAnyWork(t *testing.T) {
 		api := newCovRunAPI()
 		api.getJobFn = func(string) (*Job, error) { return nil, errors.New("plan job gone") }
 		w := NewWithAPI(Config{Operator: "self"}, api)
-		w.sandbox = &covRunSandbox{}
+		sb := &covRunSandbox{}
+		w.sandbox = sb
 		planJobID := "covrun-missing-plan"
 		stdout := NewJobLogger(api, "j", "STDOUT")
 		stderr := NewJobLogger(api, "j", "STDERR")
 		err := w.executeDeploy(t.Context(),
-			&Job{ID: "j", ConfigSnapshot: covRunSnapshot(), PlanJobID: &planJobID}, "aws", nil, nil, stdout, stderr)
+			&Job{ID: "j", ConfigSnapshot: covRunSnapshot(), PlanJobID: &planJobID, PlanSHA256: planDigestOf([]byte("plan"))},
+			"aws", nil, nil, stdout, stderr)
 		stdout.Close()
 		stderr.Close()
-		if err != nil {
-			t.Fatalf("an unfetchable plan job must only warn, got %v", err)
+		if code, ok := planBindingRefusal(err); !ok || code != PlanJobUnavailable {
+			t.Fatalf("an unreadable plan job must refuse the apply with %q, got %v", PlanJobUnavailable, err)
 		}
-		var warned bool
-		for _, c := range api.getLogChunks() {
-			if strings.Contains(c.chunk, "could not fetch plan job") {
-				warned = true
-			}
-		}
-		if !warned {
-			t.Error("expected a warning about the unfetchable plan job")
+		if sb.runs() != 0 {
+			t.Fatalf("a refused apply must not reach the stage (runs %d)", sb.runs())
 		}
 	})
 
@@ -1518,7 +1516,7 @@ func TestRun_ExecuteDeploy_EnforcesPlanApprovalContract(t *testing.T) {
 		defer stdout.Close()
 		defer stderr.Close()
 		err := w.executeDeploy(t.Context(),
-			&Job{ID: "j", ConfigSnapshot: covRunSnapshot(), PlanJobID: &planJobID, ConfigurationHash: &planHash},
+			&Job{ID: "j", ConfigSnapshot: covRunSnapshot(), PlanJobID: &planJobID, PlanSHA256: planDigestOf([]byte("plan")), ConfigurationHash: &planHash},
 			"aws", nil, nil, stdout, stderr)
 		if err == nil || !strings.Contains(err.Error(), "expected SUCCESS") {
 			t.Fatalf("expected the plan-status refusal, got %v", err)
@@ -1537,7 +1535,7 @@ func TestRun_ExecuteDeploy_EnforcesPlanApprovalContract(t *testing.T) {
 		defer stdout.Close()
 		defer stderr.Close()
 		err := w.executeDeploy(t.Context(),
-			&Job{ID: "j", ConfigSnapshot: covRunSnapshot(), PlanJobID: &planJobID, ConfigurationHash: &currentHash},
+			&Job{ID: "j", ConfigSnapshot: covRunSnapshot(), PlanJobID: &planJobID, PlanSHA256: planDigestOf([]byte("plan")), ConfigurationHash: &currentHash},
 			"aws", nil, nil, stdout, stderr)
 		if err == nil || !strings.Contains(err.Error(), "configuration changed since plan") {
 			t.Fatalf("expected the hash-drift refusal, got %v", err)

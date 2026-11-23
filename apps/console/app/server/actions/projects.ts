@@ -34,6 +34,11 @@ import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import type { Actor } from "@/lib/authz/types";
 import { ApplyAuthorizationError, requireApplyAuthorization } from "@/lib/approvals/types";
+import {
+	configurationHashOf,
+	PlanBindingError,
+	resolveReviewedPlan,
+} from "@/lib/approvals/plan-binding";
 import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
@@ -2325,6 +2330,7 @@ async function refusalAsValue<T extends object>(
 	} catch (err) {
 		if (
 			err instanceof ApplyAuthorizationError ||
+			err instanceof PlanBindingError ||
 			err instanceof JobRefusalError ||
 			err instanceof EnvStateConflictError ||
 			err instanceof UsageLimitError ||
@@ -2555,6 +2561,9 @@ export async function planProject(
 					initiated_by: "user",
 					job_type: "PLAN",
 					config_snapshot: configSnapshot,
+					// What a deploy of this plan compares against to know the plan is still current
+					// (lib/approvals/plan-binding.ts); the runner compares it again before applying.
+					configuration_hash: configurationHashOf(configSnapshot),
 					status: "QUEUED",
 					// New trace root for this provisioning operation (enqueue → claim → runner).
 					traceparent: newTraceparent(),
@@ -2701,14 +2710,19 @@ function keyedDeployResult(
 }
 
 /**
- * Queues a DEPLOY job (or, for a redeploy with repo-sourced services, the BUILD that chains it).
+ * Queues the DEPLOY of a reviewed plan: `planJobId` names a PLAN job of this environment, and the
+ * DEPLOY applies exactly that plan (decision M23). The plan must be current — succeeded, planned from
+ * the configuration this deploy would apply, nothing run on the environment since — and carry a plan
+ * digest; otherwise a {@link PlanBindingError} says to plan again (lib/approvals/plan-binding.ts). The
+ * DEPLOY carries the plan's digest, and the runner applies the saved plan only when it matches.
+ *
  * `approvalKey` makes it at most once per key, as in {@link planProject} (#5797): a repeated
  * approval of one deploy proposal returns the job it already queued and applies nothing twice.
  *
  * `approvalKey` and `approvalId` are different things. The key only makes a repeated call return
  * the same job. `approvalId` names the approval the caller presents for this deploy, and is
- * handed to `requireApplyAuthorization` with every job this queues — the DEPLOY, or the BUILD
- * that will chain it. A job a key already queued is returned as it is and is not asked about again.
+ * handed to `requireApplyAuthorization` with the DEPLOY. A job a key already queued is returned as
+ * it is and is not asked about again.
  */
 export async function provisionProject(
 	projectId: string,
@@ -2748,86 +2762,22 @@ export async function provisionProject(
 	assertIacSourceQueueable(iacSource, "deploy");
 	assertGitopsDeliveryQueueable(configSnapshot);
 
-	// W2 build-then-deploy: redeploying an ACTIVE environment that has repo-sourced
-	// services queues the BUILD first — the status route persists the digests and chains
-	// the DEPLOY (builds.ts), so the deploy renders real images instead of skipping
-	// unbuilt services. First-time provisioning (infra not up) deploys infra directly —
-	// the in-cluster build has nowhere to run until the cluster exists. A gated
-	// plan→apply (planJobId) never reroutes: it must apply exactly the reviewed plan.
-	if (
-		!planJobId &&
-		environment.status === "ACTIVE" &&
-		hasRepoSourcedServices(configSnapshot)
-	) {
-		const result = await withScope(
-			{ ownerId: owner, orgId: actor.orgId },
-			async (tx) => {
-				const job = await insertJobOnce(
-					tx,
-					signedJob({
-						user_id: owner,
-						org_id: actor.orgId,
-						project_id: projectId,
-						environment_id: environment.id,
-						cloud_identity_id: identity.id,
-						initiated_by: "user",
-						job_type: "BUILD",
-						config_snapshot: configSnapshot,
-						status: "QUEUED",
-						traceparent: newTraceparent(),
-						...(runnerId ? { assigned_runner_id: runnerId } : {}),
-					}),
-					key,
-				);
-				// A concurrent approval of the same proposal committed first: its job IS this one.
-				if (!job.created) return keyedDeployResult(job.id, job.jobType);
-
-				await requireApplyAuthorization(
-					tx,
-					{ kind: "actor", actor },
-					"deploy",
-					{
-						orgId: actor.orgId,
-						projectId,
-						environmentId: environment.id,
-						jobId: job.id,
-					},
-					approvalId,
-				);
-
-				await enqueueEnvTransition(
-					tx,
-					environment.id,
-					"enqueueDeploy",
-					job.id,
-					{
-						orgId: actor.orgId,
-						projectId,
-					},
-				);
-
-				await tx.insert(auditLog).values({
-					project_id: projectId,
-					user_id: owner,
-					action: "PROVISIONED",
-					changes: {
-						job_id: job.id,
-						environment_id: environment.id,
-						job_type: "BUILD",
-					},
-				});
-
-				return { jobId: job.id, jobType: "BUILD" as const };
-			},
-		);
-
-		notifyScaler();
-		return result;
-	}
+	// The configuration this deploy would apply now; a named plan is current only when it was
+	// planned from exactly this (lib/approvals/plan-binding.ts).
+	const configurationHash = configurationHashOf(configSnapshot);
 
 	const result = await withScope(
 		{ ownerId: owner, orgId: actor.orgId },
 		async (tx) => {
+			// Decision M23: a deploy someone asks for applies a current reviewed plan of this
+			// environment. Resolved in the transaction that inserts the DEPLOY, so the plan read and
+			// the "nothing ran since" read see the same state the insert commits against.
+			const plan = await resolveReviewedPlan(tx, {
+				projectId,
+				environmentId: environment.id,
+				planJobId,
+				configurationHash,
+			});
 			const job = await insertJobOnce(
 				tx,
 				signedJob({
@@ -2839,10 +2789,14 @@ export async function provisionProject(
 					initiated_by: "user",
 					job_type: "DEPLOY",
 					config_snapshot: configSnapshot,
+					// The runner applies the plan file of `plan_job_id` only when it hashes to
+					// `plan_sha256`, and re-checks `configuration_hash` against the plan's.
+					configuration_hash: configurationHash,
+					plan_job_id: plan.planJobId,
+					plan_sha256: plan.planSha256,
 					status: "QUEUED",
 					// New trace root for this provisioning operation (enqueue → claim → runner).
 					traceparent: newTraceparent(),
-					...(planJobId ? { plan_job_id: planJobId } : {}),
 					...(runnerId ? { assigned_runner_id: runnerId } : {}),
 				}),
 				key,
@@ -2859,7 +2813,7 @@ export async function provisionProject(
 					projectId,
 					environmentId: environment.id,
 					jobId: job.id,
-					...(planJobId ? { planJobId } : {}),
+					planJobId: plan.planJobId,
 				},
 				approvalId,
 			);

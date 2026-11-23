@@ -160,6 +160,8 @@ describe("maybeAutoHeal — the enqueue", () => {
 			environment_id: "env-1",
 			cloud_identity_id: "ci-1",
 			job_type: "DEPLOY",
+			// A system re-apply with no plan by design: no plan_job_id, and the runner plans afresh.
+			initiated_by: "system",
 			config_snapshot: { region: "eu-west-1" },
 			status: "QUEUED",
 			traceparent: "00-trace-span-01",
