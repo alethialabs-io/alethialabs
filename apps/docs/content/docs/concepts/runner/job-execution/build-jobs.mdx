@@ -3,8 +3,6 @@ title: Build Jobs
 description: How the runner executes BUILD jobs — kaniko image builds scheduled in the customer's own cluster, pushed to ECR, reported as a per-service digest map.
 ---
 
-# Build Jobs
-
 `BUILD` jobs turn a project's repo-sourced services into real, pushed container images. For each
 service whose source is a repository, the runner schedules a [kaniko](https://github.com/GoogleContainerTools/kaniko)
 build **inside the customer's own provisioned cluster**, waits for it to finish, captures the pushed

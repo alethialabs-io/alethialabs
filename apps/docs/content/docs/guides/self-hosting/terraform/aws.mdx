@@ -3,8 +3,6 @@ title: AWS
 description: Provision the Alethia control plane on an x86 EC2 instance, closed-origin behind a Cloudflare Tunnel, SSH-free via SSM.
 ---
 
-# AWS (`infra/cp-aws`)
-
 A single x86 **EC2 `t3.large`** (2 vCPU / 8 GB) fronted by a Cloudflare Tunnel — **no bastion, no
 open port**. **≈ $72/mo** (t3.large + 60 GB gp3; Infracost, on-demand, `eu-west-1`; `t3.medium` ≈ half if 4 GB fits).
 
