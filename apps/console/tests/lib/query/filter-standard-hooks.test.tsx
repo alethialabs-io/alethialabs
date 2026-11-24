@@ -17,7 +17,8 @@
 // So these hooks are driven. Each one is asked the same four questions, because "the console is
 // one product" is exactly the claim that they all answer them the same way.
 //
-// The surfaces #4890 lifted (alerts × 3, access, runners) and the two #4890 lifted first (teams,
+// The surfaces #4890 lifted (alerts × 2 — the delivery ledger left for keyset paging in #7489, and
+// its paging is driven in tests/components/alerts/activity-keyset.test.tsx — access, runners) and the two #4890 lifted first (teams,
 // members) are all here. The older hooks — jobs, evidence, activity, sso, roles, support,
 // connectors — are not: they were already on the standard, and this file is the new work's
 // instrument, not a retro-fit of coverage onto everything that predates it.
@@ -38,7 +39,6 @@ const getAccessGrantsPage = vi.fn();
 const getTeamsPage = vi.fn();
 const getMembersPage = vi.fn();
 const getAlertPoliciesPage = vi.fn();
-const getAlertDeliveriesPage = vi.fn();
 const getRunnersPage = vi.fn();
 vi.mock("@/lib/rpc/client", async () => {
 	const { os, createRouterClient } = await import("@orpc/server");
@@ -50,7 +50,6 @@ vi.mock("@/lib/rpc/client", async () => {
 		alerts: {
 			channels: page((input) => getAlertChannelsPage(input)),
 			policies: page((input) => getAlertPoliciesPage(input)),
-			deliveries: page((input) => getAlertDeliveriesPage(input)),
 		},
 		runners: { page: page((input) => getRunnersPage(input)) },
 		members: {
@@ -65,7 +64,6 @@ vi.mock("@/lib/rpc/client", async () => {
 
 const {
 	useAlertChannelsPageQuery,
-	useAlertDeliveriesPageQuery,
 	useAlertPoliciesPageQuery,
 } = await import("@/lib/query/use-alerts-query");
 const { useAccessGrantsPageQuery } = await import(
@@ -133,14 +131,6 @@ const SUBJECTS: Record<string, Subject> = {
 		prefix: [["alerts", "policies"]],
 		queryOf: orpcInput,
 	},
-	useAlertDeliveriesPageQuery: {
-		usePage: (q) => useAlertDeliveriesPageQuery(q),
-		action: getAlertDeliveriesPage,
-		// An oRPC key: the procedure's path, then `{ input, type }`. The tenant is not in it; the
-		// browser keeps one QueryClient per org instead (lib/query/client.ts).
-		prefix: [["alerts", "deliveries"]],
-		queryOf: orpcInput,
-	},
 	useAccessGrantsPageQuery: {
 		usePage: (q) => useAccessGrantsPageQuery(q),
 		action: getAccessGrantsPage,
@@ -172,7 +162,6 @@ const SUBJECTS: Record<string, Subject> = {
 const ACTIONS = [
 	getAlertChannelsPage,
 	getAlertPoliciesPage,
-	getAlertDeliveriesPage,
 	getAccessGrantsPage,
 	getRunnersPage,
 	getTeamsPage,

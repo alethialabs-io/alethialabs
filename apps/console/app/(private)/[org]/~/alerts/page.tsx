@@ -4,7 +4,10 @@
 import { dehydrate, HydrationBoundary, type Query } from "@tanstack/react-query";
 import { Suspense } from "react";
 import { AlertsPage } from "@/components/alerts/alerts-page";
-import { alertsQueriesFromUrl } from "@/components/alerts/alerts-query";
+import {
+	alertsQueriesFromUrl,
+	type NormalizedActivityQuery,
+} from "@/components/alerts/alerts-query";
 import { AlertsSkeleton } from "@/components/alerts/alerts-skeleton";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
 import { RegionRefusal } from "@/components/errors/region-refusal";
@@ -71,6 +74,8 @@ function isAlertsRead(query: Pick<Query, "queryKey" | "state">): boolean {
  *   link, and which is also the universe the panels cross-reference against;
  * - each list for the URL's filters, the key the panel settles on once it has read the link (#4980,
  *   the audit's F8) — `{}` again for a pristine link, which TanStack dedupes.
+ * The delivery ledger is a keyset list (#7489), so its two keys are INFINITE queries holding their
+ * first page — the exact key `useKeysetList(orpc.alerts.deliveries, query)` asks for.
  * A read that fails is not dehydrated; its section renders its own error after a client retry. The
  * `[org]` layout shares this request's QueryClient and hands its shell reads over through its own
  * boundary, so only this route's reads are serialized here.
@@ -83,14 +88,27 @@ async function PrefetchedAlerts({ searchParams }: { searchParams: SearchParams }
 		queryClient.prefetchQuery(rpc.alerts.settings.queryOptions()),
 		queryClient.prefetchQuery(rpc.alerts.policies.queryOptions({ input: {} })),
 		queryClient.prefetchQuery(rpc.alerts.channels.queryOptions({ input: {} })),
-		queryClient.prefetchQuery(rpc.alerts.deliveries.queryOptions({ input: {} })),
+		queryClient.prefetchInfiniteQuery(deliveriesFirstPage(rpc, {})),
 		queryClient.prefetchQuery(rpc.alerts.policies.queryOptions({ input: filtered.policies })),
 		queryClient.prefetchQuery(rpc.alerts.channels.queryOptions({ input: filtered.channels })),
-		queryClient.prefetchQuery(rpc.alerts.deliveries.queryOptions({ input: filtered.activity })),
+		queryClient.prefetchInfiniteQuery(deliveriesFirstPage(rpc, filtered.activity)),
 	]);
 	return (
 		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isAlertsRead })}>
 			<AlertsPage />
 		</HydrationBoundary>
 	);
+}
+
+/**
+ * The delivery ledger's first page as an infinite query, built the way `useKeysetList` builds it
+ * (lib/query/use-keyset-list.ts): the cursor is the page param, so the key is the filter alone and
+ * the server's cache entry is the one the client reads on hydration.
+ */
+function deliveriesFirstPage(rpc: ReturnType<typeof serverOrpc>, query: NormalizedActivityQuery) {
+	return rpc.alerts.deliveries.infiniteOptions({
+		input: (cursor: string | null) => (cursor === null ? query : { ...query, cursor }),
+		initialPageParam: null,
+		getNextPageParam: (last) => last.nextCursor,
+	});
 }

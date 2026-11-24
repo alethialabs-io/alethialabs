@@ -17,7 +17,7 @@
 // well — the PDP's `manage_alerts` is a decision about the org, not about the row — and a write that
 // matched nothing is NOT_FOUND, the same answer for a row that never existed and one of another org.
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { defineAction } from "@/lib/actions/define-action";
 import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
@@ -30,8 +30,9 @@ import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorize } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
 import { encryptSecret, isCredEncryptionConfigured } from "@/lib/crypto/secrets";
-import { getServiceDb } from "@/lib/db";
+import { getServiceDb, type Tx } from "@/lib/db";
 import { alertChannels, alertRuleChannels, alertRules } from "@/lib/db/schema";
+import { ALERT_CHANNELS_MAX, ALERT_POLICIES_MAX } from "@/lib/queries/alerts-lists";
 import type {
 	AlertChannelType,
 	AlertDeliveryStatus,
@@ -117,6 +118,32 @@ async function managingActor(): Promise<Actor> {
 	return actor;
 }
 
+/**
+ * Refuses a create once the org holds the most channels or policies it may configure
+ * ({@link ALERT_CHANNELS_MAX} / {@link ALERT_POLICIES_MAX}). Those caps are the server-side bounds
+ * the Alerts hub's two unpaged lists are recorded against (`apps/console/list-standard/`, #7489):
+ * configuration is capped HERE, at the write, so the read can return every row without paging and
+ * without ever cutting one off.
+ *
+ * Takes a per-org, per-kind transaction lock before counting, so two creates racing at the cap
+ * cannot both see room — the second waits for the first to commit and then counts its row.
+ */
+async function assertRoomFor(tx: Tx, kind: "channels" | "policies", orgId: string): Promise<void> {
+	await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`alerts-cap:${kind}:${orgId}`}, 0))`);
+	const [row] =
+		kind === "channels"
+			? await tx.select({ n: count() }).from(alertChannels).where(eq(alertChannels.org_id, orgId))
+			: await tx.select({ n: count() }).from(alertRules).where(eq(alertRules.org_id, orgId));
+	const max = kind === "channels" ? ALERT_CHANNELS_MAX : ALERT_POLICIES_MAX;
+	if ((row?.n ?? 0) >= max) {
+		const noun = kind === "channels" ? "alert channels" : "alert policies";
+		throw new ActionRefusal(
+			"conflict",
+			`This organization already has ${max} ${noun}, the most it can configure. Delete one before adding another.`,
+		);
+	}
+}
+
 // ── Channels ────────────────────────────────────────────────────────────────────
 
 /** Actionable error when a secret-bearing channel is configured without the key. */
@@ -164,6 +191,11 @@ async function createChannel(data: ChannelInput): Promise<AddChannelOutcome> {
 		return { added: false, error: "Too many attempts — wait a minute and try again." };
 	}
 
+	// The cap is checked before the endpoint is sent a test delivery, so a full org is told so without
+	// a wasted verification — and again under the lock at the insert, which is the check that binds.
+	const db = getServiceDb();
+	await db.transaction((tx) => assertRoomFor(tx, "channels", actor.orgId));
+
 	const secret = encryptChannelSecret(data);
 	const now = new Date();
 
@@ -188,20 +220,23 @@ async function createChannel(data: ChannelInput): Promise<AddChannelOutcome> {
 		return { added: false, error: friendlyVerifyError(err) };
 	}
 
-	const [row] = await getServiceDb()
-		.insert(alertChannels)
-		.values({
-			org_id: actor.orgId,
-			type: data.type,
-			name: data.name,
-			enabled: data.enabled,
-			config: { recipients: data.recipients ?? [] },
-			secret,
-			is_verified: true,
-			last_verified_at: now,
-			created_by: actor.userId,
-		})
-		.returning({ id: alertChannels.id });
+	const [row] = await db.transaction(async (tx) => {
+		await assertRoomFor(tx, "channels", actor.orgId);
+		return tx
+			.insert(alertChannels)
+			.values({
+				org_id: actor.orgId,
+				type: data.type,
+				name: data.name,
+				enabled: data.enabled,
+				config: { recipients: data.recipients ?? [] },
+				secret,
+				is_verified: true,
+				last_verified_at: now,
+				created_by: actor.userId,
+			})
+			.returning({ id: alertChannels.id });
+	});
 	return { added: true, id: row.id };
 }
 
@@ -411,6 +446,7 @@ export async function createPolicy(raw: z.input<typeof policyInputSchema>): Prom
 			);
 
 			const rule = await db.transaction(async (tx) => {
+				await assertRoomFor(tx, "policies", actor.orgId);
 				const [created] = await tx
 					.insert(alertRules)
 					.values({
