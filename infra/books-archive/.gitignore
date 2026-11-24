@@ -1,0 +1,19 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+tfplan.json
+backend.hcl
+*.tfvars.json
+
+# Two inputs cannot be committed, and both are REQUIRED variables so their absence fails loudly:
+#   emails.auto.tfvars  budget_alert_emails — personal addresses, and this repo is public.
+#   box.auto.tfvars     console_writer_source_cidrs — the production box's origin addresses, which
+#                       sit behind the Cloudflare tunnel and are not published anywhere else.
+emails.auto.tfvars
+box.auto.tfvars
+
+# terraform.tfvars is committed HERE on purpose, overriding `**/terraform.tfvars` in
+# infra/.gitignore and `infra/**/terraform.tfvars` in the root one. Only already-public values.
+!terraform.tfvars

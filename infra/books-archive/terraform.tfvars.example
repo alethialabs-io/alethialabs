@@ -1,0 +1,9 @@
+# The two inputs that are never committed. Copy each block into its own gitignored file.
+
+# emails.auto.tfvars
+budget_alert_emails = ["you@example.com"]
+
+# box.auto.tfvars — the production box's egress addresses (the same values as
+# infra/backup-account/box.auto.tfvars). Print them ON THE BOX with:
+#   curl -4 -s https://checkip.amazonaws.com ; curl -6 -s https://api64.ipify.org
+console_writer_source_cidrs = ["203.0.113.10/32", "2001:db8::10/128"]
