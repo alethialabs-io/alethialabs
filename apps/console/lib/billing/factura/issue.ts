@@ -47,7 +47,7 @@ import {
 	type SupplierVatStatus,
 	vatCharged,
 } from "./checks";
-import { renderFacturaPdf } from "./document";
+import { renderFacturaPdf } from "./render-pdf";
 import { buildFacturaSnapshot } from "./snapshot";
 
 /** The issued фактура: what the invoice mirror records and the receipt attaches. */

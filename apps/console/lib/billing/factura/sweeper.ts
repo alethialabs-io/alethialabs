@@ -38,7 +38,7 @@ import { type Factura, factura, type Invoice, invoice } from "@/lib/db/schema";
 import { log } from "@/lib/observability/log";
 import { storage } from "@/lib/storage";
 import type { FacturaSource } from "./checks";
-import { renderFacturaPdf } from "./document";
+import { renderFacturaPdf } from "./render-pdf";
 import { dbFacturaStore, documentFor, type FacturaOutcome, requestFactura } from "./issue";
 
 /** At most this many pending invoices, and this many PDF-less credit notes, per pass. */
