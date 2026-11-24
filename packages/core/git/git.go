@@ -40,6 +40,15 @@ type GIT struct {
 	// Provider is the git provider that minted Token, as the console named it (see TokenUsername).
 	// It decides the HTTP Basic username sent with the token. Empty means "not named".
 	Provider string
+	// AllowSSH admits an ssh:// or scp-style remote under the repository URL rule (see repourl.go).
+	// Only the BYO IaC paths set it; every other remote must be https.
+	AllowSSH bool
+}
+
+// checkRemote applies the repository URL rule (ValidateRepoURL) to g.RepoURL. Clone,
+// CloneAndCheckoutCommit, Pull and Push call it before any network operation.
+func (g *GIT) checkRemote(ctx context.Context) error {
+	return ValidateRepoURL(ctx, g.RepoURL, RepoURLOptions{AllowSSH: g.AllowSSH})
 }
 
 // NewGIT creates a GIT wrapper for a TOKEN-LESS clone, PRESERVING the caller's transport.
@@ -214,6 +223,9 @@ func getSSHAuthMethod() (transport.AuthMethod, error) {
 // passes a user-supplied ref (chart scan, IaC scan, repo analysis) passes force=true and so never
 // reaches it.
 func (g *GIT) Clone(ctx context.Context, branch string, force bool) error {
+	if err := g.checkRemote(ctx); err != nil {
+		return err
+	}
 	fmt.Printf("Cloning %s into %s...\n", g.redactedURL(), g.LocalPath)
 	// `HEAD` names the remote's default branch, exactly as an empty ref does. It is NOT a branch
 	// called "HEAD": handing it to NewBranchReferenceName asks the remote for refs/heads/HEAD,
@@ -263,7 +275,7 @@ func (g *GIT) Clone(ctx context.Context, branch string, force bool) error {
 			}
 		}
 		_ = g.ResetAndRestoreChanges() // Discard local changes and untracked files
-		return g.Pull(ctx)
+		return g.pull(ctx)
 	} else {
 		// Remove existing directory if not correct repo or force is true
 		_ = os.RemoveAll(g.LocalPath)
@@ -400,6 +412,9 @@ func (g *GIT) CloneAndCheckoutCommit(ctx context.Context, ref, commitSHA string,
 	if strings.TrimSpace(commitSHA) == "" {
 		return fmt.Errorf("commit SHA is required for a pinned checkout of %s", g.redactedURL())
 	}
+	if err := g.checkRemote(ctx); err != nil {
+		return err
+	}
 	fmt.Printf("Cloning %s (ref %q) and pinning commit %s into %s...\n", g.redactedURL(), ref, commitSHA, g.LocalPath)
 
 	auth, authErr := g.getAuth()
@@ -514,11 +529,21 @@ func (g *GIT) isCorrectRepo() bool {
 	return false
 }
 
-// Pull pulls the latest changes from the remote repository.
+// Pull pulls the latest changes from the remote repository, after checking the remote against the
+// repository URL rule.
 func (g *GIT) Pull(ctx context.Context) error {
 	if g.Repo == nil {
 		return fmt.Errorf("repository not initialized")
 	}
+	if err := g.checkRemote(ctx); err != nil {
+		return err
+	}
+	return g.pull(ctx)
+}
+
+// pull is Pull without the remote check, for Clone's reuse path, which has already made it. The
+// caller guarantees g.Repo is set.
+func (g *GIT) pull(ctx context.Context) error {
 	fmt.Printf("Pulling changes for %s...\n", g.redactedURL())
 
 	w, err := g.Repo.Worktree()
@@ -566,6 +591,9 @@ func (g *GIT) Push(ctx context.Context) error {
 		return nil
 	}
 
+	if err := g.checkRemote(ctx); err != nil {
+		return err
+	}
 	fmt.Printf("Pushing changes to %s...\n", g.redactedURL())
 	auth, err := g.getAuth()
 	if err != nil {
