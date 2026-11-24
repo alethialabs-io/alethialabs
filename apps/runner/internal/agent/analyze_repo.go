@@ -26,6 +26,14 @@ func (w *Runner) executeAnalyzeRepo(ctx context.Context, job *Job, stdout, stder
 
 	fmt.Fprintf(stdout, "Analyzing the repository on host %s\n", provisioner.RepoHostForLog(repoURL))
 
+	// The runner validates the repository URL itself, whatever enqueued the job: https only, no
+	// credentials in the URL, a public host (git.ValidateRepoURL; operators allow internal Git hosts
+	// with ALETHIA_GIT_ALLOWED_HOSTS). It runs before the token request so a URL that will not be
+	// cloned never has a token fetched for it; Clone checks it again before it connects.
+	if err := git.ValidateRepoURL(ctx, repoURL, git.RepoURLOptions{}); err != nil {
+		return err
+	}
+
 	fetched := w.fetchRepoToken(job.ID, repoURL, stderr)
 	token := fetched.Token
 	if token == "" {
