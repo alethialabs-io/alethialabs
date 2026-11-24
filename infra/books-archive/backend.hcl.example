@@ -1,0 +1,12 @@
+# AWS-native S3 backend for infra/books-archive. Copy to backend.hcl (gitignored):
+#
+#   cp backend.hcl.example backend.hcl
+#   AWS_PROFILE=alethia-sso tofu init -backend-config=backend.hcl
+#
+# The Alethia platform account's existing state bucket (the one infra/backup-account uses), under
+# this stack's own key. ops/plan.sh copies this file for you when backend.hcl is missing.
+
+bucket       = "alethia-tofu-state-270587882865"
+key          = "books-archive/terraform.tfstate"
+region       = "eu-central-1"
+use_lockfile = true

@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Static validation for infra/books-archive (the immutable books archive in the alethia-backup
+# account: the Object-Lock bucket, its KMS key, the books-monthly OIDC role, the console-books-writer
+# user, the connectors secret shell and the budget). Credential-free by design: the stack creates
+# IAM, so it is APPLIED BY AN OPERATOR (infra/books-archive/ops/). There is deliberately NO apply job
+# and no `id-token` permission — the run only fmt/validates/tests/lints/scans, so no cloud or state
+# credential ever touches it (safe on contributor PRs).
+
+name: Infra - books archive
+
+on:
+  pull_request:
+    paths:
+      - "infra/books-archive/**"
+      - "infra/.trivyignore"
+      - "infra/.tflint.hcl"
+      - "infra/.trivy.yaml"
+      - ".github/workflows/infra-books-archive.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/books-archive/**"
+
+# `github.ref`, not the PR number: this also fires on `push` (see infra-backup-account.yml).
+concurrency:
+  group: infra-books-archive-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TF_DIR: infra/books-archive
+  TOFU_VERSION: "1.10.10"
+
+jobs:
+  validate:
+    name: Validate + test + IaC checks (no backend, no secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      # The test file replaces the provider with a credential-free one and overrides the two data
+      # sources that would call AWS (STS, the OIDC provider), so `tofu test` plans offline. It proves
+      # Object Lock COMPLIANCE 4018 d, no principal with a delete / retention / governance bypass, the
+      # exact OIDC subject, the writer's SourceIp lock, no access-key or secret-version resource, and
+      # every refusal.
+      - name: OpenTofu validate + test
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          tofu init -backend=false
+          tofu validate
+          tofu test
+
+      - name: shellcheck (operator scripts)
+        working-directory: ${{ env.TF_DIR }}/ops
+        run: shellcheck -x ./*.sh
+
+      # The plan summary's refusals (a delete/replace, a credential resource), against fixed plans.
+      - name: plan.sh summary self-test
+        working-directory: ${{ env.TF_DIR }}/ops
+        run: ./plan.sh --self-test
+
+      - name: IaC checks (fmt + tflint + Trivy)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: ${{ env.TF_DIR }}
