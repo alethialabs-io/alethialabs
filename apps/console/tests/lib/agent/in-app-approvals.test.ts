@@ -14,7 +14,13 @@
 //   the org requires a different approver.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { type EnterpriseSlot, fakeEnterprisePolicy } from "../approvals/fake-enterprise-policy";
 import { fakeExecutor, type FakeExecutor } from "../approvals/fake-executor";
+
+// "Require a different approver" is an enterprise toggle since AGT-L14 (#7478): core reads the
+// org's toggles and asks the registered enterprise policy, and a community build registers none.
+const enterprise = vi.hoisted((): EnterpriseSlot => ({ current: null }));
+vi.mock("@/lib/approvals/enterprise-policy", () => ({ enterpriseAgentPolicy: async () => enterprise.current }));
 
 const can = vi.fn();
 vi.mock("@/lib/authz", () => ({ getPdp: () => ({ can }) }));
@@ -184,6 +190,7 @@ function inserted(fake: FakeExecutor): Record<string, unknown> | undefined {
 }
 
 beforeEach(() => {
+	enterprise.current = null;
 	can.mockReset();
 	can.mockResolvedValue({ allowed: true });
 	currentActor.mockReset();
@@ -415,7 +422,8 @@ describe("deciding an in-product agent's request", () => {
 	const NOW = new Date();
 
 	/** The executor one decision reads through. */
-	function decideSetup(differentApprover: boolean) {
+	function decideSetup(differentApprover: boolean, edition: "enterprise" | "community" = "enterprise") {
+		enterprise.current = edition === "enterprise" ? fakeEnterprisePolicy(true).policy : null;
 		return fakeExecutor(
 			new Map<unknown, unknown[][]>([
 				[applyApprovals, [[approvalRow()]]],
@@ -454,6 +462,13 @@ describe("deciding an in-product agent's request", () => {
 		expect(await codeOf(decideApproval(fake.db, decider(PERSON), APPROVAL, { decision: "approve" }, NOW))).toBe(
 			"self_approval",
 		);
+	});
+
+	it("a community build has no different-approver rule, so the toggle alone refuses nothing", async () => {
+		const fake = decideSetup(true, "community");
+		await expect(decideApproval(fake.db, decider(PERSON), APPROVAL, { decision: "approve" }, NOW)).resolves.toMatchObject({
+			ok: true,
+		});
 	});
 
 	it("another person may approve it when the org requires a different approver", async () => {
