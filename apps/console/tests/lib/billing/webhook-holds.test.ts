@@ -83,7 +83,7 @@ vi.mock("@/lib/billing/webhook-events", () => ({
 	claimWebhookEvent: vi.fn(async () => ({ claimed: true })),
 	markWebhookEventError: vi.fn(),
 	runWebhookEventExactlyOnce: vi.fn(
-		async (_id: string, _type: string, handler: () => Promise<void>) => {
+		async (_provider: string, _id: string, _type: string, handler: () => Promise<void>) => {
 			await handler();
 			return "handled";
 		},

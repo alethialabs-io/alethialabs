@@ -38,7 +38,7 @@ vi.mock("@/lib/authz", () => ({ getPdp: () => ({ can: h.can }) }));
 vi.mock("@/lib/cloud-providers/availability", () => ({ offeredClouds: () => ["aws", "gcp", "azure", "hetzner"] }));
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
 vi.mock("@/lib/authz/entitlements", () => ({ getEntitlements: vi.fn() }));
-vi.mock("@/lib/billing/config", () => ({ isStripeConfigured: () => true }));
+vi.mock("@/lib/billing/config", () => ({ isBillingConfigured: () => true }));
 vi.mock("@/lib/db", () => ({
 	getServiceDb: () => ({
 		select: () => ({
@@ -96,6 +96,15 @@ const teamRow: OrganizationBilling = {
 	aiPerUserWeeklyCapCredits: null,
 	stripeSubscriptionEventAt: null,
 	aiStripeSubscriptionEventAt: null,
+	billingProvider: null,
+	paddleCustomerId: null,
+	paddleBusinessId: null,
+	paddleAddressId: null,
+	paddleSubscriptionId: null,
+	paddleSubscriptionEventAt: null,
+	aiPaddleSubscriptionId: null,
+	aiPaddleSubscriptionEventAt: null,
+	cancelEffectiveAt: null,
 	payerCapacity: null,
 	billingCountry: null,
 	authorityAttestation: null,
