@@ -214,7 +214,9 @@ exact command), never `--squash`, `--rebase`, `--auto` or `--delete-branch`, one
 and only once `gh pr checks <n>` shows nothing failed or pending and every `Release gate (<leg>)`
 named in `.github/workflows/release-gate.yml` passed. A release-please PR into `main` (head
 `release-please--branches--main--components--<c>`, author `app/alethia-labs-ci`, changing only the
-files `release-please-config.json` says it writes) merges the same way under the same checks. Any other
+files `release-please-config.json` says it writes) merges the same way under the same checks, and only
+while `dev` holds no commit under that component that `main` lacks — merging earlier hides those
+commits from release-please for good (`docs/releases/README.md`, "A release can miss a commit"). Any other
 merge into `main` is the maintainer's, and `--admin`, which bypasses the queue entirely,
 is never yours. Never merge a red PR.
 
