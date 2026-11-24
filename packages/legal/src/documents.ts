@@ -38,31 +38,35 @@ export const LEGAL_DOCUMENTS: readonly LegalDocumentVersion[] = [
 	{
 		id: "terms",
 		title: "Terms of Service",
-		// Bumped by #2372: sections 5 and 13 now state the paid-market gating, the ordinary
-		// cancellation bargain, and the consumer's statutory withdrawal right. That changes what a
-		// reader agrees to, so it is a NEW version — every acceptance recorded against 2026-08-12
-		// stays pinned to the text that existed then, which is the whole point of the hash.
-		version: "2026-08-24",
-		effectiveDate: "2026-08-24",
+		// Bumped by #2372 (2026-08-24): sections 5 and 13 stated the paid-market gating, the ordinary
+		// cancellation bargain, and the consumer's statutory withdrawal right. Bumped again for the
+		// move to Paddle (2026-11-24, lane L6a): section 5 names Paddle as reseller and merchant of
+		// record for card purchases, keeps Enterprise contracts direct, and replaces "no refund" with
+		// the Refund Policy at /refunds. That changes what a reader agrees to, so it is a NEW version —
+		// every acceptance recorded against an earlier one stays pinned to the text that existed then,
+		// which is the whole point of the hash.
+		version: "2026-11-24",
+		effectiveDate: "2026-11-24",
 		path: "/terms",
 		locales: ["en"],
 		acceptanceRequired: true,
 		contentHash:
-			"154044e64831a16ac461e94b51eee0428f9f58bf2f73b70deb780251a4558286",
+			"a49ffc8ddddf0f71883bb506b34266818b9cc996383c1ffded529a277eb020d6",
 		source: "apps/marketing/app/terms/page.tsx",
 	},
 	{
 		id: "privacy",
 		title: "Privacy Policy",
-		// Bumped when transactional email moved from Resend to Amazon SES (eu-central-1): section 3
-		// names the email processor, so the text a reader is told about changed.
-		version: "2026-11-21",
-		effectiveDate: "2026-11-21",
+		// Bumped when transactional email moved from Resend to Amazon SES (eu-central-1) on 2026-11-21,
+		// and again on 2026-11-24 when card purchases moved to Paddle, an independent controller: the
+		// billing section and section 4 name who receives payment data.
+		version: "2026-11-24",
+		effectiveDate: "2026-11-24",
 		path: "/privacy",
 		locales: ["en"],
 		acceptanceRequired: false,
 		contentHash:
-			"103f7ff7669fedeffa2a5336e5227670706987e4b112fa1a094cf2c560597de0",
+			"e2f514c86f06738f5d9c7fe8cb6d0c4e245ab1b62de0c9a3d97e5eeee9e6df06",
 		source: "apps/marketing/app/privacy/page.tsx",
 	},
 	{
@@ -95,14 +99,17 @@ export const LEGAL_DOCUMENTS: readonly LegalDocumentVersion[] = [
 		// Sealed by the maintainer's legal review of 2026-11-23 (#7351): the console withdrawal control
 		// is named, the owed-refund sentence added, and the Bulgarian section (#bg) written, so the
 		// one hash pins both languages. A `consumer` paid-market cell needs this seal
-		// (paid-markets.ts, condition 3).
-		version: "2026-11-23",
-		effectiveDate: "2026-11-23",
+		// (paid-markets.ts, condition 3). Bumped on 2026-11-24 (lane L6a) in both languages: Paddle is
+		// named as the seller of card purchases, withdrawal can go through Paddle or us, and the
+		// voluntary money-back of the Refund Policy replaces "no discretionary refunds". This version
+		// awaits the lawyer's review before MOR_MARKETS opens (mor-markets.ts, condition 2).
+		version: "2026-11-24",
+		effectiveDate: "2026-11-24",
 		path: "/consumer-rights",
 		locales: ["en", "bg-BG"],
 		acceptanceRequired: false,
 		contentHash:
-			"1d57baabd0e9fa3710f4b806b4590aad30a77d5b49a6b6a7e551ca532b243e1b",
+			"eba08cf79c27a3609d2f4144f1f5234d11516b077c2538397692bcdfc4e9d3fb",
 		source: "apps/marketing/app/consumer-rights/page.tsx",
 	},
 ];

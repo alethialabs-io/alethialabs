@@ -763,3 +763,36 @@ How the texts were read: the two lex.bg acts, the four EU acts and the Stripe pa
 downloaded whole and the articles extracted from the text, so the quotations are copied, not
 recalled. The NRA and Canada Revenue Agency pages were read through a fetch tool that returns
 short excerpts; the quotations from them are those excerpts.
+
+## 9. 2026-11-24: card sales move to a merchant of record
+
+Recorded on 2026-11-24. This section changes nothing above it; it records a decision that
+narrows where the rest of this document applies.
+
+**The decision.** Self-serve card sales (subscriptions, usage and AI credit packs) are made by
+Paddle (Paddle.com Market Ltd, UK; Paddle.com Inc. for buyers in the United States) as reseller
+and merchant of record. Paddle is the seller to the customer: it charges the customer, calculates
+and remits the VAT or sales tax in the customer's jurisdiction, and issues the customer's invoice.
+Alethia Labs makes one supply a month, to Paddle.com Market Ltd. The cells for these sales are in
+`MOR_MARKETS` (`packages/legal/src/mor-markets.ts`), empty until go-live; the conditions are in
+`PAID_MARKETS.md` § "Merchant-of-record cells". The company applied for full VAT registration on
+the same day, with effect expected around 2026-12-01; the Terms' statement that the company is not
+registered for VAT changes in a separate, dated edit after the registration act.
+
+**What no longer applies to card sales through Paddle** [I]:
+
+- per-customer VAT: the EU OSS scheme (§2.2), the EUR 10,000 threshold, the reverse charge and
+  the VAT-number dimension (§3.3, §3.4) — the customer's tax is Paddle's;
+- US and Canadian sales-tax nexus and registration (§2.3, §3.6, §3.7);
+- invoicing each customer (§2.4) and Наредба Н-18 receipts for those sales — Paddle issues the
+  customer's invoice.
+
+What replaces them is one question for the accountant: the monthly supply to Paddle.com Market
+Ltd under ЗДДС чл. 21(2) (place of supply in the UK, outside Bulgarian VAT), whether Н-18 reaches
+any part of it, and whether the document is our фактура or Paddle's self-billing. **Not
+established** until the accountant answers in writing.
+
+**What still applies.** Enterprise and services contracts are concluded directly with Alethia
+Labs and paid by bank transfer against our фактура. They keep every per-cell rule in §3 and stay
+gated by `PAID_MARKETS`. The consumer-law duties in §2.5 still apply to consumer sales through
+Paddle; the division of them between Paddle and us is for the lawyer review.

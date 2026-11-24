@@ -2,7 +2,7 @@
 
 Owner: Alethia Labs legal/commercial
 
-Effective: 2026-08-24
+Effective: 2026-11-24
 
 Review cadence: before any cell is opened, and whenever a tax registration, Stripe account
 setting, or published document version changes
@@ -118,6 +118,45 @@ current list is correct for a Bulgarian trader; it is not a per-country list.
 **NOT ESTABLISHED — requires the durable confirmation to be sent and its content confirmed
 against CRD art. 8(7).** The order record captures everything the confirmation must contain;
 what is not established is that a message carrying it is actually delivered on a real order.
+
+## Merchant-of-record cells (`MOR_MARKETS`)
+
+Decided 2026-11-24 (decision D6′ in the paddle-billing plan): self-serve card sales —
+subscriptions, usage and AI credit packs — move to **Paddle** (Paddle.com Market Ltd, UK, and
+Paddle.com Inc. for US buyers) as **reseller and merchant of record**. Paddle sells to the buyer
+in its own name, charges and remits the tax, issues the customer's invoice and handles refunds
+and chargebacks; Alethia provides the Service under its Terms. Enterprise and services contracts
+stay direct with Alethia Labs (our фактура, bank transfer) and keep the four conditions above.
+
+Those sales are opened by a second list, `MOR_MARKETS` in `packages/legal/src/mor-markets.ts`,
+with the same **country × payer capacity** cells and no VAT-number dimension (Paddle, as the
+seller, decides the buyer's tax treatment). It is **empty**, and
+`packages/legal/src/mor-markets.test.ts` fails if a cell is added without changing the test. A
+merchant-of-record cell does not need conditions 1 and 2 above — the tax and the payment account
+are Paddle's — but it needs all of these:
+
+1. **Paddle** — the live account is verified (business and identity), the payout account is set,
+   and alethialabs.io has passed Paddle's domain review. **NOT ESTABLISHED.** Settled by the
+   approval in the Paddle dashboard; the review needs the public Refund Policy at `/refunds`
+   on production first.
+2. **Contractual** — the Terms (version 2026-11-24 or later) and the consumer-rights page naming
+   Paddle as reseller are sealed in `packages/legal/src/documents.ts`, reviewed by a lawyer, and
+   deployed to production. **Sealed; lawyer review NOT ESTABLISHED.**
+3. **Books** — the accountant's written opinion on the monthly supply to Paddle.com Market Ltd
+   (ЗДДС чл. 21(2): a B2B service whose place of supply is the UK, outside Bulgarian VAT), on
+   whether Наредба Н-18 applies to any of it, and on our own фактура versus Paddle's
+   self-billing. **NOT ESTABLISHED.**
+4. **Date** — no earlier than the company's VAT registration taking effect (applied for on
+   2026-11-24; see `TAX_MARKET_PRECONDITIONS.md` §9).
+5. **Opening** — a one-file PR that adds the cells to `MOR_MARKETS`, each with an `evidence:`
+   string naming the Paddle approval, the sealed document versions and the accountant's opinion.
+   It is reviewed on its own, like a `PAID_MARKETS` cell. Production also needs
+   `PADDLE_ENVIRONMENT=live`; that is configuration, not a cell.
+
+For a `consumer` cell, condition 4 above (Commercial rights) still applies in part: the
+withdrawal right is exercised through Paddle or through us (we pass it on), the immediate-
+performance consent is still captured on our side before checkout opens, and the ADR bodies are
+still ours to name. Whether that division is right is part of the lawyer review in item 2.
 
 ## Things that are NOT gated on any of this
 

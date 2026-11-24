@@ -71,6 +71,18 @@ describe("processing registry", () => {
 		expect(stripe?.purposes.every((p) => p.consentRequired === false)).toBe(true);
 	});
 
+	// Paddle sells card purchases as reseller and merchant of record, so it is an independent
+	// controller, not our processor. It is registered now and published only when a card sale can go
+	// through it (MOR_MARKETS opens), because a register that names a party receiving nothing is not a
+	// truthful register either.
+	it("registers Paddle as an independent controller, unpublished until merchant-of-record sales open", () => {
+		const paddle = PROCESSING_PARTIES.find((party) => party.id === "paddle");
+		expect(paddle?.role).toBe("independent-controller");
+		expect(paddle?.status).toBe("planned");
+		expect(paddle?.purposes.every((p) => p.lawfulBasis === "contract" && !p.consentRequired)).toBe(true);
+		expect(publicProcessingParties().some((party) => party.id === "paddle")).toBe(false);
+	});
+
 	// Customer-directed entries are CATEGORIES, never company names: Alethia has no agreement with,
 	// and no knowledge of, which cloud or model endpoint a given customer connects. An unevidenced
 	// company name in a processing register is the same defect as a missing one, pointing the other way.
