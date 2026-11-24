@@ -36,9 +36,8 @@ vi.mock("@modelcontextprotocol/server", () => ({
 	createMcpHandler: vi.fn(() => ({ fetch: vi.fn() })),
 	McpServer: class {},
 }));
-vi.mock("@/lib/ai/mcp/adapter", () => ({ registerAiToolsOnMcp: vi.fn() }));
-vi.mock("@/lib/ai/tools", () => ({ buildExternalAgentTools: vi.fn(() => []) }));
-vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));
+vi.mock("@/lib/ai/mcp/server", () => ({ buildMcpServer: vi.fn() }));
+vi.mock("@/lib/ai/mcp/actor", () => ({ resolveMcpActor: vi.fn() }));
 vi.mock("@/lib/authz/actor-context", () => ({ runWithActor: vi.fn() }));
 vi.mock("@/lib/billing/ai-guard", () => ({ isAiSurfaceEnabled: vi.fn(async () => true) }));
 
@@ -57,28 +56,90 @@ describe("the MCP route's token audience", () => {
 	});
 });
 
+/** Calls the handler the route handed `requireMcpAuth` on its first import, and answers its response. */
+async function callTokenHandler(req: Request, claims: Record<string, unknown>): Promise<Response | undefined> {
+	const handler = requireMcpAuth.mock.calls[0][1];
+	if (typeof handler !== "function") throw new Error("the route handed requireMcpAuth no handler");
+	const res: unknown = await handler(req, claims);
+	return res instanceof Response ? res : undefined;
+}
+
 // Runs between the two blocks around it on purpose: it reads the handler the first block's import
 // handed to `requireMcpAuth`, and the block below clears that call.
 describe("the actor an MCP access token is resolved into", () => {
-	it("is bound as agent_oauth, so a rule can tell it from a person at the console", async () => {
+	it("is the one resolveMcpActor answers, bound for the whole request", async () => {
 		await import("@/app/api/mcp/route");
-		const { getActiveScope } = await import("@/lib/auth/scope");
+		const { resolveMcpActor } = await import("@/lib/ai/mcp/actor");
 		const { runWithActor } = await import("@/lib/authz/actor-context");
-		vi.mocked(getActiveScope).mockResolvedValue({ userId: "user-1", orgId: "org-1" });
+		const actor = {
+			userId: "user-1",
+			orgId: "org-1",
+			credential: "agent_oauth" as const,
+			ceiling: { scopes: ["read" as const], projectIds: null },
+		};
+		vi.mocked(resolveMcpActor).mockResolvedValue({ ok: true, actor });
 
-		const withActorFromToken = requireMcpAuth.mock.calls[0][1];
-		if (typeof withActorFromToken !== "function") {
-			throw new Error("the route handed requireMcpAuth no handler");
-		}
-		await withActorFromToken(new Request("https://alethialabs.io/api/mcp", { method: "POST" }), {
+		const claims = { sub: "user-1", scope: "read" };
+		await callTokenHandler(new Request("https://alethialabs.io/api/mcp?project=p1", { method: "POST" }), claims);
+
+		expect(resolveMcpActor).toHaveBeenCalledWith(claims, "p1");
+		expect(runWithActor).toHaveBeenCalledTimes(1);
+		expect(runWithActor).toHaveBeenCalledWith(actor, expect.any(Function));
+	});
+
+	it("answers a token with no agent scope 403 with a step-up challenge, and binds no actor", async () => {
+		await import("@/app/api/mcp/route");
+		const { resolveMcpActor } = await import("@/lib/ai/mcp/actor");
+		const { runWithActor } = await import("@/lib/authz/actor-context");
+		vi.mocked(runWithActor).mockClear();
+		vi.mocked(resolveMcpActor).mockResolvedValue({ ok: false, reason: "insufficient_scope" });
+
+		const res = await callTokenHandler(new Request("https://alethialabs.io/api/mcp", { method: "POST" }), {
 			sub: "user-1",
 		});
+		expect(res?.status).toBe(403);
+		expect(res?.headers.get("www-authenticate")).toContain('error="insufficient_scope"');
+		expect(runWithActor).not.toHaveBeenCalled();
+	});
 
-		expect(runWithActor).toHaveBeenCalledTimes(1);
-		expect(runWithActor).toHaveBeenCalledWith(
-			{ userId: "user-1", orgId: "org-1", credential: "agent_oauth" },
-			expect.any(Function),
+	it("tells a token holding only OIDC scopes to disconnect and reconnect, naming every agent scope", async () => {
+		await import("@/app/api/mcp/route");
+		const { resolveMcpActor } = await import("@/lib/ai/mcp/actor");
+		vi.mocked(resolveMcpActor).mockResolvedValue({ ok: false, reason: "insufficient_scope" });
+
+		const res = await callTokenHandler(new Request("https://alethialabs.io/api/mcp", { method: "POST" }), {
+			sub: "user-1",
+			scope: "openid profile email offline_access",
+		});
+		expect(res?.status).toBe(403);
+		const body: { error: string } = await res?.json();
+		expect(body.error).toMatch(/Disconnect this MCP server/);
+		expect(body.error).toMatch(/connect it again/);
+		for (const scope of ["read", "design", "plan", "apply", "destroy"]) {
+			expect(body.error).toContain(scope);
+		}
+		expect(res?.headers.get("www-authenticate")).toContain('scope="read design plan apply destroy"');
+	});
+
+	it("answers 403 while the organization's agent access is off", async () => {
+		await import("@/app/api/mcp/route");
+		const { resolveMcpActor } = await import("@/lib/ai/mcp/actor");
+		vi.mocked(resolveMcpActor).mockResolvedValue({ ok: false, reason: "agent_access_disabled" });
+		const res = await callTokenHandler(new Request("https://alethialabs.io/api/mcp", { method: "POST" }), {
+			sub: "user-1",
+			scope: "read",
+		});
+		expect(res?.status).toBe(403);
+		expect(await res?.json()).toEqual({ error: expect.stringContaining("Agent access is turned off") });
+	});
+
+	it("refuses a mistyped URL scoping rather than listing everything", async () => {
+		await import("@/app/api/mcp/route");
+		const res = await callTokenHandler(
+			new Request("https://alethialabs.io/api/mcp?features=nope", { method: "POST" }),
+			{ sub: "user-1", scope: "read" },
 		);
+		expect(res?.status).toBe(400);
 	});
 });
 

@@ -1,23 +1,27 @@
 ---
 title: MCP tool reference
-description: Every tool the Alethia MCP server offers today — 20 read tools, their arguments, and what each returns. None of them writes.
+description: Every tool the Alethia MCP server offers today — 20 read tools, six tools that plan, apply, destroy and follow jobs, their arguments, and what each returns.
 ---
 
-{/* Source of truth: apps/console/lib/ai/tools/registry.ts (TOOL_AUDIENCE "both" or "external") and the
-    tool definitions in apps/console/lib/ai/tools/{compose,read,docs,scanner}.ts. The MCP route registers
-    exactly that set (buildExternalAgentTools). Change this page when that set changes. */}
+{/* Source of truth: the read tools are apps/console/lib/ai/tools/registry.ts (TOOL_AUDIENCE "both" or
+    "external") and their definitions in apps/console/lib/ai/tools/{compose,read,docs,scanner}.ts; the
+    operation tools are the declared tools in apps/console/lib/ai/mcp/surface.ts that have a handler in
+    apps/console/lib/ai/mcp/handlers.ts (HANDLED_TOOL_NAMES). Change this page when either set changes. */}
 
 # MCP tool reference
 
-The MCP server at `<console origin>/api/mcp` offers the 20 tools below. They have the same names and
-arguments as the tools of Elench, the console's own assistant.
+The MCP server at `<console origin>/api/mcp` offers the tools below: 20 read tools, with the same
+names and arguments as the tools of Elench, the console's own assistant, and six
+[operation tools](#operations) that plan, apply, destroy and follow jobs.
 
 Every tool:
 
-- **reads only.** None of them creates, changes or deletes anything, and none starts a job.
 - **acts as you.** Each call checks your role in the organization, the same check the console makes.
   A tool refuses what you cannot see.
-- **returns JSON as text.** A refusal or a failure comes back as a tool error with a message.
+- **stays inside what you granted.** The scopes you approved when you connected the client decide
+  which tools it is offered. A tool that needs a scope you did not grant is not listed, and refuses a
+  call.
+- **returns JSON.** A refusal or a failure comes back as a tool error with a message.
 - **leaves secrets out.** No result carries a password, a token or a cloud credential.
 
 ## Projects and jobs
@@ -72,10 +76,38 @@ A scan starts from the console or from Elench. No MCP tool starts one.
 | --- | --- | --- |
 | `search_docs` | `query`, `topK` (1 to 8, default 4) | The most relevant passages of these docs, each with its URL. |
 
+## Operations
+
+These tools take their arguments in `snake_case`, return structured content, and carry the MCP
+annotations that tell a client which of them change something.
+
+| Tool | Scope | Arguments | Returns |
+| --- | --- | --- | --- |
+| `plan` | `plan` | `project_id`, `environment_id`, `idempotency_key` | The `job_id` of a plan of what the design would create or change. It changes nothing in the cloud. The same key returns the same job. |
+| `request_apply` | `apply` | `plan_job_id`, `reason` (optional) | An approval request for that plan: `approval_id`, `status`, `approve_url`, `digest_prefix`, `expires_at` and `job_id`. |
+| `request_destroy` | `destroy` | `project_id`, `environment_id`, `reason` (optional) | The same, for destroying the environment as it was last deployed. |
+| `wait_for_job` | `read` | `job_id` or `approval_id`, `timeout_s` (up to 50) | Where the job or the approval stands, whether it is done, and when to ask again. |
+| `get_job_logs` | `read` | `job_id`, `cursor` (optional) | The job's log from the cursor, in a field named `untrusted_output`, and the next cursor. |
+| `cancel_job` | `plan` | `job_id` | The job's status after the cancel. A finished job stays as it is. |
+
+### How an apply or a destroy runs
+
+No tool approves. An apply or a destroy runs only after you approve it in the console:
+
+1. The agent calls `request_apply` with a plan it has reviewed. Nothing runs. The tool returns
+   `status: "pending"`, a link and the first 8 characters of the plan's digest.
+2. You open the link in the console, check that the page shows the same 8 characters, and approve.
+   For a destroy, you type the environment's name.
+3. The agent calls `request_apply` again with the same plan. Only now does the deploy start. The tool
+   returns `status: "consumed"` and the `job_id`. Calling it again returns the same job.
+
+An approval covers one plan, for the client that asked for it, once. It expires after the time your
+organization set (60 minutes by default). A newer plan, or a change to the environment, voids it.
+
 ## Not on the server
 
 These need a person in the console, or the CLI:
 
-- Plan, apply and destroy. Use `alethia plan` and `alethia apply`, or the console.
+- Approving an apply or a destroy.
 - Starting a repository scan or an audit of existing infrastructure.
 - Changing a design, connecting a cloud, and anything that opens part of the console.
