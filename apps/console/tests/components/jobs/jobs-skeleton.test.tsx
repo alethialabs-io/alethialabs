@@ -12,7 +12,7 @@ import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const page = vi.hoisted((): { current: Record<string, unknown> } => ({ current: {} }));
-vi.mock("@/lib/query/use-jobs-page-query", () => ({ useJobsPageQuery: () => page.current }));
+vi.mock("@/lib/query/use-keyset-list", () => ({ useKeysetList: () => page.current }));
 vi.mock("@/lib/query/use-activity-query", () => ({ useMembersQuery: () => ({ data: [], isPending: false }) }));
 vi.mock("next/navigation", () => ({
 	useParams: () => ({ org: "acme" }),
@@ -47,13 +47,16 @@ const JOB = {
 
 beforeEach(() => {
 	page.current = {
-		data: { rows: [JOB], matched: 1, total: 1, facets: EMPTY_FACETS },
-		error: null,
-		isError: false,
+		rows: [JOB],
+		facets: EMPTY_FACETS,
+		universeEmpty: false,
 		isPending: false,
-		isLoading: false,
 		isPlaceholderData: false,
-		refetch: vi.fn(),
+		hasMore: false,
+		loadingMore: false,
+		loadMoreFailed: false,
+		loadMore: vi.fn(),
+		query: { isLoading: false, isError: false, data: { pages: [{ rows: [JOB] }] }, error: null, refetch: vi.fn() },
 	};
 });
 

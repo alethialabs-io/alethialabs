@@ -12,15 +12,15 @@
 // is stored as its id and resolved by the READ, so a link to "last 30 days" stays relative.
 
 import { parseRangeFilter } from "@/lib/query/range-filter";
-import { JOBS_DEFAULT_PRESET, type JobsRange, jobsPageInputFrom } from "@/lib/rpc/inputs/jobs";
-import type { JobsPageRead } from "@/lib/rpc/procedures/jobs";
+import { JOBS_DEFAULT_PRESET, type JobsPageInput, type JobsRange, jobsPageInputFrom } from "@/lib/rpc/inputs/jobs";
 import { type DateRange, presetRange } from "@repo/ui/range";
 
-/** How many rows the list reads at first, and how many more each "Show more" asks for. */
-export const JOBS_PAGE_SIZE = 50;
-
-/** The largest window one read returns. Past it the list says to narrow the filters. */
-export const JOBS_PAGE_MAX = 500;
+/**
+ * The jobs list's normalized query: the filters, the range, and the project whose list it is. It is
+ * the WHOLE of the list's query key. The page size and the cursor are not in it: `useKeysetList`
+ * sends the cursor as the infinite query's page param, and the server's default page size applies.
+ */
+export type JobsListQuery = JobsPageInput & { projectId?: string };
 
 /** The store-held filter selections (a type alias — the factory's Record constraint). */
 export type JobsFilters = {
@@ -71,13 +71,9 @@ export function jobsRangeWindow(range: string, now: Date): DateRange {
  * `projectId` is the SCOPE of a project's jobs list, not a filter (lib/query/README.md, "Scope is
  * a predicate, never a filter"): it travels as its own field, the read applies it to the facet
  * counts as well as the rows, and the Project facet's selection is dropped — on a project's list
- * that facet is not offered. `limit` is the row window; the default size is the absent field.
+ * that facet is not offered.
  */
-export function normalizeJobsQuery(
-	filters: JobsFilters,
-	projectId?: string,
-	limit: number = JOBS_PAGE_SIZE,
-): JobsPageRead {
+export function normalizeJobsQuery(filters: JobsFilters, projectId?: string): JobsListQuery {
 	const sorted = (xs: string[]) => (xs.length ? [...xs].sort() : undefined);
 	const search = filters.search.trim();
 	const input = jobsPageInputFrom(
@@ -91,9 +87,5 @@ export function normalizeJobsQuery(
 		},
 		jobsRangeOf(filters.range),
 	);
-	return {
-		...input,
-		...(projectId ? { projectId } : {}),
-		...(limit !== JOBS_PAGE_SIZE ? { limit: Math.min(limit, JOBS_PAGE_MAX) } : {}),
-	};
+	return projectId ? { ...input, projectId } : input;
 }
