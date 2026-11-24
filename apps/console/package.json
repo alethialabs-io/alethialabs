@@ -66,6 +66,8 @@
     "db:studio": "drizzle-kit studio",
     "stripe:setup": "tsx scripts/stripe-setup.ts",
     "stripe:check": "tsx scripts/stripe-check.ts",
+    "paddle:setup": "tsx scripts/paddle-setup.ts",
+    "paddle:check": "tsx scripts/paddle-check.ts",
     "billing:pending-org-setups": "tsx scripts/pending-org-setups.ts",
     "billing:payment-holds": "tsx scripts/payment-holds.ts",
     "factura:export": "tsx scripts/factura-export.ts",
