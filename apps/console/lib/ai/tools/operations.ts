@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { tool } from "ai";
-import { requestInAppApproval } from "@/lib/agent/approval-request";
+import { requestInAppApply, requestInAppDestroy } from "@/lib/agent/approval-request";
 import { EXTERNAL_TOOLS } from "@/lib/ai/mcp/surface";
 import { operationSchema, proposeOperationInputSchema } from "../operation";
 
@@ -37,8 +37,9 @@ const proposePlanInputSchema = proposeOperationInputSchema.extend({ operation: p
  * `opts.environmentId` is the environment the conversation is scoped to (the project route resolves
  * it). The plan description names it so the model fills `environmentId` on every proposal — an
  * omitted id reaches the action as "the project's default environment", which is exactly the wrong
- * target when the user is looking at any other one. A request needs no environment: it names a plan,
- * and the plan names its environment.
+ * target when the user is looking at any other one. `request_apply` needs no environment: it names a
+ * plan, and the plan names its environment. `request_destroy` names the environment, and the server
+ * finds the plan its last successful deploy applied.
  */
 export function operationTools(opts?: { environmentId?: string | null }) {
 	const scoped = opts?.environmentId
@@ -53,12 +54,12 @@ export function operationTools(opts?: { environmentId?: string | null }) {
 		request_apply: tool({
 			description: `${EXTERNAL_TOOLS.request_apply.title}: ask a person to approve deploying a succeeded plan. Pass the plan job id; the deploy applies exactly that plan.${REQUEST_SUFFIX}`,
 			inputSchema: EXTERNAL_TOOLS.request_apply.inputSchema,
-			execute: (input) => requestInAppApproval("deploy", input),
+			execute: (input) => requestInAppApply(input),
 		}),
 		request_destroy: tool({
-			description: `${EXTERNAL_TOOLS.request_destroy.title}: ask a person to approve destroying an environment. Pass the plan job id the environment's current state was deployed from (the plan its latest successful deploy applied).${REQUEST_SUFFIX}`,
+			description: `${EXTERNAL_TOOLS.request_destroy.title}: ask a person to approve destroying an environment. Pass the project and environment ids; the destroy is bound to the plan the environment's latest successful deploy applied, and no plan is needed first.${REQUEST_SUFFIX}`,
 			inputSchema: EXTERNAL_TOOLS.request_destroy.inputSchema,
-			execute: (input) => requestInAppApproval("destroy", input),
+			execute: (input) => requestInAppDestroy(input),
 		}),
 	};
 }

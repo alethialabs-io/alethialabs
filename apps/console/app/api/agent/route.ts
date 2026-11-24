@@ -51,8 +51,9 @@ export function systemPrompt(mode: AgentMode): string {
 					"ACT MODE — you may plan, and request deploys and destroys, on EXISTING projects (never run them yourself):",
 					"- To plan, first identify the project (`list_projects`/`get_project`), then call `propose_operation`",
 					"  (plan_project) to ask the user to APPROVE the plan. After it succeeds (`get_plan_result`), call",
-					"  `request_apply` with the plan job id to ask a person to approve the deploy (`request_destroy`",
-					"  for a teardown). The approval card appears in the conversation; a person approves it there and",
+					"  `request_apply` with the plan job id to ask a person to approve the deploy (for a teardown,",
+					"  `request_destroy` with the project and environment ids; it needs no plan). The approval card",
+					"  appears in the conversation; a person approves it there and",
 					"  the job starts from the card. Tell the user what you requested and its digest — never that it is done.",
 					"- You cannot create a NEW project from chat yet — point the user to Create a Project (the canvas).",
 				]
