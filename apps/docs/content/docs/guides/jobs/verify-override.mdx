@@ -3,8 +3,6 @@ title: Verify Override
 description: Waive specific failing verify controls on a queued DEPLOY job so a fail-closed apply can proceed deliberately.
 ---
 
-# Verify Override
-
 The [verify gate](/guides/jobs/plan-and-apply#verify-gate) is **fail-closed**: a hard control
 failure blocks before `tofu apply`. A verify override is the deliberate, accountable exception —
 it waives **specific** failing control IDs on one DEPLOY job so the apply can proceed, without ever

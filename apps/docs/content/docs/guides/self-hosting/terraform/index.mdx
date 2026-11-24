@@ -3,8 +3,6 @@ title: Terraform (per-cloud)
 description: Provision a hardened control-plane VM on any of four clouds — closed-origin behind a Cloudflare Tunnel — with OpenTofu.
 ---
 
-# Terraform modules
-
 The repeatable IaC path. Each cloud has a self-contained OpenTofu stack under `infra/cp-<cloud>/`
 that provisions **one** control-plane VM and fronts it with a **Cloudflare Tunnel**, so the box has
 **no public web ports**. It lands on the same [bundle](/guides/self-hosting) as the [one-click](/guides/self-hosting/one-click) VM

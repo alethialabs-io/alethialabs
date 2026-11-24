@@ -3,8 +3,6 @@ title: Real-time updates
 description: How the console pushes live job logs and support messages over Postgres LISTEN/NOTIFY and SSE, and why everything else refreshes by polling.
 ---
 
-# Real-time updates
-
 The console has two ways to keep a page current. A stream that must feel instant — a job's log, a
 support thread — is **pushed**: Postgres `LISTEN/NOTIFY` fanned out to the browser over SSE
 (Server-Sent Events). Everything else — job status, the runner list, an environment's status — is
