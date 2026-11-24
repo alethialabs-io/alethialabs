@@ -112,6 +112,28 @@ export const PROCESSING_PARTIES: readonly ProcessingParty[] = [
 		evidenceId: "ops:billing:stripe-live:2026-08-24",
 	},
 	{
+		id: "paddle",
+		name: "Paddle.com Market Ltd (Paddle.com Inc. for buyers in the United States)",
+		purposes: [
+			{
+				name: "Reselling self-serve subscriptions, usage and AI credits as merchant of record: payment processing, sales tax and VAT, customer invoices, refunds and chargebacks, and fraud prevention",
+				lawfulBasis: "contract",
+				consentRequired: false,
+			},
+		],
+		// An INDEPENDENT CONTROLLER, not our processor: Paddle sells to the buyer in its own name as
+		// reseller and merchant of record, under its own Buyer Terms and privacy notice, and decides
+		// for itself what payment, tax and fraud data it needs. We receive the order and subscription
+		// outcome, never the card.
+		role: "independent-controller",
+		// PLANNED until the go-live PR: no card sale goes through Paddle while MOR_MARKETS is empty
+		// (mor-markets.ts), and a planned party is not rendered on the subprocessors page. Flip to
+		// `active` with an operational evidence id (live account, first transaction) when it opens.
+		status: "planned",
+		region: "United Kingdom (Paddle.com Market Ltd) and United States (Paddle.com Inc.)",
+		evidenceId: "decision:billing:paddle-mor:2026-11-24",
+	},
+	{
 		id: "aws-ses",
 		name: "Amazon Web Services EMEA SARL",
 		purposes: [

@@ -26,7 +26,7 @@ module is what runs. The claims in `legal-set.json` tie the statements below to 
 
 The checkbox label, for the current Terms:
 
-> I have read and accept the Terms of Service (version 2026-08-24).
+> I have read and accept the Terms of Service (version 2026-11-24).
 
 "Terms of Service" is a link to the Terms page. The version printed is the sealed version the
 record will name. When more than one document must be accepted, each is listed with its own link
@@ -92,7 +92,7 @@ action `acceptLegalDocuments` in `apps/console/app/server/actions/legal.ts`.
 | Field | Value | Set by |
 |---|---|---|
 | `documentId` | The document id, e.g. `terms` | The registry |
-| `documentVersion` | The sealed version, e.g. `2026-08-24`, copied in at write time | The registry |
+| `documentVersion` | The sealed version, e.g. `2026-11-24`, copied in at write time | The registry |
 | `documentHash` | The sealed SHA-256 of the document's source file, copied in at write time | The registry |
 | `locale` | `en` | The form |
 | `context` | `signup` if the person never accepted any version of the document before, otherwise `reacceptance` | The server, from stored history |

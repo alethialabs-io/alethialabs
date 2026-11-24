@@ -74,10 +74,10 @@ recording of how people in the customer's organization use the product. `DPIA.md
 | --- | --- |
 | Purpose | Take payment for paid plans; issue invoices and фактура; keep statutory records |
 | Data subjects | Billing contacts; the person who placed an order |
-| Personal data | Organization, plan, invoice, transaction and tax metadata (`commerce_order`, `invoice`, `factura`). Card data goes into Stripe-hosted fields and never reaches Alethia (claim `privacy.card-fields-stripe-hosted`) |
+| Personal data | Organization, plan, invoice, transaction and tax metadata (`commerce_order`, `invoice`, `factura`). Card data goes into the provider's hosted fields and never reaches Alethia: Stripe's for subscriptions started on Stripe, Paddle's checkout for card sales through the merchant of record (claim `privacy.card-fields-paddle-checkout`, outside-repo until the checkout lands) |
 | Lawful basis | Contract; legal obligation |
-| Recipients | Stripe Payments Europe, Ltd., active (claim `privacy.subprocessor.stripe`) |
-| Transfers | `processing.ts` gives Stripe's region as "Ireland (EEA), with global card-network processing". **Open: maintainer to confirm** the transfer mechanism (`GDPR_ACCOUNTABILITY.md`, "Stripe DPA and transfer mechanism") |
+| Recipients | Stripe Payments Europe, Ltd., active (claim `privacy.subprocessor.stripe`). Paddle.com Market Ltd / Paddle.com Inc., an **independent controller** reselling as merchant of record, `planned` in `processing.ts` until `MOR_MARKETS` opens (claim `privacy.paddle-independent-controller`) |
+| Transfers | `processing.ts` gives Stripe's region as "Ireland (EEA), with global card-network processing". **Open: maintainer to confirm** the transfer mechanism (`GDPR_ACCOUNTABILITY.md`, "Stripe DPA and transfer mechanism"). Paddle: United Kingdom and United States; the buyer gives checkout data to Paddle directly. **Open: lawyer to confirm** the disclosure is sufficient for an independent controller in the UK and US |
 | Retention | `RETENTION_SCHEDULE.md` §2. The statutory period is **not established** |
 
 No paid market is open: `PAID_MARKETS` in `packages/legal/src/commerce.ts` is empty (claim

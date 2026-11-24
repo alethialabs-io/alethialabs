@@ -8,6 +8,7 @@
 		"./documents": "./src/documents.ts",
 		"./entity": "./src/entity.ts",
 		"./launch": "./src/launch.ts",
+		"./mor-markets": "./src/mor-markets.ts",
 		"./paid-markets": "./src/paid-markets.ts",
 		"./processing": "./src/processing.ts",
 		"./thresholds": "./src/thresholds.ts",
