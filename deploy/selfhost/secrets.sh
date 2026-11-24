@@ -7,10 +7,10 @@
 #
 #   . deploy/selfhost/secrets.sh
 #
-# Sourced by deploy/install.sh, deploy/selfhost/rotate-secret.sh, scripts/dev-env.sh and
-# scripts/validate-selfhost.sh. The manifest stays the one list of instance secrets; this file only
-# reads it. Nothing here prints a secret value: every function that produces one writes it to a file
-# or returns it on stdout to a caller that stores it.
+# Sourced by deploy/install.sh, deploy/selfhost/preflight.sh, deploy/selfhost/rotate-secret.sh,
+# scripts/dev-env.sh and scripts/validate-selfhost.sh. The manifest stays the one list of instance
+# secrets; this file only reads it. Nothing here prints a secret value: every function that produces
+# one writes it to a file or returns it on stdout to a caller that stores it.
 #
 # Callers may set:
 #   SECRETS_MANIFEST   path to the manifest (default: deploy/selfhost/secrets.manifest)
@@ -67,13 +67,23 @@ generator_hint() {
 	manifest_generator "$(manifest_field "$1" 3)"
 }
 
+# sha256_hex — the lowercase hex SHA-256 of stdin. Uses openssl when the box has it, else
+# `sha256sum` (coreutils or busybox), so the preflight service can run in an image without openssl.
+sha256_hex() {
+	if command -v openssl >/dev/null 2>&1; then
+		openssl dgst -sha256 -r | cut -d' ' -f1
+	else
+		sha256sum | cut -d' ' -f1
+	fi
+}
+
 # is_placeholder VALUE — true when VALUE is a template placeholder: an angle-bracketed
 # `<…>` marker, or a value whose SHA-256 is in PLACEHOLDER_DIGESTS. An empty value is not a
 # placeholder (it is missing, which callers check separately).
 is_placeholder() {
 	[ -n "$1" ] || return 1
 	case "$1" in "<"*">") return 0 ;; esac
-	_digest="$(printf '%s' "$1" | openssl dgst -sha256 -r | cut -d' ' -f1)"
+	_digest="$(printf '%s' "$1" | sha256_hex)"
 	case " $PLACEHOLDER_DIGESTS " in
 		*" $_digest "*) return 0 ;;
 	esac
