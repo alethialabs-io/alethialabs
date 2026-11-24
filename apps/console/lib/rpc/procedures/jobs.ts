@@ -4,29 +4,25 @@
 import "server-only";
 
 import { presetRange } from "@repo/ui/range";
-import { and, asc, count, desc, eq, gte, ilike, inArray, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { JOB_FINISHED_STATUSES, JOB_LOG_SETTLE_MS } from "@/components/jobs/job-log-contract";
-import { JOBS_PAGE_MAX, JOBS_PAGE_SIZE } from "@/components/jobs/jobs-query";
 import { ActionRefusal } from "@/lib/actions/result";
 import { getPdp } from "@/lib/authz";
 import { authorize } from "@/lib/authz/guard";
 import type { Actor, BulkCheck } from "@/lib/authz/types";
 import { withScope } from "@/lib/db";
-import { likeTerm } from "@/lib/db/like";
-import {
-	applyApprovals,
-	cloudIdentities,
-	jobLogs,
-	jobs,
-	projectEnvironments,
-	projects,
-	runners,
-} from "@/lib/db/schema";
-import { provisionJobStatus, provisionJobType } from "@/lib/db/schema/enums";
+import { applyApprovals, jobLogs, jobs, projectEnvironments, projects } from "@/lib/db/schema";
 import { permissionToCancel, rerunRouteOf } from "@/lib/jobs/operation";
 import { redactJobRow } from "@/lib/jobs/redact-snapshot";
 import { jobVisibleTo } from "@/lib/jobs/visibility";
+import { type JobsFilterQuery, queryJobsPage } from "@/lib/queries/jobs";
+import {
+	KEYSET_DEFAULT_LIMIT,
+	KEYSET_MAX_LIMIT,
+	type KeysetPageRequest,
+	keysetPageInput,
+} from "@/lib/queries/keyset";
 import { query } from "@/lib/rpc/base";
 import { jobsPageInput } from "@/lib/rpc/inputs/jobs";
 
@@ -38,54 +34,13 @@ import { jobsPageInput } from "@/lib/rpc/inputs/jobs";
 // visibility, so a reader who may not view a project sees none of its jobs here.
 
 /**
- * The jobs page's server-side query (#578 — the console filter standard). Everything but the scope
- * and the window is a FILTER: optional, and enum-shaped values are narrowed to known members
- * before SQL.
+ * What the jobs list is asked: its filters (`lib/queries/jobs.ts`) plus its SCOPE, the project
+ * whose list this is — not a filter (lib/query/README.md, "Scope is a predicate, never a filter"):
+ * it narrows the rows and the facet counts alike, so a project's list never offers or counts
+ * another project's jobs.
  */
-export interface JobsQuery {
-	/** ISO bounds on created_at (inclusive). */
-	from?: string;
-	to?: string;
-	authors?: string[];
-	envs?: string[];
-	projects?: string[];
-	statuses?: string[];
-	types?: string[];
-	/** Free-text contains-match over project name/slug, environment + runner names, and
-	 * the error message (jobs carry no commit/branch column to search). */
-	search?: string;
-	/**
-	 * SCOPE, not a filter (lib/query/README.md, "Scope is a predicate, never a filter"): the project
-	 * whose jobs list this is. It narrows the rows, the matched count, the facet counts and the
-	 * total alike, so a project's list never offers or counts another project's jobs.
-	 */
+export interface JobsQuery extends JobsFilterQuery {
 	projectId?: string;
-	/** How many rows to return, newest first. Defaults to {@link JOBS_PAGE_SIZE}; capped at {@link JOBS_PAGE_MAX}. */
-	limit?: number;
-}
-
-/** One facet option: value + display label + count over the UNFILTERED scope (the
- * standard: options never disappear as you select them). Label is null when the client
- * owns the labeling (statuses/types have static labels; authors resolve via members). */
-export interface JobsFacetOption {
-	value: string;
-	label: string | null;
-	count: number;
-}
-
-/** Narrow untrusted strings to known enum members (evidence-action precedent). */
-function narrowTo<T extends string>(values: readonly T[], input?: string[]): T[] | undefined {
-	if (!input?.length) return undefined;
-	const known = new Set<string>(values);
-	const kept = input.filter((v): v is T => known.has(v));
-	return kept.length ? kept : undefined;
-}
-
-/** Parse an ISO bound; undefined when absent/invalid (an invalid bound must not 500). */
-function parseBound(iso?: string): Date | undefined {
-	if (!iso) return undefined;
-	const d = new Date(iso);
-	return Number.isNaN(d.getTime()) ? undefined : d;
 }
 
 /** The refusal every by-id read gives for a job the reader cannot see — absent or not visible alike. */
@@ -93,197 +48,25 @@ function jobNotFound(): ActionRefusal {
 	return new ActionRefusal("not-found", "Job not found.");
 }
 
-/** The window a read returns: the default for an absent or unusable `limit`, never above the cap. */
+/** A page `limit` for an in-process caller: the default when absent or unusable, never above the max. */
 function pageLimit(limit?: number): number {
-	if (limit === undefined || !Number.isFinite(limit) || limit < 1) return JOBS_PAGE_SIZE;
-	return Math.min(Math.floor(limit), JOBS_PAGE_MAX);
-}
-
-/** A facet's running tally: each value's label and how many jobs in the scope carry it. */
-type FacetTally = Map<string, { label: string | null; count: number }>;
-
-/** Adds `count` jobs to `value`'s tally; a row the facet does not apply to (null) is skipped. */
-function bump(tally: FacetTally, value: string | null, count: number, label: string | null = null): void {
-	if (!value) return;
-	const current = tally.get(value);
-	if (current) current.count += count;
-	else tally.set(value, { label, count });
-}
-
-/** A tally as facet options, sorted by label (falling back to the value). */
-function asOptions(tally: FacetTally): JobsFacetOption[] {
-	return [...tally.entries()]
-		.map(([value, { label, count }]) => ({ value, label, count }))
-		.sort((a, b) => (a.label ?? a.value).localeCompare(b.label ?? b.value));
+	if (limit === undefined || !Number.isFinite(limit) || limit < 1) return KEYSET_DEFAULT_LIMIT;
+	return Math.min(Math.floor(limit), KEYSET_MAX_LIMIT);
 }
 
 /**
- * The jobs PAGE read (#578): one bounded window of rows filtered server-side in SQL, how many jobs
- * the filters match in all, facet counts, and the scope's true total.
- *
- * THREE PASSES, AND WHICH PREDICATES EACH ONE SEES IS THE POINT:
- *
- * | Pass | Scope (visibility, project) | Filters |
- * | --- | --- | --- |
- * | rows — newest first, at most `limit` | yes | yes |
- * | matched — the count the rows are a window of | yes | yes |
- * | facets — one `GROUP BY`, summed into every facet and into `total` | yes | **no** |
- *
- * The scope is the reader's visible jobs and, on a project's list, that project. Because the facet
- * pass sees the scope and nothing else, an option never disappears when it is picked, and a
- * project's list never counts or offers another project's jobs. `total === 0` therefore means
- * "this scope has no jobs at all", which is what tells first-run apart from a filter that matches
- * nothing.
- *
- * Nothing here is unbounded: the rows pass has a LIMIT, and the other two return counts — the
- * facet pass one row per distinct (status, type, author, project, environment), not one per job.
+ * The jobs list read (#578, keyset paging #7483): the reader's visible jobs — in one project on a
+ * project's list — as one keyset page through `queryJobsPage` (lib/queries/jobs.ts), which holds the
+ * rows pass, the facet pass and which predicates each one sees. Visibility is the SCOPE: it reaches
+ * both passes, so a hidden project's jobs are neither listed nor counted in a facet.
  */
-export async function readJobsPage(q: JobsQuery = {}) {
+export async function readJobsPage(q: JobsQuery = {}, page: Partial<KeysetPageRequest> = {}) {
 	const actor = await authorize("view", { type: "job" });
 	const visible = await jobVisibleTo(actor);
-	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
-		const statuses = narrowTo(provisionJobStatus.enumValues, q.statuses);
-		const types = narrowTo(provisionJobType.enumValues, q.types);
-		const from = parseBound(q.from);
-		const to = parseBound(q.to);
-		const limit = pageLimit(q.limit);
-		// Free-text search spans the joined display fields (project/env/runner) + the error
-		// message — the columns a user actually recognises a job by. It is a filter: it narrows
-		// the rows and the matched count, never the facet pass.
-		const search = q.search?.trim();
-		const like = search ? likeTerm(search) : undefined;
-		// Built ONCE and handed to all three passes.
-		const scope = and(visible, q.projectId ? eq(jobs.project_id, q.projectId) : undefined);
-		const filtered = and(
-			scope,
-			from ? gte(jobs.created_at, from) : undefined,
-			to ? lte(jobs.created_at, to) : undefined,
-			q.authors?.length ? inArray(jobs.user_id, q.authors) : undefined,
-			q.envs?.length ? inArray(jobs.environment_id, q.envs) : undefined,
-			q.projects?.length ? inArray(jobs.project_id, q.projects) : undefined,
-			statuses ? inArray(jobs.status, statuses) : undefined,
-			types ? inArray(jobs.job_type, types) : undefined,
-			like
-				? or(
-						ilike(projects.project_name, like),
-						ilike(projects.slug, like),
-						ilike(projectEnvironments.name, like),
-						ilike(runners.name, like),
-						ilike(jobs.error_message, like),
-					)
-				: undefined,
-		);
-
-		const [rows, matchedRows, facetRows] = await Promise.all([
-			tx
-				.select({
-					job: jobs,
-					project_name: projects.project_name,
-					project_slug: projects.slug,
-					runner_name: runners.name,
-					runner_version: runners.version,
-					cloud_provider: cloudIdentities.provider,
-					cloud_identity_status: cloudIdentities.status,
-					environment_name: projectEnvironments.name,
-					environment_stage: projectEnvironments.stage,
-				})
-				.from(jobs)
-				.leftJoin(projects, eq(jobs.project_id, projects.id))
-				.leftJoin(runners, eq(jobs.runner_id, runners.id))
-				.leftJoin(cloudIdentities, eq(jobs.cloud_identity_id, cloudIdentities.id))
-				.leftJoin(projectEnvironments, eq(jobs.environment_id, projectEnvironments.id))
-				.where(filtered)
-				// `id` breaks ties, so two jobs created in the same instant keep one order from one
-				// read to the next and a grown window never reshuffles the rows above it.
-				.orderBy(desc(jobs.created_at), desc(jobs.id))
-				.limit(limit),
-			// The same joins as the rows pass: the search reads the joined names.
-			tx
-				.select({ matched: count() })
-				.from(jobs)
-				.leftJoin(projects, eq(jobs.project_id, projects.id))
-				.leftJoin(runners, eq(jobs.runner_id, runners.id))
-				.leftJoin(projectEnvironments, eq(jobs.environment_id, projectEnvironments.id))
-				.where(filtered),
-			// One grouped pass over the scope feeds every facet count and the total.
-			tx
-				.select({
-					status: jobs.status,
-					job_type: jobs.job_type,
-					user_id: jobs.user_id,
-					project_id: jobs.project_id,
-					project_name: projects.project_name,
-					environment_id: jobs.environment_id,
-					environment_name: projectEnvironments.name,
-					environment_stage: projectEnvironments.stage,
-					jobs: count(),
-				})
-				.from(jobs)
-				.leftJoin(projects, eq(jobs.project_id, projects.id))
-				.leftJoin(projectEnvironments, eq(jobs.environment_id, projectEnvironments.id))
-				.where(scope)
-				.groupBy(
-					jobs.status,
-					jobs.job_type,
-					jobs.user_id,
-					jobs.project_id,
-					projects.project_name,
-					jobs.environment_id,
-					projectEnvironments.name,
-					projectEnvironments.stage,
-				),
-		]);
-
-		const authorF: FacetTally = new Map();
-		const envF: FacetTally = new Map();
-		const projectF: FacetTally = new Map();
-		const statusF: FacetTally = new Map();
-		const typeF: FacetTally = new Map();
-		let total = 0;
-		for (const r of facetRows) {
-			total += r.jobs;
-			bump(authorF, r.user_id, r.jobs);
-			bump(
-				envF,
-				r.environment_id,
-				r.jobs,
-				r.environment_name
-					? r.environment_stage
-						? `${r.environment_name} (${r.environment_stage})`
-						: r.environment_name
-					: null,
-			);
-			bump(projectF, r.project_id, r.jobs, r.project_name);
-			bump(statusF, r.status, r.jobs);
-			bump(typeF, r.job_type, r.jobs);
-		}
-
-		return {
-			rows: rows.map((r) => ({
-				// Keeps the job-snapshot filter (lib/jobs/redact-snapshot.ts) on every user-facing row.
-				...redactJobRow(r.job),
-				project_name: r.project_name ?? null,
-				project_slug: r.project_slug ?? null,
-				runner_name: r.runner_name ?? null,
-				runner_version: r.runner_version ?? null,
-				cloud_provider: r.cloud_provider ?? null,
-				cloud_identity_status: r.cloud_identity_status ?? null,
-				environment_name: r.environment_name ?? null,
-				environment_stage: r.environment_stage ?? null,
-			})),
-			/** How many jobs the filters match in this scope; `rows` is its newest `limit`. */
-			matched: matchedRows[0]?.matched ?? 0,
-			/** How many jobs the scope holds, whatever the filters. */
-			total,
-			facets: {
-				authors: asOptions(authorF),
-				envs: asOptions(envF),
-				projects: asOptions(projectF),
-				statuses: asOptions(statusF),
-				types: asOptions(typeF),
-			},
-		};
-	});
+	const { projectId, ...filters } = q;
+	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, (tx) =>
+		queryJobsPage(tx, { visible, projectId }, filters, { cursor: page.cursor, limit: pageLimit(page.limit) }),
+	);
 }
 
 /**
@@ -577,22 +360,27 @@ export async function readJobLogsHead(jobId: string): Promise<JobLogsHead> {
 }
 
 /**
- * What `jobs.page` is asked: the filters and the range (`lib/rpc/inputs/jobs.ts`), plus the two
- * things that are not filters — the project whose list this is, and how many rows to return.
+ * What `jobs.page` is asked: the filters and the range (`lib/rpc/inputs/jobs.ts`), the project whose
+ * list this is (a scope, not a filter), and the keyset paging fields — an opaque `cursor`, decoded at
+ * the boundary (a malformed one is a 400, never page one), and `limit` (default 50, refused above
+ * 100). The cursor is never part of the query KEY: `useKeysetList` passes it as the page param.
  */
 export const jobsPageRead = jobsPageInput.extend({
 	projectId: z.uuid().optional(),
-	limit: z.number().int().min(1).max(JOBS_PAGE_MAX).optional(),
+	...keysetPageInput(),
 });
 
 /** The validated shape of {@link jobsPageRead}. */
 export type JobsPageRead = z.infer<typeof jobsPageRead>;
 
+/** The filter-and-scope part of {@link JobsPageRead} — what {@link toJobsQuery} turns into a query. */
+export type JobsPageFilters = Omit<JobsPageRead, "cursor" | "limit">;
+
 /**
  * Turns the wire input into the reader's query: a preset is resolved to concrete bounds
  * HERE, at read time, so "last 12 months" means the twelve months before this read.
  */
-export function toJobsQuery(input: JobsPageRead, now: Date = new Date()): JobsQuery {
+export function toJobsQuery(input: JobsPageFilters, now: Date = new Date()): JobsQuery {
 	const { range, ...filters } = input;
 	const bounds =
 		"preset" in range
@@ -625,8 +413,11 @@ const byJob = z.object({ id: z.uuid() });
  * address, bound by the `query` base.
  */
 export const jobsRouter = {
-	/** The jobs list page: a window of filtered rows, the matched count, facet counts, the total. */
-	page: query.input(jobsPageRead).handler(({ input }) => jobsReaders.page(toJobsQuery(input))),
+	/** The jobs list: one keyset page of filtered rows; on the first page, facet counts and `universeEmpty`. */
+	page: query.input(jobsPageRead).handler(({ input }) => {
+		const { cursor, limit, ...filters } = input;
+		return jobsReaders.page(toJobsQuery(filters), { cursor, limit });
+	}),
 	/** One job as its page reads it: names, the reader's controls, a plan's approval; null when not visible. */
 	detail: query.input(byJob).handler(({ input }) => jobsReaders.detail(input.id)),
 	/** A job's status and error. */

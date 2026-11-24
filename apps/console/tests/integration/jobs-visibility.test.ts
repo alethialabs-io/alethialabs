@@ -248,12 +248,13 @@ describeIfDb("job visibility follows project visibility", () => {
 			const listed = ids(page.rows);
 			expect(listed).not.toContain(seeded.jobP);
 			expect(listed).toEqual(expect.arrayContaining([seeded.jobQ, seeded.jobOrg]));
-			expect(page.facets.projects.map((o) => o.value)).not.toContain(P);
+			expect(page.facets?.projects.map((o) => o.value)).not.toContain(P);
 			expect(listed).not.toContain(seeded.scanP);
 			// A scan stored with its project only in the snapshot follows THAT project too.
 			expect(listed).not.toContain(seeded.legacyScanP);
 			expect(listed).toContain(seeded.legacyScanQ);
-			expect(page.total).toBe(3);
+			// The scope's size, as the facet pass counts it (the list carries no total since #7483).
+			expect(page.facets?.statuses.reduce((n, o) => n + o.count, 0)).toBe(3);
 		});
 
 		it("the shell's job feed (workspace.recentJobs) shows no job of P either", async () => {
@@ -338,7 +339,7 @@ describeIfDb("job visibility follows project visibility", () => {
 			expect(ids(page.rows)).toEqual(
 				expect.arrayContaining([seeded.jobP, seeded.jobQ, seeded.jobOrg, seeded.scanP, seeded.legacyScanP, seeded.legacyScanQ]),
 			);
-			expect(page.facets.projects.map((o) => o.value)).toContain(P);
+			expect(page.facets?.projects.map((o) => o.value)).toContain(P);
 		});
 
 		it("sees P's job in the shell's job feed", async () => {
