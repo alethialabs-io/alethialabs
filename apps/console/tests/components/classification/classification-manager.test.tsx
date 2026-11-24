@@ -142,14 +142,14 @@ describe("URL state (F-28)", () => {
 		expect(screen.queryByRole("heading", { name: "Environment" })).toBeNull();
 	});
 
-	it("the result count is the count pill", async () => {
+	it("draws no list-size count (the list standard, #7481)", async () => {
 		h.handlers["classification.dimensions"] = async () => [
 			dimension("env", "Environment"),
 			dimension("team", "Team"),
 		];
 		const { container } = renderManager();
 		await screen.findByRole("heading", { name: "Environment" });
-		expect(container.querySelector('[data-slot="count-pill"]')).toHaveTextContent("2");
+		expect(container.querySelector('[data-slot="count-pill"]')).toBeNull();
 		expect(screen.queryByText("2 dimensions")).toBeNull();
 	});
 });
