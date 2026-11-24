@@ -78,6 +78,13 @@ func prepareByoIacWorkdir(ctx context.Context, vc *types.ProjectConfig, gitToken
 	if err := validateByoRepoURL(src.RepoURL); err != nil {
 		return "", nil, nil, err
 	}
+	// The shared repository URL rule (git.ValidateRepoURL): no credentials in the URL and a public
+	// host, unless the operator allows an internal Git host with ALETHIA_GIT_ALLOWED_HOSTS. BYO IaC
+	// keeps ssh, the transport a deploy key uses. CloneAndCheckoutCommit checks it again before it
+	// connects.
+	if err := git.ValidateRepoURL(ctx, src.RepoURL, git.RepoURLOptions{AllowSSH: true}); err != nil {
+		return "", nil, nil, fmt.Errorf("BYO IaC repo_url: %w", err)
+	}
 	if strings.TrimSpace(src.CommitSHA) == "" {
 		return "", nil, nil, fmt.Errorf("BYO IaC source is missing commit_sha (a pinned commit is required — a ref alone is TOCTOU-unsafe)")
 	}
@@ -92,6 +99,7 @@ func prepareByoIacWorkdir(ctx context.Context, vc *types.ProjectConfig, gitToken
 	} else {
 		repo = git.NewGIT(src.RepoURL, cloneDir, false)
 	}
+	repo.AllowSSH = true
 	if cloneErr := repo.CloneAndCheckoutCommit(ctx, src.Ref, src.CommitSHA, true); cloneErr != nil {
 		return "", nil, nil, fmt.Errorf("BYO IaC clone/checkout failed: %w", cloneErr)
 	}
