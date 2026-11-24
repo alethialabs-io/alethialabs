@@ -45,8 +45,11 @@ const GRACE = memberRow("mem_grace", "u_grace", "Grace Hopper", "owner");
 /** The page the mocked query answers with; the viewer is Ada, an admin. */
 let pageData = buildPage([GRACE, ADA, LINUS]);
 
-/** A page holding `members` and one invitation sent two days before `asOf`. */
-function buildPage(members: ReturnType<typeof memberRow>[]) {
+/**
+ * A page holding `members` and one invitation sent two days before `asOf`, whose link expires
+ * `expiresAt` (by default five days after `asOf`).
+ */
+function buildPage(members: ReturnType<typeof memberRow>[], expiresAt = "2026-01-09T00:00:00.000Z") {
 	return {
 		members,
 		invitations: [
@@ -56,6 +59,7 @@ function buildPage(members: ReturnType<typeof memberRow>[]) {
 				role: "operator",
 				inviterName: "Ada Lovelace",
 				createdAt: "2026-01-02T00:00:00.000Z",
+				expiresAt,
 			},
 		],
 		resultCount: members.length + 1,
@@ -166,5 +170,31 @@ describe("the selection follows the rows on screen (R6 E-11)", () => {
 		rerender(tree(client));
 		expect(screen.getByText("selected")).toBeInTheDocument();
 		expect(screen.getByRole("checkbox", { name: "Select Linus Torvalds" })).toBeChecked();
+	});
+});
+
+// #6827 (from CON-L10): an invitation says when its link stops working, and an expired one says so
+// and offers Resend on the row.
+describe("an invitation's expiry", () => {
+	it("says when a live link expires, with no inline Resend", () => {
+		render(tree(new QueryClient()));
+		expect(screen.getByText("Link expires in 5 days")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Resend invitation to new@example.test" })).toBeNull();
+	});
+
+	it("an expired link says so, reads Expired, and offers Resend at its role", async () => {
+		pageData = buildPage([GRACE, ADA, LINUS], "2026-01-03T00:00:00.000Z");
+		const user = userEvent.setup();
+		render(tree(new QueryClient()));
+		expect(screen.getByText("Link expired 1 day ago")).toBeInTheDocument();
+		expect(screen.getByText("Expired")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Resend invitation to new@example.test" }));
+		await waitFor(() =>
+			expect(h.inviteMember).toHaveBeenCalledWith({
+				email: "new@example.test",
+				role: "operator",
+				resend: true,
+			}),
+		);
 	});
 });

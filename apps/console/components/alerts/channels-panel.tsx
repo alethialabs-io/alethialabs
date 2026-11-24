@@ -98,6 +98,11 @@ interface ChannelsPanelProps {
 	onOpenPolicy: (id?: string) => void;
 }
 
+/** "1 policy" / "3 policies" — one noun, counted, never "policy/policies" (R6 C-29). */
+export function policyCount(n: number): string {
+	return `${n} ${n === 1 ? "policy" : "policies"}`;
+}
+
 /** Channels master-detail. */
 export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 	const { channels, policies, policiesKnown, canManage, encryptionConfigured } = hub;
@@ -298,7 +303,7 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 					!policiesKnown
 						? "Couldn't check which policies route here; any that do will lose this destination. Delivery history is kept. This cannot be undone."
 						: deleteTarget && policiesUsing(deleteTarget.id).length > 0
-							? `${policiesUsing(deleteTarget.id).length} policy/policies route here and will lose this destination. Delivery history is kept. This cannot be undone.`
+							? `${policyCount(policiesUsing(deleteTarget.id).length)} route here and will lose this destination. Delivery history is kept. This cannot be undone.`
 							: "Delivery history is kept. This cannot be undone."
 				}
 				confirmLabel="Delete channel"
@@ -484,7 +489,7 @@ function ChannelDetail({
 				<MetaCell k="Target" v={targetOf(channel)} mono />
 				<MetaCell
 					k="Used by"
-					v={`${usingPolicies.length} ${usingPolicies.length === 1 ? "policy" : "policies"}`}
+					v={policyCount(usingPolicies.length)}
 				/>
 			</div>
 

@@ -124,10 +124,14 @@ export function RunnerCard({
 						<span className="text-muted-foreground">Any</span>
 					)}
 				</Fact>
+				{/* The location the Region facet filters on, for every runner (R6 C-24): it used to be
+				    shown for managed runners only, so a self-hosted runner the facet matched read "—". */}
 				<Fact label="Region">
-					<span className="font-mono text-muted-foreground">
-						{(isManaged ? runner.location : null) ?? "—"}
-					</span>
+					{runner.location ? (
+						<span className="font-mono text-muted-foreground">{runner.location}</span>
+					) : (
+						<span className="text-muted-foreground">Not reported</span>
+					)}
 				</Fact>
 				<Fact label="Version">
 					<RunnerVersion runner={runner} />
