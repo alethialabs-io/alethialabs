@@ -14,7 +14,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelDTO, PolicyDTO } from "@/app/server/actions/alerts";
 import type { AlertsHub } from "@/components/alerts/alerts-hub";
-import type { ActivityView, ChannelsView, PoliciesView } from "@/components/alerts/alerts-filters";
+import type { ChannelsView, PoliciesView } from "@/components/alerts/alerts-filters";
+import { activityViewOf } from "@/tests/components/alerts/_activity-view";
 import { queryWrapper } from "@/tests/helpers/query-wrapper";
 
 const deleteChannel = vi.fn();
@@ -80,9 +81,9 @@ const hub: AlertsHub = {
 
 type State = "loading" | "error" | "ready";
 
-/** A view in `state` with no rows; `total` is what the org holds. */
-function view(state: State, retry = vi.fn(), total = 0) {
-	return { rows: [], count: 0, total, stale: false, busy: state !== "ready", state, refreshFailed: false, retry };
+/** A view in `state` with no rows; the org holds nothing at all. */
+function view(state: State, retry = vi.fn()) {
+	return { rows: [], universeEmpty: true, stale: false, busy: state !== "ready", state, refreshFailed: false, retry };
 }
 
 const policiesView = (state: State, retry?: () => void): PoliciesView => ({
@@ -93,10 +94,8 @@ const channelsView = (state: State, retry?: () => void): ChannelsView => ({
 	...view(state, retry ? vi.fn(retry) : undefined),
 	facets: { types: [], status: [] },
 });
-const activityView = (state: State, retry?: () => void): ActivityView => ({
-	...view(state, retry ? vi.fn(retry) : undefined),
-	facets: { status: [] },
-});
+const activityView = (state: State, retry?: () => void) =>
+	activityViewOf(state, { retry: retry ? vi.fn(retry) : undefined });
 
 /** Each section: how to render it in a state, and the copy its EMPTY answer uses. */
 const SECTIONS = [
@@ -168,7 +167,7 @@ describe("deleting a channel has a pending state", () => {
 		render(
 			<ChannelsPanel
 				hub={{ ...hub, channels: [channel] }}
-				view={{ ...channelsView("ready"), rows: [channel], count: 1, total: 1 }}
+				view={{ ...channelsView("ready"), rows: [channel], universeEmpty: false }}
 				onOpenPolicy={() => {}}
 			/>,
 			{ wrapper: queryWrapper() },
@@ -194,7 +193,7 @@ describe("deleting a channel has a pending state", () => {
 		render(
 			<ChannelsPanel
 				hub={{ ...hub, channels: [channel] }}
-				view={{ ...channelsView("ready"), rows: [channel], count: 1, total: 1 }}
+				view={{ ...channelsView("ready"), rows: [channel], universeEmpty: false }}
 				onOpenPolicy={() => {}}
 			/>,
 			{ wrapper: queryWrapper() },
@@ -215,7 +214,7 @@ describe("the delete warning says only what the policies read answered", () => {
 		render(
 			<ChannelsPanel
 				hub={{ ...hub, channels: [channel], policiesKnown: false }}
-				view={{ ...channelsView("ready"), rows: [channel], count: 1, total: 1 }}
+				view={{ ...channelsView("ready"), rows: [channel], universeEmpty: false }}
 				onOpenPolicy={() => {}}
 			/>,
 			{ wrapper: queryWrapper() },
@@ -229,7 +228,7 @@ describe("the delete warning says only what the policies read answered", () => {
 		render(
 			<ChannelsPanel
 				hub={{ ...hub, channels: [channel] }}
-				view={{ ...channelsView("ready"), rows: [channel], count: 1, total: 1 }}
+				view={{ ...channelsView("ready"), rows: [channel], universeEmpty: false }}
 				onOpenPolicy={() => {}}
 			/>,
 			{ wrapper: queryWrapper() },
@@ -262,7 +261,7 @@ describe("the inline policy editor tracks dirty state", () => {
 		render(
 			<PoliciesPanel
 				hub={{ ...hub, policies: [policy] }}
-				view={{ ...policiesView("ready"), rows: [policy], count: 1, total: 1 }}
+				view={{ ...policiesView("ready"), rows: [policy], universeEmpty: false }}
 				onOpenChannel={() => {}}
 			/>,
 			{ wrapper: queryWrapper() },

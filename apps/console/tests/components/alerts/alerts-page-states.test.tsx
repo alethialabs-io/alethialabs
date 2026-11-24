@@ -62,8 +62,11 @@ const SETTINGS = {
 	conditionOptions: { projects: [], jobTypes: [], resourceTypes: [], actions: [] },
 };
 
-/** An empty list page. */
-const EMPTY_PAGE = { rows: [], resultCount: 0, total: 0, facets: { status: [], kinds: [], channels: [], types: [] } };
+/** An empty configuration list (policies, channels): the org holds none. */
+const EMPTY_PAGE = { rows: [], universeEmpty: true, facets: { status: [], kinds: [], channels: [], types: [] } };
+
+/** An empty first page of the delivery ledger — a keyset page since #7489. */
+const EMPTY_LEDGER = { rows: [], nextCursor: null, facets: { status: [] }, universeEmpty: true };
 
 /** Renders the hub over a fresh client; `seed` puts answers in the cache first, as the prefetch does. */
 function renderHub(seed?: (client: QueryClient) => void) {
@@ -96,7 +99,7 @@ beforeEach(() => {
 	h.handlers["alerts.settings"] = async () => SETTINGS;
 	h.handlers["alerts.policies"] = async () => EMPTY_PAGE;
 	h.handlers["alerts.channels"] = async () => EMPTY_PAGE;
-	h.handlers["alerts.deliveries"] = async () => EMPTY_PAGE;
+	h.handlers["alerts.deliveries"] = async () => EMPTY_LEDGER;
 });
 
 describe("AlertsPage — the settings read's four answers", () => {
@@ -146,9 +149,14 @@ describe("AlertsPage — first paint from the prefetched cache (B1)", () => {
 	it("paints every section from the cache and issues no read on mount", async () => {
 		renderHub((client) => {
 			client.setQueryData([["alerts", "settings"], { input: undefined, type: "query" }], SETTINGS);
-			for (const list of ["policies", "channels", "deliveries"]) {
+			for (const list of ["policies", "channels"]) {
 				client.setQueryData([["alerts", list], { input: {}, type: "query" }], EMPTY_PAGE);
 			}
+			// The ledger is an infinite query holding its first page, as the route prefetches it.
+			client.setQueryData([["alerts", "deliveries"], { input: {}, type: "infinite" }], {
+				pages: [EMPTY_LEDGER],
+				pageParams: [null],
+			});
 		});
 		expect(screen.getByText("No policies yet")).toBeInTheDocument();
 		expect(screen.getByText("No activity yet")).toBeInTheDocument();

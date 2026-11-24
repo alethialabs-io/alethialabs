@@ -205,7 +205,7 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 				<AlertsPanelSkeleton kind="policies" />
 			) : view.state === "error" ? (
 				<RegionError title="Couldn't load policies" onRetry={view.retry} />
-			) : view.total === 0 ? (
+			) : view.universeEmpty ? (
 				<EmptyState
 					icon={<Bell />}
 					// `level={3}` under the section's own `h2` — see the twin in channels-panel.tsx:
@@ -239,7 +239,7 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 								<EmptyState
 									icon={<SearchX />}
 									title="No policies match"
-									description={`None of the ${view.total} policies match these filters.`}
+									description="No policy matches these filters."
 									action={
 										<Button variant="outline" size="sm" onClick={resetFilters}>
 											Reset filters
