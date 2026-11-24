@@ -17,7 +17,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@repo/ui/tooltip";
-import { AlertTriangle, Check, Server } from "lucide-react";
+import { Check, Server } from "lucide-react";
 import Link from "next/link";
 import { useId, useMemo, useState } from "react";
 import { cn } from "@repo/ui/utils";
@@ -29,7 +29,10 @@ interface RunnerSelectPopoverProps {
   showRePlan?: boolean;
   variant?: "default" | "destructive";
   confirmLabel?: string;
-  description?: string;
+  /** The popover's heading; names the action when the pick is a step of one (e.g. a destroy). */
+  title?: string;
+  /** The line under the heading. */
+  subtitle?: string;
   excludeId?: string;
 }
 
@@ -64,13 +67,15 @@ export function RunnerSelectPopover({
   showRePlan,
   variant = "default",
   confirmLabel,
-  description,
+  title = "Select runner",
+  subtitle = "Choose which runner runs this job.",
   excludeId,
 }: RunnerSelectPopoverProps) {
   // Live through the `runners` topic, so opening the popover needs no refetch of its own.
   const { data: runnersData, isError, refetch } = useRunnersQuery();
   const orgSlug = useActiveOrgSlug();
   const headingId = useId();
+  const subtitleId = useId();
   const runners = useMemo(() => {
     const allRunners = runnersData?.runners ?? [];
     return excludeId ? allRunners.filter((t) => t.id !== excludeId) : allRunners;
@@ -109,16 +114,10 @@ export function RunnerSelectPopover({
       <PopoverTrigger disabled={disabled} render={trigger} />
       <PopoverContent align="end" className="w-72 p-0">
         <div className="px-3 pt-3 pb-2 border-b border-border">
-          <p id={headingId} className="text-sm font-medium">Select runner</p>
-          <p className="text-xs text-muted-foreground">
-            Choose which runner runs this job.
+          <p id={headingId} className="text-sm font-medium">{title}</p>
+          <p id={subtitleId} className="text-xs text-muted-foreground">
+            {subtitle}
           </p>
-          {variant === "destructive" && description && (
-            <div className="mt-2 flex gap-1.5 rounded-md bg-destructive/10 px-2 py-1.5 text-ui-xs text-destructive">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" aria-hidden />
-              <span>{description}</span>
-            </div>
-          )}
         </div>
 
         {runnerCount === null && isError ? (
@@ -152,7 +151,14 @@ export function RunnerSelectPopover({
         ) : (
           // One choice from a set: a radio group, so the picker has a name and each option says
           // whether it is the one selected (it was a column of unnamed buttons with a check icon).
-          <div role="radiogroup" aria-labelledby={headingId} className="max-h-52 overflow-y-auto py-1">
+          // Named "Select runner" whatever the heading says (a destroy's heading names the runner
+          // being destroyed, not the choice), and described by the line that explains the choice.
+          <div
+            role="radiogroup"
+            aria-label="Select runner"
+            aria-describedby={subtitleId}
+            className="max-h-52 overflow-y-auto py-1"
+          >
             <button
               type="button"
               role="radio"

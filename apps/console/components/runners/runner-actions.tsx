@@ -36,6 +36,12 @@ import { toast } from "sonner";
 export const PERSONAL_RUNNER_DEFAULT_REASON =
   "Switch to your personal workspace to change its default";
 
+/** What a runner destroy removes, listed in its typed confirmation (R6 C-20). */
+const RUNNER_DESTROY_CONSEQUENCES = [
+  "Every cloud resource this runner was deployed with is torn down.",
+  "The runner is deleted and is no longer given jobs.",
+] as const;
+
 /** A runner with its in-flight job (if any), joined on the server — the unit the card renders. */
 export type RunnerRow = RunnerView;
 
@@ -130,6 +136,9 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
   const destroy = useDestroyRunner();
   const remove = useDeleteRunner();
   const [showRemoveDialog, setShowRemoveDialog] = useState(false);
+  // The destroy is two steps (R6 C-20): the popover picks which runner carries out the destroy job,
+  // then the typed confirmation names what is torn down. `undefined` = no confirmation open.
+  const [destroyWith, setDestroyWith] = useState<string | null | undefined>(undefined);
 
   const isManaged = runner.operator === "managed";
   const busy = runnerBusyKind(runner);
@@ -137,6 +146,7 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
   // A destroy stays "Destroying…" from the click until the job it queued shows on the card.
   const destroying = destroy.isPending || destroy.isSuccess;
 
+  /** Sets this runner as the org default, or clears the default when it already is. */
   const handleToggleDefault = () => {
     const newValue = !runner.is_default;
     setDefault.mutate(newValue ? runner.id : null, {
@@ -146,6 +156,7 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
     });
   };
 
+  /** Queues the destroy job on the picked runner (null = any available). */
   const handleDestroy = (assignedRunnerId: string | null) => {
     destroy.mutate(
       { runnerId: runner.id, assignedRunnerId },
@@ -248,24 +259,47 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
       {!isManaged &&
         runner.provisioning === "deployed" &&
         hasCloudResources && (
-          <RunnerSelectPopover
-            trigger={
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                disabled={destroying}
-              >
-                {destroying ? "Destroying…" : "Destroy"}
-              </Button>
-            }
-            variant="destructive"
-            confirmLabel="Destroy"
-            description={`This will tear down all cloud resources for "${runner.name}" and delete the runner. This cannot be undone.`}
-            excludeId={runner.id}
-            onConfirm={handleDestroy}
-            disabled={destroying}
-          />
+          <>
+            <RunnerSelectPopover
+              trigger={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                  disabled={destroying}
+                >
+                  {destroying ? "Destroying…" : "Destroy"}
+                </Button>
+              }
+              variant="destructive"
+              title={`Destroy runner \u201C${runner.name}\u201D`}
+              subtitle="Choose which runner carries out the destroy job."
+              confirmLabel="Continue to destroy"
+              excludeId={runner.id}
+              onConfirm={(assignedRunnerId) => setDestroyWith(assignedRunnerId)}
+              disabled={destroying}
+            />
+            <ConfirmAction
+              open={destroyWith !== undefined}
+              onOpenChange={(open) => {
+                if (!open) setDestroyWith(undefined);
+              }}
+              title={`Destroy runner \u201C${runner.name}\u201D?`}
+              description="The runner's cloud resources are torn down and the runner is deleted. This cannot be undone."
+              confirmLabel="Destroy runner"
+              pendingLabel="Queuing…"
+              severity={{
+                level: "destroy",
+                subject: runner.name,
+                consequences: RUNNER_DESTROY_CONSEQUENCES,
+              }}
+              run={() => {
+                if (destroyWith === undefined) return false;
+                handleDestroy(destroyWith);
+                return true;
+              }}
+            />
+          </>
         )}
 
       {!isManaged &&

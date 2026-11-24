@@ -258,4 +258,35 @@ describe("BillingPanel", () => {
 		await screen.findByRole("button", { name: /cancel plan/i });
 		expect(screen.queryByTestId("billing-past-due")).toBeNull();
 	});
+
+	// CON-PB2, R6 F-36: the label used to read `state === "canceling"` while the click read
+	// `cancelAtPeriodEnd`, so a past-due subscription set to cancel said "Cancel plan" and resumed.
+	it("a past-due subscription already set to cancel offers Resume plan, and the click resumes", async () => {
+		reads.summary.mockResolvedValue(
+			summary({ status: "past_due", state: "past_due", cancelAtPeriodEnd: true }),
+		);
+		resumePlan.mockResolvedValue({ ok: true, data: { ok: true } });
+		renderWithReads(<BillingPanel />);
+		fireEvent.click(await screen.findByRole("button", { name: "Resume plan" }));
+		await waitFor(() => expect(resumePlan).toHaveBeenCalledWith({}));
+		expect(screen.queryByRole("button", { name: "Cancel plan" })).toBeNull();
+	});
+
+	// CON-PB2, R6 F-24: the lifecycle state is the shared StatusBadge, not a hand-rolled pill.
+	it("the subscription state renders through StatusBadge with an explicit tier", async () => {
+		reads.summary.mockResolvedValue(summary({ status: "past_due", state: "past_due" }));
+		const { container } = renderWithReads(<BillingPanel />);
+		await screen.findByTestId("billing-past-due");
+		const badge = container.querySelector(".vx-status--failed");
+		expect(badge).not.toBeNull();
+		expect(badge).toHaveTextContent("Past due");
+	});
+
+	// CON-PB2, R6 F-38: "see the docs" with no link.
+	it("a self-managed deployment links to the licensing docs", async () => {
+		reads.summary.mockResolvedValue(summary({ hosted: false }));
+		renderWithReads(<BillingPanel />);
+		const link = await screen.findByRole("link", { name: /self-managed licensing/i });
+		expect(link).toHaveAttribute("href", "/docs/editions/licensing");
+	});
 });

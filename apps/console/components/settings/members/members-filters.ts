@@ -36,7 +36,18 @@ export interface MemberRowView {
 	status: "active" | "pending" | "suspended";
 	activity: string;
 	isYou: boolean;
+	/**
+	 * A pending invitation's link expiry, formatted against the page's `asOf` (#6827): "expires in
+	 * 3 days" or, once past, "expired 2 days ago". Absent on member rows.
+	 */
+	expiry?: { label: string; expired: boolean };
 }
+
+/**
+ * One page of a settings list — Members, Teams and Access all page by this (R6 E-23); they used to
+ * page by 20, 10 and 15, so the same table length meant a different amount of data on each.
+ */
+export const SETTINGS_LIST_PAGE_SIZE = 20;
 
 /** The members list's filter state (a type alias, for the store's `Record` constraint). */
 export type MembersFilters = {
