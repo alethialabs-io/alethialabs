@@ -63,7 +63,7 @@ export async function authorizeApply(
 	if (actor.orgId !== target.orgId) {
 		throw new ApplyAuthorizationError("not_permitted", "This environment belongs to another organization.");
 	}
-	const enterprise = enterpriseAgentPolicy();
+	const enterprise = await enterpriseAgentPolicy();
 	if (actor.credential === "session") {
 		// A person at the console. The environments placed on a Fabric are destroyed in the same
 		// transaction as the Fabric's own environment, which is gated last and consumes (or does not

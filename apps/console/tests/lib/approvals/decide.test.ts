@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const can = vi.fn();
 vi.mock("@/lib/authz", () => ({ getPdp: () => ({ can }) }));
 const enterprise = vi.hoisted((): EnterpriseSlot => ({ current: null }));
-vi.mock("@/lib/approvals/enterprise-policy", () => ({ enterpriseAgentPolicy: () => enterprise.current }));
+vi.mock("@/lib/approvals/enterprise-policy", () => ({ enterpriseAgentPolicy: async () => enterprise.current }));
 
 import { type Decider, decideApproval, DECIDER_SESSION_MAX_AGE_MS } from "@/lib/approvals/decide";
 import { ApprovalError } from "@/lib/approvals/refusal";

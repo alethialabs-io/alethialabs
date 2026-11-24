@@ -84,7 +84,7 @@ export async function decideApproval(
 	if (stale) return { ok: false, error: await markVoid(db, approval.id, "superseded", staleMessage(stale)) };
 
 	if (input.decision === "approve") {
-		const enterprise = enterpriseAgentPolicy();
+		const enterprise = await enterpriseAgentPolicy();
 		if (enterprise) {
 			const policy = await readAgentPolicy(db, approval.org_id);
 			const refusal = await enterprise.approverRefusal(approval.org_id, policy, approval.requester_user_id, actor.userId);

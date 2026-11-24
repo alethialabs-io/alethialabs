@@ -11,7 +11,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const enterprise = vi.hoisted((): EnterpriseSlot => ({ current: null }));
-vi.mock("@/lib/approvals/enterprise-policy", () => ({ enterpriseAgentPolicy: () => enterprise.current }));
+vi.mock("@/lib/approvals/enterprise-policy", () => ({ enterpriseAgentPolicy: async () => enterprise.current }));
 
 import { ApplyAuthorizationError, type ApplyTarget, requireApplyAuthorization, SYSTEM_APPLY_ORIGINS } from "@/lib/approvals/types";
 import type { Actor, CredentialKind } from "@/lib/authz/types";

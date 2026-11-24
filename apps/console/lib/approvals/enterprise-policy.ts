@@ -11,7 +11,6 @@
 // answers it: no second person, any OAuth client, self-approval allowed (decision D6).
 
 import type { EnvironmentStage } from "@/lib/db/schema/enums";
-import { getEnterprise } from "@/lib/enterprise";
 import type { ApplyOperation } from "./types";
 
 /** The enterprise columns of `org_agent_policy`, as stored. A missing row is `false` and `null`. */
@@ -64,7 +63,13 @@ export interface EnterpriseAgentPolicy {
  * The registered enterprise agent policy, or null when core answers alone. A failed enterprise load
  * throws, as it does from every seam: an instance configured as enterprise never silently runs its
  * approvals as community.
+ *
+ * The loader is imported when first asked, not at module load. `lib/approvals/types.ts` is the
+ * approval vocabulary (`AGENT_SCOPES`, read by lib/auth/mcp-scopes.ts) and also exports the queue
+ * gate, so a static import here would pull lib/enterprise.ts — and through it billing, alerting,
+ * email and the database — into everything that only wants the scope names.
  */
-export function enterpriseAgentPolicy(): EnterpriseAgentPolicy | null {
+export async function enterpriseAgentPolicy(): Promise<EnterpriseAgentPolicy | null> {
+	const { getEnterprise } = await import("@/lib/enterprise");
 	return getEnterprise()?.agentPolicy ?? null;
 }

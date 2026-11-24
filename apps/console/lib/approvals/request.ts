@@ -83,7 +83,7 @@ export async function requestApproval(
 		throw new ApprovalError("not_permitted", policyRefusalMessage(requirement.reason, input.operation));
 	}
 	// An agent's OAuth client outside the org's allow-list may not ask (enterprise-policy.ts).
-	const enterprise = enterpriseAgentPolicy();
+	const enterprise = await enterpriseAgentPolicy();
 	if (enterprise && actor.credential === "agent_oauth") {
 		const refusal = await enterprise.oauthClientRefusal(actor.orgId, policy, actor.credentialRef ?? null);
 		if (refusal) throw new ApprovalError("not_permitted", refusal);
