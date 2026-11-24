@@ -4,17 +4,21 @@
 
 // Deciding an approval (lib/approvals/decide.ts): only a person in a recent console session, in the
 // approval's org, holding the verb on the project; never a token or an agent; never the requester's
-// own person when the org requires a different approver; a destroy needs the typed environment name.
+// own person when the org requires a different approver and the enterprise agent policy applies it;
+// a destroy needs the typed environment name.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const can = vi.fn();
 vi.mock("@/lib/authz", () => ({ getPdp: () => ({ can }) }));
+const enterprise = vi.hoisted((): EnterpriseSlot => ({ current: null }));
+vi.mock("@/lib/approvals/enterprise-policy", () => ({ enterpriseAgentPolicy: () => enterprise.current }));
 
 import { type Decider, decideApproval, DECIDER_SESSION_MAX_AGE_MS } from "@/lib/approvals/decide";
 import { ApprovalError } from "@/lib/approvals/refusal";
 import { CREDENTIAL_KINDS, type CredentialKind } from "@/lib/authz/types";
 import { applyApprovals, jobs, orgAgentPolicy, projectEnvironments } from "@/lib/db/schema";
+import { type EnterpriseSlot, fakeEnterprisePolicy } from "./fake-enterprise-policy";
 import { fakeExecutor, untouchableTx } from "./fake-executor";
 
 const ORG = "00000000-0000-4000-8000-0000000000aa";
@@ -76,6 +80,7 @@ async function codeOf(p: Promise<unknown>): Promise<string> {
 }
 
 beforeEach(() => {
+	enterprise.current = null;
 	can.mockReset();
 	can.mockResolvedValue({ allowed: true });
 });
@@ -116,15 +121,51 @@ describe("self-approval", () => {
 		expect(result.ok).toBe(true);
 	});
 
-	it("is refused when the org requires a different approver", async () => {
+	it("is allowed in core even with the toggle stored on: core does not read it (an enterprise toggle)", async () => {
+		const f = setup([pending()], { differentApprover: true });
+		const result = await decideApproval(f.db, decider("session", REQUESTER), APPROVAL, { decision: "approve" }, NOW);
+		expect(result.ok).toBe(true);
+		expect(f.selects.get(orgAgentPolicy)).toBeUndefined();
+	});
+
+	it("is refused when the org requires a different approver and is entitled to it", async () => {
+		const fake = fakeEnterprisePolicy(true);
+		enterprise.current = fake.policy;
 		const f = setup([pending()], { differentApprover: true });
 		expect(await codeOf(decideApproval(f.db, decider("session", REQUESTER), APPROVAL, { decision: "approve" }, NOW))).toBe(
 			"self_approval",
 		);
+		expect(fake.approverRefusal).toHaveBeenCalledWith(
+			ORG,
+			expect.objectContaining({ requireDifferentApprover: true, allowedOauthClientIds: null }),
+			REQUESTER,
+			REQUESTER,
+		);
 		expect(f.writes).toEqual([]);
 	});
 
+	it("is allowed when the org requires a different approver and is not entitled to it", async () => {
+		enterprise.current = fakeEnterprisePolicy(false).policy;
+		const f = setup([pending()], { differentApprover: true });
+		expect((await decideApproval(f.db, decider("session", REQUESTER), APPROVAL, { decision: "approve" }, NOW)).ok).toBe(true);
+	});
+
+	it("is allowed when entitled and the toggle is off", async () => {
+		enterprise.current = fakeEnterprisePolicy(true).policy;
+		const f = setup([pending()]);
+		expect((await decideApproval(f.db, decider("session", REQUESTER), APPROVAL, { decision: "approve" }, NOW)).ok).toBe(true);
+	});
+
+	it("a rejection by the requester is never refused as a self-approval", async () => {
+		const fake = fakeEnterprisePolicy(true);
+		enterprise.current = fake.policy;
+		const f = setup([pending()], { differentApprover: true });
+		expect((await decideApproval(f.db, decider("session", REQUESTER), APPROVAL, { decision: "reject" }, NOW)).ok).toBe(true);
+		expect(fake.approverRefusal).not.toHaveBeenCalled();
+	});
+
 	it("lets a different person approve when the org requires one", async () => {
+		enterprise.current = fakeEnterprisePolicy(true).policy;
 		const f = setup([pending()], { differentApprover: true });
 		expect((await decideApproval(f.db, decider(), APPROVAL, { decision: "approve" }, NOW)).ok).toBe(true);
 		expect(f.writes[0]?.values).toEqual(

@@ -15,8 +15,9 @@
 // |                                |      | the token lists the env (D2) |                           | automatic               |
 //
 // The org's kill switch (`agent_access_enabled` off) refuses the two agent kinds everything here.
-// A second person for a `session` click when "require a different approver" is on is the
-// enterprise toggle's (AGT-L14); in core a session's click is its approval.
+// A second person for a `session` click when "require a different approver" is on, and the OAuth
+// client allow-list, are the enterprise toggles (AGT-L14): the queue gate asks them through
+// enterprise-policy.ts after this table, never here. In core a session's click is its approval.
 
 import type { CredentialKind } from "@/lib/authz/types";
 import type { EnvironmentStage } from "@/lib/db/schema/enums";

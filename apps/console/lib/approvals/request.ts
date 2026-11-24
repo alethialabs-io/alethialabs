@@ -12,6 +12,7 @@ import { applyApprovals, jobs } from "@/lib/db/schema";
 import type { ApplyApproval } from "@/lib/db/schema/agent-surface";
 import { appliedState, bindingStaleReason, type Executor, staleMessage } from "./binding";
 import { readAgentPolicy, readEnvironment } from "./context";
+import { enterpriseAgentPolicy } from "./enterprise-policy";
 import { planDigestOf } from "./plan-binding";
 import { applyRequirement, policyRefusalMessage } from "./policy";
 import { ApprovalError } from "./refusal";
@@ -36,7 +37,8 @@ export interface ApprovalRequestInput {
  *
  * Refused (an {@link ApprovalError}) when the actor lacks the PDP verb on the project, when the plan is
  * not this org's, has not succeeded, has no digest, failed verification or is no longer current, and
- * when the org's agent policy refuses the operation outright. A pending approval of an older plan for
+ * when the org's agent policy refuses the operation outright (including, through the enterprise agent
+ * policy, an OAuth client outside the org's allow-list). A pending approval of an older plan for
  * the same environment and operation is marked superseded.
  */
 export async function requestApproval(
@@ -79,6 +81,12 @@ export async function requestApproval(
 	});
 	if (requirement.kind === "refused") {
 		throw new ApprovalError("not_permitted", policyRefusalMessage(requirement.reason, input.operation));
+	}
+	// An agent's OAuth client outside the org's allow-list may not ask (enterprise-policy.ts).
+	const enterprise = enterpriseAgentPolicy();
+	if (enterprise && actor.credential === "agent_oauth") {
+		const refusal = await enterprise.oauthClientRefusal(actor.orgId, policy, actor.credentialRef ?? null);
+		if (refusal) throw new ApprovalError("not_permitted", refusal);
 	}
 
 	if (plan.status !== "SUCCESS") {

@@ -8,11 +8,20 @@
 // answering each table's reads (fake-executor.ts). The single-use compare-and-set against real
 // Postgres is the database's (`uq_jobs_approval_id`, the CAS WHERE), exercised in CI's integration tier.
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const enterprise = vi.hoisted((): EnterpriseSlot => ({ current: null }));
+vi.mock("@/lib/approvals/enterprise-policy", () => ({ enterpriseAgentPolicy: () => enterprise.current }));
+
 import { ApplyAuthorizationError, type ApplyTarget, requireApplyAuthorization, SYSTEM_APPLY_ORIGINS } from "@/lib/approvals/types";
 import type { Actor, CredentialKind } from "@/lib/authz/types";
 import { applyApprovals, cliServiceTokens, jobs, orgAgentPolicy, projectEnvironments } from "@/lib/db/schema";
+import { type EnterpriseSlot, fakeEnterprisePolicy } from "./fake-enterprise-policy";
 import { fakeExecutor, untouchableTx } from "./fake-executor";
+
+beforeEach(() => {
+	enterprise.current = null;
+});
 
 const ORG = "00000000-0000-4000-8000-0000000000aa";
 const OTHER_ORG = "00000000-0000-4000-8000-0000000000bb";
@@ -325,5 +334,163 @@ describe("each insert site's request, from a credential that needs an approval a
 			expect(err.code).toBe("approval_required");
 			expect(f.writes).toEqual([]);
 		}
+	});
+});
+
+// AGT-L14: the enterprise agent policy, registered through enterprise-policy.ts. Without one (every
+// case above) core answers alone; with one, the gate asks it, and acts on what it answers.
+describe("the enterprise agent policy", () => {
+	const session = { kind: "actor" as const, actor: actorOf("session") };
+	const STORED_ON = [
+		{
+			agent_access_enabled: true,
+			agents_may_not_apply_to_production: false,
+			require_different_approver: true,
+			approval_ttl_minutes: 60,
+			allowed_oauth_client_ids: ["claude-code"],
+		},
+	];
+
+	describe("require a different approver — a person's own click", () => {
+		it("refuses a production deploy with no approval, and writes nothing", async () => {
+			const fake = fakeEnterprisePolicy(true);
+			enterprise.current = fake.policy;
+			const f = setup({ stage: "production", policy: STORED_ON });
+			const err = await refusal(requireApplyAuthorization(f.db, session, "deploy", DEPLOY_TARGET));
+			expect(err.code).toBe("approval_required");
+			expect(err.message).toMatch(/second person/);
+			expect(fake.sessionApplyNeedsSecondPerson).toHaveBeenCalledWith(
+				ORG,
+				expect.objectContaining({ requireDifferentApprover: true, allowedOauthClientIds: ["claude-code"] }),
+				"deploy",
+				"production",
+			);
+			expect(f.writes).toEqual([]);
+		});
+
+		it("refuses a destroy of any stage with no approval", async () => {
+			enterprise.current = fakeEnterprisePolicy(true).policy;
+			const f = setup({ stage: "development", policy: STORED_ON });
+			expect((await refusal(requireApplyAuthorization(f.db, session, "destroy", DESTROY_TARGET))).code).toBe("approval_required");
+		});
+
+		it("leaves a staging deploy to the click", async () => {
+			enterprise.current = fakeEnterprisePolicy(true).policy;
+			const f = setup({ stage: "staging", policy: STORED_ON });
+			await expect(requireApplyAuthorization(f.db, session, "deploy", DEPLOY_TARGET)).resolves.toEqual({ approvalId: null });
+		});
+
+		it("leaves every click alone when the toggle is off", async () => {
+			enterprise.current = fakeEnterprisePolicy(true).policy;
+			const f = setup({ stage: "production" });
+			await expect(requireApplyAuthorization(f.db, session, "destroy", DESTROY_TARGET)).resolves.toEqual({ approvalId: null });
+		});
+
+		it("leaves every click alone when the organization is not entitled (unlicensed = core)", async () => {
+			enterprise.current = fakeEnterprisePolicy(false).policy;
+			const f = setup({ stage: "production", policy: STORED_ON });
+			await expect(requireApplyAuthorization(f.db, session, "deploy", DEPLOY_TARGET)).resolves.toEqual({ approvalId: null });
+		});
+
+		it("consumes the person's approval when a different person approved it", async () => {
+			enterprise.current = fakeEnterprisePolicy(true).policy;
+			const f = setup({
+				stage: "production",
+				policy: STORED_ON,
+				approval: [approvalRow({ requester_credential: "session", approver_user_id: "someone-else" })],
+			});
+			await expect(requireApplyAuthorization(f.db, session, "deploy", DEPLOY_TARGET, APPROVAL)).resolves.toEqual({
+				approvalId: APPROVAL,
+			});
+		});
+
+		it("refuses an approval its requester approved (decided before the toggle was on), and stamps nothing", async () => {
+			enterprise.current = fakeEnterprisePolicy(true).policy;
+			const f = setup({
+				stage: "production",
+				policy: STORED_ON,
+				approval: [approvalRow({ requester_credential: "session", approver_user_id: USER })],
+			});
+			const err = await refusal(requireApplyAuthorization(f.db, session, "deploy", DEPLOY_TARGET, APPROVAL));
+			expect(err.code).toBe("approval_invalid");
+			expect(f.writes).toEqual([]);
+		});
+
+		it("holds an agent's self-approved approval to the same rule", async () => {
+			enterprise.current = fakeEnterprisePolicy(true).policy;
+			const f = setup({
+				policy: STORED_ON,
+				approval: [approvalRow({ requester_credential: "cli_session", approver_user_id: USER })],
+			});
+			const err = await refusal(
+				requireApplyAuthorization(f.db, { kind: "actor", actor: actorOf("cli_session") }, "deploy", DEPLOY_TARGET, APPROVAL),
+			);
+			expect(err.code).toBe("approval_invalid");
+		});
+
+		it("covers the environments on a Fabric by the Fabric's own approval, with nothing read for them", async () => {
+			enterprise.current = fakeEnterprisePolicy(true).policy;
+			await expect(
+				requireApplyAuthorization(
+					untouchableTx(),
+					session,
+					"destroy",
+					{ ...DESTROY_TARGET, cascadeOfEnvironmentId: "owner-env" },
+					APPROVAL,
+				),
+			).resolves.toEqual({ approvalId: null });
+		});
+	});
+
+	describe("the OAuth client allow-list", () => {
+		const oauth = (clientId?: string) => ({
+			kind: "actor" as const,
+			actor: actorOf("agent_oauth", clientId === undefined ? {} : { credentialRef: clientId }),
+		});
+
+		it("refuses a client outside the list, approval or not, and writes nothing", async () => {
+			const fake = fakeEnterprisePolicy(true);
+			enterprise.current = fake.policy;
+			const f = setup({ policy: STORED_ON, approval: [approvalRow({ requester_credential: "agent_oauth", requester_credential_ref: "cursor" })] });
+			const err = await refusal(requireApplyAuthorization(f.db, oauth("cursor"), "deploy", DEPLOY_TARGET, APPROVAL));
+			expect(err.code).toBe("not_permitted");
+			expect(fake.oauthClientRefusal).toHaveBeenCalledWith(ORG, expect.objectContaining({ allowedOauthClientIds: ["claude-code"] }), "cursor");
+			expect(f.writes).toEqual([]);
+		});
+
+		it("refuses a token that names no client when a list is set", async () => {
+			const fake = fakeEnterprisePolicy(true);
+			enterprise.current = fake.policy;
+			const f = setup({ policy: STORED_ON });
+			expect((await refusal(requireApplyAuthorization(f.db, oauth(), "deploy", DEPLOY_TARGET))).code).toBe("not_permitted");
+			expect(fake.oauthClientRefusal).toHaveBeenCalledWith(ORG, expect.anything(), null);
+		});
+
+		it("lets a listed client on to the approval check", async () => {
+			enterprise.current = fakeEnterprisePolicy(true).policy;
+			const f = setup({
+				policy: STORED_ON,
+				approval: [approvalRow({ requester_credential: "agent_oauth", requester_credential_ref: "claude-code", approver_user_id: "someone-else" })],
+			});
+			await expect(requireApplyAuthorization(f.db, oauth("claude-code"), "deploy", DEPLOY_TARGET, APPROVAL)).resolves.toEqual({
+				approvalId: APPROVAL,
+			});
+		});
+
+		it("lets any client on when the organization is not entitled (unlicensed = core)", async () => {
+			enterprise.current = fakeEnterprisePolicy(false).policy;
+			const f = setup({ policy: STORED_ON });
+			expect((await refusal(requireApplyAuthorization(f.db, oauth("cursor"), "deploy", DEPLOY_TARGET))).code).toBe(
+				"approval_required",
+			);
+		});
+
+		it("is not asked for any other credential kind", async () => {
+			const fake = fakeEnterprisePolicy(true);
+			enterprise.current = fake.policy;
+			const f = setup({ policy: STORED_ON });
+			await refusal(requireApplyAuthorization(f.db, { kind: "actor", actor: actorOf("agent_in_app") }, "deploy", DEPLOY_TARGET));
+			expect(fake.oauthClientRefusal).not.toHaveBeenCalled();
+		});
 	});
 });

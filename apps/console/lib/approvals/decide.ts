@@ -3,8 +3,9 @@
 
 // Deciding an approval (spec §4.3): only a person signed in to the console, with a recent sign-in,
 // who holds the PDP verb on the project. Every other credential kind is refused, so no token and no
-// agent can approve its own request. When the org requires a different approver, the requester's own
-// person is refused too.
+// agent can approve its own request. When the org requires a different approver and holds the
+// enterprise entitlement for it, the requester's own person is refused too (enterprise-policy.ts); in
+// core a person may approve what their own agent asked (decision D6).
 
 import { and, eq, sql } from "drizzle-orm";
 import { getPdp } from "@/lib/authz";
@@ -13,6 +14,7 @@ import { applyApprovals } from "@/lib/db/schema";
 import type { ApplyApproval } from "@/lib/db/schema/agent-surface";
 import { bindingStaleReason, type Executor, staleMessage } from "./binding";
 import { readAgentPolicy, readEnvironment } from "./context";
+import { enterpriseAgentPolicy } from "./enterprise-policy";
 import { ApprovalError } from "./refusal";
 
 /**
@@ -82,12 +84,11 @@ export async function decideApproval(
 	if (stale) return { ok: false, error: await markVoid(db, approval.id, "superseded", staleMessage(stale)) };
 
 	if (input.decision === "approve") {
-		const policy = await readAgentPolicy(db, approval.org_id);
-		if (policy.requireDifferentApprover && approval.requester_user_id === actor.userId) {
-			throw new ApprovalError(
-				"self_approval",
-				"This organization requires a different person to approve a request than the one it was made for.",
-			);
+		const enterprise = enterpriseAgentPolicy();
+		if (enterprise) {
+			const policy = await readAgentPolicy(db, approval.org_id);
+			const refusal = await enterprise.approverRefusal(approval.org_id, policy, approval.requester_user_id, actor.userId);
+			if (refusal) throw new ApprovalError("self_approval", refusal);
 		}
 		if (approval.operation === "destroy") {
 			const environment = await readEnvironment(db, approval.project_id, approval.environment_id);

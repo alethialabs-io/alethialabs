@@ -16,8 +16,10 @@ import { sso } from "@better-auth/sso";
 import { OpenFgaClient } from "@openfga/sdk";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { organization } from "better-auth/plugins/organization";
+import type { EnterpriseAgentPolicy } from "@/lib/approvals/enterprise-policy";
 import type { Entitlements, ResolvedScope } from "@/lib/authz/types";
 import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
+import { agentPolicy, type EntitlementResolver } from "./agent-policy";
 import { FgaTupleSync } from "./fga-tuple-sync";
 import {
   graceEndsAt,
@@ -58,6 +60,7 @@ const ALL_ENTITLEMENTS: Entitlements = {
   advancedAlerting: true,
   byoRunners: true,
   managedPools: true,
+  agentPolicy: true, // the governance toggles of ./agent-policy
   // A licensed instance gets the enterprise tier's quotas (mirrors the ladder in
   // core's planEntitlements("enterprise"); inlined to keep this package type-only on core).
   quotas: {
@@ -142,8 +145,9 @@ function bodyOrgId(body: unknown): string | null {
 
 /**
  * One enterprise module's registration entry: what it adds to the instance when `register(core)`
- * runs. Today that is Better Auth plugins (endpoints and before/after hooks), appended after
- * `organization()` and `sso()` in the order of {@link ENTERPRISE_FEATURES}.
+ * runs: Better Auth plugins (endpoints and before/after hooks), appended after `organization()` and
+ * `sso()` in the order of {@link ENTERPRISE_FEATURES}, and — for the one module that provides it —
+ * the approval engine's agent policy.
  */
 export interface EnterpriseFeature {
   /** The module's name; for the ones below it is also its directory under `ee/src/`. */
@@ -152,6 +156,12 @@ export interface EnterpriseFeature {
   built: boolean;
   /** The Better Auth plugins this module mounts, built from the injected core capabilities. */
   authPlugins: (core: CoreContext) => EnterpriseAuthPlugin[];
+  /**
+   * The agent policy this module gives the approval engine (core's
+   * lib/approvals/enterprise-policy.ts), built from the module's entitlement resolver. At most one
+   * entry provides it; `register` mounts the first.
+   */
+  agentPolicy?: (resolveEntitlements: EntitlementResolver) => EnterpriseAgentPolicy;
 }
 
 /** The entry of a module that is planned and not built: it registers nothing. */
@@ -181,8 +191,13 @@ export const ENTERPRISE_FEATURES: readonly EnterpriseFeature[] = [
   notBuilt("audit-stream"),
   // Second factor and session policy — ee/src/session-policy/
   notBuilt("session-policy"),
-  // Agent policy — ee/src/agent-policy/
-  notBuilt("agent-policy"),
+  // Agent policy: a different approver and the OAuth client allow-list (./agent-policy).
+  {
+    id: "agent-policy",
+    built: true,
+    authPlugins: () => [],
+    agentPolicy,
+  },
 ];
 
 export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
@@ -562,6 +577,10 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
 
     // Per-org entitlement resolution — the resolver the gates above read.
     resolveEntitlements,
+
+    // The enterprise agent-policy toggles the approval engine consults, gated by the same
+    // entitlement resolver: an organization without `agentPolicy` is answered as core answers.
+    agentPolicy: ENTERPRISE_FEATURES.find((feature) => feature.agentPolicy)?.agentPolicy?.(resolveEntitlements),
 
     // The instance edition report: the licence state, the capabilities it grants and the
     // module registry, read by the console's one edition reader.
