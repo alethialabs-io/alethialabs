@@ -8,6 +8,14 @@
 // management (lib/queries/usage-counts.ts — the definition the Usage page counts), pending and
 // failed ones included, each shown as such. A row opens its record in a drawer, and the open row is
 // in the URL (`?selected=`), so a link to one cluster is a link.
+//
+// Paged by the list standard's keyset contract (LST-3 #7485): `useKeysetList` + `<DataTable
+// keyset>` and its `ListFooter`, one server page at a time, and no count. A `?selected=` row that
+// is not among the loaded pages opens nothing until it is loaded.
+//
+// LIVE, with no poll: a cluster that changes is a `clusters` hint, and its environment's lifecycle
+// and data services are `environments` hints; both invalidate every `clusters.*` key — a prefix of
+// this list's infinite key (lib/query/topics.ts) — so the loaded pages are re-read from page one.
 
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
@@ -33,32 +41,31 @@ import { RegionRefusal } from "@/components/errors/region-refusal";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { ARCHITECTURE, sentenceStart, PROJECT } from "@/lib/copy/vocabulary";
-import { useClustersPageQuery } from "@/lib/query/use-clusters-page-query";
+import { useKeysetList } from "@/lib/query/use-keyset-list";
 import {
-	FILTER_DEPENDENT_PARAMS,
 	hrefWithParamPatch,
-	pageFromUrl,
-	pagePatch,
+	SELECTION_PARAM,
 	selectionFromUrl,
 	selectionPatch,
 } from "@/lib/query/view-url-params";
+import { orpc } from "@/lib/rpc/client";
 import { readRefusalOf } from "@/lib/rpc/refusal";
 import { useClustersFilters } from "@/lib/stores/use-clusters-filters";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 
-/** Rows per page. A page number is in the URL (`?page=`), and a filter change returns to the first. */
-export const CLUSTERS_PAGE_SIZE = 20;
+/** What a filter change clears from the URL: the open row, which the new filters may exclude. */
+const FILTER_RESET_PARAMS: readonly string[] = [SELECTION_PARAM];
 
 /**
  * The clusters list for the organization, or — given `projectId` — for one project. The project is
- * the route's SCOPE: it is in the read's input (so the facets and the count are the project's own),
+ * the route's SCOPE: it is in the read's input (so the rows and the facets are the project's own),
  * never in the filter store or the query string, and the Project column is dropped.
  *
  * Six distinct renders, so nothing reads as something it is not (RUBRIC B3/B4): pending is the
  * skeleton, a refusal says the viewer lacks access, a failure says it failed and offers a retry, no
  * clusters in scope is the empty state with its next action, clusters the filters exclude is "no
  * match" with a way back, and clusters are the table. A refresh that fails after data arrived keeps
- * the rows under the table's own notice.
+ * the rows under the table's own notice; a later page that fails keeps them above the footer's retry.
  */
 export function ClustersClient({ projectId }: { projectId?: string }) {
 	const orgSlug = useActiveOrgSlug();
@@ -71,7 +78,7 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 	const set = useClustersFilters((s) => s.set);
 	const reset = useClustersFilters((s) => s.reset);
 	const urlRead = useFilterUrlSync(useClustersFilters, DEFAULT_CLUSTER_FILTERS, undefined, {
-		resetParams: FILTER_DEPENDENT_PARAMS,
+		resetParams: FILTER_RESET_PARAMS,
 	});
 	// Only TYPING waits: a search the link carried lands in the key at once (`urlRead`).
 	const debouncedSearch = useDebouncedValue(filters.search, 250, { urlRead });
@@ -79,9 +86,11 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 		() => normalizeClustersQuery(filters, debouncedSearch, projectId),
 		[filters, debouncedSearch, projectId],
 	);
-	const page = useClustersPageQuery(query);
+	const list = useKeysetList(orpc.clusters.page, query);
 
-	const rows = useMemo(() => clusterRows(page.data?.rows ?? []), [page.data]);
+	const rows = useMemo(() => clusterRows(list.rows.map((row) => row.cluster)), [list.rows]);
+	// The table renders the loaded rows with their posture; the paging state is the list's own.
+	const table = useMemo(() => ({ ...list, rows }), [list, rows]);
 	const selectedId = selectionFromUrl(searchParams);
 	const selected = rows.find((row) => row.id === selectedId) ?? null;
 
@@ -94,27 +103,27 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 	// columns do not change with the URL and a cell keeps its identity (and its focus).
 	const columns = useMemo(() => buildClusterColumns({ showProject: !projectId, orgSlug }), [projectId, orgSlug]);
 
-	if (page.data === undefined) {
-		const refusal = page.isError ? readRefusalOf(page.error) : null;
+	if (list.query.data === undefined) {
+		const refusal = list.query.isError ? readRefusalOf(list.query.error) : null;
 		if (refusal) {
 			// An expected refusal, not a failure: retrying will not change it, so there is no button.
 			return <RegionRefusal refusal={refusal} subject="clusters" className={CLUSTERS_REGION} />;
 		}
-		if (page.isError) {
+		if (list.query.isError) {
 			return (
 				<RegionError
 					className={CLUSTERS_REGION}
 					title="Couldn't load clusters"
 					description="Something went wrong fetching your clusters. Check your connection and try again."
-					onRetry={() => void page.refetch()}
+					onRetry={() => void list.query.refetch()}
 				/>
 			);
 		}
 		return <ClustersSkeleton showProject={!projectId} />;
 	}
 
-	const { total, facets } = page.data;
-	if (total === 0) {
+	const facets = list.facets ?? undefined;
+	if (list.universeEmpty === true) {
 		// Nothing in scope at all — onboarding, never "no match". Each scope names its own next step:
 		// a project's clusters come from deploying it, so its action stays IN the project.
 		const architecture = params.project ? `/${orgSlug}/${params.project}/architecture` : null;
@@ -146,12 +155,12 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 	// BUSY while what the table shows may not answer the URL and the bar: before the link has been
 	// read into the store, while the rows are the previous query's, and while a typed search is still
 	// inside its debounce.
-	const busy = !urlRead || page.isPlaceholderData || filters.search !== debouncedSearch;
+	const busy = !urlRead || list.isPlaceholderData || filters.search !== debouncedSearch;
 
 	return (
 		<div className="space-y-6" aria-busy={busy}>
+			{/* No count: the list standard carries no list sizes (lib/query/README.md → "Counts"). */}
 			<PageToolbar
-				count={rows.length}
 				description={
 					projectId
 						? "The cluster each of this project's environments runs on."
@@ -172,18 +181,9 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 					}
 				/>
 			) : (
-				<div className={cn("transition-opacity", page.isPlaceholderData && "opacity-60")}>
+				<div className={cn("transition-opacity", list.isPlaceholderData && "opacity-60")}>
 					<ClusterOpenContext.Provider value={open}>
-						<DataTable
-							columns={columns}
-							data={rows}
-							query={page}
-							onRowClick={open}
-							selectedRowId={selected?.id}
-							pageSize={CLUSTERS_PAGE_SIZE}
-							pageIndex={pageFromUrl(searchParams) - 1}
-							onPageIndexChange={(index) => patchUrl(pagePatch(index + 1))}
-						/>
+						<DataTable columns={columns} keyset={table} onRowClick={open} selectedRowId={selected?.id} />
 					</ClusterOpenContext.Provider>
 				</div>
 			)}

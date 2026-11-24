@@ -62,7 +62,7 @@ vi.mock("@/components/classification/classification-control", () => ({
 import { EnvironmentsView } from "@/components/environments/environments-view";
 import { orpc } from "@/lib/rpc/client";
 import type { EnvironmentsOverview } from "@/lib/rpc/procedures/environments";
-import { DEV, PROJECT_ID, envRow, overviewOf } from "./fixtures";
+import { DEV, PROJECT_ID, envRow, overviewOf, pageOf, seedLists } from "./fixtures";
 
 const KEY = orpc.environments.overview.queryKey({ input: { project: "payments" } });
 
@@ -81,6 +81,7 @@ function renderView(overview: EnvironmentsOverview = OVERVIEW) {
 		},
 	});
 	client.setQueryData(KEY, overview);
+	seedLists(client, overview);
 	return render(
 		<QueryClientProvider client={client}>
 			<EnvironmentsView org="acme" project="payments" />
@@ -105,6 +106,8 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	// The delete invalidates the page's read; the refetch answers with the same overview.
 	h.handlers["environments.overview"] = async () => OVERVIEW;
+	h.handlers["environments.page"] = async () => pageOf(OVERVIEW.envs);
+	h.handlers["environments.promotions"] = async () => ({ rows: [], nextCursor: null, facets: null, universeEmpty: true });
 });
 
 describe("EnvironmentsView — deleting an environment (#6800)", () => {

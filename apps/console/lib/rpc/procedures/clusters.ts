@@ -33,7 +33,8 @@ import {
 	projects,
 } from "@/lib/db/schema";
 import { type AssignedValue, assignmentsForKind } from "@/lib/queries/classification";
-import { type ClustersPage, clustersPage } from "@/lib/queries/clusters";
+import { type ClustersPage, queryClustersPage } from "@/lib/queries/clusters";
+import { KEYSET_DEFAULT_LIMIT, keysetPageInput } from "@/lib/queries/keyset";
 import { managedClusterEnvJoin, managedClusterPredicate } from "@/lib/queries/usage-counts";
 import { query } from "@/lib/rpc/base";
 
@@ -62,6 +63,8 @@ export interface ClusterData {
 	project_cluster: {
 		/** project_cluster row id — the classifiable `project_cluster` resource. */
 		id: string;
+		/** When the cluster row was created (ISO) — the clusters list's sort key. */
+		created_at: string;
 		cluster_name: string | null;
 		cluster_endpoint: string | null;
 		cluster_arn: string | null;
@@ -155,6 +158,7 @@ export async function readClusters(actor: Actor): Promise<ClusterData[]> {
 				last_deployed_at: projectEnvironments.last_deployed_at,
 				provider: cloudIdentities.provider,
 				cluster_id: projectCluster.id,
+				cluster_created_at: projectCluster.created_at,
 				cluster_environment_id: projectCluster.environment_id,
 				cluster_name: projectCluster.cluster_name,
 				cluster_endpoint: projectCluster.cluster_endpoint,
@@ -279,6 +283,7 @@ export async function readClusters(actor: Actor): Promise<ClusterData[]> {
 				cloud_identities: r.provider ? { provider: r.provider } : null,
 				project_cluster: {
 					id: r.cluster_id,
+					created_at: r.cluster_created_at.toISOString(),
 					cluster_name: r.cluster_name,
 					cluster_endpoint: r.cluster_endpoint,
 					cluster_arn: r.cluster_outputs?.arn ?? null,
@@ -410,10 +415,10 @@ export async function readClusterList(actor: Actor): Promise<ClusterListItem[]> 
 const values = z.array(z.string().min(1).max(200)).max(200).optional();
 
 /**
- * One page of the clusters list: the route's scope and the bar's filters. Normalized (trimmed,
- * sorted, empty → absent) by the caller, so equal views are one query key.
+ * The clusters list's query: the route's scope and the bar's filters. Normalized (trimmed, sorted,
+ * empty → absent) by the caller, so equal views are one query key.
  */
-export const clustersPageInput = z.object({
+const clustersListQuery = z.object({
 	/** The project a project route lists; absent on the org route. A SCOPE, never a filter. */
 	projectId: z.uuid().optional(),
 	search: z.string().max(200).optional(),
@@ -422,21 +427,28 @@ export const clustersPageInput = z.object({
 	regions: values,
 });
 
-/** The validated shape of {@link clustersPageInput}. */
+/** One keyset page of the clusters list: the query plus the opaque cursor and the page size. */
+export const clustersPageInput = clustersListQuery.extend(keysetPageInput());
+
+/** What the clusters list is asked, without the paging fields — the normalized query, and the key. */
+export type ClustersListQuery = z.infer<typeof clustersListQuery>;
+
+/** The validated shape of {@link clustersPageInput} (the cursor decoded, the limit defaulted). */
 export type ClustersPageInput = z.infer<typeof clustersPageInput>;
 
 /**
- * The clusters list for `input`: the composed universe of {@link readClusterList}, resolved by
- * `clustersPage` (lib/queries/clusters.ts) — the scope on the rows and the facets, the filters on
- * the rows only. A project id of another organization, or of a project the viewer may not see,
- * matches no row of the universe and so lists nothing.
+ * One keyset page of the clusters list for `input`: the composed universe of
+ * {@link readClusterList}, resolved and paged IN MEMORY on the server by `queryClustersPage`
+ * (lib/queries/clusters.ts) — the scope on the rows and the facets, the filters on the rows only.
+ * A project id of another organization, or of a project the viewer may not see, matches no row of
+ * the universe and so lists nothing.
  */
 export async function readClustersPage(
 	actor: Actor,
-	input: ClustersPageInput = {},
+	input: ClustersListQuery & Partial<Pick<ClustersPageInput, "cursor" | "limit">> = {},
 ): Promise<ClustersPage<ClusterListItem>> {
-	const { projectId, ...filters } = input;
-	return clustersPage(await readClusterList(actor), filters, { projectId });
+	const { projectId, cursor, limit = KEYSET_DEFAULT_LIMIT, ...filters } = input;
+	return queryClustersPage(await readClusterList(actor), filters, { projectId }, { cursor, limit });
 }
 
 /**
