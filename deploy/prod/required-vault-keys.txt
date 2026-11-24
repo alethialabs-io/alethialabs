@@ -30,3 +30,14 @@ ALETHIA_PUBLIC_PHONE
 # by the deploy (infra/email-ses-account/README.md). packages/email/src/config.ts also THROWS in
 # hosted mode when the selected provider has no credentials, so a gap breaks email-OTP sign-in
 # loudly rather than degrading quietly.
+
+# Instance secrets docker-compose.yml references as `${NAME:?…}`, with no default (#6803). The
+# deploy emits an absent key as an empty value, which compose refuses on the box; listing them
+# here refuses in the preflight, before any image is built. The list of every instance secret is
+# deploy/selfhost/secrets.manifest; only the ones the shared compose file requires are gated here.
+ALETHIA_DB_PASSWORD
+ALETHIA_APP_DB_PASSWORD
+ALETHIA_CRED_ENCRYPTION_KEY
+OPENFGA_DB_PASSWORD
+ALETHIA_STORAGE_ACCESS_KEY_ID
+ALETHIA_STORAGE_SECRET_ACCESS_KEY
