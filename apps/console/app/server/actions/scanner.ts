@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { signedJob } from "@/lib/db/signed-job";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
@@ -14,7 +15,7 @@ import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
-import { withActorScope } from "@/lib/db";
+import { type Tx, withActorScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import { inferStack } from "@/lib/scanner/infer";
@@ -26,19 +27,64 @@ function toSlug(p: string): CloudProviderSlug {
 	return p === "gcp" || p === "azure" ? p : "aws";
 }
 
+/** What a scan is queued with besides the repository. */
+export interface RepoScanOptions {
+	ref?: string;
+	/**
+	 * A key the caller chose for this scan. A second call by the same person with the same key
+	 * returns the first call's job, queues nothing and books no usage.
+	 */
+	idempotencyKey?: string;
+}
+
+/**
+ * The value `jobs.idempotency_key` holds for a keyed scan: a SHA-256 over the org, the person and
+ * the caller's key, so a key never matches another person's or another organisation's scan and the
+ * caller's text is not stored.
+ */
+function scanKeyHash(orgId: string, userId: string, key: string): string {
+	return createHash("sha256").update(`scan:${orgId}:${userId}:${key}`).digest("hex");
+}
+
 /**
  * Queues an ANALYZE_REPO job and returns its id, THROWING the budget refusals as their own classes
  * ({@link AiBudgetError}, {@link UsageLimitError}) so each caller maps them in its own words. Not
  * exported: the two exports below are the callers, and each establishes the actor first.
+ *
+ * A keyed scan is looked up before the budget checks, and again under a transaction-scoped advisory
+ * lock on the key before the insert, so two concurrent calls with one key queue one job. The jobs
+ * table's idempotency index cannot do this alone: a scan has no project, and its NULL project id
+ * makes every row distinct under that index.
  */
-async function queueRepoScan(repoUrl: string, opts?: { ref?: string }): Promise<{ jobId: string }> {
+async function queueRepoScan(repoUrl: string, opts?: RepoScanOptions): Promise<{ jobId: string }> {
 	const actor = await currentActor();
 	const url = repoUrl.trim();
 	if (!url) throw new Error("A repository URL is required.");
+	const key = opts?.idempotencyKey ? scanKeyHash(actor.orgId, actor.userId, opts.idempotencyKey) : null;
+
+	/** The keyed scan already queued under `key`, read in `tx`. */
+	const findKeyed = async (tx: Tx, k: string) => {
+		const [row] = await tx
+			.select({ id: jobs.id })
+			.from(jobs)
+			.where(and(eq(jobs.job_type, "ANALYZE_REPO"), eq(jobs.idempotency_key, k)))
+			.limit(1);
+		return row?.id ?? null;
+	};
+	if (key) {
+		const existing = await withActorScope(actor, (tx) => findKeyed(tx, key));
+		if (existing) return { jobId: existing };
+	}
+
 	const charge = await assertAiAllowed(actor.orgId, "scan", actor.userId);
 	await assertJobQuotaAllowed(actor.orgId);
 
-	const jobId = await withActorScope(actor, async (tx) => {
+	const queued = await withActorScope(actor, async (tx) => {
+		if (key) {
+			await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${key}))`);
+			const existing = await findKeyed(tx, key);
+			if (existing) return { id: existing, fresh: false };
+		}
 		const [job] = await tx
 			.insert(jobs)
 			.values(signedJob({
@@ -47,10 +93,13 @@ async function queueRepoScan(repoUrl: string, opts?: { ref?: string }): Promise<
 				initiated_by: "user",
 				status: "QUEUED",
 				config_snapshot: { repo_url: url, ...(opts?.ref ? { ref: opts.ref } : {}) },
+				idempotency_key: key,
 			}))
 			.returning({ id: jobs.id });
-		return job.id;
+		return { id: job.id, fresh: true };
 	});
+	if (!queued.fresh) return { jobId: queued.id };
+	const jobId = queued.id;
 
 	await recordAiUsage({
 		orgId: actor.orgId,
@@ -76,7 +125,7 @@ async function queueRepoScan(repoUrl: string, opts?: { ref?: string }): Promise<
  *
  * B6 will front this with `assertScanAllowed` (entitlement + per-scan meter).
  */
-export async function scanRepo(repoUrl: string, opts?: { ref?: string }) {
+export async function scanRepo(repoUrl: string, opts?: RepoScanOptions) {
 	try {
 		return await queueRepoScan(repoUrl, opts);
 	} catch (e) {
