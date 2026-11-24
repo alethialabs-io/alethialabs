@@ -13,6 +13,7 @@ import { claimPlanWelcome, upsertOrgBilling } from "@/lib/billing/queries";
 import { sendPlanWelcomeEmailForOrg } from "@/lib/email/billing-email";
 import { sendInviteEmail } from "@/lib/email/notify-email";
 import type { AiTier } from "@/lib/billing/ai-plan";
+import { hasAiSubscription, hasPlanSubscription } from "@/lib/billing/plan";
 import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -197,18 +198,22 @@ async function writeOffStripeAiTier(
 			plan: organizationBilling.plan,
 			status: organizationBilling.status,
 			stripeSubscriptionId: organizationBilling.stripeSubscriptionId,
+			paddleSubscriptionId: organizationBilling.paddleSubscriptionId,
 			aiStripeSubscriptionId: organizationBilling.aiStripeSubscriptionId,
+			aiPaddleSubscriptionId: organizationBilling.aiPaddleSubscriptionId,
 			currentPeriodEnd: organizationBilling.currentPeriodEnd,
 		})
 		.from(organizationBilling)
 		.where(eq(organizationBilling.organizationId, orgId))
 		.limit(1);
-	if (row?.aiStripeSubscriptionId) {
+	if (row && hasAiSubscription(row)) {
 		throw new ProvisionError(
-			"This organization has a Stripe AI subscription; an off-Stripe AI grant would overwrite it.",
+			"This organization has a paid AI subscription; an off-Stripe AI grant would overwrite it.",
 		);
 	}
-	if (!planAlsoSet && periodEnd && row?.stripeSubscriptionId) {
+	// A plan subscription at either provider (Stripe or Paddle) owns the row's term end.
+	const planIsSubscription = row ? hasPlanSubscription(row) : false;
+	if (!planAlsoSet && periodEnd && planIsSubscription) {
 		throw new ProvisionError(
 			"A time-limited AI grant cannot be given to an organization whose plan is a Stripe subscription: it would never lapse.",
 		);
@@ -216,7 +221,7 @@ async function writeOffStripeAiTier(
 	if (
 		!planAlsoSet &&
 		row &&
-		!row.stripeSubscriptionId &&
+		!planIsSubscription &&
 		row.plan !== "community" &&
 		(row.status === "active" || row.status === "trialing") &&
 		(row.currentPeriodEnd?.getTime() ?? null) !== (periodEnd?.getTime() ?? null)
@@ -234,7 +239,7 @@ async function writeOffStripeAiTier(
 		updatedAt: now,
 		// The plan write (upsertOrgBilling) already set the term end when the plan was set too. A row
 		// whose plan is a Stripe subscription keeps that subscription's renewal date.
-		...(planAlsoSet || row?.stripeSubscriptionId ? {} : { currentPeriodEnd: periodEnd }),
+		...(planAlsoSet || planIsSubscription ? {} : { currentPeriodEnd: periodEnd }),
 	};
 	await db
 		.insert(organizationBilling)

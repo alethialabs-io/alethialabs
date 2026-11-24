@@ -26,7 +26,7 @@ vi.mock("@/lib/authz/activity", () => ({ recordAllowed: vi.fn() }));
 // "claimed" the first time an id is seen and "already there" every time after.
 const claimed = vi.hoisted(() => new Set<string>());
 vi.mock("@/lib/billing/webhook-events", () => ({
-	claimWebhookEvent: vi.fn(async (id: string) => {
+	claimWebhookEvent: vi.fn(async (_provider: string, id: string) => {
 		if (claimed.has(id)) return { claimed: false, alreadyDone: true };
 		claimed.add(id);
 		return { claimed: true };
@@ -276,6 +276,7 @@ vi.mock("@/lib/billing/config", () => ({
 	deploymentMode: vi.fn(() => "self-managed"),
 	getStripeConfig: vi.fn(() => ({ appUrl: "https://app.test" })),
 	isStripeConfigured: vi.fn(() => true),
+	isBillingConfigured: vi.fn(() => true),
 	isStripeTaxEnabled: vi.fn(() => false),
 	meterPriceIdForPlan: vi.fn(() => undefined),
 	priceIdForPlan: vi.fn((plan: string) => `price_${plan}`),

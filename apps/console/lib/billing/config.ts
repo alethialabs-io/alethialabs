@@ -6,7 +6,21 @@
 // from the signed license / community baseline instead. Hosted (alethialabs.io) sets
 // the keys + per-plan price IDs and Stripe drives the organization_billing record.
 // Server-only — never import from a client component.
+//
+// Two "is billing on?" questions, kept apart on purpose:
+//   · `isBillingConfigured()` — can this instance SELL: the sales provider (`BILLING_PROVIDER`,
+//     lib/billing/provider/select.ts) is chosen and its key is present. The provider-neutral surface
+//     gates ask this: the billing summary's and the overview's `hosted` flag (is billing — and the
+//     upgrade path — a surface on this instance at all).
+//   · `isStripeConfigured()` — is a Stripe key present. Code that CALLS Stripe asks this (the
+//     `requireHostedBilling` guards in billing.ts and consumer-rights.ts, the Stripe reads behind
+//     `requireHostedRead`, metering, seats), because an existing Stripe subscriber must stay
+//     manageable even when new sales go elsewhere. The remaining "hosted?" reads move to the seam
+//     with their provider branching (L4).
+// `BILLING_PROVIDER` fails closed: with it unset, `isBillingConfigured()` is false even where Stripe
+// keys exist, so every deploy that sells sets `BILLING_PROVIDER=stripe` (deploy assembly + examples).
 
+import { isSalesProviderConfigured } from "@/lib/billing/provider/select";
 import { stripeSecretKey } from "@/lib/billing/stripe-key";
 import { typedEntries } from "@/lib/typed-object";
 import { z } from "zod";
@@ -71,6 +85,14 @@ export function deploymentMode(): "hosted" | "self-managed" {
 /** Whether Stripe billing is wired (hosted control plane). A blank key is not a key. */
 export function isStripeConfigured(): boolean {
 	return stripeSecretKey() !== "";
+}
+
+/**
+ * Whether this instance takes billing at all: a sales provider is selected (`BILLING_PROVIDER`, fails
+ * closed) and its secret key is configured. The provider-neutral gate — see the header.
+ */
+export function isBillingConfigured(): boolean {
+	return isSalesProviderConfigured();
 }
 
 /**

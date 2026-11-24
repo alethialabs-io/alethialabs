@@ -10,7 +10,7 @@ import type Stripe from "stripe";
 import { z } from "zod";
 import { ActionRefusal } from "@/lib/actions/result";
 import { authorizeQuiet, authorizeRead, currentActor } from "@/lib/authz/guard";
-import { isStripeConfigured } from "@/lib/billing/config";
+import { isBillingConfigured, isStripeConfigured } from "@/lib/billing/config";
 import { paidSalesOpen } from "@/lib/billing/eligibility";
 import { listOrgInvoices } from "@/lib/billing/invoices";
 import { backupRankOf } from "@/lib/billing/payment-methods";
@@ -205,7 +205,8 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 	}
 
 	return {
-		hosted: isStripeConfigured(),
+		// Provider-neutral: is billing a surface on this instance (the sales provider is configured).
+		hosted: isBillingConfigured(),
 		hasOrg,
 		plan,
 		status,

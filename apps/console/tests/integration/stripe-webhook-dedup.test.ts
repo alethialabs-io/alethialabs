@@ -65,9 +65,9 @@ async function deliver(
 	type: string,
 	handler: () => Promise<void>,
 ): Promise<WebhookRunOutcome> {
-	const claim: ClaimResult = await claimWebhookEvent(eventId, type);
+	const claim: ClaimResult = await claimWebhookEvent("stripe", eventId, type);
 	if (!claim.claimed && claim.alreadyDone) return "skipped_done";
-	return runWebhookEventExactlyOnce(eventId, type, handler);
+	return runWebhookEventExactlyOnce("stripe", eventId, type, handler);
 }
 
 /** A handler stub that counts its invocations after a small delay (to overlap concurrent deliveries). */
