@@ -2,23 +2,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @vitest-environment node
 
-// Starting an approved request from the approval card (lib/agent/approval-actions.ts): a person's
+// Reading an approval for the card, and starting an approved request from it
+// (lib/agent/approval-actions.ts). The card's facts come from the plan job, never the agent. A person's
 // click in the console queues the job as the credential that requested it — the in-product agent of
 // that conversation — with the approval presented, so the queue gate decides it. Only the requester's
 // own person starts it, and never a tool inside a turn.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fakeExecutor, type FakeExecutor } from "../approvals/fake-executor";
+import { fakeExecutor } from "../approvals/fake-executor";
 
 const currentActor = vi.fn();
 vi.mock("@/lib/authz/guard", () => ({ currentActor: () => currentActor() }));
-const scoped: { db: FakeExecutor["db"] | null } = { db: null };
+const scoped: { db: unknown } = { db: null };
 vi.mock("@/lib/db", () => ({
 	withActorScope: (_actor: unknown, fn: (tx: unknown) => Promise<unknown>) => {
 		if (!scoped.db) throw new Error("no scoped executor set for this test");
 		return fn(scoped.db);
 	},
 }));
+const readApproval = vi.fn();
+vi.mock("@/lib/approvals/read", () => ({ readApproval: (...args: unknown[]) => readApproval(...args) }));
 /** What each queueing action was called with, and the actor it ran as. */
 const queued: { action: string; args: unknown[]; actor: unknown }[] = [];
 const queueResult: { value: { ok: true; jobId: string; jobs: never[] } | { ok: false; error: string } } = {
@@ -33,7 +36,8 @@ vi.mock("@/app/server/actions/projects", async () => {
 	return { tryProvisionProject: record("deploy"), tryDestroyProject: record("destroy") };
 });
 
-import { startInAppApproval } from "@/lib/agent/approval-actions";
+import { readInAppApproval, startInAppApproval } from "@/lib/agent/approval-actions";
+import { ApprovalError } from "@/lib/approvals/refusal";
 import { inAppAgentActor } from "@/lib/agent/in-app-credential";
 import type { Actor } from "@/lib/authz/types";
 import { applyApprovals } from "@/lib/db/schema";
@@ -74,6 +78,7 @@ beforeEach(() => {
 	currentActor.mockReset();
 	currentActor.mockResolvedValue(PERSON);
 	scoped.db = null;
+	readApproval.mockReset();
 });
 
 describe("startInAppApproval", () => {
@@ -127,5 +132,127 @@ describe("startInAppApproval", () => {
 		reads([]);
 		await expect(startInAppApproval({ approvalId: APPROVAL })).resolves.toMatchObject({ ok: false, error: { kind: "not-found" } });
 		expect(queued).toHaveLength(0);
+	});
+});
+
+/** One Terraform resource change with `actions`. */
+function change(address: string, actions: string[]) {
+	return { address, type: "aws_instance", name: address, change: { actions, after: {}, after_unknown: {} } };
+}
+
+const VIEW = { id: APPROVAL, status: "pending", operation: "deploy", project_id: PROJECT };
+
+/** Answers the card read's one joined SELECT with `rows`. */
+function joinedRead(rows: unknown[]) {
+	const chain = {
+		from: () => chain,
+		leftJoin: () => chain,
+		where: () => chain,
+		limit: () => Promise.resolve(rows),
+	};
+	scoped.db = { select: () => chain };
+}
+
+/** The joined row the card read answers, with `overrides`. */
+function joined(overrides: Record<string, unknown> = {}) {
+	return {
+		reason: "initial staging cluster",
+		requester_user_id: USER,
+		requester_credential: "agent_in_app",
+		execution_metadata: {
+			plan_result: {
+				resource_changes: [
+					change("a", ["create"]),
+					change("b", ["create"]),
+					change("c", ["update"]),
+					change("d", ["delete", "create"]),
+					change("e", ["delete"]),
+					change("f", ["no-op"]),
+				],
+			},
+			cost_breakdown: { totalMonthlyCost: "61.20" },
+			verify_result: { verdict: "pass" },
+		},
+		project_name: "acme",
+		environment_name: "staging",
+		...overrides,
+	};
+}
+
+describe("readInAppApproval", () => {
+	it("answers the approval with its plan job's own counts, cost and verdict", async () => {
+		readApproval.mockResolvedValue(VIEW);
+		joinedRead([joined()]);
+		await expect(readInAppApproval({ approvalId: APPROVAL })).resolves.toEqual({
+			ok: true,
+			data: {
+				approval: VIEW,
+				plan: {
+					projectName: "acme",
+					environmentName: "staging",
+					add: 2,
+					change: 2,
+					destroy: 1,
+					monthly: 61.2,
+					verifyVerdict: "pass",
+				},
+				reason: "initial staging cluster",
+				requestedByReader: true,
+			},
+		});
+		expect(readApproval).toHaveBeenCalledWith(expect.anything(), PERSON, APPROVAL);
+	});
+
+	it("leaves the facts empty when the plan job stored no plan output or cost", async () => {
+		readApproval.mockResolvedValue(VIEW);
+		joinedRead([
+			joined({
+				execution_metadata: {},
+				project_name: null,
+				environment_name: null,
+			}),
+		]);
+		const res = await readInAppApproval({ approvalId: APPROVAL });
+		expect(res).toMatchObject({
+			ok: true,
+			data: {
+				plan: {
+					projectName: null,
+					environmentName: null,
+					add: null,
+					change: null,
+					destroy: null,
+					monthly: null,
+					verifyVerdict: null,
+				},
+			},
+		});
+	});
+
+	it("tells a reader who did not ask the assistant that they cannot start it", async () => {
+		readApproval.mockResolvedValue(VIEW);
+		joinedRead([joined({ requester_user_id: "00000000-0000-4000-8000-000000000002", execution_metadata: null })]);
+		await expect(readInAppApproval({ approvalId: APPROVAL })).resolves.toMatchObject({
+			ok: true,
+			data: { requestedByReader: false },
+		});
+	});
+
+	it("answers not-found when the engine cannot see the approval", async () => {
+		readApproval.mockRejectedValue(new ApprovalError("not_found", "That approval was not found."));
+		joinedRead([]);
+		await expect(readInAppApproval({ approvalId: APPROVAL })).resolves.toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "That approval was not found." },
+		});
+	});
+
+	it("answers not-found when the approval row is gone after the engine read it", async () => {
+		readApproval.mockResolvedValue(VIEW);
+		joinedRead([]);
+		await expect(readInAppApproval({ approvalId: APPROVAL })).resolves.toMatchObject({
+			ok: false,
+			error: { kind: "not-found" },
+		});
 	});
 });
