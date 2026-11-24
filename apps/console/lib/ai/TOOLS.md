@@ -12,16 +12,35 @@ Two tool surfaces are described here, and they are at different stages:
   bounded by the actor's grants and there is no second authority model. The catalog lookups and the
   documentation search touch no account data.
 - **The external tool contract** (`lib/ai/mcp/surface.ts`) declares the 19 tools an outside agent
-  will be offered over the remote MCP server. It is data only: no handler is implemented from it
-  yet, and the MCP route does not read it.
+  is offered over the remote MCP server. Six of them have a handler (`lib/ai/mcp/handlers.ts`) and
+  are served under their own names; the reads among the rest are served by the in-app tools they
+  stand for.
 
 ## What the MCP route serves today
 
-`app/api/mcp/route.ts` registers `buildExternalAgentTools()` — the in-app tools whose audience in
-`lib/ai/tools/registry.ts` is `both` or `external` — under their in-app names, through
-`registerAiToolsOnMcp()`. That is a read-only surface: no tool on it writes or queues a job. The
-adapter registers a description and an input schema for each, with no annotations and no output
-schema.
+`app/api/mcp/route.ts` resolves the access token into an `agent_oauth` actor held to the token's
+scopes, the consent grant's organization and projects, and the `?project=` pin, and refuses every
+request while the organization's agent access is off (`lib/ai/mcp/actor.ts`). The server it builds
+(`lib/ai/mcp/server.ts`) lists two things:
+
+- `buildExternalAgentTools()` — the in-app tools whose audience in `lib/ai/tools/registry.ts` is
+  `both` or `external` — under their in-app names, through `registerAiToolsOnMcp()`. These are reads.
+  Each is listed when the declared tool that stands for it would be (same `?features=` group, `read`
+  scope).
+- The declared tools with a handler: `plan`, `request_apply`, `request_destroy`, `wait_for_job`,
+  `get_job_logs`, `cancel_job`, each with its title, annotations, input and output schema, answering
+  structured content and the same JSON as text.
+
+`validate_design`, `apply_design_patch`, `create_project`, `scan_repo` and `send_feedback` have no
+handler yet and are not listed.
+
+**How an apply or a destroy runs.** The first `request_apply` (or `request_destroy`) records a pending
+approval bound to the plan, its digest, the environment and the calling OAuth client, and returns the
+console link. A person approves it in the console. When the agent calls the same tool again for the
+same plan (or environment), its own approval reads `approved`, and only then is the job queued through
+the ordinary server action, which hands the approval to `requireApplyAuthorization` to check and
+consume once. Later calls return the job it started. Every call is recorded in `agent_tool_calls`
+with no arguments.
 
 ## In-app tools
 
@@ -85,8 +104,8 @@ is feedback: it needs no scope and stays under `?readonly`, which leaves 12 tool
 
 **Scope.** `read`, `design`, `plan`, `apply`, `destroy`. A scope is a ceiling on what the caller's own
 grants allow, never a grant. `apply` and `destroy` unlock only the request for an approval:
-`request_apply` and `request_destroy` return a link for a person to open and never queue a job. No
-tool approves.
+`request_apply` and `request_destroy` return a link for a person to open, and queue a job only once
+that person has approved the caller's own request for that same plan. No tool approves.
 
 **Hints.** The MCP annotations `readOnlyHint` / `destructiveHint` / `idempotentHint` /
 `openWorldHint`, as `T` or `F`. All four are stated on every tool because the protocol's defaults
@@ -94,8 +113,9 @@ for an omitted hint are not-read-only, destructive, not-idempotent and open-worl
 the client and enforce nothing; the scope check and the approval record are the controls.
 
 **In-app tools it stands for.** The in-app tools a read tool replaces on the external surface. The
-same test fails unless these are, together, exactly the tools the MCP route registers today — so a
-tool added to or removed from the live surface has to be placed in the contract in the same change.
+same test fails unless these are, together, exactly the tools the in-app external projection
+registers — so a tool added to or removed from the live surface has to be placed in the contract in
+the same change.
 
 **URL scoping (`parseSurfaceQuery`, `selectExternalTools`).** `?readonly` lists no write tool.
 `?project=<id>` pins calls to one project; it narrows what the token may reach and does not change
