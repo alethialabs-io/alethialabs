@@ -13,6 +13,7 @@ How Alethia is built, for people changing it. User-facing documentation lives in
 | [cli-tui.md](./cli-tui.md) | The CLI's terminal UI components |
 | [release-system.md](./release-system.md) | Builds, releases and the CI/CD pipeline |
 | [homebrew-core.md](./homebrew-core.md) | Submitting the CLI to Homebrew core |
+| [releasing-packages.md](./releasing-packages.md) | Publishing the shared packages to npm as `@alethialabs/*`: changesets, the Version packages PR, trusted publishing |
 | [control-plane-ci.md](./control-plane-ci.md) | The `infra-cp-*` workflows and the secrets each needs |
 | [marketing-site.md](./marketing-site.md) | Running and configuring the marketing site |
 | [testing.md](./testing.md) | Engineering quality and testing practice |
