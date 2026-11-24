@@ -9,6 +9,8 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/app/server/actions/projects", () => ({ planProject: vi.fn(), provisionProject: vi.fn(), destroyProject: vi.fn() }));
 vi.mock("@/app/server/actions/jobs", () => ({ cancelJob: vi.fn() }));
+vi.mock("@/app/server/actions/scanner", () => ({ scanRepo: vi.fn() }));
+vi.mock("@/lib/ai/mcp/feedback", () => ({ sendAgentFeedback: vi.fn() }));
 vi.mock("@/lib/rpc/procedures/jobs", () => ({ readJobStatus: vi.fn() }));
 vi.mock("@/lib/ai/mcp/approval-store", () => ({
 	findOwnApproval: vi.fn(),
@@ -20,6 +22,8 @@ vi.mock("@/lib/ai/mcp/job-logs", () => ({ readJobLogPage: vi.fn() }));
 
 import { cancelJob } from "@/app/server/actions/jobs";
 import { destroyProject, planProject, provisionProject } from "@/app/server/actions/projects";
+import { scanRepo } from "@/app/server/actions/scanner";
+import { sendAgentFeedback } from "@/lib/ai/mcp/feedback";
 import { defaultHandlerDeps } from "@/lib/ai/mcp/handlers";
 
 describe("defaultHandlerDeps", () => {
@@ -52,6 +56,16 @@ describe("defaultHandlerDeps", () => {
 		vi.mocked(cancelJob).mockResolvedValue({ ok: true, data: null });
 		await defaultHandlerDeps.cancelJob("job-1");
 		expect(cancelJob).toHaveBeenCalledWith({ jobId: "job-1" });
+	});
+
+	it("queues a scan through scanRepo with the MCP idempotency key", async () => {
+		vi.mocked(scanRepo).mockResolvedValue({ jobId: "job-scan" });
+		expect(await defaultHandlerDeps.queueScan({ repo: "https://github.com/acme/api", key: "mcp:k" })).toEqual({ jobId: "job-scan" });
+		expect(scanRepo).toHaveBeenCalledWith("https://github.com/acme/api", { idempotencyKey: "mcp:k" });
+	});
+
+	it("sends feedback through the agent feedback sink", () => {
+		expect(defaultHandlerDeps.sendFeedback).toBe(sendAgentFeedback);
 	});
 
 	it("sleeps on a timer and reads the wall clock", async () => {
