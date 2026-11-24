@@ -39,7 +39,7 @@ applies it when it re-seals. The unsealed pages were corrected directly.
 | Social sign-in providers; email one-time code | claim `privacy.sign-in-methods` |
 | Cloud connections keep only federation configuration; "Alethia does not store static cloud access keys" | finding `privacy.static-cloud-keys` (LEG-L2): true only for the federated clouds |
 | Stripe is the payment processor | claim `privacy.subprocessor.stripe` (LEG-S1) |
-| Card fields are Stripe-hosted | claim `privacy.card-fields-stripe-hosted` |
+| Card fields are Stripe-hosted | claim `privacy.card-fields-stripe-hosted` (replaced on 2026-11-24 by `privacy.card-fields-paddle-checkout` when card sales moved to Paddle) |
 | No session replay; GPC honoured; withdrawal purges storage | claims `privacy.no-session-replay`, `privacy.global-privacy-control`, `privacy.withdrawal-purges-storage` |
 | Analytics uses internal identifiers | claim `privacy.analytics-internal-ids` |
 | Server errors and operational logs go to PostHog | claim `privacy.operational-data-posthog` |
