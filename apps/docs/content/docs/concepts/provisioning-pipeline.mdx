@@ -3,8 +3,6 @@ title: Provisioning Pipeline
 description: How project form values flow through config snapshots and provider-specific mappings into OpenTofu variables.
 ---
 
-# Provisioning Pipeline
-
 When a user plans or applies an environment, the platform transforms the project's form configuration into OpenTofu variables through a five-stage pipeline. Each stage has a single responsibility: serialize, freeze, deserialize, map, execute.
 
 <img src="/docs/diagrams/concepts/provisioning-pipeline.svg" alt="Provisioning Pipeline" />

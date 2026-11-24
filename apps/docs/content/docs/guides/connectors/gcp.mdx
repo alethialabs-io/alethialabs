@@ -3,8 +3,6 @@ title: GCP Connector
 description: Workload Identity Federation setup with OIDC token exchange.
 ---
 
-# GCP Connector
-
 Connecting GCP registers a **cloud identity** (`cloud_identities`) that uses **Workload Identity Federation (WIF)** with **direct OIDC** — your project's WIF pool
 trusts Alethia's issuer directly (no AWS hop), and Alethia federates in with a short-lived minted JWT. No
 service account JSON keys are created or stored. See [Security Architecture](/concepts/security).
