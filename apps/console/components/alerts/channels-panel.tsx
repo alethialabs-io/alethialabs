@@ -176,7 +176,7 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 				<AlertsPanelSkeleton kind="channels" />
 			) : view.state === "error" ? (
 				<RegionError title="Couldn't load channels" onRetry={view.retry} />
-			) : view.total === 0 ? (
+			) : view.universeEmpty ? (
 				<EmptyState
 					icon={<Send />}
 					// `level={3}` under the section's own `h2`. EmptyState renders its title as a
@@ -214,7 +214,7 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 								<EmptyState
 									icon={<SearchX />}
 									title="No channels match"
-									description={`None of the ${view.total} channels match these filters.`}
+									description="No channel matches these filters."
 									action={
 										<Button variant="outline" size="sm" onClick={resetFilters}>
 											Reset filters

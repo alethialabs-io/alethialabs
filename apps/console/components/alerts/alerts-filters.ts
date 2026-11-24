@@ -8,6 +8,16 @@
 //   store (use-alerts-filters) → useFilterUrlSync → useDebouncedValue → normalize*Query()
 //     → orpc.alerts.<list>(query) — a GET procedure (lib/rpc/procedures/alerts.ts, #6125)
 //
+// THE LIST STANDARD (lib/query/README.md → "Paging", epic #7481, #7489). The delivery ledger is
+// append-only, so it pages by keyset: `useKeysetList(orpc.alerts.deliveries, query)` — the cursor is
+// the infinite query's page param, never in the key or the URL, and a filter change restarts at page
+// one — in ./activity-view.ts, its own module, so the guard reads the ledger's paging next to the
+// ledger's store and not as a property of the two lists here. It used to be a 50-row window (at most
+// 200) with every older delivery unreachable. Policies and channels are configuration the product
+// caps at create (`ALERT_POLICIES_MAX` / `ALERT_CHANNELS_MAX`), so they stay single reads, recorded
+// as `bounded` in apps/console/list-standard/. No view carries a result count: the console has no
+// list counts, and whether the org holds anything at all is the `universeEmpty` boolean.
+//
 // The resolve step USED to be in-memory (`filter*()` from alerts-query.ts) over a bootstrap that
 // returned the whole universe in one payload; #4890 moved it to SQL, and #6125 moved the reads off
 // server actions onto GET procedures that the route prefetches.
@@ -17,7 +27,7 @@
 // 0 both while the first answer is in flight and after it failed, and rendered "No activity yet"
 // for both.
 //
-// Each hook is called ONCE, from alerts-page.tsx, which owns the resolved view and hands it to
+// Each hook (these two, and ./activity-view.ts) is called ONCE, from alerts-page.tsx, which owns the resolved view and hands it to
 // the panels — so the URL-sync effects mount once even though the panels' filter bars read the
 // same stores. The three stores share a URL, hence the param prefixes below.
 //
@@ -29,22 +39,14 @@
 // maps are not in the database.
 
 import { useMemo } from "react";
-import type {
-	ChannelDTO,
-	DeliveryDTO,
-	PolicyDTO,
-} from "@/app/server/actions/alerts";
+import type { ChannelDTO, PolicyDTO } from "@/app/server/actions/alerts";
 import type { UseQueryResult } from "@tanstack/react-query";
 import {
-	ACTIVITY_URL_PARAMS,
 	CHANNEL_STATUS_LABEL,
 	CHANNEL_URL_PARAMS,
-	DEFAULT_ACTIVITY_FILTERS,
 	DEFAULT_CHANNEL_FILTERS,
 	DEFAULT_POLICY_FILTERS,
-	DELIVERY_STATUS_LABEL,
 	type FacetCount,
-	normalizeActivityQuery,
 	normalizeChannelsQuery,
 	normalizePoliciesQuery,
 	POLICY_KIND_LABEL,
@@ -56,24 +58,21 @@ import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import type { FacetOption } from "@/lib/queries/facets";
 import {
 	useAlertChannelsPageQuery,
-	useAlertDeliveriesPageQuery,
 	useAlertPoliciesPageQuery,
 } from "@/lib/query/use-alerts-query";
 import {
-	useAlertActivityFilters,
 	useAlertChannelFilters,
 	useAlertPolicyFilters,
 } from "@/lib/stores/use-alerts-filters";
 import { lookup } from "@/lib/typed-object";
 
-const SEARCH_DEBOUNCE = 300;
+/** How long a typed search settles before it reaches a query key (every alerts panel). */
+export const SEARCH_DEBOUNCE = 300;
 
 /** What a panel needs to render: the resolved rows, the facets behind its bar, and staleness. */
 export interface FilteredView<Row, Facets> {
 	/** Rows matching the current (debounced, normalized) query, as the SERVER resolved them. */
 	rows: Row[];
-	/** How many rows matched — the count pill's figure. */
-	count: number;
 	/** Facet options + counts over the UNFILTERED universe. */
 	facets: Facets;
 	/**
@@ -98,8 +97,8 @@ export interface FilteredView<Row, Facets> {
 	state: "loading" | "error" | "ready";
 	/** A refetch failed behind rows that are still the last good answer. */
 	refreshFailed: boolean;
-	/** Every row in the org, whatever the filters — 0 means the empty copy, not the no-match copy. */
-	total: number;
+	/** The org holds no row at all, whatever the filters — the empty copy, not the no-match copy. */
+	universeEmpty: boolean;
 	/** Re-run the read (the region error's and the stale notice's retry). */
 	retry: () => void;
 }
@@ -108,14 +107,14 @@ export interface FilteredView<Row, Facets> {
 type PageRead<P> = Pick<UseQueryResult<P>, "data" | "isError" | "isPlaceholderData" | "isPending" | "refetch">;
 
 /** The read-state half of a {@link FilteredView}, from the page query behind it. */
-function readState<P extends { total: number }>(
+function readState<P extends { universeEmpty: boolean }>(
 	page: PageRead<P>,
-): Pick<FilteredView<unknown, unknown>, "state" | "refreshFailed" | "total" | "retry"> {
+): Pick<FilteredView<unknown, unknown>, "state" | "refreshFailed" | "universeEmpty" | "retry"> {
 	const answered = page.data !== undefined;
 	return {
 		state: answered ? "ready" : page.isError ? "error" : "loading",
 		refreshFailed: answered && page.isError,
-		total: page.data?.total ?? 0,
+		universeEmpty: page.data?.universeEmpty ?? true,
 		retry: () => void page.refetch(),
 	};
 }
@@ -130,15 +129,13 @@ export type PoliciesView = FilteredView<
 	{ status: FacetCount[]; kinds: FacetCount[]; channels: FacetCount[] }
 >;
 
-export type ActivityView = FilteredView<DeliveryDTO, { status: FacetCount[] }>;
-
 /**
  * Server facet options as the filter bars' `FacetCount`s, with the human label resolved.
  *
  * `labels` is consulted first and the raw value is the fallback, so a value the client's label
  * map has not heard of renders as itself rather than as an empty chip.
  */
-function labelled(
+export function labelled(
 	options: FacetOption[],
 	labels: Record<string, string> = {},
 ): FacetCount[] {
@@ -150,7 +147,7 @@ function labelled(
 }
 
 /** The empty facet set a panel renders against while its first read is in flight. */
-const NO_OPTIONS: FacetOption[] = [];
+export const NO_OPTIONS: FacetOption[] = [];
 
 /** Channels: URL-synced, debounced filters resolved by `alerts.channels(query)`. */
 export function useChannelsView(): ChannelsView {
@@ -178,7 +175,6 @@ export function useChannelsView(): ChannelsView {
 	);
 	return {
 		rows: page.data?.rows ?? [],
-		count: page.data?.resultCount ?? 0,
 		facets,
 		stale: page.isPlaceholderData,
 		busy:
@@ -217,44 +213,6 @@ export function usePoliciesView(): PoliciesView {
 	);
 	return {
 		rows: page.data?.rows ?? [],
-		count: page.data?.resultCount ?? 0,
-		facets,
-		stale: page.isPlaceholderData,
-		busy:
-			!urlRead ||
-			page.isPending ||
-			page.isPlaceholderData ||
-			filters.search !== search,
-		...readState(page),
-	};
-}
-
-/** Activity: URL-synced, debounced filters resolved by `alerts.deliveries(query)`. */
-export function useActivityView(): ActivityView {
-	const filters = useAlertActivityFilters((s) => s.filters);
-	const urlRead = useFilterUrlSync(
-		useAlertActivityFilters,
-		DEFAULT_ACTIVITY_FILTERS,
-		ACTIVITY_URL_PARAMS,
-	);
-	const search = useDebouncedValue(filters.search, SEARCH_DEBOUNCE, { urlRead });
-	const query = useMemo(
-		() => normalizeActivityQuery({ ...filters, search }),
-		[filters, search],
-	);
-	const page = useAlertDeliveriesPageQuery(query);
-	const facets = useMemo(
-		() => ({
-			status: labelled(
-				page.data?.facets.status ?? NO_OPTIONS,
-				DELIVERY_STATUS_LABEL,
-			),
-		}),
-		[page.data],
-	);
-	return {
-		rows: page.data?.rows ?? [],
-		count: page.data?.resultCount ?? 0,
 		facets,
 		stale: page.isPlaceholderData,
 		busy:
