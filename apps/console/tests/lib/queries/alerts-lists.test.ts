@@ -10,9 +10,9 @@
 //   * a channel's DISPLAY name ("Rocket.Chat") is a constant in the transport catalog, not a
 //     column. Searching for it has to be resolved to a VALUE LIST and matched in SQL, or the
 //     panel silently cannot find its own rows.
-//   * the ledger is filtered and THEN windowed, and `total` describes the whole ledger rather
-//     than the window — otherwise the count beside a facet option contradicts the filter that
-//     produced it. The window is also capped, so a client cannot ask for the entire ledger.
+//   * the ledger is filtered and then PAGED by keyset (#7489): one page per cursor, in a total
+//     order, with nothing cut off — it used to be a 50-row window (at most 200) that left every
+//     older delivery unreachable. The facet counts describe the whole ledger, first page only.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -31,7 +31,8 @@ vi.mock("drizzle-orm", async (importOriginal) => {
 const { getServiceDb } = vi.hoisted(() => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb }));
 
-import { exists, ilike, inArray } from "drizzle-orm";
+import { exists, ilike, inArray, SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import {
 	CHANNEL_STATUSES,
 	POLICY_KINDS,
@@ -43,6 +44,7 @@ import {
 	toDeliveryDTO,
 	toPolicyDTO,
 } from "@/lib/queries/alerts-lists";
+import { decodeKeysetCursor } from "@/lib/queries/keyset";
 
 const CREATED = new Date("2026-08-01T12:00:00.000Z");
 
@@ -158,8 +160,10 @@ describe("queryAlertChannelsPage", () => {
 
 		expect(page.rows).toHaveLength(1);
 		expect(page.rows[0].id).toBe("c1");
-		expect(page.resultCount).toBe(1);
-		expect(page.total).toBe(3);
+		// No count of any kind: whether the org holds channels at all is a boolean.
+		expect(page).not.toHaveProperty("resultCount");
+		expect(page).not.toHaveProperty("total");
+		expect(page.universeEmpty).toBe(false);
 		expect(page.facets.status).toEqual([
 			{ value: "verified", label: null, count: 1 },
 			{ value: "unverified", label: null, count: 1 },
@@ -263,7 +267,7 @@ describe("queryAlertPoliciesPage", () => {
 		expect(page.rows).toHaveLength(1);
 		expect(page.rows[0].channels).toEqual([{ id: "c1", minSeverity: "warning" }]);
 		expect(page.rows[0].channelIds).toEqual(["c1"]);
-		expect(page.total).toBe(2);
+		expect(page.universeEmpty).toBe(false);
 		expect(page.facets.status).toEqual([
 			{ value: "enabled", label: null, count: 1 },
 			{ value: "off", label: null, count: 1 },
@@ -322,6 +326,8 @@ describe("queryAlertPoliciesPage", () => {
 });
 
 describe("queryAlertDeliveriesPage", () => {
+	const dialect = new PgDialect();
+
 	function deliveryRow(over: Record<string, unknown> = {}) {
 		return {
 			id: "d1",
@@ -337,7 +343,33 @@ describe("queryAlertDeliveriesPage", () => {
 		};
 	}
 
-	it("reports the WHOLE ledger as total, not the size of the window", async () => {
+	/** A uuid whose last group is `n`, so ids order the way their numbers do. */
+	function uuidOf(n: number): string {
+		return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+	}
+
+	/**
+	 * A ledger of `n` deliveries, newest first in the list's total order. Every PAIR shares one
+	 * created_at millisecond, so half the page boundaries fall between two tied rows and only the id
+	 * decides which side each lands on.
+	 */
+	function ledger(n: number) {
+		return Array.from({ length: n }, (_, i) =>
+			deliveryRow({
+				id: uuidOf(n - i),
+				created_at: new Date(CREATED.getTime() - Math.floor(i / 2) * 1000),
+			}),
+		);
+	}
+
+	/** The rows pass's WHERE, rendered to SQL text and params. */
+	function whereOf(chain: { argsOf(m: string): unknown[] | undefined }) {
+		const [where] = chain.argsOf("where") ?? [];
+		if (!(where instanceof SQL)) throw new Error("rows pass has no SQL where");
+		return dialect.sqlToQuery(where);
+	}
+
+	it("returns the keyset page shape, with facets over the WHOLE ledger and no count", async () => {
 		seed(
 			[deliveryRow()],
 			[
@@ -347,9 +379,11 @@ describe("queryAlertDeliveriesPage", () => {
 		);
 		const page = await queryAlertDeliveriesPage("org-1", { status: ["failed"] });
 		expect(page.rows).toHaveLength(1);
-		expect(page.resultCount).toBe(1);
-		expect(page.total).toBe(912);
-		expect(page.facets.status).toEqual([
+		expect(page.nextCursor).toBeNull();
+		expect(page.universeEmpty).toBe(false);
+		expect(page).not.toHaveProperty("resultCount");
+		expect(page).not.toHaveProperty("total");
+		expect(page.facets?.status).toEqual([
 			{ value: "sent", label: null, count: 900 },
 			{ value: "pending", label: null, count: 0 },
 			{ value: "failed", label: null, count: 12 },
@@ -357,41 +391,83 @@ describe("queryAlertDeliveriesPage", () => {
 		]);
 	});
 
-	it("counts every match when the window is full, so the newest 50 never pass for the whole answer", async () => {
-		const full = Array.from({ length: 50 }, (_, i) => deliveryRow({ id: `d${i}` }));
-		const chains = seed(full, [{ status: "failed", n: 300 }], [{ n: 240 }]);
-		const page = await queryAlertDeliveriesPage("org-1", { status: ["failed"] });
-		expect(page.rows).toHaveLength(50);
-		expect(page.limit).toBe(50);
-		expect(page.resultCount).toBe(240);
-		// The count pass is scoped and filtered like the rows pass, and is neither windowed nor grouped.
-		const countPass = chains[2];
-		expect(countPass.called("where")).toBe(true);
-		expect(countPass.called("limit")).toBe(false);
-		expect(countPass.called("groupBy")).toBe(false);
-	});
-
-	it("asks for no count when the window is not full — its length IS the count", async () => {
-		const chains = seed([deliveryRow()], [{ status: "sent", n: 1 }]);
+	it("says universeEmpty when the org's ledger holds nothing at all", async () => {
+		seed([], []);
 		const page = await queryAlertDeliveriesPage("org-1");
-		expect(page.resultCount).toBe(1);
-		expect(chains).toHaveLength(2);
+		expect(page.rows).toEqual([]);
+		expect(page.universeEmpty).toBe(true);
 	});
 
-	it("windows at 50 by default and caps a client's ask at 200", async () => {
-		const cases: [number | undefined, number][] = [
-			[undefined, 50],
-			[10, 10],
-			[10_000, 200],
-			[0, 1],
-			[-5, 1],
-			[25.9, 25],
-		];
-		for (const [asked, expected] of cases) {
-			const chains = seed([], []);
-			await queryAlertDeliveriesPage("org-1", { limit: asked });
-			expect(chains[0].argsOf("limit")).toEqual([expected]);
-		}
+	it("reads limit + 1 in the ms-truncated (created_at, id) order, and mints the cursor from the last KEPT row", async () => {
+		const rows = ledger(51);
+		const chains = seed(rows, []);
+		const page = await queryAlertDeliveriesPage("org-1", {}, { limit: 50 });
+		expect(chains[0].argsOf("limit")).toEqual([51]);
+		const order = (chains[0].argsOf("orderBy") ?? []).map((o) =>
+			o instanceof SQL ? dialect.sqlToQuery(o).sql : "",
+		);
+		expect(order).toEqual([
+			`date_trunc('milliseconds', "alert_deliveries"."created_at") desc`,
+			`"alert_deliveries"."id" desc`,
+		]);
+		expect(page.rows).toHaveLength(50);
+		expect(page.rows.at(-1)?.id).toBe(rows[49].id);
+		expect(decodeKeysetCursor(page.nextCursor ?? "")).toEqual({
+			at: rows[49].created_at.toISOString(),
+			id: rows[49].id,
+		});
+	});
+
+	it("an exactly-full LAST page says there is no next page — no empty page to ask for", async () => {
+		seed(ledger(50), []);
+		const page = await queryAlertDeliveriesPage("org-1", {}, { limit: 50 });
+		expect(page.rows).toHaveLength(50);
+		expect(page.nextCursor).toBeNull();
+	});
+
+	it("a later page cuts strictly after the cursor by ROW VALUE, so a tie on the millisecond falls to the id", async () => {
+		// rows[48] and rows[49] share a millisecond; the boundary falls between them.
+		const rows = ledger(120);
+		expect(rows[48].created_at.getTime()).toBe(rows[49].created_at.getTime());
+		const cursor = { at: rows[48].created_at.toISOString(), id: rows[48].id };
+		const chains = seed(rows.slice(49, 100));
+		const page = await queryAlertDeliveriesPage("org-1", { status: ["sent"] }, { cursor, limit: 50 });
+		const where = whereOf(chains[0]);
+		expect(where.sql).toContain(
+			`(date_trunc('milliseconds', "alert_deliveries"."created_at"), "alert_deliveries"."id") < ($`,
+		);
+		expect(where.params).toEqual(expect.arrayContaining([cursor.at, cursor.id, "org-1"]));
+		// The filters still apply on a later page — only the facet pass is dropped.
+		expect(vi.mocked(inArray)).toHaveBeenCalledTimes(1);
+		expect(chains).toHaveLength(1);
+		expect(page.facets).toBeNull();
+		expect(page.universeEmpty).toBeNull();
+		expect(page.rows[0].id).toBe(rows[49].id);
+	});
+
+	it("walks a ledger far past the old 50 / 200 window: every delivery is reachable, none twice", async () => {
+		const rows = ledger(260);
+		const seen: string[] = [];
+		let cursor: string | null = null;
+		let pages = 0;
+		do {
+			const position = cursor === null ? undefined : (decodeKeysetCursor(cursor) ?? undefined);
+			// What Postgres would answer for this page: the rows strictly after the cursor, limit + 1.
+			const start = position === undefined ? 0 : rows.findIndex((r) => r.id === position.id) + 1;
+			seed(rows.slice(start, start + 51), position === undefined ? [{ status: "sent", n: 260 }] : []);
+			const page: Awaited<ReturnType<typeof queryAlertDeliveriesPage>> = await queryAlertDeliveriesPage(
+				"org-1",
+				{},
+				{ cursor: position, limit: 50 },
+			);
+			seen.push(...page.rows.map((r) => r.id));
+			cursor = page.nextCursor;
+			pages += 1;
+		} while (cursor !== null && pages < 20);
+		expect(pages).toBe(6);
+		expect(seen).toHaveLength(260);
+		expect(new Set(seen).size).toBe(260);
+		expect(seen.at(-1)).toBe(rows[259].id);
 	});
 
 	it("searches the event key and the rendered title, and nothing in the facet pass", async () => {

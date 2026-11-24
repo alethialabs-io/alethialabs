@@ -6,8 +6,13 @@
 // the route prefetches through `serverOrpc()`, so the first paint carries the data and the browser
 // asks for nothing on mount.
 //
-// The three lists are step 5 of the console filter standard (./README.md → "Server-side filters"):
-// the normalized query IS the input, the read is the SERVER's filtered page, and previous rows are
+// The delivery ledger is not read here: it is a keyset list (`useKeysetList(orpc.alerts.deliveries, …)`
+// in components/alerts/alerts-filters.ts, #7489), because the list standard's guard reads the call
+// next to the filter store it pages for.
+//
+// The two configuration lists are step 5 of the console filter standard (./README.md → "Server-side filters"):
+// the normalized query IS the input, the read is the SERVER's filtered list (unpaged by a recorded
+// `bounded` decision — the org's channels and policies are capped at create), and previous rows are
 // kept — and visibly dimmed by the caller — while the next answer loads. Their PRISTINE pages
 // (`{}`) double as the universes the panels cross-reference against (which channel is open in the
 // master-detail, which policies route to the channel being deleted), so there is no second read of
@@ -28,8 +33,6 @@ import {
 import type {
 	AlertChannelsPage,
 	AlertChannelsQuery,
-	AlertDeliveriesPage,
-	AlertDeliveriesQuery,
 	AlertPoliciesPage,
 	AlertPoliciesQuery,
 } from "@/lib/queries/alerts-lists";
@@ -67,21 +70,6 @@ export function useAlertPoliciesPageQuery(
 ): UseQueryResult<AlertPoliciesPage> {
 	return useQuery({
 		...orpc.alerts.policies.queryOptions({ input: query }),
-		placeholderData: keepPreviousData,
-	});
-}
-
-/**
- * The org's delivery ledger for `query`, filtered SERVER-SIDE and THEN windowed, with the
- * status facet counted over the WHOLE ledger rather than over the window.
- *
- * @param query the `normalizeActivityQuery()` output; `{}` is the pristine view
- */
-export function useAlertDeliveriesPageQuery(
-	query: AlertDeliveriesQuery = {},
-): UseQueryResult<AlertDeliveriesPage> {
-	return useQuery({
-		...orpc.alerts.deliveries.queryOptions({ input: query }),
 		placeholderData: keepPreviousData,
 	});
 }

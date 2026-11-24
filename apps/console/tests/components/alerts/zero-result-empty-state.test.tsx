@@ -16,10 +16,10 @@ import type { ChannelDTO, PolicyDTO } from "@/app/server/actions/alerts";
 import type { AlertsHub } from "@/components/alerts/alerts-hub";
 import { queryWrapper } from "@/tests/helpers/query-wrapper";
 import type {
-	ActivityView,
 	ChannelsView,
 	PoliciesView,
 } from "@/components/alerts/alerts-filters";
+import { activityViewOf } from "@/tests/components/alerts/_activity-view";
 
 vi.mock("@/app/server/actions/alerts", () => ({
 	addChannel: vi.fn(async () => {}),
@@ -109,15 +109,13 @@ const answered = { stale: false, busy: false, state: "ready", refreshFailed: fal
 const noChannels: ChannelsView = {
 	...answered,
 	rows: [],
-	count: 0,
-	total: 1,
+	universeEmpty: false,
 	facets: { types: [], status: [] },
 };
 const noPolicies: PoliciesView = {
 	...answered,
 	rows: [],
-	count: 0,
-	total: 1,
+	universeEmpty: false,
 	facets: { status: [], kinds: [], channels: [] },
 };
 
@@ -163,7 +161,7 @@ describe("alerts rails: a filter that matches nothing", () => {
 	it("the activity ledger renders the shared empty state, and Reset clears the filters", async () => {
 		useAlertActivityFilters.getState().set("search", "zqxvjk");
 		const user = userEvent.setup();
-		const { container } = render(<ActivityPanel view={noActivity} />);
+		const { container } = render(<ActivityPanel view={noMatchingActivity} />);
 
 		expect(container.querySelector('[data-slot="empty"]')).not.toBeNull();
 		expect(screen.getByText("No activity matches")).toBeInTheDocument();
@@ -184,14 +182,11 @@ describe("alerts rails: a filter that matches nothing", () => {
 	});
 });
 
-/** The empty activity view: no deliveries on this page of the ledger. */
-const noActivity: ActivityView = {
-	...answered,
-	rows: [],
-	count: 0,
-	total: 0,
-	facets: { status: [] },
-};
+/** The org's ledger holds nothing at all (`universeEmpty`): the first-run empty state. */
+const noActivity = activityViewOf("ready", { universeEmpty: true });
+
+/** The ledger holds deliveries, and none match: the FILTERED empty state (#7489 reads `universeEmpty`). */
+const noMatchingActivity = activityViewOf("ready", { universeEmpty: false });
 
 /**
  * Every element OUTSIDE the shared empty state whose own text reads as a "no results" message —
