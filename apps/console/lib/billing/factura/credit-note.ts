@@ -37,7 +37,7 @@ import { log } from "@/lib/observability/log";
 import { storage } from "@/lib/storage";
 import type { FacturaLine, FacturaSnapshot } from "@/types/jsonb.types";
 import { isLegalInvoiceNumber } from "./checks";
-import { renderFacturaPdf } from "./document";
+import { renderFacturaPdf } from "./render-pdf";
 import {
 	dbFacturaStore,
 	documentFor,
