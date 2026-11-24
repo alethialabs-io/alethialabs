@@ -47,6 +47,15 @@ import { orpc } from "@/lib/rpc/client";
 export const DESTROY_HOLD_KEY = ["canvas-destroy-hold"] as const;
 
 /**
+ * The query-key prefix of the in-conversation approval card's read (`components/agent/approval/
+ * in-app-approval-card.tsx`, AGT-L5). An approval recorded, decided, used or replaced fires the
+ * `environments` topic (the apply_approvals triggers, lib/db/programmables.sql), filtered on the
+ * approval's project, so a teammate's decision reaches the requester's card. Declared here, not with
+ * the card, so this map imports no component (#6119).
+ */
+export const IN_APP_APPROVAL_KEY = ["in-app-approval"] as const;
+
+/**
  * The query-key prefix of the agent grid's live widgets (`components/agent/widgets/live-refresh.ts`,
  * #6207). A widget's key is `[...AGENT_WIDGET_KEY, topic, owner, widgetId]`, where `topic` is its
  * source tool's registry topic, so a hint on that topic reaches exactly the widgets fed by it. The
@@ -136,6 +145,8 @@ export const TOPIC_KEYS = {
 		// The overview's project grid (#6817): a card's status is its default environment's, and its
 		// environment count moves when one is added or deleted.
 		orpc.overview.projects.key(),
+		// The in-conversation approval card: an agent's apply approval was decided, used or replaced.
+		[...IN_APP_APPROVAL_KEY],
 	],
 	// A project's name/slug/region changed, or one was created or deleted (#6128): the shell's list
 	// (switcher, breadcrumbs, palette), the setup guide, usage, and the project's Settings → General.
