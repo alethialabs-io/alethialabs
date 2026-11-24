@@ -430,15 +430,15 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 2,
-			"fail": 17,
+			"pass": 1,
+			"fail": 18,
 			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
 				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
-			"score": 0.1053
+			"score": 0.0526
 		},
 		"F6": {
 			"family": "F",
@@ -1121,11 +1121,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1147,11 +1147,11 @@
 				}
 			},
 			"overall": {
-				"pass": 41,
-				"fail": 0,
+				"pass": 40,
+				"fail": 1,
 				"na": 1,
 				"notMeasured": 1,
-				"score": 1
+				"score": 0.9756
 			}
 		},
 		{
@@ -1590,11 +1590,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
-					"fail": 1,
+					"pass": 10,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.9
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1616,11 +1616,11 @@
 				}
 			},
 			"overall": {
-				"pass": 35,
-				"fail": 1,
+				"pass": 36,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 5,
-				"score": 0.9722
+				"score": 1
 			}
 		},
 		{
@@ -1858,11 +1858,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1884,11 +1884,11 @@
 				}
 			},
 			"overall": {
-				"pass": 41,
-				"fail": 0,
+				"pass": 40,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 1
+				"score": 0.9756
 			}
 		},
 		{
@@ -4709,7 +4709,8 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useJobsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -6312,8 +6313,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useAlertPolicyFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts · useAlertChannelFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts · useAlertActivityFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -7206,7 +7206,8 @@
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useJobsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/jobs",
