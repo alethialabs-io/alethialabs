@@ -430,15 +430,15 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 7,
-			"fail": 12,
+			"pass": 3,
+			"fail": 16,
 			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
 				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
-			"score": 0.3684
+			"score": 0.1579
 		},
 		"F6": {
 			"family": "F",
@@ -987,11 +987,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1013,11 +1013,11 @@
 				}
 			},
 			"overall": {
-				"pass": 34,
-				"fail": 1,
+				"pass": 35,
+				"fail": 0,
 				"na": 3,
 				"notMeasured": 5,
-				"score": 0.9714
+				"score": 1
 			}
 		},
 		{
@@ -1054,11 +1054,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1080,11 +1080,11 @@
 				}
 			},
 			"overall": {
-				"pass": 35,
-				"fail": 1,
+				"pass": 36,
+				"fail": 0,
 				"na": 4,
 				"notMeasured": 3,
-				"score": 0.9722
+				"score": 1
 			}
 		},
 		{
@@ -1121,11 +1121,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1147,11 +1147,11 @@
 				}
 			},
 			"overall": {
-				"pass": 41,
-				"fail": 0,
+				"pass": 40,
+				"fail": 1,
 				"na": 1,
 				"notMeasured": 1,
-				"score": 1
+				"score": 0.9756
 			}
 		},
 		{
@@ -1322,11 +1322,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1348,11 +1348,11 @@
 				}
 			},
 			"overall": {
-				"pass": 40,
-				"fail": 0,
+				"pass": 39,
+				"fail": 1,
 				"na": 0,
 				"notMeasured": 3,
-				"score": 1
+				"score": 0.975
 			}
 		},
 		{
@@ -1590,11 +1590,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1616,11 +1616,11 @@
 				}
 			},
 			"overall": {
-				"pass": 36,
-				"fail": 0,
+				"pass": 35,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 5,
-				"score": 1
+				"score": 0.9722
 			}
 		},
 		{
@@ -1657,11 +1657,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1683,11 +1683,11 @@
 				}
 			},
 			"overall": {
-				"pass": 33,
-				"fail": 1,
+				"pass": 34,
+				"fail": 0,
 				"na": 5,
 				"notMeasured": 4,
-				"score": 0.9706
+				"score": 1
 			}
 		},
 		{
@@ -1724,11 +1724,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1750,11 +1750,11 @@
 				}
 			},
 			"overall": {
-				"pass": 38,
-				"fail": 0,
+				"pass": 37,
+				"fail": 1,
 				"na": 3,
 				"notMeasured": 2,
-				"score": 1
+				"score": 0.9737
 			}
 		},
 		{
@@ -1791,11 +1791,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1817,11 +1817,11 @@
 				}
 			},
 			"overall": {
-				"pass": 37,
-				"fail": 0,
+				"pass": 36,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 4,
-				"score": 1
+				"score": 0.973
 			}
 		},
 		{
@@ -1858,11 +1858,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1884,11 +1884,11 @@
 				}
 			},
 			"overall": {
-				"pass": 41,
-				"fail": 0,
+				"pass": 40,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 1
+				"score": 0.9756
 			}
 		},
 		{
@@ -2260,11 +2260,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -2286,11 +2286,11 @@
 				}
 			},
 			"overall": {
-				"pass": 38,
-				"fail": 0,
+				"pass": 37,
+				"fail": 1,
 				"na": 3,
 				"notMeasured": 2,
-				"score": 1
+				"score": 0.9737
 			}
 		},
 		{
@@ -4263,8 +4263,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useClustersFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -4275,7 +4274,7 @@
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -4487,8 +4486,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useEnvironmentsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -4499,7 +4497,7 @@
 			"route": "/[org]/[project]/environments",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -4709,7 +4707,8 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useJobsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -4720,7 +4719,7 @@
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -5188,7 +5187,7 @@
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -5396,1147 +5395,1148 @@
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
-			"predicate": "F5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "F6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "F7",
-			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "F8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "F9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "H3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "R5",
-			"verdict": "PASS",
-			"detail": "themes dark, light"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "R8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "T3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "T5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/activity",
-			"predicate": "T7",
-			"verdict": "NOT MEASURED",
-			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "B1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "B2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "B4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "F1",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "F10",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "F2",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "F3",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "F4",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "F5",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "F6",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "F7",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "F8",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "F9",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "H3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "R5",
-			"verdict": "PASS",
-			"detail": "themes dark, light"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "R8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "T3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "T5",
-			"verdict": "N/A",
-			"reason": "no-empty-state"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "T7",
-			"verdict": "NOT MEASURED",
-			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "B1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "B2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "B4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F1",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F10",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F2",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F3",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F4",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F5",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F6",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F7",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F8",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F9",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R5",
-			"verdict": "PASS",
-			"detail": "themes dark, light"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "T3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "T5",
-			"verdict": "N/A",
-			"reason": "no-empty-state"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "T7",
-			"verdict": "NOT MEASURED",
-			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "B1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "hosted-only — the hosted product renders this page differently (an upsell on a plan without the feature, or the billing and usage panels the self-managed notice replaces), and the release gate's self-managed console never shows it; the skeleton question needs a leg booted as the hosted edition"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "F1",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "F10",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "F2",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "F3",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "F4",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "F5",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "F6",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "F7",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "F8",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "F9",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "H3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "R5",
-			"verdict": "PASS",
-			"detail": "themes dark, light"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "R8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "T3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "T5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"predicate": "T7",
-			"verdict": "NOT MEASURED",
-			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "hosted-only — the hosted product renders this page differently (an upsell on a plan without the feature, or the billing and usage panels the self-managed notice replaces), and the release gate's self-managed console never shows it; the skeleton question needs a leg booted as the hosted edition"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "F1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "F10",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "F2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "F3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "F4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "F5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "F6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "F7",
-			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "F8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "F9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "H3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "R5",
-			"verdict": "PASS",
-			"detail": "themes dark, light"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "R8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "T3",
-			"verdict": "N/A",
-			"reason": "does-not-call-not-found"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "T5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/alerts",
-			"predicate": "T7",
-			"verdict": "N/A",
-			"reason": "no-restricted-surface"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "B2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "F1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "F10",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "F2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "F3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "F4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
 			"predicate": "F5",
 			"verdict": "FAIL",
-			"detail": "useClustersFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"detail": "useActivityFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "F6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "F8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "F9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "R5",
+			"verdict": "PASS",
+			"detail": "themes dark, light"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "R8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "T3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "T5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "T7",
+			"verdict": "NOT MEASURED",
+			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "B1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "B2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "B3",
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "B4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "B5",
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F10",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F8",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F9",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "R5",
+			"verdict": "PASS",
+			"detail": "themes dark, light"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "R8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T5",
+			"verdict": "N/A",
+			"reason": "no-empty-state"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T7",
+			"verdict": "NOT MEASURED",
+			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "B1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "B2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "B3",
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "B4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "B5",
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F10",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F8",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F9",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R5",
+			"verdict": "PASS",
+			"detail": "themes dark, light"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T5",
+			"verdict": "N/A",
+			"reason": "no-empty-state"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T7",
+			"verdict": "NOT MEASURED",
+			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "B1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "B2",
+			"verdict": "NOT MEASURED",
+			"reason": "hosted-only — the hosted product renders this page differently (an upsell on a plan without the feature, or the billing and usage panels the self-managed notice replaces), and the release gate's self-managed console never shows it; the skeleton question needs a leg booted as the hosted edition"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "B3",
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "B4",
+			"verdict": "NOT MEASURED",
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "B5",
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F10",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F8",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F9",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "R5",
+			"verdict": "PASS",
+			"detail": "themes dark, light"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "R8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "T3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "T5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "T7",
+			"verdict": "NOT MEASURED",
+			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "B1",
+			"verdict": "NOT MEASURED",
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "B2",
+			"verdict": "NOT MEASURED",
+			"reason": "hosted-only — the hosted product renders this page differently (an upsell on a plan without the feature, or the billing and usage panels the self-managed notice replaces), and the release gate's self-managed console never shows it; the skeleton question needs a leg booted as the hosted edition"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "B3",
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "B4",
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "B5",
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F10",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F5",
+			"verdict": "FAIL",
+			"detail": "useAlertPolicyFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts · useAlertChannelFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts · useAlertActivityFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "R5",
+			"verdict": "PASS",
+			"detail": "themes dark, light"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "R8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "T5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "T7",
+			"verdict": "N/A",
+			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "B1",
+			"verdict": "NOT MEASURED",
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "B2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "B3",
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "B4",
+			"verdict": "NOT MEASURED",
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "B5",
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F10",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F5",
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -6547,7 +6547,7 @@
 			"route": "/[org]/~/clusters",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -6759,7 +6759,8 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useConnectorFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -6770,7 +6771,7 @@
 			"route": "/[org]/~/connectors",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -6983,7 +6984,8 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useEvidenceFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -6994,7 +6996,7 @@
 			"route": "/[org]/~/evidence",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -7202,7 +7204,8 @@
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useJobsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -7213,7 +7216,7 @@
 			"route": "/[org]/~/jobs",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -7896,7 +7899,7 @@
 			"route": "/[org]/~/runners",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -8364,7 +8367,7 @@
 			"route": "/[org]/~/settings/access",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -8574,7 +8577,8 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useActivityFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -8585,7 +8589,7 @@
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -9283,7 +9287,7 @@
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -9966,7 +9970,7 @@
 			"route": "/[org]/~/settings/members",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -10187,7 +10191,7 @@
 			"route": "/[org]/~/settings/roles",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -10401,7 +10405,7 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F5",
 			"verdict": "FAIL",
-			"detail": "useSsoFilters: \"N of M\" / \"Showing …\" prose around the list — totals exist only as facet option counts"
+			"detail": "useSsoFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -10412,7 +10416,7 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -10634,7 +10638,7 @@
 			"route": "/[org]/~/settings/teams",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -11780,7 +11784,7 @@
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
