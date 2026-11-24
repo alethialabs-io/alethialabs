@@ -17,6 +17,7 @@ const ROOTS = [
 	"packages/ui/tests",
 	"packages/plan-catalog/tests",
 	"packages/org-slug/tests",
+	"packages/nra/tests",
 ];
 
 /** Recursively collect *.test.ts/tsx files under a dir. */

@@ -108,6 +108,7 @@ Code used by more than one app is **promoted here, never duplicated**. The npm s
 | `packages/ui` | the shared shadcn/ui design system — import `@repo/ui/button` |
 | `packages/brand` | logo, `tokens.css`, and the metadata/icon/OG generators |
 | `packages/legal` | versioned company identity, legal-document metadata, and processing registry |
+| `packages/nra` | the monthly NRA VAT filing package (DEKLAR/PRODAGBI/POKUPKI/VIES, чл. 117 protocols) from JSON inputs; pure, used by the console's `factura:export`, `nra:build` and `nra:protocol` (scripts only, so not in `transpilePackages`) |
 | `packages/plan-catalog` | plan display catalog, shared by console billing and marketing pricing |
 | `packages/assets` | static files only, synced into each app's `public/` at dev/build |
 | `packages/email` | SMTP and SES transports plus react-email building blocks (templates stay per-app) |
