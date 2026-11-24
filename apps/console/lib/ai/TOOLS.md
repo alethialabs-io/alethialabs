@@ -12,27 +12,36 @@ Two tool surfaces are described here, and they are at different stages:
   bounded by the actor's grants and there is no second authority model. The catalog lookups and the
   documentation search touch no account data.
 - **The external tool contract** (`lib/ai/mcp/surface.ts`) declares the 19 tools an outside agent
-  is offered over the remote MCP server. Six of them have a handler (`lib/ai/mcp/handlers.ts`) and
-  are served under their own names; the reads among the rest are served by the in-app tools they
-  stand for.
+  is offered over the remote MCP server. All 19 have a handler and are served under their own
+  names; each read answers through the in-app tools it stands for.
 
 ## What the MCP route serves today
 
 `app/api/mcp/route.ts` resolves the access token into an `agent_oauth` actor held to the token's
 scopes, the consent grant's organization and projects, and the `?project=` pin, and refuses every
 request while the organization's agent access is off (`lib/ai/mcp/actor.ts`). The server it builds
-(`lib/ai/mcp/server.ts`) lists two things:
+(`lib/ai/mcp/server.ts`) lists the declared tools, each with its title, annotations, input and output
+schema, answering structured content and the same JSON as text. Their handlers live in three modules:
 
-- `buildExternalAgentTools()` — the in-app tools whose audience in `lib/ai/tools/registry.ts` is
-  `both` or `external` — under their in-app names, through `registerAiToolsOnMcp()`. These are reads.
-  Each is listed when the declared tool that stands for it would be (same `?features=` group, `read`
-  scope).
-- The declared tools with a handler: `plan`, `request_apply`, `request_destroy`, `wait_for_job`,
-  `get_job_logs`, `cancel_job`, each with its title, annotations, input and output schema, answering
-  structured content and the same JSON as text.
+- **Reads** (`lib/ai/mcp/reads.ts`): `list_resources`, `get_resource`, `get_plan_result`, `catalog`,
+  `cidr_for_hosts`, `compare_providers`, `get_usage`, `search_docs`. Each runs the in-app tools its
+  contract entry names in `replaces` (`lib/ai/mcp/read-deps.ts`), so both agents read through the
+  same server actions and PDP verbs; the read reshapes the answer (one tool per question selected by
+  `kind`, money in minor units with a currency, ISO timestamps, an unknown id as a refusal). Two
+  reads have no in-app counterpart: a design with its revision, and a plan's counts, digest and cost
+  change (`lib/ai/mcp/plan-facts.ts`).
+- **Design** (`lib/ai/mcp/design.ts`): `validate_design`, `apply_design_patch`, `create_project`. A
+  design is the document the canvas saves (`designSaveSchema`); the writes go through
+  `updateProjectDesign` and `tryCreateProject`, and every problem a caller can fix comes back in
+  `errors`. A design's revision is the id of its latest design-write audit row; a stale
+  `base_revision` is a conflict. A repeated idempotency key answers with the first result, because
+  the key is recorded, hashed with the organization and the person, on that audit row.
+- **Operations** (`lib/ai/mcp/handlers.ts`): `scan_repo`, `plan`, `request_apply`,
+  `request_destroy`, `wait_for_job`, `get_job_logs`, `cancel_job`, `send_feedback`. A repeated
+  `scan_repo` key returns the first scan's job. `send_feedback` emails the team inbox on the hosted
+  service and answers `received: false` on a self-managed deployment.
 
-`validate_design`, `apply_design_patch`, `create_project`, `scan_repo` and `send_feedback` have no
-handler yet and are not listed.
+The in-app read tools are no longer listed under their in-app names.
 
 **How an apply or a destroy runs.** The first `request_apply` (or `request_destroy`) records a pending
 approval bound to the plan, its digest, the environment and the calling OAuth client, and returns the
@@ -112,10 +121,10 @@ that person has approved the caller's own request for that same plan. No tool ap
 for an omitted hint are not-read-only, destructive, not-idempotent and open-world. They are hints to
 the client and enforce nothing; the scope check and the approval record are the controls.
 
-**In-app tools it stands for.** The in-app tools a read tool replaces on the external surface. The
-same test fails unless these are, together, exactly the tools the in-app external projection
-registers — so a tool added to or removed from the live surface has to be placed in the contract in
-the same change.
+**In-app tools it stands for.** The in-app tools a read tool answers through on the external surface.
+The same test fails unless these are, together, exactly the tools of the in-app external projection
+(`buildExternalAgentTools()`) — so a tool added to or removed from that projection has to be placed in
+the contract in the same change.
 
 **URL scoping (`parseSurfaceQuery`, `selectExternalTools`).** `?readonly` lists no write tool.
 `?project=<id>` pins calls to one project; it narrows what the token may reach and does not change
