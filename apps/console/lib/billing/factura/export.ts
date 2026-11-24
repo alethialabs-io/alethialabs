@@ -14,6 +14,11 @@
 //  - `facturi-M-pdfs.zip`: every PDF under `pdfs/<number>.pdf`, stored (PDFs are already compressed);
 //  - `stripe-balance-M.csv`: every Stripe balance transaction created in M (gross, fee, net, type,
 //    the payout it settled in), so the accountant can reconcile payouts and fees to the documents;
+//  - `facturi-M.json` (written by the script, scripts/factura-export.ts): the same documents as
+//    @repo/nra reads them (lib/billing/nra/sales-documents.ts), so `nra:build` can rebuild the VAT
+//    package from the export alone;
+//  - `nra/…`: with an operator input file, the NRA files, the чл. 117 protocols and a summary
+//    (@repo/nra through lib/billing/nra/package.ts);
 //  - `MANIFEST.sha256`: the SHA-256 of each file above and of each PDF, in `sha256sum` format, so
 //    `shasum -a 256 -c MANIFEST.sha256` verifies the set once the ZIP is unpacked beside it.
 // The CSVs are UTF-8 with a byte-order mark (spreadsheet programs read Cyrillic correctly with it)
@@ -358,12 +363,16 @@ export interface ExportProblem {
  * none) and the Stripe balance transactions. Refuses — returns the problems and no files — when a
  * document has no PDF yet or its PDF does not match the SHA-256 recorded at issue: an accountant's
  * set must be complete and intact, and the sweeper renders a missing PDF within the hour.
+ *
+ * `extra` are further files written beside these and listed in the manifest: the `nra/` package of
+ * VAT filing files and protocols (lib/billing/nra/package.ts) and facturi-M.json.
  */
 export function buildExport(
 	window: MonthWindow,
 	documents: readonly Factura[],
 	pdfs: ReadonlyMap<string, Uint8Array | null>,
 	balance: readonly BalanceRow[],
+	extra: readonly ExportFile[] = [],
 ): { ok: true; files: ExportFile[] } | { ok: false; problems: ExportProblem[] } {
 	const problems: ExportProblem[] = [];
 	const pdfFiles: ExportFile[] = [];
@@ -381,6 +390,7 @@ export function buildExport(
 		{ name: `facturi-${m}.csv`, data: facturaCsv(documents) },
 		{ name: `facturi-${m}-pdfs.zip`, data: zipStore(pdfFiles) },
 		{ name: `stripe-balance-${m}.csv`, data: balanceCsv(balance) },
+		...extra,
 	];
 	return { ok: true, files: [...files, { name: "MANIFEST.sha256", data: manifest([...files, ...pdfFiles]) }] };
 }
