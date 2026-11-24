@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Self-host ingress — automatic HTTPS via Let's Encrypt. Mounted by
+# deploy/selfhost/docker-compose.selfhost.yml; the hosted service keeps its own in deploy/prod/.
+# Domain and ACME email come from .env:
+#   ALETHIA_DOMAIN=app.example.com  ALETHIA_ACME_EMAIL=you@example.com
+# With ALETHIA_DOMAIN unset it serves ":80" (plain HTTP, no TLS) — for a first look by IP.
+{
+	email {$ALETHIA_ACME_EMAIL}
+}
+
+{$ALETHIA_DOMAIN::80} {
+	encode zstd gzip
+	handle /docs* {
+		reverse_proxy docs:3000
+	}
+	# News, formerly the blog: the app's basePath is /news. Every old /blog URL, including the feed at
+	# /blog/feed.xml, answers a permanent 308 to the same path under /news with its query string, so
+	# links and feed subscribers keep working. The anchored regex matches the /blog segment only, so
+	# /blogroll would not be caught. Every Caddyfile that fronts the app carries this same redirect.
+	@blog_legacy path_regexp blog_legacy ^/blog(/.*)?$
+	handle @blog_legacy {
+		# `*` is required: a first argument starting with "/" is read as a path MATCHER, not the target.
+		redir * /news{re.blog_legacy.1}{?query} 308
+	}
+	@news path /news /news/*
+	handle @news {
+		reverse_proxy blog:3000
+	}
+	handle {
+		reverse_proxy app:3000 {
+			# The app trusts only this single-value client-IP header for auth throttling.
+			# Overwrite it so a public client cannot select its own rate-limit bucket.
+			header_up cf-connecting-ip {remote_host}
+		}
+	}
+}
