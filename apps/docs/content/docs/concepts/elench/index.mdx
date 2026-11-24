@@ -38,7 +38,7 @@ flowchart TD
   EXT[Claude Code · ChatGPT · Codex · Gemini/Zed]
   UI -->|native AI SDK| MCP
   EXT -->|remote MCP| MCP
-  MCP[Exposure — one adapter: remote MCP server<br/>read-only at launch]
+  MCP[Exposure — one adapter: remote MCP server<br/>reads, plans, approval requests]
   MCP --> CORE
   CORE[Elench core<br/>Tool Registry SSOT · agent-as-data runtime · supervisor]
   CORE -->|calls| ACT[Platform actions<br/>PDP-gated]
@@ -89,7 +89,7 @@ on each layer.
     versioning.
   </Card>
   <Card title="Agent harness" href="/concepts/elench/agent-runtime">
-    The tool-registry SSOT, the read-only MCP surface, agents-as-data + memory isolation, the stateless
+    The tool-registry SSOT, the MCP surface, agents-as-data + memory isolation, the stateless
     executor, and the supervisor/colony.
   </Card>
   <Card title="Extending & running" href="/concepts/elench/extending">

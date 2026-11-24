@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The external tool contract (lib/ai/mcp/surface.ts) is data that nothing serves yet, so the tests
-// here are what stop it from drifting away from the things it describes:
+// The external tool contract (lib/ai/mcp/surface.ts) is data; the server (lib/ai/mcp/server.ts) serves
+// part of it. The tests here are what stop it from drifting away from the things it describes:
 //
 //   1. THE LIVE SURFACE. The in-app tools the contract's read tools stand for are exactly the tools
-//      the MCP route composition registers today. Boundary, stated: this runs the same two calls
-//      the route makes (`registerAiToolsOnMcp(server, buildExternalAgentTools())`), not the route
-//      module itself — a route that stopped making those calls is outside what this can see.
-//      When the route starts serving the contract's own names, replace test 1 with one that
-//      compares the registered names to `listExternalTools()` directly.
+//      the external in-app projection registers (`registerAiToolsOnMcp(server,
+//      buildExternalAgentTools())`), which the server serves beside the declared tools that have a
+//      handler (tests/lib/ai/mcp/server.test.ts covers that composition). When every read tool has a
+//      handler of its own, replace test 1 with one that compares the registered names to
+//      `listExternalTools()` directly.
 //   2. THE RULES. Every declared tool passes `toolContractViolations`, and a tool missing a scope
 //      or an annotation is refused by it.
 //   3. THE SCHEMAS. Each one is an object at the JSON Schema root, and a sample of every
@@ -309,7 +309,7 @@ describe("external tool contract — schemas", () => {
 		expect(input.safeParse({ job_id: "j1", timeout_s: 51 }).success).toBe(false);
 	});
 
-	it("an approval request returns a pending request with an 8-character digest prefix, never a job", () => {
+	it("an approval request returns its status, an 8-character digest prefix, and a job only once consumed", () => {
 		const output = EXTERNAL_TOOLS.request_apply.outputSchema;
 		const pending = {
 			approval_id: "apr_1",
@@ -317,12 +317,31 @@ describe("external tool contract — schemas", () => {
 			approve_url: "https://console.example/approvals/apr_1",
 			digest_prefix: "9f3c1a7e",
 			expires_at: "2026-11-17T12:00:00Z",
+			job_id: null,
 		};
 		expect(output.parse(pending)).toEqual(pending);
+		expect(output.parse({ ...pending, status: "consumed", job_id: "job_1" }).job_id).toBe("job_1");
 		expect(output.safeParse({ ...pending, digest_prefix: "9f3c" }).success).toBe(false);
 		expect(output.safeParse({ ...pending, status: "queued" }).success).toBe(false);
-		expect(Object.keys(output.shape)).not.toContain("job_id");
 		expect(EXTERNAL_TOOLS.request_destroy.outputSchema).toBe(output);
+	});
+
+	it("request_apply names a plan; request_destroy names the environment, whose applied plan the server finds", () => {
+		expect(Object.keys(EXTERNAL_TOOLS.request_apply.inputSchema.shape)).toEqual(["plan_job_id", "reason"]);
+		expect(Object.keys(EXTERNAL_TOOLS.request_destroy.inputSchema.shape)).toEqual([
+			"project_id",
+			"environment_id",
+			"reason",
+		]);
+	});
+
+	it("tells the calling model, in each approval tool, that a person approves and no tool does", () => {
+		for (const name of ["request_apply", "request_destroy"] as const) {
+			const { description } = EXTERNAL_TOOLS[name];
+			expect(description).toContain("No tool approves");
+			expect(description).toContain("wait_for_job");
+			expect(description).toContain("call request_");
+		}
 	});
 
 	it("apply_design_patch takes add, remove and replace operations and at least one of them", () => {

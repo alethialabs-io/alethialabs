@@ -38,12 +38,20 @@ function stringify(value: unknown): string {
 	}
 }
 
+/** Told about every finished call: the tool, how long it took, and the error when it failed. */
+export type ToolCallObserver = (tool: string, latencyMs: number, error?: unknown) => Promise<void>;
+
 /**
- * Registers every executable tool in `tools` on the MCP server. Tools without an
+ * Registers every executable tool in `tools` on the MCP server. `observe`, when given, is told about
+ * each call after it finishes (the MCP server records it in `agent_tool_calls`). Tools without an
  * execute() (none today) are skipped; errors thrown by a tool (e.g. ForbiddenError,
  * AiBudgetError) are returned as an MCP tool error so the model can react.
  */
-export function registerAiToolsOnMcp(server: McpServer, tools: ToolSet): void {
+export function registerAiToolsOnMcp(
+	server: McpServer,
+	tools: ToolSet,
+	observe?: ToolCallObserver,
+): void {
 	for (const [name, def] of Object.entries(tools)) {
 		// Bridge the published Tool type to its runtime shape (see BridgeableTool).
 		// @ts-expect-error AI-SDK's published Tool type brands execute's input and erases the concrete zod schema; this is its runtime shape
@@ -60,13 +68,16 @@ export function registerAiToolsOnMcp(server: McpServer, tools: ToolSet): void {
 			name,
 			{ description: tool.description ?? name, inputSchema },
 			async (args: unknown) => {
+				const started = Date.now();
 				try {
 					const result = await execute(args ?? {}, {
 						toolCallId: `mcp_${name}`,
 						messages: [],
 					});
+					await observe?.(name, Date.now() - started);
 					return { content: [{ type: "text" as const, text: stringify(result) }] };
 				} catch (err) {
+					await observe?.(name, Date.now() - started, err);
 					return {
 						isError: true,
 						content: [
