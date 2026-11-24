@@ -1,0 +1,11 @@
+{
+	"kind": "debt",
+	"owner": "#7491",
+	"lane": "LST-9",
+	"why": "A raw `CountPill` of the dimension count; the dimensions list is a bounded configuration list awaiting its recorded decision.",
+	"findings": {
+		"apps/console/components/classification/classification-manager.tsx": {
+			"count-pill": 1
+		}
+	}
+}

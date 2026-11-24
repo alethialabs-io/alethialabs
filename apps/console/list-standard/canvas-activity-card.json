@@ -1,0 +1,11 @@
+{
+	"kind": "debt",
+	"owner": "#7492",
+	"lane": "LST-10",
+	"why": "The canvas activity card walks the activity read with its own hand-rolled `useInfiniteQuery`. It follows the activity read onto `useKeysetList` when LST-10 moves it (the card is outside LST-10's declared scope today: the orchestrator widens it or re-homes this file).",
+	"findings": {
+		"apps/console/components/design-project/canvas/cards/activity-card.tsx": {
+			"keyset-contract": 1
+		}
+	}
+}
