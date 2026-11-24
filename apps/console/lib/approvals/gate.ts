@@ -7,12 +7,18 @@
 // requester and plan digest, and still current (binding.ts). The consume is a compare-and-set on
 // `consumed_at IS NULL` in the transaction that inserted the job, and the job records the approval
 // it consumed (`jobs.approval_id`, unique), so one approval queues one job once.
+//
+// The enterprise agent policy (enterprise-policy.ts), when one is registered, adds two answers: a
+// person's own click to deploy production or to destroy needs a second person's approval while
+// "require a different approver" applies, and an agent's OAuth client outside the org's allow-list is
+// refused. Without one, both are core's: the click is the approval, and any client may ask.
 
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import type { Actor } from "@/lib/authz/types";
 import { applyApprovals, jobs } from "@/lib/db/schema";
 import { bindingStaleReason, type Executor, staleMessage } from "./binding";
-import { readAgentPolicy, readEnvironment, tokenAutoApproves } from "./context";
+import { type AgentPolicy, readAgentPolicy, readEnvironment, tokenAutoApproves } from "./context";
+import { type EnterpriseAgentPolicy, enterpriseAgentPolicy } from "./enterprise-policy";
 import { planDigestOf } from "./plan-binding";
 import { applyRequirement, policyRefusalMessage } from "./policy";
 import { ApplyAuthorizationError } from "./refusal";
@@ -57,15 +63,41 @@ export async function authorizeApply(
 	if (actor.orgId !== target.orgId) {
 		throw new ApplyAuthorizationError("not_permitted", "This environment belongs to another organization.");
 	}
-	// A person at the console: the click is the approval (table 4.2). An approval they present is
-	// still checked and consumed, so a presented approval is never accepted unread.
-	if (actor.credential === "session" && !approvalId) return { approvalId: null };
+	const enterprise = await enterpriseAgentPolicy();
+	if (actor.credential === "session") {
+		// A person at the console. The environments placed on a Fabric are destroyed in the same
+		// transaction as the Fabric's own environment, which is gated last and consumes (or does not
+		// need) the person's approval; an approval names one environment, so a cascaded one is covered
+		// by that one rather than asked to consume it again.
+		if (target.cascadeOfEnvironmentId) return { approvalId: null };
+		// The click is the approval (table 4.2), unless the enterprise policy asks a second person for
+		// this cell. An approval they present is still checked and consumed, so a presented approval is
+		// never accepted unread.
+		if (!approvalId && !enterprise) return { approvalId: null };
+	}
 
 	const environment = await readEnvironment(db, target.projectId, target.environmentId);
 	if (!environment) {
 		throw new ApplyAuthorizationError("not_permitted", "This environment is not part of the project.");
 	}
 	const policy = await readAgentPolicy(db, target.orgId);
+	if (enterprise) {
+		if (actor.credential === "session" && !approvalId) {
+			if (!(await enterprise.sessionApplyNeedsSecondPerson(target.orgId, policy, operation, environment.stage))) {
+				return { approvalId: null };
+			}
+			throw new ApplyAuthorizationError(
+				"approval_required",
+				`This organization requires a second person to approve this ${operation}. Request an approval for the reviewed plan, have a different person approve it in the console, then ${operation} with that approval.`,
+			);
+		}
+		if (actor.credential === "agent_oauth") {
+			const refusal = await enterprise.oauthClientRefusal(target.orgId, policy, actor.credentialRef ?? null);
+			if (refusal) throw new ApplyAuthorizationError("not_permitted", refusal);
+		}
+	}
+	// An approval decided before "require a different approver" applied is held to it when used.
+	const approverCheck: ApproverCheck | null = enterprise ? { enterprise, policy } : null;
 	const requirement = applyRequirement({
 		credential: actor.credential,
 		operation,
@@ -80,7 +112,7 @@ export async function authorizeApply(
 			throw new ApplyAuthorizationError("not_permitted", policyRefusalMessage(requirement.reason, operation));
 		case "none":
 		case "automatic":
-			return approvalId ? consumeApproval(db, actor, operation, target, approvalId) : { approvalId: null };
+			return approvalId ? consumeApproval(db, actor, operation, target, approvalId, approverCheck) : { approvalId: null };
 		case "approval":
 			if (target.cascadeOfEnvironmentId) {
 				// An approval covers one environment's destroy. The environments placed on its Fabric
@@ -96,8 +128,14 @@ export async function authorizeApply(
 					`This ${operation} needs a person's approval. Request an approval for the reviewed plan, have it approved in the console, then ${operation} with that approval.`,
 				);
 			}
-			return consumeApproval(db, actor, operation, target, approvalId);
+			return consumeApproval(db, actor, operation, target, approvalId, approverCheck);
 	}
+}
+
+/** The enterprise agent policy and the org's toggles, for the approver check at consume time. */
+interface ApproverCheck {
+	enterprise: EnterpriseAgentPolicy;
+	policy: AgentPolicy;
 }
 
 /** Refuses with `approval_invalid` and `message`. */
@@ -108,7 +146,9 @@ function invalid(message: string): never {
 /**
  * Consumes `approvalId` for the job `target.jobId`, or refuses saying why it does not cover it. Every
  * check reads the row locked FOR UPDATE, and the consume itself re-asserts status, single use and
- * expiry in its WHERE, so two jobs racing for one approval cannot both pass.
+ * expiry in its WHERE, so two jobs racing for one approval cannot both pass. With `approverCheck`,
+ * an approval its own requester approved is refused while the enterprise policy requires a different
+ * approver, so one decided before the toggle was turned on cannot be used after it.
  */
 async function consumeApproval(
 	db: Executor,
@@ -116,6 +156,7 @@ async function consumeApproval(
 	operation: ApplyOperation,
 	target: ApplyTarget,
 	approvalId: string,
+	approverCheck: ApproverCheck | null,
 ): Promise<ApplyAuthorization> {
 	const [approval] = await db
 		.select()
@@ -154,6 +195,15 @@ async function consumeApproval(
 			invalid("That approval was superseded by a newer plan or change. Request a new one.");
 		case "consumed":
 			invalid("That approval was already used. Each approval queues one job.");
+	}
+	if (approverCheck && approval.approver_user_id) {
+		const refusal = await approverCheck.enterprise.approverRefusal(
+			target.orgId,
+			approverCheck.policy,
+			approval.requester_user_id,
+			approval.approver_user_id,
+		);
+		if (refusal) invalid(`${refusal} That approval was approved by the person it was requested for. Request a new one.`);
 	}
 
 	if (operation === "deploy") {

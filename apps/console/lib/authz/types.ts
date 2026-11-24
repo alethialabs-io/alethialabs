@@ -191,6 +191,15 @@ export interface Entitlements {
 	 */
 	managedPools: boolean;
 	/**
+	 * The enterprise agent-policy toggles (agent surface §4.9, AGT-L14): "require a different
+	 * approver" — which also makes a person's own console deploy to production, and every destroy,
+	 * need a second person — and the OAuth client allow-list. The columns live in core and are read
+	 * only while this is `true`; the kill switch and "agents may not apply to production" are core
+	 * safety controls and are never gated by it. A licence whose entitlements claim does not name it
+	 * does not grant it (every reader tests for the boolean `true`).
+	 */
+	agentPolicy: boolean;
+	/**
 	 * Runner-scheduling quotas (ADR 20). Mirrors the authoritative SQL mapping in
 	 * programmables.sql (plan_max_concurrency / plan_priority) for UI + insert-time
 	 * "at your limit" UX. The claim_next_job RPC is the source of truth.
