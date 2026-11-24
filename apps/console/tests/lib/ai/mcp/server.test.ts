@@ -7,7 +7,6 @@
 // again when a tool is called.
 
 import { describe, expect, it, vi } from "vitest";
-import { z } from "zod";
 
 interface Registered {
 	name: string;
@@ -28,18 +27,24 @@ vi.mock("@modelcontextprotocol/server", () => ({
 	},
 }));
 vi.mock("@/lib/db", () => ({ withActorScope: vi.fn() }));
-vi.mock("@/lib/ai/tools", () => ({
-	buildExternalAgentTools: () => ({
-		list_projects: { description: "in-app list", inputSchema: z.object({}), execute: vi.fn(async () => []) },
-		get_plan_result: { description: "in-app plan result", inputSchema: z.object({}), execute: vi.fn(async () => ({})) },
-	}),
-}));
 vi.mock("@/lib/ai/mcp/handlers", async () => {
 	const actual = await vi.importActual<typeof import("@/lib/ai/mcp/handlers")>("@/lib/ai/mcp/handlers");
-	return { ...actual, createHandlers: () => ({}) };
+	return { ...actual, createHandlers: () => ({ plan: { scope: "plan", call: vi.fn(async () => ({ job_id: "j" })) } }) };
 });
+vi.mock("@/lib/ai/mcp/reads", async () => {
+	const actual = await vi.importActual<typeof import("@/lib/ai/mcp/reads")>("@/lib/ai/mcp/reads");
+	return { ...actual, createReadHandlers: () => ({ catalog: { scope: "read", call: vi.fn(async () => ({})) } }) };
+});
+vi.mock("@/lib/ai/mcp/design", async () => {
+	const actual = await vi.importActual<typeof import("@/lib/ai/mcp/design")>("@/lib/ai/mcp/design");
+	return { ...actual, createDesignHandlers: () => ({ validate_design: { scope: "read", call: vi.fn(async () => ({})) } }) };
+});
+vi.mock("@/lib/ai/mcp/read-deps", () => ({ defaultReadDeps: {} }));
+vi.mock("@/lib/ai/mcp/design-deps", () => ({ defaultDesignDeps: {} }));
+vi.mock("@/lib/ai/mcp/feedback", () => ({ sendAgentFeedback: vi.fn() }));
 vi.mock("@/app/server/actions/projects", () => ({ planProject: vi.fn(), provisionProject: vi.fn(), destroyProject: vi.fn() }));
 vi.mock("@/app/server/actions/jobs", () => ({ cancelJob: vi.fn() }));
+vi.mock("@/app/server/actions/scanner", () => ({ scanRepo: vi.fn() }));
 vi.mock("@/lib/rpc/procedures/jobs", () => ({ readJobStatus: vi.fn() }));
 vi.mock("@/lib/ai/mcp/approval-store", () => ({
 	findOwnApproval: vi.fn(),
@@ -49,9 +54,16 @@ vi.mock("@/lib/ai/mcp/approval-store", () => ({
 }));
 vi.mock("@/lib/ai/mcp/job-logs", () => ({ readJobLogPage: vi.fn() }));
 
-import { type HandledTool, HANDLED_TOOL_NAMES, McpToolRefusal } from "@/lib/ai/mcp/handlers";
-import { buildMcpServer, MCP_SERVER_INSTRUCTIONS, recordToolCall, type ToolCallRecord } from "@/lib/ai/mcp/server";
-import type { AgentScope, SurfaceQuery } from "@/lib/ai/mcp/surface";
+import { HANDLED_TOOL_NAMES } from "@/lib/ai/mcp/handlers";
+import { type HandledTool, McpToolRefusal } from "@/lib/ai/mcp/served";
+import {
+	buildMcpServer,
+	defaultServedTools,
+	MCP_SERVER_INSTRUCTIONS,
+	recordToolCall,
+	type ToolCallRecord,
+} from "@/lib/ai/mcp/server";
+import { type AgentScope, EXTERNAL_TOOLS, type SurfaceQuery } from "@/lib/ai/mcp/surface";
 import type { Actor } from "@/lib/authz/types";
 import { withActorScope } from "@/lib/db";
 import { log } from "@/lib/observability/log";
@@ -93,33 +105,48 @@ function tool(name: string): Registered {
 	return found;
 }
 
-const WRITES = ["plan", "request_apply", "request_destroy", "cancel_job"];
+const WRITES = ["apply_design_patch", "create_project", "scan_repo", "plan", "request_apply", "request_destroy", "cancel_job"];
 
 describe("buildMcpServer — what is listed", () => {
-	it("lists the in-app reads and every served tool to a token with every scope", () => {
+	it("lists all 19 declared tools, in declaration order, to a token with every scope", () => {
 		const { names } = build(["read", "design", "plan", "apply", "destroy"]);
-		expect(names).toEqual(["list_projects", "get_plan_result", ...HANDLED_TOOL_NAMES]);
+		expect(names).toHaveLength(19);
+		expect(names).toEqual(Object.keys(EXTERNAL_TOOLS));
+		expect([...HANDLED_TOOL_NAMES].sort()).toEqual(Object.keys(EXTERNAL_TOOLS).sort());
 	});
 
-	it("lists no write under ?readonly", () => {
-		const { names } = build(["read", "plan", "apply", "destroy"], { ...UNSCOPED, readonly: true });
+	it("lists 12 tools under ?readonly and no write among them", () => {
+		const { names } = build(["read", "design", "plan", "apply", "destroy"], { ...UNSCOPED, readonly: true });
+		expect(names).toHaveLength(12);
 		expect(names.filter((n) => WRITES.includes(n))).toEqual([]);
 		expect(names).toContain("wait_for_job");
 		expect(names).toContain("get_job_logs");
+		expect(names).toContain("send_feedback");
+	});
+
+	it("no longer lists an in-app read under its in-app name", () => {
+		const { names } = build(["read", "design", "plan", "apply", "destroy"]);
+		expect(names).not.toContain("list_projects");
+		expect(names).not.toContain("get_project");
+	});
+
+	it("serves the read, design and operation handlers by default", () => {
+		expect(Object.keys(defaultServedTools()).sort()).toEqual(["catalog", "plan", "validate_design"]);
 	});
 
 	it("lists a write only to a token carrying that write's scope", () => {
 		expect(build(["read"]).names.filter((n) => WRITES.includes(n))).toEqual([]);
-		expect(build(["read", "plan"]).names.filter((n) => WRITES.includes(n))).toEqual(["plan", "cancel_job"]);
+		expect(build(["read", "design"]).names.filter((n) => WRITES.includes(n))).toEqual(["apply_design_patch", "create_project"]);
+		expect(build(["read", "plan"]).names.filter((n) => WRITES.includes(n))).toEqual(["scan_repo", "plan", "cancel_job"]);
 		expect(build(["read", "apply"]).names.filter((n) => WRITES.includes(n))).toEqual(["request_apply"]);
 		expect(build(["read", "destroy"]).names.filter((n) => WRITES.includes(n))).toEqual(["request_destroy"]);
 	});
 
 	it("lists nothing that needs read to a token without it", () => {
-		expect(build(["plan"]).names).toEqual(["plan", "cancel_job"]);
+		expect(build(["plan"]).names).toEqual(["scan_repo", "plan", "cancel_job", "send_feedback"]);
 	});
 
-	it("narrows to the ?features groups, in-app reads included", () => {
+	it("narrows to the ?features groups", () => {
 		const { names } = build(["read", "plan", "apply", "destroy"], { ...UNSCOPED, features: ["jobs"] });
 		expect(names).toEqual(["wait_for_job", "get_job_logs", "cancel_job"]);
 	});
@@ -203,12 +230,18 @@ describe("buildMcpServer — calls", () => {
 		expect(answer.content[0].text).not.toContain("secret_table");
 	});
 
-	it("records an in-app read call too", async () => {
+	it("records a read call too, with no approval", async () => {
 		const { records } = build(["read"]);
-		await tool("list_projects").cb({});
+		await tool("list_resources").cb({ kind: "project" });
 		expect(records).toEqual([
-			expect.objectContaining({ tool: "list_projects", errorClass: null, approvalId: null }),
+			expect.objectContaining({ tool: "list_resources", errorClass: null, approvalId: null, approvalStatus: null }),
 		]);
+	});
+
+	it("builds its default handlers when none are stood in", () => {
+		registered.length = 0;
+		buildMcpServer({ actor: actorWith(["read", "plan"]), query: UNSCOPED, appOrigin: "https://console.example" });
+		expect(registered.map((r) => r.name)).toEqual(["catalog", "validate_design", "plan"]);
 	});
 });
 
