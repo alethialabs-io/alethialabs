@@ -16,6 +16,7 @@ import { sql } from "drizzle-orm";
 import {
 	boolean,
 	check,
+	index,
 	integer,
 	pgTable,
 	text,
@@ -23,6 +24,7 @@ import {
 	uuid,
 } from "drizzle-orm/pg-core";
 import type { AiTier } from "@/lib/billing/ai-plan";
+import { type BillingProviderId, billingProviderSqlList } from "./billing-provider";
 import { billingPlan, billingStatus, payerCapacity } from "./enums";
 import { organization } from "./organizations";
 
@@ -79,6 +81,29 @@ export const organizationBilling = pgTable("organization_billing", {
 	aiSubscriptionStatus: billingStatus().default("none").notNull(),
 	// The same event-time watermark as `stripeSubscriptionEventAt`, for `aiStripeSubscriptionId`.
 	aiStripeSubscriptionEventAt: timestamp({ withTimezone: true }),
+	// ── Payment provider (Paddle Billing, L1) ─────────────────────────────────────
+	// Which provider this org's subscriptions live with. NULL = never routed explicitly: a row
+	// written before this column, or by today's Stripe writers (which do not set it). The seam
+	// (lib/billing/provider/select.ts `providerForOrg`) reads NULL as "stripe" when a Stripe
+	// subscription id is present, else as the instance's sales provider. A Paddle subscription id
+	// REQUIRES `paddle` here (check below) — the Paddle writers are new and always set it.
+	billingProvider: text().$type<BillingProviderId>(),
+	// Paddle linkage, BESIDE Stripe's (no renames). A Paddle customer is per e-mail address, and
+	// Paddle lets one customer own businesses for several orgs, so the customer id is indexed but
+	// NOT unique; the business and the subscriptions map back to exactly one org.
+	paddleCustomerId: text(),
+	paddleBusinessId: text().unique(),
+	paddleAddressId: text(),
+	paddleSubscriptionId: text().unique(),
+	// Paddle's `occurred_at` of the newest event applied for `paddleSubscriptionId` — the same
+	// out-of-order / redelivery watermark as `stripeSubscriptionEventAt`.
+	paddleSubscriptionEventAt: timestamp({ withTimezone: true }),
+	// The Paddle subscription backing a paid AI tier, and its watermark (mirrors the Stripe pair).
+	aiPaddleSubscriptionId: text().unique(),
+	aiPaddleSubscriptionEventAt: timestamp({ withTimezone: true }),
+	// When a scheduled cancellation takes effect (Paddle `scheduled_change.effective_at`). NULL when
+	// nothing is scheduled. The subscription stays entitled until this instant.
+	cancelEffectiveAt: timestamp({ withTimezone: true }),
 	// Admin AI-spend limits (Claude-Enterprise style), in credits/week. NULL = no admin
 	// limit → use the tier's default caps. When set, they only ever TIGHTEN the effective
 	// budget (min(tier, cap)): an org-wide weekly ceiling and a per-seat weekly ceiling, so
@@ -120,7 +145,32 @@ export const organizationBilling = pgTable("organization_billing", {
 	welcomedAt: timestamp({ withTimezone: true }),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
-}, () => [
+}, (t) => [
+	index("organization_billing_paddle_customer_idx").on(t.paddleCustomerId),
+	check(
+		"organization_billing_provider_known",
+		sql.raw(`billing_provider IS NULL OR billing_provider IN (${billingProviderSqlList()})`),
+	),
+	// A Stripe subscription id belongs to a Stripe row. NULL is admitted because today's Stripe
+	// writers predate the column and do not set it (see `billingProvider` above).
+	check(
+		"organization_billing_stripe_sub_is_stripe",
+		sql`(stripe_subscription_id IS NULL AND ai_stripe_subscription_id IS NULL) OR billing_provider IS NULL OR billing_provider = 'stripe'`,
+	),
+	// A Paddle subscription id belongs to a row that SAYS Paddle — strictly.
+	check(
+		"organization_billing_paddle_sub_is_paddle",
+		sql`(paddle_subscription_id IS NULL AND ai_paddle_subscription_id IS NULL) OR billing_provider = 'paddle'`,
+	),
+	// One subscription per slot: never a Stripe AND a Paddle subscription for the plan, or for AI.
+	check(
+		"organization_billing_one_plan_subscription",
+		sql`stripe_subscription_id IS NULL OR paddle_subscription_id IS NULL`,
+	),
+	check(
+		"organization_billing_one_ai_subscription",
+		sql`ai_stripe_subscription_id IS NULL OR ai_paddle_subscription_id IS NULL`,
+	),
 	check(
 		"organization_billing_vat_id_status_known",
 		sql.raw(`vat_id_status IS NULL OR vat_id_status IN (${sqlList(VAT_ID_STATUSES)})`),

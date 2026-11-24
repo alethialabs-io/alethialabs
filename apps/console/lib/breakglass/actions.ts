@@ -383,10 +383,10 @@ async function replayWebhook(
 	const event = await getStripe().events.retrieve(eventId);
 	const suppressEmails = input?.suppressEmails ?? true;
 	const suppressPaymentRetry = input?.suppressPaymentRetry ?? true;
-	await resetWebhookEvent(eventId);
-	await claimWebhookEvent(event.id, event.type);
+	await resetWebhookEvent("stripe", eventId);
+	await claimWebhookEvent("stripe", event.id, event.type);
 	await handleStripeEvent(event, { suppressEmails, suppressPaymentRetry });
-	await markWebhookEventDone(event.id);
+	await markWebhookEventDone("stripe", event.id);
 	const notes = [
 		suppressEmails ? "emails suppressed" : null,
 		suppressPaymentRetry ? "payment retry suppressed" : null,

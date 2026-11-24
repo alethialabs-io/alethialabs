@@ -20,7 +20,13 @@
 // type-import `AiTier`; the client display copy lives in @repo/plan-catalog, so client
 // components never need to import this module.
 
-import { isBillingActive, isManualGrantExpired } from "@/lib/billing/plan";
+import {
+	type AiSubscriptionIds,
+	hasAiSubscription,
+	isBillingActive,
+	isManualGrantExpired,
+	type PlanSubscriptionIds,
+} from "@/lib/billing/plan";
 import { getOrgBilling } from "@/lib/billing/queries";
 import type { Tx } from "@/lib/db";
 import type { BillingStatus } from "@/lib/db/schema/enums";
@@ -130,11 +136,9 @@ export function effectiveAiTier(tier: AiTier, status: BillingStatus): AiTier {
 }
 
 /** The billing-row columns {@link billingAiTier} reads. */
-export interface AiTierBillingFields {
+export interface AiTierBillingFields extends AiSubscriptionIds, PlanSubscriptionIds {
 	aiTier: AiTier | null;
 	aiSubscriptionStatus: BillingStatus | null;
-	aiStripeSubscriptionId: string | null;
-	stripeSubscriptionId: string | null;
 	currentPeriodEnd: Date | null;
 }
 
@@ -144,10 +148,11 @@ export interface AiTierBillingFields {
  * (`setOrgPlan` with an `ai` tier — the complimentary Early Access grant, EA-3 #7325), and it lapses
  * with the row's term end exactly as an off-Stripe plan grant does (`isManualGrantExpired`). Without
  * this, `ai_subscription_status = 'active'` with no subscription to renew or cancel it would stay paid
- * forever. A Stripe-backed AI tier is never affected: the webhook maintains its status.
+ * forever. A provider-backed AI tier (Stripe or Paddle) is never affected: the webhook maintains its
+ * status.
  *
- * `isManualGrantExpired` is scoped to rows with no Stripe PLAN subscription, so an off-Stripe AI
- * grant on a row whose plan is a Stripe subscription never lapses here; `setOrgPlan` refuses a
+ * `isManualGrantExpired` is scoped to rows with no PLAN subscription at any provider, so an
+ * off-provider AI grant on a row whose plan is a provider subscription never lapses here; `setOrgPlan` refuses a
  * time-limited AI grant on such a row for that reason, so the only grants in that position are
  * open-ended ones.
  */
@@ -157,7 +162,7 @@ export function billingAiTier(billing: AiTierBillingFields, now: Date = new Date
 		billing.aiSubscriptionStatus ?? "none",
 	);
 	if (tier === "ai_free") return tier;
-	if (billing.aiStripeSubscriptionId == null && isManualGrantExpired(billing, now)) {
+	if (!hasAiSubscription(billing) && isManualGrantExpired(billing, now)) {
 		return "ai_free";
 	}
 	return tier;

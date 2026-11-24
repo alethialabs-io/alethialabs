@@ -130,15 +130,19 @@ async function grantWrite(orgId: string, plan: EarlyAccessPlan, end: Date): Prom
 			status: organizationBilling.status,
 			seats: organizationBilling.seats,
 			stripeSubscriptionId: organizationBilling.stripeSubscriptionId,
+			paddleSubscriptionId: organizationBilling.paddleSubscriptionId,
 			currentPeriodEnd: organizationBilling.currentPeriodEnd,
 		})
 		.from(organizationBilling)
 		.where(eq(organizationBilling.organizationId, orgId))
 		.limit(1);
 	const ai = { aiTier: plan, aiStatus: "active" };
+	// "No plan subscription at any provider" — mirrors hasPlanSubscription in the console's
+	// lib/billing/plan.ts, which this app cannot import (the console owns organization_billing).
 	const liveOffStripePlan =
 		row &&
 		!row.stripeSubscriptionId &&
+		!row.paddleSubscriptionId &&
 		row.plan !== "community" &&
 		(row.status === "active" || row.status === "trialing");
 	if (!row || !liveOffStripePlan) return { ...ai, periodEnd: end.toISOString() };

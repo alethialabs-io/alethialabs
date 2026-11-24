@@ -157,9 +157,15 @@ export async function reportTwoLive(
 /** Whether a stored slot holds a live plan: a live subscription, or a live, unexpired off-Stripe grant. */
 function slotIsLive(slot: PlanSlotBefore): boolean {
 	if (!STORED_LIVE_STATUSES.has(slot.status)) return false;
+	// `subscriptionId` was checked on the line above, so the expiry question is asked of a slot with
+	// no subscription at any provider.
 	return (
 		slot.subscriptionId !== null ||
-		!isManualGrantExpired({ stripeSubscriptionId: null, currentPeriodEnd: slot.currentPeriodEnd })
+		!isManualGrantExpired({
+			stripeSubscriptionId: null,
+			paddleSubscriptionId: null,
+			currentPeriodEnd: slot.currentPeriodEnd,
+		})
 	);
 }
 
