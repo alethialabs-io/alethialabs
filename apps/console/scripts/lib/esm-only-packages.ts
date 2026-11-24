@@ -31,9 +31,9 @@ export async function allowEsmOnlyPackages(): Promise<void> {
 }
 
 /**
- * The directory a user's relative path means. `pnpm -C apps/console run …` starts the script in
- * apps/console (the PDF fonts are found from there), while the person typed the path in the folder
- * they ran pnpm from, which pnpm passes as INIT_CWD.
+ * The directory a user's relative path means. Running a console script through pnpm with -C
+ * starts it in apps/console (the PDF fonts are found from there), while the person typed the path
+ * in the folder they ran pnpm from, which pnpm passes as INIT_CWD.
  */
 export function userCwd(): string {
 	return process.env.INIT_CWD ?? process.cwd();
