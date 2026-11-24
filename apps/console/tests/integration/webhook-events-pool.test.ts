@@ -101,14 +101,14 @@ async function startDeliveries(fail: boolean): Promise<{
 }> {
 	const ids = Array.from({ length: POOL_MAX }, () => freshEventId());
 	for (const id of ids) {
-		expect(await claimWebhookEvent(id, "invoice.payment_succeeded")).toEqual({ claimed: true });
+		expect(await claimWebhookEvent("stripe", id, "invoice.payment_succeeded")).toEqual({ claimed: true });
 	}
 	let entered = 0;
 	const allIn = deferred();
 	const release = deferred();
 	const runs = Promise.allSettled(
 		ids.map((id, i) =>
-			runWebhookEventExactlyOnce(id, "invoice.payment_succeeded", async () => {
+			runWebhookEventExactlyOnce("stripe", id, "invoice.payment_succeeded", async () => {
 				entered += 1;
 				if (entered === POOL_MAX) allIn.resolve();
 				// Every delivery is inside its lock before any of them asks the service pool for a
@@ -164,7 +164,7 @@ describeIfDb("stripe webhook exactly-once — the lock does not hold a service c
 		let reruns = 0;
 		for (const id of ids) {
 			const outcome = await within(
-				runWebhookEventExactlyOnce(id, "invoice.payment_succeeded", async () => {
+				runWebhookEventExactlyOnce("stripe", id, "invoice.payment_succeeded", async () => {
 					reruns += 1;
 				}),
 				5000,
