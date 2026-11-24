@@ -3,28 +3,30 @@
 
 // Canonical organization URL. The console is the microfrontends *default* zone,
 // served at the app root, so an org lives at `{host}/{slug}` (e.g.
-// `alethialabs.io/acme`) — never a `console.` subdomain. Single source of truth
+// `alethia.example.com/acme`) — never a `console.` subdomain. Single source of truth
 // for the host shown in onboarding + settings.
+//
+// The host is THIS instance's, read from `NEXT_PUBLIC_APP_URL` at runtime (`next-runtime-env`,
+// so a prebuilt self-host image shows its operator's value). There is no hosted default (#7417,
+// after EDN-H7 #6904): an instance with no origin configured shows the org's path on itself
+// (`/acme`), never the hosted service's domain. The hosted service sets `NEXT_PUBLIC_APP_URL`
+// like any other instance, so it needs no literal here.
 
 import { env } from "next-runtime-env";
 
-/** Canonical brand host when the runtime origin is unset (dev/self-host). */
-const DEFAULT_HOST = "alethialabs.io";
-
-/** The bare host the console is served at (no protocol / trailing slash),
- *  derived from NEXT_PUBLIC_APP_URL. Falls back to the canonical brand host. */
+/** The bare host the console is served at (no protocol / trailing slash), derived from
+ *  NEXT_PUBLIC_APP_URL. "" when that is unset or carries no host. */
 export function orgHost(): string {
-	const raw = env("NEXT_PUBLIC_APP_URL");
-	if (!raw) return DEFAULT_HOST;
+	const raw = (env("NEXT_PUBLIC_APP_URL") ?? "").trim();
+	if (!raw) return "";
 	try {
-		return new URL(raw).host || DEFAULT_HOST;
+		return new URL(raw).host;
 	} catch {
-		return raw.replace(/^https?:\/\//, "").replace(/\/+$/, "") || DEFAULT_HOST;
+		return raw.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 	}
 }
 
-/** Display URL for an organization, e.g. `alethialabs.io/acme`. */
+/** Display URL for an organization, e.g. `alethia.example.com/acme`; `/acme` with no origin set. */
 export function orgUrl(slug: string): string {
 	return `${orgHost()}/${slug}`;
 }
-
