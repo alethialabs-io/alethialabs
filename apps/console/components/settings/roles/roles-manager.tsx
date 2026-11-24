@@ -10,13 +10,18 @@
 // refreshes the page when someone else changes a role. Authoring is gated on customRoles.
 
 import { Lock, Pencil, Plus, SearchX, Shield, Trash2 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
+import { planMeta } from "@repo/plan-catalog";
 import { deleteRole, type RoleRow } from "@/app/server/actions/roles";
 import { ClassificationChips } from "@/components/classification/classification-chips";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { roleDisplayName } from "@/lib/authz/registry";
-import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
+import { manageReason } from "@/components/errors/manage-gate";
+import { FEATURE_UPSELLS } from "@/components/settings/upgrade/feature-catalog";
+import { hrefWithParamPatch, selectionFromUrl, selectionPatch } from "@/lib/query/view-url-params";
 import { RegionError } from "@/components/errors/region-error";
 import { isForbiddenRead } from "@/components/settings/members/people-reads";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -26,17 +31,8 @@ import { useRoleCatalogQuery, useRolesQuery } from "@/lib/query/use-roles-query"
 import { orpc } from "@/lib/rpc/client";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useRolesFilters } from "@/lib/stores/use-settings-filters";
-import {
-	AlertDialog,
-	AlertDialogAction,
-	AlertDialogCancel,
-	AlertDialogContent,
-	AlertDialogDescription,
-	AlertDialogFooter,
-	AlertDialogHeader,
-	AlertDialogTitle,
-} from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
 import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
@@ -129,6 +125,20 @@ function RailRow({
 	);
 }
 
+/** Why Create role is disabled for an org whose plan has no custom roles (R6 E-09). */
+export const CUSTOM_ROLES_PLAN_REASON = `Custom roles are available on the ${planMeta(FEATURE_UPSELLS.roles.requiredPlan).name} plan.`;
+
+/**
+ * Why Create role is unavailable, or null when it is: the plan first (no role can fix that), then
+ * the viewer's role. One answer, shown on the disabled button — it used to be an enabled button that
+ * opened an upgrade dialog, beside Edit and Delete disabled with no reason at all (R6 E-09).
+ */
+export function createRoleReason(entitled: boolean, canManage: boolean): string | null {
+	if (!entitled) return CUSTOM_ROLES_PLAN_REASON;
+	return manageReason({ canManage });
+}
+
+/** Settings · Roles: the built-in and custom role rail beside the selected role's permissions. */
 export function RolesManager() {
 	// The catalog is prefetched by the route; the server answered `customRoles` and `canManage` from
 	// the addressed org's actor, and the store can still turn authoring on later (an in-session
@@ -174,11 +184,22 @@ export function RolesManager() {
 	// universe). `undefined` until it has loaded, and the count is then left unstated.
 	const { data: customUniverse } = useRolesQuery();
 
-	const [selectedId, setSelectedId] = useState<string>("");
+	// The selected role is URL state (R6 E-23): a link to a role opens on it, and a refresh keeps it.
+	// Written with `history.replaceState`, so picking a role is not a server navigation.
+	const searchParams = useSearchParams();
+	const selectedId = selectionFromUrl(searchParams) ?? "";
+	const setSelectedId = (id: string) =>
+		window.history.replaceState(
+			null,
+			"",
+			hrefWithParamPatch(window.location.pathname, window.location.search, selectionPatch(id || null)),
+		);
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const [editingRole, setEditingRole] = useState<RoleRow | null>(null);
 	const [deleting, setDeleting] = useState<RoleRow | null>(null);
-	const [upsellOpen, setUpsellOpen] = useState(false);
+	// The name the delete confirmation is RENDERING, which outlives `deleting` by one close.
+	const [deletingName, setDeletingName] = useState("");
+	const createReason = createRoleReason(entitled, canManage);
 
 	// Built-ins ship with the page bootstrap, not the query, so they are narrowed by the pure
 	// `filterBuiltins` predicate rather than a server round-trip.
@@ -201,15 +222,14 @@ export function RolesManager() {
 	const selected =
 		[...builtin, ...custom].find((r) => r.id === selectedId) ?? builtin[0] ?? null;
 
+	/** Opens the role sheet empty, to author a new custom role. */
 	function openCreate() {
-		if (!entitled) {
-			setUpsellOpen(true);
-			return;
-		}
+		if (createReason !== null) return;
 		setEditingRole(null);
 		setSheetOpen(true);
 	}
 
+	/** Opens the role sheet on `r`. */
 	function openEdit(r: RoleRow) {
 		setEditingRole(r);
 		setSheetOpen(true);
@@ -248,10 +268,12 @@ export function RolesManager() {
 				description={ROLES_DESCRIPTION}
 				count={builtinList.length + custom.length}
 				actions={
-					<Button size="sm" onClick={openCreate}>
-						{entitled ? <Plus size={13} /> : <Lock size={13} />}
-						Create role
-					</Button>
+					<DisabledReason reason={createReason}>
+						<Button size="sm" onClick={openCreate}>
+							{entitled ? <Plus size={13} /> : <Lock size={13} />}
+							Create role
+						</Button>
+					</DisabledReason>
 				}
 			/>
 
@@ -305,7 +327,7 @@ export function RolesManager() {
 						)}
 					action={
 						<Button variant="outline" size="sm" onClick={reset}>
-							Reset filters
+							Clear filters
 						</Button>
 					}
 				/>
@@ -373,10 +395,16 @@ export function RolesManager() {
 				<div className={DETAIL_CLASS}>
 					{selected ? (
 						<RoleDetail
-								role={selected}
-								canManage={canManage && removingId !== selected.id}
+							role={selected}
+							manageReason={
+								manageReason({ canManage }) ??
+								(removingId === selected.id ? "This role is being deleted." : null)
+							}
 							onEdit={() => openEdit(selected)}
-							onDelete={() => setDeleting(selected)}
+							onDelete={() => {
+								setDeletingName(roleDisplayName(selected.name, selected.builtin));
+								setDeleting(selected);
+							}}
 						/>
 					) : (
 						<EmptyState
@@ -396,40 +424,25 @@ export function RolesManager() {
 				canManage={canManage}
 			/>
 
-			<UpgradeDialog
-				feature="roles"
-				open={upsellOpen}
-				onOpenChange={setUpsellOpen}
-			/>
-
-			<AlertDialog
+			{/* The console's one confirmation (R6 E-21): it names the role, stays open while the
+			    delete runs and closes once it has succeeded. */}
+			<ConfirmAction
 				open={deleting !== null}
-				onOpenChange={(o) => !o && setDeleting(null)}
-			>
-				<AlertDialogContent>
-					<AlertDialogHeader>
-						<AlertDialogTitle>Delete this role?</AlertDialogTitle>
-						<AlertDialogDescription>
-							{deleting && deleting.grantCount > 0
-								? `${deleting.grantCount} member${deleting.grantCount === 1 ? "" : "s"} ${deleting.grantCount === 1 ? "is" : "are"} granted this role — deleting revokes it for ${deleting.grantCount === 1 ? "them" : "all of them"}. `
-								: "No members are currently granted this role. "}
-							This cannot be undone.
-						</AlertDialogDescription>
-					</AlertDialogHeader>
-					<AlertDialogFooter>
-						<AlertDialogCancel>Cancel</AlertDialogCancel>
-						<AlertDialogAction
-								onClick={() => {
-									if (deleting) removal.mutate({ id: deleting.id });
-									setDeleting(null);
-								}}
-								variant="destructive"
-							>
-							Delete role
-						</AlertDialogAction>
-					</AlertDialogFooter>
-				</AlertDialogContent>
-			</AlertDialog>
+				onOpenChange={(o) => {
+					if (!o) setDeleting(null);
+				}}
+				title={`Delete role \u201C${deletingName}\u201D?`}
+				description={`${
+					deleting && deleting.grantCount > 0
+						? `${deleting.grantCount} member${deleting.grantCount === 1 ? "" : "s"} ${deleting.grantCount === 1 ? "is" : "are"} granted this role — deleting revokes it for ${deleting.grantCount === 1 ? "them" : "all of them"}.`
+						: "No members are currently granted this role."
+				} This cannot be undone.`}
+				confirmLabel="Delete role"
+				pendingLabel="Deleting…"
+				severity={{ level: "confirm" }}
+				mutation={removal}
+				variables={deleting ? { id: deleting.id } : null}
+			/>
 		</div>
 	);
 }
@@ -438,15 +451,17 @@ export function RolesManager() {
  *  Custom roles get Edit/Delete affordances (gated on canManage). */
 function RoleDetail({
 	role,
-	canManage,
+	manageReason: reason,
 	onEdit,
 	onDelete,
 }: {
 	role: RoleRow;
-	canManage: boolean;
+	/** Why Edit/Delete are unavailable, or null when they are (shown on the disabled control). */
+	manageReason: string | null;
 	onEdit: () => void;
 	onDelete: () => void;
 }) {
+	const canManage = reason === null;
 	return (
 		<div>
 			<div className={DETAIL_HEADER_CLASS}>
@@ -468,24 +483,18 @@ function RoleDetail({
 				</div>
 				{!role.builtin && (
 					<div className="flex shrink-0 items-center gap-2">
-						<Button
-							variant="outline"
-							size="sm"
-							disabled={!canManage}
-							onClick={onEdit}
-						>
-							<Pencil size={13} />
-							Edit
-						</Button>
-						<Button
-							variant="outline"
-							size="sm"
-							disabled={!canManage}
-							onClick={onDelete}
-						>
-							<Trash2 size={13} />
-							Delete
-						</Button>
+						<DisabledReason reason={reason}>
+							<Button variant="outline" size="sm" onClick={onEdit}>
+								<Pencil size={13} />
+								Edit
+							</Button>
+						</DisabledReason>
+						<DisabledReason reason={reason}>
+							<Button variant="outline" size="sm" onClick={onDelete}>
+								<Trash2 size={13} />
+								Delete
+							</Button>
+						</DisabledReason>
 					</div>
 				)}
 			</div>

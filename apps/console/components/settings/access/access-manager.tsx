@@ -13,7 +13,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Info, Layers, MoreHorizontal, Plus, Shield, ShieldAlert } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import {
@@ -22,6 +22,7 @@ import {
   type GrantOptions,
   revokeGrant,
 } from "@/app/server/actions/grants";
+import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { RegionError } from "@/components/errors/region-error";
 import { manageReason } from "@/components/errors/manage-gate";
 import { FormRootError } from "@/components/forms/form-root-error";
@@ -48,15 +49,12 @@ import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useAccessFilters } from "@/lib/stores/use-settings-filters";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@repo/ui/alert-dialog";
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@repo/ui/sheet";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import {
@@ -87,9 +85,13 @@ import {
 } from "./access-filters";
 import { AccessNoAccess } from "./access-no-access";
 import { Combobox } from "./combobox";
+import { SETTINGS_LIST_PAGE_SIZE } from "@/components/settings/members/members-filters";
 
 /** Every read a grant write shows in: the grants list, the role catalog's grant counts. */
 const GRANT_READS = [orpc.members.key()];
+
+/** What a grant's scope reads as when its resource is not in the option lists (R6 F-19). */
+const UNKNOWN_RESOURCE_LABEL = "Unknown resource";
 
 const SCOPE_OPTIONS = [
   { value: "org", label: "Entire organization" },
@@ -149,6 +151,16 @@ export function AccessManager({
 
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<AccessGrantRow | null>(null);
+  // What the revoke confirmation is RENDERING, which outlives `deleting` by one close.
+  const [revokingCopy, setRevokingCopy] = useState({ what: "this grant", who: "this member" });
+  /** Opens the revoke confirmation for `g`, naming the grant and who holds it. */
+  const askRevoke = useCallback((g: AccessGrantRow) => {
+    setRevokingCopy({
+      what: g.roleName ? roleDisplayName(g.roleName) : (g.permissionKey ?? "this grant"),
+      who: g.principalLabel,
+    });
+    setDeleting(g);
+  }, []);
 
   // Custom-scoped grants are Enterprise. Without the entitlement the page body is the upsell, so
   // both reads stay disabled; a route that already learned the viewer may not read them (forbidden)
@@ -182,8 +194,10 @@ export function AccessManager({
         for (const r of list) map.set(`${type}:${r.id}`, r.label);
       }
     }
+    // A scoped id the option lists do not name (deleted, or not visible to this viewer) reads as
+    // "Unknown resource" — never a UUID fragment nobody can act on (R6 F-19).
     return (type: string, id: string | null) =>
-      id ? (map.get(`${type}:${id}`) ?? `${id.slice(0, 8)}…`) : "—";
+      id ? (map.get(`${type}:${id}`) ?? UNKNOWN_RESOURCE_LABEL) : "—";
   }, [options]);
 
   const revocation = useActionMutation(revokeGrant, {
@@ -216,7 +230,9 @@ export function AccessManager({
     () => [
       {
         id: "principal",
-        header: "Principal",
+        // "Member or team", the builder's own label for the same field (R6 E-25): "Principal" was
+        // the only place in Settings that named a member that way.
+        header: "Member or team",
         enableSorting: false,
         cell: ({ row }) => {
           const g = row.original;
@@ -329,7 +345,7 @@ export function AccessManager({
                 <DropdownMenuItem
                   className="text-destructive focus:text-destructive"
                   disabledReason={writeReason}
-                  onClick={() => setDeleting(row.original)}
+                  onClick={() => askRevoke(row.original)}
                 >
                   Revoke access
                 </DropdownMenuItem>
@@ -339,7 +355,7 @@ export function AccessManager({
         ),
       },
     ],
-    [resourceLabel, revokingId, asOf, writeReason],
+    [resourceLabel, revokingId, asOf, writeReason, askRevoke],
   );
 
   return (
@@ -353,7 +369,7 @@ export function AccessManager({
               <b className="font-medium text-text-primary">
                 Grants on this Project.
               </b>{" "}
-              These bind a principal to a role or permission on this Project
+              These bind a member or team to a role or permission on this Project
               alone. Org-wide grants also apply here but are managed in
               organization settings.
             </>
@@ -389,11 +405,7 @@ export function AccessManager({
             count={grantsQuery.data?.resultCount ?? 0}
             actions={
               <DisabledReason reason={writeReason}>
-                <Button
-                  size="sm"
-                  aria-expanded={creating}
-                  onClick={() => setCreating((v) => !v)}
-                >
+                <Button size="sm" onClick={() => setCreating(true)}>
                   <Plus size={13} />
                   Add grant
                 </Button>
@@ -405,7 +417,7 @@ export function AccessManager({
             <FilterSearch
               value={filters.search}
               onChange={(v) => set("search", v)}
-              placeholder="Search principal or scope…"
+              placeholder="Search member, team or scope…"
               className="w-[240px] max-w-[380px] flex-1"
             />
             {/* Scope filter is meaningless when the list is already scoped to one project. */}
@@ -456,29 +468,41 @@ export function AccessManager({
             <FilterBarReset count={activeFilters} onReset={reset} />
           </FilterBar>
 
-          {/* inline grant builder. It renders whenever it is open: before the options have loaded it
-              is their skeleton, and a failed options read is an error with a retry inside the
-              builder — never an "Add grant" that silently does nothing (R6 E-16). */}
-          {creating &&
-            (options ? (
-              <GrantBuilder
-                options={options}
-                resourceLabel={resourceLabel}
-                projectId={projectId}
-                onCancel={() => setCreating(false)}
-                onGranted={() => setCreating(false)}
-              />
-            ) : optionsQuery.isError ? (
-              <div className="mb-4">
-                <RegionError
-                  title="Couldn't load what can be granted"
-                  description="The members, roles and resources a grant can name didn't load, so a grant can't be built yet. No access was changed."
-                  onRetry={() => void optionsQuery.refetch()}
-                />
+          {/* The grant builder is a long form (who · effect · role or permission · scope, and a
+              live preview), so it opens in a sheet — Settings' shape for a long create, beside the
+              dialog for a short one (R6 E-20); it used to be an inline panel above the table. Before
+              the options have loaded the sheet holds their skeleton, and a failed options read is an
+              error with a retry inside it — never an "Add grant" that silently does nothing (R6 E-16). */}
+          <Sheet open={creating} onOpenChange={setCreating}>
+            <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto p-0 sm:max-w-xl">
+              <SheetHeader className="gap-1 border-b border-border/60 p-5">
+                <SheetTitle className="font-display text-base">New grant</SheetTitle>
+                <SheetDescription className="text-xs">
+                  Bind a member or team to a role or permission on a scope. Inheritance is computed
+                  from the scope you pick.
+                </SheetDescription>
+              </SheetHeader>
+              <div className="p-5">
+                {options ? (
+                  <GrantBuilder
+                    options={options}
+                    resourceLabel={resourceLabel}
+                    projectId={projectId}
+                    onCancel={() => setCreating(false)}
+                    onGranted={() => setCreating(false)}
+                  />
+                ) : optionsQuery.isError ? (
+                  <RegionError
+                    title="Couldn't load what can be granted"
+                    description="The members, roles and resources a grant can name didn't load, so a grant can't be built yet. No access was changed."
+                    onRetry={() => void optionsQuery.refetch()}
+                  />
+                ) : (
+                  <GrantBuilderSkeleton />
+                )}
               </div>
-            ) : (
-              <GrantBuilderSkeleton />
-            ))}
+            </SheetContent>
+          </Sheet>
 
           {filtered.length === 0 ? (
             <EmptyState
@@ -495,7 +519,7 @@ export function AccessManager({
                   <Button variant="outline" size="sm" onClick={reset}>
                     Clear filters
                   </Button>
-                ) : writeReason === null && !creating ? (
+                ) : writeReason === null ? (
                   <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
                     <Plus size={13} />
                     Add grant
@@ -512,38 +536,27 @@ export function AccessManager({
                 grantsQuery.isPlaceholderData && "opacity-60 transition-opacity",
               )}
             >
-              <DataTable columns={columns} data={filtered} pageSize={15} />
+              <DataTable columns={columns} data={filtered} pageSize={SETTINGS_LIST_PAGE_SIZE} />
             </div>
           )}
         </div>
       )}
 
-      <AlertDialog
+      {/* The console's one confirmation (R6 E-21): it names whose access goes and stays open
+          while the revoke runs. */}
+      <ConfirmAction
         open={deleting !== null}
-        onOpenChange={(o) => !o && setDeleting(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Revoke this grant?</AlertDialogTitle>
-            <AlertDialogDescription>
-              The principal loses this access immediately. Inherited access from
-              other grants is unaffected. This cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (deleting) revocation.mutate({ id: deleting.id });
-                setDeleting(null);
-              }}
-              variant="destructive"
-            >
-              Revoke access
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        onOpenChange={(o) => {
+          if (!o) setDeleting(null);
+        }}
+        title={`Revoke ${revokingCopy.what} from ${revokingCopy.who}?`}
+        description={`${revokingCopy.who} loses this access immediately. Access from other grants is unaffected. This cannot be undone.`}
+        confirmLabel="Revoke access"
+        pendingLabel="Revoking…"
+        severity={{ level: "confirm" }}
+        mutation={revocation}
+        variables={deleting ? { id: deleting.id } : null}
+      />
     </div>
   );
 }
@@ -698,16 +711,10 @@ function GrantBuilder({
       noValidate
       aria-label="New grant"
       onSubmit={(e) => void submit(e)}
-      className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm"
     >
-      <p className="text-ui-md font-medium text-text-primary">New grant</p>
-      <p className="mb-3 text-ui-xs text-text-tertiary">
-        Bind a member or team to a role or permission on a scope. Inheritance is
-        computed from the scope you pick.
-      </p>
 
       <fieldset disabled={grant.isPending} className="m-0 min-w-0 border-0 p-0">
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3">
           <div>
             <div id={ids.principal} className="mb-1.5 text-ui-xs text-text-tertiary">
               Member or team
@@ -895,11 +902,11 @@ function GrantBuilder({
 /** The grant builder before its options have loaded: its box, three fields and its buttons. */
 function GrantBuilderSkeleton() {
   return (
-    <div aria-busy className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm">
+    <div aria-busy>
       <div aria-hidden>
         <Skeleton className="mb-2 h-4 w-24" />
         <Skeleton className="mb-3 h-3 w-2/3" />
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3">
           {[0, 1, 2].map((i) => (
             <div key={i}>
               <Skeleton className="mb-1.5 h-3 w-16" />
