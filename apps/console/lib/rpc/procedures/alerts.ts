@@ -24,6 +24,7 @@ import {
 	queryAlertDeliveriesPage,
 	queryAlertPoliciesPage,
 } from "@/lib/queries/alerts-lists";
+import { KEYSET_DEFAULT_LIMIT, type KeysetPageRequest, keysetPageInput } from "@/lib/queries/keyset";
 import { query } from "@/lib/rpc/base";
 
 /** Selectable values for the policy "conditions" (match) filters. */
@@ -117,13 +118,16 @@ export async function readAlertPoliciesPage(q: AlertPoliciesQuery = {}): Promise
 }
 
 /**
- * The org's delivery ledger for `q`: filtered SERVER-SIDE in SQL and THEN windowed (newest first,
- * 50 by default), with status facet counts over the WHOLE ledger. Moved from
- * `getAlertDeliveriesPage`.
+ * One keyset page of the org's delivery ledger for `q`: filtered SERVER-SIDE in SQL, newest first,
+ * strictly after `cursor` (lib/query/README.md → "Paging"), with status facet counts over the WHOLE
+ * ledger on the first page. The paging fields are split off here, so the builder's query is the
+ * filter alone. Moved from `getAlertDeliveriesPage`; the 50-row window it used to cut is gone (#7489).
  */
-export async function readAlertDeliveriesPage(q: AlertDeliveriesQuery = {}): Promise<AlertDeliveriesPage> {
+export async function readAlertDeliveriesPage(
+	{ cursor, limit = KEYSET_DEFAULT_LIMIT, ...q }: AlertDeliveriesQuery & Partial<KeysetPageRequest> = {},
+): Promise<AlertDeliveriesPage> {
 	const actor = await authorize("view_alerts", { type: "alert" });
-	return queryAlertDeliveriesPage(actor.orgId, q);
+	return queryAlertDeliveriesPage(actor.orgId, q, { cursor, limit });
 }
 
 /** A free-text search term, as the filter bars send it (trimmed client-side; bounded here). */
@@ -146,6 +150,6 @@ export const alertsRouter = {
 		.input(z.object({ search, types: values, status: values }))
 		.handler(({ input }) => readAlertChannelsPage(input)),
 	deliveries: query
-		.input(z.object({ search, status: values, limit: z.number().int().min(1).max(200).optional() }))
+		.input(z.object({ search, status: values, ...keysetPageInput() }))
 		.handler(({ input }) => readAlertDeliveriesPage(input)),
 };
