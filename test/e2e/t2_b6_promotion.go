@@ -37,6 +37,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -205,15 +206,17 @@ func (cp *ControlPlane) SeedPromotionGraph(ctx context.Context, opts b6SeedOpts)
 		newUUID(), g.projectID, g.targetEnvID, g.userID); err != nil {
 		return nil, fmt.Errorf("seed protection rule: %w", err)
 	}
-	// The promotion's PLAN job — already SUCCESS, carrying a verify_result the gate engine reads.
+	// The promotion's PLAN job — already SUCCESS, carrying a verify_result the gate engine reads and
+	// the plan digest the runner stamps. Since #7410 a promotion's DEPLOY applies the reviewed plan
+	// and that plan only, so a plan with no digest stops the promotion as BLOCKED (applyGateDecision).
 	if _, err := cp.pool.Exec(ctx, `
 		INSERT INTO public.jobs
 		  (id, user_id, org_id, project_id, environment_id, job_type, config_snapshot, status,
-		   provider, execution_metadata)
-		VALUES ($1, $2, $2, $3, $4, 'PLAN', $5::jsonb, 'SUCCESS', NULL, $6::jsonb)`,
+		   provider, execution_metadata, plan_sha256)
+		VALUES ($1, $2, $2, $3, $4, 'PLAN', $5::jsonb, 'SUCCESS', NULL, $6::jsonb, $7)`,
 		g.planJobID, g.userID, g.projectID, g.targetEnvID,
 		`{"id":"b6","provider":"hetzner","environment_stage":"staging"}`,
-		b6VerifyResultMetadata(opts.VerifyFails)); err != nil {
+		b6VerifyResultMetadata(opts.VerifyFails), b6PlanSHA256); err != nil {
 		return nil, fmt.Errorf("seed plan job: %w", err)
 	}
 	// The promotion itself — PENDING_PLAN, linked to the plan job (advancePromotionOnPlan finds it by
@@ -280,6 +283,22 @@ func (cp *ControlPlane) ApprovalSlotCounts(ctx context.Context, promotionID stri
 }
 
 // JobStatus reads one job's status (the DEPLOY the promotion enqueued reaches SUCCESS through the SSOT).
+// b6PlanSHA256 is the seeded PLAN job's digest: 64 lowercase hex, the shape jobs_plan_sha256_hex
+// admits and the runner stamps.
+var b6PlanSHA256 = strings.Repeat("b6", 32)
+
+// JobPlanSHA256 returns a job's recorded plan digest, or "" when it has none.
+func (cp *ControlPlane) JobPlanSHA256(ctx context.Context, jobID string) (string, error) {
+	var digest *string
+	if err := cp.pool.QueryRow(ctx, `SELECT plan_sha256 FROM public.jobs WHERE id = $1`, jobID).Scan(&digest); err != nil {
+		return "", err
+	}
+	if digest == nil {
+		return "", nil
+	}
+	return *digest, nil
+}
+
 func (cp *ControlPlane) JobStatus(ctx context.Context, jobID string) (string, error) {
 	var status string
 	err := cp.pool.QueryRow(ctx, `SELECT status::text FROM public.jobs WHERE id = $1`, jobID).Scan(&status)
