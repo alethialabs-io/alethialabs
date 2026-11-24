@@ -3,8 +3,6 @@ title: Job queue
 description: How infrastructure operations are queued, claimed atomically, and executed by Runners.
 ---
 
-# Job queue
-
 Every provisioning operation in the platform — planning, deploying, destroying, drift detection,
 bring-your-own scans — is modeled as a **job** in a PostgreSQL queue. Runners poll for jobs, claim
 them atomically, execute them, and report results. (Cloud-account connection is *not* a job; it runs

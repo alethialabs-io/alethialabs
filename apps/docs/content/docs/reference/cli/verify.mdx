@@ -3,8 +3,6 @@ title: Verify Commands
 description: Pull a job's signed evidence receipt, check its ed25519 signature against a key your control plane vouches for, and read the per-control report.
 ---
 
-# Verify Commands
-
 Every `PLAN` and `DEPLOY` job carries an **Elench evidence receipt**: the per-control verification
 report, sealed to the hash of the exact OpenTofu plan that was applied, and signed with ed25519.
 The `verify` group reads that receipt from the terminal.
