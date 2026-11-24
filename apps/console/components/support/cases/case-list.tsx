@@ -23,7 +23,6 @@ import {
 	CASE_LIST_PARAM_NAMES,
 	caseFacetOptions,
 	DEFAULT_SUPPORT_CASE_FILTERS,
-	matchesSupportCaseQuery,
 	normalizeSupportCaseQuery,
 	type SupportCaseFilters,
 } from "@/components/support/cases/case-query";
@@ -33,6 +32,7 @@ import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import {
 	type CaseCursor,
 	type CaseListItem as CaseListItemData,
+	type CasePage,
 	nextCaseCursor,
 } from "@/lib/queries/support";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
@@ -76,16 +76,15 @@ function mergeCasePages(
 /**
  * The support case list, on the console filter standard (lib/query/README.md →
  * "Server-side filters"): the URL-synced `useSupportFilters` store feeds a debounced,
- * normalized query into the `support.cases` GET read for its bucket, and the search /
- * severity / type refinement runs as a pure predicate over the returned rows (see the
- * header of case-query.ts for why those three are client-side and the bucket is not).
+ * normalized query — bucket, search, severity, type — into the `support.cases` GET read, which
+ * applies every one of them in SQL and returns the facet counts over the caller's unfiltered cases
+ * on its first page (#7396).
  *
  * Paged by keyset (#7389): `support.cases` answers one page per cursor, newest activity first with
  * the case id breaking ties. Page one keeps the exact key the route prefetches, so it still paints
  * from the server HTML; "Load more" (and the scroll sentinel behind it, as on the Activity log)
- * walks an infinite query seeded with page one's last row. Search, severity and type refine the
- * rows LOADED so far — until the last page is in, the toolbar shows no count rather than a
- * number that would read as the total.
+ * walks an infinite query seeded with page one's last row, under the same filters. Until the last
+ * page is in, the toolbar shows no count rather than a number that would read as the total.
  *
  * Result count lives in the page toolbar's pill, never as prose in the bar. When `seeAll`
  * (the caller holds manage_support) the list is the whole org's cases — the toolbar's line
@@ -125,7 +124,7 @@ export function CaseList({
 	// reads its own feed now, `workspace.supportCases`, so nothing else fills this entry early.)
 	const result = useQuery(
 		orpc.support.cases.queryOptions({
-			input: { bucket: query.bucket },
+			input: query,
 			placeholderData: keepPreviousData,
 		}),
 	);
@@ -135,29 +134,34 @@ export function CaseList({
 	const refusal = isError ? readRefusalOf(result.error) : null;
 	// A module-level empty array, not an inline `= []` default: a fresh literal on every
 	// render would give the memos below a new dependency identity each time and defeat them.
-	const firstPage = result.data ?? NO_ROWS;
+	const firstPage = result.data?.rows ?? NO_ROWS;
+	const facets = result.data?.facets ?? null;
 
 	// The pages after the first. Keyed (through oRPC's infinite key) on page one's last row, so a
 	// refetched page one restarts the walk from wherever page one now ends (the previous pages stay
 	// on screen until it lands, and `mergeCasePages` drops any case both hold). Disabled until the
-	// reader asks for more in THIS bucket — nothing is fetched speculatively.
+	// reader asks for more under THESE filters — nothing is fetched speculatively. The query object
+	// is memoised on its fields, so its identity is the filter state's.
 	const firstCursor = isPlaceholderData ? null : nextCaseCursor(firstPage);
-	const [extendBucket, setExtendBucket] = useState<string | null>(null);
-	const extending = firstCursor !== null && extendBucket === query.bucket;
+	const [extendQuery, setExtendQuery] = useState<typeof query | null>(null);
+	const extending = firstCursor !== null && extendQuery === query;
 	const more = useInfiniteQuery(
 		orpc.support.cases.infiniteOptions({
 			input: (cursor: CaseCursor | null) => ({
-				bucket: query.bucket,
+				...query,
 				cursor: cursor ?? undefined,
 			}),
 			initialPageParam: firstCursor,
-			getNextPageParam: (last: CaseListItemData[]) => nextCaseCursor(last),
+			getNextPageParam: (last: CasePage) => nextCaseCursor(last.rows),
 			enabled: extending,
 			placeholderData: keepPreviousData,
 		}),
 	);
 	const { fetchNextPage } = more;
-	const morePages = extending ? (more.data?.pages ?? NO_PAGES) : NO_PAGES;
+	const morePages = useMemo(
+		() => (extending && more.data ? more.data.pages.map((p) => p.rows) : NO_PAGES),
+		[extending, more.data],
+	);
 	const rows = useMemo(() => mergeCasePages(firstPage, morePages), [firstPage, morePages]);
 	const hasMore = extending ? more.hasNextPage || more.isPending : firstCursor !== null;
 	const loadingMore = extending && (more.isPending || more.isFetchingNextPage);
@@ -167,7 +171,7 @@ export function CaseList({
 	/** Load the next page: the first click starts the walk after page one, later ones extend it. */
 	const onLoadMore = () => {
 		if (loadingMore || !hasMore) return;
-		if (!extending) setExtendBucket(query.bucket);
+		if (!extending) setExtendQuery(query);
 		else void fetchNextPage();
 	};
 	const sentinelRef = useInfiniteScrollSentinel({
@@ -177,20 +181,15 @@ export function CaseList({
 		resetKey: rows.length,
 	});
 
-	// Facet counts come off the bucket's rows BEFORE the client-side refinement, so an
+	// Facet counts come from the server's facet pass over the caller's UNFILTERED cases, so an
 	// option never disappears at the moment you select it.
 	const severityOptions = useMemo(
-		() => caseFacetOptions(rows, "severity", SUPPORT_SEVERITY_LABELS),
-		[rows],
+		() => caseFacetOptions(facets?.severity, SUPPORT_SEVERITY_LABELS),
+		[facets],
 	);
 	const typeOptions = useMemo(
-		() => caseFacetOptions(rows, "type", SUPPORT_CASE_TYPE_LABELS),
-		[rows],
-	);
-
-	const visible = useMemo(
-		() => rows.filter((row) => matchesSupportCaseQuery(row, query)),
-		[rows, query],
+		() => caseFacetOptions(facets?.type, SUPPORT_CASE_TYPE_LABELS),
+		[facets],
 	);
 
 	const activeFilters = countActiveFilters<SupportCaseFilters>(
@@ -206,7 +205,7 @@ export function CaseList({
 						? "Every support case in this organization."
 						: "Your support cases and their conversation threads."
 				}
-				count={isPending || !totalKnown ? null : visible.length}
+				count={isPending || !totalKnown ? null : rows.length}
 				actions={
 					<Button
 						size="sm"
@@ -235,7 +234,7 @@ export function CaseList({
 					description="Something went wrong fetching the support cases. Try again in a moment."
 					onRetry={() => refetch()}
 				/>
-			) : visible.length === 0 && !hasMore ? (
+			) : rows.length === 0 ? (
 				// Two different empties: nothing to show at all, versus nothing that
 				// survived the filters — conflating them is how a filtered list comes to
 				// look broken.
@@ -282,22 +281,13 @@ export function CaseList({
 				// A real list (`ul`/`li`): it is one, and it is how the page says its bottom edge is
 				// open-ended — a skeleton cannot know how many cases there are (#6354, B2).
 				<>
-					{visible.length > 0 ? (
-						<ul className={cn(CASE_ROWS, isPlaceholderData && "opacity-60")}>
-							{visible.map((item) => (
-								<li key={item.id}>
-									<CaseListItem item={item} orgSlug={orgSlug} />
-								</li>
-							))}
-						</ul>
-					) : (
-						// Nothing loaded so far survives the filters, but more cases exist: say so
-						// beside the control that reaches them, instead of an empty state that would
-						// claim there is nothing.
-						<p className="text-ui-sm text-text-secondary">
-							None of the cases loaded so far match these filters.
-						</p>
-					)}
+					<ul className={cn(CASE_ROWS, isPlaceholderData && "opacity-60")}>
+						{rows.map((item) => (
+							<li key={item.id}>
+								<CaseListItem item={item} orgSlug={orgSlug} />
+							</li>
+						))}
+					</ul>
 					{extending && more.isError ? (
 						// A failed "Load more" is said under the rows it would have extended; it never
 						// replaces them (the Activity log's R6 E-26 rule).

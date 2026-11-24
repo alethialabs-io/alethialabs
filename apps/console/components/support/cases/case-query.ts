@@ -6,29 +6,20 @@
 // no DB imports, mirroring components/evidence/evidence-query.ts, which is the reference
 // implementation this list was migrated onto.
 //
-// WHERE EACH FILTER IS APPLIED, and why they differ:
+// EVERY FILTER IS APPLIED ON THE SERVER (#7396). The normalized query below IS the
+// `support.cases` input, and so the query key: bucket, search, severity and type all reach
+// `listCasesForOwner`'s SQL, so a filter finds a case on any page, not only the pages loaded so
+// far. A pristine query is `{ bucket }` alone — the key `my-cases/page.tsx` prefetches for a bare
+// link — and the route prefetches the link's full normalized query too, so a filtered link also
+// paints from the server.
 //
-//   bucket (all / active / resolved)  →  SERVER. The `support.cases` read takes exactly
-//                                        this one input, and it is the only dimension the
-//                                        query key varies on, so the list's key stays
-//                                        byte-identical to the key `my-cases/page.tsx`
-//                                        prefetches. Hydration hits on first paint because of that.
-//
-//   search / severity / type          →  CLIENT, over the rows the bucket returned.
-//                                        `support.cases` accepts no other filter (#2880 kept
-//                                        them client-side; #6130 kept that split). They are deliberately NOT in the query key: keying on a
-//                                        dimension the server never sees only fragments the cache
-//                                        and breaks the prefetch match, so the refinement runs as
-//                                        a pure predicate here instead.
-//
-// Widening `support.cases` (and computing the facet counts server-side over the unfiltered
-// universe, as the standard prescribes) is the follow-up that makes those two client-side
-// dimensions server-side; the shape here does not change when it lands, only where
-// `matchesSupportCaseQuery` runs.
+// Facet counts come from the server as well: the read's first page carries them, counted over the
+// caller's UNFILTERED cases (the scope is RLS; the bucket is a filter like the others), so an
+// option never vanishes as it is selected. Only the labels are client-side.
 
 import { coerceEnum } from "@/lib/coerce";
 import { caseLabel } from "@/lib/support/case-status";
-import type { CaseListItem } from "@/lib/queries/support";
+import type { FacetOption } from "@/lib/queries/facets";
 import type { ResourceKind } from "@/lib/db/schema/enums";
 
 /**
@@ -57,7 +48,7 @@ export const CASE_BUCKET_LABELS: Record<CaseBucket, string> = {
  * via the implicit index signature.
  */
 export type SupportCaseFilters = {
-	/** Lifecycle bucket — the one dimension the server action filters on. */
+	/** Lifecycle bucket (all / active / resolved). */
 	bucket: string;
 	/** Free text over the case reference and subject. */
 	search: string;
@@ -86,7 +77,7 @@ export const DEFAULT_SUPPORT_CASE_FILTERS: SupportCaseFilters = {
 
 /** The stable, normalized query the list renders from. */
 export interface NormalizedSupportCaseQuery {
-	/** Always present — it is the query key's only variable, so it may not be dropped. */
+	/** Always present — a pristine query is `{ bucket: "all" }`, the key a bare link prefetches. */
 	bucket: CaseBucket;
 	search?: string;
 	severity?: string[];
@@ -101,8 +92,8 @@ function normalizeList(values: string[]): string[] | undefined {
 
 /**
  * Normalize filter state into the stable query object (trim, sort, drop empties). Two
- * equivalent filter states always produce a deep-equal result, so the memoised refinement
- * downstream never re-runs on a no-op change.
+ * equivalent filter states always produce a deep-equal result, so they share one query key
+ * and a no-op change never refetches.
  */
 export function normalizeSupportCaseQuery(
 	filters: SupportCaseFilters,
@@ -124,30 +115,6 @@ export function formatCaseNumber(caseNumber: number): string {
 	return caseLabel(caseNumber);
 }
 
-/**
- * The text a search term is matched against: the subject, the padded reference, and the
- * bare number — so "123", "case-000123" and a subject word all find the same row.
- */
-function searchHaystack(row: CaseListItem): string {
-	return `${row.subject} ${formatCaseNumber(row.case_number)} ${row.case_number}`.toLowerCase();
-}
-
-/**
- * True when one row survives the client-side half of the query (search / severity / type).
- * The bucket is NOT tested here — the server already applied it.
- */
-export function matchesSupportCaseQuery(
-	row: CaseListItem,
-	query: NormalizedSupportCaseQuery,
-): boolean {
-	if (query.search && !searchHaystack(row).includes(query.search.toLowerCase())) {
-		return false;
-	}
-	if (query.severity && !query.severity.includes(row.severity)) return false;
-	if (query.type && !query.type.includes(row.type)) return false;
-	return true;
-}
-
 /** One facet option: the value, how many rows carry it, and its display label. */
 export interface CaseFacetOption {
 	value: string;
@@ -156,29 +123,21 @@ export interface CaseFacetOption {
 }
 
 /**
- * Facet option counts for one row field, computed over the rows the server returned
- * *before* any client-side refinement — the standard's rule that options must not
- * disappear as you select them. Options with no rows are dropped, and the order follows
- * `labels`, not the data, so the list does not reshuffle as counts change.
- *
- * The universe is the current bucket, not every case, because the bucket is a server
- * filter; that is the honest limit of computing facets client-side.
+ * The server's facet counts for one dimension as the bar's options: labelled, in the order of
+ * `labels` (not the data's, so the list does not reshuffle as counts change), keeping only values
+ * the caller's cases carry. The counts were taken over the unfiltered cases (`queryCasesPage`), so
+ * an option stays put while it is selected. `counts` is undefined before the first page lands.
  */
 export function caseFacetOptions(
-	rows: CaseListItem[],
-	field: "severity" | "type",
+	counts: readonly FacetOption[] | undefined,
 	labels: Record<string, string>,
 ): CaseFacetOption[] {
-	const counts = new Map<string, number>();
-	for (const row of rows) {
-		const value = row[field];
-		counts.set(value, (counts.get(value) ?? 0) + 1);
-	}
+	const byValue = new Map((counts ?? []).map((o) => [o.value, o.count]));
 	return Object.keys(labels)
-		.filter((value) => counts.has(value))
+		.filter((value) => byValue.has(value))
 		.map((value) => ({
 			value,
 			label: labels[value],
-			count: counts.get(value) ?? 0,
+			count: byValue.get(value) ?? 0,
 		}));
 }

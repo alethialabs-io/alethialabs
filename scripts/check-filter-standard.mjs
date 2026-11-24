@@ -308,6 +308,17 @@ export const F7_UNDRIVEN = /** @type {const} */ ({
 			"mechanism and needs a different assertion — the facet set must not shrink as the query " +
 			"narrows — rather than the two-pass predicate check the other builders take.",
 	},
+	queryCasesPage: {
+		file: "apps/console/lib/queries/support.ts",
+		owner: "#7396",
+		why:
+			"its scope is the support RLS policy on the transaction `withSupportScope` opens (requester-own, " +
+			"or org-wide for manage_support), not an `org_id` predicate, so its facet pass correctly carries " +
+			"NO `where` at all — and F7's second clause looks for an unfiltered pass that still has one. The " +
+			"two-pass shape is asserted instead by tests/lib/queries/support.test.ts (only the rows pass takes " +
+			"a WHERE; a later page issues no facet pass) and against real Postgres by " +
+			"tests/integration/support-cases-page.test.ts (the facets do not move under a filter).",
+	},
 });
 
 // ── reading the tree ─────────────────────────────────────────────────────────────────────────
@@ -934,10 +945,11 @@ const QUERY_HOP = /^apps\/console\/lib\/query\/use-[a-z0-9-]+-query\.ts$/;
  * than one argument", which is a rendering of the thing and is wrong in both directions — measured
  * on `dev`, both ways, in one scan:
  *
- *   * UNDER-reports. `components/support/cases/case-list.tsx` keys `qk.supportCases(query.bucket)`
- *     — ONE argument, and it is the whole of what that surface sends the server (the other three
- *     fields are a documented client-side refinement over the bucket's rows). Counting arguments
- *     called the reference-quality surface a cache-sharing defect.
+ *   * UNDER-reports. `components/support/cases/case-list.tsx` keyed `qk.supportCases(query.bucket)`
+ *     — ONE argument, and it was then the whole of what that surface sent the server (the other
+ *     three fields were a documented client-side refinement over the bucket's rows, until #7396
+ *     moved them into the query). Counting arguments called the reference-quality surface a
+ *     cache-sharing defect.
  *   * OVER-reports. `components/settings/access/access-manager.tsx` keys
  *     `qk.accessGrants(org, projectId ? { projectId } : undefined)` — two arguments, neither of
  *     them the query. That surface fetches the scope's whole universe and narrows it in memory, so

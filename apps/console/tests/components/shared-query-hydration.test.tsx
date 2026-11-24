@@ -166,7 +166,8 @@ describe("a page reading a query the shell also reads hydrates cleanly (#5786)",
 			is_mine: true,
 		};
 		const key = orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey;
-		const seed = (qc: QueryClient) => qc.setQueryData(key, [item]);
+		const seed = (qc: QueryClient) =>
+			qc.setQueryData(key, { rows: [item], facets: { severity: [], type: [] } });
 		const { serverHtml, recoverable } = await serverThenHydrate(
 			<CaseList orgSlug="acme" seeAll={false} />,
 			client(seed),
