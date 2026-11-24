@@ -274,7 +274,7 @@ Work is claimed from the board, never hand-picked: `scripts/coordinate.sh --repo
 
 ## Beta predicates — B1 to B9
 
-**1 of 9 beta predicates are met.** 6 not met · 2 not measured. Evaluated on this tree at the snapshot instant **2026-11-23T20:40:05Z**, over the 4 scored clouds: `aws`, `gcp`, `azure`, `hetzner`.
+**1 of 9 beta predicates are met.** 5 not met · 3 not measured. Evaluated on this tree at the snapshot instant **2026-11-23T20:40:05Z**, over the 4 scored clouds: `aws`, `gcp`, `azure`, `hetzner`.
 
 The predicates are defined in `docs/beta/README.md`; this section only evaluates them. `not measured` is not met: it means the instrument does not exist yet, or reads something the tree and the snapshot do not carry. Evidence records read: **1**.
 
@@ -326,9 +326,9 @@ The predicates are defined in `docs/beta/README.md`; this section only evaluates
 - **B6** ? not measured
   - sealed register: ✅ met — `terms` is sealed at 2026-08-24; the hashes themselves are held by `pnpm check:legal-hashes` and `pnpm check:legal-set` in CI
   - beta terms: ? not measured — nothing in the register records which `terms` version carries the beta and no-SLA wording (LEG-L2 writes it)
-- **B7** ❌ not met
+- **B7** ? not measured
   - off-box backup: ✅ met — newest complete copy `20261123T144753Z` finished 2026-11-23T14:47:59Z, 5.8 h before 2026-11-23T20:40:05Z (backup-status.yml run 45239283153 at 2026-11-23T19:12:00Z)
-  - restore drill: ❌ not met — no restore-drill record
+  - restore drill: ✅ met — `docs/beta/evidence/b7/2026-11-23-restore-drill.md` (2026-11-23T19:19:31Z) · 159s · tombstones replayed
   - public hosts: ? not measured — the post-deploy smoke result is not in the snapshot, and the installer and status hosts are not in the smoke yet (REL-L8)
 - **B8** ❌ not met
   - hosted: ❌ not met — no B8 record
