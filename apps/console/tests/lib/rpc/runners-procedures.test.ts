@@ -338,6 +338,28 @@ describe("runners.page — the grid", () => {
 		expect(second.universeEmpty).toBeNull();
 	});
 
+	it("pins the addressed org's default runner first on page one, and never walks it again", async () => {
+		h.rows.set("tx:runners", [
+			own({ id: uuid(1), is_default: true, created_at: new Date("2026-01-01T00:00:00Z") }),
+			own({ id: uuid(3), created_at: new Date("2026-03-01T00:00:00Z") }),
+			own({ id: uuid(4), created_at: new Date("2026-04-01T00:00:00Z") }),
+		]);
+		h.rows.set("svc:runners", [managed({ id: uuid(2), created_at: new Date("2026-02-01T00:00:00Z") })]);
+		const first = await readRunnersPage({ limit: 2 });
+		expect(first.rows.map((r) => r.id)).toEqual([uuid(1), uuid(4), uuid(3)]);
+		const second = await routerClient().page({ limit: 2, cursor: first.nextCursor ?? undefined });
+		expect(second.rows.map((r) => r.id)).toEqual([uuid(2)]);
+	});
+
+	it("does not pin a default of another org (a personal runner listed from a team org)", async () => {
+		h.rows.set("tx:runners", [
+			own({ id: uuid(1), is_default: true, org_id: USER, created_at: new Date("2026-01-01T00:00:00Z") }),
+			own({ id: uuid(2), created_at: new Date("2026-02-01T00:00:00Z") }),
+		]);
+		const page = await readRunnersPage({});
+		expect(page.rows.map((r) => r.id)).toEqual([uuid(2), uuid(1)]);
+	});
+
 	it("says universeEmpty for an actor who can see no runner at all", async () => {
 		const page = await readRunnersPage({ statuses: ["ONLINE"] });
 		expect(page.rows).toEqual([]);

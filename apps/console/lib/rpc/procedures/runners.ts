@@ -363,6 +363,7 @@ export type RunnersPageInput = RunnersQuery & Partial<KeysetPageRequest>;
  *
  * The universe is composed in memory (two reads under two authorization models), so it is paged in
  * memory too — the list standard's arrangement for a composed universe — and only the page is sent.
+ * The org's default runner is pinned to the top of page one when it matches, outside the walk.
  */
 export async function readRunnersPage(input: RunnersPageInput): Promise<RunnersListPage<RunnerView>> {
 	const { cursor, limit = KEYSET_DEFAULT_LIMIT, ...query } = input;
@@ -375,6 +376,9 @@ export async function readRunnersPage(input: RunnersPageInput): Promise<RunnersL
 		query,
 		{ cursor, limit },
 		(r) => ({ at: createdAt.get(r.id) ?? new Date(0), id: r.id }),
+		// The ADDRESSED org's default (`is_default` is reduced to exactly that in `toRunnerView`),
+		// pinned first on page one, outside the walk.
+		(r) => r.is_default,
 	);
 }
 

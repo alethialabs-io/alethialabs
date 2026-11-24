@@ -325,3 +325,70 @@ describe("queryRunnersPage — the keyset page cut (#7484)", () => {
 		expect(pages.flatMap((p) => ids(p.rows))).toEqual([b.id, a.id]);
 	});
 });
+
+describe("queryRunnersPage — the org's default runner is pinned first (#7484)", () => {
+	/** `n` runners, newest = highest n, with runner number `def` (an OLD one) as the default. */
+	function fleetWithDefault(n: number, def: number): (KeyedRunner & { is_default: boolean })[] {
+		return Array.from({ length: n }, (_, i) => ({
+			...runner({ name: `d-${i + 1}`, supported_providers: (i + 1) % 2 === 0 ? ["gcp"] : ["aws"] }),
+			id: uuid(1000 + i + 1),
+			created_at: new Date(Date.UTC(2026, 0, 1) + (i + 1) * 1000).toISOString(),
+			is_default: i + 1 === def,
+		}));
+	}
+	const isDefault = (r: { is_default: boolean }) => r.is_default;
+
+	/** Walks every page, decoding each cursor as the input schema would. */
+	function walkPinned(all: ReturnType<typeof fleetWithDefault>, query: RunnersQuery, limit: number) {
+		const pages = [];
+		let request: KeysetPageRequest = { limit };
+		for (let guard = 0; guard < 1000; guard++) {
+			const result = queryRunnersPage(all, query, request, keyOf, isDefault);
+			pages.push(result);
+			if (result.nextCursor === null) break;
+			const cursor = decodeKeysetCursor(result.nextCursor, "uuid");
+			if (cursor === null) throw new Error("the builder minted a cursor its own codec refuses");
+			request = { cursor, limit };
+		}
+		return pages;
+	}
+
+	it("puts the default first on page one even though it is one of the oldest runners", () => {
+		const all = fleetWithDefault(12, 3);
+		const [first] = walkPinned(all, {}, 5);
+		expect(first?.rows[0]?.id).toBe(uuid(1003));
+		// Then the walk, newest first, `limit` rows of it: the pin is outside the page size.
+		expect(ids(first?.rows.slice(1) ?? [])).toEqual([12, 11, 10, 9, 8].map((n) => uuid(1000 + n)));
+	});
+
+	it("draws the default exactly once across a full walk, and every other runner once too", () => {
+		const all = fleetWithDefault(12, 3);
+		const seen = walkPinned(all, {}, 5).flatMap((p) => ids(p.rows));
+		expect(seen.filter((id) => id === uuid(1003))).toHaveLength(1);
+		expect(seen).toHaveLength(12);
+		expect(new Set(seen).size).toBe(12);
+		// Without the pin, the default would be walked in place, near the end.
+		expect(seen.indexOf(uuid(1003))).toBe(0);
+	});
+
+	it("is not pinned when an active filter excludes it — and is not walked either", () => {
+		// Runner 3 is on aws; the filter asks for gcp.
+		const all = fleetWithDefault(12, 3);
+		const seen = walkPinned(all, { clouds: ["gcp"] }, 4).flatMap((p) => p.rows);
+		expect(seen.map((r) => r.id)).not.toContain(uuid(1003));
+		expect(seen).toHaveLength(6);
+		expect(seen.every((r) => r.supported_providers?.includes("gcp"))).toBe(true);
+	});
+
+	it("is pinned under a filter it matches", () => {
+		const all = fleetWithDefault(12, 3);
+		const [first] = walkPinned(all, { clouds: ["aws"] }, 4);
+		expect(first?.rows[0]?.id).toBe(uuid(1003));
+	});
+
+	it("pins nothing when no runner is the default", () => {
+		const all = fleetWithDefault(6, 0);
+		const [first] = walkPinned(all, {}, 50);
+		expect(ids(first?.rows ?? [])).toEqual([6, 5, 4, 3, 2, 1].map((n) => uuid(1000 + n)));
+	});
+});
