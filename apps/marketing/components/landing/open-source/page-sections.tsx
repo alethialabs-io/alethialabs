@@ -56,10 +56,10 @@ const PARTS: Part[] = [
  * the per-cloud stacks on purpose: the one-click templates open 22/80/443.
  */
 const WAYS: Row[] = [
-	{ d: "One VM", k: "Docker Compose", t: "The whole bundle behind Caddy, one command", href: "/docs/guides/self-hosting" },
-	{ d: "Per cloud", k: "OpenTofu", t: "Version-controlled, closed-origin behind a tunnel", href: "/docs/guides/self-hosting/terraform" },
-	{ d: "Existing cluster", k: "Helm", t: "The same bundle on Kubernetes you already run", href: "/docs/guides/self-hosting/helm" },
-	{ d: "AWS · Azure", k: "One-click", t: "Launch from a prefilled template", href: "/docs/guides/self-hosting/one-click" },
+	{ d: "One VM", k: "Docker Compose", t: "The whole bundle behind Caddy, one command", href: "/docs/self-host" },
+	{ d: "Per cloud", k: "OpenTofu", t: "Version-controlled, closed-origin behind a tunnel", href: "/docs/self-host/terraform" },
+	{ d: "Existing cluster", k: "Helm", t: "The same bundle on Kubernetes you already run", href: "/docs/self-host/helm" },
+	{ d: "AWS · Azure", k: "One-click", t: "Launch from a prefilled template", href: "/docs/self-host/one-click" },
 ];
 
 /** The opening statement, the install command and the two actions. */
@@ -73,7 +73,7 @@ function Opening() {
 				<CommandBlock command={SELF_HOST_INSTALL_COMMAND} />
 			</div>
 			<Actions>
-				<ActionLink link={{ label: "Self-hosting guide ↗", href: "/docs/guides/self-hosting", external: true }} />
+				<ActionLink link={{ label: "Self-hosting guide ↗", href: "/docs/self-host", external: true }} />
 				<ActionLink variant="outline" link={{ label: "View on GitHub ↗", href: REPO_URL, external: true }} />
 			</Actions>
 		</EditorialStatement>
@@ -117,7 +117,7 @@ function WhatIsOpen() {
 function WaysToRun() {
 	return (
 		<Block label="Ways to run it">
-			<RuleHead title="Ways to run it" action={{ label: "All guides ↗", href: "/docs/guides/self-hosting", external: true }} />
+			<RuleHead title="Ways to run it" action={{ label: "All guides ↗", href: "/docs/self-host", external: true }} />
 			<Rows rows={WAYS} />
 		</Block>
 	);
