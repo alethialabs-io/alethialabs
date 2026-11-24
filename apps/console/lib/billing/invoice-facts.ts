@@ -22,10 +22,11 @@
 // change the row's status, and only `paid` rows count. A partial refund is not recorded, so the
 // totals read high — which stops a sale early rather than late.
 //
-// THE TOTALS AND THE GATE. `readTurnoverTotals` sums the rows with `@repo/legal/turnover`, the same
-// function the admin `/turnover` page calls. EA-2's gate (lib/billing/turnover.ts) calls
-// `assessSaleBeforeCharge` BEFORE it takes a sale: the sale that crosses the EU EUR 10,000 is itself
-// taxed in the buyer's member state (TAX §3.5), so refusing it afterwards is too late.
+// THE TOTALS AND THE GATE. `readTurnoverTotals` (lib/billing/turnover-facts.ts) sums the rows with
+// `@repo/legal/turnover`, the same function the admin `/turnover` page calls; this file reuses that
+// read and its columns. EA-2's gate (lib/billing/turnover.ts) calls `assessSaleBeforeCharge` there
+// BEFORE it takes a sale: the sale that crosses the EU EUR 10,000 is itself taxed in the buyer's
+// member state (TAX §3.5), so refusing it afterwards is too late.
 //
 // THE ALERTS. Recording runs under one transaction-scoped advisory lock, and compares the totals
 // without and with the invoice. A threshold that rises to `warn` (default 80%) or to `stop` alerts
@@ -35,13 +36,8 @@
 import type { PayerCapacity } from "@repo/legal/commerce";
 import { DEFAULT_WARN_MARGIN, thresholdCountersForSale } from "@repo/legal/thresholds";
 import {
-	assessSaleAgainstTurnover,
 	assessTurnover,
-	type ProspectiveSale,
-	type SaleAssessment,
 	type ThresholdEscalation,
-	type TurnoverFact,
-	type TurnoverTotals,
 	thresholdEscalations,
 	turnoverTotals,
 	turnoverWindowStart,
@@ -49,6 +45,12 @@ import {
 import { eq, gte, sql } from "drizzle-orm";
 import type Stripe from "stripe";
 import { setInvoiceStatus } from "@/lib/billing/invoices";
+import {
+	INVOICE_FACT_COLUMNS,
+	type InvoiceFactRow,
+	liveTurnoverFactsReader,
+	type TurnoverFactsReader,
+} from "@/lib/billing/turnover-facts";
 import { alertOperator } from "@/lib/billing/operator-alert";
 import { getServiceDb } from "@/lib/db";
 import { invoice, organizationBilling } from "@/lib/db/schema";
@@ -64,12 +66,6 @@ export interface PayerDeclaration {
 	readonly capacity: PayerCapacity | null;
 	/** `given` | `not_given`, or null when undeclared. */
 	readonly vatIdStatus: string | null;
-}
-
-/** An invoice row, with its id, as the recording reads it. */
-export interface InvoiceFactRow extends TurnoverFact {
-	readonly id: string;
-	readonly eurRateSource: string | null;
 }
 
 /** The snapshot written onto an invoice row. Absent keys are left unchanged. */
@@ -94,28 +90,13 @@ export interface InvoiceFactsTx {
 }
 
 /** Everything the recording and the totals touch: the live database unless a test injects one. */
-export interface InvoiceFactsStore {
+export interface InvoiceFactsStore extends TurnoverFactsReader {
 	declaration(orgId: string): Promise<PayerDeclaration | null>;
 	/** Runs `fn` in one transaction holding the turnover advisory lock. */
 	locked<T>(fn: (tx: InvoiceFactsTx) => Promise<T>): Promise<T>;
 	/** Every invoice row paid at or after `since`, outside any lock (the gate's read). */
 	factsSince(since: Date): Promise<InvoiceFactRow[]>;
 }
-
-/** The invoice columns the facts read, selected once. */
-const FACT_COLUMNS = {
-	id: invoice.id,
-	status: invoice.status,
-	paidAt: invoice.paidAt,
-	currency: invoice.currency,
-	amountMinor: invoice.amountTotal,
-	amountEurMinor: invoice.amountEurMinor,
-	country: invoice.customerCountry,
-	state: invoice.customerState,
-	capacity: invoice.payerCapacity,
-	vatIdGiven: invoice.vatIdGiven,
-	eurRateSource: invoice.eurRateSource,
-};
 
 /** The one lock every recording takes, so two invoices never assess the same totals at once. */
 const TURNOVER_LOCK = sql`select pg_advisory_xact_lock(hashtextextended('billing:turnover', 0))`;
@@ -141,14 +122,14 @@ const liveInvoiceFactsStore: InvoiceFactsStore = {
 			return fn({
 				async invoiceRow(stripeInvoiceId) {
 					const [row] = await tx
-						.select(FACT_COLUMNS)
+						.select(INVOICE_FACT_COLUMNS)
 						.from(invoice)
 						.where(eq(invoice.stripeInvoiceId, stripeInvoiceId))
 						.limit(1);
 					return row ?? null;
 				},
 				async factsSince(since) {
-					return tx.select(FACT_COLUMNS).from(invoice).where(gte(invoice.paidAt, since));
+					return tx.select(INVOICE_FACT_COLUMNS).from(invoice).where(gte(invoice.paidAt, since));
 				},
 				async writeSnapshot(id, patch) {
 					await tx
@@ -159,9 +140,7 @@ const liveInvoiceFactsStore: InvoiceFactsStore = {
 			});
 		});
 	},
-	async factsSince(since) {
-		return getServiceDb().select(FACT_COLUMNS).from(invoice).where(gte(invoice.paidAt, since));
-	},
+	factsSince: (since) => liveTurnoverFactsReader.factsSince(since),
 };
 
 // ── Recording one invoice ───────────────────────────────────────────────────────────────────────
@@ -387,27 +366,4 @@ export async function invoiceIdOfPaymentIntent(
 	});
 	const ref = payments.data[0]?.invoice;
 	return typeof ref === "string" ? ref : (ref?.id ?? null);
-}
-
-// ── The totals, for the purchase gate ───────────────────────────────────────────────────────────
-
-/** Every running total as of `now`, summed from the invoice rows by `@repo/legal/turnover`. */
-export async function readTurnoverTotals(
-	now: Date = new Date(),
-	store: InvoiceFactsStore = liveInvoiceFactsStore,
-): Promise<TurnoverTotals> {
-	return turnoverTotals(await store.factsSince(turnoverWindowStart(now)), now);
-}
-
-/**
- * The check EA-2's gate runs BEFORE taking a sale: the totals as they stand, with this sale added,
- * against each threshold it counts toward. `stop` means refuse with `threshold_reached`. A database
- * error throws, and the gate must treat a throw as a refusal.
- */
-export async function assessSaleBeforeCharge(
-	sale: ProspectiveSale,
-	opts: { now?: Date; store?: InvoiceFactsStore; warnMargin?: number } = {},
-): Promise<SaleAssessment> {
-	const totals = await readTurnoverTotals(opts.now, opts.store);
-	return assessSaleAgainstTurnover(totals, sale, opts.warnMargin);
 }
