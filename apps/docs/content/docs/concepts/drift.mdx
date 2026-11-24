@@ -3,8 +3,6 @@ title: Drift detection
 description: How Alethia runs scheduled refresh-only OpenTofu plans to detect when live cloud infrastructure diverges from its provisioned state, records a per-environment drift posture, and what that posture means on the Evidence page.
 ---
 
-# Drift detection
-
 Provisioning proves an environment matches its configuration at one moment — the moment of apply. Drift
 detection is the other half: it **keeps proving it**. On a recurring schedule, Alethia reconciles each
 environment's recorded OpenTofu state against the live cloud and records whether anything has diverged.
