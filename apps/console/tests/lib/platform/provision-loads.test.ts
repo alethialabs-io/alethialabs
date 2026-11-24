@@ -20,7 +20,13 @@
 
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The in-process half: the seam itself. If render-pdf imported the document module statically, this
+// mock's factory would run on import and throw — the lazy `import("./document")` is what keeps it out.
+vi.mock("@/lib/billing/factura/document", () => {
+	throw new Error("the фактура document module was evaluated at import time");
+});
 
 /** The console package root, which the child runs in so `tsx` and the `@/` paths resolve. */
 const CONSOLE_ROOT = resolve(__dirname, "../../..");
@@ -39,6 +45,13 @@ const mod = await import(pathToFileURL(process.cwd() + "/lib/platform/provision.
 process.stdout.write(typeof mod.provisionOrg === "function" ? "LOADED" : "NO-EXPORT");
 process.exit(0);
 `;
+
+describe("the фактура render seam", () => {
+	it("imports without evaluating the PDF document module", async () => {
+		const mod = await import("@/lib/billing/factura/render-pdf");
+		expect(typeof mod.renderFacturaPdf).toBe("function");
+	});
+});
 
 describe("lib/platform/provision under plain tsx", () => {
 	it("loads without evaluating the фактура PDF renderer", () => {
