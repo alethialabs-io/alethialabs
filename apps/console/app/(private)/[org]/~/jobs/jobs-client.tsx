@@ -4,7 +4,15 @@
 
 // Jobs list — the console filter standard (#578): zustand store + URL sync, server-side
 // filtering + facet counts (`jobs.page`), the normalized query in the TanStack key, and
-// keepPreviousData dimming instead of client-side .filter() over the whole cache.
+// keepPreviousData dimming instead of client-side .filter() over the whole cache. Paged by the
+// list standard's keyset contract (#7483): `useKeysetList` + `<DataTable keyset>` + its
+// `ListFooter`, so every job in the scope is reachable by scrolling, and no count is shown.
+//
+// LIVE. A job that changes is a `jobs` hint on the org's change stream, which invalidates
+// `orpc.jobs.page.key()` — a prefix of this list's infinite key (lib/query/topics.ts). TanStack then
+// re-reads the loaded pages in order from page one, each with the cursor the page before it now
+// ends on, so a job inserted at the top shifts the boundaries instead of breaking them; the join
+// keeps each job id once (`useKeysetList`), so a job seen on two pages mid-refetch is drawn once.
 
 import { DataTable } from "@/components/data-table";
 import { RegionError } from "@/components/errors/region-error";
@@ -12,19 +20,14 @@ import { RegionRefusal } from "@/components/errors/region-refusal";
 import { buildJobColumns, jobHref } from "@/components/jobs/columns";
 import type { JobAuthorInfo } from "@/components/jobs/job-author";
 import { JobsFilterBar } from "@/components/jobs/jobs-filter-bar";
-import {
-	DEFAULT_JOBS_FILTERS,
-	JOBS_PAGE_MAX,
-	JOBS_PAGE_SIZE,
-	jobsRangeWindow,
-	normalizeJobsQuery,
-} from "@/components/jobs/jobs-query";
+import { DEFAULT_JOBS_FILTERS, jobsRangeWindow, normalizeJobsQuery } from "@/components/jobs/jobs-query";
 import { ARCHITECTURE } from "@/lib/copy/vocabulary";
 import { displayName } from "@/lib/user-display";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useMembersQuery } from "@/lib/query/use-activity-query";
-import { useJobsPageQuery } from "@/lib/query/use-jobs-page-query";
+import { useKeysetList } from "@/lib/query/use-keyset-list";
+import { orpc } from "@/lib/rpc/client";
 import { projectHref } from "@/lib/routing";
 import { readRefusalOf } from "@/lib/rpc/refusal";
 import { useJobsFilters } from "@/lib/stores/use-jobs-filters";
@@ -40,12 +43,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 /**
- * Jobs list UI. Filters live in the jobs filter store (URL-synced, the date range included); rows,
- * the matched count and facet counts come from `jobs.page` (server-side filtering — the standard).
+ * Jobs list UI. Filters live in the jobs filter store (URL-synced, the date range included); rows
+ * and facet counts come from `jobs.page` (server-side filtering — the standard), one keyset page at
+ * a time.
  *
  * Pass `projectId` for a project's own list. The project is then the list's SCOPE, not a filter:
- * the read counts its facets and its total inside that project, the Project facet and column are
- * dropped, and a project with no jobs gets its own first-run state.
+ * the read counts its facets inside that project, the Project facet and column are dropped, and a
+ * project with no jobs gets its own first-run state.
  */
 export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	const router = useRouter();
@@ -68,20 +72,15 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	const [mountedAt] = useState(() => new Date());
 	const range = useMemo(() => jobsRangeWindow(filters.range, mountedAt), [filters.range, mountedAt]);
 
-	// The filters the read is asked, without the row window. It is also what the row window belongs
-	// to: a change of filters (the matched set may shrink) starts again at the first window. Keyed
-	// by this object rather than reset in an effect, so the first render under new filters already
-	// asks for the first window.
-	const view = useMemo(() => ({ ...filters, search: debouncedSearch }), [filters, debouncedSearch]);
-	const [grown, setGrown] = useState({ view, limit: JOBS_PAGE_SIZE });
-	const limit = grown.view === view ? grown.limit : JOBS_PAGE_SIZE;
-
 	// The normalized query IS the key: equal filters hit the cache, and the route's server component
-	// builds the same object from the same link, so first paint is the prefetched answer.
-	const input = useMemo(() => normalizeJobsQuery(view, projectId, limit), [view, projectId, limit]);
-	const page = useJobsPageQuery(input);
-	const rows = useMemo(() => page.data?.rows ?? [], [page.data]);
-	const facets = page.data?.facets;
+	// builds the same object from the same link, so first paint is the prefetched answer. A change of
+	// filters is a new key, so the walk restarts at page one; the cursor is the infinite query's page
+	// param and never part of this object.
+	const view = useMemo(() => ({ ...filters, search: debouncedSearch }), [filters, debouncedSearch]);
+	const input = useMemo(() => normalizeJobsQuery(view, projectId), [view, projectId]);
+	const list = useKeysetList(orpc.jobs.page, input);
+	const rows = list.rows;
+	const facets = list.facets ?? undefined;
 
 	// Author labels/avatars resolve through the cached members query; counts come from
 	// the unfiltered facet universe.
@@ -124,15 +123,12 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 		router.push(jobHref(orgSlug, job.id));
 	};
 
-	// `total` counts the SCOPE — the org, or this project — whatever the filters, so total === 0
-	// means the scope has no jobs at all (first run). `matched` counts what the filters match in
-	// it; the rows are its newest window. Jobs that exist but are all excluded by the filters are
-	// a distinct "no match" state — never the same copy as first run.
-	const total = page.data?.total ?? 0;
-	const matched = page.data?.matched ?? 0;
-	const noMatch = !page.isPending && total > 0 && rows.length === 0;
-	const hasMore = matched > rows.length && rows.length < JOBS_PAGE_MAX;
-	const capped = matched > rows.length && rows.length >= JOBS_PAGE_MAX;
+	// `universeEmpty` is the facet pass's answer about the SCOPE — the org, or this project —
+	// whatever the filters: true means the scope has no jobs at all (first run). Jobs that exist but
+	// are all excluded by the filters are a distinct "no match" state — never the same copy as first
+	// run. Both are read only once the first page has landed.
+	const firstRun = !list.isPending && list.universeEmpty === true;
+	const noMatch = !list.isPending && list.universeEmpty === false && rows.length === 0;
 	// The list is BUSY while what it shows may not answer the URL and the bar: before the link has
 	// been read into the store, before the first answer, while the rows are the previous query's
 	// placeholder, and while a typed search is still inside its debounce — the runners list's rule
@@ -140,13 +136,14 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	// which reads exactly like a project with no jobs; `aria-busy` is what tells the two apart, for
 	// assistive tech and for the audit's F8–F9 read, which scored `/[org]/[project]/jobs` as a
 	// zero-row list while its fetch was still queued (#5045).
-	const busy = !urlRead || page.isPending || page.isPlaceholderData || filters.search !== debouncedSearch;
+	const busy = !urlRead || list.isPending || list.isPlaceholderData || filters.search !== debouncedSearch;
 
 	// A refusal is not a failure and neither is an empty list (RUBRIC B4). Only a read with nothing
 	// to show reaches these: a failed REFRESH behind rows already on screen is the table's own
-	// stale notice (`DataTable` `query`).
-	const refusal = page.isError && page.data === undefined ? readRefusalOf(page.error) : null;
-	const failed = page.isError && page.data === undefined && refusal === null;
+	// stale notice, and a failed LATER page is the footer's retry line (`DataTable` `keyset`).
+	const firstPageFailed = list.query.isError && list.query.data === undefined;
+	const refusal = firstPageFailed ? readRefusalOf(list.query.error) : null;
+	const failed = firstPageFailed && refusal === null;
 
 	return (
 		<div className="space-y-6" aria-busy={busy}>
@@ -159,9 +156,9 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 					className="min-h-[60vh]"
 					title="Couldn't load jobs"
 					description="Something went wrong fetching your jobs. Check your connection and try again."
-					onRetry={() => void page.refetch()}
+					onRetry={() => void list.query.refetch()}
 				/>
-			) : !page.isPending && total === 0 ? (
+			) : firstRun ? (
 				projectId ? (
 					<EmptyState
 						className="min-h-[60vh]"
@@ -200,18 +197,14 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 				)
 			) : (
 				<>
-					{/* The result count, through the count pill — the console filter standard's
-					    place for it now that the console has no page titles (lib/query/README.md,
-					    "Visual grammar"). It counts the jobs the current filters MATCH, of which the
-					    table shows the newest window; `total` above is the unfiltered scope and is
-					    what tells first run apart from a filter that excludes everything. */}
+					{/* No count: the list standard carries no list sizes (lib/query/README.md →
+					    "Counts"); totals live only in the facet options' counts. */}
 					<PageToolbar
 						description={
 							projectId
 								? "Every plan, deploy and destroy this project has run."
 								: "Every plan, deploy and destroy this organization has run."
 						}
-						count={page.isPending ? null : matched}
 					/>
 					<JobsFilterBar
 						showProject={!projectId}
@@ -245,49 +238,13 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 						/>
 					) : (
 						<TooltipProvider delayDuration={300}>
-							{/* keepPreviousData: the previous rows stay visible, dimmed, while a
-							    filter change — or a larger window — refetches (the standard's
-							    isPlaceholderData rule). */}
-							<div
-								className={cn(
-									"space-y-3 transition-opacity",
-									page.isPlaceholderData && "opacity-60",
-								)}
-							>
-								<DataTable
-									columns={columns}
-									data={rows}
-									query={page}
-									onRowClick={handleRowClick}
-									// One page holding every row read: the window is the server's, so
-									// the table pages nothing itself. `pageIndex` is what makes the
-									// table follow `pageSize` as the window grows — without it the
-									// size is read once, at mount.
-									pageIndex={0}
-									pageSize={Math.max(rows.length, 1)}
-									scrollHeight="h-[70vh]"
-								/>
-								{rows.length > 0 && matched > rows.length && (
-									<div className="flex flex-col items-center gap-2 px-1" data-slot="jobs-window">
-										<p className="text-xs tabular-nums text-muted-foreground" role="status">
-											{capped
-												? `Showing the newest ${rows.length} of ${matched}. Narrow the filters to reach older jobs.`
-												: `Showing the newest ${rows.length} of ${matched}`}
-										</p>
-										{hasMore && (
-											<Button
-												variant="outline"
-												size="sm"
-												disabled={page.isPlaceholderData}
-												onClick={() =>
-													setGrown({ view, limit: Math.min(limit + JOBS_PAGE_SIZE, JOBS_PAGE_MAX) })
-												}
-											>
-												{page.isPlaceholderData ? "Loading…" : "Show more"}
-											</Button>
-										)}
-									</div>
-								)}
+							{/* keepPreviousData: the previous filters' rows stay visible, dimmed, while
+							    a filter change fetches its first page (the standard's
+							    isPlaceholderData rule). No fixed-height scroll frame: the footer's
+							    scroll sentinel watches the viewport, so the table must grow with the
+							    page for "scrolled to the end" to mean the end of the rows. */}
+							<div className={cn("transition-opacity", list.isPlaceholderData && "opacity-60")}>
+								<DataTable columns={columns} keyset={list} onRowClick={handleRowClick} />
 							</div>
 						</TooltipProvider>
 					)}
