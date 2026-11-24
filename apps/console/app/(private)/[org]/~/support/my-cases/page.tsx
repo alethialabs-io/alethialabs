@@ -23,11 +23,12 @@ export const metadata = pageMetadata({
 
 /**
  * "My cases" route (#6130, the jobs slice's shape). Prefetches EXACTLY the key the list asks for on
- * first paint — `support.cases` for the link's lifecycle bucket (`?status=`) — in-process through
- * the read router, and hands the dehydrated cache to the client, so the rows are in the server HTML
- * and the browser fetches nothing on mount. When the link names a bucket, "All" is prefetched too:
- * the list's hydration render reads the store's default bucket before the URL is read into it.
- * `loading.tsx` covers the prefetch window.
+ * first paint — `support.cases` for the link's normalized query (`?status=`, `?search=`,
+ * `?severity=`, `?type=`, all applied by the server since #7396) — in-process through the read
+ * router, and hands the dehydrated cache to the client, so the rows are in the server HTML and the
+ * browser fetches nothing on mount. When the link carries any filter, the pristine query is
+ * prefetched too: the list's hydration render reads the store's defaults before the URL is read
+ * into it. `loading.tsx` covers the prefetch window.
  */
 export default async function MyCasesRoute({
 	params,
@@ -42,7 +43,8 @@ export default async function MyCasesRoute({
 		DEFAULT_SUPPORT_CASE_FILTERS,
 		CASE_LIST_PARAM_NAMES,
 	);
-	const { bucket } = normalizeSupportCaseQuery(filters);
+	const query = normalizeSupportCaseQuery(filters);
+	const pristine = normalizeSupportCaseQuery(DEFAULT_SUPPORT_CASE_FILTERS);
 
 	// Whether the caller sees the whole org's cases (owner/admin) vs only their own —
 	// drives the "all cases" caption + the per-row requester label.
@@ -52,11 +54,9 @@ export default async function MyCasesRoute({
 	).allowed;
 
 	const queryClient = getQueryClient();
-	const buckets = bucket === "all" ? ["all" as const] : (["all", bucket] as const);
+	const inputs = JSON.stringify(query) === JSON.stringify(pristine) ? [query] : [pristine, query];
 	await Promise.all(
-		buckets.map((b) =>
-			queryClient.prefetchQuery(serverOrpc().support.cases.queryOptions({ input: { bucket: b } })),
-		),
+		inputs.map((input) => queryClient.prefetchQuery(serverOrpc().support.cases.queryOptions({ input }))),
 	);
 
 	return (

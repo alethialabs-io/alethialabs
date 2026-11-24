@@ -4,7 +4,9 @@
 // Query-builder tests for the support-case visibility filters. Drives a thenable drizzle-ish tx
 // stub (each await shifts the next seeded result set) and spies on the real drizzle `inArray`/`eq`
 // helpers to assert: listCasesForOwner buckets by the right status set (active vs resolved vs
-// none), and getCaseWithThread strips is_internal staff notes and returns null for a missing case.
+// none) and applies the search / severity / type filters in SQL, queryCasesPage adds an UNFILTERED
+// facet pass on the first page only, and getCaseWithThread strips is_internal staff notes and
+// returns null for a missing case.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -26,6 +28,7 @@ import {
 	getCaseWithThread,
 	listCasesForOwner,
 	nextCaseCursor,
+	queryCasesPage,
 } from "@/lib/queries/support";
 import { supportCases, supportMessages } from "@/lib/db/schema";
 
@@ -44,6 +47,7 @@ function mockTx(resultSets: unknown[][]) {
 			return tx;
 		},
 		limit: () => tx,
+		groupBy: () => tx,
 		orderBy: (...a: unknown[]) => {
 			orderBySpy(...a);
 			return tx;
@@ -86,6 +90,85 @@ describe("listCasesForOwner", () => {
 		await listCasesForOwner(tx, "owner-1");
 		expect(inArray).not.toHaveBeenCalled();
 		expect(whereSpy).toHaveBeenCalledWith(undefined);
+	});
+});
+
+// ── The filter bar, in SQL (#7396) ───────────────────────────────────────────────────────────────
+
+const filterDialect = new PgDialect();
+
+/** The rendered WHERE of the one rows pass `run` issued against a fresh stub. */
+async function renderedWhere(run: (tx: never) => Promise<unknown>) {
+	const { tx, whereSpy } = mockTx([[]]);
+	await run(tx);
+	const w: SQL | undefined = whereSpy.mock.calls[0]?.[0];
+	return w ? filterDialect.sqlToQuery(w) : { sql: "", params: [] };
+}
+
+describe("listCasesForOwner filters", () => {
+	it("searches the subject, the CASE-000123 reference and the bare number, LIKE-escaped", async () => {
+		const q = await renderedWhere((tx) => listCasesForOwner(tx, "owner-1", { search: "  50%_off  " }));
+		expect(q.sql).toContain(`"support_cases"."subject" ilike $1`);
+		expect(q.sql).toContain(`('CASE-' || repeat('0', greatest(0, 6 - length("support_cases"."case_number"::text)))`);
+		expect(q.sql).toContain(`"support_cases"."case_number"::text ilike $3`);
+		// Trimmed, and the wildcards match literally.
+		expect(q.params).toEqual(["%50\\%\\_off%", "%50\\%\\_off%", "%50\\%\\_off%"]);
+	});
+
+	it("narrows severity and type to the enum, dropping a stale link's unknown value", async () => {
+		await listCasesForOwner(mockTx([[]]).tx, "owner-1", {
+			severity: ["urgent", "bogus"],
+			type: ["billing"],
+		});
+		expect(inArray).toHaveBeenCalledWith(supportCases.severity, ["urgent"]);
+		expect(inArray).toHaveBeenCalledWith(supportCases.type, ["billing"]);
+	});
+
+	it("an all-unknown facet selection is no predicate at all, never `in ()`", async () => {
+		const q = await renderedWhere((tx) => listCasesForOwner(tx, "owner-1", { severity: ["bogus"] }));
+		expect(q.sql).toBe("");
+	});
+
+	it("combines the bucket with the filters", async () => {
+		const q = await renderedWhere((tx) =>
+			listCasesForOwner(tx, "owner-1", { status: "resolved", severity: ["high"], search: "vpn" }),
+		);
+		expect(q.params).toEqual(["resolved", "closed", "high", "%vpn%", "%vpn%", "%vpn%"]);
+	});
+});
+
+describe("queryCasesPage", () => {
+	const facetGroups = [
+		{ severity: "normal", type: "technical", n: 2 },
+		{ severity: "urgent", type: "technical", n: 1 },
+		{ severity: "normal", type: "billing", n: 4 },
+	];
+
+	it("adds an UNFILTERED facet pass on the first page, counted per dimension", async () => {
+		const { tx, whereSpy } = mockTx([[{ id: "c-1" }], facetGroups]);
+		const page = await queryCasesPage(tx, "owner-1", { severity: ["urgent"], search: "vpn" }, { limit: 50 });
+		expect(page.rows).toEqual([{ id: "c-1" }]);
+		expect(page.facets).toEqual({
+			severity: [
+				{ value: "normal", label: null, count: 6 },
+				{ value: "urgent", label: null, count: 1 },
+			],
+			type: [
+				{ value: "technical", label: null, count: 3 },
+				{ value: "billing", label: null, count: 4 },
+			],
+		});
+		// Only the rows pass took a WHERE: the facet pass sees the RLS scope and nothing else.
+		expect(whereSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("a later page carries no facets and issues no facet pass", async () => {
+		const { tx } = mockTx([[{ id: "c-2" }], facetGroups]);
+		const page = await queryCasesPage(tx, "owner-1", {}, {
+			limit: 50,
+			cursor: { at: "2026-11-20T10:00:00.123Z", id: "c-1" },
+		});
+		expect(page).toEqual({ rows: [{ id: "c-2" }], facets: null });
 	});
 });
 

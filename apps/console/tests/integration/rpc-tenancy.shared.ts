@@ -445,7 +445,7 @@ export const FIXTURES: Record<string, Fixture> = {
 	"support.cases": {
 		kind: "org-scoped",
 		input: { bucket: "all" },
-		markers: (out, s) => ({ x: hasElement(out, "id", s.caseX), y: hasElement(out, "id", s.caseY) }),
+		markers: (out, s) => ({ x: hasRow(out, s.caseX), y: hasRow(out, s.caseY) }),
 	},
 	"support.case": {
 		kind: "by-id",
