@@ -258,6 +258,23 @@ describe("~/support/submit: the skeleton is the wizard's first step (#6354, B2)"
 });
 
 
+/** The key "My cases" reads: the first page of the `support.cases` infinite query (`useKeysetList`). */
+function casesKey(input: { bucket: "all"; search?: string }) {
+	return orpc.support.cases.infiniteOptions({
+		input: (cursor: string | null) => (cursor === null ? input : { ...input, cursor }),
+		initialPageParam: null,
+		getNextPageParam: (last: { nextCursor: string | null }) => last.nextCursor,
+	}).queryKey;
+}
+
+/** One first page of "My cases" as the infinite query caches it. */
+function casesPage(rows: CaseListItemData[]) {
+	return {
+		pages: [{ rows, nextCursor: null, facets: { severity: [], type: [] }, universeEmpty: rows.length === 0 }],
+		pageParams: [null],
+	};
+}
+
 describe("~/support/my-cases: the answered list is a list, in the skeleton's frame (#6354, B2)", () => {
 	const item = (id: string, case_number: number, subject: string): CaseListItemData => ({
 		id,
@@ -277,10 +294,10 @@ describe("~/support/my-cases: the answered list is a list, in the skeleton's fra
 
 	it("renders the cases as `ul > li` rows, framed and ruled as the skeleton's rows are", async () => {
 		const { container } = renderWithClient(<CaseList orgSlug="acme" seeAll={false} />, (qc) =>
-			qc.setQueryData(orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey, {
-				rows: [item("c1", 1042, "Runner cannot reach the registry"), item("c2", 1043, "Invoice address is wrong")],
-				facets: { severity: [], type: [] },
-			}),
+			qc.setQueryData(
+				casesKey({ bucket: "all" }),
+				casesPage([item("c1", 1042, "Runner cannot reach the registry"), item("c2", 1043, "Invoice address is wrong")]),
+			),
 		);
 		await act(async () => {});
 		const list = container.querySelector("ul");
