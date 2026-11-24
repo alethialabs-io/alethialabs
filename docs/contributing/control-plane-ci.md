@@ -1,4 +1,4 @@
-<!-- Moved out of the user docs (apps/docs, /guides/self-hosting/terraform) by #5240: these are this repository's own deploy workflows, not a self-hoster's. -->
+<!-- Moved out of the user docs (apps/docs, /self-host/terraform) by #5240: these are this repository's own deploy workflows, not a self-hoster's. -->
 
 # Control-plane stacks in CI
 
