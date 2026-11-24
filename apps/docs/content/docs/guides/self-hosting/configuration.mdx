@@ -101,7 +101,7 @@ through the generic OAuth plugin and use `https://<your-domain>/api/auth/oauth2/
 
 | Key | Default | Notes |
 |---|---|---|
-| `NEXT_PUBLIC_CONNECTOR_ASSETS_ORIGIN` | hosted bucket | Origin serving the connector setup artifacts the AWS/GCP/Azure connect flows hand out (`alethia-bootstrap.yaml`, `alethia-{gcp,azure}-setup.sh`). Point it at your own console origin — the files ship in `apps/console/public/`, e.g. `https://alethia.example.com`. The AWS CloudFormation quick-create flow needs an S3-hosted template, so AWS uses the bucket default or the OpenTofu method. |
+| `NEXT_PUBLIC_CONNECTOR_ASSETS_ORIGIN` | your `NEXT_PUBLIC_APP_URL` | Origin that serves the connector setup files the AWS, GCP, Azure and Alibaba connect flows hand out (`alethia-{aws,gcp,azure,alibaba}-setup.sh`, `alethia-bootstrap.yaml`). A self-managed instance serves them itself: the files ship in `apps/console/public/`, so the default is your own console origin and no hosted service is involved. Set this only to serve the files from somewhere else, such as a bucket or a CDN. The origin must be publicly reachable, because the commands download the files with `curl`. |
 
 ## Managed runner fleet (optional)
 
