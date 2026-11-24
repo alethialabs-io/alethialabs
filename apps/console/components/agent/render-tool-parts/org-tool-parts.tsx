@@ -12,6 +12,7 @@ import {
 	ToolView,
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
+import { renderApprovalRequestPart } from "@/components/agent/approval/approval-request-part";
 import { DashboardPinnedCard } from "@/components/agent/render-tool-parts/dashboard-pinned";
 import { ToolResultFrame } from "@/components/agent/tool-result-frame";
 import type { AddToolResult } from "@/components/agent/use-agent-chat";
@@ -45,6 +46,11 @@ export function orgRenderToolPart({
 	addToolResult,
 }: OrgToolPartsDeps): RenderToolPart {
 	return function renderOrgToolPart(part: ToolUIPart) {
+		// A deploy or destroy request (request_apply / request_destroy) → the approval card, where a
+		// person decides it and the requester starts the approved job.
+		const approvalRequest = renderApprovalRequestPart(part);
+		if (approvalRequest) return approvalRequest;
+
 		// HITL proposal (no execute): the frame's live marker while its input streams,
 		// then the approval card — which feeds the outcome back via addToolResult.
 		if (part.type === "tool-propose_operation") {

@@ -27,7 +27,9 @@ import "server-only";
 // After the org gate, the route's own check, `reserveTurn`, `prepare`, the model stream and its tools
 // run inside `runWithActor`, so every nested `currentActor()` resolves the billing org, not the
 // session's. The project check (`projectVisible`) runs between them, outside `runWithActor`: it is
-// handed the resolved actor as an argument and reads no ambient one.
+// handed the resolved actor as an argument and reads no ambient one. The model's stream, and so every
+// tool it calls, runs under that actor relabelled `agent_in_app` (lib/agent/in-app-credential.ts):
+// the same person and org, with the credential table 4.2 of the agent-surface spec answers for an agent.
 
 import {
 	type AsyncIterableStream,
@@ -82,6 +84,7 @@ import {
 	turnRefusal,
 	TURN_REFUSAL_STATUS,
 } from "./turn-claims";
+import { inAppAgentActor } from "./in-app-credential";
 import { pendingClientToolCalls, type TurnRequest } from "./turn-key";
 
 /** The transient part the stream opens with, once the turn is accepted (ADR 0003 §5.1 step 9). */
@@ -609,8 +612,13 @@ async function streamAcceptedTurn<R>(
 		const continued = turn.kind === "continue" ? turn.modelInput.at(-1) : undefined;
 		const answerId = continued?.id ?? generateId();
 
+		// The model's tools act as the in-product agent, not as the person (agent surface §4.6). Bound
+		// around the whole stream, so every tool call and subagent the model starts reads it from
+		// `currentActor()`; a deploy or destroy it asks for then needs a person's approval (table 4.2).
+		const toolActor = inAppAgentActor(actor, turn.threadId);
+
 		const stream = createUIMessageStream({
-			execute: async ({ writer }) => {
+			execute: ({ writer }) => runWithActor(toolActor, async () => {
 				startHeartbeat();
 				writer.write({
 					type: TURN_ACCEPTED_PART,
@@ -726,7 +734,7 @@ async function streamAcceptedTurn<R>(
 					});
 				}
 				writer.write({ type: "finish" });
-			},
+			}),
 			// A throw inside `execute` after the stream registered (the heartbeat may be running) ends
 			// the attempt as C7 — or C6 partial, when model output had already streamed.
 			onError: (error) => {
