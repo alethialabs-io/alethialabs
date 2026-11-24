@@ -3,9 +3,11 @@
 
 // Settings · Activity, CON-L10. Drives the REAL `ActivityLog`; only the network edges are mocked.
 //
-//   · E-26 — a failed "Load more" keeps every loaded row and says so under them, with a retry;
-//   · E-27 — an empty feed is one of three answers: filtered, a new organization, a quiet window;
-//   · E-28 — the page opens with its toolbar (count, description), not a heading naming the page.
+//   · E-26 — a failed "Load more" keeps every loaded row and says so under them, with a retry
+//            (the shared `ListFooter`'s line since LST-10 #7492);
+//   · E-27 — an empty feed is one of three answers: filtered, a new organization (the first page's
+//            `universeEmpty`), a quiet window;
+//   · E-28 — the page opens with its toolbar (description, no count), not a heading naming the page.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render as rtlRender, screen, waitFor } from "@testing-library/react";
@@ -78,6 +80,14 @@ function facets(total: number) {
 	};
 }
 
+/** A first page, as the keyset builder returns it: rows, cursor, facets and universeEmpty. */
+function firstPage(rows: ReturnType<typeof row>[], total: number, nextCursor: string | null = null) {
+	return { rows, nextCursor, facets: facets(total), universeEmpty: total === 0 };
+}
+
+/** Long enough for useKeysetList's one retry of a real failure (TanStack's first back-off is 1s). */
+const RETRIED = { timeout: 4000 };
+
 /** Renders under a fresh QueryClient (retries off so a rejection fails fast). */
 function render() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -100,15 +110,13 @@ describe("a failed Load more keeps the loaded rows (R6 E-26)", () => {
 		const user = userEvent.setup();
 		h.page.mockImplementation(async (input) => {
 			const cursor = typeof input === "object" && input !== null && "cursor" in input ? input.cursor : undefined;
-			if (cursor === undefined || cursor === null) {
-				return { rows: [row(2)], nextCursor: 1, facets: facets(2) };
-			}
+			if (cursor === undefined || cursor === null) return firstPage([row(2)], 2, "c1");
 			throw new Error("network");
 		});
 		render();
 		const more = await screen.findByRole("button", { name: /load more/i });
 		await user.click(more);
-		expect(await screen.findByText(/Couldn't load older activity/)).toBeInTheDocument();
+		expect(await screen.findByText(/Couldn't load more/, undefined, RETRIED)).toBeInTheDocument();
 		// The loaded row is still on screen; no page-wide error replaced it.
 		expect(screen.getAllByText("Ada Lovelace").length).toBeGreaterThan(0);
 		expect(screen.queryByText("Couldn't load activity")).toBeNull();
@@ -118,19 +126,19 @@ describe("a failed Load more keeps the loaded rows (R6 E-26)", () => {
 
 describe("the three empty answers (R6 E-27)", () => {
 	it("a new organization: no activity yet", async () => {
-		h.page.mockResolvedValue({ rows: [], nextCursor: null, facets: facets(0) });
+		h.page.mockResolvedValue(firstPage([], 0));
 		render();
 		expect(await screen.findByText("No activity yet")).toBeInTheDocument();
 	});
 
 	it("a quiet window: nothing recorded in this time range", async () => {
-		h.page.mockResolvedValue({ rows: [], nextCursor: null, facets: facets(12) });
+		h.page.mockResolvedValue(firstPage([], 12));
 		render();
 		expect(await screen.findByText("Nothing recorded in this time range")).toBeInTheDocument();
 	});
 
 	it("a filter that matches nothing: the pinned sentence, with Clear filters", async () => {
-		h.page.mockResolvedValue({ rows: [], nextCursor: null, facets: facets(12) });
+		h.page.mockResolvedValue(firstPage([], 12));
 		nav.search = "eventTokens=result:deny";
 		render();
 		await waitFor(() => expect(screen.getByText("No activity matches these filters.")).toBeInTheDocument());
@@ -140,10 +148,12 @@ describe("the three empty answers (R6 E-27)", () => {
 
 describe("the page opens with its toolbar (R6 E-28)", () => {
 	it("has no heading naming the page, and describes the feed", async () => {
-		h.page.mockResolvedValue({ rows: [row(1)], nextCursor: null, facets: facets(1) });
+		h.page.mockResolvedValue(firstPage([row(1)], 1));
 		render();
 		await waitFor(() => expect(screen.getAllByText("Ada Lovelace").length).toBeGreaterThan(0));
 		expect(screen.queryByRole("heading", { name: "Activity" })).toBeNull();
+		// No count anywhere in the toolbar: a keyset feed only knows what it LOADED (#7481).
+		expect(document.querySelector('[data-slot="count-pill"]')).toBeNull();
 		expect(
 			screen.getByText("Every recorded action and access decision in this organization."),
 		).toBeInTheDocument();

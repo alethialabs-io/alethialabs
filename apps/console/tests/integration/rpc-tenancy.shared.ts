@@ -554,7 +554,7 @@ export const FIXTURES: Record<string, Fixture> = {
 		// another org's environment is refused before any row is read.
 		kind: "by-id",
 		input: (s, org) => ({ projectId: projectOf(s, org), environmentId: envOf(s, org) }),
-		reveals: (out) => Array.isArray(field(out, "jobs")),
+		reveals: (out) => Array.isArray(field(out, "rows")),
 	},
 	// #6124: the connectors board lists the cloud accounts homed in the address's org — the ones it
 	// shares, and the caller's own personal ones created there (never one homed in another org).
