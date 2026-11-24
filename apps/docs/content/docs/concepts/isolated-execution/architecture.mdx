@@ -3,8 +3,6 @@ title: Architecture
 description: How isolated execution works — the per-job container, the environment allowlist, PID and network isolation, the state-proxy source-drop, per-job and per-VM tokens, and default-deny domain-allowlist egress.
 ---
 
-# Architecture
-
 Isolated execution is a **seam** in the runner (`packages/core/sandbox`): the runner calls `Sandbox.Run`
 instead of invoking the provisioner directly, and a backend decides how much isolation the work gets. Trusted
 templates use the in-process `Passthrough` backend; untrusted bring-your-own on the managed fleet uses the

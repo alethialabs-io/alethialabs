@@ -3,8 +3,6 @@ title: OIDC APIs
 description: The public, unauthenticated discovery and JWKS endpoints of the Alethia workload-identity OIDC issuer.
 ---
 
-# OIDC APIs
-
 Alethia is its own OpenID Connect identity provider for cloud workload-identity federation. It mints a short-lived, signed JWT so managed cloud connectors can federate **keylessly** — the private signing key never leaves the vault, and a customer's cloud verifies the token against Alethia's published public keys.
 
 This surface is deliberately minimal. It has no interactive or user-facing endpoints — it is not a general OAuth server. Only two routes are public: the discovery document and the JWKS. Both serve static signed material.
