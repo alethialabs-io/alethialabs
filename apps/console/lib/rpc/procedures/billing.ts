@@ -6,7 +6,6 @@ import "server-only";
 import { type Money, money } from "@repo/format";
 import { planMeta } from "@repo/plan-catalog";
 import { count, eq } from "drizzle-orm";
-import type Stripe from "stripe";
 import { z } from "zod";
 import { ActionRefusal } from "@/lib/actions/result";
 import { authorizeQuiet, authorizeRead, currentActor } from "@/lib/authz/guard";
@@ -22,6 +21,18 @@ import { mapStatus } from "@/lib/billing/sync";
 import { getServiceDb } from "@/lib/db";
 import { type Invoice, member, organization } from "@/lib/db/schema";
 import { type BillingPlan, type BillingStatus, type InvoiceStatus, invoiceStatus } from "@/lib/db/schema/enums";
+import {
+	type InvoiceFacets,
+	queryInvoicesPage,
+	queryTransactionsPage,
+	type TransactionInfo,
+} from "@/lib/queries/billing";
+import {
+	KEYSET_DEFAULT_LIMIT,
+	type KeysetListPage,
+	type KeysetPageRequest,
+	keysetPageInput,
+} from "@/lib/queries/keyset";
 import { query } from "@/lib/rpc/base";
 import {
 	INVOICE_PAID_WITHIN,
@@ -341,7 +352,8 @@ export type { InvoiceListParams } from "@/lib/rpc/inputs/invoices";
 /**
  * Lists the active org's mirrored invoices (newest paid first), from the local table — no
  * Stripe call, so it's fast and only ever shows real paid invoices. Filterable by period
- * range + status.
+ * range + status. Bounded by `listOrgInvoices`' default `limit`, so it is an in-process glance,
+ * not the ledger: the `billing.invoices` read pages through {@link readInvoicesPage} instead.
  */
 export async function listInvoices(
 	params: InvoiceListParams = {},
@@ -351,60 +363,45 @@ export async function listInvoices(
 	return rows.map(toInvoiceInfo);
 }
 
+/**
+ * One page of the active org's mirrored invoices, newest first, filtered by status and paid-date
+ * range SERVER-SIDE (`queryInvoicesPage`), with the status facet over the unfiltered invoices on
+ * the first page. The Invoices page reads this; it used to read up to 500 rows in one go and page
+ * them in the browser (#7493). Same reach as {@link listInvoices}: the mirrored table, no Stripe.
+ */
+export async function readInvoicesPage(
+	params: Omit<InvoiceListParams, "limit">,
+	request: KeysetPageRequest,
+): Promise<KeysetListPage<InvoiceInfo, InvoiceFacets>> {
+	const actor = await authorizeRead("manage_billing", { type: "billing" });
+	const page = await queryInvoicesPage(actor.orgId, invoiceReaderFilters(params), request);
+	return { ...page, rows: page.rows.map(toInvoiceInfo) };
+}
+
 // ── Transactions (Stripe charges) ─────────────────────────────────────────────────────────────────
 
-/** A charge row for the transaction-history table. */
-export interface TransactionInfo {
-	id: string;
-	/** What the charge was for (Stripe description, or a sensible fallback). */
-	description: string;
-	/** Normalized outcome driving the status badge. */
-	status: "paid" | "pending" | "failed" | "refunded";
-	/** Smallest-unit amount; negative for refunds. */
-	amount: number;
-	currency: string;
-	created: string;
-	/** "Visa ···· 4242", or null when the method isn't a card. */
-	method: string | null;
-}
+export type { TransactionInfo } from "@/lib/queries/billing";
 
-/** Maps a Stripe charge to our normalized transaction shape. */
-function toTransaction(charge: Stripe.Charge): TransactionInfo {
-	const card = charge.payment_method_details?.card;
-	const method = card
-		? `${card.brand ?? "card"} ···· ${card.last4 ?? "••••"}`
-		: null;
-	const refunded = charge.refunded || charge.amount_refunded > 0;
-	const status: TransactionInfo["status"] = refunded
-		? "refunded"
-		: charge.status === "succeeded"
-			? "paid"
-			: charge.status === "failed"
-				? "failed"
-				: "pending";
-	return {
-		id: charge.id,
-		description: charge.description ?? "Subscription payment",
-		status,
-		amount: refunded ? -charge.amount_refunded : charge.amount,
-		currency: charge.currency,
-		created: new Date(charge.created * 1000).toISOString(),
-		method,
-	};
-}
-
-/** Lists the active org's recent charges (paid / failed / refunded) for the ledger. */
-export async function listTransactions(): Promise<TransactionInfo[]> {
+/**
+ * One page of the active org's charges (paid / failed / refunded) for the ledger, newest first,
+ * through Stripe's own cursor (`queryTransactionsPage`). Every charge is reachable: this used to
+ * read `limit: 24` and nothing after it (#7493).
+ */
+export async function readTransactionsPage(
+	request: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
+): Promise<KeysetListPage<TransactionInfo, null>> {
 	const actor = await authorizeRead("manage_billing", { type: "billing" });
 	requireHostedRead();
 	const billing = await getOrgBilling(actor.orgId);
-	if (!billing?.stripeCustomerId) return [];
+	return queryTransactionsPage(billing?.stripeCustomerId ?? null, request);
+}
 
-	const charges = await getStripe().charges.list({
-		customer: billing.stripeCustomerId,
-		limit: 24,
-	});
-	return charges.data.map(toTransaction);
+/**
+ * The active org's NEWEST charges — the first page of {@link readTransactionsPage}, for an
+ * in-process caller that wants a glance rather than the ledger. The ledger itself pages.
+ */
+export async function listTransactions(): Promise<TransactionInfo[]> {
+	return (await readTransactionsPage()).rows;
 }
 
 // ── Plan history (minimal — derived, no event log yet) ────────────────────────────────────────────
@@ -490,20 +487,34 @@ function readSalesOpen(): { open: boolean } {
 // ── Inputs + router ───────────────────────────────────────────────────────────────────────────────
 
 /** The invoices list's filters, as the page builds them (`normalizeInvoiceQuery`). */
-const invoicesInput = z.object({
+const invoiceFilterFields = {
 	status: z.array(z.enum(invoiceStatus.enumValues)).max(10).optional(),
 	paidWithin: z.enum(INVOICE_PAID_WITHIN).optional(),
 	paidFrom: z.iso.datetime().optional(),
 	paidTo: z.iso.datetime().optional(),
-	limit: z.number().int().min(1).max(500).optional(),
-});
+};
+
+/**
+ * The invoices read: the filters plus the paging contract (`keysetPageInput`: an opaque cursor,
+ * a malformed one a 400; `limit` defaulting to 50 and refused above 100). The Billing page's
+ * five-row preview reads the first page with `limit: 5`; the Invoices page walks every page.
+ */
+const invoicesInput = z.object({ ...invoiceFilterFields, ...keysetPageInput("uuid") });
+
+/**
+ * The transaction history's input: only the paging contract (the cursor's id is a Stripe charge
+ * id, so text-kind). Optional as a whole, so a caller that names nothing reads the first page.
+ */
+const transactionsInput = z.object(keysetPageInput("text")).optional();
 
 /** The billing domain's read procedures (ADR 0005 D1). */
 export const billingRouter = {
 	summary: query.handler(() => getBillingSummary()),
 	paymentMethods: query.handler(() => listPaymentMethods()),
-	invoices: query.input(invoicesInput).handler(({ input }) => listInvoices(input)),
-	transactions: query.handler(() => listTransactions()),
+	invoices: query
+		.input(invoicesInput)
+		.handler(({ input: { cursor, limit, ...filters } }) => readInvoicesPage(filters, { cursor, limit })),
+	transactions: query.input(transactionsInput).handler(({ input }) => readTransactionsPage(input)),
 	planHistory: query.handler(() => getPlanHistory()),
 	liveAiPrices: query.handler(() => readLiveAiPrices()),
 	salesOpen: query.handler(() => readSalesOpen()),

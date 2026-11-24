@@ -11,6 +11,7 @@ import { InvoicesPanel } from "@/components/settings/billing/invoices-panel";
 import { getQueryClient } from "@/lib/query/client";
 import { globalHref } from "@/lib/routing";
 import { filterStateFromUrl, paramReader } from "@/lib/query/filter-url-codec";
+import type { InvoiceListParams } from "@/lib/rpc/inputs/invoices";
 import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
@@ -22,10 +23,11 @@ export const metadata = pageMetadata({
 /**
  * Invoices — the dedicated, filterable history of the org's paid invoices (#6127, ADR 0005 D1).
  *
- * Prefetches the two keys the panel reads on first paint, in-process through the read router: the
- * UNFILTERED universe (the facet counts, and the rows before the URL's filters are read into the
- * store) and the URL's FILTERED view — built by the same codec and the same normaliser the panel
- * uses, so both keys are the browser's. `loading.tsx` covers the prefetch window.
+ * Prefetches the first PAGE of the two walks the panel reads on first paint, in-process through the
+ * read router, under the same infinite keys `useKeysetList` builds (#7493): the unfiltered walk (the
+ * rows before the URL's filters are read into the store) and the URL's FILTERED walk — built by the
+ * same codec and the same normaliser the panel uses, so both keys are the browser's. Each first
+ * page carries the status facets. `loading.tsx` covers the prefetch window.
  */
 export default async function InvoicesPage({
 	params,
@@ -40,10 +42,16 @@ export default async function InvoicesPage({
 	);
 	const queryClient = getQueryClient();
 	const rpc = serverOrpc();
-	await Promise.all([
-		queryClient.prefetchQuery(rpc.billing.invoices.queryOptions({ input: {} })),
-		queryClient.prefetchQuery(rpc.billing.invoices.queryOptions({ input: filtered })),
-	]);
+	/** The first page of one filter's walk, under the infinite key `useKeysetList` reads. */
+	const firstPage = (filter: InvoiceListParams) =>
+		queryClient.prefetchInfiniteQuery(
+			rpc.billing.invoices.infiniteOptions({
+				input: (cursor: string | null) => (cursor === null ? filter : { ...filter, cursor }),
+				initialPageParam: null,
+				getNextPageParam: (last) => last.nextCursor,
+			}),
+		);
+	await Promise.all([firstPage({}), firstPage(filtered)]);
 
 	return (
 		<HydrationBoundary state={dehydrate(queryClient)}>
