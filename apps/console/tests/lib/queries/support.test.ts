@@ -23,13 +23,8 @@ vi.mock("drizzle-orm", async (importOriginal) => {
 
 import { eq, inArray, type SQL, sql as sqlTag } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
-import {
-	type CaseCursor,
-	getCaseWithThread,
-	listCasesForOwner,
-	nextCaseCursor,
-	queryCasesPage,
-} from "@/lib/queries/support";
+import { decodeKeysetCursor, type KeysetPosition } from "@/lib/queries/keyset";
+import { getCaseWithThread, listCasesForOwner, queryCasesPage } from "@/lib/queries/support";
 import { supportCases, supportMessages } from "@/lib/db/schema";
 
 /** A thenable drizzle-ish tx: each await shifts the next seeded result set. */
@@ -158,8 +153,17 @@ describe("queryCasesPage", () => {
 				{ value: "billing", label: null, count: 4 },
 			],
 		});
+		// Some case is in scope, so an empty `rows` would be the FILTERED empty.
+		expect(page.universeEmpty).toBe(false);
+		expect(page.nextCursor).toBeNull();
 		// Only the rows pass took a WHERE: the facet pass sees the RLS scope and nothing else.
 		expect(whereSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("an empty facet pass is an empty universe — the first-run empty, not a filtered one", async () => {
+		const { tx } = mockTx([[], []]);
+		const page = await queryCasesPage(tx, "owner-1", { search: "vpn" }, { limit: 50 });
+		expect(page).toEqual({ rows: [], nextCursor: null, facets: { severity: [], type: [] }, universeEmpty: true });
 	});
 
 	it("a later page carries no facets and issues no facet pass", async () => {
@@ -168,7 +172,7 @@ describe("queryCasesPage", () => {
 			limit: 50,
 			cursor: { at: "2026-11-20T10:00:00.123Z", id: "c-1" },
 		});
-		expect(page).toEqual({ rows: [{ id: "c-2" }], facets: null });
+		expect(page).toEqual({ rows: [{ id: "c-2" }], nextCursor: null, facets: null, universeEmpty: null });
 	});
 });
 
@@ -179,7 +183,7 @@ describe("queryCasesPage", () => {
 //      one row-value comparison (rendered through the real PgDialect, not inferred from spies);
 //   2. a walk over a fixture full of timestamp ties — evaluated with Postgres's row-comparison and
 //      date_trunc semantics on the PARAMETERS the builder rendered — visits every case exactly once,
-//      with the next cursor taken from each page by the real `nextCaseCursor`.
+//      following each page's opaque `nextCursor` (minted by the shared codec, lib/queries/keyset.ts).
 
 const dialect = new PgDialect();
 
@@ -189,12 +193,13 @@ interface StoredCase {
 	micros: number;
 }
 
-/** A tx stub that answers listCasesForOwner like Postgres would over `table`. */
+/** A tx stub that answers the cases rows pass like Postgres would over `table` (and the facet pass with nothing). */
 function keysetTx(table: StoredCase[]) {
 	const sqls: { where: string; params: unknown[]; orderBy: string }[] = [];
 	let where: SQL | undefined;
 	let orderBy: SQL[] = [];
 	let limit = Number.POSITIVE_INFINITY;
+	let grouped = false;
 	const truncMs = (c: StoredCase) => Math.floor(c.micros / 1000);
 	const tx: Record<string, unknown> = {};
 	Object.assign(tx, {
@@ -213,7 +218,15 @@ function keysetTx(table: StoredCase[]) {
 			limit = n;
 			return tx;
 		},
+		groupBy: () => {
+			grouped = true;
+			return tx;
+		},
 		then: (resolve: (v: unknown) => void) => {
+			if (grouped) {
+				grouped = false;
+				return resolve([]);
+			}
 			const rendered = where ? dialect.sqlToQuery(where) : { sql: "", params: [] };
 			const order = dialect.sqlToQuery(sqlJoin(orderBy)).sql;
 			sqls.push({ where: rendered.sql, params: rendered.params, orderBy: order });
@@ -252,11 +265,11 @@ function uuid(n: number): string {
 	return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 }
 
-describe("listCasesForOwner keyset paging", () => {
+describe("queryCasesPage keyset paging", () => {
 	it("orders and compares on the same (ms-truncated activity, id) key, as one row comparison", async () => {
 		const { tx, sqls } = keysetTx([]);
-		const cursor: CaseCursor = { at: "2026-11-20T10:00:00.123Z", id: uuid(1) };
-		await listCasesForOwner(tx, "owner-1", {}, { cursor, limit: 2 });
+		const cursor: KeysetPosition = { at: "2026-11-20T10:00:00.123Z", id: uuid(1) };
+		await queryCasesPage(tx, "owner-1", {}, { cursor, limit: 2 });
 		const [q] = sqls;
 		expect(q.orderBy).toBe(
 			`date_trunc('milliseconds', "support_cases"."last_message_at") desc, "support_cases"."id" desc`,
@@ -267,7 +280,7 @@ describe("listCasesForOwner keyset paging", () => {
 		expect(q.params.slice(-2)).toEqual([cursor.at, cursor.id]);
 	});
 
-	it("no page request reads every case: no cursor predicate, no limit", async () => {
+	it("the bell's unpaged read takes every case: no cursor predicate, no limit", async () => {
 		const table = Array.from({ length: 7 }, (_, i) => ({ id: uuid(i), micros: 1_000_000 * i }));
 		const { tx, sqls } = keysetTx(table);
 		const rows = await listCasesForOwner(tx, "owner-1");
@@ -290,13 +303,13 @@ describe("listCasesForOwner keyset paging", () => {
 		const { tx } = keysetTx(table);
 
 		const seen: string[] = [];
-		let cursor: CaseCursor | undefined;
+		let cursor: KeysetPosition | undefined;
 		for (let guard = 0; guard < 20; guard++) {
-			const page = await listCasesForOwner(tx, "owner-1", {}, { cursor, limit: 2 });
-			seen.push(...page.map((r) => r.id));
-			const next = nextCaseCursor(page, 2);
-			if (next === null) break;
-			cursor = next;
+			const page = await queryCasesPage(tx, "owner-1", {}, { cursor, limit: 2 });
+			seen.push(...page.rows.map((r) => r.id));
+			if (page.nextCursor === null) break;
+			cursor = decodeKeysetCursor(page.nextCursor) ?? undefined;
+			expect(cursor).toBeDefined();
 		}
 
 		expect(seen).toHaveLength(table.length);
@@ -310,20 +323,21 @@ describe("listCasesForOwner keyset paging", () => {
 	});
 });
 
-describe("nextCaseCursor", () => {
-	it("is null for a short page — the end — and the last row's key for a full one", () => {
-		const at = new Date("2026-11-20T10:00:00.123Z");
-		expect(nextCaseCursor([], 2)).toBeNull();
-		expect(nextCaseCursor([{ id: uuid(1), last_message_at: at }], 2)).toBeNull();
-		expect(
-			nextCaseCursor(
-				[
-					{ id: uuid(2), last_message_at: at },
-					{ id: uuid(1), last_message_at: at },
-				],
-				2,
-			),
-		).toEqual({ at: "2026-11-20T10:00:00.123Z", id: uuid(1) });
+describe("queryCasesPage next cursor", () => {
+	it("is exact: a last page of exactly `limit` rows says null, a page with more names its last row", async () => {
+		const base = Date.parse("2026-11-20T10:00:00.123Z") * 1000;
+		const table = [1, 2, 3, 4].map((n) => ({ id: uuid(n), micros: base + n }));
+
+		const all = await queryCasesPage(keysetTx(table).tx, "owner-1", {}, { limit: 4 });
+		expect(all.rows).toHaveLength(4);
+		expect(all.nextCursor).toBeNull();
+
+		const first = await queryCasesPage(keysetTx(table).tx, "owner-1", {}, { limit: 3 });
+		expect(first.nextCursor).not.toBeNull();
+		expect(decodeKeysetCursor(first.nextCursor ?? "")).toEqual({
+			at: "2026-11-20T10:00:00.123Z",
+			id: first.rows.at(-1)?.id,
+		});
 	});
 });
 
