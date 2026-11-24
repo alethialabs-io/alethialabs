@@ -18,7 +18,9 @@
 // Pinned here, given those lookups' answers: the ORDER — a project the org-bound lookup did not find
 // is a typed NOT_FOUND before the PDP is asked or any design is read; an environment outside the
 // project is a NOT_FOUND; a malformed id is a BAD_REQUEST that never reaches the database; a failed
-// promotions or protection read fails the page instead of reading as "none"; and no read writes.
+// active-promotion or protection read fails the page instead of reading as "none"; and no read
+// writes. And the list standard's two paged reads (LST-3 #7485): `page` (the table, in memory) and
+// `promotions` (the history, SQL keyset) — no count, a malformed cursor a BAD_REQUEST.
 
 import { createRouterClient, ORPCError } from "@orpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -232,16 +234,18 @@ describe("environments.overview", () => {
 			],
 		});
 		h.getEnvConsistency.mockRejectedValue(new Error("a deleted cloud identity"));
-		h.scopedRows.push([], []); // no promotions, no protection rules
+		h.scopedRows.push([], []); // no promotion in flight, no protection rules
 		const out = await client.overview({ project: "payments" });
 		expect(out).toMatchObject({
 			projectId: PROJECT,
 			envs: [{ id: ENV_A, name: "dev", updated_at: "2026-10-01T00:00:00.000Z" }],
 			consistency: { envs: [{ id: ENV_A, name: "dev", stage: "development" }], rows: [] },
-			promotions: [],
 			activePromotion: null,
 			protectionByEnv: {},
 		});
+		// The history is its own keyset read now; the overview carries neither it nor a list page.
+		expect(out).not.toHaveProperty("promotions");
+		expect(out).not.toHaveProperty("page");
 		expect(h.getProjectEnvironments).toHaveBeenCalledWith(PROJECT);
 	});
 
@@ -261,38 +265,7 @@ describe("environments.overview", () => {
 		expect(out).toMatchObject({ projectId: PROJECT, canManage: false, canPromote: false });
 	});
 
-	it("the filters narrow the LIST, not the environments the rest of the page reads (#6819)", async () => {
-		h.serviceRows.push([{ id: PROJECT }]);
-		const at = new Date("2026-10-01T00:00:00Z");
-		h.getProjectEnvironments.mockResolvedValue({
-			environments: [
-				{ id: ENV_A, name: "dev", stage: "development", status: "ACTIVE", is_default: true, updated_at: at },
-				{ id: ENV_B, name: "prod", stage: "production", status: "FAILED", is_default: false, updated_at: at },
-			],
-		});
-		const out = await client.overview({ project: "payments", stages: ["production"] });
-		expect(out.envs.map((e) => e.id)).toEqual([ENV_A, ENV_B]);
-		expect(out.page.rowIds).toEqual([ENV_B]);
-		expect(out.page).toMatchObject({ resultCount: 1, total: 2 });
-		// The facet pass never saw the filter: both stages keep their counts.
-		expect(out.page.facets.stages).toEqual([
-			{ value: "development", label: null, count: 1 },
-			{ value: "staging", label: null, count: 0 },
-			{ value: "production", label: null, count: 1 },
-		]);
-	});
-
-	it("a pristine read lists every environment", async () => {
-		h.serviceRows.push([{ id: PROJECT }]);
-		const at = new Date("2026-10-01T00:00:00Z");
-		h.getProjectEnvironments.mockResolvedValue({
-			environments: [{ id: ENV_A, name: "dev", stage: "development", status: "ACTIVE", is_default: true, updated_at: at }],
-		});
-		const out = await client.overview({ project: "payments" });
-		expect(out.page).toMatchObject({ rowIds: [ENV_A], resultCount: 1, total: 1 });
-	});
-
-	it("a failed promotions read fails the page — it never reads as 'no promotion in flight'", async () => {
+	it("a failed active-promotion read fails the page — it never reads as 'no promotion in flight'", async () => {
 		h.serviceRows.push([{ id: PROJECT }]);
 		h.scopedRows.push(new Error("promotions read failed"), []);
 		await expect(client.overview({ project: "payments" })).rejects.toBeTruthy();
@@ -308,5 +281,96 @@ describe("environments.overview", () => {
 		h.serviceRows.push([{ id: PROJECT }]);
 		h.getProjectEnvironments.mockRejectedValue(new Error("database down"));
 		await expect(client.overview({ project: "payments" })).rejects.toBeTruthy();
+	});
+});
+
+describe("environments.page — the table, one keyset page at a time (LST-3 #7485)", () => {
+	const at = (day: number) => new Date(`2026-10-0${day}T00:00:00Z`);
+	const ENVS = [
+		{ id: ENV_A, name: "dev", stage: "development", status: "ACTIVE", is_default: true, created_at: at(1), updated_at: at(1) },
+		{ id: ENV_B, name: "prod", stage: "production", status: "FAILED", is_default: false, created_at: at(2), updated_at: at(2) },
+	];
+
+	it("a slug with no project in the ADDRESSED org is NOT_FOUND", async () => {
+		h.serviceRows.push([]);
+		expect(await codeOf(client.page({ project: "payments" }))).toBe("NOT_FOUND");
+		expect(h.getProjectEnvironments).not.toHaveBeenCalled();
+	});
+
+	it("the filters narrow the rows, not the facets; newest first; no count", async () => {
+		h.serviceRows.push([{ id: PROJECT }]);
+		h.getProjectEnvironments.mockResolvedValue({ environments: ENVS });
+		const out = await client.page({ project: "payments", stages: ["production"] });
+		expect(out.rows.map((e) => e.id)).toEqual([ENV_B]);
+		expect(out).toMatchObject({ nextCursor: null, universeEmpty: false });
+		expect(out).not.toHaveProperty("total");
+		// The facet pass never saw the filter: both stages keep their counts.
+		expect(out.facets?.stages).toEqual([
+			{ value: "development", label: null, count: 1 },
+			{ value: "staging", label: null, count: 0 },
+			{ value: "production", label: null, count: 1 },
+		]);
+		expect(h.authorizeRead).toHaveBeenCalledWith("view", { type: "project", id: PROJECT });
+	});
+
+	it("pages: a page of one hands back the cursor, and the next page is the rest, without facets", async () => {
+		h.serviceRows.push([{ id: PROJECT }], [{ id: PROJECT }]);
+		h.getProjectEnvironments.mockResolvedValue({ environments: ENVS });
+		const first = await client.page({ project: "payments", limit: 1 });
+		expect(first.rows.map((e) => e.id)).toEqual([ENV_B]);
+		if (first.nextCursor === null) throw new Error("expected a next page");
+		const second = await client.page({ project: "payments", limit: 1, cursor: first.nextCursor });
+		expect(second.rows.map((e) => e.id)).toEqual([ENV_A]);
+		expect(second).toMatchObject({ nextCursor: null, facets: null, universeEmpty: null });
+	});
+
+	it("a project with no environment is universeEmpty — the first-run state, not 'no match'", async () => {
+		h.serviceRows.push([{ id: PROJECT }]);
+		const out = await client.page({ project: "payments", search: "x" });
+		expect(out).toMatchObject({ rows: [], universeEmpty: true });
+	});
+
+	it("a malformed cursor is a BAD_REQUEST that never reaches the database", async () => {
+		expect(await codeOf(client.page({ project: "payments", cursor: "not-a-cursor" }))).toBe("BAD_REQUEST");
+		expect(h.selects).toBe(0);
+	});
+});
+
+describe("environments.promotions — the history, one SQL keyset page at a time (LST-3 #7485)", () => {
+	const row = (n: number) => ({
+		id: `00000000-0000-4000-8000-00000000000${n}`,
+		source_environment_id: ENV_A,
+		target_environment_id: ENV_B,
+		status: "SUCCEEDED",
+		error_message: null,
+		created_at: new Date(`2026-11-0${n}T00:00:00Z`),
+	});
+
+	it("a slug with no project in the ADDRESSED org is NOT_FOUND, and the PDP is never asked", async () => {
+		h.serviceRows.push([]);
+		expect(await codeOf(client.promotions({ project: "payments" }))).toBe("NOT_FOUND");
+		expect(h.authorizeRead).not.toHaveBeenCalled();
+	});
+
+	it("answers one page for the resolved project, gated on view, with ISO instants and no count", async () => {
+		h.serviceRows.push([{ id: PROJECT }]);
+		h.scopedRows.push([row(3), row(2), row(1)]);
+		const out = await client.promotions({ project: "payments", limit: 2 });
+		expect(out.rows.map((p) => p.created_at)).toEqual(["2026-11-03T00:00:00.000Z", "2026-11-02T00:00:00.000Z"]);
+		expect(out.nextCursor).not.toBeNull();
+		expect(out).toMatchObject({ facets: null, universeEmpty: false });
+		expect(h.authorizeRead).toHaveBeenCalledWith("view", { type: "project", id: PROJECT });
+	});
+
+	it("a PDP refusal is a typed FORBIDDEN", async () => {
+		h.serviceRows.push([{ id: PROJECT }]);
+		h.authorizeRead.mockRejectedValue(new ForbiddenError("view", { type: "project", id: PROJECT }));
+		expect(await codeOf(client.promotions({ project: "payments" }))).toBe("FORBIDDEN");
+	});
+
+	it("a malformed cursor or an oversized limit is a BAD_REQUEST that never reaches the database", async () => {
+		expect(await codeOf(client.promotions({ project: "payments", cursor: "nope" }))).toBe("BAD_REQUEST");
+		expect(await codeOf(client.promotions({ project: "payments", limit: 101 }))).toBe("BAD_REQUEST");
+		expect(h.selects).toBe(0);
 	});
 });
