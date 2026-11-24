@@ -1,0 +1,14 @@
+2026-11-23T19:17:33Z  [fetch] resolving the backup
+2026-11-23T19:17:39Z  [fetch] downloading daily/20261123T144753Z and the newest tombstone export
+2026-11-23T19:17:40Z  [verify] checking sha256 of every file against the manifest
+2026-11-23T19:17:40Z  [decrypt] decrypting with the age identity
+2026-11-23T19:17:40Z  [datastores] starting postgres and seaweedfs as project alethia-drill (image a03ee4d5daa4bb6f26b1938dce109a67b70936ff)
+2026-11-23T19:19:11Z  [restore] pg_restore into an empty database
+2026-11-23T19:19:15Z  [restore] restored 149 tables
+2026-11-23T19:19:15Z  [restore] loading buckets into seaweedfs
+2026-11-23T19:19:16Z  [migrate] running the migrate one-shot
+2026-11-23T19:19:18Z  [tombstones] merging tombstone exports
+2026-11-23T19:19:19Z  [tombstones] replaying every tombstone before the console serves
+2026-11-23T19:19:22Z  [tombstones] replay: {"mode":"apply","tombstones":0,"replayed":0,"nothingToReplay":0,"rowsErased":0,"rowsPseudonymized":0,"remaining":0}
+2026-11-23T19:19:24Z  [serve] starting the console
+2026-11-23T19:19:31Z  [serve] console healthy after 159s
