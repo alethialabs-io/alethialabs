@@ -31,7 +31,8 @@ import {
 import { jobVisibleTo } from "@/lib/jobs/visibility";
 import { latestReleaseVersion, type ManagedRunnerRow, managedRunnerRowsForProvider } from "@/lib/fleet/queue";
 import { jobMinutesByProvider, provisionedHoursByProvider, queryProvisionedHours } from "@/lib/queries/runner-usage";
-import { type RunnersPage, type RunnersQuery, runnersPage } from "@/lib/queries/runners";
+import { KEYSET_DEFAULT_LIMIT, type KeysetPageRequest, keysetPageInput } from "@/lib/queries/keyset";
+import { queryRunnersPage, type RunnersListPage, type RunnersQuery } from "@/lib/queries/runners";
 import { RUNNER_DEPLOY_PROVIDERS } from "@/lib/runners/deploy-providers";
 import { query } from "@/lib/rpc/base";
 
@@ -100,6 +101,8 @@ const RUNNER_COLUMNS = {
 	location: runners.location,
 	is_default: runners.is_default,
 	org_id: runners.org_id,
+	/** The grid's keyset sort key (#7484) — read for the order only, never put on the view. */
+	created_at: runners.created_at,
 	/** A cloud identity AND a recorded deploy config: UPDATE/DESTROY can act on the runner in place. */
 	in_place: sql<boolean>`(${runners.cloud_identity_id} is not null and coalesce(jsonb_typeof(${runners.metadata} -> 'deploy_config') = 'object', false))`,
 	/** The VM a managed runner runs on (set at bootstrap); null when none is recorded. */
@@ -117,6 +120,7 @@ interface SelectedRunner {
 		| "supported_providers"
 		| "status"
 		| "last_heartbeat"
+		| "created_at"
 		| "version"
 		| "location"
 		| "is_default"
@@ -291,21 +295,34 @@ async function readManagedRunnerHours(): Promise<Map<string, number>> {
 	return new Map(rows.map((r) => [r.runner_id, r.provisioned_hours]));
 }
 
+/** A runner view with the instant it was created — the grid's keyset sort key, kept off the view. */
+interface KeyedRunnerView {
+	view: RunnerView;
+	createdAt: Date;
+}
+
 /**
- * Every runner the actor can see, as views: the org's own (RLS path) then the platform's managed
- * fleet (service path, `[]` on hosted) — disjoint by construction — each with the job in flight on
- * it. The job overlay used to be joined in the browser from the org's WHOLE job history.
+ * Every runner the actor can see, as views each keyed by its `created_at`: the org's own (RLS
+ * path) then the platform's managed fleet (service path, `[]` on hosted) — disjoint by
+ * construction — each with the job in flight on it. The job overlay used to be joined in the
+ * browser from the org's WHOLE job history.
  */
-async function readRunnerUniverse(): Promise<RunnerView[]> {
+async function readKeyedRunnerUniverse(): Promise<KeyedRunnerView[]> {
 	const [own, managed, hours, active] = await Promise.all([
 		readOwnRunners(),
 		readManagedRunners(),
 		readManagedRunnerHours(),
 		readActiveRunnerJobs(),
 	]);
-	return [...own.rows, ...managed].map((r) =>
-		toRunnerView(r, own.actor, hours.get(r.runner.id) ?? null, active.get(r.runner.id) ?? null),
-	);
+	return [...own.rows, ...managed].map((r) => ({
+		view: toRunnerView(r, own.actor, hours.get(r.runner.id) ?? null, active.get(r.runner.id) ?? null),
+		createdAt: r.runner.created_at,
+	}));
+}
+
+/** Every runner the actor can see, as views (see {@link readKeyedRunnerUniverse}). */
+async function readRunnerUniverse(): Promise<RunnerView[]> {
+	return (await readKeyedRunnerUniverse()).map((k) => k.view);
 }
 
 /** How many releases the Versions changelog lists. */
@@ -335,13 +352,30 @@ export async function readRunnersData(): Promise<RunnersData> {
 	return { runners: all, latestRelease: releases[0] ?? null, releases };
 }
 
+/** The `runners.page` input once validated: the filters plus a decoded cursor and a page size. */
+export type RunnersPageInput = RunnersQuery & Partial<KeysetPageRequest>;
+
 /**
- * The runner grid's PAGE read (#4890): the universe narrowed by `q`, plus cloud/region/version facet
- * counts over every runner the actor can see — the console filter standard's steps 5 + 6. The
- * narrowing and the facet pass are `runnersPage`'s (lib/queries/runners.ts).
+ * The runner grid's PAGE read (#4890, keyset since #7484): one page of the universe narrowed by
+ * the query, newest first, plus — on the first page — cloud/region/version facet counts over every
+ * runner the actor can see and whether there are any at all. The narrowing, the facet pass and the
+ * page cut are `queryRunnersPage`'s (lib/queries/runners.ts); this composes the universe it pages.
+ *
+ * The universe is composed in memory (two reads under two authorization models), so it is paged in
+ * memory too — the list standard's arrangement for a composed universe — and only the page is sent.
  */
-export async function readRunnersPage(q: RunnersQuery): Promise<RunnersPage<RunnerView>> {
-	return runnersPage(await readRunnerUniverse(), q);
+export async function readRunnersPage(input: RunnersPageInput): Promise<RunnersListPage<RunnerView>> {
+	const { cursor, limit = KEYSET_DEFAULT_LIMIT, ...query } = input;
+	const keyed = await readKeyedRunnerUniverse();
+	// Built from the same array the views come from, so every view has its instant; the epoch
+	// fallback is unreachable and exists only because a Map lookup is typed as possibly missing.
+	const createdAt = new Map(keyed.map((k) => [k.view.id, k.createdAt]));
+	return queryRunnersPage(
+		keyed.map((k) => k.view),
+		query,
+		{ cursor, limit },
+		(r) => ({ at: createdAt.get(r.id) ?? new Date(0), id: r.id }),
+	);
 }
 
 /** A runner release by version, or null (the release-notes popover). */
@@ -700,7 +734,11 @@ export async function readFleetEconomicsForManager(): Promise<FleetEconomics | n
 
 const facet = z.array(z.string().min(1).max(200)).max(200).optional();
 
-/** The grid's normalized filter query on the wire — `normalizeRunnersQuery()`'s output. */
+/**
+ * The grid's normalized filter query on the wire — `normalizeRunnersQuery()`'s output — plus the
+ * keyset paging fields: an opaque cursor (a malformed one is a 400) and a `limit` that defaults to
+ * 50 and is refused above 100.
+ */
 const runnersPageInput = z.object({
 	search: z.string().max(200).optional(),
 	clouds: facet,
@@ -708,6 +746,7 @@ const runnersPageInput = z.object({
 	operators: facet,
 	regions: facet,
 	versions: facet,
+	...keysetPageInput("uuid"),
 });
 
 const releaseNotesInput = z.object({ version: z.string().min(1).max(100) });
@@ -716,7 +755,8 @@ const releaseNotesInput = z.object({ version: z.string().min(1).max(100) });
  * The runners domain's reads (ADR 0005 D1, #6123).
  *
  * - `list`: every runner the actor can see, the latest release and the changelog.
- * - `page`: the grid — the universe narrowed by the URL's filters, facets over all of it.
+ * - `page`: the grid — one keyset page of the universe narrowed by the URL's filters, facets over
+ *   all of it on the first page.
  * - `fleet`: the warm pools (self-managed only; empty on hosted).
  * - `fleetEconomics`: the pools' month-to-date cost and utilization (managers only; null otherwise).
  * - `releaseNotes`: one release, when a version popover opens.

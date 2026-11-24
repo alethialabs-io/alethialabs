@@ -24,7 +24,10 @@ vi.mock("@/lib/authz/guard", () => ({ currentActor: async () => ({ userId: "u1",
 vi.mock("@/lib/authz/entitlements", () => ({ getEntitlements: () => ({ byoRunners: h.byoRunners }) }));
 vi.mock("@/lib/billing/config", () => ({ deploymentMode: () => h.mode }));
 vi.mock("@/lib/rpc/server", () => {
-	/** A procedure stand-in whose queryOptions records which read was prefetched. */
+	/**
+	 * A procedure stand-in whose queryOptions — and infiniteOptions, which the grid's first keyset
+	 * page is prefetched through (#7484) — record which read was prefetched.
+	 */
 	const proc = (name: string) => ({
 		queryOptions: (opts?: { input?: unknown }) => ({
 			queryKey: [name, opts?.input ?? null],
@@ -32,6 +35,15 @@ vi.mock("@/lib/rpc/server", () => {
 				h.prefetched.push(name);
 				return {};
 			},
+		}),
+		infiniteOptions: (opts: { input: (cursor: null) => unknown }) => ({
+			queryKey: [name, "infinite", opts.input(null)],
+			queryFn: async () => {
+				h.prefetched.push(name);
+				return { rows: [], nextCursor: null, facets: null, universeEmpty: null };
+			},
+			initialPageParam: null,
+			getNextPageParam: () => undefined,
 		}),
 	});
 	const rpc = {
