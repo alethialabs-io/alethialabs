@@ -3,8 +3,6 @@ title: Probe Jobs
 description: How the runner executes PROBE_CLUSTER jobs — a bounded, read-only liveness dial of the cluster API server that mutates nothing.
 ---
 
-# Probe Jobs
-
 `PROBE_CLUSTER` jobs answer one question: **is the environment's cluster reachable right now?**
 This is the live half of day-2 monitoring, alongside `DETECT_DRIFT`. A probe reads the
 environment's OpenTofu outputs in-process, acquires the cluster kubeconfig, and dials the

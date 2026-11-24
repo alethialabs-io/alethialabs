@@ -3,8 +3,6 @@ title: Isolated Execution
 description: When Alethia runs your bring-your-own OpenTofu/Terraform or Helm on the managed fleet, each job runs in a per-job sealed sandbox — no shared secrets, no cloud metadata, default-deny domain-allowlisted egress.
 ---
 
-# Isolated Execution
-
 Zero-credential connections control **who** can touch a cloud. Isolated execution controls what the
 **provisioning code itself** can do once it runs. When Alethia runs *your* code — bring-your-own OpenTofu/Terraform
 providers, `external` data sources, Helm charts and their hooks — on the **managed fleet**, that code is

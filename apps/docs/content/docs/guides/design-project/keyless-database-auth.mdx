@@ -3,8 +3,6 @@ title: Keyless Database Auth
 description: Bind a service to a PostgreSQL or MySQL database that authenticates with short-lived cloud IAM tokens instead of a password — no secret in the cluster, nothing to rotate.
 ---
 
-# Keyless Database Auth
-
 When you turn on **IAM Auth** on a database, a service bound to it connects using its own **cloud
 identity** and a **short-lived token** — not a stored password. No database password sits in the
 cluster to leak or rotate. The workload proves who it is to the cloud, and the cloud hands the
