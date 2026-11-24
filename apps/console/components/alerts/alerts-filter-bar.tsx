@@ -6,8 +6,8 @@
 // (lib/query/README.md → "Server-side filters"): FilterBar is the row, FilterSearch the
 // free-text input, FilterChipGroup the always-visible low-cardinality facets, FacetFilter
 // the searchable popover for the transport list, MultiCombobox the entity list, and
-// FilterBarReset the mono "Reset · N". No Select, and no "N of M" prose — result counts
-// live in the count pill beside each section heading, rendered by alerts-page.tsx.
+// FilterBarReset the mono "Reset · N". No Select, and no result count anywhere — no "N of M"
+// prose and no pill beside the section heading: totals exist only as facet option counts (#7489).
 //
 // These are presentational over the page's zustand stores, exactly as
 // components/evidence/evidence-filter-bar.tsx is: facet options + counts arrive as props
@@ -29,8 +29,8 @@ import {
 	type FacetCount,
 	type PolicyFilters,
 } from "@/components/alerts/alerts-query";
+import type { ActivityView } from "@/components/alerts/activity-view";
 import type {
-	ActivityView,
 	ChannelsView,
 	PoliciesView,
 } from "@/components/alerts/alerts-filters";
