@@ -83,6 +83,26 @@ jobs:
             echo "tag=$TAG"
           } >> "$GITHUB_OUTPUT"
 
+  # release-please (v17) finds a component's commits by walking main newest-first in commit-date
+  # order and cutting at the component's release commit by POSITION, not ancestry. A promotion
+  # merges a pinned dev commit, so a dev commit committed BEFORE a release PR merged but promoted
+  # AFTER it sorts below that release commit and is never seen — not in the changelog, not in the
+  # bump, and when it is the component's only change, no release PR opens at all ("No commits for
+  # path"). guard-merge.sh refuses a release-PR merge while dev holds such commits; this job is the
+  # alarm for whatever got past it. It goes red naming each hidden commit — the remedy is in
+  # docs/releases/README.md, "A release can miss a commit".
+  release-cursor:
+    needs: release-please
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the whole graph and every tag: the walk and the ancestry are both git's
+      - name: Every component commit on main is visible to release-please
+        run: bash scripts/release-cursor.sh lost HEAD
+
   release-runner:
     needs: release-please
     if: needs.release-please.outputs.runner-released == 'true'
