@@ -565,16 +565,20 @@ jobs:
       # and HEAD^1 the base it was merged onto, so the diff is exactly the PR's own changes.
       # Everything else — a push, the queue build, a dispatch, a root-config change — runs unfiltered.
       - name: Type-check + lint (affected workspace projects on a PR; all of them otherwise)
+        # The console's `tsc --noEmit` outgrew Node's default heap and aborted with "JavaScript heap
+        # out of memory" (exit 134) on several PRs on 2026-11-24. Each task gets a 6 GiB heap and turbo
+        # runs at most two at once, so two tsc/eslint processes fit the 16 GiB ubuntu-latest runner.
         env:
           TS_FILTER: ${{ needs.detect-changes.outputs.ts_filter }}
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           set -euo pipefail
           if [ "$TS_FILTER" = affected ]; then
             echo "affected-only: turbo --filter=...[HEAD^1]"
-            pnpm exec turbo run check-types lint --filter='...[HEAD^1]'
+            pnpm exec turbo run check-types lint --concurrency=2 --filter='...[HEAD^1]'
           else
             echo "full run (ts_filter='${TS_FILTER}')"
-            pnpm exec turbo run check-types lint
+            pnpm exec turbo run check-types lint --concurrency=2
           fi
 
   ts-test:
@@ -2041,6 +2045,8 @@ jobs:
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:
           ALETHIA_EDITION: community
+          # Same heap as the TypeScript job's type-check: the console's tsc outgrew Node's default.
+          NODE_OPTIONS: --max-old-space-size=6144
         run: pnpm -C apps/console run check-types
       - name: Installed dependency licence inventory has no unknown metadata
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
