@@ -9,6 +9,7 @@ import { getPdp } from "@/lib/authz";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { queryActivityPage } from "@/lib/queries/activity";
+import { KEYSET_DEFAULT_LIMIT, type KeysetPageRequest, keysetPageInput } from "@/lib/queries/keyset";
 import { query } from "@/lib/rpc/base";
 import { JOBS_RANGE_PRESETS } from "@/lib/rpc/inputs/jobs";
 
@@ -26,16 +27,16 @@ import { JOBS_RANGE_PRESETS } from "@/lib/rpc/inputs/jobs";
 // and `queryActivityPage` puts `org_id = actor.orgId` on every pass (the rows and the facets). The
 // ids in the input — actors, resources, a project — are FILTERS inside that org; none widens it.
 
-/** The page size the feed walks the id-descending cursor in. */
-const PAGE_SIZE = 50;
-
 /** A short list of ids or tokens, as the filter bar sends them. */
 const idList = z.array(z.string().uuid()).max(200).optional();
 
-/** The feed's query (`activityQueryFrom()`), plus the infinite query's cursor. */
+/**
+ * The feed's query (`activityQueryFrom()`), plus the paging half of the shared keyset contract: an
+ * opaque cursor over `(ts, bigint id)` — a malformed one is a 400, never page one — and a `limit`
+ * that defaults to 50 and is refused above 100.
+ */
 const activityPageInput = z.object({
-	cursor: z.number().int().positive().nullable().optional(),
-	limit: z.number().int().min(1).max(100).optional(),
+	...keysetPageInput("integer"),
 	projectId: z.string().uuid().optional(),
 	within: z.enum(JOBS_RANGE_PRESETS).optional(),
 	from: z.string().datetime({ offset: true }).optional(),
@@ -48,13 +49,16 @@ const activityPageInput = z.object({
 });
 
 /**
- * A filtered, cursor-paginated page of the addressed org's Activity log — every recorded action
- * and denial — newest first (by insertion id), with the filter bar's facet counts on the first
- * page. Gated on `activity:view_activity`.
+ * A filtered, keyset-paged page of the addressed org's Activity log — every recorded action and
+ * denial — newest first (by time, the id breaking ties), with the filter bar's facet counts and
+ * the universe-empty answer on the first page. Gated on `activity:view_activity`.
  */
-export async function readActivityPage(input: ActivityQuery): Promise<ActivityPage> {
+export async function readActivityPage(
+	filter: ActivityQuery,
+	page: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
+): Promise<ActivityPage> {
 	const actor = await authorize("view_activity", { type: "activity" });
-	return queryActivityPage(actor.orgId, input, PAGE_SIZE);
+	return queryActivityPage(actor.orgId, filter, page);
 }
 
 /** What the caller may do with the Activity log, and whether the org's plan includes export. */
@@ -83,6 +87,8 @@ export async function readActivityPermissions(): Promise<ActivityPermissions> {
 
 /** The Activity reads (#6129). */
 export const activityRouter = {
-	page: query.input(activityPageInput).handler(({ input }) => readActivityPage(input)),
+	page: query.input(activityPageInput).handler(({ input: { cursor, limit, ...filter } }) =>
+		readActivityPage(filter, { cursor, limit }),
+	),
 	permissions: query.handler(() => readActivityPermissions()),
 };
