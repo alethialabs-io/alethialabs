@@ -141,6 +141,20 @@ type projectJobRun struct {
 	DryRun bool
 	// Tree is the destroy tree a cascade already showed the person, carried into the result.
 	Tree []api.DestroyTreeNode
+	// Approval makes a DEPLOY or DESTROY approval-aware: nil passes a refusal for want of an
+	// approval through unchanged.
+	Approval *projectJobApproval
+}
+
+// projectJobApproval is how a deploy or a destroy obtains the approval the control plane asks for
+// (approve.go): who to ask, which plan the approval covers, and how long to wait for it.
+type projectJobApproval struct {
+	Client approvalClient
+	// Operation is api.ApprovalOperationDeploy or api.ApprovalOperationDestroy.
+	Operation string
+	// PlanJobID names the plan the approval covers. It is called only once an approval is needed.
+	PlanJobID func() (string, error)
+	Wait      approvalWait
 }
 
 // runProjectJob queues the job a project command resolved, follows it when asked to, and returns
@@ -171,7 +185,7 @@ func runProjectJob(ctx context.Context, p *Printer, c projectJobClient, run proj
 		return result, nil
 	}
 
-	resp, err := c.QueueJobFull(run.Params)
+	resp, err := queueProjectJob(ctx, p, c, run)
 	if err != nil {
 		return result, err
 	}
@@ -203,6 +217,21 @@ func runProjectJob(ctx context.Context, p *Printer, c projectJobClient, run proj
 	}
 	result.Object = obj
 	return result, nil
+}
+
+// queueProjectJob sends the resolved request. An approval-aware run that the control plane refuses
+// for want of a person's approval obtains one and sends the same request again with it.
+func queueProjectJob(ctx context.Context, p *Printer, c projectJobClient, run projectJobRun) (*api.QueueJobResponse, error) {
+	if run.Approval == nil {
+		return c.QueueJobFull(run.Params)
+	}
+	a := run.Approval
+	return queueWithApproval(ctx, p, a.Client, a.Operation, a.PlanJobID, a.Wait,
+		func(approvalID string) (*api.QueueJobResponse, error) {
+			params := run.Params
+			params.ApprovalID = approvalID
+			return c.QueueJobFull(params)
+		})
 }
 
 // queuedJobEntries is every job one request queued, in the order they run. A cascading destroy

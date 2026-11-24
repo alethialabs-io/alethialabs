@@ -30,6 +30,9 @@ var (
 	// on the target's Fabric, tenants first. Without it the server refuses to destroy an environment
 	// that owns a cluster other live environments still run in.
 	projectDestroyCascade bool
+	// projectDestroyNoWait is --no-wait: when the destroy needs a person's approval, print where to
+	// give it and exit 9 instead of waiting.
+	projectDestroyNoWait bool
 )
 
 // destroyTreeClient is what `project destroy --cascade` needs from the control plane before it
@@ -51,7 +54,15 @@ input and prints the request without sending it.
 An environment placed as "dedicated" owns its cluster. While other environments (namespace or
 vcluster placements) are still placed on that cluster, destroying it is refused, naming them:
 destroy them first, or pass --cascade. --cascade prints every environment it will destroy, in
-order — the tenants first, the cluster's owner last — and asks before it queues anything.`,
+order — the tenants first, the cluster's owner last — and asks before it queues anything.
+
+A destroy from the CLI needs a person's approval, given against the plan the environment's current
+state was deployed from. The control plane says so when the destroy is sent; the command then
+asks for an approval, prints the console page where a person approves it and the plan digest that
+page must show, and waits for the decision before it queues the destroy. --no-wait (and agent
+mode) prints the page and exits 9 instead; run the same destroy again once it is approved. A
+rejected approval exits 5, an expired or superseded one 7. A --cascade destroy is never approved
+this way: start it from the console.`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := runProjectDestroy(cmd); err != nil {
@@ -66,6 +77,8 @@ type destroyClient interface {
 	projectJobResolver
 	projectJobClient
 	destroyTreeClient
+	jobLister
+	approvalClient
 }
 
 // runProjectDestroy resolves, confirms and queues one DESTROY, or a cascade of them.
@@ -90,6 +103,16 @@ func destroyProject(cmd *cobra.Command, client destroyClient, token string) erro
 	}
 	params.Cascade = projectDestroyCascade
 	run := projectJobRun{Params: params, Wait: projectDestroyWait, DryRun: cmdmeta.DryRunRequested(cmd)}
+	if !projectDestroyCascade {
+		// A cascade is refused for want of an approval in any case: one approval covers one
+		// environment, so the control plane's refusal is passed through as it is.
+		run.Approval = &projectJobApproval{
+			Client:    client,
+			Operation: api.ApprovalOperationDestroy,
+			PlanJobID: func() (string, error) { return appliedPlanJobID(client, params.ConfigurationID, params.EnvironmentID) },
+			Wait:      approvalWait{NoWait: projectDestroyNoWait, Timeout: projectDestroyWait.Timeout},
+		}
+	}
 
 	title := "Destroy this project environment?"
 	description := "This tears down all of its cloud resources. It cannot be undone."
@@ -117,6 +140,49 @@ func destroyProject(cmd *cobra.Command, client destroyClient, token string) erro
 	}
 
 	return destroyQueueError(finishProjectJob(cmd, client, run), projectDestroyCascade)
+}
+
+// appliedPlanJobID names the plan an environment's current state was deployed from, which is the
+// plan a destroy's approval is given against: the plan of the environment's most recent successful
+// DEPLOY. envID empty is the project's default environment.
+//
+// The jobs list does not carry a job's environment, so a DEPLOY is matched on the environment id its
+// frozen config snapshot records. Only the most recent page of jobs is read; a deploy older than
+// that is not found, and the refusal says where the destroy can be started instead.
+func appliedPlanJobID(c interface {
+	envLister
+	jobLister
+}, projectID, envID string) (string, error) {
+	if envID == "" {
+		envs, err := c.ListEnvironments(projectID)
+		if err != nil {
+			return "", fmt.Errorf("find the environment this destroy needs an approval for: %w", err)
+		}
+		for _, e := range envs {
+			if e.IsDefault {
+				envID = e.ID
+			}
+		}
+	}
+	deploys, err := narrowJobs(c, jobSelector{
+		jobType: string(types.JobTypeDeploy), status: string(types.JobStatusSuccess), project: projectID,
+	}, jobScope{})
+	if err != nil {
+		return "", err
+	}
+	// Newest first, and only the newest counts: it is the deploy the environment's state came from.
+	// One with no plan (a system re-apply) cannot be approved against, so the search stops there.
+	for _, d := range deploys {
+		if envID != "" && d.ConfigSnapshot["environment_id"] == envID {
+			if d.PlanJobID != "" {
+				return d.PlanJobID, nil
+			}
+			break
+		}
+	}
+	return "", refusal(clierr.CodeApprovalRequired, "destroy it from the console, where your click is the approval",
+		"this destroy needs a person's approval, given against the plan the environment was deployed from, "+
+			"and no successful deploy of it with a plan is among the last %d jobs", jobSelectorPageSize)
 }
 
 // projectConfirmName is what the person types to confirm a destroy: the project's name, or its id
@@ -189,4 +255,5 @@ func init() {
 	addProjectWaitFlags(projectDestroyCmd, &projectDestroyWait)
 	addDryRunFlag(projectDestroyCmd)
 	projectDestroyCmd.Flags().BoolVar(&projectDestroyCascade, "cascade", false, "Also destroy the environments placed on this environment's cluster, tenants first; prints them all and confirms first")
+	addApprovalNoWaitFlag(projectDestroyCmd, &projectDestroyNoWait)
 }

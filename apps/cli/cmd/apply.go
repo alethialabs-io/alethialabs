@@ -72,7 +72,7 @@ var applySpec = spec.Spec{
 			Description: "Apply without asking (required with --no-input)",
 			Flag:        "yes", Shorthand: "y", Bool: true, Page: docsPlanApplyPage},
 		{Command: "alethia apply", Key: "no-wait", Title: "Wait",
-			Description: "Queue the deploys and return instead of waiting for them",
+			Description: "Queue the deploys and return instead of waiting for them or for a person's approval (exits 9 when one is needed)",
 			Flag:        "no-wait", Bool: true, Page: docsPlanApplyPage},
 		{Command: "alethia apply", Key: applyKeyTimeout, Title: "Timeout",
 			Description: applyTimeoutDescription,
@@ -120,8 +120,9 @@ var applyCmd = &cobra.Command{
 environments, their components and add-ons), show the plan, and deploy every environment.
 
 Use it to bring a project to what the file says. It asks once before it writes anything; pass
---yes to skip the question, which a script or an agent must. Then it queues one deploy for each
-environment, in file order, and waits for them. --no-wait returns as soon as the deploys are
+--yes to skip the question, which a script or an agent must. Then it deploys each environment, in
+file order, and waits for the deploys. A deploy applies a reviewed plan, so each environment is
+previewed first and its change counts printed; the deploy then applies exactly that plan. --no-wait returns as soon as the deploys are
 queued, and --timeout bounds the wait: when it passes, the deploys keep running and the command
 exits 12 with the job to follow.
 
@@ -133,13 +134,20 @@ apply never removes anything. An environment, a component or an add-on that is o
 not in the file is unmanaged: it is left as it is. Running apply again on a project that already
 matches the file changes nothing and deploys again.
 
+A deploy from the CLI needs a person's approval of its plan. The command asks for one, prints the
+console page where a person approves it and the plan digest that page must show, and waits for
+the decision. --no-wait (and agent mode) asks for every environment's approval, waits for none,
+and exits 9 with the pages and the "alethia project deploy" line that deploys each plan once it
+is approved.
+
 The plan is written to stdout and progress to stderr. With --output json, stdout is one result
 object that names every job; a deploy that is held for an approval says so, with the console
 page where a person approves it.
 
 Exit codes: 0 done, 1 the file does not exist or is not valid, 2 the file cannot be applied as
 written (the same code "alethia plan" gives it), 9 nobody could confirm and --yes was not
-passed, 12 the wait timed out, 13 a deploy failed. Every other code is in the CLI's exit table.`,
+passed, or a deploy waits for a person's approval, 12 the wait timed out, 13 a preview or a deploy
+failed. Every other code is in the CLI's exit table.`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, _ []string) {
 		token, err := getAuthToken()
@@ -351,6 +359,8 @@ type applyClient interface {
 	EnableAddon(p api.EnableAddonParams) error
 	// Whoami names the organization, for the console page of a deploy that waits for an approval.
 	Whoami() (*api.WhoAmI, error)
+	// A deploy from the CLI needs a person's approval of its plan (approve.go).
+	approvalClient
 }
 
 // planFromFile reads, normalises and validates the manifest, then computes the plan.
@@ -907,16 +917,31 @@ type deployRun struct {
 	wait     waitFlags
 }
 
-// deployEnvironments queues one DEPLOY per environment the plan deploys, in file order, and
-// follows each to its end when the run waits. Each job is added to result as soon as it is queued,
-// so a wait that fails or times out still leaves the job named.
+// deployEnvironments deploys every environment the plan deploys, in file order, and follows each
+// to its end when the run waits. Each job is added to result as soon as it is queued, so a wait
+// that fails or times out still leaves the job named.
+//
+// A deploy applies a reviewed plan (decision M23), so each environment is previewed first: a PLAN
+// job for the same environment and runner, waited for even under --no-wait, whose change counts are
+// printed on stderr. The DEPLOY then names that plan. When the control plane answers that the
+// deploy needs a person's approval, an approval is asked for the plan and waited for (approve.go);
+// under --no-wait or in agent mode each environment's approval is asked for, nothing waits, and the
+// run ends exit 9 naming every approval and the command that deploys each plan once approved.
 //
 // The deadline is over the whole run, not per job: `--timeout 30m` is thirty minutes from the
-// first deploy, however many environments there are.
+// first preview, however many environments there are.
 func deployEnvironments(ctx context.Context, c applyClient, p *Printer, plan *ApplyPlan, result *ApplyResult, run deployRun) error {
 	var deadline time.Time
 	if run.wait.Timeout > 0 {
 		deadline = time.Now().Add(run.wait.Timeout)
+	}
+	remaining := func() time.Duration {
+		if deadline.IsZero() {
+			return 0
+		}
+		// Never zero, which would mean "no deadline": a deadline that has already passed still
+		// has to end the wait.
+		return max(time.Until(deadline), time.Nanosecond)
 	}
 	var pending []string
 	for _, e := range plan.Environments {
@@ -924,6 +949,7 @@ func deployEnvironments(ctx context.Context, c applyClient, p *Printer, plan *Ap
 			pending = append(pending, e.Name)
 		}
 	}
+	var awaiting []*clierr.Error
 	for _, e := range plan.Environments {
 		if !e.Deploy {
 			continue
@@ -939,8 +965,27 @@ func deployEnvironments(ctx context.Context, c applyClient, p *Printer, plan *Ap
 		if run.runnerID != "" {
 			params.AssignedRunnerID = run.runnerID
 		}
-		job, err := c.QueueJobWithParams(params)
+		planID, err := previewEnvironment(ctx, c, p, e.Name, params, remaining())
 		if err != nil {
+			return deployWaitError(err, e.Name, run.wait.Timeout, pending)
+		}
+		params.PlanJobID = planID
+		rerun := fmt.Sprintf("alethia project deploy --project %s --env %s --plan-job-id %s --yes",
+			plan.Manifest.Project, e.Name, planID)
+		job, err := queueWithApproval(ctx, p, c, api.ApprovalOperationDeploy,
+			func() (string, error) { return planID, nil },
+			approvalWait{NoWait: !run.wait.Wait, Timeout: remaining(), Rerun: "run " + rerun},
+			func(approvalID string) (*api.ProvisionJob, error) {
+				queued := params
+				queued.ApprovalID = approvalID
+				return c.QueueJobWithParams(queued)
+			})
+		if err != nil {
+			if ce := clierr.From(err); ce.Code == clierr.CodeApprovalRequired && !run.wait.Wait {
+				// Not waiting: every environment's approval is asked for before the run ends.
+				awaiting = append(awaiting, ce)
+				continue
+			}
 			return fmt.Errorf("deploy %s: %w", e.Name, err)
 		}
 		result.Jobs = append(result.Jobs, projectJobEntry{
@@ -959,13 +1004,7 @@ func deployEnvironments(ctx context.Context, c applyClient, p *Printer, plan *Ap
 		if !entry.AwaitingApproval {
 			fmt.Fprintf(p.Err, "%s Deploying %s (job %s)\n", ui.MutedStyle.Render(ui.SymbolPoint), e.Name, job.ID)
 		}
-		opts := waitOptions{JobType: params.JobType, Progress: p}
-		if !deadline.IsZero() {
-			// Never zero, which would mean "no deadline": a deadline that has already passed still
-			// has to end the wait.
-			opts.Timeout = max(time.Until(deadline), time.Nanosecond)
-		}
-		done, err := awaitJob(ctx, c, job.ID, opts)
+		done, err := awaitJob(ctx, c, job.ID, waitOptions{JobType: params.JobType, Progress: p, Timeout: remaining()})
 		if err != nil {
 			return deployWaitError(err, e.Name, run.wait.Timeout, pending)
 		}
@@ -974,7 +1013,52 @@ func deployEnvironments(ctx context.Context, c applyClient, p *Printer, plan *Ap
 		// awaitJob has already said them on stderr; the result carries them for a program.
 		entry.Warnings = jobWarnings(done)
 	}
-	return nil
+	return approvalsAwaited(awaiting)
+}
+
+// previewEnvironment queues the PLAN a deploy of one environment applies, waits for it (bounded by
+// timeout when it is set), prints its change counts on stderr, and returns its id. A plan that does
+// not succeed is an error naming the PLAN job, classified as its wait ended.
+func previewEnvironment(ctx context.Context, c applyClient, p *Printer, env string, deploy api.QueueJobParams, timeout time.Duration) (string, error) {
+	params := deploy
+	params.JobType = string(types.JobTypePlan)
+	job, err := c.QueueJobWithParams(params)
+	if err != nil {
+		return "", fmt.Errorf("preview %s: %w", env, err)
+	}
+	fmt.Fprintf(p.Err, "%s Previewing %s (job %s); a deploy applies a reviewed plan\n",
+		ui.MutedStyle.Render(ui.SymbolPoint), env, job.ID)
+	done, err := awaitJob(ctx, c, job.ID, waitOptions{JobType: params.JobType, Timeout: timeout})
+	if err != nil {
+		return "", fmt.Errorf("the preview of %s (PLAN job %s) did not finish successfully, so it was not deployed: %w",
+			env, job.ID, err)
+	}
+	if changes := planChangeSummary(done.ExecutionMetadata); changes != "" {
+		fmt.Fprintf(p.Err, "  %s %s\n", env, changes)
+	}
+	return job.ID, nil
+}
+
+// approvalsAwaited is how a run that did not wait for approvals ends: nil when none was asked for,
+// the one refusal when one was, and one exit-9 error naming every approval when several were.
+func approvalsAwaited(awaiting []*clierr.Error) error {
+	switch len(awaiting) {
+	case 0:
+		return nil
+	case 1:
+		return awaiting[0]
+	}
+	messages := make([]string, len(awaiting))
+	hints := make([]string, len(awaiting))
+	for i, a := range awaiting {
+		messages[i] = a.Message
+		hints[i] = a.Hint
+	}
+	e := clierr.New(clierr.CodeApprovalRequired, fmt.Sprintf("%d deploys are waiting for a person's approval:\n  - %s",
+		len(awaiting), strings.Join(messages, "\n  - ")))
+	e.Hint = strings.Join(hints, "\n  ")
+	e.Operation = awaiting[0].Operation
+	return e
 }
 
 // deployWaitError says which environment's deploy ended the wait, and what that leaves undone. A
