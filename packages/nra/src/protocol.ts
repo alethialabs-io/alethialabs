@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Every string printed on a чл. 117 protocol, in reading order (#7457). The PDF component
-// (protocol-document.tsx) prints these and nothing else, so the golden test of this layout is a test
-// of the document's text, as for the фактура (lib/billing/factura/layout.ts).
+// Every string printed on a чл. 117 protocol, in reading order. A renderer (the console's PDF
+// component, apps/console/lib/billing/nra/protocol-document.tsx) prints these and nothing else, so
+// the golden test of this layout is a test of the document's text.
 //
 // ЗДДС чл. 117, ал. 2 says what a protocol must contain; each point is printed:
 //  1. its number and date;
@@ -12,12 +12,15 @@
 //  4. the date of the chargeable event;
 //  5. the taxable amount;   6. the rate;   7. the ground for charging the tax;   8. the tax;
 //  9. the supplier's VAT number when it is VAT-registered in another member state, and the number
-//     and date of its invoice when one was issued by the protocol's date.
+//     and date of its invoice.
+// A company registered under чл. 100 keeps the credit for the tax it self-assesses (чл. 69, ал. 1,
+// т. 2 ЗДДС), and the protocol says so: the protocol is recorded in both journals (02-26/02-22 and
+// 03-31/03-41), and the tax nets to zero in the return.
 
 import { formatMoney } from "@repo/format";
 import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { FILER_NAME } from "./files";
-import { PROTOCOL_TAX_GROUND, type ReverseChargeProtocol, VAT_RATE_PERCENT } from "./month";
+import { PROTOCOL_CREDIT_GROUND, PROTOCOL_TAX_GROUND, type ReverseChargeProtocol, VAT_RATE_PERCENT } from "./month";
 
 /** A labelled value. */
 export interface ProtocolPair {
@@ -38,13 +41,16 @@ export interface ProtocolLayout {
 	notes: string[];
 }
 
+/** Renders one protocol to a document (a PDF); injected so the package stays free of a renderer. */
+export type ProtocolRenderer = (p: ReverseChargeProtocol, filerVat: string) => Promise<Uint8Array>;
+
 /** YYYY-MM-DD → DD.MM.YYYY. */
 function bgDate(iso: string): string {
 	const [y, m, d] = iso.split("-");
 	return `${d}.${m}.${y}`;
 }
 
-/** Euro cents through the console's one money formatter. */
+/** Euro cents through the shared money formatter. */
 function eur(cents: number): string {
 	return formatMoney(cents, "EUR");
 }
@@ -52,6 +58,9 @@ function eur(cents: number): string {
 /** The printed content of protocol `p`, issued by the company under VAT number `filerVat`. */
 export function protocolLayout(p: ReverseChargeProtocol, filerVat: string): ProtocolLayout {
 	const doc = p.supplierDocument;
+	const conversion = p.conversion
+		? [`Сума по фактурата / Invoice amount: ${p.conversion.currency} ${p.conversion.amount}; курс / rate: ${p.conversion.eurRate} EUR (чл. 26, ал. 6 ЗДДС).`]
+		: [];
 	return {
 		title: "ПРОТОКОЛ",
 		subtitle: "по чл. 117, ал. 1, т. 1 ЗДДС / Self-assessment protocol (reverse charge)",
@@ -70,7 +79,7 @@ export function protocolLayout(p: ReverseChargeProtocol, filerVat: string): Prot
 				p.supplier.name,
 				`Държава / Country: ${p.supplier.country}`,
 				p.supplier.vatNumber ? `ДДС № / VAT No.: ${p.supplier.vatNumber}` : "Без ДДС номер в ЕС / No EU VAT number",
-				doc ? `Фактура / Invoice: № ${doc.number} от ${bgDate(doc.date)}` : "Фактура / Invoice: не е издадена към датата на протокола / not issued by the protocol date",
+				`Фактура / Invoice: № ${doc.number} от ${bgDate(doc.date)}`,
 			],
 		},
 		table: {
@@ -83,8 +92,9 @@ export function protocolLayout(p: ReverseChargeProtocol, filerVat: string): Prot
 			{ label: "ДДС / VAT", value: eur(p.vat) },
 		],
 		notes: [
+			...conversion,
 			`Основание за начисляване / Ground: ${PROTOCOL_TAX_GROUND}; място на изпълнение в страната (чл. 21, ал. 2 ЗДДС).`,
-			"Без право на данъчен кредит (чл. 70, ал. 4 ЗДДС) / No input tax credit (Art. 70(4)).",
+			`С право на пълен данъчен кредит (${PROTOCOL_CREDIT_GROUND}) / Full input tax credit (Art. 69(1)(2)).`,
 		],
 	};
 }

@@ -1,15 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Renders a чл. 117 protocol to PDF with the фактура's renderer and fonts (#7457). It prints the
-// strings of `protocolLayout` and nothing else. Reproducible, like the фактура: the PDF dates are
-// the issue date and the producer strings are fixed, so the same protocol renders the same bytes.
+// Renders a чл. 117 protocol to PDF with the фактура's renderer and fonts: the ProtocolRenderer the
+// console injects into @repo/nra (which has no PDF library). It prints the strings of
+// `protocolLayout` and nothing else. The PDF dates are the issue date and the producer strings are
+// fixed, so within one process the same protocol renders the same bytes. Across processes the
+// embedded font subset can differ with what the process rendered before (factura:export renders the
+// фактури first; nra:build does not), so the reproducible artefact is the text (protocolText, the
+// .txt copy), and two PDFs of one protocol are compared by their text, not their bytes.
 // Server-only.
 
 import { Document, Page, renderToBuffer, StyleSheet, Text, View } from "@react-pdf/renderer";
 import { FACTURA_FONT_FAMILY, registerFonts } from "@/lib/billing/factura/document";
-import type { ReverseChargeProtocol } from "./month";
-import { type ProtocolLayout, type ProtocolPair, protocolLayout } from "./protocol";
+import { type ProtocolLayout, type ProtocolPair, protocolLayout, type ReverseChargeProtocol } from "@repo/nra";
 
 const styles = StyleSheet.create({
 	page: { fontFamily: FACTURA_FONT_FAMILY, fontSize: 9, padding: 40, lineHeight: 1.35 },
@@ -93,7 +96,7 @@ function ProtocolPage({ l }: { l: ProtocolLayout }) {
 	);
 }
 
-/** Renders protocol `p` to PDF bytes. The same protocol always renders the same bytes. */
+/** Renders protocol `p` to PDF bytes (the same bytes again within one process). */
 export async function renderProtocolPdf(p: ReverseChargeProtocol, filerVat: string): Promise<Uint8Array> {
 	registerFonts();
 	const at = new Date(`${p.issueDate}T00:00:00Z`);

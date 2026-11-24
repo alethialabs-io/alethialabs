@@ -5,10 +5,14 @@
 // PDFs, a SHA-256 manifest, and Stripe's balance transactions for the same month so payouts and fees
 // reconcile. The files and their format are described in lib/billing/factura/export.ts.
 //
-// With `--nra=<input.json>` it also writes `nra/`: the VAT return package of a company registered
-// under чл. 97а ЗДДС (DEKLAR.TXT, PRODAGBI.TXT, POKUPKI.TXT, VIES.TXT when due, the чл. 117
-// protocols and SUMMARY.md; lib/billing/nra/, #7457). The input file is described in
-// lib/billing/nra/input.ts; it names the person who files, so keep it out of the repository.
+// It also writes `facturi-<month>.json`: the same documents as @repo/nra reads them (SalesFile,
+// lib/billing/nra/sales-documents.ts), so the VAT package can be rebuilt from the export alone with
+// `nra:build`.
+//
+// With `--nra=<nra-input.json>` it also writes `nra/`: the VAT return package of a company registered
+// under чл. 100, ал. 1 ЗДДС (DEKLAR.TXT, PRODAGBI.TXT, POKUPKI.TXT, VIES.TXT when due, the чл. 117
+// protocols and SUMMARY.md), built by @repo/nra. The input file (version 2) is described in
+// packages/nra/src/input.ts; it names the person who files, so keep it out of the repository.
 //
 // Usage (operator, against production):
 //   pnpm creds prod-env -- pnpm -C apps/console run factura:export -- --month=2026-12 [--out=<dir>] [--nra=<input.json>]
@@ -33,15 +37,16 @@ import { dirname, join, resolve } from "node:path";
 import { and, asc, gte, lte } from "drizzle-orm";
 import type Stripe from "stripe";
 import { type BalanceRow, buildExport, type ExportFile, monthWindow, type MonthWindow, sha256Hex } from "@/lib/billing/factura/export";
+import { centsToDecimal, type NraInput, parseNraInput } from "@repo/nra";
 import { demoMonth } from "@/lib/billing/nra/demo";
-import { type NraInput, parseNraInput } from "@/lib/billing/nra/input";
-import { buildNraPackage } from "@/lib/billing/nra/package";
-import { centsToDecimal } from "@/lib/billing/nra/record";
+import { buildNraExport } from "@/lib/billing/nra/package";
+import { salesFileFromFacturi, salesFileJson } from "@/lib/billing/nra/sales-documents";
 import { getStripe } from "@/lib/billing/stripe";
 import { getServiceDb } from "@/lib/db";
 import { type Factura, factura } from "@/lib/db/schema";
 import { storage } from "@/lib/storage";
 import { INVOICE_PDF_BUCKET } from "@/lib/storage/invoice-pdf";
+import { allowEsmOnlyPackages, userCwd } from "./lib/esm-only-packages";
 
 /** Payouts arriving this many days after the month may still pay out its transactions. */
 const PAYOUT_LOOKAHEAD_DAYS = 31;
@@ -107,35 +112,6 @@ async function exists(path: string): Promise<boolean> {
 	);
 }
 
-/**
- * Lets this script load the PDF renderer. tsx compiles the console's TypeScript to CommonJS, so
- * `@react-pdf/renderer` and its dependencies are `require`d, and `@react-pdf/hyphenate` publishes its
- * subpaths under the `import` condition only: resolution fails with ERR_PACKAGE_PATH_NOT_EXPORTED
- * before any PDF is drawn. Node (22.15+) can `require` an ES module synchronously; what is missing is
- * only the resolution, so this hook retries exactly that failure with the `import` condition added.
- * Next bundles the renderer for the server and never takes this path. `registerHooks` is not in the
- * console's @types/node (20), hence the runtime check.
- */
-async function allowEsmOnlyPackages(): Promise<void> {
-	const mod: unknown = await import("node:module");
-	if (typeof mod !== "object" || mod === null || !("registerHooks" in mod) || typeof mod.registerHooks !== "function") return;
-	mod.registerHooks({
-		resolve(
-			specifier: string,
-			context: { conditions?: string[] },
-			next: (s: string, c: { conditions?: string[] }) => unknown,
-		): unknown {
-			try {
-				return next(specifier, context);
-			} catch (err) {
-				const code = typeof err === "object" && err !== null && "code" in err ? err.code : null;
-				if (code !== "ERR_PACKAGE_PATH_NOT_EXPORTED" || !specifier.startsWith("@react-pdf/")) throw err;
-				return next(specifier, { ...context, conditions: [...(context.conditions ?? []), "import"] });
-			}
-		},
-	});
-}
-
 /** True when `argv` carries the bare flag `--name`. */
 function flag(argv: readonly string[], name: string): boolean {
 	return argv.includes(`--${name}`);
@@ -168,7 +144,8 @@ async function readDemoMonth(): Promise<{ window: MonthWindow; documents: Factur
 		pdfs.set(doc.number, pdf);
 		documents.push({ ...doc, pdfKey: `demo/${doc.number}.pdf`, pdfSha256: sha256Hex(pdf) });
 	}
-	return { window: demo.window, documents, pdfs, balance: demo.balance, operator: demo.operator };
+	// Card sales go through Paddle (the merchant of record): the demo has no Stripe balance.
+	return { window: demo.window, documents, pdfs, balance: [], operator: demo.operator };
 }
 
 /** Runs the export for the arguments in `argv`; returns the exit code. */
@@ -188,41 +165,45 @@ async function main(argv: readonly string[]): Promise<number> {
 	let operator: NraInput | null = null;
 	const nraPath = arg(argv, "nra");
 	if (nraPath && !demo) {
-		const parsed = parseNraInput(await readFile(resolve(nraPath), "utf8"));
+		const parsed = parseNraInput(await readFile(resolve(userCwd(), nraPath), "utf8"));
 		if (!parsed.ok) {
-			console.error(`refused: ${nraPath} is not a valid NRA input file:`);
+			console.error(`refused: ${nraPath} is not a valid NRA input file (version 2):`);
 			for (const p of parsed.problems) console.error(`  ${p}`);
 			return 1;
 		}
-		operator = parsed.input;
+		operator = parsed.value;
 	}
 
 	const data = demo ? await readDemoMonth() : { window: monthWindow(month ?? ""), ...(await readMonth(monthWindow(month ?? ""))) };
 	const window = data.window;
 	if (demo && "operator" in data) operator = data.operator;
-	const out = resolve(outArg ?? `factura-export-${window.month}`);
+	const out = resolve(userCwd(), outArg ?? `factura-export-${window.month}`);
 	if (await exists(out)) {
 		console.error(`refused: ${out} already exists; choose another --out, a past export is never overwritten`);
 		return 1;
 	}
 
-	let extra: ExportFile[] = [];
+	const sales = salesFileFromFacturi(window.month, data.documents);
+	if (!sales.ok) {
+		console.error(`refused: the documents of ${window.month} cannot be written as facturi-${window.month}.json:`);
+		for (const p of sales.problems) console.error(`  ${p}`);
+		return 1;
+	}
+	const extra: ExportFile[] = [{ name: `facturi-${window.month}.json`, data: salesFileJson(sales.value) }];
 	let vatLine = "";
 	if (operator) {
 		await allowEsmOnlyPackages();
 		const { renderProtocolPdf } = await import("@/lib/billing/nra/protocol-document");
-		const nra = await buildNraPackage(
-			{ window, documents: data.documents, balance: data.balance, operator },
-			renderProtocolPdf,
-			{ demo },
-		);
+		const nra = await buildNraExport(sales.value, operator, renderProtocolPdf, { demo });
 		if (!nra.ok) {
 			console.error(`refused: the VAT package for ${window.month} cannot be built as specified:`);
 			for (const p of nra.problems) console.error(`  ${p}`);
 			return 1;
 		}
-		extra = nra.files;
-		vatLine = ` VAT package in nra/ (VAT payable EUR ${centsToDecimal(nra.vatPayableCents)}; read nra/SUMMARY.md).`;
+		extra.push(...nra.files);
+		vatLine = nra.vatRefundableCents
+			? ` VAT package in nra/ (VAT refundable EUR ${centsToDecimal(nra.vatRefundableCents)}; read nra/SUMMARY.md).`
+			: ` VAT package in nra/ (VAT payable EUR ${centsToDecimal(nra.vatPayableCents)}; read nra/SUMMARY.md).`;
 	}
 
 	const result = buildExport(window, data.documents, data.pdfs, data.balance, extra);

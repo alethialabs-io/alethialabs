@@ -1,4 +1,3 @@
-// @vitest-environment node
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
@@ -9,7 +8,7 @@
 // byte for byte against the code page.
 
 import { describe, expect, it } from "vitest";
-import type { FieldSpec } from "@/lib/billing/nra/layout";
+import type { FieldSpec } from "../src/layout";
 import {
 	centsToDecimal,
 	encodeCp1251,
@@ -19,7 +18,7 @@ import {
 	NraError,
 	renderRecord,
 	toCp1251Text,
-} from "@/lib/billing/nra/record";
+} from "../src/record";
 
 /** A layout with one field of each format. */
 const LAYOUT: FieldSpec[] = [

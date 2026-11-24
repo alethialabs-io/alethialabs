@@ -1,6 +1,6 @@
 ПРОТОКОЛ
 по чл. 117, ал. 1, т. 1 ЗДДС / Self-assessment protocol (reverse charge)
-№ 0000000001
+№ 0000000002
 Дата на издаване / Date of issue: 31.12.2026
 Дата на данъчното събитие / Chargeable event: 31.12.2026
 Издател, получател по доставката / Issuer, recipient of the service
@@ -8,15 +8,15 @@
 гр. София 1111, р-н Слатина, ул. Сирак Скитник № 9, вх. А, ет. 4, ап. 7, България
 ДДС № / VAT No.: BG208913663
 Доставчик / Supplier
-Stripe Payments Europe, Limited
-Държава / Country: IE
-ДДС № / VAT No.: IE0000000XX
-Фактура / Invoice: № DEMO-STRIPE-2026-12 от 31.12.2026
+Amazon Web Services EMEA SARL
+Държава / Country: LU
+ДДС № / VAT No.: LU00000000
+Фактура / Invoice: № AWS-0001 от 31.12.2026
 № | Вид на услугата / Service | Данъчна основа / Taxable amount
-1 | Stripe: такси за софтуерни услуги (Billing, Tax, Radar) | €1.24
-2 | Stripe: такси за обработка на картови плащания | €2.95
-Данъчна основа / Taxable amount: €4.19
+1 | AWS usage 12/2026 | €201.78
+Данъчна основа / Taxable amount: €201.78
 Ставка / Rate: 20 %
-ДДС / VAT: €0.84
+ДДС / VAT: €40.36
+Сума по фактурата / Invoice amount: USD 212.40; курс / rate: 0.95000000 EUR (чл. 26, ал. 6 ЗДДС).
 Основание за начисляване / Ground: чл. 82, ал. 2, т. 3 ЗДДС; място на изпълнение в страната (чл. 21, ал. 2 ЗДДС).
-Без право на данъчен кредит (чл. 70, ал. 4 ЗДДС) / No input tax credit (Art. 70(4)).
+С право на пълен данъчен кредит (чл. 69, ал. 1, т. 2 ЗДДС) / Full input tax credit (Art. 69(1)(2)).
