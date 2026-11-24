@@ -174,8 +174,9 @@ describe("queryActivityPage — what the facet passes are given", () => {
 describe("queryActivityPage — later pages", () => {
 	it("skips the facet passes when a cursor is set, and says so with null", async () => {
 		const chains = seed([], [], []);
-		const page = await queryActivityPage(ORG, { cursor: 42 });
+		const page = await queryActivityPage(ORG, {}, { limit: 50, cursor: { at: "2026-06-20T10:00:00.000Z", id: "42" } });
 		expect(facetPasses(chains)).toHaveLength(0);
 		expect(page.facets).toBeNull();
+		expect(page.universeEmpty).toBeNull();
 	});
 });

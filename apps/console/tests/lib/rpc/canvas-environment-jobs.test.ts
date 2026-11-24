@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The environment's job history pages on a keyset cursor. What matters: a page never returns the
-// probe row it fetched to learn whether another page exists, the cursor it hands back names the
-// last row it DID return, a malformed cursor reads as the first page, and every page stays inside
-// the environment (the where clause carries project, environment and org).
+// The environment's job history pages on the console's one keyset contract (LST-10 #7492). What
+// matters: a page never returns the probe row it fetched to learn whether another page exists, the
+// cursor it hands back names the last row it DID return (in the shared codec), a malformed cursor
+// is REFUSED at the input (a 400 — it used to read as the first page, which re-shows rows), and
+// every page stays inside the environment (the where clause carries project, environment and org).
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,7 +17,8 @@ vi.mock("@/lib/billing/job-quota", () => ({ assertJobQuotaAllowed: vi.fn() }));
 vi.mock("@/lib/db/signed-job", () => ({ signedJob: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 
-import { readEnvironmentJobs as getEnvironmentJobs } from "@/lib/rpc/procedures/canvas";
+import { canvasRouter, readEnvironmentJobs as getEnvironmentJobs } from "@/lib/rpc/procedures/canvas";
+import { decodeKeysetCursor, encodeKeysetCursor } from "@/lib/queries/keyset";
 import { getServiceDb } from "@/lib/db";
 
 interface Row {
@@ -56,9 +58,22 @@ function mockDb(rows: Row[]) {
 	return calls;
 }
 
+/** A uuid whose trailing digits are `n` — the cursor codec checks the id's kind. */
+function uuid(n: number): string {
+	return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+}
+
+/** Validates `input` against the `canvas.environmentJobs` procedure's own input schema. */
+async function validInput(input: unknown): Promise<boolean> {
+	const schema = canvasRouter.environmentJobs["~orpc"].inputSchema;
+	if (schema === undefined) throw new Error("environmentJobs has no input schema");
+	const result = await schema["~standard"].validate(input);
+	return result.issues === undefined;
+}
+
 function row(i: number): Row {
 	return {
-		id: `job-${i}`,
+		id: uuid(i),
 		job_type: "DEPLOY",
 		status: "SUCCESS",
 		created_at: new Date(Date.UTC(2026, 8, 7, 12, 0, 60 - i)),
@@ -76,10 +91,11 @@ describe("readEnvironmentJobs (canvas.environmentJobs)", () => {
 		const calls = mockDb(rows);
 		const page = await getEnvironmentJobs("p1", "e1", { limit: 3 });
 		expect(calls.limit).toBe(4);
-		expect(page.jobs.map((j) => j.id)).toEqual(["job-1", "job-2", "job-3"]);
-		expect(page.nextCursor).toBe(`${rows[2].created_at.toISOString()}|job-3`);
-		expect(page.jobs[0]).toEqual({
-			id: "job-1",
+		expect(page.rows.map((j) => j.id)).toEqual([uuid(1), uuid(2), uuid(3)]);
+		expect(page.nextCursor).toBe(encodeKeysetCursor({ at: rows[2].created_at, id: uuid(3) }));
+		expect(decodeKeysetCursor(page.nextCursor ?? "")).toEqual({ at: rows[2].created_at.toISOString(), id: uuid(3) });
+		expect(page.rows[0]).toEqual({
+			id: uuid(1),
 			type: "DEPLOY",
 			status: "SUCCESS",
 			createdAt: rows[0].created_at.toISOString(),
@@ -90,32 +106,44 @@ describe("readEnvironmentJobs (canvas.environmentJobs)", () => {
 	it("the last page carries no cursor", async () => {
 		mockDb([row(1), row(2)]);
 		const page = await getEnvironmentJobs("p1", "e1", { limit: 3 });
-		expect(page.jobs).toHaveLength(2);
+		expect(page.rows).toHaveLength(2);
 		expect(page.nextCursor).toBeNull();
 	});
 
 	it("an empty environment is an empty page, not an error", async () => {
 		mockDb([]);
 		const page = await getEnvironmentJobs("p1", "e1");
-		expect(page).toEqual({ jobs: [], nextCursor: null });
+		expect(page).toEqual({ rows: [], nextCursor: null, facets: null, universeEmpty: true });
 	});
 
-	it("a malformed cursor reads as the first page rather than throwing", async () => {
+	it("a later page says nothing about the universe (null), and the first page says it is not empty", async () => {
 		mockDb([row(1)]);
-		await expect(
-			getEnvironmentJobs("p1", "e1", { before: "garbage" }),
-		).resolves.toMatchObject({ nextCursor: null });
-		await expect(
-			getEnvironmentJobs("p1", "e1", { before: "not-a-date|job-9" }),
-		).resolves.toMatchObject({ nextCursor: null });
+		const first = await getEnvironmentJobs("p1", "e1", { limit: 3 });
+		expect(first.universeEmpty).toBe(false);
+		const later = await getEnvironmentJobs("p1", "e1", {
+			limit: 3,
+			cursor: { at: "2026-09-07T12:00:59.000Z", id: uuid(9) },
+		});
+		expect(later.universeEmpty).toBeNull();
+		expect(later.facets).toBeNull();
 	});
 
-	it("clamps the page size to a sane window", async () => {
-		const calls = mockDb([]);
-		await getEnvironmentJobs("p1", "e1", { limit: 10_000 });
-		expect(calls.limit).toBe(101);
-		await getEnvironmentJobs("p1", "e1", { limit: 0 });
-		expect(calls.limit).toBe(2);
+	it("a malformed cursor is refused at the input — never read as the first page", async () => {
+		const scope = { projectId: uuid(100), environmentId: uuid(101) };
+		expect(await validInput(scope)).toBe(true);
+		expect(await validInput({ ...scope, cursor: encodeKeysetCursor({ at: new Date(), id: uuid(1) }) })).toBe(true);
+		expect(await validInput({ ...scope, cursor: "garbage" })).toBe(false);
+		// The old `created_at|id` shape is not a cursor any more.
+		expect(await validInput({ ...scope, cursor: "2026-09-07T12:00:00.000Z|job-9" })).toBe(false);
+		// A cursor whose id is not a uuid would reach Postgres and raise; it is refused here instead.
+		expect(await validInput({ ...scope, cursor: encodeKeysetCursor({ at: new Date(), id: "job-9" }) })).toBe(false);
+	});
+
+	it("refuses a page size outside 1–100 rather than clamping it", async () => {
+		const scope = { projectId: uuid(100), environmentId: uuid(101) };
+		expect(await validInput({ ...scope, limit: 100 })).toBe(true);
+		expect(await validInput({ ...scope, limit: 101 })).toBe(false);
+		expect(await validInput({ ...scope, limit: 0 })).toBe(false);
 	});
 
 	it("refuses an environment outside the actor's org as NOT_FOUND — a typed refusal, not an empty history", async () => {
