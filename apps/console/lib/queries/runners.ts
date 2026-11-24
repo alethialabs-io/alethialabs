@@ -213,22 +213,34 @@ export function runnerFacets(all: readonly RunnerFacts[]): RunnersFacets {
  * and delegates; an assertion about this function is therefore an assertion about what that read
  * returns, which is the only arrangement in which the test is not re-deriving its own answer.
  *
+ * THE DEFAULT RUNNER IS PINNED, outside the walk. The org's default is the runner a job runs on
+ * when nothing else is chosen, and the grid has always shown it first. A keyset walk is one total
+ * order on (sort key, id), and "default first" is not that order, so the default is taken OUT of
+ * the walked universe — always, whether or not it matches — and put at the top of page one only
+ * when it matches the query. It can therefore never appear twice: no later page can reach it,
+ * and page one draws it at most once. Page one carries it IN ADDITION to `limit` walked rows; the
+ * cursor is always the last WALKED row's, so the pin never shifts a page boundary.
+ *
  * @param all every runner this actor can see, already composed (any order: the page imposes its own)
  * @param query the normalized filter query; `{}` is the pristine view
  * @param request the decoded cursor (absent on page one) and the page size
  * @param keyOf a row's keyset position: its `created_at` and its id
+ * @param isPinned true for the org's default runner (at most one row); omit to pin nothing
  */
 export function queryRunnersPage<Row extends RunnerFacts>(
 	all: readonly Row[],
 	query: RunnersQuery,
 	request: KeysetPageRequest,
 	keyOf: (row: Row) => KeysetKey,
+	isPinned: (row: Row) => boolean = () => false,
 ): RunnersListPage<Row> {
-	const matching = all.filter((r) => matchesRunnersQuery(r, query));
-	const page = keysetPageInMemory(matching, request, keyOf, "uuid");
+	const pinned = all.find(isPinned);
+	const walked = all.filter((r) => r !== pinned && matchesRunnersQuery(r, query));
+	const page = keysetPageInMemory(walked, request, keyOf, "uuid");
 	const first = request.cursor === undefined;
+	const pin = first && pinned !== undefined && matchesRunnersQuery(pinned, query) ? [pinned] : [];
 	return {
-		rows: page.rows,
+		rows: [...pin, ...page.rows],
 		nextCursor: page.nextCursor,
 		facets: first ? runnerFacets(all) : null,
 		universeEmpty: first ? all.length === 0 : null,
