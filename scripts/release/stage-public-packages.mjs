@@ -166,6 +166,10 @@ function compile(short, pkgDir, outDir, paths) {
 					incremental: false,
 					composite: false,
 					rootDir: src,
+					// Automatic @types come from typeRoots relative to THIS file, which lives under
+					// .release/; point them back at the package (and the root) so `process` etc. resolve
+					// exactly as in the package's own check-types.
+					typeRoots: [path.join(pkgDir, "node_modules", "@types"), path.join(ROOT, "node_modules", "@types")],
 					outDir,
 					paths,
 				},
