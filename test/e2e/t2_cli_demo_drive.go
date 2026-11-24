@@ -148,7 +148,13 @@ func ResolveCLIDemoRun(t *testing.T) *CLIDemoRun {
 	if err != nil {
 		t.Fatalf("cli-demo: %v", err)
 	}
-	run := &CLIDemoRun{Bin: CLIDemoBinary(), Token: creds.Token, OrgID: creds.OrgID, APIBase: apiBase, GitOps: gitOps}
+	// The org owner's steps (#7454): listing the run's environment on the token, and approving the
+	// destroy. Refused here, before a cluster is bought, rather than at the `project-env` beat.
+	admin, err := newCLIDemoScriptAdmin(strings.TrimSpace(os.Getenv(cliDemoCredsEnv)), os.Getenv)
+	if err != nil {
+		t.Fatalf("cli-demo: %v", err)
+	}
+	run := &CLIDemoRun{Bin: CLIDemoBinary(), Token: creds.Token, OrgID: creds.OrgID, APIBase: apiBase, GitOps: gitOps, Admin: admin}
 	// exec.LookPath, not os.Stat: CLIDemoBinary's default is the BARE name `alethia`, which it
 	// documents as "whatever is on PATH" — os.Stat resolves a bare name against the cwd and can
 	// never find it there. LookPath searches PATH for a bare name and checks a path as given.
@@ -421,7 +427,8 @@ func AssertCLIDemoBeatsAreLeafCommands(ctx context.Context, t *testing.T, run *C
 	t.Helper()
 	for _, b := range CLIDemoBeats {
 		// The command PATH is the leading non-flag tokens. Values that follow a flag are skipped
-		// with it, so `--project <id>` never contributes `<id>` to the path.
+		// with it, so `--project <id>` never contributes `<id>` to the path. An approval beat's
+		// rerun names the same command as its first run, so the first argv answers for both.
 		var path []string
 		argv := b.Args(run)
 		for i := 0; i < len(argv); i++ {
@@ -527,19 +534,20 @@ func AssertCLIDemoBeatFlagsAreRegistered(ctx context.Context, t *testing.T, run 
 				// ValidateCLIDemoBeats owns that finding; two reports of one cause read as two causes.
 				continue
 			}
-			argv := b.Args(&candidate)
-			if len(argv) == 0 {
-				refused = append(refused, fmt.Sprintf(
-					"beat %q on %s builds an EMPTY argv — it would perform nothing and exit 0", b.StepID, provider))
-				continue
+			for _, argv := range cliDemoBeatInvocations(b, &candidate) {
+				if len(argv) == 0 {
+					refused = append(refused, fmt.Sprintf(
+						"beat %q on %s builds an EMPTY argv — it would perform nothing and exit 0", b.StepID, provider))
+					continue
+				}
+				key := strings.Join(argv, "\x00")
+				if i, ok := at[key]; ok {
+					probes[i].providers = append(probes[i].providers, provider)
+					continue
+				}
+				at[key] = len(probes)
+				probes = append(probes, probe{stepID: b.StepID, providers: []string{provider}, argv: argv})
 			}
-			key := strings.Join(argv, "\x00")
-			if i, ok := at[key]; ok {
-				probes[i].providers = append(probes[i].providers, provider)
-				continue
-			}
-			at[key] = len(probes)
-			probes = append(probes, probe{stepID: b.StepID, providers: []string{provider}, argv: argv})
 		}
 	}
 	if len(probes) == 0 {
@@ -712,11 +720,27 @@ func DriveCLIDemoPhase(ctx context.Context, t *testing.T, run *CLIDemoRun, phase
 				t.Fatalf("cli-demo beat %q: %v", b.StepID, err)
 			}
 		}
-		argv := b.Args(run)
 		bound := cliDemoBeatTimeout
 		if b.Timeout > 0 {
 			bound = b.Timeout
 		}
+		if b.Approval != nil {
+			out, err := performCLIDemoApprovalBeat(ctx, run, b, bound, runCLIDemoCommand)
+			if err != nil {
+				t.Fatalf("cli-demo beat %q: %v", b.StepID, err)
+			}
+			t.Logf("cli-demo [%s] %s: approval %s requested by `alethia %s`, approved by the org's owner, "+
+				"and picked up by `alethia %s`", phase, b.StepID, run.ApprovalID,
+				strings.Join(b.Args(run), " "), strings.Join(b.Approval.Rerun(run), " "))
+			if b.After != nil {
+				if e := b.After(run, out); e != nil {
+					t.Fatalf("cli-demo beat %q produced no usable output: %v", b.StepID, e)
+				}
+			}
+			ran++
+			continue
+		}
+		argv := b.Args(run)
 		cctx, cancel := context.WithTimeout(ctx, bound)
 		cmd := exec.CommandContext(cctx, run.Bin, argv...)
 		cmd.Env = cliDemoEnv(run)
@@ -729,8 +753,8 @@ func DriveCLIDemoPhase(ctx context.Context, t *testing.T, run *CLIDemoRun, phase
 		cancel()
 		out := string(outB)
 		if err != nil {
-			t.Fatalf("cli-demo beat %q FAILED (`alethia %s`): %v\n%s",
-				b.StepID, strings.Join(argv, " "), err, out)
+			t.Fatalf("cli-demo beat %q FAILED (`alethia %s`): %v%s\n%s",
+				b.StepID, strings.Join(argv, " "), err, cliDemoApprovalHint(err), out)
 		}
 		t.Logf("cli-demo [%s] %s: `alethia %s` ok", phase, b.StepID, strings.Join(argv, " "))
 		if b.ReadBack != nil {
@@ -753,6 +777,13 @@ func DriveCLIDemoPhase(ctx context.Context, t *testing.T, run *CLIDemoRun, phase
 			if e := b.After(run, out); e != nil {
 				t.Fatalf("cli-demo beat %q produced no usable output: %v", b.StepID, e)
 			}
+		}
+		if b.OrgAdmin != nil {
+			if e := b.OrgAdmin(ctx, run); e != nil {
+				t.Fatalf("cli-demo beat %q: the org owner's step after it failed: %v", b.StepID, e)
+			}
+			t.Logf("cli-demo [%s] %s: the org's owner listed environment %q on the token for automatic deploys",
+				phase, b.StepID, run.EnvName)
 		}
 		ran++
 	}
