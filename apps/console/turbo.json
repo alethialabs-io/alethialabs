@@ -34,6 +34,8 @@
 				"$TURBO_ROOT$/apps/marketing/app/consumer-rights/page.tsx",
 				"$TURBO_ROOT$/deploy/prod/Caddyfile.tunnel",
 				"$TURBO_ROOT$/deploy/prod/docker-compose.prod.yml",
+				"$TURBO_ROOT$/deploy/selfhost/secrets.manifest",
+				"$TURBO_ROOT$/deploy/selfhost/secrets.sh",
 				"$TURBO_ROOT$/docs/legal/GDPR_ACCOUNTABILITY.md",
 				"$TURBO_ROOT$/examples/addons/**",
 				"$TURBO_ROOT$/infra/config-carriage-exclusions.yaml",
