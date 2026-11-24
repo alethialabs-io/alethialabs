@@ -22,6 +22,7 @@ export const COMMUNITY_ENTITLEMENTS: Entitlements = {
 	advancedAlerting: false,
 	byoRunners: false,
 	managedPools: false,
+	agentPolicy: false,
 	quotas: {
 		maxConcurrentJobs: 2,
 		priorityLevel: 0,
@@ -35,6 +36,7 @@ export const COMMUNITY_ENTITLEMENTS: Entitlements = {
  *  - community  → all off (single-tenant: own projects only)
  *  - team       → organizations (invite + collaborate) + alerting (policies/channels)
  *  - enterprise → + teams + custom roles + activity export + advanced (PDP) alerting + SSO/SAML
+ *                 + the agent-policy toggles
  *
  * Adjusting what a tier grants is a one-line edit here.
  */
@@ -64,6 +66,7 @@ export function planEntitlements(plan: BillingPlan): Entitlements {
 				sso: true,
 				byoRunners: true,
 				managedPools: true,
+				agentPolicy: true,
 				quotas: {
 					maxConcurrentJobs: null,
 					priorityLevel: 30,
