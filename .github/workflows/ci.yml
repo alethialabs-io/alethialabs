@@ -3159,6 +3159,12 @@ jobs:
       - name: The playwright-install retry retries a fetch and refuses a real failure
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/ci/playwright-install.sh --self-test
+      # release-please cuts a component's commits at its release commit by position in a date-ordered
+      # walk, so a dev commit promoted after a release it predates is never released. The detector
+      # release-please.yml runs after every main push, held to both orderings in a throwaway repo.
+      - name: The release-cursor detector names a commit release-please cannot see
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/release-cursor.sh --self-test
       - name: Guards self-test (runtime · compose · merge · secrets · worktree · spend · destroy)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
