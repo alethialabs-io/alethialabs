@@ -13,12 +13,12 @@ import {
 } from "@repo/ui/empty";
 import { PageToolbar } from "@repo/ui/page-toolbar";
 import { cn } from "@repo/ui/utils";
-import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { LifeBuoy, Loader2, SearchX } from "lucide-react";
+import { LifeBuoy, SearchX } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { RegionError } from "@/components/errors/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
+import { ListFooter } from "@/components/list/list-footer";
 import {
 	CASE_LIST_PARAM_NAMES,
 	caseFacetOptions,
@@ -27,17 +27,11 @@ import {
 	type SupportCaseFilters,
 } from "@/components/support/cases/case-query";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import {
-	type CaseCursor,
-	type CaseListItem as CaseListItemData,
-	type CasePage,
-	nextCaseCursor,
-} from "@/lib/queries/support";
-import { countActiveFilters } from "@/lib/stores/create-filter-store";
+import { useKeysetList } from "@/lib/query/use-keyset-list";
 import { orpc } from "@/lib/rpc/client";
 import { readRefusalOf } from "@/lib/rpc/refusal";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useSupportFilters } from "@/lib/stores/use-support-filters";
 import {
 	SUPPORT_CASE_TYPE_LABELS,
@@ -47,32 +41,6 @@ import { CaseFilterBar } from "./case-filter-bar";
 import { CASE_ROWS, CaseListItem } from "./case-list-item";
 import { CaseListSkeletonRows } from "./case-list-skeleton";
 
-/** Stable empty result — see the note at its use site. */
-const NO_ROWS: CaseListItemData[] = [];
-
-/** Stable "no further pages loaded" — a fresh `[]` per render would defeat the rows memo. */
-const NO_PAGES: CaseListItemData[][] = [];
-
-/**
- * Joins the first page with the pages loaded after it, keeping each case once (its first
- * occurrence). A refetch of page one can lift a case that a later, older page still holds —
- * a reply moves it to the top — and the list must not draw it twice.
- */
-function mergeCasePages(
-	first: readonly CaseListItemData[],
-	more: readonly (readonly CaseListItemData[])[],
-): CaseListItemData[] {
-	if (more.length === 0) return [...first];
-	const seen = new Set<string>();
-	const out: CaseListItemData[] = [];
-	for (const row of [first, ...more].flat()) {
-		if (seen.has(row.id)) continue;
-		seen.add(row.id);
-		out.push(row);
-	}
-	return out;
-}
-
 /**
  * The support case list, on the console filter standard (lib/query/README.md →
  * "Server-side filters"): the URL-synced `useSupportFilters` store feeds a debounced,
@@ -80,13 +48,13 @@ function mergeCasePages(
  * applies every one of them in SQL and returns the facet counts over the caller's unfiltered cases
  * on its first page (#7396).
  *
- * Paged by keyset (#7389): `support.cases` answers one page per cursor, newest activity first with
- * the case id breaking ties. Page one keeps the exact key the route prefetches, so it still paints
- * from the server HTML; "Load more" (and the scroll sentinel behind it, as on the Activity log)
- * walks an infinite query seeded with page one's last row, under the same filters. Until the last
- * page is in, the toolbar shows no count rather than a number that would read as the total.
+ * Paged on the console list contract (lib/query/README.md → "Paging"; #7494): `support.cases`
+ * answers one keyset page per opaque cursor, newest activity first with the case id breaking ties,
+ * read through `useKeysetList` — whose first page is the exact key the route prefetches, so it
+ * still paints from the server HTML — and footed by `ListFooter` (the scroll sentinel plus the
+ * always-visible "Load more", and the retry line on a failed page with the rows kept).
  *
- * Result count lives in the page toolbar's pill, never as prose in the bar. When `seeAll`
+ * No count anywhere: the console carries no list counts (README → "Counts"). When `seeAll`
  * (the caller holds manage_support) the list is the whole org's cases — the toolbar's line
  * says so and each foreign row shows its opener.
  */
@@ -118,68 +86,14 @@ export function CaseList({
 		[filters.bucket, filters.severity, filters.type, debouncedSearch],
 	);
 
-	// The route prefetched this key (`my-cases/page.tsx`), so the rows are in the server HTML and
-	// the hydrating render draws the same rows: no client fetch on mount, no pending flash. (This
-	// used to render pending until hydration was over, because the bell shared the key; the bell
-	// reads its own feed now, `workspace.supportCases`, so nothing else fills this entry early.)
-	const result = useQuery(
-		orpc.support.cases.queryOptions({
-			input: query,
-			placeholderData: keepPreviousData,
-		}),
-	);
-	const { refetch, isPending, isPlaceholderData } = result;
-	const isError = result.isError && result.data === undefined;
+	// The route prefetched this key's first page (`my-cases/page.tsx`), so the rows are in the
+	// server HTML and the hydrating render draws the same rows: no client fetch on mount, no pending
+	// flash. (The bell reads its own feed, `workspace.supportCases`, so nothing else fills this entry.)
+	const list = useKeysetList(orpc.support.cases, query);
+	const { rows, facets, isPending, isPlaceholderData } = list;
+	const isError = list.query.isError && list.query.data === undefined;
 	// A refused read answers the same every time: it is told as a refusal, with no retry (G-16).
-	const refusal = isError ? readRefusalOf(result.error) : null;
-	// A module-level empty array, not an inline `= []` default: a fresh literal on every
-	// render would give the memos below a new dependency identity each time and defeat them.
-	const firstPage = result.data?.rows ?? NO_ROWS;
-	const facets = result.data?.facets ?? null;
-
-	// The pages after the first. Keyed (through oRPC's infinite key) on page one's last row, so a
-	// refetched page one restarts the walk from wherever page one now ends (the previous pages stay
-	// on screen until it lands, and `mergeCasePages` drops any case both hold). Disabled until the
-	// reader asks for more under THESE filters — nothing is fetched speculatively. The query object
-	// is memoised on its fields, so its identity is the filter state's.
-	const firstCursor = isPlaceholderData ? null : nextCaseCursor(firstPage);
-	const [extendQuery, setExtendQuery] = useState<typeof query | null>(null);
-	const extending = firstCursor !== null && extendQuery === query;
-	const more = useInfiniteQuery(
-		orpc.support.cases.infiniteOptions({
-			input: (cursor: CaseCursor | null) => ({
-				...query,
-				cursor: cursor ?? undefined,
-			}),
-			initialPageParam: firstCursor,
-			getNextPageParam: (last: CasePage) => nextCaseCursor(last.rows),
-			enabled: extending,
-			placeholderData: keepPreviousData,
-		}),
-	);
-	const { fetchNextPage } = more;
-	const morePages = useMemo(
-		() => (extending && more.data ? more.data.pages.map((p) => p.rows) : NO_PAGES),
-		[extending, more.data],
-	);
-	const rows = useMemo(() => mergeCasePages(firstPage, morePages), [firstPage, morePages]);
-	const hasMore = extending ? more.hasNextPage || more.isPending : firstCursor !== null;
-	const loadingMore = extending && (more.isPending || more.isFetchingNextPage);
-	// A failed page means the end is unknown, exactly as an unloaded one does.
-	const totalKnown = !hasMore && !(extending && more.isError);
-
-	/** Load the next page: the first click starts the walk after page one, later ones extend it. */
-	const onLoadMore = () => {
-		if (loadingMore || !hasMore) return;
-		if (!extending) setExtendQuery(query);
-		else void fetchNextPage();
-	};
-	const sentinelRef = useInfiniteScrollSentinel({
-		hasMore,
-		loading: loadingMore,
-		onLoadMore,
-		resetKey: rows.length,
-	});
+	const refusal = isError ? readRefusalOf(list.query.error) : null;
 
 	// Facet counts come from the server's facet pass over the caller's UNFILTERED cases, so an
 	// option never disappears at the moment you select it.
@@ -205,7 +119,6 @@ export function CaseList({
 						? "Every support case in this organization."
 						: "Your support cases and their conversation threads."
 				}
-				count={isPending || !totalKnown ? null : rows.length}
 				actions={
 					<Button
 						size="sm"
@@ -232,13 +145,14 @@ export function CaseList({
 				<RegionError
 					title={seeAll ? "Couldn't load the cases" : "Couldn't load your cases"}
 					description="Something went wrong fetching the support cases. Try again in a moment."
-					onRetry={() => refetch()}
+					onRetry={() => list.query.refetch()}
 				/>
 			) : rows.length === 0 ? (
 				// Two different empties: nothing to show at all, versus nothing that
 				// survived the filters — conflating them is how a filtered list comes to
-				// look broken.
-				activeFilters > 0 ? (
+				// look broken. `universeEmpty` is the server's answer (no case in scope at all),
+				// so a filtered link into an org with no cases still offers "Submit a case".
+				activeFilters > 0 && list.universeEmpty !== true ? (
 					<Empty className="rounded-md border">
 						<EmptyHeader>
 							<EmptyMedia variant="icon">
@@ -288,29 +202,7 @@ export function CaseList({
 							</li>
 						))}
 					</ul>
-					{extending && more.isError ? (
-						// A failed "Load more" is said under the rows it would have extended; it never
-						// replaces them (the Activity log's R6 E-26 rule).
-						<p role="status" className="flex items-center justify-center gap-2 text-ui-sm text-text-secondary">
-							Couldn&apos;t load more cases.
-							<Button
-								variant="outline"
-								size="sm"
-								onClick={() => void (more.data ? more.fetchNextPage() : more.refetch())}
-							>
-								Try again
-							</Button>
-						</p>
-					) : hasMore ? (
-						<div className="flex justify-center pt-1">
-							{/* Invisible tail sentinel that drives the auto-load-on-scroll. */}
-							<div ref={sentinelRef} aria-hidden className="h-px w-px" />
-							<Button variant="outline" size="sm" disabled={loadingMore} onClick={onLoadMore}>
-								{loadingMore && <Loader2 className="size-3.5 animate-spin" />}
-								Load more
-							</Button>
-						</div>
-					) : null}
+					<ListFooter list={list} />
 				</>
 			)}
 		</div>
