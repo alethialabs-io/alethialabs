@@ -1,3 +1,4 @@
+"use client";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
@@ -9,9 +10,14 @@
 // `grid-cols-[…]` string with no header row at all, so the columns were unlabelled and a
 // screen reader read the log as an undifferentiated stack of text. It now renders through the
 // shared `@repo/ui/table` primitives with real column headers. Not `DataTable`: the list is
-// server-produced, capped at 100 by the query, and never sorted or paginated client-side.
+// server-produced, capped at 100 by the query, and never sorted client-side. It IS paged here, in
+// pages of WAIVER_PAGE_SIZE (R6 C-36): a hundred rows of prose under the posture table pushed
+// everything below it off the page.
 
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
+import { Button } from "@repo/ui/button";
 import { CountPill } from "@repo/ui/count-pill";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { EmptyState } from "@repo/ui/empty";
@@ -40,6 +46,12 @@ const HEAD = cn(
 	"h-auto py-2.5 font-mono text-ui-3xs font-normal uppercase tracking-[0.13em] text-text-tertiary",
 );
 
+/** How many waivers one page of the panel shows. */
+export const WAIVER_PAGE_SIZE = 20;
+
+/** The most waivers the evidence read returns (`lib/queries/evidence.ts`). */
+const WAIVER_READ_CAP = 100;
+
 /** The recorded-waivers panel below the posture table. */
 export function EvidenceWaivers({
 	org,
@@ -49,6 +61,11 @@ export function EvidenceWaivers({
 	waivers: EvidenceWaiver[];
 }) {
 	const active = waivers.filter((w) => w.active).length;
+	const pageCount = Math.max(1, Math.ceil(waivers.length / WAIVER_PAGE_SIZE));
+	const [pageState, setPage] = useState(1);
+	// A refresh can shrink the list under the current page; clamp rather than show an empty page.
+	const page = Math.min(pageState, pageCount);
+	const shown = waivers.slice((page - 1) * WAIVER_PAGE_SIZE, page * WAIVER_PAGE_SIZE);
 	return (
 		<div className="overflow-hidden rounded-lg border bg-surface shadow-sm">
 			<div className="flex items-center gap-2.5 border-b px-4 py-3.5">
@@ -70,11 +87,11 @@ export function EvidenceWaivers({
 					active
 				</span>
 				<span className="flex-1" />
-				{waivers.length >= 100 && (
+				{waivers.length >= WAIVER_READ_CAP && (
 					// The truncation notice is the only thing that says the list is not the whole
 					// list. Nothing about it is a disabled control. #4612.
 					<span className="font-mono text-ui-2xs text-text-tertiary">
-						Showing the 100 most recent
+						Showing the {WAIVER_READ_CAP} most recent
 					</span>
 				)}
 			</div>
@@ -100,7 +117,7 @@ export function EvidenceWaivers({
 						</TableRow>
 					</TableHeader>
 					<TableBody>
-						{waivers.map((w) => (
+						{shown.map((w) => (
 							<TableRow
 								key={w.jobId}
 								className="border-border-faint hover:bg-transparent"
@@ -171,6 +188,36 @@ export function EvidenceWaivers({
 						))}
 					</TableBody>
 				</Table>
+			)}
+			{pageCount > 1 && (
+				<nav
+					aria-label="Recorded waivers pages"
+					className="flex items-center justify-end gap-2 border-t px-4 py-2.5"
+				>
+					<Button
+						variant="outline"
+						size="icon"
+						className="h-7 w-7"
+						disabled={page <= 1}
+						onClick={() => setPage(page - 1)}
+						aria-label="Previous page of waivers"
+					>
+						<ChevronLeft className="h-4 w-4" aria-hidden />
+					</Button>
+					<span className="font-mono text-ui-xs tabular-nums text-text-tertiary">
+						Page {page} of {pageCount}
+					</span>
+					<Button
+						variant="outline"
+						size="icon"
+						className="h-7 w-7"
+						disabled={page >= pageCount}
+						onClick={() => setPage(page + 1)}
+						aria-label="Next page of waivers"
+					>
+						<ChevronRight className="h-4 w-4" aria-hidden />
+					</Button>
+				</nav>
 			)}
 		</div>
 	);
