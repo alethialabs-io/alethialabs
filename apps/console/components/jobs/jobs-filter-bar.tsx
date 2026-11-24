@@ -4,7 +4,8 @@
 
 import { DEFAULT_JOBS_FILTERS } from "@/components/jobs/jobs-query";
 import { JOB_TYPES } from "@/lib/jobs/format";
-import type { JobsFacetOption } from "@/lib/rpc/procedures/jobs";
+import type { FacetOption } from "@/lib/queries/facets";
+import type { JobsFacets } from "@/lib/queries/jobs";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import type { useJobsFilters } from "@/lib/stores/use-jobs-filters";
 import { parseRangeFilter, rangeFilterLabel, rangeFromPick, rangeWindowValue } from "@/lib/query/range-filter";
@@ -31,8 +32,8 @@ const STATUS_LABELS = new Map(
 
 /** Facet options → MultiCombobox options: label fallback + the count as the hint. */
 function comboOptions(
-	facet: JobsFacetOption[] | undefined,
-	label: (o: JobsFacetOption) => string = (o) => o.label ?? o.value,
+	facet: FacetOption[] | undefined,
+	label: (o: FacetOption) => string = (o) => o.label ?? o.value,
 ): ComboboxOption[] {
 	return (facet ?? []).map((o) => ({
 		value: o.value,
@@ -47,15 +48,6 @@ function comboOptions(
  * rather than restated beside it.
  */
 type JobsFilterStore = ReturnType<typeof useJobsFilters.getState>;
-
-/** The facet counts `jobs.page` answers with — every facet the bar offers. */
-interface JobsFacets {
-	authors: JobsFacetOption[];
-	envs: JobsFacetOption[];
-	projects: JobsFacetOption[];
-	statuses: JobsFacetOption[];
-	types: JobsFacetOption[];
-}
 
 /** What the jobs filter bar shows and what each control reports back. */
 interface JobsFilterBarProps {

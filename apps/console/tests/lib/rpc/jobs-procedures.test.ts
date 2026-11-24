@@ -55,7 +55,7 @@ const dialect = new PgDialect();
 /**
  * A drizzle-ish chain; each `await` resolves the next seeded result set. Records every `.where()`
  * and `.limit()` argument, in the order the queries were BUILT — which for `readJobsPage` is rows,
- * matched count, facets.
+ * then (on the first page) facets.
  */
 function mockDb(resultSets: unknown[][]) {
 	const wheres: unknown[] = [];
@@ -110,9 +110,9 @@ describe("job visibility follows project visibility, in every jobs read", () => 
 		["readJobLogsHead", () => readJobLogsHead("job-1"), [[{ id: "job-1" }], []], 1],
 		["readProjectJobs", () => readProjectJobs("proj-1"), [[]], 1],
 		["readJobDetail", () => readJobDetail("job-1"), [[{ job: { id: "job-1", job_type: "DEPLOY", status: "QUEUED", project_id: null, environment_id: null, config_snapshot: {} } }]], 1],
-		// All three passes: the rows, the matched count AND the facet counts, or a hidden project's
-		// name leaks as a facet and its jobs are counted.
-		["readJobsPage", () => readJobsPage({}), [[], [], []], 3],
+		// Both passes: the rows AND the facet counts, or a hidden project's name leaks as a facet and
+		// its jobs are counted.
+		["readJobsPage", () => readJobsPage({}), [[], []], 2],
 	] as const)("%s filters by the reader's visible projects", async (_name, run, sets, jobsQueries) => {
 		const { wheres } = mockDb(sets.map((s) => [...s]));
 		await run();
@@ -312,132 +312,38 @@ describe("readProjectJobs", () => {
 	});
 });
 
+// The page's passes, predicates and keyset cut are `queryJobsPage`'s (tests/lib/queries/jobs-page.test.ts).
+// What is the PROCEDURE's: it resolves the actor, puts visibility into the scope, keeps the project
+// a scope rather than a filter, and hands the builder a bounded page.
 describe("readJobsPage", () => {
-	/** One facet-pass row: a distinct (status, type, author, project, environment) and how many jobs carry it. */
-	const group = (fields: Record<string, unknown>) => ({
-		status: "SUCCESS",
-		job_type: "PLAN",
-		user_id: "u-1",
-		project_id: null,
-		project_name: null,
-		environment_id: null,
-		environment_name: null,
-		environment_stage: null,
-		jobs: 1,
-		...fields,
+	it("the project is the scope of BOTH passes; the filters reach the rows pass only", async () => {
+		const { wheres } = mockDb([[], []]);
+		await readJobsPage({ projectId: "proj-scope", statuses: ["FAILED"], search: "needle" });
+		const [rows, facets] = wheres.map(rendered);
+		expect(rows?.params).toEqual(expect.arrayContaining(["proj-scope", "FAILED", "%needle%"]));
+		expect(facets?.params).toContain("proj-scope");
+		expect(facets?.params).not.toContain("FAILED");
+		expect(facets?.params).not.toContain("%needle%");
 	});
 
-	it("flattens the rows, reports the matched count, and sums the grouped facet pass into every facet and the total", async () => {
-		mockDb([
-			[{ job: { id: "j-1", status: "FAILED" }, project_name: "Web", project_slug: "web", runner_name: null }],
-			[{ matched: 1 }],
-			[
-				group({ status: "FAILED", project_id: "p-1", project_name: "Web", environment_id: "e-1", environment_name: "prod", environment_stage: "production", jobs: 4 }),
-				group({ status: "FAILED", project_id: "p-1", project_name: "Web", environment_id: "e-1", environment_name: "prod", environment_stage: "production", job_type: "DEPLOY", jobs: 2 }),
-				group({ jobs: 3 }),
-			],
-		]);
-		const page = await readJobsPage({ statuses: ["FAILED"] });
-		expect(page.rows[0]).toMatchObject({ id: "j-1", project_name: "Web", runner_name: null, cloud_provider: null });
-		expect(page.matched).toBe(1);
-		// Counts are the SUM of the groups' job counts, never the number of groups.
-		expect(page.total).toBe(9);
-		expect(page.facets.projects).toEqual([{ value: "p-1", label: "Web", count: 6 }]);
-		expect(page.facets.envs).toEqual([{ value: "e-1", label: "prod (production)", count: 6 }]);
-		expect(page.facets.statuses).toEqual([
-			{ value: "FAILED", label: null, count: 6 },
-			{ value: "SUCCESS", label: null, count: 3 },
-		]);
-		expect(page.facets.types).toEqual([
-			{ value: "DEPLOY", label: null, count: 2 },
-			{ value: "PLAN", label: null, count: 7 },
-		]);
-		expect(page.facets.authors).toEqual([{ value: "u-1", label: null, count: 9 }]);
+	it.each([
+		["no limit asked", undefined, 51],
+		["a smaller page", 20, 21],
+		["more than the keyset max", 5_000, 101],
+		["a limit that is not a count", Number.NaN, 51],
+		["zero", 0, 51],
+	])("%s (%s) reads limit + 1 = %s rows", async (_name, limit, expected) => {
+		const { limits } = mockDb([[], []]);
+		await readJobsPage({}, { limit });
+		expect(limits).toEqual([expected]);
 	});
 
-	it("an empty scope reads zero for both counts", async () => {
-		mockDb([[], [], []]);
-		const page = await readJobsPage({});
-		expect(page).toMatchObject({ rows: [], matched: 0, total: 0 });
-	});
-
-	// The console filter standard's server half (lib/query/README.md): a facet's counts come from the
-	// scope, never from the rows the filters selected — or the option just picked disappears.
-	describe("the facet pass sees the scope and nothing else", () => {
-		const FILTERS = {
-			search: "needle-search",
-			authors: ["needle-author"],
-			envs: ["needle-env"],
-			projects: ["needle-project"],
-			statuses: ["FAILED"],
-			types: ["DEPLOY"],
-			from: "2026-01-01T00:00:00.000Z",
-			to: "2026-02-01T00:00:00.000Z",
-		};
-
-		it("the rows pass and the matched count carry the filters; the facet pass carries none of them", async () => {
-			const filtered = mockDb([[], [], []]);
-			await readJobsPage(FILTERS);
-			const [rows, matched, facets] = filtered.wheres.map(rendered);
-			const needles = ["%needle-search%", "needle-author", "needle-env", "needle-project", "FAILED", "DEPLOY"];
-			// The control: without it, a reader that ignored its query would pass the line below.
-			for (const pass of [rows, matched]) {
-				expect(needles.filter((needle) => !pass?.params.includes(needle))).toEqual([]);
-			}
-			expect(needles.filter((needle) => facets?.params.includes(needle))).toEqual([]);
-			// And it is the SAME predicate as with no filters at all: nothing the query supplied
-			// narrowed it, a date bound or an enum rendered without a string parameter included.
-			const pristine = mockDb([[], [], []]);
-			await readJobsPage({});
-			expect(facets).toEqual(rendered(pristine.wheres[2]));
-		});
-
-		it("the matched count is filtered exactly as the rows are", async () => {
-			const { wheres } = mockDb([[], [], []]);
-			await readJobsPage(FILTERS);
-			expect(rendered(wheres[1])).toEqual(rendered(wheres[0]));
-		});
-	});
-
-	describe("a project's list is scoped to the project in every pass", () => {
-		it("rows, matched count and facets all carry the project", async () => {
-			const { wheres } = mockDb([[], [], []]);
-			await readJobsPage({ projectId: "proj-scope" });
-			expect(wheres).toHaveLength(3);
-			expect(wheres.map(rendered).filter((pass) => !pass.params.includes("proj-scope"))).toEqual([]);
-		});
-
-		it("the facet pass narrows with the scope: it is not the org-wide predicate", async () => {
-			const scoped = mockDb([[], [], []]);
-			await readJobsPage({ projectId: "proj-scope" });
-			const org = mockDb([[], [], []]);
-			await readJobsPage({});
-			expect(rendered(scoped.wheres[2])).not.toEqual(rendered(org.wheres[2]));
-			expect(rendered(org.wheres[2]).params).not.toContain("proj-scope");
-		});
-
-		it("the scope is not one of the filters: filters change the rows pass and leave the scoped facet pass alone", async () => {
-			const bare = mockDb([[], [], []]);
-			await readJobsPage({ projectId: "proj-scope" });
-			const filtered = mockDb([[], [], []]);
-			await readJobsPage({ projectId: "proj-scope", statuses: ["FAILED"], search: "needle" });
-			expect(rendered(filtered.wheres[2])).toEqual(rendered(bare.wheres[2]));
-			expect(rendered(filtered.wheres[0])).not.toEqual(rendered(bare.wheres[0]));
-		});
-	});
-
-	describe("the rows are a bounded window", () => {
-		it.each([
-			["no limit asked", undefined, 50],
-			["a larger window", 150, 150],
-			["more than the cap", 5_000, 500],
-			["a limit that is not a count", Number.NaN, 50],
-			["zero", 0, 50],
-		])("%s reads %s → LIMIT %s", async (_name, limit, expected) => {
-			const { limits } = mockDb([[], [], []]);
-			await readJobsPage({ limit });
-			expect(limits).toEqual([expected]);
-		});
+	it("a later page runs the rows pass alone and answers no facets", async () => {
+		const { wheres } = mockDb([[]]);
+		const page = await readJobsPage({}, { cursor: { at: "2026-11-20T10:00:00.000Z", id: "00000000-0000-4000-8000-000000000007" } });
+		expect(wheres).toHaveLength(1);
+		expect(carriesVisibility(wheres[0])).toBe(true);
+		expect(page.facets).toBeNull();
 	});
 });
 
@@ -449,7 +355,7 @@ describe("job snapshot redaction on the relocated readers", () => {
 	const REDACTED = { runner_id: "r-1", nested: { region: "eu" } };
 
 	it("readJobsPage", async () => {
-		mockDb([[{ job: { id: "j-1", config_snapshot: snapshot() }, project_name: null }], [{ matched: 1 }], []]);
+		mockDb([[{ job: { id: "j-1", config_snapshot: snapshot() }, project_name: null }], []]);
 		const page = await readJobsPage({});
 		expect(page.rows[0]?.config_snapshot).toEqual(REDACTED);
 		expect(JSON.stringify(page)).not.toContain(SENTINEL);
