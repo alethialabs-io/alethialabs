@@ -35,8 +35,9 @@ import { getServiceDb } from "@/lib/db";
 import { type Factura, factura } from "@/lib/db/schema";
 import { log } from "@/lib/observability/log";
 import { storage } from "@/lib/storage";
-import type { FacturaLine, FacturaSnapshot } from "@/types/jsonb.types";
+import type { FacturaSnapshot } from "@/types/jsonb.types";
 import { isLegalInvoiceNumber } from "./checks";
+import { buildCreditNoteSnapshot } from "./credit-note-snapshot";
 import { renderFacturaPdf } from "./document";
 import {
 	dbFacturaStore,
@@ -48,8 +49,6 @@ import {
 	sofiaDay,
 } from "./issue";
 
-/** The document name of a credit note (Art. 115 ЗДДС). */
-export const CREDIT_NOTE_DOCUMENT_NAME = "КРЕДИТНО ИЗВЕСТИЕ";
 
 /** The Stripe refund fields a credit note is built from (a full `Stripe.Refund` satisfies it). */
 export type RefundSource = Pick<Stripe.Refund, "id" | "amount" | "currency" | "created" | "status">;
@@ -123,79 +122,6 @@ const defaultDeps: CreditNoteDeps = {
 	now: () => new Date(),
 };
 
-/** What the snapshot of a credit note needs beyond the original and the refund. */
-export interface CreditNoteInputs {
-	/** The ten-digit number taken from the series. */
-	number: string;
-	/** YYYY-MM-DD. */
-	issueDate: string;
-	/** YYYY-MM-DD: the day of the refund. */
-	chargeableDate: string;
-}
-
-/** A line with its amounts negated, for a full refund. */
-function negated(l: FacturaLine): FacturaLine {
-	return { ...l, unitAmountMinor: -l.unitAmountMinor, amountMinor: -l.amountMinor };
-}
-
-/** The EUR equivalent of `amountMinor` at a recorded rate, rounded half away from zero. */
-function eurAt(amountMinor: number, rate: string): number {
-	return Math.round(amountMinor * Number(rate));
-}
-
-/**
- * The snapshot of the credit note for `refundMinor` of the фактура `original`. Pure: the same inputs
- * always give the same snapshot, so its PDF is reproducible.
- */
-export function buildCreditNoteSnapshot(
-	original: FacturaSnapshot,
-	refundMinor: number,
-	input: CreditNoteInputs,
-): FacturaSnapshot {
-	const full = refundMinor === original.totalMinor;
-	const lines: FacturaLine[] = full
-		? original.lines.map(negated)
-		: [
-				{
-					description: `Възстановена сума по фактура № ${original.number} / Refund against invoice No. ${original.number}`,
-					quantity: 1,
-					unitAmountMinor: -refundMinor,
-					amountMinor: -refundMinor,
-					periodStart: null,
-					periodEnd: null,
-				},
-			];
-	const eur = original.eurEquivalent;
-	return {
-		version: 1,
-		documentName: CREDIT_NOTE_DOCUMENT_NAME,
-		number: input.number,
-		issueDate: input.issueDate,
-		chargeableDate: input.chargeableDate,
-		supplier: original.supplier,
-		recipient: original.recipient,
-		lines,
-		currency: original.currency,
-		taxBaseMinor: -refundMinor,
-		vatMinor: 0,
-		totalMinor: -refundMinor,
-		noVatGround: original.noVatGround,
-		eurEquivalent: eur
-			? {
-					taxBaseEurMinor: full ? -eur.taxBaseEurMinor : -eurAt(refundMinor, eur.rate),
-					vatEurMinor: 0,
-					rate: eur.rate,
-					rateDate: eur.rateDate,
-					source: eur.source,
-				}
-			: null,
-		original: { number: original.number, issueDate: original.issueDate },
-		reason: full
-			? "Пълно възстановяване на плащането / Full refund of the payment"
-			: "Частично възстановяване на плащането / Partial refund of the payment",
-		stripeInvoiceNumber: original.stripeInvoiceNumber,
-	};
-}
 
 /** A failed outcome. */
 function fail(reason: CreditNoteFailure, detail: string): CreditNoteOutcome {
