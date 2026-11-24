@@ -62,15 +62,9 @@ function refusalOf(err: ApprovalError): ActionRefusal {
 
 /** The counts and cost of a plan job's stored output; nulls where the runner reported nothing readable. */
 function planFactsOf(meta: (typeof jobs.$inferSelect)["execution_metadata"]): Omit<ApprovalPlanFacts, "projectName" | "environmentName"> {
-	let counts: { add: number; change: number; destroy: number } | null = null;
-	if (meta?.plan_result) {
-		try {
-			const c = parsePlanJSON(meta.plan_result).counts;
-			counts = { add: c.create, change: c.update + c.replace, destroy: c.delete };
-		} catch {
-			counts = null;
-		}
-	}
+	// parsePlanJSON is lenient: a malformed plan reads as no changes rather than throwing.
+	const c = meta?.plan_result ? parsePlanJSON(meta.plan_result).counts : null;
+	const counts = c ? { add: c.create, change: c.update + c.replace, destroy: c.delete } : null;
 	const monthly = meta?.cost_breakdown ? parseCostBreakdown(meta.cost_breakdown).totalMonthlyCost : null;
 	return {
 		add: counts?.add ?? null,
