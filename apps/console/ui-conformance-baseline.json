@@ -1121,11 +1121,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
-					"fail": 1,
+					"pass": 10,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.9
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1147,11 +1147,11 @@
 				}
 			},
 			"overall": {
-				"pass": 40,
-				"fail": 1,
+				"pass": 41,
+				"fail": 0,
 				"na": 1,
 				"notMeasured": 1,
-				"score": 0.9756
+				"score": 1
 			}
 		},
 		{
@@ -1791,11 +1791,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1817,11 +1817,11 @@
 				}
 			},
 			"overall": {
-				"pass": 37,
-				"fail": 0,
+				"pass": 36,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 4,
-				"score": 1
+				"score": 0.973
 			}
 		},
 		{
@@ -1858,11 +1858,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
-					"fail": 1,
+					"pass": 10,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.9
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1884,11 +1884,11 @@
 				}
 			},
 			"overall": {
-				"pass": 40,
-				"fail": 1,
+				"pass": 41,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9756
+				"score": 1
 			}
 		},
 		{
@@ -4776,8 +4776,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useJobsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -7051,7 +7050,8 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useEvidenceFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -7270,8 +7270,7 @@
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useJobsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
