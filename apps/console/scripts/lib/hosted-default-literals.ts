@@ -7,7 +7,8 @@
 // THE DEFECT. Four call sites fell back to the hosted service when the instance's own URL was
 // unset (`process.env.NEXT_PUBLIC_APP_URL ?? <hosted origin>`). On a self-hosted instance that
 // handed deployed runners, the SSO page's SP URLs and the connect flows' OIDC issuer to Alethia
-// Labs' hosted service.
+// Labs' hosted service. A fifth, `lib/org-url.ts`, showed the hosted domain as an org's address
+// (#7417); it is guarded too (#7450).
 //
 // THE RULE. Under `HOSTED_DEFAULT_GUARDED`, no STRING LITERAL (plain, or any piece of a template)
 // names the hosted domain. The hosted asset bucket may appear only as the initializer of the one
@@ -21,12 +22,16 @@
 
 import ts from "typescript";
 
-/** The call sites EDN-H7 named (its `scope:`), relative to apps/console. */
+/**
+ * The call sites cleared of hosted defaults, relative to apps/console: the four EDN-H7 named (its
+ * `scope:`), and `lib/org-url.ts`, whose hosted fallback #7417 removed (#7450).
+ */
 export const HOSTED_DEFAULT_GUARDED: readonly string[] = [
 	"app/server/actions/runners.ts",
 	"app/api/cli/runners/deploy/route.ts",
 	"lib/rpc/procedures/sso.ts",
 	"components/connectors/connector-assets.ts",
+	"lib/org-url.ts",
 ];
 
 /** The hosted service's domain, as a host or a host suffix. */
