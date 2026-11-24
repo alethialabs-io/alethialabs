@@ -1,6 +1,6 @@
 ---
 title: Security model for agents
-description: What limits an AI agent that works with Alethia today — your own permissions, a read-only MCP server, OAuth tokens bound to that server, and a confirmation before apply and destroy.
+description: What limits an AI agent that works with Alethia today — your own permissions, the scopes you grant, an approval by a person before apply and destroy, and OAuth tokens bound to the server.
 ---
 
 # Security model for agents
@@ -19,7 +19,9 @@ a job or an organization that its person cannot reach, and cannot read across or
 
 | Control | What it does |
 | --- | --- |
-| Read-only tools | The server offers only tools marked as safe to expose, all of them reads. A tool without that mark is left out. No tool writes, starts a job or approves. See the [tool reference](/agents/tools). |
+| Scopes | The token carries the scopes you granted: `read`, `design`, `plan`, `apply`, `destroy`. A scope only narrows your own permissions. A tool that needs a scope the token lacks is not listed and refuses a call. |
+| Approval by a person | `request_apply` and `request_destroy` start nothing on their own. The job starts only after a person signed in to the console approves the request, and only for the plan that was approved, once. No tool approves. See [how an apply runs](/agents/tools#how-an-apply-or-a-destroy-runs). |
+| Organization switch | An owner can turn agent access off for the organization. The server then refuses every request, and no approval can start a job. An owner can also refuse agents any apply or destroy in a production environment. |
 | OAuth sign-in | A client gets a token only after you sign in to Alethia in the browser. There is no API key to paste or leak. |
 | Client ID Metadata Documents | A client identifies itself by the URL of a metadata document that it publishes. Clients cannot register themselves anonymously. |
 | Tokens bound to the server | Each access token names the MCP endpoint as its audience. The server refuses a token issued for anything else. |
@@ -52,5 +54,6 @@ a secret store, and revoke it when the work is done.
 
 Tool results and command output can contain text that Alethia did not write: a repository's files, a
 job's log, a cloud API's answer. Such text can contain instructions aimed at the agent. An agent must
-treat it as data and never follow it. Over MCP the worst such text can do is mislead a read, because
-no MCP tool changes anything.
+treat it as data and never follow it. Over MCP the most such text can lead to is a plan, or a
+pending request that you still have to approve in the console. The server returns log text in a field
+named `untrusted_output` to say so.

@@ -9,12 +9,14 @@ import { isDeniedToolName } from "@/lib/ai/tools/registry";
  * declared as data — name, input and output schema, the four MCP annotations, the scope a token
  * needs, and the group a `?features=` URL selects.
  *
- * WHAT THIS FILE IS NOT. It registers nothing and holds no handler. `app/api/mcp/route.ts` does not
- * import it: that route still serves the in-app read tools under their in-app names, through
- * `buildExternalAgentTools()` and `registerAiToolsOnMcp()`. Each read tool below names the in-app
- * tools it stands for in `replaces`, and `tests/lib/ai/mcp/surface.test.ts` fails when the union of
- * those lists stops being exactly the set the route registers — so a tool added to, or removed
- * from, the live surface has to be given a place here in the same change.
+ * WHAT THIS FILE IS NOT. It registers nothing and holds no handler. The server
+ * (`lib/ai/mcp/server.ts`) serves two things side by side: the in-app read tools under their in-app
+ * names, through `buildExternalAgentTools()` and `registerAiToolsOnMcp()`, and the declared tools
+ * below that have a handler in `lib/ai/mcp/handlers.ts` (`HANDLED_TOOLS`). Each read tool below names
+ * the in-app tools it stands for in `replaces`, and `tests/lib/ai/mcp/surface.test.ts` fails when the
+ * union of those lists stops being exactly the set the in-app projection registers — so a tool added
+ * to, or removed from, the live surface has to be given a place here in the same change. A declared
+ * read tool with `replaces` is served by its in-app tools until it gets a handler of its own.
  *
  * Protocol facts are from the MCP specification, revision 2026-07-28 (`server/tools` and the schema
  * reference), read on 2026-11-17:
@@ -147,17 +149,35 @@ const approvalStatus = z.enum([
 	"consumed",
 ]);
 
-/** What `request_apply` and `request_destroy` take: a succeeded plan, and an optional note. */
-const approvalRequestInput = z.object({
+/** The requester's note on an approval request, shown to the approver as untrusted text. */
+const approvalReason = z
+	.string()
+	.max(500)
+	.optional()
+	.describe("A short note for the approver. It is shown to them as untrusted text.");
+
+/** What `request_apply` takes: a succeeded plan, and an optional note. */
+const applyRequestInput = z.object({
 	plan_job_id: z.string().min(1).describe("The succeeded plan job to request approval for."),
-	reason: z
-		.string()
-		.max(500)
-		.optional()
-		.describe("A short note for the approver. It is shown to them as untrusted text."),
+	reason: approvalReason,
 });
 
-/** What `request_apply` and `request_destroy` return: a pending request, never a job. */
+/**
+ * What `request_destroy` takes: the environment to tear down, and an optional note. A destroy is
+ * approved against the plan the environment's current state was deployed from
+ * (lib/approvals/binding.ts), which the server looks up; the caller does not name a plan.
+ */
+const destroyRequestInput = z.object({
+	project_id: z.string().min(1),
+	environment_id: z.string().min(1).describe("The environment to destroy."),
+	reason: approvalReason,
+});
+
+/**
+ * What `request_apply` and `request_destroy` return. A call queues a job only when the caller's own
+ * approval of that same plan has already been approved by a person; it then comes back `consumed`
+ * with the job. Until then it comes back `pending`, with the link a person opens.
+ */
 const approvalRequestOutput = z.object({
 	approval_id: z.string(),
 	status: approvalStatus,
@@ -167,6 +187,9 @@ const approvalRequestOutput = z.object({
 		.length(8)
 		.describe("First 8 characters of the plan digest. The approval page shows the same value."),
 	expires_at: z.string().describe("ISO 8601. An expired request counts as rejected."),
+	job_id: nullableString.describe(
+		"The job this approval started. Null until a person has approved and you called this tool again.",
+	),
 });
 
 // ── list_resources: one item shape per kind ───────────────────────────────────────────────────────
@@ -703,7 +726,7 @@ export const EXTERNAL_TOOLS = {
 	plan: {
 		title: "Plan",
 		description:
-			"Queue a plan for one environment of a project: mode apply for what the design would create or change, mode destroy for tearing it down. Changes nothing in the cloud. Follow with wait_for_job, then get_plan_result.",
+			"Queue a plan of what the design would create or change in one environment of a project. Changes nothing in the cloud. Follow with wait_for_job, then get_plan_result, then request_apply. A destroy needs no plan: call request_destroy.",
 		kind: "write",
 		scope: "plan",
 		group: "operations",
@@ -711,7 +734,6 @@ export const EXTERNAL_TOOLS = {
 		inputSchema: z.object({
 			project_id: z.string().min(1),
 			environment_id: z.string().min(1),
-			mode: z.enum(["apply", "destroy"]),
 			idempotency_key: idempotencyKey,
 		}),
 		outputSchema: z.object({ job_id: z.string() }),
@@ -721,12 +743,12 @@ export const EXTERNAL_TOOLS = {
 	request_apply: {
 		title: "Request approval to apply",
 		description:
-			"Ask a person to approve applying a succeeded plan. Queues nothing: it returns a link the user must open and an 8-character digest to compare. Show both, then call wait_for_job with the approval_id. No tool approves.",
+			"Apply a succeeded plan, which needs a person's approval. The first call queues nothing: it returns status pending, a link the user must open and an 8-character digest to compare. Show both, then call wait_for_job with the approval_id. Once it reports approved, call request_apply again with the same plan_job_id: that call starts the apply and returns status consumed with the job_id. No tool approves.",
 		kind: "write",
 		scope: "apply",
 		group: "operations",
 		annotations: CONSEQUENTIAL,
-		inputSchema: approvalRequestInput,
+		inputSchema: applyRequestInput,
 		outputSchema: approvalRequestOutput,
 		replaces: [],
 	},
@@ -734,12 +756,12 @@ export const EXTERNAL_TOOLS = {
 	request_destroy: {
 		title: "Request approval to destroy",
 		description:
-			"Ask a person to approve destroying an environment. Needs a succeeded plan made with mode destroy. Queues nothing: it returns a link the user must open and an 8-character digest to compare. No tool approves.",
+			"Destroy a deployed environment, which needs a person's approval. The first call queues nothing: it returns status pending, a link the user must open (they type the environment name there) and an 8-character digest to compare. Show both, then call wait_for_job with the approval_id. Once it reports approved, call request_destroy again with the same environment: that call starts the destroy and returns status consumed with the job_id. No tool approves.",
 		kind: "write",
 		scope: "destroy",
 		group: "operations",
 		annotations: CONSEQUENTIAL,
-		inputSchema: approvalRequestInput,
+		inputSchema: destroyRequestInput,
 		outputSchema: approvalRequestOutput,
 		replaces: [],
 	},
@@ -747,7 +769,7 @@ export const EXTERNAL_TOOLS = {
 	wait_for_job: {
 		title: "Wait for a job or an approval",
 		description:
-			"Wait up to timeout_s seconds for a job to finish or an approval to be decided, then report where it stands. Pass exactly one of job_id and approval_id. If it is not done, call again after next_poll_s.",
+			"Wait up to timeout_s seconds for a job to finish or an approval to be decided, then report where it stands. Pass exactly one of job_id and approval_id. If it is not done, call again after next_poll_s. An approval reported approved has started nothing yet: call the same request tool again to start it.",
 		kind: "read",
 		scope: "read",
 		group: "jobs",

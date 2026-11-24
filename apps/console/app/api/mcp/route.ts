@@ -1,57 +1,83 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { actorWithCredential } from "@/lib/authz/actor-credential";
 import { requireMcpAuth } from "@better-auth/mcp";
 // The SDK directly, not mcp-handler. mcp-handler v2 is a thin wrapper that hardcodes
 // `legacy: "stateless"` and exposes no way to override it, so routing through it would
 // make the strict posture below unreachable. better-auth's own MCP docs and demo call the
 // SDK the same way.
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
-import { registerAiToolsOnMcp } from "@/lib/ai/mcp/adapter";
-import { buildExternalAgentTools } from "@/lib/ai/tools";
+import { createMcpHandler } from "@modelcontextprotocol/server";
+import { type McpActorRefusal, resolveMcpActor } from "@/lib/ai/mcp/actor";
+import { buildMcpServer } from "@/lib/ai/mcp/server";
+import { parseSurfaceQuery } from "@/lib/ai/mcp/surface";
+import { AGENT_SCOPES } from "@/lib/approvals/types";
 import { auth, mcpResourceUrl } from "@/lib/auth";
-import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { isAiSurfaceEnabled } from "@/lib/billing/ai-guard";
 
 // Node runtime: the actor seam uses AsyncLocalStorage + the tools reach postgres-js.
 export const runtime = "nodejs";
 
-/**
- * Remote MCP endpoint (B7) — exposes the same PDP-gated tool SSOT the in-app agent
- * uses (read surface + service catalog + repo scanner) to Claude / claude.ai
- * connectors over Streamable HTTP. Auth is OAuth 2.1 via Better Auth's mcp() plugin
- * (discovery + token endpoints live under /api/auth + /oauth2); requireMcpAuth
- * validates the access token and yields its session. We resolve that into the same
- * Actor every other caller uses (getActiveScope) and bind it for the request via
- * runWithActor, so the tools enforce the user's grants with no new authority.
+/*
+ * Remote MCP endpoint (B7, agent surface §4.5) over Streamable HTTP. Auth is OAuth 2.1 via Better
+ * Auth's mcp() plugin (discovery + token endpoints live under /api/auth + /oauth2); requireMcpAuth
+ * validates the access token and yields its claims. `resolveMcpActor` turns those into the actor the
+ * request runs as — the person, bound as `agent_oauth`, held to the token's scopes, the consent
+ * grant's organization and projects, and the URL's `?project=` pin, and refused while the
+ * organization's agent access is off — and runWithActor binds it, so every tool enforces the
+ * person's grants under that ceiling with no new authority.
  *
- * Read-only by design: we expose the audience-filtered EXTERNAL projection
- * (buildExternalAgentTools → registry.ts), i.e. only read/both tools. HITL
- * proposals, canvas tools, AND job-queuing writes (scan_repo) are excluded — the
- * external surface stays strictly read-only at launch (see the elench plan A5).
+ * The server (lib/ai/mcp/server.ts) lists the in-app read tools and the declared external tools
+ * that have a handler, including the writes: `plan`, `request_apply`, `request_destroy` and
+ * `cancel_job`. An apply or a destroy is queued only after a person approved it in the console, and
+ * only for the plan that was approved (lib/ai/mcp/handlers.ts).
+ *
+ * `legacy: "reject"` is the point of calling the SDK directly. The default, "stateless", still
+ * SERVES 2025-era POSTs (it only answers GET/DELETE with 405); "reject" is what actually closes
+ * the old protocol generation. POST-only below is complementary, not redundant.
  */
-// v2 inverts the factory: it RETURNS a server rather than receiving one, and `serverInfo` moves
-// to the McpServer constructor. It runs per request, so each call still gets a fresh server.
-//
-// `legacy: "reject"` is the point of calling the SDK directly. The default, "stateless", still
-// SERVES 2025-era POSTs (it only answers GET/DELETE with 405); "reject" is what actually closes
-// the old protocol generation. POST-only below is complementary, not redundant.
-const mcpHandler = createMcpHandler(
-	() => {
-		const server = new McpServer(
-			{ name: "alethia", version: "1.0.0" },
-			{
-				instructions:
-					"Alethia control-plane tools (read-only): read the user's projects/clusters/jobs/runners, browse the service catalog, and review repo-scan results. Provisioning and repo scans are initiated in the Alethia dashboard with human approval.",
-			},
-		);
-		registerAiToolsOnMcp(server, buildExternalAgentTools());
-		return server;
-	},
-	{ legacy: "reject" },
-);
+
+/** A JSON error response with `status`. */
+function jsonError(status: number, error: string, headers: Record<string, string> = {}): Response {
+	return new Response(JSON.stringify({ error }), {
+		status,
+		headers: { "content-type": "application/json", ...headers },
+	});
+}
+
+/**
+ * What a token with no agent scope is told: typically a connection made before the agent scopes
+ * existed, holding only OIDC scopes. Names the fix and every scope there is to grant.
+ */
+const INSUFFICIENT_SCOPE_MESSAGE = `This connection was authorized without any Alethia agent scope, so it can use no tools. Disconnect this MCP server in your client, then connect it again and approve the agent scopes it asks for: ${AGENT_SCOPES.join(", ")}. Approve at least read; each scope only narrows what your role allows.`;
+
+/** The response for a token that resolved into no actor. */
+function refusalResponse(reason: McpActorRefusal): Response {
+	switch (reason) {
+		case "no_subject":
+			return jsonError(401, "Access token carries no subject.");
+		case "insufficient_scope":
+			// RFC 6750 §3.1: a client may step up by asking for the scope again. Connections made before
+			// the agent scopes existed hold only OIDC scopes, so the body names the fix for a person.
+			return jsonError(403, INSUFFICIENT_SCOPE_MESSAGE, {
+				"www-authenticate": `Bearer error="insufficient_scope", scope="${AGENT_SCOPES.join(" ")}"`,
+			});
+		case "org_not_permitted":
+			return jsonError(403, "The organization this connection was granted in is not one you belong to. Reconnect.");
+		case "project_not_permitted":
+			return jsonError(403, "This connection was not granted the project the URL names.");
+		case "agent_access_disabled":
+			return jsonError(
+				403,
+				"Agent access is turned off for this organization. An owner can turn it back on in the organization's agent settings.",
+			);
+	}
+}
+
+/** The console origin approval links are built on: the MCP resource's own origin. */
+function appOriginOf(resource: string): string {
+	return new URL(resource).origin;
+}
 
 // 1.7's requireMcpAuth is NOT a rename of withMcpAuth: the second argument is now the
 // verified access-token CLAIMS (a JWTPayload), not a session object. The subject claim is
@@ -69,33 +95,29 @@ const mcpHandler = createMcpHandler(
 // Deleting that argument leaves types, lint and the whole suite green while remote MCP auth is
 // dead, which is why tests/app/api/mcp-route-audience.test.ts asserts the value that reaches the
 // library rather than trusting the wiring to stay put (#3511).
-/** Resolves a verified access token into the same Actor every other caller uses. */
-const withActorFromToken: Parameters<typeof requireMcpAuth>[1] = async (_req, accessTokenClaims) => {
-	const subject = accessTokenClaims.sub;
-	if (typeof subject !== "string" || subject.length === 0) {
-		return new Response(JSON.stringify({ error: "Access token carries no subject." }), {
-			status: 401,
-			headers: { "content-type": "application/json" },
-		});
-	}
-	// An OAuth grant is a person's, so the subject is the person it acts for. It is bound as
-	// `agent_oauth` and not `session` because the token is held by an MCP client, not by a person
-	// at the console.
-	const actor = actorWithCredential(await getActiveScope(subject), "agent_oauth");
+/** Resolves a verified access token into the actor the request runs as, and answers the request. */
+const withActorFromToken: Parameters<typeof requireMcpAuth>[1] = async (req, accessTokenClaims) => {
+	const surface = parseSurfaceQuery(new URL(req.url).searchParams);
+	if (!surface.ok) return jsonError(400, surface.error);
+
+	const resolved = await resolveMcpActor(accessTokenClaims, surface.query.projectId);
+	if (!resolved.ok) return refusalResponse(resolved.reason);
+	const { actor } = resolved;
 
 	// The connector is a paid/ee surface; self-host (no Stripe) is always enabled.
 	if (!(await isAiSurfaceEnabled(actor.orgId))) {
-		return new Response(
-			JSON.stringify({
-				error: "AI features require an active plan. Upgrade to use the connector.",
-			}),
-			{ status: 403, headers: { "content-type": "application/json" } },
-		);
+		return jsonError(403, "AI features require an active plan. Upgrade to use the connector.");
 	}
 
+	const appOrigin = appOriginOf(mcpResourceUrl ?? req.url);
+	// One server per request: what it lists depends on this request's token and URL.
+	const handler = createMcpHandler(
+		() => buildMcpServer({ actor, query: surface.query, appOrigin }),
+		{ legacy: "reject" },
+	);
 	// Bind the token-derived actor for the whole request so currentActor()/
 	// requireOwner() inside the tools resolve to it instead of a (absent) session.
-	return runWithActor(actor, () => mcpHandler.fetch(_req));
+	return runWithActor(actor, () => handler.fetch(req));
 };
 
 /**
