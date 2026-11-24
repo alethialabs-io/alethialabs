@@ -10,16 +10,21 @@
 // tenancy wall: an id of another org's dimension or value matches no row, and is answered as an
 // unknown id is.
 
-import { eq } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { defineAction } from "@/lib/actions/define-action";
 import { ActionRefusal, type ActionResult, FieldRefusal } from "@/lib/actions/result";
 import { authorize } from "@/lib/authz/guard";
-import { withScope } from "@/lib/db";
+import { type Tx, withScope } from "@/lib/db";
 import { classificationDimension, classificationValue } from "@/lib/db/schema";
 import type { ResourceKind } from "@/lib/db/schema/enums";
 import type { ClassificationEnforcement } from "@/types/jsonb.types";
-import { dimensionInputSchema, valueInputSchema } from "@/lib/validations/classification";
+import {
+	CLASSIFICATION_DIMENSIONS_MAX,
+	CLASSIFICATION_VALUES_MAX,
+	dimensionInputSchema,
+	valueInputSchema,
+} from "@/lib/validations/classification";
 
 /** Client-safe value DTO (no org_id). `assignmentCount` = resources carrying this value. */
 export interface ValueDTO {
@@ -82,6 +87,44 @@ async function withUniqueFields<T>(write: () => Promise<T>): Promise<T> {
 	}
 }
 
+/**
+ * Refuses a new dimension once the org holds {@link CLASSIFICATION_DIMENSIONS_MAX}. Takes a per-org
+ * transaction lock before counting, so two creates racing at the cap cannot both see room: the
+ * second waits for the first to commit and then counts its row. Call it inside the transaction that
+ * inserts.
+ */
+async function assertRoomForDimension(tx: Tx, orgId: string): Promise<void> {
+	await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`classification-cap:dimensions:${orgId}`}, 0))`);
+	const [row] = await tx
+		.select({ n: count() })
+		.from(classificationDimension)
+		.where(eq(classificationDimension.org_id, orgId));
+	if ((row?.n ?? 0) >= CLASSIFICATION_DIMENSIONS_MAX) {
+		throw new ActionRefusal(
+			"conflict",
+			`This organization already has ${CLASSIFICATION_DIMENSIONS_MAX} classification dimensions, the most it can define. Delete one before adding another.`,
+		);
+	}
+}
+
+/**
+ * Refuses a new value once the dimension holds {@link CLASSIFICATION_VALUES_MAX}, under a
+ * per-dimension transaction lock (as {@link assertRoomForDimension}).
+ */
+async function assertRoomForValue(tx: Tx, dimensionId: string): Promise<void> {
+	await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`classification-cap:values:${dimensionId}`}, 0))`);
+	const [row] = await tx
+		.select({ n: count() })
+		.from(classificationValue)
+		.where(eq(classificationValue.dimension_id, dimensionId));
+	if ((row?.n ?? 0) >= CLASSIFICATION_VALUES_MAX) {
+		throw new ActionRefusal(
+			"conflict",
+			`This dimension already has ${CLASSIFICATION_VALUES_MAX} values, the most it can hold. Delete one before adding another.`,
+		);
+	}
+}
+
 /** A row addressed by id. */
 const idInput = z.object({ id: z.string().uuid() });
 
@@ -96,6 +139,7 @@ export async function createDimension(raw: z.input<typeof dimensionInputSchema>)
 			const actor = await authorize("edit", { type: "org" });
 			const id = await withUniqueFields(() =>
 				withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
+					await assertRoomForDimension(tx, actor.orgId);
 					const [row] = await tx
 						.insert(classificationDimension)
 						.values({
@@ -183,6 +227,7 @@ export async function createValue(raw: z.input<typeof createValueInput>): Promis
 						.where(eq(classificationDimension.id, data.dimensionId))
 						.limit(1);
 					if (!dim) throw new ActionRefusal("not-found", "That dimension no longer exists.");
+					await assertRoomForValue(tx, data.dimensionId);
 					const [row] = await tx
 						.insert(classificationValue)
 						.values({
@@ -264,7 +309,7 @@ const createWithValuesInput = z.object({
 				.pick({ value: true, label: true })
 				.extend({ color: valueInputSchema.shape.color.nullable() }),
 		)
-		.max(100),
+		.max(CLASSIFICATION_VALUES_MAX),
 });
 
 /**
@@ -281,6 +326,7 @@ export async function createDimensionWithValues(
 			const data = input.dimension;
 			const id = await withUniqueFields(() =>
 				withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
+					await assertRoomForDimension(tx, actor.orgId);
 					const [row] = await tx
 						.insert(classificationDimension)
 						.values({
