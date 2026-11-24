@@ -1,79 +1,76 @@
 ---
-title: Terraform (per-cloud)
-description: Provision a hardened control-plane VM on any of four clouds — closed-origin behind a Cloudflare Tunnel — with OpenTofu.
+title: OpenTofu per cloud
+description: Provision a hardened control-plane VM and a Cloudflare Tunnel on Hetzner, AWS, GCP or Azure with OpenTofu, with no open web ports.
 ---
 
-The repeatable IaC path. Each cloud has a self-contained OpenTofu stack under `infra/cp-<cloud>/`
-that provisions **one** control-plane VM and fronts it with a **Cloudflare Tunnel**, so the box has
-**no public web ports**. It lands on the same [bundle](/self-host) as the [one-click](/self-host/one-click) VM
-and the [Helm](/self-host/helm) chart — pick this when you want version-controlled infrastructure with a
-plan/apply CI loop.
+Provision the VM for a self-hosted instance as code. Each cloud has an OpenTofu stack in
+`infra/cp-<cloud>/` that creates one x86 VM with no open web port, and a Cloudflare Tunnel that
+carries its traffic.
 
-> **Pick one.** The stacks all serve the **same domain/zone**, so they are alternatives — apply
-> **one instead of another**, never two at once (two would fight over the apex DNS + tunnel). The
-> hosted alethialabs.io runs on Hetzner.
+<Callout type="warn">
+  These stacks prepare the VM: Docker, a clone of the repository in `/opt/alethia`, and the tunnel.
+  They do not start Alethia, and the self-host bundle does not include the tunnel's connector
+  (`cloudflared`). Use them only if you will run `cloudflared` on the VM yourself. Otherwise use the
+  [installer](/self-host/install) or the [one-click templates](/self-host/one-click), which serve
+  HTTPS directly.
+</Callout>
 
-## Status
+## Choose a cloud
 
-| Cloud | Module | Box (x86) | Cost/mo | Admin access (no open web port) | Page |
-|---|---|---|---|---|---|
-| Hetzner | `infra/cp-hetzner` | `cx33` | ≈ €14 | SSH, key-only (firewall SSH-only) | [Hetzner](/self-host/terraform/hetzner) |
-| AWS | `infra/cp-aws` | `t3.large` | ≈ $72 | SSM Session Manager | [AWS](/self-host/terraform/aws) |
-| GCP | `infra/cp-gcp` | `e2-standard-2` | ≈ $57 | IAP tunnel | [GCP](/self-host/terraform/gcp) |
-| Azure | `infra/cp-azure` | `Standard_D2s_v5` | ≈ $90 | `az vm run-command` + Serial Console | [Azure](/self-host/terraform/azure) |
+Apply one stack per domain. Two stacks on the same domain fight over its DNS records and tunnel.
 
-> **x86 boxes.** The published app-bundle images are `linux/amd64`, so every module provisions an x86
-> host (the per-cloud *runner* images are arm64, but they run on the managed fleet, not this box).
+| Cloud | Stack | Default VM | Admin access | Page |
+| --- | --- | --- | --- | --- |
+| Hetzner | `infra/cp-hetzner` | `cx33`, 4 vCPU, 8 GB | SSH with a key | [Hetzner](/self-host/terraform/hetzner) |
+| AWS | `infra/cp-aws` | `t3.large`, 2 vCPU, 8 GB | SSM Session Manager | [AWS](/self-host/terraform/aws) |
+| GCP | `infra/cp-gcp` | `e2-standard-2`, 2 vCPU, 8 GB | SSH through IAP | [GCP](/self-host/terraform/gcp) |
+| Azure | `infra/cp-azure` | `Standard_D2s_v5`, 2 vCPU, 8 GB | `az vm run-command` and Serial Console | [Azure](/self-host/terraform/azure) |
 
-> **Costs** are on-demand estimates at each module's default region. AWS/GCP/Azure are from
-> **Infracost**; Hetzner (which Infracost doesn't price) is a **list price**. See each
-> cloud's page for the breakdown; a monthly/subscription commitment is cheaper on most clouds.
+Every VM is x86, because the images are `linux/amd64` only.
 
-## The model — closed origin, zero standing inbound
+## What every stack does
 
-Every stack follows the same shape:
+- **No inbound web traffic.** The firewall opens no port 80 or 443. `cloudflared` on the VM dials out
+  to Cloudflare, and TLS ends at Cloudflare's edge.
+- **Proxied DNS.** The apex and `www` are proxied CNAME records onto `<tunnel id>.cfargotunnel.com`.
+  The tunnel sends both to `http://caddy:80` on the VM.
+- **Checks in the plan.** Each stack's `checks.tf` fails the plan if the posture regresses, for
+  example if a web port opens.
 
-- **Ingress is a Cloudflare Tunnel.** `cloudflared` (a service in the bundle) dials **out**; nothing
-  dials in. The firewall / security group exposes **no 80/443**. Apex and `www` are **proxied**
-  `CNAME`s onto `<tunnel_id>.cfargotunnel.com`, and TLS terminates at Cloudflare's edge.
-- **The connector token is an output.** The stack exports `tunnel_token` (sensitive); set it as
-  `TUNNEL_TOKEN` in the box's `.env` and the compose `cloudflared` connects with nothing else
-  (`config_src = "cloudflare"`, remotely-managed).
-- **The public IP is egress-only** (image pulls, `git`, dialing the tunnel out); inbound is closed.
-- **Hardened + asserted.** Each stack ships a `checks.tf` that fails the plan if the posture regresses
-  (no web ingress, disk encryption / verified boot, tunnel remotely-managed).
+## Before you begin
 
-## Shared workflow
+- A Cloudflare zone, its zone ID and account ID, and an API token with DNS edit and Cloudflare Tunnel
+  permissions.
+- An S3-compatible bucket for OpenTofu state.
+- Credentials for the cloud. Use short-lived ones, such as the cloud CLI's sign-in.
+- OpenTofu.
 
-Every module is the same three steps:
+## Apply a stack
 
 ```bash
 cd infra/cp-<cloud>
-cp backend.hcl.example backend.hcl          # S3-compatible state backend (endpoint + creds)
-cp terraform.tfvars.example terraform.tfvars # cloud creds, domain, cloudflare_* ids
+cp backend.hcl.example backend.hcl            # the state bucket's endpoint and credentials
+cp terraform.tfvars.example terraform.tfvars  # domain, cloudflare_* IDs, cloud settings
 tofu init -backend-config=backend.hcl
-tofu plan && tofu apply
+tofu plan -out=tfplan
+tofu apply tfplan
 ```
 
-Then wire the tunnel token into the bundle `.env`:
+Read the plan before you apply it. Then get the tunnel's token, which `cloudflared` needs:
 
 ```bash
-export TUNNEL_TOKEN="$(tofu output -raw tunnel_token)"
+tofu output -raw tunnel_token
 ```
 
-State lives in an S3-compatible bucket that you name in `backend.hcl`, one key per stack
-(`<cloud>-cp/terraform.tfstate`). DNS records are **proxied** CNAMEs onto the tunnel — there is no
-open origin. See each cloud's page for the credentials its provider reads. Use short-lived
-credentials (each cloud's CLI sign-in, or federation) rather than long-lived keys.
+The token is a secret. Pass it to `cloudflared` as `TUNNEL_TOKEN`; do not print it into logs.
 
-## Prerequisites
+## Check that it worked
 
-- A **Cloudflare account + zone** and an API token with **DNS edit** and **Zero Trust (Cloudflare
-  Tunnel)** permissions — you pass `cloudflare_account_id` and `cloudflare_zone_id`.
-- An **S3-compatible state backend** (`backend.hcl`).
-- The chosen cloud's own credentials.
+The cloud console shows one VM named `alethia-cp`. In Cloudflare, the tunnel exists and the apex
+record points at it. The tunnel shows as healthy once `cloudflared` runs on the VM.
 
-## Not managed here
+## Related
 
-Cloudflare **Email Routing** is zone-global and lives only in `cp-hetzner` (see [Email](/self-host/email)),
-so the stacks don't collide on the shared zone.
+- [Install on a VM](/self-host/install): start the bundle on the VM.
+- [Configuration](/self-host/configuration#domain-and-client-ip): how the console reads the client
+  IP address, which a tunnel changes.

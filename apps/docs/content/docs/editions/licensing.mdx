@@ -1,67 +1,57 @@
 ---
 title: Licensing
-description: How the Enterprise license works — entitlements, activation, and graceful degradation back to the open-source defaults.
+description: How an Enterprise licence turns on entitlements in a self-hosted Alethia, how it is checked, and what happens when it ends.
 ---
 
-The <Enterprise>Enterprise</Enterprise> features are gated by a license. This page explains the mechanism;
-the [Enterprise setup runbook](/self-host/enterprise-setup) walks through turning it all on.
+An <Enterprise>Enterprise</Enterprise> licence turns on a fixed set of entitlements. The product
+reads those entitlements; nothing else in the code asks whether the instance is licensed. To install
+a licence, see [Enterprise setup](/self-host/enterprise-setup).
 
-## Entitlements, not scattered checks
+## Entitlements
 
-Alethia never sprinkles `if (licensed)` through the code. Instead, the licensed layer answers a small set of
-**entitlements**, and the product reads those:
-
-| Entitlement | Unlocks |
+| Entitlement | Turns on |
 |---|---|
-| `organizations` | Multi-member orgs, members, invitations, the active-org switcher |
-| `teams` | Team (access-group) management — create teams and scope grants to them |
-| `sso` | SSO sign-in (OIDC + SAML) |
-| `customRoles` | The custom-role editor + the access portal |
-| `activityExport` | CSV export of the Activity log (viewing is free) |
-| `alerting` | The alerting surface — policies, channels, and the delivery activity log |
-| `advancedAlerting` | Security/governance alert rules sourced from PDP Activity events |
-| `byoRunners` | Bring-your-own runners — deploy into your cloud or register your own |
-| `managedPools` | Managed warm-pool fleet operations (pools, versions, economics) |
+| `organizations` | Multi-member organizations, members, invitations, the organization switcher |
+| `teams` | Teams, and grants to a team |
+| `sso` | SSO sign-in over OIDC and SAML |
+| `customRoles` | The custom-role editor and the access portal |
+| `activityExport` | CSV export of the Activity log. Viewing it is free. |
+| `alerting` | Alert policies, channels and the delivery log |
+| `advancedAlerting` | Alert rules on security events from the Activity log |
+| `agentPolicy` | Agent policy: a different approver, and the OAuth client allow-list |
+| `byoRunners` | Bring-your-own runners on the hosted service. A self-hosted operator always has them. |
+| `managedPools` | Managed runner pools on the hosted service. A self-hosted operator always has them. |
 
-A license also carries runner-scheduling `quotas` (max concurrent jobs, priority band, included
-runner-minutes, activity retention).
+A licence also carries scheduling quotas: concurrent jobs, priority, included runner minutes and
+Activity retention.
 
-Without a license, **every entitlement is `false`** and the console shows the open-source experience: a single
-personal organization, the four built-in roles (read-only), and a browsable (non-exportable) Activity log. The
-features aren't hidden behind a paywalled binary — the open-source build simply has nothing to switch them on.
+Without a licence every entitlement is off, and the console is Community: one personal
+organization, the four built-in roles, and an Activity log you can browse but not export.
 
-## Where entitlements come from
+## How the licence is checked
 
-Entitlements are produced by the Enterprise package (`@alethia/ee`), which the core loads through **one
-tolerant seam** (`lib/enterprise.ts`). The rule that makes this open-core:
+The licence is a signed token that Alethia Labs issues, set as `ALETHIA_LICENSE_KEY`. The console
+checks it offline against public keys built into the published image, and sends nothing to Alethia
+Labs. A licence that is missing, malformed, expired past its grace period, or signed by another key
+grants nothing. The console still starts, as Community.
 
-> **The open-source core never imports the Enterprise package, and runs completely if it's absent.** The seam
-> tries to load `@alethia/ee`; if it isn't installed, the core falls back to the Community defaults — nothing
-> breaks.
+`ALETHIA_EDITION` decides whether the Enterprise package loads: `community` never loads it,
+`enterprise` (the published image's setting) requires it, and `auto` loads it when present. The
+open-source code never imports the package directly, so a build without it is a complete Community
+product. See [the open-core architecture](/concepts/access-control/open-core).
 
-So there are really two ways a deployment is "Community":
+## When a licence ends
 
-1. **The open-source build** — `@alethia/ee` isn't installed at all.
-2. **An Enterprise build without an active license** — `@alethia/ee` is present, and each organization's
-   entitlements fall back to its billing record (`resolveOrgEntitlements` in
-   `apps/console/lib/billing/queries.ts`). An organization with no live paid plan resolves to all-`false`.
-
-For an organization without a paid plan, both behave identically: the Community product. See the
-[open-core architecture](/concepts/access-control/open-core) for the boundary guarantees and CI guards.
-
-## Graceful degradation
-
-Because the seam is tolerant, an Enterprise deployment **never hard-fails** if the license is missing or
-expires — it degrades to Community behavior. Members already in an organization keep their data; the org
-simply stops accepting new enterprise-only operations until the license is restored.
-
-## Activating Enterprise
-
-At a high level, enabling Enterprise is: install `@alethia/ee`, provide a license, run the extra migrations,
-and (optionally) bring up OpenFGA. The full, ordered checklist is in the
-[**Enterprise setup runbook**](/self-host/enterprise-setup).
+A licence keeps granting for its grace period after the end date: 30 days unless the licence states
+another period. Then the instance goes back to Community. No data is deleted, and members keep their
+data, but Enterprise-only operations stop until a valid licence is installed. No restart is needed.
 
 <Callout type="warn">
-  Self-hosting an Enterprise deployment requires a commercial license. Running the **open-source Community
-  edition** never does. If you only need a single-tenant Alethia, you never touch any of this.
+  Running Enterprise in production needs a commercial licence. The `ee/` directory is source-visible
+  under its own licence, not AGPL. Running Community never needs one.
 </Callout>
+
+## Related
+
+- [Feature matrix](/editions/feature-matrix)
+- [Enterprise setup](/self-host/enterprise-setup)

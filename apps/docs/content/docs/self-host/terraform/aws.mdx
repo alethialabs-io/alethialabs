@@ -1,42 +1,54 @@
 ---
 title: AWS
-description: Provision the Alethia control plane on an x86 EC2 instance, closed-origin behind a Cloudflare Tunnel, SSH-free via SSM.
+description: Provision the control-plane VM on an x86 EC2 instance with OpenTofu, behind a Cloudflare Tunnel, with admin access through SSM.
 ---
 
-A single x86 **EC2 `t3.large`** (2 vCPU / 8 GB) fronted by a Cloudflare Tunnel — **no bastion, no
-open port**. **≈ $72/mo** (t3.large + 60 GB gp3; Infracost, on-demand, `eu-west-1`; `t3.medium` ≈ half if 4 GB fits).
+Provision an EC2 instance for the control plane with `infra/cp-aws`. It has no open port: web
+traffic comes through a Cloudflare Tunnel, and you reach a shell through SSM Session Manager. Read
+[OpenTofu per cloud](/self-host/terraform) first.
 
 ## What it creates
-- `aws_instance` (`t3.large`, Ubuntu 24.04 amd64) with an encrypted 60 GB gp3 root; **IMDSv2 required**
-- `aws_security_group` with **no ingress** (egress only) — web is the tunnel, SSH is SSM
-- IAM role + instance profile with **`AmazonSSMManagedInstanceCore`** only (Session Manager)
-- `cloudflare_zero_trust_tunnel_cloudflared` (+ config) and **proxied** CNAMEs (apex + `www`)
-- cloud-init: installs Docker, clones the repo (Docker data on the durable EBS root)
 
-## Access — SSM Session Manager
-No SSH port is open. The SSM agent (preinstalled on the AMI) dials out; connect with:
-```bash
-aws ssm start-session --target <instance_id>
-```
+- An EC2 `t3.large` (2 vCPU, 8 GB) running Ubuntu 24.04, with an encrypted 60 GB gp3 root volume and
+  IMDSv2 required. It runs in the account's default VPC, with a public IP for outbound traffic only.
+- A security group with no inbound rules.
+- An IAM role and instance profile with only `AmazonSSMManagedInstanceCore`.
+- The Cloudflare Tunnel, and proxied CNAME records for the apex and `www`.
 
-## Prerequisites
-- AWS credentials for the target account. Any source the AWS provider reads works. Use a
-  short-lived source, such as an IAM Identity Center profile (`aws sso login --profile <profile>`),
-  instead of a long-lived access key.
-- A Cloudflare **API token** with **DNS edit + Zero Trust (Tunnel)** perms, the **zone id**, and the
-  **account id**.
+At the default region `eu-west-1`, on demand, this costs about $72 a month (Infracost). A
+`t3.medium` costs about half, with 4 GB of memory.
+
+## Before you begin
+
+- AWS credentials for the target account. Use a short-lived source, such as
+  `aws sso login --profile <profile>`, instead of an access key.
+- The Cloudflare token, zone ID and account ID.
 
 ## Apply
+
 ```bash
 cd infra/cp-aws
 cp backend.hcl.example backend.hcl
-cp terraform.tfvars.example terraform.tfvars # cloudflare_* (token/zone/account), domain, aws_region
-export AWS_PROFILE=<profile>   # after `aws sso login --profile <profile>`
+cp terraform.tfvars.example terraform.tfvars   # cloudflare_*, domain, aws_region
+export AWS_PROFILE=<profile>
 tofu init -backend-config=backend.hcl
-tofu plan && tofu apply
-export TUNNEL_TOKEN="$(tofu output -raw tunnel_token)"
+tofu plan -out=tfplan
+tofu apply tfplan
 ```
 
-## Tuning
-`instance_type` (`t3.large` default — **must be x86**), `root_volume_size`, `aws_region`. Runs in the
-account's default VPC with an auto-assigned public IP (egress only).
+Variables you may change: `instance_type` (must be x86), `root_volume_size`, `aws_region`.
+
+## Check that it worked
+
+Open a shell on the instance. No SSH port is needed:
+
+```bash
+aws ssm start-session --target <instance id>
+```
+
+`/opt/alethia` holds the repository.
+
+## Related
+
+- [OpenTofu per cloud](/self-host/terraform)
+- [One-click deploy](/self-host/one-click): an AWS VM that starts Alethia on its own.

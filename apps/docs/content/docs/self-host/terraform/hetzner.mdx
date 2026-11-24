@@ -1,39 +1,57 @@
 ---
 title: Hetzner
-description: Provision the Alethia control plane on a Hetzner Cloud x86 VM, closed-origin behind a Cloudflare Tunnel.
+description: Provision the control-plane VM on a Hetzner Cloud x86 server with OpenTofu, behind a Cloudflare Tunnel, with a data volume for Postgres and object storage.
 ---
 
-The cheapest target, and the one the hosted alethialabs.io runs on: a Hetzner Cloud **CX33** (Intel
-x86, 4 vCPU / 8 GB) with an attached data volume, fronted by a Cloudflare Tunnel. **≈ €14/mo**
-(Hetzner list price: `cx33` €13.10 + 25 GB volume €1.19; not priced by Infracost).
+Provision a Hetzner Cloud server for the control plane with `infra/cp-hetzner`. Web traffic comes
+through a Cloudflare Tunnel, and the firewall allows only SSH. Read
+[OpenTofu per cloud](/self-host/terraform) first.
+
+<Callout type="warn">
+  This stack is also the one the hosted service runs on. It imports the hosted service's own DNS
+  record (`dns-imports.tf`) and carries its email routing, switched off. Remove `dns-imports.tf`
+  before you apply it to your zone, or the plan fails.
+</Callout>
 
 ## What it creates
-- `hcloud_server` (`cx33`) + `hcloud_volume` (25 GB, holds Postgres + object storage) + attachment
-- `hcloud_firewall` — **SSH only** (`22`); no 80/443 (ingress is the tunnel)
-- `cloudflare_zero_trust_tunnel_cloudflared` (+ config) and **proxied** `cloudflare_record` CNAMEs
-  (apex + `www`) onto `<tunnel_id>.cfargotunnel.com`
-- cloud-init: installs Docker, moves Docker's data-root onto the volume, clones the repo
 
-## Prerequisites
-- A Hetzner Cloud **project + API token** (`HCLOUD_TOKEN`).
-- A Cloudflare **API token** with **DNS edit + Zero Trust (Tunnel)** perms, the **zone id**, and the
-  **account id**.
-- An SSH **public key** (SSH is the admin channel on Hetzner).
+- A `cx33` server (x86, 4 vCPU, 8 GB) and a 25 GB volume. Docker's data, so Postgres and the object
+  store, live on the volume.
+- Delete and rebuild protection on the server and the volume, and `prevent_destroy` in OpenTofu.
+- A firewall that allows only SSH (port 22).
+- The Cloudflare Tunnel, and proxied CNAME records for the apex and `www`.
+
+At Hetzner's list price this costs about €14 a month: the server €13.10 and the volume €1.19.
+
+## Before you begin
+
+- A Hetzner Cloud project and an API token for it.
+- An SSH public key. SSH is the admin channel on Hetzner.
+- The Cloudflare token, zone ID and account ID.
 
 ## Apply
+
 ```bash
 cd infra/cp-hetzner
-cp backend.hcl.example backend.hcl          # fill S3 endpoint + creds
-cp terraform.tfvars.example terraform.tfvars # hcloud_token, cloudflare_* (token/zone/account), ssh_public_key, domain
+cp backend.hcl.example backend.hcl
+cp terraform.tfvars.example terraform.tfvars   # hcloud_token, cloudflare_*, ssh_public_key, domain
 tofu init -backend-config=backend.hcl
-tofu plan && tofu apply
-export TUNNEL_TOKEN="$(tofu output -raw tunnel_token)"   # → the bundle's .env
+tofu plan -out=tfplan
+tofu apply tfplan
 ```
 
-## Tuning
-`server_type` (`cx33` default; `cx43` if busy), `data_volume_size`, `location` (any EU region),
-`ssh_allowed_cidrs` (SSH source restriction).
+Variables you may change: `server_type` (`cx43` for a busier instance), `data_volume_size`,
+`location` (default `fsn1`), `ssh_allowed_cidrs`.
 
-## Also here — inbound email
-Hetzner owns the zone-global Cloudflare **Email Routing** for the apex addresses (support@, sales@,
-…) — see [Email](/self-host/email). It's gated off until you import the existing routing.
+To remove the server later, first apply a change that turns the protections off, then destroy. See
+`infra/cp-hetzner/README.md`.
+
+## Check that it worked
+
+```bash
+ssh root@<server ip> ls /opt/alethia
+```
+
+## Related
+
+- [OpenTofu per cloud](/self-host/terraform)

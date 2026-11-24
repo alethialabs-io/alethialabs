@@ -60,9 +60,9 @@ export const movedPages = [
 	{ source: "/cli/installation", destination: "/get-started/install-the-cli", permanent: true },
 	{ source: "/cli/tui", destination: "https://github.com/alethialabs-io/alethialabs/blob/dev/docs/contributing/cli-tui.md", permanent: true },
 	{ source: "/compare", destination: "/editions/compare", permanent: true },
-	{ source: "/compare/vs-porter", destination: "/editions/compare/vs-porter", permanent: true },
-	{ source: "/compare/vs-qovery", destination: "/editions/compare/vs-qovery", permanent: true },
-	{ source: "/compare/vs-spacelift", destination: "/editions/compare/vs-spacelift", permanent: true },
+	{ source: "/compare/vs-porter", destination: "/editions/compare#porter", permanent: true },
+	{ source: "/compare/vs-qovery", destination: "/editions/compare#qovery", permanent: true },
+	{ source: "/compare/vs-spacelift", destination: "/editions/compare#spacelift", permanent: true },
 	{ source: "/concepts/database", destination: "https://github.com/alethialabs-io/alethialabs/blob/dev/docs/contributing/database-schema.md", permanent: true },
 	{ source: "/concepts/elench/drift", destination: "/concepts/drift", permanent: true },
 	{ source: "/concepts/glossary", destination: "/reference/glossary", permanent: true },
@@ -211,6 +211,10 @@ export const movedPages = [
 	{ source: "/guides/connectors/health-and-inventory", destination: "/concepts/connection-health", permanent: true },
 	{ source: "/guides/dashboard/project-detail", destination: "/guides/dashboard", permanent: true },
 	{ source: "/guides/design-project/cost-sidebar", destination: "/guides/design-project/cost", permanent: true },
+	// Docs rework (self-host, agents, editions): the three comparison pages became one.
+	{ source: "/editions/compare/vs-porter", destination: "/editions/compare#porter", permanent: true },
+	{ source: "/editions/compare/vs-qovery", destination: "/editions/compare#qovery", permanent: true },
+	{ source: "/editions/compare/vs-spacelift", destination: "/editions/compare#spacelift", permanent: true },
 	// A cloud the product hides (`availability: hidden` in packages/core/catalog/catalog.json). Its
 	// pages stay in content/ with `availability: hidden` frontmatter, so lib/source.ts drops them, and
 	// these send their URLs to the section index; the two older entries for the same pages, under
