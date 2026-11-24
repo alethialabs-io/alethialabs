@@ -8,8 +8,8 @@ import { z } from "zod";
 import { signedJob } from "@/lib/db/signed-job";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { defineAction } from "@/lib/actions/define-action";
-import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
-import { currentActor } from "@/lib/authz/guard";
+import { ActionRefusal, type ActionResult, FieldRefusal } from "@/lib/actions/result";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
 import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
@@ -19,6 +19,7 @@ import { type Tx, withActorScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import { inferStack } from "@/lib/scanner/infer";
+import { assertScannableRepoUrl, RepoUrlRefusedError } from "@/lib/scanner/repo-url";
 import type { ScanProposal } from "@/lib/scanner/schema";
 import { mergeScansToFormData, type ScanInput } from "@/lib/scanner/to-project";
 
@@ -47,7 +48,9 @@ function scanKeyHash(orgId: string, userId: string, key: string): string {
 }
 
 /**
- * Queues an ANALYZE_REPO job and returns its id, THROWING the budget refusals as their own classes
+ * Queues an ANALYZE_REPO job and returns its id. The caller must hold `create` on projects (a scan
+ * proposes one), and the URL must be one a runner may clone (lib/scanner/repo-url.ts): both are
+ * checked before anything else. THROWS the budget refusals as their own classes
  * ({@link AiBudgetError}, {@link UsageLimitError}) so each caller maps them in its own words. Not
  * exported: the two exports below are the callers, and each establishes the actor first.
  *
@@ -57,9 +60,10 @@ function scanKeyHash(orgId: string, userId: string, key: string): string {
  * makes every row distinct under that index.
  */
 async function queueRepoScan(repoUrl: string, opts?: RepoScanOptions): Promise<{ jobId: string }> {
-	const actor = await currentActor();
-	const url = repoUrl.trim();
-	if (!url) throw new Error("A repository URL is required.");
+	// A scan infers a proposed project, so it asks for the verb creating one needs.
+	const actor = await authorize("create", { type: "project" });
+	if (!repoUrl.trim()) throw new Error("A repository URL is required.");
+	const url = await assertScannableRepoUrl(repoUrl);
 	const key = opts?.idempotencyKey ? scanKeyHash(actor.orgId, actor.userId, opts.idempotencyKey) : null;
 
 	/** The keyed scan already queued under `key`, read in `tx`. */
@@ -159,6 +163,7 @@ export async function startRepoScan(
 			} catch (e) {
 				if (e instanceof AiBudgetError) throw new ActionRefusal("entitlement", e.message, "ai");
 				if (e instanceof UsageLimitError) throw new ActionRefusal("entitlement", e.message, "jobs");
+				if (e instanceof RepoUrlRefusedError) throw new FieldRefusal({ repoUrl: [e.message] }, e.message);
 				throw e;
 			}
 		},

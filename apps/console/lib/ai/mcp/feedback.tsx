@@ -16,9 +16,23 @@ import { sendEmail } from "@repo/email/send";
 import { env } from "next-runtime-env";
 import type { Actor } from "@/lib/authz/types";
 import { deploymentMode } from "@/lib/billing/config";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { McpToolRefusal } from "./served";
 
 /** The inbox agent feedback is delivered to; the same one the console's widget uses. */
 const DEFAULT_FEEDBACK_EMAIL = "feedback@alethialabs.io";
+
+/** Feedback messages one person may send in {@link FEEDBACK_WINDOW_MS}, in one organisation. */
+export const FEEDBACK_PER_PERSON = 5;
+
+/** Feedback messages one organisation may send in {@link FEEDBACK_WINDOW_MS}, across its people. */
+export const FEEDBACK_PER_ORG = 30;
+
+/** The fixed window both limits are counted over (lib/rate-limit.ts: shared by every replica). */
+const FEEDBACK_WINDOW_MS = 60 * 60 * 1000;
+
+/** The refusal a caller over either limit is answered with. */
+const RATE_LIMITED = "Feedback is limited to a few messages an hour. Try again later, or combine your notes into one message.";
 
 /** What a connected agent reported. */
 export interface FeedbackSubmission {
@@ -64,9 +78,17 @@ export function AgentFeedbackEmail({
 /**
  * Sends `submission` to the team inbox and returns true, or returns false without sending on a
  * self-managed deployment. With email unconfigured (local, dev) `sendEmail` logs instead.
+ *
+ * Each message counts against a per-person and a per-organisation hourly limit first; over either,
+ * the call is refused `rate_limited` and nothing is sent. The person's limit is checked first, so a
+ * refused person does not use up the organisation's.
  */
 export async function sendAgentFeedback(actor: Actor, submission: FeedbackSubmission): Promise<boolean> {
 	if (deploymentMode() !== "hosted") return false;
+	const person = await checkRateLimit(`agent-feedback:${actor.orgId}:${actor.userId}`, FEEDBACK_PER_PERSON, FEEDBACK_WINDOW_MS);
+	if (!person.ok) throw new McpToolRefusal("rate_limited", RATE_LIMITED);
+	const org = await checkRateLimit(`agent-feedback:${actor.orgId}`, FEEDBACK_PER_ORG, FEEDBACK_WINDOW_MS);
+	if (!org.ok) throw new McpToolRefusal("rate_limited", RATE_LIMITED);
 	const origin: FeedbackOrigin = {
 		orgId: actor.orgId,
 		userId: actor.userId,
